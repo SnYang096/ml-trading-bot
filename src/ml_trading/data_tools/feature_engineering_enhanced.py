@@ -1,0 +1,1047 @@
+"""Enhanced feature engineering with Wavelet Packet Transform, Energy, Entropy, and Hurst.
+
+对所有信号源（close, open, volume, cvd, taker_buy_ratio）都做：
+1. 小波包变换（WPT） - 精细频带分解
+2. Hurst指数 - 趋势持续性分析
+3. 能量和熵特征
+"""
+
+import pandas as pd
+import numpy as np
+import pywt
+from typing import Dict, Tuple
+from scipy import signal
+from scipy.signal import hilbert
+from sklearn.preprocessing import StandardScaler
+
+
+class EnhancedFeatureEngineer:
+    """增强版特征工程：对所有信号源做WPT+Hurst分解."""
+
+    def __init__(
+        self,
+        scaler_type: str = "standard",
+        wavelet: str = "db4",
+        wpt_level: int = 3,
+        hurst_window: int = 100,
+    ):
+        """
+        Initialize enhanced feature engineer.
+
+        Args:
+            scaler_type: Type of scaler ('standard' or 'minmax')
+            wavelet: Wavelet type for WPT
+            wpt_level: Decomposition level for wavelet packet
+            hurst_window: Window size for Hurst exponent calculation
+        """
+        self.scaler_type = scaler_type
+        self.scalers: Dict[str, StandardScaler] = {}
+        self.wavelet = wavelet
+        self.wpt_level = wpt_level
+        self.hurst_window = hurst_window
+
+    def calculate_hurst_exponent(self, ts: np.ndarray, min_window: int = 10) -> float:
+        """
+        Calculate Hurst exponent using R/S analysis.
+
+        Args:
+            ts: Time series data
+            min_window: Minimum window size
+
+        Returns:
+            Hurst exponent (0.5 = random, >0.5 = trending, <0.5 = mean-reverting)
+        """
+        if len(ts) < min_window * 2:
+            return 0.5
+
+        # Remove any NaN or inf values
+        ts = ts[np.isfinite(ts)]
+        if len(ts) < min_window * 2:
+            return 0.5
+
+        try:
+            # Create range of window sizes
+            lags = range(min_window, min(len(ts) // 2, 100))
+
+            # Calculate R/S for each lag
+            rs_values = []
+            for lag in lags:
+                # Split into chunks
+                n_chunks = len(ts) // lag
+                if n_chunks == 0:
+                    continue
+
+                rs_chunk = []
+                for i in range(n_chunks):
+                    chunk = ts[i * lag : (i + 1) * lag]
+                    if len(chunk) < lag:
+                        continue
+
+                    # Mean-adjusted series
+                    mean_chunk = np.mean(chunk)
+                    y = chunk - mean_chunk
+
+                    # Cumulative deviate
+                    z = np.cumsum(y)
+
+                    # Range
+                    r = np.max(z) - np.min(z)
+
+                    # Standard deviation
+                    s = np.std(chunk, ddof=1)
+
+                    if s > 0:
+                        rs_chunk.append(r / s)
+
+                if rs_chunk:
+                    rs_values.append((lag, np.mean(rs_chunk)))
+
+            if len(rs_values) < 2:
+                return 0.5
+
+            # Linear regression on log-log plot
+            lags_log = np.log([x[0] for x in rs_values])
+            rs_log = np.log([x[1] for x in rs_values])
+
+            # Handle any inf or nan in logs
+            valid_mask = np.isfinite(lags_log) & np.isfinite(rs_log)
+            if np.sum(valid_mask) < 2:
+                return 0.5
+
+            lags_log = lags_log[valid_mask]
+            rs_log = rs_log[valid_mask]
+
+            # Fit linear regression
+            hurst = np.polyfit(lags_log, rs_log, 1)[0]
+
+            # Clip to reasonable range
+            return np.clip(hurst, 0.0, 1.0)
+
+        except Exception as e:
+            return 0.5
+
+    def calculate_wavelet_packet_features(self, data: np.ndarray) -> Dict[str, float]:
+        """
+        Calculate wavelet packet transform features.
+
+        Args:
+            data: Time series data
+
+        Returns:
+            Dictionary of WPT features
+        """
+        features = {}
+
+        try:
+            # Ensure data has enough length and is finite
+            if len(data) < 2**self.wpt_level:
+                return {}
+
+            # Remove NaN and inf
+            data_clean = data[np.isfinite(data)]
+            if len(data_clean) < 2**self.wpt_level:
+                return {}
+
+            # Perform wavelet packet decomposition
+            wp = pywt.WaveletPacket(
+                data=data_clean,
+                wavelet=self.wavelet,
+                mode="symmetric",
+                maxlevel=self.wpt_level,
+            )
+
+            # Get all nodes at specified level
+            nodes = wp.get_level(self.wpt_level, "natural")
+
+            # Calculate energy for each node
+            energies = []
+            for node in nodes:
+                try:
+                    coeffs = node.data
+                    if len(coeffs) > 0:
+                        energy = np.sum(np.square(coeffs))
+                        energies.append(energy)
+
+                        # Individual node features
+                        features[f"wpt_{node.path}_energy"] = energy
+                        features[f"wpt_{node.path}_mean"] = np.mean(coeffs)
+                        features[f"wpt_{node.path}_std"] = np.std(coeffs)
+                except:
+                    continue
+
+            if len(energies) > 0:
+                total_energy = np.sum(energies)
+
+                # Energy distribution features
+                if total_energy > 0:
+                    # Energy ratios
+                    for i, node in enumerate(nodes):
+                        if i < len(energies):
+                            features[f"wpt_{node.path}_energy_ratio"] = (
+                                energies[i] / total_energy
+                            )
+
+                    # Shannon entropy of energy distribution
+                    probs = np.array(energies) / total_energy
+                    probs = probs[probs > 1e-10]  # Remove zero probabilities
+                    shannon_entropy = -np.sum(probs * np.log(probs + 1e-10))
+                    features["wpt_shannon_entropy"] = shannon_entropy
+
+                    # Energy concentration (Gini coefficient-like)
+                    sorted_energies = np.sort(energies)[::-1]
+                    cumsum_energies = np.cumsum(sorted_energies) / total_energy
+                    features["wpt_energy_concentration"] = (
+                        cumsum_energies[0] if len(cumsum_energies) > 0 else 0
+                    )
+
+                    # High frequency vs low frequency energy ratio
+                    n_nodes = len(energies)
+                    mid = n_nodes // 2
+                    low_freq_energy = np.sum(energies[:mid])
+                    high_freq_energy = np.sum(energies[mid:])
+
+                    if low_freq_energy > 0:
+                        features["wpt_high_low_ratio"] = (
+                            high_freq_energy / low_freq_energy
+                        )
+
+                    # Dominant frequency band
+                    features["wpt_dominant_band"] = np.argmax(energies)
+
+        except Exception as e:
+            pass  # Return empty dict on error
+
+        return features
+
+    def add_hurst_features(
+        self, data: pd.DataFrame, window: int = None
+    ) -> pd.DataFrame:
+        """
+        Add Hurst exponent features for ALL signal sources.
+        对 close, open, volume, cvd, taker_buy_ratio 都计算Hurst指数
+        """
+        if window is None:
+            window = self.hurst_window
+
+        df = data.copy()
+
+        # 定义需要计算Hurst的信号源
+        signal_sources = {
+            "close": df["close"].values,
+            "open": df["open"].values,
+            "volume": df["volume"].values,
+        }
+
+        # 如果有订单流数据，也加入
+        if "cvd" in df.columns:
+            signal_sources["cvd"] = df["cvd"].values
+        if "taker_buy_ratio" in df.columns:
+            signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
+
+        print(f"      Hurst计算信号源: {list(signal_sources.keys())}")
+
+        # 对每个信号源计算Hurst
+        for source_name, source_data in signal_sources.items():
+            # Rolling Hurst exponent
+            hurst_values = []
+            for i in range(len(source_data)):
+                if i < window:
+                    hurst_values.append(0.5)
+                else:
+                    window_data = source_data[i - window : i]
+                    h = self.calculate_hurst_exponent(window_data)
+                    hurst_values.append(h)
+
+            # 主Hurst值
+            df[f"{source_name}_hurst"] = hurst_values
+
+            # Hurst衍生特征
+            df[f"{source_name}_hurst_deviation"] = df[f"{source_name}_hurst"] - 0.5
+            df[f"{source_name}_hurst_trend_signal"] = (
+                df[f"{source_name}_hurst"] > 0.55
+            ).astype(int)
+            df[f"{source_name}_hurst_mean_revert_signal"] = (
+                df[f"{source_name}_hurst"] < 0.45
+            ).astype(int)
+            df[f"{source_name}_hurst_change"] = df[f"{source_name}_hurst"].diff()
+            df[f"{source_name}_hurst_acceleration"] = df[
+                f"{source_name}_hurst_change"
+            ].diff()
+
+        return df
+
+    def add_wavelet_packet_features(
+        self, data: pd.DataFrame, window: int = 100
+    ) -> pd.DataFrame:
+        """
+        Add wavelet packet transform features for ALL signal sources.
+        对 close, open, volume, cvd, taker_buy_ratio 都做WPT分解
+        """
+        df = data.copy()
+
+        # 定义需要做WPT的信号源
+        signal_sources = {
+            "close": df["close"].values,
+            "open": df["open"].values,
+            "volume": df["volume"].values,
+        }
+
+        # 如果有订单流数据，也加入
+        if "cvd" in df.columns:
+            signal_sources["cvd"] = df["cvd"].values
+        if "taker_buy_ratio" in df.columns:
+            signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
+
+        print(f"      WPT分解信号源: {list(signal_sources.keys())}")
+
+        # 对每个信号源计算WPT特征
+        for source_name, source_data in signal_sources.items():
+            wpt_features_list = []
+
+            for i in range(len(source_data)):
+                if i < window:
+                    wpt_features_list.append({})
+                else:
+                    window_data = source_data[i - window : i]
+                    wpt_features = self.calculate_wavelet_packet_features(window_data)
+
+                    # 添加前缀以区分不同信号源
+                    prefixed_features = {
+                        f"{source_name}_{k}": v for k, v in wpt_features.items()
+                    }
+                    wpt_features_list.append(prefixed_features)
+
+            # Convert to DataFrame
+            wpt_df = pd.DataFrame(wpt_features_list, index=df.index)
+            wpt_df = wpt_df.fillna(0)
+
+            # Add to main dataframe
+            for col in wpt_df.columns:
+                df[col] = wpt_df[col].values
+
+        return df
+
+    def add_hilbert_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Hilbert transform features for ALL signal sources.
+        对 close, open, volume, cvd, taker_buy_ratio 都做Hilbert变换
+        """
+        df = data.copy()
+
+        # 定义需要计算Hilbert的信号源
+        signal_sources = {
+            "close": df["close"].values,
+            "open": df["open"].values,
+            "volume": df["volume"].values,
+        }
+
+        if "cvd" in df.columns:
+            signal_sources["cvd"] = df["cvd"].values
+        if "taker_buy_ratio" in df.columns:
+            signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
+
+        print(f"      Hilbert变换信号源: {list(signal_sources.keys())}")
+
+        # 对每个信号源计算Hilbert特征
+        for source_name, source_data in signal_sources.items():
+            try:
+                # Remove NaN
+                valid_data = source_data[np.isfinite(source_data)]
+
+                if len(valid_data) < 10:
+                    df[f"{source_name}_hilbert_amplitude"] = 0
+                    df[f"{source_name}_hilbert_phase"] = 0
+                    df[f"{source_name}_hilbert_frequency"] = 0
+                    continue
+
+                # Compute analytic signal
+                analytic_signal = hilbert(valid_data)
+
+                # Extract amplitude and phase
+                amplitude = np.abs(analytic_signal)
+                phase = np.angle(analytic_signal)
+
+                # Compute instantaneous frequency
+                frequency = np.diff(np.unwrap(phase)) / (2.0 * np.pi)
+                frequency = np.concatenate([[frequency[0]], frequency])
+
+                # Pad to original length if needed
+                if len(amplitude) < len(source_data):
+                    amplitude = np.pad(
+                        amplitude, (0, len(source_data) - len(amplitude)), mode="edge"
+                    )
+                    phase = np.pad(
+                        phase, (0, len(source_data) - len(phase)), mode="edge"
+                    )
+                    frequency = np.pad(
+                        frequency, (0, len(source_data) - len(frequency)), mode="edge"
+                    )
+
+                df[f"{source_name}_hilbert_amplitude"] = amplitude[: len(df)]
+                df[f"{source_name}_hilbert_phase"] = phase[: len(df)]
+                df[f"{source_name}_hilbert_frequency"] = frequency[: len(df)]
+
+            except Exception as e:
+                print(f"      Warning: Hilbert for {source_name} failed: {e}")
+                df[f"{source_name}_hilbert_amplitude"] = 0
+                df[f"{source_name}_hilbert_phase"] = 0
+                df[f"{source_name}_hilbert_frequency"] = 0
+
+        return df
+
+    def add_spectral_features(
+        self, data: pd.DataFrame, window: int = 100
+    ) -> pd.DataFrame:
+        """
+        Add spectral analysis features for ALL signal sources (FIXED VERSION).
+        使用滚动窗口计算spectral特征，生成时间序列
+
+        Args:
+            data: DataFrame with OHLCV and other columns
+            window: 滚动窗口大小（默认100根K线）
+        """
+        from scipy.signal import periodogram
+
+        df = data.copy()
+
+        # 定义需要计算光谱的信号源
+        signal_sources = {
+            "close": df["close"].values,
+            "open": df["open"].values,
+            "volume": df["volume"].values,
+        }
+
+        if "cvd" in df.columns:
+            signal_sources["cvd"] = df["cvd"].values
+        if "taker_buy_ratio" in df.columns:
+            signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
+
+        print(
+            f"      光谱分析信号源: {list(signal_sources.keys())} (滚动窗口={window})"
+        )
+
+        # 对每个信号源计算滚动spectral特征
+        for source_name, source_data in signal_sources.items():
+            # 初始化特征数组
+            n_samples = len(source_data)
+            spectral_centroid = np.zeros(n_samples)
+            spectral_bandwidth = np.zeros(n_samples)
+            spectral_rolloff = np.zeros(n_samples)
+
+            # 滚动窗口计算
+            for i in range(n_samples):
+                if i < window:
+                    # 窗口不足，保持为0
+                    continue
+
+                try:
+                    # 获取窗口数据
+                    window_data = source_data[i - window : i]
+
+                    # 移除NaN
+                    valid_data = window_data[np.isfinite(window_data)]
+
+                    if len(valid_data) < 10:
+                        continue
+
+                    # 使用periodogram计算功率谱密度（更稳定）
+                    if source_name in ["close", "open"]:
+                        # 对价格信号，先转换为收益率
+                        returns = np.diff(valid_data) / (valid_data[:-1] + 1e-10)
+                        if len(returns) < 5:
+                            continue
+                        freqs, psd = periodogram(returns, fs=1.0)
+                    else:
+                        # 对volume、cvd等，直接使用
+                        freqs, psd = periodogram(valid_data, fs=1.0)
+
+                    # 归一化
+                    psd_sum = np.sum(psd)
+                    if psd_sum == 0 or not np.isfinite(psd_sum):
+                        continue
+
+                    psd_norm = psd / psd_sum
+
+                    # 1. Spectral Centroid（谱质心）
+                    spectral_centroid[i] = np.sum(freqs * psd_norm)
+
+                    # 2. Spectral Bandwidth（谱带宽）
+                    spectral_bandwidth[i] = np.sqrt(
+                        np.sum(((freqs - spectral_centroid[i]) ** 2) * psd_norm)
+                    )
+
+                    # 3. Spectral Rolloff（谱滚降，95%能量点）
+                    cumsum_psd = np.cumsum(psd_norm)
+                    rolloff_idx = np.where(cumsum_psd >= 0.95)[0]
+                    if len(rolloff_idx) > 0:
+                        spectral_rolloff[i] = freqs[rolloff_idx[0]]
+
+                except Exception:
+                    # 如果计算失败，保持为0
+                    continue
+
+            # 添加到DataFrame（时间序列）
+            df[f"{source_name}_spectral_centroid"] = spectral_centroid
+            df[f"{source_name}_spectral_bandwidth"] = spectral_bandwidth
+            df[f"{source_name}_spectral_rolloff"] = spectral_rolloff
+
+        return df
+
+    def add_advanced_derived_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add advanced derived features from baseline model.
+        添加基线模型中的高级衍生特征
+        """
+        df = data.copy()
+
+        print("      计算高级衍生特征...")
+
+        try:
+            # 需要的基础特征
+            if "bb_upper" not in df.columns or "atr" not in df.columns:
+                print("        缺少BB或ATR，跳过部分衍生特征")
+                return df
+
+            # 1. BB Width相关
+            df["bb_width"] = (df["bb_upper"] - df["bb_lower"]).abs()
+            df["bb_width_normalized"] = df["bb_width"] / df["atr"].replace(0, np.nan)
+            df["bb_width_normalized"] = (
+                df["bb_width_normalized"].replace([np.inf, -np.inf], np.nan).fillna(0)
+            )
+
+            # 2. Range ratio
+            df["hl"] = df["high"] - df["low"]
+            df["range_ratio_5bar"] = df["hl"].rolling(5).mean() / df["hl"].rolling(
+                20
+            ).mean().replace(0, np.nan)
+            df["range_ratio_5bar"] = df["range_ratio_5bar"].fillna(1)
+
+            # 3. Compression duration
+            perc = df["bb_width"].rolling(20, min_periods=5).quantile(0.2)
+            low_vol = (df["bb_width"] <= perc).astype(int)
+            df["compression_duration"] = (
+                low_vol.groupby((low_vol != low_vol.shift()).cumsum()).cumsum()
+            ) * low_vol
+
+            # 4. Compression energy
+            df["compression_energy"] = (1.0 / df["bb_width"].replace(0, np.nan)) * df[
+                "volume_ratio"
+            ]
+            df["compression_energy"] = (
+                df["compression_energy"].replace([np.inf, -np.inf], np.nan).fillna(0)
+            )
+
+            # 5. ATR percentile
+            def pct_rank(x):
+                r = pd.Series(x).rank(pct=True).iloc[-1] if len(x) > 0 else 0.5
+                return r
+
+            df["atr_percentile"] = (
+                df["atr"].rolling(100, min_periods=20).apply(pct_rank, raw=False)
+            )
+
+            # 6. Volatility reversal score
+            atr_mean = df["atr"].rolling(50).mean()
+            atr_std = df["atr"].rolling(50).std()
+            df["volatility_reversal_score"] = (df["atr"] - atr_mean) / atr_std.replace(
+                0, np.nan
+            )
+            df["volatility_reversal_score"] = df["volatility_reversal_score"].fillna(0)
+
+            # 7. Volatility squeeze flag
+            df["volatility_squeeze_flag"] = (df["bb_width"] < (2.0 * df["atr"])).astype(
+                int
+            )
+
+            # 8. Price range symmetry
+            df["price_range_symmetry"] = (df["high"] - df["close"]) / (
+                df["close"] - df["low"]
+            ).replace(0, np.nan)
+            df["price_range_symmetry"] = (
+                df["price_range_symmetry"].replace([np.inf, -np.inf], np.nan).fillna(1)
+            )
+
+            # 9. Volume anomaly
+            df["volume_anomaly"] = (
+                df["volume"] / df["volume"].ewm(span=20, min_periods=10).mean()
+            )
+
+            # 10. Up/Down volume ratio
+            up = (df["close"] > df["close"].shift()).astype(int)
+            df["up_vol"] = (df["volume"] * up).rolling(20).sum()
+            df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
+            df["upvol_downvol_ratio"] = df["up_vol"] / df["down_vol"].replace(0, np.nan)
+            df["upvol_downvol_ratio"] = (
+                df["upvol_downvol_ratio"].replace([np.inf, -np.inf], np.nan).fillna(1)
+            )
+
+            # 11. ROC and acceleration
+            df["roc_5"] = df["close"].pct_change(5)
+            roc_3 = df["close"].pct_change(3)
+            df["acceleration_3"] = roc_3 - roc_3.shift(1)
+
+            # 12. Price vs EMA distance
+            df["price_vs_ema_distance"] = (df["close"] - df["sma_20"]) / df[
+                "atr"
+            ].replace(0, np.nan)
+            df["price_vs_ema_distance"] = (
+                df["price_vs_ema_distance"].replace([np.inf, -np.inf], np.nan).fillna(0)
+            )
+
+            # 13. Momentum persistence
+            sig = np.sign(df["close"].diff())
+            df["momentum_persistence"] = sig.rolling(10).apply(
+                lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True
+            )
+
+            # 14. Slope consistency
+            ema10 = df["close"].ewm(span=10).mean()
+            ema20 = df["close"].ewm(span=20).mean()
+            ema50 = df["close"].ewm(span=50).mean()
+            slope10 = np.sign(ema10.diff())
+            slope20 = np.sign(ema20.diff())
+            slope50 = np.sign(ema50.diff())
+            df["slope_consistency_score"] = (
+                (slope10 == slope20).astype(int)
+                + (slope20 == slope50).astype(int)
+                + (slope10 == slope50).astype(int)
+            )
+
+            # 15. Temporal features (时间特征)
+            try:
+                idx = df.index
+                # 检查索引是否是datetime类型
+                if hasattr(idx, "hour") and hasattr(idx, "dayofweek"):
+                    df["hour_of_day_sin"] = np.sin(2 * np.pi * idx.hour / 24)
+                    df["hour_of_day_cos"] = np.cos(2 * np.pi * idx.hour / 24)
+                    df["day_of_week_sin"] = np.sin(2 * np.pi * idx.dayofweek / 7)
+                    df["day_of_week_cos"] = np.cos(2 * np.pi * idx.dayofweek / 7)
+                else:
+                    # 如果不是datetime索引，创建虚拟时间特征
+                    df["hour_of_day_sin"] = 0
+                    df["hour_of_day_cos"] = 1
+                    df["day_of_week_sin"] = 0
+                    df["day_of_week_cos"] = 1
+            except Exception as e:
+                print(f"        Warning: 时间特征计算失败: {e}")
+                # 创建虚拟时间特征
+                df["hour_of_day_sin"] = 0
+                df["hour_of_day_cos"] = 1
+                df["day_of_week_sin"] = 0
+                df["day_of_week_cos"] = 1
+
+            # 16. Structure tension
+            dist_high = (df["high"].rolling(50).max() - df["close"]).abs() / df["close"]
+            dist_low = (df["close"] - df["low"].rolling(50).min()).abs() / df["close"]
+            df["structure_tension"] = (dist_high + dist_low) / df["bb_width"].replace(
+                0, np.nan
+            )
+            df["structure_tension"] = (
+                df["structure_tension"].replace([np.inf, -np.inf], np.nan).fillna(0)
+            )
+
+            # 17. Trend volatility alignment
+            df["trend_volatility_alignment"] = np.sign(df["roc_5"]).fillna(0) * df[
+                "atr_percentile"
+            ].fillna(0)
+
+            # 18. Compression to breakout probability
+            df["compression_to_breakout_prob"] = df["compression_duration"].fillna(
+                0
+            ) * df["roc_5"].fillna(0)
+
+        except Exception as e:
+            print(f"      Warning: 高级衍生特征计算失败: {e}")
+
+        return df
+
+    def add_order_flow_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add advanced order flow features.
+        添加高级订单流特征：Order Flow Imbalance, Delta Divergence, Liquidity等
+        """
+        df = data.copy()
+
+        # 只有当存在订单流数据时才计算
+        if "cvd" not in df.columns or "taker_buy_ratio" not in df.columns:
+            print("      ⚠️  缺少订单流数据，跳过订单流特征")
+            return df
+
+        print("      计算订单流特征...")
+
+        try:
+            # 1. Order Flow Imbalance (买卖压力不平衡)
+            # 使用buy_qty和sell_qty如果存在，否则从taker_buy_ratio推导
+            if "buy_qty" in df.columns and "sell_qty" in df.columns:
+                total_vol = df["buy_qty"] + df["sell_qty"]
+                df["order_flow_imbalance"] = (
+                    df["buy_qty"] - df["sell_qty"]
+                ) / total_vol.replace(0, np.nan)
+                df["order_flow_imbalance"] = df["order_flow_imbalance"].fillna(0)
+
+                # 改用滚动窗口OFI（避免全局cumsum）
+                df["ofi_short"] = (
+                    df["order_flow_imbalance"].rolling(20, min_periods=1).sum()
+                )
+                df["ofi_medium"] = (
+                    df["order_flow_imbalance"].rolling(60, min_periods=1).sum()
+                )
+                df["ofi_long"] = (
+                    df["order_flow_imbalance"].rolling(288, min_periods=1).sum()
+                )
+
+                # 向后兼容：保留cumulative_ofi
+                df["cumulative_ofi"] = df["order_flow_imbalance"].cumsum()
+
+                # Order flow momentum (OFI变化率)
+                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(5).mean()
+                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(20).mean()
+
+                # Order flow volatility
+                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(20).std()
+            else:
+                # 从taker_buy_ratio推导
+                df["order_flow_imbalance"] = (
+                    df["taker_buy_ratio"] - 0.5
+                ) * 2  # 映射到[-1, 1]
+
+                # 改用滚动窗口OFI
+                df["ofi_short"] = (
+                    df["order_flow_imbalance"].rolling(20, min_periods=1).sum()
+                )
+                df["ofi_medium"] = (
+                    df["order_flow_imbalance"].rolling(60, min_periods=1).sum()
+                )
+                df["ofi_long"] = (
+                    df["order_flow_imbalance"].rolling(288, min_periods=1).sum()
+                )
+
+                # 向后兼容
+                df["cumulative_ofi"] = df["order_flow_imbalance"].cumsum()
+
+                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(5).mean()
+                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(20).mean()
+                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(20).std()
+
+            # 2. Delta Divergence (CVD vs Price背离)
+            # 价格动量
+            price_momentum_5 = df["close"].pct_change(5)
+            price_momentum_20 = df["close"].pct_change(20)
+
+            # 优先使用新的CVD滚动窗口特征，如果不存在则使用原始CVD
+            if "cvd_change_5" in df.columns and "cvd_change_20" in df.columns:
+                # 使用预计算的CVD变化率（更安全，避免全局cumsum）
+                cvd_change_5 = df["cvd_change_5"]
+                cvd_change_20 = df["cvd_change_20"]
+            else:
+                # 向后兼容：使用原始CVD的diff
+                cvd_change_5 = df["cvd"].diff(5)
+                cvd_change_20 = df["cvd"].diff(20)
+
+            # CVD动量标准化
+            cvd_change_5_norm = (
+                cvd_change_5 - cvd_change_5.rolling(50).mean()
+            ) / cvd_change_5.rolling(50).std()
+            cvd_change_20_norm = (
+                cvd_change_20 - cvd_change_20.rolling(50).mean()
+            ) / cvd_change_20.rolling(50).std()
+
+            # Delta divergence = price momentum - CVD momentum
+            df["delta_divergence_5"] = price_momentum_5 - cvd_change_5_norm
+            df["delta_divergence_20"] = price_momentum_20 - cvd_change_20_norm
+
+            # Divergence strength (绝对值)
+            df["divergence_strength"] = df["delta_divergence_20"].abs()
+
+            # 3. 多时间框架CVD特征（如果有新的滚动窗口CVD）
+            if (
+                "cvd_short" in df.columns
+                and "cvd_medium" in df.columns
+                and "cvd_long" in df.columns
+            ):
+                # 短期CVD趋势
+                df["cvd_short_trend"] = df["cvd_short"].diff(5)
+                df["cvd_short_momentum"] = df["cvd_short_trend"].diff()
+
+                # 中期CVD趋势
+                df["cvd_medium_trend"] = df["cvd_medium"].diff(10)
+                df["cvd_medium_momentum"] = df["cvd_medium_trend"].diff()
+
+                # 长期CVD趋势
+                df["cvd_long_trend"] = df["cvd_long"].diff(20)
+
+                # CVD跨周期关系
+                df["cvd_short_medium_ratio"] = df["cvd_short"] / (
+                    df["cvd_medium"].abs() + 1e-10
+                )
+                df["cvd_medium_long_ratio"] = df["cvd_medium"] / (
+                    df["cvd_long"].abs() + 1e-10
+                )
+
+                # CVD趋势一致性（短中长期同向）
+                cvd_short_sign = np.sign(df["cvd_short"])
+                cvd_medium_sign = np.sign(df["cvd_medium"])
+                cvd_long_sign = np.sign(df["cvd_long"])
+                df["cvd_trend_alignment"] = (
+                    (cvd_short_sign == cvd_medium_sign)
+                    & (cvd_medium_sign == cvd_long_sign)
+                ).astype(int)
+
+            # 4. CVD归一化特征（如果存在）
+            if "cvd_normalized" in df.columns:
+                df["cvd_norm_momentum"] = df["cvd_normalized"].rolling(5).mean()
+                df["cvd_norm_extreme"] = (df["cvd_normalized"].abs() > 0.6).astype(int)
+
+            # 5. Taker Buy Ratio动量和极值
+            df["tbr_momentum_5"] = df["taker_buy_ratio"].diff(5)
+            df["tbr_momentum_20"] = df["taker_buy_ratio"].diff(20)
+
+            # TBR极值（买方/卖方主导）
+            df["tbr_extreme_buy"] = (df["taker_buy_ratio"] > 0.7).astype(
+                int
+            )  # 买方主导
+            df["tbr_extreme_sell"] = (df["taker_buy_ratio"] < 0.3).astype(
+                int
+            )  # 卖方主导
+            df["tbr_neutral"] = (
+                (df["taker_buy_ratio"] >= 0.45) & (df["taker_buy_ratio"] <= 0.55)
+            ).astype(int)
+
+            # 6. CVD Slope (CVD变化趋势) - 向后兼容
+            if "cvd_change_1" in df.columns:
+                # 使用预计算的delta
+                df["cvd_slope_3"] = df["cvd_change_1"].rolling(3).sum()
+                df["cvd_slope_10"] = df["cvd_change_1"].rolling(10).sum()
+                df["cvd_slope_30"] = df["cvd_change_1"].rolling(30).sum()
+            else:
+                # 向后兼容
+                df["cvd_slope_3"] = df["cvd"].diff(3)
+                df["cvd_slope_10"] = df["cvd"].diff(10)
+                df["cvd_slope_30"] = df["cvd"].diff(30)
+
+            # CVD加速度
+            df["cvd_acceleration"] = df["cvd_slope_10"].diff()
+
+            # 7. Liquidity Drain特征（成交量突然下降）
+            volume_ma_20 = df["volume"].rolling(20).mean()
+            volume_std_20 = df["volume"].rolling(20).std()
+
+            # 流动性枯竭信号：成交量突然低于均值-2std
+            df["liquidity_drain"] = (
+                df["volume"] < (volume_ma_20 - 2 * volume_std_20)
+            ).astype(int)
+
+            # 流动性比率
+            df["liquidity_ratio"] = df["volume"] / volume_ma_20
+
+            # 6. Buy/Sell Pressure Ratio（买卖压力比）
+            if "buy_qty" in df.columns and "sell_qty" in df.columns:
+                # 滚动窗口的买卖压力
+                buy_pressure_20 = df["buy_qty"].rolling(20).sum()
+                sell_pressure_20 = df["sell_qty"].rolling(20).sum()
+
+                df["buy_sell_pressure_ratio"] = (
+                    buy_pressure_20 / sell_pressure_20.replace(0, np.nan)
+                )
+                df["buy_sell_pressure_ratio"] = df["buy_sell_pressure_ratio"].fillna(1)
+
+                # 压力差
+                df["pressure_diff"] = buy_pressure_20 - sell_pressure_20
+                df["pressure_diff_norm"] = df["pressure_diff"] / (
+                    buy_pressure_20 + sell_pressure_20
+                ).replace(0, np.nan)
+                df["pressure_diff_norm"] = df["pressure_diff_norm"].fillna(0)
+
+            # 7. Volume-Price Divergence（量价背离）
+            price_change_20 = df["close"].pct_change(20)
+            volume_change_20 = df["volume"].pct_change(20)
+
+            # 标准化
+            price_change_norm = (
+                price_change_20 - price_change_20.rolling(50).mean()
+            ) / price_change_20.rolling(50).std()
+            volume_change_norm = (
+                volume_change_20 - volume_change_20.rolling(50).mean()
+            ) / volume_change_20.rolling(50).std()
+
+            # 量价背离 = 价格上涨但成交量下降（或反之）
+            df["volume_price_divergence"] = price_change_norm - volume_change_norm
+
+        except Exception as e:
+            print(f"      Warning: 订单流特征计算失败: {e}")
+
+        return df
+
+    def add_basic_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Add basic technical indicators."""
+        df = data.copy()
+
+        # Price-based features
+        df["returns"] = df["close"].pct_change()
+        df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
+        df["price_change"] = df["close"] - df["close"].shift(1)
+
+        # Moving averages
+        for period in [5, 10, 20, 50]:
+            df[f"sma_{period}"] = df["close"].rolling(window=period).mean()
+            df[f"ema_{period}"] = df["close"].ewm(span=period).mean()
+
+        # Volatility
+        df["volatility"] = df["returns"].rolling(window=20).std()
+        df["atr"] = self.calculate_atr(df)
+        df["atr_normalized"] = df["atr"] / df["close"]
+
+        # Momentum
+        for period in [5, 10, 20]:
+            df[f"momentum_{period}"] = df["close"] - df["close"].shift(period)
+            df[f"roc_{period}"] = (df["close"] / df["close"].shift(period) - 1) * 100
+
+        # RSI
+        df["rsi_14"] = self.calculate_rsi(df["close"], 14)
+
+        # Bollinger Bands
+        sma_20 = df["close"].rolling(window=20).mean()
+        std_20 = df["close"].rolling(window=20).std()
+        df["bb_upper"] = sma_20 + (std_20 * 2)
+        df["bb_lower"] = sma_20 - (std_20 * 2)
+        df["bb_position"] = (df["close"] - df["bb_lower"]) / (
+            df["bb_upper"] - df["bb_lower"]
+        )
+
+        # Volume features
+        df["volume_sma_20"] = df["volume"].rolling(window=20).mean()
+        df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
+
+        # MACD
+        ema_12 = df["close"].ewm(span=12).mean()
+        ema_26 = df["close"].ewm(span=26).mean()
+        df["macd"] = ema_12 - ema_26
+        df["macd_signal"] = df["macd"].ewm(span=9).mean()
+        df["macd_histogram"] = df["macd"] - df["macd_signal"]
+
+        return df
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Average True Range."""
+        high = df["high"]
+        low = df["low"]
+        close = df["close"].shift(1)
+
+        tr1 = high - low
+        tr2 = abs(high - close)
+        tr3 = abs(low - close)
+
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+
+        return atr
+
+    def calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
+        """Calculate Relative Strength Index."""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi
+
+    def engineer_features(
+        self, multi_tf_data: Dict[str, pd.DataFrame], fit: bool = True
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Engineer features for all timeframes with enhanced WPT, Entropy, and Hurst features.
+
+        对所有信号源（close, open, volume, cvd, taker_buy_ratio）都做：
+        1. 小波包变换
+        2. Hurst指数
+        3. 基础技术指标
+
+        Args:
+            multi_tf_data: Dictionary mapping timeframe to OHLCV data
+            fit: Whether to fit scalers (True for training, False for testing)
+
+        Returns:
+            Dictionary mapping timeframe to engineered features
+        """
+        engineered_data = {}
+
+        for timeframe, data in multi_tf_data.items():
+            print(f"  Engineering enhanced features for {timeframe}...")
+
+            df = data.copy()
+
+            # 1. Basic features
+            print(f"    - Adding basic technical indicators...")
+            df = self.add_basic_features(df)
+
+            # 2. Hurst exponent features for ALL signal sources
+            print(f"    - Calculating Hurst exponent for all sources...")
+            df = self.add_hurst_features(df)
+
+            # 3. Wavelet packet features for ALL signal sources
+            print(f"    - Calculating WPT features for all sources...")
+            df = self.add_wavelet_packet_features(df)
+
+            # 4. Hilbert transform features for ALL signal sources
+            print(f"    - Calculating Hilbert transform for all sources...")
+            df = self.add_hilbert_features(df)
+
+            # 5. Spectral analysis features for ALL signal sources
+            print(f"    - Calculating spectral features for all sources...")
+            df = self.add_spectral_features(df)
+
+            # 6. Advanced derived features (from baseline model)
+            print(f"    - Calculating advanced derived features...")
+            df = self.add_advanced_derived_features(df)
+
+            # 7. Order flow features (advanced)
+            print(f"    - Calculating order flow features...")
+            df = self.add_order_flow_features(df)
+
+            # 4. Normalize features
+            feature_columns = [
+                col
+                for col in df.columns
+                if col not in ["open", "high", "low", "close", "volume"]
+            ]
+
+            if fit:
+                scaler = StandardScaler()
+                df[feature_columns] = scaler.fit_transform(
+                    df[feature_columns].fillna(0)
+                )
+                self.scalers[timeframe] = scaler
+            else:
+                if timeframe in self.scalers:
+                    df[feature_columns] = self.scalers[timeframe].transform(
+                        df[feature_columns].fillna(0)
+                    )
+
+            # Remove NaN rows
+            df = df.dropna()
+
+            engineered_data[timeframe] = df
+
+            print(
+                f"    ✓ {len(feature_columns)} features engineered, {len(df)} samples"
+            )
+
+        return engineered_data
+
+    def save_scalers(self, path: str):
+        """Save fitted scalers."""
+        import pickle
+
+        with open(path, "wb") as f:
+            pickle.dump(self.scalers, f)
+        print(f"Scalers saved to {path}")
+
+    def load_scalers(self, path: str):
+        """Load fitted scalers."""
+        import pickle
+
+        with open(path, "rb") as f:
+            self.scalers = pickle.load(f)
+        print(f"Scalers loaded from {path}")

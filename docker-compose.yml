@@ -1,0 +1,39 @@
+# version: '3.8'  # Docker Compose v2 不再需要 version 字段
+
+services:
+  # GPU 开发和训练环境（使用已构建的 lightgbm-runtime 镜像）
+  ml-gpu:
+    image: lightgbm-runtime:latest  # 使用您已经构建好的镜像
+    container_name: ml-trading-gpu
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - .:/app
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    shm_size: '8gb'  # 增加共享内存，用于 GPU 训练
+    command: /bin/bash
+
+  # Jupyter Notebook 环境（带 GPU，使用已构建的 lightgbm-runtime 镜像）
+  jupyter-gpu:
+    image: lightgbm-runtime:latest  # 使用您已经构建好的镜像
+    container_name: ml-trading-jupyter-gpu
+    runtime: nvidia
+    ports:
+      - "8888:8888"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - .:/app
+    working_dir: /app
+    shm_size: '8gb'
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+
