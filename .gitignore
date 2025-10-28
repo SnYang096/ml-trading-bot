@@ -414,3 +414,4 @@ Thumbs.db
 data/
 *.log
 *.egg-info/
+cmake-3.28.3-linux-x86_64.sh
