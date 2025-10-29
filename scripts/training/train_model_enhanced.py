@@ -1,46 +1,60 @@
 """Train ML model with enhanced features: WPT + Entropy + Hurst."""
 
-import sys
 import os
+import shutil
 import zipfile
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import pickle
 from datetime import datetime
-
-# Add the src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from typing import Optional
 
 from ml_trading.strategies.ml_strategy import MLTradingStrategy
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
 
 
-def extract_zip_data(zip_path: str) -> str:
-    """Extract zip file and return path to CSV file."""
-    print(f"Extracting {zip_path}...")
+def load_trade_dataframe(
+        data_path: str) -> tuple[pd.DataFrame, Optional[Path]]:
+    """Load raw trade records from CSV/Parquet/ZIP."""
+    path = Path(data_path)
+    suffix = path.suffix.lower()
+    temp_dir: Optional[Path] = None
 
-    temp_dir = os.path.join(os.path.dirname(zip_path), "temp_extract_enhanced")
-    os.makedirs(temp_dir, exist_ok=True)
+    if suffix == ".zip":
+        print(f"Extracting {data_path}...")
+        temp_dir = path.parent / f"temp_extract_{path.stem}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(temp_dir)
+        with zipfile.ZipFile(path, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
 
-    csv_files = [f for f in os.listdir(temp_dir) if f.endswith(".csv")]
-    if not csv_files:
-        raise FileNotFoundError("No CSV file found in the zip archive")
+        csv_files = list(temp_dir.glob("*.csv"))
+        if not csv_files:
+            raise FileNotFoundError("No CSV file found in the zip archive")
 
-    csv_path = os.path.join(temp_dir, csv_files[0])
-    print(f"Extracted CSV file: {csv_path}")
-    return csv_path
+        df = pd.read_csv(csv_files[0])
+        print(f"Extracted CSV file: {csv_files[0]}")
+    elif suffix == ".csv":
+        print(f"Loading CSV data from {data_path}...")
+        df = pd.read_csv(path)
+    elif suffix == ".parquet":
+        print(f"Loading Parquet data from {data_path}...")
+        df = pd.read_parquet(path)
+    else:
+        raise ValueError(
+            f"Unsupported file extension '{suffix}'. Expected .zip, .csv, or .parquet"
+        )
 
-
-def load_btcusdt_data(csv_path: str) -> pd.DataFrame:
-    """Load and preprocess BTCUSDT aggregate trade data."""
-    print(f"Loading BTCUSDT data from {csv_path}...")
-
-    df = pd.read_csv(csv_path)
     print(f"Raw data shape: {df.shape}")
+    return df, temp_dir
+
+
+def prepare_trade_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize BTCUSDT aggregate trade data and attach timestamp index."""
+    print("Preparing trade dataframe...")
 
     # Convert timestamp
     if "transact_time" in df.columns:
@@ -87,64 +101,61 @@ def train_enhanced_model():
     print("🚀 Training Enhanced ML Model (WPT + Entropy + Hurst)")
     print("=" * 80)
 
-    # Path to the zip file
-    zip_path = "data/raw/BTCUSDT-aggTrades-2025-05.zip"
+    data_path = os.environ.get("TRAIN_DATA") or os.environ.get("TRAIN_ZIP")
+    if not data_path:
+        data_path = os.path.join("data", "parquet_data",
+                                 "BTCUSDT-aggTrades-2025-05.parquet")
 
-    if not os.path.exists(zip_path):
-        print(f"❌ Zip file not found: {zip_path}")
+    if not os.path.exists(data_path):
+        print(f"❌ Data file not found: {data_path}")
         return
 
-    print(f"✅ Zip file found: {zip_path}")
+    print(f"✅ Using data file: {data_path}")
+
+    temp_dir: Optional[Path] = None
 
     try:
-        # Extract and load data
-        csv_path = extract_zip_data(zip_path)
-        raw_data = load_btcusdt_data(csv_path)
-        ohlcv_data = create_ohlcv_data(raw_data)
+        # Load and preprocess trade data
+        raw_trades, temp_dir = load_trade_dataframe(data_path)
+        processed_trades = prepare_trade_dataframe(raw_trades.copy())
+        ohlcv_data = create_ohlcv_data(processed_trades)
 
         # Derive microstructure series from agg trades for WPT: CVD and taker_buy_ratio
         print("\nAdding order flow features (CVD and taker_buy_ratio)...")
         try:
-            agg = pd.read_csv(csv_path)
-            if "transact_time" in agg.columns:
-                agg["timestamp"] = pd.to_datetime(agg["transact_time"], unit="ms")
-            else:
-                agg["timestamp"] = pd.to_datetime(agg["timestamp"])
-            agg["price"] = pd.to_numeric(agg["price"], errors="coerce")
-            agg["quantity"] = pd.to_numeric(agg["quantity"], errors="coerce")
-            agg = agg.dropna(subset=["price", "quantity"])
+            agg = processed_trades.copy()
 
-            # Classify taker side
             if "is_buyer_maker" in agg.columns:
-                agg["taker_buy"] = (~agg["is_buyer_maker"].astype(bool)).astype(int)
+                agg["taker_buy"] = (
+                    ~agg["is_buyer_maker"].round().astype(bool)).astype(int)
             else:
                 agg["taker_buy"] = 0
 
-            agg["buy_qty"] = np.where(agg["taker_buy"] == 1, agg["quantity"], 0.0)
-            agg["sell_qty"] = np.where(agg["taker_buy"] == 1, 0.0, agg["quantity"])
-            agg = agg.set_index("timestamp")
+            agg["buy_qty"] = np.where(agg["taker_buy"] == 1, agg["quantity"],
+                                      0.0)
+            agg["sell_qty"] = np.where(agg["taker_buy"] == 1, 0.0,
+                                       agg["quantity"])
 
-            per_sec = agg.groupby(pd.Grouper(freq="1s")).agg(
-                {"buy_qty": "sum", "sell_qty": "sum"}
-            )
+            per_sec = agg.groupby(pd.Grouper(freq="1s")).agg({
+                "buy_qty": "sum",
+                "sell_qty": "sum"
+            })
             per_sec["taker_buy_ratio"] = per_sec["buy_qty"] / (
-                per_sec["buy_qty"] + per_sec["sell_qty"]
-            ).replace(0, np.nan)
+                per_sec["buy_qty"] + per_sec["sell_qty"]).replace(0, np.nan)
             per_sec["taker_buy_ratio"] = per_sec["taker_buy_ratio"].fillna(0.5)
-            per_sec["cvd"] = (per_sec["buy_qty"] - per_sec["sell_qty"]).cumsum()
+            per_sec["cvd"] = (per_sec["buy_qty"] -
+                              per_sec["sell_qty"]).cumsum()
 
             # Align into ohlcv_data index
-            ohlcv_data = (
-                ohlcv_data.join(
-                    per_sec[["buy_qty", "sell_qty", "taker_buy_ratio", "cvd"]],
-                    how="left",
-                )
-                .ffill()
-                .fillna(0)
-            )
+            ohlcv_data = (ohlcv_data.join(
+                per_sec[["buy_qty", "sell_qty", "taker_buy_ratio", "cvd"]],
+                how="left",
+            ).ffill().fillna(0))
             print(f"   ✓ Added CVD and taker_buy_ratio to OHLCV data")
         except Exception as e:
-            print(f"   ⚠️  Warning: failed to compute microstructure series: {e}")
+            print(
+                f"   ⚠️  Warning: failed to compute microstructure series: {e}"
+            )
 
         # Initialize data loader
         print("\n1. Initializing data loader...")
@@ -155,7 +166,8 @@ def train_enhanced_model():
         print("\n2. Creating multi-timeframe data...")
         multi_tf_data = data_loader.get_multi_timeframe_data()
 
-        print(f"   ✓ Created data for timeframes: {list(multi_tf_data.keys())}")
+        print(
+            f"   ✓ Created data for timeframes: {list(multi_tf_data.keys())}")
         for tf, data in multi_tf_data.items():
             print(f"     - {tf}: {len(data)} bars")
 
@@ -163,11 +175,13 @@ def train_enhanced_model():
         print("\n3. Engineering enhanced features (WPT + Entropy + Hurst)...")
         print("   This may take a few minutes...")
 
-        feature_engineer = EnhancedFeatureEngineer(
-            scaler_type="standard", wavelet="db4", wpt_level=3, hurst_window=100
-        )
+        feature_engineer = EnhancedFeatureEngineer(scaler_type="standard",
+                                                   wavelet="db4",
+                                                   wpt_level=3,
+                                                   hurst_window=100)
 
-        engineered_data = feature_engineer.engineer_features(multi_tf_data, fit=True)
+        engineered_data = feature_engineer.engineer_features(multi_tf_data,
+                                                             fit=True)
 
         print(f"\n   ✓ Enhanced features engineered for all timeframes")
         for tf, data in engineered_data.items():
@@ -175,15 +189,16 @@ def train_enhanced_model():
 
             # Show sample features
             feature_cols = [
-                col
-                for col in data.columns
+                col for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             if feature_cols:
                 print(f"       Total features: {len(feature_cols)}")
                 # Show some WPT and Hurst features
                 wpt_features = [col for col in feature_cols if "wpt_" in col]
-                hurst_features = [col for col in feature_cols if "hurst" in col]
+                hurst_features = [
+                    col for col in feature_cols if "hurst" in col
+                ]
                 print(f"       WPT features: {len(wpt_features)}")
                 print(f"       Hurst features: {len(hurst_features)}")
 
@@ -214,9 +229,14 @@ def train_enhanced_model():
             "metrics": metrics,
             "training_date": datetime.now(),
             "data_info": {
-                "total_bars": len(ohlcv_data),
-                "timeframes": {tf: len(data) for tf, data in multi_tf_data.items()},
-                "price_range": (ohlcv_data["close"].min(), ohlcv_data["close"].max()),
+                "total_bars":
+                len(ohlcv_data),
+                "timeframes": {
+                    tf: len(data)
+                    for tf, data in multi_tf_data.items()
+                },
+                "price_range":
+                (ohlcv_data["close"].min(), ohlcv_data["close"].max()),
                 "date_range": (ohlcv_data.index[0], ohlcv_data.index[-1]),
             },
         }
@@ -234,12 +254,20 @@ def train_enhanced_model():
 
         # Save model info
         model_info = {
-            "model_path": model_path,
-            "scaler_path": scaler_path,
-            "training_date": datetime.now().isoformat(),
-            "data_source": "BTCUSDT-aggTrades-2025-05.zip",
-            "total_bars": len(ohlcv_data),
-            "timeframes": {tf: len(data) for tf, data in multi_tf_data.items()},
+            "model_path":
+            model_path,
+            "scaler_path":
+            scaler_path,
+            "training_date":
+            datetime.now().isoformat(),
+            "data_source":
+            "BTCUSDT-aggTrades-2025-05.zip",
+            "total_bars":
+            len(ohlcv_data),
+            "timeframes": {
+                tf: len(data)
+                for tf, data in multi_tf_data.items()
+            },
             "price_range": (
                 float(ohlcv_data["close"].min()),
                 float(ohlcv_data["close"].max()),
@@ -248,8 +276,10 @@ def train_enhanced_model():
                 ohlcv_data.index[0].isoformat(),
                 ohlcv_data.index[-1].isoformat(),
             ),
-            "metrics": metrics,
-            "feature_engineering": "enhanced_with_wpt_entropy_hurst",
+            "metrics":
+            metrics,
+            "feature_engineering":
+            "enhanced_with_wpt_entropy_hurst",
             "features": {
                 "scaler_type": "standard",
                 "wavelet": "db4",
@@ -274,9 +304,7 @@ def train_enhanced_model():
         print("3. ✅ Hurst Exponent - 每个信号源的趋势持续性/均值回归")
         print("4. ✅ Energy Features - 各频带能量特征")
         print("5. ✅ Time Series CV - 正确的交叉验证")
-        print(
-            f"\n预期特征数: 5个信号源 × ~40个WPT特征 + 5×6个Hurst特征 + ~30基础特征 ≈ 260个"
-        )
+        print(f"\n预期特征数: 5个信号源 × ~40个WPT特征 + 5×6个Hurst特征 + ~30基础特征 ≈ 260个")
 
         print("\nNext steps:")
         print("1. Test on OOS data (June-September)")
@@ -291,12 +319,9 @@ def train_enhanced_model():
 
     finally:
         # Clean up temporary files
-        temp_dir = os.path.join(os.path.dirname(zip_path), "temp_extract_enhanced")
-        if os.path.exists(temp_dir):
-            import shutil
-
-            shutil.rmtree(temp_dir)
-            print(f"\n🧹 Cleaned up temporary files")
+        if temp_dir and temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            print("\n🧹 Cleaned up temporary files")
 
 
 if __name__ == "__main__":

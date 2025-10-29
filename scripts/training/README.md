@@ -1,18 +1,19 @@
-# 训练脚本 (Training)
+# 训练脚本（Training）
 
-一般训练脚本 - 用于实验和快速测试
+该目录现在仅包含生产级的训练入口：
 
-## 脚本列表
+- `train_model_enhanced.py` — 使用 `EnhancedFeatureEngineer` + LightGBM 的生产流水线。脚本会保存训练好的策略、特征工程器、指标信息，并生成模型说明 JSON。
 
-- `train_model_enhanced.py` - 增强特征训练
-- `train_model_gpu.py` - GPU加速训练
-- `train_model_improved.py` - 改进版本
-- `train_model_wavelet.py` - 小波特征
-- `train_multi_year_multi_symbol.py` - 多年多币种
-- `train_january.py` / `train_january_simple.py` - 一月数据训练
-- `train_model_may.py` - 五月数据训练
+## 使用方式
 
-## 使用建议
+```bash
+# 推荐通过 Makefile 调度（会自动设置 PYTHONPATH）
+make train-enhanced
 
-⚠️ 这些脚本用于实验，生产环境建议使用 `rolling/` 目录下的滚动训练脚本。
+# 或者手动执行并覆盖数据路径
+PYTHONPATH=src TRAIN_DATA=/path/to/BTCUSDT-aggTrades-2025-05.parquet \
+python scripts/training/train_model_enhanced.py
+```
+
+> 提示：脚本会优先读取环境变量 `TRAIN_DATA`（默认：`data/parquet_data/BTCUSDT-aggTrades-2025-05.parquet`）。如需使用旧的 ZIP 文件，可改用 `TRAIN_ZIP=/path/to/file.zip`，脚本会自动解压并处理。训练完成后模型保存在 `models/` 目录下，供 `scripts/backtesting/` 中的回测/OOS 脚本复用。
 

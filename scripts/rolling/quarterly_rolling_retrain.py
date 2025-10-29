@@ -4,7 +4,6 @@
 """
 
 import os
-import sys
 import pandas as pd
 import json
 import argparse
@@ -13,16 +12,18 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# Add common utilities
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "common"))
-from data_utils import (
+from ml_trading.data_tools.rolling_data import (
     load_and_process_file,
     add_order_flow_features,
     engineer_features,
     create_labels,
     get_feature_columns,
 )
-from training_utils import train_lightgbm_model, simple_backtest, print_backtest_results
+from ml_trading.utils.training import (
+    train_lightgbm_model,
+    simple_backtest,
+    print_backtest_results,
+)
 
 
 def find_data_files_by_quarter(data_dir, symbols, start_year, end_year):
@@ -31,30 +32,38 @@ def find_data_files_by_quarter(data_dir, symbols, start_year, end_year):
     for symbol in symbols:
         for year in range(start_year, end_year + 1):
             for month in range(1, 13):
-                file_path = os.path.join(
-                    data_dir, f"{symbol}-aggTrades-{year}-{month:02d}.zip"
-                )
-                if os.path.exists(file_path):
+                base_name = f"{symbol}-aggTrades-{year}-{month:02d}"
+                parquet_path = os.path.join(data_dir, f"{base_name}.parquet")
+                zip_path = os.path.join(data_dir, f"{base_name}.zip")
+
+                data_path = None
+                if os.path.exists(parquet_path):
+                    data_path = parquet_path
+                elif os.path.exists(zip_path):
+                    data_path = zip_path
+
+                if data_path:
                     # Determine quarter
                     quarter = (month - 1) // 3 + 1
                     quarter_str = f"{year}Q{quarter}"
-                    all_files.append(
-                        {
-                            "path": file_path,
-                            "year": year,
-                            "month": month,
-                            "quarter": quarter_str,
-                            "symbol": symbol,
-                        }
-                    )
+                    all_files.append({
+                        "path": data_path,
+                        "year": year,
+                        "month": month,
+                        "quarter": quarter_str,
+                        "symbol": symbol,
+                    })
 
     return sorted(all_files, key=lambda x: (x["year"], x["month"]))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Quarterly Rolling Re-training")
+    parser = argparse.ArgumentParser(
+        description="Quarterly Rolling Re-training")
     parser.add_argument(
-        "--data-dir", type=str, default=r"D:\GitHub\trading\rlbot\data\agg_data"
+        "--data-dir",
+        type=str,
+        default=os.environ.get("DATA_DIR", "data/parquet_data"),
     )
     parser.add_argument("--symbols", nargs="+", default=["BTCUSDT"])
     parser.add_argument("--start-year", type=int, default=2021)
@@ -85,13 +94,14 @@ def main():
     print(f"   Initial training: {args.initial_train_quarters} quarters")
     print(f"   GPU: {args.gpu}")
     print(f"   Order Flow Features: {args.add_order_flow}")
-    print(f"   Feature Engineering: EnhancedFeatureEngineer (WPT + Hurst + Advanced)")
+    print(
+        f"   Feature Engineering: EnhancedFeatureEngineer (WPT + Hurst + Advanced)"
+    )
 
     # Find all files
     print(f"\n🔍 Finding data files...")
-    all_files = find_data_files_by_quarter(
-        args.data_dir, args.symbols, args.start_year, args.end_year
-    )
+    all_files = find_data_files_by_quarter(args.data_dir, args.symbols,
+                                           args.start_year, args.end_year)
 
     if not all_files:
         print("❌ No data files found!")
@@ -106,7 +116,8 @@ def main():
         quarters_dict[q].append(file_info)
 
     quarters = sorted(quarters_dict.keys())
-    print(f"   Found {len(quarters)} quarters: {quarters[0]} to {quarters[-1]}")
+    print(
+        f"   Found {len(quarters)} quarters: {quarters[0]} to {quarters[-1]}")
 
     # Rolling training
     results_dir = f"results/{args.output}"
@@ -180,10 +191,12 @@ def main():
 
         # Engineer features using EnhancedFeatureEngineer
         print(f"\n3. Engineering enhanced features...")
-        print(f"   Features: WPT + Hurst + Hilbert + Spectral + Advanced Derived")
-        train_df, feature_engineer = engineer_features(
-            train_df, feature_engineer, fit=True
+        print(
+            f"   Features: WPT + Hurst + Hilbert + Spectral + Advanced Derived"
         )
+        train_df, feature_engineer = engineer_features(train_df,
+                                                       feature_engineer,
+                                                       fit=True)
         test_df, _ = engineer_features(test_df, feature_engineer, fit=False)
         print(
             f"   ✓ Features engineered: {len(get_feature_columns(train_df))} features"
@@ -233,12 +246,12 @@ def main():
         print(f"\n   💾 Model saved: {model_path}")
 
         # Save feature importance
-        importance_df = pd.DataFrame(
-            {"feature": feature_cols, "importance": model.feature_importance()}
-        ).sort_values("importance", ascending=False)
+        importance_df = pd.DataFrame({
+            "feature": feature_cols,
+            "importance": model.feature_importance()
+        }).sort_values("importance", ascending=False)
         importance_path = os.path.join(
-            results_dir, f"feature_importance_{test_quarter}.csv"
-        )
+            results_dir, f"feature_importance_{test_quarter}.csv")
         importance_df.to_csv(importance_path, index=False)
         print(f"   💾 Feature importance saved: {importance_path}")
 
@@ -257,20 +270,16 @@ def main():
     )
     print("-" * 80)
     for _, row in results_df.iterrows():
-        print(
-            f"{row['quarter']:<10} {row['total_trades']:<8} "
-            f"{row['total_return']:>8.2f}% {row['win_rate']:>6.1f}% "
-            f"{row['profit_factor']:>6.2f} {row['max_drawdown']:>8.2f}%"
-        )
+        print(f"{row['quarter']:<10} {row['total_trades']:<8} "
+              f"{row['total_return']:>8.2f}% {row['win_rate']:>6.1f}% "
+              f"{row['profit_factor']:>6.2f} {row['max_drawdown']:>8.2f}%")
 
     print("-" * 80)
-    print(
-        f"{'AVERAGE':<10} {results_df['total_trades'].mean():<8.1f} "
-        f"{results_df['total_return'].mean():>8.2f}% "
-        f"{results_df['win_rate'].mean():>6.1f}% "
-        f"{results_df['profit_factor'].mean():>6.2f} "
-        f"{results_df['max_drawdown'].mean():>8.2f}%"
-    )
+    print(f"{'AVERAGE':<10} {results_df['total_trades'].mean():<8.1f} "
+          f"{results_df['total_return'].mean():>8.2f}% "
+          f"{results_df['win_rate'].mean():>6.1f}% "
+          f"{results_df['profit_factor'].mean():>6.2f} "
+          f"{results_df['max_drawdown'].mean():>8.2f}%")
 
     # Save summary
     summary = {

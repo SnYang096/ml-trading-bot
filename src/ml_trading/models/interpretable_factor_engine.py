@@ -10,9 +10,6 @@ This module implements a state-of-the-art dimensionality reduction pipeline that
 """
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
@@ -28,60 +25,9 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-
-class Autoencoder(nn.Module):
-    """
-    Advanced Autoencoder for factor dimensionality reduction.
-
-    Architecture:
-    - Encoder: Input -> 32 -> 16 -> encoding_dim (bottleneck)
-    - Decoder: encoding_dim -> 16 -> 32 -> Input
-    - Uses ReLU activation and dropout for regularization
-    """
-
-    def __init__(
-        self, input_dim: int, encoding_dim: int = 8, dropout_rate: float = 0.1
-    ):
-        super(Autoencoder, self).__init__()
-
-        self.input_dim = input_dim
-        self.encoding_dim = encoding_dim
-
-        # Encoder layers
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(32, 16),
-            nn.ReLU(),
-            nn.Linear(16, encoding_dim),  # Bottleneck
-        )
-
-        # Decoder layers
-        self.decoder = nn.Sequential(
-            nn.Linear(encoding_dim, 16),
-            nn.ReLU(),
-            nn.Linear(16, 32),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(32, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(64, input_dim),
-        )
-
-    def forward(self, x):
-        encoded = self.encoder(x)
-        decoded = self.decoder(encoded)
-        return decoded, encoded
-
-    def encode(self, x):
-        """Extract compressed representations (embeddings)."""
-        with torch.no_grad():
-            return self.encoder(x)
+from ml_trading.models.autoencoder import AutoencoderTrainer, UnifiedAutoencoder
+from ml_trading.utils.sample_data import create_sample_data
+from ml_trading.utils.training import train_lightgbm_model
 
 
 class InterpretableFactorEngine:
@@ -117,15 +63,18 @@ class InterpretableFactorEngine:
         self.autoencoder_lr = autoencoder_lr
         self.autoencoder_epochs = autoencoder_epochs
         self.dropout_rate = dropout_rate
+        self.autoencoder_architecture = "production"
 
         # Auto-detect device
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.device = torch.device(
+                "cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
         # Initialize components
         self.autoencoder = None
+        self.autoencoder_trainer: Optional[AutoencoderTrainer] = None
         self.lgb_model = None
         self.shap_explainer = None
         self.scaler_X = StandardScaler()
@@ -139,9 +88,8 @@ class InterpretableFactorEngine:
 
         print(f"🚀 InterpretableFactorEngine initialized on {self.device}")
 
-    def prepare_data(
-        self, X: np.ndarray, y: np.ndarray, factor_names: List[str]
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def prepare_data(self, X: np.ndarray, y: np.ndarray,
+                     factor_names: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """
         Prepare and standardize data for training.
 
@@ -181,53 +129,36 @@ class InterpretableFactorEngine:
             f"🧠 Training Autoencoder: {X_scaled.shape[1]} -> {self.encoding_dim} dimensions"
         )
 
-        # Initialize autoencoder
-        self.autoencoder = Autoencoder(
+        autoencoder = UnifiedAutoencoder(
             input_dim=X_scaled.shape[1],
             encoding_dim=self.encoding_dim,
+            architecture=self.autoencoder_architecture,
             dropout_rate=self.dropout_rate,
-        ).to(self.device)
+        )
 
-        # Prepare data
-        X_tensor = torch.FloatTensor(X_scaled).to(self.device)
-        dataset = TensorDataset(X_tensor, X_tensor)
-        dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+        trainer_device = "cuda" if self.device.type == "cuda" else "cpu"
+        trainer = AutoencoderTrainer(
+            autoencoder,
+            device=trainer_device,
+            learning_rate=self.autoencoder_lr,
+            weight_decay=0.0,
+        )
 
-        # Training setup
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(self.autoencoder.parameters(), lr=self.autoencoder_lr)
+        trainer.train(X_scaled, epochs=self.autoencoder_epochs, verbose=True)
 
-        # Training loop
-        self.autoencoder.train()
-        for epoch in range(self.autoencoder_epochs):
-            total_loss = 0
-            for batch_x, _ in dataloader:
-                optimizer.zero_grad()
-                reconstructed, _ = self.autoencoder(batch_x)
-                loss = criterion(reconstructed, batch_x)
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
+        embeddings = trainer.transform(X_scaled)
 
-            if (epoch + 1) % 20 == 0:
-                avg_loss = total_loss / len(dataloader)
-                print(
-                    f"  Epoch {epoch+1:3d}/{self.autoencoder_epochs}: Loss = {avg_loss:.6f}"
-                )
-
-        # Extract embeddings
-        self.autoencoder.eval()
-        with torch.no_grad():
-            _, embeddings_tensor = self.autoencoder(X_tensor)
-            embeddings = embeddings_tensor.cpu().numpy()
-
+        self.autoencoder = autoencoder.to(self.device)
+        self.autoencoder_trainer = trainer
         self.embeddings = embeddings
-        print(f"✅ Autoencoder training complete. Embeddings shape: {embeddings.shape}")
+
+        print(
+            f"✅ Autoencoder training complete. Embeddings shape: {embeddings.shape}"
+        )
         return embeddings
 
-    def train_lightgbm(
-        self, embeddings: np.ndarray, y_scaled: np.ndarray
-    ) -> lgb.Booster:
+    def train_lightgbm(self, embeddings: np.ndarray,
+                       y_scaled: np.ndarray) -> lgb.Booster:
         """
         Train LightGBM model on compressed embeddings.
 
@@ -238,14 +169,18 @@ class InterpretableFactorEngine:
         Returns:
             Trained LightGBM model
         """
-        print(f"🌲 Training LightGBM on {embeddings.shape[1]}-dimensional embeddings")
+        print(
+            f"🌲 Training LightGBM on {embeddings.shape[1]}-dimensional embeddings"
+        )
 
         # Split data (time series aware)
         X_train, X_val, y_train, y_val = train_test_split(
-            embeddings, y_scaled, test_size=0.2, shuffle=False
+            embeddings,
+            y_scaled,
+            test_size=0.2,
+            shuffle=False,
         )
 
-        # LightGBM parameters
         params = {
             "objective": "regression",
             "metric": "l2",
@@ -259,24 +194,25 @@ class InterpretableFactorEngine:
             "verbose": -1,
         }
 
-        # Training
-        lgb_train = lgb.Dataset(X_train, y_train)
-        lgb_eval = lgb.Dataset(X_val, y_val, reference=lgb_train)
+        use_gpu = self.device.type == "cuda"
 
-        self.lgb_model = lgb.train(
-            params,
-            lgb_train,
+        self.lgb_model = train_lightgbm_model(
+            X_train,
+            y_train,
+            use_gpu=use_gpu,
             num_boost_round=100,
-            valid_sets=[lgb_eval],
-            callbacks=[lgb.early_stopping(stopping_rounds=10)],
+            params=params,
+            X_val=X_val,
+            y_val=y_val,
+            early_stopping_rounds=10,
+            eval_period=0,
         )
 
-        print(f"✅ LightGBM training complete")
+        print("✅ LightGBM training complete")
         return self.lgb_model
 
-    def compute_shap_distillation(
-        self, X_scaled: np.ndarray, embeddings: np.ndarray
-    ) -> np.ndarray:
+    def compute_shap_distillation(self, X_scaled: np.ndarray,
+                                  embeddings: np.ndarray) -> np.ndarray:
         """
         Compute SHAP values and distill factor contributions.
 
@@ -318,18 +254,19 @@ class InterpretableFactorEngine:
         print(f"✅ SHAP distillation complete. Top 5 factors:")
 
         # Show top factors
-        contrib_df = pd.DataFrame(
-            {"factor": self.factor_names, "contribution": factor_contributions}
-        ).sort_values("contribution", ascending=False)
+        contrib_df = pd.DataFrame({
+            "factor": self.factor_names,
+            "contribution": factor_contributions
+        }).sort_values("contribution", ascending=False)
 
         for i, (_, row) in enumerate(contrib_df.head(5).iterrows()):
             print(f"  {i+1}. {row['factor']}: {row['contribution']:.4f}")
 
         return factor_contributions
 
-    def generate_semantic_factors(
-        self, top_k: int = 10
-    ) -> Tuple[List[str], np.ndarray]:
+    def generate_semantic_factors(self,
+                                  top_k: int = 10
+                                  ) -> Tuple[List[str], np.ndarray]:
         """
         Generate semantic factor combinations with interpretable weights.
 
@@ -342,9 +279,10 @@ class InterpretableFactorEngine:
         print(f"🧩 Generating semantic factor combinations (top {top_k})")
 
         # Create contribution dataframe
-        contrib_df = pd.DataFrame(
-            {"factor": self.factor_names, "contribution": self.factor_contributions}
-        ).sort_values("contribution", ascending=False)
+        contrib_df = pd.DataFrame({
+            "factor": self.factor_names,
+            "contribution": self.factor_contributions
+        }).sort_values("contribution", ascending=False)
 
         # Select top factors
         top_factors = contrib_df.head(top_k)["factor"].values
@@ -357,14 +295,17 @@ class InterpretableFactorEngine:
         self.factor_weights = weights_normalized
 
         print(f"✅ Semantic factors generated:")
-        for i, (factor, weight) in enumerate(zip(top_factors, weights_normalized)):
+        for i, (factor,
+                weight) in enumerate(zip(top_factors, weights_normalized)):
             print(f"  {i+1}. {factor}: {weight:.3f}")
 
         return top_factors, weights_normalized
 
-    def fit(
-        self, X: np.ndarray, y: np.ndarray, factor_names: List[str], top_k: int = 10
-    ) -> "InterpretableFactorEngine":
+    def fit(self,
+            X: np.ndarray,
+            y: np.ndarray,
+            factor_names: List[str],
+            top_k: int = 10) -> "InterpretableFactorEngine":
         """
         Complete training pipeline.
 
@@ -432,10 +373,22 @@ class InterpretableFactorEngine:
 
         # Inverse transform predictions
         predictions_original = self.scaler_y.inverse_transform(
-            predictions.reshape(-1, 1)
-        ).flatten()
+            predictions.reshape(-1, 1)).flatten()
 
         return predictions_original
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """Return compressed embeddings for new feature data."""
+
+        if self.autoencoder is None:
+            raise ValueError("Autoencoder not trained. Call fit() first.")
+
+        X_scaled = self.scaler_X.transform(X)
+        X_tensor = torch.FloatTensor(X_scaled).to(self.device)
+        with torch.no_grad():
+            embeddings = self.autoencoder.encode(X_tensor).cpu().numpy()
+
+        return embeddings
 
     def get_interpretable_signal(self, X: np.ndarray) -> np.ndarray:
         """
@@ -448,7 +401,8 @@ class InterpretableFactorEngine:
             Interpretable trading signals
         """
         if self.top_factors is None or self.factor_weights is None:
-            raise ValueError("Semantic factors not generated. Call fit() first.")
+            raise ValueError(
+                "Semantic factors not generated. Call fit() first.")
 
         # Get top factors from input
         factor_indices = [
@@ -461,9 +415,9 @@ class InterpretableFactorEngine:
 
         return signal
 
-    def visualize_factor_contributions(
-        self, save_path: Optional[str] = None, top_k: int = 15
-    ) -> None:
+    def visualize_factor_contributions(self,
+                                       save_path: Optional[str] = None,
+                                       top_k: int = 15) -> None:
         """
         Visualize factor contributions and importance.
 
@@ -472,12 +426,14 @@ class InterpretableFactorEngine:
             top_k: Number of top factors to show
         """
         if self.factor_contributions is None:
-            raise ValueError("Factor contributions not computed. Call fit() first.")
+            raise ValueError(
+                "Factor contributions not computed. Call fit() first.")
 
         # Create contribution dataframe
-        contrib_df = pd.DataFrame(
-            {"factor": self.factor_names, "contribution": self.factor_contributions}
-        ).sort_values("contribution", ascending=True)
+        contrib_df = pd.DataFrame({
+            "factor": self.factor_names,
+            "contribution": self.factor_contributions
+        }).sort_values("contribution", ascending=True)
 
         # Plot
         plt.figure(figsize=(12, 8))
@@ -523,18 +479,30 @@ class InterpretableFactorEngine:
             filepath: Path to save the model
         """
         model_data = {
-            "autoencoder_state": (
-                self.autoencoder.state_dict() if self.autoencoder else None
-            ),
-            "lgb_model": self.lgb_model,
-            "scaler_X": self.scaler_X,
-            "scaler_y": self.scaler_y,
-            "factor_names": self.factor_names,
-            "factor_contributions": self.factor_contributions,
-            "top_factors": self.top_factors,
-            "factor_weights": self.factor_weights,
-            "encoding_dim": self.encoding_dim,
-            "device": str(self.device),
+            "autoencoder_state":
+            (self.autoencoder.state_dict() if self.autoencoder else None),
+            "lgb_model":
+            self.lgb_model,
+            "scaler_X":
+            self.scaler_X,
+            "scaler_y":
+            self.scaler_y,
+            "factor_names":
+            self.factor_names,
+            "factor_contributions":
+            self.factor_contributions,
+            "top_factors":
+            self.top_factors,
+            "factor_weights":
+            self.factor_weights,
+            "encoding_dim":
+            self.encoding_dim,
+            "device":
+            str(self.device),
+            "autoencoder_architecture":
+            self.autoencoder_architecture,
+            "dropout_rate":
+            self.dropout_rate,
         }
 
         joblib.dump(model_data, filepath)
@@ -560,56 +528,28 @@ class InterpretableFactorEngine:
 
         # Recreate autoencoder
         if model_data["autoencoder_state"] is not None:
-            self.autoencoder = Autoencoder(
-                input_dim=len(self.factor_names), encoding_dim=self.encoding_dim
+            architecture = model_data.get("autoencoder_architecture",
+                                          self.autoencoder_architecture)
+            dropout_rate = model_data.get("dropout_rate", self.dropout_rate)
+
+            self.autoencoder_architecture = architecture
+            self.dropout_rate = dropout_rate
+
+            self.autoencoder = UnifiedAutoencoder(
+                input_dim=len(self.factor_names),
+                encoding_dim=self.encoding_dim,
+                architecture=self.autoencoder_architecture,
+                dropout_rate=self.dropout_rate,
             ).to(self.device)
             self.autoencoder.load_state_dict(model_data["autoencoder_state"])
+            self.autoencoder_trainer = None
 
         self.lgb_model = model_data["lgb_model"]
 
         print(f"📂 Model loaded from: {filepath}")
-        print(f"🎯 Ready for inference with {len(self.top_factors)} semantic factors")
-
-
-def create_sample_data(
-    n_samples: int = 1000, n_factors: int = 60
-) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-    """
-    Create sample data for testing the InterpretableFactorEngine.
-
-    Args:
-        n_samples: Number of samples
-        n_factors: Number of factors
-
-    Returns:
-        X, y, factor_names
-    """
-    np.random.seed(42)
-
-    # Generate factor names
-    factor_names = []
-    categories = ["momentum", "volatility", "mean_reversion", "trend", "volume"]
-    for i in range(n_factors):
-        category = categories[i % len(categories)]
-        factor_names.append(f"{category}_{i+1}")
-
-    # Generate synthetic factors with some structure
-    X = np.random.randn(n_samples, n_factors)
-
-    # Create some meaningful relationships
-    momentum_factors = [i for i, name in enumerate(factor_names) if "momentum" in name]
-    volatility_factors = [
-        i for i, name in enumerate(factor_names) if "volatility" in name
-    ]
-
-    # Create target with some signal
-    y = (
-        X[:, momentum_factors].mean(axis=1) * 0.3
-        + X[:, volatility_factors].mean(axis=1) * -0.2
-        + np.random.randn(n_samples) * 0.1
-    )
-
-    return X, y, factor_names
+        print(
+            f"🎯 Ready for inference with {len(self.top_factors)} semantic factors"
+        )
 
 
 if __name__ == "__main__":

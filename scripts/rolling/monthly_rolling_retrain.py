@@ -4,7 +4,6 @@
 """
 
 import os
-import sys
 import pandas as pd
 import json
 import argparse
@@ -13,45 +12,57 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# Add common utilities
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "common"))
-from data_utils import (
+from ml_trading.data_tools.rolling_data import (
     load_and_process_file,
     add_order_flow_features,
     engineer_features,
     create_labels,
     get_feature_columns,
 )
-from training_utils import train_lightgbm_model, simple_backtest, print_backtest_results
+from ml_trading.utils.training import (
+    train_lightgbm_model,
+    simple_backtest,
+    print_backtest_results,
+)
 
 
 def find_monthly_files(data_dir, symbol, year):
     """Find all monthly files for a given year."""
     files = []
     for month in range(1, 13):
-        file_path = os.path.join(data_dir, f"{symbol}-aggTrades-{year}-{month:02d}.zip")
-        if os.path.exists(file_path):
-            files.append(
-                {
-                    "path": file_path,
-                    "year": year,
-                    "month": month,
-                    "month_str": f"{year}-{month:02d}",
-                }
-            )
+        base_name = f"{symbol}-aggTrades-{year}-{month:02d}"
+        parquet_path = os.path.join(data_dir, f"{base_name}.parquet")
+        zip_path = os.path.join(data_dir, f"{base_name}.zip")
+
+        data_path = None
+        if os.path.exists(parquet_path):
+            data_path = parquet_path
+        elif os.path.exists(zip_path):
+            data_path = zip_path
+
+        if data_path:
+            files.append({
+                "path": data_path,
+                "year": year,
+                "month": month,
+                "month_str": f"{year}-{month:02d}",
+            })
     return files
 
 
 def main():
     parser = argparse.ArgumentParser(description="Monthly Rolling Re-training")
     parser.add_argument(
-        "--data-dir", type=str, default=r"D:\GitHub\trading\rlbot\data\agg_data"
+        "--data-dir",
+        type=str,
+        default=os.environ.get("DATA_DIR", "data/parquet_data"),
     )
     parser.add_argument("--symbol", type=str, default="BTCUSDT")
     parser.add_argument("--year", type=int, default=2024)
-    parser.add_argument(
-        "--initial-train-months", type=int, default=6, help="Initial training months"
-    )
+    parser.add_argument("--initial-train-months",
+                        type=int,
+                        default=6,
+                        help="Initial training months")
     parser.add_argument("--output", type=str, default="monthly_rolling_btc")
     parser.add_argument("--gpu", action="store_true", default=True)
     parser.add_argument(
@@ -72,7 +83,9 @@ def main():
     print(f"   Initial training: {args.initial_train_months} months")
     print(f"   GPU: {args.gpu}")
     print(f"   Order Flow Features: {args.add_order_flow}")
-    print(f"   Feature Engineering: EnhancedFeatureEngineer (WPT + Hurst + Advanced)")
+    print(
+        f"   Feature Engineering: EnhancedFeatureEngineer (WPT + Hurst + Advanced)"
+    )
 
     # Find all files
     print(f"\n🔍 Finding data files...")
@@ -144,10 +157,12 @@ def main():
 
         # Engineer features using EnhancedFeatureEngineer
         print(f"\n3. Engineering enhanced features...")
-        print(f"   Features: WPT + Hurst + Hilbert + Spectral + Advanced Derived")
-        train_df, feature_engineer = engineer_features(
-            train_df, feature_engineer, fit=True
+        print(
+            f"   Features: WPT + Hurst + Hilbert + Spectral + Advanced Derived"
         )
+        train_df, feature_engineer = engineer_features(train_df,
+                                                       feature_engineer,
+                                                       fit=True)
         test_df, _ = engineer_features(test_df, feature_engineer, fit=False)
         print(
             f"   ✓ Features engineered: {len(get_feature_columns(train_df))} features"
@@ -192,7 +207,8 @@ def main():
         print_backtest_results(results, f"{test_file['month_str']} Results")
 
         # Save model
-        model_path = os.path.join(results_dir, f"model_{test_file['month_str']}.txt")
+        model_path = os.path.join(results_dir,
+                                  f"model_{test_file['month_str']}.txt")
         model.save_model(model_path)
         print(f"\n   💾 Model saved: {model_path}")
 
@@ -211,20 +227,16 @@ def main():
     )
     print("-" * 80)
     for _, row in results_df.iterrows():
-        print(
-            f"{row['test_month']:<12} {row['total_trades']:<8} "
-            f"{row['total_return']:>8.2f}% {row['win_rate']:>6.1f}% "
-            f"{row['profit_factor']:>6.2f} {row['max_drawdown']:>8.2f}%"
-        )
+        print(f"{row['test_month']:<12} {row['total_trades']:<8} "
+              f"{row['total_return']:>8.2f}% {row['win_rate']:>6.1f}% "
+              f"{row['profit_factor']:>6.2f} {row['max_drawdown']:>8.2f}%")
 
     print("-" * 80)
-    print(
-        f"{'AVERAGE':<12} {results_df['total_trades'].mean():<8.1f} "
-        f"{results_df['total_return'].mean():>8.2f}% "
-        f"{results_df['win_rate'].mean():>6.1f}% "
-        f"{results_df['profit_factor'].mean():>6.2f} "
-        f"{results_df['max_drawdown'].mean():>8.2f}%"
-    )
+    print(f"{'AVERAGE':<12} {results_df['total_trades'].mean():<8.1f} "
+          f"{results_df['total_return'].mean():>8.2f}% "
+          f"{results_df['win_rate'].mean():>6.1f}% "
+          f"{results_df['profit_factor'].mean():>6.2f} "
+          f"{results_df['max_drawdown'].mean():>8.2f}%")
 
     # Save summary
     summary = {

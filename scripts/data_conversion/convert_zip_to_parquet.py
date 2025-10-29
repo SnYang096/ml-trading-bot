@@ -15,9 +15,8 @@ import shutil
 import logging
 
 # 设置日志
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -67,7 +66,9 @@ class DataConverter:
                     symbol = "SOL-USDT"
                 else:
                     symbol = "UNKNOWN"
-                    logger.warning(f"Could not detect symbol from filename, using {symbol}")
+                    logger.warning(
+                        f"Could not detect symbol from filename, using {symbol}"
+                    )
 
             # 解压zip文件
             with zipfile.ZipFile(zip_file, "r") as zip_ref:
@@ -78,21 +79,43 @@ class DataConverter:
 
                 # 读取CSV文件
                 csv_file = file_list[0]
+
                 with zip_ref.open(csv_file) as f:
                     # 尝试读取第一行检查是否有header
-                    first_line = f.readline().decode('utf-8')
-                    f.seek(0)  # 重置到文件开头
-                    
-                    # 如果第一行是数字，说明没有header
-                    if first_line.strip().split(',')[0].replace('.', '').isdigit():
-                        logger.info("No header detected, using default column names")
-                        df = pd.read_csv(f, header=None, names=[
-                            'agg_trade_id', 'price', 'quantity', 
-                            'first_trade_id', 'last_trade_id', 
-                            'transact_time', 'is_buyer_maker'
-                        ])
-                    else:
-                        df = pd.read_csv(f)
+                    first_line = f.readline().decode("utf-8", errors="ignore")
+
+                read_params = {"low_memory": False}
+
+                # 如果第一行是数字，说明没有header
+                if first_line.strip().split(",")[0].replace(".", "").isdigit():
+                    logger.info(
+                        "No header detected, using default column names")
+                    read_params.update({
+                        "header":
+                        None,
+                        "names": [
+                            "agg_trade_id",
+                            "price",
+                            "quantity",
+                            "first_trade_id",
+                            "last_trade_id",
+                            "transact_time",
+                            "is_buyer_maker",
+                        ],
+                    })
+
+                try:
+                    with zip_ref.open(csv_file) as csv_handle:
+                        df = pd.read_csv(csv_handle, **read_params)
+                except Exception as read_error:
+                    logger.warning(
+                        "Primary CSV load failed for %s, retrying with python engine: %s",
+                        zip_basename,
+                        read_error,
+                    )
+                    fallback_params = {**read_params, "engine": "python"}
+                    with zip_ref.open(csv_file) as csv_handle:
+                        df = pd.read_csv(csv_handle, **fallback_params)
 
                 logger.info(f"Loaded data: {df.shape}")
 
@@ -110,7 +133,8 @@ class DataConverter:
                 df_ohlc["symbol"] = output_symbol
 
                 # 生成输出文件名
-                output_file = self._generate_output_filename(zip_file, output_symbol)
+                output_file = self._generate_output_filename(
+                    zip_file, output_symbol)
 
                 # 保存为parquet
                 df_ohlc.to_parquet(output_file, compression="snappy")
@@ -118,9 +142,8 @@ class DataConverter:
 
                 # 备份原始文件
                 if self.backup_dir:
-                    backup_file = os.path.join(
-                        self.backup_dir, os.path.basename(zip_file)
-                    )
+                    backup_file = os.path.join(self.backup_dir,
+                                               os.path.basename(zip_file))
                     shutil.copy2(zip_file, backup_file)
                     logger.info(f"Backed up to: {backup_file}")
 
@@ -143,7 +166,8 @@ class DataConverter:
             # 检查必要的列
             required_cols = ["transact_time", "price", "quantity"]
             if not all(col in df.columns for col in required_cols):
-                logger.warning(f"Missing required columns in {df.columns.tolist()}")
+                logger.warning(
+                    f"Missing required columns in {df.columns.tolist()}")
                 return None
 
             # 转换时间戳
@@ -171,11 +195,11 @@ class DataConverter:
             df_indexed = df.set_index("timestamp")
 
             # 重采样为5分钟K线
-            df_ohlc = (
-                df_indexed.resample("5min")
-                .agg({"close": ["first", "max", "min", "last"], "volume": "sum"})
-                .dropna()
-            )
+            df_ohlc = (df_indexed.resample("5min").agg({
+                "close": ["first", "max", "min", "last"],
+                "volume":
+                "sum"
+            }).dropna())
 
             # 展平列名
             df_ohlc.columns = ["open", "high", "low", "close", "volume"]
@@ -190,42 +214,53 @@ class DataConverter:
             # 添加订单流特征 (如果有 is_buyer_maker 列)
             if "is_buyer_maker" in df_indexed.columns:
                 # 分类买卖方
-                df_indexed["taker_buy"] = (~df_indexed["is_buyer_maker"].astype(bool)).astype(int)
-                df_indexed["buy_qty"] = np.where(df_indexed["taker_buy"] == 1, df_indexed["volume"], 0.0)
-                df_indexed["sell_qty"] = np.where(df_indexed["taker_buy"] == 1, 0.0, df_indexed["volume"])
-                
+                df_indexed["taker_buy"] = (
+                    ~df_indexed["is_buyer_maker"].astype(bool)).astype(int)
+                df_indexed["buy_qty"] = np.where(df_indexed["taker_buy"] == 1,
+                                                 df_indexed["volume"], 0.0)
+                df_indexed["sell_qty"] = np.where(df_indexed["taker_buy"] == 1,
+                                                  0.0, df_indexed["volume"])
+
                 # 重采样订单流
-                order_flow = df_indexed.resample("5min").agg(
-                    {"buy_qty": "sum", "sell_qty": "sum"}
-                )
-                
+                order_flow = df_indexed.resample("5min").agg({
+                    "buy_qty": "sum",
+                    "sell_qty": "sum"
+                })
+
                 # 计算 taker_buy_ratio
                 order_flow["taker_buy_ratio"] = order_flow["buy_qty"] / (
-                    order_flow["buy_qty"] + order_flow["sell_qty"]
-                ).replace(0, np.nan)
-                order_flow["taker_buy_ratio"] = order_flow["taker_buy_ratio"].fillna(0.5)
-                
+                    order_flow["buy_qty"] + order_flow["sell_qty"]).replace(
+                        0, np.nan)
+                order_flow["taker_buy_ratio"] = order_flow[
+                    "taker_buy_ratio"].fillna(0.5)
+
                 # 计算 CVD 特征
                 delta = order_flow["buy_qty"] - order_flow["sell_qty"]
-                order_flow["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
-                order_flow["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
-                order_flow["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
+                order_flow["cvd_short"] = delta.rolling(window=20,
+                                                        min_periods=1).sum()
+                order_flow["cvd_medium"] = delta.rolling(window=60,
+                                                         min_periods=1).sum()
+                order_flow["cvd_long"] = delta.rolling(window=288,
+                                                       min_periods=1).sum()
                 order_flow["cvd_change_1"] = delta
                 order_flow["cvd_change_5"] = delta.rolling(window=5).sum()
                 order_flow["cvd_change_20"] = delta.rolling(window=20).sum()
-                
+
                 # CVD 归一化
                 total_volume = order_flow["buy_qty"] + order_flow["sell_qty"]
-                order_flow["cvd_normalized"] = delta / total_volume.replace(0, np.nan)
-                order_flow["cvd_normalized"] = order_flow["cvd_normalized"].fillna(0)
+                order_flow["cvd_normalized"] = delta / total_volume.replace(
+                    0, np.nan)
+                order_flow["cvd_normalized"] = order_flow[
+                    "cvd_normalized"].fillna(0)
                 order_flow["cvd"] = delta.cumsum()
-                
+
                 # 合并到 OHLC 数据
                 df_ohlc = df_ohlc.join(order_flow[[
-                    "buy_qty", "sell_qty", "taker_buy_ratio", "cvd", 
-                    "cvd_short", "cvd_medium", "cvd_long",
-                    "cvd_change_1", "cvd_change_5", "cvd_change_20", "cvd_normalized"
-                ]], how="left").ffill().fillna(0)
+                    "buy_qty", "sell_qty", "taker_buy_ratio", "cvd",
+                    "cvd_short", "cvd_medium", "cvd_long", "cvd_change_1",
+                    "cvd_change_5", "cvd_change_20", "cvd_normalized"
+                ]],
+                                       how="left").ffill().fillna(0)
 
             return df_ohlc
 
@@ -239,18 +274,22 @@ class DataConverter:
 
         # 提取日期信息 - 支持多种格式
         if "ETHUSDT-aggTrades-" in zip_basename:
-            date_part = zip_basename.replace("ETHUSDT-aggTrades-", "").replace(".zip", "")
+            date_part = zip_basename.replace("ETHUSDT-aggTrades-",
+                                             "").replace(".zip", "")
         elif "BTCUSDT-aggTrades-" in zip_basename:
-            date_part = zip_basename.replace("BTCUSDT-aggTrades-", "").replace(".zip", "")
+            date_part = zip_basename.replace("BTCUSDT-aggTrades-",
+                                             "").replace(".zip", "")
         elif "SOLUSDT-aggTrades-" in zip_basename:
-            date_part = zip_basename.replace("SOLUSDT-aggTrades-", "").replace(".zip", "")
+            date_part = zip_basename.replace("SOLUSDT-aggTrades-",
+                                             "").replace(".zip", "")
         elif "aggTrades-" in zip_basename:
             # 通用格式
             date_part = zip_basename.split("aggTrades-")[1].replace(".zip", "")
         else:
             # 无法识别，使用当前日期
             date_part = datetime.now().strftime("%Y-%m")
-            logger.warning(f"Could not extract date from filename, using {date_part}")
+            logger.warning(
+                f"Could not extract date from filename, using {date_part}")
 
         # 生成输出文件名
         output_filename = f"{symbol}_{date_part}.parquet"
@@ -267,12 +306,27 @@ class DataConverter:
         converted_files = []
         failed_files = []
 
-        for zip_file in zip_files:
+        total_files = len(zip_files)
+        if total_files == 0:
+            logger.warning("No matching ZIP files found for conversion.")
+            return {
+                "converted_files": converted_files,
+                "failed_files": failed_files,
+                "total_files": total_files,
+            }
+
+        for index, zip_file in enumerate(zip_files, start=1):
+            file_name = os.path.basename(zip_file)
+            progress_prefix = f"[{index}/{total_files}]"
+            print(f"{progress_prefix} Converting {file_name} ...")
+
             result = self.convert_zip_to_parquet(zip_file)
             if result:
                 converted_files.append(result)
+                print(f"{progress_prefix} ✅ Success: {file_name}")
             else:
                 failed_files.append(zip_file)
+                print(f"{progress_prefix} ❌ Failed: {file_name}")
 
         logger.info(
             f"Conversion complete: {len(converted_files)} successful, {len(failed_files)} failed"
@@ -307,12 +361,13 @@ def main():
     """主函数"""
     print("🚀 Converting ZIP files to Parquet format...")
 
-    # 配置路径（使用绝对路径）
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    # 配置路径（使用绝对路径，指向仓库根目录）
+    base_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", ".."))
     input_dir = os.path.join(base_dir, "data", "agg_data")
     output_dir = os.path.join(base_dir, "data", "parquet_data")
     backup_dir = os.path.join(base_dir, "data", "backup_zip")
-    
+
     print(f"📂 Base directory: {base_dir}")
     print(f"📂 Input directory: {input_dir}")
     print(f"📂 Output directory: {output_dir}")
@@ -346,7 +401,8 @@ def main():
             )
 
         if len(results["converted_files"]) > 5:
-            print(f"   ... and {len(results['converted_files']) - 5} more files")
+            print(
+                f"   ... and {len(results['converted_files']) - 5} more files")
 
     if results["failed_files"]:
         print(f"\n❌ Failed files:")
@@ -362,7 +418,8 @@ def main():
             f"\n🗑️  Clean up {len(results['converted_files'])} converted zip files? (y/N): "
         )
         if response.lower() == "y":
-            cleaned_count = converter.cleanup_zip_files(results["converted_files"])
+            cleaned_count = converter.cleanup_zip_files(
+                results["converted_files"])
             print(f"✅ Cleaned up {cleaned_count} zip files")
 
     print(f"\n🎉 Data conversion complete!")

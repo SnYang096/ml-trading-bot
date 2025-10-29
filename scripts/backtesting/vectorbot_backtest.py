@@ -1,6 +1,5 @@
 """VectorBot backtest with stop loss, take profit, and position scaling."""
 
-import sys
 import os
 import pickle
 import pandas as pd
@@ -8,12 +7,14 @@ import numpy as np
 from datetime import datetime, timedelta
 import json
 
-# Add the src directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+from ml_trading.strategies.ml_strategy import MLTradingStrategy
+from ml_trading.data_tools.data_loader import MarketDataLoader
+from ml_trading.data_tools.feature_engineering import FeatureEngineer
 
-from src.ml_trading.strategies.ml_strategy import MLTradingStrategy
-from src.ml_trading.data.data_loader import MarketDataLoader
-from src.ml_trading.data.feature_engineering import FeatureEngineer
+
+DEFAULT_MODEL_PATH = os.environ.get(
+    "MODEL_PATH", "trained_model_enhanced_may_2025.pkl"
+)
 
 
 class VectorBotBacktest:
@@ -63,9 +64,8 @@ class VectorBotBacktest:
         print(f"   Training date: {model_data['training_date']}")
         print(f"   Data info: {model_data['data_info']}")
 
-    def calculate_position_size(
-        self, signal_strength: float, current_price: float
-    ) -> float:
+    def calculate_position_size(self, signal_strength: float,
+                                current_price: float) -> float:
         """
         Calculate position size based on signal strength and risk management.
 
@@ -83,7 +83,8 @@ class VectorBotBacktest:
         adjusted_size = base_size * signal_strength
 
         # Check if we can add more positions
-        active_positions = len([p for p in self.positions if p["status"] == "active"])
+        active_positions = len(
+            [p for p in self.positions if p["status"] == "active"])
         if active_positions >= self.max_positions:
             return 0
 
@@ -101,9 +102,11 @@ class VectorBotBacktest:
 
             # Calculate current P&L
             if position["side"] == "long":
-                pnl = (current_price - position["entry_price"]) * position["size"]
+                pnl = (current_price -
+                       position["entry_price"]) * position["size"]
             else:  # short
-                pnl = (position["entry_price"] - current_price) * position["size"]
+                pnl = (position["entry_price"] -
+                       current_price) * position["size"]
 
             position["current_pnl"] = pnl
             position["current_price"] = current_price
@@ -113,33 +116,34 @@ class VectorBotBacktest:
             if position["side"] == "long":
                 stop_price = position["entry_price"] * (1 - self.stop_loss_pct)
                 if current_price <= stop_price:
-                    self.close_position(position, current_price, timestamp, "stop_loss")
+                    self.close_position(position, current_price, timestamp,
+                                        "stop_loss")
                     continue
             else:  # short
                 stop_price = position["entry_price"] * (1 + self.stop_loss_pct)
                 if current_price >= stop_price:
-                    self.close_position(position, current_price, timestamp, "stop_loss")
+                    self.close_position(position, current_price, timestamp,
+                                        "stop_loss")
                     continue
 
             # Check take profit
             if position["side"] == "long":
-                take_profit_price = position["entry_price"] * (1 + self.take_profit_pct)
+                take_profit_price = position["entry_price"] * (
+                    1 + self.take_profit_pct)
                 if current_price >= take_profit_price:
-                    self.close_position(
-                        position, current_price, timestamp, "take_profit"
-                    )
+                    self.close_position(position, current_price, timestamp,
+                                        "take_profit")
                     continue
             else:  # short
-                take_profit_price = position["entry_price"] * (1 - self.take_profit_pct)
+                take_profit_price = position["entry_price"] * (
+                    1 - self.take_profit_pct)
                 if current_price <= take_profit_price:
-                    self.close_position(
-                        position, current_price, timestamp, "take_profit"
-                    )
+                    self.close_position(position, current_price, timestamp,
+                                        "take_profit")
                     continue
 
-    def close_position(
-        self, position: dict, exit_price: float, timestamp: pd.Timestamp, reason: str
-    ):
+    def close_position(self, position: dict, exit_price: float,
+                       timestamp: pd.Timestamp, reason: str):
         """Close a position and record the trade."""
         # Calculate final P&L
         if position["side"] == "long":
@@ -159,10 +163,11 @@ class VectorBotBacktest:
             "exit_price": exit_price,
             "size": position["size"],
             "pnl": pnl,
-            "return_pct": pnl / (position["entry_price"] * position["size"]) * 100,
+            "return_pct":
+            pnl / (position["entry_price"] * position["size"]) * 100,
             "reason": reason,
-            "duration": (timestamp - position["entry_time"]).total_seconds()
-            / 60,  # minutes
+            "duration": (timestamp - position["entry_time"]).total_seconds() /
+            60,  # minutes
         }
 
         self.trades.append(trade)
@@ -172,7 +177,9 @@ class VectorBotBacktest:
         position["pnl"] = pnl
         position["reason"] = reason
 
-        print(f"   🔄 Closed {position['side']} position: {pnl:.2f} P&L ({reason})")
+        print(
+            f"   🔄 Closed {position['side']} position: {pnl:.2f} P&L ({reason})"
+        )
 
     def open_position(
         self,
@@ -217,8 +224,7 @@ class VectorBotBacktest:
 
         # Prepare features for prediction
         feature_columns = [
-            col
-            for col in data_5t.columns
+            col for col in data_5t.columns
             if col not in ["open", "high", "low", "close", "volume"]
         ]
         X_5t = data_5t[feature_columns]
@@ -238,14 +244,12 @@ class VectorBotBacktest:
         stage2_preds = stage2_model.predict(X_5t_clean)
 
         # Create signals DataFrame
-        signals = pd.DataFrame(
-            {
-                "timestamp": X_5t_clean.index,
-                "stage1_pred": stage1_preds,
-                "stage2_pred": stage2_preds,
-                "close": data_5t["close"].loc[X_5t_clean.index],
-            }
-        )
+        signals = pd.DataFrame({
+            "timestamp": X_5t_clean.index,
+            "stage1_pred": stage1_preds,
+            "stage2_pred": stage2_preds,
+            "close": data_5t["close"].loc[X_5t_clean.index],
+        })
 
         # Convert to discrete signals
         signals["discrete_signal"] = 0
@@ -257,9 +261,15 @@ class VectorBotBacktest:
 
         print(f"\n📊 Signal Statistics:")
         print(f"   Total signals: {len(signals)}")
-        print(f"   Long signals: {len(signals[signals['discrete_signal'] == 1])}")
-        print(f"   Short signals: {len(signals[signals['discrete_signal'] == -1])}")
-        print(f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}")
+        print(
+            f"   Long signals: {len(signals[signals['discrete_signal'] == 1])}"
+        )
+        print(
+            f"   Short signals: {len(signals[signals['discrete_signal'] == -1])}"
+        )
+        print(
+            f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}"
+        )
 
         # Run backtest
         print(f"\n🔄 Running backtest...")
@@ -276,14 +286,12 @@ class VectorBotBacktest:
             if signal != 0 and signal_strength > 0.1:  # Lower minimum signal strength
                 # Check if we can open new position
                 active_positions = len(
-                    [p for p in self.positions if p["status"] == "active"]
-                )
+                    [p for p in self.positions if p["status"] == "active"])
 
                 if active_positions < self.max_positions:
                     # Calculate position size
                     position_size = self.calculate_position_size(
-                        signal_strength, current_price
-                    )
+                        signal_strength, current_price)
 
                     if position_size > 0:
                         side = "long" if signal == 1 else "short"
@@ -296,18 +304,17 @@ class VectorBotBacktest:
                         )
 
             # Update equity curve
-            total_pnl = sum(
-                [p["current_pnl"] for p in self.positions if p["status"] == "active"]
-            )
+            total_pnl = sum([
+                p["current_pnl"] for p in self.positions
+                if p["status"] == "active"
+            ])
             current_equity = self.capital + total_pnl
-            self.equity_curve.append(
-                {
-                    "timestamp": timestamp,
-                    "equity": current_equity,
-                    "capital": self.capital,
-                    "open_pnl": total_pnl,
-                }
-            )
+            self.equity_curve.append({
+                "timestamp": timestamp,
+                "equity": current_equity,
+                "capital": self.capital,
+                "open_pnl": total_pnl,
+            })
 
             # Update drawdown
             if current_equity > self.peak_equity:
@@ -328,7 +335,8 @@ class VectorBotBacktest:
             if position["status"] == "active":
                 last_price = signals["close"].iloc[-1]
                 last_timestamp = signals.index[-1]
-                self.close_position(position, last_price, last_timestamp, "end_of_data")
+                self.close_position(position, last_price, last_timestamp,
+                                    "end_of_data")
 
         # Calculate final results
         self.calculate_results()
@@ -368,36 +376,24 @@ class VectorBotBacktest:
         win_rate = winning_trades / total_trades * 100
 
         total_pnl = sum([t["pnl"] for t in self.trades])
-        avg_win = (
-            np.mean([t["pnl"] for t in self.trades if t["pnl"] > 0])
-            if winning_trades > 0
-            else 0
-        )
-        avg_loss = (
-            np.mean([t["pnl"] for t in self.trades if t["pnl"] < 0])
-            if losing_trades > 0
-            else 0
-        )
+        avg_win = (np.mean([t["pnl"] for t in self.trades
+                            if t["pnl"] > 0]) if winning_trades > 0 else 0)
+        avg_loss = (np.mean([t["pnl"] for t in self.trades
+                             if t["pnl"] < 0]) if losing_trades > 0 else 0)
 
-        profit_factor = (
-            abs(avg_win * winning_trades / (avg_loss * losing_trades))
-            if losing_trades > 0
-            else float("inf")
-        )
+        profit_factor = (abs(avg_win * winning_trades /
+                             (avg_loss * losing_trades))
+                         if losing_trades > 0 else float("inf"))
 
         # Risk metrics
         returns = [t["return_pct"] for t in self.trades]
-        sharpe_ratio = (
-            np.mean(returns) / np.std(returns) * np.sqrt(252)
-            if np.std(returns) > 0
-            else 0
-        )
+        sharpe_ratio = (np.mean(returns) / np.std(returns) *
+                        np.sqrt(252) if np.std(returns) > 0 else 0)
 
         # Final equity
         final_equity = self.capital
-        total_return = (
-            (final_equity - self.initial_capital) / self.initial_capital * 100
-        )
+        total_return = ((final_equity - self.initial_capital) /
+                        self.initial_capital * 100)
 
         self.results = {
             "total_trades": total_trades,
@@ -450,10 +446,10 @@ class VectorBotBacktest:
 def main():
     """Main function to run VectorBot backtest."""
     # Check if model exists
-    model_path = "trained_model_may_2025.pkl"
+    model_path = DEFAULT_MODEL_PATH
     if not os.path.exists(model_path):
         print(f"❌ Model not found: {model_path}")
-        print("Please run train_model_may.py first")
+        print("Please run scripts/training/train_model_enhanced.py first")
         return
 
     # Initialize backtest

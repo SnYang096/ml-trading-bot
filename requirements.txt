@@ -12,6 +12,7 @@ PyWavelets>=1.1.0  # Wavelet transforms
 
 # Data Processing
 scipy>=1.7.0
+pyarrow>=14.0.0
 
 # Visualization
 matplotlib>=3.4.0
