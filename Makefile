@@ -206,8 +206,8 @@ oos-june:
 dimensionality-demo:
 	@echo "🌀 Running dimensionality pipeline (sample data)..."
 	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.pipeline \
-		--synthetic-length 5000 \
-		--synthetic-factors 120 \
+		--n-samples 5000 \
+		--n-factors 120 \
 		--encoding-dim 16 \
 		--visualize \
 		--generate-report

@@ -1,0 +1,65 @@
+{
+  "timestamp": "20251030_123505",
+  "symbol": "ETH-USD",
+  "train_range": {
+    "start": "2024-01-01 00:00:00",
+    "end": "2024-12-31 00:00:00",
+    "samples": 5000
+  },
+  "test_range": {
+    "start": null,
+    "end": null,
+    "samples": null
+  },
+  "compression": {
+    "original_factors": 120,
+    "encoding_dim": 16,
+    "compression_ratio": 7.5
+  },
+  "top_factors_file": "/workspace/results/dimensionality_pipeline/top_factors_ETH_USD.json",
+  "top_k": [
+    "trend_84",
+    "momentum_31",
+    "volume_5",
+    "trend_64",
+    "mean_reversion_103",
+    "momentum_81",
+    "mean_reversion_3",
+    "volatility_32",
+    "momentum_26",
+    "momentum_51"
+  ],
+  "topk_weights": [
+    0.1112793505370547,
+    0.10847372863272287,
+    0.10390134560059758,
+    0.10207756195443847,
+    0.09988499619782241,
+    0.0974388143163246,
+    0.09555934918168908,
+    0.09439902619360689,
+    0.09395177807303265,
+    0.09303404931271081
+  ],
+  "topk_lightgbm_metrics": {
+    "r2": 0.04620838017928097,
+    "rmse": 0.12472810058162838,
+    "mae": 0.09977405048694697,
+    "best_iteration": 66,
+    "train_samples": 4000,
+    "eval_samples": 1000,
+    "feature_names": [
+      "trend_84",
+      "momentum_31",
+      "volume_5",
+      "trend_64",
+      "mean_reversion_103",
+      "momentum_81",
+      "mean_reversion_3",
+      "volatility_32",
+      "momentum_26",
+      "momentum_51"
+    ]
+  },
+  "rolling_summary": null
+}

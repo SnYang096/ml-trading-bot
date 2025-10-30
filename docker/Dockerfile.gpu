@@ -11,13 +11,14 @@
 #   - scipy:        1.11.4
 #   - pandas:       2.1.4
 #   - matplotlib:   3.7.5
+#   - seaborn:      0.12.2  (数据可视化)
 #   - scikit-learn: 1.3.2
 #   - numba:        0.58.1  (匹配 numpy 1.26.4)
 #   - llvmlite:     0.41.1  (匹配 numba 0.58.1)
 #   - shap:         0.43.0
 #   - LightGBM:     GPU版本 (从源码编译)
-#   - PyTorch:      latest (CUDA 12.4+，兼容 12.8.1)
-#   - mamba-ssm:    latest (深度学习加速库)
+#   - PyTorch:      2.9.0 (CUDA 12.8/cu128，builder 和 runtime 一致)
+#   - mamba-ssm:    latest (深度学习加速库，基于 PyTorch 2.9.0 编译)
 # 
 # 多阶段构建优势:
 #   - 分离编译环境和运行环境
@@ -28,11 +29,18 @@
 #   - Git 重试机制（3次重试）
 #   - 详细的进度反馈
 #   - 优化的网络超时设置
+#   - PyTorch 版本统一（builder/runtime 一致，确保 mamba-ssm ABI 兼容）
 # ============================================================================
 
 # ============================================================================
 # Stage 1: Builder - 编译 LightGBM
 # ============================================================================
+# PyTorch 版本配置（builder 和 runtime 必须一致，确保 mamba-ssm CUDA 扩展 ABI 兼容）
+ARG PYTORCH_VERSION="2.9.0"
+ARG TORCHVISION_VERSION="0.20.0"
+ARG TORCHAUDIO_VERSION="2.9.0"
+ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
+
 ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY=""
@@ -41,6 +49,10 @@ ARG https_proxy=""
 ARG no_proxy=""
 
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 AS builder
+ARG PYTORCH_VERSION
+ARG TORCHVISION_VERSION
+ARG TORCHAUDIO_VERSION
+ARG PYTORCH_INDEX_URL
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
@@ -163,11 +175,21 @@ RUN echo "🔨 Building LightGBM with GPU support (this may take 10-20 minutes).
     ls -lh dist/*.whl && \
     echo "✅ LightGBM built successfully"
 
+# 安装 PyTorch（builder 阶段，用于编译 mamba-ssm CUDA 扩展）
+# 关键：builder 和 runtime 的 PyTorch 版本必须完全一致，确保 ABI 兼容
+RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) for mamba-ssm compilation..." && \
+    pip3 install --no-cache-dir --timeout=1200 \
+        torch==${PYTORCH_VERSION} \
+        torchvision==${TORCHVISION_VERSION} \
+        torchaudio==${TORCHAUDIO_VERSION} \
+        --index-url ${PYTORCH_INDEX_URL} && \
+    python3 -c "import torch; print('✅ PyTorch (builder):', torch.__version__, '| CUDA:', torch.version.cuda)"
+
 # 预编译 mamba-ssm wheel（这是最耗时的步骤！）
-# 关键修复：保留代理设置，使用 PyPI 官方源（通过 --index-url）
+# 关键：使用上面安装的 PyTorch 编译，确保与 runtime 阶段的 PyTorch ABI 兼容
 RUN echo "🔨 Pre-building mamba-ssm wheel (this will take 30-60 minutes)..." && \
     echo "⏱️  Please be patient, this is the longest step..." && \
-    echo "🌐 Using proxy to access PyPI official source..." && \
+    echo "🌐 Using PyTorch ${PYTORCH_VERSION} to compile CUDA extensions..." && \
     set -e && \
     mkdir -p /wheelhouse && \
     pip3 wheel \
@@ -180,12 +202,16 @@ RUN echo "🔨 Pre-building mamba-ssm wheel (this will take 30-60 minutes)..." &
         --trusted-host files.pythonhosted.org \
         mamba-ssm>=1.0.0 && \
     ls -lh /wheelhouse/*.whl && \
-    echo "✅ mamba-ssm wheel built successfully"
+    echo "✅ mamba-ssm wheel built successfully with PyTorch ${PYTORCH_VERSION}"
 
 # =========================================================================
 # Stage 2: Runtime - 运行环境（不包含编译工具）
 # =========================================================================
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 AS runtime
+ARG PYTORCH_VERSION
+ARG TORCHVISION_VERSION
+ARG TORCHAUDIO_VERSION
+ARG PYTORCH_INDEX_URL
 
 # =========================================================================
 # 环境变量配置
@@ -245,15 +271,20 @@ RUN echo "📦 Installing LightGBM..." && \
 COPY --from=builder /wheelhouse /wheelhouse
 
 # ============================================================================
-# 安装 PyTorch GPU 版本（兼容 CUDA 12.8.1 + Python 3.10）
+# 安装 PyTorch GPU 版本（与 builder 阶段完全一致，确保 mamba-ssm ABI 兼容）
 # ============================================================================
-RUN echo "📦 Installing PyTorch with CUDA support (this may take 10-20 minutes)..." && \
+# 关键：必须与 builder 阶段使用相同的 PyTorch 版本（2.9.0+cu128）
+RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) - matching builder stage..." && \
     (pip3 install --no-cache-dir --timeout=1200 \
-        torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cu124 \
+        torch==${PYTORCH_VERSION} \
+        torchvision==${TORCHVISION_VERSION} \
+        torchaudio==${TORCHAUDIO_VERSION} \
+        --index-url ${PYTORCH_INDEX_URL} \
     || pip3 install --no-cache-dir --timeout=1200 \
-        torch torchvision torchaudio) \
-    && python3 -c "import torch; print('✅ PyTorch:', torch.__version__, '| CUDA可用:', torch.cuda.is_available(), '| CUDA版本:', torch.version.cuda)"
+        torch==${PYTORCH_VERSION} \
+        torchvision==${TORCHVISION_VERSION} \
+        torchaudio==${TORCHAUDIO_VERSION}) \
+    && python3 -c "import torch; print('✅ PyTorch (runtime):', torch.__version__, '| CUDA可用:', torch.cuda.is_available(), '| CUDA版本:', torch.version.cuda)"
 
 # ============================================================================
 # 安装 numba + shap（与 numpy 1.26.4 兼容）
@@ -281,10 +312,11 @@ RUN echo "📦 Installing project dependencies..." && \
     PyPDF2==3.0.1 \
     plotly==5.18.0 \
     matplotlib==3.7.5 \
+    seaborn==0.12.2 \
     bokeh==3.3.4 \
     tensorboard==2.15.1 \
     joblib==1.3.2 \
-    && python3 -c "import pywt, optuna, plotly, matplotlib, bokeh; print('✅ 项目依赖库安装完成')"
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh; print('✅ 项目依赖库安装完成')"
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库

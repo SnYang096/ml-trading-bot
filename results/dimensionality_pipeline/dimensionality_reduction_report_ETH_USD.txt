@@ -1,0 +1,50 @@
+Advanced Dimensionality Reduction Pipeline Report
+======================================================================
+
+Configuration
+--------------------
+Symbol: ETH-USD
+Encoding Dimension: 16
+Autoencoder LR: 0.001
+Autoencoder Epochs: 100
+Dropout Rate: 0.1
+Top-K Factors: 10
+
+Compression Summary
+--------------------
+Original Factors: 120
+Compressed Dimensions: 16
+Compression Ratio: 7.5x
+
+Predictions
+--------------------
+Mean: -0.0016
+Std: 0.0107
+
+Signals (Top-K Weighted)
+--------------------
+Mean: -0.0003
+Std: 0.3198
+
+Top Factors
+--------------------
+ 1. trend_84                                 0.1113
+ 2. momentum_31                              0.1085
+ 3. volume_5                                 0.1039
+ 4. trend_64                                 0.1021
+ 5. mean_reversion_103                       0.0999
+ 6. momentum_81                              0.0974
+ 7. mean_reversion_3                         0.0956
+ 8. volatility_32                            0.0944
+ 9. momentum_26                              0.0940
+10. momentum_51                              0.0930
+
+Top-K LightGBM Metrics
+-------------------------
+r2: 0.04620838017928097
+rmse: 0.12472810058162838
+mae: 0.09977405048694697
+best_iteration: 66
+train_samples: 4000
+eval_samples: 1000
+feature_names: ['trend_84', 'momentum_31', 'volume_5', 'trend_64', 'mean_reversion_103', 'momentum_81', 'mean_reversion_3', 'volatility_32', 'momentum_26', 'momentum_51']

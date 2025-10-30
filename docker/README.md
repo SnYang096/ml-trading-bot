@@ -17,7 +17,18 @@ docker run --rm -it lightgbm-builder bash -lc "ls /lightgbm/python-package/"
 
 docker run --rm -it lightgbm-builder bash
 
-docker run --rm -it lightgbm-runtime bash
+docker run --rm -it hansenlovefiona017/lightgbm-runtime:v0.0.2 bash
+
+docker commit -m "安装seaborn" -a "hansen" fe05bbe8ebf2 hansenlovefiona017/lightgbm-runtime:v0.0.2
+
+docker run --rm lightgbm-runtime python3 -c "import torch; import pandas as pd; import numpy as np; print('✅ PyTorch:', torch.__version__); print('✅ Pandas:', pd.__version__); print('✅ NumPy:', np.__version__); print('✅ CUDA available:', torch.cuda.is_available())"
+
+docker run --rm hansenlovefiona017/lightgbm-runtime:v0.0.2 pip3 show mamba-ssm
+
+docker run --rm -it --gpus all \
+    -e NVIDIA_VISIBLE_DEVICES=all \
+    hansenlovefiona017/lightgbm-runtime:v0.0.2 \
+    python3 -c "import torch; print(torch.__version__); import mamba_ssm; from mamba_ssm import Mamba; print('Mamba OK')"
 ```
 ## 🎯 快速开始
 
