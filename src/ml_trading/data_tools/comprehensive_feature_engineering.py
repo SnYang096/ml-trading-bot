@@ -4,12 +4,9 @@
 整合所有特征工程模块，提供统一的特征工程接口
 
 包含模块：
-1. feature_engineering.py - 基础特征工程
-2. feature_engineering_talib.py - TA-Lib特征工程
-3. feature_engineering_improved.py - 改进版特征工程
-4. feature_engineering_enhanced.py - 增强版特征工程
-5. feature_engineering_wavelet.py - 小波特征工程
-6. dl_sequence_features.py - 深度学习序列特征
+1. feature_engineering.py - 基础 + TA-Lib 特征工程
+2. feature_engineering_enhanced.py - 增强版特征工程（含WPT/订单流等）
+3. dl_sequence_features.py - 深度学习序列特征
 """
 
 import pandas as pd
@@ -21,10 +18,7 @@ warnings.filterwarnings("ignore")
 
 # 导入所有特征工程模块
 from .feature_engineering import FeatureEngineer
-from .feature_engineering_talib import TalibFeatureEngineer
-from .feature_engineering_improved import ImprovedFeatureEngineer
 from .feature_engineering_enhanced import EnhancedFeatureEngineer
-from .feature_engineering_wavelet import WaveletFeatureEngineer
 from .dl_sequence_features import add_dl_sequence_features
 
 
@@ -64,93 +58,56 @@ class ComprehensiveFeatureEngineer:
         self.dl_d_model = dl_d_model
         self.use_fp16 = use_fp16
 
-        # 初始化各个特征工程器
+        # 初始化特征工程器
         self.basic_engineer = FeatureEngineer()
-        self.talib_engineer = TalibFeatureEngineer(scaler_type=scaler_type)
-        self.improved_engineer = ImprovedFeatureEngineer(scaler_type=scaler_type)
         self.enhanced_engineer = EnhancedFeatureEngineer(
             scaler_type=scaler_type,
             wavelet=wavelet,
             wpt_level=wpt_level,
             hurst_window=hurst_window,
         )
-        self.wavelet_engineer = WaveletFeatureEngineer(scaler_type=scaler_type)
 
         # 特征统计
         self.feature_stats = {}
         self.total_features = 0
 
-    def engineer_all_features(
-        self, data: pd.DataFrame, fit: bool = True
-    ) -> pd.DataFrame:
+    def engineer_all_features(self,
+                              data: pd.DataFrame,
+                              fit: bool = True) -> pd.DataFrame:
         """
-        使用所有特征工程模块生成综合特征
+        使用三阶段特征工程生成综合特征
 
-        Args:
-            data: 输入数据 (OHLCV)
-            fit: 是否拟合标准化器 (True for training, False for testing)
-
-        Returns:
-            包含所有特征的DataFrame
+        阶段：
+        1. 基础 + TA-Lib 指标
+        2. 增强版（WPT/Hurst/Hilbert/光谱/订单流）
+        3. 深度学习序列特征
         """
         print("🚀 开始综合特征工程...")
         df = data.copy()
         initial_features = len(df.columns)
+        prev_count = initial_features
 
         # 1. 基础特征工程
-        print("  📊 1/6 基础特征工程...")
+        print("  📊 1/3 基础特征工程...")
         df = self.basic_engineer.add_technical_indicators(df)
-        basic_features = len(df.columns) - initial_features
+        basic_features = len(df.columns) - prev_count
+        prev_count = len(df.columns)
         print(f"     ✅ 基础特征: {basic_features} 个")
 
-        # 2. TA-Lib特征工程
-        print("  📊 2/6 TA-Lib特征工程...")
-        df = self.talib_engineer.add_technical_indicators(df)
-        talib_features = len(df.columns) - basic_features - initial_features
-        print(f"     ✅ TA-Lib特征: {talib_features} 个")
-
-        # 3. 改进版特征工程
-        print("  📊 3/6 改进版特征工程...")
-        df = self.improved_engineer.add_technical_indicators(df)
-        improved_features = (
-            len(df.columns) - talib_features - basic_features - initial_features
-        )
-        print(f"     ✅ 改进版特征: {improved_features} 个")
-
-        # 4. 增强版特征工程 (WPT + Hurst + Hilbert + 光谱 + 订单流)
-        print("  📊 4/6 增强版特征工程...")
-        df = self.enhanced_engineer.add_basic_features(df)
+        # 2. 增强版特征工程 (WPT + Hurst + Hilbert + 光谱 + 订单流)
+        print("  📊 2/3 增强版特征工程...")
         df = self.enhanced_engineer.add_hurst_features(df)
         df = self.enhanced_engineer.add_wavelet_packet_features(df)
         df = self.enhanced_engineer.add_hilbert_features(df)
         df = self.enhanced_engineer.add_spectral_features(df)
         df = self.enhanced_engineer.add_advanced_derived_features(df)
         df = self.enhanced_engineer.add_order_flow_features(df)
-        enhanced_features = (
-            len(df.columns)
-            - improved_features
-            - talib_features
-            - basic_features
-            - initial_features
-        )
+        enhanced_features = len(df.columns) - prev_count
+        prev_count = len(df.columns)
         print(f"     ✅ 增强版特征: {enhanced_features} 个")
 
-        # 5. 小波特征工程
-        print("  📊 5/6 小波特征工程...")
-        df = self.wavelet_engineer.add_technical_indicators(df)
-        df = self.wavelet_engineer.add_wavelet_features(df)
-        wavelet_features = (
-            len(df.columns)
-            - enhanced_features
-            - improved_features
-            - talib_features
-            - basic_features
-            - initial_features
-        )
-        print(f"     ✅ 小波特征: {wavelet_features} 个")
-
-        # 6. 深度学习序列特征
-        print("  📊 6/6 深度学习序列特征...")
+        # 3. 深度学习序列特征
+        print("  📊 3/3 深度学习序列特征...")
         try:
             df = add_dl_sequence_features(
                 df,
@@ -159,21 +116,13 @@ class ComprehensiveFeatureEngineer:
                 d_model=self.dl_d_model,
                 use_fp16=self.use_fp16,
             )
-            dl_features = (
-                len(df.columns)
-                - wavelet_features
-                - enhanced_features
-                - improved_features
-                - talib_features
-                - basic_features
-                - initial_features
-            )
+            dl_features = len(df.columns) - prev_count
+            prev_count = len(df.columns)
             print(f"     ✅ 深度学习特征: {dl_features} 个")
         except Exception as e:
             print(f"     ⚠️ 深度学习特征失败: {e}")
             dl_features = 0
 
-        # 计算总特征数
         total_new_features = len(df.columns) - initial_features
         self.total_features = total_new_features
 
@@ -183,19 +132,12 @@ class ComprehensiveFeatureEngineer:
         print(f"  总特征数: {len(df.columns)} 个")
         print(f"  特征分布:")
         print(f"    - 基础特征: {basic_features} 个")
-        print(f"    - TA-Lib特征: {talib_features} 个")
-        print(f"    - 改进版特征: {improved_features} 个")
         print(f"    - 增强版特征: {enhanced_features} 个")
-        print(f"    - 小波特征: {wavelet_features} 个")
         print(f"    - 深度学习特征: {dl_features} 个")
 
-        # 保存特征统计
         self.feature_stats = {
             "basic_features": basic_features,
-            "talib_features": talib_features,
-            "improved_features": improved_features,
             "enhanced_features": enhanced_features,
-            "wavelet_features": wavelet_features,
             "dl_features": dl_features,
             "total_new_features": total_new_features,
             "total_features": len(df.columns),
@@ -203,7 +145,9 @@ class ComprehensiveFeatureEngineer:
 
         return df
 
-    def engineer_features(self, data: pd.DataFrame, fit: bool = True) -> pd.DataFrame:
+    def engineer_features(self,
+                          data: pd.DataFrame,
+                          fit: bool = True) -> pd.DataFrame:
         """
         为单时间框架数据工程特征
 
@@ -218,7 +162,9 @@ class ComprehensiveFeatureEngineer:
 
     def get_feature_columns(self, df: pd.DataFrame) -> List[str]:
         """获取特征列名"""
-        exclude_columns = ["timestamp", "open", "high", "low", "close", "volume"]
+        exclude_columns = [
+            "timestamp", "open", "high", "low", "close", "volume"
+        ]
         return [col for col in df.columns if col not in exclude_columns]
 
     def get_feature_stats(self) -> Dict:
@@ -230,10 +176,7 @@ class ComprehensiveFeatureEngineer:
         import pickle
 
         scalers_data = {
-            "talib_scalers": self.talib_engineer.scalers,
-            "improved_scalers": self.improved_engineer.scalers,
             "enhanced_scalers": self.enhanced_engineer.scalers,
-            "wavelet_scalers": self.wavelet_engineer.scalers,
             "feature_stats": self.feature_stats,
         }
 
@@ -248,18 +191,16 @@ class ComprehensiveFeatureEngineer:
         with open(path, "rb") as f:
             scalers_data = pickle.load(f)
 
-        self.talib_engineer.scalers = scalers_data.get("talib_scalers", {})
-        self.improved_engineer.scalers = scalers_data.get("improved_scalers", {})
-        self.enhanced_engineer.scalers = scalers_data.get("enhanced_scalers", {})
-        self.wavelet_engineer.scalers = scalers_data.get("wavelet_scalers", {})
+        self.enhanced_engineer.scalers = scalers_data.get(
+            "enhanced_scalers", {})
         self.feature_stats = scalers_data.get("feature_stats", {})
 
         print(f"✅ 标准化器从 {path} 加载完成")
 
 
 def create_comprehensive_feature_engineer(
-    scaler_type: str = "standard", **kwargs
-) -> ComprehensiveFeatureEngineer:
+        scaler_type: str = "standard",
+        **kwargs) -> ComprehensiveFeatureEngineer:
     """
     创建综合特征工程器的便捷函数
 
@@ -317,16 +258,14 @@ if __name__ == "__main__":
 
     # 创建测试数据
     dates = pd.date_range("2024-01-01", periods=1000, freq="5T")
-    test_data = pd.DataFrame(
-        {
-            "timestamp": dates,
-            "open": np.random.randn(1000).cumsum() + 100,
-            "high": np.random.randn(1000).cumsum() + 105,
-            "low": np.random.randn(1000).cumsum() + 95,
-            "close": np.random.randn(1000).cumsum() + 100,
-            "volume": np.random.randint(1000, 10000, 1000),
-        }
-    )
+    test_data = pd.DataFrame({
+        "timestamp": dates,
+        "open": np.random.randn(1000).cumsum() + 100,
+        "high": np.random.randn(1000).cumsum() + 105,
+        "low": np.random.randn(1000).cumsum() + 95,
+        "close": np.random.randn(1000).cumsum() + 100,
+        "volume": np.random.randint(1000, 10000, 1000),
+    })
 
     # 测试综合特征工程
     engineer = ComprehensiveFeatureEngineer()

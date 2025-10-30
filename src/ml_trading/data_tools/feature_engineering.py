@@ -1,50 +1,45 @@
 """Feature engineering module for technical indicators.
 
-这是基础版特征工程模块，提供13个基础技术指标。
+这是基础版特征工程模块，提供常用的基础+TA-Lib指标集合。
 所有基础指标计算函数已移至 base_indicators.py 以避免重复。
 """
 
 import pandas as pd
 from typing import Dict
-from .base_indicators import add_basic_indicators
+
+from .base_indicators import add_common_derived_features
+from .feature_engineering_talib import TalibFeatureEngineer
 
 
 class FeatureEngineer:
-    """基础特征工程类 - 处理市场数据的特征工程."""
+    """基础特征工程类 - 产出统一的基础/TA-Lib/衍生特征集合."""
 
-    def __init__(self):
-        """初始化特征工程器."""
-        pass
+    def __init__(self) -> None:
+        self._talib_engineer = TalibFeatureEngineer()
 
     def add_technical_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        添加技术指标到数据中.
+        """组合基础指标、TA-Lib 指标以及常用衍生特征."""
+        if data.empty:
+            return data
 
-        Args:
-            data: OHLCV数据
+        # 1) TA-Lib 指标（内部会处理数值化/缺失值）
+        talib_df = self._talib_engineer.add_technical_indicators(data)
 
-        Returns:
-            添加了技术指标的数据
-        """
-        return add_basic_indicators(data)
+        # 2) 衍生指标（会确保基础指标完备，并填补常用派生列）
+        enriched = add_common_derived_features(talib_df)
+
+        return enriched
 
     def engineer_features(
-        self, multi_tf_data: Dict[str, pd.DataFrame]
-    ) -> Dict[str, pd.DataFrame]:
-        """
-        为多时间框架数据工程特征.
-
-        Args:
-            multi_tf_data: 时间框架到DataFrame的字典映射
-
-        Returns:
-            每个时间框架的工程特征字典
-        """
+            self,
+            multi_tf_data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """为多时间框架数据工程统一的基础特征集."""
         engineered_data = {}
         for timeframe, data in multi_tf_data.items():
-            print(f"Engineering features for {timeframe}: {data.shape}")
-            engineered_data[timeframe] = self.add_technical_indicators(data)
+            print(f"Engineering basic features for {timeframe}: {data.shape}")
+            engineered = self.add_technical_indicators(data)
             print(
-                f"Engineered features for {timeframe}: {engineered_data[timeframe].shape}"
+                f"Engineered basic features for {timeframe}: {engineered.shape}"
             )
+            engineered_data[timeframe] = engineered
         return engineered_data

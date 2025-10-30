@@ -51,51 +51,77 @@ class TalibFeatureEngineer:
 
         # 简单移动平均线 (SMA)
         for period in [5, 10, 20, 50, 100, 200]:
-            df[f"sma_{period}"] = talib.SMA(df["close"].values, timeperiod=period)
+            col = f"sma_{period}"
+            if col not in df.columns:
+                df[col] = talib.SMA(df["close"].values, timeperiod=period)
 
         # 指数移动平均线 (EMA)
         for period in [5, 10, 20, 50, 100]:
-            df[f"ema_{period}"] = talib.EMA(df["close"].values, timeperiod=period)
+            col = f"ema_{period}"
+            if col not in df.columns:
+                df[col] = talib.EMA(df["close"].values, timeperiod=period)
 
         # 加权移动平均线 (WMA)
         for period in [10, 20, 50]:
-            df[f"wma_{period}"] = talib.WMA(df["close"].values, timeperiod=period)
+            col = f"wma_{period}"
+            if col not in df.columns:
+                df[col] = talib.WMA(df["close"].values, timeperiod=period)
 
         # 三角移动平均线 (TEMA)
         for period in [10, 20, 30]:
-            df[f"tema_{period}"] = talib.TEMA(df["close"].values, timeperiod=period)
+            col = f"tema_{period}"
+            if col not in df.columns:
+                df[col] = talib.TEMA(df["close"].values, timeperiod=period)
 
         # 考夫曼自适应移动平均线 (KAMA)
         for period in [10, 20, 30]:
-            df[f"kama_{period}"] = talib.KAMA(df["close"].values, timeperiod=period)
+            col = f"kama_{period}"
+            if col not in df.columns:
+                df[col] = talib.KAMA(df["close"].values, timeperiod=period)
 
         # 抛物线SAR
-        df["sar"] = talib.SAR(df["high"].values, df["low"].values)
-        df["sar_ext"] = talib.SAREXT(df["high"].values, df["low"].values)
+        if "sar" not in df.columns:
+            df["sar"] = talib.SAR(df["high"].values, df["low"].values)
+        if "sar_ext" not in df.columns:
+            df["sar_ext"] = talib.SAREXT(df["high"].values, df["low"].values)
 
         # 平均方向指数 (ADX)
-        df["adx"] = talib.ADX(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
-        df["adxr"] = talib.ADXR(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
+        if "adx" not in df.columns:
+            df["adx"] = talib.ADX(df["high"].values,
+                                  df["low"].values,
+                                  df["close"].values,
+                                  timeperiod=14)
+        if "adxr" not in df.columns:
+            df["adxr"] = talib.ADXR(df["high"].values,
+                                    df["low"].values,
+                                    df["close"].values,
+                                    timeperiod=14)
 
         # 正负方向指标
-        df["plus_di"] = talib.PLUS_DI(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
-        df["minus_di"] = talib.MINUS_DI(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
+        if "plus_di" not in df.columns:
+            df["plus_di"] = talib.PLUS_DI(df["high"].values,
+                                          df["low"].values,
+                                          df["close"].values,
+                                          timeperiod=14)
+        if "minus_di" not in df.columns:
+            df["minus_di"] = talib.MINUS_DI(df["high"].values,
+                                            df["low"].values,
+                                            df["close"].values,
+                                            timeperiod=14)
 
         # 阿隆指标
-        df["aroon_up"], df["aroon_down"] = talib.AROON(
-            df["high"].values, df["low"].values, timeperiod=14
-        )
-        df["aroon_osc"] = talib.AROONOSC(
-            df["high"].values, df["low"].values, timeperiod=14
-        )
+        if "aroon_up" not in df.columns or "aroon_down" not in df.columns:
+            aroon_up, aroon_down = talib.AROON(df["high"].values,
+                                               df["low"].values,
+                                               timeperiod=14)
+            if "aroon_up" not in df.columns:
+                df["aroon_up"] = aroon_up
+            if "aroon_down" not in df.columns:
+                df["aroon_down"] = aroon_down
+        if "aroon_osc" not in df.columns:
+            df["aroon_osc"] = talib.AROONOSC(df["high"].values,
+                                             df["low"].values,
+                                             timeperiod=14)
 
         return df
 
@@ -105,52 +131,54 @@ class TalibFeatureEngineer:
 
         # RSI (多个周期)
         for period in [7, 14, 21]:
-            df[f"rsi_{period}"] = talib.RSI(df["close"].values, timeperiod=period)
+            col = f"rsi_{period}"
+            if col not in df.columns:
+                df[col] = talib.RSI(df["close"].values, timeperiod=period)
 
         # 随机指标 (Stochastic)
-        df["stoch_k"], df["stoch_d"] = talib.STOCH(
-            df["high"].values, df["low"].values, df["close"].values
-        )
-        df["stochf_k"], df["stochf_d"] = talib.STOCHF(
-            df["high"].values, df["low"].values, df["close"].values
-        )
-        df["stochrsi_k"], df["stochrsi_d"] = talib.STOCHRSI(
-            df["close"].values, timeperiod=14
-        )
+        df["stoch_k"], df["stoch_d"] = talib.STOCH(df["high"].values,
+                                                   df["low"].values,
+                                                   df["close"].values)
+        df["stochf_k"], df["stochf_d"] = talib.STOCHF(df["high"].values,
+                                                      df["low"].values,
+                                                      df["close"].values)
+        df["stochrsi_k"], df["stochrsi_d"] = talib.STOCHRSI(df["close"].values,
+                                                            timeperiod=14)
 
         # 威廉指标 (Williams %R)
-        df["willr"] = talib.WILLR(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
+        df["willr"] = talib.WILLR(df["high"].values,
+                                  df["low"].values,
+                                  df["close"].values,
+                                  timeperiod=14)
 
         # 动量指标
         for period in [5, 10, 14]:
-            df[f"mom_{period}"] = talib.MOM(df["close"].values, timeperiod=period)
+            df[f"mom_{period}"] = talib.MOM(df["close"].values,
+                                            timeperiod=period)
 
         # 变化率 (ROC)
         for period in [5, 10, 20]:
-            df[f"roc_{period}"] = talib.ROC(df["close"].values, timeperiod=period)
+            df[f"roc_{period}"] = talib.ROC(df["close"].values,
+                                            timeperiod=period)
 
         # 商品通道指数 (CCI)
-        df["cci"] = talib.CCI(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
+        df["cci"] = talib.CCI(df["high"].values,
+                              df["low"].values,
+                              df["close"].values,
+                              timeperiod=14)
 
         # 终极指标 (Ultimate Oscillator)
-        df["ultosc"] = talib.ULTOSC(
-            df["high"].values, df["low"].values, df["close"].values
-        )
+        df["ultosc"] = talib.ULTOSC(df["high"].values, df["low"].values,
+                                    df["close"].values)
 
         # 真实强度指数 (TSI) - 使用自定义实现，因为TA-Lib没有TSI
         def compute_tsi(series, period1=14, period2=25):
             """计算真实强度指数 (TSI)."""
             momentum = series.diff()
-            smoothed_momentum = (
-                momentum.ewm(span=period1).mean().ewm(span=period2).mean()
-            )
-            smoothed_abs_momentum = (
-                momentum.abs().ewm(span=period1).mean().ewm(span=period2).mean()
-            )
+            smoothed_momentum = (momentum.ewm(span=period1).mean().ewm(
+                span=period2).mean())
+            smoothed_abs_momentum = (momentum.abs().ewm(
+                span=period1).mean().ewm(span=period2).mean())
             tsi = 100 * smoothed_momentum / smoothed_abs_momentum
             return tsi
 
@@ -163,39 +191,58 @@ class TalibFeatureEngineer:
         df = data.copy()
 
         # 布林带
-        df["bb_upper"], df["bb_middle"], df["bb_lower"] = talib.BBANDS(
-            df["close"].values, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0
-        )
+        if {"bb_upper", "bb_middle", "bb_lower"}.difference(df.columns):
+            upper, middle, lower = talib.BBANDS(
+                df["close"].values,
+                timeperiod=20,
+                nbdevup=2,
+                nbdevdn=2,
+                matype=0,
+            )
+            if "bb_upper" not in df.columns:
+                df["bb_upper"] = upper
+            if "bb_middle" not in df.columns:
+                df["bb_middle"] = middle
+            if "bb_lower" not in df.columns:
+                df["bb_lower"] = lower
 
         # 布林带宽度和位置
-        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"]
-        df["bb_position"] = (df["close"] - df["bb_lower"]) / (
-            df["bb_upper"] - df["bb_lower"]
-        )
+        if "bb_width" not in df.columns:
+            df["bb_width"] = (df["bb_upper"] -
+                              df["bb_lower"]) / df["bb_middle"]
+        if "bb_position" not in df.columns:
+            df["bb_position"] = (df["close"] - df["bb_lower"]) / (
+                df["bb_upper"] - df["bb_lower"])
 
         # 平均真实波幅 (ATR)
         for period in [7, 14, 21]:
-            df[f"atr_{period}"] = talib.ATR(
-                df["high"].values,
-                df["low"].values,
-                df["close"].values,
-                timeperiod=period,
-            )
+            col = f"atr_{period}"
+            if col not in df.columns:
+                df[col] = talib.ATR(
+                    df["high"].values,
+                    df["low"].values,
+                    df["close"].values,
+                    timeperiod=period,
+                )
 
         # 真实波幅 (TRANGE)
-        df["trange"] = talib.TRANGE(
-            df["high"].values, df["low"].values, df["close"].values
-        )
+        if "trange" not in df.columns:
+            df["trange"] = talib.TRANGE(df["high"].values, df["low"].values,
+                                        df["close"].values)
 
         # 平均方向指数 (ADX) - 也用于波动率
-        df["natr"] = talib.NATR(
-            df["high"].values, df["low"].values, df["close"].values, timeperiod=14
-        )
+        if "natr" not in df.columns:
+            df["natr"] = talib.NATR(df["high"].values,
+                                    df["low"].values,
+                                    df["close"].values,
+                                    timeperiod=14)
 
         # 历史波动率
         returns = df["close"].pct_change()
         for period in [10, 20, 30]:
-            df[f"volatility_{period}"] = returns.rolling(window=period).std()
+            col = f"volatility_{period}"
+            if col not in df.columns:
+                df[col] = returns.rolling(window=period).std()
 
         return df
 
@@ -205,30 +252,28 @@ class TalibFeatureEngineer:
 
         # 成交量移动平均
         for period in [5, 10, 20]:
-            df[f"volume_sma_{period}"] = talib.SMA(
-                df["volume"].values, timeperiod=period
-            )
+            col = f"volume_sma_{period}"
+            if col not in df.columns:
+                df[col] = talib.SMA(df["volume"].values, timeperiod=period)
 
         # 成交量比率
-        df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
+        if "volume_ratio" not in df.columns:
+            df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
 
         # 平衡成交量 (OBV)
         df["obv"] = talib.OBV(df["close"].values, df["volume"].values)
 
         # 成交量加权平均价格 (VWAP) - 简化版
-        df["vwap"] = (df["close"] * df["volume"]).rolling(window=20).sum() / df[
-            "volume"
-        ].rolling(window=20).sum()
+        df["vwap"] = (df["close"] * df["volume"]).rolling(
+            window=20).sum() / df["volume"].rolling(window=20).sum()
 
         # 累积/派发线 (A/D Line)
-        df["ad"] = talib.AD(
-            df["high"].values, df["low"].values, df["close"].values, df["volume"].values
-        )
+        df["ad"] = talib.AD(df["high"].values, df["low"].values,
+                            df["close"].values, df["volume"].values)
 
         # 柴金资金流量 (CMF)
-        df["cmf"] = talib.ADOSC(
-            df["high"].values, df["low"].values, df["close"].values, df["volume"].values
-        )
+        df["cmf"] = talib.ADOSC(df["high"].values, df["low"].values,
+                                df["close"].values, df["volume"].values)
 
         # 成交量价格趋势 (VPT) - 使用自定义实现，因为TA-Lib没有VPT
         def compute_vpt(close, volume):
@@ -241,56 +286,37 @@ class TalibFeatureEngineer:
 
         return df
 
-    def add_cycle_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """添加周期类指标."""
-        df = data.copy()
-
-        # 希尔伯特变换 - 主导周期
-        df["ht_dcperiod"] = talib.HT_DCPERIOD(df["close"].values)
-        df["ht_dcphase"] = talib.HT_DCPHASE(df["close"].values)
-
-        # 希尔伯特变换 - 相位
-        df["ht_phasor_inphase"], df["ht_phasor_quadrature"] = talib.HT_PHASOR(
-            df["close"].values
-        )
-
-        # 希尔伯特变换 - 正弦波
-        df["ht_sine"], df["ht_leadsine"] = talib.HT_SINE(df["close"].values)
-
-        # 希尔伯特变换 - 趋势模式
-        df["ht_trendmode"] = talib.HT_TRENDMODE(df["close"].values)
-
-        return df
-
     def add_pattern_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
         """添加形态识别指标."""
         df = data.copy()
 
         # 蜡烛图形态识别
-        df["cdl_doji"] = talib.CDLDOJI(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
-        df["cdl_hammer"] = talib.CDLHAMMER(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
-        df["cdl_hanging_man"] = talib.CDLHANGINGMAN(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
-        df["cdl_engulfing"] = talib.CDLENGULFING(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
-        df["cdl_harami"] = talib.CDLHARAMI(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
-        df["cdl_doji_star"] = talib.CDLDOJISTAR(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
-        df["cdl_hammer"] = talib.CDLHAMMER(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
+        df["cdl_doji"] = talib.CDLDOJI(df["open"].values, df["high"].values,
+                                       df["low"].values, df["close"].values)
+        df["cdl_hammer"] = talib.CDLHAMMER(df["open"].values,
+                                           df["high"].values, df["low"].values,
+                                           df["close"].values)
+        df["cdl_hanging_man"] = talib.CDLHANGINGMAN(df["open"].values,
+                                                    df["high"].values,
+                                                    df["low"].values,
+                                                    df["close"].values)
+        df["cdl_engulfing"] = talib.CDLENGULFING(df["open"].values,
+                                                 df["high"].values,
+                                                 df["low"].values,
+                                                 df["close"].values)
+        df["cdl_harami"] = talib.CDLHARAMI(df["open"].values,
+                                           df["high"].values, df["low"].values,
+                                           df["close"].values)
+        df["cdl_doji_star"] = talib.CDLDOJISTAR(df["open"].values,
+                                                df["high"].values,
+                                                df["low"].values,
+                                                df["close"].values)
+        df["cdl_hammer"] = talib.CDLHAMMER(df["open"].values,
+                                           df["high"].values, df["low"].values,
+                                           df["close"].values)
         df["cdl_shooting_star"] = talib.CDLSHOOTINGSTAR(
-            df["open"].values, df["high"].values, df["low"].values, df["close"].values
-        )
+            df["open"].values, df["high"].values, df["low"].values,
+            df["close"].values)
 
         return df
 
@@ -317,17 +343,26 @@ class TalibFeatureEngineer:
         df = data.copy()
 
         # 标准MACD
-        df["macd"], df["macd_signal"], df["macd_hist"] = talib.MACD(df["close"].values)
+        if {"macd", "macd_signal", "macd_hist"}.difference(df.columns):
+            macd, signal, hist = talib.MACD(df["close"].values)
+            if "macd" not in df.columns:
+                df["macd"] = macd
+            if "macd_signal" not in df.columns:
+                df["macd_signal"] = signal
+            if "macd_hist" not in df.columns:
+                df["macd_hist"] = hist
 
         # MACD扩展
-        df["macd_ext"], df["macd_ext_signal"], df["macd_ext_hist"] = talib.MACDEXT(
-            df["close"].values, fastperiod=12, slowperiod=26, signalperiod=9
-        )
+        df["macd_ext"], df["macd_ext_signal"], df[
+            "macd_ext_hist"] = talib.MACDEXT(df["close"].values,
+                                             fastperiod=12,
+                                             slowperiod=26,
+                                             signalperiod=9)
 
         # MACD固定
-        df["macd_fix"], df["macd_fix_signal"], df["macd_fix_hist"] = talib.MACDFIX(
-            df["close"].values, signalperiod=9
-        )
+        df["macd_fix"], df["macd_fix_signal"], df[
+            "macd_fix_hist"] = talib.MACDFIX(df["close"].values,
+                                             signalperiod=9)
 
         return df
 
@@ -341,7 +376,8 @@ class TalibFeatureEngineer:
         # 确保数据是数值类型并转换为double
         for col in ["open", "high", "low", "close", "volume"]:
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").astype(np.float64)
+                df[col] = pd.to_numeric(df[col],
+                                        errors="coerce").astype(np.float64)
 
         # 移除包含NaN的行
         df = df.dropna(subset=["open", "high", "low", "close", "volume"])
@@ -370,11 +406,6 @@ class TalibFeatureEngineer:
                 df = self.add_volume_indicators(df)
             except Exception as e:
                 print(f"Warning: Error in volume indicators: {e}")
-
-            try:
-                df = self.add_cycle_indicators(df)
-            except Exception as e:
-                print(f"Warning: Error in cycle indicators: {e}")
 
             try:
                 df = self.add_pattern_indicators(df)
@@ -416,8 +447,7 @@ class TalibFeatureEngineer:
 
         # 填充NaN值
         feature_cols = [
-            col
-            for col in df.columns
+            col for col in df.columns
             if col not in ["open", "high", "low", "close", "volume"]
         ]
         for col in feature_cols:
@@ -425,9 +455,10 @@ class TalibFeatureEngineer:
 
         return df
 
-    def normalize_features(
-        self, data: pd.DataFrame, timeframe: str, fit: bool = True
-    ) -> pd.DataFrame:
+    def normalize_features(self,
+                           data: pd.DataFrame,
+                           timeframe: str,
+                           fit: bool = True) -> pd.DataFrame:
         """
         Improved feature normalization with feature grouping and outlier handling.
 
@@ -443,8 +474,7 @@ class TalibFeatureEngineer:
 
         # Get feature columns (exclude OHLCV)
         feature_cols = [
-            col
-            for col in df.columns
+            col for col in df.columns
             if col not in ["open", "high", "low", "close", "volume"]
         ]
 
@@ -466,7 +496,8 @@ class TalibFeatureEngineer:
                 q3 = values.quantile(0.75)
                 iqr = q3 - q1
                 if iqr > 0:
-                    outliers = values[(values < q1 - 3 * iqr) | (values > q3 + 3 * iqr)]
+                    outliers = values[(values < q1 - 3 * iqr) |
+                                      (values > q3 + 3 * iqr)]
                     outlier_ratio = len(outliers) / len(values)
                     if outlier_ratio > 0.5:  # 超过50%的异常值，跳过该特征
                         print(
@@ -482,48 +513,35 @@ class TalibFeatureEngineer:
 
         # 2. 特征分组 - 根据特征类型选择不同的归一化策略
         price_features = [
-            col
-            for col in valid_features
-            if any(x in col for x in ["sma", "ema", "wma", "tema", "kama", "sar"])
+            col for col in valid_features if any(
+                x in col for x in ["sma", "ema", "wma", "tema", "kama", "sar"])
         ]
         ratio_features = [
-            col
-            for col in valid_features
+            col for col in valid_features
             if "ratio" in col or "position" in col or "normalized" in col
         ]
         volatility_features = [
-            col
-            for col in valid_features
-            if any(x in col for x in ["atr", "natr", "trange", "bb_", "volatility"])
+            col for col in valid_features
+            if any(x in col
+                   for x in ["atr", "natr", "trange", "bb_", "volatility"])
         ]
         volume_features = [
-            col
-            for col in valid_features
+            col for col in valid_features
             if any(x in col for x in ["volume", "obv", "ad", "vpt", "cmf"])
         ]
         momentum_features = [
-            col
-            for col in valid_features
-            if any(
-                x in col
-                for x in ["rsi", "stoch", "willr", "mom", "roc", "cci", "ultosc", "tsi"]
-            )
+            col for col in valid_features if any(x in col for x in [
+                "rsi", "stoch", "willr", "mom", "roc", "cci", "ultosc", "tsi"
+            ])
         ]
         index_features = [
-            col
-            for col in valid_features
+            col for col in valid_features
             if any(x in col for x in ["maxindex", "minindex", "max", "min"])
         ]
         other_features = [
-            col
-            for col in valid_features
-            if col
-            not in price_features
-            + ratio_features
-            + volatility_features
-            + volume_features
-            + momentum_features
-            + index_features
+            col for col in valid_features if col not in price_features +
+            ratio_features + volatility_features + volume_features +
+            momentum_features + index_features
         ]
 
         # 3. 分组归一化
@@ -560,7 +578,8 @@ class TalibFeatureEngineer:
             else:
                 # 使用已保存的scaler
                 if f"{timeframe}_{group_name}" not in self.group_scalers:
-                    raise ValueError(f"No scaler found for {timeframe}_{group_name}")
+                    raise ValueError(
+                        f"No scaler found for {timeframe}_{group_name}")
                 scaler = self.group_scalers[f"{timeframe}_{group_name}"]
                 X_scaled = scaler.transform(X)
 
@@ -590,9 +609,9 @@ class TalibFeatureEngineer:
 
         return df
 
-    def engineer_features(
-        self, multi_tf_data: Dict[str, pd.DataFrame], fit: bool = True
-    ) -> Dict[str, pd.DataFrame]:
+    def engineer_features(self,
+                          multi_tf_data: Dict[str, pd.DataFrame],
+                          fit: bool = True) -> Dict[str, pd.DataFrame]:
         """
         Engineer features for multi-timeframe data with normalization.
 
@@ -615,10 +634,11 @@ class TalibFeatureEngineer:
             )
 
             # Normalize features
-            df_normalized = self.normalize_features(
-                df_with_indicators, timeframe, fit=fit
-            )
-            print(f"Normalized features for {timeframe}: {df_normalized.shape}")
+            df_normalized = self.normalize_features(df_with_indicators,
+                                                    timeframe,
+                                                    fit=fit)
+            print(
+                f"Normalized features for {timeframe}: {df_normalized.shape}")
 
             engineered_data[timeframe] = df_normalized
 
@@ -674,8 +694,7 @@ class TalibFeatureEngineer:
         """Get the number of features after adding indicators."""
         df_with_indicators = self.add_technical_indicators(data)
         feature_cols = [
-            col
-            for col in df_with_indicators.columns
+            col for col in df_with_indicators.columns
             if col not in ["open", "high", "low", "close", "volume"]
         ]
         return len(feature_cols)

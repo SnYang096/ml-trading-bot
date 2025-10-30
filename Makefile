@@ -1,4 +1,32 @@
 # ---------------------------------------------------------------------------
+# Feature diagnostics
+# ---------------------------------------------------------------------------
+
+FEATURE_REPORT_INPUT ?= data/parquet_data/BTC-USD_2024-10.parquet
+FEATURE_REPORT_OUTPUT ?= reports/feature_report.html
+FEATURE_REPORT_START ?=
+FEATURE_REPORT_END ?=
+FEATURE_REPORT_HORIZON ?= 1
+FEATURE_REPORT_ARGS ?=
+# Example:
+#   make feature-report FEATURE_REPORT_INPUT=data/parquet_data/ETH-USD_2024-10.parquet \
+#                       FEATURE_REPORT_OUTPUT=reports/eth_report.html \
+#                       FEATURE_REPORT_START=2024-10-01 FEATURE_REPORT_END=2024-12-31 \
+#                       FEATURE_REPORT_HORIZON=3 \
+#                       FEATURE_REPORT_ARGS="--no-enhanced --no-dl"
+
+feature-report:
+	@echo "📊 Generating feature IC report (Docker) ..."
+	@mkdir -p $(dir $(FEATURE_REPORT_OUTPUT))
+	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/feature_quality_report.py \
+		--input $(FEATURE_REPORT_INPUT) \
+		--output $(FEATURE_REPORT_OUTPUT) \
+		--future-horizon $(FEATURE_REPORT_HORIZON) \
+		$(if $(FEATURE_REPORT_START),--start-date $(FEATURE_REPORT_START)) \
+		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
+		$(FEATURE_REPORT_ARGS)
+
+# ---------------------------------------------------------------------------
 # ML Trading Project
 # Streamlined commands for production workflows
 # ---------------------------------------------------------------------------
@@ -47,6 +75,17 @@ DOCKER_RUN := docker run --rm -it \
 	--shm-size=8gb \
 	$(DOCKER_IMAGE)
 
+DOCKER_RUN_NO_TTY := docker run --rm \
+	--runtime=nvidia \
+	-e NVIDIA_VISIBLE_DEVICES=all \
+	-e CUDA_VISIBLE_DEVICES=0 \
+	-e PYTHONPATH=/workspace/src \
+	-e PYTHONUNBUFFERED=1 \
+	-v $(PWD):/workspace \
+	-w /workspace \
+	--shm-size=8gb \
+	$(DOCKER_IMAGE)
+
 .PHONY: help clean format lint dev-install docker-build docker-install train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real
 
 help:
@@ -62,6 +101,7 @@ help:
 	@echo "  make docker-install       # Install project inside Docker container"
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
+	@echo "  make feature-report       # Generate feature IC/IR HTML report"
 	@echo "  make train               # Train production LightGBM pipeline"
 	@echo "  make rolling-monthly      # Monthly rolling retraining"
 	@echo "  make rolling-quarterly    # Quarterly rolling retraining"

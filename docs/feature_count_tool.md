@@ -160,9 +160,9 @@ features = engineer.engineer_features(multi_tf_data)
 
 ### 标准训练 → 改进版 (25个特征)
 ```python
-from ml_trading.data_tools.feature_engineering_improved import ImprovedFeatureEngineer
+from ml_trading.data_tools.feature_engineering import FeatureEngineer
 
-engineer = ImprovedFeatureEngineer(scaler_type='standard')
+engineer = FeatureEngineer()
 features = engineer.engineer_features(multi_tf_data)
 ```
 - ✅ 快速计算

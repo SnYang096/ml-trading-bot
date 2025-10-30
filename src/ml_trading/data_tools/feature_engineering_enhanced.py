@@ -9,10 +9,17 @@
 import pandas as pd
 import numpy as np
 import pywt
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 from scipy import signal
 from scipy.signal import hilbert
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
+
+from .base_indicators import add_common_derived_features
+
+try:
+    import talib
+except ImportError:  # pragma: no cover - optional dependency
+    talib = None
 
 
 class EnhancedFeatureEngineer:
@@ -35,12 +42,23 @@ class EnhancedFeatureEngineer:
             hurst_window: Window size for Hurst exponent calculation
         """
         self.scaler_type = scaler_type
-        self.scalers: Dict[str, StandardScaler] = {}
+        self.scalers: Dict[str, Any] = {}
         self.wavelet = wavelet
         self.wpt_level = wpt_level
         self.hurst_window = hurst_window
 
-    def calculate_hurst_exponent(self, ts: np.ndarray, min_window: int = 10) -> float:
+        if scaler_type == "standard":
+            self.scaler_class = StandardScaler
+        elif scaler_type == "minmax":
+            self.scaler_class = MinMaxScaler
+        elif scaler_type == "robust":
+            self.scaler_class = RobustScaler
+        else:
+            raise ValueError(f"Unknown scaler type: {scaler_type}")
+
+    def calculate_hurst_exponent(self,
+                                 ts: np.ndarray,
+                                 min_window: int = 10) -> float:
         """
         Calculate Hurst exponent using R/S analysis.
 
@@ -73,7 +91,7 @@ class EnhancedFeatureEngineer:
 
                 rs_chunk = []
                 for i in range(n_chunks):
-                    chunk = ts[i * lag : (i + 1) * lag]
+                    chunk = ts[i * lag:(i + 1) * lag]
                     if len(chunk) < lag:
                         continue
 
@@ -120,7 +138,8 @@ class EnhancedFeatureEngineer:
         except Exception as e:
             return 0.5
 
-    def calculate_wavelet_packet_features(self, data: np.ndarray) -> Dict[str, float]:
+    def calculate_wavelet_packet_features(
+            self, data: np.ndarray) -> Dict[str, float]:
         """
         Calculate wavelet packet transform features.
 
@@ -178,8 +197,7 @@ class EnhancedFeatureEngineer:
                     for i, node in enumerate(nodes):
                         if i < len(energies):
                             features[f"wpt_{node.path}_energy_ratio"] = (
-                                energies[i] / total_energy
-                            )
+                                energies[i] / total_energy)
 
                     # Shannon entropy of energy distribution
                     probs = np.array(energies) / total_energy
@@ -191,8 +209,7 @@ class EnhancedFeatureEngineer:
                     sorted_energies = np.sort(energies)[::-1]
                     cumsum_energies = np.cumsum(sorted_energies) / total_energy
                     features["wpt_energy_concentration"] = (
-                        cumsum_energies[0] if len(cumsum_energies) > 0 else 0
-                    )
+                        cumsum_energies[0] if len(cumsum_energies) > 0 else 0)
 
                     # High frequency vs low frequency energy ratio
                     n_nodes = len(energies)
@@ -201,9 +218,8 @@ class EnhancedFeatureEngineer:
                     high_freq_energy = np.sum(energies[mid:])
 
                     if low_freq_energy > 0:
-                        features["wpt_high_low_ratio"] = (
-                            high_freq_energy / low_freq_energy
-                        )
+                        features["wpt_high_low_ratio"] = (high_freq_energy /
+                                                          low_freq_energy)
 
                     # Dominant frequency band
                     features["wpt_dominant_band"] = np.argmax(energies)
@@ -213,9 +229,9 @@ class EnhancedFeatureEngineer:
 
         return features
 
-    def add_hurst_features(
-        self, data: pd.DataFrame, window: int = None
-    ) -> pd.DataFrame:
+    def add_hurst_features(self,
+                           data: pd.DataFrame,
+                           window: int = None) -> pd.DataFrame:
         """
         Add Hurst exponent features for ALL signal sources.
         对 close, open, volume, cvd, taker_buy_ratio 都计算Hurst指数
@@ -248,7 +264,7 @@ class EnhancedFeatureEngineer:
                 if i < window:
                     hurst_values.append(0.5)
                 else:
-                    window_data = source_data[i - window : i]
+                    window_data = source_data[i - window:i]
                     h = self.calculate_hurst_exponent(window_data)
                     hurst_values.append(h)
 
@@ -256,23 +272,22 @@ class EnhancedFeatureEngineer:
             df[f"{source_name}_hurst"] = hurst_values
 
             # Hurst衍生特征
-            df[f"{source_name}_hurst_deviation"] = df[f"{source_name}_hurst"] - 0.5
+            df[f"{source_name}_hurst_deviation"] = df[
+                f"{source_name}_hurst"] - 0.5
             df[f"{source_name}_hurst_trend_signal"] = (
-                df[f"{source_name}_hurst"] > 0.55
-            ).astype(int)
+                df[f"{source_name}_hurst"] > 0.55).astype(int)
             df[f"{source_name}_hurst_mean_revert_signal"] = (
-                df[f"{source_name}_hurst"] < 0.45
-            ).astype(int)
-            df[f"{source_name}_hurst_change"] = df[f"{source_name}_hurst"].diff()
+                df[f"{source_name}_hurst"] < 0.45).astype(int)
+            df[f"{source_name}_hurst_change"] = df[
+                f"{source_name}_hurst"].diff()
             df[f"{source_name}_hurst_acceleration"] = df[
-                f"{source_name}_hurst_change"
-            ].diff()
+                f"{source_name}_hurst_change"].diff()
 
         return df
 
-    def add_wavelet_packet_features(
-        self, data: pd.DataFrame, window: int = 100
-    ) -> pd.DataFrame:
+    def add_wavelet_packet_features(self,
+                                    data: pd.DataFrame,
+                                    window: int = 100) -> pd.DataFrame:
         """
         Add wavelet packet transform features for ALL signal sources.
         对 close, open, volume, cvd, taker_buy_ratio 都做WPT分解
@@ -302,12 +317,14 @@ class EnhancedFeatureEngineer:
                 if i < window:
                     wpt_features_list.append({})
                 else:
-                    window_data = source_data[i - window : i]
-                    wpt_features = self.calculate_wavelet_packet_features(window_data)
+                    window_data = source_data[i - window:i]
+                    wpt_features = self.calculate_wavelet_packet_features(
+                        window_data)
 
                     # 添加前缀以区分不同信号源
                     prefixed_features = {
-                        f"{source_name}_{k}": v for k, v in wpt_features.items()
+                        f"{source_name}_{k}": v
+                        for k, v in wpt_features.items()
                     }
                     wpt_features_list.append(prefixed_features)
 
@@ -344,9 +361,31 @@ class EnhancedFeatureEngineer:
 
         # 对每个信号源计算Hilbert特征
         for source_name, source_data in signal_sources.items():
+            source_series = pd.Series(source_data, index=df.index, dtype=float)
+
+            # 首选 TA-Lib（若可用）
+            if talib is not None:
+                try:
+                    inphase, quadrature = talib.HT_PHASOR(source_series.values)
+                    amplitude = np.sqrt(
+                        np.square(inphase) + np.square(quadrature))
+                    phase = np.arctan2(quadrature, inphase)
+                    frequency = np.diff(np.unwrap(phase)) / (2.0 * np.pi)
+                    frequency = np.concatenate([[frequency[0]], frequency])
+
+                    df[f"{source_name}_hilbert_amplitude"] = amplitude
+                    df[f"{source_name}_hilbert_phase"] = phase
+                    df[f"{source_name}_hilbert_frequency"] = frequency
+                    continue
+                except Exception as err:
+                    print(
+                        f"      Warning: TA-Lib Hilbert for {source_name} failed: {err}"
+                    )
+
+            # Fallback 使用 SciPy Hilbert
             try:
-                # Remove NaN
-                valid_data = source_data[np.isfinite(source_data)]
+                valid_data = source_series.to_numpy()
+                valid_data = valid_data[np.isfinite(valid_data)]
 
                 if len(valid_data) < 10:
                     df[f"{source_name}_hilbert_amplitude"] = 0
@@ -354,32 +393,26 @@ class EnhancedFeatureEngineer:
                     df[f"{source_name}_hilbert_frequency"] = 0
                     continue
 
-                # Compute analytic signal
                 analytic_signal = hilbert(valid_data)
-
-                # Extract amplitude and phase
                 amplitude = np.abs(analytic_signal)
                 phase = np.angle(analytic_signal)
-
-                # Compute instantaneous frequency
                 frequency = np.diff(np.unwrap(phase)) / (2.0 * np.pi)
                 frequency = np.concatenate([[frequency[0]], frequency])
 
                 # Pad to original length if needed
-                if len(amplitude) < len(source_data):
+                if len(amplitude) < len(source_series):
                     amplitude = np.pad(
-                        amplitude, (0, len(source_data) - len(amplitude)), mode="edge"
-                    )
-                    phase = np.pad(
-                        phase, (0, len(source_data) - len(phase)), mode="edge"
-                    )
+                        amplitude, (0, len(source_series) - len(amplitude)),
+                        mode="edge")
+                    phase = np.pad(phase, (0, len(source_series) - len(phase)),
+                                   mode="edge")
                     frequency = np.pad(
-                        frequency, (0, len(source_data) - len(frequency)), mode="edge"
-                    )
+                        frequency, (0, len(source_series) - len(frequency)),
+                        mode="edge")
 
-                df[f"{source_name}_hilbert_amplitude"] = amplitude[: len(df)]
-                df[f"{source_name}_hilbert_phase"] = phase[: len(df)]
-                df[f"{source_name}_hilbert_frequency"] = frequency[: len(df)]
+                df[f"{source_name}_hilbert_amplitude"] = amplitude[:len(df)]
+                df[f"{source_name}_hilbert_phase"] = phase[:len(df)]
+                df[f"{source_name}_hilbert_frequency"] = frequency[:len(df)]
 
             except Exception as e:
                 print(f"      Warning: Hilbert for {source_name} failed: {e}")
@@ -389,9 +422,9 @@ class EnhancedFeatureEngineer:
 
         return df
 
-    def add_spectral_features(
-        self, data: pd.DataFrame, window: int = 100
-    ) -> pd.DataFrame:
+    def add_spectral_features(self,
+                              data: pd.DataFrame,
+                              window: int = 100) -> pd.DataFrame:
         """
         Add spectral analysis features for ALL signal sources (FIXED VERSION).
         使用滚动窗口计算spectral特征，生成时间序列
@@ -416,9 +449,7 @@ class EnhancedFeatureEngineer:
         if "taker_buy_ratio" in df.columns:
             signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
 
-        print(
-            f"      光谱分析信号源: {list(signal_sources.keys())} (滚动窗口={window})"
-        )
+        print(f"      光谱分析信号源: {list(signal_sources.keys())} (滚动窗口={window})")
 
         # 对每个信号源计算滚动spectral特征
         for source_name, source_data in signal_sources.items():
@@ -436,7 +467,7 @@ class EnhancedFeatureEngineer:
 
                 try:
                     # 获取窗口数据
-                    window_data = source_data[i - window : i]
+                    window_data = source_data[i - window:i]
 
                     # 移除NaN
                     valid_data = window_data[np.isfinite(window_data)]
@@ -447,7 +478,8 @@ class EnhancedFeatureEngineer:
                     # 使用periodogram计算功率谱密度（更稳定）
                     if source_name in ["close", "open"]:
                         # 对价格信号，先转换为收益率
-                        returns = np.diff(valid_data) / (valid_data[:-1] + 1e-10)
+                        returns = np.diff(valid_data) / (valid_data[:-1] +
+                                                         1e-10)
                         if len(returns) < 5:
                             continue
                         freqs, psd = periodogram(returns, fs=1.0)
@@ -467,8 +499,7 @@ class EnhancedFeatureEngineer:
 
                     # 2. Spectral Bandwidth（谱带宽）
                     spectral_bandwidth[i] = np.sqrt(
-                        np.sum(((freqs - spectral_centroid[i]) ** 2) * psd_norm)
-                    )
+                        np.sum(((freqs - spectral_centroid[i])**2) * psd_norm))
 
                     # 3. Spectral Rolloff（谱滚降，95%能量点）
                     cumsum_psd = np.cumsum(psd_norm)
@@ -487,7 +518,8 @@ class EnhancedFeatureEngineer:
 
         return df
 
-    def add_advanced_derived_features(self, data: pd.DataFrame) -> pd.DataFrame:
+    def add_advanced_derived_features(self,
+                                      data: pd.DataFrame) -> pd.DataFrame:
         """
         Add advanced derived features from baseline model.
         添加基线模型中的高级衍生特征
@@ -504,76 +536,68 @@ class EnhancedFeatureEngineer:
 
             # 1. BB Width相关
             df["bb_width"] = (df["bb_upper"] - df["bb_lower"]).abs()
-            df["bb_width_normalized"] = df["bb_width"] / df["atr"].replace(0, np.nan)
-            df["bb_width_normalized"] = (
-                df["bb_width_normalized"].replace([np.inf, -np.inf], np.nan).fillna(0)
-            )
+            df["bb_width_normalized"] = df["bb_width"] / df["atr"].replace(
+                0, np.nan)
+            df["bb_width_normalized"] = (df["bb_width_normalized"].replace(
+                [np.inf, -np.inf], np.nan).fillna(0))
 
             # 2. Range ratio
             df["hl"] = df["high"] - df["low"]
-            df["range_ratio_5bar"] = df["hl"].rolling(5).mean() / df["hl"].rolling(
-                20
-            ).mean().replace(0, np.nan)
+            df["range_ratio_5bar"] = df["hl"].rolling(
+                5).mean() / df["hl"].rolling(20).mean().replace(0, np.nan)
             df["range_ratio_5bar"] = df["range_ratio_5bar"].fillna(1)
 
             # 3. Compression duration
             perc = df["bb_width"].rolling(20, min_periods=5).quantile(0.2)
             low_vol = (df["bb_width"] <= perc).astype(int)
-            df["compression_duration"] = (
-                low_vol.groupby((low_vol != low_vol.shift()).cumsum()).cumsum()
-            ) * low_vol
+            df["compression_duration"] = (low_vol.groupby(
+                (low_vol != low_vol.shift()).cumsum()).cumsum()) * low_vol
 
             # 4. Compression energy
-            df["compression_energy"] = (1.0 / df["bb_width"].replace(0, np.nan)) * df[
-                "volume_ratio"
-            ]
             df["compression_energy"] = (
-                df["compression_energy"].replace([np.inf, -np.inf], np.nan).fillna(0)
-            )
+                1.0 / df["bb_width"].replace(0, np.nan)) * df["volume_ratio"]
+            df["compression_energy"] = (df["compression_energy"].replace(
+                [np.inf, -np.inf], np.nan).fillna(0))
 
             # 5. ATR percentile
             def pct_rank(x):
                 r = pd.Series(x).rank(pct=True).iloc[-1] if len(x) > 0 else 0.5
                 return r
 
-            df["atr_percentile"] = (
-                df["atr"].rolling(100, min_periods=20).apply(pct_rank, raw=False)
-            )
+            df["atr_percentile"] = (df["atr"].rolling(
+                100, min_periods=20).apply(pct_rank, raw=False))
 
             # 6. Volatility reversal score
             atr_mean = df["atr"].rolling(50).mean()
             atr_std = df["atr"].rolling(50).std()
-            df["volatility_reversal_score"] = (df["atr"] - atr_mean) / atr_std.replace(
-                0, np.nan
-            )
-            df["volatility_reversal_score"] = df["volatility_reversal_score"].fillna(0)
+            df["volatility_reversal_score"] = (
+                df["atr"] - atr_mean) / atr_std.replace(0, np.nan)
+            df["volatility_reversal_score"] = df[
+                "volatility_reversal_score"].fillna(0)
 
             # 7. Volatility squeeze flag
-            df["volatility_squeeze_flag"] = (df["bb_width"] < (2.0 * df["atr"])).astype(
-                int
-            )
+            df["volatility_squeeze_flag"] = (df["bb_width"]
+                                             < (2.0 * df["atr"])).astype(int)
 
             # 8. Price range symmetry
             df["price_range_symmetry"] = (df["high"] - df["close"]) / (
-                df["close"] - df["low"]
-            ).replace(0, np.nan)
-            df["price_range_symmetry"] = (
-                df["price_range_symmetry"].replace([np.inf, -np.inf], np.nan).fillna(1)
-            )
+                df["close"] - df["low"]).replace(0, np.nan)
+            df["price_range_symmetry"] = (df["price_range_symmetry"].replace(
+                [np.inf, -np.inf], np.nan).fillna(1))
 
             # 9. Volume anomaly
             df["volume_anomaly"] = (
-                df["volume"] / df["volume"].ewm(span=20, min_periods=10).mean()
-            )
+                df["volume"] /
+                df["volume"].ewm(span=20, min_periods=10).mean())
 
             # 10. Up/Down volume ratio
             up = (df["close"] > df["close"].shift()).astype(int)
             df["up_vol"] = (df["volume"] * up).rolling(20).sum()
             df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
-            df["upvol_downvol_ratio"] = df["up_vol"] / df["down_vol"].replace(0, np.nan)
-            df["upvol_downvol_ratio"] = (
-                df["upvol_downvol_ratio"].replace([np.inf, -np.inf], np.nan).fillna(1)
-            )
+            df["upvol_downvol_ratio"] = df["up_vol"] / df["down_vol"].replace(
+                0, np.nan)
+            df["upvol_downvol_ratio"] = (df["upvol_downvol_ratio"].replace(
+                [np.inf, -np.inf], np.nan).fillna(1))
 
             # 11. ROC and acceleration
             df["roc_5"] = df["close"].pct_change(5)
@@ -581,18 +605,15 @@ class EnhancedFeatureEngineer:
             df["acceleration_3"] = roc_3 - roc_3.shift(1)
 
             # 12. Price vs EMA distance
-            df["price_vs_ema_distance"] = (df["close"] - df["sma_20"]) / df[
-                "atr"
-            ].replace(0, np.nan)
             df["price_vs_ema_distance"] = (
-                df["price_vs_ema_distance"].replace([np.inf, -np.inf], np.nan).fillna(0)
-            )
+                df["close"] - df["sma_20"]) / df["atr"].replace(0, np.nan)
+            df["price_vs_ema_distance"] = (df["price_vs_ema_distance"].replace(
+                [np.inf, -np.inf], np.nan).fillna(0))
 
             # 13. Momentum persistence
             sig = np.sign(df["close"].diff())
             df["momentum_persistence"] = sig.rolling(10).apply(
-                lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True
-            )
+                lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
 
             # 14. Slope consistency
             ema10 = df["close"].ewm(span=10).mean()
@@ -601,11 +622,9 @@ class EnhancedFeatureEngineer:
             slope10 = np.sign(ema10.diff())
             slope20 = np.sign(ema20.diff())
             slope50 = np.sign(ema50.diff())
-            df["slope_consistency_score"] = (
-                (slope10 == slope20).astype(int)
-                + (slope20 == slope50).astype(int)
-                + (slope10 == slope50).astype(int)
-            )
+            df["slope_consistency_score"] = ((slope10 == slope20).astype(int) +
+                                             (slope20 == slope50).astype(int) +
+                                             (slope10 == slope50).astype(int))
 
             # 15. Temporal features (时间特征)
             try:
@@ -614,8 +633,10 @@ class EnhancedFeatureEngineer:
                 if hasattr(idx, "hour") and hasattr(idx, "dayofweek"):
                     df["hour_of_day_sin"] = np.sin(2 * np.pi * idx.hour / 24)
                     df["hour_of_day_cos"] = np.cos(2 * np.pi * idx.hour / 24)
-                    df["day_of_week_sin"] = np.sin(2 * np.pi * idx.dayofweek / 7)
-                    df["day_of_week_cos"] = np.cos(2 * np.pi * idx.dayofweek / 7)
+                    df["day_of_week_sin"] = np.sin(2 * np.pi * idx.dayofweek /
+                                                   7)
+                    df["day_of_week_cos"] = np.cos(2 * np.pi * idx.dayofweek /
+                                                   7)
                 else:
                     # 如果不是datetime索引，创建虚拟时间特征
                     df["hour_of_day_sin"] = 0
@@ -631,24 +652,22 @@ class EnhancedFeatureEngineer:
                 df["day_of_week_cos"] = 1
 
             # 16. Structure tension
-            dist_high = (df["high"].rolling(50).max() - df["close"]).abs() / df["close"]
-            dist_low = (df["close"] - df["low"].rolling(50).min()).abs() / df["close"]
-            df["structure_tension"] = (dist_high + dist_low) / df["bb_width"].replace(
-                0, np.nan
-            )
+            dist_high = (df["high"].rolling(50).max() -
+                         df["close"]).abs() / df["close"]
+            dist_low = (df["close"] -
+                        df["low"].rolling(50).min()).abs() / df["close"]
             df["structure_tension"] = (
-                df["structure_tension"].replace([np.inf, -np.inf], np.nan).fillna(0)
-            )
+                dist_high + dist_low) / df["bb_width"].replace(0, np.nan)
+            df["structure_tension"] = (df["structure_tension"].replace(
+                [np.inf, -np.inf], np.nan).fillna(0))
 
             # 17. Trend volatility alignment
-            df["trend_volatility_alignment"] = np.sign(df["roc_5"]).fillna(0) * df[
-                "atr_percentile"
-            ].fillna(0)
+            df["trend_volatility_alignment"] = np.sign(
+                df["roc_5"]).fillna(0) * df["atr_percentile"].fillna(0)
 
             # 18. Compression to breakout probability
-            df["compression_to_breakout_prob"] = df["compression_duration"].fillna(
-                0
-            ) * df["roc_5"].fillna(0)
+            df["compression_to_breakout_prob"] = df[
+                "compression_duration"].fillna(0) * df["roc_5"].fillna(0)
 
         except Exception as e:
             print(f"      Warning: 高级衍生特征计算失败: {e}")
@@ -674,54 +693,53 @@ class EnhancedFeatureEngineer:
             # 使用buy_qty和sell_qty如果存在，否则从taker_buy_ratio推导
             if "buy_qty" in df.columns and "sell_qty" in df.columns:
                 total_vol = df["buy_qty"] + df["sell_qty"]
-                df["order_flow_imbalance"] = (
-                    df["buy_qty"] - df["sell_qty"]
-                ) / total_vol.replace(0, np.nan)
-                df["order_flow_imbalance"] = df["order_flow_imbalance"].fillna(0)
+                df["order_flow_imbalance"] = (df["buy_qty"] - df["sell_qty"]
+                                              ) / total_vol.replace(0, np.nan)
+                df["order_flow_imbalance"] = df["order_flow_imbalance"].fillna(
+                    0)
 
                 # 改用滚动窗口OFI（避免全局cumsum）
-                df["ofi_short"] = (
-                    df["order_flow_imbalance"].rolling(20, min_periods=1).sum()
-                )
-                df["ofi_medium"] = (
-                    df["order_flow_imbalance"].rolling(60, min_periods=1).sum()
-                )
-                df["ofi_long"] = (
-                    df["order_flow_imbalance"].rolling(288, min_periods=1).sum()
-                )
+                df["ofi_short"] = (df["order_flow_imbalance"].rolling(
+                    20, min_periods=1).sum())
+                df["ofi_medium"] = (df["order_flow_imbalance"].rolling(
+                    60, min_periods=1).sum())
+                df["ofi_long"] = (df["order_flow_imbalance"].rolling(
+                    288, min_periods=1).sum())
 
                 # 向后兼容：保留cumulative_ofi
                 df["cumulative_ofi"] = df["order_flow_imbalance"].cumsum()
 
                 # Order flow momentum (OFI变化率)
-                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(5).mean()
-                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(20).mean()
+                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(
+                    5).mean()
+                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(
+                    20).mean()
 
                 # Order flow volatility
-                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(20).std()
+                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(
+                    20).std()
             else:
                 # 从taker_buy_ratio推导
-                df["order_flow_imbalance"] = (
-                    df["taker_buy_ratio"] - 0.5
-                ) * 2  # 映射到[-1, 1]
+                df["order_flow_imbalance"] = (df["taker_buy_ratio"] -
+                                              0.5) * 2  # 映射到[-1, 1]
 
                 # 改用滚动窗口OFI
-                df["ofi_short"] = (
-                    df["order_flow_imbalance"].rolling(20, min_periods=1).sum()
-                )
-                df["ofi_medium"] = (
-                    df["order_flow_imbalance"].rolling(60, min_periods=1).sum()
-                )
-                df["ofi_long"] = (
-                    df["order_flow_imbalance"].rolling(288, min_periods=1).sum()
-                )
+                df["ofi_short"] = (df["order_flow_imbalance"].rolling(
+                    20, min_periods=1).sum())
+                df["ofi_medium"] = (df["order_flow_imbalance"].rolling(
+                    60, min_periods=1).sum())
+                df["ofi_long"] = (df["order_flow_imbalance"].rolling(
+                    288, min_periods=1).sum())
 
                 # 向后兼容
                 df["cumulative_ofi"] = df["order_flow_imbalance"].cumsum()
 
-                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(5).mean()
-                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(20).mean()
-                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(20).std()
+                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(
+                    5).mean()
+                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(
+                    20).mean()
+                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(
+                    20).std()
 
             # 2. Delta Divergence (CVD vs Price背离)
             # 价格动量
@@ -739,12 +757,12 @@ class EnhancedFeatureEngineer:
                 cvd_change_20 = df["cvd"].diff(20)
 
             # CVD动量标准化
-            cvd_change_5_norm = (
-                cvd_change_5 - cvd_change_5.rolling(50).mean()
-            ) / cvd_change_5.rolling(50).std()
-            cvd_change_20_norm = (
-                cvd_change_20 - cvd_change_20.rolling(50).mean()
-            ) / cvd_change_20.rolling(50).std()
+            cvd_change_5_norm = (cvd_change_5 -
+                                 cvd_change_5.rolling(50).mean()
+                                 ) / cvd_change_5.rolling(50).std()
+            cvd_change_20_norm = (cvd_change_20 -
+                                  cvd_change_20.rolling(50).mean()
+                                  ) / cvd_change_20.rolling(50).std()
 
             # Delta divergence = price momentum - CVD momentum
             df["delta_divergence_5"] = price_momentum_5 - cvd_change_5_norm
@@ -754,11 +772,8 @@ class EnhancedFeatureEngineer:
             df["divergence_strength"] = df["delta_divergence_20"].abs()
 
             # 3. 多时间框架CVD特征（如果有新的滚动窗口CVD）
-            if (
-                "cvd_short" in df.columns
-                and "cvd_medium" in df.columns
-                and "cvd_long" in df.columns
-            ):
+            if ("cvd_short" in df.columns and "cvd_medium" in df.columns
+                    and "cvd_long" in df.columns):
                 # 短期CVD趋势
                 df["cvd_short_trend"] = df["cvd_short"].diff(5)
                 df["cvd_short_momentum"] = df["cvd_short_trend"].diff()
@@ -772,11 +787,9 @@ class EnhancedFeatureEngineer:
 
                 # CVD跨周期关系
                 df["cvd_short_medium_ratio"] = df["cvd_short"] / (
-                    df["cvd_medium"].abs() + 1e-10
-                )
+                    df["cvd_medium"].abs() + 1e-10)
                 df["cvd_medium_long_ratio"] = df["cvd_medium"] / (
-                    df["cvd_long"].abs() + 1e-10
-                )
+                    df["cvd_long"].abs() + 1e-10)
 
                 # CVD趋势一致性（短中长期同向）
                 cvd_short_sign = np.sign(df["cvd_short"])
@@ -784,28 +797,26 @@ class EnhancedFeatureEngineer:
                 cvd_long_sign = np.sign(df["cvd_long"])
                 df["cvd_trend_alignment"] = (
                     (cvd_short_sign == cvd_medium_sign)
-                    & (cvd_medium_sign == cvd_long_sign)
-                ).astype(int)
+                    & (cvd_medium_sign == cvd_long_sign)).astype(int)
 
             # 4. CVD归一化特征（如果存在）
             if "cvd_normalized" in df.columns:
-                df["cvd_norm_momentum"] = df["cvd_normalized"].rolling(5).mean()
-                df["cvd_norm_extreme"] = (df["cvd_normalized"].abs() > 0.6).astype(int)
+                df["cvd_norm_momentum"] = df["cvd_normalized"].rolling(
+                    5).mean()
+                df["cvd_norm_extreme"] = (df["cvd_normalized"].abs()
+                                          > 0.6).astype(int)
 
             # 5. Taker Buy Ratio动量和极值
             df["tbr_momentum_5"] = df["taker_buy_ratio"].diff(5)
             df["tbr_momentum_20"] = df["taker_buy_ratio"].diff(20)
 
             # TBR极值（买方/卖方主导）
-            df["tbr_extreme_buy"] = (df["taker_buy_ratio"] > 0.7).astype(
-                int
-            )  # 买方主导
-            df["tbr_extreme_sell"] = (df["taker_buy_ratio"] < 0.3).astype(
-                int
-            )  # 卖方主导
-            df["tbr_neutral"] = (
-                (df["taker_buy_ratio"] >= 0.45) & (df["taker_buy_ratio"] <= 0.55)
-            ).astype(int)
+            df["tbr_extreme_buy"] = (df["taker_buy_ratio"]
+                                     > 0.7).astype(int)  # 买方主导
+            df["tbr_extreme_sell"] = (df["taker_buy_ratio"]
+                                      < 0.3).astype(int)  # 卖方主导
+            df["tbr_neutral"] = ((df["taker_buy_ratio"] >= 0.45) &
+                                 (df["taker_buy_ratio"] <= 0.55)).astype(int)
 
             # 6. CVD Slope (CVD变化趋势) - 向后兼容
             if "cvd_change_1" in df.columns:
@@ -827,9 +838,9 @@ class EnhancedFeatureEngineer:
             volume_std_20 = df["volume"].rolling(20).std()
 
             # 流动性枯竭信号：成交量突然低于均值-2std
-            df["liquidity_drain"] = (
-                df["volume"] < (volume_ma_20 - 2 * volume_std_20)
-            ).astype(int)
+            df["liquidity_drain"] = (df["volume"]
+                                     < (volume_ma_20 -
+                                        2 * volume_std_20)).astype(int)
 
             # 流动性比率
             df["liquidity_ratio"] = df["volume"] / volume_ma_20
@@ -841,15 +852,14 @@ class EnhancedFeatureEngineer:
                 sell_pressure_20 = df["sell_qty"].rolling(20).sum()
 
                 df["buy_sell_pressure_ratio"] = (
-                    buy_pressure_20 / sell_pressure_20.replace(0, np.nan)
-                )
-                df["buy_sell_pressure_ratio"] = df["buy_sell_pressure_ratio"].fillna(1)
+                    buy_pressure_20 / sell_pressure_20.replace(0, np.nan))
+                df["buy_sell_pressure_ratio"] = df[
+                    "buy_sell_pressure_ratio"].fillna(1)
 
                 # 压力差
                 df["pressure_diff"] = buy_pressure_20 - sell_pressure_20
                 df["pressure_diff_norm"] = df["pressure_diff"] / (
-                    buy_pressure_20 + sell_pressure_20
-                ).replace(0, np.nan)
+                    buy_pressure_20 + sell_pressure_20).replace(0, np.nan)
                 df["pressure_diff_norm"] = df["pressure_diff_norm"].fillna(0)
 
             # 7. Volume-Price Divergence（量价背离）
@@ -857,12 +867,12 @@ class EnhancedFeatureEngineer:
             volume_change_20 = df["volume"].pct_change(20)
 
             # 标准化
-            price_change_norm = (
-                price_change_20 - price_change_20.rolling(50).mean()
-            ) / price_change_20.rolling(50).std()
-            volume_change_norm = (
-                volume_change_20 - volume_change_20.rolling(50).mean()
-            ) / volume_change_20.rolling(50).std()
+            price_change_norm = (price_change_20 -
+                                 price_change_20.rolling(50).mean()
+                                 ) / price_change_20.rolling(50).std()
+            volume_change_norm = (volume_change_20 -
+                                  volume_change_20.rolling(50).mean()
+                                  ) / volume_change_20.rolling(50).std()
 
             # 量价背离 = 价格上涨但成交量下降（或反之）
             df["volume_price_divergence"] = price_change_norm - volume_change_norm
@@ -873,83 +883,12 @@ class EnhancedFeatureEngineer:
         return df
 
     def add_basic_features(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Add basic technical indicators."""
-        df = data.copy()
+        """Ensure baseline indicators and shared derived features are present."""
+        return add_common_derived_features(data)
 
-        # Price-based features
-        df["returns"] = df["close"].pct_change()
-        df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
-        df["price_change"] = df["close"] - df["close"].shift(1)
-
-        # Moving averages
-        for period in [5, 10, 20, 50]:
-            df[f"sma_{period}"] = df["close"].rolling(window=period).mean()
-            df[f"ema_{period}"] = df["close"].ewm(span=period).mean()
-
-        # Volatility
-        df["volatility"] = df["returns"].rolling(window=20).std()
-        df["atr"] = self.calculate_atr(df)
-        df["atr_normalized"] = df["atr"] / df["close"]
-
-        # Momentum
-        for period in [5, 10, 20]:
-            df[f"momentum_{period}"] = df["close"] - df["close"].shift(period)
-            df[f"roc_{period}"] = (df["close"] / df["close"].shift(period) - 1) * 100
-
-        # RSI
-        df["rsi_14"] = self.calculate_rsi(df["close"], 14)
-
-        # Bollinger Bands
-        sma_20 = df["close"].rolling(window=20).mean()
-        std_20 = df["close"].rolling(window=20).std()
-        df["bb_upper"] = sma_20 + (std_20 * 2)
-        df["bb_lower"] = sma_20 - (std_20 * 2)
-        df["bb_position"] = (df["close"] - df["bb_lower"]) / (
-            df["bb_upper"] - df["bb_lower"]
-        )
-
-        # Volume features
-        df["volume_sma_20"] = df["volume"].rolling(window=20).mean()
-        df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
-
-        # MACD
-        ema_12 = df["close"].ewm(span=12).mean()
-        ema_26 = df["close"].ewm(span=26).mean()
-        df["macd"] = ema_12 - ema_26
-        df["macd_signal"] = df["macd"].ewm(span=9).mean()
-        df["macd_histogram"] = df["macd"] - df["macd_signal"]
-
-        return df
-
-    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
-        """Calculate Average True Range."""
-        high = df["high"]
-        low = df["low"]
-        close = df["close"].shift(1)
-
-        tr1 = high - low
-        tr2 = abs(high - close)
-        tr3 = abs(low - close)
-
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=period).mean()
-
-        return atr
-
-    def calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate Relative Strength Index."""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-
-        return rsi
-
-    def engineer_features(
-        self, multi_tf_data: Dict[str, pd.DataFrame], fit: bool = True
-    ) -> Dict[str, pd.DataFrame]:
+    def engineer_features(self,
+                          multi_tf_data: Dict[str, pd.DataFrame],
+                          fit: bool = True) -> Dict[str, pd.DataFrame]:
         """
         Engineer features for all timeframes with enhanced WPT, Entropy, and Hurst features.
 
@@ -1002,22 +941,11 @@ class EnhancedFeatureEngineer:
 
             # 4. Normalize features
             feature_columns = [
-                col
-                for col in df.columns
+                col for col in df.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
 
-            if fit:
-                scaler = StandardScaler()
-                df[feature_columns] = scaler.fit_transform(
-                    df[feature_columns].fillna(0)
-                )
-                self.scalers[timeframe] = scaler
-            else:
-                if timeframe in self.scalers:
-                    df[feature_columns] = self.scalers[timeframe].transform(
-                        df[feature_columns].fillna(0)
-                    )
+            df = self._normalize_features(df, timeframe, feature_columns, fit)
 
             # Remove NaN rows
             df = df.dropna()
@@ -1045,3 +973,31 @@ class EnhancedFeatureEngineer:
         with open(path, "rb") as f:
             self.scalers = pickle.load(f)
         print(f"Scalers loaded from {path}")
+
+    def _normalize_features(
+        self,
+        df: pd.DataFrame,
+        timeframe: str,
+        feature_columns: list,
+        fit: bool,
+    ) -> pd.DataFrame:
+        if not feature_columns:
+            return df
+
+        features = (df[feature_columns].replace([np.inf, -np.inf],
+                                                np.nan).fillna(0.0))
+
+        if fit:
+            scaler = self.scaler_class()
+            scaled = scaler.fit_transform(features.values)
+            self.scalers[timeframe] = scaler
+        else:
+            scaler = self.scalers.get(timeframe)
+            if scaler is None:
+                raise ValueError(
+                    f"No fitted scaler found for timeframe '{timeframe}'. Call with fit=True first."
+                )
+            scaled = scaler.transform(features.values)
+
+        df.loc[:, feature_columns] = scaled
+        return df
