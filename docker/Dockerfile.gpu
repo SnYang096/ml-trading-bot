@@ -235,7 +235,9 @@ RUN pip3 install --no-cache-dir --timeout=600 \
     plotly==5.18.0 \
     tensorboard==2.15.1 \
     joblib==1.3.2 \
-    && python3 -c "import pywt, optuna, plotly; print('✅ 项目依赖库安装完成')"
+    matplotlib==3.7.5 \
+    bokeh==3.5.1 \
+    && python3 -c "import pywt, optuna, plotly, matplotlib, bokeh; print('✅ 项目依赖库安装完成')"
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库（可选，可能失败）
@@ -271,15 +273,15 @@ RUN pip3 install --no-cache-dir --timeout=600 \
 # 安装 mamba-ssm（状态空间模型）
 RUN pip3 install --no-cache-dir --timeout=1200 \
     mamba-ssm>=1.0.0 \
-    && python3 -c "import mamba_ssm; print('✅ mamba-ssm installed')" || echo "⚠️  mamba-ssm installation failed or not available"
+    && python3 -c "import mamba_ssm; print('✅ mamba-ssm installed')"
 
 # 安装 flash-attn（需要 CUDA，可能需要编译）
-# 注意：flash-attn 的安装可能需要较长时间，因为它需要从源码编译
-RUN pip3 install --no-cache-dir --timeout=1800 \
-    flash-attn>=2.0.0 --no-build-isolation || \
-    (echo "⚠️  flash-attn installation failed, trying without strict version..." && \
-     pip3 install --no-cache-dir --timeout=1800 flash-attn --no-build-isolation || \
-     echo "⚠️  flash-attn not available, will use standard attention")
+# 注意：flash-attn 的安装可能需要较长时间，因为它需要从源码编译，使用 mamba 就不需要这个
+# RUN pip3 install --no-cache-dir --timeout=1800 \
+#     flash-attn>=2.0.0 --no-build-isolation || \
+#     (echo "⚠️  flash-attn installation failed, trying without strict version..." && \
+#      pip3 install --no-cache-dir --timeout=1800 flash-attn --no-build-isolation || \
+#      echo "⚠️  flash-attn not available, will use standard attention")
 
 # ============================================================================
 # 工作目录配置

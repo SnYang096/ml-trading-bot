@@ -27,7 +27,7 @@ else:
 
 setup(
     name="ml-trading-project",
-    version="0.1.0",
+    version="0.0.2",
     author="Your Name",
     author_email="your.email@example.com",
     description="Machine learning algorithmic trading system with multi-timeframe analysis",
