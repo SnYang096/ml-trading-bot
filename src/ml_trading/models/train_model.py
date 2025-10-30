@@ -21,6 +21,8 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer, )
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.strategies.ml_strategy import MLTradingStrategy
+from ml_trading.pipeline.dimensionality.integration import DimensionalityIntegrationEngine  # type: ignore
+from ml_trading.models.autoencoder import UnifiedAutoencoder  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Helper classes
@@ -147,6 +149,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Enable additional logging output",
+    )
+    # Dimensionality options
+    parser.add_argument(
+        "--use-top-factors",
+        type=str,
+        default=None,
+        help=(
+            "Path to top_factors JSON (from dimensionality-real). If provided, "
+            "filters engineered features to this Top-K list per timeframe."),
+    )
+    parser.add_argument(
+        "--use-autoencoder",
+        type=str,
+        default=None,
+        help=
+        ("Path to a trained autoencoder .pth (UnifiedAutoencoder). If provided, "
+         "engineered features will be transformed to compressed embeddings before training."
+         ),
+    )
+    parser.add_argument(
+        "--encoding-dim",
+        type=int,
+        default=None,
+        help=
+        "Encoding dimension of the provided autoencoder (required with --use-autoencoder)",
     )
     return parser
 
@@ -569,6 +596,83 @@ def train_symbol(
             scaler_type="standard")
         engineered_data = feature_engineer.engineer_features(multi_tf_data,
                                                              fit=True)
+
+        # Optionally filter features by Top-K list
+        if args.use_top_factors:
+            try:
+                with open(args.use_top_factors, "r") as f:
+                    top_json = json.load(f)
+                top_list = [
+                    item["name"]
+                    if isinstance(item, dict) and "name" in item else str(item)
+                    for item in top_json.get("top_factors", [])
+                ]
+                if not top_list:
+                    print(
+                        "   ⚠️ Top factors list is empty; skipping filtering")
+                else:
+                    print(
+                        f"   🔎 Applying Top-K filter with {len(top_list)} factors"
+                    )
+                    for tf, df in engineered_data.items():
+                        keep_cols = [c for c in df.columns if c in top_list]
+                        # Always keep essential columns if present
+                        for essential in ("close", "volume", "taker_buy_ratio",
+                                          "cvd"):
+                            if essential in df.columns and essential not in keep_cols:
+                                keep_cols.append(essential)
+                        if not keep_cols:
+                            print(
+                                f"   ⚠️ No overlap with Top-K for timeframe {tf}, keeping original features"
+                            )
+                            continue
+                        engineered_data[tf] = df[keep_cols].copy()
+            except Exception as exc:  # noqa: BLE001
+                print(f"   ⚠️ Failed to apply Top-K filter: {exc}")
+
+        # Optionally compress features using a provided autoencoder
+        if args.use_autoencoder:
+            if not args.encoding_dim:
+                print(
+                    "   ❌ --encoding-dim is required when --use-autoencoder is provided"
+                )
+                return None
+            try:
+                # Derive input_dim from a representative timeframe
+                any_tf = next(iter(engineered_data.values()))
+                input_dim = any_tf.shape[1]
+                encoding_dim = int(args.encoding_dim)
+                autoencoder = UnifiedAutoencoder(
+                    input_dim,
+                    encoding_dim,
+                    architecture="production",
+                )
+                import torch  # local import to avoid unnecessary dependency at import time
+
+                state = torch.load(args.use_autoencoder, map_location="cpu")
+                autoencoder.load_state_dict(state)
+                autoencoder.eval()
+
+                def _transform_df(df: pd.DataFrame) -> pd.DataFrame:
+                    with torch.no_grad():
+                        X = torch.as_tensor(df.values, dtype=torch.float32)
+                        _, Z = autoencoder(X)
+                        z_np = Z.numpy()
+                    cols = [
+                        f"compressed_feature_{i}" for i in range(z_np.shape[1])
+                    ]
+                    return pd.DataFrame(z_np, index=df.index, columns=cols)
+
+                transformed: Dict[str, pd.DataFrame] = {}
+                for tf, df in engineered_data.items():
+                    transformed[tf] = _transform_df(df)
+                engineered_data = transformed
+                print(
+                    f"   ✅ Applied autoencoder compression to {len(engineered_data)} timeframes"
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"   ❌ Failed to apply autoencoder compression: {exc}")
+                return None
 
         strategy = MLTradingStrategy()
         strategy.data_loader = data_loader

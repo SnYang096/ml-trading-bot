@@ -1,30 +1,3 @@
-# ---------------------------------------------------------------------------
-# Feature diagnostics
-# ---------------------------------------------------------------------------
-
-FEATURE_REPORT_INPUT ?= data/parquet_data/BTC-USD_2024-10.parquet
-FEATURE_REPORT_OUTPUT ?= reports/feature_report.html
-FEATURE_REPORT_START ?=
-FEATURE_REPORT_END ?=
-FEATURE_REPORT_HORIZON ?= 1
-FEATURE_REPORT_ARGS ?=
-# Example:
-#   make feature-report FEATURE_REPORT_INPUT=data/parquet_data/ETH-USD_2024-10.parquet \
-#                       FEATURE_REPORT_OUTPUT=reports/eth_report.html \
-#                       FEATURE_REPORT_START=2024-10-01 FEATURE_REPORT_END=2024-12-31 \
-#                       FEATURE_REPORT_HORIZON=3 \
-#                       FEATURE_REPORT_ARGS="--no-enhanced --no-dl"
-
-feature-report:
-	@echo "📊 Generating feature IC report (Docker) ..."
-	@mkdir -p $(dir $(FEATURE_REPORT_OUTPUT))
-	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/feature_quality_report.py \
-		--input $(FEATURE_REPORT_INPUT) \
-		--output $(FEATURE_REPORT_OUTPUT) \
-		--future-horizon $(FEATURE_REPORT_HORIZON) \
-		$(if $(FEATURE_REPORT_START),--start-date $(FEATURE_REPORT_START)) \
-		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
-		$(FEATURE_REPORT_ARGS)
 
 # ---------------------------------------------------------------------------
 # ML Trading Project
@@ -37,7 +10,7 @@ PIP := pip3
 # Docker configuration
 DOCKER_COMPOSE := docker-compose
 DOCKER_SERVICE := ml-gpu
-DOCKER_IMAGE ?= lightgbm-runtime:latest
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:latest
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=/mnt/parquet_data`)
 DATA_DIR ?= data/parquet_data
@@ -133,10 +106,39 @@ dev-install:
 docker-build:
 	@echo "🔨 Building Docker image $(DOCKER_IMAGE)..."
 	docker build -f docker/Dockerfile.gpu -t $(DOCKER_IMAGE) .
+	
 
 docker-install:
 	@echo "📦 Installing project inside Docker container..."
 	$(DOCKER_RUN) pip3 install -e /workspace
+
+# ---------------------------------------------------------------------------
+# Feature diagnostics
+# ---------------------------------------------------------------------------
+
+FEATURE_REPORT_INPUT ?= data/parquet_data/BTC-USD_2024-10.parquet
+FEATURE_REPORT_OUTPUT ?= reports/feature_report.html
+FEATURE_REPORT_START ?=
+FEATURE_REPORT_END ?=
+FEATURE_REPORT_HORIZON ?= 1
+FEATURE_REPORT_ARGS ?=
+# Example:
+#   make feature-report FEATURE_REPORT_INPUT=data/parquet_data/ETH-USD_2024-10.parquet \
+#                       FEATURE_REPORT_OUTPUT=reports/eth_report.html \
+#                       FEATURE_REPORT_START=2024-10-01 FEATURE_REPORT_END=2024-12-31 \
+#                       FEATURE_REPORT_HORIZON=3 \
+#                       FEATURE_REPORT_ARGS="--no-enhanced --no-dl"
+
+feature-report:
+	@echo "📊 Generating feature IC report (Docker) ..."
+	@mkdir -p $(dir $(FEATURE_REPORT_OUTPUT))
+	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/feature_quality_report.py \
+		--input $(FEATURE_REPORT_INPUT) \
+		--output $(FEATURE_REPORT_OUTPUT) \
+		--future-horizon $(FEATURE_REPORT_HORIZON) \
+		$(if $(FEATURE_REPORT_START),--start-date $(FEATURE_REPORT_START)) \
+		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
+		$(FEATURE_REPORT_ARGS)
 
 train:
 	@echo "🚀 Training production model for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
@@ -148,6 +150,33 @@ train:
 		--data-dir $(DATA_DIR) \
 		--output-dir $(MODEL_DIR) \
 		--model-name $(MODEL_NAME) $(OVERWRITE_FLAG)
+
+train-topk:
+	@echo "🚀 Training with Top-K factors for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Usage: make train-topk SYMBOLS=BTCUSDT START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD TOP_FACTORS=path/to/top_factors.json"
+	$(DOCKER_RUN) python3 -m ml_trading.models.train_model \
+		--symbols $(SYMBOLS) \
+		--start-date $(START_DATE) \
+		--end-date $(END_DATE) \
+		--data-dir $(DATA_DIR) \
+		--output-dir $(MODEL_DIR) \
+		--model-name $(MODEL_NAME) \
+		--use-top-factors $(TOP_FACTORS) \
+		$(OVERWRITE_FLAG)
+
+train-ae:
+	@echo "🚀 Training with Autoencoder-compressed features for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Usage: make train-ae SYMBOLS=BTCUSDT START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD AE_PATH=results/.../production_autoencoder.pth ENCODING_DIM=16"
+	$(DOCKER_RUN) python3 -m ml_trading.models.train_model \
+		--symbols $(SYMBOLS) \
+		--start-date $(START_DATE) \
+		--end-date $(END_DATE) \
+		--data-dir $(DATA_DIR) \
+		--output-dir $(MODEL_DIR) \
+		--model-name $(MODEL_NAME) \
+		--use-autoencoder $(AE_PATH) \
+		--encoding-dim $(ENCODING_DIM) \
+		$(OVERWRITE_FLAG)
 
 rolling-monthly:
 	@echo "📆 Running monthly rolling retraining for $(SYMBOL) $(YEAR)..."
@@ -182,10 +211,6 @@ dimensionality-demo:
 		--encoding-dim 16 \
 		--visualize \
 		--generate-report
-
-
-
-
 
 dimensionality-real:
 	@echo "🏭 Running dimensionality pipeline on real data..."

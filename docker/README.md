@@ -9,8 +9,20 @@
 # 多数程序会同时查找，优先级通常是小写覆盖大写，所以我们在 Dockerfile 里同时设置，保证无论谁检查哪一种都能拿到值。
 # 如果只给小写（http_proxy）赋值，apt-get 这类工具不会走代理；只给大写赋值，Git 可能不生效。因此在需要代理的场景，最好两个都设。
 
-docker build -f docker/Dockerfile.gpu  --target runtime -t lightgbm-runtime . --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= --build-arg http_proxy=http://host.docker.internal:7897 --build-arg https_proxy=http://host.docker.internal:7897 --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
+docker build -f docker/Dockerfile.gpu --target runtime \
+  -t hansenlovefiona017/lightgbm-runtime:v0.0.2 \
+  . --add-host=host.docker.internal:host-gateway
+
+docker build -f docker/Dockerfile.gpu --target runtime \
+  -t hansenlovefiona017/lightgbm-runtime:v0.0.2 \
+  . --add-host=host.docker.internal:host-gateway \
+  --build-arg HTTP_PROXY=http://host.docker.internal:7899 \
+  --build-arg HTTPS_PROXY=http://host.docker.internal:7899 \
+  --build-arg http_proxy=http://host.docker.internal:7899 \
+  --build-arg https_proxy=http://host.docker.internal:7899 \
+  --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com \
+  --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
 
 docker build -f ml_project/docker/Dockerfile.gpu --target builder -t lightgbm-builder .  --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= --build-arg http_proxy=http://host.docker.internal:7899 --build-arg https_proxy=http://host.docker.internal:7899 --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com

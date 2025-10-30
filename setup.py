@@ -15,7 +15,10 @@ except FileNotFoundError:
 requirements = []
 if os.path.exists("requirements.txt"):
     with open("requirements.txt", "r", encoding="utf-8") as fh:
-        requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+        requirements = [
+            line.strip() for line in fh
+            if line.strip() and not line.startswith("#")
+        ]
 else:
     # Minimal requirements if file doesn't exist
     requirements = [
@@ -30,7 +33,8 @@ setup(
     version="0.0.2",
     author="Your Name",
     author_email="your.email@example.com",
-    description="Machine learning algorithmic trading system with multi-timeframe analysis",
+    description=
+    "Machine learning algorithmic trading system with multi-timeframe analysis",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/ml-trading-project",
