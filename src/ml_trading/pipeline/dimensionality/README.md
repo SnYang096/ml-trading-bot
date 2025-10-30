@@ -12,7 +12,7 @@ src/ml_trading/pipeline/dimensionality/
 ## 模块概要
 
 - `pipeline.py`
-  - 数据加载：`UnifiedDataLoader`
+  - 数据加载：`UnifiedFeatureDataLoader`
   - Autoencoder 训练：`InterpretableFactorEngine`（内部调用 `UnifiedAutoencoder` + `AutoencoderTrainer`）
   - SHAP Distillation：提取 Top-K 因子并训练轻量级 LightGBM
   - 报告输出：模型指标、Top-K 因子、可视化、JSON 归档

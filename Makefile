@@ -10,9 +10,10 @@ PIP := pip3
 # Docker configuration
 DOCKER_COMPOSE := docker-compose
 DOCKER_SERVICE := ml-gpu
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.2
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.3
+BUILDER_IMAGE ?= lightgbm-builder
 
-# Common paths (override when invoking make, e.g. `make train DATA_DIR=/mnt/parquet_data`)
+# Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
 DATA_DIR ?= data/parquet_data
 MODEL_DIR ?= models
 RESULTS_DIR ?= results
@@ -20,7 +21,7 @@ RESULTS_DIR ?= results
 SYMBOL ?= BTCUSDT
 SYMBOLS ?= $(SYMBOL)
 START_DATE ?= 2025-05-01
-END_DATE ?= 2025-05-31
+END_DATE ?= 2025-07-31
 YEAR ?= 2024
 START_YEAR ?= 2021
 END_YEAR ?= 2025
@@ -44,6 +45,7 @@ DOCKER_RUN := docker run --rm -it \
 	-e PYTHONPATH=/workspace/src \
 	-e PYTHONUNBUFFERED=1 \
 	-v $(PWD):/workspace \
+	-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
 	-w /workspace \
 	--shm-size=8gb \
 	$(DOCKER_IMAGE)
@@ -55,11 +57,12 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 	-e PYTHONPATH=/workspace/src \
 	-e PYTHONUNBUFFERED=1 \
 	-v $(PWD):/workspace \
+	-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
 	-w /workspace \
 	--shm-size=8gb \
 	$(DOCKER_IMAGE)
 
-.PHONY: help clean format lint dev-install docker-build docker-install train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real
+.PHONY: help clean format lint dev-install docker-build docker-install builder-shell train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real
 
 help:
 	@echo "ML Trading Project"
@@ -72,6 +75,7 @@ help:
 	@echo "Docker setup commands:"
 	@echo "  make docker-build         # Build Docker image (lightgbm-runtime:latest)"
 	@echo "  make docker-install       # Install project inside Docker container"
+	@echo "  make builder-shell        # Open bash in $(BUILDER_IMAGE)"
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  make feature-report       # Generate feature IC/IR HTML report"
@@ -111,6 +115,10 @@ docker-build:
 docker-install:
 	@echo "📦 Installing project inside Docker container..."
 	$(DOCKER_RUN) pip3 install -e /workspace
+
+builder-shell:
+	@echo "🔧 Opening interactive shell in $(BUILDER_IMAGE) ..."
+	DOCKER_IMAGE=$(BUILDER_IMAGE) $(DOCKER_RUN) bash
 
 # ---------------------------------------------------------------------------
 # Feature diagnostics
@@ -205,19 +213,25 @@ oos-june:
 
 dimensionality-demo:
 	@echo "🌀 Running dimensionality pipeline (sample data)..."
+	@echo "Example : make dimensionality-demo START_DATE=2024-01-01 END_DATE=2024-06-30"
 	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.pipeline \
 		--n-samples 5000 \
 		--n-factors 120 \
 		--encoding-dim 16 \
+		$(if $(START_DATE),--train-start $(START_DATE)) \
+		$(if $(END_DATE),--train-end $(END_DATE)) \
 		--visualize \
 		--generate-report
 
 dimensionality-real:
 	@echo "🏭 Running dimensionality pipeline on real data..."
+	@echo "make dimensionality-real DATA_DIR=data/parquet_data SYMBOL=BTCUSDT START_DATE=2024-01-01 END_DATE=2024-12-31"
 	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.pipeline \
 		--use-real-data \
-		--data-path $(DATA_DIR) \
+		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
+		$(if $(START_DATE),--train-start $(START_DATE)) \
+		$(if $(END_DATE),--train-end $(END_DATE)) \
 		--encoding-dim 16 \
 		--top-k 40 \
 		--save-model \

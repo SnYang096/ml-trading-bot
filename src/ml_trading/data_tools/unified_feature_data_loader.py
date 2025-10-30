@@ -14,7 +14,13 @@ from ml_trading.utils.sample_data import create_sample_data
 
 
 class UnifiedDataLoader:
-    """Reusable data loader for research and production workflows."""
+    """Reusable data + feature loader for research and production workflows.
+
+    Responsibilities:
+    - Load raw market data (via MarketDataLoader)
+    - Run comprehensive feature engineering
+    - Provide matrix or DataFrame outputs for pipelines
+    """
 
     def __init__(self, data_path: Optional[str] = None) -> None:
         self.data_path = data_path
@@ -32,7 +38,9 @@ class UnifiedDataLoader:
             print(f"📊 Loading real market data for {symbol}...")
 
             loader = MarketDataLoader(self.data_path)
-            df = loader.load_data()
+            df = loader.load_data(symbol=symbol,
+                                  start_date=start_date,
+                                  end_date=end_date)
 
             if df is None or df.empty:
                 print("⚠️ No real data found, generating sample data...")
@@ -40,10 +48,17 @@ class UnifiedDataLoader:
                     return_dataframe=return_dataframe)
 
             df = loader.resample_data("5T")
+            # Preserve timestamps as a column for downstream date filtering
+            df = df.copy()
+            df["timestamp"] = df.index
 
             self.feature_engineer = ComprehensiveFeatureEngineer()
             df_features = self.feature_engineer.engineer_all_features(df,
                                                                       fit=True)
+            # Ensure timestamp survives after feature engineering
+            if "timestamp" not in df_features.columns and "timestamp" in df.columns:
+                df_features = df_features.copy()
+                df_features["timestamp"] = df["timestamp"].values
 
             feature_cols = [
                 col for col in df_features.columns
@@ -56,7 +71,7 @@ class UnifiedDataLoader:
             min_len = min(len(X), len(y))
             X = X[:min_len]
             y = y[:min_len]
-            df_features = df_features.iloc[:min_len].reset_index(drop=True)
+            df_features = df_features.iloc[:min_len].copy()
 
             target_column = "target"
             df_features[target_column] = y
@@ -196,4 +211,9 @@ class UnifiedDataLoader:
         }
 
 
-__all__ = ["UnifiedDataLoader"]
+__all__ = ["UnifiedFeatureDataLoader"]
+
+
+# Backward-compatible alias for external imports
+class UnifiedFeatureDataLoader(UnifiedDataLoader):
+    pass

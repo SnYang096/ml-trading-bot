@@ -1,5 +1,7 @@
 """Data loading and preprocessing module."""
 
+import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from typing import List, Tuple, Dict, Optional
@@ -7,7 +9,9 @@ from ml_trading.config.settings import TIMEFRAMES, TECHNICAL_INDICATORS
 
 
 class MarketDataLoader:
-    """Handles loading and preprocessing of market data."""
+    """Handles loading and preprocessing of market data.
+    data_loader.py 的 MarketDataLoader 负责“路径解析 + 目录扫描 + 多格式读取（parquet/csv/zip）+ agg-trade→1s OHLCV 转换 + 按日期裁剪”。这是底层通用数据层。
+    """
 
     def __init__(self, data_path: Optional[str] = None):
         """
@@ -19,7 +23,10 @@ class MarketDataLoader:
         self.data_path = data_path
         self.raw_data: Optional[pd.DataFrame] = None
 
-    def load_data(self) -> pd.DataFrame:
+    def load_data(self,
+                  symbol: Optional[str] = None,
+                  start_date: Optional[str] = None,
+                  end_date: Optional[str] = None) -> pd.DataFrame:
         """
         Load raw market data.
 
@@ -27,39 +34,118 @@ class MarketDataLoader:
             DataFrame with OHLCV data
         """
         if self.data_path:
-            # Load real data from CSV file
-            print(f"Loading data from {self.data_path}")
-            # Load the aggregate trade data
-            agg_trades = pd.read_csv(self.data_path)
+            path = Path(self.data_path)
+            print(f"Loading data from {path}")
 
-            # Convert timestamp to datetime
-            agg_trades["timestamp"] = pd.to_datetime(
-                agg_trades["transact_time"], unit="ms"
-            )
-            agg_trades.set_index("timestamp", inplace=True)
+            def _normalize_symbol(s: str) -> str:
+                return s.replace("_", "-").upper()
 
-            # Convert price and quantity to numeric
-            agg_trades["price"] = pd.to_numeric(agg_trades["price"], errors="coerce")
-            agg_trades["quantity"] = pd.to_numeric(
-                agg_trades["quantity"], errors="coerce"
-            )
+            def _symbol_tokens(sym: Optional[str]) -> set:
+                if not sym:
+                    return set()
+                s = sym.upper()
+                tokens = {s, s.replace("_", "-"), s.replace("-", "_")}
+                # Common mapping: BTCUSDT -> BTC-USD / BTC_USD
+                if s.endswith("USDT") and len(s) > 4:
+                    base = s[:-4]
+                    tokens.add(f"{base}-USD")
+                    tokens.add(f"{base}_USD")
+                return {t.upper() for t in tokens}
 
-            # Resample to 1-second bars to create OHLCV data
-            ohlc_dict = {"price": "ohlc", "quantity": "sum"}
+            def _read_and_standardize_frame(p: Path) -> pd.DataFrame:
+                if p.suffix.lower() == ".parquet":
+                    df = pd.read_parquet(p)
+                else:
+                    df = pd.read_csv(p)
 
-            # Group by 1-second intervals and create OHLCV
-            raw_ohlc = agg_trades.groupby(pd.Grouper(freq="1s")).agg(
-                ohlc_dict
-            )  # Changed '1S' to '1s'
-            raw_ohlc.columns = ["open", "high", "low", "close", "volume"]
+                # Try aggregate trade schema -> resample to OHLCV
+                if {"transact_time", "price", "quantity"}.issubset(df.columns):
+                    df["timestamp"] = pd.to_datetime(df["transact_time"],
+                                                     unit="ms")
+                    df.set_index("timestamp", inplace=True)
+                    df["price"] = pd.to_numeric(df["price"], errors="coerce")
+                    df["quantity"] = pd.to_numeric(df["quantity"],
+                                                   errors="coerce")
+                    raw_ohlc = df.groupby(pd.Grouper(freq="1s")).agg({
+                        "price":
+                        "ohlc",
+                        "quantity":
+                        "sum"
+                    })
+                    raw_ohlc.columns = [
+                        "open", "high", "low", "close", "volume"
+                    ]
+                    return raw_ohlc
 
-            # Forward fill any missing values
-            raw_ohlc = raw_ohlc.ffill()
+                # Try OHLCV parquet/csv with timestamp column
+                if "timestamp" in df.columns and {
+                        "open", "high", "low", "close", "volume"
+                }.issubset(df.columns):
+                    df["timestamp"] = pd.to_datetime(df["timestamp"],
+                                                     errors="coerce")
+                    df = df.dropna(subset=["timestamp"]).set_index(
+                        "timestamp").sort_index()
+                    return df[["open", "high", "low", "close", "volume"]]
 
-            self.raw_data = raw_ohlc.dropna()
-            print(
-                f"Loaded {len(self.raw_data)} 1-second bars from aggregate trade data"
-            )
+                # Try already indexed by timestamp
+                if {"open", "high", "low", "close",
+                        "volume"}.issubset(df.columns):
+                    return df[["open", "high", "low", "close", "volume"]]
+
+                raise ValueError(f"Unrecognized data schema in file: {p}")
+
+            frames: List[pd.DataFrame] = []
+            if path.is_dir():
+                # Collect candidate files
+                exts = (".parquet", ".csv")
+                candidates = [
+                    p for p in path.rglob("*") if p.suffix.lower() in exts
+                ]
+                if symbol:
+                    sym_tokens = _symbol_tokens(symbol)
+
+                    def _match(name: str) -> bool:
+                        up = name.upper().replace("_", "-")
+                        return any(tok in up for tok in sym_tokens)
+
+                    candidates = [p for p in candidates if _match(p.name)]
+                if not candidates:
+                    raise FileNotFoundError(
+                        f"No data files found under directory: {path}")
+                for file_path in sorted(candidates):
+                    try:
+                        frames.append(_read_and_standardize_frame(file_path))
+                    except Exception:
+                        # Skip unreadable files silently to allow mixed folders
+                        continue
+                if not frames:
+                    raise FileNotFoundError(
+                        f"No readable OHLCV/agg-trade files in {path}")
+                df_all = pd.concat(frames).sort_index()
+                # Deduplicate on index if overlapping months
+                df_all = df_all[~df_all.index.duplicated(keep="last")]
+                self.raw_data = df_all.ffill().dropna()
+            else:
+                # Single file path
+                p = path
+                self.raw_data = _read_and_standardize_frame(p).ffill().dropna()
+
+            # Optional date filtering on index
+            if start_date or end_date:
+                idx = self.raw_data.index
+                if not isinstance(idx, pd.DatetimeIndex):
+                    self.raw_data = self.raw_data.copy()
+                    self.raw_data.index = pd.to_datetime(self.raw_data.index,
+                                                         errors="coerce")
+                start_ts = pd.to_datetime(
+                    start_date) if start_date else self.raw_data.index.min()
+                end_ts = pd.to_datetime(
+                    end_date) if end_date else self.raw_data.index.max()
+                self.raw_data = self.raw_data.loc[
+                    (self.raw_data.index >= start_ts)
+                    & (self.raw_data.index <= end_ts)]
+
+            print(f"Loaded {len(self.raw_data)} bars")
         else:
             # Generate sample data for demonstration
             print("Generating sample data for demonstration")
@@ -67,18 +153,23 @@ class MarketDataLoader:
             prices = 100 + np.cumsum(np.random.randn(10000) * 0.1)
             volume = np.random.randint(1000, 10000, size=10000)
 
-            self.raw_data = pd.DataFrame(
-                {
-                    "timestamp": dates,
-                    "open": prices,
-                    "high": prices + np.abs(np.random.randn(10000) * 0.05),
-                    "low": prices - np.abs(np.random.randn(10000) * 0.05),
-                    "close": prices + np.random.randn(10000) * 0.02,
-                    "volume": volume,
-                }
-            )
+            self.raw_data = pd.DataFrame({
+                "timestamp":
+                dates,
+                "open":
+                prices,
+                "high":
+                prices + np.abs(np.random.randn(10000) * 0.05),
+                "low":
+                prices - np.abs(np.random.randn(10000) * 0.05),
+                "close":
+                prices + np.random.randn(10000) * 0.02,
+                "volume":
+                volume,
+            })
 
-            self.raw_data["timestamp"] = pd.to_datetime(self.raw_data["timestamp"])
+            self.raw_data["timestamp"] = pd.to_datetime(
+                self.raw_data["timestamp"])
             self.raw_data.set_index("timestamp", inplace=True)
 
         return self.raw_data
@@ -124,14 +215,15 @@ class MarketDataLoader:
             "volume": resampled_volume,
         }
         if have_buy:
-            data_dict["buy_qty"] = self.raw_data["buy_qty"].resample(timeframe).sum()
+            data_dict["buy_qty"] = self.raw_data["buy_qty"].resample(
+                timeframe).sum()
         if have_sell:
-            data_dict["sell_qty"] = self.raw_data["sell_qty"].resample(timeframe).sum()
+            data_dict["sell_qty"] = self.raw_data["sell_qty"].resample(
+                timeframe).sum()
         if have_ratio:
             # ratio is averaged over the window
             data_dict["taker_buy_ratio"] = (
-                self.raw_data["taker_buy_ratio"].resample(timeframe).mean()
-            )
+                self.raw_data["taker_buy_ratio"].resample(timeframe).mean())
         if have_cvd:
             # cvd is cumulative; use last value in window
             data_dict["cvd"] = self.raw_data["cvd"].resample(timeframe).last()

@@ -359,33 +359,18 @@ class EnhancedFeatureEngineer:
 
         print(f"      Hilbert变换信号源: {list(signal_sources.keys())}")
 
-        # 对每个信号源计算Hilbert特征
+        # 对每个信号源计算Hilbert特征（强制使用 SciPy 实现，忽略 TA-Lib）
         for source_name, source_data in signal_sources.items():
             source_series = pd.Series(source_data, index=df.index, dtype=float)
+            # 预清洗：前向填充 + 非有限值置零，避免外部 NaN 传播
+            source_series = source_series.replace([np.inf, -np.inf],
+                                                  np.nan).ffill()
+            source_series = source_series.fillna(0.0)
 
-            # 首选 TA-Lib（若可用）
-            if talib is not None:
-                try:
-                    inphase, quadrature = talib.HT_PHASOR(source_series.values)
-                    amplitude = np.sqrt(
-                        np.square(inphase) + np.square(quadrature))
-                    phase = np.arctan2(quadrature, inphase)
-                    frequency = np.diff(np.unwrap(phase)) / (2.0 * np.pi)
-                    frequency = np.concatenate([[frequency[0]], frequency])
-
-                    df[f"{source_name}_hilbert_amplitude"] = amplitude
-                    df[f"{source_name}_hilbert_phase"] = phase
-                    df[f"{source_name}_hilbert_frequency"] = frequency
-                    continue
-                except Exception as err:
-                    print(
-                        f"      Warning: TA-Lib Hilbert for {source_name} failed: {err}"
-                    )
-
-            # Fallback 使用 SciPy Hilbert
             try:
                 valid_data = source_series.to_numpy()
-                valid_data = valid_data[np.isfinite(valid_data)]
+                valid_mask = np.isfinite(valid_data)
+                valid_data = valid_data[valid_mask]
 
                 if len(valid_data) < 10:
                     df[f"{source_name}_hilbert_amplitude"] = 0
@@ -399,16 +384,23 @@ class EnhancedFeatureEngineer:
                 frequency = np.diff(np.unwrap(phase)) / (2.0 * np.pi)
                 frequency = np.concatenate([[frequency[0]], frequency])
 
-                # Pad to original length if needed
+                # Pad to original length if needed (left pad if we trimmed head)
                 if len(amplitude) < len(source_series):
-                    amplitude = np.pad(
-                        amplitude, (0, len(source_series) - len(amplitude)),
-                        mode="edge")
-                    phase = np.pad(phase, (0, len(source_series) - len(phase)),
-                                   mode="edge")
-                    frequency = np.pad(
-                        frequency, (0, len(source_series) - len(frequency)),
-                        mode="edge")
+                    pad_len = len(source_series) - len(amplitude)
+                    amplitude = np.pad(amplitude, (pad_len, 0), mode="edge")
+                    phase = np.pad(phase, (pad_len, 0), mode="edge")
+                    frequency = np.pad(frequency, (pad_len, 0), mode="edge")
+
+                # 清理非有限值
+                amplitude = np.nan_to_num(amplitude,
+                                          nan=0.0,
+                                          posinf=0.0,
+                                          neginf=0.0)
+                phase = np.nan_to_num(phase, nan=0.0, posinf=0.0, neginf=0.0)
+                frequency = np.nan_to_num(frequency,
+                                          nan=0.0,
+                                          posinf=0.0,
+                                          neginf=0.0)
 
                 df[f"{source_name}_hilbert_amplitude"] = amplitude[:len(df)]
                 df[f"{source_name}_hilbert_phase"] = phase[:len(df)]

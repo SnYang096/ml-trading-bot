@@ -23,7 +23,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from ml_trading.data_tools.unified_data_loader import UnifiedDataLoader
+from ml_trading.data_tools.unified_feature_data_loader import UnifiedFeatureDataLoader
 from ml_trading.models.interpretable_factor_engine import InterpretableFactorEngine
 from ml_trading.utils.sample_data import create_sample_data
 
@@ -57,19 +57,38 @@ def _ensure_timestamp_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_real_data(data_path: str, symbol: str = "ETH-USD") -> DatasetBundle:
+def load_real_data(data_path: str,
+                   symbol: str = "ETH-USD",
+                   start: Optional[str] = None,
+                   end: Optional[str] = None) -> DatasetBundle:
     print(f"📂 Loading real data for {symbol}")
 
-    loader = UnifiedDataLoader(data_path)
-    result = loader.load_real_data(symbol=symbol, return_dataframe=True)
+    loader = UnifiedFeatureDataLoader(data_path)
+    result = loader.load_real_data(symbol=symbol,
+                                   start_date=start or "2024-01-01",
+                                   end_date=end or "2025-12-31",
+                                   return_dataframe=True)
 
     X, y, feature_columns, df_features, target_column = result
 
     df_features = _ensure_timestamp_column(df_features)
 
-    cleaned_df = df_features.dropna(subset=feature_columns +
-                                    [target_column]).copy()
-    X = cleaned_df[feature_columns].values
+    # Relaxed cleaning: require non-NaN target, and at least 80% of features present
+    base_df = df_features.dropna(subset=[target_column]).copy()
+    if feature_columns:
+        feature_block = base_df[feature_columns]
+        present_ratio = 1.0 - feature_block.isna().mean(axis=1)
+        mask = present_ratio >= 0.8
+        cleaned_df = base_df.loc[mask].copy()
+        # Simple imputation for remaining NaNs (per-feature median)
+        medians = cleaned_df[feature_columns].median(axis=0, skipna=True)
+        cleaned_df[feature_columns] = cleaned_df[feature_columns].fillna(
+            medians)
+    else:
+        cleaned_df = base_df
+
+    X = cleaned_df[feature_columns].values if feature_columns else np.empty(
+        (len(cleaned_df), 0))
     y = cleaned_df[target_column].values
 
     print(
@@ -157,19 +176,58 @@ def create_matrix_bundle_from_df(
         print(f"❌ {label}: none of the requested features are present")
         return None
 
-    subset = df[available_features + [target_column]].dropna()
-
-    if len(subset) < min_samples:
+    # Diagnostics before strict dropna
+    try:
+        total_rows = len(df)
+        tgt_non_null = df[target_column].notna().sum()
+        feat_block = df[available_features]
+        row_present_ratio = 1.0 - feat_block.isna().mean(axis=1)
+        rows_ge_80 = int((row_present_ratio >= 0.8).sum())
+        rows_ge_90 = int((row_present_ratio >= 0.9).sum())
+        rows_ge_100 = int((row_present_ratio == 1.0).sum())
         print(
-            f"⚠️ {label}: insufficient samples after cleaning ({len(subset)} < {min_samples})"
+            f"   🔍 {label}: rows={total_rows}, target_non_null={tgt_non_null}, present>=80%={rows_ge_80}, >=90%={rows_ge_90}, =100%={rows_ge_100}"
         )
+    except Exception:
+        pass
+
+    # Build robust subset: drop all-NaN columns; require target present and >=80% feature presence; impute remaining NaNs
+    nonempty_features = [
+        f for f in available_features if df[f].notna().sum() > 0
+    ]
+    if not nonempty_features:
+        print(f"❌ {label}: all requested features are empty (all NaN)")
         return None
 
+    working = df[nonempty_features + [target_column]].copy()
+    working = working[working[target_column].notna()]
+    present_ratio = 1.0 - working[nonempty_features].isna().mean(axis=1)
+    working = working.loc[present_ratio >= 0.8]
+
+    if len(working) < min_samples:
+        print(
+            f"⚠️ {label}: insufficient samples after cleaning ({len(working)} < {min_samples})"
+        )
+        try:
+            null_counts = df[nonempty_features +
+                             [target_column]].isna().sum().sort_values(
+                                 ascending=False)
+            top_nulls = null_counts.head(10)
+            print(f"   🔎 Top columns with NaNs (showing up to 10):")
+            for col, cnt in top_nulls.items():
+                print(f"     - {col}: {int(cnt)} NaNs")
+        except Exception:
+            pass
+        return None
+
+    medians = working[nonempty_features].median(axis=0, skipna=True)
+    working[nonempty_features] = working[nonempty_features].fillna(medians)
+
     return MatrixBundle(
-        X=subset[available_features].values,
-        y=subset[target_column].values,
-        df=subset.reset_index(drop=True),
-        feature_names=available_features,
+        X=working[nonempty_features].values,
+        y=working[target_column].values,
+        df=working.reset_index(drop=True),
+        feature_names=nonempty_features,
     )
 
 
@@ -559,7 +617,8 @@ def run_dimensionality_reduction_pipeline(args: argparse.Namespace) -> None:
 
     try:
         if args.use_real_data:
-            dataset = load_real_data(args.data_path, args.symbol)
+            dataset = load_real_data(args.data_path, args.symbol,
+                                     args.train_start, args.train_end)
         else:
             dataset = create_sample_dataset(args.n_samples, args.n_factors)
     except Exception as exc:  # noqa: BLE001
@@ -569,6 +628,19 @@ def run_dimensionality_reduction_pipeline(args: argparse.Namespace) -> None:
 
     train_df, train_start, train_end = filter_by_date_range(
         dataset.dataframe, args.train_start, args.train_end)
+
+    # Guard: if filtered window is empty or too small, fallback to full available range
+    if train_df is None or len(train_df) < args.min_samples:
+        print(
+            "⚠️ Base training: insufficient data after date filter; using full dataset range"
+        )
+        train_df = dataset.dataframe.copy()
+        if "timestamp" in train_df.columns:
+            ts = pd.to_datetime(train_df["timestamp"], errors="coerce")
+            train_start = ts.min()
+            train_end = ts.max()
+        else:
+            train_start = train_end = None
 
     train_bundle = create_matrix_bundle_from_df(
         train_df,
@@ -635,19 +707,25 @@ def run_dimensionality_reduction_pipeline(args: argparse.Namespace) -> None:
         test_bundle=test_bundle,
     )
 
+    # File tag prefers training end date if available; falls back to current date
+    if isinstance(train_end, pd.Timestamp):
+        file_tag = pd.Timestamp(train_end).strftime("%Y%m%d")
+    else:
+        file_tag = pd.Timestamp.now().strftime("%Y%m%d")
+    # Record actual run time separately for metadata
     timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
 
     if args.save_model:
         model_path = (
             output_dir /
-            f"interpretable_factor_engine_{args.symbol.replace('-', '_')}_{timestamp}.pkl"
+            f"interpretable_factor_engine_{args.symbol.replace('-', '_')}_{file_tag}.pkl"
         )
         engine.save_model(str(model_path))
 
     if args.save_topk_model and topk_model is not None:
         topk_model_path = (
             output_dir /
-            f"lightgbm_topk_{args.symbol.replace('-', '_')}_{timestamp}.txt")
+            f"lightgbm_topk_{args.symbol.replace('-', '_')}_{file_tag}.txt")
         topk_model.save_model(str(topk_model_path))
         print(f"💾 Top-K LightGBM saved to: {topk_model_path}")
 
@@ -699,13 +777,13 @@ def run_dimensionality_reduction_pipeline(args: argparse.Namespace) -> None:
 
     summary_path = (
         output_dir /
-        f"pipeline_summary_{args.symbol.replace('-', '_')}_{timestamp}.json")
+        f"pipeline_summary_{args.symbol.replace('-', '_')}_{file_tag}.json")
     save_json(summary_path, summary_payload)
 
     if args.visualize:
         viz_path = (
             output_dir /
-            f"factor_contributions_{args.symbol.replace('-', '_')}_{timestamp}.png"
+            f"factor_contributions_{args.symbol.replace('-', '_')}_{file_tag}.png"
         )
         engine.visualize_factor_contributions(save_path=str(viz_path),
                                               top_k=args.top_k)
