@@ -18,7 +18,7 @@ This repository hosts the production-ready components for the factor research, d
 
 | Workflow | Command | Notes |
 | --- | --- | --- |
-| Enhanced production training | `make train-enhanced` | Uses `TRAIN_DATA` (defaults to `data/parquet_data/BTCUSDT-aggTrades-2025-05.parquet`). Saves the pickled strategy, feature engineer, and metrics into `models/`.
+| Production training | `make train` | Uses `SYMBOL`, `START_DATE`, `END_DATE` (defaults in Makefile). Reads matching files under `DATA_DIR`, trains with enhanced features, and saves artefacts to `models/`.
 | Monthly rolling retrain | `make rolling-monthly` | Sliding monthly windows for a single symbol. Override `DATA_DIR`, `SYMBOL`, `YEAR` as needed.
 | Quarterly rolling retrain | `make rolling-quarterly` | Expanding quarterly windows with drift-aware evaluation. Overrides identical to monthly.
 | VectorBot backtest | `make vectorbot-backtest` | Loads the latest trained model (`MODEL_PATH`). Produces trade logs and equity curves.
@@ -29,14 +29,15 @@ This repository hosts the production-ready components for the factor research, d
 All targets accept overrides, for example:
 
 ```bash
-make train-enhanced TRAIN_DATA=/data/parquet_data/ETHUSDT-aggTrades-2025-05.parquet SYMBOL=ETHUSDT
+make train SYMBOL=ETHUSDT START_DATE=2024-01-01 END_DATE=2024-06-30 OVERWRITE=1
+make train SYMBOLS="BTCUSDT ETHUSDT" START_DATE=2024-01-01 END_DATE=2024-12-31 OVERWRITE=1
 make rolling-quarterly DATA_DIR=/mnt/data/parquet_data SYMBOL=ETHUSDT START_YEAR=2022 END_YEAR=2025
 ```
 
 ## Directory Layout
 
 - `src/ml_trading/` – installable Python package that provides feature pipelines, model trainers, autoencoder stack, and rolling evaluation utilities.
-- `scripts/training/train_model_enhanced.py` – production LightGBM training entry point.
+- `ml_trading/models/train_model.py` – production LightGBM training entry point.
 - `scripts/rolling/` – rolling retraining orchestration (`monthly_rolling_retrain.py`, `quarterly_rolling_retrain.py`).
 - `scripts/backtesting/` – minimal backtesting interfaces (`vectorbot_backtest.py`, `oos_june.py`).
 - `scripts/analysis/` – diagnostic tooling that reuses the shared package (e.g. exporting SHAP/feature importance reports).
@@ -44,7 +45,7 @@ make rolling-quarterly DATA_DIR=/mnt/data/parquet_data SYMBOL=ETHUSDT START_YEAR
 
 ## Data Expectations
 
-- Aggregated trade parquet files are expected under `data/parquet_data/` (or the path provided through `TRAIN_DATA` / `OOS_DATA`).
+- Aggregated trade parquet files are expected under `data/parquet_data/` (or the path provided through `DATA_DIR`).
 - Legacy ZIP inputs are still accepted when `TRAIN_ZIP`/`OOS_DATA` point to `.zip` archives; the scripts will extract and process them transparently.
 - Results are written to `results/` and models to `models/` by default.
 

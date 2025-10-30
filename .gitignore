@@ -415,3 +415,4 @@ data/
 *.log
 *.egg-info/
 cmake-3.28.3-linux-x86_64.sh
+ta-lib_0.6.4_amd64.deb

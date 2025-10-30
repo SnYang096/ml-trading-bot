@@ -8,14 +8,14 @@
 ## 运行示例
 
 ```bash
-# VectorBot 回测（默认使用 models/trained_model_enhanced_may_2025.pkl）
+# VectorBot 回测（默认使用 Makefile 中的 MODEL_PATH 变量）
 make vectorbot-backtest
 
 # 2025 年 6 月 OOS 评估，覆盖模型与数据路径
-make oos-june MODEL_PATH=models/trained_model_enhanced_may_2025.pkl \
-             SCALER_PATH=models/feature_scalers_enhanced_may_2025.pkl \
+make oos-june MODEL_PATH=models/trained_model_btcusdt_20250501_20250531.pkl \
+             SCALER_PATH=models/trained_model_btcusdt_20250501_20250531_scalers.pkl \
              OOS_DATA=data/parquet_data/BTCUSDT-aggTrades-2025-06.parquet
 ```
 
-> 训练脚本会生成所需的模型与特征缩放器（参见 `scripts/training/train_model_enhanced.py`），默认从 `data/parquet_data/*.parquet` 读取。若仍使用 ZIP，可将 `OOS_DATA` 指向 `.zip` 文件，脚本会自动解压处理。确保在运行回测/OOS 前已完成训练。
+> 训练脚本会生成所需的模型与特征缩放器（参见 `ml_trading.models.train_model`），默认从 `data/parquet_data/*.parquet` 读取。若仍使用 ZIP，可将 `OOS_DATA` 指向 `.zip` 文件，脚本会自动解压处理。确保在运行回测/OOS 前已完成训练。
 

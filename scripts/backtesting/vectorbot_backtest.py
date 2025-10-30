@@ -11,9 +11,12 @@ from ml_trading.strategies.ml_strategy import MLTradingStrategy
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.data_tools.feature_engineering import FeatureEngineer
 
-
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME",
+                                    "trained_model_btcusdt_20250501_20250531")
 DEFAULT_MODEL_PATH = os.environ.get(
-    "MODEL_PATH", "trained_model_enhanced_may_2025.pkl"
+    "MODEL_PATH",
+    os.path.join(os.environ.get("MODEL_DIR", "models"),
+                 f"{DEFAULT_MODEL_NAME}.pkl"),
 )
 
 
@@ -449,7 +452,9 @@ def main():
     model_path = DEFAULT_MODEL_PATH
     if not os.path.exists(model_path):
         print(f"❌ Model not found: {model_path}")
-        print("Please run scripts/training/train_model_enhanced.py first")
+        print(
+            "Please run `make train` (or python -m ml_trading.models.train_model) first"
+        )
         return
 
     # Initialize backtest

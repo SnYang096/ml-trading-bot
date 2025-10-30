@@ -8,12 +8,19 @@ from datetime import datetime
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.strategies.ml_strategy import MLTradingStrategy
 
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME",
+                                    "trained_model_btcusdt_20250501_20250531")
 MODEL_PATH = os.environ.get(
-    "MODEL_PATH", os.path.join("models",
-                               "trained_model_enhanced_may_2025.pkl"))
+    "MODEL_PATH",
+    os.path.join(os.environ.get("MODEL_DIR", "models"),
+                 f"{DEFAULT_MODEL_NAME}.pkl"),
+)
 SCALER_PATH = os.environ.get(
     "SCALER_PATH",
-    os.path.join("models", "feature_scalers_enhanced_may_2025.pkl"),
+    os.path.join(
+        os.environ.get("MODEL_DIR", "models"),
+        f"{DEFAULT_MODEL_NAME}_scalers.pkl",
+    ),
 )
 JUNE_DATA = os.environ.get(
     "OOS_DATA",

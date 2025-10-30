@@ -5,9 +5,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME",
+                                    "trained_model_btcusdt_20250501_20250531")
 MODEL_PATH = os.environ.get(
-    "MODEL_PATH", os.path.join("models",
-                               "trained_model_enhanced_may_2025.pkl"))
+    "MODEL_PATH",
+    os.path.join(os.environ.get("MODEL_DIR", "models"),
+                 f"{DEFAULT_MODEL_NAME}.pkl"),
+)
 OUT_DIR = os.path.join("reports")
 os.makedirs(OUT_DIR, exist_ok=True)
 
