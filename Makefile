@@ -10,7 +10,7 @@ PIP := pip3
 # Docker configuration
 DOCKER_COMPOSE := docker-compose
 DOCKER_SERVICE := ml-gpu
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:latest
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.2
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=/mnt/parquet_data`)
 DATA_DIR ?= data/parquet_data
