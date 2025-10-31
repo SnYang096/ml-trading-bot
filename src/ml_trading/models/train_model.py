@@ -22,6 +22,10 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.strategies.ml_strategy import MLTradingStrategy
 from ml_trading.pipeline.dimensionality.integration import DimensionalityIntegrationEngine  # type: ignore
+from ml_trading.pipeline.dimensionality.utils import (
+    load_top_factors_list,
+    filter_engineered_by_topk,
+)
 from ml_trading.models.autoencoder import UnifiedAutoencoder  # type: ignore
 
 # ---------------------------------------------------------------------------
@@ -600,33 +604,12 @@ def train_symbol(
         # Optionally filter features by Top-K list
         if args.use_top_factors:
             try:
-                with open(args.use_top_factors, "r") as f:
-                    top_json = json.load(f)
-                top_list = [
-                    item["name"]
-                    if isinstance(item, dict) and "name" in item else str(item)
-                    for item in top_json.get("top_factors", [])
-                ]
+                top_list = load_top_factors_list(args.use_top_factors)
                 if not top_list:
-                    print(
-                        "   ⚠️ Top factors list is empty; skipping filtering")
+                    print("   ⚠️ Top factors list is empty; skipping filtering")
                 else:
-                    print(
-                        f"   🔎 Applying Top-K filter with {len(top_list)} factors"
-                    )
-                    for tf, df in engineered_data.items():
-                        keep_cols = [c for c in df.columns if c in top_list]
-                        # Always keep essential columns if present
-                        for essential in ("close", "volume", "taker_buy_ratio",
-                                          "cvd"):
-                            if essential in df.columns and essential not in keep_cols:
-                                keep_cols.append(essential)
-                        if not keep_cols:
-                            print(
-                                f"   ⚠️ No overlap with Top-K for timeframe {tf}, keeping original features"
-                            )
-                            continue
-                        engineered_data[tf] = df[keep_cols].copy()
+                    print(f"   🔎 Applying Top-K filter with {len(top_list)} factors")
+                    engineered_data = filter_engineered_by_topk(engineered_data, top_list)
             except Exception as exc:  # noqa: BLE001
                 print(f"   ⚠️ Failed to apply Top-K filter: {exc}")
 

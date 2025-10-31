@@ -241,6 +241,12 @@ class EnhancedFeatureEngineer:
 
         df = data.copy()
 
+        # 严格校验：必须存在订单流关键列
+        required_cols = ["cvd", "taker_buy_ratio"]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"缺少订单流数据列: {missing}。这是数据错误，请检查上游数据准备流程。")
+
         # 定义需要计算Hurst的信号源
         signal_sources = {
             "close": df["close"].values,
@@ -248,11 +254,9 @@ class EnhancedFeatureEngineer:
             "volume": df["volume"].values,
         }
 
-        # 如果有订单流数据，也加入
-        if "cvd" in df.columns:
-            signal_sources["cvd"] = df["cvd"].values
-        if "taker_buy_ratio" in df.columns:
-            signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
+        # 加入订单流信号（已严格校验）
+        signal_sources["cvd"] = df["cvd"].values
+        signal_sources["taker_buy_ratio"] = df["taker_buy_ratio"].values
 
         print(f"      Hurst计算信号源: {list(signal_sources.keys())}")
 
@@ -673,10 +677,10 @@ class EnhancedFeatureEngineer:
         """
         df = data.copy()
 
-        # 只有当存在订单流数据时才计算
+        # 严格模式：必须存在订单流数据
         if "cvd" not in df.columns or "taker_buy_ratio" not in df.columns:
-            print("      ⚠️  缺少订单流数据，跳过订单流特征")
-            return df
+            raise ValueError(
+                "缺少订单流数据(cvd/taker_buy_ratio)，这是数据错误，请检查上游数据准备流程。")
 
         print("      计算订单流特征...")
 
@@ -878,6 +882,38 @@ class EnhancedFeatureEngineer:
         """Ensure baseline indicators and shared derived features are present."""
         return add_common_derived_features(data)
 
+    def _ensure_orderflow_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure minimal order-flow signals exist (cvd, taker_buy_ratio) to allow
+        Hurst/WPT/Hilbert to include them as signal sources. Uses robust proxies
+        when true order-flow columns are missing.
+        """
+        out = df.copy()
+        # Proxy taker_buy_ratio: rolling up-move frequency as a rough proxy
+        if "taker_buy_ratio" not in out.columns:
+            up = (out["close"].diff() > 0).astype(float)
+            out["taker_buy_ratio"] = up.rolling(
+                20, min_periods=5).mean().fillna(0.5)
+        # Proxy CVD: cumulative signed volume using price change sign
+        if "cvd" not in out.columns:
+            signed_vol = np.sign(
+                out["close"].diff().fillna(0.0)) * out["volume"].fillna(0.0)
+            out["cvd"] = signed_vol.cumsum()
+            # Provide simple deltas for downstream usage if needed
+            out["cvd_change_1"] = signed_vol
+            out["cvd_change_5"] = signed_vol.rolling(5, min_periods=1).sum()
+            out["cvd_change_20"] = signed_vol.rolling(20, min_periods=1).sum()
+            # Smoothed windows for short/medium/long
+            out["cvd_short"] = signed_vol.rolling(20, min_periods=1).sum()
+            out["cvd_medium"] = signed_vol.rolling(60, min_periods=1).sum()
+            out["cvd_long"] = signed_vol.rolling(288, min_periods=1).sum()
+            total_vol = out["volume"].rolling(20, min_periods=1).sum()
+            out["cvd_normalized"] = out["cvd_short"] / total_vol.replace(
+                0, np.nan)
+            out["cvd_normalized"] = out["cvd_normalized"].replace(
+                [np.inf, -np.inf], np.nan).fillna(0.0)
+        return out
+
     def engineer_features(self,
                           multi_tf_data: Dict[str, pd.DataFrame],
                           fit: bool = True) -> Dict[str, pd.DataFrame]:
@@ -906,6 +942,14 @@ class EnhancedFeatureEngineer:
             # 1. Basic features
             print(f"    - Adding basic technical indicators...")
             df = self.add_basic_features(df)
+
+            # Strict validation: require order flow columns to be present
+            required_of_cols = ["cvd", "taker_buy_ratio"]
+            missing = [c for c in required_of_cols if c not in df.columns]
+            if missing:
+                raise ValueError(
+                    f"Missing required order-flow columns: {missing}. Data source error; please ensure preprocessing provides these columns."
+                )
 
             # 2. Hurst exponent features for ALL signal sources
             print(f"    - Calculating Hurst exponent for all sources...")

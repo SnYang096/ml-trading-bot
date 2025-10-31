@@ -88,14 +88,15 @@ help:
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  make feature-report       # Generate feature IC/IR HTML report"
-	@echo "  make train               # Train production LightGBM pipeline"
+	@echo "  make train               # Train production LightGBM pipeline (baseline/rollback)"
 	@echo "  make rolling-monthly      # Monthly rolling retraining"
 	@echo "  make rolling-quarterly    # Quarterly rolling retraining"
 	@echo "  make vectorbot-backtest   # Run VectorBot risk-managed backtest"
 	@echo "  make oos-june             # Evaluate June OOS performance"
 	@echo "  make dimensionality-demo  # Run dimensionality pipeline on sample data"
 	@echo "  make dimensionality-real  # Run dimensionality pipeline on real data"
-	@echo "  make dim-compare         # Train full vs compressed/Top-K and compare metrics"
+	@echo "  make dim-compare         # DEFAULT: production ablation pipeline with report"
+	@echo "  -- Deprecated: make train-topk / make train-ae (use dim-compare instead)"
 	@echo ""
 	@echo "Override defaults, e.g. \"make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31\""
 	@echo ""
@@ -211,7 +212,7 @@ train:
 train-topk:
 	@echo "🚀 Training with Top-K factors for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
 	@echo "Usage: make train-topk SYMBOLS=BTCUSDT START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD TOP_FACTORS=path/to/top_factors.json"
-	$(DOCKER_RUN) python3 -m ml_trading.models.train_model \
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.models.train_model \
 		--symbols $(SYMBOLS) \
 		--start-date $(START_DATE) \
 		--end-date $(END_DATE) \
@@ -298,10 +299,11 @@ DIM_COMPARE_ARGS ?=
 dim-compare:
 	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
 	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS=\"--top-k 50\""
-	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.production_training \
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.production_training \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		--encoding-dim $(ENCODING_DIM) \
+		$(if $(ENCODING_GRID),--encoding-grid $(ENCODING_GRID)) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(DIM_COMPARE_ARGS)

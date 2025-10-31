@@ -85,12 +85,14 @@ class MarketDataLoader:
                                                      errors="coerce")
                     df = df.dropna(subset=["timestamp"]).set_index(
                         "timestamp").sort_index()
-                    return df[["open", "high", "low", "close", "volume"]]
+                    # Preserve auxiliary columns (e.g., order-flow)
+                    return df
 
                 # Try already indexed by timestamp
                 if {"open", "high", "low", "close",
                         "volume"}.issubset(df.columns):
-                    return df[["open", "high", "low", "close", "volume"]]
+                    # Preserve auxiliary columns
+                    return df
 
                 raise ValueError(f"Unrecognized data schema in file: {p}")
 
