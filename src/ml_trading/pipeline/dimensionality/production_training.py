@@ -6,6 +6,7 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, Tuple
+import argparse
 
 import joblib
 import numpy as np
@@ -355,7 +356,41 @@ def run_production_training(
 
 
 def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
-    return run_production_training()
+    parser = argparse.ArgumentParser(
+        description="Production-style comparison: original vs compressed/Top-K",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--data-path",
+        default="/data/parquet_data",
+        help="Parquet directory with real market data",
+    )
+    parser.add_argument(
+        "--symbol",
+        default="ETH-USD",
+        help="Symbol name (e.g., BTC-USD, ETH-USD)",
+    )
+    parser.add_argument(
+        "--encoding-dim",
+        type=int,
+        default=8,
+        help="Autoencoder embedding dimension",
+    )
+    parser.add_argument(
+        "--autoencoder-epochs",
+        type=int,
+        default=500,
+        help="Autoencoder training epochs",
+    )
+
+    args = parser.parse_args()
+
+    return run_production_training(
+        data_path=args.data_path,
+        symbol=args.symbol,
+        encoding_dim=args.encoding_dim,
+        autoencoder_epochs=args.autoencoder_epochs,
+    )
 
 
 if __name__ == "__main__":

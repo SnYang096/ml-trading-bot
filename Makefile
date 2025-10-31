@@ -62,9 +62,11 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 	--shm-size=8gb \
 	$(DOCKER_IMAGE)
 
+
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real
+	train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real \
+	dim-compare
 
 help:
 	@echo "ML Trading Project"
@@ -93,6 +95,7 @@ help:
 	@echo "  make oos-june             # Evaluate June OOS performance"
 	@echo "  make dimensionality-demo  # Run dimensionality pipeline on sample data"
 	@echo "  make dimensionality-real  # Run dimensionality pipeline on real data"
+	@echo "  make dim-compare         # Train full vs compressed/Top-K and compare metrics"
 	@echo ""
 	@echo "Override defaults, e.g. \"make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31\""
 	@echo ""
@@ -284,4 +287,20 @@ dimensionality-real:
 		--save-topk-model \
 		--visualize \
 		--generate-report
+
+# ---------------------------------------------------------------------------
+# Dimensionality: production-style comparison (original vs compressed)
+# ---------------------------------------------------------------------------
+
+ENCODING_DIM ?= 16
+DIM_COMPARE_ARGS ?=
+
+dim-compare:
+	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
+	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS=\"--top-k 40\""
+	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.production_training \
+		--data-path /workspace/data/parquet_data \
+		--symbol $(SYMBOL) \
+		--encoding-dim $(ENCODING_DIM) \
+		$(DIM_COMPARE_ARGS)
 
