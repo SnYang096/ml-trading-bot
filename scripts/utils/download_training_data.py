@@ -17,7 +17,7 @@ import requests
 import zipfile
 import time
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 import argparse
 
@@ -25,9 +25,12 @@ import argparse
 class BinanceMultiSymbolDownloader:
     """Binance多币种历史数据下载器"""
 
-    def __init__(self, data_dir: str = "data/raw"):
+    def __init__(self,
+                 data_dir: str = "data/raw",
+                 parquet_dir: Optional[str] = None):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.parquet_dir = Path(parquet_dir) if parquet_dir else None
 
         # Binance数据基础URL
         self.base_url = "https://data.binance.vision/data/futures/um/monthly/aggTrades"
@@ -60,9 +63,8 @@ class BinanceMultiSymbolDownloader:
         current_year = start_year
         current_month = start_month
 
-        while (current_year < end_year) or (
-            current_year == end_year and current_month <= end_month
-        ):
+        while (current_year < end_year) or (current_year == end_year
+                                            and current_month <= end_month):
             months.append((current_year, current_month))
             current_month += 1
             if current_month > 12:
@@ -71,8 +73,24 @@ class BinanceMultiSymbolDownloader:
 
         return months
 
+    def _symbol_to_usd(self, symbol: str) -> str:
+        """将交易对从 *USDT 转换为 *-USD（用于Parquet文件名对齐）"""
+        if symbol.endswith("USDT"):
+            return symbol.replace("USDT", "-USD")
+        return symbol
+
     def check_local_file(self, symbol: str, year: int, month: int) -> bool:
-        """检查本地文件是否存在且完整"""
+        """检查本地是否已具备该月份数据：优先检查Parquet；否则检查ZIP完整性"""
+        # 1) 如果提供了Parquet目录，先检查是否已有对应月份的Parquet
+        if self.parquet_dir:
+            parquet_symbol = self._symbol_to_usd(symbol)
+            parquet_name = f"{parquet_symbol}_{year}-{month:02d}.parquet"
+            parquet_path = self.parquet_dir / parquet_name
+            if parquet_path.exists() and parquet_path.stat().st_size > 0:
+                print(f"✅ Parquet 已存在: {parquet_name}")
+                return True
+
+        # 2) 回退检查ZIP是否已完整下载
         filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
         file_path = self.data_dir / filename
 
@@ -160,7 +178,8 @@ class BinanceMultiSymbolDownloader:
         self.stats["failed"] += 1
         return False
 
-    def download_symbol_data(self, symbol: str, months: List[Tuple[int, int]]) -> Dict:
+    def download_symbol_data(self, symbol: str,
+                             months: List[Tuple[int, int]]) -> Dict:
         """下载单个币种的所有数据"""
         symbol_name = self.symbols.get(symbol, symbol)
         print(f"\n{'='*60}")
@@ -216,7 +235,9 @@ class BinanceMultiSymbolDownloader:
         print(
             f"📅 时间范围: {start_year}-{start_month:02d} 至 {end_year}-{end_month:02d}"
         )
-        print(f"📂 保存目录: {self.data_dir.absolute()}")
+        print(f"📂 ZIP目录: {self.data_dir.absolute()}")
+        if self.parquet_dir:
+            print(f"📂 Parquet目录: {self.parquet_dir.absolute()}")
 
         # 确定要下载的币种
         if symbols is None:
@@ -228,7 +249,8 @@ class BinanceMultiSymbolDownloader:
         print(f"💰 币种: {', '.join(symbols)}")
 
         # 生成月份列表
-        months = self.get_month_list(start_year, start_month, end_year, end_month)
+        months = self.get_month_list(start_year, start_month, end_year,
+                                     end_month)
         total_files = len(months) * len(symbols)
 
         print(f"📦 预计文件数: {total_files} ({len(months)} 月 × {len(symbols)} 币种)")
@@ -265,11 +287,8 @@ class BinanceMultiSymbolDownloader:
         print(f"⏱️  总耗时: {elapsed_minutes:.1f} 分钟")
 
         if self.stats["downloaded"] > 0:
-            avg_speed = (
-                self.stats["total_size_mb"] / elapsed_minutes
-                if elapsed_minutes > 0
-                else 0
-            )
+            avg_speed = (self.stats["total_size_mb"] /
+                         elapsed_minutes if elapsed_minutes > 0 else 0)
             print(f"⚡ 平均速度: {avg_speed:.1f} MB/分钟")
 
         print("\n✅ 下载完成！")
@@ -284,9 +303,8 @@ class BinanceMultiSymbolDownloader:
             for symbol in self.symbols.keys():
                 if filename.startswith(symbol):
                     # 提取日期
-                    date_part = filename.replace(f"{symbol}-aggTrades-", "").replace(
-                        ".zip", ""
-                    )
+                    date_part = filename.replace(f"{symbol}-aggTrades-",
+                                                 "").replace(".zip", "")
                     downloaded[symbol].append(date_part)
 
         return {k: sorted(v) for k, v in downloaded.items()}
@@ -320,7 +338,8 @@ class BinanceMultiSymbolDownloader:
                 # 检查缺失的月份
                 if len(dates) > 1:
                     # 简单检查：应该有连续的月份
-                    expected_count = self._count_months_between(dates[0], dates[-1])
+                    expected_count = self._count_months_between(
+                        dates[0], dates[-1])
                     if expected_count > len(dates):
                         missing = expected_count - len(dates)
                         print(f"  ⚠️  可能缺失 {missing} 个月的数据")
@@ -356,29 +375,40 @@ def main():
         """,
     )
 
-    parser.add_argument(
-        "--data-dir", default="data/raw", help="数据保存目录 (默认: data/raw)"
-    )
+    parser.add_argument("--data-dir",
+                        default="data/agg_data",
+                        help="ZIP保存目录 (默认: data/agg_data)")
+    parser.add_argument("--parquet-dir",
+                        default=None,
+                        help="Parquet目录 (提供后将跳过已存在月份)")
     parser.add_argument(
         "--symbols",
         nargs="+",
         choices=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
         help="指定要下载的币种",
     )
-    parser.add_argument(
-        "--start-year", type=int, default=2021, help="开始年份 (默认: 2021)"
-    )
-    parser.add_argument("--start-month", type=int, default=1, help="开始月份 (默认: 1)")
-    parser.add_argument(
-        "--end-year", type=int, default=2025, help="结束年份 (默认: 2025)"
-    )
-    parser.add_argument("--end-month", type=int, default=9, help="结束月份 (默认: 9)")
+    parser.add_argument("--start-year",
+                        type=int,
+                        default=2021,
+                        help="开始年份 (默认: 2021)")
+    parser.add_argument("--start-month",
+                        type=int,
+                        default=1,
+                        help="开始月份 (默认: 1)")
+    parser.add_argument("--end-year",
+                        type=int,
+                        default=2025,
+                        help="结束年份 (默认: 2025)")
+    parser.add_argument("--end-month",
+                        type=int,
+                        default=9,
+                        help="结束月份 (默认: 9)")
     parser.add_argument("--summary", action="store_true", help="只显示已下载文件的摘要")
 
     args = parser.parse_args()
 
     # 创建下载器
-    downloader = BinanceMultiSymbolDownloader(args.data_dir)
+    downloader = BinanceMultiSymbolDownloader(args.data_dir, args.parquet_dir)
 
     if args.summary:
         # 只显示摘要

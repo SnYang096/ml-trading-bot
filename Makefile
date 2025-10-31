@@ -62,7 +62,9 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 	--shm-size=8gb \
 	$(DOCKER_IMAGE)
 
-.PHONY: help clean format lint dev-install docker-build docker-install builder-shell train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real
+.PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
+	data-download data-convert data-pipeline \
+	train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real
 
 help:
 	@echo "ML Trading Project"
@@ -76,6 +78,11 @@ help:
 	@echo "  make docker-build         # Build Docker image (lightgbm-runtime:latest)"
 	@echo "  make docker-install       # Install project inside Docker container"
 	@echo "  make builder-shell        # Open bash in $(BUILDER_IMAGE)"
+	@echo ""
+	@echo "Data commands:"
+	@echo "  make data-download       # Download Binance aggTrades ZIPs (non-interactive)"
+	@echo "  make data-convert        # Convert ZIPs to Parquet (5min OHLC + orderflow)"
+	@echo "  make data-pipeline       # Download then convert"
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  make feature-report       # Generate feature IC/IR HTML report"
@@ -115,6 +122,45 @@ docker-build:
 docker-install:
 	@echo "📦 Installing project inside Docker container..."
 	$(DOCKER_RUN) pip3 install -e /workspace
+
+# ---------------------------------------------------------------------------
+# Data: download Binance monthly aggTrades ZIPs and convert to Parquet
+# ---------------------------------------------------------------------------
+
+# Download configuration
+AGG_DATA_DIR ?= data/agg_data
+DOWNLOAD_SYMBOLS ?= $(SYMBOLS)
+DOWNLOAD_START_YEAR ?= 2021
+DOWNLOAD_START_MONTH ?= 1
+DOWNLOAD_END_YEAR ?= $(shell date +%Y)
+DOWNLOAD_END_MONTH ?= $(shell date +%m)
+
+data-download:
+	@echo "📥 Downloading Binance monthly aggTrades ZIPs to $(AGG_DATA_DIR) ..."
+	@echo "Symbols=$(DOWNLOAD_SYMBOLS) Range=$(DOWNLOAD_START_YEAR)-$(DOWNLOAD_START_MONTH) → $(DOWNLOAD_END_YEAR)-$(DOWNLOAD_END_MONTH)"
+	@mkdir -p $(AGG_DATA_DIR)
+	# Non-interactive confirm: auto-continue (downloads directly into agg_data)
+	@yes | $(PYTHON) scripts/utils/download_training_data.py \
+		--data-dir $(AGG_DATA_DIR) \
+		--parquet-dir $(DATA_DIR) \
+		$(if $(DOWNLOAD_SYMBOLS),--symbols $(DOWNLOAD_SYMBOLS)) \
+		--start-year $(DOWNLOAD_START_YEAR) \
+		--start-month $(DOWNLOAD_START_MONTH) \
+		--end-year $(DOWNLOAD_END_YEAR) \
+		--end-month $(DOWNLOAD_END_MONTH)
+
+data-convert:
+	@echo "🔄 Converting ZIPs under data/agg_data → Parquet under data/parquet_data ..."
+	$(PYTHON) scripts/data_conversion/convert_zip_to_parquet.py --cleanup yes
+
+data-pipeline:
+	@$(MAKE) data-download \
+		DOWNLOAD_SYMBOLS="$(DOWNLOAD_SYMBOLS)" \
+		DOWNLOAD_START_YEAR=$(DOWNLOAD_START_YEAR) \
+		DOWNLOAD_START_MONTH=$(DOWNLOAD_START_MONTH) \
+		DOWNLOAD_END_YEAR=$(DOWNLOAD_END_YEAR) \
+		DOWNLOAD_END_MONTH=$(DOWNLOAD_END_MONTH)
+	@$(MAKE) data-convert
 
 builder-shell:
 	@echo "🔧 Opening interactive shell in $(BUILDER_IMAGE) ..."

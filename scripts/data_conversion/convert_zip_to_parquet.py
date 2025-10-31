@@ -13,6 +13,7 @@ import glob
 from datetime import datetime, timedelta
 import shutil
 import logging
+import argparse
 
 # 设置日志
 logging.basicConfig(level=logging.INFO,
@@ -359,14 +360,36 @@ class DataConverter:
 
 def main():
     """主函数"""
+    parser = argparse.ArgumentParser(
+        description=
+        "Convert Binance ZIP aggTrades to Parquet (5min OHLC + orderflow)")
+    parser.add_argument("--input-dir",
+                        default=None,
+                        help="ZIP input directory (default: data/agg_data)")
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Parquet output directory (default: data/parquet_data)")
+    parser.add_argument("--backup-dir",
+                        default=None,
+                        help="Backup directory for original ZIPs (optional)")
+    parser.add_argument(
+        "--cleanup",
+        choices=["yes", "no"],
+        default="yes",
+        help="Delete converted ZIPs without prompt (default: yes)")
+    args = parser.parse_args()
+
     print("🚀 Converting ZIP files to Parquet format...")
 
     # 配置路径（使用绝对路径，指向仓库根目录）
     base_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", ".."))
-    input_dir = os.path.join(base_dir, "data", "agg_data")
-    output_dir = os.path.join(base_dir, "data", "parquet_data")
-    backup_dir = os.path.join(base_dir, "data", "backup_zip")
+    input_dir = args.input_dir or os.path.join(base_dir, "data", "agg_data")
+    output_dir = args.output_dir or os.path.join(base_dir, "data",
+                                                 "parquet_data")
+    backup_dir = args.backup_dir or os.path.join(base_dir, "data",
+                                                 "backup_zip")
 
     print(f"📂 Base directory: {base_dir}")
     print(f"📂 Input directory: {input_dir}")
@@ -412,15 +435,20 @@ def main():
         if len(results["failed_files"]) > 5:
             print(f"   ... and {len(results['failed_files']) - 5} more files")
 
-    # 询问是否清理zip文件
+    # 清理zip文件（可非交互）
     if results["converted_files"]:
-        response = input(
-            f"\n🗑️  Clean up {len(results['converted_files'])} converted zip files? (y/N): "
-        )
-        if response.lower() == "y":
+        if args.cleanup == "yes":
             cleaned_count = converter.cleanup_zip_files(
                 results["converted_files"])
             print(f"✅ Cleaned up {cleaned_count} zip files")
+        else:
+            response = input(
+                f"\n🗑️  Clean up {len(results['converted_files'])} converted zip files? (y/N): "
+            )
+            if response.lower() == "y":
+                cleaned_count = converter.cleanup_zip_files(
+                    results["converted_files"])
+                print(f"✅ Cleaned up {cleaned_count} zip files")
 
     print(f"\n🎉 Data conversion complete!")
     print(f"   Output directory: {output_dir}")
