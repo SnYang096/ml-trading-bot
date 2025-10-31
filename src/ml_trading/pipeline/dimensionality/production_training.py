@@ -40,17 +40,35 @@ def write_html_report(results: Dict, html_path: str) -> None:
     os.makedirs(os.path.dirname(html_path), exist_ok=True)
     ts_start = results.get("timestamp_start", results.get("timestamp", "-"))
     ts_end = results.get("timestamp_end", "-")
+    # Prefer training date range if available, otherwise show runtime timestamps
+    train_start_date = results.get("train_start_date")
+    train_end_date = results.get("train_end_date")
+    if train_start_date and train_end_date:
+        # Format: YYYYMMDD -> YYYY-MM-DD
+        date_range_str = f"Training Data: {train_start_date[:4]}-{train_start_date[4:6]}-{train_start_date[6:8]} to {train_end_date[:4]}-{train_end_date[4:6]}-{train_end_date[6:8]}"
+        runtime_str = f"Run Time: {ts_start} to {ts_end}"
+    else:
+        date_range_str = f"Start: {ts_start}  |  End: {ts_end}"
+        runtime_str = ""
     d = results.get("data_info", {})
     p = results.get("performance", {})
     train_info = results.get("training_info", {})
 
     orig = p.get("original_features", {})
     comp = p.get("compressed_features", {})
+    orig_val = p.get("original_features_val", {})
+    comp_val = p.get("compressed_features_val", {})
     delta_r2 = p.get("performance_change", None)
 
     conclusion = "Dimensionality reduction appears beneficial." if (
         delta_r2 is not None and delta_r2
         > 0) else "Dimensionality reduction is not beneficial under this run."
+    
+    # Extract financial metrics
+    orig_fin = orig.get("financial_metrics", {})
+    comp_fin = comp.get("financial_metrics", {})
+    orig_val_fin = orig_val.get("financial_metrics", {})
+    comp_val_fin = comp_val.get("financial_metrics", {})
 
     # Optional grid table
     grid_rows = []
@@ -71,7 +89,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
 <style>body{{font-family:Arial,sans-serif;margin:24px;color:#222}}table{{border-collapse:collapse;margin-top:16px;width:100%;max-width:900px}}th,td{{border:1px solid #ddd;padding:8px 10px;text-align:left}}th{{background:#f7f7f7}}.bad{{color:#b00020;font-weight:600}}.good{{color:#0a7c2f;font-weight:600}}.warn{{color:#b36b00;font-weight:600}}</style>
 </head><body>
 <h1>Dimensionality Reduction Comparison</h1>
-<div>Start: {ts_start}  |  End: {ts_end}</div>
+<div>{date_range_str}</div>
+{f'<div style="font-size:0.9em;color:#666;margin-top:4px;">{runtime_str}</div>' if runtime_str else ''}
 
 <h2>Data Summary</h2>
 <table>
@@ -327,11 +346,115 @@ def train_production_lightgbm(
     return model
 
 
+def calculate_financial_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    risk_free_rate: float = 0.0,
+) -> Dict[str, float]:
+    """
+    Calculate financial metrics for trading strategy evaluation.
+    
+    Args:
+        y_true: True returns
+        y_pred: Predicted returns
+        risk_free_rate: Risk-free rate (annualized, default 0)
+    
+    Returns:
+        Dictionary of financial metrics
+    """
+    metrics = {}
+    
+    try:
+        # Strategy: use predicted returns as position signals
+        # Simple strategy: long if pred > 0, short if pred < 0 (proportional to confidence)
+        positions = np.sign(y_pred) * np.abs(y_pred)
+        # Clip positions to reasonable range [-1, 1]
+        positions = np.clip(positions, -1.0, 1.0)
+        
+        # Strategy returns: position * true return
+        strategy_returns = positions * y_true
+        
+        # 1. Total return (cumulative)
+        total_return = float(np.sum(strategy_returns))
+        metrics["total_return"] = total_return
+        
+        # 2. Annualized return (assuming daily data)
+        n_periods = len(strategy_returns)
+        if n_periods > 0:
+            # Simple annualization: multiply by ~252 trading days
+            annualized_return = total_return * (252.0 / n_periods) if n_periods < 252 else total_return
+            metrics["annualized_return"] = annualized_return
+        else:
+            metrics["annualized_return"] = 0.0
+        
+        # 3. Sharpe ratio
+        returns_std = np.std(strategy_returns)
+        if returns_std > 1e-8:
+            # Annualized Sharpe: (mean_return - risk_free) / std_return * sqrt(252)
+            daily_rf = risk_free_rate / 252.0
+            sharpe_ratio = (np.mean(strategy_returns) - daily_rf) / returns_std * np.sqrt(252.0)
+            metrics["sharpe_ratio"] = float(sharpe_ratio)
+        else:
+            metrics["sharpe_ratio"] = 0.0
+        
+        # 4. Maximum drawdown
+        cumulative_returns = np.cumsum(strategy_returns)
+        running_max = np.maximum.accumulate(cumulative_returns)
+        drawdown = cumulative_returns - running_max
+        max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        metrics["max_drawdown"] = max_drawdown
+        metrics["max_drawdown_pct"] = max_drawdown / (1.0 + abs(running_max[-1])) if len(running_max) > 0 and running_max[-1] != 0 else 0.0
+        
+        # 5. Win rate
+        winning_trades = (strategy_returns > 0).sum()
+        total_trades = len(strategy_returns)
+        metrics["win_rate"] = float(winning_trades / total_trades) if total_trades > 0 else 0.0
+        
+        # 6. Average win/loss ratio
+        wins = strategy_returns[strategy_returns > 0]
+        losses = strategy_returns[strategy_returns < 0]
+        avg_win = float(np.mean(wins)) if len(wins) > 0 else 0.0
+        avg_loss = float(np.abs(np.mean(losses))) if len(losses) > 0 else 0.0
+        metrics["avg_win"] = avg_win
+        metrics["avg_loss"] = avg_loss
+        metrics["win_loss_ratio"] = avg_win / avg_loss if avg_loss > 1e-8 else 0.0
+        
+        # 7. Volatility (annualized)
+        volatility = np.std(strategy_returns) * np.sqrt(252.0)
+        metrics["volatility"] = float(volatility)
+        
+        # 8. Calmar ratio (return / max_drawdown)
+        if abs(max_drawdown) > 1e-8:
+            metrics["calmar_ratio"] = float(annualized_return / abs(max_drawdown))
+        else:
+            metrics["calmar_ratio"] = 0.0
+            
+    except Exception as e:
+        print(f"⚠️ Error calculating financial metrics: {e}")
+        # Return defaults
+        metrics = {
+            "total_return": 0.0,
+            "annualized_return": 0.0,
+            "sharpe_ratio": 0.0,
+            "max_drawdown": 0.0,
+            "max_drawdown_pct": 0.0,
+            "win_rate": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "win_loss_ratio": 0.0,
+            "volatility": 0.0,
+            "calmar_ratio": 0.0,
+        }
+    
+    return metrics
+
+
 def evaluate_model_performance(
     model,
     X_test: np.ndarray,
     y_test: np.ndarray,
     model_name: str = "Model",
+    include_financial_metrics: bool = True,
 ):
     predictions = model.predict(X_test)
 
@@ -345,13 +468,23 @@ def evaluate_model_performance(
     print(f"  RMSE: {rmse:.4f}")
     print(f"  MAE: {mae:.4f}")
 
-    return {
+    results = {
         "mse": mse,
         "rmse": rmse,
         "mae": mae,
         "r2": r2,
         "predictions": predictions,
     }
+    
+    # Add financial metrics if requested
+    if include_financial_metrics:
+        financial_metrics = calculate_financial_metrics(y_test, predictions)
+        results["financial_metrics"] = financial_metrics
+        print(f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
+        print(f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
+        print(f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
+
+    return results
 
 
 def save_production_results(
@@ -460,17 +593,32 @@ def run_production_training(
     )
 
     print("\n📊 Evaluating performance...")
+    # Evaluate on validation set
+    results_original_val = evaluate_model_performance(
+        model_original,
+        X_val,
+        y_val,
+        "Original Features (Val)",
+    )
+    results_compressed_val = evaluate_model_performance(
+        model_compressed,
+        X_val_emb,
+        y_val,
+        "Compressed Features (Val)",
+    )
+    
+    # Evaluate on test set
     results_original = evaluate_model_performance(
         model_original,
         X_test,
         y_test,
-        "Original Features",
+        "Original Features (Test)",
     )
     results_compressed = evaluate_model_performance(
         model_compressed,
         X_test_emb,
         y_test,
-        "Compressed Features",
+        "Compressed Features (Test)",
     )
 
     print("\n📋 Generating production report...")
@@ -478,9 +626,23 @@ def run_production_training(
     compression_ratio = X.shape[1] / X_train_emb.shape[1]
     performance_change = results_compressed["r2"] - results_original["r2"]
 
+    # Format training date range for directory name
+    if train_start and train_end:
+        # Extract date parts (YYYY-MM-DD -> YYYYMMDD)
+        train_start_date = train_start.replace("-", "")[:8]
+        train_end_date = train_end.replace("-", "")[:8]
+        dir_date_suffix = f"{train_start_date}_{train_end_date}"
+    else:
+        # Fallback to runtime timestamps if no date range provided
+        train_start_date = None
+        train_end_date = None
+        dir_date_suffix = f"{timestamp_start}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
     results = {
         "timestamp_start": timestamp_start,
         "timestamp_end": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "train_start_date": train_start_date,
+        "train_end_date": train_end_date,
         "duration_sec": (datetime.now() - start_dt).total_seconds(),
         "data_info": {
             "original_features_count": X.shape[1],
@@ -501,10 +663,12 @@ def run_production_training(
             results_original,
             "compressed_features":
             results_compressed,
+            "original_features_val": results_original_val,
+            "compressed_features_val": results_compressed_val,
             "performance_change":
             performance_change,
             "performance_change_percent":
-            (performance_change / results_original["r2"]) * 100,
+            (performance_change / results_original["r2"]) * 100 if results_original["r2"] != 0 else 0,
         },
         "model_info": {
             "device_used": str(autoencoder.encoder[0].weight.device),
@@ -513,8 +677,8 @@ def run_production_training(
         },
     }
 
-    # Build results directory name using start and end timestamps
-    results_dir = f"results/production_dimensionality_{results['timestamp_start']}_{results['timestamp_end']}"
+    # Build results directory name using training date range (if available) or runtime timestamps
+    results_dir = f"results/production_dimensionality_{dir_date_suffix}"
     results_dir = save_production_results(
         results,
         model_compressed,
@@ -634,6 +798,15 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     if args.research_ablation:
         ablation_start_dt = datetime.now()
         ablation_start_ts = ablation_start_dt.strftime("%Y%m%d_%H%M%S")
+        # Format training date range for directory name (if provided)
+        if args.train_start and args.train_end:
+            train_start_date = args.train_start.replace("-", "")[:8]
+            train_end_date = args.train_end.replace("-", "")[:8]
+            ablation_dir_date_suffix = f"{train_start_date}_{train_end_date}"
+        else:
+            train_start_date = None
+            train_end_date = None
+            ablation_dir_date_suffix = None  # Will use runtime timestamps
         # Load engineered features for IC & representative selection
         X_raw, y_raw, feature_names = load_real_market_data(
             args.data_path, args.symbol, args.train_start, args.train_end)
@@ -791,14 +964,30 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                         "timestamp_start": ablation_start_ts,
                         "timestamp_end":
                         datetime.now().strftime("%Y%m%d_%H%M%S"),
+                        "train_start_date": train_start_date,
+                        "train_end_date": train_end_date,
                         "data_info": {
-                            "representatives": len(reps),
-                            "encoding_dim": dim
+                            # Populate full Data Summary for HTML report
+                            "original_features_count": int(len(reps)),
+                            "compressed_dimensions": int(dim),
+                            "compression_ratio": (float(len(reps)) / float(dim)) if dim else None,
+                            "training_samples": int(len(X_train)),
+                            "validation_samples": int(len(X_val)),
+                            "test_samples": int(len(X_test)),
+                            # Extra ablation-specific context
+                            "representatives": int(len(reps)),
+                            "encoding_dim": int(dim),
                         },
                         "performance": {
                             "original_features": perf_orig,
                             "compressed_features": perf_comp,
                             "performance_change": delta_r2,
+                        },
+                        "training_info": {
+                            "autoencoder_epochs": int(args.autoencoder_epochs),
+                            "autoencoder_final_loss": float(losses[-1]) if isinstance(losses, (list, tuple)) and len(losses) > 0 else None,
+                            "lightgbm_original_iterations": getattr(model_orig, "best_iteration", None),
+                            "lightgbm_compressed_iterations": getattr(model_compressed, "best_iteration", None),
                         },
                     }
                     # Proxy: map compressed predictions back to reps
@@ -814,7 +1003,11 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                     best_result = results
                     best_model = model_compressed
                     best_ae = ae
-                    best_dir = f"results/production_dimensionality_{results['timestamp_start']}_{results['timestamp_end']}"
+                    # Use training date range for directory name if available, otherwise runtime timestamps
+                    if ablation_dir_date_suffix:
+                        best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
+                    else:
+                        best_dir = f"results/production_dimensionality_{results['timestamp_start']}_{results['timestamp_end']}"
             except Exception as exc:
                 print(f"⚠️ Ablation ENCODING_DIM={dim} failed: {exc}")
                 continue
@@ -835,8 +1028,11 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                 best_result["duration_sec"] = duration_sec
             except Exception:
                 pass
-            # rebuild dir to include final end ts if changed
-            best_dir = f"results/production_dimensionality_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
+            # rebuild dir using training date range if available, otherwise runtime timestamps
+            if ablation_dir_date_suffix:
+                best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
+            else:
+                best_dir = f"results/production_dimensionality_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
         os.makedirs(best_dir, exist_ok=True)
 
         # Ensure JSON-serializable (e.g., convert any numpy types)
