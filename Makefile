@@ -297,10 +297,13 @@ DIM_COMPARE_ARGS ?=
 
 dim-compare:
 	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
-	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS=\"--top-k 40\""
+	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS=\"--top-k 50\""
 	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.production_training \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		--encoding-dim $(ENCODING_DIM) \
+		$(if $(START_DATE),--train-start $(START_DATE)) \
+		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(DIM_COMPARE_ARGS)
+	@echo "📝 HTML report is saved next to production_results.json (dimensionality_report.html)"
 

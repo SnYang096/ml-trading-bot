@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><title>Dimensionality Reduction Comparison</title>
+<style>body{font-family:Arial,sans-serif;margin:24px;color:#222}table{border-collapse:collapse;margin-top:16px;width:100%;max-width:900px}th,td{border:1px solid #ddd;padding:8px 10px;text-align:left}th{background:#f7f7f7}.bad{color:#b00020;font-weight:600}.good{color:#0a7c2f;font-weight:600}.warn{color:#b36b00;font-weight:600}</style>
+</head><body>
+<h1>Dimensionality Reduction Comparison</h1>
+<div>Start: 20251031_104036  |  End: 20251031_104717</div>
+
+<h2>Data Summary</h2>
+<table>
+<tr><th>Original feature count</th><td>355</td></tr>
+<tr><th>Compressed dimensions</th><td>32</td></tr>
+<tr><th>Compression ratio</th><td>11.09x</td></tr>
+<tr><th>Samples (train/val/test)</th><td>18344 / 3931 / 3931</td></tr>
+</table>
+
+<h2>Performance (Test Set)</h2>
+<table>
+<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
+<tr><td>R²</td><td>0.4772</td><td>-0.0038</td><td>-0.4810</td></tr>
+<tr><td>RMSE</td><td>0.7895</td><td>1.0941</td><td>0.3045</td></tr>
+<tr><td>MAE</td><td>0.5302</td><td>0.7701</td><td>0.2399</td></tr>
+</table>
+
+<h2>Training Diagnostics</h2>
+<ul>
+<li>Autoencoder epochs: 800</li>
+<li>Autoencoder final loss: 0.3126</li>
+<li>LightGBM iterations (original/compressed): 282 / 4</li>
+</ul>
+
+<h2>Conclusion</h2>
+<p>Dimensionality reduction is not beneficial under this run.</p>
+</body></html>
