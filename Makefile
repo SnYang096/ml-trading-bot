@@ -66,7 +66,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real \
-	dim-compare
+	dim-compare nautilus-backtest
 
 help:
 	@echo "ML Trading Project"
@@ -92,6 +92,7 @@ help:
 	@echo "  make rolling-monthly      # Monthly rolling retraining"
 	@echo "  make rolling-quarterly    # Quarterly rolling retraining"
 	@echo "  make vectorbot-backtest   # Run VectorBot risk-managed backtest"
+	@echo "  make nautilus-backtest    # Run Nautilus Trader backtest with AE+LGB and portfolio mgmt"
 	@echo "  make oos-june             # Evaluate June OOS performance"
 	@echo "  make dimensionality-demo  # Run dimensionality pipeline on sample data"
 	@echo "  make dimensionality-real  # Run dimensionality pipeline on real data"
@@ -256,6 +257,15 @@ rolling-quarterly:
 vectorbot-backtest:
 	@echo "🤖 Running VectorBot backtest with $(MODEL_PATH)..."
 	$(DOCKER_RUN) bash -c "MODEL_PATH=$(MODEL_PATH) python3 scripts/backtesting/vectorbot_backtest.py"
+
+nautilus-backtest:
+	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
+	PYTHONPATH=src $(PYTHON) scripts/backtesting/nautilus_dim_backtest.py \
+		--data-dir $(DATA_DIR) \
+		--results-dir $(RESULTS_DIR)/$(NAUTILUS_RESULTS_DIR) \
+		--symbols $(SYMBOLS) \
+		--timeframe 5T \
+		--start $(START_DATE) --end $(END_DATE)
 
 oos-june:
 	@echo "🧪 Evaluating June OOS performance..."
