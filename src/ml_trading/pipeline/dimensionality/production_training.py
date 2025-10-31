@@ -54,19 +54,37 @@ def write_html_report(results: Dict, html_path: str) -> None:
     p = results.get("performance", {})
     train_info = results.get("training_info", {})
 
-    orig = p.get("original_features", {})
-    comp = p.get("compressed_features", {})
+    # Support both old format (original/compressed) and new 4-stage format
+    stage1 = p.get("stage1_all_features", p.get("original_features", {}))
+    stage2 = p.get("stage2_ic_filtered", {})
+    stage3 = p.get("stage3_representatives", {})
+    stage4 = p.get("stage4_compressed", p.get("compressed_features", {}))
+
+    # Legacy support
+    orig = p.get("original_features", stage1)
+    comp = p.get("compressed_features", stage4)
     orig_val = p.get("original_features_val", {})
     comp_val = p.get("compressed_features_val", {})
-    delta_r2 = p.get("performance_change", None)
+
+    # Get delta comparisons
+    stage2_vs_1 = p.get("stage2_vs_stage1", {})
+    stage3_vs_2 = p.get("stage3_vs_stage2", {})
+    stage4_vs_3 = p.get("stage4_vs_stage3", {})
+    delta_r2 = p.get("performance_change", stage4_vs_3.get("delta_r2"))
+
+    has_4_stages = stage2 and stage3
 
     conclusion = "Dimensionality reduction appears beneficial." if (
         delta_r2 is not None and delta_r2
         > 0) else "Dimensionality reduction is not beneficial under this run."
-    
+
     # Extract financial metrics
-    orig_fin = orig.get("financial_metrics", {})
-    comp_fin = comp.get("financial_metrics", {})
+    stage1_fin = stage1.get("financial_metrics", {})
+    stage2_fin = stage2.get("financial_metrics", {})
+    stage3_fin = stage3.get("financial_metrics", {})
+    stage4_fin = stage4.get("financial_metrics", {})
+    orig_fin = orig.get("financial_metrics", stage1_fin)
+    comp_fin = comp.get("financial_metrics", stage4_fin)
     orig_val_fin = orig_val.get("financial_metrics", {})
     comp_val_fin = comp_val.get("financial_metrics", {})
 
@@ -77,10 +95,10 @@ def write_html_report(results: Dict, html_path: str) -> None:
         for row in grid:
             grid_rows.append(
                 f"<tr><td>{row.get('encoding_dim','-')}</td>"
-                f"<td>{_format_float(row.get('r2_original'))}</td>"
+                f"<td>{_format_float(row.get('r2_stage3_reps') or row.get('r2_original'))}</td>"
                 f"<td>{_format_float(row.get('r2_compressed'))}</td>"
                 f"<td>{_format_float(row.get('delta_r2'))}</td>"
-                f"<td>{_format_float(row.get('rmse_original'))}</td>"
+                f"<td>{_format_float(row.get('rmse_stage3_reps') or row.get('rmse_original'))}</td>"
                 f"<td>{_format_float(row.get('rmse_compressed'))}</td>"
                 "</tr>")
 
@@ -94,11 +112,17 @@ def write_html_report(results: Dict, html_path: str) -> None:
 
 <h2>Data Summary</h2>
 <table>
-<tr><th>Original feature count</th><td>{d.get('original_features_count','-')}</td></tr>
-<tr><th>Compressed dimensions</th><td>{d.get('compressed_dimensions','-')}</td></tr>
-<tr><th>Compression ratio</th><td>{_format_float(d.get('compression_ratio'),2)}x</td></tr>
-<tr><th>Samples (train/val/test)</th><td>{d.get('training_samples','-')} / {d.get('validation_samples','-')} / {d.get('test_samples','-')}</td></tr>
+<tr><th>Stage</th><th>Features</th><th>Description</th></tr>
+<tr><td>Stage 1: All Features</td><td>{d.get('stage1_all_features', d.get('original_features_count','-'))}</td><td>All original features after missing/stability filter</td></tr>
+{f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td><td>Top features by |IC| (Spearman correlation)</td></tr>' if d.get('stage2_ic_filtered') else ''}
+{f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td><td>Correlation-filtered representative features (60-100)</td></tr>' if d.get('stage3_representatives') else ''}
+<tr><td>Stage 4: Compressed</td><td>{d.get('compressed_dimensions','-')}</td><td>Autoencoder compressed dimensions</td></tr>
+<tr><th colspan="3">Summary</th></tr>
+<tr><td>Final Compression Ratio</td><td colspan="2">{_format_float(d.get('compression_ratio'),2)}x ({d.get('original_features_count','-')} → {d.get('compressed_dimensions','-')})</td></tr>
+<tr><td>Samples (train/val/test)</td><td colspan="2">{d.get('training_samples','-')} / {d.get('validation_samples','-')} / {d.get('test_samples','-')}</td></tr>
 </table>
+
+{f'<h2>4-Stage Comparison (Test Set)</h2><table><tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr><tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td><td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td><td>{_format_float(stage1.get("mae"))}</td><td>-</td></tr><tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td><td>{_format_float(stage2.get("r2"))}</td><td>{_format_float(stage2.get("rmse"))}</td><td>{_format_float(stage2.get("mae"))}</td><td>{_format_float(stage2_vs_1.get("delta_r2"))}</td></tr><tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td><td>{_format_float(stage3.get("r2"))}</td><td>{_format_float(stage3.get("rmse"))}</td><td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr><tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td><td>{_format_float(stage4.get("r2"))}</td><td>{_format_float(stage4.get("rmse"))}</td><td>{_format_float(stage4.get("mae"))}</td><td>{_format_float(stage4_vs_3.get("delta_r2"))}</td></tr></table>' if has_4_stages else ''}
 
 <h2>Performance (Test Set)</h2>
 <table>
@@ -106,6 +130,38 @@ def write_html_report(results: Dict, html_path: str) -> None:
 <tr><td>R²</td><td>{_format_float(orig.get('r2'))}</td><td>{_format_float(comp.get('r2'))}</td><td>{_format_float(delta_r2)}</td></tr>
 <tr><td>RMSE</td><td>{_format_float(orig.get('rmse'))}</td><td>{_format_float(comp.get('rmse'))}</td><td>{_format_float((comp.get('rmse') or 0)-(orig.get('rmse') or 0))}</td></tr>
 <tr><td>MAE</td><td>{_format_float(orig.get('mae'))}</td><td>{_format_float(comp.get('mae'))}</td><td>{_format_float((comp.get('mae') or 0)-(orig.get('mae') or 0))}</td></tr>
+</table>
+
+{f'<h2>Financial Metrics - 4-Stage Comparison (Validation Set)</h2><table><tr><th>Metric</th><th>Stage 1: All</th><th>Stage 2: IC</th><th>Stage 3: Reps</th><th>Stage 4: AE</th></tr><tr><td>Sharpe Ratio</td><td>{_format_float(stage1_fin.get("sharpe_ratio"))}</td><td>{_format_float(stage2_fin.get("sharpe_ratio"))}</td><td>{_format_float(stage3_fin.get("sharpe_ratio"))}</td><td>{_format_float(stage4_fin.get("sharpe_ratio"))}</td></tr><tr><td>Total Return</td><td>{_format_float(stage1_fin.get("total_return"))}</td><td>{_format_float(stage2_fin.get("total_return"))}</td><td>{_format_float(stage3_fin.get("total_return"))}</td><td>{_format_float(stage4_fin.get("total_return"))}</td></tr><tr><td>Max Drawdown</td><td>{_format_float(stage1_fin.get("max_drawdown"))}</td><td>{_format_float(stage2_fin.get("max_drawdown"))}</td><td>{_format_float(stage3_fin.get("max_drawdown"))}</td><td>{_format_float(stage4_fin.get("max_drawdown"))}</td></tr><tr><td>Win Rate</td><td>{_format_float(stage1_fin.get("win_rate") * 100, 2)}%</td><td>{_format_float(stage2_fin.get("win_rate") * 100, 2)}%</td><td>{_format_float(stage3_fin.get("win_rate") * 100, 2)}%</td><td>{_format_float(stage4_fin.get("win_rate") * 100, 2)}%</td></tr></table>' if has_4_stages and stage1_fin and stage2_fin else ''}
+
+<h2>Financial Metrics (Validation Set)</h2>
+<table>
+<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
+<tr><td>Sharpe Ratio</td><td>{_format_float(orig_val_fin.get('sharpe_ratio')) if orig_val_fin else _format_float(orig_fin.get('sharpe_ratio'))}</td><td>{_format_float(comp_val_fin.get('sharpe_ratio')) if comp_val_fin else _format_float(comp_fin.get('sharpe_ratio'))}</td><td>{_format_float((comp_val_fin.get('sharpe_ratio') or comp_fin.get('sharpe_ratio') or 0) - (orig_val_fin.get('sharpe_ratio') or orig_fin.get('sharpe_ratio') or 0))}</td></tr>
+<tr><td>Total Return</td><td>{_format_float(orig_val_fin.get('total_return') or orig_fin.get('total_return'))}</td><td>{_format_float(comp_val_fin.get('total_return') or comp_fin.get('total_return'))}</td><td>{_format_float((comp_val_fin.get('total_return') or comp_fin.get('total_return') or 0) - (orig_val_fin.get('total_return') or orig_fin.get('total_return') or 0))}</td></tr>
+<tr><td>Annualized Return</td><td>{_format_float(orig_val_fin.get('annualized_return') or orig_fin.get('annualized_return'))}</td><td>{_format_float(comp_val_fin.get('annualized_return') or comp_fin.get('annualized_return'))}</td><td>{_format_float((comp_val_fin.get('annualized_return') or comp_fin.get('annualized_return') or 0) - (orig_val_fin.get('annualized_return') or orig_fin.get('annualized_return') or 0))}</td></tr>
+<tr><td>Max Drawdown</td><td>{_format_float(orig_val_fin.get('max_drawdown') or orig_fin.get('max_drawdown'))}</td><td>{_format_float(comp_val_fin.get('max_drawdown') or comp_fin.get('max_drawdown'))}</td><td>{_format_float((comp_val_fin.get('max_drawdown') or comp_fin.get('max_drawdown') or 0) - (orig_val_fin.get('max_drawdown') or orig_fin.get('max_drawdown') or 0))}</td></tr>
+<tr><td>Max Drawdown %</td><td>{_format_float((orig_val_fin.get('max_drawdown_pct') or orig_fin.get('max_drawdown_pct') or 0) * 100, 2)}%</td><td>{_format_float((comp_val_fin.get('max_drawdown_pct') or comp_fin.get('max_drawdown_pct') or 0) * 100, 2)}%</td><td>{_format_float(((comp_val_fin.get('max_drawdown_pct') or comp_fin.get('max_drawdown_pct') or 0) - (orig_val_fin.get('max_drawdown_pct') or orig_fin.get('max_drawdown_pct') or 0)) * 100, 2)}%</td></tr>
+<tr><td>Win Rate</td><td>{_format_float((orig_val_fin.get('win_rate') or orig_fin.get('win_rate') or 0) * 100, 2)}%</td><td>{_format_float((comp_val_fin.get('win_rate') or comp_fin.get('win_rate') or 0) * 100, 2)}%</td><td>{_format_float(((comp_val_fin.get('win_rate') or comp_fin.get('win_rate') or 0) - (orig_val_fin.get('win_rate') or orig_fin.get('win_rate') or 0)) * 100, 2)}%</td></tr>
+<tr><td>Win/Loss Ratio</td><td>{_format_float(orig_val_fin.get('win_loss_ratio') or orig_fin.get('win_loss_ratio'))}</td><td>{_format_float(comp_val_fin.get('win_loss_ratio') or comp_fin.get('win_loss_ratio'))}</td><td>{_format_float((comp_val_fin.get('win_loss_ratio') or comp_fin.get('win_loss_ratio') or 0) - (orig_val_fin.get('win_loss_ratio') or orig_fin.get('win_loss_ratio') or 0))}</td></tr>
+<tr><td>Volatility</td><td>{_format_float(orig_val_fin.get('volatility') or orig_fin.get('volatility'))}</td><td>{_format_float(comp_val_fin.get('volatility') or comp_fin.get('volatility'))}</td><td>{_format_float((comp_val_fin.get('volatility') or comp_fin.get('volatility') or 0) - (orig_val_fin.get('volatility') or orig_fin.get('volatility') or 0))}</td></tr>
+<tr><td>Calmar Ratio</td><td>{_format_float(orig_val_fin.get('calmar_ratio') or orig_fin.get('calmar_ratio'))}</td><td>{_format_float(comp_val_fin.get('calmar_ratio') or comp_fin.get('calmar_ratio'))}</td><td>{_format_float((comp_val_fin.get('calmar_ratio') or comp_fin.get('calmar_ratio') or 0) - (orig_val_fin.get('calmar_ratio') or orig_fin.get('calmar_ratio') or 0))}</td></tr>
+</table>
+
+{f'<h2>Financial Metrics - 4-Stage Comparison (Test Set)</h2><table><tr><th>Metric</th><th>Stage 1: All</th><th>Stage 2: IC</th><th>Stage 3: Reps</th><th>Stage 4: AE</th></tr><tr><td>Sharpe Ratio</td><td>{_format_float(stage1_fin.get("sharpe_ratio"))}</td><td>{_format_float(stage2_fin.get("sharpe_ratio"))}</td><td>{_format_float(stage3_fin.get("sharpe_ratio"))}</td><td>{_format_float(stage4_fin.get("sharpe_ratio"))}</td></tr><tr><td>Total Return</td><td>{_format_float(stage1_fin.get("total_return"))}</td><td>{_format_float(stage2_fin.get("total_return"))}</td><td>{_format_float(stage3_fin.get("total_return"))}</td><td>{_format_float(stage4_fin.get("total_return"))}</td></tr><tr><td>Max Drawdown</td><td>{_format_float(stage1_fin.get("max_drawdown"))}</td><td>{_format_float(stage2_fin.get("max_drawdown"))}</td><td>{_format_float(stage3_fin.get("max_drawdown"))}</td><td>{_format_float(stage4_fin.get("max_drawdown"))}</td></tr><tr><td>Win Rate</td><td>{_format_float(stage1_fin.get("win_rate") * 100, 2)}%</td><td>{_format_float(stage2_fin.get("win_rate") * 100, 2)}%</td><td>{_format_float(stage3_fin.get("win_rate") * 100, 2)}%</td><td>{_format_float(stage4_fin.get("win_rate") * 100, 2)}%</td></tr></table>' if has_4_stages and stage1_fin and stage2_fin else ''}
+
+<h2>Financial Metrics (Test Set)</h2>
+<table>
+<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
+<tr><td>Sharpe Ratio</td><td>{_format_float(orig_fin.get('sharpe_ratio'))}</td><td>{_format_float(comp_fin.get('sharpe_ratio'))}</td><td>{_format_float((comp_fin.get('sharpe_ratio') or 0)-(orig_fin.get('sharpe_ratio') or 0))}</td></tr>
+<tr><td>Total Return</td><td>{_format_float(orig_fin.get('total_return'))}</td><td>{_format_float(comp_fin.get('total_return'))}</td><td>{_format_float((comp_fin.get('total_return') or 0)-(orig_fin.get('total_return') or 0))}</td></tr>
+<tr><td>Annualized Return</td><td>{_format_float(orig_fin.get('annualized_return'))}</td><td>{_format_float(comp_fin.get('annualized_return'))}</td><td>{_format_float((comp_fin.get('annualized_return') or 0)-(orig_fin.get('annualized_return') or 0))}</td></tr>
+<tr><td>Max Drawdown</td><td>{_format_float(orig_fin.get('max_drawdown'))}</td><td>{_format_float(comp_fin.get('max_drawdown'))}</td><td>{_format_float((comp_fin.get('max_drawdown') or 0)-(orig_fin.get('max_drawdown') or 0))}</td></tr>
+<tr><td>Max Drawdown %</td><td>{_format_float(orig_fin.get('max_drawdown_pct') * 100, 2)}%</td><td>{_format_float(comp_fin.get('max_drawdown_pct') * 100, 2)}%</td><td>{_format_float(((comp_fin.get('max_drawdown_pct') or 0)-(orig_fin.get('max_drawdown_pct') or 0)) * 100, 2)}%</td></tr>
+<tr><td>Win Rate</td><td>{_format_float(orig_fin.get('win_rate') * 100, 2)}%</td><td>{_format_float(comp_fin.get('win_rate') * 100, 2)}%</td><td>{_format_float(((comp_fin.get('win_rate') or 0)-(orig_fin.get('win_rate') or 0)) * 100, 2)}%</td></tr>
+<tr><td>Win/Loss Ratio</td><td>{_format_float(orig_fin.get('win_loss_ratio'))}</td><td>{_format_float(comp_fin.get('win_loss_ratio'))}</td><td>{_format_float((comp_fin.get('win_loss_ratio') or 0)-(orig_fin.get('win_loss_ratio') or 0))}</td></tr>
+<tr><td>Volatility</td><td>{_format_float(orig_fin.get('volatility'))}</td><td>{_format_float(comp_fin.get('volatility'))}</td><td>{_format_float((comp_fin.get('volatility') or 0)-(orig_fin.get('volatility') or 0))}</td></tr>
+<tr><td>Calmar Ratio</td><td>{_format_float(orig_fin.get('calmar_ratio'))}</td><td>{_format_float(comp_fin.get('calmar_ratio'))}</td><td>{_format_float((comp_fin.get('calmar_ratio') or 0)-(orig_fin.get('calmar_ratio') or 0))}</td></tr>
 </table>
 
 {('<h2>Encoding Grid Results</h2>'
@@ -363,53 +419,58 @@ def calculate_financial_metrics(
         Dictionary of financial metrics
     """
     metrics = {}
-    
+
     try:
         # Strategy: use predicted returns as position signals
         # Simple strategy: long if pred > 0, short if pred < 0 (proportional to confidence)
         positions = np.sign(y_pred) * np.abs(y_pred)
         # Clip positions to reasonable range [-1, 1]
         positions = np.clip(positions, -1.0, 1.0)
-        
+
         # Strategy returns: position * true return
         strategy_returns = positions * y_true
-        
+
         # 1. Total return (cumulative)
         total_return = float(np.sum(strategy_returns))
         metrics["total_return"] = total_return
-        
+
         # 2. Annualized return (assuming daily data)
         n_periods = len(strategy_returns)
         if n_periods > 0:
             # Simple annualization: multiply by ~252 trading days
-            annualized_return = total_return * (252.0 / n_periods) if n_periods < 252 else total_return
+            annualized_return = total_return * (
+                252.0 / n_periods) if n_periods < 252 else total_return
             metrics["annualized_return"] = annualized_return
         else:
             metrics["annualized_return"] = 0.0
-        
+
         # 3. Sharpe ratio
         returns_std = np.std(strategy_returns)
         if returns_std > 1e-8:
             # Annualized Sharpe: (mean_return - risk_free) / std_return * sqrt(252)
             daily_rf = risk_free_rate / 252.0
-            sharpe_ratio = (np.mean(strategy_returns) - daily_rf) / returns_std * np.sqrt(252.0)
+            sharpe_ratio = (np.mean(strategy_returns) -
+                            daily_rf) / returns_std * np.sqrt(252.0)
             metrics["sharpe_ratio"] = float(sharpe_ratio)
         else:
             metrics["sharpe_ratio"] = 0.0
-        
+
         # 4. Maximum drawdown
         cumulative_returns = np.cumsum(strategy_returns)
         running_max = np.maximum.accumulate(cumulative_returns)
         drawdown = cumulative_returns - running_max
         max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
         metrics["max_drawdown"] = max_drawdown
-        metrics["max_drawdown_pct"] = max_drawdown / (1.0 + abs(running_max[-1])) if len(running_max) > 0 and running_max[-1] != 0 else 0.0
-        
+        metrics["max_drawdown_pct"] = max_drawdown / (
+            1.0 + abs(running_max[-1])) if len(
+                running_max) > 0 and running_max[-1] != 0 else 0.0
+
         # 5. Win rate
         winning_trades = (strategy_returns > 0).sum()
         total_trades = len(strategy_returns)
-        metrics["win_rate"] = float(winning_trades / total_trades) if total_trades > 0 else 0.0
-        
+        metrics["win_rate"] = float(winning_trades /
+                                    total_trades) if total_trades > 0 else 0.0
+
         # 6. Average win/loss ratio
         wins = strategy_returns[strategy_returns > 0]
         losses = strategy_returns[strategy_returns < 0]
@@ -417,18 +478,20 @@ def calculate_financial_metrics(
         avg_loss = float(np.abs(np.mean(losses))) if len(losses) > 0 else 0.0
         metrics["avg_win"] = avg_win
         metrics["avg_loss"] = avg_loss
-        metrics["win_loss_ratio"] = avg_win / avg_loss if avg_loss > 1e-8 else 0.0
-        
+        metrics[
+            "win_loss_ratio"] = avg_win / avg_loss if avg_loss > 1e-8 else 0.0
+
         # 7. Volatility (annualized)
         volatility = np.std(strategy_returns) * np.sqrt(252.0)
         metrics["volatility"] = float(volatility)
-        
+
         # 8. Calmar ratio (return / max_drawdown)
         if abs(max_drawdown) > 1e-8:
-            metrics["calmar_ratio"] = float(annualized_return / abs(max_drawdown))
+            metrics["calmar_ratio"] = float(annualized_return /
+                                            abs(max_drawdown))
         else:
             metrics["calmar_ratio"] = 0.0
-            
+
     except Exception as e:
         print(f"⚠️ Error calculating financial metrics: {e}")
         # Return defaults
@@ -445,7 +508,7 @@ def calculate_financial_metrics(
             "volatility": 0.0,
             "calmar_ratio": 0.0,
         }
-    
+
     return metrics
 
 
@@ -475,14 +538,17 @@ def evaluate_model_performance(
         "r2": r2,
         "predictions": predictions,
     }
-    
+
     # Add financial metrics if requested
     if include_financial_metrics:
         financial_metrics = calculate_financial_metrics(y_test, predictions)
         results["financial_metrics"] = financial_metrics
-        print(f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
-        print(f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
-        print(f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
+        print(
+            f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
+        print(
+            f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
+        print(
+            f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
 
     return results
 
@@ -606,7 +672,7 @@ def run_production_training(
         y_val,
         "Compressed Features (Val)",
     )
-    
+
     # Evaluate on test set
     results_original = evaluate_model_performance(
         model_original,
@@ -663,12 +729,15 @@ def run_production_training(
             results_original,
             "compressed_features":
             results_compressed,
-            "original_features_val": results_original_val,
-            "compressed_features_val": results_compressed_val,
+            "original_features_val":
+            results_original_val,
+            "compressed_features_val":
+            results_compressed_val,
             "performance_change":
             performance_change,
             "performance_change_percent":
-            (performance_change / results_original["r2"]) * 100 if results_original["r2"] != 0 else 0,
+            (performance_change / results_original["r2"]) *
+            100 if results_original["r2"] != 0 else 0,
         },
         "model_info": {
             "device_used": str(autoencoder.encoder[0].weight.device),
@@ -810,14 +879,33 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         # Load engineered features for IC & representative selection
         X_raw, y_raw, feature_names = load_real_market_data(
             args.data_path, args.symbol, args.train_start, args.train_end)
+        original_feature_count = len(
+            feature_names)  # Save original count (482)
         dfX = pd.DataFrame(X_raw, columns=feature_names)
         y_series = pd.Series(y_raw)
 
-        # IC (Spearman) ranking
+        # Stage 1: All original features (482) - missing/stability filter only
+        print(f"\n[Stage 1] All original features: {len(dfX.columns)}")
+        keep_all = []
+        for c in dfX.columns:
+            s = dfX[c]
+            if s.isna().mean() < 0.2 and s.std() > 1e-8:
+                keep_all.append(c)
+        df_all = dfX[keep_all].fillna(method="ffill").fillna(
+            method="bfill").fillna(0.0)
+        X_all = df_all.values
+        scaler_all = StandardScaler()
+        X_all_scaled = sanitize_features(scaler_all.fit_transform(X_all))
+        print(
+            f"[DEBUG] Stage 1: {len(keep_all)} features after missing/stability filter"
+        )
+
+        # Stage 2: IC (Spearman) ranking - top features by |IC|
+        print(f"\n[Stage 2] IC ranking...")
         ic_scores = {}
-        for col in dfX.columns:
+        for col in df_all.columns:
             try:
-                ic = spearmanr(dfX[col].values,
+                ic = spearmanr(df_all[col].values,
                                y_series.values,
                                nan_policy="omit")[0]
             except Exception:
@@ -827,80 +915,152 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                             key=lambda kv: abs(kv[1]),
                             reverse=True)
         top_cols = [c for c, _ in top_sorted[:120]]
-        df_top = dfX[top_cols].copy()
+        df_ic = df_all[top_cols].copy()
+        X_ic = df_ic.values
+        scaler_ic = StandardScaler()
+        X_ic_scaled = sanitize_features(scaler_ic.fit_transform(X_ic))
+        print(f"[DEBUG] Stage 2: {len(top_cols)} features after IC ranking")
 
-        print(
-            f"[DEBUG] IC ranking done: total={len(dfX.columns)} | top_by_|IC|={len(top_cols)}"
-        )
-
-        # Missing and stability filter
-        keep = []
-        for c in df_top.columns:
-            s = df_top[c]
+        # Stage 3: Correlation-based representative selection
+        print(f"\n[Stage 3] Correlation-based representative selection...")
+        # Missing and stability filter on IC-selected features
+        keep_ic = []
+        for c in df_ic.columns:
+            s = df_ic[c]
             if s.isna().mean() < 0.2 and s.std() > 1e-8:
-                keep.append(c)
-        df_top = df_top[keep].fillna(method="ffill").fillna(
+                keep_ic.append(c)
+        df_ic_clean = df_ic[keep_ic].fillna(method="ffill").fillna(
             method="bfill").fillna(0.0)
-
-        dropped_missing = len(top_cols) - len(keep)
-        print(
-            f"[DEBUG] Missing/stability filter: kept={len(keep)} | dropped={dropped_missing}"
-        )
 
         # Greedy representative selection by correlation threshold (0.9)
         reps: list[str] = []
-        if not df_top.empty:
-            corr = df_top.corr().abs().fillna(0.0)
-            for c in df_top.columns:
+        if not df_ic_clean.empty:
+            corr = df_ic_clean.corr().abs().fillna(0.0)
+            for c in df_ic_clean.columns:
                 if all(corr.loc[c, r] < 0.9 for r in reps):
                     reps.append(c)
         # Bound reps between 60 and 100
         if len(reps) < 60:
-            reps = top_cols[:60]
+            reps = list(df_ic_clean.columns)[:60]
         elif len(reps) > 100:
             reps = reps[:100]
-
+        df_reps = df_ic_clean[reps] if set(reps).issubset(
+            df_ic_clean.columns) else df_all[reps].fillna(0.0)
+        X_reps = df_reps.values
+        scaler_reps = StandardScaler()
+        X_reps_scaled = sanitize_features(scaler_reps.fit_transform(X_reps))
         print(
-            f"[DEBUG] Representative selection: reps={len(reps)} | sample={reps[:10]}"
+            f"[DEBUG] Stage 3: {len(reps)} representative features after correlation filtering"
         )
 
-        X_rep = df_top[reps].values if set(reps).issubset(
-            df_top.columns) else dfX[reps].fillna(0.0).values
-
-        # Scale and sanitize
-        scaler_rep = StandardScaler()
-        X_rep_scaled = sanitize_features(scaler_rep.fit_transform(X_rep))
+        # Stage 4: Autoencoder compression (will be done in the loop)
+        print(f"\n[Stage 4] Autoencoder compression (to be evaluated)...")
         print(
             f"[DEBUG] Label variance: y.std={float(np.std(y_series.values)):.6f}"
         )
 
-        # Split
-        X_train, X_temp, y_train, y_temp = train_test_split(X_rep_scaled,
-                                                            y_series.values,
-                                                            test_size=0.3,
-                                                            shuffle=False)
-        X_val, X_test, y_val, y_test = train_test_split(X_temp,
-                                                        y_temp,
-                                                        test_size=0.5,
-                                                        shuffle=False)
+        # Split data (same split for all stages - use consistent random state)
+        # All stages should have the same number of samples, so we can use the same split
+        n_samples = len(y_series.values)
+        split_idx = int(n_samples * 0.7)
+        split_idx2 = int(n_samples * 0.85)
 
-        # AE dims: 60→32→16→8 (ensure <= num reps)
-        trial_dims = [60, 32, 16, 8]
-        trial_dims = [d for d in trial_dims if d <= X_train.shape[1]]
+        # Create same indices for all stages
+        train_indices = np.arange(split_idx)
+        val_indices = np.arange(split_idx, split_idx2)
+        test_indices = np.arange(split_idx2, n_samples)
+
+        # Split y
+        y_all = y_series.values
+        y_train = y_all[train_indices]
+        y_val = y_all[val_indices]
+        y_test = y_all[test_indices]
+
+        # Stage 1: All features
+        X_train_all = X_all_scaled[train_indices]
+        X_val_all = X_all_scaled[val_indices]
+        X_test_all = X_all_scaled[test_indices]
+
+        # Stage 2: IC-filtered features
+        X_train_ic = X_ic_scaled[train_indices]
+        X_val_ic = X_ic_scaled[val_indices]
+        X_test_ic = X_ic_scaled[test_indices]
+
+        # Stage 3: Representative features
+        X_train_reps = X_reps_scaled[train_indices]
+        X_val_reps = X_reps_scaled[val_indices]
+        X_test_reps = X_reps_scaled[test_indices]
+
+        # Train and evaluate models for all 4 stages
+        print("\n" + "=" * 60)
+        print("Training and evaluating all 4 stages for comparison:")
+        print("=" * 60)
+
+        # Stage 1: All features (482 -> ~470 after filtering)
+        print("\n[Stage 1] Training on ALL features...")
+        model_all = train_production_lightgbm(X_train_all, y_train, X_val_all,
+                                              y_val)
+        perf_all = evaluate_model_performance(model_all, X_test_all, y_test,
+                                              "All Features")
+
+        # Stage 2: IC-filtered features (~120)
+        print("\n[Stage 2] Training on IC-filtered features...")
+        model_ic = train_production_lightgbm(X_train_ic, y_train, X_val_ic,
+                                             y_val)
+        perf_ic = evaluate_model_performance(model_ic, X_test_ic, y_test,
+                                             "IC-Filtered Features")
+
+        # Stage 3: Representative features (60-100)
+        print("\n[Stage 3] Training on Representative features...")
+        model_reps = train_production_lightgbm(X_train_reps, y_train,
+                                               X_val_reps, y_val)
+        perf_reps = evaluate_model_performance(model_reps, X_test_reps, y_test,
+                                               "Representative Features")
+
+        # Stage 4: Autoencoder compressed features
+        # Try multiple compression dimensions
+        num_features = len(reps)
+        trial_dims = []
+        # Add dimensions that give reasonable compression ratios
+        for ratio in [10, 20, 30, 40]:  # e.g., 60 -> 6, 3 (but min 8), 8, 8
+            dim = max(8, int(num_features / ratio))
+            if dim < num_features and dim >= 8:
+                trial_dims.append(dim)
+        # Add some fixed dimensions
+        trial_dims.extend([32, 16, 8])
+        trial_dims = sorted(set([
+            d for d in trial_dims
+            if d < num_features and d <= X_train_reps.shape[1] and d >= 8
+        ]),
+                            reverse=True)
+        if not trial_dims:
+            # Fallback: use at least 10x compression
+            trial_dims = [max(8, int(num_features / 10)), 16, 8]
+            trial_dims = [
+                d for d in trial_dims if d <= X_train_reps.shape[1] and d >= 8
+            ]
+
+        print(
+            f"\n[Stage 4] Training on Autoencoder compressed features (trying dims: {trial_dims})..."
+        )
         grid_rows = []
         best_row = None
         best_result = None
         best_model = None
         best_ae = None
         best_dir = None
+        best_dim = None
 
         for dim in trial_dims:
             try:
+                print(f"\n  Trying encoding_dim={dim}...")
                 ae, trainer, losses = train_production_autoencoder(
-                    X_train, encoding_dim=dim, epochs=args.autoencoder_epochs)
+                    X_train_reps,
+                    encoding_dim=dim,
+                    epochs=args.autoencoder_epochs)
                 # Reconstruction MSE on val
                 with torch.no_grad():
-                    Xv = torch.as_tensor(X_val,
+                    Xv = torch.as_tensor(X_val_reps,
                                          dtype=torch.float32,
                                          device=next(ae.parameters()).device)
                     out = ae(Xv)
@@ -908,11 +1068,11 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                         recon = out[0].cpu().numpy()
                     else:
                         recon = out.cpu().numpy()
-                recon_mse = float(np.mean((recon - X_val)**2))
+                recon_mse = float(np.mean((recon - X_val_reps)**2))
 
-                Z_train = trainer.transform(X_train)
-                Z_val = trainer.transform(X_val)
-                Z_test = trainer.transform(X_test)
+                Z_train = trainer.transform(X_train_reps)
+                Z_val = trainer.transform(X_val_reps)
+                Z_test = trainer.transform(X_test_reps)
 
                 # Standardize AE embeddings before feeding to LightGBM
                 z_scaler = StandardScaler()
@@ -923,43 +1083,34 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                 try:
                     z_var = float(np.var(Z_train))
                     print(
-                        f"[DEBUG] AE dim={dim} | recon_mse={recon_mse:.6e} | Z_train_var={z_var:.6e}"
+                        f"    [DEBUG] AE dim={dim} | recon_mse={recon_mse:.6e} | Z_train_var={z_var:.6e}"
                     )
                 except Exception:
                     pass
 
-                model_compressed = train_production_lightgbm(
-                    Z_train, y_train, Z_val, y_val)
-                perf_comp = evaluate_model_performance(model_compressed,
-                                                       Z_test, y_test,
-                                                       f"AE{dim}")
+                model_ae = train_production_lightgbm(Z_train, y_train, Z_val,
+                                                     y_val)
+                perf_ae = evaluate_model_performance(model_ae, Z_test, y_test,
+                                                     f"AE{dim}")
 
-                model_orig = train_production_lightgbm(X_train, y_train, X_val,
-                                                       y_val)
-                perf_orig = evaluate_model_performance(model_orig, X_test,
-                                                       y_test, "OriginalReps")
-
-                try:
-                    print(
-                        f"[DEBUG] LightGBM iters: original={getattr(model_orig, 'best_iteration', None)} | compressed={getattr(model_compressed, 'best_iteration', None)}"
-                    )
-                except Exception:
-                    pass
-
-                delta_r2 = perf_comp["r2"] - perf_orig["r2"]
+                # Compare against Stage 3 (representatives) as baseline for AE
+                delta_r2 = perf_ae["r2"] - perf_reps["r2"]
                 row = {
                     "encoding_dim": dim,
                     "reconstruction_mse": recon_mse,
-                    "r2_original": perf_orig["r2"],
-                    "r2_compressed": perf_comp["r2"],
+                    "r2_stage3_reps": perf_reps["r2"],
+                    "r2_compressed": perf_ae["r2"],
                     "delta_r2": delta_r2,
-                    "rmse_original": perf_orig["rmse"],
-                    "rmse_compressed": perf_comp["rmse"],
+                    "rmse_stage3_reps": perf_reps["rmse"],
+                    "rmse_compressed": perf_ae["rmse"],
                 }
                 grid_rows.append(row)
                 if best_row is None or delta_r2 > best_row["delta_r2"]:
                     best_row = row
-                    # Build minimal result struct for report
+                    best_dim = dim
+                    best_model = model_ae
+                    best_ae = ae
+                    # Build comprehensive result struct with all 4 stages
                     results = {
                         "timestamp_start": ablation_start_ts,
                         "timestamp_end":
@@ -967,33 +1118,77 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                         "train_start_date": train_start_date,
                         "train_end_date": train_end_date,
                         "data_info": {
-                            # Populate full Data Summary for HTML report
-                            "original_features_count": int(len(reps)),
-                            "compressed_dimensions": int(dim),
-                            "compression_ratio": (float(len(reps)) / float(dim)) if dim else None,
-                            "training_samples": int(len(X_train)),
-                            "validation_samples": int(len(X_val)),
-                            "test_samples": int(len(X_test)),
-                            # Extra ablation-specific context
-                            "representatives": int(len(reps)),
-                            "encoding_dim": int(dim),
+                            # Feature counts at each stage
+                            "stage1_all_features":
+                            int(len(keep_all)),
+                            "stage2_ic_filtered":
+                            int(len(top_cols)),
+                            "stage3_representatives":
+                            int(len(reps)),
+                            "stage4_compressed_dim":
+                            int(dim),
+                            "original_features_count":
+                            int(original_feature_count),
+                            "compressed_dimensions":
+                            int(dim),
+                            "compression_ratio":
+                            (float(original_feature_count) /
+                             float(dim)) if dim else None,
+                            "training_samples":
+                            int(len(X_train_reps)),
+                            "validation_samples":
+                            int(len(X_val_reps)),
+                            "test_samples":
+                            int(len(X_test_reps)),
                         },
                         "performance": {
-                            "original_features": perf_orig,
-                            "compressed_features": perf_comp,
+                            # All 4 stages performance
+                            "stage1_all_features": perf_all,
+                            "stage2_ic_filtered": perf_ic,
+                            "stage3_representatives": perf_reps,
+                            "stage4_compressed": perf_ae,
+                            # Delta comparisons
+                            "stage2_vs_stage1": {
+                                "delta_r2": perf_ic["r2"] - perf_all["r2"],
+                                "delta_rmse":
+                                perf_ic["rmse"] - perf_all["rmse"],
+                            },
+                            "stage3_vs_stage2": {
+                                "delta_r2": perf_reps["r2"] - perf_ic["r2"],
+                                "delta_rmse":
+                                perf_reps["rmse"] - perf_ic["rmse"],
+                            },
+                            "stage4_vs_stage3": {
+                                "delta_r2": perf_ae["r2"] - perf_reps["r2"],
+                                "delta_rmse":
+                                perf_ae["rmse"] - perf_reps["rmse"],
+                            },
+                            # Legacy fields for compatibility
+                            "original_features": perf_all,
+                            "compressed_features": perf_ae,
                             "performance_change": delta_r2,
                         },
                         "training_info": {
-                            "autoencoder_epochs": int(args.autoencoder_epochs),
-                            "autoencoder_final_loss": float(losses[-1]) if isinstance(losses, (list, tuple)) and len(losses) > 0 else None,
-                            "lightgbm_original_iterations": getattr(model_orig, "best_iteration", None),
-                            "lightgbm_compressed_iterations": getattr(model_compressed, "best_iteration", None),
+                            "autoencoder_epochs":
+                            int(args.autoencoder_epochs),
+                            "autoencoder_final_loss":
+                            float(losses[-1])
+                            if isinstance(losses, (list, tuple))
+                            and len(losses) > 0 else None,
+                            "lightgbm_stage1_iterations":
+                            getattr(model_all, "best_iteration", None),
+                            "lightgbm_stage2_iterations":
+                            getattr(model_ic, "best_iteration", None),
+                            "lightgbm_stage3_iterations":
+                            getattr(model_reps, "best_iteration", None),
+                            "lightgbm_stage4_iterations":
+                            getattr(model_ae, "best_iteration", None),
                         },
                     }
                     # Proxy: map compressed predictions back to reps
-                    y_hat_train = model_compressed.predict(Z_train)
+                    y_hat_train = model_ae.predict(Z_train)
                     ridge = Ridge(alpha=1.0)
-                    ridge.fit(X_train, y_hat_train)
+                    ridge.fit(X_train_reps, y_hat_train)
                     proxy_coefs = {
                         reps[i]: float(ridge.coef_[i])
                         for i in range(len(reps))
@@ -1001,8 +1196,6 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                     results["proxy_weights"] = proxy_coefs
                     results["grid_search"] = grid_rows
                     best_result = results
-                    best_model = model_compressed
-                    best_ae = ae
                     # Use training date range for directory name if available, otherwise runtime timestamps
                     if ablation_dir_date_suffix:
                         best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
