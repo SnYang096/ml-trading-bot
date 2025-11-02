@@ -208,7 +208,8 @@ train:
 		--end-date $(END_DATE) \
 		--data-dir $(DATA_DIR) \
 		--output-dir $(MODEL_DIR) \
-		--model-name $(MODEL_NAME) $(OVERWRITE_FLAG)
+		--model-name $(MODEL_NAME) $(OVERWRITE_FLAG) \
+		--overwrite
 
 train-topk:
 	@echo "🚀 Training with Top-K factors for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."

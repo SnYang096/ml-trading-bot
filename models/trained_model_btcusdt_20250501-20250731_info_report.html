@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Training Report: BTCUSDT</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 24px;
+            color: #222;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+            margin-top: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .info-box {
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .file-list {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .explanation {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Training Report: BTCUSDT</h1>
+        
+        <div class="info-box">
+            <h3>📋 Training Information</h3>
+            <table>
+                <tr><th>Symbol</th><td>BTCUSDT</td></tr>
+                <tr><th>Training Date</th><td>2025-11-02T13:25:07.823645</td></tr>
+                <tr><th>Data Period</th><td>2025-05-01 to 2025-07-31</td></tr>
+                <tr><th>Total Bars (5T)</th><td>26,209</td></tr>
+                <tr><th>Price Range</th><td>$93,411.90 - $122,920.00</td></tr>
+            </table>
+        </div>
+        
+        <div class="explanation">
+            <h3>📦 Model Files Explanation</h3>
+            <ul>
+                <li><strong>Model File (.pkl)</strong>: Contains the trained LightGBM model, strategy, data loader, and feature engineer.</li>
+                <li><strong>Scalers File (_scalers.pkl)</strong>: Contains the StandardScaler objects for each timeframe used to normalize features during training. 
+                    These are <strong>required</strong> for making predictions - new data must be scaled using the same scalers before feeding to the model.</li>
+                <li><strong>Info File (_info.json)</strong>: Contains metadata about the training run, including metrics and data sources.</li>
+            </ul>
+            <p><strong>Why two model files?</strong> The scalers (feature normalizers) are separate because:</p>
+            <ul>
+                <li>They contain the mean/std statistics calculated from training data</li>
+                <li>They must be applied to new data before prediction</li>
+                <li>Keeping them separate makes it easier to version and update scalers independently</li>
+            </ul>
+        </div>
+        
+        <h2>📁 Data Files</h2>
+        <div class="file-list">
+            <ul>
+                <li>data/parquet_data/BTC-USD_2025-05.parquet</li><li>data/parquet_data/BTC-USD_2025-06.parquet</li><li>data/parquet_data/BTC-USD_2025-07.parquet</li>
+            </ul>
+        </div>
+        
+        <h2>📈 Multi-Timeframe Metrics</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Bars</th>
+                <th>Stage1: CV Accuracy</th>
+                <th>Stage1: Std Dev</th>
+                <th>Stage2: CV RMSE</th>
+                <th>Stage2: CV MSE</th>
+            </tr>
+            
+        <tr>
+            <td>5T</td>
+            <td>26,209</td>
+            <td>0.7960</td>
+            <td>0.0354</td>
+            <td>0.000665</td>
+            <td>0.00000045</td>
+        </tr>
+        <tr>
+            <td>15T</td>
+            <td>8,737</td>
+            <td>0.6084</td>
+            <td>0.0423</td>
+            <td>0.001227</td>
+            <td>0.00000153</td>
+        </tr>
+        <tr>
+            <td>45T</td>
+            <td>2,913</td>
+            <td>0.4731</td>
+            <td>0.0636</td>
+            <td>0.002301</td>
+            <td>0.00000534</td>
+        </tr>
+        <tr>
+            <td>60T</td>
+            <td>2,185</td>
+            <td>0.4337</td>
+            <td>0.0320</td>
+            <td>0.002697</td>
+            <td>0.00000742</td>
+        </tr>
+        <tr>
+            <td>240T</td>
+            <td>547</td>
+            <td>0.3521</td>
+            <td>0.0661</td>
+            <td>0.005525</td>
+            <td>0.00003141</td>
+        </tr>
+        </table>
+        
+        <div class="explanation">
+            <h3>📊 Metrics Explanation</h3>
+            <ul>
+                <li><strong>Stage1 (CV Accuracy)</strong>: Cross-validation accuracy for direction prediction (classification task). 
+                    Higher is better. Range: 0-1 (0.5 = random, 1.0 = perfect).</li>
+                <li><strong>Stage1 (Std Dev)</strong>: Standard deviation of accuracy across CV folds. Lower means more stable.</li>
+                <li><strong>Stage2 (CV RMSE)</strong>: Cross-validation Root Mean Squared Error for price prediction (regression task). 
+                    Lower is better. Units: price difference (e.g., for BTC, RMSE of 0.001 ≈ $0.001 price error).</li>
+                <li><strong>Stage2 (CV MSE)</strong>: Cross-validation Mean Squared Error. Lower is better. MSE = RMSE².</li>
+            </ul>
+        </div>
+        
+        <h2>🔬 Stage1: Classification Metrics (Per Fold)</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Fold</th>
+                <th>Accuracy</th>
+            </tr>
+            
+            <tr>
+                <td>5T</td>
+                <td>1</td>
+                <td>0.7321</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>2</td>
+                <td>0.8142</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>3</td>
+                <td>0.8075</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>4</td>
+                <td>0.8367</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>5</td>
+                <td>0.7896</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>1</td>
+                <td>0.5369</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>2</td>
+                <td>0.6177</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>3</td>
+                <td>0.6219</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>4</td>
+                <td>0.6671</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>5</td>
+                <td>0.5982</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>1</td>
+                <td>0.4022</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>2</td>
+                <td>0.4774</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>3</td>
+                <td>0.5097</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>4</td>
+                <td>0.5699</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>5</td>
+                <td>0.4065</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>1</td>
+                <td>0.4273</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>2</td>
+                <td>0.3866</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>3</td>
+                <td>0.4564</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>4</td>
+                <td>0.4797</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>5</td>
+                <td>0.4186</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>1</td>
+                <td>0.2676</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>2</td>
+                <td>0.4225</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>3</td>
+                <td>0.4366</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>4</td>
+                <td>0.3099</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>5</td>
+                <td>0.3239</td>
+            </tr>
+        </table>
+        
+        <h2>📉 Stage2: Regression Metrics (Per Fold)</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Fold</th>
+                <th>RMSE</th>
+                <th>MSE</th>
+            </tr>
+            
+            <tr>
+                <td>5T</td>
+                <td>1</td>
+                <td>0.000803</td>
+                <td>0.00000065</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>2</td>
+                <td>0.000572</td>
+                <td>0.00000033</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>3</td>
+                <td>0.000646</td>
+                <td>0.00000042</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>4</td>
+                <td>0.000642</td>
+                <td>0.00000041</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>5</td>
+                <td>0.000662</td>
+                <td>0.00000044</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>1</td>
+                <td>0.001506</td>
+                <td>0.00000227</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>2</td>
+                <td>0.001086</td>
+                <td>0.00000118</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>3</td>
+                <td>0.001158</td>
+                <td>0.00000134</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>4</td>
+                <td>0.001056</td>
+                <td>0.00000112</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>5</td>
+                <td>0.001330</td>
+                <td>0.00000177</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>1</td>
+                <td>0.002663</td>
+                <td>0.00000709</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>2</td>
+                <td>0.002104</td>
+                <td>0.00000443</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>3</td>
+                <td>0.002383</td>
+                <td>0.00000568</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>4</td>
+                <td>0.002041</td>
+                <td>0.00000417</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>5</td>
+                <td>0.002313</td>
+                <td>0.00000535</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>1</td>
+                <td>0.003408</td>
+                <td>0.00001162</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>2</td>
+                <td>0.002355</td>
+                <td>0.00000555</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>3</td>
+                <td>0.002773</td>
+                <td>0.00000769</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>4</td>
+                <td>0.002420</td>
+                <td>0.00000585</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>5</td>
+                <td>0.002530</td>
+                <td>0.00000640</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>1</td>
+                <td>0.005846</td>
+                <td>0.00003418</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>2</td>
+                <td>0.006993</td>
+                <td>0.00004891</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>3</td>
+                <td>0.004081</td>
+                <td>0.00001665</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>4</td>
+                <td>0.005499</td>
+                <td>0.00003024</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>5</td>
+                <td>0.005204</td>
+                <td>0.00002709</td>
+            </tr>
+        </table>
+        
+        <h2>💾 Model Artifacts</h2>
+        <table>
+            <tr><th>Model Path</th><td>models/trained_model_btcusdt_20250501-20250731.pkl</td></tr>
+            <tr><th>Scalers Path</th><td>models/trained_model_btcusdt_20250501-20250731_scalers.pkl</td></tr>
+        </table>
+        
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #7f8c8d;">
+            <p>Generated by ML Trading Bot Training System</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -417,3 +417,11 @@ data/
 cmake-3.28.3-linux-x86_64.sh
 ta-lib_0.6.4_amd64.deb
 results/
+models/
+# Large model files
+*.pkl
+*.h5
+*.ckpt
+*.pt
+*.pth
+*.onnx

@@ -748,6 +748,16 @@ def train_symbol(
         print(f"   ✓ Model saved to {model_path}")
         print(f"   ✓ Scalers saved to {scaler_path}")
         print(f"   ✓ Model info saved to {info_path}")
+        
+        # Generate HTML report
+        try:
+            from ml_trading.pipeline.dimensionality.report_generator import write_training_report
+            report_path = str(info_path).replace(".json", "_report.html")
+            write_training_report(str(info_path), report_path)
+            print(f"   ✓ Training report saved to {report_path}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ⚠️  Failed to generate HTML report: {exc}")
+        
         return SymbolTrainingResult(
             symbol=symbol,
             model_path=model_path,
