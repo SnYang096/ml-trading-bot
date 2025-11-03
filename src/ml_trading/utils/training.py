@@ -155,23 +155,27 @@ def simple_backtest(
     - Otherwise: Binary classification with threshold
     """
     df = df.copy()
-    df["prediction"] = predictions
-
-    # Auto-detect prediction format: 3-class (0/1/2) vs binary probability
-    unique_preds = np.unique(predictions[~np.isnan(predictions)])
-    is_multiclass = (len(unique_preds) <= 3
-                     and np.all(np.equal(np.mod(unique_preds, 1), 0))
-                     and np.all(unique_preds >= 0)
-                     and np.all(unique_preds <= 2))
-
-    if is_multiclass:
-        # 3-class: 0=Hold, 1=Long, 2=Short
-        df["signal"] = predictions.astype(int)
-        print(f"   Using 3-class predictions: Hold=0, Long=1, Short=2")
+    # Normalize predictions into 1D class labels or binary signal
+    if predictions.ndim == 2:
+        # If shape (N, C) assume multiclass probabilities → take argmax to class labels 0/1/2
+        class_labels = np.argmax(predictions, axis=1).astype(int)
+        df["prediction"] = class_labels
+        df["signal"] = class_labels
+        print("   Using multiclass probabilities → argmax to class labels (0=Hold,1=Long,2=Short)")
     else:
-        # Binary: probability > threshold = Long
-        df["signal"] = (predictions > signal_threshold).astype(int)
-        print(f"   Using binary predictions with threshold={signal_threshold}")
+        # 1D predictions; detect if already class labels 0/1/2 or binary prob
+        unique_preds = np.unique(predictions[~np.isnan(predictions)])
+        is_multiclass = (len(unique_preds) <= 3
+                         and np.all(np.equal(np.mod(unique_preds, 1), 0))
+                         and np.all(unique_preds >= 0)
+                         and np.all(unique_preds <= 2))
+        df["prediction"] = predictions
+        if is_multiclass:
+            df["signal"] = predictions.astype(int)
+            print("   Using 3-class predictions: Hold=0, Long=1, Short=2")
+        else:
+            df["signal"] = (predictions > signal_threshold).astype(int)
+            print(f"   Using binary predictions with threshold={signal_threshold}")
 
     capital = initial_capital
     position = None
