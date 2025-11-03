@@ -224,3 +224,8 @@ make auto-rolling-update SYMBOL=BTCUSDT \
 ## See Also
 
 Run `make help` to see all available commands and their usage.
+
+## 开发环境
+
+开发者 A：用 VS Code 打开项目 → 自动进入 Dev Container → 运行 make train → 直接在容器内高效训练。
+开发者 B：用 Vim/命令行 → 先确保镜像存在 → 运行 make train → Makefile 自动拉起容器完成任务。

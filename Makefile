@@ -66,7 +66,8 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train auto-rolling-update auto-rolling-update-only vectorbot-backtest oos-june \
-	dim-compare nautilus-backtest feature-report
+		dim-compare nautilus-backtest feature-report \
+		baseline-train baseline-rolling baseline-rolling-multi
 
 help:
 	@echo "ML Trading Project"
@@ -317,4 +318,62 @@ dim-compare:
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \
 		$(DIM_COMPARE_ARGS)
 	@echo "📝 HTML report is saved next to production_results.json (dimensionality_report.html)"
+
+# ---------------------------------------------------------------------------
+# Baseline: SR + Compression features only (single + rolling)
+# Defaults aligned with dim-compare (HORIZONS/START_DATE/END_DATE)
+# ---------------------------------------------------------------------------
+
+# Multi-config defaults
+BASELINE_FREQS ?= 5T
+BASELINE_FBS ?= $(HORIZONS)
+BASELINE_START ?= $(shell echo $(START_DATE) | cut -c1-7)
+BASELINE_END ?= $(shell echo $(END_DATE) | cut -c1-7)
+
+# Single-config defaults derive from multi-config
+BASELINE_FREQ ?= $(word 1,$(subst ,, ,$(BASELINE_FREQS)))
+BASELINE_FB ?= $(word 1,$(subst ,, ,$(BASELINE_FBS)))
+INITIAL_TRAIN_MONTHS ?= 6
+MIN_TRAIN_MONTHS ?= 3
+
+.PHONY: baseline-train baseline-rolling baseline-rolling-multi
+
+baseline-train:
+	@echo "🧱 Baseline single training (SR+Compression) with GPU: $(SYMBOL) tf=$(BASELINE_FREQ) fb=$(BASELINE_FB)"
+	PYTHONPATH=src $(PYTHON) -m ml_trading.pipeline.baseline.train_baseline \
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--data-dir $(DATA_DIR) \
+		--symbol $(SYMBOL) \
+		--freq $(BASELINE_FREQ) \
+		--forward-bars $(BASELINE_FB) \
+		--gpu
+
+baseline-rolling:
+	@echo "🔄 Baseline rolling (SR+Compression) with GPU: $(SYMBOL) tf=$(BASELINE_FREQ) fb=$(BASELINE_FB)"
+	PYTHONPATH=src $(PYTHON) -m ml_trading.pipeline.baseline.rolling_baseline \
+		--data-dir $(DATA_DIR) \
+		--symbol $(SYMBOL) \
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		--freq $(BASELINE_FREQ) \
+		--forward-bars $(BASELINE_FB) \
+		--gpu
+
+# Multi-config: support multiple timeframes and horizons
+# - Timeframes via BASELINE_FREQS (comma-separated or repeated in CLI)
+# - Horizons via BASELINE_FBS (comma-separated), passed by FB_LIST env var
+baseline-rolling-multi:
+	@echo "🔄 Baseline rolling (multi-config) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
+	FB_LIST=$(BASELINE_FBS) PYTHONPATH=src $(PYTHON) -m ml_trading.pipeline.baseline.rolling_baseline \
+		--data-dir $(DATA_DIR) \
+		--symbol $(SYMBOL) \
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
+		--gpu
 
