@@ -293,7 +293,7 @@ class AutoencoderTrainer:
                                 # Classification
                                 self.task_criterion = nn.CrossEntropyLoss()
                                 task_pred = task_pred.reshape(-1, task_pred.shape[-1])
-                                batch_y = batch_y.long()
+                                batch_y = batch_y.view(-1).long()
                             else:
                                 # Regression
                                 self.task_criterion = nn.MSELoss()
@@ -317,7 +317,7 @@ class AutoencoderTrainer:
                             if is_small_cardinality and is_integer_like:
                                 self.task_criterion = nn.CrossEntropyLoss()
                                 task_pred = task_pred.reshape(-1, task_pred.shape[-1])
-                                batch_y = batch_y.long()
+                                batch_y = batch_y.view(-1).long()
                             else:
                                 self.task_criterion = nn.MSELoss()
                                 task_pred = task_pred.squeeze()
