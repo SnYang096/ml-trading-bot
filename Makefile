@@ -282,13 +282,21 @@ HORIZONS ?= 1,5,10,15
 
 dim-compare:
 	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
-	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15 DIM_COMPARE_ARGS=\"--top-k 50\""
+	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15"
+	@echo "       Enhanced options: AE_TYPE=vae AUTO_ENCODING_GRID=1 AE_AUTO_TUNE=1 AE_TASK_LOSS=1"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		--encoding-dim $(ENCODING_DIM) \
 		$(if $(ENCODING_GRID),--encoding-grid $(ENCODING_GRID)) \
+		$(if $(AE_TYPE),--ae-type $(AE_TYPE)) \
+		$(if $(KL_WEIGHT),--kl-weight $(KL_WEIGHT)) \
+		$(if $(filter 1 true yes,$(AUTO_ENCODING_GRID)),--auto-encoding-grid) \
+		$(if $(filter 1 true yes,$(AE_AUTO_TUNE)),--ae-auto-tune) \
+		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS)) \
+		$(if $(filter 1 true yes,$(AE_TASK_LOSS)),--ae-task-loss) \
+		$(if $(TASK_WEIGHT),--task-weight $(TASK_WEIGHT)) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \

@@ -31,11 +31,29 @@ The recommended workflow consists of only 3 commands:
 Find optimal features and compression dimension using one quarter of data:
 
 ```bash
-# Research dimensionality reduction
+# Basic: Research dimensionality reduction
 make dim-compare SYMBOL=BTCUSDT \
   START_DATE=2025-05-01 END_DATE=2025-07-31 \
   ENCODING_DIM=32
+
+# Enhanced: With VAE and automatic optimization
+make dim-compare SYMBOL=BTCUSDT \
+  START_DATE=2025-05-01 END_DATE=2025-07-31 \
+  AE_TYPE=vae \
+  AUTO_ENCODING_GRID=1 \
+  AE_AUTO_TUNE=1 \
+  AE_TASK_LOSS=1 \
+  TASK_WEIGHT=0.1 \
+  KL_WEIGHT=1e-3
 ```
+
+**Enhanced Options**:
+- `AE_TYPE=vae`: Use Variational Autoencoder (VAE) instead of standard AE (better latent space)
+- `AUTO_ENCODING_GRID=1`: Automatically generate encoding dimensions based on compression ratios
+- `AE_AUTO_TUNE=1`: Automatically tune hyperparameters (learning rate, batch size, epochs)
+- `AE_TASK_LOSS=1`: Enable task-aware loss (reconstruction + prediction task loss)
+- `TASK_WEIGHT=0.1`: Weight for task loss in multi-task training (default: 0.1)
+- `KL_WEIGHT=1e-3`: KL divergence weight for VAE (default: 1e-3)
 
 **Output** (in `results/production_dimensionality_20250501_20250731/`):
 - `top_factors.json` - Representative features (60-100 features)

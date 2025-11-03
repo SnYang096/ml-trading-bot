@@ -24,6 +24,7 @@ class UnifiedAutoencoder(nn.Module):
         self.input_dim = input_dim
         self.encoding_dim = encoding_dim
         self.architecture = architecture
+        self.is_vae = False  # Will be set to True for VAE architecture
 
         if architecture == "standard":
             self._build_standard_architecture(dropout_rate)
@@ -31,6 +32,8 @@ class UnifiedAutoencoder(nn.Module):
             self._build_deep_architecture(dropout_rate)
         elif architecture == "production":
             self._build_production_architecture(dropout_rate)
+        elif architecture == "vae":
+            self._build_vae_architecture(dropout_rate)
         else:
             raise ValueError(f"Unknown architecture: {architecture}")
 
@@ -115,13 +118,64 @@ class UnifiedAutoencoder(nn.Module):
             nn.Linear(128, self.input_dim),
         )
 
+    def _build_vae_architecture(self, dropout_rate: float) -> None:
+        """Build Variational Autoencoder (VAE) architecture."""
+        # Encoder: maps input to mean and log-variance
+        self.encoder_base = nn.Sequential(
+            nn.Linear(self.input_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+        )
+        self.encoder_mu = nn.Linear(32, self.encoding_dim)
+        self.encoder_logvar = nn.Linear(32, self.encoding_dim)
+
+        # Decoder: maps latent code to reconstruction
+        self.decoder = nn.Sequential(
+            nn.Linear(self.encoding_dim, 32),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(32, 64),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(128, self.input_dim),
+        )
+        self.is_vae = True
+
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        encoded = self.encoder(x)
-        decoded = self.decoder(encoded)
-        return decoded, encoded
+        if self.is_vae:
+            # VAE: encode to mu and logvar, sample z, decode
+            h = self.encoder_base(x)
+            mu = self.encoder_mu(h)
+            logvar = self.encoder_logvar(h)
+            # Reparameterization trick
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu + eps * std
+            decoded = self.decoder(z)
+            return decoded, z
+        else:
+            # Standard AE
+            encoded = self.encoder(x)
+            decoded = self.decoder(encoded)
+            return decoded, encoded
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        return self.encoder(x)
+        if self.is_vae:
+            # VAE: return mean (mu) as deterministic encoding
+            h = self.encoder_base(x)
+            mu = self.encoder_mu(h)
+            return mu
+        else:
+            return self.encoder(x)
 
     def decode(self, encoded: torch.Tensor) -> torch.Tensor:
         return self.decoder(encoded)
@@ -148,8 +202,14 @@ class AutoencoderTrainer:
         device: str = "auto",
         learning_rate: float = 0.001,
         weight_decay: float = 1e-5,
+        kl_weight: float = 1e-3,
+        task_weight: float = 0.0,
+        task_head: nn.Module | None = None,
     ) -> None:
         self.autoencoder = autoencoder
+        self.kl_weight = kl_weight
+        self.task_weight = task_weight
+        self.task_head = task_head
 
         if device == "auto":
             self.device = torch.device(
@@ -158,9 +218,15 @@ class AutoencoderTrainer:
             self.device = torch.device(device)
 
         self.autoencoder.to(self.device)
+        if self.task_head is not None:
+            self.task_head.to(self.device)
+
+        params = list(self.autoencoder.parameters())
+        if self.task_head is not None:
+            params.extend(list(self.task_head.parameters()))
 
         self.optimizer = torch.optim.Adam(
-            self.autoencoder.parameters(),
+            params,
             lr=learning_rate,
             weight_decay=weight_decay,
         )
@@ -172,6 +238,7 @@ class AutoencoderTrainer:
         )
 
         self.criterion = nn.MSELoss()
+        self.task_criterion = None  # Will be set based on task type
 
     def train(
         self,
@@ -179,26 +246,85 @@ class AutoencoderTrainer:
         epochs: int = 300,
         batch_size: int = 256,
         verbose: bool = True,
+        y_train: np.ndarray | None = None,
     ) -> list:
         self.autoencoder.train()
+        if self.task_head is not None:
+            self.task_head.train()
 
         X_tensor = torch.FloatTensor(X_train).to(self.device)
+        y_tensor = None
+        if y_train is not None:
+            y_tensor = torch.FloatTensor(y_train).to(self.device)
 
         losses = []
         for epoch in range(epochs):
-            self.optimizer.zero_grad()
+            # Batch training for efficiency
+            epoch_losses = []
+            for i in range(0, len(X_train), batch_size):
+                batch_X = X_tensor[i:i+batch_size]
+                self.optimizer.zero_grad()
 
-            reconstructed, _ = self.autoencoder(X_tensor)
-            loss = self.criterion(reconstructed, X_tensor)
+                if self.autoencoder.is_vae:
+                    # VAE: compute reconstruction + KL divergence
+                    recon, z = self.autoencoder(batch_X)
+                    recon_loss = self.criterion(recon, batch_X)
+                    
+                    # KL divergence loss
+                    h = self.autoencoder.encoder_base(batch_X)
+                    mu = self.autoencoder.encoder_mu(h)
+                    logvar = self.autoencoder.encoder_logvar(h)
+                    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1).mean()
+                    
+                    loss = recon_loss + self.kl_weight * kl_loss
+                    
+                    # Task loss if enabled
+                    if self.task_weight > 0 and self.task_head is not None and y_tensor is not None:
+                        batch_y = y_tensor[i:i+batch_size]
+                        task_pred = self.task_head(z)
+                        if self.task_criterion is None:
+                            # Auto-detect task type
+                            if len(torch.unique(batch_y)) <= 3 and torch.all(torch.equal(torch.fmod(batch_y, 1), 0)):
+                                # Classification
+                                self.task_criterion = nn.CrossEntropyLoss()
+                                task_pred = task_pred.reshape(-1, task_pred.shape[-1])
+                                batch_y = batch_y.long()
+                            else:
+                                # Regression
+                                self.task_criterion = nn.MSELoss()
+                                task_pred = task_pred.squeeze()
+                        task_loss = self.task_criterion(task_pred, batch_y)
+                        loss = loss + self.task_weight * task_loss
+                else:
+                    # Standard AE: reconstruction only
+                    recon, z = self.autoencoder(batch_X)
+                    loss = self.criterion(recon, batch_X)
+                    
+                    # Task loss if enabled
+                    if self.task_weight > 0 and self.task_head is not None and y_tensor is not None:
+                        batch_y = y_tensor[i:i+batch_size]
+                        task_pred = self.task_head(z)
+                        if self.task_criterion is None:
+                            if len(torch.unique(batch_y)) <= 3:
+                                self.task_criterion = nn.CrossEntropyLoss()
+                                task_pred = task_pred.reshape(-1, task_pred.shape[-1])
+                                batch_y = batch_y.long()
+                            else:
+                                self.task_criterion = nn.MSELoss()
+                                task_pred = task_pred.squeeze()
+                        task_loss = self.task_criterion(task_pred, batch_y)
+                        loss = loss + self.task_weight * task_loss
 
-            loss.backward()
-            self.optimizer.step()
-            self.scheduler.step(loss)
+                loss.backward()
+                self.optimizer.step()
+                epoch_losses.append(loss.item())
 
-            losses.append(loss.item())
+            avg_loss = np.mean(epoch_losses)
+            losses.append(avg_loss)
+            self.scheduler.step(avg_loss)
 
             if verbose and (epoch + 1) % 50 == 0:
-                print(f"Epoch {epoch+1:3d}/{epochs}: Loss = {loss.item():.6f}")
+                print(f"Epoch {epoch+1:3d}/{epochs}: Loss = {avg_loss:.6f}")
 
         return losses
 
