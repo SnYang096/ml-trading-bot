@@ -1119,6 +1119,13 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         default=0.0,
         help="Threshold for future return to classify Long vs Short in binary mode (default 0.0)",
     )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="both",
+        choices=["classification", "regression", "both"],
+        help="Task type to evaluate: classification | regression | both (default)",
+    )
 
     args = parser.parse_args()
 
@@ -1544,6 +1551,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                         datetime.now().strftime("%Y%m%d_%H%M%S"),
                         "train_start_date": train_start_date,
                         "train_end_date": train_end_date,
+                        "task_type": ("classification_binary" if args.binary_signals else "classification_multiclass"),
                         "data_info": {
                             # Feature counts at each stage
                             "stage1_all_features":

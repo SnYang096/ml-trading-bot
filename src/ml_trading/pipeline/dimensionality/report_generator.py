@@ -367,6 +367,14 @@ def write_html_report(results: Dict, html_path: str) -> None:
     p = results.get("performance", {})
     train_info = results.get("training_info", {})
     multi_horizon_results = results.get("multi_horizon_results", {})
+    task_type = results.get("task_type", "classification_multiclass")
+    selection_metric = results.get("selection_metric", results.get("selection",{}).get("metric","composite"))
+    label_threshold = results.get("label_threshold", None)
+    artifacts = {
+        "top_factors": d.get("top_factors_path") or results.get("top_factors_path"),
+        "representatives": d.get("representatives_path") or results.get("representatives_path"),
+        "autoencoder": d.get("autoencoder_path") or results.get("autoencoder_path") or "results/production_autoencoder.pth",
+    }
 
     # Support both old format (original/compressed) and new 4-stage format
     stage1 = p.get("stage1_all_features", p.get("original_features", {}))
@@ -422,7 +430,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
         has_4_stages, orig, comp, delta_r2, stage1_fin, stage2_fin, stage3_fin,
         stage4_fin, orig_fin, comp_fin, orig_val_fin, comp_val_fin, train_info,
         grid_rows, conclusion, stage2_vs_1, stage3_vs_2, stage4_vs_3,
-        multi_horizon_results)
+        multi_horizon_results, task_type,
+        selection_metric, label_threshold, artifacts)
 
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -456,27 +465,46 @@ def _build_html_report_content(
     stage3_vs_2: Dict,
     stage4_vs_3: Dict,
     multi_horizon_results: Dict = None,
+    task_type: str = "classification_multiclass",
+    selection_metric: str | None = None,
+    label_threshold: float | None = None,
+    artifacts: Dict | None = None,
 ) -> str:
     """Build HTML content string for the report."""
     # Build conditional 4-stage comparison table
     stage_comparison_table = ""
     if has_4_stages:
-        stage_comparison_table = (
-            f'<h2>4-Stage Comparison (Test Set)</h2><table>'
-            f'<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>'
-            f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
-            f'<td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td>'
-            f'<td>{_format_float(stage1.get("mae"))}</td><td>-</td></tr>'
-            f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
-            f'<td>{_format_float(stage2.get("r2"))}</td><td>{_format_float(stage2.get("rmse"))}</td>'
-            f'<td>{_format_float(stage2.get("mae"))}</td><td>{_format_float(stage2_vs_1.get("delta_r2"))}</td></tr>'
-            f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
-            f'<td>{_format_float(stage3.get("r2"))}</td><td>{_format_float(stage3.get("rmse"))}</td>'
-            f'<td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr>'
-            f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
-            f'<td>{_format_float(stage4.get("r2"))}</td><td>{_format_float(stage4.get("rmse"))}</td>'
-            f'<td>{_format_float(stage4.get("mae"))}</td><td>{_format_float(stage4_vs_3.get("delta_r2"))}</td></tr>'
-            f'</table>')
+        if task_type.startswith("classification"):
+            # Show classification-centric table
+            stage_comparison_table = (
+                f'<h2>4-Stage Comparison (Test Set)</h2><table>'
+                f'<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>'
+                f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
+                f'<td>{_format_float(stage1_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage1_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
+                f'<td>{_format_float(stage2_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage2_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
+                f'<td>{_format_float(stage3_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage3_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
+                f'<td>{_format_float(stage4_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage4_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'</table>')
+        else:
+            stage_comparison_table = (
+                f'<h2>4-Stage Comparison (Test Set)</h2><table>'
+                f'<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>'
+                f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
+                f'<td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td>'
+                f'<td>{_format_float(stage1.get("mae"))}</td><td>-</td></tr>'
+                f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
+                f'<td>{_format_float(stage2.get("r2"))}</td><td>{_format_float(stage2.get("rmse"))}</td>'
+                f'<td>{_format_float(stage2.get("mae"))}</td><td>{_format_float(stage2_vs_1.get("delta_r2"))}</td></tr>'
+                f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
+                f'<td>{_format_float(stage3.get("r2"))}</td><td>{_format_float(stage3.get("rmse"))}</td>'
+                f'<td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr>'
+                f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
+                f'<td>{_format_float(stage4.get("r2"))}</td><td>{_format_float(stage4.get("rmse"))}</td>'
+                f'<td>{_format_float(stage4.get("mae"))}</td><td>{_format_float(stage4_vs_3.get("delta_r2"))}</td></tr>'
+                f'</table>')
 
     # Build conditional 4-stage financial metrics tables
     val_4stage_fin_table = ""
@@ -539,15 +567,35 @@ def _build_html_report_content(
 <tr><td>Samples (train/val/test)</td><td colspan="2">{d.get('training_samples','-')} / {d.get('validation_samples','-')} / {d.get('test_samples','-')}</td></tr>
 </table>
 
+<div class="section" style="background:#f8f9fa">
+<h3>Run Configuration</h3>
+<table>
+<tr><th>Task Type</th><td>{task_type}</td></tr>
+<tr><th>Selection Metric</th><td>{selection_metric or '-'}</td></tr>
+{f'<tr><th>Label Threshold</th><td>{_format_float(label_threshold,6)}</td></tr>' if label_threshold is not None else ''}
+<tr><th>Artifacts</th><td>
+{('Top Factors: ' + (artifacts.get('top_factors') or '-')) if artifacts else ''}<br/>
+{('Representatives: ' + (artifacts.get('representatives') or '-')) if artifacts else ''}<br/>
+{('Autoencoder: ' + (artifacts.get('autoencoder') or '-')) if artifacts else ''}
+</td></tr>
+</table>
+</div>
+
 {stage_comparison_table}
 
-<h2>Performance (Test Set)</h2>
-<table>
-<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
-<tr><td>R²</td><td>{_format_float(orig.get('r2'))}</td><td>{_format_float(comp.get('r2'))}</td><td>{_format_float(delta_r2)}</td></tr>
-<tr><td>RMSE</td><td>{_format_float(orig.get('rmse'))}</td><td>{_format_float(comp.get('rmse'))}</td><td>{_format_float((comp.get('rmse') or 0)-(orig.get('rmse') or 0))}</td></tr>
-<tr><td>MAE</td><td>{_format_float(orig.get('mae'))}</td><td>{_format_float(comp.get('mae'))}</td><td>{_format_float((comp.get('mae') or 0)-(orig.get('mae') or 0))}</td></tr>
-</table>
+{('<h2>Classification Performance (Test Set)</h2>'
+  '<table>'
+  '<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>'
+  f"<tr><td>Directional Win Rate</td><td>{_format_float(orig_fin.get('win_rate',0)*100,2)}%</td><td>{_format_float(comp_fin.get('win_rate',0)*100,2)}%</td><td>{_format_float((comp_fin.get('win_rate',0)-orig_fin.get('win_rate',0))*100,2)}%</td></tr>"
+  f"<tr><td>Active Ratio</td><td>{_format_float(orig_fin.get('active_ratio',0)*100,2)}%</td><td>{_format_float(comp_fin.get('active_ratio',0)*100,2)}%</td><td>{_format_float((comp_fin.get('active_ratio',0)-orig_fin.get('active_ratio',0))*100,2)}%</td></tr>"
+  '</table>') if task_type.startswith('classification') else (
+  '<h2>Performance (Test Set)</h2>'
+  '<table>'
+  '<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>'
+  f"<tr><td>R²</td><td>{_format_float(orig.get('r2'))}</td><td>{_format_float(comp.get('r2'))}</td><td>{_format_float(delta_r2)}</td></tr>"
+  f"<tr><td>RMSE</td><td>{_format_float(orig.get('rmse'))}</td><td>{_format_float(comp.get('rmse'))}</td><td>{_format_float((comp.get('rmse') or 0)-(orig.get('rmse') or 0))}</td></tr>"
+  f"<tr><td>MAE</td><td>{_format_float(orig.get('mae'))}</td><td>{_format_float(comp.get('mae'))}</td><td>{_format_float((comp.get('mae') or 0)-(orig.get('mae') or 0))}</td></tr>"
+  '</table>')}
 
 {val_4stage_fin_table}
 
@@ -556,6 +604,7 @@ def _build_html_report_content(
 <tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
 {_build_financial_metrics_table(orig_val_fin or orig_fin, comp_val_fin or comp_fin)}
 </table>
+{('<div class="section" style="color:#7a6">Note: Financial metrics appear as 0/NA when no trades were triggered (Active Ratio≈0). Consider binary labels or lower thresholds to increase signal activity.</div>' if (isinstance(orig_fin,dict) and (orig_fin.get('active_ratio',0)==0 and comp_fin.get('active_ratio',0)==0)) else '')}
 
 {test_4stage_fin_table}
 
