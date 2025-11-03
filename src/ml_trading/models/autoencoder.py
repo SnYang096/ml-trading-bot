@@ -283,8 +283,13 @@ class AutoencoderTrainer:
                         batch_y = y_tensor[i:i+batch_size]
                         task_pred = self.task_head(z)
                         if self.task_criterion is None:
-                            # Auto-detect task type
-                            if len(torch.unique(batch_y)) <= 3 and torch.all(torch.equal(torch.fmod(batch_y, 1), 0)):
+                            # Auto-detect task type: treat as classification if values are integers in {0,1,2}
+                            unique_vals = torch.unique(batch_y)
+                            is_small_cardinality = unique_vals.numel() <= 3
+                            # Check integer-like: max fractional part close to 0
+                            frac_max = torch.max(torch.abs(batch_y - torch.round(batch_y)))
+                            is_integer_like = frac_max.item() < 1e-6
+                            if is_small_cardinality and is_integer_like:
                                 # Classification
                                 self.task_criterion = nn.CrossEntropyLoss()
                                 task_pred = task_pred.reshape(-1, task_pred.shape[-1])
@@ -305,7 +310,11 @@ class AutoencoderTrainer:
                         batch_y = y_tensor[i:i+batch_size]
                         task_pred = self.task_head(z)
                         if self.task_criterion is None:
-                            if len(torch.unique(batch_y)) <= 3:
+                            unique_vals = torch.unique(batch_y)
+                            is_small_cardinality = unique_vals.numel() <= 3
+                            frac_max = torch.max(torch.abs(batch_y - torch.round(batch_y)))
+                            is_integer_like = frac_max.item() < 1e-6
+                            if is_small_cardinality and is_integer_like:
                                 self.task_criterion = nn.CrossEntropyLoss()
                                 task_pred = task_pred.reshape(-1, task_pred.shape[-1])
                                 batch_y = batch_y.long()

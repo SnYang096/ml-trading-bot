@@ -277,6 +277,7 @@ oos-june:
 # ---------------------------------------------------------------------------
 
 ENCODING_DIM ?= 16
+AE_TYPE ?= production
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 1,5,10,15
 
