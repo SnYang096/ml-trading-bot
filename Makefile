@@ -280,6 +280,16 @@ ENCODING_DIM ?= 16
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 1,5,10,15
 
+# make dim-compare SYMBOL=BTCUSDT \
+#   START_DATE=2025-05-01 END_DATE=2025-07-31 \
+#   AE_TYPE=vae \
+#   AUTO_ENCODING_GRID=1 \
+#   AE_AUTO_TUNE=1 \
+#   AE_TASK_LOSS=1 \
+#   TASK_WEIGHT=0.1 \
+#   KL_WEIGHT=1e-3 \
+#   TUNE_TRIALS=15
+
 dim-compare:
 	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
 	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15"

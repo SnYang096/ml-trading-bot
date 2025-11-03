@@ -965,7 +965,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     parser.add_argument(
         "--ae-type",
         type=str,
-        default="production",
+        default="vae",
         choices=["production", "vae"],
         help="Autoencoder type: 'production' (standard AE) or 'vae' (Variational AE)",
     )
@@ -978,13 +978,13 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     parser.add_argument(
         "--auto-encoding-grid",
         action="store_true",
-        default=False,
+        default=True,
         help="Automatically generate encoding grid based on compression ratios",
     )
     parser.add_argument(
         "--ae-auto-tune",
         action="store_true",
-        default=False,
+        default=True,
         help="Enable automatic hyperparameter tuning for autoencoder (learning rate, batch size, epochs)",
     )
     parser.add_argument(
@@ -996,7 +996,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     parser.add_argument(
         "--ae-task-loss",
         action="store_true",
-        default=False,
+        default=True,
         help="Enable task-aware loss (reconstruction + prediction task loss)",
     )
     parser.add_argument(
