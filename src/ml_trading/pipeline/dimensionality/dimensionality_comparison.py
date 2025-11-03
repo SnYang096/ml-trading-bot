@@ -98,10 +98,9 @@ def load_real_market_data(
             "future_return_",
         )
         feature_cols = [
-            col
-            for col in df_features.columns
-            if (col not in exclude_exact)
-            and (not any(col.startswith(pfx) for pfx in exclude_prefixes))
+            col for col in df_features.columns
+            if (col not in exclude_exact) and (not any(
+                col.startswith(pfx) for pfx in exclude_prefixes))
         ]
 
         # Debug: engineered feature summary
@@ -216,7 +215,7 @@ def train_production_autoencoder(
     # Prefer GPU if available
     ae_device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"   Device preference for AE: {ae_device}")
-    
+
     trainer = AutoencoderTrainer(
         autoencoder,
         device=ae_device,
@@ -224,7 +223,7 @@ def train_production_autoencoder(
         task_weight=task_weight,
         task_head=task_head,
     )
-    
+
     losses = trainer.train(
         X,
         epochs=epochs,
@@ -237,10 +236,12 @@ def train_production_autoencoder(
     return autoencoder, trainer, losses
 
 
-def create_task_head(encoding_dim: int, task_type: str = "classification", num_classes: int = 3):
+def create_task_head(encoding_dim: int,
+                     task_type: str = "classification",
+                     num_classes: int = 3):
     """Create a task prediction head for multi-task learning."""
     import torch.nn as nn
-    
+
     if task_type == "classification":
         return nn.Sequential(
             nn.Linear(encoding_dim, 64),
@@ -271,41 +272,41 @@ def auto_tune_hyperparameters(
 ) -> dict:
     """Automatically tune hyperparameters for autoencoder using grid search."""
     print(f"🔍 Auto-tuning hyperparameters ({n_trials} trials)...")
-    
+
     # Parameter grid
     learning_rates = [0.001, 0.0005, 0.002, 0.0001]
     batch_sizes = [128, 256, 512]
     epochs_list = [300, 400, 500]
     kl_weights = [1e-4, 1e-3, 5e-3] if ae_type == "vae" else [0.0]
-    
+
     best_params = None
     best_val_loss = float('inf')
     best_trainer = None
     best_ae = None
-    
+
     import random
     trials = 0
     tried = set()
-    
+
     while trials < n_trials:
         lr = random.choice(learning_rates)
         bs = random.choice(batch_sizes)
         ep = random.choice(epochs_list)
         kl_w = random.choice(kl_weights) if ae_type == "vae" else 1e-3
-        
+
         key = (lr, bs, ep, kl_w)
         if key in tried:
             continue
         tried.add(key)
         trials += 1
-        
+
         try:
             ae = UnifiedAutoencoder(
                 input_dim=X_train.shape[1],
                 encoding_dim=encoding_dim,
                 architecture=ae_type,
             )
-            
+
             ae_device = "cuda" if torch.cuda.is_available() else "cpu"
             trainer = AutoencoderTrainer(
                 ae,
@@ -315,7 +316,7 @@ def auto_tune_hyperparameters(
                 task_weight=task_weight,
                 task_head=task_head,
             )
-            
+
             # Train for a shorter period to evaluate
             trainer.train(
                 X_train,
@@ -324,35 +325,53 @@ def auto_tune_hyperparameters(
                 verbose=False,
                 y_train=y_train,
             )
-            
+
             # Evaluate on validation set
             with torch.no_grad():
-                Xv_t = torch.as_tensor(X_val, dtype=torch.float32, device=ae_device)
+                Xv_t = torch.as_tensor(X_val,
+                                       dtype=torch.float32,
+                                       device=ae_device)
                 recon, _ = ae(Xv_t)
                 val_loss = torch.nn.functional.mse_loss(recon, Xv_t).item()
-                
+
                 if ae_type == "vae":
                     h = ae.encoder_base(Xv_t)
                     mu = ae.encoder_mu(h)
                     logvar = ae.encoder_logvar(h)
-                    kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1).mean().item()
+                    kl = -0.5 * torch.sum(
+                        1 + logvar - mu.pow(2) - logvar.exp(),
+                        dim=1).mean().item()
                     val_loss += kl_w * kl
-            
+
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                best_params = {"lr": lr, "batch_size": bs, "epochs": ep, "kl_weight": kl_w}
+                best_params = {
+                    "lr": lr,
+                    "batch_size": bs,
+                    "epochs": ep,
+                    "kl_weight": kl_w
+                }
                 best_trainer = trainer
                 best_ae = ae
-                print(f"   Trial {trials}/{n_trials}: Val Loss = {val_loss:.6f} (lr={lr}, bs={bs}, ep={ep}, kl_w={kl_w})")
+                print(
+                    f"   Trial {trials}/{n_trials}: Val Loss = {val_loss:.6f} (lr={lr}, bs={bs}, ep={ep}, kl_w={kl_w})"
+                )
             else:
-                print(f"   Trial {trials}/{n_trials}: Val Loss = {val_loss:.6f} (worse, skipping)")
+                print(
+                    f"   Trial {trials}/{n_trials}: Val Loss = {val_loss:.6f} (worse, skipping)"
+                )
         except Exception as exc:
             print(f"   Trial {trials}/{n_trials}: Failed - {exc}")
             continue
-    
+
     if best_params is None:
         print("   ⚠️ All trials failed, using defaults")
-        best_params = {"lr": 0.001, "batch_size": 256, "epochs": 500, "kl_weight": 1e-3}
+        best_params = {
+            "lr": 0.001,
+            "batch_size": 256,
+            "epochs": 500,
+            "kl_weight": 1e-3
+        }
         best_ae = UnifiedAutoencoder(
             input_dim=X_train.shape[1],
             encoding_dim=encoding_dim,
@@ -367,12 +386,14 @@ def auto_tune_hyperparameters(
             task_weight=task_weight,
             task_head=task_head,
         )
-    
+
     print(f"   ✓ Best params: {best_params}")
     return best_params, best_trainer, best_ae
 
 
-def generate_auto_encoding_grid(num_features: int, min_dim: int = 8, max_ratio: float = 20.0) -> list:
+def generate_auto_encoding_grid(num_features: int,
+                                min_dim: int = 8,
+                                max_ratio: float = 20.0) -> list:
     """Automatically generate encoding dimensions based on compression ratios."""
     # Generate dimensions based on compression ratios: 5x, 10x, 15x, 20x, 30x, etc.
     ratios = [5, 10, 15, 20, 30, 40]
@@ -381,11 +402,11 @@ def generate_auto_encoding_grid(num_features: int, min_dim: int = 8, max_ratio: 
         dim = max(min_dim, int(num_features / ratio))
         if dim < num_features and dim >= min_dim:
             dims.append(dim)
-    
+
     # Also add some fixed dimensions for fine-tuning
     fixed_dims = [64, 32, 16, 8]
     dims.extend([d for d in fixed_dims if d < num_features and d >= min_dim])
-    
+
     # Remove duplicates and sort
     dims = sorted(set(dims), reverse=True)
     return dims
@@ -643,7 +664,8 @@ def evaluate_model_performance(
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(y_test, predictions_for_metrics)
     # For multiclass, R² may not be meaningful, but we'll calculate it anyway
-    r2 = r2_score(y_test, predictions_for_metrics) if len(np.unique(y_test)) > 1 else 0.0
+    r2 = r2_score(y_test, predictions_for_metrics) if len(
+        np.unique(y_test)) > 1 else 0.0
 
     print(f"📊 {model_name} Performance:")
     print(f"  R²: {r2:.4f}")
@@ -672,7 +694,9 @@ def evaluate_model_performance(
             active_ratio = float(active / total) if total > 0 else 0.0
 
             if active > 0:
-                correct_non_hold = ((y_pred_cls == 1) & (y_true_cls == 1)) | ((y_pred_cls == 2) & (y_true_cls == 2))
+                correct_non_hold = ((y_pred_cls == 1) &
+                                    (y_true_cls == 1)) | ((y_pred_cls == 2) &
+                                                          (y_true_cls == 2))
                 win_rate = float(np.sum(correct_non_hold) / active)
             else:
                 win_rate = 0.0
@@ -705,11 +729,18 @@ def evaluate_model_performance(
             print(f"  Active Ratio: {active_ratio:.4f}")
         else:
             # Regression/binary: compute financial metrics using returns-like predictions
-            financial_metrics = calculate_financial_metrics(y_test, predictions_for_metrics)
+            financial_metrics = calculate_financial_metrics(
+                y_test, predictions_for_metrics)
             results["financial_metrics"] = financial_metrics
-            print(f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
-            print(f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
-            print(f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
+            print(
+                f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}"
+            )
+            print(
+                f"  Total Return: {financial_metrics.get('total_return', 0):.4f}"
+            )
+            print(
+                f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}"
+            )
 
     return results
 
@@ -967,7 +998,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         type=str,
         default="vae",
         choices=["production", "vae"],
-        help="Autoencoder type: 'production' (standard AE) or 'vae' (Variational AE)",
+        help=
+        "Autoencoder type: 'production' (standard AE) or 'vae' (Variational AE)",
     )
     parser.add_argument(
         "--kl-weight",
@@ -985,7 +1017,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         "--ae-auto-tune",
         action="store_true",
         default=True,
-        help="Enable automatic hyperparameter tuning for autoencoder (learning rate, batch size, epochs)",
+        help=
+        "Enable automatic hyperparameter tuning for autoencoder (learning rate, batch size, epochs)",
     )
     parser.add_argument(
         "--tune-trials",
@@ -1004,6 +1037,34 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         type=float,
         default=0.1,
         help="Weight for task loss in multi-task training (default: 0.1)",
+    )
+    parser.add_argument(
+        "--selection-metric",
+        type=str,
+        default="composite",
+        choices=["sharpe", "f1", "r2", "composite"],
+        help=
+        "Metric to select best AE dimension: sharpe | f1 | r2 | composite (default)",
+    )
+    parser.add_argument(
+        "--max-dd-threshold",
+        type=float,
+        default=-20.0,
+        help="Max drawdown threshold (%) for composite scoring (default: -20)",
+    )
+    parser.add_argument(
+        "--composite-alpha",
+        type=float,
+        default=0.5,
+        help=
+        "Alpha penalty weight for exceeding max drawdown in composite score (default: 0.5)",
+    )
+    parser.add_argument(
+        "--composite-beta",
+        type=float,
+        default=0.5,
+        help=
+        "Beta penalty weight for (1 - F1) in composite score (default: 0.5)",
     )
     parser.add_argument(
         "--train-start",
@@ -1250,7 +1311,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         # Stage 4: Autoencoder compressed features
         # Try multiple compression dimensions
         num_features = len(reps)
-        
+
         # Determine encoding dimensions to try
         if args.auto_encoding_grid:
             # Auto-generate grid based on compression ratios
@@ -1259,8 +1320,13 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         elif args.encoding_grid:
             # Use provided grid
             try:
-                trial_dims = [int(x.strip()) for x in args.encoding_grid.split(',') if x.strip()]
-                trial_dims = [d for d in trial_dims if d < num_features and d >= 8]
+                trial_dims = [
+                    int(x.strip()) for x in args.encoding_grid.split(',')
+                    if x.strip()
+                ]
+                trial_dims = [
+                    d for d in trial_dims if d < num_features and d >= 8
+                ]
                 trial_dims = sorted(set(trial_dims), reverse=True)
             except Exception:
                 print(f"   ⚠️ Invalid --encoding-grid, using auto-generation")
@@ -1276,10 +1342,14 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
             trial_dims = sorted(set([
                 d for d in trial_dims
                 if d < num_features and d <= X_train_reps.shape[1] and d >= 8
-            ]), reverse=True)
+            ]),
+                                reverse=True)
             if not trial_dims:
                 trial_dims = [max(8, int(num_features / 10)), 16, 8]
-                trial_dims = [d for d in trial_dims if d <= X_train_reps.shape[1] and d >= 8]
+                trial_dims = [
+                    d for d in trial_dims
+                    if d <= X_train_reps.shape[1] and d >= 8
+                ]
 
         print(
             f"\n[Stage 4] Training on Autoencoder compressed features (trying dims: {trial_dims}, AE type: {args.ae_type})..."
@@ -1292,20 +1362,55 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         best_dir = None
         best_dim = None
 
+        def _selection_score(perf: Dict, metric: str) -> float:
+            """Compute selection score from performance dict using chosen metric.
+            perf: dict with keys r2, rmse, mae, and financial_metrics if available
+            """
+            fm = perf.get("financial_metrics", {}) if isinstance(perf,
+                                                                 dict) else {}
+            sharpe = float(fm.get("sharpe_ratio", 0.0))
+            max_dd = float(fm.get("max_drawdown", 0.0))  # negative percentage
+            # Prefer 'f1' if present; fallback to win_rate/100 as proxy
+            f1 = float(fm.get("f1", fm.get("directional_f1", 0.0)))
+            if f1 == 0.0:
+                f1 = float(fm.get("win_rate", 0.0)) / 100.0
+
+            if metric == "sharpe":
+                return sharpe
+            if metric == "f1":
+                return f1
+            if metric == "r2":
+                return float(perf.get("r2", 0.0))
+
+            # composite: score = Sharpe - alpha * penalty(DD) - beta * (1 - F1)
+            dd_threshold = float(
+                args.max_dd_threshold)  # negative value e.g., -20
+            alpha = float(args.composite_alpha)
+            beta = float(args.composite_beta)
+            dd_penalty = 0.0
+            # If max drawdown is worse (more negative) than threshold, penalize the excess magnitude
+            if max_dd < dd_threshold:
+                dd_excess = abs(
+                    max_dd - dd_threshold)  # both negative, excess is positive
+                dd_penalty = dd_excess
+            return sharpe - alpha * dd_penalty - beta * (1.0 - f1)
+
         for dim in trial_dims:
             try:
                 print(f"\n  Trying encoding_dim={dim}...")
-                
+
                 # Create task head for this dimension if needed
                 task_head_dim = None
                 if args.ae_task_loss:
                     unique_y = np.unique(y_train)
-                    if len(unique_y) <= 3 and np.all(np.equal(np.mod(unique_y, 1), 0)):
+                    if len(unique_y) <= 3 and np.all(
+                            np.equal(np.mod(unique_y, 1), 0)):
                         num_classes = len(unique_y)
-                        task_head_dim = create_task_head(dim, "classification", num_classes)
+                        task_head_dim = create_task_head(
+                            dim, "classification", num_classes)
                     else:
                         task_head_dim = create_task_head(dim, "regression", 1)
-                
+
                 # Auto-tune hyperparameters if enabled
                 if args.ae_auto_tune:
                     tuned_params, tuned_trainer, tuned_ae = auto_tune_hyperparameters(
@@ -1315,7 +1420,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                         args.ae_type,
                         y_train=y_train if args.ae_task_loss else None,
                         y_val=y_val if args.ae_task_loss else None,
-                        task_weight=args.task_weight if args.ae_task_loss else 0.0,
+                        task_weight=args.task_weight
+                        if args.ae_task_loss else 0.0,
                         task_head=task_head_dim,
                         n_trials=args.tune_trials,
                     )
@@ -1337,7 +1443,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                         epochs=args.autoencoder_epochs,
                         ae_type=args.ae_type,
                         kl_weight=args.kl_weight,
-                        task_weight=args.task_weight if args.ae_task_loss else 0.0,
+                        task_weight=args.task_weight
+                        if args.ae_task_loss else 0.0,
                         y_train=y_train if args.ae_task_loss else None,
                         task_head=task_head_dim,
                     )
@@ -1376,11 +1483,16 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                 perf_ae = evaluate_model_performance(model_ae, Z_test, y_test,
                                                      f"AE{dim}")
 
-                # Compare against Stage 3 (representatives) as baseline for AE
-                delta_r2 = perf_ae["r2"] - perf_reps["r2"]
+                # Model selection based on requested metric (use test-set perf)
+                score_ae = _selection_score(perf_ae, args.selection_metric)
+                score_reps = _selection_score(perf_reps, args.selection_metric)
+                delta_r2 = perf_ae.get("r2", 0.0) - perf_reps.get("r2", 0.0)
                 row = {
                     "encoding_dim": dim,
                     "reconstruction_mse": recon_mse,
+                    "selection_metric": args.selection_metric,
+                    "selection_score_compressed": score_ae,
+                    "selection_score_reps": score_reps,
                     "r2_stage3_reps": perf_reps["r2"],
                     "r2_compressed": perf_ae["r2"],
                     "delta_r2": delta_r2,
@@ -1388,7 +1500,9 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                     "rmse_compressed": perf_ae["rmse"],
                 }
                 grid_rows.append(row)
-                if best_row is None or delta_r2 > best_row["delta_r2"]:
+                # Choose best by selection score (higher is better)
+                if best_row is None or score_ae > best_row.get(
+                        "selection_score_compressed", -1e9):
                     best_row = row
                     best_dim = dim
                     best_model = model_ae
