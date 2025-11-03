@@ -1107,6 +1107,18 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         help=
         "Comma-separated list of forward bars for multi-horizon labels (e.g., 1,5,10,15)",
     )
+    parser.add_argument(
+        "--binary-signals",
+        action="store_true",
+        default=False,
+        help="Use binary labels (1=Long, 0=Short) without Hold. Threshold controlled by --label-threshold",
+    )
+    parser.add_argument(
+        "--label-threshold",
+        type=float,
+        default=0.0,
+        help="Threshold for future return to classify Long vs Short in binary mode (default 0.0)",
+    )
 
     args = parser.parse_args()
 
@@ -1171,6 +1183,23 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
 
         # For backward compatibility, use default horizon
         y_series = pd.Series(y_raw)
+        # If binary mode: remap labels to 2-class using future_return threshold
+        if args.binary_signals:
+            try:
+                # Use first horizon's future return if available
+                default_h = horizons[0] if horizons else 1
+                fr_col = f"future_return_{default_h}"
+                if fr_col in df_features_original.columns:
+                    fr = df_features_original[fr_col].values
+                else:
+                    # Fallback: compute from close
+                    close = df_features_original["close"].values
+                    fr = np.roll(close, -default_h) / close - 1.0
+                thr = float(args.label_threshold)
+                y_series = pd.Series((fr > thr).astype(int))
+                print(f"[Label] Using binary signals (thr={thr}), positives={y_series.mean():.4f}")
+            except Exception as exc:
+                print(f"⚠️ Binary label remap failed, keep original labels: {exc}")
 
         # Stage 1: All original features (482) - missing/stability filter only
         print(f"\n[Stage 1] All original features: {len(dfX.columns)}")

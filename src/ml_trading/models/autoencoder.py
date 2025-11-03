@@ -298,6 +298,11 @@ class AutoencoderTrainer:
                                 # Regression
                                 self.task_criterion = nn.MSELoss()
                                 task_pred = task_pred.squeeze()
+                        else:
+                            # Ensure correct shapes/dtypes for existing criterion
+                            if isinstance(self.task_criterion, nn.CrossEntropyLoss):
+                                task_pred = task_pred.reshape(-1, task_pred.shape[-1])
+                                batch_y = batch_y.view(-1).long()
                         task_loss = self.task_criterion(task_pred, batch_y)
                         loss = loss + self.task_weight * task_loss
                 else:
@@ -321,6 +326,10 @@ class AutoencoderTrainer:
                             else:
                                 self.task_criterion = nn.MSELoss()
                                 task_pred = task_pred.squeeze()
+                        else:
+                            if isinstance(self.task_criterion, nn.CrossEntropyLoss):
+                                task_pred = task_pred.reshape(-1, task_pred.shape[-1])
+                                batch_y = batch_y.view(-1).long()
                         task_loss = self.task_criterion(task_pred, batch_y)
                         loss = loss + self.task_weight * task_loss
 

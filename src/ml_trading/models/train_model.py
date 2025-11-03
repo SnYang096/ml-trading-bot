@@ -21,7 +21,6 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer, )
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.strategies.ml_strategy import MLTradingStrategy
-from ml_trading.pipeline.dimensionality.integration import DimensionalityIntegrationEngine  # type: ignore
 from ml_trading.pipeline.dimensionality.utils import (
     load_top_factors_list,
     filter_engineered_by_topk,

@@ -227,7 +227,7 @@ auto-rolling-update:
 	@echo "Usage: make auto-rolling-update SYMBOL=BTCUSDT INITIAL_TRAIN_MONTHS=6 FORWARD_BARS=5"
 	@echo "       make auto-rolling-update SYMBOL=BTCUSDT USE_TOP_FACTORS=path/to/top_factors.json USE_AUTOENCODER=path/to/ae.pth ENCODING_DIM=32 FORWARD_BARS=15"
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS) bars ahead for prediction"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/rolling/auto_rolling_update.py \
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.rolling.auto_rolling_update \
 		--data-dir $(DATA_DIR) \
 		--symbol $(SYMBOL) \
 		--initial-train-months $(if $(INITIAL_TRAIN_MONTHS),$(INITIAL_TRAIN_MONTHS),6) \
@@ -244,7 +244,7 @@ auto-rolling-update-only:
 	@echo "Usage: make auto-rolling-update-only SYMBOL=BTCUSDT OUTPUT=results/auto_rolling_btcusdt_XXX FORWARD_BARS=5"
 	@echo "       make auto-rolling-update-only SYMBOL=BTCUSDT OUTPUT=results/XXX USE_TOP_FACTORS=path/to/top_factors.json USE_AUTOENCODER=path/to/ae.pth ENCODING_DIM=32 FORWARD_BARS=15"
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS) bars ahead for prediction"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/rolling/auto_rolling_update.py \
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.rolling.auto_rolling_update \
 		--data-dir $(DATA_DIR) \
 		--symbol $(SYMBOL) \
 		--update-only \
@@ -280,6 +280,8 @@ ENCODING_DIM ?= 16
 AE_TYPE ?= production
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 1,5,10,15
+BINARY_SIGNALS ?= 1
+LABEL_THRESHOLD ?= 0.0
 
 # make dim-compare SYMBOL=BTCUSDT \
 #   START_DATE=2025-05-01 END_DATE=2025-07-31 \
@@ -294,7 +296,7 @@ HORIZONS ?= 1,5,10,15
 dim-compare:
 	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
 	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15"
-	@echo "       Enhanced options: AE_TYPE=vae AUTO_ENCODING_GRID=1 AE_AUTO_TUNE=1 AE_TASK_LOSS=1"
+	@echo "       Enhanced options: AE_TYPE=vae AUTO_ENCODING_GRID=1 AE_AUTO_TUNE=1 AE_TASK_LOSS=1 BINARY_SIGNALS=$(BINARY_SIGNALS) LABEL_THRESHOLD=$(LABEL_THRESHOLD)"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
@@ -307,6 +309,8 @@ dim-compare:
 		$(if $(filter 1 true yes,$(AE_AUTO_TUNE)),--ae-auto-tune) \
 		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS)) \
 		$(if $(filter 1 true yes,$(AE_TASK_LOSS)),--ae-task-loss) \
+		--binary-signals \
+		$(if $(LABEL_THRESHOLD),--label-threshold $(LABEL_THRESHOLD)) \
 		$(if $(TASK_WEIGHT),--task-weight $(TASK_WEIGHT)) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
