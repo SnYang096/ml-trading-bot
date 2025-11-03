@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict
 
 import numpy as np
+import pandas as pd
 
 
 def _format_float(val, digits: int = 4) -> str:
@@ -365,6 +366,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     d = results.get("data_info", {})
     p = results.get("performance", {})
     train_info = results.get("training_info", {})
+    multi_horizon_results = results.get("multi_horizon_results", {})
 
     # Support both old format (original/compressed) and new 4-stage format
     stage1 = p.get("stage1_all_features", p.get("original_features", {}))
@@ -419,7 +421,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
         date_range_str, runtime_str, d, stage1, stage2, stage3, stage4,
         has_4_stages, orig, comp, delta_r2, stage1_fin, stage2_fin, stage3_fin,
         stage4_fin, orig_fin, comp_fin, orig_val_fin, comp_val_fin, train_info,
-        grid_rows, conclusion, stage2_vs_1, stage3_vs_2, stage4_vs_3)
+        grid_rows, conclusion, stage2_vs_1, stage3_vs_2, stage4_vs_3,
+        multi_horizon_results)
 
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -452,6 +455,7 @@ def _build_html_report_content(
     stage2_vs_1: Dict,
     stage3_vs_2: Dict,
     stage4_vs_3: Dict,
+    multi_horizon_results: Dict = None,
 ) -> str:
     """Build HTML content string for the report."""
     # Build conditional 4-stage comparison table
@@ -576,7 +580,81 @@ def _build_html_report_content(
 
 <h2>Conclusion</h2>
 <p>{conclusion}</p>
+
+{_build_multi_horizon_table(multi_horizon_results) if multi_horizon_results else ''}
 </body></html>"""
+    return html
+
+
+def _build_multi_horizon_table(multi_horizon_results: Dict) -> str:
+    """Build multi-horizon comparison table."""
+    if not multi_horizon_results:
+        return ""
+    
+    html = """
+<h2>📊 Multi-Horizon Comparison</h2>
+<div class="section">
+    <p>This table compares the performance of all 4 stages across different prediction horizons (bars ahead).</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Horizon</th>
+                <th>Stage</th>
+                <th>R²</th>
+                <th>RMSE</th>
+                <th>MAE</th>
+                <th>Sharpe Ratio</th>
+                <th>Total Return</th>
+                <th>Max Drawdown</th>
+                <th>Win Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+    
+    # Sort horizons numerically
+    horizon_keys = sorted(
+        [k for k in multi_horizon_results.keys() if k.startswith("horizon_")],
+        key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0
+    )
+    
+    for horizon_key in horizon_keys:
+        horizon_num = horizon_key.split("_")[1]
+        horizon_data = multi_horizon_results[horizon_key]
+        
+        stages = [
+            ("Stage 1: All Features", "stage1_all_features"),
+            ("Stage 2: IC-Filtered", "stage2_ic_filtered"),
+            ("Stage 3: Representatives", "stage3_representatives"),
+            ("Stage 4: Compressed", "stage4_compressed"),
+        ]
+        
+        for stage_name, stage_key in stages:
+            stage_perf = horizon_data.get(stage_key, {})
+            if not stage_perf:
+                continue
+            
+            fin_metrics = stage_perf.get("financial_metrics", {})
+            
+            html += f"""            <tr>
+                <td><strong>{horizon_num} bars</strong></td>
+                <td>{stage_name}</td>
+                <td>{_format_float(stage_perf.get('r2'))}</td>
+                <td>{_format_float(stage_perf.get('rmse'))}</td>
+                <td>{_format_float(stage_perf.get('mae'))}</td>
+                <td>{_format_float(fin_metrics.get('sharpe_ratio'))}</td>
+                <td>{_format_float(fin_metrics.get('total_return'))}</td>
+                <td>{_format_float(fin_metrics.get('max_drawdown'))}</td>
+                <td>{_format_float(fin_metrics.get('win_rate'))}</td>
+            </tr>
+"""
+    
+    html += """
+        </tbody>
+    </table>
+</div>
+"""
+    
     return html
 
 
@@ -611,7 +689,19 @@ def _build_financial_metrics_table(orig_fin: Dict, comp_fin: Dict) -> str:
     )
     o, c, d = safe_get('win_rate')
     rows.append(
-        f'<tr><td>Win Rate</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
+        f'<tr><td>Directional Win Rate (non-hold)</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
+    )
+    o, c, d = safe_get('long_win_rate')
+    rows.append(
+        f'<tr><td>Long Win Rate</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
+    )
+    o, c, d = safe_get('short_win_rate')
+    rows.append(
+        f'<tr><td>Short Win Rate</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
+    )
+    o, c, d = safe_get('active_ratio')
+    rows.append(
+        f'<tr><td>Active Ratio (non-hold share)</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
     )
     o, c, d = safe_get('win_loss_ratio')
     rows.append(
@@ -935,6 +1025,270 @@ def _build_training_report_html(info: Dict) -> str:
         
         <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #7f8c8d;">
             <p>Generated by ML Trading Bot Training System</p>
+        </div>
+    </div>
+</body>
+</html>"""
+    return html
+
+
+def write_rolling_report(
+    results_dir: str,
+    summary_path: str | None = None,
+    results_csv_path: str | None = None,
+    report_type: str = "monthly",
+) -> str:
+    """Generate HTML report for rolling training (monthly or quarterly).
+    
+    Args:
+        results_dir: Directory containing rolling training results
+        summary_path: Path to summary.json (if None, auto-detect)
+        results_csv_path: Path to results CSV (if None, auto-detect)
+        report_type: "monthly" or "quarterly"
+    
+    Returns:
+        Path to the generated HTML report
+    """
+    from pathlib import Path
+    
+    results_path = Path(results_dir)
+    if not results_path.exists():
+        raise FileNotFoundError(f"Results directory not found: {results_dir}")
+    
+    # Auto-detect files
+    if summary_path is None:
+        summary_path = str(results_path / "summary.json")
+    if results_csv_path is None:
+        if report_type == "monthly":
+            results_csv_path = str(results_path / "monthly_results.csv")
+        else:
+            results_csv_path = str(results_path / "quarterly_results.csv")
+    
+    # Load data
+    summary = {}
+    if Path(summary_path).exists():
+        with open(summary_path, "r", encoding="utf-8") as f:
+            summary = json.load(f)
+    
+    results_df = pd.DataFrame()
+    if Path(results_csv_path).exists():
+        results_df = pd.read_csv(results_csv_path)
+    
+    # Generate HTML
+    html_path = str(results_path / f"{report_type}_rolling_report.html")
+    html = _build_rolling_report_html(summary, results_df, report_type)
+    
+    # Write HTML
+    Path(html_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    
+    print(f"📝 Rolling {report_type} report written to: {html_path}")
+    return html_path
+
+
+def _build_rolling_report_html(
+    summary: Dict,
+    results_df: pd.DataFrame,
+    report_type: str,
+) -> str:
+    """Build HTML content for rolling training report."""
+    report_title = f"{report_type.capitalize()} Rolling Training Report"
+    period_col = "test_month" if report_type == "monthly" else "quarter"
+    
+    # Extract summary info
+    symbol = summary.get("configuration", {}).get("symbol", summary.get("configuration", {}).get("symbols", ["N/A"])[0] if isinstance(summary.get("configuration", {}).get("symbols"), list) else "N/A")
+    total_periods = summary.get(f"total_{report_type}s_tested", len(results_df))
+    avg_return = summary.get("avg_return", 0)
+    avg_win_rate = summary.get("avg_win_rate", 0)
+    avg_profit_factor = summary.get("avg_profit_factor", 0)
+    avg_max_drawdown = summary.get("avg_max_drawdown", 0)
+    total_trades = summary.get("total_trades", 0)
+    feature_engineering = summary.get("feature_engineering", "EnhancedFeatureEngineer")
+    config = summary.get("configuration", {})
+    
+    # Build period results table
+    period_rows = []
+    if not results_df.empty:
+        for _, row in results_df.iterrows():
+            period = row.get(period_col, "N/A")
+            period_rows.append(f"""
+            <tr>
+                <td>{period}</td>
+                <td>{int(row.get('total_trades', 0))}</td>
+                <td>{_format_float(row.get('total_return', 0), 2)}%</td>
+                <td>{_format_float(row.get('win_rate', 0), 2)}%</td>
+                <td>{_format_float(row.get('profit_factor', 0), 2)}</td>
+                <td>{_format_float(row.get('max_drawdown', 0), 2)}%</td>
+                <td>{int(row.get('train_samples', 0)):,}</td>
+                <td>{int(row.get('test_samples', 0)):,}</td>
+                <td>{int(row.get('num_features', 0))}</td>
+            </tr>""")
+    
+    # Build statistics table
+    stats_rows = []
+    if not results_df.empty:
+        for col in ['total_trades', 'total_return', 'win_rate', 'profit_factor', 'max_drawdown']:
+            if col in results_df.columns:
+                mean_val = results_df[col].mean()
+                std_val = results_df[col].std()
+                min_val = results_df[col].min()
+                max_val = results_df[col].max()
+                stats_rows.append(f"""
+                <tr>
+                    <td>{col.replace('_', ' ').title()}</td>
+                    <td>{_format_float(mean_val, 2)}</td>
+                    <td>{_format_float(std_val, 2)}</td>
+                    <td>{_format_float(min_val, 2)}</td>
+                    <td>{_format_float(max_val, 2)}</td>
+                </tr>""")
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{report_title}: {symbol}</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 24px;
+            color: #222;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }}
+        h2 {{
+            color: #34495e;
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+            margin-top: 30px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }}
+        th, td {{
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }}
+        th {{
+            background-color: #3498db;
+            color: white;
+        }}
+        tr:nth-child(even) {{
+            background-color: #f2f2f2;
+        }}
+        .info-box {{
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }}
+        .explanation {{
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }}
+        .good {{
+            color: #0a7c2f;
+            font-weight: 600;
+        }}
+        .bad {{
+            color: #b00020;
+            font-weight: 600;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 {report_title}: {symbol}</h1>
+        
+        <div class="info-box">
+            <h3>📋 Summary</h3>
+            <table>
+                <tr><th>Symbol</th><td>{symbol}</td></tr>
+                <tr><th>Report Type</th><td>{report_type.capitalize()} Rolling Training</td></tr>
+                <tr><th>Total Periods Tested</th><td>{total_periods}</td></tr>
+                <tr><th>Total Trades</th><td>{total_trades:,}</td></tr>
+                <tr><th>Feature Engineering</th><td>{feature_engineering}</td></tr>
+            </table>
+        </div>
+        
+        <div class="explanation">
+            <h3>📊 Rolling Training Explanation</h3>
+            <p><strong>{report_type.capitalize()} Rolling Training</strong> uses an expanding window approach:</p>
+            <ul>
+                <li><strong>Training Window</strong>: Expands each period, accumulating more data over time</li>
+                <li><strong>Test Window</strong>: Next period ({'month' if report_type == 'monthly' else 'quarter'}) after training window</li>
+                <li><strong>Purpose</strong>: Simulates real-world deployment where model is retrained periodically</li>
+            </ul>
+            <p><strong>Example</strong>: Train on periods 1-6, test on period 7; then train on periods 1-7, test on period 8, etc.</p>
+        </div>
+        
+        <h2>📈 Performance Summary</h2>
+        <table>
+            <tr>
+                <th>Metric</th>
+                <th>Average</th>
+                <th>Std Dev</th>
+                <th>Min</th>
+                <th>Max</th>
+            </tr>
+            {"".join(stats_rows)}
+        </table>
+        
+        <div class="explanation">
+            <h3>📊 Metrics Explanation</h3>
+            <ul>
+                <li><strong>Total Return</strong>: Cumulative return percentage for the test period</li>
+                <li><strong>Win Rate</strong>: Percentage of profitable trades</li>
+                <li><strong>Profit Factor</strong>: Ratio of gross profit to gross loss (>1 = profitable)</li>
+                <li><strong>Max Drawdown</strong>: Maximum peak-to-trough decline during the test period</li>
+                <li><strong>Total Trades</strong>: Number of trades executed during the test period</li>
+            </ul>
+        </div>
+        
+        <h2>📅 Period-by-Period Results</h2>
+        <table>
+            <tr>
+                <th>{report_type.capitalize()}</th>
+                <th>Trades</th>
+                <th>Return (%)</th>
+                <th>Win Rate (%)</th>
+                <th>Profit Factor</th>
+                <th>Max DD (%)</th>
+                <th>Train Samples</th>
+                <th>Test Samples</th>
+                <th>Features</th>
+            </tr>
+            {"".join(period_rows)}
+        </table>
+        
+        <h2>⚙️ Configuration</h2>
+        <table>
+            <tr><th>Parameter</th><th>Value</th></tr>
+            {f"<tr><td>Data Directory</td><td>{config.get('data_dir', 'N/A')}</td></tr>" if config.get('data_dir') else ""}
+            {f"<tr><td>Initial Train Periods</td><td>{config.get('initial_train_months' if report_type == 'monthly' else 'initial_train_quarters', 'N/A')}</td></tr>" if config.get('initial_train_months' if report_type == 'monthly' else 'initial_train_quarters') else ""}
+            {f"<tr><td>GPU</td><td>{config.get('gpu', 'N/A')}</td></tr>" if 'gpu' in config else ""}
+            {f"<tr><td>Order Flow Features</td><td>{config.get('add_order_flow', 'N/A')}</td></tr>" if 'add_order_flow' in config else ""}
+        </table>
+        
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #7f8c8d;">
+            <p>Generated by ML Trading Bot Rolling Training System</p>
         </div>
     </div>
 </body>

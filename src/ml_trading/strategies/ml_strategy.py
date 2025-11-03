@@ -13,7 +13,9 @@ from ml_trading.config.settings import TIMEFRAMES
 class MLTradingStrategy:
     """Main ML trading strategy integrating all components."""
 
-    def __init__(self, ensemble_method: str = "weighted"):
+    def __init__(self,
+                 ensemble_method: str = "weighted",
+                 forward_bars: int = 1):
         """
         Initialize the ML trading strategy.
 
@@ -24,10 +26,11 @@ class MLTradingStrategy:
                 - 'independent': Any TF can trigger signal - AGGRESSIVE
                 - 'majority': Majority voting - MODERATE
                 - 'average': Original average method - MOST CONSERVATIVE
+            forward_bars: Number of bars ahead for label prediction (default: 1)
         """
         self.data_loader = MarketDataLoader()
         self.feature_engineer = FeatureEngineer()
-        self.pipeline = MultiTimeframePipeline()
+        self.pipeline = MultiTimeframePipeline(forward_bars=forward_bars)
         self.risk_manager = RiskManager()
         self.ensemble_method = ensemble_method
         self.is_trained = False
@@ -52,7 +55,8 @@ class MLTradingStrategy:
 
         # Engineer features
         print("Engineering features...")
-        engineered_data = self.feature_engineer.engineer_features(multi_tf_data)
+        engineered_data = self.feature_engineer.engineer_features(
+            multi_tf_data)
 
         return engineered_data
 
@@ -73,7 +77,8 @@ class MLTradingStrategy:
         self.is_trained = True
         return metrics
 
-    def generate_signals(self, data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    def generate_signals(self,
+                         data: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """
         Generate trading signals using the trained strategy.
 
@@ -84,12 +89,14 @@ class MLTradingStrategy:
             DataFrame with trading signals and positions
         """
         if not self.is_trained:
-            raise ValueError("Strategy must be trained before generating signals")
+            raise ValueError(
+                "Strategy must be trained before generating signals")
 
         # If no data provided, use data loader to get latest data
         if data is None:
             multi_tf_data = self.data_loader.get_multi_timeframe_data()
-            engineered_data = self.feature_engineer.engineer_features(multi_tf_data)
+            engineered_data = self.feature_engineer.engineer_features(
+                multi_tf_data)
         else:
             # Assume data is already engineered for the base timeframe
             engineered_data = {"5T": data}  # Simplified for demo
@@ -106,8 +113,7 @@ class MLTradingStrategy:
             f"Ensembling multi-timeframe predictions using '{self.ensemble_method}' method..."
         )
         ensemble_df = self.pipeline.ensemble_predictions(
-            stage1_preds, stage2_preds, ensemble_method=self.ensemble_method
-        )
+            stage1_preds, stage2_preds, ensemble_method=self.ensemble_method)
 
         # Get price data for risk management
         if data is None:
@@ -118,7 +124,9 @@ class MLTradingStrategy:
         # Ensure we have valid price data
         if price_data is None:
             # Create dummy price data if needed
-            dates = pd.date_range("2020-01-01", periods=len(ensemble_df), freq="5T")
+            dates = pd.date_range("2020-01-01",
+                                  periods=len(ensemble_df),
+                                  freq="5T")
             price_data = pd.DataFrame(
                 {
                     "close": np.ones(len(ensemble_df)) * 100,
@@ -132,13 +140,14 @@ class MLTradingStrategy:
 
         # Apply risk management
         print("Applying risk management rules...")
-        final_df = self.risk_manager.apply_risk_management(ensemble_df, price_data)
+        final_df = self.risk_manager.apply_risk_management(
+            ensemble_df, price_data)
 
         return final_df
 
     def optimize_strategy(
-        self, n_trials: int = 50
-    ) -> Dict[str, Dict[str, Dict[str, float]]]:
+            self,
+            n_trials: int = 50) -> Dict[str, Dict[str, Dict[str, float]]]:
         """
         Optimize the strategy using Optuna.
 
@@ -158,8 +167,7 @@ class MLTradingStrategy:
         for timeframe, data in engineered_data.items():
             # Prepare features and targets
             feature_columns = [
-                col
-                for col in data.columns
+                col for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -169,20 +177,18 @@ class MLTradingStrategy:
             model = self.pipeline.stage1_models.get(
                 timeframe,
                 MultiTimeframePipeline().stage1_models.get(
-                    timeframe, LightGBMModel(model_type="classification")
-                ),
+                    timeframe, LightGBMModel(model_type="classification")),
             )
-            best_params[f"stage1_{timeframe}"] = model.optimize_hyperparameters(
-                X, y_stage1, n_trials=n_trials // 2
-            )
+            best_params[
+                f"stage1_{timeframe}"] = model.optimize_hyperparameters(
+                    X, y_stage1, n_trials=n_trials // 2)
 
         # Optimize stage 2 models
         print("Optimizing stage 2 models...")
         for timeframe, data in engineered_data.items():
             # Prepare features and targets
             feature_columns = [
-                col
-                for col in data.columns
+                col for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -192,12 +198,11 @@ class MLTradingStrategy:
             model = self.pipeline.stage2_models.get(
                 timeframe,
                 MultiTimeframePipeline().stage2_models.get(
-                    timeframe, LightGBMModel(model_type="regression")
-                ),
+                    timeframe, LightGBMModel(model_type="regression")),
             )
-            best_params[f"stage2_{timeframe}"] = model.optimize_hyperparameters(
-                X, y_stage2, n_trials=n_trials // 2
-            )
+            best_params[
+                f"stage2_{timeframe}"] = model.optimize_hyperparameters(
+                    X, y_stage2, n_trials=n_trials // 2)
 
         return best_params
 

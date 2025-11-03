@@ -1,4 +1,4 @@
-"""Production-grade dimensionality reduction training workflows."""
+"""Dimensionality reduction comparison and research workflows."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import lightgbm as lgb
 from ml_trading.data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer, )
 from ml_trading.data_tools.data_loader import MarketDataLoader
+from ml_trading.data_tools.rolling_data import create_labels_multi_horizon
 from ml_trading.models.autoencoder import AutoencoderTrainer, UnifiedAutoencoder
 from ml_trading.utils.training import train_lightgbm_model
 
@@ -48,7 +49,8 @@ def load_real_market_data(
     symbol: str = "ETH-USD",
     start_date: str | None = None,
     end_date: str | None = None,
-) -> Tuple[np.ndarray, np.ndarray, list]:
+    horizons: list[int] | None = None,
+) -> Tuple[np.ndarray, np.ndarray, list, list[int], pd.DataFrame]:
     print(f"📊 Loading real market data for {symbol}...")
 
     try:
@@ -67,9 +69,39 @@ def load_real_market_data(
         df_features = comprehensive_engineer.engineer_all_features(df,
                                                                    fit=True)
 
+        # Parse horizons
+        if horizons and len(horizons) > 0:
+            horizons_list = horizons
+        else:
+            horizons_list = [1]
+
+        # Create multi-horizon labels
+        print(
+            f"   Creating multi-horizon labels for horizons: {horizons_list}")
+        df_features = create_labels_multi_horizon(df_features,
+                                                  horizons=horizons_list)
+
+        # Store original df_features for multi-horizon label creation
+        df_features_stored = df_features.copy()
+
+        # Build safe feature columns (exclude targets/labels and future info)
+        exclude_exact = {
+            "timestamp",
+            "close",
+            "signal",
+            "binary_signal",
+            "future_return",
+        }
+        exclude_prefixes = (
+            "signal_",
+            "binary_signal_",
+            "future_return_",
+        )
         feature_cols = [
-            col for col in df_features.columns
-            if col not in ["timestamp", "close"]
+            col
+            for col in df_features.columns
+            if (col not in exclude_exact)
+            and (not any(col.startswith(pfx) for pfx in exclude_prefixes))
         ]
 
         # Debug: engineered feature summary
@@ -81,19 +113,32 @@ def load_real_market_data(
             pass
 
         X = df_features[feature_cols].values
-        y = df_features["close"].pct_change().shift(-1).dropna().values
+
+        # Use first horizon for backward compatibility
+        default_horizon = horizons_list[0]
+        y = df_features[f"signal_{default_horizon}"].dropna(
+        ).values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
         y = y[:min_len]
 
         print(f"✅ Real data loaded: {X.shape}, {y.shape}")
-        return X, y, feature_cols
+        print(
+            f"   Using horizon: {default_horizon} bars (for backward compatibility)"
+        )
+
+        # Store horizons for multi-horizon training
+        if len(horizons_list) > 1:
+            print(f"   Multi-horizon mode enabled: {horizons_list}")
+
+        return X, y, feature_cols, horizons_list, df_features_stored
 
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Error loading real data: {exc}")
         print("📊 Generating sample data...")
-        return create_enhanced_sample_data()
+        X, y, feature_cols = create_enhanced_sample_data()
+        return X, y, feature_cols, [1], pd.DataFrame()
 
 
 def create_enhanced_sample_data(
@@ -160,7 +205,10 @@ def train_production_autoencoder(
         architecture="production",
     )
 
-    trainer = AutoencoderTrainer(autoencoder, device="auto")
+    # Prefer GPU if available
+    ae_device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"   Device preference for AE: {ae_device}")
+    trainer = AutoencoderTrainer(autoencoder, device=ae_device)
     losses = trainer.train(X, epochs=epochs, verbose=True)
 
     print("✅ Production Autoencoder training complete")
@@ -181,13 +229,48 @@ def train_production_lightgbm(
         raise ValueError("Non-finite values detected in features (NaN/inf)")
     if not np.isfinite(y_train).all() or not np.isfinite(y_val).all():
         raise ValueError("Non-finite values detected in labels (NaN/inf)")
-    if float(np.std(y_train)) == 0.0:
-        raise ValueError("y_train variance is zero; cannot train a regressor")
+
+    # Check for valid labels (for both classification and regression)
+    unique_labels = np.unique(y_train)
+    if len(unique_labels) == 1:
+        raise ValueError(
+            f"y_train has only one unique value ({unique_labels[0]}); cannot train a model"
+        )
+
+    # Auto-detect task type based on labels
+    # IMPORTANT: Classification tasks use 3-class (0=Hold, 1=Long, 2=Short)
+    # Regression tasks (predicting returns) remain as regression - DO NOT CHANGE
+    unique_labels = np.unique(y_train)
+    num_unique = len(unique_labels)
+
+    # Determine objective based on label characteristics
+    # If labels are integers in [0, 2] → 3-class classification (signal prediction)
+    # If labels are continuous values → regression (return prediction)
+    if num_unique <= 3 and np.all(np.equal(
+            np.mod(unique_labels, 1),
+            0)) and np.all(unique_labels >= 0) and np.all(unique_labels <= 2):
+        # 3-class classification for signal prediction (0=Hold, 1=Long, 2=Short)
+        objective = "multiclass"
+        metric = "multi_logloss"
+        task_params = {"num_class": 3}
+        print(f"   Using 3-class classification (0=Hold, 1=Long, 2=Short)")
+    elif num_unique == 2:
+        # Binary classification (fallback for compatibility)
+        objective = "binary"
+        metric = "binary_logloss"
+        task_params = {}
+        print(f"   Using binary classification")
+    else:
+        # Regression for predicting continuous returns (DO NOT CHANGE - this is correct for return prediction)
+        objective = "regression"
+        metric = "rmse"
+        task_params = {}
+        print(f"   Using regression for return prediction")
 
     if params is None:
         params = {
-            "objective": "regression",
-            "metric": "rmse",
+            "objective": objective,
+            "metric": metric,
             "boosting_type": "gbdt",
             "num_leaves": 31,
             "learning_rate": 0.02,
@@ -202,6 +285,7 @@ def train_production_lightgbm(
             "random_state": 42,
             # Prefer CUDA backend if available (LightGBM built with CUDA)
             "device_type": "cuda" if torch.cuda.is_available() else "cpu",
+            **task_params,  # Add num_class for multiclass
         }
 
     lgb_train = lgb.Dataset(X_train, label=y_train)
@@ -364,10 +448,26 @@ def evaluate_model_performance(
 ):
     predictions = model.predict(X_test)
 
-    mse = mean_squared_error(y_test, predictions)
+    # Handle multiclass predictions: LightGBM returns probability array for multiclass
+    # Shape: (n_samples, n_classes) for multiclass, (n_samples,) for binary/regression
+    is_multiclass = predictions.ndim == 2 and predictions.shape[1] > 1
+    if is_multiclass:
+        # Multiclass: convert probability array to class predictions
+        predictions_class = np.argmax(predictions, axis=1)
+        # For metrics, use class predictions
+        predictions_for_metrics = predictions_class
+        predictions_to_store = predictions_class
+    else:
+        # Binary or regression: use predictions as-is
+        predictions_for_metrics = predictions
+        predictions_to_store = predictions
+
+    # Basic numeric metrics (note: for multiclass these are not very meaningful)
+    mse = mean_squared_error(y_test, predictions_for_metrics)
     rmse = np.sqrt(mse)
-    mae = mean_absolute_error(y_test, predictions)
-    r2 = r2_score(y_test, predictions)
+    mae = mean_absolute_error(y_test, predictions_for_metrics)
+    # For multiclass, R² may not be meaningful, but we'll calculate it anyway
+    r2 = r2_score(y_test, predictions_for_metrics) if len(np.unique(y_test)) > 1 else 0.0
 
     print(f"📊 {model_name} Performance:")
     print(f"  R²: {r2:.4f}")
@@ -379,19 +479,61 @@ def evaluate_model_performance(
         "rmse": rmse,
         "mae": mae,
         "r2": r2,
-        "predictions": predictions,
+        "predictions": predictions_to_store,
     }
 
-    # Add financial metrics if requested
+    # Add financial or directional metrics
     if include_financial_metrics:
-        financial_metrics = calculate_financial_metrics(y_test, predictions)
-        results["financial_metrics"] = financial_metrics
-        print(
-            f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
-        print(
-            f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
-        print(
-            f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
+        if is_multiclass:
+            # Compute directional win rate among non-hold predictions (1=Long, 2=Short)
+            y_pred_cls = predictions_class
+            y_true_cls = y_test
+            non_hold_mask = y_pred_cls != 0
+            long_mask = y_pred_cls == 1
+            short_mask = y_pred_cls == 2
+            active = int(np.sum(non_hold_mask))
+            total = int(len(y_pred_cls))
+            active_ratio = float(active / total) if total > 0 else 0.0
+
+            if active > 0:
+                correct_non_hold = ((y_pred_cls == 1) & (y_true_cls == 1)) | ((y_pred_cls == 2) & (y_true_cls == 2))
+                win_rate = float(np.sum(correct_non_hold) / active)
+            else:
+                win_rate = 0.0
+
+            # Long-only win rate
+            long_total = int(np.sum(long_mask))
+            if long_total > 0:
+                long_correct = np.sum((y_pred_cls == 1) & (y_true_cls == 1))
+                long_win_rate = float(long_correct / long_total)
+            else:
+                long_win_rate = 0.0
+
+            # Short-only win rate
+            short_total = int(np.sum(short_mask))
+            if short_total > 0:
+                short_correct = np.sum((y_pred_cls == 2) & (y_true_cls == 2))
+                short_win_rate = float(short_correct / short_total)
+            else:
+                short_win_rate = 0.0
+
+            fm = results.setdefault("financial_metrics", {})
+            fm["win_rate"] = win_rate
+            fm["long_win_rate"] = long_win_rate
+            fm["short_win_rate"] = short_win_rate
+            fm["active_ratio"] = active_ratio
+
+            print(f"  Directional Win Rate (non-hold): {win_rate:.4f}")
+            print(f"  Long Win Rate: {long_win_rate:.4f}")
+            print(f"  Short Win Rate: {short_win_rate:.4f}")
+            print(f"  Active Ratio: {active_ratio:.4f}")
+        else:
+            # Regression/binary: compute financial metrics using returns-like predictions
+            financial_metrics = calculate_financial_metrics(y_test, predictions_for_metrics)
+            results["financial_metrics"] = financial_metrics
+            print(f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
+            print(f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
+            print(f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
 
     return results
 
@@ -416,7 +558,7 @@ def save_production_results(
     return results_dir
 
 
-def run_production_training(
+def run_dimensionality_comparison(
     data_path: str = "/data/parquet_data",
     symbol: str = "ETH-USD",
     encoding_dim: int = 8,
@@ -424,7 +566,7 @@ def run_production_training(
     train_start: str | None = None,
     train_end: str | None = None,
 ) -> Tuple[Dict, any, UnifiedAutoencoder, str]:
-    print("🚀 Production Dimensionality Reduction Training")
+    print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
     start_dt = datetime.now()
     timestamp_start = start_dt.strftime("%Y%m%d_%H%M%S")
@@ -599,7 +741,7 @@ def run_production_training(
     )
 
     print("\n" + "=" * 60)
-    print("🎉 Production Dimensionality Reduction Training Complete!")
+    print("🎉 Dimensionality Reduction Comparison Complete!")
     print("=" * 60)
     print(f"📊 Compression Ratio: {compression_ratio:.1f}x")
     print(
@@ -613,7 +755,8 @@ def run_production_training(
 
 def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     parser = argparse.ArgumentParser(
-        description="Production-style comparison: original vs compressed/Top-K",
+        description=
+        "Dimensionality reduction comparison: evaluate feature reduction stages (All → IC-filtered → Representatives → Autoencoder)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -677,6 +820,13 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         help=
         "Optional: number of top factors (informational; not applied in this script)",
     )
+    parser.add_argument(
+        "--horizons",
+        type=str,
+        default="1,5,10,15",
+        help=
+        "Comma-separated list of forward bars for multi-horizon labels (e.g., 1,5,10,15)",
+    )
 
     args = parser.parse_args()
 
@@ -719,12 +869,27 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
             train_start_date = None
             train_end_date = None
             ablation_dir_date_suffix = None  # Will use runtime timestamps
+        # Parse horizons from args
+        horizons_list = [int(h.strip()) for h in args.horizons.split(",")
+                         ] if args.horizons else [1]
+
         # Load engineered features for IC & representative selection
-        X_raw, y_raw, feature_names = load_real_market_data(
-            args.data_path, args.symbol, args.train_start, args.train_end)
+        X_raw, y_raw, feature_names, horizons_loaded, df_features_original = load_real_market_data(
+            args.data_path,
+            args.symbol,
+            args.train_start,
+            args.train_end,
+            horizons=horizons_list)
+
+        # Use loaded horizons or fallback to parsed horizons
+        horizons = horizons_loaded if horizons_loaded and len(
+            horizons_loaded) > 0 else horizons_list
+
         original_feature_count = len(
             feature_names)  # Save original count (482)
         dfX = pd.DataFrame(X_raw, columns=feature_names)
+
+        # For backward compatibility, use default horizon
         y_series = pd.Series(y_raw)
 
         # Stage 1: All original features (482) - missing/stability filter only
@@ -833,6 +998,9 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         X_train_reps = X_reps_scaled[train_indices]
         X_val_reps = X_reps_scaled[val_indices]
         X_test_reps = X_reps_scaled[test_indices]
+
+        # Multi-horizon training (if enabled) - will be done after all 4 stages
+        multi_horizon_results = {}
 
         # Train and evaluate models for all 4 stages
         print("\n" + "=" * 60)
@@ -953,6 +1121,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                     best_dim = dim
                     best_model = model_ae
                     best_ae = ae
+
                     # Build comprehensive result struct with all 4 stages
                     results = {
                         "timestamp_start": ablation_start_ts,
@@ -1011,13 +1180,16 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                             "compressed_features": perf_ae,
                             "performance_change": delta_r2,
                         },
+                        # Multi-horizon results (if enabled)
+                        "multi_horizon_results":
+                        multi_horizon_results if multi_horizon_results else {},
                         "training_info": {
                             "autoencoder_epochs":
                             int(args.autoencoder_epochs),
                             "autoencoder_final_loss":
-                            float(losses[-1])
-                            if isinstance(losses, (list, tuple))
-                            and len(losses) > 0 else None,
+                            (float(losses[-1])
+                             if isinstance(losses, (list, tuple))
+                             and len(losses) > 0 else None),
                             "lightgbm_stage1_iterations":
                             getattr(model_all, "best_iteration", None),
                             "lightgbm_stage2_iterations":
@@ -1028,28 +1200,183 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                             getattr(model_ae, "best_iteration", None),
                         },
                     }
-                    # Proxy: map compressed predictions back to reps
-                    y_hat_train = model_ae.predict(Z_train)
-                    ridge = Ridge(alpha=1.0)
-                    ridge.fit(X_train_reps, y_hat_train)
-                    proxy_coefs = {
-                        reps[i]: float(ridge.coef_[i])
-                        for i in range(len(reps))
-                    }
-                    results["proxy_weights"] = proxy_coefs
-                    results["grid_search"] = grid_rows
-                    best_result = results
-                    # Use training date range for directory name if available, otherwise runtime timestamps
-                    if ablation_dir_date_suffix:
-                        best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
-                    else:
-                        best_dir = f"results/production_dimensionality_{results['timestamp_start']}_{results['timestamp_end']}"
+                # Proxy: map compressed predictions back to reps
+                y_hat_train = model_ae.predict(Z_train)
+
+                # Handle multiclass predictions: convert probability array to class predictions
+                # For multiclass, we use class predictions (0, 1, 2) as regression targets
+                if y_hat_train.ndim == 2 and y_hat_train.shape[1] > 1:
+                    # Multiclass: use class predictions (0=Hold, 1=Long, 2=Short)
+                    y_hat_train = np.argmax(y_hat_train,
+                                            axis=1).astype(np.float64)
+
+                # Ensure y_hat_train is 1D for Ridge regression
+                if y_hat_train.ndim > 1:
+                    y_hat_train = y_hat_train.flatten()
+
+                ridge = Ridge(alpha=1.0)
+                ridge.fit(X_train_reps, y_hat_train)
+
+                # Get coefficients: coef_ is always 1D for single-output Ridge
+                coef = ridge.coef_
+                # Ensure coef is 1D array
+                if coef.ndim > 1:
+                    coef = coef.flatten()
+
+                proxy_coefs = {
+                    reps[i]: float(coef[i])
+                    for i in range(len(reps)) if i < len(coef)
+                }
+                results["proxy_weights"] = proxy_coefs
+                results["grid_search"] = grid_rows
+                best_result = results
+                # Use training date range for directory name if available, otherwise runtime timestamps
+                if ablation_dir_date_suffix:
+                    best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
+                else:
+                    best_dir = f"results/production_dimensionality_{results['timestamp_start']}_{results['timestamp_end']}"
             except Exception as exc:
                 print(f"⚠️ Ablation ENCODING_DIM={dim} failed: {exc}")
                 continue
 
         if best_result is None:
             raise RuntimeError("Ablation failed for all encoding dims")
+
+        # Multi-horizon training (if enabled) - train all 4 stages for each horizon
+        if horizons and len(horizons) > 1 and not df_features_original.empty:
+            print(f"\n{'=' * 80}")
+            print(
+                f"Multi-Horizon Training: Evaluating {len(horizons)} horizons across all 4 stages"
+            )
+            print(f"{'=' * 80}")
+
+            df_multi_labels = create_labels_multi_horizon(df_features_original,
+                                                          horizons=horizons)
+
+            for horizon in horizons:
+                print(f"\n{'=' * 60}")
+                print(f"Training all 4 stages for Horizon: {horizon} bars")
+                print(f"{'=' * 60}")
+
+                # Get labels for this horizon (3-class: 0=Hold, 1=Long, 2=Short)
+                y_horizon_col = f"signal_{horizon}"
+                if y_horizon_col in df_multi_labels.columns:
+                    y_horizon = df_multi_labels[y_horizon_col].values
+                    y_horizon = y_horizon[:len(X_raw)]
+
+                    # Use same split indices
+                    y_train_h = y_horizon[train_indices]
+                    y_val_h = y_horizon[val_indices]
+                    y_test_h = y_horizon[test_indices]
+
+                    # Stage 1: All features
+                    print(
+                        f"\n  [Stage 1] Horizon {horizon}: Training on ALL features..."
+                    )
+                    model_h_all = train_production_lightgbm(
+                        X_train_all, y_train_h, X_val_all, y_val_h)
+                    perf_h_all = evaluate_model_performance(
+                        model_h_all, X_test_all, y_test_h,
+                        f"Horizon {horizon} - All Features")
+
+                    # Stage 2: IC-filtered features
+                    print(
+                        f"\n  [Stage 2] Horizon {horizon}: Training on IC-filtered features..."
+                    )
+                    model_h_ic = train_production_lightgbm(
+                        X_train_ic, y_train_h, X_val_ic, y_val_h)
+                    perf_h_ic = evaluate_model_performance(
+                        model_h_ic, X_test_ic, y_test_h,
+                        f"Horizon {horizon} - IC-Filtered")
+
+                    # Stage 3: Representative features
+                    print(
+                        f"\n  [Stage 3] Horizon {horizon}: Training on Representative features..."
+                    )
+                    model_h_reps = train_production_lightgbm(
+                        X_train_reps, y_train_h, X_val_reps, y_val_h)
+                    perf_h_reps = evaluate_model_performance(
+                        model_h_reps, X_test_reps, y_test_h,
+                        f"Horizon {horizon} - Representatives")
+
+                    # Stage 4: Autoencoder compressed features (using best_dim and best_ae)
+                    if best_dim is not None and best_ae is not None:
+                        print(
+                            f"\n  [Stage 4] Horizon {horizon}: Training on AE-compressed features (dim={best_dim})..."
+                        )
+                        # Transform using best autoencoder (same method as in main training loop)
+                        # Get device from best_ae model
+                        ae_device = next(best_ae.parameters()).device
+                        with torch.no_grad():
+                            X_train_reps_t = torch.as_tensor(
+                                X_train_reps,
+                                dtype=torch.float32,
+                                device=ae_device)
+                            X_val_reps_t = torch.as_tensor(X_val_reps,
+                                                           dtype=torch.float32,
+                                                           device=ae_device)
+                            X_test_reps_t = torch.as_tensor(
+                                X_test_reps,
+                                dtype=torch.float32,
+                                device=ae_device)
+
+                            _, Z_train_h_t = best_ae(X_train_reps_t)
+                            _, Z_val_h_t = best_ae(X_val_reps_t)
+                            _, Z_test_h_t = best_ae(X_test_reps_t)
+
+                            Z_train_h = Z_train_h_t.cpu().numpy()
+                            Z_val_h = Z_val_h_t.cpu().numpy()
+                            Z_test_h = Z_test_h_t.cpu().numpy()
+
+                        # Standardize AE embeddings before feeding to LightGBM
+                        z_scaler = StandardScaler()
+                        Z_train_h = z_scaler.fit_transform(Z_train_h)
+                        Z_val_h = z_scaler.transform(Z_val_h)
+                        Z_test_h = z_scaler.transform(Z_test_h)
+
+                        model_h_ae = train_production_lightgbm(
+                            Z_train_h, y_train_h, Z_val_h, y_val_h)
+                        perf_h_ae = evaluate_model_performance(
+                            model_h_ae, Z_test_h, y_test_h,
+                            f"Horizon {horizon} - AE-Compressed")
+                    else:
+                        perf_h_ae = None
+
+                    # Store results for this horizon
+                    multi_horizon_results[f"horizon_{horizon}"] = {
+                        "stage1_all_features":
+                        perf_h_all,
+                        "stage2_ic_filtered":
+                        perf_h_ic,
+                        "stage3_representatives":
+                        perf_h_reps,
+                        "stage4_compressed":
+                        perf_h_ae if perf_h_ae is not None else
+                        perf_h_reps,  # Fallback to reps if AE failed
+                    }
+
+                    print(f"\n  ✅ Horizon {horizon} Complete:")
+                    print(
+                        f"     Stage 1 (All):      R²={perf_h_all['r2']:.4f}, RMSE={perf_h_all['rmse']:.6f}"
+                    )
+                    print(
+                        f"     Stage 2 (IC):       R²={perf_h_ic['r2']:.4f}, RMSE={perf_h_ic['rmse']:.6f}"
+                    )
+                    print(
+                        f"     Stage 3 (Reps):     R²={perf_h_reps['r2']:.4f}, RMSE={perf_h_reps['rmse']:.6f}"
+                    )
+                    if perf_h_ae is not None:
+                        print(
+                            f"     Stage 4 (AE):       R²={perf_h_ae['r2']:.4f}, RMSE={perf_h_ae['rmse']:.6f}"
+                        )
+                else:
+                    print(
+                        f"   ⚠️  Label column {y_horizon_col} not found for horizon {horizon}"
+                    )
+
+        # Add multi-horizon results to best_result
+        if multi_horizon_results:
+            best_result["multi_horizon_results"] = multi_horizon_results
 
         # finalize end timestamp using actual ablation end
         ablation_end_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1070,6 +1397,49 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
             else:
                 best_dir = f"results/production_dimensionality_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
         os.makedirs(best_dir, exist_ok=True)
+
+        # Save representative features list (Stage 3) - after best_dir is set
+        if reps:
+            reps_path = os.path.join(best_dir, "representative_factors.json")
+            with open(reps_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "representative_factors":
+                        reps,
+                        "count":
+                        len(reps),
+                        "stage":
+                        "Stage 3: Correlation-based representative selection",
+                        "description":
+                        "Features selected by greedy correlation filtering (threshold=0.9)"
+                    },
+                    f,
+                    indent=2)
+            print(f"   💾 Representative factors saved to: {reps_path}")
+
+            # Also save in top_factors format for compatibility with train_model
+            top_factors_path = os.path.join(best_dir, "top_factors.json")
+            with open(top_factors_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "top_factors": [{
+                            "name": factor
+                        } for factor in reps],
+                        "count": len(reps),
+                        "source": "dim-compare",
+                        "stage": "Stage 3: Representative features"
+                    },
+                    f,
+                    indent=2)
+            print(
+                f"   💾 Top factors (compatible format) saved to: {top_factors_path}"
+            )
+
+        # Save best Autoencoder model - after best_dir is set
+        if best_ae is not None:
+            ae_path = os.path.join(best_dir, "production_autoencoder.pth")
+            torch.save(best_ae.state_dict(), ae_path)
+            print(f"   💾 Best Autoencoder saved to: {ae_path}")
 
         # Ensure JSON-serializable (e.g., convert any numpy types)
         def _to_py(o):
@@ -1105,7 +1475,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         grid_rows = []
         for dim in grid_dims:
             try:
-                trial_results, trial_model, trial_ae, trial_dir = run_production_training(
+                trial_results, trial_model, trial_ae, trial_dir = run_dimensionality_comparison(
                     data_path=args.data_path,
                     symbol=args.symbol,
                     encoding_dim=dim,
@@ -1141,7 +1511,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         if 'grid_search' not in results:
             results['grid_search'] = grid_rows
     else:
-        results, model, autoencoder, results_dir = run_production_training(
+        results, model, autoencoder, results_dir = run_dimensionality_comparison(
             data_path=args.data_path,
             symbol=args.symbol,
             encoding_dim=args.encoding_dim,

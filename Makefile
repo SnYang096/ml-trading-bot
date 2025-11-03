@@ -65,8 +65,8 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train rolling-monthly rolling-quarterly vectorbot-backtest oos-june dimensionality-demo dimensionality-real \
-	dim-compare nautilus-backtest
+	train auto-rolling-update auto-rolling-update-only vectorbot-backtest oos-june \
+	dim-compare nautilus-backtest feature-report
 
 help:
 	@echo "ML Trading Project"
@@ -87,17 +87,21 @@ help:
 	@echo "  make data-pipeline       # Download then convert"
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
-	@echo "  make feature-report       # Generate feature IC/IR HTML report"
-	@echo "  make train               # Train production LightGBM pipeline (baseline/rollback)"
-	@echo "  make rolling-monthly      # Monthly rolling retraining"
-	@echo "  make rolling-quarterly    # Quarterly rolling retraining"
-	@echo "  make vectorbot-backtest   # Run VectorBot risk-managed backtest"
-	@echo "  make nautilus-backtest    # Run Nautilus Trader backtest with AE+LGB and portfolio mgmt"
-	@echo "  make oos-june             # Evaluate June OOS performance"
-	@echo "  make dimensionality-demo  # Run dimensionality pipeline on sample data"
-	@echo "  make dimensionality-real  # Run dimensionality pipeline on real data"
-	@echo "  make dim-compare         # DEFAULT: production ablation pipeline with report"
-	@echo "  -- Deprecated: make train-topk / make train-ae (use dim-compare instead)"
+	@echo "  Core Workflow (Recommended):"
+	@echo "    make dim-compare        # Step 1: Research dimensionality reduction (find optimal features)"
+	@echo "    make train              # Step 2: Train production model (optional, for single evaluation)"
+	@echo "    make auto-rolling-update # Step 3: Rolling update to latest data (main workflow)"
+	@echo ""
+	@echo "  Data commands:"
+	@echo "    make data-download     # Download Binance data"
+	@echo "    make data-convert      # Convert ZIPs to Parquet"
+	@echo "    make data-pipeline     # Download then convert"
+	@echo ""
+	@echo "  Other commands:"
+	@echo "    make feature-report    # Generate feature IC/IR HTML report"
+	@echo "    make vectorbot-backtest # Run VectorBot risk-managed backtest"
+	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
+	@echo ""
 	@echo ""
 	@echo "Override defaults, e.g. \"make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31\""
 	@echo ""
@@ -199,9 +203,12 @@ feature-report:
 		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
 		$(FEATURE_REPORT_ARGS)
 
+FORWARD_BARS_TRAIN ?= 1
+
 train:
 	@echo "🚀 Training production model for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31"
+	@echo "Example: make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
+	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
 	$(DOCKER_RUN) python3 -m ml_trading.models.train_model \
 		--symbols $(SYMBOLS) \
 		--start-date $(START_DATE) \
@@ -209,51 +216,43 @@ train:
 		--data-dir $(DATA_DIR) \
 		--output-dir $(MODEL_DIR) \
 		--model-name $(MODEL_NAME) $(OVERWRITE_FLAG) \
-		--overwrite
+		--overwrite \
+		--forward-bars $(FORWARD_BARS_TRAIN)
 
-train-topk:
-	@echo "🚀 Training with Top-K factors for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Usage: make train-topk SYMBOLS=BTCUSDT START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD TOP_FACTORS=path/to/top_factors.json"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.models.train_model \
-		--symbols $(SYMBOLS) \
-		--start-date $(START_DATE) \
-		--end-date $(END_DATE) \
-		--data-dir $(DATA_DIR) \
-		--output-dir $(MODEL_DIR) \
-		--model-name $(MODEL_NAME) \
-		--use-top-factors $(TOP_FACTORS) \
-		$(OVERWRITE_FLAG)
 
-train-ae:
-	@echo "🚀 Training with Autoencoder-compressed features for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Usage: make train-ae SYMBOLS=BTCUSDT START_DATE=YYYY-MM-DD END_DATE=YYYY-MM-DD AE_PATH=results/.../production_autoencoder.pth ENCODING_DIM=16"
-	$(DOCKER_RUN) python3 -m ml_trading.models.train_model \
-		--symbols $(SYMBOLS) \
-		--start-date $(START_DATE) \
-		--end-date $(END_DATE) \
-		--data-dir $(DATA_DIR) \
-		--output-dir $(MODEL_DIR) \
-		--model-name $(MODEL_NAME) \
-		--use-autoencoder $(AE_PATH) \
-		--encoding-dim $(ENCODING_DIM) \
-		$(OVERWRITE_FLAG)
+FORWARD_BARS ?= 3
 
-rolling-monthly:
-	@echo "📆 Running monthly rolling retraining for $(SYMBOL) $(YEAR)..."
-	$(DOCKER_RUN) python3 scripts/rolling/monthly_rolling_retrain.py \
+auto-rolling-update:
+	@echo "🚀 Auto Rolling Update: Train and update $(SYMBOL) to latest available data..."
+	@echo "Usage: make auto-rolling-update SYMBOL=BTCUSDT INITIAL_TRAIN_MONTHS=6 FORWARD_BARS=5"
+	@echo "       make auto-rolling-update SYMBOL=BTCUSDT USE_TOP_FACTORS=path/to/top_factors.json USE_AUTOENCODER=path/to/ae.pth ENCODING_DIM=32 FORWARD_BARS=15"
+	@echo "       Forward Bars (Horizon): $(FORWARD_BARS) bars ahead for prediction"
+	$(DOCKER_RUN_NO_TTY) python3 scripts/rolling/auto_rolling_update.py \
 		--data-dir $(DATA_DIR) \
 		--symbol $(SYMBOL) \
-		--year $(YEAR) \
-		--output $(RESULTS_DIR)/monthly_rolling_$(SYMBOL)_$(YEAR)
+		--initial-train-months $(if $(INITIAL_TRAIN_MONTHS),$(INITIAL_TRAIN_MONTHS),6) \
+		$(if $(MIN_TRAIN_MONTHS),--min-train-months $(MIN_TRAIN_MONTHS),) \
+		$(if $(OUTPUT),--output $(OUTPUT),) \
+		$(if $(filter 1 true yes,$(ADD_ORDER_FLOW)),--add-order-flow,) \
+		$(if $(filter 1 true yes,$(UPDATE_ONLY)),--update-only,) \
+		$(if $(USE_TOP_FACTORS),--use-top-factors $(USE_TOP_FACTORS),) \
+		$(if $(USE_AUTOENCODER),--use-autoencoder $(USE_AUTOENCODER) --encoding-dim $(ENCODING_DIM),) \
+		--forward-bars $(FORWARD_BARS)
 
-rolling-quarterly:
-	@echo "📈 Running quarterly rolling retraining for $(SYMBOL) $(START_YEAR)-$(END_YEAR)..."
-	$(DOCKER_RUN) python3 scripts/rolling/quarterly_rolling_retrain.py \
+auto-rolling-update-only:
+	@echo "🔄 Auto Rolling Update: Only update $(SYMBOL) from last trained month..."
+	@echo "Usage: make auto-rolling-update-only SYMBOL=BTCUSDT OUTPUT=results/auto_rolling_btcusdt_XXX FORWARD_BARS=5"
+	@echo "       make auto-rolling-update-only SYMBOL=BTCUSDT OUTPUT=results/XXX USE_TOP_FACTORS=path/to/top_factors.json USE_AUTOENCODER=path/to/ae.pth ENCODING_DIM=32 FORWARD_BARS=15"
+	@echo "       Forward Bars (Horizon): $(FORWARD_BARS) bars ahead for prediction"
+	$(DOCKER_RUN_NO_TTY) python3 scripts/rolling/auto_rolling_update.py \
 		--data-dir $(DATA_DIR) \
-		--symbols $(SYMBOL) \
-		--start-year $(START_YEAR) \
-		--end-year $(END_YEAR) \
-		--output $(RESULTS_DIR)/quarterly_rolling_$(SYMBOL)
+		--symbol $(SYMBOL) \
+		--update-only \
+		$(if $(OUTPUT),--output $(OUTPUT),) \
+		$(if $(filter 1 true yes,$(ADD_ORDER_FLOW)),--add-order-flow,) \
+		$(if $(USE_TOP_FACTORS),--use-top-factors $(USE_TOP_FACTORS),) \
+		$(if $(USE_AUTOENCODER),--use-autoencoder $(USE_AUTOENCODER) --encoding-dim $(ENCODING_DIM),) \
+		--forward-bars $(FORWARD_BARS)
 
 vectorbot-backtest:
 	@echo "🤖 Running VectorBot backtest with $(MODEL_PATH)..."
@@ -272,33 +271,6 @@ oos-june:
 	@echo "🧪 Evaluating June OOS performance..."
 	$(DOCKER_RUN) bash -c "MODEL_PATH=$(MODEL_PATH) SCALER_PATH=$(SCALER_PATH) OOS_DATA=$(OOS_DATA) python3 scripts/backtesting/oos_june.py"
 
-dimensionality-demo:
-	@echo "🌀 Running dimensionality pipeline (sample data)..."
-	@echo "Example : make dimensionality-demo START_DATE=2024-01-01 END_DATE=2024-06-30"
-	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.pipeline \
-		--n-samples 5000 \
-		--n-factors 120 \
-		--encoding-dim 16 \
-		$(if $(START_DATE),--train-start $(START_DATE)) \
-		$(if $(END_DATE),--train-end $(END_DATE)) \
-		--visualize \
-		--generate-report
-
-dimensionality-real:
-	@echo "🏭 Running dimensionality pipeline on real data..."
-	@echo "make dimensionality-real DATA_DIR=data/parquet_data SYMBOL=BTCUSDT START_DATE=2024-01-01 END_DATE=2024-12-31"
-	$(DOCKER_RUN) python3 -m ml_trading.pipeline.dimensionality.pipeline \
-		--use-real-data \
-		--data-path /workspace/data/parquet_data \
-		--symbol $(SYMBOL) \
-		$(if $(START_DATE),--train-start $(START_DATE)) \
-		$(if $(END_DATE),--train-end $(END_DATE)) \
-		--encoding-dim 16 \
-		--top-k 40 \
-		--save-model \
-		--save-topk-model \
-		--visualize \
-		--generate-report
 
 # ---------------------------------------------------------------------------
 # Dimensionality: production-style comparison (original vs compressed)
@@ -306,17 +278,20 @@ dimensionality-real:
 
 ENCODING_DIM ?= 16
 DIM_COMPARE_ARGS ?=
+HORIZONS ?= 1,5,10,15
 
 dim-compare:
 	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
-	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS=\"--top-k 50\""
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.production_training \
+	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15 DIM_COMPARE_ARGS=\"--top-k 50\""
+	@echo "       Multi-horizon training enabled: $(HORIZONS)"
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		--encoding-dim $(ENCODING_DIM) \
 		$(if $(ENCODING_GRID),--encoding-grid $(ENCODING_GRID)) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
+		$(if $(HORIZONS),--horizons $(HORIZONS)) \
 		$(DIM_COMPARE_ARGS)
 	@echo "📝 HTML report is saved next to production_results.json (dimensionality_report.html)"
 

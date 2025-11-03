@@ -43,11 +43,14 @@ class LightGBMModel:
 
         # Adjust parameters based on model type
         if model_type == "regression":
+            # Regression for predicting continuous returns - DO NOT CHANGE
             self.params["objective"] = "regression"
             self.params["metric"] = "mse"
         else:
-            self.params["objective"] = "binary"
-            self.params["metric"] = "binary_logloss"
+            # Classification: Use 3-class (0=Hold, 1=Long, 2=Short) instead of binary
+            self.params["objective"] = "multiclass"
+            self.params["metric"] = "multi_logloss"
+            self.params["num_class"] = 3
 
     def prepare_data(
         self, X: pd.DataFrame, y: pd.Series

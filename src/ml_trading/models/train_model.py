@@ -150,6 +150,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Overwrite existing model/scaler files if they already exist",
     )
     parser.add_argument(
+        "--forward-bars",
+        type=int,
+        default=1,
+        help=
+        "Number of bars ahead for label prediction (default: 1). Use 1, 5, 10, or 15 for different horizons.",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable additional logging output",
@@ -606,10 +613,14 @@ def train_symbol(
             try:
                 top_list = load_top_factors_list(args.use_top_factors)
                 if not top_list:
-                    print("   ⚠️ Top factors list is empty; skipping filtering")
+                    print(
+                        "   ⚠️ Top factors list is empty; skipping filtering")
                 else:
-                    print(f"   🔎 Applying Top-K filter with {len(top_list)} factors")
-                    engineered_data = filter_engineered_by_topk(engineered_data, top_list)
+                    print(
+                        f"   🔎 Applying Top-K filter with {len(top_list)} factors"
+                    )
+                    engineered_data = filter_engineered_by_topk(
+                        engineered_data, top_list)
             except Exception as exc:  # noqa: BLE001
                 print(f"   ⚠️ Failed to apply Top-K filter: {exc}")
 
@@ -657,7 +668,7 @@ def train_symbol(
                 print(f"   ❌ Failed to apply autoencoder compression: {exc}")
                 return None
 
-        strategy = MLTradingStrategy()
+        strategy = MLTradingStrategy(forward_bars=args.forward_bars)
         strategy.data_loader = data_loader
         strategy.feature_engineer = feature_engineer
 
@@ -748,7 +759,7 @@ def train_symbol(
         print(f"   ✓ Model saved to {model_path}")
         print(f"   ✓ Scalers saved to {scaler_path}")
         print(f"   ✓ Model info saved to {info_path}")
-        
+
         # Generate HTML report
         try:
             from ml_trading.pipeline.dimensionality.report_generator import write_training_report
@@ -757,7 +768,7 @@ def train_symbol(
             print(f"   ✓ Training report saved to {report_path}")
         except Exception as exc:  # noqa: BLE001
             print(f"   ⚠️  Failed to generate HTML report: {exc}")
-        
+
         return SymbolTrainingResult(
             symbol=symbol,
             model_path=model_path,

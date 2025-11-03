@@ -14,7 +14,7 @@ import torch
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from ml_trading.models.autoencoder import UnifiedAutoencoder
-from ml_trading.pipeline.dimensionality.production_training import (
+from ml_trading.pipeline.dimensionality.dimensionality_comparison import (
     create_enhanced_sample_data, )
 
 

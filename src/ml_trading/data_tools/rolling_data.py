@@ -264,16 +264,75 @@ def create_labels(df: pd.DataFrame,
                   *,
                   forward_bars: int = 3,
                   threshold: float = 0.005) -> pd.DataFrame:
-    """Create future-return based classification labels."""
+    """Create future-return based classification labels (3-class: 0=Hold, 1=Long, 2=Short).
+
+    Args:
+        df: DataFrame with OHLCV data
+        forward_bars: Number of bars ahead for prediction
+        threshold: Threshold for signal classification
+    
+    Returns:
+        DataFrame with 'signal' column containing 3-class labels:
+        - 0: Hold (future_return between -threshold and threshold)
+        - 1: Long (future_return > threshold)
+        - 2: Short (future_return < -threshold)
+    """
 
     df = df.copy()
     df["future_return"] = df["close"].shift(-forward_bars) / df["close"] - 1
 
-    df["signal"] = 0
-    df.loc[df["future_return"] > threshold, "signal"] = 1
-    df.loc[df["future_return"] < -threshold, "signal"] = -1
+    # Create 3-class labels (0=Hold, 1=Long, 2=Short) for multiclass classification
+    df["signal"] = 0  # Hold by default
+    df.loc[df["future_return"] > threshold, "signal"] = 1   # Long
+    df.loc[df["future_return"] < -threshold, "signal"] = 2  # Short
+    
+    # Keep backward compatibility: binary_signal for legacy code (1=Long, 0=not Long)
     df["binary_signal"] = (df["signal"] == 1).astype(int)
 
+    return df
+
+
+def create_labels_multi_horizon(
+    df: pd.DataFrame,
+    *,
+    horizons: list[int] = [1, 5, 10, 15],
+    threshold: float = 0.005
+) -> pd.DataFrame:
+    """Create future-return based labels for multiple horizons (3-class: 0=Hold, 1=Long, 2=Short).
+    
+    Args:
+        df: DataFrame with OHLCV data
+        horizons: List of forward bars to look ahead (e.g., [1, 5, 10, 15])
+        threshold: Threshold for signal classification
+    
+    Returns:
+        DataFrame with multiple label columns for each horizon:
+        - signal_{horizon}: 3-class labels (0=Hold, 1=Long, 2=Short)
+        - binary_signal_{horizon}: Backward compatibility (1=Long, 0=not Long)
+        - Also creates backward-compatible 'signal' and 'binary_signal' using the first horizon
+    """
+    df = df.copy()
+    
+    for horizon in horizons:
+        # Create future return for this horizon
+        future_return_col = f"future_return_{horizon}"
+        df[future_return_col] = df["close"].shift(-horizon) / df["close"] - 1
+        
+        # Create 3-class signal for this horizon (0=Hold, 1=Long, 2=Short)
+        signal_col = f"signal_{horizon}"
+        df[signal_col] = 0  # Hold by default
+        df.loc[df[future_return_col] > threshold, signal_col] = 1   # Long
+        df.loc[df[future_return_col] < -threshold, signal_col] = 2  # Short
+        
+        # Keep backward compatibility: binary_signal for legacy code
+        binary_signal_col = f"binary_signal_{horizon}"
+        df[binary_signal_col] = (df[signal_col] == 1).astype(int)
+    
+    # Create backward-compatible columns using the first horizon
+    if horizons:
+        df["signal"] = df[f"signal_{horizons[0]}"]
+        df["binary_signal"] = df[f"binary_signal_{horizons[0]}"]
+    
     return df
 
 
@@ -320,13 +379,21 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         "close",
         "volume",
         "signal",
-        "binary_signal",
+        "binary_signal",  # Keep for backward compatibility
         "future_return",
         "hl",
         "hc",
         "lc",
         "tr",
     }
+    
+    # Also exclude multi-horizon label columns (e.g., signal_1, binary_signal_5, future_return_10)
+    exclude_cols.update([
+        col for col in df.columns 
+        if col.startswith("signal_") or 
+           col.startswith("binary_signal_") or 
+           col.startswith("future_return_")
+    ])
 
     return [col for col in df.columns if col not in exclude_cols]
 
@@ -337,6 +404,7 @@ __all__ = [
     "add_order_flow_features",
     "engineer_features",
     "create_labels",
+    "create_labels_multi_horizon",
     "add_dl_time_series_features",
     "add_transformer_time_series_features",
     "get_feature_columns",

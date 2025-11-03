@@ -23,11 +23,44 @@ def train_lightgbm_model(
     eval_period: int | None = 50,
     categorical_feature: Any | None = None,
 ) -> lgb.Booster:
-    """Train a LightGBM model with optional validation support."""
+    """Train a LightGBM model with optional validation support.
+    
+    Automatically detects whether to use binary, multiclass, or regression based on y_train:
+    - If unique values <= 2: binary classification
+    - If unique values > 2 and all integers: multiclass classification
+    - Otherwise: regression
+    """
+
+    # Auto-detect task type based on labels
+    # IMPORTANT: Classification tasks use 3-class (0=Hold, 1=Long, 2=Short)
+    # Regression tasks (predicting returns) remain as regression - DO NOT CHANGE
+    unique_labels = np.unique(y_train)
+    num_unique = len(unique_labels)
+
+    # Determine objective based on label characteristics
+    # If labels are integers in [0, 2] → 3-class classification (signal prediction)
+    # If labels are continuous values → regression (return prediction)
+    if num_unique <= 3 and np.all(np.equal(
+            np.mod(unique_labels, 1),
+            0)) and np.all(unique_labels >= 0) and np.all(unique_labels <= 2):
+        # 3-class classification for signal prediction (0=Hold, 1=Long, 2=Short)
+        objective = "multiclass"
+        metric = "multi_logloss"
+        task_params = {"num_class": 3}
+    elif num_unique == 2:
+        # Binary classification (fallback for compatibility)
+        objective = "binary"
+        metric = "binary_logloss"
+        task_params = {}
+    else:
+        # Regression for predicting continuous returns (DO NOT CHANGE - this is correct for return prediction)
+        objective = "regression"
+        metric = "rmse"
+        task_params = {}
 
     default_params = {
-        "objective": "binary",
-        "metric": "binary_logloss",
+        "objective": objective,
+        "metric": metric,
         "boosting_type": "gbdt",
         "num_leaves": 31,
         "learning_rate": 0.05,
@@ -36,6 +69,7 @@ def train_lightgbm_model(
         "bagging_freq": 5,
         "verbose": -1,
         "force_col_wise": True,
+        **task_params,  # Add num_class for multiclass
     }
 
     if params:
@@ -114,9 +148,30 @@ def simple_backtest(
     stop_loss_pct: float = 0.02,
     take_profit_pct: float = 0.04,
 ) -> Dict[str, Any]:
+    """Backtest with support for both binary and multiclass predictions.
+    
+    Automatically detects prediction format:
+    - If predictions are integers in [0, 2]: 3-class (0=Hold, 1=Long, 2=Short)
+    - Otherwise: Binary classification with threshold
+    """
     df = df.copy()
     df["prediction"] = predictions
-    df["signal"] = (predictions > signal_threshold).astype(int)
+
+    # Auto-detect prediction format: 3-class (0/1/2) vs binary probability
+    unique_preds = np.unique(predictions[~np.isnan(predictions)])
+    is_multiclass = (len(unique_preds) <= 3
+                     and np.all(np.equal(np.mod(unique_preds, 1), 0))
+                     and np.all(unique_preds >= 0)
+                     and np.all(unique_preds <= 2))
+
+    if is_multiclass:
+        # 3-class: 0=Hold, 1=Long, 2=Short
+        df["signal"] = predictions.astype(int)
+        print(f"   Using 3-class predictions: Hold=0, Long=1, Short=2")
+    else:
+        # Binary: probability > threshold = Long
+        df["signal"] = (predictions > signal_threshold).astype(int)
+        print(f"   Using binary predictions with threshold={signal_threshold}")
 
     capital = initial_capital
     position = None
@@ -154,27 +209,72 @@ def simple_backtest(
                     })
                     capital += pnl
                     position = None
+            elif position["side"] == "short":
+                # Handle short positions (for 3-class predictions)
+                if price >= position["stop"]:
+                    pnl = (position["entry"] - price) * position["size"]
+                    trades.append({
+                        "entry_time": position["entry_time"],
+                        "exit_time": idx,
+                        "entry_price": position["entry"],
+                        "exit_price": price,
+                        "size": position["size"],
+                        "pnl": pnl,
+                        "reason": "stop_loss",
+                    })
+                    capital += pnl
+                    position = None
+                elif price <= position["target"]:
+                    pnl = (position["entry"] - price) * position["size"]
+                    trades.append({
+                        "entry_time": position["entry_time"],
+                        "exit_time": idx,
+                        "entry_price": position["entry"],
+                        "exit_price": price,
+                        "size": position["size"],
+                        "pnl": pnl,
+                        "reason": "take_profit",
+                    })
+                    capital += pnl
+                    position = None
 
-        if position is None and row["signal"] == 1:
-            size = (capital * risk_per_trade) / (price * stop_loss_pct)
-            position = {
-                "side": "long",
-                "entry": price,
-                "entry_time": idx,
-                "size": size,
-                "stop": price * (1 - stop_loss_pct),
-                "target": price * (1 + take_profit_pct),
-            }
+        if position is None:
+            if row["signal"] == 1:  # Long signal
+                size = (capital * risk_per_trade) / (price * stop_loss_pct)
+                position = {
+                    "side": "long",
+                    "entry": price,
+                    "entry_time": idx,
+                    "size": size,
+                    "stop": price * (1 - stop_loss_pct),
+                    "target": price * (1 + take_profit_pct),
+                }
+            elif row["signal"] == 2:  # Short signal (for 3-class)
+                size = (capital * risk_per_trade) / (price * stop_loss_pct)
+                position = {
+                    "side": "short",
+                    "entry": price,
+                    "entry_time": idx,
+                    "size": size,
+                    "stop": price * (1 + stop_loss_pct),
+                    "target": price * (1 - take_profit_pct),
+                }
 
         current_equity = capital
         if position is not None:
-            unrealized_pnl = (price - position["entry"]) * position["size"]
+            if position["side"] == "long":
+                unrealized_pnl = (price - position["entry"]) * position["size"]
+            else:  # short
+                unrealized_pnl = (position["entry"] - price) * position["size"]
             current_equity += unrealized_pnl
         equity_curve.append({"timestamp": idx, "equity": current_equity})
 
     if position is not None:
         last_price = df["close"].iloc[-1]
-        pnl = (last_price - position["entry"]) * position["size"]
+        if position["side"] == "long":
+            pnl = (last_price - position["entry"]) * position["size"]
+        else:  # short
+            pnl = (position["entry"] - last_price) * position["size"]
         trades.append({
             "entry_time": position["entry_time"],
             "exit_time": df.index[-1],

@@ -10,13 +10,19 @@ from ml_trading.config.settings import TIMEFRAMES, STAGE_1_TARGET, STAGE_2_TARGE
 class MultiTimeframePipeline:
     """Multi-timeframe three-stage pipeline for trading strategy."""
 
-    def __init__(self):
-        """Initialize the multi-timeframe pipeline."""
+    def __init__(self, forward_bars: int = 1):
+        """Initialize the multi-timeframe pipeline.
+        
+        Args:
+            forward_bars: Number of bars ahead for label prediction (default: 1)
+        """
         self.stage1_models: Dict[str, LightGBMModel] = {}  # timeframe -> model
         self.stage2_models: Dict[str, LightGBMModel] = {}  # timeframe -> model
         self.is_trained = False
+        self.forward_bars = forward_bars
 
-    def prepare_targets(self, data: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+    def prepare_targets(self,
+                        data: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
         """
         Prepare targets for both stages.
 
@@ -26,14 +32,15 @@ class MultiTimeframePipeline:
         Returns:
             Tuple of (stage1_target, stage2_target)
         """
-        # Stage 1: Binary classification target (1 for long, -1 for short, 0 for hold)
-        # Simple approach: if next period return > threshold, long; if < -threshold, short
-        future_returns = data["close"].shift(-1) / data["close"] - 1
+        # Stage 1: 3-class classification target (0=Hold, 1=Long, 2=Short)
+        # Unified with create_labels: if next period return > threshold, long; if < -threshold, short
+        future_returns = data["close"].shift(
+            -self.forward_bars) / data["close"] - 1
         threshold = 0.001  # 0.1% threshold
 
-        stage1_target = pd.Series(0, index=data.index)
+        stage1_target = pd.Series(0, index=data.index)  # Hold by default
         stage1_target[future_returns > threshold] = 1  # Long signal
-        stage1_target[future_returns < -threshold] = -1  # Short signal
+        stage1_target[future_returns < -threshold] = 2  # Short signal
 
         # Stage 2: Regression target (expected return)
         stage2_target = future_returns
@@ -41,8 +48,9 @@ class MultiTimeframePipeline:
         return stage1_target, stage2_target
 
     def train_stage1(
-        self, engineered_data: Dict[str, pd.DataFrame]
-    ) -> Dict[str, Dict[str, float]]:
+        self,
+        engineered_data: Dict[str,
+                              pd.DataFrame]) -> Dict[str, Dict[str, float]]:
         """
         Train stage 1 models (signal classification) for each timeframe.
 
@@ -57,8 +65,7 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             # Prepare features (exclude OHLCV and target columns)
             feature_columns = [
-                col
-                for col in data.columns
+                col for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -77,8 +84,9 @@ class MultiTimeframePipeline:
         return metrics
 
     def train_stage2(
-        self, engineered_data: Dict[str, pd.DataFrame]
-    ) -> Dict[str, Dict[str, float]]:
+        self,
+        engineered_data: Dict[str,
+                              pd.DataFrame]) -> Dict[str, Dict[str, float]]:
         """
         Train stage 2 models (return regression) for each timeframe.
 
@@ -93,8 +101,7 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             # Prepare features (exclude OHLCV and target columns)
             feature_columns = [
-                col
-                for col in data.columns
+                col for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -135,8 +142,8 @@ class MultiTimeframePipeline:
         return {"stage1": stage1_metrics, "stage2": stage2_metrics}
 
     def predict_stage1(
-        self, engineered_data: Dict[str, pd.DataFrame]
-    ) -> Dict[str, np.ndarray]:
+            self,
+            engineered_data: Dict[str, pd.DataFrame]) -> Dict[str, np.ndarray]:
         """
         Make predictions using stage 1 models.
 
@@ -147,15 +154,15 @@ class MultiTimeframePipeline:
             Dictionary mapping timeframe to predictions
         """
         if not self.is_trained:
-            raise ValueError("Pipeline must be trained before making predictions")
+            raise ValueError(
+                "Pipeline must be trained before making predictions")
 
         predictions = {}
         for timeframe, data in engineered_data.items():
             if timeframe in self.stage1_models:
                 # Prepare features
                 feature_columns = [
-                    col
-                    for col in data.columns
+                    col for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
@@ -167,8 +174,8 @@ class MultiTimeframePipeline:
         return predictions
 
     def predict_stage2(
-        self, engineered_data: Dict[str, pd.DataFrame]
-    ) -> Dict[str, np.ndarray]:
+            self,
+            engineered_data: Dict[str, pd.DataFrame]) -> Dict[str, np.ndarray]:
         """
         Make predictions using stage 2 models.
 
@@ -179,15 +186,15 @@ class MultiTimeframePipeline:
             Dictionary mapping timeframe to predictions
         """
         if not self.is_trained:
-            raise ValueError("Pipeline must be trained before making predictions")
+            raise ValueError(
+                "Pipeline must be trained before making predictions")
 
         predictions = {}
         for timeframe, data in engineered_data.items():
             if timeframe in self.stage2_models:
                 # Prepare features
                 feature_columns = [
-                    col
-                    for col in data.columns
+                    col for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
@@ -232,8 +239,12 @@ class MultiTimeframePipeline:
             ensemble_df[f"signal_{tf}"] = stage1_preds[tf]
             ensemble_df[f"return_{tf}"] = stage2_preds[tf]
 
-        signal_cols = [col for col in ensemble_df.columns if col.startswith("signal")]
-        return_cols = [col for col in ensemble_df.columns if col.startswith("return")]
+        signal_cols = [
+            col for col in ensemble_df.columns if col.startswith("signal")
+        ]
+        return_cols = [
+            col for col in ensemble_df.columns if col.startswith("return")
+        ]
 
         # Apply different ensemble methods
         if ensemble_method == "weighted":
@@ -241,28 +252,29 @@ class MultiTimeframePipeline:
             # e.g., 15m: 0.5, 5m: 0.3, 1m: 0.2
             weights = self._get_timeframe_weights(list(stage1_preds.keys()))
             ensemble_df["ensemble_signal"] = sum(
-                ensemble_df[col] * weights[i] for i, col in enumerate(signal_cols)
-            )
+                ensemble_df[col] * weights[i]
+                for i, col in enumerate(signal_cols))
             ensemble_df["ensemble_return"] = sum(
-                ensemble_df[col] * weights[i] for i, col in enumerate(return_cols)
-            )
+                ensemble_df[col] * weights[i]
+                for i, col in enumerate(return_cols))
             # More lenient threshold for weighted method
             ensemble_df["discrete_signal"] = 0
-            ensemble_df.loc[ensemble_df["ensemble_signal"] > 0.3, "discrete_signal"] = 1
-            ensemble_df.loc[
-                ensemble_df["ensemble_signal"] < -0.3, "discrete_signal"
-            ] = -1
+            ensemble_df.loc[ensemble_df["ensemble_signal"] > 0.3,
+                            "discrete_signal"] = 1
+            ensemble_df.loc[ensemble_df["ensemble_signal"] < -0.3,
+                            "discrete_signal"] = -1
 
         elif ensemble_method == "hierarchical":
             # Large TF defines direction, small TF for timing
             # Sort timeframes by size (assuming format like '5T', '15T')
-            sorted_tfs = sorted(
-                stage1_preds.keys(), key=lambda x: int(x.rstrip("T")), reverse=True
-            )
+            sorted_tfs = sorted(stage1_preds.keys(),
+                                key=lambda x: int(x.rstrip("T")),
+                                reverse=True)
 
             # Use largest TF for direction
             largest_tf = sorted_tfs[0]
-            ensemble_df["trend_direction"] = ensemble_df[f"signal_{largest_tf}"]
+            ensemble_df["trend_direction"] = ensemble_df[
+                f"signal_{largest_tf}"]
 
             # Use smallest TF for entry timing (only when aligned with trend)
             smallest_tf = sorted_tfs[-1]
@@ -271,68 +283,73 @@ class MultiTimeframePipeline:
             # Only take trades when smallest TF agrees with largest TF direction
             ensemble_df["discrete_signal"] = 0
             # Long: both positive
-            mask_long = (ensemble_df["trend_direction"] > 0.5) & (
-                ensemble_df["entry_signal"] > 0.5
-            )
+            mask_long = (ensemble_df["trend_direction"]
+                         > 0.5) & (ensemble_df["entry_signal"] > 0.5)
             ensemble_df.loc[mask_long, "discrete_signal"] = 1
             # Short: both negative
-            mask_short = (ensemble_df["trend_direction"] < -0.5) & (
-                ensemble_df["entry_signal"] < -0.5
-            )
+            mask_short = (ensemble_df["trend_direction"]
+                          < -0.5) & (ensemble_df["entry_signal"] < -0.5)
             ensemble_df.loc[mask_short, "discrete_signal"] = -1
 
             # Ensemble return is weighted toward trend direction
             ensemble_df["ensemble_return"] = (
-                0.7 * ensemble_df[f"return_{largest_tf}"]
-                + 0.3 * ensemble_df[f"return_{smallest_tf}"]
-            )
+                0.7 * ensemble_df[f"return_{largest_tf}"] +
+                0.3 * ensemble_df[f"return_{smallest_tf}"])
 
         elif ensemble_method == "independent":
             # Any timeframe can independently trigger a signal
             # Take the strongest signal among all timeframes
-            ensemble_df["ensemble_signal"] = ensemble_df[signal_cols].max(axis=1)
+            ensemble_df["ensemble_signal"] = ensemble_df[signal_cols].max(
+                axis=1)
             ensemble_df["min_signal"] = ensemble_df[signal_cols].min(axis=1)
 
             # Use the return prediction from the timeframe with strongest signal
-            ensemble_df["ensemble_return"] = ensemble_df[return_cols].mean(axis=1)
+            ensemble_df["ensemble_return"] = ensemble_df[return_cols].mean(
+                axis=1)
 
             # Convert to discrete signals
             ensemble_df["discrete_signal"] = 0
             # Long if any timeframe strongly suggests long
-            ensemble_df.loc[ensemble_df["ensemble_signal"] > 0.5, "discrete_signal"] = 1
+            ensemble_df.loc[ensemble_df["ensemble_signal"] > 0.5,
+                            "discrete_signal"] = 1
             # Short if any timeframe strongly suggests short
-            ensemble_df.loc[ensemble_df["min_signal"] < -0.5, "discrete_signal"] = -1
+            ensemble_df.loc[ensemble_df["min_signal"] < -0.5,
+                            "discrete_signal"] = -1
 
         elif ensemble_method == "majority":
             # Majority voting: take signal if more than half agree
             # Count positive, negative, and neutral signals
-            ensemble_df["count_long"] = (ensemble_df[signal_cols] > 0.5).sum(axis=1)
-            ensemble_df["count_short"] = (ensemble_df[signal_cols] < -0.5).sum(axis=1)
+            ensemble_df["count_long"] = (ensemble_df[signal_cols]
+                                         > 0.5).sum(axis=1)
+            ensemble_df["count_short"] = (ensemble_df[signal_cols]
+                                          < -0.5).sum(axis=1)
             n_timeframes = len(signal_cols)
 
             ensemble_df["discrete_signal"] = 0
             # Long if majority is long
-            ensemble_df.loc[
-                ensemble_df["count_long"] > n_timeframes / 2, "discrete_signal"
-            ] = 1
+            ensemble_df.loc[ensemble_df["count_long"] > n_timeframes / 2,
+                            "discrete_signal"] = 1
             # Short if majority is short
-            ensemble_df.loc[
-                ensemble_df["count_short"] > n_timeframes / 2, "discrete_signal"
-            ] = -1
+            ensemble_df.loc[ensemble_df["count_short"] > n_timeframes / 2,
+                            "discrete_signal"] = -1
 
             # Average returns
-            ensemble_df["ensemble_return"] = ensemble_df[return_cols].mean(axis=1)
-            ensemble_df["ensemble_signal"] = ensemble_df[signal_cols].mean(axis=1)
+            ensemble_df["ensemble_return"] = ensemble_df[return_cols].mean(
+                axis=1)
+            ensemble_df["ensemble_signal"] = ensemble_df[signal_cols].mean(
+                axis=1)
 
         else:  # 'average' - original conservative method
-            ensemble_df["ensemble_signal"] = ensemble_df[signal_cols].mean(axis=1)
-            ensemble_df["ensemble_return"] = ensemble_df[return_cols].mean(axis=1)
+            ensemble_df["ensemble_signal"] = ensemble_df[signal_cols].mean(
+                axis=1)
+            ensemble_df["ensemble_return"] = ensemble_df[return_cols].mean(
+                axis=1)
 
             ensemble_df["discrete_signal"] = 0
-            ensemble_df.loc[ensemble_df["ensemble_signal"] > 0.1, "discrete_signal"] = 1
-            ensemble_df.loc[
-                ensemble_df["ensemble_signal"] < -0.1, "discrete_signal"
-            ] = -1
+            ensemble_df.loc[ensemble_df["ensemble_signal"] > 0.1,
+                            "discrete_signal"] = 1
+            ensemble_df.loc[ensemble_df["ensemble_signal"] < -0.1,
+                            "discrete_signal"] = -1
 
         return ensemble_df
 
