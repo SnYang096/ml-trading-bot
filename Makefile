@@ -7,6 +7,11 @@
 PYTHON := python3
 PIP := pip3
 
+# Detect Dev Container environment (env var or marker file)
+INSIDE_FROM_ENV := $(if $(DEV_CONTAINER),yes,no)
+INSIDE_FROM_FILE := $(shell if [ -f /.devcontainer-env ]; then echo yes; else echo no; fi)
+INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),yes,no)
+
 # Docker configuration
 DOCKER_COMPOSE := docker-compose
 DOCKER_SERVICE := ml-gpu
@@ -38,6 +43,10 @@ OVERWRITE ?= 0
 OVERWRITE_FLAG := $(if $(filter 1 true yes,$(OVERWRITE)),--overwrite,)
 
 # Docker command template (mounts volumes and sets PYTHONPATH)
+ifeq ($(INSIDE_CONTAINER),yes)
+DOCKER_RUN :=
+DOCKER_RUN_NO_TTY :=
+else
 DOCKER_RUN := docker run --rm -it \
 	--runtime=nvidia \
 	-e NVIDIA_VISIBLE_DEVICES=all \
@@ -61,6 +70,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 	-w /workspace \
 	--shm-size=8gb \
 	$(DOCKER_IMAGE)
+endif
 
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \

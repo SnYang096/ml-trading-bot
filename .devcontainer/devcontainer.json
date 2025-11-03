@@ -1,4 +1,39 @@
 {
+  "name": "ML Trading Dev Container",
+  "build": {
+    "dockerfile": "docker/Dockerfile.gpu",
+    "context": "..",
+    "args": {}
+  },
+  "runArgs": [
+    "--gpus", "all",
+    "--shm-size=8gb"
+  ],
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "DEV_CONTAINER": "1",
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONPATH": "/workspace/src"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "python3",
+        "python.testing.pytestEnabled": true,
+        "python.formatting.provider": "black"
+      }
+    }
+  },
+  "postCreateCommand": "pip3 install -e . || true"
+}
+
+{
   "name": "ML Trading GPU Development",
   "dockerComposeFile": "../docker-compose.yml",
   "service": "ml-gpu",
