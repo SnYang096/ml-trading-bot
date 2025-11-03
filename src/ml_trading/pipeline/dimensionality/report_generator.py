@@ -1192,6 +1192,30 @@ def _build_rolling_report_html(
                     <td>{_format_float(max_val, 2)}</td>
                 </tr>""")
     
+    # Optional CV metrics table if present
+    cv_section = ""
+    if not results_df.empty and "cv_logloss_mean" in results_df.columns:
+        cv_mean_overall = _format_float(results_df["cv_logloss_mean"].mean(), 6)
+        cv_std_overall = _format_float(results_df["cv_logloss_std"].mean(), 6)
+        cv_section = f"""
+        <h2>🧪 Cross-Validation (Training Window)</h2>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Mean multi_logloss (across periods)</td><td>{cv_mean_overall}</td></tr>
+            <tr><td>Std multi_logloss (across periods)</td><td>{cv_std_overall}</td></tr>
+        </table>
+        """
+
+    guidance_section = """
+    <h2>📘 Guidance: Rolling vs Time-Series CV</h2>
+    <div class="explanation">
+        <ul>
+            <li><strong>Rolling OOS</strong>: 贴近实盘的“训练→上线→下一期”评估，能暴露概念漂移与逐期稳定性，适合作为主评估。</li>
+            <li><strong>时序CV</strong>: 在训练窗内估计方差与过拟合风险，用于调参与特征选择；与OOS对照，若偏差大，优先信任滚动OOS并缩短重训周期。</li>
+        </ul>
+    </div>
+    """
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1300,6 +1324,9 @@ def _build_rolling_report_html(
             {"".join(stats_rows)}
         </table>
         
+        {cv_section}
+        {guidance_section}
+
         <div class="explanation">
             <h3>📊 Metrics Explanation</h3>
             <ul>

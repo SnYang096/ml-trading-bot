@@ -333,6 +333,10 @@ BASELINE_END ?= $(shell echo $(END_DATE) | cut -c1-7)
 # Single-config defaults derive from multi-config
 BASELINE_FREQ ?= $(word 1,$(subst ,, ,$(BASELINE_FREQS)))
 BASELINE_FB ?= $(word 1,$(subst ,, ,$(BASELINE_FBS)))
+
+# CV defaults
+BASELINE_CV_FOLDS ?= 0
+BASELINE_CV_ON_ROLLING ?= 0
 INITIAL_TRAIN_MONTHS ?= 6
 MIN_TRAIN_MONTHS ?= 3
 
@@ -347,6 +351,7 @@ baseline-train:
 		--symbol $(SYMBOL) \
 		--freq $(BASELINE_FREQ) \
 		--forward-bars $(BASELINE_FB) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
 		--gpu
 
 baseline-rolling:
@@ -360,6 +365,8 @@ baseline-rolling:
 		--min-train-months $(MIN_TRAIN_MONTHS) \
 		--freq $(BASELINE_FREQ) \
 		--forward-bars $(BASELINE_FB) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
+		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
 		--gpu
 
 # Multi-config: support multiple timeframes and horizons
@@ -375,5 +382,7 @@ baseline-rolling-multi:
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
 		--min-train-months $(MIN_TRAIN_MONTHS) \
 		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
+		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
 		--gpu
 

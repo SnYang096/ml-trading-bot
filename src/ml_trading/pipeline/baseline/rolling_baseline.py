@@ -99,6 +99,8 @@ def main() -> None:
     parser.add_argument("--forward-bars", type=int, default=3)
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--freq", type=str, action="append", default=["5T"], help="Bar timeframe(s), repeat or comma-separate: --freq 5T --freq 15T or --freq 5T,15T")
+    parser.add_argument("--cv-folds", type=int, default=0, help="TimeSeries CV folds on each training window (0=disable)")
+    parser.add_argument("--cv-on-rolling", action="store_true", default=False, help="Enable CV evaluation per rolling window")
     parser.add_argument("--start", type=str, default=None, help="Start YYYY-MM (inclusive)")
     parser.add_argument("--end", type=str, default=None, help="End YYYY-MM (inclusive)")
     parser.add_argument("--gpu", action="store_true", default=True)
@@ -197,6 +199,33 @@ def main() -> None:
             X_test = test_labeled[feat_cols].values
 
             print(f"   🎯 Training LightGBM (fb={fb}, tf={freq}) (N={len(X_train):,}, F={len(feat_cols)})")
+            # Optional CV
+            cv_mean = None
+            cv_std = None
+            if args.cv_on_rolling and args.cv_folds and args.cv_folds > 0:
+                from sklearn.model_selection import TimeSeriesSplit
+                from sklearn.metrics import log_loss
+                import numpy as np
+                tscv = TimeSeriesSplit(n_splits=args.cv_folds)
+                cv_scores = []
+                fold = 0
+                for tr_idx, va_idx in tscv.split(X_train):
+                    fold += 1
+                    X_tr, X_va = X_train[tr_idx], X_train[va_idx]
+                    y_tr, y_va = y_train[tr_idx], y_train[va_idx]
+                    mcv = train_lightgbm_model(X_tr, y_tr, use_gpu=args.gpu)
+                    proba = mcv.predict(X_va)
+                    try:
+                        score = log_loss(y_va, proba, labels=[0,1,2])
+                    except Exception:
+                        from sklearn.preprocessing import label_binarize
+                        y2 = label_binarize(y_va, classes=[0,1])
+                        proba2 = np.vstack([1-proba, proba]).T
+                        score = log_loss(y2, proba2)
+                    cv_scores.append(score)
+                cv_mean = float(np.mean(cv_scores))
+                cv_std = float(np.std(cv_scores))
+                print(f"      CV (folds={args.cv_folds}) multi_logloss: mean={cv_mean:.6f}, std={cv_std:.6f}")
             model = train_lightgbm_model(X_train, y_train, use_gpu=args.gpu)
 
             preds = model.predict(X_test)
@@ -208,6 +237,9 @@ def main() -> None:
                 "test_month": test_file["month_str"],
                 "train_months": len(train_files),
                 "num_features": len(feat_cols),
+                "cv_folds": args.cv_folds if (args.cv_on_rolling and args.cv_folds) else 0,
+                "cv_logloss_mean": cv_mean if cv_mean is not None else None,
+                "cv_logloss_std": cv_std if cv_std is not None else None,
             })
             all_results.append(res)
             print_backtest_results(res, label=f"Baseline fb={fb} tf={freq} {test_file['month_str']}")

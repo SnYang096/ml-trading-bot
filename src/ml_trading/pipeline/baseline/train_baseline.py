@@ -17,6 +17,8 @@ import os
 import argparse
 from typing import List
 import pandas as pd
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import log_loss
 
 from ml_trading.data_tools.rolling_data import (
     load_parquet_file,
@@ -83,6 +85,7 @@ def main() -> None:
     parser.add_argument("--start", type=str, default=None, help="Start YYYY-MM (inclusive)")
     parser.add_argument("--end", type=str, default=None, help="End YYYY-MM (inclusive)")
     parser.add_argument("--forward-bars", type=int, default=3, help="Bars ahead for label creation")
+    parser.add_argument("--cv-folds", type=int, default=0, help="TimeSeries CV folds (0=disable)")
     parser.add_argument("--gpu", action="store_true", default=True, help="Use GPU for LightGBM")
     args = parser.parse_args()
 
@@ -103,6 +106,30 @@ def main() -> None:
     feature_cols = get_baseline_feature_columns(feat_df)
     X = feat_df[feature_cols].values
     y = feat_df["signal"].values
+
+    if args.cv_folds and args.cv_folds > 0:
+        print(f"🧪 TimeSeries CV (folds={args.cv_folds}) on training set...")
+        tscv = TimeSeriesSplit(n_splits=args.cv_folds)
+        cv_scores = []
+        fold = 0
+        for train_idx, val_idx in tscv.split(X):
+            fold += 1
+            X_tr, X_va = X[train_idx], X[val_idx]
+            y_tr, y_va = y[train_idx], y[val_idx]
+            model_cv = train_lightgbm_model(X_tr, y_tr, use_gpu=args.gpu)
+            proba = model_cv.predict(X_va)
+            # Ensure probability matrix for multiclass; if 1D, map to 2-class
+            try:
+                score = log_loss(y_va, proba, labels=[0,1,2])
+            except Exception:
+                # fallback for binary
+                from sklearn.preprocessing import label_binarize
+                y2 = label_binarize(y_va, classes=[0,1])
+                proba2 = np.vstack([1-proba, proba]).T
+                score = log_loss(y2, proba2)
+            cv_scores.append(score)
+            print(f"   fold {fold}: multi_logloss={score:.6f}")
+        print(f"   CV multi_logloss: mean={np.mean(cv_scores):.6f}, std={np.std(cv_scores):.6f}")
 
     print("🎯 Training LightGBM (baseline features only)...")
     model = train_lightgbm_model(X, y, use_gpu=args.gpu)
