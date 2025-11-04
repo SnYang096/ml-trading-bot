@@ -967,9 +967,11 @@ class EnhancedFeatureEngineer:
             print(f"    - Calculating spectral features for all sources...")
             df = self.add_spectral_features(df)
 
-            # 6. Advanced derived features (from baseline model)
-            print(f"    - Calculating advanced derived features...")
-            df = self.add_advanced_derived_features(df)
+            # 6. Advanced derived features (moved to baseline model)
+            # Note: Advanced derived features are now in BaselineFeatureEngineer._add_advanced_derived_features
+            # Uncomment below if you need them in this context, but they will be added by baseline model
+            # print(f"    - Calculating advanced derived features...")
+            # df = self.add_advanced_derived_features(df)
 
             # 7. Order flow features (advanced)
             print(f"    - Calculating order flow features...")

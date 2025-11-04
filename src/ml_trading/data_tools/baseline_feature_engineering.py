@@ -20,7 +20,9 @@ class BaselineFeatureEngineer:
     consistently (for atr and volume percentiles). Keep it minimal for baseline usage.
     """
 
-    def __init__(self, percentile_window: int = 288, compression_threshold_pct: float = 0.2) -> None:
+    def __init__(self,
+                 percentile_window: int = 288,
+                 compression_threshold_pct: float = 0.2) -> None:
         self.percentile_window = percentile_window
         self.compression_threshold_pct = compression_threshold_pct
         self._fitted_atr_quantiles: Optional[np.ndarray] = None
@@ -52,31 +54,220 @@ class BaselineFeatureEngineer:
                 return np.nan
             return (arr <= last).sum() / float(len(arr))
 
-        return series.rolling(window=window, min_periods=1).apply(_rank, raw=True)
+        return series.rolling(window=window, min_periods=1).apply(_rank,
+                                                                  raw=True)
 
     @staticmethod
     def _price_entropy(close: pd.Series, window: int = 50) -> pd.Series:
         # Shannon entropy of direction (+1/-1) over window
         ret = close.pct_change().fillna(0.0)
         sign = np.sign(ret).replace(0, 1)  # treat zero as +1 to avoid NaNs
+
         def _entropy(x: np.ndarray) -> float:
             if len(x) == 0:
                 return np.nan
             p_up = (x > 0).mean()
             p_dn = 1.0 - p_up
             eps = 1e-9
-            return - (p_up * np.log2(p_up + eps) + p_dn * np.log2(p_dn + eps)) / 1.0
+            return -(p_up * np.log2(p_up + eps) +
+                     p_dn * np.log2(p_dn + eps)) / 1.0
 
         # Normalize to [0,1] where max entropy at p=0.5 is 1.0 after dividing by 1
-        return sign.rolling(window=window, min_periods=1).apply(_entropy, raw=True)
+        return sign.rolling(window=window, min_periods=1).apply(_entropy,
+                                                                raw=True)
 
     @staticmethod
     def _ema(series: pd.Series, span: int) -> pd.Series:
         return series.ewm(span=span, adjust=False).mean()
 
-    def engineer_features(self, df: pd.DataFrame, *, fit: bool = True) -> pd.DataFrame:
+    def _add_advanced_derived_features(self,
+                                       data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add advanced derived features (moved from enhanced features).
+        Only adds features that don't already exist to avoid duplicates.
+        添加高级衍生特征（从enhanced特征移过来）
+        只添加不存在的特征，避免重复
+        """
+        df = data.copy()
+
+        try:
+            # 需要的基础特征
+            if "bb_upper" not in df.columns or "atr" not in df.columns:
+                # 如果缺少BB或ATR，跳过部分依赖这些的衍生特征
+                # 但可以添加不依赖BB/ATR的特征
+                pass
+            else:
+                # 1. BB Width相关（如果不存在）
+                if "bb_width" not in df.columns:
+                    df["bb_width"] = (df["bb_upper"] - df["bb_lower"]).abs()
+                if "bb_width_normalized" not in df.columns:
+                    df["bb_width_normalized"] = df["bb_width"] / df[
+                        "atr"].replace(0, np.nan)
+                    df["bb_width_normalized"] = (
+                        df["bb_width_normalized"].replace([np.inf, -np.inf],
+                                                          np.nan).fillna(0))
+
+                # 3. Compression duration (BB-based, only if not exists)
+                # Note: baseline already has compression_duration (ATR-based), so check for bb_compression_duration
+                if "bb_compression_duration" not in df.columns and "bb_width" in df.columns:
+                    perc = df["bb_width"].rolling(20,
+                                                  min_periods=5).quantile(0.2)
+                    low_vol = (df["bb_width"] <= perc).astype(int)
+                    df["bb_compression_duration"] = (low_vol.groupby(
+                        (low_vol
+                         != low_vol.shift()).cumsum()).cumsum()) * low_vol
+
+                # 4. Compression energy (if volume_ratio exists)
+                if "compression_energy" not in df.columns and "volume_ratio" in df.columns and "bb_width" in df.columns:
+                    df["compression_energy"] = (1.0 / df["bb_width"].replace(
+                        0, np.nan)) * df["volume_ratio"]
+                    df["compression_energy"] = (
+                        df["compression_energy"].replace([np.inf, -np.inf],
+                                                         np.nan).fillna(0))
+
+                # 7. Volatility squeeze flag
+                if "volatility_squeeze_flag" not in df.columns and "bb_width" in df.columns:
+                    df["volatility_squeeze_flag"] = (df["bb_width"]
+                                                     < (2.0 *
+                                                        df["atr"])).astype(int)
+
+                # 16. Structure tension
+                if "structure_tension" not in df.columns and "bb_width" in df.columns:
+                    dist_high = (df["high"].rolling(50).max() -
+                                 df["close"]).abs() / df["close"]
+                    dist_low = (df["close"] - df["low"].rolling(50).min()
+                                ).abs() / df["close"]
+                    df["structure_tension"] = (
+                        dist_high + dist_low) / df["bb_width"].replace(
+                            0, np.nan)
+                    df["structure_tension"] = (df["structure_tension"].replace(
+                        [np.inf, -np.inf], np.nan).fillna(0))
+
+            # 2. Range ratio (不依赖BB/ATR)
+            if "range_ratio_5bar" not in df.columns:
+                if "hl" not in df.columns:
+                    df["hl"] = df["high"] - df["low"]
+                df["range_ratio_5bar"] = df["hl"].rolling(
+                    5).mean() / df["hl"].rolling(20).mean().replace(0, np.nan)
+                df["range_ratio_5bar"] = df["range_ratio_5bar"].fillna(1)
+
+            # 5. ATR percentile (注意：baseline已有atr_percentile，但这里用不同的窗口，所以跳过或改名)
+            # Skip since baseline already has atr_percentile
+
+            # 6. Volatility reversal score
+            if "volatility_reversal_score" not in df.columns and "atr" in df.columns:
+                atr_mean = df["atr"].rolling(50).mean()
+                atr_std = df["atr"].rolling(50).std()
+                df["volatility_reversal_score"] = (
+                    df["atr"] - atr_mean) / atr_std.replace(0, np.nan)
+                df["volatility_reversal_score"] = df[
+                    "volatility_reversal_score"].fillna(0)
+
+            # 8. Price range symmetry
+            if "price_range_symmetry" not in df.columns:
+                df["price_range_symmetry"] = (df["high"] - df["close"]) / (
+                    df["close"] - df["low"]).replace(0, np.nan)
+                df["price_range_symmetry"] = (
+                    df["price_range_symmetry"].replace([np.inf, -np.inf],
+                                                       np.nan).fillna(1))
+
+            # 9. Volume anomaly
+            if "volume_anomaly" not in df.columns:
+                df["volume_anomaly"] = (
+                    df["volume"] /
+                    df["volume"].ewm(span=20, min_periods=10).mean())
+
+            # 10. Up/Down volume ratio
+            if "upvol_downvol_ratio" not in df.columns:
+                up = (df["close"] > df["close"].shift()).astype(int)
+                df["up_vol"] = (df["volume"] * up).rolling(20).sum()
+                df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
+                df["upvol_downvol_ratio"] = df["up_vol"] / df[
+                    "down_vol"].replace(0, np.nan)
+                df["upvol_downvol_ratio"] = (df["upvol_downvol_ratio"].replace(
+                    [np.inf, -np.inf], np.nan).fillna(1))
+
+            # 11. ROC and acceleration
+            if "roc_5" not in df.columns:
+                df["roc_5"] = df["close"].pct_change(5)
+            if "acceleration_3" not in df.columns:
+                roc_3 = df["close"].pct_change(3)
+                df["acceleration_3"] = roc_3 - roc_3.shift(1)
+
+            # 12. Price vs EMA distance
+            if "price_vs_ema_distance" not in df.columns and "sma_20" in df.columns and "atr" in df.columns:
+                df["price_vs_ema_distance"] = (
+                    df["close"] - df["sma_20"]) / df["atr"].replace(0, np.nan)
+                df["price_vs_ema_distance"] = (
+                    df["price_vs_ema_distance"].replace([np.inf, -np.inf],
+                                                        np.nan).fillna(0))
+
+            # 13. Momentum persistence
+            if "momentum_persistence" not in df.columns:
+                sig = np.sign(df["close"].diff())
+                df["momentum_persistence"] = sig.rolling(10).apply(
+                    lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
+
+            # 14. Slope consistency
+            if "slope_consistency_score" not in df.columns:
+                ema10 = df["close"].ewm(span=10).mean()
+                ema20 = df["close"].ewm(span=20).mean()
+                ema50 = df["close"].ewm(span=50).mean()
+                slope10 = np.sign(ema10.diff())
+                slope20 = np.sign(ema20.diff())
+                slope50 = np.sign(ema50.diff())
+                df["slope_consistency_score"] = (
+                    (slope10 == slope20).astype(int) +
+                    (slope20 == slope50).astype(int) +
+                    (slope10 == slope50).astype(int))
+
+            # 15. Temporal features (时间特征)
+            if "hour_of_day_sin" not in df.columns:
+                try:
+                    idx = df.index
+                    if hasattr(idx, "hour") and hasattr(idx, "dayofweek"):
+                        df["hour_of_day_sin"] = np.sin(2 * np.pi * idx.hour /
+                                                       24)
+                        df["hour_of_day_cos"] = np.cos(2 * np.pi * idx.hour /
+                                                       24)
+                        df["day_of_week_sin"] = np.sin(2 * np.pi *
+                                                       idx.dayofweek / 7)
+                        df["day_of_week_cos"] = np.cos(2 * np.pi *
+                                                       idx.dayofweek / 7)
+                    else:
+                        df["hour_of_day_sin"] = 0
+                        df["hour_of_day_cos"] = 1
+                        df["day_of_week_sin"] = 0
+                        df["day_of_week_cos"] = 1
+                except Exception:
+                    df["hour_of_day_sin"] = 0
+                    df["hour_of_day_cos"] = 1
+                    df["day_of_week_sin"] = 0
+                    df["day_of_week_cos"] = 1
+
+            # 17. Trend volatility alignment (需要atr_percentile和roc_5)
+            if "trend_volatility_alignment" not in df.columns and "atr_percentile" in df.columns and "roc_5" in df.columns:
+                df["trend_volatility_alignment"] = np.sign(
+                    df["roc_5"]).fillna(0) * df["atr_percentile"].fillna(0)
+
+            # 18. Compression to breakout probability
+            if "compression_to_breakout_prob" not in df.columns and "compression_duration" in df.columns and "roc_5" in df.columns:
+                df["compression_to_breakout_prob"] = df[
+                    "compression_duration"].fillna(0) * df["roc_5"].fillna(0)
+
+        except Exception as e:
+            print(f"      Warning: 高级衍生特征计算失败: {e}")
+
+        return df
+
+    def engineer_features(self,
+                          df: pd.DataFrame,
+                          *,
+                          fit: bool = True) -> pd.DataFrame:
         if not {"open", "high", "low", "close", "volume"}.issubset(df.columns):
-            raise ValueError("DataFrame must contain open, high, low, close, volume columns")
+            raise ValueError(
+                "DataFrame must contain open, high, low, close, volume columns"
+            )
 
         data = df.copy()
 
@@ -86,42 +277,58 @@ class BaselineFeatureEngineer:
         # SR proximity using rolling swing proxies (highest high / lowest low)
         swing_win_short = 20
         swing_win_long = 60
-        data["roll_high_s"] = data["high"].rolling(swing_win_short, min_periods=1).max()
-        data["roll_low_s"] = data["low"].rolling(swing_win_short, min_periods=1).min()
-        data["roll_high_l"] = data["high"].rolling(swing_win_long, min_periods=1).max()
-        data["roll_low_l"] = data["low"].rolling(swing_win_long, min_periods=1).min()
+        data["roll_high_s"] = data["high"].rolling(swing_win_short,
+                                                   min_periods=1).max()
+        data["roll_low_s"] = data["low"].rolling(swing_win_short,
+                                                 min_periods=1).min()
+        data["roll_high_l"] = data["high"].rolling(swing_win_long,
+                                                   min_periods=1).max()
+        data["roll_low_l"] = data["low"].rolling(swing_win_long,
+                                                 min_periods=1).min()
 
         eps = 1e-9
-        data["sr_dist_high_s"] = (data["close"] - data["roll_high_s"]) / (data["atr"] + eps)
-        data["sr_dist_low_s"] = (data["close"] - data["roll_low_s"]) / (data["atr"] + eps)
-        data["sr_dist_high_l"] = (data["close"] - data["roll_high_l"]) / (data["atr"] + eps)
-        data["sr_dist_low_l"] = (data["close"] - data["roll_low_l"]) / (data["atr"] + eps)
+        data["sr_dist_high_s"] = (data["close"] -
+                                  data["roll_high_s"]) / (data["atr"] + eps)
+        data["sr_dist_low_s"] = (data["close"] -
+                                 data["roll_low_s"]) / (data["atr"] + eps)
+        data["sr_dist_high_l"] = (data["close"] -
+                                  data["roll_high_l"]) / (data["atr"] + eps)
+        data["sr_dist_low_l"] = (data["close"] -
+                                 data["roll_low_l"]) / (data["atr"] + eps)
 
         # Simple channel via EMAs as OLS proxy
         ema_fast = self._ema(data["close"], span=20)
         ema_slow = self._ema(data["close"], span=60)
         mid = (ema_fast + ema_slow) / 2.0
-        band_half = (data["high"].rolling(20, min_periods=1).max() - data["low"].rolling(20, min_periods=1).min()) / 4.0
+        band_half = (data["high"].rolling(20, min_periods=1).max() -
+                     data["low"].rolling(20, min_periods=1).min()) / 4.0
         upper = mid + band_half
         lower = mid - band_half
         data["channel_upper"] = upper
         data["channel_lower"] = lower
         data["channel_mid"] = mid
         data["channel_bandwidth"] = (upper - lower) / (data["atr"] + eps)
-        data["channel_upper_distance"] = (upper - data["close"]) / (data["atr"] + eps)
-        data["channel_lower_distance"] = (data["close"] - lower) / (data["atr"] + eps)
+        data["channel_upper_distance"] = (upper -
+                                          data["close"]) / (data["atr"] + eps)
+        data["channel_lower_distance"] = (data["close"] -
+                                          lower) / (data["atr"] + eps)
 
         # Compression features
         # ATR percentile (rolling)
-        atr_pct = self._rolling_percentile(data["atr"], window=self.percentile_window)
+        atr_pct = self._rolling_percentile(data["atr"],
+                                           window=self.percentile_window)
         data["atr_percentile"] = atr_pct
 
         # ATR compression ratio: mean(ATR_hist)/ATR
-        atr_mean_hist = data["atr"].rolling(self.percentile_window, min_periods=1).mean()
-        data["atr_compression_ratio"] = (atr_mean_hist / (data["atr"] + eps)).replace([np.inf, -np.inf], np.nan)
+        atr_mean_hist = data["atr"].rolling(self.percentile_window,
+                                            min_periods=1).mean()
+        data["atr_compression_ratio"] = (atr_mean_hist /
+                                         (data["atr"] + eps)).replace(
+                                             [np.inf, -np.inf], np.nan)
 
         # Volume percentile
-        vol_pct = self._rolling_percentile(data["volume"].astype(float), window=self.percentile_window)
+        vol_pct = self._rolling_percentile(data["volume"].astype(float),
+                                           window=self.percentile_window)
         data["volume_percentile"] = vol_pct
 
         # Price direction entropy
@@ -143,7 +350,8 @@ class BaselineFeatureEngineer:
 
         # Pre-break silence: mean of ATR percentile over short lookback below threshold
         short_window = 30
-        data["pre_break_silence"] = (data["atr_percentile"].rolling(short_window, min_periods=1).mean() <= threshold).astype(float)
+        data["pre_break_silence"] = (data["atr_percentile"].rolling(
+            short_window, min_periods=1).mean() <= threshold).astype(float)
 
         # Internal price density proxy: price variance over small window vs larger window
         small = 20
@@ -157,22 +365,47 @@ class BaselineFeatureEngineer:
         atr_norm = (data["atr_percentile"].fillna(0.0))
         vol_norm = (data["volume_percentile"].fillna(0.0))
         dens_norm = data["internal_price_density"].fillna(0.0)
-        data["compression_confidence"] = 0.5 * (1 - atr_norm) + 0.3 * (1 - vol_norm) + 0.2 * dens_norm
+        data["compression_confidence"] = 0.5 * (1 - atr_norm) + 0.3 * (
+            1 - vol_norm) + 0.2 * dens_norm
+
+        # Advanced derived features (if BB/ATR available)
+        data = self._add_advanced_derived_features(data)
 
         # Finalize: feature column ordering
         feature_cols: List[str] = [
             # SR distances
-            "sr_dist_high_s", "sr_dist_low_s", "sr_dist_high_l", "sr_dist_low_l",
+            "sr_dist_high_s",
+            "sr_dist_low_s",
+            "sr_dist_high_l",
+            "sr_dist_low_l",
             # Channel features
-            "channel_bandwidth", "channel_upper_distance", "channel_lower_distance",
+            "channel_bandwidth",
+            "channel_upper_distance",
+            "channel_lower_distance",
             # Compression set
-            "atr_percentile", "atr_compression_ratio", "volume_percentile",
-            "price_entropy", "internal_price_density", "compression_duration",
-            "pre_break_silence", "compression_confidence",
+            "atr_percentile",
+            "atr_compression_ratio",
+            "volume_percentile",
+            "price_entropy",
+            "internal_price_density",
+            "compression_duration",
+            "pre_break_silence",
+            "compression_confidence",
         ]
 
-        # Clean up and keep OHLCV + features
-        keep_cols = ["open", "high", "low", "close", "volume"] + feature_cols
+        # Clean up and keep OHLCV + features + advanced derived features
+        # Collect all feature columns (including advanced derived ones)
+        all_feature_cols = feature_cols + [
+            col for col in data.columns if col not in
+            ["open", "high", "low", "close", "volume", "timestamp", "symbol"]
+            and col not in feature_cols and not col.startswith("signal_")
+            and not col.startswith("binary_signal_")
+            and not col.startswith("future_return_")
+        ]
+        keep_cols = ["open", "high", "low", "close", "volume"
+                     ] + all_feature_cols
+        # Only keep columns that exist
+        keep_cols = [c for c in keep_cols if c in data.columns]
         data = data[keep_cols]
         return data
 
@@ -183,14 +416,14 @@ class BaselineFeatureEngineer:
             path: Path to save scalers (pickle file)
         """
         import pickle
-        
+
         scalers_data = {
             "fitted_atr_quantiles": self._fitted_atr_quantiles,
             "fitted_vol_quantiles": self._fitted_vol_quantiles,
             "percentile_window": self.percentile_window,
             "compression_threshold_pct": self.compression_threshold_pct,
         }
-        
+
         with open(path, "wb") as f:
             pickle.dump(scalers_data, f)
         print(f"✅ Baseline scalers saved to: {path}")
@@ -202,25 +435,35 @@ class BaselineFeatureEngineer:
             path: Path to load scalers (pickle file)
         """
         import pickle
-        
+
         with open(path, "rb") as f:
             scalers_data = pickle.load(f)
-        
-        self._fitted_atr_quantiles = scalers_data.get("fitted_atr_quantiles", None)
-        self._fitted_vol_quantiles = scalers_data.get("fitted_vol_quantiles", None)
+
+        self._fitted_atr_quantiles = scalers_data.get("fitted_atr_quantiles",
+                                                      None)
+        self._fitted_vol_quantiles = scalers_data.get("fitted_vol_quantiles",
+                                                      None)
         self.percentile_window = scalers_data.get("percentile_window", 288)
-        self.compression_threshold_pct = scalers_data.get("compression_threshold_pct", 0.2)
+        self.compression_threshold_pct = scalers_data.get(
+            "compression_threshold_pct", 0.2)
         print(f"✅ Baseline scalers loaded from: {path}")
 
 
-def engineer_baseline_features(df: pd.DataFrame, engineer: Optional[BaselineFeatureEngineer] = None, *, fit: bool = True) -> Tuple[pd.DataFrame, BaselineFeatureEngineer]:
+def engineer_baseline_features(
+        df: pd.DataFrame,
+        engineer: Optional[BaselineFeatureEngineer] = None,
+        *,
+        fit: bool = True) -> Tuple[pd.DataFrame, BaselineFeatureEngineer]:
     if engineer is None:
         engineer = BaselineFeatureEngineer()
     out = engineer.engineer_features(df, fit=fit)
     return out, engineer
 
 
-def create_binary_labels_baseline(df: pd.DataFrame, *, forward_bars: int = 3, threshold: float = 0.005) -> pd.DataFrame:
+def create_binary_labels_baseline(df: pd.DataFrame,
+                                  *,
+                                  forward_bars: int = 3,
+                                  threshold: float = 0.005) -> pd.DataFrame:
     """Create binary classification labels for baseline (1=Long, 0=not Long).
     
     Args:
@@ -233,26 +476,57 @@ def create_binary_labels_baseline(df: pd.DataFrame, *, forward_bars: int = 3, th
     """
     df = df.copy()
     df["future_return"] = df["close"].shift(-forward_bars) / df["close"] - 1
-    
+
     # Binary classification: 1=Long (future_return > threshold), 0=not Long
     df["binary_signal"] = (df["future_return"] > threshold).astype(int)
-    
+
     # Keep backward compatibility: signal for legacy code
     df["signal"] = df["binary_signal"]
-    
+
     return df
 
 
 def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
-    exclude = {"open", "high", "low", "close", "volume", "signal", "binary_signal", "future_return"}
+    exclude = {
+        "open", "high", "low", "close", "volume", "signal", "binary_signal",
+        "future_return"
+    }
     # Also exclude multi-horizon label columns
     exclude.update([
-        col for col in df.columns 
-        if col.startswith("signal_") or 
-           col.startswith("binary_signal_") or 
-           col.startswith("future_return_")
+        col for col in df.columns
+        if (col.startswith("signal_") or col.startswith("binary_signal_")
+            or col.startswith("future_return_"))
     ])
-    return [c for c in df.columns if c not in exclude]
+    # Exclude unnormalized/raw columns; prefer normalized variants
+    exclude.update({
+        "bb_upper",
+        "bb_lower",
+        "bb_middle",
+        "bb_width",  # use bb_width_normalized
+        "hl",  # helper
+        "up_vol",
+        "down_vol",  # helpers
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "macd_ext_hist",
+        "macd_fix_hist",
+        "atr",  # 原始ATR（未归一化），保留natr和atr_normalized
+    })
+    # Exclude raw-scale prefixes
+    raw_prefixes = ("sma_", "ema_", "wma_", "tema_", "kama_", "volume_sma_",
+                    "atr_")
+    # Exclude unnormalized WPT features (wpt_*_energy, wpt_*_mean, wpt_*_std)
+    # but keep normalized WPT features (wpt_*_energy_ratio, wpt_shannon_entropy, etc.)
+    wpt_raw_patterns = ("_energy", "_mean", "_std")
+    return [
+        c for c in df.columns if (c not in exclude and not any(
+            c.startswith(p)
+            for p in raw_prefixes) and not (c.startswith("wpt_") and any(
+                c.endswith(p)
+                for p in wpt_raw_patterns) and not c.endswith("_energy_ratio"))
+                                  )
+    ]
 
 
 __all__ = [
@@ -261,5 +535,3 @@ __all__ = [
     "get_baseline_feature_columns",
     "create_binary_labels_baseline",
 ]
-
-

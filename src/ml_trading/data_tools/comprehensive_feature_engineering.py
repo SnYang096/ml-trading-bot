@@ -174,6 +174,7 @@ class ComprehensiveFeatureEngineer:
 
         # 3. 增强版特征工程 (WPT + Hurst + Hilbert + 光谱 + 订单流)
         if self.use_enhanced:
+            import os, time
             print("  📊 增强版特征工程...")
             try:
                 if self.enhanced_engineer is None:
@@ -183,15 +184,42 @@ class ComprehensiveFeatureEngineer:
                         wpt_level=self.wpt_level,
                         hurst_window=self.hurst_window,
                     )
-                df = self.enhanced_engineer.add_hurst_features(df)
-                df = self.enhanced_engineer.add_wavelet_packet_features(df)
-                df = self.enhanced_engineer.add_hilbert_features(df)
-                df = self.enhanced_engineer.add_spectral_features(df)
-                df = self.enhanced_engineer.add_advanced_derived_features(df)
-                df = self.enhanced_engineer.add_order_flow_features(df)
+
+                fast_mode = os.getenv("ENHANCED_FAST",
+                                      "0").lower() in ("1", "true", "yes")
+
+                def _run(step_name, fn, df_in):
+                    t0 = time.time()
+                    print(f"     ▶️ {step_name} 开始...")
+                    out = fn(df_in)
+                    dt = time.time() - t0
+                    print(
+                        f"     ⏱ {step_name} 完成，用时 {dt:.2f}s，新列数 {len(out.columns) - len(df_in.columns)}"
+                    )
+                    return out
+
+                # Hurst（较快）
+                df = _run("Hurst", self.enhanced_engineer.add_hurst_features,
+                          df)
+                # Wavelet/Spectral（较重），在 fast 模式下跳过
+                if not fast_mode:
+                    df = _run(
+                        "WaveletPacket",
+                        self.enhanced_engineer.add_wavelet_packet_features, df)
+                    df = _run("Spectral",
+                              self.enhanced_engineer.add_spectral_features, df)
+                # Hilbert、Order Flow
+                # Note: Advanced Derived features moved to baseline model
+                df = _run("Hilbert",
+                          self.enhanced_engineer.add_hilbert_features, df)
+                df = _run("OrderFlow",
+                          self.enhanced_engineer.add_order_flow_features, df)
+
                 enhanced_features = len(df.columns) - prev_count
                 prev_count = len(df.columns)
-                print(f"     ✅ 增强版特征: {enhanced_features} 个")
+                print(
+                    f"     ✅ 增强版特征: {enhanced_features} 个 (fast_mode={fast_mode})"
+                )
             except Exception as e:
                 print(f"     ⚠️  增强版特征失败: {e}")
 
@@ -266,13 +294,56 @@ class ComprehensiveFeatureEngineer:
         ]
         # 排除多周期标签列
         exclude_patterns = ["signal_", "binary_signal_", "future_return_"]
+        # 排除未归一化/原始尺度列（使用对应的归一化替代列）
+        exclude_raw = {
+            "bb_upper",
+            "bb_lower",
+            "bb_middle",
+            "bb_width",  # 使用 bb_width_normalized
+            "hl",  # 中间变量
+            "up_vol",
+            "down_vol",  # 中间变量
+        }
+        # 原始价格量纲的指标前缀（未标准化），统一剔除
+        raw_prefixes = (
+            "sma_",
+            "ema_",
+            "wma_",
+            "tema_",
+            "kama_",  # 均线族（价格量纲）
+            "volume_sma_",  # 量均线（未标准化）
+            "atr_",  # 原始ATR（未归一化），保留natr和atr_normalized
+        )
+        # MACD 原始量纲（价格差异），为稳妥剔除原始MACD系
+        raw_exact = {
+            "macd",
+            "macd_signal",
+            "macd_hist",
+            "macd_ext_hist",
+            "macd_fix_hist",
+            "atr",  # 原始ATR（未归一化），保留natr和atr_normalized
+        }
+        # 排除未归一化的小波特征（保留归一化的小波特征）
+        # 未归一化：wpt_*_energy, wpt_*_mean, wpt_*_std
+        # 已归一化：wpt_*_energy_ratio, wpt_shannon_entropy, wpt_energy_concentration, wpt_high_low_ratio, wpt_dominant_band
+        wpt_raw_patterns = ("_energy", "_mean", "_std")
         feature_cols = []
         for col in df.columns:
-            if col not in exclude_columns:
+            if col not in exclude_columns and col not in exclude_raw and col not in raw_exact:
                 # 检查是否匹配排除模式
                 if not any(
                         col.startswith(pattern)
                         for pattern in exclude_patterns):
+                    # 过滤原始未归一化前缀
+                    if any(col.startswith(p) for p in raw_prefixes):
+                        continue
+                    # 排除未归一化的小波特征（wpt_*_energy, wpt_*_mean, wpt_*_std）
+                    # 但保留归一化的小波特征（wpt_*_energy_ratio, wpt_shannon_entropy 等）
+                    if col.startswith("wpt_") and any(
+                            col.endswith(p) for p in wpt_raw_patterns):
+                        # 检查是否是 energy_ratio（已归一化）
+                        if not col.endswith("_energy_ratio"):
+                            continue
                     # 只包含数值类型的列
                     if pd.api.types.is_numeric_dtype(df[col]):
                         feature_cols.append(col)
