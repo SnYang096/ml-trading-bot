@@ -75,9 +75,8 @@ endif
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train auto-rolling-update auto-rolling-update-only vectorbot-backtest oos-june \
-		dim-compare nautilus-backtest feature-report \
-		baseline-train baseline-rolling baseline-rolling-multi
+	train rolling rolling-multi rolling-update-only vectorbot-backtest oos-june \
+		dim-compare nautilus-backtest feature-report
 
 help:
 	@echo "ML Trading Project"
@@ -100,8 +99,8 @@ help:
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  Core Workflow (Recommended):"
 	@echo "    make dim-compare        # Step 1: Research dimensionality reduction (find optimal features)"
-	@echo "    make train              # Step 2: Train production model (optional, for single evaluation)"
-	@echo "    make auto-rolling-update # Step 3: Rolling update to latest data (main workflow)"
+	@echo "    make train              # Step 2: Train regression model (single run, reports)"
+	@echo "    make rolling            # Step 3: Rolling training to latest data (main workflow)"
 	@echo ""
 	@echo "  Data commands:"
 	@echo "    make data-download     # Download Binance data"
@@ -216,54 +215,106 @@ feature-report:
 
 FORWARD_BARS_TRAIN ?= 1
 
+TRAIN_USE_TOP_FACTORS ?=
+TRAIN_FEATURE_TYPE ?= comprehensive
+TRAIN_TOPK ?=
+TRAIN_TOPK_SOURCE ?=
+
 train:
-	@echo "🚀 Training production model for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
+    @echo "🚀 Training (regression-only) via baseline-train for $(SYMBOL) ($(START_DATE) → $(END_DATE))..."
+    @echo "Example: make train SYMBOL=BTCUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
-	$(DOCKER_RUN) python3 -m ml_trading.models.train_model \
-		--symbols $(SYMBOLS) \
-		--start-date $(START_DATE) \
-		--end-date $(END_DATE) \
-		--data-dir $(DATA_DIR) \
-		--output-dir $(MODEL_DIR) \
-		--model-name $(MODEL_NAME) $(OVERWRITE_FLAG) \
-		--overwrite \
-		--forward-bars $(FORWARD_BARS_TRAIN)
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
+		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
+		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
+        --data-dir /workspace/$(DATA_DIR) \
+        --symbol $(SYMBOL) \
+        --freq $(BASELINE_FREQS) \
+        --forward-bars $(FORWARD_BARS_TRAIN) \
+        --cv-folds $(BASELINE_CV_FOLDS) \
+		--feature-type $(TRAIN_FEATURE_TYPE) \
+		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
+		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
+		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
+		--oos-months $(BASELINE_OOS_MONTHS) \
+        $(if $(BASELINE_OOS_START),--oos-start $(BASELINE_OOS_START),) \
+        $(if $(BASELINE_OOS_END),--oos-end $(BASELINE_OOS_END),) \
+        --gpu
 
 
 FORWARD_BARS ?= 3
 
-auto-rolling-update:
-	@echo "🚀 Auto Rolling Update: Train and update $(SYMBOL) to latest available data..."
-	@echo "Usage: make auto-rolling-update SYMBOL=BTCUSDT INITIAL_TRAIN_MONTHS=6 FORWARD_BARS=5"
-	@echo "       make auto-rolling-update SYMBOL=BTCUSDT USE_TOP_FACTORS=path/to/top_factors.json USE_AUTOENCODER=path/to/ae.pth ENCODING_DIM=32 FORWARD_BARS=15"
-	@echo "       Forward Bars (Horizon): $(FORWARD_BARS) bars ahead for prediction"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.rolling.auto_rolling_update \
-		--data-dir $(DATA_DIR) \
-		--symbol $(SYMBOL) \
-		--initial-train-months $(if $(INITIAL_TRAIN_MONTHS),$(INITIAL_TRAIN_MONTHS),6) \
-		$(if $(MIN_TRAIN_MONTHS),--min-train-months $(MIN_TRAIN_MONTHS),) \
-		$(if $(OUTPUT),--output $(OUTPUT),) \
-		$(if $(filter 1 true yes,$(ADD_ORDER_FLOW)),--add-order-flow,) \
-		$(if $(filter 1 true yes,$(UPDATE_ONLY)),--update-only,) \
-		$(if $(USE_TOP_FACTORS),--use-top-factors $(USE_TOP_FACTORS),) \
-		$(if $(USE_AUTOENCODER),--use-autoencoder $(USE_AUTOENCODER) --encoding-dim $(ENCODING_DIM),) \
-		--forward-bars $(FORWARD_BARS)
+ROLLING_FREQ ?= $(BASELINE_FREQ)
+ROLLING_FBS ?= $(FORWARD_BARS)
+ROLLING_OUTPUT ?=
+ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
+ROLLING_USE_TOP_FACTORS ?=
+ROLLING_TOPK ?=
+ROLLING_TOPK_SOURCE ?=
 
-auto-rolling-update-only:
-	@echo "🔄 Auto Rolling Update: Only update $(SYMBOL) from last trained month..."
-	@echo "Usage: make auto-rolling-update-only SYMBOL=BTCUSDT OUTPUT=results/auto_rolling_btcusdt_XXX FORWARD_BARS=5"
-	@echo "       make auto-rolling-update-only SYMBOL=BTCUSDT OUTPUT=results/XXX USE_TOP_FACTORS=path/to/top_factors.json USE_AUTOENCODER=path/to/ae.pth ENCODING_DIM=32 FORWARD_BARS=15"
-	@echo "       Forward Bars (Horizon): $(FORWARD_BARS) bars ahead for prediction"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.rolling.auto_rolling_update \
-		--data-dir $(DATA_DIR) \
+rolling:
+	@echo "🔄 Rolling training (regression) for $(SYMBOL) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.rolling \
+		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOL) \
-		--update-only \
-		$(if $(OUTPUT),--output $(OUTPUT),) \
-		$(if $(filter 1 true yes,$(ADD_ORDER_FLOW)),--add-order-flow,) \
-		$(if $(USE_TOP_FACTORS),--use-top-factors $(USE_TOP_FACTORS),) \
-		$(if $(USE_AUTOENCODER),--use-autoencoder $(USE_AUTOENCODER) --encoding-dim $(ENCODING_DIM),) \
-		--forward-bars $(FORWARD_BARS)
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		--freq $(ROLLING_FREQ) \
+		--forward-bars $(ROLLING_FBS) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
+		$(if $(ROLLING_OUTPUT),--output $(ROLLING_OUTPUT),) \
+		--feature-type $(ROLLING_FEATURE_TYPE) \
+		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
+		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
+		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		--gpu
+
+rolling-multi:
+	@echo "🔄 Rolling training (multi-config) for $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
+	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
+		FB_LIST=$(BASELINE_FBS) python3 -m ml_trading.pipeline.training.rolling \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOL) \
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
+		--feature-type $(ROLLING_FEATURE_TYPE) \
+		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
+		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
+		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		--gpu; \
+	else \
+		docker run --rm \
+			--runtime=nvidia \
+			-e NVIDIA_VISIBLE_DEVICES=all \
+			-e CUDA_VISIBLE_DEVICES=0 \
+			-e PYTHONPATH=/workspace/src \
+			-e PYTHONUNBUFFERED=1 \
+			-e FB_LIST=$(BASELINE_FBS) \
+			-v $(PWD):/workspace \
+			-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
+			-w /workspace \
+			--shm-size=8gb \
+			$(DOCKER_IMAGE) python3 -m ml_trading.pipeline.training.rolling \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOL) \
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
+		--feature-type $(ROLLING_FEATURE_TYPE) \
+		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
+		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
+		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		--gpu; \
+	fi
 
 vectorbot-backtest:
 	@echo "🤖 Running VectorBot backtest with $(MODEL_PATH)..."
@@ -329,103 +380,4 @@ dim-compare:
 		$(DIM_COMPARE_ARGS)
 	@echo "📝 HTML report is saved next to production_results.json (dimensionality_report.html)"
 
-# ---------------------------------------------------------------------------
-# Baseline: SR + Compression features only (single + rolling)
-# Defaults aligned with dim-compare (HORIZONS/START_DATE/END_DATE)
-# ---------------------------------------------------------------------------
-
-# Multi-config defaults
-BASELINE_FREQS ?= 5T,15T,45T,240T
-BASELINE_FBS ?= $(HORIZONS)
-BASELINE_START ?= $(shell echo $(START_DATE) | cut -c1-7)
-BASELINE_END ?= $(shell echo $(END_DATE) | cut -c1-7)
-
-# Single-config defaults derive from multi-config
-BASELINE_FREQ ?= $(shell echo $(BASELINE_FREQS) | cut -d',' -f1)
-BASELINE_FB ?= $(shell echo $(BASELINE_FBS) | cut -d',' -f1)
-
-# CV defaults
-BASELINE_CV_FOLDS ?= 0
-BASELINE_CV_ON_ROLLING ?= 0
-INITIAL_TRAIN_MONTHS ?= 6
-MIN_TRAIN_MONTHS ?= 3
-BASELINE_OOS_MONTHS ?= 3
-
-.PHONY: baseline-train baseline-rolling baseline-rolling-multi
-
-baseline-train:
-	@echo "🧱 Baseline training (SR+Compression) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
-	@echo "Usage: make baseline-train SYMBOL=BTCUSDT BASELINE_FREQS=5T,15T,45T,240T BASELINE_FBS=1,5,10,15 BASELINE_OOS_MONTHS=3"
-	@echo "       OOS months: $(BASELINE_OOS_MONTHS) (months after training end for OOS testing, default: 3)"
-	@echo "       OOS start: $(BASELINE_OOS_START) (optional: YYYY-MM-DD, overrides oos-months)"
-	@echo "       OOS end: $(BASELINE_OOS_END) (optional: YYYY-MM-DD, defaults to oos-start + 3 months)"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.baseline.train_baseline \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
-		--data-dir /workspace/data/parquet_data \
-		--symbol $(SYMBOL) \
-		--freq $(BASELINE_FREQS) \
-		--forward-bars $(BASELINE_FBS) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
-		--oos-months $(BASELINE_OOS_MONTHS) \
-		$(if $(BASELINE_OOS_START),--oos-start $(BASELINE_OOS_START),) \
-		$(if $(BASELINE_OOS_END),--oos-end $(BASELINE_OOS_END),) \
-		--gpu
-
-baseline-rolling:
-	@echo "🔄 Baseline rolling (SR+Compression) with GPU: $(SYMBOL) tf=$(BASELINE_FREQ) fb=$(BASELINE_FB)"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.baseline.rolling_baseline \
-		--data-dir /workspace/data/parquet_data \
-		--symbol $(SYMBOL) \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		--freq $(BASELINE_FREQ) \
-		--forward-bars $(BASELINE_FB) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
-		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
-		--gpu
-
-# Multi-config: support multiple timeframes and horizons
-# - Timeframes via BASELINE_FREQS (comma-separated or repeated in CLI)
-# - Horizons via BASELINE_FBS (comma-separated), passed by FB_LIST env var
-baseline-rolling-multi:
-	@echo "🔄 Baseline rolling (multi-config) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
-	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
-		FB_LIST=$(BASELINE_FBS) python3 -m ml_trading.pipeline.baseline.rolling_baseline \
-		--data-dir /workspace/data/parquet_data \
-		--symbol $(SYMBOL) \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
-		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
-		--gpu; \
-	else \
-		docker run --rm \
-			--runtime=nvidia \
-			-e NVIDIA_VISIBLE_DEVICES=all \
-			-e CUDA_VISIBLE_DEVICES=0 \
-			-e PYTHONPATH=/workspace/src \
-			-e PYTHONUNBUFFERED=1 \
-			-e FB_LIST=$(BASELINE_FBS) \
-			-v $(PWD):/workspace \
-			-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
-			-w /workspace \
-			--shm-size=8gb \
-			$(DOCKER_IMAGE) python3 -m ml_trading.pipeline.baseline.rolling_baseline \
-		--data-dir /workspace/data/parquet_data \
-		--symbol $(SYMBOL) \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
-		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
-		--gpu; \
-	fi
 

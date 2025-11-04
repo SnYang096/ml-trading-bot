@@ -132,6 +132,16 @@ def generate_summary_report(results_dir: str = "results/baseline",
             if not isinstance(oos_stage1, dict):
                 oos_stage1 = {}
             oos_accuracy = oos_stage1.get("accuracy", None)
+            oos_precision = oos_stage1.get("precision", None)
+            oos_recall = oos_stage1.get("recall", None)
+            oos_f1 = oos_stage1.get("f1", None)
+            oos_auc = oos_stage1.get("auc", None)
+            oos_pr_auc = oos_stage1.get("pr_auc", None)
+            best_threshold = oos_stage1.get("best_threshold", None)
+            quality_check = oos_stage1.get("quality_check", {})
+            if not isinstance(quality_check, dict):
+                quality_check = {}
+            quality_pass = quality_check.get("passed", True)
             oos_bars = oos_stage1.get("samples", 0)
             
             oos_stage2 = oos_metrics.get("stage2", {})
@@ -139,9 +149,50 @@ def generate_summary_report(results_dir: str = "results/baseline",
                 oos_stage2 = {}
             oos_rmse = oos_stage2.get("rmse", None)
             
+            # Feature importance top 5 (by gain)
+            fi_list = row_dict.get("feature_importance", [])
+            top_feats = []
+            if isinstance(fi_list, list) and fi_list:
+                try:
+                    # Filter out None values and ensure we have valid dicts
+                    valid_feats = [f for f in fi_list if isinstance(f, dict) and 'feature' in f]
+                    top_feats = sorted(valid_feats, key=lambda x: x.get('importance_gain', 0), reverse=True)[:5]
+                except Exception as e:
+                    # Debug: print error if needed
+                    # print(f"Warning: Failed to extract top features: {e}")
+                    top_feats = fi_list[:5] if isinstance(fi_list, list) else []
+            top_feats_str = ", ".join([str(it.get('feature', '')) for it in top_feats if isinstance(it, dict)]) if top_feats else ""
+
+            # Curves/paths (make relative if under results_dir)
+            pr_curve_path = row_dict.get('pr_curve_path')
+            roc_curve_path = row_dict.get('roc_curve_path')
+            fi_csv_path = row_dict.get('feature_importance_path')
+            def _to_rel(p):
+                if not p:
+                    return None
+                try:
+                    abs_p = os.path.abspath(p)
+                    base = os.path.abspath(results_dir)
+                    return abs_p[len(base)+1:] if abs_p.startswith(base) else p
+                except Exception:
+                    return p
+            pr_rel = _to_rel(pr_curve_path)
+            roc_rel = _to_rel(roc_curve_path)
+            fi_rel = _to_rel(fi_csv_path)
+
             # Training info
             train_bars = row_dict.get("train_bars") or row_dict.get("total_bars", 0)
-            
+
+            quality_label = (
+                '<span style="color: #155724; background:#d4edda; padding:2px 6px; border-radius:4px;">PASS</span>'
+                if quality_pass else
+                '<span style="color: #721c24; background:#f8d7da; padding:2px 6px; border-radius:4px;">FAIL</span>'
+            )
+
+            pr_thumb = f"<img src=\"{pr_rel}\" style=\"max-width:160px; border:1px solid #ddd;\">" if pr_rel else ""
+            roc_thumb = f"<img src=\"{roc_rel}\" style=\"max-width:160px; border:1px solid #ddd;\">" if roc_rel else ""
+            fi_link = f"<a href=\"{fi_rel}\">CSV</a>" if fi_rel else ""
+
             rows.append(f"""
             <tr>
                 <td>{symbol}</td>
@@ -152,9 +203,23 @@ def generate_summary_report(results_dir: str = "results/baseline",
                 <td>{_format_float(cv_accuracy, 4)}</td>
                 <td>{_format_float(cv_accuracy_std, 4)}</td>
                 <td>{_format_float(oos_accuracy, 4)}</td>
+                <td>{_format_float(oos_precision, 4)}</td>
+                <td>{_format_float(oos_recall, 4)}</td>
+                <td>{_format_float(oos_f1, 4)}</td>
+                <td>{_format_float(oos_auc, 4)}</td>
+                <td>{_format_float(oos_pr_auc, 4)}</td>
+                <td>{_format_float(best_threshold, 3)}</td>
+                <td>{quality_label}</td>
                 <td>{_format_float(cv_rmse, 6)}</td>
                 <td>{_format_float(oos_rmse, 6)}</td>
                 <td>{config_dir}</td>
+            </tr>
+            <tr style=\"background:#fafafa;\">
+                <td colspan=5><strong>Top Features:</strong> {top_feats_str} {f'({fi_link})' if fi_link else ''}</td>
+                <td colspan=6>
+                    <div style=\"display:flex; gap:10px; align-items:center;\">{pr_thumb}{roc_thumb}</div>
+                </td>
+                <td colspan=5></td>
             </tr>""")
         except Exception as exc:
             print(f"Warning: Failed to process row {idx}: {exc}")
@@ -249,11 +314,22 @@ def generate_summary_report(results_dir: str = "results/baseline",
                 <li><strong>CV Accuracy</strong>: Cross-validation accuracy from training (Stage1 classification)</li>
                 <li><strong>CV Accuracy Std</strong>: Standard deviation of CV accuracy across folds</li>
                 <li><strong>OOS Accuracy</strong>: Out-of-sample test accuracy (unseen data)</li>
+                <li><strong>OOS Precision</strong>: Precision on OOS test (控制误开仓)</li>
+                <li><strong>OOS Recall</strong>: Recall on OOS test (抓住行情能力)</li>
+                <li><strong>OOS F1</strong>: F1 Score on OOS test (综合指标，推荐阈值: F1 &gt; 0.3)</li>
+                <li><strong>OOS AUC</strong>: AUC-ROC on OOS test (区分能力，推荐阈值: AUC &gt; 0.6)</li>
+                <li><strong>OOS PR-AUC</strong>: PR-AUC on OOS test (更适合不平衡数据)</li>
+                <li><strong>Best Threshold</strong>: Optimal classification threshold (maximizing F1)</li>
+                <li><strong>Quality</strong>: Model quality check result (PASS/FAIL based on F1&gt;0.3 OR AUC&gt;0.6)</li>
                 <li><strong>CV RMSE</strong>: Cross-validation RMSE from training (Stage2 regression)</li>
                 <li><strong>OOS RMSE</strong>: Out-of-sample test RMSE (unseen data)</li>
                 <li><strong>Training Bars</strong>: Number of bars used for training</li>
                 <li><strong>OOS Bars</strong>: Number of bars used for out-of-sample testing</li>
+                <li><strong>Top Features</strong>: Top 5 most important features (by gain), with CSV link</li>
+                <li><strong>PR/ROC Curves</strong>: Precision-Recall and ROC curve thumbnails (if available)</li>
             </ul>
+            <p><strong>Note:</strong> If you see "N/A" for OOS metrics or empty "Top Features", these results were generated with older code. 
+            Please re-run training with the latest code to generate complete metrics, feature importance, and curves.</p>
         </div>
         
         <h2>All Configurations Comparison</h2>
@@ -267,6 +343,13 @@ def generate_summary_report(results_dir: str = "results/baseline",
                 <th>CV Accuracy</th>
                 <th>CV Accuracy Std</th>
                 <th>OOS Accuracy</th>
+                <th>OOS Precision</th>
+                <th>OOS Recall</th>
+                <th>OOS F1</th>
+                <th>OOS AUC</th>
+                <th>OOS PR-AUC</th>
+                <th>Best Threshold</th>
+                <th>Quality</th>
                 <th>CV RMSE</th>
                 <th>OOS RMSE</th>
                 <th>Config Directory</th>

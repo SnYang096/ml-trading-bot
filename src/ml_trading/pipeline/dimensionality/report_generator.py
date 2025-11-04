@@ -34,14 +34,108 @@ def _get_oos_period_html(oos_metrics: Dict, oos_months: int) -> str:
     return f"<tr><th>OOS Test Period</th><td>{start_str} to {end_str} ({oos_months} months)</td></tr>"
 
 
+def _build_feature_importance_table(info: Dict) -> str:
+    """Build feature importance table HTML."""
+    feature_importance = info.get('feature_importance', [])
+    if not feature_importance:
+        return ""
+    
+    # Get top 20 features
+    top_features = feature_importance[:20]
+    
+    rows = []
+    for feat in top_features:
+        feat_name = feat.get('feature', 'N/A')
+        importance_gain = _format_float(feat.get('importance_gain', 0), 2)
+        importance_split = feat.get('importance_split', 0)
+        rows.append(f"""
+            <tr>
+                <td>{feat_name}</td>
+                <td>{importance_gain}</td>
+                <td>{importance_split:,}</td>
+            </tr>""")
+    
+    return f"""
+        <h2>Feature Importance (Top 20)</h2>
+        <div class="explanation">
+            <h3>Feature Importance Explanation</h3>
+            <p>Feature importance measures how much each feature contributes to the model's predictions.</p>
+            <ul>
+                <li><strong>Importance (Gain):</strong> The average gain (improvement in accuracy) when the feature is used for splitting. Higher is better.</li>
+                <li><strong>Importance (Split):</strong> The number of times the feature is used for splitting in the tree. Higher indicates more usage.</li>
+            </ul>
+        </div>
+        <table>
+            <tr>
+                <th>Feature</th>
+                <th>Importance (Gain)</th>
+                <th>Importance (Split)</th>
+            </tr>
+            {"".join(rows)}
+        </table>"""
+
+
 def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
     """Build OOS test results table HTML."""
     if not oos_metrics or oos_months <= 0:
         return ""
 
-    stage1_acc = _format_float(
-        oos_metrics.get('stage1', {}).get('accuracy'), 4)
-    stage1_samples = oos_metrics.get('stage1', {}).get('samples', 0)
+    stage1 = oos_metrics.get('stage1', {})
+    stage1_acc = _format_float(stage1.get('accuracy'), 4)
+    stage1_precision = _format_float(stage1.get('precision'), 4)
+    stage1_recall = _format_float(stage1.get('recall'), 4)
+    stage1_f1 = _format_float(stage1.get('f1'), 4)
+    stage1_auc = _format_float(stage1.get('auc'), 4)
+    stage1_pr_auc = _format_float(stage1.get('pr_auc'), 4)
+    stage1_samples = stage1.get('samples', 0)
+    
+    # Confusion matrix
+    cm = stage1.get('confusion_matrix', [])
+    cm_html = ""
+    if cm and len(cm) == 2 and len(cm[0]) == 2:
+        tn, fp = cm[0]
+        fn, tp = cm[1]
+        cm_html = f"""
+            <h3>Confusion Matrix</h3>
+            <table style="margin: 10px 0;">
+                <tr>
+                    <th></th>
+                    <th>Predicted: 0</th>
+                    <th>Predicted: 1</th>
+                </tr>
+                <tr>
+                    <th>Actual: 0</th>
+                    <td>{tn}</td>
+                    <td>{fp}</td>
+                </tr>
+                <tr>
+                    <th>Actual: 1</th>
+                    <td>{fn}</td>
+                    <td>{tp}</td>
+                </tr>
+            </table>
+            <p><strong>TN (True Negative):</strong> {tn}, <strong>FP (False Positive):</strong> {fp}, 
+            <strong>FN (False Negative):</strong> {fn}, <strong>TP (True Positive):</strong> {tp}</p>"""
+    
+    # Best threshold
+    best_threshold = _format_float(stage1.get('best_threshold'), 3)
+    best_threshold_f1 = _format_float(stage1.get('best_threshold_f1'), 4)
+    
+    # Quality check
+    quality_check = stage1.get('quality_check', {})
+    quality_check_passed = quality_check.get('passed', True)
+    quality_issues = quality_check.get('issues', [])
+    quality_check_html = ""
+    if quality_issues or not quality_check_passed:
+        if quality_check_passed:
+            quality_check_html = '<div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 20px 0;"><strong>✅ Model Quality Check: PASSED</strong></div>'
+        else:
+            quality_check_html = '<div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0;"><strong>❌ Model Quality Check: FAILED</strong><ul>'
+            for issue in quality_issues:
+                quality_check_html += f'<li>{issue}</li>'
+            quality_check_html += '</ul></div>'
+    elif quality_check_passed:
+        quality_check_html = '<div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 20px 0;"><strong>✅ Model Quality Check: PASSED</strong></div>'
 
     stage2_rows = ""
     if oos_metrics.get('stage2'):
@@ -50,18 +144,24 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
         stage2_mse = _format_float(oos_metrics.get('stage2', {}).get('mse'), 8)
         stage2_samples = oos_metrics.get('stage2', {}).get('samples', 0)
         stage2_rows = f"""
-            <tr>
-                <td>Stage2 (Regression)</td>
-                <td>RMSE</td>
-                <td>{stage2_rmse}</td>
-                <td>{stage2_samples:,}</td>
-            </tr>
-            <tr>
-                <td>Stage2 (Regression)</td>
-                <td>MSE</td>
-                <td>{stage2_mse}</td>
-                <td>{stage2_samples:,}</td>
-            </tr>"""
+            <h3>Stage2: Regression Metrics</h3>
+            <table>
+                <tr>
+                    <th>Metric</th>
+                    <th>Value</th>
+                    <th>Samples</th>
+                </tr>
+                <tr>
+                    <td>RMSE</td>
+                    <td>{stage2_rmse}</td>
+                    <td>{stage2_samples:,}</td>
+                </tr>
+                <tr>
+                    <td>MSE</td>
+                    <td>{stage2_mse}</td>
+                    <td>{stage2_samples:,}</td>
+                </tr>
+            </table>"""
 
     return f"""
         <h2>Out-of-Sample (OOS) Test Results</h2>
@@ -71,21 +171,62 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
             This provides an unbiased evaluation of model performance on unseen data, 
             simulating real-world deployment scenarios.</p>
         </div>
+        {quality_check_html}
+        <h3>Stage1: Classification Metrics</h3>
         <table>
             <tr>
-                <th>Stage</th>
                 <th>Metric</th>
                 <th>Value</th>
-                <th>Samples</th>
+                <th>Explanation</th>
             </tr>
             <tr>
-                <td>Stage1 (Classification)</td>
-                <td>Accuracy</td>
+                <td><strong>Accuracy</strong></td>
                 <td>{stage1_acc}</td>
-                <td>{stage1_samples:,}</td>
+                <td>Overall classification accuracy (0-1, higher is better)</td>
             </tr>
-            {stage2_rows}
+            <tr>
+                <td><strong>Precision</strong></td>
+                <td>{stage1_precision if stage1_precision != 'NA' else 'N/A'}</td>
+                <td>控制误开仓（预测为做多时，真的做多比例）</td>
+            </tr>
+            <tr>
+                <td><strong>Recall</strong></td>
+                <td>{stage1_recall if stage1_recall != 'NA' else 'N/A'}</td>
+                <td>抓住行情能力（实际该做多时，模型抓到比例）</td>
+            </tr>
+            <tr>
+                <td><strong>F1 Score</strong></td>
+                <td>{stage1_f1 if stage1_f1 != 'NA' else 'N/A'}</td>
+                <td>综合指标（Precision和Recall的调和平均，推荐阈值：F1 &gt; 0.3）</td>
+            </tr>
+            <tr>
+                <td><strong>AUC-ROC</strong></td>
+                <td>{stage1_auc if stage1_auc != 'NA' else 'N/A'}</td>
+                <td>区分能力（对阈值不敏感，推荐阈值：AUC &gt; 0.6）</td>
+            </tr>
+            <tr>
+                <td><strong>PR-AUC</strong></td>
+                <td>{stage1_pr_auc if stage1_pr_auc != 'NA' else 'N/A'}</td>
+                <td>精确率-召回率曲线下面积（更适合不平衡数据）</td>
+            </tr>
+            <tr>
+                <td><strong>Best Threshold (F1)</strong></td>
+                <td>{best_threshold if best_threshold != 'NA' else 'N/A'}</td>
+                <td>最优分类阈值（最大化F1 Score，当前使用0.5）</td>
+            </tr>
+            <tr>
+                <td><strong>Best F1 (at threshold)</strong></td>
+                <td>{best_threshold_f1 if best_threshold_f1 != 'NA' else 'N/A'}</td>
+                <td>在最优阈值下的F1 Score</td>
+            </tr>
+            <tr>
+                <td><strong>Samples</strong></td>
+                <td>{stage1_samples:,}</td>
+                <td>OOS test samples</td>
+            </tr>
         </table>
+        {cm_html if cm_html else ""}
+        {stage2_rows if stage2_rows else ""}
         """
 
 
@@ -930,6 +1071,8 @@ def _build_training_report_html(info: Dict) -> str:
     metrics = info.get("metrics", {})
     model_path = info.get("model_path", "N/A")
     scaler_path = info.get("scaler_path", "N/A")
+    pr_curve_path = info.get("pr_curve_path", None)
+    roc_curve_path = info.get("roc_curve_path", None)
     data_files = info.get("data_files", [])
 
     # Format date range
@@ -1181,10 +1324,17 @@ def _build_training_report_html(info: Dict) -> str:
         
         {_build_oos_table(oos_metrics, oos_months) if oos_metrics and oos_months > 0 else ""}
         
+        {_build_feature_importance_table(info) if info.get('feature_importance') else ""}
+
+        {(f"<h2>PR / ROC Curves</h2>\n        <div style=\"display:flex; gap:20px; flex-wrap: wrap;\">\n            {f'<div><img src=\"{pr_curve_path}\" alt=\"PR Curve\" style=\"max-width:520px; border:1px solid #ddd;\"><div style=\"text-align:center; color:#555; margin-top:6px;\">Precision-Recall Curve</div></div>' if pr_curve_path else ''}\n            {f'<div><img src=\"{roc_curve_path}\" alt=\"ROC Curve\" style=\"max-width:520px; border:1px solid #ddd;\"><div style=\"text-align:center; color:#555; margin-top:6px;\">ROC Curve</div></div>' if roc_curve_path else ''}\n        </div>" if (pr_curve_path or roc_curve_path) else '')}
+        
         <h2>Model Artifacts</h2>
         <table>
             <tr><th>Model Path</th><td>{model_path}</td></tr>
             <tr><th>Scalers Path</th><td>{scaler_path}</td></tr>
+            {f"<tr><th>Feature Importance</th><td>{info.get('feature_importance_path', 'N/A')}</td></tr>" if info.get('feature_importance_path') else ""}
+            {f"<tr><th>PR Curve</th><td>{pr_curve_path}</td></tr>" if pr_curve_path else ""}
+            {f"<tr><th>ROC Curve</th><td>{roc_curve_path}</td></tr>" if roc_curve_path else ""}
         </table>
         
         <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #7f8c8d;">
