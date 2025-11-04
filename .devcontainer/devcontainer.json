@@ -1,7 +1,7 @@
 {
   "name": "ML Trading Dev Container",
   "build": {
-    "dockerfile": "docker/Dockerfile.gpu",
+    "dockerfile": "Dockerfile",
     "context": "..",
     "args": {}
   },
