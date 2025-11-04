@@ -25,7 +25,7 @@ RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
 SYMBOLS ?= $(SYMBOL)
-START_DATE ?= 2025-01-01
+START_DATE ?= 2024-01-01
 END_DATE ?= 2025-04-31
 YEAR ?= 2024
 START_YEAR ?= 2021
@@ -335,7 +335,7 @@ dim-compare:
 # ---------------------------------------------------------------------------
 
 # Multi-config defaults
-BASELINE_FREQS ?= 5T
+BASELINE_FREQS ?= 5T,15T,45T,240T
 BASELINE_FBS ?= $(HORIZONS)
 BASELINE_START ?= $(shell echo $(START_DATE) | cut -c1-7)
 BASELINE_END ?= $(shell echo $(END_DATE) | cut -c1-7)
@@ -355,7 +355,7 @@ BASELINE_OOS_MONTHS ?= 3
 
 baseline-train:
 	@echo "🧱 Baseline training (SR+Compression) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
-	@echo "Usage: make baseline-train SYMBOL=BTCUSDT BASELINE_FREQS=5T,15T BASELINE_FBS=1,5,10,15 BASELINE_OOS_MONTHS=3"
+	@echo "Usage: make baseline-train SYMBOL=BTCUSDT BASELINE_FREQS=5T,15T,45T,240T BASELINE_FBS=1,5,10,15 BASELINE_OOS_MONTHS=3"
 	@echo "       OOS months: $(BASELINE_OOS_MONTHS) (months after training end for OOS testing, default: 3)"
 	@echo "       OOS start: $(BASELINE_OOS_START) (optional: YYYY-MM-DD, overrides oos-months)"
 	@echo "       OOS end: $(BASELINE_OOS_END) (optional: YYYY-MM-DD, defaults to oos-start + 3 months)"
