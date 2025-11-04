@@ -176,6 +176,42 @@ class BaselineFeatureEngineer:
         data = data[keep_cols]
         return data
 
+    def save_scalers(self, path: str) -> None:
+        """Save fitted quantiles for consistent train/test transformation.
+        
+        Args:
+            path: Path to save scalers (pickle file)
+        """
+        import pickle
+        
+        scalers_data = {
+            "fitted_atr_quantiles": self._fitted_atr_quantiles,
+            "fitted_vol_quantiles": self._fitted_vol_quantiles,
+            "percentile_window": self.percentile_window,
+            "compression_threshold_pct": self.compression_threshold_pct,
+        }
+        
+        with open(path, "wb") as f:
+            pickle.dump(scalers_data, f)
+        print(f"✅ Baseline scalers saved to: {path}")
+
+    def load_scalers(self, path: str) -> None:
+        """Load fitted quantiles for consistent train/test transformation.
+        
+        Args:
+            path: Path to load scalers (pickle file)
+        """
+        import pickle
+        
+        with open(path, "rb") as f:
+            scalers_data = pickle.load(f)
+        
+        self._fitted_atr_quantiles = scalers_data.get("fitted_atr_quantiles", None)
+        self._fitted_vol_quantiles = scalers_data.get("fitted_vol_quantiles", None)
+        self.percentile_window = scalers_data.get("percentile_window", 288)
+        self.compression_threshold_pct = scalers_data.get("compression_threshold_pct", 0.2)
+        print(f"✅ Baseline scalers loaded from: {path}")
+
 
 def engineer_baseline_features(df: pd.DataFrame, engineer: Optional[BaselineFeatureEngineer] = None, *, fit: bool = True) -> Tuple[pd.DataFrame, BaselineFeatureEngineer]:
     if engineer is None:
@@ -184,8 +220,38 @@ def engineer_baseline_features(df: pd.DataFrame, engineer: Optional[BaselineFeat
     return out, engineer
 
 
+def create_binary_labels_baseline(df: pd.DataFrame, *, forward_bars: int = 3, threshold: float = 0.005) -> pd.DataFrame:
+    """Create binary classification labels for baseline (1=Long, 0=not Long).
+    
+    Args:
+        df: DataFrame with OHLCV data
+        forward_bars: Number of bars ahead for prediction
+        threshold: Threshold for Long signal (future_return > threshold)
+    
+    Returns:
+        DataFrame with 'binary_signal' column (1=Long, 0=not Long)
+    """
+    df = df.copy()
+    df["future_return"] = df["close"].shift(-forward_bars) / df["close"] - 1
+    
+    # Binary classification: 1=Long (future_return > threshold), 0=not Long
+    df["binary_signal"] = (df["future_return"] > threshold).astype(int)
+    
+    # Keep backward compatibility: signal for legacy code
+    df["signal"] = df["binary_signal"]
+    
+    return df
+
+
 def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
     exclude = {"open", "high", "low", "close", "volume", "signal", "binary_signal", "future_return"}
+    # Also exclude multi-horizon label columns
+    exclude.update([
+        col for col in df.columns 
+        if col.startswith("signal_") or 
+           col.startswith("binary_signal_") or 
+           col.startswith("future_return_")
+    ])
     return [c for c in df.columns if c not in exclude]
 
 
@@ -193,6 +259,7 @@ __all__ = [
     "BaselineFeatureEngineer",
     "engineer_baseline_features",
     "get_baseline_feature_columns",
+    "create_binary_labels_baseline",
 ]
 
 

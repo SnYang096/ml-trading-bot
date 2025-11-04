@@ -368,12 +368,18 @@ def write_html_report(results: Dict, html_path: str) -> None:
     train_info = results.get("training_info", {})
     multi_horizon_results = results.get("multi_horizon_results", {})
     task_type = results.get("task_type", "classification_multiclass")
-    selection_metric = results.get("selection_metric", results.get("selection",{}).get("metric","composite"))
+    selection_metric = results.get(
+        "selection_metric",
+        results.get("selection", {}).get("metric", "composite"))
     label_threshold = results.get("label_threshold", None)
     artifacts = {
-        "top_factors": d.get("top_factors_path") or results.get("top_factors_path"),
-        "representatives": d.get("representatives_path") or results.get("representatives_path"),
-        "autoencoder": d.get("autoencoder_path") or results.get("autoencoder_path") or "results/production_autoencoder.pth",
+        "top_factors":
+        d.get("top_factors_path") or results.get("top_factors_path"),
+        "representatives":
+        d.get("representatives_path") or results.get("representatives_path"),
+        "autoencoder":
+        d.get("autoencoder_path") or results.get("autoencoder_path")
+        or "results/production_autoencoder.pth",
     }
 
     # Support both old format (original/compressed) and new 4-stage format
@@ -430,8 +436,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
         has_4_stages, orig, comp, delta_r2, stage1_fin, stage2_fin, stage3_fin,
         stage4_fin, orig_fin, comp_fin, orig_val_fin, comp_val_fin, train_info,
         grid_rows, conclusion, stage2_vs_1, stage3_vs_2, stage4_vs_3,
-        multi_horizon_results, task_type,
-        selection_metric, label_threshold, artifacts)
+        multi_horizon_results, task_type, selection_metric, label_threshold,
+        artifacts)
 
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -604,7 +610,7 @@ def _build_html_report_content(
 <tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
 {_build_financial_metrics_table(orig_val_fin or orig_fin, comp_val_fin or comp_fin)}
 </table>
-{('<div class="section" style="color:#7a6">Note: Financial metrics appear as 0/NA when no trades were triggered (Active Ratio≈0). Consider binary labels or lower thresholds to increase signal activity.</div>' if (isinstance(orig_fin,dict) and (orig_fin.get('active_ratio',0)==0 and comp_fin.get('active_ratio',0)==0)) else '')}
+{('<div class="section" style="color:#7a6">Note: Financial metrics appear as 0/NA when no trades were triggered (Active Ratio ~ 0). Consider binary labels or lower thresholds to increase signal activity.</div>' if (isinstance(orig_fin, dict) and (orig_fin.get('active_ratio', 0) == 0 and comp_fin.get('active_ratio', 0) == 0)) else '')}
 
 {test_4stage_fin_table}
 
@@ -639,7 +645,7 @@ def _build_multi_horizon_table(multi_horizon_results: Dict) -> str:
     """Build multi-horizon comparison table."""
     if not multi_horizon_results:
         return ""
-    
+
     html = """
 <h2>📊 Multi-Horizon Comparison</h2>
 <div class="section">
@@ -660,31 +666,30 @@ def _build_multi_horizon_table(multi_horizon_results: Dict) -> str:
         </thead>
         <tbody>
 """
-    
+
     # Sort horizons numerically
     horizon_keys = sorted(
         [k for k in multi_horizon_results.keys() if k.startswith("horizon_")],
-        key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0
-    )
-    
+        key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0)
+
     for horizon_key in horizon_keys:
         horizon_num = horizon_key.split("_")[1]
         horizon_data = multi_horizon_results[horizon_key]
-        
+
         stages = [
             ("Stage 1: All Features", "stage1_all_features"),
             ("Stage 2: IC-Filtered", "stage2_ic_filtered"),
             ("Stage 3: Representatives", "stage3_representatives"),
             ("Stage 4: Compressed", "stage4_compressed"),
         ]
-        
+
         for stage_name, stage_key in stages:
             stage_perf = horizon_data.get(stage_key, {})
             if not stage_perf:
                 continue
-            
+
             fin_metrics = stage_perf.get("financial_metrics", {})
-            
+
             html += f"""            <tr>
                 <td><strong>{horizon_num} bars</strong></td>
                 <td>{stage_name}</td>
@@ -697,13 +702,13 @@ def _build_multi_horizon_table(multi_horizon_results: Dict) -> str:
                 <td>{_format_float(fin_metrics.get('win_rate'))}</td>
             </tr>
 """
-    
+
     html += """
         </tbody>
     </table>
 </div>
 """
-    
+
     return html
 
 
@@ -871,10 +876,12 @@ def _build_training_report_html(info: Dict) -> str:
 
         stage1_acc = stage1.get("cv_accuracy", None)
         stage1_std = stage1.get("cv_accuracy_std", None)
-        stage2_rmse = stage2.get("cv_rmse", None)
-        stage2_mse = stage2.get("cv_mse", None)
+        stage2_rmse = stage2.get("cv_rmse", None) if stage2_metrics else None
+        stage2_mse = stage2.get("cv_mse", None) if stage2_metrics else None
 
-        timeframe_rows.append(f"""
+        # Build row with conditional stage2 columns
+        if stage2_metrics:
+            timeframe_rows.append(f"""
         <tr>
             <td>{tf}</td>
             <td>{bars:,}</td>
@@ -882,6 +889,14 @@ def _build_training_report_html(info: Dict) -> str:
             <td>{_format_float(stage1_std, 4) if stage1_std is not None else 'N/A'}</td>
             <td>{_format_float(stage2_rmse, 6) if stage2_rmse is not None else 'N/A'}</td>
             <td>{_format_float(stage2_mse, 8) if stage2_mse is not None else 'N/A'}</td>
+        </tr>""")
+        else:
+            timeframe_rows.append(f"""
+        <tr>
+            <td>{tf}</td>
+            <td>{bars:,}</td>
+            <td>{_format_float(stage1_acc, 4) if stage1_acc is not None else 'N/A'}</td>
+            <td>{_format_float(stage1_std, 4) if stage1_std is not None else 'N/A'}</td>
         </tr>""")
 
     # Build fold details table for stage1
@@ -912,6 +927,30 @@ def _build_training_report_html(info: Dict) -> str:
                 <td>{_format_float(fold.get('rmse'), 6)}</td>
                 <td>{_format_float(fold.get('mse'), 8)}</td>
             </tr>""")
+
+    # Build stage2 explanation and table outside f-string to avoid nesting
+    stage2_explanation = ""
+    if stage2_metrics:
+        stage2_explanation = """
+                <li><strong>Stage2 (CV RMSE)</strong>: Cross-validation Root Mean Squared Error for price prediction (regression task). 
+                    Lower is better. Units: price difference (e.g., for BTC, RMSE of 0.001 ~ $0.001 price error).</li>
+                <li><strong>Stage2 (CV MSE)</strong>: Cross-validation Mean Squared Error. Lower is better. MSE = RMSE^2.</li>
+                """
+
+    stage2_table = ""
+    if stage2_fold_details:
+        stage2_table = """
+        <h2>📉 Stage2: Regression Metrics (Per Fold)</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Fold</th>
+                <th>RMSE</th>
+                <th>MSE</th>
+            </tr>
+            """ + "".join(stage2_fold_details) + """
+        </table>
+        """
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1027,8 +1066,7 @@ def _build_training_report_html(info: Dict) -> str:
                 <th>Bars</th>
                 <th>Stage1: CV Accuracy</th>
                 <th>Stage1: Std Dev</th>
-                <th>Stage2: CV RMSE</th>
-                <th>Stage2: CV MSE</th>
+                {"<th>Stage2: CV RMSE</th><th>Stage2: CV MSE</th>" if stage2_metrics else ""}
             </tr>
             {"".join(timeframe_rows)}
         </table>
@@ -1039,9 +1077,7 @@ def _build_training_report_html(info: Dict) -> str:
                 <li><strong>Stage1 (CV Accuracy)</strong>: Cross-validation accuracy for direction prediction (classification task). 
                     Higher is better. Range: 0-1 (0.5 = random, 1.0 = perfect).</li>
                 <li><strong>Stage1 (Std Dev)</strong>: Standard deviation of accuracy across CV folds. Lower means more stable.</li>
-                <li><strong>Stage2 (CV RMSE)</strong>: Cross-validation Root Mean Squared Error for price prediction (regression task). 
-                    Lower is better. Units: price difference (e.g., for BTC, RMSE of 0.001 ≈ $0.001 price error).</li>
-                <li><strong>Stage2 (CV MSE)</strong>: Cross-validation Mean Squared Error. Lower is better. MSE = RMSE².</li>
+                {stage2_explanation if stage2_metrics else ""}
             </ul>
         </div>
         
@@ -1055,16 +1091,7 @@ def _build_training_report_html(info: Dict) -> str:
             {"".join(stage1_fold_details)}
         </table>
         
-        <h2>📉 Stage2: Regression Metrics (Per Fold)</h2>
-        <table>
-            <tr>
-                <th>Timeframe</th>
-                <th>Fold</th>
-                <th>RMSE</th>
-                <th>MSE</th>
-            </tr>
-            {"".join(stage2_fold_details)}
-        </table>
+        {stage2_table if stage2_fold_details else ""}
         
         <h2>💾 Model Artifacts</h2>
         <table>
@@ -1099,11 +1126,11 @@ def write_rolling_report(
         Path to the generated HTML report
     """
     from pathlib import Path
-    
+
     results_path = Path(results_dir)
     if not results_path.exists():
         raise FileNotFoundError(f"Results directory not found: {results_dir}")
-    
+
     # Auto-detect files
     if summary_path is None:
         summary_path = str(results_path / "summary.json")
@@ -1112,26 +1139,26 @@ def write_rolling_report(
             results_csv_path = str(results_path / "monthly_results.csv")
         else:
             results_csv_path = str(results_path / "quarterly_results.csv")
-    
+
     # Load data
     summary = {}
     if Path(summary_path).exists():
         with open(summary_path, "r", encoding="utf-8") as f:
             summary = json.load(f)
-    
+
     results_df = pd.DataFrame()
     if Path(results_csv_path).exists():
         results_df = pd.read_csv(results_csv_path)
-    
+
     # Generate HTML
     html_path = str(results_path / f"{report_type}_rolling_report.html")
     html = _build_rolling_report_html(summary, results_df, report_type)
-    
+
     # Write HTML
     Path(html_path).parent.mkdir(parents=True, exist_ok=True)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
-    
+
     print(f"📝 Rolling {report_type} report written to: {html_path}")
     return html_path
 
@@ -1144,18 +1171,31 @@ def _build_rolling_report_html(
     """Build HTML content for rolling training report."""
     report_title = f"{report_type.capitalize()} Rolling Training Report"
     period_col = "test_month" if report_type == "monthly" else "quarter"
-    
+
     # Extract summary info
-    symbol = summary.get("configuration", {}).get("symbol", summary.get("configuration", {}).get("symbols", ["N/A"])[0] if isinstance(summary.get("configuration", {}).get("symbols"), list) else "N/A")
-    total_periods = summary.get(f"total_{report_type}s_tested", len(results_df))
+    symbol = summary.get("configuration", {}).get(
+        "symbol",
+        summary.get("configuration", {}).get("symbols", ["N/A"])[0]
+        if isinstance(summary.get("configuration", {}).get("symbols"), list)
+        else "N/A")
+    total_periods = summary.get(f"total_{report_type}s_tested",
+                                len(results_df))
     avg_return = summary.get("avg_return", 0)
     avg_win_rate = summary.get("avg_win_rate", 0)
     avg_profit_factor = summary.get("avg_profit_factor", 0)
     avg_max_drawdown = summary.get("avg_max_drawdown", 0)
     total_trades = summary.get("total_trades", 0)
-    feature_engineering = summary.get("feature_engineering", "EnhancedFeatureEngineer")
+    feature_engineering = summary.get("feature_engineering",
+                                      "EnhancedFeatureEngineer")
     config = summary.get("configuration", {})
-    
+    # Training time range (prefer training dates over creation time)
+    train_start_date = summary.get("train_start_date") or summary.get(
+        "configuration", {}).get("start")
+    test_end_date = summary.get("test_end_date") or summary.get(
+        "configuration", {}).get("end")
+    time_range_str = f"{train_start_date} to {test_end_date}" if (
+        train_start_date and test_end_date) else "N/A"
+
     # Build period results table
     period_rows = []
     if not results_df.empty:
@@ -1173,11 +1213,14 @@ def _build_rolling_report_html(
                 <td>{int(row.get('test_samples', 0)):,}</td>
                 <td>{int(row.get('num_features', 0))}</td>
             </tr>""")
-    
+
     # Build statistics table
     stats_rows = []
     if not results_df.empty:
-        for col in ['total_trades', 'total_return', 'win_rate', 'profit_factor', 'max_drawdown']:
+        for col in [
+                'total_trades', 'total_return', 'win_rate', 'profit_factor',
+                'max_drawdown'
+        ]:
             if col in results_df.columns:
                 mean_val = results_df[col].mean()
                 std_val = results_df[col].std()
@@ -1191,11 +1234,12 @@ def _build_rolling_report_html(
                     <td>{_format_float(min_val, 2)}</td>
                     <td>{_format_float(max_val, 2)}</td>
                 </tr>""")
-    
+
     # Optional CV metrics table if present
     cv_section = ""
     if not results_df.empty and "cv_logloss_mean" in results_df.columns:
-        cv_mean_overall = _format_float(results_df["cv_logloss_mean"].mean(), 6)
+        cv_mean_overall = _format_float(results_df["cv_logloss_mean"].mean(),
+                                        6)
         cv_std_overall = _format_float(results_df["cv_logloss_std"].mean(), 6)
         cv_section = f"""
         <h2>🧪 Cross-Validation (Training Window)</h2>
@@ -1295,6 +1339,7 @@ def _build_rolling_report_html(
             <table>
                 <tr><th>Symbol</th><td>{symbol}</td></tr>
                 <tr><th>Report Type</th><td>{report_type.capitalize()} Rolling Training</td></tr>
+                <tr><th>Training Period</th><td>{time_range_str}</td></tr>
                 <tr><th>Total Periods Tested</th><td>{total_periods}</td></tr>
                 <tr><th>Total Trades</th><td>{total_trades:,}</td></tr>
                 <tr><th>Feature Engineering</th><td>{feature_engineering}</td></tr>

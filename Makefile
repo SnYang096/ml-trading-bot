@@ -341,8 +341,8 @@ BASELINE_START ?= $(shell echo $(START_DATE) | cut -c1-7)
 BASELINE_END ?= $(shell echo $(END_DATE) | cut -c1-7)
 
 # Single-config defaults derive from multi-config
-BASELINE_FREQ ?= $(word 1,$(subst ,, ,$(BASELINE_FREQS)))
-BASELINE_FB ?= $(word 1,$(subst ,, ,$(BASELINE_FBS)))
+BASELINE_FREQ ?= $(shell echo $(BASELINE_FREQS) | cut -d',' -f1)
+BASELINE_FB ?= $(shell echo $(BASELINE_FBS) | cut -d',' -f1)
 
 # CV defaults
 BASELINE_CV_FOLDS ?= 0
@@ -353,21 +353,22 @@ MIN_TRAIN_MONTHS ?= 3
 .PHONY: baseline-train baseline-rolling baseline-rolling-multi
 
 baseline-train:
-	@echo "🧱 Baseline single training (SR+Compression) with GPU: $(SYMBOL) tf=$(BASELINE_FREQ) fb=$(BASELINE_FB)"
-	PYTHONPATH=src $(PYTHON) -m ml_trading.pipeline.baseline.train_baseline \
+	@echo "🧱 Baseline training (SR+Compression) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
+	@echo "Usage: make baseline-train SYMBOL=BTCUSDT BASELINE_FREQS=5T,15T BASELINE_FBS=1,5,10,15"
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.baseline.train_baseline \
 		$(if $(BASELINE_START),--start $(BASELINE_START),) \
 		$(if $(BASELINE_END),--end $(BASELINE_END),) \
-		--data-dir $(DATA_DIR) \
+		--data-dir /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
-		--freq $(BASELINE_FREQ) \
-		--forward-bars $(BASELINE_FB) \
+		--freq $(BASELINE_FREQS) \
+		--forward-bars $(BASELINE_FBS) \
 		--cv-folds $(BASELINE_CV_FOLDS) \
 		--gpu
 
 baseline-rolling:
 	@echo "🔄 Baseline rolling (SR+Compression) with GPU: $(SYMBOL) tf=$(BASELINE_FREQ) fb=$(BASELINE_FB)"
-	PYTHONPATH=src $(PYTHON) -m ml_trading.pipeline.baseline.rolling_baseline \
-		--data-dir $(DATA_DIR) \
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.baseline.rolling_baseline \
+		--data-dir /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		$(if $(BASELINE_START),--start $(BASELINE_START),) \
 		$(if $(BASELINE_END),--end $(BASELINE_END),) \
@@ -384,8 +385,9 @@ baseline-rolling:
 # - Horizons via BASELINE_FBS (comma-separated), passed by FB_LIST env var
 baseline-rolling-multi:
 	@echo "🔄 Baseline rolling (multi-config) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
-	FB_LIST=$(BASELINE_FBS) PYTHONPATH=src $(PYTHON) -m ml_trading.pipeline.baseline.rolling_baseline \
-		--data-dir $(DATA_DIR) \
+	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
+		FB_LIST=$(BASELINE_FBS) python3 -m ml_trading.pipeline.baseline.rolling_baseline \
+		--data-dir /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		$(if $(BASELINE_START),--start $(BASELINE_START),) \
 		$(if $(BASELINE_END),--end $(BASELINE_END),) \
@@ -394,5 +396,29 @@ baseline-rolling-multi:
 		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
 		--cv-folds $(BASELINE_CV_FOLDS) \
 		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
-		--gpu
+		--gpu; \
+	else \
+		docker run --rm \
+			--runtime=nvidia \
+			-e NVIDIA_VISIBLE_DEVICES=all \
+			-e CUDA_VISIBLE_DEVICES=0 \
+			-e PYTHONPATH=/workspace/src \
+			-e PYTHONUNBUFFERED=1 \
+			-e FB_LIST=$(BASELINE_FBS) \
+			-v $(PWD):/workspace \
+			-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
+			-w /workspace \
+			--shm-size=8gb \
+			$(DOCKER_IMAGE) python3 -m ml_trading.pipeline.baseline.rolling_baseline \
+		--data-dir /workspace/data/parquet_data \
+		--symbol $(SYMBOL) \
+		$(if $(BASELINE_START),--start $(BASELINE_START),) \
+		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
+		--cv-folds $(BASELINE_CV_FOLDS) \
+		$(if $(filter 1 true yes,$(BASELINE_CV_ON_ROLLING)),--cv-on-rolling,) \
+		--gpu; \
+	fi
 
