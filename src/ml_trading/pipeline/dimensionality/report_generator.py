@@ -6,6 +6,7 @@ import glob
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Dict
 
 import numpy as np
@@ -21,6 +22,71 @@ def _format_float(val, digits: int = 4) -> str:
         return f"{val:.{digits}f}"
     except Exception:
         return str(val)
+
+
+def _get_oos_period_html(oos_metrics: Dict, oos_months: int) -> str:
+    """Generate HTML row for OOS test period."""
+    oos_period = oos_metrics.get('oos_period', {})
+    start = oos_period.get('start', 'N/A')
+    end = oos_period.get('end', 'N/A')
+    start_str = start.split('T')[0] if start and start != 'N/A' else 'N/A'
+    end_str = end.split('T')[0] if end and end != 'N/A' else 'N/A'
+    return f"<tr><th>OOS Test Period</th><td>{start_str} to {end_str} ({oos_months} months)</td></tr>"
+
+
+def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
+    """Build OOS test results table HTML."""
+    if not oos_metrics or oos_months <= 0:
+        return ""
+
+    stage1_acc = _format_float(
+        oos_metrics.get('stage1', {}).get('accuracy'), 4)
+    stage1_samples = oos_metrics.get('stage1', {}).get('samples', 0)
+
+    stage2_rows = ""
+    if oos_metrics.get('stage2'):
+        stage2_rmse = _format_float(
+            oos_metrics.get('stage2', {}).get('rmse'), 6)
+        stage2_mse = _format_float(oos_metrics.get('stage2', {}).get('mse'), 8)
+        stage2_samples = oos_metrics.get('stage2', {}).get('samples', 0)
+        stage2_rows = f"""
+            <tr>
+                <td>Stage2 (Regression)</td>
+                <td>RMSE</td>
+                <td>{stage2_rmse}</td>
+                <td>{stage2_samples:,}</td>
+            </tr>
+            <tr>
+                <td>Stage2 (Regression)</td>
+                <td>MSE</td>
+                <td>{stage2_mse}</td>
+                <td>{stage2_samples:,}</td>
+            </tr>"""
+
+    return f"""
+        <h2>Out-of-Sample (OOS) Test Results</h2>
+        <div class="explanation">
+            <h3>OOS Testing Explanation</h3>
+            <p>The last {oos_months} months of data were reserved for out-of-sample testing. 
+            This provides an unbiased evaluation of model performance on unseen data, 
+            simulating real-world deployment scenarios.</p>
+        </div>
+        <table>
+            <tr>
+                <th>Stage</th>
+                <th>Metric</th>
+                <th>Value</th>
+                <th>Samples</th>
+            </tr>
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>Accuracy</td>
+                <td>{stage1_acc}</td>
+                <td>{stage1_samples:,}</td>
+            </tr>
+            {stage2_rows}
+        </table>
+        """
 
 
 def _format_price(val) -> str:
@@ -832,6 +898,17 @@ def write_training_report(info_path: str, html_path: str | None = None) -> str:
         f.write(html)
 
     print(f"📝 Training report written to: {html_path}")
+
+    # Auto-open report in browser
+    try:
+        import webbrowser
+        abs_path = os.path.abspath(html_path)
+        file_url = f"file://{abs_path}"
+        webbrowser.open(file_url)
+        print(f"Report opened in browser: {file_url}")
+    except Exception as exc:
+        print(f"Note: Could not auto-open report in browser: {exc}")
+
     return html_path
 
 
@@ -842,7 +919,12 @@ def _build_training_report_html(info: Dict) -> str:
     training_date = info.get("training_date", "N/A")
     actual_start = info.get("actual_start", "N/A")
     actual_end = info.get("actual_end", "N/A")
+    train_start = info.get("train_start", None)
+    train_end = info.get("train_end", None)
     total_bars = info.get("total_bars", 0)
+    train_bars = info.get("train_bars", None)
+    oos_months = info.get("oos_months", 0)
+    oos_metrics = info.get("oos_metrics", {})
     timeframes = info.get("timeframes", {})
     price_range = info.get("price_range", [])
     metrics = info.get("metrics", {})
@@ -940,7 +1022,7 @@ def _build_training_report_html(info: Dict) -> str:
     stage2_table = ""
     if stage2_fold_details:
         stage2_table = """
-        <h2>📉 Stage2: Regression Metrics (Per Fold)</h2>
+        <h2>Stage2: Regression Metrics (Per Fold)</h2>
         <table>
             <tr>
                 <th>Timeframe</th>
@@ -1023,15 +1105,19 @@ def _build_training_report_html(info: Dict) -> str:
 </head>
 <body>
     <div class="container">
-        <h1>📊 Training Report: {symbol}</h1>
+        <h1>Training Report: {symbol}</h1>
         
         <div class="info-box">
-            <h3>📋 Training Information</h3>
+            <h3>Training Information</h3>
             <table>
                 <tr><th>Symbol</th><td>{symbol}</td></tr>
                 <tr><th>Training Date</th><td>{training_date}</td></tr>
                 <tr><th>Data Period</th><td>{date_range_str}</td></tr>
-                <tr><th>Total Bars (5T)</th><td>{total_bars:,}</td></tr>
+                {f"<tr><th>Training Period</th><td>{train_start.split('T')[0] if train_start else 'N/A'} to {train_end.split('T')[0] if train_end else 'N/A'}</td></tr>" if train_start and train_end else ""}
+                {_get_oos_period_html(oos_metrics, oos_months) if oos_metrics and oos_months > 0 else ""}
+                <tr><th>Total Bars</th><td>{total_bars:,}</td></tr>
+                {f"<tr><th>Training Bars</th><td>{train_bars:,}</td></tr>" if train_bars is not None else ""}
+                {f"<tr><th>OOS Test Bars</th><td>{oos_metrics.get('stage1', {}).get('samples', 0):,}</td></tr>" if oos_metrics and oos_metrics.get('stage1', {}).get('samples') else ""}
                 <tr><th>Price Range</th><td>${_format_price(price_range[0] if price_range else 0)} - ${_format_price(price_range[1] if len(price_range) > 1 else 0)}</td></tr>
             </table>
         </div>
@@ -1059,7 +1145,7 @@ def _build_training_report_html(info: Dict) -> str:
             </ul>
         </div>
         
-        <h2>📈 Multi-Timeframe Metrics</h2>
+        <h2>Multi-Timeframe Metrics</h2>
         <table>
             <tr>
                 <th>Timeframe</th>
@@ -1072,7 +1158,7 @@ def _build_training_report_html(info: Dict) -> str:
         </table>
         
         <div class="explanation">
-            <h3>📊 Metrics Explanation</h3>
+            <h3>Metrics Explanation</h3>
             <ul>
                 <li><strong>Stage1 (CV Accuracy)</strong>: Cross-validation accuracy for direction prediction (classification task). 
                     Higher is better. Range: 0-1 (0.5 = random, 1.0 = perfect).</li>
@@ -1081,7 +1167,7 @@ def _build_training_report_html(info: Dict) -> str:
             </ul>
         </div>
         
-        <h2>🔬 Stage1: Classification Metrics (Per Fold)</h2>
+        <h2>Stage1: Classification Metrics (Per Fold)</h2>
         <table>
             <tr>
                 <th>Timeframe</th>
@@ -1093,7 +1179,9 @@ def _build_training_report_html(info: Dict) -> str:
         
         {stage2_table if stage2_fold_details else ""}
         
-        <h2>💾 Model Artifacts</h2>
+        {_build_oos_table(oos_metrics, oos_months) if oos_metrics and oos_months > 0 else ""}
+        
+        <h2>Model Artifacts</h2>
         <table>
             <tr><th>Model Path</th><td>{model_path}</td></tr>
             <tr><th>Scalers Path</th><td>{scaler_path}</td></tr>
@@ -1373,7 +1461,7 @@ def _build_rolling_report_html(
         {guidance_section}
 
         <div class="explanation">
-            <h3>📊 Metrics Explanation</h3>
+            <h3>Metrics Explanation</h3>
             <ul>
                 <li><strong>Total Return</strong>: Cumulative return percentage for the test period</li>
                 <li><strong>Win Rate</strong>: Percentage of profitable trades</li>

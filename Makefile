@@ -25,8 +25,8 @@ RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
 SYMBOLS ?= $(SYMBOL)
-START_DATE ?= 2025-05-01
-END_DATE ?= 2025-07-31
+START_DATE ?= 2025-01-01
+END_DATE ?= 2025-04-31
 YEAR ?= 2024
 START_YEAR ?= 2021
 END_YEAR ?= 2025
@@ -349,12 +349,16 @@ BASELINE_CV_FOLDS ?= 0
 BASELINE_CV_ON_ROLLING ?= 0
 INITIAL_TRAIN_MONTHS ?= 6
 MIN_TRAIN_MONTHS ?= 3
+BASELINE_OOS_MONTHS ?= 3
 
 .PHONY: baseline-train baseline-rolling baseline-rolling-multi
 
 baseline-train:
 	@echo "🧱 Baseline training (SR+Compression) with GPU: $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
-	@echo "Usage: make baseline-train SYMBOL=BTCUSDT BASELINE_FREQS=5T,15T BASELINE_FBS=1,5,10,15"
+	@echo "Usage: make baseline-train SYMBOL=BTCUSDT BASELINE_FREQS=5T,15T BASELINE_FBS=1,5,10,15 BASELINE_OOS_MONTHS=3"
+	@echo "       OOS months: $(BASELINE_OOS_MONTHS) (months after training end for OOS testing, default: 3)"
+	@echo "       OOS start: $(BASELINE_OOS_START) (optional: YYYY-MM-DD, overrides oos-months)"
+	@echo "       OOS end: $(BASELINE_OOS_END) (optional: YYYY-MM-DD, defaults to oos-start + 3 months)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.baseline.train_baseline \
 		$(if $(BASELINE_START),--start $(BASELINE_START),) \
 		$(if $(BASELINE_END),--end $(BASELINE_END),) \
@@ -363,6 +367,9 @@ baseline-train:
 		--freq $(BASELINE_FREQS) \
 		--forward-bars $(BASELINE_FBS) \
 		--cv-folds $(BASELINE_CV_FOLDS) \
+		--oos-months $(BASELINE_OOS_MONTHS) \
+		$(if $(BASELINE_OOS_START),--oos-start $(BASELINE_OOS_START),) \
+		$(if $(BASELINE_OOS_END),--oos-end $(BASELINE_OOS_END),) \
 		--gpu
 
 baseline-rolling:
