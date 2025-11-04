@@ -26,7 +26,7 @@ RESULTS_DIR ?= results
 SYMBOL ?= BTCUSDT
 SYMBOLS ?= $(SYMBOL)
 START_DATE ?= 2024-01-01
-END_DATE ?= 2025-04-31
+ END_DATE ?= 2025-04-30
 YEAR ?= 2024
 START_YEAR ?= 2021
 END_YEAR ?= 2025
@@ -41,6 +41,23 @@ SCALER_PATH ?= $(MODEL_DIR)/$(MODEL_NAME)_$(SYMBOL_LOWER)_$(START_TAG)_$(END_TAG
 OOS_DATA ?= $(DATA_DIR)/$(SYMBOL)-aggTrades-2025-06.parquet
 OVERWRITE ?= 0
 OVERWRITE_FLAG := $(if $(filter 1 true yes,$(OVERWRITE)),--overwrite,)
+
+# ---------------------------------------------------------------------------
+# Training configuration (simple names) + backward-compatible BASELINE_* aliases
+# ---------------------------------------------------------------------------
+FREQ ?= 5T
+FREQS ?= 5T
+CV_FOLDS ?= 5
+OOS_MONTHS ?= 2
+OOS_START ?=
+OOS_END ?=
+INITIAL_TRAIN_MONTHS ?= 6
+MIN_TRAIN_MONTHS ?= 3
+FBS ?= 1,3,5
+
+# Optional rolling window month bounds
+ROLLING_START ?=
+ROLLING_END ?=
 
 # Docker command template (mounts volumes and sets PYTHONPATH)
 ifeq ($(INSIDE_CONTAINER),yes)
@@ -216,35 +233,35 @@ feature-report:
 FORWARD_BARS_TRAIN ?= 1
 
 TRAIN_USE_TOP_FACTORS ?=
-TRAIN_FEATURE_TYPE ?= comprehensive
+TRAIN_FEATURE_TYPE ?= default
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
 
 train:
-    @echo "🚀 Training (regression-only) via baseline-train for $(SYMBOL) ($(START_DATE) → $(END_DATE))..."
-    @echo "Example: make train SYMBOL=BTCUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
+	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOL) ($(START_DATE) → $(END_DATE))..."
+	@echo "Example: make train SYMBOL=BTCUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
-        --data-dir /workspace/$(DATA_DIR) \
-        --symbol $(SYMBOL) \
-        --freq $(BASELINE_FREQS) \
-        --forward-bars $(FORWARD_BARS_TRAIN) \
-        --cv-folds $(BASELINE_CV_FOLDS) \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOL) \
+		--freq $(FREQS) \
+		--forward-bars $(FORWARD_BARS_TRAIN) \
+		--cv-folds $(CV_FOLDS) \
 		--feature-type $(TRAIN_FEATURE_TYPE) \
 		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
 		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
 		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
-		--oos-months $(BASELINE_OOS_MONTHS) \
-        $(if $(BASELINE_OOS_START),--oos-start $(BASELINE_OOS_START),) \
-        $(if $(BASELINE_OOS_END),--oos-end $(BASELINE_OOS_END),) \
-        --gpu
+		--oos-months $(OOS_MONTHS) \
+		$(if $(OOS_START),--oos-start $(OOS_START),) \
+		$(if $(OOS_END),--oos-end $(OOS_END),) \
+		--gpu
 
 
 FORWARD_BARS ?= 3
 
-ROLLING_FREQ ?= $(BASELINE_FREQ)
+ROLLING_FREQ ?= $(FREQ)
 ROLLING_FBS ?= $(FORWARD_BARS)
 ROLLING_OUTPUT ?=
 ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
@@ -257,13 +274,13 @@ rolling:
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOL) \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		$(if $(ROLLING_START),--start $(ROLLING_START),) \
+		$(if $(ROLLING_END),--end $(ROLLING_END),) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
 		--min-train-months $(MIN_TRAIN_MONTHS) \
 		--freq $(ROLLING_FREQ) \
 		--forward-bars $(ROLLING_FBS) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
+		--cv-folds $(CV_FOLDS) \
 		$(if $(ROLLING_OUTPUT),--output $(ROLLING_OUTPUT),) \
 		--feature-type $(ROLLING_FEATURE_TYPE) \
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
@@ -272,17 +289,17 @@ rolling:
 		--gpu
 
 rolling-multi:
-	@echo "🔄 Rolling training (multi-config) for $(SYMBOL) tfs=$(BASELINE_FREQS) fbs=$(BASELINE_FBS)"
+	@echo "🔄 Rolling training (multi-config) for $(SYMBOL) tfs=$(FREQS) fbs=$(FBS)"
 	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
-		FB_LIST=$(BASELINE_FBS) python3 -m ml_trading.pipeline.training.rolling \
+		FB_LIST=$(FBS) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOL) \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		$(if $(ROLLING_START),--start $(ROLLING_START),) \
+		$(if $(ROLLING_END),--end $(ROLLING_END),) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
 		--min-train-months $(MIN_TRAIN_MONTHS) \
-		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
+		$(foreach tf,$(subst ,, $(FREQS)),--freq $(tf)) \
+		--cv-folds $(CV_FOLDS) \
 		--feature-type $(ROLLING_FEATURE_TYPE) \
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
@@ -295,7 +312,7 @@ rolling-multi:
 			-e CUDA_VISIBLE_DEVICES=0 \
 			-e PYTHONPATH=/workspace/src \
 			-e PYTHONUNBUFFERED=1 \
-			-e FB_LIST=$(BASELINE_FBS) \
+			-e FB_LIST=$(FBS) \
 			-v $(PWD):/workspace \
 			-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
 			-w /workspace \
@@ -303,12 +320,12 @@ rolling-multi:
 			$(DOCKER_IMAGE) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOL) \
-		$(if $(BASELINE_START),--start $(BASELINE_START),) \
-		$(if $(BASELINE_END),--end $(BASELINE_END),) \
+		$(if $(ROLLING_START),--start $(ROLLING_START),) \
+		$(if $(ROLLING_END),--end $(ROLLING_END),) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
 		--min-train-months $(MIN_TRAIN_MONTHS) \
-		$(foreach tf,$(subst ,, $(BASELINE_FREQS)),--freq $(tf)) \
-		--cv-folds $(BASELINE_CV_FOLDS) \
+		$(foreach tf,$(subst ,, $(FREQS)),--freq $(tf)) \
+		--cv-folds $(CV_FOLDS) \
 		--feature-type $(ROLLING_FEATURE_TYPE) \
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
