@@ -339,11 +339,20 @@ class ComprehensiveFeatureEngineer:
                         continue
                     # 排除未归一化的小波特征（wpt_*_energy, wpt_*_mean, wpt_*_std）
                     # 但保留归一化的小波特征（wpt_*_energy_ratio, wpt_shannon_entropy 等）
-                    if col.startswith("wpt_") and any(
+                    if "wpt_" in col and any(
                             col.endswith(p) for p in wpt_raw_patterns):
                         # 检查是否是 energy_ratio（已归一化）
                         if not col.endswith("_energy_ratio"):
                             continue
+                    # 排除 channel 的原始价格量纲特征（保留归一化的距离特征）
+                    if col in [
+                            "channel_mid", "channel_upper", "channel_lower"
+                    ]:
+                        continue
+                    # 排除 Hilbert 的原始幅度和频率（保留归一化的相位）
+                    if col.endswith("_hilbert_amplitude") or col.endswith(
+                            "_hilbert_frequency"):
+                        continue
                     # 只包含数值类型的列
                     if pd.api.types.is_numeric_dtype(df[col]):
                         feature_cols.append(col)

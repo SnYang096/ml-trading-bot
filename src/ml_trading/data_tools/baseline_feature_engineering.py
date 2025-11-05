@@ -512,6 +512,9 @@ def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
         "macd_ext_hist",
         "macd_fix_hist",
         "atr",  # 原始ATR（未归一化），保留natr和atr_normalized
+        "channel_mid",  # 原始价格量纲，保留归一化的距离特征
+        "channel_upper",  # 原始价格量纲
+        "channel_lower",  # 原始价格量纲
     })
     # Exclude raw-scale prefixes
     raw_prefixes = ("sma_", "ema_", "wma_", "tema_", "kama_", "volume_sma_",
