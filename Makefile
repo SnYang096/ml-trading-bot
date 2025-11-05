@@ -230,7 +230,7 @@ feature-report:
 		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
 		$(FEATURE_REPORT_ARGS)
 
-FORWARD_BARS_TRAIN ?= 1,5,15
+FORWARD_BARS_TRAIN ?= 1,5,15,45
 
 TRAIN_USE_TOP_FACTORS ?=
 TRAIN_FEATURE_TYPE ?= baseline
@@ -245,10 +245,10 @@ train:
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
-		--data-dir /workspace/$(DATA_DIR) \
+        --data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOLS) \
 		--freq $(FREQS) \
-		--forward-bars $(FORWARD_BARS_TRAIN) \
+        --forward-bars $(FORWARD_BARS_TRAIN) \
 		--cv-folds $(CV_FOLDS) \
 		--feature-type $(TRAIN_FEATURE_TYPE) \
 		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
@@ -257,7 +257,7 @@ train:
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \
-		--gpu
+        --gpu
 
 
 FORWARD_BARS ?= 3

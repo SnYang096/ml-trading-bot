@@ -60,30 +60,55 @@ class BaselineFeatureEngineer:
 
     @staticmethod
     def _trend_r2(prices: pd.Series, window: int = 20) -> pd.Series:
-        """计算趋势R²特征
+        """
+        计算趋势R²特征（基于对数价格序列）
+        
+        CRITICAL: 趋势应该体现在价格路径上，而不是收益率上。
+        收益率序列本质上是白噪声，对收益率计算R²没有意义。
+        正确做法：在对数价格序列上计算R²，衡量价格对时间的线性拟合优度。
         
         Args:
-            prices: 价格序列
+            prices: 价格序列（close价格）
             window: 滚动窗口大小
             
         Returns:
-            R²值序列（0-1范围，已归一化）
+            R²值序列（0-1范围），已shift(1)避免未来信息
         """
+        # 使用对数价格（更稳定，避免价格水平影响R²）
+        # 例如：BTC从10k→20k和从60k→120k，趋势强度应相同
+        log_price = np.log(prices.replace(0, np.nan)).ffill()
 
-        def _compute_r2(prices_window):
-            if len(prices_window) < 2:
+        def _compute_r2(series):
+            """计算线性回归的R²"""
+            if len(series) < 3:
                 return 0.0
             try:
-                X = np.arange(len(prices_window)).reshape(-1, 1)
-                y = prices_window.values
-                model = LinearRegression().fit(X, y)
-                return model.score(X, y)  # R²
+                x = np.arange(len(series))  # 时间索引: 0,1,2,...,window-1
+                y = series.values
+
+                # 简化线性回归：y = a + b*x
+                # 使用polyfit更高效
+                slope, intercept = np.polyfit(x, y, 1)
+                y_pred = slope * x + intercept
+
+                # 计算R²
+                ss_res = np.sum((y - y_pred)**2)
+                ss_tot = np.sum((y - np.mean(y))**2)
+                r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+
+                # 截断到[0,1]范围
+                return max(0.0, min(1.0, r2))
             except Exception:
                 return 0.0
 
-        return prices.rolling(window=window,
-                              min_periods=2).apply(lambda x: _compute_r2(x),
-                                                   raw=False).fillna(0.0)
+        # 滚动计算R²，并shift(1)确保在t时刻只能用到t-1及之前的信息
+        # 这样在t时刻预测t+1时，这个特征是可用的（基于t-1及之前的数据）
+        r2_series = log_price.rolling(window=window,
+                                      min_periods=3).apply(_compute_r2,
+                                                           raw=False)
+
+        # shift(1)确保不包含当前未完成的K线
+        return r2_series.shift(1).fillna(0.0)
 
     @staticmethod
     def _price_entropy(close: pd.Series, window: int = 50) -> pd.Series:
@@ -171,12 +196,14 @@ class BaselineFeatureEngineer:
                                                         df["atr"])).astype(int)
 
                 # 16. Structure tension，使用log转换和标准化
+                # FIXED: Use shift(1) to avoid using current close (data leakage)
                 if "structure_tension" not in df.columns and "bb_width" in df.columns:
-                    dist_high = (df["high"].rolling(50).max() -
-                                 df["close"]).abs() / df["close"].replace(
-                                     0, np.nan)
-                    dist_low = (df["close"] - df["low"].rolling(50).min()
-                                ).abs() / df["close"].replace(0, np.nan)
+                    dist_high = (df["high"].shift(1).rolling(50).max() -
+                                 df["close"].shift(1)).abs(
+                                 ) / df["close"].shift(1).replace(0, np.nan)
+                    dist_low = (df["close"].shift(1) -
+                                df["low"].shift(1).rolling(50).min()).abs(
+                                ) / df["close"].shift(1).replace(0, np.nan)
                     structure_tension_raw = (
                         dist_high.fillna(0) +
                         dist_low.fillna(0)) / df["bb_width"].replace(
@@ -225,9 +252,12 @@ class BaselineFeatureEngineer:
                     "volatility_reversal_score"].fillna(0)
 
             # 8. Price range symmetry，使用log转换和标准化
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             if "price_range_symmetry" not in df.columns:
-                price_range_symmetry_raw = (df["high"] - df["close"]) / (
-                    df["close"] - df["low"]).replace(0, np.nan)
+                price_range_symmetry_raw = (
+                    df["high"].shift(1) - df["close"].shift(1)) / (
+                        (df["close"].shift(1) - df["low"].shift(1)).replace(
+                            0, np.nan))
                 price_range_symmetry_raw = price_range_symmetry_raw.replace(
                     [np.inf, -np.inf], np.nan).fillna(1)
                 # 使用log转换避免极端值，然后标准化
@@ -304,15 +334,20 @@ class BaselineFeatureEngineer:
                 df["acceleration_3"] = roc_3_norm - roc_3_norm.shift(1)
 
             # 12. Trend R² (R-squared) - 衡量趋势强度
+            # CORRECTED: 趋势应该体现在价格路径上，而不是收益率上
+            # 收益率序列本质上是白噪声，对收益率计算R²没有意义
+            # 正确做法：在对数价格序列上计算R²，并shift(1)避免未来信息
             if "trend_r2_20" not in df.columns:
                 df["trend_r2_20"] = self._trend_r2(df["close"], window=20)
             if "trend_r2_50" not in df.columns:
                 df["trend_r2_50"] = self._trend_r2(df["close"], window=50)
 
             # 12.1 Price vs EMA/SMA distance (normalized)
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             if "price_vs_ema_distance" not in df.columns and "sma_20" in df.columns and "atr" in df.columns:
                 df["price_vs_ema_distance"] = (
-                    df["close"] - df["sma_20"]) / df["atr"].replace(0, np.nan)
+                    (df["close"].shift(1) - df["sma_20"].shift(1)) /
+                    df["atr"].shift(1).replace(0, np.nan))
                 df["price_vs_ema_distance"] = (
                     df["price_vs_ema_distance"].replace([np.inf, -np.inf],
                                                         np.nan).fillna(0))
@@ -331,24 +366,30 @@ class BaselineFeatureEngineer:
                 df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
 
             # SMA距离特征（归一化）
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             if "sma_20_distance" not in df.columns:
                 df["sma_20_distance"] = (
-                    df["close"] / df["sma_20"].replace(0, np.nan) - 1).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0)
+                    (df["close"].shift(1) /
+                     df["sma_20"].shift(1).replace(0, np.nan) - 1)).replace(
+                         [np.inf, -np.inf], np.nan).fillna(0)
             if "sma_50_distance" not in df.columns:
                 df["sma_50_distance"] = (
-                    df["close"] / df["sma_50"].replace(0, np.nan) - 1).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0)
+                    (df["close"].shift(1) /
+                     df["sma_50"].shift(1).replace(0, np.nan) - 1)).replace(
+                         [np.inf, -np.inf], np.nan).fillna(0)
 
             # EMA距离特征（归一化）
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             if "ema_20_distance" not in df.columns:
                 df["ema_20_distance"] = (
-                    df["close"] / df["ema_20"].replace(0, np.nan) - 1).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0)
+                    (df["close"].shift(1) /
+                     df["ema_20"].shift(1).replace(0, np.nan) - 1)).replace(
+                         [np.inf, -np.inf], np.nan).fillna(0)
             if "ema_50_distance" not in df.columns:
                 df["ema_50_distance"] = (
-                    df["close"] / df["ema_50"].replace(0, np.nan) - 1).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0)
+                    (df["close"].shift(1) /
+                     df["ema_50"].shift(1).replace(0, np.nan) - 1)).replace(
+                         [np.inf, -np.inf], np.nan).fillna(0)
 
             # WMA距离特征（如果存在）
             try:
@@ -360,21 +401,26 @@ class BaselineFeatureEngineer:
                             lambda x: np.dot(x, weights) / weights.sum(),
                             raw=True)
                 if "wma_20" in df.columns and "wma_20_distance" not in df.columns:
-                    df["wma_20_distance"] = (
-                        df["close"] / df["wma_20"].replace(0, np.nan) -
-                        1).replace([np.inf, -np.inf], np.nan).fillna(0)
+                    # FIXED: Use shift(1) to avoid using current close (data leakage)
+                    df["wma_20_distance"] = ((
+                        df["close"].shift(1) /
+                        df["wma_20"].shift(1).replace(0, np.nan) - 1)).replace(
+                            [np.inf, -np.inf], np.nan).fillna(0)
             except Exception:
                 pass
 
             # VWAP距离特征（如果存在）
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             if "vwap" in df.columns and "vwap_distance" not in df.columns:
                 df["vwap_distance"] = (
-                    df["close"] / df["vwap"].replace(0, np.nan) - 1).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0)
+                    (df["close"].shift(1) /
+                     df["vwap"].shift(1).replace(0, np.nan) - 1)).replace(
+                         [np.inf, -np.inf], np.nan).fillna(0)
 
             # 13. Momentum persistence
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             if "momentum_persistence" not in df.columns:
-                sig = np.sign(df["close"].diff())
+                sig = np.sign(df["close"].diff().shift(1))
                 df["momentum_persistence"] = sig.rolling(10).apply(
                     lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
 

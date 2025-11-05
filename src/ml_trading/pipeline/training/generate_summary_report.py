@@ -135,6 +135,8 @@ def generate_summary_report(results_dir: str = "results/training",
     train_end = first_row.get("train_end")
     actual_start = first_row.get("actual_start")
     actual_end = first_row.get("actual_end")
+    oos_start = first_row.get("oos_start")
+    oos_end = first_row.get("oos_end")
 
     # Format dates for filename
     def _format_date_for_filename(date_str):
@@ -228,14 +230,25 @@ def generate_summary_report(results_dir: str = "results/training",
         actual_start) if actual_start else train_start_display
     actual_end_display = _format_date_for_display(
         actual_end) if actual_end else train_end_display
-
+    # Use explicit OOS time range if available, otherwise fallback to actual_start/actual_end
+    oos_start_display = _format_date_for_display(oos_start) if oos_start else None
+    oos_end_display = _format_date_for_display(oos_end) if oos_end else None
+    
     # Generate OOS info HTML if needed
-    has_oos = (actual_start_display and actual_end_display
-               and (actual_start_display != train_start_display
-                    or actual_end_display != train_end_display))
-    oos_info_html = (
-        f'<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>'
-        if has_oos else '')
+    # Prefer explicit oos_start/oos_end, fallback to actual_start/actual_end if different from train period
+    if oos_start_display and oos_end_display:
+        # Use explicit OOS time range
+        has_oos = True
+        oos_info_html = f'<li><strong>测试期 (OOS):</strong> {oos_start_display} 至 {oos_end_display}</li>'
+    elif actual_start_display and actual_end_display and (
+            actual_start_display != train_start_display
+            or actual_end_display != train_end_display):
+        # Fallback: use actual_start/actual_end if different from train period
+        has_oos = True
+        oos_info_html = f'<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>'
+    else:
+        has_oos = False
+        oos_info_html = ''
 
     # Build title with symbol and time ranges
     # Use original symbol for display (with commas if multi-asset)

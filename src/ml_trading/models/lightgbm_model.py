@@ -163,6 +163,11 @@ class LightGBMModel:
                         best_model = model
                 elif self.model_type == "quantile":
                     # For quantile regression, calculate quantile loss (pinball loss)
+                    # DEBUG: Check actual values for unit issues
+                    if fold == 0:  # Only print for first fold to avoid spam
+                        print(f"    DEBUG: y_val range: [{np.nanmin(y_val):.6f}, {np.nanmax(y_val):.6f}], mean={np.nanmean(y_val):.6f}")
+                        print(f"    DEBUG: y_pred range: [{np.nanmin(y_pred):.6f}, {np.nanmax(y_pred):.6f}], mean={np.nanmean(y_pred):.6f}")
+                    
                     quantile_loss = np.mean(
                         np.maximum(self.quantile_alpha * (y_val - y_pred),
                                    (1 - self.quantile_alpha) * (y_pred - y_val))

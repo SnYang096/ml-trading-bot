@@ -42,9 +42,108 @@ def _load_many(files: List[str]) -> pd.DataFrame:
     if not frames:
         raise FileNotFoundError("No valid data files loaded")
     # Merge all dataframes (for multi-asset training, all assets are combined)
+    # Note: Multi-asset data may not have 'symbol' column if it's already in the index
+    # or if files contain data from different assets without explicit symbol column
     merged = pd.concat(frames, axis=0).sort_index()
     print(f"   Merged {len(frames)} data file(s), total {len(merged)} samples")
+
+    # Ensure DatetimeIndex
+    if not isinstance(merged.index, pd.DatetimeIndex):
+        if "timestamp" in merged.columns:
+            merged.set_index("timestamp", inplace=True)
+        else:
+            raise ValueError(
+                "Merged data must have DatetimeIndex or 'timestamp' column")
+
     return merged
+
+
+def _resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """
+    Resample OHLCV data to specified timeframe.
+    
+    CRITICAL: This function ensures different timeframes use different aggregated data.
+    Without this, all timeframes would use the same raw data, leading to identical results.
+    
+    Args:
+        df: DataFrame with OHLCV columns and DatetimeIndex
+        timeframe: Target timeframe (e.g., '5T', '15T', '45T', '240T')
+    
+    Returns:
+        Resampled DataFrame with OHLCV data aggregated to the specified timeframe
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("DataFrame must have DatetimeIndex for resampling")
+
+    # Handle multi-asset data: group by symbol if present
+    if "symbol" in df.columns:
+        # Multi-asset: resample each symbol separately, then combine
+        resampled_frames = []
+        for symbol in df["symbol"].unique():
+            symbol_mask = df["symbol"] == symbol
+            symbol_data = df[symbol_mask].copy()
+            # Remove symbol column temporarily for resampling
+            symbol_data = symbol_data.drop(columns=["symbol"])
+            symbol_resampled = _resample_single_asset(symbol_data, timeframe)
+            symbol_resampled["symbol"] = symbol
+            resampled_frames.append(symbol_resampled)
+        result = pd.concat(resampled_frames, axis=0).sort_index()
+    else:
+        # Single asset
+        result = _resample_single_asset(df, timeframe)
+
+    return result
+
+
+def _resample_single_asset(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Resample a single asset's OHLCV data."""
+    # Ensure we have required columns
+    required_cols = ["open", "high", "low", "close", "volume"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    # Ensure DatetimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("DataFrame must have DatetimeIndex for resampling")
+
+    # Resample OHLCV: open=first, high=max, low=min, close=last, volume=sum
+    resampled_dict = {
+        "open": df["open"].resample(timeframe).first(),
+        "high": df["high"].resample(timeframe).max(),
+        "low": df["low"].resample(timeframe).min(),
+        "close": df["close"].resample(timeframe).last(),
+        "volume": df["volume"].resample(timeframe).sum(),
+    }
+
+    # Handle optional columns
+    if "buy_qty" in df.columns:
+        resampled_dict["buy_qty"] = df["buy_qty"].resample(timeframe).sum()
+    if "sell_qty" in df.columns:
+        resampled_dict["sell_qty"] = df["sell_qty"].resample(timeframe).sum()
+    if "taker_buy_ratio" in df.columns:
+        resampled_dict["taker_buy_ratio"] = df["taker_buy_ratio"].resample(
+            timeframe).mean()
+    if "cvd" in df.columns:
+        resampled_dict["cvd"] = df["cvd"].resample(timeframe).last()
+    if "trade_count" in df.columns:
+        resampled_dict["trade_count"] = df["trade_count"].resample(
+            timeframe).sum()
+
+    resampled = pd.DataFrame(resampled_dict)
+
+    # Drop rows where OHLCV is NaN
+    resampled = resampled.dropna(subset=required_cols)
+
+    # Forward fill optional columns (handle deprecated fillna method)
+    optional_cols = [
+        "buy_qty", "sell_qty", "taker_buy_ratio", "cvd", "trade_count"
+    ]
+    for col in optional_cols:
+        if col in resampled.columns:
+            resampled[col] = resampled[col].ffill()
+
+    return resampled
 
 
 def _collect_files(data: List[str],
@@ -172,6 +271,13 @@ def main() -> None:
                         type=str,
                         default=None,
                         help="JSON of selected features to keep")
+    parser.add_argument(
+        "--remove-continuity-bias",
+        action="store_true",
+        default=False,
+        help=
+        "Remove price continuity bias for fb=1 using AR(1) residual (recommended for fb=1)"
+    )
     parser.add_argument("--topk",
                         type=int,
                         default=0,
@@ -206,6 +312,15 @@ def main() -> None:
         print(f"   Multi-asset training: {len(symbol_list)} assets")
         print(f"   Total samples: {len(raw)}")
 
+    # Ensure raw data has DatetimeIndex for resampling
+    if not isinstance(raw.index, pd.DatetimeIndex):
+        if "timestamp" in raw.columns:
+            raw.set_index("timestamp", inplace=True)
+        else:
+            raise ValueError(
+                "Data must have DatetimeIndex or 'timestamp' column for resampling"
+            )
+
     # Create timestamped base directory for this training run to avoid mixing old data
     from datetime import datetime as _dt
     training_timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
@@ -219,8 +334,32 @@ def main() -> None:
     print(f"📁 Results will be saved to: {base_results_dir}")
 
     for freq in freqs:
+        # CRITICAL FIX: Resample data to the specified timeframe BEFORE feature engineering
+        # This ensures different timeframes use different aggregated data
+        # Without this, all timeframes would use the same raw data, leading to identical results!
+        print(f"\n{'='*60}")
+        print(f"🔄 Resampling data to timeframe: {freq}")
+        print(f"{'='*60}")
+        try:
+            resampled_data = _resample_ohlcv(raw, freq)
+            print(
+                f"   ✅ Original samples: {len(raw):,}, Resampled samples: {len(resampled_data):,}"
+            )
+            if len(resampled_data) == 0:
+                print(
+                    f"   ⚠️  Warning: Resampled data is empty for {freq}, skipping..."
+                )
+                continue
+        except Exception as e:
+            print(f"   ❌ Error resampling to {freq}: {e}")
+            print(f"   ⚠️  Skipping timeframe {freq}...")
+            continue
+
         for fb in fbs:
-            feat_df = raw.copy()
+            print(
+                f"\n⚙️  Training config: timeframe={freq}, forward_bars={fb}")
+            print(f"   Samples in resampled data: {len(resampled_data):,}")
+            feat_df = resampled_data.copy()
             # Multi-asset training: features are engineered on merged data
             # All features are normalized (asset-agnostic), so the model learns
             # common patterns across different assets
@@ -235,14 +374,94 @@ def main() -> None:
                 feat_df = feature_engineer.engineer_all_features(feat_df,
                                                                  fit=True)
 
+            # Calculate future return
             feat_df["future_return"] = feat_df["close"].shift(
                 -fb) / feat_df["close"] - 1
-            one = feat_df["close"].pct_change()
-            # Use a safe rolling window: window>=2 and ddof=0 so fb=1 works
-            from math import prod as _prod  # dummy import to avoid unused import lints elsewhere
+
+            # CRITICAL FIX: Remove price continuity bias using AR(1) residual for ALL fb values
+            # This addresses the issue where high IC/accuracy may be due to price continuity
+            # (adjacent bars are highly correlated) rather than true predictive power
+            # Reference: docs/特征：超高准确率的问题.md
+            # ALL price-based features must use returns/differences, and ALL cases apply AR(1) residual
+            ar1_phi = None
+            ar1_autocorr = None
+
+            print(
+                f"   🔧 Removing price continuity bias using AR(1) residual (applied to all fb values)..."
+            )
+            # Calculate current period returns for AR(1) estimation
+            current_returns = np.log(feat_df["close"] /
+                                     feat_df["close"].shift(1))
+            # Calculate lag-1 autocorrelation (AR(1) coefficient φ)
+            valid_returns = current_returns.dropna()
+            if len(valid_returns
+                   ) > 100:  # Need enough data for stable estimation
+                # Method 1: pandas autocorr (lag-1)
+                ar1_autocorr = valid_returns.autocorr(lag=1)
+                # Method 2: numpy correlation (alternative)
+                if len(valid_returns) > 1:
+                    r_t = valid_returns[:-1].values
+                    r_t1 = valid_returns[1:].values
+                    if len(r_t) > 0 and len(r_t1) > 0 and not np.isnan(
+                            r_t).any() and not np.isnan(r_t1).any():
+                        ar1_phi = np.corrcoef(
+                            r_t, r_t1)[0, 1] if len(r_t) > 1 else None
+
+                # Use pandas autocorr as primary, numpy as fallback
+                if pd.notna(ar1_autocorr):
+                    ar1_phi = ar1_autocorr
+                elif ar1_phi is not None and not np.isnan(ar1_phi):
+                    ar1_phi = ar1_phi
+                else:
+                    ar1_phi = 0.0
+
+                if ar1_phi is not None and not np.isnan(ar1_phi):
+                    print(
+                        f"      📊 Lag-1 autocorrelation (AR(1) φ): {ar1_phi:.4f}"
+                    )
+                    if abs(ar1_phi) > 0.3:
+                        print(
+                            f"      ⚠️  High autocorrelation detected! This may explain high IC/accuracy."
+                        )
+
+                    # Calculate AR(1) residual: target = return_{t+fb} - φ * return_t
+                    # This removes the "predictable" part due to price continuity
+                    # Note: future_return[t] = return_{t+fb}, current_returns[t] = return_t
+                    # We subtract φ * return_t to remove the predictable component
+                    ar1_prediction = ar1_phi * current_returns
+                    original_future_return = feat_df["future_return"].copy()
+                    # Align indices: future_return[t] corresponds to return_{t+fb}, subtract return_t (current_returns[t])
+                    feat_df["future_return"] = feat_df[
+                        "future_return"] - ar1_prediction
+
+                    print(
+                        f"      ✅ Applied AR(1) residual: target = return_{fb} - {ar1_phi:.4f} * return_t"
+                    )
+                    print(
+                        f"      📈 Original future_return stats: mean={original_future_return.mean():.6f}, std={original_future_return.std():.6f}"
+                    )
+                    print(
+                        f"      📈 Residual future_return stats: mean={feat_df['future_return'].mean():.6f}, std={feat_df['future_return'].std():.6f}"
+                    )
+                else:
+                    print(
+                        f"      ⚠️  Could not estimate AR(1) coefficient, skipping continuity removal"
+                    )
+                    ar1_phi = None
+            else:
+                print(
+                    f"      ⚠️  Insufficient data for AR(1) estimation (need >100 samples, got {len(valid_returns)})"
+                )
+
+            # FIXED: future_volatility should use future returns, not shifted current returns
+            # Previous bug: one.shift(-1) was using future data (data leakage!)
+            # Correct: Calculate volatility from actual future returns
             safe_window = max(2, fb)
-            feat_df["future_volatility"] = (one.shift(-1).rolling(
-                window=safe_window, min_periods=1).std(ddof=0))
+            # Use future_return to calculate future volatility (realized volatility)
+            # For fb=1, this is the volatility of the next bar's return
+            future_returns = feat_df["future_return"]
+            feat_df["future_volatility"] = future_returns.rolling(
+                window=safe_window, min_periods=1).std(ddof=0)
             # Only drop rows where targets are NaN; allow feature NaNs (handled later)
             feat_df = feat_df.dropna(
                 subset=["future_return", "future_volatility"]).copy()
@@ -349,6 +568,20 @@ def main() -> None:
             y_vol = pd.Series(train_df["future_volatility"].values,
                               index=train_df.index)
 
+            # DEBUG: Print actual value ranges to diagnose unit issues
+            print(f"\n📊 Target Variable Ranges (fb={fb}):")
+            print(
+                f"   future_return: min={y_return.min():.6f}, max={y_return.max():.6f}, mean={y_return.mean():.6f}, std={y_return.std():.6f}"
+            )
+            print(
+                f"   future_return percentiles: 1%={y_return.quantile(0.01):.6f}, 50%={y_return.quantile(0.5):.6f}, 99%={y_return.quantile(0.99):.6f}"
+            )
+            print(
+                f"   future_volatility: min={y_vol.min():.6f}, max={y_vol.max():.6f}, mean={y_vol.mean():.6f}, std={y_vol.std():.6f}"
+            )
+            if abs(y_return.max()) > 1.0 or abs(y_return.min()) > 1.0:
+                print(f"   ⚠️ 警告: future_return超出±1.0范围，可能单位不是收益率比例！")
+
             use_cv = args.cv_folds > 0
             n_splits = args.cv_folds if use_cv else 0
 
@@ -416,10 +649,23 @@ def main() -> None:
                     np.sqrt(mean_squared_error(y_vol_oos, y_pred_vol)))
                 oos_vol_mae = float(mean_absolute_error(y_vol_oos, y_pred_vol))
                 # Derive directional metrics from q50 regression (direction prediction)
+                from scipy.stats import spearmanr, pearsonr
                 y_true_dir = (y_ret_oos > 0).astype(int)
                 y_score = y_pred_q50
                 y_pred_dir = (y_score > 0).astype(int)
                 acc = float(accuracy_score(y_true_dir, y_pred_dir))
+
+                # ⚠️ DATA LEAKAGE WARNING: fb=1 with >90% accuracy in OOS is extremely suspicious
+                if fb == 1 and acc > 0.90:
+                    print("\n" + "=" * 70)
+                    print("🚨 严重警告：OOS测试中检测到可能的数据泄露！")
+                    print("=" * 70)
+                    print(f"   Forward Bars: {fb}")
+                    print(f"   OOS 方向准确率: {acc*100:.2f}%")
+                    print(f"   即使在样本外测试中，fb=1 时超过90%的准确率也是极其罕见的！")
+                    print(f"   这强烈暗示存在数据泄露或特征包含了未来信息！")
+                    print("=" * 70 + "\n")
+
                 prec, rec, f1, _ = precision_recall_fscore_support(
                     y_true_dir, y_pred_dir, average="binary", zero_division=0)
                 try:
@@ -431,6 +677,21 @@ def main() -> None:
                         y_true_dir, y_score))
                 except Exception:
                     pr_auc = float("nan")
+                # Calculate IC (Information Coefficient) for OOS
+                try:
+                    ic_spearman_oos, _ = spearmanr(y_ret_oos,
+                                                   y_score,
+                                                   nan_policy="omit")
+                    ic_spearman_oos = float(ic_spearman_oos) if not np.isnan(
+                        ic_spearman_oos) else None
+                except Exception:
+                    ic_spearman_oos = None
+                try:
+                    ic_pearson_oos, _ = pearsonr(y_ret_oos, y_score)
+                    ic_pearson_oos = float(ic_pearson_oos) if not np.isnan(
+                        ic_pearson_oos) else None
+                except Exception:
+                    ic_pearson_oos = None
                 oos_metrics = {
                     "directional_oos": {
                         "accuracy": acc,
@@ -439,6 +700,8 @@ def main() -> None:
                         "f1": float(f1),
                         "auc": auc,
                         "pr_auc": pr_auc,
+                        "ic_spearman": ic_spearman_oos,
+                        "ic_pearson": ic_pearson_oos,
                         "samples": int(len(y_true_dir)),
                         "best_threshold": 0.0,
                         "quality_check": {
@@ -500,6 +763,8 @@ def main() -> None:
             # Directional metrics (derived from q50 regression model) - CV metrics
             # Import metrics that may not be available from earlier imports
             from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+            # Import scipy.stats functions (already imported above for OOS, but need here for CV)
+            from scipy.stats import spearmanr as spearmanr_cv, pearsonr as pearsonr_cv
             y_score = model_q50.model.predict(X_df.values)
             y_true_dir = (y_return.values > 0).astype(int)
             y_pred_dir = (y_score > 0).astype(int)
@@ -512,9 +777,48 @@ def main() -> None:
             except Exception:
                 pr_auc = None
             cm = confusion_matrix(y_true_dir, y_pred_dir).tolist()
+            # Calculate IC (Information Coefficient) - Spearman correlation
+            try:
+                ic_spearman, _ = spearmanr_cv(y_return.values,
+                                              y_score,
+                                              nan_policy="omit")
+                ic_spearman = float(
+                    ic_spearman) if not np.isnan(ic_spearman) else None
+            except Exception:
+                ic_spearman = None
+            try:
+                ic_pearson, _ = pearsonr_cv(y_return.values, y_score)
+                ic_pearson = float(
+                    ic_pearson) if not np.isnan(ic_pearson) else None
+            except Exception:
+                ic_pearson = None
+            accuracy = float(accuracy_score(y_true_dir, y_pred_dir))
+
+            # ⚠️ DATA LEAKAGE WARNING: fb=1 with >90% accuracy is extremely suspicious
+            if fb == 1 and accuracy > 0.90:
+                print("\n" + "=" * 70)
+                print("🚨 严重警告：检测到可能的数据泄露！")
+                print("=" * 70)
+                print(f"   Forward Bars: {fb}")
+                print(f"   方向准确率: {accuracy*100:.2f}%")
+                print(f"   在真实市场中，fb=1 时超过90%的准确率极其罕见！")
+                print(f"\n   可能的原因：")
+                print(f"   1. 特征中包含了未来信息（look-ahead bias）")
+                print(f"   2. 标签泄露（label leakage）")
+                print(f"   3. 数据时间顺序错误")
+                print(f"   4. 特征工程中使用了 shift(-) 等未来函数")
+                print(f"\n   ⚠️ 请立即检查：")
+                print(
+                    f"   - 运行: python scripts/check_data_leakage.py --data <data_file> --forward-bars 1"
+                )
+                print(f"   - 检查特征工程代码中是否有 shift(-) 操作")
+                print(f"   - 验证数据的时间顺序是否正确")
+                print(f"   - 确认特征不包含未来bar的信息")
+                print("=" * 70 + "\n")
+
             directional_metrics_cv = {
                 "accuracy":
-                float(accuracy_score(y_true_dir, y_pred_dir)),
+                accuracy,
                 "precision":
                 float(precision_score(y_true_dir, y_pred_dir,
                                       zero_division=0)),
@@ -526,6 +830,10 @@ def main() -> None:
                 auc,
                 "pr_auc":
                 pr_auc,
+                "ic_spearman":
+                ic_spearman,
+                "ic_pearson":
+                ic_pearson,
                 "best_threshold":
                 0.0,
                 "samples":
@@ -603,6 +911,18 @@ def main() -> None:
 
             # Compose model_info and write training_info.json with finalized paths
             info_path = os.path.join(combo_dir, "training_info.json")
+            # Extract OOS time range if available
+            oos_start_str = None
+            oos_end_str = None
+            if len(oos_df) > 0 and not oos_df.empty:
+                oos_start_str = oos_df.index.min().isoformat(
+                ) if oos_df.index.min() is not None else None
+                oos_end_str = oos_df.index.max().isoformat(
+                ) if oos_df.index.max() is not None else None
+            elif oos_start_dt is not None and oos_end_dt is not None:
+                oos_start_str = oos_start_dt.isoformat()
+                oos_end_str = oos_end_dt.isoformat()
+
             model_info = {
                 "model_path":
                 os.path.join(combo_dir, "return_q50_model.txt"),
@@ -622,10 +942,16 @@ def main() -> None:
                 "train_end":
                 train_df.index.max().isoformat()
                 if not train_df.empty else None,
+                "oos_start":
+                oos_start_str,
+                "oos_end":
+                oos_end_str,
                 "total_bars":
                 len(feat_df),
                 "train_bars":
                 len(train_df),
+                "oos_bars":
+                len(oos_df) if len(oos_df) > 0 else 0,
                 "oos_months":
                 args.oos_months if len(oos_df) > 0 else 0,
                 "timeframes": {
@@ -666,6 +992,16 @@ def main() -> None:
                 freq,
                 "data_files":
                 files,
+                "ar1_info": {
+                    "ar1_phi":
+                    float(ar1_phi)
+                    if ar1_phi is not None and not np.isnan(ar1_phi) else None,
+                    "ar1_autocorr":
+                    float(ar1_autocorr) if ar1_autocorr is not None
+                    and not np.isnan(ar1_autocorr) else None,
+                    "continuity_bias_removed":
+                    bool(ar1_phi is not None),
+                } if ar1_phi is not None else None,
             }
             if oos_metrics:
                 model_info["oos_metrics"] = oos_metrics
@@ -677,6 +1013,9 @@ def main() -> None:
             try:
                 with open(info_path, "r", encoding="utf-8") as f:
                     info_json = json.load(f)
+
+                # Extract AR(1) information if available (for fb=1)
+                ar1_info = info_json.get("ar1_info")
 
                 # Extract metrics for all 4 regression models
                 q10_metrics = info_json.get("metrics", {}).get("q10", {})
@@ -697,94 +1036,348 @@ def main() -> None:
                     q90_val = q90_metrics.get(tf,
                                               {}).get('cv_quantile_loss',
                                                       'N/A')
+
+                    # Format values with 6 decimal places
+                    def fmt_val(v):
+                        if v == 'N/A' or v is None:
+                            return 'N/A'
+                        try:
+                            return f"{float(v):.6f}"
+                        except (ValueError, TypeError):
+                            return str(v)
+
                     quantile_rows.append(
-                        f"<tr><td>{tf}</td><td>{q10_val}</td><td>{q50_val}</td><td>{q90_val}</td></tr>"
+                        f"<tr><td>{tf}</td><td>{fmt_val(q10_val)}</td><td>{fmt_val(q50_val)}</td><td>{fmt_val(q90_val)}</td></tr>"
                     )
+                # AR(1) information section (for fb=1)
+                ar1_section = ""
+                if ar1_info:
+                    ar1_phi = ar1_info.get("ar1_phi")
+                    ar1_autocorr = ar1_info.get("ar1_autocorr")
+                    removed = ar1_info.get("continuity_bias_removed", False)
+
+                    ar1_rows = []
+                    if ar1_phi is not None:
+                        ar1_rows.append(
+                            f"<tr><td>AR(1) 系数 (φ)</td><td>{ar1_phi:.4f}</td></tr>"
+                        )
+                    if ar1_autocorr is not None:
+                        ar1_rows.append(
+                            f"<tr><td>Lag-1 自相关系数</td><td>{ar1_autocorr:.4f}</td></tr>"
+                        )
+                    ar1_rows.append(
+                        f"<tr><td>连续性偏差已移除</td><td>{'✅ 是' if removed else '❌ 否'}</td></tr>"
+                    )
+
+                    if ar1_phi is not None and abs(ar1_phi) > 0.3:
+                        ar1_warning = "<div style='background-color:#fff3cd;border-left:4px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px;'><strong>⚠️ 警告:</strong> 检测到高自相关性（|φ| > 0.3），这解释了为什么fb=1的IC和准确率异常高。建议使用<code>--remove-continuity-bias</code>选项来移除价格连续性偏差。</div>"
+                    else:
+                        ar1_warning = ""
+
+                    ar1_explanation = "<p><em>AR(1) 信息说明：</em></p><ul style='margin:10px 0;padding-left:20px;'><li><strong>AR(1) 系数 (φ)</strong>：衡量价格连续性的强度，值越高表示相邻K线价格越相关</li><li><strong>Lag-1 自相关系数</strong>：收益率序列的一阶自相关性，用于估计AR(1)模型参数</li><li><strong>连续性偏差</strong>：fb=1时，高IC/准确率可能来自价格连续性而非真实预测能力。使用AR(1)残差可以移除这部分偏差</li></ul>"
+
+                    ar1_section = ("<h2>🔍 AR(1) 价格连续性分析 (fb=1)</h2>" +
+                                   ar1_explanation + ar1_warning +
+                                   "<table><tr><th>指标</th><th>值</th></tr>" +
+                                   "".join(ar1_rows) + "</table>")
+
                 quantile_section = ""
                 if quantile_rows:
+                    # Check for anomalies
+                    warnings_list = []
+                    for tf in q50_metrics.keys():
+                        q10_val = q10_metrics.get(tf, {}).get(
+                            'cv_quantile_loss', 'N/A')
+                        q50_val = q50_metrics.get(tf, {}).get(
+                            'cv_quantile_loss', 'N/A')
+                        q90_val = q90_metrics.get(tf, {}).get(
+                            'cv_quantile_loss', 'N/A')
+                        try:
+                            q10_f = float(
+                                q10_val) if q10_val != 'N/A' else None
+                            q50_f = float(
+                                q50_val) if q50_val != 'N/A' else None
+                            q90_f = float(
+                                q90_val) if q90_val != 'N/A' else None
+                            if q10_f is not None and q50_f is not None and q90_f is not None:
+                                if q50_f > q10_f or q50_f > q90_f:
+                                    warnings_list.append(
+                                        f"⚠️ {tf}: Q50 loss ({q50_f:.2f}) > Q10/Q90 loss，违反quantile regression性质！"
+                                    )
+                                if q50_f > 1.0:
+                                    warnings_list.append(
+                                        f"⚠️ {tf}: Q50 loss ({q50_f:.2f})异常大！如果收益率是比例（±0.05），loss应在0.01-0.1量级，可能存在单位问题。"
+                                    )
+                        except (ValueError, TypeError):
+                            pass
+
+                    warning_html = ""
+                    if warnings_list:
+                        warning_html = "<div style='background-color:#fff3cd;border-left:4px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px;'><strong>⚠️ 警告:</strong><ul style='margin:5px 0;padding-left:20px;'>" + "".join(
+                            [f"<li>{w}</li>"
+                             for w in warnings_list]) + "</ul></div>"
+
                     quantile_section = (
-                        "<h2>Quantile Loss (CV)</h2>"
+                        "<h2>📊 Quantile Loss (CV)</h2>"
+                        "<p><em>单位: Pinball Loss (与收益率比例单位相同，例如 0.01 表示 1% 的平均误差)</em></p>"
+                        "<p><em>注意: 如果loss值>1.0，可能存在单位问题或数据异常。正常情况下，收益率在±5%范围内时，loss应在0.01-0.1量级。Q50 loss应≤Q10/Q90 loss。</em></p>"
+                        + warning_html +
                         "<table><tr><th>Timeframe</th><th>Quantile Loss 0.1 (q10)</th><th>Quantile Loss 0.5 (q50)</th><th>Quantile Loss 0.9 (q90)</th></tr>"
                         + "".join(quantile_rows) + "</table>")
 
                 # Volatility CV Metrics section
                 vol_rows = []
                 for tf, m in vol_metrics.items():
+                    cv_rmse = m.get('cv_rmse', 'N/A')
+                    cv_mse = m.get('cv_mse', 'N/A')
+
+                    def fmt_val(v):
+                        if v == 'N/A' or v is None:
+                            return 'N/A'
+                        try:
+                            return f"{float(v):.6f}"
+                        except (ValueError, TypeError):
+                            return str(v)
+
                     vol_rows.append(
-                        f"<tr><td>{tf}</td><td>{m.get('cv_rmse', 'N/A')}</td><td>{m.get('cv_mse', 'N/A')}</td></tr>"
+                        f"<tr><td>{tf}</td><td>{fmt_val(cv_rmse)}</td><td>{fmt_val(cv_mse)}</td></tr>"
                     )
                 vol_section = ""
                 if vol_rows:
+                    # Check for anomalies
+                    vol_warnings_list = []
+                    for tf, m in vol_metrics.items():
+                        cv_rmse = m.get('cv_rmse', 'N/A')
+                        try:
+                            rmse_f = float(
+                                cv_rmse) if cv_rmse != 'N/A' else None
+                            if rmse_f is not None and rmse_f > 1.0:
+                                vol_warnings_list.append(
+                                    f"⚠️ {tf}: CV RMSE ({rmse_f:.2f})异常大！如果波动率是比例（0.01=1%），RMSE应在0.01-0.1量级，可能存在单位问题。"
+                                )
+                        except (ValueError, TypeError):
+                            pass
+
+                    vol_warning_html = ""
+                    if vol_warnings_list:
+                        vol_warning_html = "<div style='background-color:#fff3cd;border-left:4px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px;'><strong>⚠️ 警告:</strong><ul style='margin:5px 0;padding-left:20px;'>" + "".join(
+                            [f"<li>{w}</li>"
+                             for w in vol_warnings_list]) + "</ul></div>"
+
                     vol_section = (
-                        "<h2>Volatility (Regression) CV Metrics</h2>"
+                        "<h2>📈 Volatility (Regression) CV Metrics</h2>"
+                        "<p><em>单位: RMSE/MSE - 波动率比例 (与收益率比例单位相同，例如 0.01 表示 1%)</em></p>"
+                        "<p><em>注意: 如果RMSE值>1.0，可能存在单位问题。正常情况下，波动率在1-5%范围内时，RMSE应在0.01-0.1量级。</em></p>"
+                        + vol_warning_html +
                         "<table><tr><th>Timeframe</th><th>CV RMSE</th><th>CV MSE</th></tr>"
                         + "".join(vol_rows) + "</table>")
 
-                # OOS section - regression metrics only
+                # Directional and IC metrics (CV)
+                directional_cv_metrics = info_json.get("metrics", {}).get(
+                    "directional_cv", {})
+                directional_section = ""
+                if directional_cv_metrics:
+                    dir_rows = []
+                    for tf, dir_metrics in directional_cv_metrics.items():
+                        if isinstance(dir_metrics, dict):
+
+                            def fmt_pct(v):
+                                if v == 'N/A' or v is None:
+                                    return 'N/A'
+                                try:
+                                    return f"{float(v)*100:.2f}%"
+                                except (ValueError, TypeError):
+                                    return str(v)
+
+                            def fmt_corr(v):
+                                if v == 'N/A' or v is None:
+                                    return 'N/A'
+                                try:
+                                    return f"{float(v):.4f}"
+                                except (ValueError, TypeError):
+                                    return str(v)
+
+                            acc = fmt_pct(dir_metrics.get('accuracy'))
+                            prec = fmt_pct(dir_metrics.get('precision'))
+                            rec = fmt_pct(dir_metrics.get('recall'))
+                            f1 = fmt_pct(dir_metrics.get('f1'))
+                            auc_val = fmt_pct(
+                                dir_metrics.get('auc')) if dir_metrics.get(
+                                    'auc') is not None else 'N/A'
+                            ic_spearman = fmt_corr(
+                                dir_metrics.get('ic_spearman'))
+                            ic_pearson = fmt_corr(
+                                dir_metrics.get('ic_pearson'))
+                            dir_rows.append(
+                                f"<tr><td>{tf}</td><td>{acc}</td><td>{prec}</td><td>{rec}</td><td>{f1}</td><td>{auc_val}</td><td>{ic_spearman}</td><td>{ic_pearson}</td></tr>"
+                            )
+                    if dir_rows:
+                        directional_section = (
+                            "<h2>🎯 方向预测指标 (CV)</h2>"
+                            "<p><em>方向准确率: 预测涨跌方向的准确率 | IC: 信息系数 (Information Coefficient)，预测值与实际值的相关性</em></p>"
+                            "<table><tr><th>Timeframe</th><th>方向准确率</th><th>精确率</th><th>召回率</th><th>F1</th><th>AUC</th><th>IC (Spearman)</th><th>IC (Pearson)</th></tr>"
+                            + "".join(dir_rows) + "</table>")
+
+                # OOS section - regression metrics and directional metrics
                 oos_section = ""
                 if info_json.get("oos_metrics"):
                     oos_metrics = info_json["oos_metrics"]
                     oos_rows = []
+                    oos_dir_rows = []
 
-                    # Q50 OOS metrics
-                    if "q50" in oos_metrics:
-                        q50_oos = oos_metrics["q50"]
+                    # Directional OOS metrics
+                    if "directional_oos" in oos_metrics:
+                        dir_oos = oos_metrics["directional_oos"]
+
+                        def fmt_pct(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v)*100:.2f}%"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        def fmt_corr(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v):.4f}"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        oos_dir_rows.append(
+                            f"<tr><td>方向准确率</td><td>{fmt_pct(dir_oos.get('accuracy'))}</td></tr>"
+                        )
+                        oos_dir_rows.append(
+                            f"<tr><td>精确率</td><td>{fmt_pct(dir_oos.get('precision'))}</td></tr>"
+                        )
+                        oos_dir_rows.append(
+                            f"<tr><td>召回率</td><td>{fmt_pct(dir_oos.get('recall'))}</td></tr>"
+                        )
+                        oos_dir_rows.append(
+                            f"<tr><td>F1</td><td>{fmt_pct(dir_oos.get('f1'))}</td></tr>"
+                        )
+                        if dir_oos.get('auc') is not None:
+                            oos_dir_rows.append(
+                                f"<tr><td>AUC</td><td>{fmt_pct(dir_oos.get('auc'))}</td></tr>"
+                            )
+                        if dir_oos.get('ic_spearman') is not None:
+                            oos_dir_rows.append(
+                                f"<tr><td>IC (Spearman)</td><td>{fmt_corr(dir_oos.get('ic_spearman'))}</td></tr>"
+                            )
+                        if dir_oos.get('ic_pearson') is not None:
+                            oos_dir_rows.append(
+                                f"<tr><td>IC (Pearson)</td><td>{fmt_corr(dir_oos.get('ic_pearson'))}</td></tr>"
+                            )
+
+                    # Q50 OOS metrics (regression_return)
+                    def fmt_val(v):
+                        if v == 'N/A' or v is None:
+                            return 'N/A'
+                        try:
+                            return f"{float(v):.6f}"
+                        except (ValueError, TypeError):
+                            return str(v)
+
+                    if "regression_return" in oos_metrics:
+                        reg_ret = oos_metrics["regression_return"]
                         oos_rows.append(
-                            f"<tr><td>Q50 RMSE</td><td>{q50_oos.get('oos_rmse', 'N/A')}</td></tr>"
+                            f"<tr><td>Q50 RMSE</td><td>{fmt_val(reg_ret.get('rmse'))} <em>(收益率比例)</em></td></tr>"
                         )
                         oos_rows.append(
-                            f"<tr><td>Q50 MAE</td><td>{q50_oos.get('oos_mae', 'N/A')}</td></tr>"
+                            f"<tr><td>Q50 MAE</td><td>{fmt_val(reg_ret.get('mae'))} <em>(收益率比例)</em></td></tr>"
+                        )
+                    # Also check for legacy q50 key
+                    elif "q50" in oos_metrics:
+                        q50_oos = oos_metrics["q50"]
+                        oos_rows.append(
+                            f"<tr><td>Q50 RMSE</td><td>{fmt_val(q50_oos.get('oos_rmse'))} <em>(收益率比例)</em></td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td>Q50 MAE</td><td>{fmt_val(q50_oos.get('oos_mae'))} <em>(收益率比例)</em></td></tr>"
                         )
 
                     # Q10 OOS metrics
                     if "q10" in oos_metrics:
                         q10_oos = oos_metrics["q10"]
                         oos_rows.append(
-                            f"<tr><td>Q10 Quantile Loss</td><td>{q10_oos.get('oos_quantile_loss', 'N/A')}</td></tr>"
+                            f"<tr><td>Q10 Quantile Loss</td><td>{fmt_val(q10_oos.get('oos_quantile_loss'))} <em>(收益率比例)</em></td></tr>"
                         )
 
                     # Q90 OOS metrics
                     if "q90" in oos_metrics:
                         q90_oos = oos_metrics["q90"]
                         oos_rows.append(
-                            f"<tr><td>Q90 Quantile Loss</td><td>{q90_oos.get('oos_quantile_loss', 'N/A')}</td></tr>"
+                            f"<tr><td>Q90 Quantile Loss</td><td>{fmt_val(q90_oos.get('oos_quantile_loss'))} <em>(收益率比例)</em></td></tr>"
                         )
 
-                    # Volatility OOS metrics
-                    if "volatility" in oos_metrics:
-                        vol_oos = oos_metrics["volatility"]
+                    # Volatility OOS metrics (regression_volatility)
+                    if "regression_volatility" in oos_metrics:
+                        vol_oos = oos_metrics["regression_volatility"]
                         oos_rows.append(
-                            f"<tr><td>Volatility RMSE</td><td>{vol_oos.get('oos_rmse', 'N/A')}</td></tr>"
+                            f"<tr><td>Volatility RMSE</td><td>{fmt_val(vol_oos.get('rmse'))} <em>(波动率比例)</em></td></tr>"
                         )
                         oos_rows.append(
-                            f"<tr><td>Volatility MAE</td><td>{vol_oos.get('oos_mae', 'N/A')}</td></tr>"
+                            f"<tr><td>Volatility MAE</td><td>{fmt_val(vol_oos.get('mae'))} <em>(波动率比例)</em></td></tr>"
+                        )
+                    # Also check for legacy volatility key
+                    elif "volatility" in oos_metrics:
+                        vol_oos = oos_metrics["volatility"]
+                        oos_rows.append(
+                            f"<tr><td>Volatility RMSE</td><td>{fmt_val(vol_oos.get('oos_rmse'))} <em>(波动率比例)</em></td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td>Volatility MAE</td><td>{fmt_val(vol_oos.get('oos_mae'))} <em>(波动率比例)</em></td></tr>"
                         )
 
                     # Uncertainty metrics
                     if "uncertainty" in oos_metrics:
                         unc_oos = oos_metrics["uncertainty"]
+
+                        def fmt_pct(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v)*100:.2f}%"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        coverage = unc_oos.get(
+                            'coverage_10_90') or unc_oos.get('coverage')
+                        width = unc_oos.get('avg_interval_width'
+                                            ) or unc_oos.get('interval_width')
+                        conf = unc_oos.get('avg_confidence') or unc_oos.get(
+                            'confidence')
                         oos_rows.append(
-                            f"<tr><td>Coverage (q10-q90)</td><td>{unc_oos.get('coverage', 'N/A')}</td></tr>"
+                            f"<tr><td>Coverage (q10-q90)</td><td>{fmt_pct(coverage)}</td></tr>"
                         )
                         oos_rows.append(
-                            f"<tr><td>Interval Width</td><td>{unc_oos.get('interval_width', 'N/A')}</td></tr>"
+                            f"<tr><td>Interval Width</td><td>{fmt_val(width)} <em>(收益率比例)</em></td></tr>"
                         )
                         oos_rows.append(
-                            f"<tr><td>Confidence</td><td>{unc_oos.get('confidence', 'N/A')}</td></tr>"
+                            f"<tr><td>Confidence</td><td>{fmt_val(conf)}</td></tr>"
                         )
 
                     # Signal strength
                     if "signal" in oos_metrics:
                         sig_oos = oos_metrics["signal"]
                         oos_rows.append(
-                            f"<tr><td>Avg Signal Strength (|q50|/vol)</td><td>{sig_oos.get('avg_signal_strength', 'N/A')}</td></tr>"
+                            f"<tr><td>Avg Signal Strength (|q50|/vol)</td><td>{fmt_val(sig_oos.get('avg_signal_strength'))}</td></tr>"
                         )
 
+                    oos_sections = []
+                    if oos_dir_rows:
+                        oos_sections.append(
+                            "<h2>🎯 OOS 方向预测指标</h2>"
+                            "<table><tr><th>Metric</th><th>Value</th></tr>" +
+                            "".join(oos_dir_rows) + "</table>")
                     if oos_rows:
-                        oos_section = (
-                            f"<h2>OOS Test Metrics</h2>"
-                            f"<table><tr><th>Metric</th><th>Value</th></tr>" +
+                        oos_sections.append(
+                            "<h2>📉 OOS 回归指标</h2>"
+                            "<table><tr><th>Metric</th><th>Value</th></tr>" +
                             "".join(oos_rows) + "</table>")
+                    if oos_sections:
+                        oos_section = "\n".join(oos_sections)
 
                 # Artifacts section - include all 4 models
                 model_dir = os.path.dirname(info_json.get('model_path', ''))
@@ -797,19 +1390,45 @@ def main() -> None:
                 ]
 
                 html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>Training Report</title>
-                <style>body{{font-family:Arial;margin:24px;color:#222}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:8px 10px}}</style>
+                <style>
+                body{{font-family:Arial,sans-serif;margin:24px;color:#222;background:#f5f5f5}}
+                .container{{max-width:1200px;margin:0 auto;background:white;padding:24px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}}
+                h1{{color:#2c3e50;border-bottom:3px solid #3498db;padding-bottom:10px}}
+                h2{{color:#34495e;margin-top:30px;margin-bottom:15px;padding-left:10px;border-left:4px solid #3498db}}
+                table{{border-collapse:collapse;width:100%;margin:15px 0;background:white}}
+                th{{background:#3498db;color:#fff;padding:12px;text-align:left;font-weight:600}}
+                td{{border:1px solid #ddd;padding:10px}}
+                tr:nth-child(even){{background:#f9f9f9}}
+                tr:hover{{background:#f0f8ff}}
+                p{{line-height:1.6;margin:10px 0}}
+                em{{color:#7f8c8d;font-size:0.9em}}
+                ul{{line-height:1.8}}
+                .info-section{{background:#ecf0f1;padding:15px;border-radius:5px;margin:15px 0}}
+                </style>
                 </head><body>
-                <h1>Training Report</h1>
+                <div class="container">
+                <h1>📊 训练报告 (Training Report)</h1>
+                <div class="info-section">
                 <p><strong>Symbol:</strong> {info_json.get('symbol')} &nbsp; <strong>Period:</strong> {info_json.get('actual_start', 'N/A')} → {info_json.get('actual_end', 'N/A')}</p>
                 <p><strong>Total Bars:</strong> {info_json.get('total_bars', 0)} &nbsp; <strong>Train Bars:</strong> {info_json.get('train_bars', 'N/A')}</p>
                 <p><strong>Feature Type:</strong> {info_json.get('feature_type', 'N/A')} &nbsp; <strong>Forward Bars:</strong> {info_json.get('forward_bars', 'N/A')}</p>
+                <p><strong>📝 预测输出说明:</strong></p>
+                <ul>
+                  <li><strong>Q50 (中位数预测):</strong> 预测未来{info_json.get('forward_bars', 'N/A')}个bar的收益率，单位：收益率比例（例如 0.01 表示 1%）</li>
+                  <li><strong>Q10/Q90 (分位数预测):</strong> 用于构建不确定性区间，单位：收益率比例</li>
+                  <li><strong>Volatility:</strong> 预测未来波动率，单位：波动率比例（例如 0.01 表示 1%）</li>
+                </ul>
+                </div>
+                {ar1_section if 'ar1_section' in locals() and ar1_section else ""}
+                {directional_section}
                 {quantile_section}
                 {vol_section}
                 {oos_section}
-                <h2>Artifacts</h2>
+                <h2>📁 模型文件 (Artifacts)</h2>
                 <ul>
                   {''.join(artifacts_list)}
                 </ul>
+                </div>
                 </body></html>"""
                 with open(report_path, "w", encoding="utf-8") as f:
                     f.write(html)

@@ -576,8 +576,9 @@ class EnhancedFeatureEngineer:
                                              < (2.0 * df["atr"])).astype(int)
 
             # 8. Price range symmetry
-            df["price_range_symmetry"] = (df["high"] - df["close"]) / (
-                df["close"] - df["low"]).replace(0, np.nan)
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            df["price_range_symmetry"] = (df["high"].shift(1) - df["close"].shift(1)) / (
+                (df["close"].shift(1) - df["low"].shift(1)).replace(0, np.nan))
             df["price_range_symmetry"] = (df["price_range_symmetry"].replace(
                 [np.inf, -np.inf], np.nan).fillna(1))
 
@@ -587,7 +588,8 @@ class EnhancedFeatureEngineer:
                 df["volume"].ewm(span=20, min_periods=10).mean())
 
             # 10. Up/Down volume ratio
-            up = (df["close"] > df["close"].shift()).astype(int)
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            up = (df["close"].shift(1) > df["close"].shift(2)).astype(int)
             df["up_vol"] = (df["volume"] * up).rolling(20).sum()
             df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
             df["upvol_downvol_ratio"] = df["up_vol"] / df["down_vol"].replace(
@@ -596,18 +598,21 @@ class EnhancedFeatureEngineer:
                 [np.inf, -np.inf], np.nan).fillna(1))
 
             # 11. ROC and acceleration
-            df["roc_5"] = df["close"].pct_change(5)
-            roc_3 = df["close"].pct_change(3)
+            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's ROC
+            df["roc_5"] = df["close"].pct_change(5).shift(1)
+            roc_3 = df["close"].pct_change(3).shift(1)
             df["acceleration_3"] = roc_3 - roc_3.shift(1)
 
             # 12. Price vs EMA distance
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
             df["price_vs_ema_distance"] = (
-                df["close"] - df["sma_20"]) / df["atr"].replace(0, np.nan)
+                (df["close"].shift(1) - df["sma_20"].shift(1)) / df["atr"].shift(1).replace(0, np.nan))
             df["price_vs_ema_distance"] = (df["price_vs_ema_distance"].replace(
                 [np.inf, -np.inf], np.nan).fillna(0))
 
             # 13. Momentum persistence
-            sig = np.sign(df["close"].diff())
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            sig = np.sign(df["close"].diff().shift(1))
             df["momentum_persistence"] = sig.rolling(10).apply(
                 lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
 
@@ -648,10 +653,11 @@ class EnhancedFeatureEngineer:
                 df["day_of_week_cos"] = 1
 
             # 16. Structure tension
-            dist_high = (df["high"].rolling(50).max() -
-                         df["close"]).abs() / df["close"]
-            dist_low = (df["close"] -
-                        df["low"].rolling(50).min()).abs() / df["close"]
+            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            dist_high = (df["high"].shift(1).rolling(50).max() -
+                         df["close"].shift(1)).abs() / df["close"].shift(1).replace(0, np.nan)
+            dist_low = (df["close"].shift(1) -
+                        df["low"].shift(1).rolling(50).min()).abs() / df["close"].shift(1).replace(0, np.nan)
             df["structure_tension"] = (
                 dist_high + dist_low) / df["bb_width"].replace(0, np.nan)
             df["structure_tension"] = (df["structure_tension"].replace(
@@ -864,8 +870,9 @@ class EnhancedFeatureEngineer:
 
             # 2. Delta Divergence (CVD vs Price背离)
             # 价格动量
-            price_momentum_5 = df["close"].pct_change(5)
-            price_momentum_20 = df["close"].pct_change(20)
+            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's momentum
+            price_momentum_5 = df["close"].pct_change(5).shift(1)
+            price_momentum_20 = df["close"].pct_change(20).shift(1)
 
             # 优先使用新的CVD滚动窗口特征，如果不存在则使用原始CVD
             if "cvd_change_5" in df.columns and "cvd_change_20" in df.columns:
@@ -1157,8 +1164,9 @@ class EnhancedFeatureEngineer:
                     0).clip(-1, 1)
 
             # 7. Volume-Price Divergence（量价背离）
-            price_change_20 = df["close"].pct_change(20)
-            volume_change_20 = df["volume"].pct_change(20)
+            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's change
+            price_change_20 = df["close"].pct_change(20).shift(1)
+            volume_change_20 = df["volume"].pct_change(20).shift(1)
 
             # 标准化
             price_change_norm = (price_change_20 -
