@@ -767,10 +767,43 @@ def main() -> None:
 
                 prec, rec, f1, _ = precision_recall_fscore_support(
                     y_true_dir, y_pred_dir, average="binary", zero_division=0)
+                prec = float(prec)
+                rec = float(rec)
+                f1 = float(f1)
+
+                # Check for label imbalance and model "giving up" behavior in OOS
+                positive_ratio_oos = float(np.mean(y_true_dir))
+                negative_ratio_oos = 1.0 - positive_ratio_oos
+
+                # Check for extreme recall values
+                if rec == 1.0 or rec == 0.0:
+                    print("\n" + "=" * 70)
+                    print("⚠️  警告：OOS测试中检测到模型可能\"放弃预测\"！")
+                    print("=" * 70)
+                    print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                    print(
+                        f"   Recall: {rec:.4f} ({'完美' if rec == 1.0 else '完全失败'})"
+                    )
+                    print(f"   Precision: {prec:.4f}")
+                    print(f"   Accuracy: {acc:.4f}")
+                    print(
+                        f"   OOS标签分布: 正类={positive_ratio_oos:.1%}, 负类={negative_ratio_oos:.1%}"
+                    )
+                    if rec == 1.0 and abs(prec - acc) < 0.01 and abs(
+                            positive_ratio_oos - acc) < 0.01:
+                        print(f"   ⚠️  模型把所有OOS样本都预测为正类！")
+                        print(f"   💡 这强烈暗示模型在训练期内拟合了单边上涨行情，在OOS中失效")
+                    print("=" * 70 + "\n")
+
                 try:
                     auc = float(roc_auc_score(y_true_dir, y_score))
                 except Exception:
                     auc = float("nan")
+
+                # Calculate balanced accuracy for OOS
+                from sklearn.metrics import balanced_accuracy_score as balanced_acc_score_oos
+                balanced_acc_oos = float(
+                    balanced_acc_score_oos(y_true_dir, y_pred_dir))
                 try:
                     pr_auc = float(average_precision_score(
                         y_true_dir, y_score))
@@ -799,6 +832,9 @@ def main() -> None:
                         "f1": float(f1),
                         "auc": auc,
                         "pr_auc": pr_auc,
+                        "balanced_accuracy": balanced_acc_oos,
+                        "positive_ratio": positive_ratio_oos,
+                        "negative_ratio": negative_ratio_oos,
                         "ic_spearman": ic_spearman_oos,
                         "ic_pearson": ic_pearson_oos,
                         "samples": int(len(y_true_dir)),
@@ -963,30 +999,103 @@ def main() -> None:
                 print(f"   - 增加样本数量或使用更长的时间跨度")
                 print("=" * 70 + "\n")
 
+            precision = float(
+                precision_score(y_true_dir, y_pred_dir, zero_division=0))
+            recall = float(
+                recall_score(y_true_dir, y_pred_dir, zero_division=0))
+            f1 = float(f1_score(y_true_dir, y_pred_dir, zero_division=0))
+
+            # Check for label imbalance and model "giving up" behavior
+            # Calculate label distribution
+            positive_ratio = float(np.mean(y_true_dir))
+            negative_ratio = 1.0 - positive_ratio
+
+            # Check for extreme recall values (Recall=1.0 or 0.0)
+            model_gave_up = False
+            if recall == 1.0 or recall == 0.0:
+                model_gave_up = True
+                print("\n" + "=" * 70)
+                print("⚠️  警告：检测到模型可能\"放弃预测\"！")
+                print("=" * 70)
+                print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                print(
+                    f"   Recall: {recall:.4f} ({'完美' if recall == 1.0 else '完全失败'})"
+                )
+                print(f"   Precision: {precision:.4f}")
+                print(f"   Accuracy: {accuracy:.4f}")
+                print(
+                    f"   标签分布: 正类={positive_ratio:.1%}, 负类={negative_ratio:.1%}"
+                )
+
+                if recall == 1.0:
+                    print(f"\n   📊 分析：Recall=1.0 意味着所有真实为正类的样本都被预测为正类")
+                    if abs(precision -
+                           accuracy) < 0.01 and abs(positive_ratio -
+                                                    accuracy) < 0.01:
+                        print(
+                            f"   ⚠️  发现：Precision ≈ Accuracy ≈ 正类比例，说明模型把所有样本都预测为正类！"
+                        )
+                        print(f"   💡 这意味着模型\"放弃预测\"，只是简单地预测\"上涨\"")
+                        print(f"   🔍 可能原因：")
+                        print(f"      1. 训练期内市场处于单边上涨（如2025 Q1 BTC牛市）")
+                        print(f"      2. 标签不平衡（正类占比过高：{positive_ratio:.1%}）")
+                        print(f"      3. 模型无法学习有效的预测信号，选择最安全的策略（全预测正类）")
+                        print(f"   ⚠️  建议：")
+                        print(f"      - 这不是模型能力，而是市场状态偏差")
+                        print(f"      - 使用balanced accuracy或F1作为主要指标")
+                        print(f"      - 检查OOS测试，如果准确率跌至50%左右，说明只是拟合了牛市")
+                        print(f"      - 考虑使用更长的时间跨度训练，包含熊市和震荡市")
+                    else:
+                        print(f"   ℹ️  这可能是因为正样本很少，模型容易全对")
+                elif recall == 0.0:
+                    print(f"\n   📊 分析：Recall=0.0 意味着所有真实为正类的样本都被预测为负类")
+                    print(f"   ⚠️  模型可能把所有样本都预测为负类（下跌）")
+                    print(f"   💡 可能原因：市场处于单边下跌或模型完全失效")
+                print("=" * 70 + "\n")
+
+            # Check for severe label imbalance
+            if positive_ratio > 0.7 or positive_ratio < 0.3:
+                print("\n" + "=" * 70)
+                print("⚠️  警告：检测到严重的标签不平衡！")
+                print("=" * 70)
+                print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                print(
+                    f"   标签分布: 正类={positive_ratio:.1%}, 负类={negative_ratio:.1%}"
+                )
+                print(f"   Accuracy: {accuracy:.4f}")
+                if positive_ratio > 0.7:
+                    print(f"   ⚠️  正类占比过高（>70%），模型可能倾向于预测正类")
+                    print(f"   💡 建议：")
+                    print(f"      - 使用balanced accuracy或F1作为主要指标")
+                    print(f"      - 考虑使用class_weight='balanced'训练")
+                    print(f"      - 检查是否是市场处于单边上涨导致的")
+                elif positive_ratio < 0.3:
+                    print(f"   ⚠️  负类占比过高（>70%），模型可能倾向于预测负类")
+                    print(f"   💡 建议：")
+                    print(f"      - 使用balanced accuracy或F1作为主要指标")
+                    print(f"      - 考虑使用class_weight='balanced'训练")
+                    print(f"      - 检查是否是市场处于单边下跌导致的")
+                print("=" * 70 + "\n")
+
+            # Calculate balanced accuracy
+            from sklearn.metrics import balanced_accuracy_score as balanced_acc_score
+            balanced_acc = float(balanced_acc_score(y_true_dir, y_pred_dir))
+
             directional_metrics_cv = {
-                "accuracy":
-                accuracy,
-                "precision":
-                float(precision_score(y_true_dir, y_pred_dir,
-                                      zero_division=0)),
-                "recall":
-                float(recall_score(y_true_dir, y_pred_dir, zero_division=0)),
-                "f1":
-                float(f1_score(y_true_dir, y_pred_dir, zero_division=0)),
-                "auc":
-                auc,
-                "pr_auc":
-                pr_auc,
-                "ic_spearman":
-                ic_spearman,
-                "ic_pearson":
-                ic_pearson,
-                "best_threshold":
-                0.0,
-                "samples":
-                int(len(y_true_dir)),
-                "confusion_matrix":
-                cm,
+                "accuracy": accuracy,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "auc": auc,
+                "pr_auc": pr_auc,
+                "ic_spearman": ic_spearman,
+                "ic_pearson": ic_pearson,
+                "balanced_accuracy": balanced_acc,
+                "positive_ratio": positive_ratio,
+                "negative_ratio": negative_ratio,
+                "best_threshold": 0.0,
+                "samples": int(len(y_true_dir)),
+                "confusion_matrix": cm,
             }
 
             # Save artifacts and report (neutral naming, no 'baseline')
