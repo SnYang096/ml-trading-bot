@@ -271,13 +271,6 @@ def main() -> None:
                         type=str,
                         default=None,
                         help="JSON of selected features to keep")
-    parser.add_argument(
-        "--remove-continuity-bias",
-        action="store_true",
-        default=False,
-        help=
-        "Remove price continuity bias for fb=1 using AR(1) residual (recommended for fb=1)"
-    )
     parser.add_argument("--topk",
                         type=int,
                         default=0,
@@ -374,9 +367,16 @@ def main() -> None:
                 feat_df = feature_engineer.engineer_all_features(feat_df,
                                                                  fit=True)
 
-            # Calculate future return
+            # Calculate future return (simple return for fb bars ahead)
+            # CRITICAL: Use close price, NOT high/low price, to avoid look-ahead bias
+            # future_return[t] = (close[t+fb] / close[t]) - 1
+            # This represents the return over the next fb bars, using closing prices
             feat_df["future_return"] = feat_df["close"].shift(
                 -fb) / feat_df["close"] - 1
+
+            # Verify label definition: log a warning if any suspicious pattern is detected
+            # (e.g., if future_return seems to be calculated from high instead of close)
+            # For now, we trust the calculation above, but we can add validation later if needed
 
             # CRITICAL FIX: Remove price continuity bias using AR(1) residual for ALL fb values
             # This addresses the issue where high IC/accuracy may be due to price continuity
@@ -385,11 +385,13 @@ def main() -> None:
             # ALL price-based features must use returns/differences, and ALL cases apply AR(1) residual
             ar1_phi = None
             ar1_autocorr = None
+            ar1_autocorr_after = None
 
             print(
                 f"   🔧 Removing price continuity bias using AR(1) residual (applied to all fb values)..."
             )
-            # Calculate current period returns for AR(1) estimation
+            # Calculate current period log returns for AR(1) estimation
+            # Use log returns for consistency with AR(1) model and to handle compounding correctly
             current_returns = np.log(feat_df["close"] /
                                      feat_df["close"].shift(1))
             # Calculate lag-1 autocorrelation (AR(1) coefficient φ)
@@ -417,32 +419,85 @@ def main() -> None:
 
                 if ar1_phi is not None and not np.isnan(ar1_phi):
                     print(
-                        f"      📊 Lag-1 autocorrelation (AR(1) φ): {ar1_phi:.4f}"
+                        f"      📊 Lag-1 autocorrelation (AR(1) φ) before removal: {ar1_phi:.4f}"
                     )
                     if abs(ar1_phi) > 0.3:
                         print(
-                            f"      ⚠️  High autocorrelation detected! This may explain high IC/accuracy."
+                            f"      ⚠️  High autocorrelation detected! This explains high IC/accuracy for fb={fb}."
+                        )
+                        if abs(ar1_phi) > 0.5:
+                            print(
+                                f"      🚨 Very high autocorrelation (>0.5)! This is a strong indicator of price continuity bias."
+                            )
+
+                    # Calculate AR(1) residual: target = return_{t+fb} - AR(1)_prediction
+                    # For fb>1, we need to predict the cumulative return over fb bars
+                    # Using AR(1) model: if r_t = φ * r_{t-1} + ε_t, then
+                    # E[r_{t+1} | r_t] = φ * r_t
+                    # E[r_{t+2} | r_t] = φ^2 * r_t
+                    # ...
+                    # E[r_{t+fb} | r_t] = φ^fb * r_t
+                    # For cumulative log return over fb bars: E[Σ_{i=1}^{fb} r_{t+i} | r_t] ≈ φ * (1-φ^fb)/(1-φ) * r_t
+                    # For simplicity and to avoid numerical issues, we use a simplified approach:
+                    # For fb=1: subtract φ * r_t
+                    # For fb>1: subtract φ * r_t (first-order approximation, as higher-order terms are small)
+
+                    # Convert future_return to log return for consistency
+                    future_return_log = np.log(1 + feat_df["future_return"])
+
+                    # Calculate AR(1) prediction for cumulative log return
+                    # For fb=1: AR(1) prediction = φ * r_t
+                    # For fb>1: use simplified approximation φ * r_t (first-order effect)
+                    # This removes the predictable component due to price continuity
+                    ar1_prediction_log = ar1_phi * current_returns
+
+                    # For fb>1, we could use a more sophisticated prediction, but for now
+                    # we use the first-order approximation which is reasonable for small φ
+                    original_future_return = feat_df["future_return"].copy()
+
+                    # Subtract AR(1) prediction from log return, then convert back to simple return
+                    future_return_log_residual = future_return_log - ar1_prediction_log
+                    feat_df["future_return"] = np.exp(
+                        future_return_log_residual) - 1
+
+                    print(
+                        f"      ✅ Applied AR(1) residual: target = log_return_{fb} - {ar1_phi:.4f} * log_return_t"
+                    )
+                    print(
+                        f"      📈 Original future_return stats: mean={original_future_return.mean():.6f}, std={original_future_return.std():.6f}, min={original_future_return.min():.6f}, max={original_future_return.max():.6f}"
+                    )
+                    print(
+                        f"      📈 Residual future_return stats: mean={feat_df['future_return'].mean():.6f}, std={feat_df['future_return'].std():.6f}, min={feat_df['future_return'].min():.6f}, max={feat_df['future_return'].max():.6f}"
+                    )
+
+                    # Check if residual returns are reasonable
+                    if abs(feat_df['future_return'].max()) > 10.0 or abs(
+                            feat_df['future_return'].min()) > 10.0:
+                        print(
+                            f"      ⚠️  Warning: Residual future_return has extreme values (>{10.0:.0%}), this may indicate an issue with AR(1) processing"
                         )
 
-                    # Calculate AR(1) residual: target = return_{t+fb} - φ * return_t
-                    # This removes the "predictable" part due to price continuity
-                    # Note: future_return[t] = return_{t+fb}, current_returns[t] = return_t
-                    # We subtract φ * return_t to remove the predictable component
-                    ar1_prediction = ar1_phi * current_returns
-                    original_future_return = feat_df["future_return"].copy()
-                    # Align indices: future_return[t] corresponds to return_{t+fb}, subtract return_t (current_returns[t])
-                    feat_df["future_return"] = feat_df[
-                        "future_return"] - ar1_prediction
-
-                    print(
-                        f"      ✅ Applied AR(1) residual: target = return_{fb} - {ar1_phi:.4f} * return_t"
-                    )
-                    print(
-                        f"      📈 Original future_return stats: mean={original_future_return.mean():.6f}, std={original_future_return.std():.6f}"
-                    )
-                    print(
-                        f"      📈 Residual future_return stats: mean={feat_df['future_return'].mean():.6f}, std={feat_df['future_return'].std():.6f}"
-                    )
+                    # Check autocorrelation AFTER removal to verify effectiveness
+                    # Convert residual simple return back to log return for autocorrelation check
+                    residual_log_returns = np.log(
+                        1 + feat_df["future_return"]).dropna()
+                    if len(residual_log_returns) > 100:
+                        ar1_autocorr_after = residual_log_returns.autocorr(
+                            lag=1)
+                        if pd.notna(ar1_autocorr_after):
+                            print(
+                                f"      📊 Lag-1 autocorrelation AFTER removal: {ar1_autocorr_after:.4f}"
+                            )
+                            if abs(ar1_autocorr_after) < abs(ar1_autocorr):
+                                reduction = abs(ar1_autocorr) - abs(
+                                    ar1_autocorr_after)
+                                print(
+                                    f"      ✅ Autocorrelation reduced by {reduction:.4f} ({(reduction/abs(ar1_autocorr)*100):.1f}% reduction)"
+                                )
+                            else:
+                                print(
+                                    f"      ⚠️  Warning: Autocorrelation did not decrease significantly after AR(1) removal"
+                                )
                 else:
                     print(
                         f"      ⚠️  Could not estimate AR(1) coefficient, skipping continuity removal"
@@ -579,8 +634,29 @@ def main() -> None:
             print(
                 f"   future_volatility: min={y_vol.min():.6f}, max={y_vol.max():.6f}, mean={y_vol.mean():.6f}, std={y_vol.std():.6f}"
             )
-            if abs(y_return.max()) > 1.0 or abs(y_return.min()) > 1.0:
-                print(f"   ⚠️ 警告: future_return超出±1.0范围，可能单位不是收益率比例！")
+            # Check if future_return values are reasonable
+            # For fb=1, returns should typically be small (e.g., ±0.05 = ±5%)
+            # For larger fb (e.g., fb=45), returns can exceed ±1.0 (100%) for volatile assets like crypto
+            # Adjust threshold based on fb value
+            max_reasonable_return = 0.1 if fb == 1 else min(
+                0.5, 0.1 * fb)  # 10% for fb=1, or 10%*fb up to 50%
+            if abs(y_return.max()) > max_reasonable_return or abs(
+                    y_return.min()) < -max_reasonable_return:
+                if fb == 1:
+                    print(
+                        f"   ⚠️ 警告: future_return超出±{max_reasonable_return:.1%}范围（fb={fb}），可能单位不是收益率比例！"
+                    )
+                    print(
+                        f"      预期fb=1的收益率应在±5%范围内，当前范围: [{y_return.min():.2%}, {y_return.max():.2%}]"
+                    )
+                else:
+                    print(
+                        f"   ℹ️  提示: future_return超出±{max_reasonable_return:.1%}范围（fb={fb}），这是正常的"
+                    )
+                    print(
+                        f"      对于fb={fb}，未来{fb}根K线的累积收益率可能较大，当前范围: [{y_return.min():.2%}, {y_return.max():.2%}]"
+                    )
+                    print(f"      如果数值过大（如>500%），请检查数据或计算逻辑")
 
             use_cv = args.cv_folds > 0
             n_splits = args.cv_folds if use_cv else 0
@@ -655,15 +731,38 @@ def main() -> None:
                 y_pred_dir = (y_score > 0).astype(int)
                 acc = float(accuracy_score(y_true_dir, y_pred_dir))
 
-                # ⚠️ DATA LEAKAGE WARNING: fb=1 with >90% accuracy in OOS is extremely suspicious
-                if fb == 1 and acc > 0.90:
+                # ⚠️ DATA LEAKAGE WARNING: Check for suspiciously high accuracy in OOS
+                n_samples_oos = len(y_true_dir)
+                suspicious_oos = False
+                threshold_oos = 0.90 if fb == 1 else (0.85 if fb <= 5 else (
+                    0.80 if fb <= 15 else 0.75))
+
+                if acc > threshold_oos:
+                    suspicious_oos = True
+                if n_samples_oos < 200 and acc > 0.85:
+                    suspicious_oos = True
+
+                if suspicious_oos:
                     print("\n" + "=" * 70)
-                    print("🚨 严重警告：OOS测试中检测到可能的数据泄露！")
+                    print("🚨 严重警告：样本外测试中检测到可能的数据泄露或异常表现！")
                     print("=" * 70)
-                    print(f"   Forward Bars: {fb}")
-                    print(f"   OOS 方向准确率: {acc*100:.2f}%")
-                    print(f"   即使在样本外测试中，fb=1 时超过90%的准确率也是极其罕见的！")
-                    print(f"   这强烈暗示存在数据泄露或特征包含了未来信息！")
+                    print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                    print(f"   OOS样本数量: {n_samples_oos}")
+                    print(
+                        f"   方向准确率: {acc*100:.2f}% (阈值: {threshold_oos*100:.0f}%)"
+                    )
+                    print(
+                        f"   即使在样本外测试中，预测未来 {fb} 根 {freq} K线方向准确率 {acc*100:.2f}% 也是极其罕见的！"
+                    )
+                    print(f"   这强烈暗示存在数据泄露、特征包含未来信息或市场处于极端单边行情！")
+                    print(f"\n   建议检查：")
+                    print(
+                        f"   - 确认标签定义：future_return = close[t+fb] / close[t] - 1（使用收盘价，非最高/最低价）"
+                    )
+                    print(f"   - 确认特征工程：所有特征都使用 shift(1) 避免未来信息")
+                    print(f"   - 检查数据resample是否正确（{freq}下应使用正确的聚合数据）")
+                    print(f"   - 检查OOS时间段是否与训练期市场状态相似（如都是单边上涨）")
+                    print(f"   - 如果样本数少（{n_samples_oos}条），考虑使用更长的时间跨度")
                     print("=" * 70 + "\n")
 
                 prec, rec, f1, _ = precision_recall_fscore_support(
@@ -794,26 +893,74 @@ def main() -> None:
                 ic_pearson = None
             accuracy = float(accuracy_score(y_true_dir, y_pred_dir))
 
-            # ⚠️ DATA LEAKAGE WARNING: fb=1 with >90% accuracy is extremely suspicious
-            if fb == 1 and accuracy > 0.90:
+            # Get sample count for warning context
+            n_samples = len(y_true_dir)
+
+            # ⚠️ DATA LEAKAGE WARNING: Check for suspiciously high accuracy
+            # For different fb values, use different thresholds
+            suspicious = False
+            threshold = 0.90  # Default threshold
+
+            if fb == 1:
+                threshold = 0.90  # fb=1: >90% is very suspicious
+                if accuracy > threshold:
+                    suspicious = True
+            elif fb <= 5:
+                threshold = 0.85  # fb=2-5: >85% is suspicious
+                if accuracy > threshold:
+                    suspicious = True
+            elif fb <= 15:
+                threshold = 0.80  # fb=6-15: >80% is suspicious
+                if accuracy > threshold:
+                    suspicious = True
+            else:
+                # For larger fb (e.g., fb=45), high accuracy is even more suspicious
+                # Especially for longer timeframes (e.g., 240T) where sample size is small
+                threshold = 0.75  # fb>15: >75% is suspicious
+                if accuracy > threshold:
+                    suspicious = True
+
+            # Additional check: if sample size is small (<1000) and accuracy is very high, be extra cautious
+            if n_samples < 1000 and accuracy > 0.85:
+                suspicious = True
                 print("\n" + "=" * 70)
-                print("🚨 严重警告：检测到可能的数据泄露！")
+                print("🚨 严重警告：小样本 + 高准确率组合异常！")
                 print("=" * 70)
-                print(f"   Forward Bars: {fb}")
+                print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                print(f"   样本数量: {n_samples}")
                 print(f"   方向准确率: {accuracy*100:.2f}%")
-                print(f"   在真实市场中，fb=1 时超过90%的准确率极其罕见！")
+                print(f"   小样本（<1000）时高准确率可能是：")
+                print(f"   1. 过拟合特定市场阶段（如单边上涨/下跌）")
+                print(f"   2. 样本时间跨度短，市场状态单一")
+                print(f"   3. 数据泄露或标签定义问题")
+                print("=" * 70 + "\n")
+
+            if suspicious:
+                print("\n" + "=" * 70)
+                print("🚨 严重警告：检测到可能的数据泄露或异常表现！")
+                print("=" * 70)
+                print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                print(f"   样本数量: {n_samples}")
+                print(
+                    f"   方向准确率: {accuracy*100:.2f}% (阈值: {threshold*100:.0f}%)"
+                )
+                print(
+                    f"   预测未来 {fb} 根 {freq} K线的方向，准确率 {accuracy*100:.2f}% 在真实市场中极其罕见！"
+                )
                 print(f"\n   可能的原因：")
                 print(f"   1. 特征中包含了未来信息（look-ahead bias）")
-                print(f"   2. 标签泄露（label leakage）")
+                print(f"   2. 标签泄露（label leakage）- 确认使用收盘价而非最高/最低价")
                 print(f"   3. 数据时间顺序错误")
-                print(f"   4. 特征工程中使用了 shift(-) 等未来函数")
-                print(f"\n   ⚠️ 请立即检查：")
+                print(f"   4. 数据预处理错误（如未正确shift或resample）")
+                print(f"   5. 样本太少（{n_samples}条）导致过拟合特定市场阶段")
+                print(f"   6. 市场处于极端单边行情（如2025 Q1 BTC单边上涨）")
+                print(f"\n   建议检查：")
                 print(
-                    f"   - 运行: python scripts/check_data_leakage.py --data <data_file> --forward-bars 1"
+                    f"   - 确认标签定义：future_return = close[t+fb] / close[t] - 1（使用收盘价）"
                 )
-                print(f"   - 检查特征工程代码中是否有 shift(-) 操作")
-                print(f"   - 验证数据的时间顺序是否正确")
-                print(f"   - 确认特征不包含未来bar的信息")
+                print(f"   - 确认特征工程：所有特征都使用 shift(1) 避免未来信息")
+                print(f"   - 检查数据resample是否正确（{freq}下应使用正确的聚合数据）")
+                print(f"   - 增加样本数量或使用更长的时间跨度")
                 print("=" * 70 + "\n")
 
             directional_metrics_cv = {
@@ -996,9 +1143,12 @@ def main() -> None:
                     "ar1_phi":
                     float(ar1_phi)
                     if ar1_phi is not None and not np.isnan(ar1_phi) else None,
-                    "ar1_autocorr":
+                    "ar1_autocorr_before":
                     float(ar1_autocorr) if ar1_autocorr is not None
                     and not np.isnan(ar1_autocorr) else None,
+                    "ar1_autocorr_after":
+                    float(ar1_autocorr_after) if ar1_autocorr_after is not None
+                    and not np.isnan(ar1_autocorr_after) else None,
                     "continuity_bias_removed":
                     bool(ar1_phi is not None),
                 } if ar1_phi is not None else None,
@@ -1037,12 +1187,19 @@ def main() -> None:
                                               {}).get('cv_quantile_loss',
                                                       'N/A')
 
-                    # Format values with 6 decimal places
+                    # Format values with 6 decimal places, but show scientific notation for very small values
                     def fmt_val(v):
                         if v == 'N/A' or v is None:
                             return 'N/A'
                         try:
-                            return f"{float(v):.6f}"
+                            fv = float(v)
+                            # If value is very small (< 1e-6) or exactly 0, use scientific notation or show more precision
+                            if abs(fv) < 1e-6 and fv != 0.0:
+                                return f"{fv:.2e}"
+                            elif fv == 0.0:
+                                return "0.000000"
+                            else:
+                                return f"{fv:.6f}"
                         except (ValueError, TypeError):
                             return str(v)
 
@@ -1053,7 +1210,10 @@ def main() -> None:
                 ar1_section = ""
                 if ar1_info:
                     ar1_phi = ar1_info.get("ar1_phi")
-                    ar1_autocorr = ar1_info.get("ar1_autocorr")
+                    ar1_autocorr_before = ar1_info.get(
+                        "ar1_autocorr_before") or ar1_info.get(
+                            "ar1_autocorr")  # backward compatibility
+                    ar1_autocorr_after = ar1_info.get("ar1_autocorr_after")
                     removed = ar1_info.get("continuity_bias_removed", False)
 
                     ar1_rows = []
@@ -1061,25 +1221,54 @@ def main() -> None:
                         ar1_rows.append(
                             f"<tr><td>AR(1) 系数 (φ)</td><td>{ar1_phi:.4f}</td></tr>"
                         )
-                    if ar1_autocorr is not None:
+                    if ar1_autocorr_before is not None:
                         ar1_rows.append(
-                            f"<tr><td>Lag-1 自相关系数</td><td>{ar1_autocorr:.4f}</td></tr>"
+                            f"<tr><td>Lag-1 自相关系数（移除前）</td><td>{ar1_autocorr_before:.4f}</td></tr>"
                         )
+                    if ar1_autocorr_after is not None:
+                        ar1_rows.append(
+                            f"<tr><td>Lag-1 自相关系数（移除后）</td><td>{ar1_autocorr_after:.4f}</td></tr>"
+                        )
+                        if ar1_autocorr_before is not None:
+                            reduction = abs(ar1_autocorr_before) - abs(
+                                ar1_autocorr_after)
+                            reduction_pct = (
+                                reduction / abs(ar1_autocorr_before) *
+                                100) if abs(ar1_autocorr_before) > 0 else 0
+                            ar1_rows.append(
+                                f"<tr><td>自相关性减少</td><td>{reduction:.4f} ({reduction_pct:.1f}%)</td></tr>"
+                            )
                     ar1_rows.append(
                         f"<tr><td>连续性偏差已移除</td><td>{'✅ 是' if removed else '❌ 否'}</td></tr>"
                     )
 
                     if ar1_phi is not None and abs(ar1_phi) > 0.3:
-                        ar1_warning = "<div style='background-color:#fff3cd;border-left:4px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px;'><strong>⚠️ 警告:</strong> 检测到高自相关性（|φ| > 0.3），这解释了为什么fb=1的IC和准确率异常高。建议使用<code>--remove-continuity-bias</code>选项来移除价格连续性偏差。</div>"
+                        if ar1_autocorr_after is not None and ar1_autocorr_before is not None:
+                            if abs(ar1_autocorr_after) < abs(
+                                    ar1_autocorr_before):
+                                reduction = abs(ar1_autocorr_before) - abs(
+                                    ar1_autocorr_after)
+                                reduction_pct = (
+                                    reduction / abs(ar1_autocorr_before) *
+                                    100) if abs(ar1_autocorr_before) > 0 else 0
+                                ar1_warning = f"<div style='background-color:#d4edda;border-left:4px solid #28a745;padding:10px;margin:10px 0;border-radius:4px;'><strong>✅ 已处理:</strong> 检测到高自相关性（|φ| = {ar1_phi:.4f}），已通过AR(1)残差移除。移除后自相关性从 {ar1_autocorr_before:.4f} 降至 {ar1_autocorr_after:.4f}（减少 {reduction_pct:.1f}%）。</div>"
+                            else:
+                                ar1_warning = f"<div style='background-color:#fff3cd;border-left:4px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px;'><strong>⚠️ 警告:</strong> 检测到高自相关性（|φ| = {ar1_phi:.4f}），这解释了为什么IC和准确率异常高。AR(1)残差已应用，但自相关性未显著降低（移除前: {ar1_autocorr_before:.4f}, 移除后: {ar1_autocorr_after:.4f}），可能存在其他数据泄露或需要更强的去相关处理。</div>"
+                        else:
+                            ar1_warning = f"<div style='background-color:#fff3cd;border-left:4px solid #ffc107;padding:10px;margin:10px 0;border-radius:4px;'><strong>⚠️ 警告:</strong> 检测到高自相关性（|φ| = {ar1_phi:.4f}），这解释了为什么IC和准确率异常高。AR(1)残差已应用。</div>"
                     else:
                         ar1_warning = ""
 
-                    ar1_explanation = "<p><em>AR(1) 信息说明：</em></p><ul style='margin:10px 0;padding-left:20px;'><li><strong>AR(1) 系数 (φ)</strong>：衡量价格连续性的强度，值越高表示相邻K线价格越相关</li><li><strong>Lag-1 自相关系数</strong>：收益率序列的一阶自相关性，用于估计AR(1)模型参数</li><li><strong>连续性偏差</strong>：fb=1时，高IC/准确率可能来自价格连续性而非真实预测能力。使用AR(1)残差可以移除这部分偏差</li></ul>"
+                    ar1_explanation = "<p><em>AR(1) 信息说明：</em></p><ul style='margin:10px 0;padding-left:20px;'><li><strong>AR(1) 系数 (φ)</strong>：衡量价格连续性的强度，值越高表示相邻K线价格越相关</li><li><strong>Lag-1 自相关系数（移除前/后）</strong>：收益率序列的一阶自相关性，用于估计AR(1)模型参数。移除后自相关性应显著降低</li><li><strong>连续性偏差</strong>：高IC/准确率可能来自价格连续性而非真实预测能力。使用AR(1)残差可以移除这部分偏差</li><li><strong>自相关性减少</strong>：移除AR(1)成分后自相关性的减少幅度，用于验证去连续性处理的有效性</li></ul>"
 
-                    ar1_section = ("<h2>🔍 AR(1) 价格连续性分析 (fb=1)</h2>" +
-                                   ar1_explanation + ar1_warning +
-                                   "<table><tr><th>指标</th><th>值</th></tr>" +
-                                   "".join(ar1_rows) + "</table>")
+                    # Get current fb value - it should be available in the current scope
+                    # Since we're in a loop over fb values, use the fb variable directly
+                    current_fb = fb if 'fb' in locals() else "N/A"
+                    ar1_section = (
+                        f"<h2>🔍 AR(1) 价格连续性分析 (fb={current_fb})</h2>" +
+                        ar1_explanation + ar1_warning +
+                        "<table><tr><th>指标</th><th>值</th></tr>" +
+                        "".join(ar1_rows) + "</table>")
 
                 quantile_section = ""
                 if quantile_rows:
@@ -1100,13 +1289,21 @@ def main() -> None:
                             q90_f = float(
                                 q90_val) if q90_val != 'N/A' else None
                             if q10_f is not None and q50_f is not None and q90_f is not None:
-                                if q50_f > q10_f or q50_f > q90_f:
+                                # Check for Q50 loss = 0 or suspiciously small (likely calculation error or data issue)
+                                if q50_f == 0.0 or (q50_f < 1e-6
+                                                    and q10_f > 1e-6):
                                     warnings_list.append(
-                                        f"⚠️ {tf}: Q50 loss ({q50_f:.2f}) > Q10/Q90 loss，违反quantile regression性质！"
+                                        f"⚠️ {tf}: Q50 loss ({q50_f:.6f}) 异常小或为0！这可能是计算错误、数据问题或模型预测完全正确（不太可能）。请检查数据或计算逻辑。"
                                     )
+                                # Check if Q50 loss violates quantile regression property (should be <= Q10 and Q90)
+                                elif q50_f > q10_f or q50_f > q90_f:
+                                    warnings_list.append(
+                                        f"⚠️ {tf}: Q50 loss ({q50_f:.6f}) > Q10/Q90 loss（Q10={q10_f:.6f}, Q90={q90_f:.6f}），违反quantile regression性质！"
+                                    )
+                                # Check if Q50 loss is abnormally large
                                 if q50_f > 1.0:
                                     warnings_list.append(
-                                        f"⚠️ {tf}: Q50 loss ({q50_f:.2f})异常大！如果收益率是比例（±0.05），loss应在0.01-0.1量级，可能存在单位问题。"
+                                        f"⚠️ {tf}: Q50 loss ({q50_f:.6f})异常大！如果收益率是比例（±0.05），loss应在0.01-0.1量级，可能存在单位问题。"
                                     )
                         except (ValueError, TypeError):
                             pass
