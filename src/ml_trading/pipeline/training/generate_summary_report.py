@@ -11,7 +11,8 @@ from datetime import datetime
 import pandas as pd
 
 
-def collect_training_results(results_dir: str = "results/training") -> pd.DataFrame:
+def collect_training_results(
+        results_dir: str = "results/training") -> pd.DataFrame:
     """Collect training results from timestamped directories.
     
     Supports both new format (timestamped directories) and old format (fb*_tf* subdirectories).
@@ -25,29 +26,30 @@ def collect_training_results(results_dir: str = "results/training") -> pd.DataFr
     # Check if this is a timestamped directory (new format) or legacy format
     # New format: YYYYMMDD_HHMMSS_{SYMBOL}_{FEATURE_TYPE}/
     # Legacy format: results/training/ with fb*_tf* subdirectories
-    
+
     # First, try to find timestamped directories (new format)
     timestamped_dirs = []
     legacy_found = False
-    
+
     for item in results_path.iterdir():
         if item.is_dir():
             # Check if it's a timestamped directory (format: YYYYMMDD_HHMMSS_*)
-            if item.name[0].isdigit() and len(item.name) >= 15 and "_" in item.name[:15]:
+            if item.name[0].isdigit() and len(
+                    item.name) >= 15 and "_" in item.name[:15]:
                 timestamped_dirs.append(item)
             # Check for legacy format (fb*_tf*)
             elif item.name.startswith("fb"):
                 legacy_found = True
-    
+
     # If timestamped directories exist, use them (new format)
     if timestamped_dirs:
         # Sort by timestamp (newest first)
         timestamped_dirs.sort(key=lambda x: x.name, reverse=True)
-        
+
         # Collect from the most recent timestamped directory (or all if needed)
         # For now, use the most recent one to avoid mixing different training runs
         most_recent_dir = timestamped_dirs[0]
-        
+
         # main directory in timestamped folder
         main_info = most_recent_dir / "training_info.json"
         if main_info.exists():
@@ -60,7 +62,7 @@ def collect_training_results(results_dir: str = "results/training") -> pd.DataFr
                     all_results.append(info)
             except Exception as exc:
                 print(f"Warning: Failed to read {main_info}: {exc}")
-        
+
         # subdirectories (fb*_tf*) in timestamped folder
         for subdir in most_recent_dir.iterdir():
             if subdir.is_dir() and subdir.name.startswith("fb"):
@@ -73,7 +75,7 @@ def collect_training_results(results_dir: str = "results/training") -> pd.DataFr
                             all_results.append(info)
                     except Exception as exc:
                         print(f"Warning: Failed to read {info_file}: {exc}")
-    
+
     # Legacy format: fallback to old structure
     elif legacy_found:
         # main directory
@@ -108,7 +110,8 @@ def collect_training_results(results_dir: str = "results/training") -> pd.DataFr
     return pd.DataFrame(all_results)
 
 
-def generate_summary_report(results_dir: str = "results/training", output_path: Optional[str] = None) -> str:
+def generate_summary_report(results_dir: str = "results/training",
+                            output_path: Optional[str] = None) -> str:
     df = collect_training_results(results_dir)
     if df.empty:
         print("No training results found.")
@@ -119,18 +122,20 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
         df = df.sort_values(["timeframe", "forward_bars"])  # type: ignore
 
     # Extract common info from first row for filename and title
-    first_row = df.iloc[0].to_dict() if hasattr(df.iloc[0], "to_dict") else dict(df.iloc[0])
+    first_row = df.iloc[0].to_dict() if hasattr(
+        df.iloc[0], "to_dict") else dict(df.iloc[0])
     symbol_raw = first_row.get("symbol", "UNKNOWN")
     # Format symbol for filename: replace comma with underscore for multi-asset (e.g., "BTCUSDT,ETHUSDT,SOLUSDT" -> "BTCUSDT_ETHUSDT_SOLUSDT")
-    symbol = symbol_raw.replace(",", "_") if isinstance(symbol_raw, str) else str(symbol_raw)
+    symbol = symbol_raw.replace(",", "_") if isinstance(
+        symbol_raw, str) else str(symbol_raw)
     feature_type = first_row.get("feature_type", "unknown")
-    
+
     # Extract time ranges
     train_start = first_row.get("train_start")
     train_end = first_row.get("train_end")
     actual_start = first_row.get("actual_start")
     actual_end = first_row.get("actual_end")
-    
+
     # Format dates for filename
     def _format_date_for_filename(date_str):
         if not date_str:
@@ -154,18 +159,22 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
                 except:
                     return ""
             return ""
-    
+
     train_start_str = _format_date_for_filename(train_start)
     train_end_str = _format_date_for_filename(train_end)
-    actual_start_str = _format_date_for_filename(actual_start) if actual_start else train_start_str
-    actual_end_str = _format_date_for_filename(actual_end) if actual_end else train_end_str
-    
+    actual_start_str = _format_date_for_filename(
+        actual_start) if actual_start else train_start_str
+    actual_end_str = _format_date_for_filename(
+        actual_end) if actual_end else train_end_str
+
     # Generate filename
     if output_path is None:
         filename_parts = [symbol, feature_type]
         if train_start_str and train_end_str:
             filename_parts.append(f"{train_start_str}_{train_end_str}")
-        if actual_start_str and actual_end_str and (actual_start_str != train_start_str or actual_end_str != train_end_str):
+        if actual_start_str and actual_end_str and (
+                actual_start_str != train_start_str
+                or actual_end_str != train_end_str):
             filename_parts.append(f"oos_{actual_start_str}_{actual_end_str}")
         filename = "_".join(filename_parts) + "_summary_report.html"
         output_path = os.path.join(results_dir, filename)
@@ -184,12 +193,14 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
             feature_types_str = str(feature_types[0])
         elif len(feature_types) > 0:
             # Multiple feature types: use first row's feature_type (most recent training)
-            feature_types_str = str(feature_type) if feature_type != "unknown" else str(feature_types[0])
+            feature_types_str = str(
+                feature_type) if feature_type != "unknown" else str(
+                    feature_types[0])
         else:
             feature_types_str = "unknown"
     else:
         feature_types_str = feature_type if feature_type != "unknown" else "unknown"
-    
+
     # Format dates for display (more readable format)
     def _format_date_for_display(date_str):
         if not date_str:
@@ -210,27 +221,34 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
                 except:
                     return ""
             return ""
-    
+
     train_start_display = _format_date_for_display(train_start)
     train_end_display = _format_date_for_display(train_end)
-    actual_start_display = _format_date_for_display(actual_start) if actual_start else train_start_display
-    actual_end_display = _format_date_for_display(actual_end) if actual_end else train_end_display
-    
+    actual_start_display = _format_date_for_display(
+        actual_start) if actual_start else train_start_display
+    actual_end_display = _format_date_for_display(
+        actual_end) if actual_end else train_end_display
+
     # Generate OOS info HTML if needed
-    has_oos = (actual_start_display and actual_end_display and 
-               (actual_start_display != train_start_display or actual_end_display != train_end_display))
-    oos_info_html = (f'<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>' 
-                     if has_oos else '')
-    
+    has_oos = (actual_start_display and actual_end_display
+               and (actual_start_display != train_start_display
+                    or actual_end_display != train_end_display))
+    oos_info_html = (
+        f'<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>'
+        if has_oos else '')
+
     # Build title with symbol and time ranges
     # Use original symbol for display (with commas if multi-asset)
-    symbol_display = symbol_raw if 'symbol_raw' in locals() else symbol.replace("_", ",")
+    symbol_display = symbol_raw if 'symbol_raw' in locals(
+    ) else symbol.replace("_", ",")
     title_parts = [f"Training Summary Report - {symbol_display}"]
     if feature_types_str != "unknown":
         title_parts.append(f"Features: {feature_types_str}")
     if train_start_str and train_end_str:
         title_parts.append(f"Train: {train_start_str} to {train_end_str}")
-    if actual_start_str and actual_end_str and (actual_start_str != train_start_str or actual_end_str != train_end_str):
+    if actual_start_str and actual_end_str and (
+            actual_start_str != train_start_str
+            or actual_end_str != train_end_str):
         title_parts.append(f"Test: {actual_start_str} to {actual_end_str}")
     report_title = " | ".join(title_parts)
 
@@ -246,25 +264,40 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
         config_dir = row_dict.get("config_dir", "N/A")
         metrics = row_dict.get("metrics", {}) or {}
         # CV RMSE/MSE should come from volatility model (regression), not stage2 (quantile)
-        volatility_metrics = metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
-        vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(volatility_metrics, dict) else {}
+        volatility_metrics = metrics.get("volatility", {}) if isinstance(
+            metrics, dict) else {}
+        vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(
+            volatility_metrics, dict) else {}
         cv_rmse = vol_tf.get("cv_rmse")
         cv_mse = vol_tf.get("cv_mse")
         # Quantile loss metrics: q10, q50 (stage2), q90
-        q10_metrics = metrics.get("q10", {}) if isinstance(metrics, dict) else {}
-        q10_tf = q10_metrics.get(timeframe, {}) if isinstance(q10_metrics, dict) else {}
+        q10_metrics = metrics.get("q10", {}) if isinstance(metrics,
+                                                           dict) else {}
+        q10_tf = q10_metrics.get(timeframe, {}) if isinstance(
+            q10_metrics, dict) else {}
         cv_quantile_loss_0_1 = q10_tf.get("cv_quantile_loss")
-        stage2_metrics = metrics.get("stage2", {}) if isinstance(metrics, dict) else {}
-        q50_tf = stage2_metrics.get(timeframe, {}) if isinstance(stage2_metrics, dict) else {}
+        stage2_metrics = metrics.get("stage2", {}) if isinstance(
+            metrics, dict) else {}
+        q50_tf = stage2_metrics.get(timeframe, {}) if isinstance(
+            stage2_metrics, dict) else {}
         cv_quantile_loss_0_5 = q50_tf.get("cv_quantile_loss")
-        q90_metrics = metrics.get("q90", {}) if isinstance(metrics, dict) else {}
-        q90_tf = q90_metrics.get(timeframe, {}) if isinstance(q90_metrics, dict) else {}
+        q90_metrics = metrics.get("q90", {}) if isinstance(metrics,
+                                                           dict) else {}
+        q90_tf = q90_metrics.get(timeframe, {}) if isinstance(
+            q90_metrics, dict) else {}
         cv_quantile_loss_0_9 = q90_tf.get("cv_quantile_loss")
         # Fallback 1: derive from volatility fold_details if missing
-        if (cv_rmse is None or cv_mse is None) and isinstance(vol_tf.get("fold_details"), list):
+        if (cv_rmse is None or cv_mse is None) and isinstance(
+                vol_tf.get("fold_details"), list):
             try:
-                rmses = [fd.get("rmse") for fd in vol_tf["fold_details"] if isinstance(fd, dict) and fd.get("rmse") is not None]
-                mses = [fd.get("mse") for fd in vol_tf["fold_details"] if isinstance(fd, dict) and fd.get("mse") is not None]
+                rmses = [
+                    fd.get("rmse") for fd in vol_tf["fold_details"]
+                    if isinstance(fd, dict) and fd.get("rmse") is not None
+                ]
+                mses = [
+                    fd.get("mse") for fd in vol_tf["fold_details"]
+                    if isinstance(fd, dict) and fd.get("mse") is not None
+                ]
                 if cv_rmse is None and rmses:
                     cv_rmse = float(sum(rmses) / len(rmses))
                 if cv_mse is None and mses:
@@ -273,29 +306,50 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
                 pass
         # Fallback 2: derive from stage2 fold_details if still missing (quantile model may have rmse)
         if (cv_rmse is None or cv_mse is None):
-            stage2_metrics = metrics.get("stage2", {}) if isinstance(metrics, dict) else {}
-            tf_m = stage2_metrics.get(timeframe, {}) if isinstance(stage2_metrics, dict) else {}
+            stage2_metrics = metrics.get("stage2", {}) if isinstance(
+                metrics, dict) else {}
+            tf_m = stage2_metrics.get(timeframe, {}) if isinstance(
+                stage2_metrics, dict) else {}
             if isinstance(tf_m.get("fold_details"), list):
                 try:
-                    rmses = [fd.get("rmse") for fd in tf_m["fold_details"] if isinstance(fd, dict) and fd.get("rmse") is not None]
-                    mses = [fd.get("mse") for fd in tf_m["fold_details"] if isinstance(fd, dict) and fd.get("mse") is not None]
+                    rmses = [
+                        fd.get("rmse") for fd in tf_m["fold_details"]
+                        if isinstance(fd, dict) and fd.get("rmse") is not None
+                    ]
+                    mses = [
+                        fd.get("mse") for fd in tf_m["fold_details"]
+                        if isinstance(fd, dict) and fd.get("mse") is not None
+                    ]
                     if cv_rmse is None and rmses:
                         cv_rmse = float(sum(rmses) / len(rmses))
                     if cv_mse is None and mses:
                         cv_mse = float(sum(mses) / len(mses))
                 except Exception:
                     pass
-        # classification (train) metrics
-        cls_train = metrics.get("classification_train", {}) if isinstance(metrics, dict) else {}
-        cls_tf = cls_train.get(timeframe, {}) if isinstance(cls_train, dict) else {}
-        f1 = cls_tf.get("f1")
-        acc = cls_tf.get("accuracy")
-        prec = cls_tf.get("precision")
-        rec = cls_tf.get("recall")
-        auc = cls_tf.get("auc")
-        pr_auc = cls_tf.get("pr_auc")
+        # Extract directional metrics (derived from q50 regression)
+        directional_cv_metrics = metrics.get(
+            "directional_cv", {}) if isinstance(metrics, dict) else {}
+        directional_cv_tf = directional_cv_metrics.get(
+            timeframe, {}) if isinstance(directional_cv_metrics, dict) else {}
+        # Fallback to directional_train if directional_cv not available
+        if not directional_cv_tf:
+            directional_train_metrics = metrics.get(
+                "directional_train", {}) if isinstance(metrics, dict) else {}
+            directional_cv_tf = directional_train_metrics.get(
+                timeframe, {}) if isinstance(directional_train_metrics,
+                                             dict) else {}
+
+        f1 = directional_cv_tf.get("f1")
+        acc = directional_cv_tf.get("accuracy")
+        prec = directional_cv_tf.get("precision")
+        rec = directional_cv_tf.get("recall")
+        auc = directional_cv_tf.get("auc")
+        pr_auc = directional_cv_tf.get("pr_auc")
+
+        # Extract feature type and training bars
         feature_type = row_dict.get("feature_type", "N/A")
-        train_bars = row_dict.get("train_bars") or row_dict.get("total_bars", 0)
+        train_bars = row_dict.get("train_bars") or row_dict.get(
+            "total_bars", 0)
 
         # Helper functions
         def _format_metric(val, fmt=".4f"):
@@ -309,29 +363,34 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
         def _quality_color(val, threshold_good, threshold_excellent=None):
             if val is None:
                 return ""
-            if threshold_excellent and val >= threshold_excellent:
+            if threshold_good is None:
+                return ""
+            if threshold_excellent is not None and val >= threshold_excellent:
                 return ' style="background-color:#d4edda; color:#155724;"'
             if val >= threshold_good:
                 return ' style="background-color:#fff3cd; color:#856404;"'
             return ' style="background-color:#f8d7da; color:#721c24;"'
 
-        # Quality assessment
+        # Quality assessment based on directional metrics (F1 or AUC)
         f1_color = _quality_color(f1, 0.3, 0.5)
         auc_color = _quality_color(auc, 0.6, 0.7) if auc is not None else ""
-        pr_auc_color = _quality_color(pr_auc, 0.4, 0.6) if pr_auc is not None else ""
-        quality_passed = (f1 is not None and f1 >= 0.3) or (auc is not None and auc >= 0.6)
-        quality_badge = ('<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ PASS</span>' 
-                        if quality_passed 
-                        else '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ FAIL</span>')
+        pr_auc_color = _quality_color(pr_auc, 0.4,
+                                      0.6) if pr_auc is not None else ""
+        quality_passed = (f1 is not None and f1 >= 0.3) or (auc is not None
+                                                            and auc >= 0.6)
+        quality_badge = (
+            '<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ PASS</span>'
+            if quality_passed else
+            '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ FAIL</span>'
+        )
+
+        cv_rmse_color = _quality_color(cv_rmse, None, None) if cv_rmse else ""
 
         rows.append(
             f"<tr><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
             f"<td>{train_bars:,}</td>"
-            f"<td>{_format_metric(cv_rmse, '.6f')}</td>"
+            f"<td{cv_rmse_color}>{_format_metric(cv_rmse, '.6f')}</td>"
             f"<td>{_format_metric(cv_mse, '.8f')}</td>"
-            f"<td>{_format_metric(cv_quantile_loss_0_1, '.8f')}</td>"
-            f"<td>{_format_metric(cv_quantile_loss_0_5, '.8f')}</td>"
-            f"<td>{_format_metric(cv_quantile_loss_0_9, '.8f')}</td>"
             f"<td{f1_color}>{_format_metric(f1)}</td>"
             f"<td>{_format_metric(acc)}</td>"
             f"<td>{_format_metric(prec)}</td>"
@@ -340,8 +399,7 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
             f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
             f"<td>{feature_type}</td>"
             f"<td>{quality_badge}</td>"
-            f"<td>{config_dir}</td></tr>"
-        )
+            f"<td>{config_dir}</td></tr>")
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>{report_title}</title>
@@ -376,36 +434,54 @@ tr:hover{{background-color:#e8f4f8}}
 <div class="explanation">
 <h3>📊 指标说明与好坏判断</h3>
 <ul>
-<li><strong>F1 Score</strong> (综合指标): 精确率和召回率的调和平均，推荐阈值 F1 &gt; 0.3
+<li><strong>CV RMSE</strong> (交叉验证均方根误差): Q50模型的预测误差，越低越好
     <ul>
-        <li>✅ 优秀 (绿色): F1 &gt;= 0.5</li>
-        <li>⚠️ 良好 (黄色): F1 &gt;= 0.3</li>
-        <li>❌ 较差 (红色): F1 &lt; 0.3</li>
+        <li>✅ 优秀: RMSE 较小，说明预测精度高</li>
+        <li>⚠️ 注意: 如果RMSE过大，说明模型预测不准确</li>
     </ul>
 </li>
-<li><strong>AUC-ROC</strong> (区分能力): 衡量模型区分正负样本的能力，对阈值不敏感，推荐阈值 AUC &gt; 0.6
+<li><strong>CV MSE</strong> (交叉验证均方误差): Q50模型的预测误差平方，越低越好</li>
+<li><strong>F1</strong> (F1 Score): 从Q50回归模型派生的方向性预测F1分数，综合精确率和召回率
     <ul>
-        <li>✅ 优秀 (绿色): AUC &gt;= 0.7</li>
-        <li>⚠️ 良好 (黄色): AUC &gt;= 0.6</li>
-        <li>❌ 较差 (红色): AUC &lt; 0.6</li>
+        <li>阈值: F1 &gt; 0.3 为良好，F1 &gt; 0.5 为优秀</li>
+        <li>反映模型对方向（涨/跌）的预测能力</li>
     </ul>
 </li>
-<li><strong>PR-AUC</strong> (精确率-召回率曲线下面积): 更适合不平衡数据，推荐阈值 PR-AUC &gt; 0.4
+<li><strong>Acc</strong> (Accuracy): 从Q50回归模型派生的方向性预测准确率
     <ul>
-        <li>✅ 优秀 (绿色): PR-AUC &gt;= 0.6</li>
-        <li>⚠️ 良好 (黄色): PR-AUC &gt;= 0.4</li>
-        <li>❌ 较差 (红色): PR-AUC &lt; 0.4</li>
+        <li>反映模型预测方向的正确率</li>
+        <li>Acc &gt; 0.5 表示模型有预测能力</li>
     </ul>
 </li>
-<li><strong>Precision</strong> (精确率): 控制误开仓，预测为做多时真的做多比例</li>
-<li><strong>Recall</strong> (召回率): 抓住行情能力，实际该做多时模型抓到比例</li>
-<li><strong>Accuracy</strong> (准确率): 总体分类准确率，在不平衡数据上可能虚高</li>
-<li><strong>CV RMSE/MSE</strong>: 交叉验证的回归误差，越低越好</li>
-<li><strong>Quantile Loss 0.1 / 0.5 / 0.9</strong>: 分位数回归损失，用于量化不确定性估计
+<li><strong>Prec</strong> (Precision): 从Q50回归模型派生的方向性预测精确率
     <ul>
-        <li><strong>Quantile Loss 0.1</strong> (10%分位数): 预测下限，用于估计未来收益的悲观情况。值越小越好，通常应该在合理范围内。</li>
-        <li><strong>Quantile Loss 0.5</strong> (50%分位数，中位数): 预测中位数，用于点估计。这是主要的预测值，通常与RMSE相关。</li>
-        <li><strong>Quantile Loss 0.9</strong> (90%分位数): 预测上限，用于估计未来收益的乐观情况。值越小越好。</li>
+        <li>反映模型预测为"涨"时，实际确实是"涨"的比例</li>
+    </ul>
+</li>
+<li><strong>Rec</strong> (Recall): 从Q50回归模型派生的方向性预测召回率
+    <ul>
+        <li>反映模型捕获所有"涨"的情况的能力</li>
+    </ul>
+</li>
+<li><strong>AUC</strong> (ROC AUC): 从Q50回归模型派生的方向性预测ROC曲线下面积
+    <ul>
+        <li>阈值: AUC &gt; 0.6 为良好，AUC &gt; 0.7 为优秀</li>
+        <li>反映模型区分"涨"和"跌"的能力</li>
+    </ul>
+</li>
+<li><strong>PR-AUC</strong> (Precision-Recall AUC): 从Q50回归模型派生的方向性预测PR曲线下面积
+    <ul>
+        <li>阈值: PR-AUC &gt; 0.4 为良好，PR-AUC &gt; 0.6 为优秀</li>
+        <li>在不平衡数据集上比ROC AUC更有意义</li>
+    </ul>
+</li>
+<li><strong>模型架构</strong>: 使用4个回归模型（Q10, Q50, Q90, Volatility）替代分类模型
+    <ul>
+        <li><strong>Q10模型</strong>: 预测10%分位数，用于估计未来收益的下限（悲观情况）</li>
+        <li><strong>Q50模型</strong>: 预测中位数，用于点估计和方向判断</li>
+        <li><strong>Q90模型</strong>: 预测90%分位数，用于估计未来收益的上限（乐观情况）</li>
+        <li><strong>Volatility模型</strong>: 预测未来波动率，用于风险调整和仓位管理</li>
+        <li><strong>决策逻辑</strong>: signal_strength = |q50| / vol, confidence = |q50| / (q90 - q10)</li>
         <li><strong>使用说明</strong>: 
             <ul>
                 <li>比较三个quantile loss可以评估模型的不确定性估计能力：如果0.1和0.9的loss显著高于0.5，说明模型在极端情况下预测能力较弱。</li>
@@ -416,7 +492,6 @@ tr:hover{{background-color:#e8f4f8}}
         </li>
     </ul>
 </li>
-<li><strong>Quality</strong>: 模型质量检查，✅ PASS = F1 &gt;= 0.3 或 AUC &gt;= 0.6，❌ FAIL = 两者都不满足</li>
 </ul>
 <h3>💡 特征类型比较</h3>
 <ul>
@@ -425,11 +500,10 @@ tr:hover{{background-color:#e8f4f8}}
 <li><strong>enhanced</strong>: 增强特征（包含更多高级特征），特征更全面但计算更慢</li>
 <li><strong>comprehensive</strong>: 综合特征（最完整，包含所有特征类型），特征最丰富但可能过拟合</li>
 </ul>
-<p><strong>⚠️ 注意:</strong> 如果Accuracy很高（接近90%+）但F1很低，可能是模型在"背答案"（预测多数类），需要检查数据平衡性。</p>
-<p><strong>💡 建议:</strong> 比较不同特征类型（baseline vs default）时，重点关注F1、AUC和PR-AUC，这些指标更能反映模型真实性能。</p>
+<p><strong>💡 建议:</strong> 比较不同特征类型时，重点关注CV RMSE和Quantile Loss，这些指标更能反映回归模型的真实性能。</p>
 </div>
 <table>
-<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>Quantile Loss 0.1</th><th>Quantile Loss 0.5</th><th>Quantile Loss 0.9</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Config</th></tr>
+<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Config</th></tr>
 {''.join(rows)}
 </table>
 </div>
@@ -444,17 +518,18 @@ tr:hover{{background-color:#e8f4f8}}
         print(f"  Feature types: {feature_types_str}")
     if train_start_str and train_end_str:
         print(f"  Training period: {train_start_str} to {train_end_str}")
-    if actual_start_str and actual_end_str and (actual_start_str != train_start_str or actual_end_str != train_end_str):
+    if actual_start_str and actual_end_str and (
+            actual_start_str != train_start_str
+            or actual_end_str != train_end_str):
         print(f"  Test period: {actual_start_str} to {actual_end_str}")
     return output_path
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Generate training summary report")
+    parser = argparse.ArgumentParser(
+        description="Generate training summary report")
     parser.add_argument("--results-dir", type=str, default="results/training")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
     generate_summary_report(args.results_dir, args.output)
-
-

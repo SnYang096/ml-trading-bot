@@ -10,6 +10,7 @@ import json
 from ml_trading.strategies.ml_strategy import MLTradingStrategy
 from ml_trading.data_tools.data_loader import MarketDataLoader
 from ml_trading.data_tools.feature_engineering import FeatureEngineer
+import argparse
 
 DEFAULT_MODEL_NAME = os.environ.get("MODEL_NAME",
                                     "trained_model_btcusdt_20250501_20250531")
@@ -239,28 +240,91 @@ class VectorBotBacktest:
 
         print(f"Using {len(X_5t_clean)} clean data points for prediction")
 
-        # Generate predictions
-        stage1_model = self.strategy.pipeline.stage1_models["5T"]
-        stage2_model = self.strategy.pipeline.stage2_models["5T"]
-
-        stage1_preds = stage1_model.predict(X_5t_clean)
-        stage2_preds = stage2_model.predict(X_5t_clean)
-
-        # Create signals DataFrame
-        signals = pd.DataFrame({
-            "timestamp": X_5t_clean.index,
-            "stage1_pred": stage1_preds,
-            "stage2_pred": stage2_preds,
-            "close": data_5t["close"].loc[X_5t_clean.index],
-        })
-
-        # Convert to discrete signals
-        signals["discrete_signal"] = 0
-        signals.loc[stage1_preds > 0.6, "discrete_signal"] = 1  # Long
-        signals.loc[stage1_preds < 0.4, "discrete_signal"] = -1  # Short
-
-        # Calculate signal strength
-        signals["signal_strength"] = np.abs(signals["stage1_pred"] - 0.5)
+        # Check if new 4-model architecture is available
+        self.has_new_models = (
+            hasattr(self.strategy.pipeline, "q50_models") and
+            "5T" in self.strategy.pipeline.q50_models
+        )
+        
+        if self.has_new_models:
+            # Use new 4-model architecture (q10, q50, q90, volatility)
+            print("Using new 4-model architecture (q10, q50, q90, volatility)...")
+            
+            # Get predictions from all four models
+            q10_pred = self.strategy.pipeline.q10_models["5T"].predict(X_5t_clean)
+            q50_pred = self.strategy.pipeline.q50_models["5T"].predict(X_5t_clean)
+            q90_pred = self.strategy.pipeline.q90_models["5T"].predict(X_5t_clean)
+            vol_pred = self.strategy.pipeline.volatility_models["5T"].predict(X_5t_clean)
+            
+            # Create signals DataFrame
+            signals = pd.DataFrame({
+                "timestamp": X_5t_clean.index,
+                "q10": q10_pred,
+                "q50": q50_pred,
+                "q90": q90_pred,
+                "vol": vol_pred,
+                "close": data_5t["close"].loc[X_5t_clean.index],
+            })
+            
+            # Calculate derived metrics
+            signals["interval_width"] = signals["q90"] - signals["q10"]
+            signals["confidence"] = np.abs(signals["q50"]) / (signals["interval_width"] + 1e-8)
+            signals["signal_strength"] = signals["q50"] / (signals["vol"] + 1e-8)
+            
+            # Generate signals using new decision logic
+            # Default thresholds (can be overridden)
+            signal_strength_threshold = getattr(self.strategy, 'signal_strength_threshold', 1.0)
+            confidence_threshold = getattr(self.strategy, 'confidence_threshold', 0.3)
+            
+            signals["discrete_signal"] = 0
+            # Long signal: positive q50, high signal strength, high confidence
+            long_mask = (
+                (signals["q50"] > 0) &
+                (signals["signal_strength"] > signal_strength_threshold) &
+                (signals["confidence"] > confidence_threshold)
+            )
+            signals.loc[long_mask, "discrete_signal"] = 1
+            
+            # Short signal: negative q50, high signal strength (absolute), high confidence
+            short_mask = (
+                (signals["q50"] < 0) &
+                (np.abs(signals["signal_strength"]) > signal_strength_threshold) &
+                (signals["confidence"] > confidence_threshold)
+            )
+            signals.loc[short_mask, "discrete_signal"] = -1
+            
+            # Use absolute signal strength for position sizing
+            signals["signal_strength"] = np.abs(signals["signal_strength"])
+            
+        else:
+            # Fallback to old stage1/stage2 architecture for backward compatibility
+            print("⚠️  New 4-model architecture not found, using old stage1/stage2 models...")
+            if not (hasattr(self.strategy.pipeline, "stage1_models") and 
+                    "5T" in self.strategy.pipeline.stage1_models):
+                print("❌ No valid models found in pipeline")
+                return
+            
+            stage1_model = self.strategy.pipeline.stage1_models["5T"]
+            stage2_model = self.strategy.pipeline.stage2_models["5T"]
+            
+            stage1_preds = stage1_model.predict(X_5t_clean)
+            stage2_preds = stage2_model.predict(X_5t_clean)
+            
+            # Create signals DataFrame
+            signals = pd.DataFrame({
+                "timestamp": X_5t_clean.index,
+                "stage1_pred": stage1_preds,
+                "stage2_pred": stage2_preds,
+                "close": data_5t["close"].loc[X_5t_clean.index],
+            })
+            
+            # Convert to discrete signals (old logic)
+            signals["discrete_signal"] = 0
+            signals.loc[stage1_preds > 0.6, "discrete_signal"] = 1  # Long
+            signals.loc[stage1_preds < 0.4, "discrete_signal"] = -1  # Short
+            
+            # Calculate signal strength (old logic)
+            signals["signal_strength"] = np.abs(signals["stage1_pred"] - 0.5)
 
         print(f"\n📊 Signal Statistics:")
         print(f"   Total signals: {len(signals)}")
@@ -273,6 +337,16 @@ class VectorBotBacktest:
         print(
             f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}"
         )
+        
+        # Show model architecture info
+        if self.has_new_models:
+            print(f"   Model architecture: 4-model (q10, q50, q90, volatility)")
+            if "q50" in signals.columns:
+                print(f"   Avg Q50 prediction: {signals['q50'].mean():.6f}")
+                print(f"   Avg signal strength: {signals['signal_strength'].mean():.4f}")
+                print(f"   Avg confidence: {signals['confidence'].mean():.4f}")
+        else:
+            print(f"   Model architecture: 2-model (stage1, stage2)")
 
         # Run backtest
         print(f"\n🔄 Running backtest...")
@@ -286,7 +360,15 @@ class VectorBotBacktest:
             self.update_positions(current_price, timestamp)
 
             # Check for new signals
-            if signal != 0 and signal_strength > 0.1:  # Lower minimum signal strength
+            # Use different thresholds based on model architecture
+            if self.has_new_models:
+                # For new 4-model architecture, signal_strength and confidence are already filtered
+                min_signal_strength = 0.01  # Lower threshold for absolute signal strength
+            else:
+                # For old stage1/stage2 architecture, use original threshold
+                min_signal_strength = 0.1
+            
+            if signal != 0 and signal_strength > min_signal_strength:
                 # Check if we can open new position
                 active_positions = len(
                     [p for p in self.positions if p["status"] == "active"])
@@ -448,20 +530,28 @@ class VectorBotBacktest:
 
 def main():
     """Main function to run VectorBot backtest."""
-    # Check if model exists
-    model_path = DEFAULT_MODEL_PATH
+    parser = argparse.ArgumentParser(description="VectorBot backtest runner")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL_PATH, help="Path to trained model .pkl")
+    parser.add_argument("--symbol", type=str, default=os.environ.get("SYMBOL", "BTCUSDT"), help="Symbol (for logging)")
+    parser.add_argument("--start", type=str, default=os.environ.get("START_DATE"), help="Backtest start date (YYYY-MM-DD)")
+    parser.add_argument("--end", type=str, default=os.environ.get("END_DATE"), help="Backtest end date (YYYY-MM-DD)")
+    args = parser.parse_args()
+
+    model_path = args.model
     if not os.path.exists(model_path):
         print(f"❌ Model not found: {model_path}")
-        print(
-            "Please run `make train` (or python -m ml_trading.models.train_model) first"
-        )
+        print("Please run `make train` first to produce the model bundle (.pkl)")
         return
+
+    print(f"Symbol: {args.symbol}")
+    if args.start or args.end:
+        print(f"Backtest range: {args.start or '-∞'} → {args.end or '+∞'}")
 
     # Initialize backtest
     backtest = VectorBotBacktest(model_path, initial_capital=100000)
 
-    # Run backtest
-    backtest.run_backtest()
+    # Run backtest with optional date range
+    backtest.run_backtest(start_date=args.start, end_date=args.end)
 
 
 if __name__ == "__main__":

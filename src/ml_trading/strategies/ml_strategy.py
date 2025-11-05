@@ -82,10 +82,10 @@ class MLTradingStrategy:
         return metrics
 
     def generate_signals(
-        self, data: Optional[pd.DataFrame] = None
+        self, data: Optional[pd.DataFrame] = None, timeframe: str = "5T"
     ) -> pd.DataFrame:
         """
-        Generate trading signals using the four-model architecture.
+        Generate trading signals using the four-model architecture (single timeframe).
 
         Decision Logic:
         - signal_strength = q50_pred / pred_vol (收益风险比)
@@ -94,7 +94,8 @@ class MLTradingStrategy:
         - Position size = base_size * signal_strength * confidence
 
         Args:
-            data: Optional new data for signal generation
+            data: Optional new data for signal generation (should be single timeframe)
+            timeframe: Timeframe to use for predictions (default: "5T")
 
         Returns:
             DataFrame with trading signals and positions
@@ -106,141 +107,109 @@ class MLTradingStrategy:
         if data is None:
             multi_tf_data = self.data_loader.get_multi_timeframe_data()
             engineered_data = self.feature_engineer.engineer_features(multi_tf_data)
-        else:
-            # Assume data is already engineered for the base timeframe
-            engineered_data = {"5T": data}  # Simplified for demo
+            if timeframe not in engineered_data:
+                raise ValueError(f"Timeframe {timeframe} not found in engineered data. Available: {list(engineered_data.keys())}")
+            data = engineered_data[timeframe]
 
-        # Generate predictions from all four models
-        print("Generating predictions from all models...")
-        all_predictions = self.pipeline.predict_all_models(engineered_data)
-
-        # Get reference timeframe for alignment
-        reference_tf = list(all_predictions["q50"].keys())[0]
-        n_samples = len(all_predictions["q50"][reference_tf])
-
-        # Create ensemble DataFrame
-        ensemble_df = pd.DataFrame(index=range(n_samples))
-
-        # Ensemble predictions across timeframes (weighted average)
-        for tf in all_predictions["q50"].keys():
-            ensemble_df[f"q10_{tf}"] = all_predictions["q10"][tf]
-            ensemble_df[f"q50_{tf}"] = all_predictions["q50"][tf]
-            ensemble_df[f"q90_{tf}"] = all_predictions["q90"][tf]
-            ensemble_df[f"vol_{tf}"] = all_predictions["volatility"][tf]
-
-        # Weighted ensemble: larger timeframes get more weight
-        weights = self._get_timeframe_weights(list(all_predictions["q50"].keys()))
+        # Generate predictions from all four models for single timeframe
+        print(f"Generating predictions from all models for timeframe {timeframe}...")
         
-        # Ensemble q10, q50, q90, volatility predictions
-        ensemble_df["q10_ensemble"] = sum(
-            ensemble_df[f"q10_{tf}"] * weights[i]
-            for i, tf in enumerate(all_predictions["q50"].keys())
-        )
-        ensemble_df["q50_ensemble"] = sum(
-            ensemble_df[f"q50_{tf}"] * weights[i]
-            for i, tf in enumerate(all_predictions["q50"].keys())
-        )
-        ensemble_df["q90_ensemble"] = sum(
-            ensemble_df[f"q90_{tf}"] * weights[i]
-            for i, tf in enumerate(all_predictions["q50"].keys())
-        )
-        ensemble_df["vol_ensemble"] = sum(
-            ensemble_df[f"vol_{tf}"] * weights[i]
-            for i, tf in enumerate(all_predictions["q50"].keys())
+        # Prepare features
+        feature_columns = [
+            col for col in data.columns
+            if col not in ["open", "high", "low", "close", "volume"]
+        ]
+        X = data[feature_columns]
+
+        # Get predictions from all four models
+        if timeframe not in self.pipeline.q50_models:
+            raise ValueError(f"Model for timeframe {timeframe} not found. Available: {list(self.pipeline.q50_models.keys())}")
+        
+        q10_pred = self.pipeline.q10_models[timeframe].predict(X)
+        q50_pred = self.pipeline.q50_models[timeframe].predict(X)
+        q90_pred = self.pipeline.q90_models[timeframe].predict(X)
+        vol_pred = self.pipeline.volatility_models[timeframe].predict(X)
+
+        # Create DataFrame with predictions
+        signals_df = pd.DataFrame(
+            {
+                "q10": q10_pred,
+                "q50": q50_pred,
+                "q90": q90_pred,
+                "vol": vol_pred,
+            },
+            index=data.index if hasattr(data, 'index') else range(len(q50_pred)),
         )
 
         # Calculate derived metrics
         # Interval width: uncertainty measure
-        ensemble_df["interval_width"] = ensemble_df["q90_ensemble"] - ensemble_df["q10_ensemble"]
+        signals_df["interval_width"] = signals_df["q90"] - signals_df["q10"]
         
         # Confidence: |q50| / interval_width (how certain is the prediction)
-        ensemble_df["confidence"] = np.abs(ensemble_df["q50_ensemble"]) / (
-            ensemble_df["interval_width"] + 1e-8  # Avoid division by zero
+        signals_df["confidence"] = np.abs(signals_df["q50"]) / (
+            signals_df["interval_width"] + 1e-8  # Avoid division by zero
         )
 
         # Signal strength: q50 / vol (risk-adjusted return)
-        ensemble_df["signal_strength"] = ensemble_df["q50_ensemble"] / (
-            ensemble_df["vol_ensemble"] + 1e-8  # Avoid division by zero
+        signals_df["signal_strength"] = signals_df["q50"] / (
+            signals_df["vol"] + 1e-8  # Avoid division by zero
         )
 
         # Generate trading signals based on thresholds
-        ensemble_df["signal"] = 0  # 0 = Hold, 1 = Long, -1 = Short
+        signals_df["signal"] = 0  # 0 = Hold, 1 = Long, -1 = Short
         
         # Long signal: positive q50, high signal strength, high confidence
         long_mask = (
-            (ensemble_df["q50_ensemble"] > 0) &
-            (ensemble_df["signal_strength"] > self.signal_strength_threshold) &
-            (ensemble_df["confidence"] > self.confidence_threshold)
+            (signals_df["q50"] > 0) &
+            (signals_df["signal_strength"] > self.signal_strength_threshold) &
+            (signals_df["confidence"] > self.confidence_threshold)
         )
-        ensemble_df.loc[long_mask, "signal"] = 1
+        signals_df.loc[long_mask, "signal"] = 1
 
         # Short signal: negative q50, high signal strength (absolute), high confidence
         short_mask = (
-            (ensemble_df["q50_ensemble"] < 0) &
-            (np.abs(ensemble_df["signal_strength"]) > self.signal_strength_threshold) &
-            (ensemble_df["confidence"] > self.confidence_threshold)
+            (signals_df["q50"] < 0) &
+            (np.abs(signals_df["signal_strength"]) > self.signal_strength_threshold) &
+            (signals_df["confidence"] > self.confidence_threshold)
         )
-        ensemble_df.loc[short_mask, "signal"] = -1
+        signals_df.loc[short_mask, "signal"] = -1
 
         # Position sizing: base_size * signal_strength * confidence
-        ensemble_df["position_size"] = 0.0
-        trade_mask = ensemble_df["signal"] != 0
-        ensemble_df.loc[trade_mask, "position_size"] = (
+        signals_df["position_size"] = 0.0
+        trade_mask = signals_df["signal"] != 0
+        signals_df.loc[trade_mask, "position_size"] = (
             self.base_position_size *
-            np.abs(ensemble_df.loc[trade_mask, "signal_strength"]) *
-            ensemble_df.loc[trade_mask, "confidence"]
+            np.abs(signals_df.loc[trade_mask, "signal_strength"]) *
+            signals_df.loc[trade_mask, "confidence"]
         )
         
         # Cap position size at reasonable maximum (e.g., 1.0 = 100% of portfolio)
-        ensemble_df["position_size"] = np.clip(ensemble_df["position_size"], 0.0, 1.0)
+        signals_df["position_size"] = np.clip(signals_df["position_size"], 0.0, 1.0)
 
         # Apply risk management
-        if data is None:
-            price_data = self.data_loader.raw_data
+        if data is not None and "close" in data.columns:
+            price_data = data[["close", "open", "high", "low", "volume"]].copy()
+        elif self.data_loader.raw_data is not None:
+            price_data = self.data_loader.raw_data.copy()
         else:
-            price_data = data
-
-        # Ensure we have valid price data
-        if price_data is None:
             # Create dummy price data if needed
-            dates = pd.date_range("2020-01-01", periods=len(ensemble_df), freq="5T")
+            dates = pd.date_range("2020-01-01", periods=len(signals_df), freq=timeframe)
             price_data = pd.DataFrame(
                 {
-                    "close": np.ones(len(ensemble_df)) * 100,
-                    "open": np.ones(len(ensemble_df)) * 100,
-                    "high": np.ones(len(ensemble_df)) * 100,
-                    "low": np.ones(len(ensemble_df)) * 100,
-                    "volume": np.ones(len(ensemble_df)) * 1000,
+                    "close": np.ones(len(signals_df)) * 100,
+                    "open": np.ones(len(signals_df)) * 100,
+                    "high": np.ones(len(signals_df)) * 100,
+                    "low": np.ones(len(signals_df)) * 100,
+                    "volume": np.ones(len(signals_df)) * 1000,
                 },
                 index=dates,
             )
 
         print("Applying risk management rules...")
-        final_df = self.risk_manager.apply_risk_management(ensemble_df, price_data)
+        final_df = self.risk_manager.apply_risk_management(signals_df, price_data)
 
         return final_df
 
-    def _get_timeframe_weights(self, timeframes: List[str]) -> List[float]:
-        """
-        Get weights for each timeframe based on their size.
-        Larger timeframes get more weight.
-
-        Args:
-            timeframes: List of timeframe strings (e.g., ['5T', '15T', '60T'])
-
-        Returns:
-            List of weights that sum to 1.0
-        """
-        # Extract timeframe minutes and sort
-        tf_minutes = [int(tf.rstrip("T")) for tf in timeframes]
-
-        # Create weights proportional to timeframe size
-        # Using square root to avoid too much dominance of large TF
-        raw_weights = [np.sqrt(minutes) for minutes in tf_minutes]
-        total = sum(raw_weights)
-        weights = [w / total for w in raw_weights]
-
-        return weights
 
     def optimize_strategy(
         self, n_trials: int = 50

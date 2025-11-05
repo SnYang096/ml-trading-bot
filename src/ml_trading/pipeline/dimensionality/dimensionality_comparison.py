@@ -787,7 +787,7 @@ def evaluate_model_performance(
 def save_production_results(
     results: Dict,
     model,
-    autoencoder: UnifiedAutoencoder,
+    autoencoder: Optional[UnifiedAutoencoder],
     results_dir: str,
 ) -> str:
     print("💾 Saving production results...")
@@ -797,8 +797,10 @@ def save_production_results(
         json.dump(results, f, indent=2, default=str)
 
     joblib.dump(model, f"{results_dir}/production_model.pkl")
-    torch.save(autoencoder.state_dict(),
-               f"{results_dir}/production_autoencoder.pth")
+    # Autoencoder disabled: only save model; skip AE artifact if not provided
+    if autoencoder is not None:
+        torch.save(autoencoder.state_dict(),
+                   f"{results_dir}/production_autoencoder.pth")
 
     print(f"✅ Results saved to {results_dir}")
     return results_dir
@@ -812,7 +814,7 @@ def run_dimensionality_comparison(
     train_start: str | None = None,
     train_end: str | None = None,
     feature_type: str = "comprehensive",
-) -> Tuple[Dict, any, UnifiedAutoencoder, str]:
+) -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
     start_dt = datetime.now()
@@ -859,26 +861,11 @@ def run_dimensionality_comparison(
         f"✅ Data split: Train {X_train.shape}, Val {X_val.shape}, Test {X_test.shape}"
     )
 
-    print("\n🧠 Training production Autoencoder...")
-    autoencoder, trainer, train_losses = train_production_autoencoder(
-        X_train,
-        encoding_dim=encoding_dim,
-        epochs=autoencoder_epochs,
-    )
-
-    print("\n📊 Extracting embeddings...")
-    X_train_emb = trainer.transform(X_train)
-    X_val_emb = trainer.transform(X_val)
-    X_test_emb = trainer.transform(X_test)
-
-    # Validate embeddings are finite and have variance
-    if not np.isfinite(X_train_emb).all() or not np.isfinite(X_val_emb).all():
-        raise ValueError("Autoencoder embeddings contain NaN/inf values")
-    if float(np.std(X_train_emb)) == 0.0:
-        raise ValueError(
-            "Autoencoder embeddings have zero variance; model would not train")
-
-    print(f"✅ Embeddings extracted: {X_train_emb.shape}")
+    # Autoencoder disabled: use original features as "compressed" placeholders
+    autoencoder = None
+    X_train_emb = X_train
+    X_val_emb = X_val
+    X_test_emb = X_test
 
     print("\n🌲 Training original features model...")
     model_original = train_production_lightgbm(X_train, y_train, X_val, y_val)
@@ -922,7 +909,7 @@ def run_dimensionality_comparison(
 
     print("\n📋 Generating production report...")
 
-    compression_ratio = X.shape[1] / X_train_emb.shape[1]
+    compression_ratio = 1.0
     performance_change = results_compressed["r2"] - results_original["r2"]
 
     # Format training date range for directory name (include symbol and feature_type)
@@ -946,15 +933,16 @@ def run_dimensionality_comparison(
         "duration_sec": (datetime.now() - start_dt).total_seconds(),
         "data_info": {
             "original_features_count": X.shape[1],
-            "compressed_dimensions": X_train_emb.shape[1],
+            "compressed_dimensions": X.shape[1],
             "compression_ratio": compression_ratio,
             "training_samples": len(X_train),
             "validation_samples": len(X_val),
             "test_samples": len(X_test),
         },
         "training_info": {
-            "autoencoder_epochs": autoencoder_epochs,
-            "autoencoder_final_loss": train_losses[-1],
+            # Autoencoder disabled
+            "autoencoder_epochs": 0,
+            "autoencoder_final_loss": None,
             "lightgbm_original_iterations": model_original.best_iteration,
             "lightgbm_compressed_iterations": model_compressed.best_iteration,
         },
@@ -974,7 +962,7 @@ def run_dimensionality_comparison(
             100 if results_original["r2"] != 0 else 0,
         },
         "model_info": {
-            "device_used": str(autoencoder.encoder[0].weight.device),
+            "device_used": "cpu",
             "cuda_available": torch.cuda.is_available(),
             "feature_names": feature_names[:10],
         },
@@ -1002,7 +990,7 @@ def run_dimensionality_comparison(
     return results, model_compressed, autoencoder, results_dir
 
 
-def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
+def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     parser = argparse.ArgumentParser(
         description=
         "Dimensionality reduction comparison: evaluate feature reduction stages (All → IC-filtered → Representatives → Autoencoder)",

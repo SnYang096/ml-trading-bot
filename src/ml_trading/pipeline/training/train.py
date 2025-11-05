@@ -81,8 +81,8 @@ def _collect_files(data: List[str],
             for p in files:
                 fn = os.path.basename(p).upper()
                 if (fn.startswith(symbol.upper())
-                        or fn.startswith(file_symbol.upper())
-                        or fn.startswith(file_symbol.replace("-", "_").upper())):
+                        or fn.startswith(file_symbol.upper()) or fn.startswith(
+                            file_symbol.replace("-", "_").upper())):
                     if p not in filtered:  # Avoid duplicates
                         filtered.append(p)
         files = filtered
@@ -122,10 +122,13 @@ def main() -> None:
                         type=str,
                         default=None,
                         help="Directory containing parquet files")
-    parser.add_argument("--symbol",
-                        type=str,
-                        default="BTCUSDT",
-                        help="Symbol(s) metadata for report. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset training")
+    parser.add_argument(
+        "--symbol",
+        type=str,
+        default="BTCUSDT",
+        help=
+        "Symbol(s) metadata for report. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset training"
+    )
     parser.add_argument("--freq",
                         type=str,
                         default="5T",
@@ -150,7 +153,9 @@ def main() -> None:
         "--feature-type",
         type=str,
         default="baseline",
-        help="baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (e.g., baseline,default,hurst)")
+        help=
+        "baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (e.g., baseline,default,hurst)"
+    )
     parser.add_argument("--oos-months",
                         type=int,
                         default=3,
@@ -191,10 +196,11 @@ def main() -> None:
                            args.end,
                            symbols=args.symbol)
     raw = _load_many(files)
-    
+
     # Parse symbols for multi-asset training
     symbol_list = [s.strip() for s in args.symbol.split(",") if s.strip()]
-    symbols_str = ",".join(symbol_list) if len(symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
+    symbols_str = ",".join(symbol_list) if len(
+        symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
     print(f"📊 Training with symbol(s): {symbols_str}")
     if len(symbol_list) > 1:
         print(f"   Multi-asset training: {len(symbol_list)} assets")
@@ -206,8 +212,10 @@ def main() -> None:
     # Format symbol for directory name (replace comma with underscore for multi-asset)
     symbol_dir = symbols_str.replace(",", "_")
     # Create base directory with timestamp, symbol, and feature_type
+    # We'll finalize by appending train_start/train_end (YYYYMMDD) after first config is processed
     base_dir = f"{training_timestamp}_{symbol_dir}_{args.feature_type}"
     base_results_dir = os.path.join("results/training", base_dir)
+    base_dir_finalized = False
     print(f"📁 Results will be saved to: {base_results_dir}")
 
     for freq in freqs:
@@ -359,18 +367,18 @@ def main() -> None:
                                       quantile_alpha=0.1,
                                       use_gpu=args.gpu)
             q10_metrics = model_q10.train(X_df,
-                                y_return,
-                                n_splits=max(2, args.cv_folds or 2),
-                                use_time_series_cv=True)
+                                          y_return,
+                                          n_splits=max(2, args.cv_folds or 2),
+                                          use_time_series_cv=True)
 
             # q90: 90% quantile for uncertainty estimation
             model_q90 = LightGBMModel(model_type="quantile",
                                       quantile_alpha=0.9,
                                       use_gpu=args.gpu)
             q90_metrics = model_q90.train(X_df,
-                                y_return,
-                                n_splits=max(2, args.cv_folds or 2),
-                                use_time_series_cv=True)
+                                          y_return,
+                                          n_splits=max(2, args.cv_folds or 2),
+                                          use_time_series_cv=True)
 
             # volatility: regression model for volatility prediction
             model_vol = LightGBMModel(model_type="regression",
@@ -380,9 +388,9 @@ def main() -> None:
                                           n_splits=n_splits,
                                           use_time_series_cv=use_cv)
 
-            # Classification/regression metrics containers
+            # Directional metrics (derived from q50 regression) and regression metrics containers
             oos_metrics = {}
-            cls_metrics_train = {}
+            directional_metrics_train = {}
             if len(oos_df) > 0:
                 from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, precision_recall_fscore_support, roc_auc_score, average_precision_score
                 X_oos = oos_df[feature_cols].values
@@ -407,31 +415,31 @@ def main() -> None:
                 oos_vol_rmse = float(
                     np.sqrt(mean_squared_error(y_vol_oos, y_pred_vol)))
                 oos_vol_mae = float(mean_absolute_error(y_vol_oos, y_pred_vol))
-                # Derive classification labels from returns (directional)
-                y_true_cls = (y_ret_oos > 0).astype(int)
+                # Derive directional metrics from q50 regression (direction prediction)
+                y_true_dir = (y_ret_oos > 0).astype(int)
                 y_score = y_pred_q50
-                y_pred_cls = (y_score > 0).astype(int)
-                acc = float(accuracy_score(y_true_cls, y_pred_cls))
+                y_pred_dir = (y_score > 0).astype(int)
+                acc = float(accuracy_score(y_true_dir, y_pred_dir))
                 prec, rec, f1, _ = precision_recall_fscore_support(
-                    y_true_cls, y_pred_cls, average="binary", zero_division=0)
+                    y_true_dir, y_pred_dir, average="binary", zero_division=0)
                 try:
-                    auc = float(roc_auc_score(y_true_cls, y_score))
+                    auc = float(roc_auc_score(y_true_dir, y_score))
                 except Exception:
                     auc = float("nan")
                 try:
                     pr_auc = float(average_precision_score(
-                        y_true_cls, y_score))
+                        y_true_dir, y_score))
                 except Exception:
                     pr_auc = float("nan")
                 oos_metrics = {
-                    "stage1": {
+                    "directional_oos": {
                         "accuracy": acc,
                         "precision": float(prec),
                         "recall": float(rec),
                         "f1": float(f1),
                         "auc": auc,
                         "pr_auc": pr_auc,
-                        "samples": int(len(y_true_cls)),
+                        "samples": int(len(y_true_dir)),
                         "best_threshold": 0.0,
                         "quality_check": {
                             "passed":
@@ -457,62 +465,63 @@ def main() -> None:
                     },
                 }
             else:
-                # In-sample directional metrics for visibility when no OOS period
+                # In-sample directional metrics (derived from q50 regression) for visibility when no OOS period
                 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score, average_precision_score
                 X_all = train_df[feature_cols].values
                 y_ret_all = train_df["future_return"].values
                 y_score_all = model_q50.model.predict(X_all)
-                y_true_cls_all = (y_ret_all > 0).astype(int)
-                y_pred_cls_all = (y_score_all > 0).astype(int)
-                acc = float(accuracy_score(y_true_cls_all, y_pred_cls_all))
+                y_true_dir_all = (y_ret_all > 0).astype(int)
+                y_pred_dir_all = (y_score_all > 0).astype(int)
+                acc = float(accuracy_score(y_true_dir_all, y_pred_dir_all))
                 prec, rec, f1, _ = precision_recall_fscore_support(
-                    y_true_cls_all,
-                    y_pred_cls_all,
+                    y_true_dir_all,
+                    y_pred_dir_all,
                     average="binary",
                     zero_division=0)
                 try:
-                    auc = float(roc_auc_score(y_true_cls_all, y_score_all))
+                    auc = float(roc_auc_score(y_true_dir_all, y_score_all))
                 except Exception:
                     auc = float("nan")
                 try:
                     pr_auc = float(
-                        average_precision_score(y_true_cls_all, y_score_all))
+                        average_precision_score(y_true_dir_all, y_score_all))
                 except Exception:
                     pr_auc = float("nan")
-                cls_metrics_train = {
+                directional_metrics_train = {
                     "accuracy": acc,
                     "precision": float(prec),
                     "recall": float(rec),
                     "f1": float(f1),
                     "auc": auc,
                     "pr_auc": pr_auc,
-                    "samples": int(len(y_true_cls_all)),
+                    "samples": int(len(y_true_dir_all)),
                 }
 
-            # Stage1 classification-style metrics (direction from q50 regression)
-            from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, average_precision_score, confusion_matrix
+            # Directional metrics (derived from q50 regression model) - CV metrics
+            # Import metrics that may not be available from earlier imports
+            from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
             y_score = model_q50.model.predict(X_df.values)
-            y_true_bin = (y_return.values > 0).astype(int)
-            y_pred_bin = (y_score > 0).astype(int)
+            y_true_dir = (y_return.values > 0).astype(int)
+            y_pred_dir = (y_score > 0).astype(int)
             try:
-                auc = float(roc_auc_score(y_true_bin, y_score))
+                auc = float(roc_auc_score(y_true_dir, y_score))
             except Exception:
                 auc = None
             try:
-                pr_auc = float(average_precision_score(y_true_bin, y_score))
+                pr_auc = float(average_precision_score(y_true_dir, y_score))
             except Exception:
                 pr_auc = None
-            cm = confusion_matrix(y_true_bin, y_pred_bin).tolist()
-            stage1_metrics = {
+            cm = confusion_matrix(y_true_dir, y_pred_dir).tolist()
+            directional_metrics_cv = {
                 "accuracy":
-                float(accuracy_score(y_true_bin, y_pred_bin)),
+                float(accuracy_score(y_true_dir, y_pred_dir)),
                 "precision":
-                float(precision_score(y_true_bin, y_pred_bin,
+                float(precision_score(y_true_dir, y_pred_dir,
                                       zero_division=0)),
                 "recall":
-                float(recall_score(y_true_bin, y_pred_bin, zero_division=0)),
+                float(recall_score(y_true_dir, y_pred_dir, zero_division=0)),
                 "f1":
-                float(f1_score(y_true_bin, y_pred_bin, zero_division=0)),
+                float(f1_score(y_true_dir, y_pred_dir, zero_division=0)),
                 "auc":
                 auc,
                 "pr_auc":
@@ -520,7 +529,7 @@ def main() -> None:
                 "best_threshold":
                 0.0,
                 "samples":
-                int(len(y_true_bin)),
+                int(len(y_true_dir)),
                 "confusion_matrix":
                 cm,
             }
@@ -553,12 +562,52 @@ def main() -> None:
             with open(os.path.join(combo_dir, "features.txt"), "w") as f:
                 f.write("\n".join(feature_cols))
 
+            # Defer writing training_info.json until after potential base dir finalization
+
+            # Finalize base directory name with train_start/train_end (YYYYMMDD) on first config
+            if not base_dir_finalized:
+                try:
+                    _ts = train_df.index.min()
+                    _te = train_df.index.max()
+                    if _ts is not None and _te is not None:
+                        _ts_s = _ts.strftime("%Y%m%d")
+                        _te_s = _te.strftime("%Y%m%d")
+                        finalized_dir = f"{training_timestamp}_{symbol_dir}_{args.feature_type}_{_ts_s}_{_te_s}"
+                        finalized_path = os.path.join("results/training",
+                                                      finalized_dir)
+                        if finalized_path != base_results_dir:
+                            os.makedirs(os.path.dirname(finalized_path),
+                                        exist_ok=True)
+                            # Rename the base directory (moves all existing files/subdirs)
+                            os.rename(base_results_dir, finalized_path)
+                            base_results_dir = finalized_path
+                            print(
+                                f"📁 Renamed results directory to: {base_results_dir}"
+                            )
+                        base_dir_finalized = True
+                        # Update combo_dir to finalized base for subsequent saves in this loop iteration
+                        if len(freqs) > 1 or len(fbs) > 1:
+                            combo_dir = os.path.join(base_results_dir,
+                                                     f"fb{fb}_tf{freq}")
+                except Exception as _e:
+                    print(
+                        f"Note: Could not finalize results directory name: {_e}"
+                    )
+
+            # Recompute output paths after potential rename and ensure directory exists
+            if len(freqs) > 1 or len(fbs) > 1:
+                combo_dir = os.path.join(base_results_dir, f"fb{fb}_tf{freq}")
+            else:
+                combo_dir = base_results_dir
+            os.makedirs(combo_dir, exist_ok=True)
+
+            # Compose model_info and write training_info.json with finalized paths
             info_path = os.path.join(combo_dir, "training_info.json")
             model_info = {
                 "model_path":
                 os.path.join(combo_dir, "return_q50_model.txt"),
                 "scaler_path":
-                scaler_path,
+                os.path.join(combo_dir, "scalers.pkl"),
                 "training_date":
                 _dt.now().isoformat(),
                 "symbol":
@@ -584,7 +633,7 @@ def main() -> None:
                 },
                 "price_range": [
                     float(feat_df["close"].min()) if not feat_df.empty else 0,
-                    float(feat_df["close"].max()) if not feat_df.empty else 0
+                    float(feat_df["close"].max()) if not feat_df.empty else 0,
                 ],
                 "metrics": {
                     "stage2": {
@@ -599,9 +648,12 @@ def main() -> None:
                     "volatility": {
                         freq: vol_metrics
                     },
-                    "classification_train": {
-                        freq: cls_metrics_train
-                    } if cls_metrics_train else {}
+                    "directional_train": {
+                        freq: directional_metrics_train
+                    } if directional_metrics_train else {},
+                    "directional_cv": {
+                        freq: directional_metrics_cv
+                    } if directional_metrics_cv else {},
                 },
                 "feature_engineering":
                 "BaselineFeatureEngineer" if args.feature_type == "baseline"
@@ -625,51 +677,138 @@ def main() -> None:
             try:
                 with open(info_path, "r", encoding="utf-8") as f:
                     info_json = json.load(f)
-                tf_metrics = info_json.get("metrics", {}).get("stage2", {})
-                cls_train_metrics = info_json.get("metrics", {}).get(
-                    "classification_train", {})
+
+                # Extract metrics for all 4 regression models
+                q10_metrics = info_json.get("metrics", {}).get("q10", {})
+                q50_metrics = info_json.get("metrics", {}).get("stage2", {})
+                q90_metrics = info_json.get("metrics", {}).get("q90", {})
+                vol_metrics = info_json.get("metrics",
+                                            {}).get("volatility", {})
+
+                # Quantile Loss section (q10, q50, q90)
+                quantile_rows = []
+                for tf in q50_metrics.keys():
+                    q10_val = q10_metrics.get(tf,
+                                              {}).get('cv_quantile_loss',
+                                                      'N/A')
+                    q50_val = q50_metrics.get(tf,
+                                              {}).get('cv_quantile_loss',
+                                                      'N/A')
+                    q90_val = q90_metrics.get(tf,
+                                              {}).get('cv_quantile_loss',
+                                                      'N/A')
+                    quantile_rows.append(
+                        f"<tr><td>{tf}</td><td>{q10_val}</td><td>{q50_val}</td><td>{q90_val}</td></tr>"
+                    )
+                quantile_section = ""
+                if quantile_rows:
+                    quantile_section = (
+                        "<h2>Quantile Loss (CV)</h2>"
+                        "<table><tr><th>Timeframe</th><th>Quantile Loss 0.1 (q10)</th><th>Quantile Loss 0.5 (q50)</th><th>Quantile Loss 0.9 (q90)</th></tr>"
+                        + "".join(quantile_rows) + "</table>")
+
+                # Volatility CV Metrics section
+                vol_rows = []
+                for tf, m in vol_metrics.items():
+                    vol_rows.append(
+                        f"<tr><td>{tf}</td><td>{m.get('cv_rmse', 'N/A')}</td><td>{m.get('cv_mse', 'N/A')}</td></tr>"
+                    )
+                vol_section = ""
+                if vol_rows:
+                    vol_section = (
+                        "<h2>Volatility (Regression) CV Metrics</h2>"
+                        "<table><tr><th>Timeframe</th><th>CV RMSE</th><th>CV MSE</th></tr>"
+                        + "".join(vol_rows) + "</table>")
+
+                # OOS section - regression metrics only
                 oos_section = ""
                 if info_json.get("oos_metrics"):
-                    s1 = info_json["oos_metrics"].get("stage1", {})
-                    oos_section = (
-                        f"<h2>Classification (OOS)</h2><table><tr><th>Metric</th><th>Value</th></tr>"
-                        f"<tr><td>Accuracy</td><td>{s1.get('accuracy','N/A')}</td></tr>"
-                        f"<tr><td>Precision</td><td>{s1.get('precision','N/A')}</td></tr>"
-                        f"<tr><td>Recall</td><td>{s1.get('recall','N/A')}</td></tr>"
-                        f"<tr><td>F1</td><td>{s1.get('f1','N/A')}</td></tr>"
-                        f"<tr><td>AUC</td><td>{s1.get('auc','N/A')}</td></tr>"
-                        f"<tr><td>PR-AUC</td><td>{s1.get('pr_auc','N/A')}</td></tr>"
-                        f"<tr><td>Samples</td><td>{s1.get('samples',0)}</td></tr></table>"
-                    )
-                rows = []
-                for tf, m in tf_metrics.items():
-                    rows.append(
-                        f"<tr><td>{tf}</td><td>{m.get('cv_rmse','N/A')}</td><td>{m.get('cv_mse','N/A')}</td></tr>"
-                    )
-                cls_section = ""
-                if cls_train_metrics:
-                    cls_rows = "".join([
-                        f"<tr><td>{tf}</td><td>{cls_train_metrics.get(tf,{}).get('accuracy','N/A')}</td><td>{cls_train_metrics.get(tf,{}).get('precision','N/A')}</td><td>{cls_train_metrics.get(tf,{}).get('recall','N/A')}</td><td>{cls_train_metrics.get(tf,{}).get('f1','N/A')}</td><td>{cls_train_metrics.get(tf,{}).get('auc','N/A')}</td><td>{cls_train_metrics.get(tf,{}).get('pr_auc','N/A')}</td><td>{cls_train_metrics.get(tf,{}).get('samples','N/A')}</td></tr>"
-                        for tf in cls_train_metrics
-                    ])
-                    cls_section = (
-                        "<h2>Classification (Train, directional)</h2>"
-                        "<table><tr><th>Timeframe</th><th>Accuracy</th><th>Precision</th><th>Recall</th><th>F1</th><th>AUC</th><th>PR-AUC</th><th>Samples</th></tr>"
-                        + cls_rows + "</table>")
+                    oos_metrics = info_json["oos_metrics"]
+                    oos_rows = []
+
+                    # Q50 OOS metrics
+                    if "q50" in oos_metrics:
+                        q50_oos = oos_metrics["q50"]
+                        oos_rows.append(
+                            f"<tr><td>Q50 RMSE</td><td>{q50_oos.get('oos_rmse', 'N/A')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td>Q50 MAE</td><td>{q50_oos.get('oos_mae', 'N/A')}</td></tr>"
+                        )
+
+                    # Q10 OOS metrics
+                    if "q10" in oos_metrics:
+                        q10_oos = oos_metrics["q10"]
+                        oos_rows.append(
+                            f"<tr><td>Q10 Quantile Loss</td><td>{q10_oos.get('oos_quantile_loss', 'N/A')}</td></tr>"
+                        )
+
+                    # Q90 OOS metrics
+                    if "q90" in oos_metrics:
+                        q90_oos = oos_metrics["q90"]
+                        oos_rows.append(
+                            f"<tr><td>Q90 Quantile Loss</td><td>{q90_oos.get('oos_quantile_loss', 'N/A')}</td></tr>"
+                        )
+
+                    # Volatility OOS metrics
+                    if "volatility" in oos_metrics:
+                        vol_oos = oos_metrics["volatility"]
+                        oos_rows.append(
+                            f"<tr><td>Volatility RMSE</td><td>{vol_oos.get('oos_rmse', 'N/A')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td>Volatility MAE</td><td>{vol_oos.get('oos_mae', 'N/A')}</td></tr>"
+                        )
+
+                    # Uncertainty metrics
+                    if "uncertainty" in oos_metrics:
+                        unc_oos = oos_metrics["uncertainty"]
+                        oos_rows.append(
+                            f"<tr><td>Coverage (q10-q90)</td><td>{unc_oos.get('coverage', 'N/A')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td>Interval Width</td><td>{unc_oos.get('interval_width', 'N/A')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td>Confidence</td><td>{unc_oos.get('confidence', 'N/A')}</td></tr>"
+                        )
+
+                    # Signal strength
+                    if "signal" in oos_metrics:
+                        sig_oos = oos_metrics["signal"]
+                        oos_rows.append(
+                            f"<tr><td>Avg Signal Strength (|q50|/vol)</td><td>{sig_oos.get('avg_signal_strength', 'N/A')}</td></tr>"
+                        )
+
+                    if oos_rows:
+                        oos_section = (
+                            f"<h2>OOS Test Metrics</h2>"
+                            f"<table><tr><th>Metric</th><th>Value</th></tr>" +
+                            "".join(oos_rows) + "</table>")
+
+                # Artifacts section - include all 4 models
+                model_dir = os.path.dirname(info_json.get('model_path', ''))
+                artifacts_list = [
+                    f"<li>Q50 Model (median): {os.path.join(model_dir, 'return_q50_model.txt')}</li>",
+                    f"<li>Q10 Model (10% quantile): {os.path.join(model_dir, 'return_q10_model.txt')}</li>",
+                    f"<li>Q90 Model (90% quantile): {os.path.join(model_dir, 'return_q90_model.txt')}</li>",
+                    f"<li>Volatility Model: {os.path.join(model_dir, 'volatility_model.txt')}</li>",
+                    f"<li>Scalers: {info_json.get('scaler_path')}</li>"
+                ]
+
                 html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>Training Report</title>
                 <style>body{{font-family:Arial;margin:24px;color:#222}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:8px 10px}}</style>
                 </head><body>
                 <h1>Training Report</h1>
-                <p><strong>Symbol:</strong> {info_json.get('symbol')} &nbsp; <strong>Period:</strong> {info_json.get('actual_start','N/A')} → {info_json.get('actual_end','N/A')}</p>
-                <p><strong>Total Bars:</strong> {info_json.get('total_bars',0)} &nbsp; <strong>Train Bars:</strong> {info_json.get('train_bars','N/A')}</p>
-                {cls_section}
-                <h2>Stage2 (Regression) CV Metrics</h2>
-                <table><tr><th>Timeframe</th><th>CV RMSE</th><th>CV MSE</th></tr>{''.join(rows)}</table>
+                <p><strong>Symbol:</strong> {info_json.get('symbol')} &nbsp; <strong>Period:</strong> {info_json.get('actual_start', 'N/A')} → {info_json.get('actual_end', 'N/A')}</p>
+                <p><strong>Total Bars:</strong> {info_json.get('total_bars', 0)} &nbsp; <strong>Train Bars:</strong> {info_json.get('train_bars', 'N/A')}</p>
+                <p><strong>Feature Type:</strong> {info_json.get('feature_type', 'N/A')} &nbsp; <strong>Forward Bars:</strong> {info_json.get('forward_bars', 'N/A')}</p>
+                {quantile_section}
+                {vol_section}
                 {oos_section}
                 <h2>Artifacts</h2>
                 <ul>
-                  <li>Model: {info_json.get('model_path')}</li>
-                  <li>Scalers: {info_json.get('scaler_path')}</li>
+                  {''.join(artifacts_list)}
                 </ul>
                 </body></html>"""
                 with open(report_path, "w", encoding="utf-8") as f:
@@ -686,8 +825,7 @@ def main() -> None:
         generate_summary_report(base_results_dir, None)
         print(f"\n📊 Training summary report generated in: {base_results_dir}")
     except Exception as exc:  # noqa: BLE001
-        print(
-            f"Note: Could not generate training summary report: {exc}")
+        print(f"Note: Could not generate training summary report: {exc}")
 
 
 if __name__ == "__main__":

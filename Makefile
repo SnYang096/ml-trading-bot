@@ -25,7 +25,7 @@ RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT
-START_DATE ?= 2024-01-01
+START_DATE ?= 2025-01-01
  END_DATE ?= 2025-04-30
 YEAR ?= 2024
 START_YEAR ?= 2021
@@ -92,7 +92,7 @@ endif
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train rolling rolling-multi rolling-update-only vectorbot-backtest oos-june \
+	train rolling rolling-multi rolling-update-only vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report
 
 help:
@@ -269,10 +269,15 @@ ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
 ROLLING_USE_TOP_FACTORS ?=
 ROLLING_TOPK ?=
 ROLLING_TOPK_SOURCE ?=
+ROLLING_USE_AUTOENCODER ?=
+ROLLING_ENCODING_DIM ?=
 
 rolling:
 	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	@if [ -n "$(ROLLING_USE_AUTOENCODER)" ]; then \
+		echo "       Autoencoder: $(ROLLING_USE_AUTOENCODER) (dim=$(ROLLING_ENCODING_DIM))"; \
+	fi
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOLS) \
@@ -288,11 +293,16 @@ rolling:
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
+		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
 		--gpu
 
 rolling-multi:
 	@echo "🔄 Rolling training (multi-config) for $(SYMBOLS) tfs=$(FREQS) fbs=$(FBS)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	@if [ -n "$(ROLLING_USE_AUTOENCODER)" ]; then \
+		echo "       Autoencoder: $(ROLLING_USE_AUTOENCODER) (dim=$(ROLLING_ENCODING_DIM))"; \
+	fi
 	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
 		FB_LIST=$(FBS) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
@@ -307,6 +317,8 @@ rolling-multi:
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
+		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
 		--gpu; \
 	else \
 		docker run --rm \
@@ -333,12 +345,23 @@ rolling-multi:
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
+		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
 		--gpu; \
 	fi
 
+BACKTEST_START ?=$(START_DATE)
+BACKTEST_END ?=$(END_DATE)
+BACKTEST_SYMBOL ?=$(SYMBOL)
+BACKTEST_MODEL ?=$(MODEL_PATH)
+
 vectorbot-backtest:
-	@echo "🤖 Running VectorBot backtest with $(MODEL_PATH)..."
-	$(DOCKER_RUN) bash -c "MODEL_PATH=$(MODEL_PATH) python3 scripts/backtesting/vectorbot_backtest.py"
+	@echo "🤖 Running VectorBot backtest with model=$(BACKTEST_MODEL) symbol=$(BACKTEST_SYMBOL) range=$(BACKTEST_START)→$(BACKTEST_END) ..."
+	$(DOCKER_RUN_NO_TTY) bash -c "python3 scripts/backtesting/vectorbot_backtest.py \
+		$(if $(BACKTEST_MODEL),--model '$(BACKTEST_MODEL)') \
+		$(if $(BACKTEST_SYMBOL),--symbol '$(BACKTEST_SYMBOL)') \
+		$(if $(BACKTEST_START),--start '$(BACKTEST_START)') \
+		$(if $(BACKTEST_END),--end '$(BACKTEST_END)')"
 
 nautilus-backtest:
 	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
@@ -349,17 +372,13 @@ nautilus-backtest:
 		--timeframe 5T \
 		--start $(START_DATE) --end $(END_DATE)
 
-oos-june:
-	@echo "🧪 Evaluating June OOS performance..."
-	$(DOCKER_RUN) bash -c "MODEL_PATH=$(MODEL_PATH) SCALER_PATH=$(SCALER_PATH) OOS_DATA=$(OOS_DATA) python3 scripts/backtesting/oos_june.py"
+
 
 
 # ---------------------------------------------------------------------------
 # Dimensionality: production-style comparison (original vs compressed)
 # ---------------------------------------------------------------------------
 
-ENCODING_DIM ?= 16
-AE_TYPE ?= production
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 1,5,10,15
 BINARY_SIGNALS ?= 1
@@ -377,31 +396,19 @@ DIM_COMPARE_FEATURE_TYPE ?= comprehensive
 #   TUNE_TRIALS=15
 
 dim-compare:
-	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOLS) ..."
-	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline"
-	@echo "       Enhanced options: AE_TYPE=vae AUTO_ENCODING_GRID=1 AE_AUTO_TUNE=1 AE_TASK_LOSS=1 BINARY_SIGNALS=$(BINARY_SIGNALS) LABEL_THRESHOLD=$(LABEL_THRESHOLD)"
+	@echo "🔬 Comparing feature sets (no autoencoder) for $(SYMBOLS) ..."
+	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOLS) \
-		--encoding-dim $(ENCODING_DIM) \
 		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \
-		$(if $(ENCODING_GRID),--encoding-grid $(ENCODING_GRID)) \
-		$(if $(AE_TYPE),--ae-type $(AE_TYPE)) \
-		$(if $(KL_WEIGHT),--kl-weight $(KL_WEIGHT)) \
-		$(if $(filter 1 true yes,$(AUTO_ENCODING_GRID)),--auto-encoding-grid) \
-		$(if $(filter 1 true yes,$(AE_AUTO_TUNE)),--ae-auto-tune) \
-		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS)) \
-		$(if $(filter 1 true yes,$(AE_TASK_LOSS)),--ae-task-loss) \
-		--binary-signals \
-		$(if $(LABEL_THRESHOLD),--label-threshold $(LABEL_THRESHOLD)) \
-		$(if $(TASK_WEIGHT),--task-weight $(TASK_WEIGHT)) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \
 		$(DIM_COMPARE_ARGS)
-	@echo "📝 HTML report is saved with format: {SYMBOL}_{FEATURE_TYPE}_{START_DATE}_{END_DATE}_dimensionality_report.html"
+	@echo "📝 HTML report saved with: {SYMBOL}_{FEATURE_TYPE}_{START_DATE}_{END_DATE}_dimensionality_report.html"
 
 
