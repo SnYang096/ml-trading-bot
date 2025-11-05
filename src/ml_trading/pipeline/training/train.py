@@ -28,6 +28,12 @@ from ml_trading.models.lightgbm_model import LightGBMModel
 
 
 def _load_many(files: List[str]) -> pd.DataFrame:
+    """Load and merge multiple parquet files.
+    
+    For multi-asset training, all assets' data are merged together.
+    All features are normalized (asset-agnostic), so the model can learn
+    common patterns across different assets.
+    """
     frames: List[pd.DataFrame] = []
     for f in files:
         df = load_parquet_file(f) if f.endswith(".parquet") else None
@@ -35,14 +41,22 @@ def _load_many(files: List[str]) -> pd.DataFrame:
             frames.append(df)
     if not frames:
         raise FileNotFoundError("No valid data files loaded")
-    return pd.concat(frames, axis=0).sort_index()
+    # Merge all dataframes (for multi-asset training, all assets are combined)
+    merged = pd.concat(frames, axis=0).sort_index()
+    print(f"   Merged {len(frames)} data file(s), total {len(merged)} samples")
+    return merged
 
 
 def _collect_files(data: List[str],
                    data_dir: str | None,
                    start: str | None,
                    end: str | None,
-                   symbol: str | None = None) -> List[str]:
+                   symbols: str | None = None) -> List[str]:
+    """Collect files for one or multiple symbols.
+    
+    Args:
+        symbols: Single symbol or comma-separated symbols (e.g., "BTCUSDT" or "BTCUSDT,ETHUSDT,SOLUSDT")
+    """
     files: List[str] = []
     files.extend(data)
     if data_dir and os.path.isdir(data_dir):
@@ -51,7 +65,9 @@ def _collect_files(data: List[str],
                 files.append(os.path.join(data_dir, name))
     files = [os.path.abspath(p) for p in files if os.path.exists(p)]
 
-    if symbol:
+    if symbols:
+        # Support multiple symbols (comma-separated)
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
         mapping = {
             "BTCUSDT": "BTC-USD",
             "ETHUSDT": "ETH-USD",
@@ -59,14 +75,16 @@ def _collect_files(data: List[str],
             "ADAUSDT": "ADA-USD",
             "SOLUSDT": "SOL-USD"
         }
-        file_symbol = mapping.get(symbol, symbol.replace("USDT", "-USD"))
         filtered = []
-        for p in files:
-            fn = os.path.basename(p).upper()
-            if (fn.startswith(symbol.upper())
-                    or fn.startswith(file_symbol.upper())
-                    or fn.startswith(file_symbol.replace("-", "_").upper())):
-                filtered.append(p)
+        for symbol in symbol_list:
+            file_symbol = mapping.get(symbol, symbol.replace("USDT", "-USD"))
+            for p in files:
+                fn = os.path.basename(p).upper()
+                if (fn.startswith(symbol.upper())
+                        or fn.startswith(file_symbol.upper())
+                        or fn.startswith(file_symbol.replace("-", "_").upper())):
+                    if p not in filtered:  # Avoid duplicates
+                        filtered.append(p)
         files = filtered
 
     if start or end:
@@ -107,7 +125,7 @@ def main() -> None:
     parser.add_argument("--symbol",
                         type=str,
                         default="BTCUSDT",
-                        help="Symbol metadata for report")
+                        help="Symbol(s) metadata for report. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset training")
     parser.add_argument("--freq",
                         type=str,
                         default="5T",
@@ -132,7 +150,7 @@ def main() -> None:
         "--feature-type",
         type=str,
         default="baseline",
-        help="baseline/default/enhanced/dl_sequence/comprehensive or combos")
+        help="baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (e.g., baseline,default,hurst)")
     parser.add_argument("--oos-months",
                         type=int,
                         default=3,
@@ -171,12 +189,33 @@ def main() -> None:
                            args.data_dir,
                            args.start,
                            args.end,
-                           symbol=args.symbol)
+                           symbols=args.symbol)
     raw = _load_many(files)
+    
+    # Parse symbols for multi-asset training
+    symbol_list = [s.strip() for s in args.symbol.split(",") if s.strip()]
+    symbols_str = ",".join(symbol_list) if len(symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
+    print(f"📊 Training with symbol(s): {symbols_str}")
+    if len(symbol_list) > 1:
+        print(f"   Multi-asset training: {len(symbol_list)} assets")
+        print(f"   Total samples: {len(raw)}")
+
+    # Create timestamped base directory for this training run to avoid mixing old data
+    from datetime import datetime as _dt
+    training_timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+    # Format symbol for directory name (replace comma with underscore for multi-asset)
+    symbol_dir = symbols_str.replace(",", "_")
+    # Create base directory with timestamp, symbol, and feature_type
+    base_dir = f"{training_timestamp}_{symbol_dir}_{args.feature_type}"
+    base_results_dir = os.path.join("results/training", base_dir)
+    print(f"📁 Results will be saved to: {base_results_dir}")
 
     for freq in freqs:
         for fb in fbs:
             feat_df = raw.copy()
+            # Multi-asset training: features are engineered on merged data
+            # All features are normalized (asset-agnostic), so the model learns
+            # common patterns across different assets
             if args.feature_type == "baseline":
                 feat_df, base_eng = engineer_baseline_features(feat_df,
                                                                None,
@@ -319,7 +358,7 @@ def main() -> None:
             model_q10 = LightGBMModel(model_type="quantile",
                                       quantile_alpha=0.1,
                                       use_gpu=args.gpu)
-            _ = model_q10.train(X_df,
+            q10_metrics = model_q10.train(X_df,
                                 y_return,
                                 n_splits=max(2, args.cv_folds or 2),
                                 use_time_series_cv=True)
@@ -328,7 +367,7 @@ def main() -> None:
             model_q90 = LightGBMModel(model_type="quantile",
                                       quantile_alpha=0.9,
                                       use_gpu=args.gpu)
-            _ = model_q90.train(X_df,
+            q90_metrics = model_q90.train(X_df,
                                 y_return,
                                 n_splits=max(2, args.cv_folds or 2),
                                 use_time_series_cv=True)
@@ -487,10 +526,11 @@ def main() -> None:
             }
 
             # Save artifacts and report (neutral naming, no 'baseline')
-            combo_dir = "results/training"
+            # Use timestamped base directory for this training run to avoid mixing old data
+            combo_dir = base_results_dir
             if len(freqs) > 1 or len(fbs) > 1:
-                combo_dir = os.path.join("results/training",
-                                         f"fb{fb}_tf{freq}")
+                # If multiple configs, create subdirectory for each config
+                combo_dir = os.path.join(base_results_dir, f"fb{fb}_tf{freq}")
             os.makedirs(combo_dir, exist_ok=True)
             model_q50.model.save_model(
                 os.path.join(combo_dir, "return_q50_model.txt"))
@@ -513,7 +553,6 @@ def main() -> None:
             with open(os.path.join(combo_dir, "features.txt"), "w") as f:
                 f.write("\n".join(feature_cols))
 
-            from datetime import datetime as _dt
             info_path = os.path.join(combo_dir, "training_info.json")
             model_info = {
                 "model_path":
@@ -523,7 +562,7 @@ def main() -> None:
                 "training_date":
                 _dt.now().isoformat(),
                 "symbol":
-                args.symbol,
+                symbols_str,
                 "actual_start":
                 feat_df.index.min().isoformat() if not feat_df.empty else None,
                 "actual_end":
@@ -550,6 +589,12 @@ def main() -> None:
                 "metrics": {
                     "stage2": {
                         freq: q50_metrics
+                    },
+                    "q10": {
+                        freq: q10_metrics
+                    },
+                    "q90": {
+                        freq: q90_metrics
                     },
                     "volatility": {
                         freq: vol_metrics
@@ -633,13 +678,16 @@ def main() -> None:
             except Exception as exc:  # noqa: BLE001
                 print(f"Note: Could not write compact training report: {exc}")
 
-            # Additionally update training summary report across configs
-            try:
-                from ml_trading.pipeline.training.generate_summary_report import generate_summary_report
-                generate_summary_report("results/training", None)
-            except Exception as exc:  # noqa: BLE001
-                print(
-                    f"Note: Could not generate training summary report: {exc}")
+    # Generate training summary report for this training run
+    # Generate report in the timestamped directory to avoid mixing with old data
+    try:
+        from ml_trading.pipeline.training.generate_summary_report import generate_summary_report
+        # Generate report in the timestamped base directory
+        generate_summary_report(base_results_dir, None)
+        print(f"\n📊 Training summary report generated in: {base_results_dir}")
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"Note: Could not generate training summary report: {exc}")
 
 
 if __name__ == "__main__":

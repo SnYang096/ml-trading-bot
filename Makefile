@@ -24,7 +24,7 @@ MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
-SYMBOLS ?= $(SYMBOL)
+SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT
 START_DATE ?= 2024-01-01
  END_DATE ?= 2025-04-30
 YEAR ?= 2024
@@ -46,7 +46,7 @@ OVERWRITE_FLAG := $(if $(filter 1 true yes,$(OVERWRITE)),--overwrite,)
 # Training configuration (simple names) + backward-compatible BASELINE_* aliases
 # ---------------------------------------------------------------------------
 FREQ ?= 5T
-FREQS ?= 5T
+FREQS ?= 5T,15T,45T,240T
 CV_FOLDS ?= 5
 OOS_MONTHS ?= 2
 OOS_START ?=
@@ -230,22 +230,23 @@ feature-report:
 		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
 		$(FEATURE_REPORT_ARGS)
 
-FORWARD_BARS_TRAIN ?= 1
+FORWARD_BARS_TRAIN ?= 1,5,15
 
 TRAIN_USE_TOP_FACTORS ?=
-TRAIN_FEATURE_TYPE ?= default
+TRAIN_FEATURE_TYPE ?= baseline
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
 
 train:
-	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOL) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make train SYMBOL=BTCUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
+	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Example: make train SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
 		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOL) \
+		--symbol $(SYMBOLS) \
 		--freq $(FREQS) \
 		--forward-bars $(FORWARD_BARS_TRAIN) \
 		--cv-folds $(CV_FOLDS) \
@@ -270,10 +271,11 @@ ROLLING_TOPK ?=
 ROLLING_TOPK_SOURCE ?=
 
 rolling:
-	@echo "🔄 Rolling training (regression) for $(SYMBOL) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
+	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOL) \
+		--symbol $(SYMBOLS) \
 		$(if $(ROLLING_START),--start $(ROLLING_START),) \
 		$(if $(ROLLING_END),--end $(ROLLING_END),) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
@@ -289,11 +291,12 @@ rolling:
 		--gpu
 
 rolling-multi:
-	@echo "🔄 Rolling training (multi-config) for $(SYMBOL) tfs=$(FREQS) fbs=$(FBS)"
+	@echo "🔄 Rolling training (multi-config) for $(SYMBOLS) tfs=$(FREQS) fbs=$(FBS)"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
 		FB_LIST=$(FBS) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOL) \
+		--symbol $(SYMBOLS) \
 		$(if $(ROLLING_START),--start $(ROLLING_START),) \
 		$(if $(ROLLING_END),--end $(ROLLING_END),) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
@@ -319,7 +322,7 @@ rolling-multi:
 			--shm-size=8gb \
 			$(DOCKER_IMAGE) python3 -m ml_trading.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOL) \
+		--symbol $(SYMBOLS) \
 		$(if $(ROLLING_START),--start $(ROLLING_START),) \
 		$(if $(ROLLING_END),--end $(ROLLING_END),) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
@@ -361,6 +364,7 @@ DIM_COMPARE_ARGS ?=
 HORIZONS ?= 1,5,10,15
 BINARY_SIGNALS ?= 1
 LABEL_THRESHOLD ?= 0.0
+DIM_COMPARE_FEATURE_TYPE ?= comprehensive
 
 # make dim-compare SYMBOL=BTCUSDT \
 #   START_DATE=2025-05-01 END_DATE=2025-07-31 \
@@ -373,14 +377,17 @@ LABEL_THRESHOLD ?= 0.0
 #   TUNE_TRIALS=15
 
 dim-compare:
-	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOL) ..."
-	@echo "Usage: make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15"
+	@echo "🔬 Comparing original features vs compressed/Top-K for $(SYMBOLS) ..."
+	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT ENCODING_DIM=16 HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline"
 	@echo "       Enhanced options: AE_TYPE=vae AUTO_ENCODING_GRID=1 AE_AUTO_TUNE=1 AE_TASK_LOSS=1 BINARY_SIGNALS=$(BINARY_SIGNALS) LABEL_THRESHOLD=$(LABEL_THRESHOLD)"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
+	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
-		--symbol $(SYMBOL) \
+		--symbol $(SYMBOLS) \
 		--encoding-dim $(ENCODING_DIM) \
+		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \
 		$(if $(ENCODING_GRID),--encoding-grid $(ENCODING_GRID)) \
 		$(if $(AE_TYPE),--ae-type $(AE_TYPE)) \
 		$(if $(KL_WEIGHT),--kl-weight $(KL_WEIGHT)) \
@@ -395,6 +402,6 @@ dim-compare:
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \
 		$(DIM_COMPARE_ARGS)
-	@echo "📝 HTML report is saved next to production_results.json (dimensionality_report.html)"
+	@echo "📝 HTML report is saved with format: {SYMBOL}_{FEATURE_TYPE}_{START_DATE}_{END_DATE}_dimensionality_report.html"
 
 

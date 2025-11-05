@@ -25,7 +25,12 @@ from ml_trading.models.lightgbm_model import LightGBMModel
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 
-def find_all_available_files(data_dir: str, symbol: str) -> List[Dict]:
+def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
+    """Find all available files for one or multiple symbols.
+    
+    Args:
+        symbols: Single symbol or comma-separated symbols (e.g., "BTCUSDT" or "BTCUSDT,ETHUSDT,SOLUSDT")
+    """
     files: List[Dict] = []
     from pathlib import Path
     import re
@@ -34,49 +39,59 @@ def find_all_available_files(data_dir: str, symbol: str) -> List[Dict]:
     if not data_path.exists():
         return files
 
+    # Support multiple symbols (comma-separated)
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
     symbol_mapping = {
         "BTCUSDT": "BTC-USD",
         "ETHUSDT": "ETH-USD",
-        "BNBUSDT": "BNB-USD"
+        "BNBUSDT": "BNB-USD",
+        "ADAUSDT": "ADA-USD",
+        "SOLUSDT": "SOL-USD"
     }
-    file_symbol = symbol_mapping.get(symbol, symbol)
-
-    patterns = [
-        f"{symbol}-aggTrades-*.parquet", f"{file_symbol}_*.parquet",
-        f"{file_symbol}-*.parquet"
-    ]
-
-    date_patterns = [
-        rf"{symbol}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
-        rf"{file_symbol}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
-        rf"{file_symbol}-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
-        rf"(?P<year>\d{{4}})-(?P<month>\d{{2}})",
-    ]
-
-    for pattern in patterns:
-        for file_path in data_path.glob(pattern):
-            stem = file_path.stem
-            match = None
-            for dp in date_patterns:
-                match = re.search(dp, stem)
+    
+    all_files = []
+    for symbol in symbol_list:
+        file_symbol = symbol_mapping.get(symbol, symbol)
+        patterns = [
+            f"{symbol}-aggTrades-*.parquet", f"{file_symbol}_*.parquet",
+            f"{file_symbol}-*.parquet"
+        ]
+        
+        date_patterns = [
+            rf"{symbol}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"{file_symbol}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"{file_symbol}-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+        ]
+        
+        for pattern in patterns:
+            for file_path in data_path.glob(pattern):
+                stem = file_path.stem
+                match = None
+                for dp in date_patterns:
+                    match = re.search(dp, stem)
+                    if match:
+                        break
                 if match:
-                    break
-            if match:
-                try:
-                    year = int(match.group("year"))
-                    month = int(match.group("month"))
-                    files.append({
-                        "path": str(file_path),
-                        "year": year,
-                        "month": month,
-                        "month_str": f"{year}-{month:02d}",
-                        "timestamp": pd.Timestamp(year, month, 1),
-                    })
-                except Exception:
-                    continue
+                    try:
+                        year = int(match.group("year"))
+                        month = int(match.group("month"))
+                        file_info = {
+                            "path": str(file_path),
+                            "symbol": symbol,  # Track which symbol this file belongs to
+                            "year": year,
+                            "month": month,
+                            "month_str": f"{year}-{month:02d}",
+                            "timestamp": pd.Timestamp(year, month, 1),
+                        }
+                        # Avoid duplicates
+                        if not any(f["path"] == file_info["path"] for f in all_files):
+                            all_files.append(file_info)
+                    except Exception:
+                        continue
 
-    files.sort(key=lambda x: x["timestamp"])
-    return files
+    all_files.sort(key=lambda x: x["timestamp"])
+    return all_files
 
 
 def main() -> None:
@@ -85,7 +100,8 @@ def main() -> None:
                         type=str,
                         default=os.environ.get("DATA_DIR",
                                                "data/parquet_data"))
-    parser.add_argument("--symbol", type=str, default="BTCUSDT")
+    parser.add_argument("--symbol", type=str, default="BTCUSDT",
+                        help="Symbol(s) for rolling training. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset training")
     parser.add_argument("--initial-train-months", type=int, default=6)
     parser.add_argument("--min-train-months", type=int, default=3)
     parser.add_argument("--forward-bars", type=int, default=3)
@@ -148,6 +164,14 @@ def main() -> None:
         return out
 
     freqs = _parse_list(args.freq)
+    
+    # Parse symbols for multi-asset training
+    symbol_list = [s.strip() for s in args.symbol.split(",") if s.strip()]
+    symbols_str = ",".join(symbol_list) if len(symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
+    print(f"📊 Rolling training with symbol(s): {symbols_str}")
+    if len(symbol_list) > 1:
+        print(f"   Multi-asset training: {len(symbol_list)} assets")
+    
     files = find_all_available_files(args.data_dir, args.symbol)
 
     if args.start or args.end:
@@ -167,7 +191,9 @@ def main() -> None:
 
     if args.output is None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output = f"rolling_{args.symbol.lower()}_{ts}"
+        # Handle multiple symbols in output name
+        symbol_name = symbols_str.replace(",", "_").lower() if len(symbol_list) > 1 else symbol_list[0].lower() if symbol_list else "unknown"
+        args.output = f"rolling_{symbol_name}_{ts}"
     results_dir = os.path.join("results", args.output)
     os.makedirs(results_dir, exist_ok=True)
 
@@ -189,7 +215,7 @@ def main() -> None:
             )
             print(f"Test:  {test_file['month_str']}")
 
-            # Load train
+            # Load train (for multi-asset training, all assets' data are merged)
             train_parts = []
             for fi in train_files:
                 df = load_and_process_file(fi["path"], freq=freq)
@@ -198,7 +224,12 @@ def main() -> None:
             if not train_parts:
                 print("   ⚠️  No training data, skip")
                 continue
+            # Merge all training data (multi-asset training: all assets combined)
+            # All features are normalized (asset-agnostic), so the model learns
+            # common patterns across different assets
             train_df = pd.concat(train_parts, axis=0).sort_index()
+            if len(symbol_list) > 1:
+                print(f"   Multi-asset training: {len(train_parts)} files merged, {len(train_df)} samples")
 
             # Load test
             test_df = load_and_process_file(test_file["path"], freq=freq)
@@ -362,7 +393,7 @@ def main() -> None:
             width = float(np.mean(np.maximum(0.0, yp90 - yp10)))
 
             res = {
-                "symbol": args.symbol,
+                "symbol": symbols_str,
                 "timeframe": freq,
                 "forward_bars": fb,
                 "test_month": test_file["month_str"],
@@ -410,7 +441,7 @@ def main() -> None:
             results_df) > 0 else None
         summary = {
             "symbol":
-            args.symbol,
+            symbols_str,
             "total_months_tested":
             len(results_df),
             "train_start_date":
@@ -427,7 +458,7 @@ def main() -> None:
             "ComprehensiveFeatureEngineer"
             if args.feature_type != "baseline" else "BaselineFeatureEngineer",
             "configuration": {
-                "symbol": args.symbol,
+                "symbol": symbols_str,
                 "data_dir": args.data_dir,
                 "initial_train_months": args.initial_train_months,
                 "min_train_months": args.min_train_months,

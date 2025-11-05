@@ -30,7 +30,12 @@ class ComprehensiveFeatureEngineer:
     支持特征切换：
     - baseline: 基线SR+压缩特征
     - default: 默认传统指标（TA-Lib + base_indicators，推荐使用）
-    - enhanced: 增强版特征（WPT/Hurst/Hilbert/光谱/订单流）
+    - enhanced: 增强版特征（包含所有子模块：Hurst/Wavelet/Hilbert/Spectral/OrderFlow）
+    - hurst: Hurst指数特征（趋势持续性分析）
+    - wavelet: 小波包变换特征（精细频带分解）
+    - hilbert: Hilbert变换特征（瞬时频率/相位分析）
+    - spectral: 光谱分析特征（频域特征）
+    - order_flow: 订单流特征（CVD/订单流不平衡等）
     - dl_sequence: 深度学习序列特征
     - comprehensive: 所有特征合并
     """
@@ -56,10 +61,15 @@ class ComprehensiveFeatureEngineer:
             feature_types: 特征类型，支持：
                 - 'baseline': 只用基线特征
                 - 'default': 默认传统指标（TA-Lib + base_indicators，推荐）
-                - 'enhanced': 只用增强版特征
+                - 'enhanced': 增强版特征（包含所有子模块：Hurst/Wavelet/Hilbert/Spectral/OrderFlow）
+                - 'hurst': 只用Hurst指数特征
+                - 'wavelet': 只用小波包变换特征
+                - 'hilbert': 只用Hilbert变换特征
+                - 'spectral': 只用光谱分析特征
+                - 'order_flow': 只用订单流特征
                 - 'dl_sequence': 只用深度学习序列特征
                 - 'comprehensive': 所有特征合并
-                - 逗号分隔的组合: 'baseline,default' 等
+                - 逗号分隔的组合: 'baseline,default,hurst' 等
             scaler_type: 标准化类型 ('standard', 'minmax', 'robust')
             wavelet: 小波类型
             wpt_level: 小波包分解层级
@@ -89,6 +99,12 @@ class ComprehensiveFeatureEngineer:
             self.use_default = True  # default = talib + base_indicators
             self.use_enhanced = True
             self.use_dl_sequence = True
+            # 如果使用 comprehensive 或 enhanced，默认启用所有子模块
+            self.use_hurst = True
+            self.use_wavelet = True
+            self.use_hilbert = True
+            self.use_spectral = True
+            self.use_order_flow = True
         else:
             feature_list = [f.strip() for f in feature_types.split(",")]
 
@@ -96,6 +112,22 @@ class ComprehensiveFeatureEngineer:
             self.use_default = "default" in feature_list  # default = FeatureEngineer (talib + base_indicators)
             self.use_enhanced = "enhanced" in feature_list
             self.use_dl_sequence = "dl_sequence" in feature_list
+            
+            # 细粒度 enhanced 子模块控制
+            # 如果指定了 enhanced，默认启用所有子模块
+            if self.use_enhanced:
+                self.use_hurst = True
+                self.use_wavelet = True
+                self.use_hilbert = True
+                self.use_spectral = True
+                self.use_order_flow = True
+            else:
+                # 否则根据单独指定的子模块启用
+                self.use_hurst = "hurst" in feature_list
+                self.use_wavelet = "wavelet" in feature_list
+                self.use_hilbert = "hilbert" in feature_list
+                self.use_spectral = "spectral" in feature_list
+                self.use_order_flow = "order_flow" in feature_list
 
         # 初始化特征工程器（按需）
         self.basic_engineer = None  # FeatureEngineer (talib + base_indicators)
@@ -103,10 +135,11 @@ class ComprehensiveFeatureEngineer:
         self.baseline_engineer = None
 
         # 默认传统指标：使用 FeatureEngineer (talib + base_indicators)
-        if self.use_default or self.use_enhanced or feature_types == "comprehensive":
+        if self.use_default or self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow or feature_types == "comprehensive":
             self.basic_engineer = FeatureEngineer()
 
-        if self.use_enhanced or feature_types == "comprehensive":
+        # 如果使用任何 enhanced 子模块，初始化 EnhancedFeatureEngineer
+        if self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow or feature_types == "comprehensive":
             self.enhanced_engineer = EnhancedFeatureEngineer(
                 scaler_type=scaler_type,
                 wavelet=wavelet,
@@ -172,8 +205,9 @@ class ComprehensiveFeatureEngineer:
             except Exception as e:
                 print(f"     ⚠️  默认传统指标特征失败: {e}")
 
-        # 3. 增强版特征工程 (WPT + Hurst + Hilbert + 光谱 + 订单流)
-        if self.use_enhanced:
+        # 3. 增强版特征工程 (细粒度控制：Hurst, Wavelet, Hilbert, Spectral, Order Flow)
+        use_any_enhanced = self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow
+        if use_any_enhanced:
             import os, time
             print("  📊 增强版特征工程...")
             try:
@@ -199,26 +233,48 @@ class ComprehensiveFeatureEngineer:
                     return out
 
                 # Hurst（较快）
-                df = _run("Hurst", self.enhanced_engineer.add_hurst_features,
-                          df)
-                # Wavelet/Spectral（较重），在 fast 模式下跳过
-                if not fast_mode:
-                    df = _run(
-                        "WaveletPacket",
-                        self.enhanced_engineer.add_wavelet_packet_features, df)
-                    df = _run("Spectral",
-                              self.enhanced_engineer.add_spectral_features, df)
-                # Hilbert、Order Flow
-                # Note: Advanced Derived features moved to baseline model
-                df = _run("Hilbert",
-                          self.enhanced_engineer.add_hilbert_features, df)
-                df = _run("OrderFlow",
-                          self.enhanced_engineer.add_order_flow_features, df)
+                if self.use_enhanced or self.use_hurst:
+                    df = _run("Hurst", self.enhanced_engineer.add_hurst_features,
+                              df)
+                
+                # Wavelet（较重）
+                if self.use_enhanced or self.use_wavelet:
+                    if not fast_mode:
+                        df = _run(
+                            "WaveletPacket",
+                            self.enhanced_engineer.add_wavelet_packet_features, df)
+                
+                # Spectral（较重）
+                if self.use_enhanced or self.use_spectral:
+                    if not fast_mode:
+                        df = _run("Spectral",
+                                  self.enhanced_engineer.add_spectral_features, df)
+                
+                # Hilbert
+                if self.use_enhanced or self.use_hilbert:
+                    df = _run("Hilbert",
+                              self.enhanced_engineer.add_hilbert_features, df)
+                
+                # Order Flow
+                if self.use_enhanced or self.use_order_flow:
+                    df = _run("OrderFlow",
+                              self.enhanced_engineer.add_order_flow_features, df)
 
                 enhanced_features = len(df.columns) - prev_count
                 prev_count = len(df.columns)
+                active_modules = []
+                if self.use_enhanced or self.use_hurst:
+                    active_modules.append("Hurst")
+                if self.use_enhanced or self.use_wavelet:
+                    active_modules.append("Wavelet")
+                if self.use_enhanced or self.use_hilbert:
+                    active_modules.append("Hilbert")
+                if self.use_enhanced or self.use_spectral:
+                    active_modules.append("Spectral")
+                if self.use_enhanced or self.use_order_flow:
+                    active_modules.append("OrderFlow")
                 print(
-                    f"     ✅ 增强版特征: {enhanced_features} 个 (fast_mode={fast_mode})"
+                    f"     ✅ 增强版特征: {enhanced_features} 个 (模块: {', '.join(active_modules)}, fast_mode={fast_mode})"
                 )
             except Exception as e:
                 print(f"     ⚠️  增强版特征失败: {e}")
@@ -247,7 +303,8 @@ class ComprehensiveFeatureEngineer:
         print(f"  原始特征: {initial_features} 个")
         print(f"  新增特征: {total_new_features} 个")
         print(f"  总特征数: {len(df.columns)} 个")
-        if self.use_baseline or self.use_default or self.use_enhanced or self.use_dl_sequence:
+        use_any_enhanced = self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow
+        if self.use_baseline or self.use_default or use_any_enhanced or self.use_dl_sequence:
             print(f"  特征分布:")
             if self.use_baseline:
                 print(f"    - Baseline特征: {baseline_features} 个")
@@ -255,8 +312,24 @@ class ComprehensiveFeatureEngineer:
                 print(
                     f"    - 默认传统指标特征（TA-Lib + base_indicators）: {default_features} 个"
                 )
-            if self.use_enhanced:
+            if use_any_enhanced:
                 print(f"    - 增强版特征: {enhanced_features} 个")
+                if self.use_enhanced:
+                    print(f"      (包含所有子模块: Hurst, Wavelet, Hilbert, Spectral, OrderFlow)")
+                else:
+                    active_modules = []
+                    if self.use_hurst:
+                        active_modules.append("Hurst")
+                    if self.use_wavelet:
+                        active_modules.append("Wavelet")
+                    if self.use_hilbert:
+                        active_modules.append("Hilbert")
+                    if self.use_spectral:
+                        active_modules.append("Spectral")
+                    if self.use_order_flow:
+                        active_modules.append("OrderFlow")
+                    if active_modules:
+                        print(f"      (子模块: {', '.join(active_modules)})")
             if self.use_dl_sequence:
                 print(f"    - 深度学习特征: {dl_features} 个")
 
@@ -267,6 +340,13 @@ class ComprehensiveFeatureEngineer:
             "dl_features": dl_features,
             "total_new_features": total_new_features,
             "total_features": len(df.columns),
+            "enhanced_modules": {
+                "hurst": self.use_hurst if use_any_enhanced else False,
+                "wavelet": self.use_wavelet if use_any_enhanced else False,
+                "hilbert": self.use_hilbert if use_any_enhanced else False,
+                "spectral": self.use_spectral if use_any_enhanced else False,
+                "order_flow": self.use_order_flow if use_any_enhanced else False,
+            } if use_any_enhanced else {},
         }
 
         return df

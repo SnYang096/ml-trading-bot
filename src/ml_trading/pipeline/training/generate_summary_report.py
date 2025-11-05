@@ -12,37 +12,95 @@ import pandas as pd
 
 
 def collect_training_results(results_dir: str = "results/training") -> pd.DataFrame:
+    """Collect training results from timestamped directories.
+    
+    Supports both new format (timestamped directories) and old format (fb*_tf* subdirectories).
+    """
     results_path = Path(results_dir)
     if not results_path.exists():
         return pd.DataFrame()
 
     all_results = []
 
-    # main directory
-    main_info = results_path / "training_info.json"
-    if main_info.exists():
-        try:
-            with open(main_info, "r", encoding="utf-8") as f:
-                info = json.load(f)
-                info["config_dir"] = "root"
-                info["timeframe"] = info.get("timeframe", "5T")
-                info["forward_bars"] = info.get("forward_bars", 3)
-                all_results.append(info)
-        except Exception as exc:
-            print(f"Warning: Failed to read {main_info}: {exc}")
+    # Check if this is a timestamped directory (new format) or legacy format
+    # New format: YYYYMMDD_HHMMSS_{SYMBOL}_{FEATURE_TYPE}/
+    # Legacy format: results/training/ with fb*_tf* subdirectories
+    
+    # First, try to find timestamped directories (new format)
+    timestamped_dirs = []
+    legacy_found = False
+    
+    for item in results_path.iterdir():
+        if item.is_dir():
+            # Check if it's a timestamped directory (format: YYYYMMDD_HHMMSS_*)
+            if item.name[0].isdigit() and len(item.name) >= 15 and "_" in item.name[:15]:
+                timestamped_dirs.append(item)
+            # Check for legacy format (fb*_tf*)
+            elif item.name.startswith("fb"):
+                legacy_found = True
+    
+    # If timestamped directories exist, use them (new format)
+    if timestamped_dirs:
+        # Sort by timestamp (newest first)
+        timestamped_dirs.sort(key=lambda x: x.name, reverse=True)
+        
+        # Collect from the most recent timestamped directory (or all if needed)
+        # For now, use the most recent one to avoid mixing different training runs
+        most_recent_dir = timestamped_dirs[0]
+        
+        # main directory in timestamped folder
+        main_info = most_recent_dir / "training_info.json"
+        if main_info.exists():
+            try:
+                with open(main_info, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                    info["config_dir"] = "root"
+                    info["timeframe"] = info.get("timeframe", "5T")
+                    info["forward_bars"] = info.get("forward_bars", 3)
+                    all_results.append(info)
+            except Exception as exc:
+                print(f"Warning: Failed to read {main_info}: {exc}")
+        
+        # subdirectories (fb*_tf*) in timestamped folder
+        for subdir in most_recent_dir.iterdir():
+            if subdir.is_dir() and subdir.name.startswith("fb"):
+                info_file = subdir / "training_info.json"
+                if info_file.exists():
+                    try:
+                        with open(info_file, "r", encoding="utf-8") as f:
+                            info = json.load(f)
+                            info["config_dir"] = subdir.name
+                            all_results.append(info)
+                    except Exception as exc:
+                        print(f"Warning: Failed to read {info_file}: {exc}")
+    
+    # Legacy format: fallback to old structure
+    elif legacy_found:
+        # main directory
+        main_info = results_path / "training_info.json"
+        if main_info.exists():
+            try:
+                with open(main_info, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                    info["config_dir"] = "root"
+                    info["timeframe"] = info.get("timeframe", "5T")
+                    info["forward_bars"] = info.get("forward_bars", 3)
+                    all_results.append(info)
+            except Exception as exc:
+                print(f"Warning: Failed to read {main_info}: {exc}")
 
-    # subdirectories (fb*_tf*)
-    for subdir in results_path.iterdir():
-        if subdir.is_dir() and subdir.name.startswith("fb"):
-            info_file = subdir / "training_info.json"
-            if info_file.exists():
-                try:
-                    with open(info_file, "r", encoding="utf-8") as f:
-                        info = json.load(f)
-                        info["config_dir"] = subdir.name
-                        all_results.append(info)
-                except Exception as exc:
-                    print(f"Warning: Failed to read {info_file}: {exc}")
+        # subdirectories (fb*_tf*)
+        for subdir in results_path.iterdir():
+            if subdir.is_dir() and subdir.name.startswith("fb"):
+                info_file = subdir / "training_info.json"
+                if info_file.exists():
+                    try:
+                        with open(info_file, "r", encoding="utf-8") as f:
+                            info = json.load(f)
+                            info["config_dir"] = subdir.name
+                            all_results.append(info)
+                    except Exception as exc:
+                        print(f"Warning: Failed to read {info_file}: {exc}")
 
     if not all_results:
         return pd.DataFrame()
@@ -56,12 +114,125 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
         print("No training results found.")
         return ""
 
-    if output_path is None:
-        output_path = os.path.join(results_dir, "summary_report.html")
-
     # Sort for readability
     if {"timeframe", "forward_bars"}.issubset(df.columns):
         df = df.sort_values(["timeframe", "forward_bars"])  # type: ignore
+
+    # Extract common info from first row for filename and title
+    first_row = df.iloc[0].to_dict() if hasattr(df.iloc[0], "to_dict") else dict(df.iloc[0])
+    symbol_raw = first_row.get("symbol", "UNKNOWN")
+    # Format symbol for filename: replace comma with underscore for multi-asset (e.g., "BTCUSDT,ETHUSDT,SOLUSDT" -> "BTCUSDT_ETHUSDT_SOLUSDT")
+    symbol = symbol_raw.replace(",", "_") if isinstance(symbol_raw, str) else str(symbol_raw)
+    feature_type = first_row.get("feature_type", "unknown")
+    
+    # Extract time ranges
+    train_start = first_row.get("train_start")
+    train_end = first_row.get("train_end")
+    actual_start = first_row.get("actual_start")
+    actual_end = first_row.get("actual_end")
+    
+    # Format dates for filename
+    def _format_date_for_filename(date_str):
+        if not date_str:
+            return ""
+        try:
+            if isinstance(date_str, str):
+                # Parse ISO format or other formats
+                if "T" in date_str:
+                    # Handle ISO format: 2024-01-01T00:00:00 or 2024-01-01T00:00:00.589319
+                    date_part = date_str.split("T")[0]
+                    dt = datetime.strptime(date_part, "%Y-%m-%d")
+                else:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                return dt.strftime("%Y%m%d")
+            return ""
+        except Exception as e:
+            # If parsing fails, try to extract date part manually
+            if isinstance(date_str, str) and len(date_str) >= 10:
+                try:
+                    return date_str[:10].replace("-", "")
+                except:
+                    return ""
+            return ""
+    
+    train_start_str = _format_date_for_filename(train_start)
+    train_end_str = _format_date_for_filename(train_end)
+    actual_start_str = _format_date_for_filename(actual_start) if actual_start else train_start_str
+    actual_end_str = _format_date_for_filename(actual_end) if actual_end else train_end_str
+    
+    # Generate filename
+    if output_path is None:
+        filename_parts = [symbol, feature_type]
+        if train_start_str and train_end_str:
+            filename_parts.append(f"{train_start_str}_{train_end_str}")
+        if actual_start_str and actual_end_str and (actual_start_str != train_start_str or actual_end_str != train_end_str):
+            filename_parts.append(f"oos_{actual_start_str}_{actual_end_str}")
+        filename = "_".join(filename_parts) + "_summary_report.html"
+        output_path = os.path.join(results_dir, filename)
+
+    # Collect unique feature types for title
+    # Use the feature_type from first row (most recent training run)
+    # If multiple feature types exist, it means there are multiple training runs mixed together
+    # In that case, we prefer the feature_type from the first row (most recent or most relevant)
+    if "feature_type" in df.columns:
+        feature_types = df["feature_type"].dropna().unique()
+        # Prefer the feature_type from first row (most recent training run)
+        # This ensures we show the feature_type that was actually used in the current training
+        if feature_type and feature_type != "unknown":
+            feature_types_str = str(feature_type)
+        elif len(feature_types) == 1:
+            feature_types_str = str(feature_types[0])
+        elif len(feature_types) > 0:
+            # Multiple feature types: use first row's feature_type (most recent training)
+            feature_types_str = str(feature_type) if feature_type != "unknown" else str(feature_types[0])
+        else:
+            feature_types_str = "unknown"
+    else:
+        feature_types_str = feature_type if feature_type != "unknown" else "unknown"
+    
+    # Format dates for display (more readable format)
+    def _format_date_for_display(date_str):
+        if not date_str:
+            return ""
+        try:
+            if isinstance(date_str, str):
+                if "T" in date_str:
+                    date_part = date_str.split("T")[0]
+                    dt = datetime.strptime(date_part, "%Y-%m-%d")
+                else:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                return dt.strftime("%Y-%m-%d")
+            return ""
+        except Exception:
+            if isinstance(date_str, str) and len(date_str) >= 10:
+                try:
+                    return date_str[:10]
+                except:
+                    return ""
+            return ""
+    
+    train_start_display = _format_date_for_display(train_start)
+    train_end_display = _format_date_for_display(train_end)
+    actual_start_display = _format_date_for_display(actual_start) if actual_start else train_start_display
+    actual_end_display = _format_date_for_display(actual_end) if actual_end else train_end_display
+    
+    # Generate OOS info HTML if needed
+    has_oos = (actual_start_display and actual_end_display and 
+               (actual_start_display != train_start_display or actual_end_display != train_end_display))
+    oos_info_html = (f'<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>' 
+                     if has_oos else '')
+    
+    # Build title with symbol and time ranges
+    # Use original symbol for display (with commas if multi-asset)
+    symbol_display = symbol_raw if 'symbol_raw' in locals() else symbol.replace("_", ",")
+    title_parts = [f"Training Summary Report - {symbol_display}"]
+    if feature_types_str != "unknown":
+        title_parts.append(f"Features: {feature_types_str}")
+    if train_start_str and train_end_str:
+        title_parts.append(f"Train: {train_start_str} to {train_end_str}")
+    if actual_start_str and actual_end_str and (actual_start_str != train_start_str or actual_end_str != train_end_str):
+        title_parts.append(f"Test: {actual_start_str} to {actual_end_str}")
+    report_title = " | ".join(title_parts)
 
     # Build rows
     rows = []
@@ -69,24 +240,51 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
         row_dict = row.to_dict() if hasattr(row, "to_dict") else dict(row)
         timeframe = row_dict.get("timeframe", "N/A")
         forward_bars = row_dict.get("forward_bars", "N/A")
-        symbol = row_dict.get("symbol", "N/A")
+        # Use symbol from row (should be same for all rows in same training run)
+        # If multi-asset, symbol will be "BTCUSDT,ETHUSDT,SOLUSDT"
+        symbol_row = row_dict.get("symbol", "N/A")
         config_dir = row_dict.get("config_dir", "N/A")
         metrics = row_dict.get("metrics", {}) or {}
+        # CV RMSE/MSE should come from volatility model (regression), not stage2 (quantile)
+        volatility_metrics = metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
+        vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(volatility_metrics, dict) else {}
+        cv_rmse = vol_tf.get("cv_rmse")
+        cv_mse = vol_tf.get("cv_mse")
+        # Quantile loss metrics: q10, q50 (stage2), q90
+        q10_metrics = metrics.get("q10", {}) if isinstance(metrics, dict) else {}
+        q10_tf = q10_metrics.get(timeframe, {}) if isinstance(q10_metrics, dict) else {}
+        cv_quantile_loss_0_1 = q10_tf.get("cv_quantile_loss")
         stage2_metrics = metrics.get("stage2", {}) if isinstance(metrics, dict) else {}
-        tf_m = stage2_metrics.get(timeframe, {}) if isinstance(stage2_metrics, dict) else {}
-        cv_rmse = tf_m.get("cv_rmse")
-        cv_mse = tf_m.get("cv_mse")
-        # Fallback: derive from fold_details if missing
-        if (cv_rmse is None or cv_mse is None) and isinstance(tf_m.get("fold_details"), list):
+        q50_tf = stage2_metrics.get(timeframe, {}) if isinstance(stage2_metrics, dict) else {}
+        cv_quantile_loss_0_5 = q50_tf.get("cv_quantile_loss")
+        q90_metrics = metrics.get("q90", {}) if isinstance(metrics, dict) else {}
+        q90_tf = q90_metrics.get(timeframe, {}) if isinstance(q90_metrics, dict) else {}
+        cv_quantile_loss_0_9 = q90_tf.get("cv_quantile_loss")
+        # Fallback 1: derive from volatility fold_details if missing
+        if (cv_rmse is None or cv_mse is None) and isinstance(vol_tf.get("fold_details"), list):
             try:
-                rmses = [fd.get("rmse") for fd in tf_m["fold_details"] if isinstance(fd, dict) and fd.get("rmse") is not None]
-                mses = [fd.get("mse") for fd in tf_m["fold_details"] if isinstance(fd, dict) and fd.get("mse") is not None]
+                rmses = [fd.get("rmse") for fd in vol_tf["fold_details"] if isinstance(fd, dict) and fd.get("rmse") is not None]
+                mses = [fd.get("mse") for fd in vol_tf["fold_details"] if isinstance(fd, dict) and fd.get("mse") is not None]
                 if cv_rmse is None and rmses:
                     cv_rmse = float(sum(rmses) / len(rmses))
                 if cv_mse is None and mses:
                     cv_mse = float(sum(mses) / len(mses))
             except Exception:
                 pass
+        # Fallback 2: derive from stage2 fold_details if still missing (quantile model may have rmse)
+        if (cv_rmse is None or cv_mse is None):
+            stage2_metrics = metrics.get("stage2", {}) if isinstance(metrics, dict) else {}
+            tf_m = stage2_metrics.get(timeframe, {}) if isinstance(stage2_metrics, dict) else {}
+            if isinstance(tf_m.get("fold_details"), list):
+                try:
+                    rmses = [fd.get("rmse") for fd in tf_m["fold_details"] if isinstance(fd, dict) and fd.get("rmse") is not None]
+                    mses = [fd.get("mse") for fd in tf_m["fold_details"] if isinstance(fd, dict) and fd.get("mse") is not None]
+                    if cv_rmse is None and rmses:
+                        cv_rmse = float(sum(rmses) / len(rmses))
+                    if cv_mse is None and mses:
+                        cv_mse = float(sum(mses) / len(mses))
+                except Exception:
+                    pass
         # classification (train) metrics
         cls_train = metrics.get("classification_train", {}) if isinstance(metrics, dict) else {}
         cls_tf = cls_train.get(timeframe, {}) if isinstance(cls_train, dict) else {}
@@ -127,10 +325,13 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
                         else '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ FAIL</span>')
 
         rows.append(
-            f"<tr><td>{symbol}</td><td>{timeframe}</td><td>{forward_bars}</td>"
+            f"<tr><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
             f"<td>{train_bars:,}</td>"
             f"<td>{_format_metric(cv_rmse, '.6f')}</td>"
             f"<td>{_format_metric(cv_mse, '.8f')}</td>"
+            f"<td>{_format_metric(cv_quantile_loss_0_1, '.8f')}</td>"
+            f"<td>{_format_metric(cv_quantile_loss_0_5, '.8f')}</td>"
+            f"<td>{_format_metric(cv_quantile_loss_0_9, '.8f')}</td>"
             f"<td{f1_color}>{_format_metric(f1)}</td>"
             f"<td>{_format_metric(acc)}</td>"
             f"<td>{_format_metric(prec)}</td>"
@@ -143,7 +344,7 @@ def generate_summary_report(results_dir: str = "results/training", output_path: 
         )
 
     html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Training Summary Report</title>
+<html lang="en"><head><meta charset="UTF-8"><title>{report_title}</title>
 <style>
 body{{font-family:Arial,sans-serif;margin:24px;color:#222;background-color:#f5f5f5}}
 .container{{max-width:1600px;margin:0 auto;background-color:white;padding:30px;border-radius:10px;box-shadow:0 0 20px rgba(0,0,0,0.1)}}
@@ -161,8 +362,17 @@ tr:hover{{background-color:#e8f4f8}}
 </style>
 </head><body>
 <div class="container">
-<h1>Training Summary Report</h1>
+<h1>{report_title}</h1>
 <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+<div style="background-color:#e8f4f8;border-left:4px solid #3498db;padding:15px;margin:20px 0;border-radius:4px;">
+<h3 style="margin-top:0;color:#2c3e50;">📅 训练时间范围</h3>
+<ul style="margin:10px 0;padding-left:20px;">
+<li><strong>训练期:</strong> {train_start_display if train_start_display else 'N/A'} 至 {train_end_display if train_end_display else 'N/A'}</li>
+{oos_info_html}
+<li><strong>特征类型:</strong> {feature_types_str if feature_types_str != "unknown" else 'N/A'}</li>
+<li><strong>交易对:</strong> {symbol_display if 'symbol_display' in locals() else symbol.replace("_", ",")}</li>
+</ul>
+</div>
 <div class="explanation">
 <h3>📊 指标说明与好坏判断</h3>
 <ul>
@@ -191,6 +401,21 @@ tr:hover{{background-color:#e8f4f8}}
 <li><strong>Recall</strong> (召回率): 抓住行情能力，实际该做多时模型抓到比例</li>
 <li><strong>Accuracy</strong> (准确率): 总体分类准确率，在不平衡数据上可能虚高</li>
 <li><strong>CV RMSE/MSE</strong>: 交叉验证的回归误差，越低越好</li>
+<li><strong>Quantile Loss 0.1 / 0.5 / 0.9</strong>: 分位数回归损失，用于量化不确定性估计
+    <ul>
+        <li><strong>Quantile Loss 0.1</strong> (10%分位数): 预测下限，用于估计未来收益的悲观情况。值越小越好，通常应该在合理范围内。</li>
+        <li><strong>Quantile Loss 0.5</strong> (50%分位数，中位数): 预测中位数，用于点估计。这是主要的预测值，通常与RMSE相关。</li>
+        <li><strong>Quantile Loss 0.9</strong> (90%分位数): 预测上限，用于估计未来收益的乐观情况。值越小越好。</li>
+        <li><strong>使用说明</strong>: 
+            <ul>
+                <li>比较三个quantile loss可以评估模型的不确定性估计能力：如果0.1和0.9的loss显著高于0.5，说明模型在极端情况下预测能力较弱。</li>
+                <li>理想的quantile loss应该：0.5最小（中位数预测最准确），0.1和0.9略高但合理（不确定性区间适度）。</li>
+                <li>如果0.1和0.9的loss过高，说明模型对尾部风险估计不足，需要调整模型或特征工程。</li>
+                <li>这三个值通常用于构建预测区间（prediction interval），例如：预测中位数 ± 不确定性区间，可以用于风险管理。</li>
+            </ul>
+        </li>
+    </ul>
+</li>
 <li><strong>Quality</strong>: 模型质量检查，✅ PASS = F1 &gt;= 0.3 或 AUC &gt;= 0.6，❌ FAIL = 两者都不满足</li>
 </ul>
 <h3>💡 特征类型比较</h3>
@@ -204,7 +429,7 @@ tr:hover{{background-color:#e8f4f8}}
 <p><strong>💡 建议:</strong> 比较不同特征类型（baseline vs default）时，重点关注F1、AUC和PR-AUC，这些指标更能反映模型真实性能。</p>
 </div>
 <table>
-<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Config</th></tr>
+<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>Quantile Loss 0.1</th><th>Quantile Loss 0.5</th><th>Quantile Loss 0.9</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Config</th></tr>
 {''.join(rows)}
 </table>
 </div>
@@ -213,7 +438,14 @@ tr:hover{{background-color:#e8f4f8}}
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
+    # Print with feature types and time range info
     print(f"Summary report generated: {output_path}")
+    if feature_types_str != "unknown":
+        print(f"  Feature types: {feature_types_str}")
+    if train_start_str and train_end_str:
+        print(f"  Training period: {train_start_str} to {train_end_str}")
+    if actual_start_str and actual_end_str and (actual_start_str != train_start_str or actual_end_str != train_end_str):
+        print(f"  Test period: {actual_start_str} to {actual_end_str}")
     return output_path
 
 

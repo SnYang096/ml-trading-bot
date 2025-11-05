@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from typing import Optional, Tuple, List
+from sklearn.linear_model import LinearRegression
 
 
 class BaselineFeatureEngineer:
@@ -56,6 +57,33 @@ class BaselineFeatureEngineer:
 
         return series.rolling(window=window, min_periods=1).apply(_rank,
                                                                   raw=True)
+
+    @staticmethod
+    def _trend_r2(prices: pd.Series, window: int = 20) -> pd.Series:
+        """计算趋势R²特征
+        
+        Args:
+            prices: 价格序列
+            window: 滚动窗口大小
+            
+        Returns:
+            R²值序列（0-1范围，已归一化）
+        """
+
+        def _compute_r2(prices_window):
+            if len(prices_window) < 2:
+                return 0.0
+            try:
+                X = np.arange(len(prices_window)).reshape(-1, 1)
+                y = prices_window.values
+                model = LinearRegression().fit(X, y)
+                return model.score(X, y)  # R²
+            except Exception:
+                return 0.0
+
+        return prices.rolling(window=window,
+                              min_periods=2).apply(lambda x: _compute_r2(x),
+                                                   raw=False).fillna(0.0)
 
     @staticmethod
     def _price_entropy(close: pd.Series, window: int = 50) -> pd.Series:
@@ -117,13 +145,24 @@ class BaselineFeatureEngineer:
                         (low_vol
                          != low_vol.shift()).cumsum()).cumsum()) * low_vol
 
-                # 4. Compression energy (if volume_ratio exists)
+                # 4. Compression energy (if volume_ratio exists)，使用log转换和标准化
                 if "compression_energy" not in df.columns and "volume_ratio" in df.columns and "bb_width" in df.columns:
-                    df["compression_energy"] = (1.0 / df["bb_width"].replace(
+                    compression_energy_raw = (1.0 / df["bb_width"].replace(
                         0, np.nan)) * df["volume_ratio"]
+                    compression_energy_raw = compression_energy_raw.replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
+                    # 使用log转换避免极端值，然后标准化（处理正值）
+                    compression_energy_log = np.log1p(
+                        np.abs(compression_energy_raw)) * np.sign(
+                            compression_energy_raw)
+                    compression_energy_mean = compression_energy_log.rolling(
+                        50, min_periods=10).mean()
+                    compression_energy_std = compression_energy_log.rolling(
+                        50, min_periods=10).std()
                     df["compression_energy"] = (
-                        df["compression_energy"].replace([np.inf, -np.inf],
-                                                         np.nan).fillna(0))
+                        (compression_energy_log - compression_energy_mean) /
+                        compression_energy_std.replace(0, np.nan)).replace(
+                            [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
                 # 7. Volatility squeeze flag
                 if "volatility_squeeze_flag" not in df.columns and "bb_width" in df.columns:
@@ -131,25 +170,47 @@ class BaselineFeatureEngineer:
                                                      < (2.0 *
                                                         df["atr"])).astype(int)
 
-                # 16. Structure tension
+                # 16. Structure tension，使用log转换和标准化
                 if "structure_tension" not in df.columns and "bb_width" in df.columns:
                     dist_high = (df["high"].rolling(50).max() -
-                                 df["close"]).abs() / df["close"]
+                                 df["close"]).abs() / df["close"].replace(
+                                     0, np.nan)
                     dist_low = (df["close"] - df["low"].rolling(50).min()
-                                ).abs() / df["close"]
-                    df["structure_tension"] = (
-                        dist_high + dist_low) / df["bb_width"].replace(
+                                ).abs() / df["close"].replace(0, np.nan)
+                    structure_tension_raw = (
+                        dist_high.fillna(0) +
+                        dist_low.fillna(0)) / df["bb_width"].replace(
                             0, np.nan)
-                    df["structure_tension"] = (df["structure_tension"].replace(
-                        [np.inf, -np.inf], np.nan).fillna(0))
+                    structure_tension_raw = structure_tension_raw.replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
+                    # 使用log转换避免极端值，然后标准化
+                    structure_tension_log = np.log1p(structure_tension_raw)
+                    structure_tension_mean = structure_tension_log.rolling(
+                        50, min_periods=10).mean()
+                    structure_tension_std = structure_tension_log.rolling(
+                        50, min_periods=10).std()
+                    df["structure_tension"] = (
+                        (structure_tension_log - structure_tension_mean) /
+                        structure_tension_std.replace(0, np.nan)).replace(
+                            [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
-            # 2. Range ratio (不依赖BB/ATR)
+            # 2. Range ratio (不依赖BB/ATR)，使用log转换和标准化
             if "range_ratio_5bar" not in df.columns:
                 if "hl" not in df.columns:
                     df["hl"] = df["high"] - df["low"]
-                df["range_ratio_5bar"] = df["hl"].rolling(
+                range_ratio_raw = df["hl"].rolling(
                     5).mean() / df["hl"].rolling(20).mean().replace(0, np.nan)
-                df["range_ratio_5bar"] = df["range_ratio_5bar"].fillna(1)
+                range_ratio_raw = range_ratio_raw.fillna(1)
+                # 使用log转换避免极端值，然后标准化
+                range_ratio_log = np.log1p(range_ratio_raw)
+                range_ratio_mean = range_ratio_log.rolling(
+                    50, min_periods=5).mean()
+                range_ratio_std = range_ratio_log.rolling(50,
+                                                          min_periods=5).std()
+                df["range_ratio_5bar"] = (
+                    (range_ratio_log - range_ratio_mean) /
+                    range_ratio_std.replace(0, np.nan)).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
             # 5. ATR percentile (注意：baseline已有atr_percentile，但这里用不同的窗口，所以跳过或改名)
             # Skip since baseline already has atr_percentile
@@ -163,44 +224,153 @@ class BaselineFeatureEngineer:
                 df["volatility_reversal_score"] = df[
                     "volatility_reversal_score"].fillna(0)
 
-            # 8. Price range symmetry
+            # 8. Price range symmetry，使用log转换和标准化
             if "price_range_symmetry" not in df.columns:
-                df["price_range_symmetry"] = (df["high"] - df["close"]) / (
+                price_range_symmetry_raw = (df["high"] - df["close"]) / (
                     df["close"] - df["low"]).replace(0, np.nan)
+                price_range_symmetry_raw = price_range_symmetry_raw.replace(
+                    [np.inf, -np.inf], np.nan).fillna(1)
+                # 使用log转换避免极端值，然后标准化
+                price_range_symmetry_log = np.log1p(
+                    np.abs(price_range_symmetry_raw)) * np.sign(
+                        price_range_symmetry_raw)
+                price_range_symmetry_mean = price_range_symmetry_log.rolling(
+                    50, min_periods=5).mean()
+                price_range_symmetry_std = price_range_symmetry_log.rolling(
+                    50, min_periods=5).std()
                 df["price_range_symmetry"] = (
-                    df["price_range_symmetry"].replace([np.inf, -np.inf],
-                                                       np.nan).fillna(1))
+                    (price_range_symmetry_log - price_range_symmetry_mean) /
+                    price_range_symmetry_std.replace(0, np.nan)).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
-            # 9. Volume anomaly
+            # 9. Volume anomaly，使用log转换和标准化
             if "volume_anomaly" not in df.columns:
+                volume_anomaly_raw = df["volume"] / df["volume"].ewm(
+                    span=20, min_periods=10).mean().replace(0, np.nan)
+                volume_anomaly_raw = volume_anomaly_raw.fillna(1)
+                # 使用log转换避免极端值，然后标准化
+                volume_anomaly_log = np.log1p(volume_anomaly_raw)
+                volume_anomaly_mean = volume_anomaly_log.rolling(
+                    50, min_periods=10).mean()
+                volume_anomaly_std = volume_anomaly_log.rolling(
+                    50, min_periods=10).std()
                 df["volume_anomaly"] = (
-                    df["volume"] /
-                    df["volume"].ewm(span=20, min_periods=10).mean())
+                    (volume_anomaly_log - volume_anomaly_mean) /
+                    volume_anomaly_std.replace(0, np.nan)).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
-            # 10. Up/Down volume ratio
+            # 10. Up/Down volume ratio，使用log转换和标准化
             if "upvol_downvol_ratio" not in df.columns:
                 up = (df["close"] > df["close"].shift()).astype(int)
                 df["up_vol"] = (df["volume"] * up).rolling(20).sum()
                 df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
-                df["upvol_downvol_ratio"] = df["up_vol"] / df[
+                upvol_downvol_ratio_raw = df["up_vol"] / df[
                     "down_vol"].replace(0, np.nan)
-                df["upvol_downvol_ratio"] = (df["upvol_downvol_ratio"].replace(
-                    [np.inf, -np.inf], np.nan).fillna(1))
+                upvol_downvol_ratio_raw = upvol_downvol_ratio_raw.replace(
+                    [np.inf, -np.inf], np.nan).fillna(1)
+                # 使用log转换避免极端值，然后标准化
+                upvol_downvol_ratio_log = np.log1p(upvol_downvol_ratio_raw)
+                upvol_downvol_ratio_mean = upvol_downvol_ratio_log.rolling(
+                    50, min_periods=20).mean()
+                upvol_downvol_ratio_std = upvol_downvol_ratio_log.rolling(
+                    50, min_periods=20).std()
+                df["upvol_downvol_ratio"] = (
+                    (upvol_downvol_ratio_log - upvol_downvol_ratio_mean) /
+                    upvol_downvol_ratio_std.replace(0, np.nan)).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
-            # 11. ROC and acceleration
+            # 11. ROC and acceleration (with normalization)
             if "roc_5" not in df.columns:
-                df["roc_5"] = df["close"].pct_change(5)
+                roc_raw = df["close"].pct_change(5)
+                # Normalize ROC by rolling std (Z-score) to make it consistent with other features
+                # Use a larger window and ensure minimum std to avoid extreme values
+                roc_mean = roc_raw.rolling(window=50, min_periods=5).mean()
+                roc_std = roc_raw.rolling(window=50, min_periods=5).std()
+                # Clip std to avoid division by very small values
+                roc_std = roc_std.clip(lower=roc_raw.abs().quantile(0.01))
+                df["roc_5"] = ((roc_raw - roc_mean) /
+                               roc_std.replace(0, np.nan)).replace(
+                                   [np.inf, -np.inf],
+                                   np.nan).fillna(0).clip(-5, 5)
             if "acceleration_3" not in df.columns:
                 roc_3 = df["close"].pct_change(3)
-                df["acceleration_3"] = roc_3 - roc_3.shift(1)
+                roc_3_mean = roc_3.rolling(window=50, min_periods=5).mean()
+                roc_3_std = roc_3.rolling(window=50, min_periods=5).std()
+                roc_3_std = roc_3_std.clip(lower=roc_3.abs().quantile(0.01))
+                roc_3_norm = ((roc_3 - roc_3_mean) /
+                              roc_3_std.replace(0, np.nan)).replace(
+                                  [np.inf, -np.inf],
+                                  np.nan).fillna(0).clip(-5, 5)
+                df["acceleration_3"] = roc_3_norm - roc_3_norm.shift(1)
 
-            # 12. Price vs EMA distance
+            # 12. Trend R² (R-squared) - 衡量趋势强度
+            if "trend_r2_20" not in df.columns:
+                df["trend_r2_20"] = self._trend_r2(df["close"], window=20)
+            if "trend_r2_50" not in df.columns:
+                df["trend_r2_50"] = self._trend_r2(df["close"], window=50)
+
+            # 12.1 Price vs EMA/SMA distance (normalized)
             if "price_vs_ema_distance" not in df.columns and "sma_20" in df.columns and "atr" in df.columns:
                 df["price_vs_ema_distance"] = (
                     df["close"] - df["sma_20"]) / df["atr"].replace(0, np.nan)
                 df["price_vs_ema_distance"] = (
                     df["price_vs_ema_distance"].replace([np.inf, -np.inf],
                                                         np.nan).fillna(0))
+
+            # 12.2 SMA/EMA/WMA distance features (price/sma - 1, normalized)
+            # 计算移动平均线（如果不存在）
+            if "sma_20" not in df.columns:
+                df["sma_20"] = df["close"].rolling(window=20,
+                                                   min_periods=1).mean()
+            if "sma_50" not in df.columns:
+                df["sma_50"] = df["close"].rolling(window=50,
+                                                   min_periods=1).mean()
+            if "ema_20" not in df.columns:
+                df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+            if "ema_50" not in df.columns:
+                df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
+
+            # SMA距离特征（归一化）
+            if "sma_20_distance" not in df.columns:
+                df["sma_20_distance"] = (
+                    df["close"] / df["sma_20"].replace(0, np.nan) - 1).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
+            if "sma_50_distance" not in df.columns:
+                df["sma_50_distance"] = (
+                    df["close"] / df["sma_50"].replace(0, np.nan) - 1).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
+
+            # EMA距离特征（归一化）
+            if "ema_20_distance" not in df.columns:
+                df["ema_20_distance"] = (
+                    df["close"] / df["ema_20"].replace(0, np.nan) - 1).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
+            if "ema_50_distance" not in df.columns:
+                df["ema_50_distance"] = (
+                    df["close"] / df["ema_50"].replace(0, np.nan) - 1).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
+
+            # WMA距离特征（如果存在）
+            try:
+                if "wma_20" not in df.columns:
+                    # 简单加权移动平均
+                    weights = np.arange(1, 21)
+                    df["wma_20"] = df["close"].rolling(
+                        window=20, min_periods=1).apply(
+                            lambda x: np.dot(x, weights) / weights.sum(),
+                            raw=True)
+                if "wma_20" in df.columns and "wma_20_distance" not in df.columns:
+                    df["wma_20_distance"] = (
+                        df["close"] / df["wma_20"].replace(0, np.nan) -
+                        1).replace([np.inf, -np.inf], np.nan).fillna(0)
+            except Exception:
+                pass
+
+            # VWAP距离特征（如果存在）
+            if "vwap" in df.columns and "vwap_distance" not in df.columns:
+                df["vwap_distance"] = (
+                    df["close"] / df["vwap"].replace(0, np.nan) - 1).replace(
+                        [np.inf, -np.inf], np.nan).fillna(0)
 
             # 13. Momentum persistence
             if "momentum_persistence" not in df.columns:

@@ -50,22 +50,61 @@ def load_real_market_data(
     start_date: str | None = None,
     end_date: str | None = None,
     horizons: list[int] | None = None,
+    feature_type: str = "comprehensive",
 ) -> Tuple[np.ndarray, np.ndarray, list, list[int], pd.DataFrame]:
-    print(f"📊 Loading real market data for {symbol}...")
+    """Load real market data for one or multiple symbols.
+    
+    Args:
+        symbol: Single symbol or comma-separated symbols (e.g., "ETH-USD" or "ETH-USD,BTC-USD,SOL-USD")
+    """
+    # Support multiple symbols (comma-separated)
+    symbol_list = [s.strip() for s in symbol.split(",") if s.strip()]
+    symbols_str = ",".join(symbol_list) if len(symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
+    print(f"📊 Loading real market data for {symbols_str}...")
+    print(f"   Feature type: {feature_type}")
+    if len(symbol_list) > 1:
+        print(f"   Multi-asset training: {len(symbol_list)} assets")
 
     try:
         loader = MarketDataLoader(data_path)
-        df = loader.load_data(symbol=symbol,
-                              start_date=start_date,
-                              end_date=end_date)
-
-        if df is None or df.empty:
-            print("⚠️ No real data found, generating sample data...")
+        # Load and resample data for all symbols, then merge
+        all_dfs = []
+        for sym in symbol_list:
+            # Create a new loader for each symbol to ensure proper resampling
+            symbol_loader = MarketDataLoader(data_path)
+            df_single = symbol_loader.load_data(symbol=sym,
+                                                start_date=start_date,
+                                                end_date=end_date)
+            if df_single is not None and not df_single.empty:
+                # Resample each symbol's data before merging
+                if hasattr(symbol_loader, 'resample_data'):
+                    df_single = symbol_loader.resample_data("5T")
+                elif isinstance(df_single.index, pd.DatetimeIndex):
+                    # Fallback: resample manually
+                    df_single = df_single.resample("5T").agg({
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum'
+                    }).dropna()
+                if df_single is not None and not df_single.empty:
+                    all_dfs.append(df_single)
+        
+        if not all_dfs:
+            print("⚠️ No real data found for any symbol, generating sample data...")
             return create_enhanced_sample_data()
+        
+        # Merge all dataframes (already resampled)
+        # For multi-asset training, all assets' data are merged together
+        # All features are normalized (asset-agnostic), so the model can learn
+        # common patterns across different assets
+        df = pd.concat(all_dfs, axis=0).sort_index()
+        if len(symbol_list) > 1:
+            print(f"   Merged {len(all_dfs)} asset(s), total {len(df)} samples")
 
-        df = loader.resample_data("5T")
-
-        comprehensive_engineer = ComprehensiveFeatureEngineer()
+        comprehensive_engineer = ComprehensiveFeatureEngineer(
+            feature_types=feature_type)
         df_features = comprehensive_engineer.engineer_all_features(df,
                                                                    fit=True)
 
@@ -772,6 +811,7 @@ def run_dimensionality_comparison(
     autoencoder_epochs: int = 500,
     train_start: str | None = None,
     train_end: str | None = None,
+    feature_type: str = "comprehensive",
 ) -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
@@ -781,7 +821,8 @@ def run_dimensionality_comparison(
     X, y, feature_names = load_real_market_data(data_path,
                                                 symbol,
                                                 start_date=train_start,
-                                                end_date=train_end)
+                                                end_date=train_end,
+                                                feature_type=feature_type)
 
     print(f"✅ Data loaded: {X.shape}, {y.shape}")
     print(f"✅ Features: {len(feature_names)}")
@@ -884,17 +925,18 @@ def run_dimensionality_comparison(
     compression_ratio = X.shape[1] / X_train_emb.shape[1]
     performance_change = results_compressed["r2"] - results_original["r2"]
 
-    # Format training date range for directory name
+    # Format training date range for directory name (include symbol and feature_type)
     if train_start and train_end:
         # Extract date parts (YYYY-MM-DD -> YYYYMMDD)
         train_start_date = train_start.replace("-", "")[:8]
         train_end_date = train_end.replace("-", "")[:8]
-        dir_date_suffix = f"{train_start_date}_{train_end_date}"
+        dir_date_suffix = f"{symbol}_{feature_type}_{train_start_date}_{train_end_date}"
     else:
         # Fallback to runtime timestamps if no date range provided
         train_start_date = None
         train_end_date = None
-        dir_date_suffix = f"{timestamp_start}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        timestamp_end = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dir_date_suffix = f"{symbol}_{feature_type}_{timestamp_start}_{timestamp_end}"
 
     results = {
         "timestamp_start": timestamp_start,
@@ -974,7 +1016,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
     parser.add_argument(
         "--symbol",
         default="ETH-USD",
-        help="Symbol name (e.g., BTC-USD, ETH-USD)",
+        help="Symbol name(s) (e.g., BTC-USD, ETH-USD or BTC-USD,ETH-USD,SOL-USD for multi-asset training)",
     )
     parser.add_argument(
         "--encoding-dim",
@@ -1126,6 +1168,12 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         choices=["classification", "regression", "both"],
         help="Task type to evaluate: classification | regression | both (default)",
     )
+    parser.add_argument(
+        "--feature-type",
+        type=str,
+        default="comprehensive",
+        help="Feature type: baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (default: comprehensive)",
+    )
 
     args = parser.parse_args()
 
@@ -1163,11 +1211,11 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
         if args.train_start and args.train_end:
             train_start_date = args.train_start.replace("-", "")[:8]
             train_end_date = args.train_end.replace("-", "")[:8]
-            ablation_dir_date_suffix = f"{train_start_date}_{train_end_date}"
+            ablation_dir_date_suffix = f"{args.symbol}_{args.feature_type}_{train_start_date}_{train_end_date}"
         else:
             train_start_date = None
             train_end_date = None
-            ablation_dir_date_suffix = None  # Will use runtime timestamps
+            ablation_dir_date_suffix = f"{args.symbol}_{args.feature_type}_{ablation_start_ts}"  # Use runtime timestamps with symbol and feature_type
         # Parse horizons from args
         horizons_list = [int(h.strip()) for h in args.horizons.split(",")
                          ] if args.horizons else [1]
@@ -1178,7 +1226,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
             args.symbol,
             args.train_start,
             args.train_end,
-            horizons=horizons_list)
+            horizons=horizons_list,
+            feature_type=args.feature_type)
 
         # Use loaded horizons or fallback to parsed horizons
         horizons = horizons_loaded if horizons_loaded and len(
@@ -1657,7 +1706,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                 if ablation_dir_date_suffix:
                     best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
                 else:
-                    best_dir = f"results/production_dimensionality_{results['timestamp_start']}_{results['timestamp_end']}"
+                    # Fallback: use symbol, feature_type, and timestamps
+                    best_dir = f"results/production_dimensionality_{args.symbol}_{args.feature_type}_{results['timestamp_start']}_{results['timestamp_end']}"
             except Exception as exc:
                 print(f"⚠️ Ablation ENCODING_DIM={dim} failed: {exc}")
                 continue
@@ -1818,7 +1868,8 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
             if ablation_dir_date_suffix:
                 best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
             else:
-                best_dir = f"results/production_dimensionality_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
+                # Fallback: use symbol, feature_type, and timestamps
+                best_dir = f"results/production_dimensionality_{args.symbol}_{args.feature_type}_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
         os.makedirs(best_dir, exist_ok=True)
 
         # Save representative features list (Stage 3) - after best_dir is set
@@ -1876,9 +1927,41 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
 
         with open(f"{best_dir}/production_results.json", "w") as f:
             json.dump(best_result, f, indent=2, default=_to_py)
-        default_report_path = os.path.join(best_dir,
-                                           "dimensionality_report.html")
+        
+        # Generate report filename with symbol, feature_type, and time range
+        def _format_date_for_filename(date_str):
+            if not date_str:
+                return ""
+            try:
+                if isinstance(date_str, str):
+                    if "T" in date_str:
+                        date_part = date_str.split("T")[0]
+                        dt = datetime.strptime(date_part, "%Y-%m-%d")
+                    else:
+                        dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    return dt.strftime("%Y%m%d")
+                return ""
+            except Exception:
+                if isinstance(date_str, str) and len(date_str) >= 10:
+                    try:
+                        return date_str[:10].replace("-", "")
+                    except:
+                        return ""
+                return ""
+        
+        train_start_str = _format_date_for_filename(args.train_start) if args.train_start else ""
+        train_end_str = _format_date_for_filename(args.train_end) if args.train_end else ""
+        
+        # Build report filename
+        if train_start_str and train_end_str:
+            report_filename = f"{args.symbol}_{args.feature_type}_{train_start_str}_{train_end_str}_dimensionality_report.html"
+        else:
+            # Fallback to timestamps
+            report_filename = f"{args.symbol}_{args.feature_type}_{ablation_start_ts}_dimensionality_report.html"
+        
+        default_report_path = os.path.join(best_dir, report_filename)
         write_html_report(best_result, default_report_path)
+        print(f"📝 HTML report saved to: {default_report_path}")
         # optional export
         if args.export_model:
             try:
@@ -1905,6 +1988,7 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
                     autoencoder_epochs=args.autoencoder_epochs,
                     train_start=args.train_start,
                     train_end=args.train_end,
+                    feature_type=args.feature_type,
                 )
                 perf = trial_results.get('performance', {})
                 orig = perf.get('original_features', {})
@@ -1941,16 +2025,48 @@ def main() -> Tuple[Dict, any, UnifiedAutoencoder, str]:
             autoencoder_epochs=args.autoencoder_epochs,
             train_start=args.train_start,
             train_end=args.train_end,
+            feature_type=args.feature_type,
         )
 
     # Record Top-K hint if provided
     if args.top_k is not None:
         results.setdefault("training_info", {})["top_k"] = args.top_k
 
-    # Always write a report into the results directory
+    # Always write a report into the results directory with symbol, feature_type, and time range
     try:
-        default_report_path = os.path.join(results_dir,
-                                           "dimensionality_report.html")
+        # Generate report filename with symbol, feature_type, and time range
+        def _format_date_for_filename(date_str):
+            if not date_str:
+                return ""
+            try:
+                if isinstance(date_str, str):
+                    if "T" in date_str:
+                        date_part = date_str.split("T")[0]
+                        dt = datetime.strptime(date_part, "%Y-%m-%d")
+                    else:
+                        dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    return dt.strftime("%Y%m%d")
+                return ""
+            except Exception:
+                if isinstance(date_str, str) and len(date_str) >= 10:
+                    try:
+                        return date_str[:10].replace("-", "")
+                    except:
+                        return ""
+                return ""
+        
+        train_start_str = _format_date_for_filename(args.train_start) if args.train_start else ""
+        train_end_str = _format_date_for_filename(args.train_end) if args.train_end else ""
+        
+        # Build report filename
+        if train_start_str and train_end_str:
+            report_filename = f"{args.symbol}_{args.feature_type}_{train_start_str}_{train_end_str}_dimensionality_report.html"
+        else:
+            # Fallback: extract from results_dir or use timestamp
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_filename = f"{args.symbol}_{args.feature_type}_{timestamp_str}_dimensionality_report.html"
+        
+        default_report_path = os.path.join(results_dir, report_filename)
         write_html_report(results, default_report_path)
     except Exception as exc:  # noqa: BLE001
         print(f"⚠️ Failed to write default HTML report: {exc}")
