@@ -587,6 +587,127 @@ class BaselineFeatureEngineer:
         # Advanced derived features (if BB/ATR available)
         data = self._add_advanced_derived_features(data)
 
+        # Time factors (UTC): Cyclic hour encoding, Is_Weekend, Minutes_Since_Last_Trade
+        # For tree models (LightGBM/XGBoost), we use cyclic encoding for hour to capture
+        # the fact that 23:00 and 00:00 are close in time.
+        try:
+            idx = data.index
+            if hasattr(idx, "hour") and hasattr(idx, "dayofweek"):
+                # Hour_of_Day: Cyclic encoding (sin/cos) for tree models
+                # This allows the model to learn that 23:00 and 00:00 are close
+                try:
+                    # If timezone-aware, convert to UTC first
+                    if getattr(idx, "tz", None) is not None:
+                        utc_idx = idx.tz_convert("UTC")
+                        hour = utc_idx.hour.astype(int)
+                    else:
+                        # Assume timestamps are already UTC
+                        hour = idx.hour.astype(int)
+                    
+                    # Cyclic encoding: sin/cos transformation
+                    # This preserves the periodic nature of hours (23 and 0 are close)
+                    data["hour_sin"] = np.sin(2 * np.pi * hour / 24)
+                    data["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+                    
+                    # Also keep raw hour for reference (optional, can be excluded later)
+                    data["Hour_of_Day"] = hour
+                    
+                except Exception:
+                    data["hour_sin"] = 0.0
+                    data["hour_cos"] = 1.0
+                    data["Hour_of_Day"] = 0
+
+                # Is_Weekend (Sat/Sun): Binary 0/1, no normalization needed for tree models
+                try:
+                    data["Is_Weekend"] = (idx.dayofweek >= 5).astype(int)
+                except Exception:
+                    data["Is_Weekend"] = 0
+
+                # Minutes_Since_Last_Trade: Winsorize + optional binning/boolean features
+                # If tick data exists you could compute true minutes since last trade.
+                # For bar data, approximate using consecutive zero-volume run length
+                # scaled by inferred bar minutes when possible.
+                try:
+                    zero_vol = (data["volume"].astype(float) == 0).astype(int)
+                    run = np.zeros(len(zero_vol), dtype=int)
+                    cnt = 0
+                    for i, v in enumerate(zero_vol.values):
+                        if v == 1:
+                            cnt += 1
+                        else:
+                            cnt = 0
+                        run[i] = cnt
+
+                    # Infer bar minutes from timestamp diffs if available
+                    inferred_bar_minutes = None
+                    try:
+                        # Use median to be robust
+                        diffs = pd.Series(idx).diff().dt.total_seconds()
+                        med_sec = float(diffs.median()) if diffs.notna().any() else None
+                        if med_sec is not None and med_sec > 0:
+                            inferred_bar_minutes = med_sec / 60.0
+                    except Exception:
+                        inferred_bar_minutes = None
+
+                    if inferred_bar_minutes is None:
+                        # Fallback: just use bars since last trade as minutes proxy
+                        minutes_raw = run.astype(float)
+                    else:
+                        minutes_raw = run.astype(float) * float(inferred_bar_minutes)
+                    
+                    # Step 1: Winsorize (clip upper bound at 60 minutes)
+                    # Beyond 60 minutes, the signal is similar (long-term no-trade)
+                    minutes_clipped = minutes_raw.clip(upper=60.0)
+                    data["Minutes_Since_Last_Trade"] = minutes_clipped
+                    
+                    # Step 2: Add boolean features for common thresholds
+                    # These are more interpretable and robust for tree models
+                    data["no_trade_5min"] = (minutes_clipped > 5).astype(int)
+                    data["no_trade_15min"] = (minutes_clipped > 15).astype(int)
+                    data["no_trade_30min"] = (minutes_clipped > 30).astype(int)
+                    
+                    # Step 3: Optional binning (discretization)
+                    # This can help tree models by creating clear splits
+                    try:
+                        # Since we already clipped at 60, values are in [0, 60]
+                        # Bins: [0, 1), [1, 5), [5, 15), [15, 60]
+                        data["trade_gap_bin"] = pd.cut(
+                            minutes_clipped,
+                            bins=[0, 1, 5, 15, 60.1],  # 60.1 to include 60.0
+                            labels=[0, 1, 2, 3],
+                            include_lowest=True,
+                            right=False  # [0,1), [1,5), [5,15), [15,60.1)
+                        ).astype(float).fillna(0.0)
+                    except Exception:
+                        # If binning fails, just use the clipped value
+                        pass
+                        
+                except Exception:
+                    data["Minutes_Since_Last_Trade"] = 0.0
+                    data["no_trade_5min"] = 0
+                    data["no_trade_15min"] = 0
+                    data["no_trade_30min"] = 0
+            else:
+                # Fallback values if index doesn't have hour/dayofweek
+                data["hour_sin"] = 0.0
+                data["hour_cos"] = 1.0
+                data["Hour_of_Day"] = 0
+                data["Is_Weekend"] = 0
+                data["Minutes_Since_Last_Trade"] = 0.0
+                data["no_trade_5min"] = 0
+                data["no_trade_15min"] = 0
+                data["no_trade_30min"] = 0
+        except Exception:
+            # Fallback values on any error
+            data["hour_sin"] = 0.0
+            data["hour_cos"] = 1.0
+            data["Hour_of_Day"] = 0
+            data["Is_Weekend"] = 0
+            data["Minutes_Since_Last_Trade"] = 0.0
+            data["no_trade_5min"] = 0
+            data["no_trade_15min"] = 0
+            data["no_trade_30min"] = 0
+
         # Finalize: feature column ordering
         feature_cols: List[str] = [
             # SR distances
@@ -731,6 +852,11 @@ def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
         "channel_mid",  # 原始价格量纲，保留归一化的距离特征
         "channel_upper",  # 原始价格量纲
         "channel_lower",  # 原始价格量纲
+        # 原始滚动高低点（使用原始价格），保留标准化的距离特征（sr_dist_*）
+        "roll_high_s",  # 使用原始 high，保留 sr_dist_high_s（标准化）
+        "roll_low_s",  # 使用原始 low，保留 sr_dist_low_s（标准化）
+        "roll_high_l",  # 使用原始 high，保留 sr_dist_high_l（标准化）
+        "roll_low_l",  # 使用原始 low，保留 sr_dist_low_l（标准化）
     })
     # Exclude raw-scale prefixes
     raw_prefixes = ("sma_", "ema_", "wma_", "tema_", "kama_", "volume_sma_",

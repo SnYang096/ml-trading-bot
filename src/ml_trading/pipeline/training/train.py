@@ -14,6 +14,10 @@ import json
 from typing import List
 import numpy as np
 import pandas as pd
+import scipy.stats
+from sklearn.isotonic import IsotonicRegression
+from sklearn.metrics import f1_score
+from scipy.interpolate import interp1d
 
 from ml_trading.data_tools.rolling_data import load_parquet_file
 from ml_trading.data_tools.baseline_feature_engineering import (
@@ -140,7 +144,7 @@ def _compute_direction_threshold(y_score: np.ndarray,
 
         # 尝试固定阈值0
         f1_zero = f1_score(y_true_dir, (y_score > 0).astype(int),
-                           zero_division=0)
+                           zero_division="warn")
         if f1_zero > best_f1:
             best_f1 = f1_zero
             best_thresh = 0.0
@@ -151,7 +155,7 @@ def _compute_direction_threshold(y_score: np.ndarray,
             # 确保至少有一个正类和一个负类预测
             if len(np.unique(y_pred)) < 2:
                 continue
-            f1 = f1_score(y_true_dir, y_pred, zero_division=0)
+            f1 = f1_score(y_true_dir, y_pred, zero_division="warn")
             if f1 > best_f1:
                 best_f1 = f1
                 best_thresh = thresh
@@ -241,16 +245,66 @@ def _resample_single_asset(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
     resampled = pd.DataFrame(resampled_dict)
 
-    # Drop rows where OHLCV is NaN
-    resampled = resampled.dropna(subset=required_cols)
+    # 🔧 CRITICAL FIX: 正确处理无交易窗口，避免样本选择偏差
+    # 根据用户建议：价格类用 ffill()，事件类用 fillna(0)，比率类用 fillna(0) + has_trade 特征
+    # 这样可以保留"静默时段"，让模型学习真实市场状态，避免幸存者偏差
 
-    # Forward fill optional columns (handle deprecated fillna method)
-    optional_cols = [
-        "buy_qty", "sell_qty", "taker_buy_ratio", "cvd", "trade_count"
-    ]
-    for col in optional_cols:
+    # 1. 价格类数据：使用前向填充（ffill），保持价格连续性
+    # 无交易时，价格应该保持最后已知价格（这是合理的市场假设）
+    price_cols = ["open", "high", "low", "close"]
+    for col in price_cols:
         if col in resampled.columns:
             resampled[col] = resampled[col].ffill()
+
+    # 2. 事件类数据：使用 fillna(0)，表示"没有发生 = 0"
+    # 无交易时，成交量、买卖量、交易次数等应该为 0
+    event_cols = ["volume", "buy_qty", "sell_qty", "trade_count"]
+    for col in event_cols:
+        if col in resampled.columns:
+            resampled[col] = resampled[col].fillna(0)
+
+    # 3. CVD（累积成交量差）：使用 fillna(0)
+    # 无交易时，累积差值为 0（或保持最后已知值，但 fillna(0) 更安全）
+    if "cvd" in resampled.columns:
+        # CVD 是累积值，应该保持最后已知值，但如果一开始就是 NaN，则设为 0
+        resampled["cvd"] = resampled["cvd"].ffill().fillna(0)
+
+    # 4. 比率类数据：使用 fillna(0) + 添加 has_trade 特征
+    # 无交易时，比率无意义，设为 0，但添加 has_trade 标志帮助模型区分
+    if "taker_buy_ratio" in resampled.columns:
+        # 添加 has_trade 特征（强烈推荐，帮助模型区分"有交易"和"无交易"状态）
+        resampled["has_trade"] = (resampled["volume"] > 0).astype(int)
+        # 对于无交易的窗口，taker_buy_ratio 设为 0
+        resampled["taker_buy_ratio"] = resampled["taker_buy_ratio"].fillna(0)
+
+    # 5. 删除仍存在的 NaN（如开盘价一开始就缺失，无法 ffill）
+    # 只对必要的列（close）进行 dropna，确保至少有一个价格数据
+    before_dropna = len(resampled)
+    resampled = resampled.dropna(subset=["close"]).copy()
+    after_dropna = len(resampled)
+
+    # 6. 验证价格数据的有效性（必须 > 0）
+    # 但不再过滤 volume=0，因为这是真实的市场状态
+    invalid_price_mask = ((resampled["close"] <= 0) | (resampled["open"] <= 0)
+                          | (resampled["high"] <= 0) | (resampled["low"] <= 0))
+    if invalid_price_mask.any():
+        print(f"   ⚠️  Warning: 发现 {invalid_price_mask.sum()} 个无效价格（<=0），已删除")
+        resampled = resampled[~invalid_price_mask].copy()
+
+    # 7. 诊断信息：统计无交易窗口的数量
+    if "volume" in resampled.columns:
+        zero_volume_count = (resampled["volume"] == 0).sum()
+        if zero_volume_count > 0:
+            zero_volume_ratio = zero_volume_count / len(resampled) * 100
+            print(
+                f"   📊 统计: {zero_volume_count} 个无交易窗口（{zero_volume_ratio:.1f}%），"
+                f"已使用 fillna(0) 保留（避免样本选择偏差）")
+
+    if before_dropna > after_dropna:
+        dropped_ratio = (before_dropna - after_dropna) / before_dropna * 100
+        print(
+            f"   📊 统计: 删除了 {before_dropna - after_dropna} 个完全缺失价格的窗口（{dropped_ratio:.1f}%）"
+        )
 
     return resampled
 
@@ -401,6 +455,13 @@ def main() -> None:
         help=
         "Method for computing direction prediction threshold: 'zero' (fixed 0), 'median' (median of predictions), 'f1_optimize' (optimize F1 score, default)"
     )
+    parser.add_argument(
+        "--safe-multi-asset",
+        action="store_true",
+        default=False,
+        help=
+        "Use safe multi-asset preprocessing: each symbol is processed independently (resample, features, labels) before merging. This prevents cross-asset data leakage but may reduce sample size."
+    )
     args = parser.parse_args()
 
     freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
@@ -511,28 +572,117 @@ def main() -> None:
         for fb in fbs:
             print(
                 f"\n⚙️  Training config: timeframe={freq}, forward_bars={fb}")
-            print(f"   Samples in resampled data: {len(resampled_data):,}")
-            feat_df = resampled_data.copy()
-            # Multi-asset training: features are engineered on merged data
-            # All features are normalized (asset-agnostic), so the model learns
-            # common patterns across different assets
-            if args.feature_type == "baseline":
-                feat_df, base_eng = engineer_baseline_features(feat_df,
-                                                               None,
-                                                               fit=True)
-                feature_engineer = base_eng
+
+            # 🔒 Safe multi-asset preprocessing: each symbol processed independently
+            # CRITICAL: 如果没有 symbol 信息，无法安全合并多标的
+            # 必须能够识别每个样本属于哪个标的，否则会导致：
+            # 1. 标签混淆（同一时间戳多个资产的标签混在一起）
+            # 2. 评估失真（无法按标的分组评估）
+            # 3. 模型学偏（模型不知道样本属于哪个资产）
+            # 4. 推理时无法确定预测适用于哪个标的
+            if args.safe_multi_asset:
+                # 检查是否有多个标的（通过文件数量或数据中的 symbol 列）
+                has_multiple_symbols = False
+                if "symbol" in resampled_data.columns:
+                    unique_symbols = resampled_data["symbol"].unique()
+                    has_multiple_symbols = len(unique_symbols) > 1
+                else:
+                    # 如果没有 symbol 列，尝试从文件数量推断
+                    # 如果只有一个文件，可能是单标的
+                    if len(files) > 1:
+                        print(
+                            f"\n   ⚠️  警告: 检测到多个数据文件，但 resampled_data 中没有 symbol 列"
+                        )
+                        print(f"      这可能导致多标的合并不安全")
+                        print(f"      💡 建议：")
+                        print(f"         - 确保数据文件包含 symbol 列")
+                        print(
+                            f"         - 或使用 safe_multi_asset_preprocessing 自动从文件名推断 symbol"
+                        )
+                        print(f"         - 或使用单标的训练模式")
+                        # 即使没有 symbol 列，也尝试使用 safe_multi_asset_preprocessing
+                        # 因为它会从文件名推断 symbol
+                        has_multiple_symbols = True
+
+                if has_multiple_symbols or len(files) > 1:
+                    from ml_trading.pipeline.training.safe_multi_asset_preprocessing import safe_multi_asset_preprocessing
+                    print(f"   🔒 使用安全的多标的预处理（完全隔离）")
+                    feat_df, preprocessing_metadata = safe_multi_asset_preprocessing(
+                        files=files,
+                        feature_type=args.feature_type,
+                        timeframe=freq,
+                        forward_bars=fb,
+                        feature_engineer=None,
+                    )
+                    # Extract feature_engineer from metadata if needed
+                    if args.feature_type == "baseline":
+                        _, feature_engineer = engineer_baseline_features(
+                            feat_df.head(100), None, fit=False)
+                    else:
+                        feature_engineer = ComprehensiveFeatureEngineer(
+                            feature_types=args.feature_type)
             else:
-                feature_engineer = ComprehensiveFeatureEngineer(
-                    feature_types=args.feature_type)
-                feat_df = feature_engineer.engineer_all_features(feat_df,
-                                                                 fit=True)
+                # Original preprocessing (merged data)
+                print(f"   Samples in resampled data: {len(resampled_data):,}")
+                feat_df = resampled_data.copy()
+                # Multi-asset training: features are engineered on merged data
+                # All features are normalized (asset-agnostic), so the model learns
+                # common patterns across different assets
+                if args.feature_type == "baseline":
+                    feat_df, base_eng = engineer_baseline_features(feat_df,
+                                                                   None,
+                                                                   fit=True)
+                    feature_engineer = base_eng
+                else:
+                    feature_engineer = ComprehensiveFeatureEngineer(
+                        feature_types=args.feature_type)
+                    feat_df = feature_engineer.engineer_all_features(feat_df,
+                                                                     fit=True)
 
             # Calculate future return (simple return for fb bars ahead)
             # CRITICAL: Use close price, NOT high/low price, to avoid look-ahead bias
             # future_return[t] = (close[t+fb] / close[t]) - 1
             # This represents the return over the next fb bars, using closing prices
-            feat_df["future_return"] = feat_df["close"].shift(
-                -fb) / feat_df["close"] - 1
+            # Note: If using safe_multi_asset preprocessing, labels are already calculated
+            if not (args.safe_multi_asset
+                    and "future_return" in feat_df.columns):
+                # 🔧 FIX: For multi-asset training, calculate future_return per symbol to avoid cross-asset leakage
+                # 🔒 CRITICAL: 如果没有 symbol 信息，无法安全计算多标的的 future_return
+                # 必须按标的分别计算，否则会导致跨标的数据泄露
+                if "symbol" in feat_df.columns and len(
+                        feat_df["symbol"].unique()) > 1:
+                    # Multi-asset: calculate future_return separately for each symbol
+                    def calc_future_return(group):
+                        group["future_return"] = group["close"].shift(
+                            -fb) / group["close"] - 1
+                        return group
+
+                    feat_df = feat_df.groupby(
+                        "symbol", group_keys=False).apply(calc_future_return)
+                elif "symbol" in feat_df.columns and len(
+                        feat_df["symbol"].unique()) == 1:
+                    # Single asset: calculate directly
+                    feat_df["future_return"] = feat_df["close"].shift(
+                        -fb) / feat_df["close"] - 1
+                else:
+                    # 🔒 CRITICAL: 如果没有 symbol 信息，无法确定是单标的还是多标的
+                    # 如果数据来自多个文件但没有 symbol 列，这是不安全的
+                    if len(files) > 1:
+                        raise ValueError(
+                            "❌ 严重错误：检测到多个数据文件，但数据中没有 symbol 列！"
+                            "没有 symbol 信息的多标的合并是不安全的，会导致："
+                            "1. 标签混淆（同一时间戳多个资产的标签混在一起）"
+                            "2. 评估失真（无法按标的分组评估）"
+                            "3. 模型学偏（模型不知道样本属于哪个资产）"
+                            "4. 推理时无法确定预测适用于哪个标的"
+                            "\n💡 建议："
+                            "   - 使用 --safe-multi-asset 选项（会自动从文件名推断 symbol）"
+                            "   - 或确保数据文件包含 symbol 列"
+                            "   - 或使用单标的训练模式")
+                    else:
+                        # 单文件单标的：直接计算
+                        feat_df["future_return"] = feat_df["close"].shift(
+                            -fb) / feat_df["close"] - 1
 
             # Verify label definition: log a warning if any suspicious pattern is detected
             # (e.g., if future_return seems to be calculated from high instead of close)
@@ -556,16 +706,18 @@ def main() -> None:
 
             # FIXED: future_volatility should use future returns, not shifted current returns
             # Previous bug: one.shift(-1) was using future data (data leakage!)
-            # Correct: Calculate volatility from actual future returns
-            safe_window = max(2, fb)
-            # Use future_return to calculate future volatility (realized volatility)
-            # For fb=1, this is the volatility of the next bar's return
-            future_returns = feat_df["future_return"]
-            feat_df["future_volatility"] = future_returns.rolling(
-                window=safe_window, min_periods=1).std(ddof=0)
-            # Only drop rows where targets are NaN; allow feature NaNs (handled later)
-            feat_df = feat_df.dropna(
-                subset=["future_return", "future_volatility"]).copy()
+            # 🔒 CRITICAL FIX: Cannot use rolling std for future_volatility as it introduces future information
+            # future_volatility[t] = std(future_return[t:t+window]) requires future_return[t+1], ..., future_return[t+window-1]
+            # But these values correspond to future returns (e.g., future_return[t+1] needs close[t+1+fb]), introducing future information
+            # ✅ Correct approach: Use abs(future_return) or future_return^2 as volatility proxy
+            # Note: If using safe_multi_asset preprocessing, labels are already calculated
+            if not (args.safe_multi_asset
+                    and "future_volatility" in feat_df.columns):
+                # Use abs(future_return) as volatility proxy (no future information)
+                feat_df["future_volatility"] = feat_df["future_return"].abs()
+                # Only drop rows where targets are NaN; allow feature NaNs (handled later)
+                feat_df = feat_df.dropna(
+                    subset=["future_return", "future_volatility"]).copy()
 
             from dateutil.relativedelta import relativedelta
             train_end = feat_df.index.max() if not feat_df.empty else None
@@ -615,11 +767,52 @@ def main() -> None:
                         feature_cols = [c for c in feature_cols if c in s]
                 except Exception:
                     pass
-            # numeric only
+            # numeric only, and exclude symbol and raw price columns
+            # 🔒 CRITICAL: Symbol should only be used for data alignment and grouping, not as a model feature
+            # Using symbol as a feature would cause the model to overfit to specific assets
+            # and prevent it from learning cross-asset patterns
+            # 🔒 CRITICAL: Raw price columns (open, high, low, close) should NOT be used as features
+            # They have different scales across assets and would cause model bias
+            # Only normalized/standardized features (returns, ratios, z-scores) should be used
+            # Note: This is a double-check. get_feature_columns() should already exclude these,
+            # but we add this as a safety measure to ensure no raw data leaks into features
+            exclude_from_features = {
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "future_return",
+                "future_volatility",
+                "future_return_*",
+                "future_volatility_*",
+                "timestamp",
+                "signal",
+                "binary_signal",
+                # Raw order flow data (normalized versions should be used instead)
+                "buy_qty",
+                "sell_qty",
+                "trade_count",
+                # Note: We don't exclude "cvd" or "taker_buy_ratio" here because
+                # feature engineering may have created normalized versions (e.g., cumulative_ofi, ofi_*)
+                # get_feature_columns() should handle excluding raw versions
+            }
             feature_cols = [
                 c for c in feature_cols
                 if pd.api.types.is_numeric_dtype(train_df[c])
+                and c not in exclude_from_features
             ]
+
+            # Double-check: ensure excluded columns are NOT in feature_cols
+            found_excluded = [
+                c for c in feature_cols if c in exclude_from_features
+            ]
+            if found_excluded:
+                print(f"   ⚠️  警告: 以下列被包含在特征中，已自动排除: {found_excluded}")
+                feature_cols = [
+                    c for c in feature_cols if c not in exclude_from_features
+                ]
             # optional top-k
             if args.topk and args.topk > 0 and len(feature_cols) > args.topk:
                 ranked = None
@@ -687,9 +880,40 @@ def main() -> None:
                         )
 
                         # Check for extreme differences (potential issue)
+                        # Identify problematic features (likely raw prices or unnormalized values)
+                        problematic_features = []
+                        for feat in symbol_X.columns:
+                            feat_mean = abs(feature_means[feat])
+                            feat_std = feature_stds[feat]
+                            # Features with very large means or stds are likely problematic
+                            if feat_mean > 1000 or feat_std > 1000:
+                                problematic_features.append(
+                                    (feat, feat_mean, feat_std))
+
+                        if problematic_features:
+                            print(
+                                f"         ⚠️  警告：发现 {len(problematic_features)} 个异常特征（可能使用了原始价格或未标准化值）"
+                            )
+                            # Show top 5 most problematic features
+                            problematic_features.sort(
+                                key=lambda x: max(x[1], x[2]), reverse=True)
+                            for feat, feat_mean, feat_std in problematic_features[:
+                                                                                  5]:
+                                print(
+                                    f"            - {feat}: mean={feat_mean:.2f}, std={feat_std:.2f}"
+                                )
+                            if len(problematic_features) > 5:
+                                print(
+                                    f"            ... 还有 {len(problematic_features) - 5} 个异常特征"
+                                )
+                            print(f"            💡 建议：检查特征工程，确保所有特征都已标准化/归一化")
+
+                        # Also check overall statistics
                         if abs(feature_means.mean()) > 10 or feature_stds.mean(
                         ) > 100:
-                            print(f"         ⚠️  警告：特征值范围异常，可能使用了原始价格而非收益率")
+                            print(
+                                f"         ⚠️  警告：特征值范围异常（整体均值={feature_means.mean():.2f}, 整体标准差={feature_stds.mean():.2f}）"
+                            )
                             print(f"            这可能导致模型偏向价格更高的资产")
 
                 # Check target variable distribution by asset
@@ -804,27 +1028,223 @@ def main() -> None:
             )
 
             # Prepare current_returns for AR(1) processing (needed for preprocessing)
-            current_returns = np.log(feat_df["close"] /
-                                     feat_df["close"].shift(1))
-            current_returns = pd.Series(current_returns, index=feat_df.index)
+            # 🔒 CRITICAL: Calculate log returns and handle extreme values
+            # If close prices have gaps or errors, log returns can be extreme
+            # This can cause AR(1) predictions to be huge, leading to extreme residuals
+            # 🔒 CRITICAL: For multi-asset training, calculate current_returns per symbol
+            # If we calculate across symbols, shift(1) may use price from a different asset
+            # This would cause incorrect log returns (e.g., BTC close / ETH close)
+            if "symbol" in feat_df.columns and len(
+                    feat_df["symbol"].unique()) > 1:
+                # Multi-asset: calculate current_returns separately for each symbol
+                def calc_current_returns(group):
+                    group_returns = np.log(group["close"] /
+                                           group["close"].shift(1))
+                    return pd.Series(group_returns, index=group.index)
+
+                current_returns = feat_df.groupby(
+                    "symbol", group_keys=False).apply(calc_current_returns)
+                current_returns = current_returns.sort_index()
+            else:
+                # Single asset: calculate directly
+                current_returns = np.log(feat_df["close"] /
+                                         feat_df["close"].shift(1))
+                current_returns = pd.Series(current_returns,
+                                            index=feat_df.index)
+
+            # 🔒 CRITICAL: Winsorize current_returns to prevent extreme AR(1) predictions
+            # Clip to reasonable range (e.g., ±0.5 log return = ±65% price change)
+            # This prevents numerical issues in AR(1) residual transformation
+            max_log_return = 0.5
+            current_returns = current_returns.clip(-max_log_return,
+                                                   max_log_return)
+
+            # Diagnostic: Check for extreme values (should be rare after clipping)
+            # 🔍 DIAGNOSTIC: Print current_returns statistics to understand the distribution
+            current_returns_valid = current_returns.dropna()
+            if len(current_returns_valid) > 0:
+                cr_mean = current_returns_valid.mean()
+                cr_std = current_returns_valid.std()
+                cr_median = current_returns_valid.median()
+                cr_min = current_returns_valid.min()
+                cr_max = current_returns_valid.max()
+                cr_abs_max = current_returns_valid.abs().max()
+                cr_p1 = current_returns_valid.quantile(0.01)
+                cr_p99 = current_returns_valid.quantile(0.99)
+
+                print(f"   🔍 current_returns 诊断（log return，clip 后）:")
+                print(f"      范围: [{cr_min:.6f}, {cr_max:.6f}]")
+                print(
+                    f"      均值: {cr_mean:.6f}, 中位数: {cr_median:.6f}, 标准差: {cr_std:.6f}"
+                )
+                print(
+                    f"      绝对值最大值: {cr_abs_max:.6f} ({cr_abs_max*100:.2f}%)")
+                print(f"      1%分位数: {cr_p1:.6f}, 99%分位数: {cr_p99:.6f}")
+
+                # Check for extreme values (>30% log return = >35% price change)
+                # Note: After clipping to ±0.5, values > 0.3 are expected to be rare
+                extreme_count = ((current_returns_valid.abs() > 0.3).sum())
+                if extreme_count > 0:
+                    extreme_ratio = extreme_count / len(
+                        current_returns_valid) * 100
+                    if extreme_ratio > 1.0:  # More than 1% extreme values
+                        print(
+                            f"      ⚠️  警告: 检测到 {extreme_count} 个极端 current_returns（>30% log return），占比 {extreme_ratio:.2f}%"
+                        )
+                        print(
+                            f"      已自动 clip 到 ±{max_log_return*100:.0f}% 范围")
+                        # Additional diagnostic: check if this is due to clipping
+                        # If most values are > 0.3, it means they were clipped from even larger values
+                        if extreme_ratio > 50.0:  # More than 50% extreme values
+                            print(
+                                f"      🚨 严重警告: 极端值占比过高（{extreme_ratio:.2f}%），可能的原因："
+                            )
+                            print(f"         1. 原始数据中有大量极端价格跳空（>35% 价格变化）")
+                            print(f"         2. 数据质量问题（价格数据错误、时间对齐问题）")
+                            print(f"         3. 多标的合并时时间戳不一致导致计算错误")
+                            print(f"      💡 建议：检查原始价格数据，确认是否有异常价格跳空")
 
             # Create preprocessing function wrapper that has access to current_returns
             # This function will be called within each CV fold
             from ml_trading.pipeline.training.preprocessing import preprocess_target_cv
 
-            def create_preprocess_fn(current_returns_series,
+            def create_preprocess_fn(current_returns_array,
+                                     current_returns_index,
                                      forward_bars,
                                      k_winsorize=3.5,
                                      k_secondary=3.5,
                                      verbose=False):
-                """Create a preprocessing function that can access current_returns by index"""
+                """Create a preprocessing function that can access current_returns by index
+                
+                Args:
+                    current_returns_array: numpy array with current returns (aligned with y_return)
+                    current_returns_index: pandas Index corresponding to current_returns_array
+                """
+                # Create index mapping for efficient lookup (avoid repeated reindex operations)
+                # This maps from y_train/y_val indices to positions in current_returns_array
+                # 🚀 OPTIMIZATION: Use pandas Index.get_indexer for faster and more memory-efficient lookup
+                # This avoids creating a large dictionary (156k+ entries) which can use significant memory
+                # Instead, we'll use pandas' built-in index alignment which is optimized
+                # Store the index for direct use with pandas operations
+                _current_returns_index = current_returns_index
 
                 def preprocess_fn(y_train, y_val, **kwargs):
-                    # Get current_returns for train and val based on their indices
-                    current_returns_train = current_returns_series.loc[
-                        y_train.index]
-                    current_returns_val = current_returns_series.loc[
-                        y_val.index]
+                    # 🚀 OPTIMIZATION: Use positional indexing instead of label-based indexing
+                    # This avoids creating new Series objects and reduces memory usage
+
+                    # Get positions for y_train and y_val indices
+                    # 🚀 OPTIMIZATION: Use pandas Index.get_indexer for memory-efficient lookup
+                    # This is faster and uses less memory than creating a large dictionary
+                    # 🔒 CRITICAL: For multi-asset training, indices have duplicate timestamps
+                    # get_indexer() doesn't work with duplicate indices (raises InvalidIndexError)
+                    # .loc[] also doesn't work correctly because it returns all matches for duplicate indices
+                    # 
+                    # 🚀 SOLUTION: Since current_returns and y_return have the same index structure,
+                    # and y_train/y_val are positional subsets, we can use positional indexing directly
+                    # We need to find the positions of y_train/y_val in the full dataset
+                    # 
+                    # Since indices match exactly (same order), we can find positions by matching
+                    # the first and last indices, then use positional slicing
+                    
+                    # Find start and end positions in the full index
+                    # For duplicate indices, we need to match by position, not by label
+                    # Since y_train and y_val are subsets of y_return, and y_return has the same
+                    # index as current_returns, we can use the fact that they're in the same order
+                    
+                    # Get the position of the first element of y_train in the full index
+                    # We'll use a different approach: since indices should match exactly,
+                    # we can create a mapping using enumerate
+                    # But this is slow. Instead, let's assume indices match and use direct indexing
+                    
+                    # 🚀 BEST APPROACH: Since y_train/y_val are created from y_return by positional
+                    # indexing (train_idx, val_idx), and current_returns has the same index as y_return,
+                    # we can directly use the same positional indices to extract from current_returns_array
+                    # But we don't have train_idx/val_idx here. We need to find them.
+                    
+                    # Alternative: Use a simple loop to match indices by position
+                    # This is O(n) but should be fast enough for our use case
+                    # Create a mapping: for each index in y_train/y_val, find its position in _current_returns_index
+                    # Since indices match exactly, we can use a simple approach:
+                    # - Iterate through _current_returns_index and y_train.index simultaneously
+                    # - Match by position (assuming same order)
+                    
+                    # Actually, the simplest solution: since indices should match exactly,
+                    # we can use the fact that y_train/y_val are subsets of y_return
+                    # and find their positions in y_return, then use those same positions in current_returns
+                    # But we don't have y_return here either.
+                    
+                    # 🚀 FINAL SOLUTION: Use a dictionary to map (index, occurrence) to position
+                    # But this is complex. Instead, let's use a simpler approach:
+                    # Since we know the indices match, we can iterate and match by position
+                    # For each index in y_train.index, find its first occurrence in _current_returns_index
+                    # and use that position. This works if indices are in the same order.
+                    
+                    # Create position arrays by matching indices sequentially
+                    # This assumes indices are in the same order (which they should be)
+                    train_positions = []
+                    val_positions = []
+                    
+                    # Create a position counter for the full index
+                    full_idx_pos = 0
+                    full_idx_dict = {}  # Map (index, occurrence_count) to position
+                    
+                    # Build mapping: for each unique index, track its occurrences
+                    for idx in _current_returns_index:
+                        if idx not in full_idx_dict:
+                            full_idx_dict[idx] = []
+                        full_idx_dict[idx].append(full_idx_pos)
+                        full_idx_pos += 1
+                    
+                    # Now match y_train and y_val indices
+                    train_occurrence = {}
+                    val_occurrence = {}
+                    
+                    for idx in y_train.index:
+                        if idx not in train_occurrence:
+                            train_occurrence[idx] = 0
+                        if idx in full_idx_dict and train_occurrence[idx] < len(full_idx_dict[idx]):
+                            train_positions.append(full_idx_dict[idx][train_occurrence[idx]])
+                            train_occurrence[idx] += 1
+                        else:
+                            train_positions.append(-1)  # Not found
+                    
+                    for idx in y_val.index:
+                        if idx not in val_occurrence:
+                            val_occurrence[idx] = 0
+                        if idx in full_idx_dict and val_occurrence[idx] < len(full_idx_dict[idx]):
+                            val_positions.append(full_idx_dict[idx][val_occurrence[idx]])
+                            val_occurrence[idx] += 1
+                        else:
+                            val_positions.append(-1)  # Not found
+                    
+                    # Convert to numpy arrays
+                    train_positions = np.array(train_positions, dtype=np.int32)
+                    val_positions = np.array(val_positions, dtype=np.int32)
+                    
+                    # Extract values using positions
+                    train_mask = train_positions >= 0
+                    val_mask = val_positions >= 0
+                    current_returns_train_values = np.zeros(len(train_positions), dtype=np.float32)
+                    current_returns_val_values = np.zeros(len(val_positions), dtype=np.float32)
+                    
+                    if train_mask.any():
+                        current_returns_train_values[train_mask] = current_returns_array[train_positions[train_mask]]
+                    if val_mask.any():
+                        current_returns_val_values[val_mask] = current_returns_array[val_positions[val_mask]]
+                    
+                    # Convert to Series for compatibility with preprocess_target_cv
+                    current_returns_train = pd.Series(
+                        current_returns_train_values,
+                        index=y_train.index,
+                        dtype=np.float32,
+                        copy=False
+                    )
+                    current_returns_val = pd.Series(
+                        current_returns_val_values,
+                        index=y_val.index,
+                        dtype=np.float32,
+                        copy=False
+                    )
 
                     # Get fold index for verbose logging (only first fold)
                     fold = kwargs.get('fold', 0)
@@ -858,11 +1278,64 @@ def main() -> None:
                 return preprocess_fn
 
             # Create preprocessing function (verbose only for first fold)
-            preprocess_fn = create_preprocess_fn(current_returns,
-                                                 fb,
-                                                 k_winsorize=3.5,
-                                                 k_secondary=3.5,
-                                                 verbose=True)
+            # 🔒 CRITICAL: Filter current_returns to only include rows that exist in y_return
+            # This ensures current_returns is aligned with the data that will be used for training
+            # (y_return and X_df have the same index, and X_clean will be a subset of them)
+            # We filter current_returns now to avoid index mismatches in preprocess_fn
+            # 🚀 OPTIMIZATION: Since current_returns and y_return are created from the same feat_df,
+            # their indices should match. Use direct indexing to avoid memory explosion.
+            # For duplicate indices (multi-asset), we need to use positional indexing
+            # Check if indices match (they should, since both come from feat_df)
+            if len(current_returns) == len(y_return) and current_returns.index.equals(y_return.index):
+                # Indices match perfectly, use directly
+                current_returns_filtered = current_returns.fillna(0.0)
+            else:
+                # Indices don't match, use a memory-efficient approach
+                # Since both come from the same source, we can use positional matching
+                # 🚀 OPTIMIZATION: Convert to arrays first to avoid Series overhead
+                current_returns_arr = current_returns.values.astype(np.float32)
+                y_return_arr = y_return.values
+                
+                # If lengths match, assume positional alignment
+                if len(current_returns) == len(y_return):
+                    # Use positional alignment (indices may differ but positions match)
+                    current_returns_filtered = pd.Series(
+                        current_returns_arr,
+                        index=y_return.index,
+                        dtype=np.float32
+                    ).fillna(0.0)
+                else:
+                    # Lengths don't match - need to filter current_returns to match y_return
+                    # This should be rare, but handle it by using index intersection
+                    # Use a simple loop-based approach to avoid memory explosion
+                    current_returns_dict = {}
+                    for idx, val in zip(current_returns.index, current_returns_arr):
+                        if idx in y_return.index:
+                            current_returns_dict[idx] = val
+                    
+                    # Create filtered series
+                    current_returns_values = np.array([
+                        current_returns_dict.get(idx, 0.0) 
+                        for idx in y_return.index
+                    ], dtype=np.float32)
+                    current_returns_filtered = pd.Series(
+                        current_returns_values,
+                        index=y_return.index,
+                        dtype=np.float32
+                    )
+            # 🚀 OPTIMIZATION: Convert to numpy array with index mapping for memory efficiency
+            # This avoids creating multiple Series copies during CV loops
+            current_returns_array = current_returns_filtered.values.astype(
+                np.float32)  # Use float32 to save memory
+            current_returns_index = current_returns_filtered.index
+
+            preprocess_fn = create_preprocess_fn(
+                current_returns_array,  # Pass numpy array instead of Series
+                current_returns_index,  # Pass index separately for mapping
+                fb,
+                k_winsorize=3.5,
+                k_secondary=3.5,
+                verbose=True)
 
             # 🔧 OPTIMIZATION: Staged training strategy
             # Reference: docs suggestion - train Q50 first, then use residuals to guide Q10/Q90
@@ -880,13 +1353,61 @@ def main() -> None:
                                       use_gpu=args.gpu)
             # Use TimeSeries CV by default to avoid random split failures on edge cases
             # Pass preprocessing function to be called within CV loop
+            # 🔒 CRITICAL: For multi-asset training, pass groups (symbol) for GroupKFold
+            # This ensures samples from the same symbol are not split across train/val
+            groups = None
+            if "symbol" in train_df.columns and len(
+                    train_df["symbol"].unique()) > 1:
+                # Create groups array based on symbol (for GroupKFold)
+                # Map symbol to integer group ID
+                # 🔒 CRITICAL: groups must be aligned with y_return (not X_df)
+                # because prepare_data will remove rows where y is NaN
+                # So we need to create groups based on y_return's index
+                symbol_to_group = {
+                    symbol: idx
+                    for idx, symbol in enumerate(train_df["symbol"].unique())
+                }
+                # Use y_return.index instead of X_df.index to ensure alignment
+                # y_return and X_df should have the same index, but we use y_return to be safe
+                # 🔒 CRITICAL: Ensure groups is created from train_df, not feat_df
+                # train_df is a subset of feat_df (if OOS split exists), so we need to use train_df
+                # Verify that y_return.index is a subset of train_df.index
+                if not y_return.index.isin(train_df.index).all():
+                    print(
+                        f"   ⚠️  警告: y_return.index 中有 {sum(~y_return.index.isin(train_df.index))} 个索引不在 train_df.index 中"
+                    )
+                    # Filter y_return to only include indices that exist in train_df
+                    y_return = y_return.loc[y_return.index.isin(
+                        train_df.index)]
+
+                # Ensure X_df and y_return have the same index
+                # If they don't match, align them
+                if not X_df.index.equals(y_return.index):
+                    print(
+                        f"   ⚠️  警告: X_df.index 和 y_return.index 不匹配，正在对齐...")
+                    # Find common indices
+                    common_idx = X_df.index.intersection(y_return.index)
+                    X_df = X_df.loc[common_idx]
+                    y_return = y_return.loc[common_idx]
+                    print(
+                        f"      对齐后: X_df 长度={len(X_df)}, y_return 长度={len(y_return)}"
+                    )
+
+                groups = train_df.loc[y_return.index,
+                                      "symbol"].map(symbol_to_group).values
+                print(f"   🔒 使用 GroupKFold 交叉验证（按 symbol 分组，避免跨标的数据泄露）")
+                print(
+                    f"      groups 长度: {len(groups)}, y_return 长度: {len(y_return)}, train_df 长度: {len(train_df)}, X_df 长度: {len(X_df)}"
+                )
+
             q50_metrics, q50_preprocess_params = model_q50.train(
                 X_df,
                 y_return,
                 n_splits=max(2, args.cv_folds or 2),
                 use_time_series_cv=True,
                 preprocess_fn=preprocess_fn,
-                preprocess_kwargs={})
+                preprocess_kwargs={},
+                groups=groups)
 
             # Get Q50 predictions to calculate residuals for Q10/Q90 training
             # Use a subset for initial prediction to avoid memory issues
@@ -1466,14 +1987,38 @@ def main() -> None:
                     upper = median + k * sigma
                     return np.clip(data, lower, upper)
 
-                # Winsorize y_return
+                # Enhanced Winsorize with adaptive parameters based on data characteristics
+                def adaptive_winsorize(data, base_k=3.0, skew_threshold=1.0):
+                    """Adaptive winsorize that adjusts k based on data skewness"""
+                    if isinstance(data, pd.Series):
+                        data = data.values
+                    
+                    # Calculate skewness to determine if we need more aggressive clipping
+                    skewness = scipy.stats.skew(data)
+                    k = base_k
+                    
+                    # Increase clipping aggressiveness for highly skewed data
+                    if abs(skewness) > skew_threshold:
+                        k = base_k * (1 + abs(skewness) / 2)
+                        k = min(k, base_k * 2)  # Cap at 2x base_k
+                        
+                    median = np.median(data)
+                    mad = np.median(np.abs(data - median))
+                    if mad == 0:
+                        return data
+                    sigma = 1.4826 * mad  # Convert MAD to approximate std
+                    lower = median - k * sigma
+                    upper = median + k * sigma
+                    return np.clip(data, lower, upper)
+
+                # Winsorize y_return with adaptive parameters
                 y_return_original = y_return.copy()
-                y_return = pd.Series(robust_winsorize(y_return, k=2.5),
+                y_return = pd.Series(adaptive_winsorize(y_return, k=2.5),
                                      index=y_return.index)
                 n_clipped_y = np.sum(
                     np.abs(y_return - y_return_original) > 1e-10)
                 if n_clipped_y > 0:
-                    print(f"      ✅ y_return: 已clip {n_clipped_y}个极端值（k=2.5）")
+                    print(f"      ✅ y_return: 已clip {n_clipped_y}个极端值（k=2.5，自适应）")
 
                 # Winsorize features X (only for return-based and derived features, not raw prices)
                 # Apply winsorize to all numeric columns (features are already normalized/derived)
@@ -1484,18 +2029,20 @@ def main() -> None:
                     if X_df[col].dtype in [
                             np.float64, np.float32, np.int64, np.int32
                     ]:
-                        X_df[col] = robust_winsorize(
+                        X_df[col] = adaptive_winsorize(
                             X_df[col],
-                            k=4.0)  # k=4.0 for features (more conservative)
+                            base_k=4.0)  # Use adaptive winsorize with base k=4.0
                         n_clipped = np.sum(
                             np.abs(X_df[col] - X_df_original[col]) > 1e-10)
                         if n_clipped > 0:
                             n_clipped_features += 1
                 if n_clipped_features > 0:
                     print(
-                        f"      ✅ 特征X: {n_clipped_features}个特征包含极端值并已clip（k=4.0）"
+                        f"      ✅ 特征X: {n_clipped_features}个特征包含极端值并已clip（自适应参数）"
                     )
                 else:
+                    print(f"      ✅ 特征X: 未发现极端值")
+
                     print(f"      ✅ 特征X: 未发现极端值")
 
                 # Step 2: Calculate sample weights to reduce extreme value influence
@@ -1510,14 +2057,86 @@ def main() -> None:
                 pred_q50_initial = model_q50.model.predict(X_df.values)
                 residuals = y_return.values - pred_q50_initial
 
-                # Calculate robust weights using Huber-like weighting
-                residual_median = np.median(np.abs(residuals))
-                delta = 2.0 * residual_median  # Huber threshold
-                # Weight: 1.0 for normal residuals, decreasing for extreme residuals
-                sample_weights = np.where(
-                    np.abs(residuals) < delta, 1.0, delta / np.abs(residuals))
-                # Normalize weights to have mean=1.0
-                sample_weights = sample_weights / np.mean(sample_weights)
+                # Enhanced sample weighting with multiple strategies
+                def compute_sample_weights(residuals, method="huber"):
+                    """
+                    Compute sample weights using different strategies to reduce 
+                    the influence of extreme values.
+                    
+                    Args:
+                        residuals: Model residuals (y_true - y_pred)
+                        method: Weighting method
+                            - "huber": Huber-like weighting (current method)
+                            - "tukey": Tukey's biweight function (more aggressive)
+                            - "exponential": Exponential decay weighting
+                            - "combined": Combination of Huber and Tukey
+                    """
+                    if method == "huber":
+                        # Current Huber-like weighting
+                        residual_median = np.median(np.abs(residuals))
+                        delta = 2.0 * residual_median  # Huber threshold
+                        # Weight: 1.0 for normal residuals, decreasing for extreme residuals
+                        sample_weights = np.where(
+                            np.abs(residuals) < delta, 1.0, delta / np.abs(residuals))
+                    elif method == "tukey":
+                        # Tukey's biweight function (more aggressive down-weighting)
+                        residual_median = np.median(np.abs(residuals))
+                        delta = 2.0 * residual_median
+                        # Normalize residuals
+                        u = np.abs(residuals) / delta
+                        # Tukey's biweight: (1 - (u/delta)^2)^2 for |u| <= delta, 0 otherwise
+                        sample_weights = np.where(u <= 1, (1 - u**2)**2, 0)
+                    elif method == "exponential":
+                        # Exponential decay weighting
+                        residual_std = np.std(residuals)
+                        # Exponential decay: exp(-|residual| / (k * std))
+                        k = 2.0  # Decay rate parameter
+                        sample_weights = np.exp(-np.abs(residuals) / (k * residual_std))
+                    elif method == "combined":
+                        # Combined approach: Huber for moderate outliers, Tukey for extreme
+                        residual_median = np.median(np.abs(residuals))
+                        delta = 2.0 * residual_median
+                        u = np.abs(residuals) / delta
+                        
+                        # For |u| <= 1: Huber-like weighting
+                        # For |u| > 1: Tukey's biweight
+                        sample_weights = np.where(
+                            u <= 1, 
+                            np.where(u < 0.5, 1.0, delta / np.abs(residuals)),
+                            (1 - np.minimum(u, 2)**2)**2  # Tukey for extreme values
+                        )
+                    else:
+                        raise ValueError(f"Unknown weighting method: {method}")
+                    
+                    # Ensure no zero weights (add small epsilon)
+                    sample_weights = np.maximum(sample_weights, 1e-6)
+                    
+                    # Normalize weights to have mean=1.0
+                    sample_weights = sample_weights / np.mean(sample_weights)
+                    return sample_weights
+
+                # Try different weighting strategies and select the best one
+                weighting_methods = ["huber", "tukey", "exponential", "combined"]
+                best_weights = None
+                best_weighting_method = "huber"
+                
+                print(f"      尝试不同的样本权重策略...")
+                for method in weighting_methods:
+                    try:
+                        weights = compute_sample_weights(residuals, method=method)
+                        # Evaluate weights by computing weighted loss
+                        weighted_loss = np.mean(weights * np.abs(residuals))
+                        print(f"        {method}: 加权平均损失 = {weighted_loss:.6f}")
+                        
+                        # Select the method that gives the lowest weighted loss
+                        if best_weights is None or weighted_loss < np.mean(best_weights * np.abs(residuals)):
+                            best_weights = weights
+                            best_weighting_method = method
+                    except Exception as e:
+                        print(f"        {method}: 计算失败 ({str(e)})")
+                
+                sample_weights = best_weights
+                print(f"      选择最佳权重策略: {best_weighting_method}")
 
                 print(
                     f"      样本权重统计: min={np.min(sample_weights):.4f}, max={np.max(sample_weights):.4f}, mean={np.mean(sample_weights):.4f}"
@@ -1545,47 +2164,137 @@ def main() -> None:
                 else:
                     min_data_in_leaf = 300
 
+                # Enhanced parameter adjustment based on frequency and sample size
+                # More aggressive regularization for high-frequency data
+                if freq in ["5T", "15T"]:
+                    num_leaves = 31  # More conservative for high-frequency
+                    learning_rate = 0.01  # Slower learning for stability
+                    lambda_l1 = 10.0  # Stronger L1 regularization
+                    lambda_l2 = 10.0  # Stronger L2 regularization
+                    feature_fraction = 0.7  # Use fewer features to prevent overfitting
+                else:
+                    num_leaves = 63
+                    learning_rate = 0.02
+                    lambda_l1 = 5.0
+                    lambda_l2 = 5.0
+                    feature_fraction = 0.8
+
                 q50_params_retrain.update({
-                    "num_leaves":
-                    63,  # Moderate complexity (31-63 range for 5T)
-                    "min_data_in_leaf":
-                    min_data_in_leaf,  # Prevent overfitting noise (100-500 for 5T)
-                    "learning_rate":
-                    0.02,  # Stable convergence (0.01-0.05 for 5T)
-                    "lambda_l1": 5.0,  # L1 regularization (1.0-10.0 for 5T)
-                    "lambda_l2": 5.0,  # L2 regularization (1.0-10.0 for 5T)
-                    "feature_fraction":
-                    0.8,  # Feature fraction (0.7-0.9 for 5T)
+                    "num_leaves": num_leaves,
+                    "min_data_in_leaf": min_data_in_leaf,
+                    "learning_rate": learning_rate,
+                    "lambda_l1": lambda_l1,
+                    "lambda_l2": lambda_l2,
+                    "feature_fraction": feature_fraction,
+                    "bagging_fraction": 0.8,  # Add bagging for additional robustness
+                    "bagging_freq": 5,  # Bagging frequency
+                    "min_gain_to_split": 0.01,  # Minimum gain to make a split
+                    "max_depth": 8,  # Limit tree depth to prevent overfitting
                 })
-                print(f"      参数调整（针对样本数={n_samples}）:")
-                print(f"        num_leaves: 31 → 63")
+                print(f"      参数调整（针对样本数={n_samples}，频率={freq}）:")
+                print(f"        num_leaves: 31 → {num_leaves}")
                 print(
                     f"        min_data_in_leaf: 20 → {min_data_in_leaf}（根据样本数自适应）"
                 )
-                print(f"        learning_rate: 0.05 → 0.02")
-                print(f"        lambda_l1: 0 → 5.0")
-                print(f"        lambda_l2: 0 → 5.0")
-                print(f"        feature_fraction: 0.9 → 0.8")
+                print(f"        learning_rate: 0.05 → {learning_rate}")
+                print(f"        lambda_l1: 0 → {lambda_l1}")
+                print(f"        lambda_l2: 0 → {lambda_l2}")
+                print(f"        feature_fraction: 0.9 → {feature_fraction}")
+                print(f"        bagging_fraction: 1.0 → 0.8")
+                print(f"        max_depth: -1 → 8")
 
                 # Step 4: Retrain Q50 model with fixed data and weights
                 print("\n   步骤4: 使用修复后的数据和权重重训Q50模型")
-                model_q50_retrain = LightGBMModel(model_type="quantile",
+                
+                # Enhanced training with multiple strategies
+                def enhanced_q50_training(X_df, y_return, sample_weights, q50_params_retrain, args):
+                    """
+                    Enhanced Q50 training with multiple strategies to improve model robustness.
+                    
+                    Args:
+                        X_df: Feature data
+                        y_return: Target values
+                        sample_weights: Sample weights
+                        q50_params_retrain: Model parameters
+                        args: Command line arguments
+                        
+                    Returns:
+                        Trained model and metrics
+                    """
+                    from ml_trading.models.lightgbm_model import LightGBMModel
+                    
+                    # Strategy 1: Original training
+                    model_q50_retrain = LightGBMModel(model_type="quantile",
+                                                      quantile_alpha=0.5,
+                                                      params=q50_params_retrain,
+                                                      use_gpu=args.gpu)
+                    
+                    # Ensure sample_weights is numpy array
+                    if not isinstance(sample_weights, np.ndarray):
+                        sample_weights = np.array(sample_weights)
+                    
+                    q50_metrics_retrain, q50_preprocess_params_retrain = model_q50_retrain.train(
+                        X_df,
+                        y_return,
+                        n_splits=max(2, args.cv_folds or 2),
+                        use_time_series_cv=True,
+                        sample_weight=sample_weights)
+                    
+                    # Strategy 2: Ensemble approach - train multiple models with different parameters
+                    # This can help improve robustness by reducing variance
+                    if freq in ["5T", "15T"]:
+                        print(f"      🔄 训练集成模型以提高鲁棒性...")
+                        
+                        # Create multiple models with slightly different parameters
+                        ensemble_models = []
+                        ensemble_metrics = []
+                        
+                        # Base parameters
+                        base_params = q50_params_retrain.copy()
+                        
+                        # Train 3 models with different parameters
+                        for i in range(3):
+                            # Perturb parameters slightly
+                            perturbed_params = base_params.copy()
+                            perturbed_params["seed"] = 42 + i  # Different random seed
+                            perturbed_params["feature_fraction"] = min(1.0, base_params["feature_fraction"] + (i - 1) * 0.05)
+                            perturbed_params["bagging_fraction"] = min(1.0, base_params.get("bagging_fraction", 1.0) + (i - 1) * 0.05)
+                            
+                            model = LightGBMModel(model_type="quantile",
                                                   quantile_alpha=0.5,
-                                                  params=q50_params_retrain,
+                                                  params=perturbed_params,
                                                   use_gpu=args.gpu)
-                # Ensure sample_weights is numpy array
-                if not isinstance(sample_weights, np.ndarray):
-                    sample_weights = np.array(sample_weights)
+                            
+                            metrics, preprocess_params = model.train(
+                                X_df,
+                                y_return,
+                                n_splits=max(2, args.cv_folds or 2),
+                                use_time_series_cv=True,
+                                sample_weight=sample_weights)
+                            
+                            ensemble_models.append(model)
+                            ensemble_metrics.append(metrics)
+                        
+                        # Select the best model based on CV loss
+                        cv_losses = [metrics.get('cv_quantile_loss', float('inf')) for metrics in ensemble_metrics]
+                        best_idx = np.argmin(cv_losses)
+                        
+                        print(f"      选择最佳集成模型 (CV loss: {cv_losses[best_idx]:.6f})")
+                        
+                        # Use the best model
+                        model_q50_retrain = ensemble_models[best_idx]
+                        q50_metrics_retrain = ensemble_metrics[best_idx]
+                        q50_preprocess_params_retrain = ensemble_models[best_idx].preprocess_params if hasattr(ensemble_models[best_idx], 'preprocess_params') else {}
+                    
+                    return model_q50_retrain, q50_metrics_retrain, q50_preprocess_params_retrain
 
-                q50_metrics_retrain = model_q50_retrain.train(
-                    X_df,
-                    y_return,
-                    n_splits=max(2, args.cv_folds or 2),
-                    use_time_series_cv=True,
-                    sample_weight=sample_weights)
+                # Use enhanced training
+                model_q50_retrain, q50_metrics_retrain, q50_preprocess_params_retrain = enhanced_q50_training(
+                    X_df, y_return, sample_weights, q50_params_retrain, args)
 
                 # Step 5: Re-check Q50 loss and prediction range coverage
                 print("\n   步骤5: 重新检查Q50 loss和预测范围覆盖")
+                # q50_metrics_retrain is a dict, extract cv_quantile_loss
                 q50_loss_retrain = q50_metrics_retrain.get(
                     'cv_quantile_loss', 0)
                 q50_loss_ratio_retrain = q50_loss_retrain / max_other_loss if max_other_loss > 0 else float(
@@ -1640,11 +2349,111 @@ def main() -> None:
                     scale_factor = min(max(scale_factor, 1.0), 3.0)
                     print(f"      缩放因子: {scale_factor:.2f} (限制在[1.0, 3.0]之间)")
 
-                    # Apply calibration: shift to match median, then scale
-                    pred_median = np.median(pred_q50_retrain)
-                    true_median = np.median(y_diagnostic.values)
-                    pred_q50_calibrated = (pred_q50_retrain - pred_median
-                                           ) * scale_factor + true_median
+                    # Enhanced calibration: Multiple calibration strategies
+                    def enhanced_calibration(pred_q50_retrain, y_diagnostic_values, method="shift_scale"):
+                        """
+                        Enhanced calibration with multiple strategies.
+                        
+                        Args:
+                            pred_q50_retrain: Predictions from retrained model
+                            y_diagnostic_values: True values for diagnostics
+                            method: Calibration method
+                                - "shift_scale": Original method (shift to match median, then scale)
+                                - "quantile_mapping": Quantile mapping calibration
+                                - "isotonic": Isotonic regression calibration
+                                - "combined": Combination of shift_scale and quantile_mapping
+                        """
+                        if method == "shift_scale":
+                            # Original method: shift to match median, then scale
+                            pred_median = np.median(pred_q50_retrain)
+                            true_median = np.median(y_diagnostic_values)
+                            calibrated = (pred_q50_retrain - pred_median) * scale_factor + true_median
+                        elif method == "quantile_mapping":
+                            # Quantile mapping calibration
+                            # Map prediction quantiles to true quantiles
+                            pred_sorted = np.sort(pred_q50_retrain)
+                            true_sorted = np.sort(y_diagnostic_values)
+                            
+                            # Create quantile mapping function
+                            from scipy.interpolate import interp1d
+                            pred_quantiles = np.linspace(0, 1, len(pred_sorted))
+                            true_quantiles = np.linspace(0, 1, len(true_sorted))
+                            
+                            # Interpolate to map prediction quantiles to true quantiles
+                            quantile_map = interp1d(pred_sorted, 
+                                                  np.percentile(y_diagnostic_values, 
+                                                               np.linspace(0, 100, len(pred_sorted))),
+                                                  kind='linear', 
+                                                  fill_value='extrapolate')
+                            calibrated = quantile_map(pred_q50_retrain)
+                        elif method == "isotonic":
+                            # Isotonic regression calibration
+                            from sklearn.isotonic import IsotonicRegression
+                            iso_reg = IsotonicRegression(out_of_bounds='clip')
+                            # Use a subset for fitting to avoid overfitting
+                            n_fit = min(5000, len(pred_q50_retrain))
+                            idx_fit = np.random.choice(len(pred_q50_retrain), n_fit, replace=False)
+                            iso_reg.fit(pred_q50_retrain[idx_fit], y_diagnostic_values[idx_fit])
+                            calibrated = iso_reg.predict(pred_q50_retrain)
+                        elif method == "combined":
+                            # Combined approach: first shift_scale, then fine-tune with quantile mapping
+                            # Step 1: Apply shift_scale calibration
+                            pred_median = np.median(pred_q50_retrain)
+                            true_median = np.median(y_diagnostic_values)
+                            intermediate = (pred_q50_retrain - pred_median) * scale_factor + true_median
+                            
+                            # Step 2: Apply quantile mapping to fine-tune
+                            from scipy.interpolate import interp1d
+                            intermediate_sorted = np.sort(intermediate)
+                            true_sorted = np.sort(y_diagnostic_values)
+                            
+                            # Create quantile mapping function
+                            quantile_map = interp1d(intermediate_sorted, 
+                                                  np.percentile(y_diagnostic_values, 
+                                                               np.linspace(0, 100, len(intermediate_sorted))),
+                                                  kind='linear', 
+                                                  fill_value='extrapolate')
+                            calibrated = quantile_map(intermediate)
+                        else:
+                            raise ValueError(f"Unknown calibration method: {method}")
+                        
+                        return calibrated
+
+                    # Try different calibration strategies and select the best one
+                    calibration_methods = ["shift_scale", "quantile_mapping", "combined"]
+                    best_calibrated = None
+                    best_calibration_method = "shift_scale"
+                    best_coverage = coverage
+                    
+                    print(f"      尝试不同的校准策略...")
+                    for method in calibration_methods:
+                        try:
+                            calibrated = enhanced_calibration(pred_q50_retrain, y_diagnostic.values, method=method)
+                            
+                            # Evaluate calibration by computing coverage after calibration
+                            calibrated_range = np.percentile(calibrated, 99) - np.percentile(calibrated, 1)
+                            calibrated_coverage = calibrated_range / true_range_99 if true_range_99 > 0 else 0.0
+                            
+                            print(f"        {method}: 校准后覆盖 = {calibrated_coverage:.2%}")
+                            
+                            # Select the method that gives the best coverage without overfitting
+                            if calibrated_coverage > best_coverage and calibrated_coverage <= 1.2:
+                                best_calibrated = calibrated
+                                best_calibration_method = method
+                                best_coverage = calibrated_coverage
+                        except Exception as e:
+                            print(f"        {method}: 校准失败 ({str(e)})")
+                    
+                    # Use the best calibration result
+                    if best_calibrated is not None:
+                        pred_q50_calibrated = best_calibrated
+                        print(f"      选择最佳校准策略: {best_calibration_method}")
+                    else:
+                        # Fall back to original shift_scale method
+                        pred_median = np.median(pred_q50_retrain)
+                        true_median = np.median(y_diagnostic.values)
+                        pred_q50_calibrated = (pred_q50_retrain - pred_median) * scale_factor + true_median
+                        print(f"      回退到原始校准策略: shift_scale")
 
                     # Recalculate coverage after calibration using 1st-99th percentile
                     pred_range_calibrated = np.percentile(
@@ -1674,6 +2483,7 @@ def main() -> None:
                         "coverage_before": float(coverage),
                         "coverage_after": float(coverage_calibrated),
                         "q50_loss_ratio_calibrated": float(q50_loss_ratio_cal),
+                        "method": best_calibration_method,
                     }
 
                     # If calibration improves the loss ratio, use it
@@ -2009,6 +2819,87 @@ def main() -> None:
                 if f1 == 0.0:
                     quality_passed_directional = False
 
+                # 🔒 CRITICAL: Calculate per-symbol metrics for multi-asset training
+                # This allows us to understand model performance on each asset separately
+                per_symbol_metrics = {}
+                if "symbol" in oos_df.columns and len(
+                        oos_df["symbol"].unique()) > 1:
+                    print(f"\n   📊 按标的计算 OOS 指标（Per-Symbol OOS Metrics）:")
+                    for symbol in oos_df["symbol"].unique():
+                        symbol_mask = oos_df["symbol"] == symbol
+                        symbol_y_true = y_ret_oos[symbol_mask]
+                        symbol_y_pred = y_pred_q50[symbol_mask]
+                        symbol_y_true_dir = y_true_dir[symbol_mask]
+                        symbol_y_pred_dir = y_pred_dir[symbol_mask]
+
+                        if len(symbol_y_true) > 0:
+                            # Regression metrics
+                            symbol_rmse = float(
+                                np.sqrt(
+                                    mean_squared_error(symbol_y_true,
+                                                       symbol_y_pred)))
+                            symbol_mae = float(
+                                mean_absolute_error(symbol_y_true,
+                                                    symbol_y_pred))
+
+                            # Directional metrics
+                            symbol_acc = float(
+                                accuracy_score(symbol_y_true_dir,
+                                               symbol_y_pred_dir))
+                            symbol_prec, symbol_rec, symbol_f1, _ = precision_recall_fscore_support(
+                                symbol_y_true_dir,
+                                symbol_y_pred_dir,
+                                average="binary",
+                                zero_division=0)
+
+                            # IC metrics
+                            try:
+                                symbol_ic_spearman, _ = spearmanr(
+                                    symbol_y_true, symbol_y_pred)
+                                symbol_ic_spearman = float(
+                                    symbol_ic_spearman
+                                ) if not np.isnan(symbol_ic_spearman) else None
+                            except Exception:
+                                symbol_ic_spearman = None
+
+                            try:
+                                symbol_ic_pearson, _ = pearsonr(
+                                    symbol_y_true, symbol_y_pred)
+                                symbol_ic_pearson = float(
+                                    symbol_ic_pearson
+                                ) if not np.isnan(symbol_ic_pearson) else None
+                            except Exception:
+                                symbol_ic_pearson = None
+
+                            # Simple Sharpe-like metric (using predicted returns)
+                            # Note: This is a simplified metric, not a true Sharpe ratio
+                            if len(symbol_y_pred) > 1 and np.std(
+                                    symbol_y_pred) > 0:
+                                symbol_sharpe_like = float(
+                                    np.mean(symbol_y_pred) /
+                                    (np.std(symbol_y_pred) + 1e-8))
+                            else:
+                                symbol_sharpe_like = None
+
+                            per_symbol_metrics[symbol] = {
+                                "rmse": symbol_rmse,
+                                "mae": symbol_mae,
+                                "accuracy": symbol_acc,
+                                "precision": float(symbol_prec),
+                                "recall": float(symbol_rec),
+                                "f1": float(symbol_f1),
+                                "ic_spearman": symbol_ic_spearman,
+                                "ic_pearson": symbol_ic_pearson,
+                                "sharpe_like": symbol_sharpe_like,
+                                "samples": int(len(symbol_y_true)),
+                            }
+
+                            print(
+                                f"      {symbol}: RMSE={symbol_rmse:.6f}, MAE={symbol_mae:.6f}, "
+                                f"Acc={symbol_acc:.4f}, F1={symbol_f1:.4f}, "
+                                f"IC={symbol_ic_spearman:.4f if symbol_ic_spearman else 'N/A'}, "
+                                f"样本数={len(symbol_y_true)}")
+
                 oos_metrics = {
                     "directional_oos": {
                         "accuracy": acc,
@@ -2048,6 +2939,10 @@ def main() -> None:
                         "samples": len(oos_df)
                     },
                 }
+
+                # Add per-symbol metrics if available
+                if per_symbol_metrics:
+                    oos_metrics["per_symbol"] = per_symbol_metrics
             else:
                 # In-sample directional metrics (derived from q50 regression) for visibility when no OOS period
                 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score, average_precision_score

@@ -283,9 +283,12 @@ def main() -> None:
                 out = df.copy()
                 out["future_return"] = out["close"].shift(
                     -fb) / out["close"] - 1
-                one = out["close"].pct_change()
-                out["future_volatility"] = one.shift(-1).rolling(
-                    window=fb).std()
+                # 🔒 CRITICAL FIX: Cannot use rolling std for future_volatility as it introduces future information
+                # Previous bug: one.shift(-1).rolling(window=fb).std() was using future data (data leakage!)
+                # future_volatility[t] = std(returns[t+1:t+1+fb]) requires future returns, introducing future information
+                # ✅ Correct approach: Use abs(future_return) or future_return^2 as volatility proxy
+                # This is consistent with train.py and safe_multi_asset_preprocessing.py
+                out["future_volatility"] = out["future_return"].abs()
                 return out.dropna()
 
             train_labeled = _add_targets(train_df)

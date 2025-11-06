@@ -15,7 +15,7 @@ INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),ye
 # Docker configuration
 DOCKER_COMPOSE := docker-compose
 DOCKER_SERVICE := ml-gpu
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.3
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.4
 BUILDER_IMAGE ?= lightgbm-builder
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
@@ -26,7 +26,7 @@ RESULTS_DIR ?= results
 SYMBOL ?= BTCUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT
 # SYMBOLS ?= BTCUSDT
-START_DATE ?= 2024-01-01
+START_DATE ?= 2024-11-01
 END_DATE ?= 2025-04-30
 YEAR ?= 2024
 START_YEAR ?= 2021
@@ -94,7 +94,7 @@ endif
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train rolling rolling-multi rolling-update-only vectorbot-backtest \
-		dim-compare nautilus-backtest feature-report
+		dim-compare nautilus-backtest feature-report factor-analysis
 
 help:
 	@echo "ML Trading Project"
@@ -121,6 +121,7 @@ help:
 	@echo "    make train DIRECTION_THRESHOLD=f1_optimize  # Use F1-optimized threshold (default, recommended)"
 	@echo "    make train DIRECTION_THRESHOLD=median       # Use median threshold"
 	@echo "    make train DIRECTION_THRESHOLD=zero         # Use fixed threshold 0 (original method)"
+	@echo "    make train SAFE_MULTI_ASSET=1               # Use safe multi-asset preprocessing (recommended for multi-asset)"
 	@echo "    make rolling            # Step 3: Rolling training to latest data (main workflow)"
 	@echo ""
 	@echo "  Data commands:"
@@ -130,6 +131,7 @@ help:
 	@echo ""
 	@echo "  Other commands:"
 	@echo "    make feature-report    # Generate feature IC/IR HTML report"
+	@echo "    make factor-analysis   # Factor effectiveness analysis using Alphalens (IC, quantile backtest, decay)"
 	@echo "    make vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo ""
@@ -234,6 +236,38 @@ feature-report:
 		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
 		$(FEATURE_REPORT_ARGS)
 
+# ---------------------------------------------------------------------------
+# Factor analysis using Alphalens
+# ---------------------------------------------------------------------------
+
+FACTOR_ANALYSIS_OUTPUT_DIR ?= results/factor_analysis
+FACTOR_ANALYSIS_PERIODS ?= 1,4,24
+FACTOR_ANALYSIS_QUANTILES ?= 10
+FACTOR_ANALYSIS_FACTOR_NAME ?=
+FACTOR_ANALYSIS_FEATURE_TYPE ?= baseline
+
+factor-analysis:
+	@echo "📊 Factor effectiveness analysis using Alphalens for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Example: make factor-analysis SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset analysis)"
+	@echo "       Feature Type: $(FACTOR_ANALYSIS_FEATURE_TYPE)"
+	@echo "       Periods: $(FACTOR_ANALYSIS_PERIODS) bars (e.g., 1,4,24 for 15min, 1h, 6h prediction)"
+	@echo "       Quantiles: $(FACTOR_ANALYSIS_QUANTILES) (for Top vs Bottom analysis)"
+	@if [ -n "$(FACTOR_ANALYSIS_FACTOR_NAME)" ]; then \
+		echo "       Factor Name: $(FACTOR_ANALYSIS_FACTOR_NAME)"; \
+	fi
+	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/factor_analysis_alphalens.py \
+		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
+		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOLS) \
+		--freq $(FREQ) \
+		--feature-type $(FACTOR_ANALYSIS_FEATURE_TYPE) \
+		--output-dir /workspace/$(FACTOR_ANALYSIS_OUTPUT_DIR) \
+		--periods $(FACTOR_ANALYSIS_PERIODS) \
+		--quantiles $(FACTOR_ANALYSIS_QUANTILES) \
+		$(if $(FACTOR_ANALYSIS_FACTOR_NAME),--factor-name $(FACTOR_ANALYSIS_FACTOR_NAME),)
+
 FORWARD_BARS_TRAIN ?= 1,5,15,45
 
 TRAIN_USE_TOP_FACTORS ?=
@@ -241,6 +275,7 @@ TRAIN_FEATURE_TYPE ?= baseline
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
 DIRECTION_THRESHOLD ?= f1_optimize
+SAFE_MULTI_ASSET ?= 1
 
 train:
 	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
@@ -248,6 +283,9 @@ train:
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	@echo "       Direction Threshold: $(DIRECTION_THRESHOLD) (options: f1_optimize, median, zero)"
+	@if [ "$(SAFE_MULTI_ASSET)" = "1" ]; then \
+		echo "       🔒 Safe Multi-Asset: Enabled (each symbol processed independently)"; \
+	fi
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
@@ -261,6 +299,7 @@ train:
 		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
 		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
 		--direction-threshold $(DIRECTION_THRESHOLD) \
+		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \

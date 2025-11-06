@@ -268,6 +268,8 @@ def generate_summary_report(results_dir: str = "results/training",
 
     # Build rows
     rows = []
+    # Store per-symbol metrics for each configuration
+    per_symbol_sections = []
     for _, row in df.iterrows():
         row_dict = row.to_dict() if hasattr(row, "to_dict") else dict(row)
         timeframe = row_dict.get("timeframe", "N/A")
@@ -277,6 +279,10 @@ def generate_summary_report(results_dir: str = "results/training",
         symbol_row = row_dict.get("symbol", "N/A")
         config_dir = row_dict.get("config_dir", "N/A")
         metrics = row_dict.get("metrics", {}) or {}
+        
+        # Extract per-symbol metrics from oos_metrics if available
+        oos_metrics = row_dict.get("oos_metrics", {}) or {}
+        per_symbol_metrics = oos_metrics.get("per_symbol", {}) if isinstance(oos_metrics, dict) else {}
         # CV RMSE/MSE should come from volatility model (regression), not stage2 (quantile)
         volatility_metrics = metrics.get("volatility", {}) if isinstance(
             metrics, dict) else {}
@@ -450,6 +456,52 @@ def generate_summary_report(results_dir: str = "results/training",
             f"<td>{quality_badge}</td>"
             f"<td{q50_quality_tooltip}>{q50_quality_badge}</td>"
             f"<td>{config_dir}</td></tr>")
+        
+        # Build per-symbol metrics section if available
+        if per_symbol_metrics and isinstance(per_symbol_metrics, dict):
+            symbol_rows_html = []
+            for symbol_name, symbol_metrics in sorted(per_symbol_metrics.items()):
+                if isinstance(symbol_metrics, dict):
+                    symbol_rmse = symbol_metrics.get("rmse")
+                    symbol_mae = symbol_metrics.get("mae")
+                    symbol_acc = symbol_metrics.get("accuracy")
+                    symbol_prec = symbol_metrics.get("precision")
+                    symbol_rec = symbol_metrics.get("recall")
+                    symbol_f1 = symbol_metrics.get("f1")
+                    symbol_ic_spearman = symbol_metrics.get("ic_spearman")
+                    symbol_ic_pearson = symbol_metrics.get("ic_pearson")
+                    symbol_sharpe_like = symbol_metrics.get("sharpe_like")
+                    symbol_samples = symbol_metrics.get("samples", 0)
+                    
+                    # Color coding for per-symbol metrics
+                    symbol_f1_color = _quality_color(symbol_f1, 0.3, 0.5) if symbol_f1 is not None else ""
+                    symbol_ic_color = _quality_color(symbol_ic_spearman, 0.05, 0.1) if symbol_ic_spearman is not None else ""
+                    
+                    symbol_rows_html.append(
+                        f"<tr>"
+                        f"<td><strong>{symbol_name}</strong></td>"
+                        f"<td>{_format_metric(symbol_rmse, '.6f')}</td>"
+                        f"<td>{_format_metric(symbol_mae, '.6f')}</td>"
+                        f"<td{symbol_f1_color}>{_format_metric(symbol_f1)}</td>"
+                        f"<td>{_format_metric(symbol_acc)}</td>"
+                        f"<td>{_format_metric(symbol_prec)}</td>"
+                        f"<td>{_format_metric(symbol_rec)}</td>"
+                        f"<td{symbol_ic_color}>{_format_metric(symbol_ic_spearman)}</td>"
+                        f"<td>{_format_metric(symbol_ic_pearson)}</td>"
+                        f"<td>{_format_metric(symbol_sharpe_like, '.4f')}</td>"
+                        f"<td>{symbol_samples:,}</td>"
+                        f"</tr>"
+                    )
+            
+            if symbol_rows_html:
+                config_key = f"{timeframe}_fb{forward_bars}_{config_dir}"
+                per_symbol_sections.append({
+                    "config_key": config_key,
+                    "timeframe": timeframe,
+                    "forward_bars": forward_bars,
+                    "config_dir": config_dir,
+                    "rows": symbol_rows_html
+                })
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>{report_title}</title>
@@ -574,6 +626,16 @@ tr:hover{{background-color:#e8f4f8}}
 <tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Q50质量</th><th>Config</th></tr>
 {''.join(rows)}
 </table>
+{chr(10).join([f'''
+<h2>📊 按标的 OOS 指标 (Per-Symbol OOS Metrics) - {section["timeframe"]} / Forward Bars: {section["forward_bars"]} / Config: {section["config_dir"]}</h2>
+<div style="background-color:#e8f4f8;border-left:4px solid #3498db;padding:15px;margin:20px 0;border-radius:4px;">
+<p><strong>说明:</strong> 以下指标为样本外（OOS）测试期间每个标的的独立表现。这些指标可以帮助识别模型在不同资产上的表现差异。</p>
+</div>
+<table>
+<tr><th>Symbol</th><th>RMSE</th><th>MAE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>IC (Spearman)</th><th>IC (Pearson)</th><th>Sharpe-like</th><th>Samples</th></tr>
+{chr(10).join(section["rows"])}
+</table>
+''' for section in per_symbol_sections]) if per_symbol_sections else ''}
 </div>
 </body></html>"""
 

@@ -15,5 +15,6 @@
         "editor.insertSpaces": true,
         "editor.tabSize": 2,
         "editor.defaultIndentSize": 2
-    }
+    },
+    "cursorpyright.analysis.extraPaths": []
 }

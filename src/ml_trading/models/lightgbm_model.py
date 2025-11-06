@@ -4,7 +4,7 @@ import lightgbm as lgb
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
-from sklearn.model_selection import train_test_split, TimeSeriesSplit
+from sklearn.model_selection import train_test_split, TimeSeriesSplit, GroupKFold
 from sklearn.metrics import accuracy_score, mean_squared_error
 import optuna
 from ml_trading.config.settings import DEFAULT_LGBM_PARAMS, USE_GPU, GPU_LGBM_PARAMS
@@ -34,7 +34,8 @@ class LightGBMModel:
         self.quantile_alpha = quantile_alpha
 
         # Start with default parameters
-        self.params = params if params is not None else DEFAULT_LGBM_PARAMS.copy()
+        self.params = params if params is not None else DEFAULT_LGBM_PARAMS.copy(
+        )
 
         # Add GPU parameters if enabled
         if self.use_gpu:
@@ -48,7 +49,8 @@ class LightGBMModel:
         if model_type == "quantile":
             # Quantile regression (for q10, q50, q90 models)
             if quantile_alpha is None:
-                raise ValueError("quantile_alpha must be provided for quantile regression")
+                raise ValueError(
+                    "quantile_alpha must be provided for quantile regression")
             self.params["objective"] = "quantile"
             self.params["alpha"] = quantile_alpha
             self.params["metric"] = "quantile"
@@ -62,9 +64,8 @@ class LightGBMModel:
             self.params["metric"] = "multi_logloss"
             self.params["num_class"] = 3
 
-    def prepare_data(
-        self, X: pd.DataFrame, y: pd.Series
-    ) -> Tuple[pd.DataFrame, pd.Series]:
+    def prepare_data(self, X: pd.DataFrame,
+                     y: pd.Series) -> Tuple[pd.DataFrame, pd.Series]:
         """
         Prepare data for training.
 
@@ -101,6 +102,7 @@ class LightGBMModel:
         sample_weight: Optional[np.ndarray] = None,
         preprocess_fn: Optional[callable] = None,
         preprocess_kwargs: Optional[Dict] = None,
+        groups: Optional[np.ndarray] = None,
     ) -> Tuple[Dict[str, float], Optional[Dict]]:
         """
         Train the LightGBM model using TimeSeriesSplit for proper time series validation.
@@ -114,6 +116,9 @@ class LightGBMModel:
             preprocess_fn: Optional preprocessing function called within CV loop.
                           Signature: (y_train, y_test, **kwargs) -> (y_train_processed, y_test_processed, stats_dict)
             preprocess_kwargs: Optional kwargs passed to preprocess_fn
+            groups: Optional array of group labels for GroupKFold (for multi-asset training).
+                   If provided and use_time_series_cv=True, will use GroupKFold instead of TimeSeriesSplit.
+                   This ensures samples from the same group (e.g., symbol) are not split across train/val.
         
         Returns:
             Tuple of (training_metrics, preprocess_params)
@@ -122,14 +127,38 @@ class LightGBMModel:
         """
         # Prepare data (basic cleaning only, no target transformation)
         X_clean, y_clean = self.prepare_data(X, y)
-        
+
+        # Get valid indices from prepare_data (where y is not NaN)
+        # This is needed to align groups and sample_weight with cleaned data
+        # Note: prepare_data removes rows where y is NaN, so we need to filter groups accordingly
+        y_series = y.copy()
+        if isinstance(y_series, pd.Series):
+            y_series = y_series.replace([np.inf, -np.inf], np.nan)
+            valid_indices = ~y_series.isna(
+            ).values  # Convert to numpy array for indexing
+        else:
+            y_series = np.array(y_series)
+            y_series = np.where(np.isinf(y_series), np.nan, y_series)
+            valid_indices = ~np.isnan(y_series)
+
+        # Align groups with cleaned data if provided
+        groups_clean = None
+        if groups is not None:
+            if len(groups) == len(y):
+                # Groups based on original data, need to filter
+                groups_clean = np.array(groups)[valid_indices]
+            elif len(groups) == len(y_clean):
+                # Groups already aligned with cleaned data
+                groups_clean = groups
+            else:
+                print(
+                    f"  Warning: groups length ({len(groups)}) doesn't match y ({len(y)}) or y_clean ({len(y_clean)}), ignoring groups"
+                )
+                groups_clean = None
+
         # Align sample weights with cleaned data if provided
         sample_weight_clean = None
         if sample_weight is not None:
-            # Get valid indices from prepare_data (where y is not NaN)
-            y_series = y.copy()
-            y_series.replace([np.inf, -np.inf], np.nan, inplace=True)
-            valid_indices = ~y_series.isna()
             # Align sample_weight with valid indices
             if len(sample_weight) == len(y):
                 sample_weight_clean = sample_weight[valid_indices]
@@ -137,45 +166,82 @@ class LightGBMModel:
                 # Already aligned with cleaned data
                 sample_weight_clean = sample_weight
             else:
-                print(f"  Warning: sample_weight length ({len(sample_weight)}) doesn't match y ({len(y)}) or y_clean ({len(y_clean)}), ignoring weights")
+                print(
+                    f"  Warning: sample_weight length ({len(sample_weight)}) doesn't match y ({len(y)}) or y_clean ({len(y_clean)}), ignoring weights"
+                )
                 sample_weight_clean = None
 
         if use_time_series_cv:
             # ✅ 使用时间序列交叉验证 - 避免未来信息泄露
-            print(
-                f"  Using TimeSeriesSplit with {n_splits} folds (prevents look-ahead bias)"
-            )
-            tscv = TimeSeriesSplit(n_splits=n_splits)
+            # 如果提供了 groups，使用 GroupKFold（按 symbol 分组，避免跨标的数据泄露）
+            # 否则使用 TimeSeriesSplit（标准时间序列交叉验证）
+            if groups_clean is not None:
+                print(f"  🔒 使用 GroupKFold 交叉验证（按 symbol 分组，避免跨标的数据泄露）")
+                cv = GroupKFold(n_splits=n_splits)
+            else:
+                print(
+                    f"  Using TimeSeriesSplit with {n_splits} folds (prevents look-ahead bias)"
+                )
+                cv = TimeSeriesSplit(n_splits=n_splits)
 
             metrics_list = []
             best_model = None
             best_metric = -np.inf if self.model_type == "classification" else np.inf
             preprocess_stats_first_fold = None  # Store first fold stats for deployment
 
-            for fold, (train_idx, val_idx) in enumerate(tscv.split(X_clean)):
-                X_train_raw, X_val_raw = X_clean.iloc[train_idx], X_clean.iloc[val_idx]
-                y_train_raw, y_val_raw = y_clean.iloc[train_idx], y_clean.iloc[val_idx]
-                
+            # Split data using the appropriate CV strategy
+            if groups_clean is not None:
+                # GroupKFold: groups parameter is required (use aligned groups)
+                cv_splits = cv.split(X_clean, groups=groups_clean)
+            else:
+                # TimeSeriesSplit: no groups parameter
+                cv_splits = cv.split(X_clean)
+
+            for fold, (train_idx, val_idx) in enumerate(cv_splits):
+                # 🚀 OPTIMIZATION: Use .values to get numpy arrays directly, avoiding DataFrame overhead
+                # This reduces memory usage, especially for large datasets
+                # We'll convert back to DataFrame only when needed for feature cleaning
+                X_train_raw = pd.DataFrame(
+                    X_clean.values[train_idx],
+                    index=X_clean.index[train_idx],
+                    columns=X_clean.columns,
+                    copy=False  # Don't copy the underlying data
+                )
+                X_val_raw = pd.DataFrame(X_clean.values[val_idx],
+                                         index=X_clean.index[val_idx],
+                                         columns=X_clean.columns,
+                                         copy=False)
+                y_train_raw = pd.Series(y_clean.values[train_idx],
+                                        index=y_clean.index[train_idx],
+                                        copy=False)
+                y_val_raw = pd.Series(y_clean.values[val_idx],
+                                      index=y_clean.index[val_idx],
+                                      copy=False)
+
                 # Apply feature cleaning WITHIN CV loop (prevents lookahead bias)
                 # All statistics computed ONLY from training data
                 from ml_trading.pipeline.training.preprocessing import clean_features_train_test
                 X_train, X_val, feature_clean_stats = clean_features_train_test(
-                    X_train_raw, X_val_raw, k=4.0
-                )
-                if fold == 0 and feature_clean_stats.get("n_features_cleaned", 0) > 0:
-                    print(f"    Feature cleaning (fold {fold+1}): {feature_clean_stats['n_features_cleaned']} features cleaned")
-                
+                    X_train_raw, X_val_raw, k=4.0)
+                if fold == 0 and feature_clean_stats.get(
+                        "n_features_cleaned", 0) > 0:
+                    print(
+                        f"    Feature cleaning (fold {fold+1}): {feature_clean_stats['n_features_cleaned']} features cleaned"
+                    )
+
                 # Apply target preprocessing WITHIN CV loop (prevents lookahead bias)
                 # All statistics computed ONLY from training data
                 if preprocess_fn is not None:
-                    preprocess_kwargs_fold = preprocess_kwargs.copy() if preprocess_kwargs else {}
+                    preprocess_kwargs_fold = preprocess_kwargs.copy(
+                    ) if preprocess_kwargs else {}
                     # Add fold index for logging if needed
                     preprocess_kwargs_fold['fold'] = fold
                     y_train, y_val, preprocess_stats = preprocess_fn(
-                        y_train_raw, y_val_raw, **preprocess_kwargs_fold
-                    )
+                        y_train_raw, y_val_raw, **preprocess_kwargs_fold)
                     if fold == 0:  # Log preprocessing stats for first fold only
-                        print(f"    Target preprocessing stats (fold {fold+1}): {preprocess_stats}")
+                        print(
+                            f"    Target preprocessing stats (fold {fold+1}): {preprocess_stats}"
+                        )
                         # Store first fold stats for deployment parameter extraction
                         preprocess_stats_first_fold = preprocess_stats
                 else:
@@ -189,11 +255,18 @@ class LightGBMModel:
                 if sample_weight_clean is not None:
                     train_weight = sample_weight_clean[train_idx]
                     val_weight = sample_weight_clean[val_idx]
-                    train_data = lgb.Dataset(X_train, label=y_train, weight=train_weight)
-                    val_data = lgb.Dataset(X_val, label=y_val, weight=val_weight, reference=train_data)
+                    train_data = lgb.Dataset(X_train,
+                                             label=y_train,
+                                             weight=train_weight)
+                    val_data = lgb.Dataset(X_val,
+                                           label=y_val,
+                                           weight=val_weight,
+                                           reference=train_data)
                 else:
                     train_data = lgb.Dataset(X_train, label=y_train)
-                    val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+                    val_data = lgb.Dataset(X_val,
+                                           label=y_val,
+                                           reference=train_data)
 
                 # Train model
                 model = lgb.train(
@@ -213,7 +286,10 @@ class LightGBMModel:
                 if self.model_type == "classification":
                     y_pred_binary = (y_pred > 0.5).astype(int)
                     fold_accuracy = accuracy_score(y_val, y_pred_binary)
-                    metrics_list.append({"fold": fold + 1, "accuracy": fold_accuracy})
+                    metrics_list.append({
+                        "fold": fold + 1,
+                        "accuracy": fold_accuracy
+                    })
                     print(f"    Accuracy: {fold_accuracy:.4f}")
 
                     # Keep best model (last fold is typically best for time series)
@@ -223,17 +299,24 @@ class LightGBMModel:
                     # For quantile regression, calculate quantile loss (pinball loss)
                     # DEBUG: Check actual values for unit issues
                     if fold == 0:  # Only print for first fold to avoid spam
-                        print(f"    DEBUG: y_val range: [{np.nanmin(y_val):.6f}, {np.nanmax(y_val):.6f}], mean={np.nanmean(y_val):.6f}")
-                        print(f"    DEBUG: y_pred range: [{np.nanmin(y_pred):.6f}, {np.nanmax(y_pred):.6f}], mean={np.nanmean(y_pred):.6f}")
-                    
+                        print(
+                            f"    DEBUG: y_val range: [{np.nanmin(y_val):.6f}, {np.nanmax(y_val):.6f}], mean={np.nanmean(y_val):.6f}"
+                        )
+                        print(
+                            f"    DEBUG: y_pred range: [{np.nanmin(y_pred):.6f}, {np.nanmax(y_pred):.6f}], mean={np.nanmean(y_pred):.6f}"
+                        )
+
                     quantile_loss = np.mean(
                         np.maximum(self.quantile_alpha * (y_val - y_pred),
-                                   (1 - self.quantile_alpha) * (y_pred - y_val))
+                                   (1 - self.quantile_alpha) *
+                                   (y_pred - y_val)))
+                    metrics_list.append({
+                        "fold": fold + 1,
+                        "quantile_loss": quantile_loss
+                    })
+                    print(
+                        f"    Quantile Loss (alpha={self.quantile_alpha}): {quantile_loss:.6f}"
                     )
-                    metrics_list.append(
-                        {"fold": fold + 1, "quantile_loss": quantile_loss}
-                    )
-                    print(f"    Quantile Loss (alpha={self.quantile_alpha}): {quantile_loss:.6f}")
 
                     # Keep best model (last fold is typically best for time series)
                     if fold == n_splits - 1:  # Use last fold model
@@ -241,9 +324,11 @@ class LightGBMModel:
                 else:
                     fold_mse = mean_squared_error(y_val, y_pred)
                     fold_rmse = np.sqrt(fold_mse)
-                    metrics_list.append(
-                        {"fold": fold + 1, "mse": fold_mse, "rmse": fold_rmse}
-                    )
+                    metrics_list.append({
+                        "fold": fold + 1,
+                        "mse": fold_mse,
+                        "rmse": fold_rmse
+                    })
                     print(f"    MSE: {fold_mse:.6f}, RMSE: {fold_rmse:.6f}")
 
                     # Keep best model (last fold is typically best for time series)
@@ -252,7 +337,7 @@ class LightGBMModel:
 
             # Store the best model
             self.model = best_model
-            
+
             # Extract preprocessing parameters from first fold (for deployment)
             # These parameters will be used for consistent preprocessing in production
             preprocess_params = None
@@ -262,7 +347,7 @@ class LightGBMModel:
                 winsorize_stats = first_fold_stats.get('step1_winsorize', {})
                 ar1_stats = first_fold_stats.get('step2_ar1', {})
                 secondary_stats = first_fold_stats.get('step2b_secondary', {})
-                
+
                 preprocess_params = {
                     "winsorize": {
                         "median": float(winsorize_stats.get('median', 0.0)),
@@ -271,16 +356,25 @@ class LightGBMModel:
                         "k": float(winsorize_stats.get('k', 3.5)),
                     },
                     "ar1": {
-                        "ar1_phi": float(ar1_stats.get('ar1_phi', 0.0)),
-                        "ar1_autocorr_after": float(ar1_stats.get('ar1_autocorr_after', 0.0)) if ar1_stats.get('ar1_autocorr_after') is not None else None,
+                        "ar1_phi":
+                        float(ar1_stats.get('ar1_phi', 0.0)),
+                        "ar1_autocorr_after":
+                        float(ar1_stats.get('ar1_autocorr_after', 0.0))
+                        if ar1_stats.get('ar1_autocorr_after') is not None else
+                        None,
                     },
                     "secondary": {
-                        "median": float(secondary_stats.get('median', 0.0)),
-                        "mad": float(secondary_stats.get('mad', 0.0)),
-                        "sigma": float(secondary_stats.get('sigma', 0.0)),
-                        "clip_threshold": float(secondary_stats.get('clip_threshold', 0.0)),
+                        "median":
+                        float(secondary_stats.get('median', 0.0)),
+                        "mad":
+                        float(secondary_stats.get('mad', 0.0)),
+                        "sigma":
+                        float(secondary_stats.get('sigma', 0.0)),
+                        "clip_threshold":
+                        float(secondary_stats.get('clip_threshold', 0.0)),
                     },
-                    "note": "Parameters extracted from first CV fold. Use these for consistent preprocessing in deployment.",
+                    "note":
+                    "Parameters extracted from first CV fold. Use these for consistent preprocessing in deployment.",
                 }
 
             # Return average metrics across folds
@@ -292,18 +386,24 @@ class LightGBMModel:
                     "cv_accuracy_std": std_accuracy,
                     "fold_details": metrics_list,
                 }
-                print(f"  Average CV Accuracy: {avg_accuracy:.4f} ± {std_accuracy:.4f}")
+                print(
+                    f"  Average CV Accuracy: {avg_accuracy:.4f} ± {std_accuracy:.4f}"
+                )
                 return metrics, preprocess_params
             elif self.model_type == "quantile":
-                avg_quantile_loss = np.mean([m["quantile_loss"] for m in metrics_list])
-                std_quantile_loss = np.std([m["quantile_loss"] for m in metrics_list])
+                avg_quantile_loss = np.mean(
+                    [m["quantile_loss"] for m in metrics_list])
+                std_quantile_loss = np.std(
+                    [m["quantile_loss"] for m in metrics_list])
                 metrics = {
                     "cv_quantile_loss": avg_quantile_loss,
                     "cv_quantile_loss_std": std_quantile_loss,
                     "quantile_alpha": self.quantile_alpha,
                     "fold_details": metrics_list,
                 }
-                print(f"  Average CV Quantile Loss (alpha={self.quantile_alpha}): {avg_quantile_loss:.6f} ± {std_quantile_loss:.6f}")
+                print(
+                    f"  Average CV Quantile Loss (alpha={self.quantile_alpha}): {avg_quantile_loss:.6f} ± {std_quantile_loss:.6f}"
+                )
                 return metrics, preprocess_params
             else:
                 avg_mse = np.mean([m["mse"] for m in metrics_list])
@@ -322,9 +422,10 @@ class LightGBMModel:
             print(
                 f"  WARNING: Using train_test_split (random split - not recommended for time series!)"
             )
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_clean, y_clean, test_size=0.2, random_state=42
-            )
+            X_train, X_val, y_train, y_val = train_test_split(X_clean,
+                                                              y_clean,
+                                                              test_size=0.2,
+                                                              random_state=42)
 
             # Create LightGBM datasets
             train_data = lgb.Dataset(X_train, label=y_train)
@@ -351,9 +452,11 @@ class LightGBMModel:
                 y_pred = self.model.predict(X_val)
                 quantile_loss = np.mean(
                     np.maximum(self.quantile_alpha * (y_val - y_pred),
-                               (1 - self.quantile_alpha) * (y_pred - y_val))
-                )
-                metrics = {"quantile_loss": quantile_loss, "quantile_alpha": self.quantile_alpha}
+                               (1 - self.quantile_alpha) * (y_pred - y_val)))
+                metrics = {
+                    "quantile_loss": quantile_loss,
+                    "quantile_alpha": self.quantile_alpha
+                }
             else:
                 y_pred = self.model.predict(X_val)
                 metrics = {
@@ -378,17 +481,17 @@ class LightGBMModel:
             raise ValueError("Model must be trained before making predictions")
 
         # Prepare data
-        X_clean, _ = self.prepare_data(
-            X, pd.Series([0] * len(X))
-        )  # Dummy y for consistency
+        X_clean, _ = self.prepare_data(X, pd.Series(
+            [0] * len(X)))  # Dummy y for consistency
 
         # Make predictions
         predictions = self.model.predict(X_clean)
         return predictions
 
-    def optimize_hyperparameters(
-        self, X: pd.DataFrame, y: pd.Series, n_trials: int = 50
-    ) -> Dict[str, Any]:
+    def optimize_hyperparameters(self,
+                                 X: pd.DataFrame,
+                                 y: pd.Series,
+                                 n_trials: int = 50) -> Dict[str, Any]:
         """
         Optimize hyperparameters using Optuna.
 
@@ -404,28 +507,40 @@ class LightGBMModel:
         X_clean, y_clean = self.prepare_data(X, y)
 
         # Split data
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_clean, y_clean, test_size=0.2, random_state=42
-        )
+        X_train, X_val, y_train, y_val = train_test_split(X_clean,
+                                                          y_clean,
+                                                          test_size=0.2,
+                                                          random_state=42)
 
         def objective(trial):
             # Suggest hyperparameters
             params = {
-                "objective": self.params["objective"],
-                "metric": self.params["metric"],
-                "boosting_type": trial.suggest_categorical(
-                    "boosting_type", ["gbdt", "dart"]
-                ),
-                "num_leaves": trial.suggest_int("num_leaves", 10, 1000),
-                "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.3),
-                "feature_fraction": trial.suggest_float("feature_fraction", 0.1, 1.0),
-                "bagging_fraction": trial.suggest_float("bagging_fraction", 0.1, 1.0),
-                "bagging_freq": trial.suggest_int("bagging_freq", 0, 10),
-                "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
-                "min_child_weight": trial.suggest_float("min_child_weight", 1e-5, 1.0),
-                "lambda_l1": trial.suggest_float("lambda_l1", 1e-8, 10.0),
-                "lambda_l2": trial.suggest_float("lambda_l2", 1e-8, 10.0),
-                "verbose": -1,
+                "objective":
+                self.params["objective"],
+                "metric":
+                self.params["metric"],
+                "boosting_type":
+                trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
+                "num_leaves":
+                trial.suggest_int("num_leaves", 10, 1000),
+                "learning_rate":
+                trial.suggest_float("learning_rate", 0.001, 0.3),
+                "feature_fraction":
+                trial.suggest_float("feature_fraction", 0.1, 1.0),
+                "bagging_fraction":
+                trial.suggest_float("bagging_fraction", 0.1, 1.0),
+                "bagging_freq":
+                trial.suggest_int("bagging_freq", 0, 10),
+                "min_child_samples":
+                trial.suggest_int("min_child_samples", 5, 100),
+                "min_child_weight":
+                trial.suggest_float("min_child_weight", 1e-5, 1.0),
+                "lambda_l1":
+                trial.suggest_float("lambda_l1", 1e-8, 10.0),
+                "lambda_l2":
+                trial.suggest_float("lambda_l2", 1e-8, 10.0),
+                "verbose":
+                -1,
             }
 
             # Add GPU parameters if GPU is enabled
@@ -456,8 +571,7 @@ class LightGBMModel:
             else:
                 y_pred = model.predict(X_val)
                 return -mean_squared_error(
-                    y_val, y_pred
-                )  # Negative because we want to maximize
+                    y_val, y_pred)  # Negative because we want to maximize
 
         # Run optimization
         study = optuna.create_study(direction="maximize")

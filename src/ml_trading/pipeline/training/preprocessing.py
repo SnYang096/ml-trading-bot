@@ -414,6 +414,16 @@ def ar1_residual_train_test(
                     [current_returns_test_values,
                      np.zeros(pad_length)])
 
+    # 🔒 CRITICAL: Winsorize current_returns to prevent extreme AR(1) predictions
+    # If current_returns has extreme values (e.g., price gaps, data errors),
+    # AR(1) prediction can be huge, leading to extreme residuals after exp()
+    # Clip current_returns to reasonable range (e.g., ±0.5 log return = ±65% price change)
+    max_log_return = 0.5  # Maximum reasonable log return (65% price change)
+    current_returns_train_values = np.clip(current_returns_train_values,
+                                           -max_log_return, max_log_return)
+    current_returns_test_values = np.clip(current_returns_test_values,
+                                          -max_log_return, max_log_return)
+
     # Calculate AR(1) prediction for training set
     # Improved: Use accurate forward prediction for fb > 1
     if forward_bars == 1:
@@ -435,6 +445,13 @@ def ar1_residual_train_test(
             ar1_pred_train = ar1_phi_train * current_returns_train_values
             ar1_pred_test = ar1_phi_train * current_returns_test_values
 
+    # 🔒 CRITICAL: Clip AR(1) predictions to prevent extreme residuals
+    # Even after clipping current_returns, phi * current_returns can still be large
+    # Clip AR(1) predictions to reasonable range (e.g., ±1.0 log return)
+    max_ar1_pred = 1.0  # Maximum reasonable AR(1) prediction in log space
+    ar1_pred_train = np.clip(ar1_pred_train, -max_ar1_pred, max_ar1_pred)
+    ar1_pred_test = np.clip(ar1_pred_test, -max_ar1_pred, max_ar1_pred)
+
     # Convert to log returns and apply AR(1) residual
     # Improved: Use log1p with smooth transition zone to prevent log(negative)
     # Smooth transition prevents hard clipping from creating discrete noise
@@ -455,6 +472,16 @@ def ar1_residual_train_test(
     # All arrays are now numpy arrays with matching shapes
     y_train_residual_log = y_train_log - ar1_pred_train
     y_test_residual_log = y_test_log - ar1_pred_test
+
+    # 🔒 CRITICAL: Clip residual_log before exp() to prevent extreme values
+    # If residual_log is too large (e.g., > 2.0), exp(residual_log) can be huge
+    # Clip residual_log to reasonable range (e.g., ±2.0 log return = ±640% simple return)
+    # This prevents numerical overflow and extreme predictions
+    max_residual_log = 2.0  # Maximum reasonable residual in log space
+    y_train_residual_log = np.clip(y_train_residual_log, -max_residual_log,
+                                   max_residual_log)
+    y_test_residual_log = np.clip(y_test_residual_log, -max_residual_log,
+                                  max_residual_log)
 
     # Convert back to simple returns: exp(residual_log) - 1
     y_train_residual = np.exp(y_train_residual_log) - 1
