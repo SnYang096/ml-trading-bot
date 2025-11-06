@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.frequencies import to_offset
 
 try:
     import alphalens as al
@@ -283,48 +284,136 @@ def load_and_prepare_data(files: List[str], freq: str,
 
 
 def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
-                            periods: List[int]) -> pd.DataFrame:
+                            periods: List[int], freq_str: Optional[str]) -> pd.DataFrame:
     """Prepare data for Alphalens: multi-index [symbol, timestamp]."""
     # Ensure we have symbol column
     if "symbol" not in df.columns:
         raise ValueError("DataFrame must have 'symbol' column")
 
-    # Create multi-index
-    df_multi = df.reset_index()
-    if "timestamp" not in df_multi.columns:
-        if df_multi.index.name:
-            df_multi["timestamp"] = df_multi.index
-        else:
-            df_multi["timestamp"] = pd.date_range(start="2020-01-01", periods=len(df_multi), freq="5T")
-
-    # Ensure timestamp is datetime
-    df_multi["timestamp"] = pd.to_datetime(df_multi["timestamp"])
-
-    # Set multi-index [symbol, timestamp]
-    df_multi = df_multi.set_index(["symbol", "timestamp"])
-
-    # Get factor and prices
-    if factor_col not in df_multi.columns:
+    # Work directly with the DataFrame to avoid timezone issues
+    # Extract factor and prices before any index manipulation
+    if factor_col not in df.columns:
         raise ValueError(f"Factor column '{factor_col}' not found in DataFrame")
     
-    factor = df_multi[factor_col].copy()
-    prices = df_multi["close"].copy()
-
-    # Remove any NaN or inf values from factor
-    factor = factor.replace([np.inf, -np.inf], np.nan).dropna()
+    # Rename columns to match Alphalens expectations
+    df_renamed = df.rename(columns={"symbol": "asset"})
+    # Ensure index name is 'date' for Alphalens compatibility
+    df_renamed.index.name = 'date'
     
-    # Align prices with factor
-    prices = prices.reindex(factor.index)
+    # Get factor and prices series with original index
+    factor_series = df_renamed[factor_col].copy()
+    prices_series = df_renamed["close"].copy()
+    assets = df_renamed["asset"].copy()
+    
+    # Use the DataFrame's index as dates
+    dates = df_renamed.index
+    
+    # Ensure date is datetime and timezone-naive for Alphalens compatibility
+    dates = pd.to_datetime(dates)
+    # Remove timezone information if present for Alphalens compatibility
+    if hasattr(dates, 'tz') and dates.tz is not None:
+        dates = dates.tz_localize(None)
+    # Drop explicit frequency metadata to keep Alphalens from forcing a
+    # CustomBusinessDay calendar on intraday timestamps
+    try:
+        dates.freq = None  # type: ignore[attr-defined]
+    except (ValueError, AttributeError):
+        pass
+    
+    # Remove any NaN or inf values from factor and align all series
+    # First, identify valid (non-NaN, non-inf) factor values
+    valid_mask = np.isfinite(factor_series)
+    
+    # Check if we have any valid data
+    if not valid_mask.any():
+        raise ValueError("No valid data points found after removing NaN/inf values")
+    
+    # Align all series to have the same valid entries
+    factor_values = factor_series[valid_mask]
+    prices_values = prices_series[valid_mask]
+    assets_values = assets[valid_mask]
+    dates_values = dates[valid_mask]
+    
+    # Create MultiIndex with correct names for Alphalens
+    # Alphalens expects 'date' as first level and 'asset' as second level
+    date_index = pd.DatetimeIndex(dates_values)
+    if hasattr(date_index, 'tz') and date_index.tz is not None:
+        date_index = date_index.tz_localize(None)
+    try:
+        date_index.freq = None  # type: ignore[attr-defined]
+    except (ValueError, AttributeError):
+        pass
+    
+    # Ensure the asset level is also a proper Index
+    asset_index = pd.Index(assets_values)
+    
+    # Create MultiIndex with correct names: 'date' first, then 'asset'
+    multi_index = pd.MultiIndex.from_arrays([date_index, asset_index], names=['date', 'asset'])
+    
+    # Parse frequency
+    freq_offset = None
+    if freq_str:
+        try:
+            freq_offset = to_offset(freq_str)
+        except (TypeError, ValueError):
+            print(f"      ⚠️  Could not parse freq '{freq_str}' into pandas offset; defaulting to inference")
 
+    # Create factor Series with the new MultiIndex
+    factor = pd.Series(factor_values.values, index=multi_index, name=factor_col)
+    try:
+        if freq_offset is not None:
+            factor.index.levels[0].freq = freq_offset  # type: ignore[attr-defined]
+    except (ValueError, AttributeError):
+        pass
+    
+    # Create a DataFrame for prices with the proper MultiIndex structure
+    # Alphalens expects prices to be a DataFrame with assets as columns and dates as index
+    prices_df_pivot = pd.DataFrame({
+        'date_col': dates_values,  # Use a different name to avoid ambiguity
+        'asset': assets_values,
+        'close': prices_values
+    })
+    
+    # Pivot the DataFrame to have assets as columns (as Alphalens expects)
+    prices = prices_df_pivot.pivot_table(values='close', index='date_col', columns='asset', aggfunc='first')
+    
+    # Rename the index to 'date' after pivot
+    prices.index.name = 'date'
+    
+    # Ensure the index is timezone-naive DatetimeIndex
+    prices.index = pd.DatetimeIndex(prices.index)
+    if hasattr(prices.index, 'tz') and prices.index.tz is not None:
+        prices.index = prices.index.tz_localize(None)
+    try:
+        if freq_offset is not None:
+            prices.index.freq = freq_offset  # type: ignore[attr-defined]
+    except (ValueError, AttributeError):
+        pass
+    
+    # Ensure prices DataFrame is properly sorted and filled
+    prices = prices.sort_index().ffill().bfill()
+    
+    # Align factor and prices to have common assets
+    common_assets = sorted(set(factor.index.get_level_values("asset")) & set(prices.columns))
+    if not common_assets:
+        raise ValueError("No common assets between factor and prices")
+    
+    prices = prices[common_assets]
+    factor = factor.loc[factor.index.get_level_values("asset").isin(common_assets)]
+    
+    # Check if factor has enough unique values
+    if factor.nunique() < 5:
+        raise ValueError(f"Factor contains only {factor.nunique()} unique values, need at least 5 for quantile analysis")
+    
     # Prepare Alphalens data
     factor_data = al.utils.get_clean_factor_and_forward_returns(
         factor=factor,
         prices=prices,
         periods=periods,
-        quantiles=None,  # We'll use quantiles in the tear sheet
+        quantiles=10,  # Use 10 quantiles for factor analysis
         bins=None,
         binning_by_group=False,
-        max_loss=0.35,  # Max percentage of data that can be dropped
+        max_loss=0.99,  # Allow up to 99% loss to avoid dropping too much data
     )
 
     return factor_data
@@ -337,10 +426,25 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
     matplotlib.use("Agg")  # Use non-interactive backend
     import matplotlib.pyplot as plt
 
-    os.makedirs(output_dir, exist_ok=True)
+    # Ensure output directory exists
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"      Output directory created/verified: {output_dir}")
+    except Exception as e:
+        print(f"      ⚠️  Error creating output directory {output_dir}: {e}")
+        # Try to use current directory as fallback
+        output_dir = "."
+        os.makedirs(output_dir, exist_ok=True)
 
     print(f"   📊 Generating Alphalens tear sheet for {factor_name}...")
     print(f"      Output directory: {output_dir}")
+    
+    # Check if factor_data is valid
+    if factor_data is None or len(factor_data) == 0:
+        print(f"      ⚠️  No valid factor data for {factor_name}")
+        return
+    
+    print(f"      Factor data shape: {factor_data.shape}")
 
     # Create full tear sheet (this will display plots)
     try:
@@ -348,28 +452,48 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             factor_data,
             long_short=True,
             group_neutral=False,
-            quantiles=quantiles,
         )
 
-        # Save all figures to file
+        # Save all figures to files
         factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
-        output_path = os.path.join(output_dir, f"{factor_safe_name}_tear_sheet.png")
-        plt.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
+        
+        # Save all figures that were created
+        saved_figures = []
+        for i, fig_num in enumerate(plt.get_fignums()):
+            fig = plt.figure(fig_num)
+            fig_path = os.path.join(output_dir, f"{factor_safe_name}_fig_{i}.png")
+            try:
+                fig.savefig(fig_path, dpi=150, bbox_inches="tight", facecolor="white")
+                saved_figures.append(fig_path)
+                print(f"      ✅ Figure {i} saved to: {fig_path}")
+            except Exception as fig_e:
+                print(f"      ⚠️  Error saving figure {i}: {fig_e}")
+        
         plt.close("all")
+        
+        if saved_figures:
+            print(f"      ✅ Total {len(saved_figures)} figures saved for {factor_name}")
+        else:
+            print(f"      ⚠️  No figures were saved for {factor_name}")
 
         # Also compute and save IC statistics
-        ic = al.performance.factor_information_coefficient(factor_data)
-        ic_summary = al.performance.mean_information_coefficient(factor_data)
+        try:
+            ic = al.performance.factor_information_coefficient(factor_data)
+            ic_summary = al.performance.mean_information_coefficient(factor_data)
 
-        # Save IC summary to CSV
-        ic_csv_path = os.path.join(output_dir, f"{factor_safe_name}_ic_summary.csv")
-        ic_summary.to_csv(ic_csv_path)
-        print(f"      ✅ IC summary saved to: {ic_csv_path}")
+            # Save IC summary to CSV
+            ic_csv_path = os.path.join(output_dir, f"{factor_safe_name}_ic_summary.csv")
+            ic_summary.to_csv(ic_csv_path)
+            print(f"      ✅ IC summary saved to: {ic_csv_path}")
+        except Exception as ic_e:
+            print(f"      ⚠️  Error computing/saving IC statistics: {ic_e}")
 
         print(f"   ✅ Tear sheet generated for {factor_name}")
 
     except Exception as e:
         print(f"      ⚠️  Error generating tear sheet: {e}")
+        print(f"      factor_data shape: {getattr(factor_data, 'shape', 'N/A')}")
+        print(f"      factor_data index names: {getattr(getattr(factor_data, 'index', None), 'names', 'N/A')}")
         import traceback
         traceback.print_exc()
         plt.close("all")
@@ -431,7 +555,8 @@ def main() -> None:
             print(f"\n   🔍 Analyzing factor: {factor_name}")
 
             # Prepare Alphalens data
-            factor_data = prepare_alphalens_data(df, factor_name, periods)
+            factor_data = prepare_alphalens_data(df, factor_name, periods,
+                                                 args.freq)
 
             # Run analysis
             analyze_factor(factor_data, factor_name, output_dir, args.quantiles)

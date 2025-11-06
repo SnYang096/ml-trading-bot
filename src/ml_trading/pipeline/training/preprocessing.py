@@ -801,36 +801,58 @@ def clean_features_train_test(
     stats = {
         "n_features_cleaned": 0,
         "n_clipped_per_feature": {},
+        "n_filled_per_feature": {},
     }
 
     # Clean each numeric column using training statistics
     for col in X_train.columns:
         if X_train[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
-            # Calculate statistics ONLY from training data
-            median_train = X_train[col].median()
-            mad_train = np.median(np.abs(X_train[col] - median_train))
+            # Replace infinities with NaN first
+            train_series = X_train_cleaned[col].replace([np.inf, -np.inf], np.nan)
+            test_series = X_test_cleaned[col].replace([np.inf, -np.inf], np.nan)
+
+            # Compute statistics using training data only
+            median_train = train_series.median()
+            if not np.isfinite(median_train):
+                median_train = 0.0
+
+            train_filled = train_series.fillna(median_train)
+            test_filled = test_series.fillna(median_train)
+
+            mad_train = np.median(np.abs(train_filled - median_train))
             if mad_train == 0:
-                sigma_train = X_train[col].std()
+                sigma_train = train_filled.std()
             else:
                 sigma_train = mad_train * 1.4826  # Convert MAD to approximate std
 
-            # Calculate bounds using training statistics
+            # If sigma is zero or NaN, fallback to small value to avoid collapsing
+            if not np.isfinite(sigma_train) or sigma_train == 0:
+                sigma_train = 1e-9
+
             lower_bound = median_train - k * sigma_train
             upper_bound = median_train + k * sigma_train
 
-            # Apply same bounds to both train and test
-            X_train_cleaned[col] = X_train[col].clip(lower_bound, upper_bound)
-            X_test_cleaned[col] = X_test[col].clip(lower_bound, upper_bound)
+            X_train_cleaned[col] = train_filled.clip(lower_bound, upper_bound)
+            X_test_cleaned[col] = test_filled.clip(lower_bound, upper_bound)
 
-            # Count clipped values
-            n_clipped_train = int((X_train_cleaned[col] != X_train[col]).sum())
-            n_clipped_test = int((X_test_cleaned[col] != X_test[col]).sum())
+            n_clipped_train = int((X_train_cleaned[col] != train_filled).sum())
+            n_clipped_test = int((X_test_cleaned[col] != test_filled).sum())
+
+            n_filled_train = int(train_series.isna().sum())
+            n_filled_test = int(test_series.isna().sum())
 
             if n_clipped_train > 0 or n_clipped_test > 0:
                 stats["n_features_cleaned"] += 1
                 stats["n_clipped_per_feature"][col] = {
                     "train": n_clipped_train,
                     "test": n_clipped_test,
+                }
+
+            if n_filled_train > 0 or n_filled_test > 0:
+                stats["n_filled_per_feature"][col] = {
+                    "train": n_filled_train,
+                    "test": n_filled_test,
+                    "fill_value": float(median_train),
                 }
 
     return X_train_cleaned, X_test_cleaned, stats

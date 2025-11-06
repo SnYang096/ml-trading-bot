@@ -121,6 +121,7 @@ help:
 	@echo "    make train DIRECTION_THRESHOLD=f1_optimize  # Use F1-optimized threshold (default, recommended)"
 	@echo "    make train DIRECTION_THRESHOLD=median       # Use median threshold"
 	@echo "    make train DIRECTION_THRESHOLD=zero         # Use fixed threshold 0 (original method)"
+	@echo "    make train AUTO_TUNE=1 TUNE_TRIALS=20       # Auto-tune LGBM (Q50 constraint-aware) before training"
 	@echo "    make train SAFE_MULTI_ASSET=1               # Use safe multi-asset preprocessing (recommended for multi-asset)"
 	@echo "    make rolling            # Step 3: Rolling training to latest data (main workflow)"
 	@echo ""
@@ -277,6 +278,10 @@ TRAIN_TOPK_SOURCE ?=
 DIRECTION_THRESHOLD ?= f1_optimize
 SAFE_MULTI_ASSET ?= 1
 
+# Auto-tune hyperparameters (Q50-constraint-aware) for LGBM quantile models
+AUTO_TUNE ?= 1
+TUNE_TRIALS ?= 20
+
 train:
 	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
 	@echo "Example: make train SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
@@ -300,6 +305,8 @@ train:
 		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
 		--direction-threshold $(DIRECTION_THRESHOLD) \
 		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
+		$(if $(filter 1,$(AUTO_TUNE)),--auto-tune-params,) \
+		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS),) \
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \

@@ -229,3 +229,11 @@ Run `make help` to see all available commands and their usage.
 
 开发者 A：用 VS Code 打开项目 → 自动进入 Dev Container → 运行 make train → 直接在容器内高效训练。
 开发者 B：用 Vim/命令行 → 先确保镜像存在 → 运行 make train → Makefile 自动拉起容器完成任务。
+
+# TODOs
+make train
+如需进一步提升，可考虑：
+集成 SHAP 解释性
+支持动态滚动训练窗口
+添加模型版本管理和预测缓存
+整体而言，代码质量高，结构清晰，工程实践成熟。

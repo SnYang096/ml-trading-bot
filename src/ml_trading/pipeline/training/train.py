@@ -456,6 +456,16 @@ def main() -> None:
         "Method for computing direction prediction threshold: 'zero' (fixed 0), 'median' (median of predictions), 'f1_optimize' (optimize F1 score, default)"
     )
     parser.add_argument(
+        "--auto-tune-params",
+        action="store_true",
+        default=False,
+        help="Auto-tune hyperparameters (Q50-constraint-aware) before training")
+    parser.add_argument(
+        "--tune-trials",
+        type=int,
+        default=20,
+        help="Number of trials for hyperparameter tuning (default: 20)")
+    parser.add_argument(
         "--safe-multi-asset",
         action="store_true",
         default=False,
@@ -1407,7 +1417,9 @@ def main() -> None:
                 use_time_series_cv=True,
                 preprocess_fn=preprocess_fn,
                 preprocess_kwargs={},
-                groups=groups)
+                groups=groups,
+                auto_tune_params=args.auto_tune_params,
+                tune_trials=args.tune_trials)
 
             # Get Q50 predictions to calculate residuals for Q10/Q90 training
             # Use a subset for initial prediction to avoid memory issues
