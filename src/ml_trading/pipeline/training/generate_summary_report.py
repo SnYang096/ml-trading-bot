@@ -231,9 +231,10 @@ def generate_summary_report(results_dir: str = "results/training",
     actual_end_display = _format_date_for_display(
         actual_end) if actual_end else train_end_display
     # Use explicit OOS time range if available, otherwise fallback to actual_start/actual_end
-    oos_start_display = _format_date_for_display(oos_start) if oos_start else None
+    oos_start_display = _format_date_for_display(
+        oos_start) if oos_start else None
     oos_end_display = _format_date_for_display(oos_end) if oos_end else None
-    
+
     # Generate OOS info HTML if needed
     # Prefer explicit oos_start/oos_end, fallback to actual_start/actual_end if different from train period
     if oos_start_display and oos_end_display:
@@ -364,6 +365,16 @@ def generate_summary_report(results_dir: str = "results/training",
         train_bars = row_dict.get("train_bars") or row_dict.get(
             "total_bars", 0)
 
+        # Extract model usability information
+        model_usability = row_dict.get("model_usability", {}) or {}
+        model_usable = model_usability.get(
+            "usable", True)  # Default to True if not found
+        q50_loss_ratio = model_usability.get("q50_loss_ratio", 1.0)
+        q50_loss = model_usability.get("q50_loss", 0.0)
+        q10_loss = model_usability.get("q10_loss", 0.0)
+        q90_loss = model_usability.get("q90_loss", 0.0)
+        unusable_reason = model_usability.get("reason", None)
+
         # Helper functions
         def _format_metric(val, fmt=".4f"):
             if val is None:
@@ -384,23 +395,48 @@ def generate_summary_report(results_dir: str = "results/training",
                 return ' style="background-color:#fff3cd; color:#856404;"'
             return ' style="background-color:#f8d7da; color:#721c24;"'
 
-        # Quality assessment based on directional metrics (F1 or AUC)
+        # Quality assessment: combine directional metrics AND model usability
         f1_color = _quality_color(f1, 0.3, 0.5)
         auc_color = _quality_color(auc, 0.6, 0.7) if auc is not None else ""
         pr_auc_color = _quality_color(pr_auc, 0.4,
                                       0.6) if pr_auc is not None else ""
-        quality_passed = (f1 is not None and f1 >= 0.3) or (auc is not None
-                                                            and auc >= 0.6)
+
+        # F1 = 0 或 None 应该标记为不可用（F1 = 0 表示模型完全没有预测能力）
+        # 阈值: F1 > 0.3 为良好，F1 > 0.5 为优秀
+        # ⚠️ CRITICAL: F1=0 时即使 AUC 很高也应标记为不可用（F1=0 意味着模型无法预测"涨"）
+        f1_valid = f1 is not None and f1 > 0.0
+        # Quality check: F1>0 且 F1>=0.3 或 AUC>=0.6
+        quality_passed = (f1_valid and f1 >= 0.3) or (auc is not None
+                                                      and auc >= 0.6)
+        # ⚠️ But if F1=0, quality should fail regardless of AUC (F1=0 means no "up" predictions)
+        if f1 == 0.0:
+            quality_passed = False
+        # Quality must pass BOTH directional metrics AND model usability
+        quality_passed = quality_passed and model_usable
         quality_badge = (
-            '<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ PASS</span>'
+            '<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ 可用</span>'
             if quality_passed else
-            '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ FAIL</span>'
+            '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ 不可用</span>'
         )
+
+        # Q50 quality column: show Q50 loss ratio and individual losses
+        if q50_loss_ratio <= 1.2:
+            q50_quality_badge = f'<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ {q50_loss_ratio:.2f}</span>'
+            q50_quality_tooltip = f' title="Q50 loss ratio: {q50_loss_ratio:.2f} (正常)&#10;Q50 loss: {q50_loss:.6f}&#10;Q10 loss: {q10_loss:.6f}&#10;Q90 loss: {q90_loss:.6f}"'
+        elif q50_loss_ratio <= 1.5:
+            q50_quality_badge = f'<span style="background-color:#fff3cd; color:#856404; padding:2px 6px; border-radius:4px;">⚠️ {q50_loss_ratio:.2f}</span>'
+            q50_quality_tooltip = f' title="Q50 loss ratio: {q50_loss_ratio:.2f} (轻微异常)&#10;Q50 loss: {q50_loss:.6f}&#10;Q10 loss: {q10_loss:.6f}&#10;Q90 loss: {q90_loss:.6f}"'
+        else:
+            q50_quality_badge = f'<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ {q50_loss_ratio:.2f}</span>'
+            q50_quality_tooltip = f' title="Q50 loss ratio: {q50_loss_ratio:.2f} (严重异常)&#10;Q50 loss: {q50_loss:.6f}&#10;Q10 loss: {q10_loss:.6f}&#10;Q90 loss: {q90_loss:.6f}&#10;{unusable_reason or "Q50 loss > Q10/Q90 loss"}"'
 
         cv_rmse_color = _quality_color(cv_rmse, None, None) if cv_rmse else ""
 
+        # Add row styling for unusable models
+        row_style = ' style="background-color:#ffe6e6;"' if not model_usable else ''
+
         rows.append(
-            f"<tr><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
+            f"<tr{row_style}><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
             f"<td>{train_bars:,}</td>"
             f"<td{cv_rmse_color}>{_format_metric(cv_rmse, '.6f')}</td>"
             f"<td>{_format_metric(cv_mse, '.8f')}</td>"
@@ -412,6 +448,7 @@ def generate_summary_report(results_dir: str = "results/training",
             f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
             f"<td>{feature_type}</td>"
             f"<td>{quality_badge}</td>"
+            f"<td{q50_quality_tooltip}>{q50_quality_badge}</td>"
             f"<td>{config_dir}</td></tr>")
 
     html = f"""<!DOCTYPE html>
@@ -457,6 +494,7 @@ tr:hover{{background-color:#e8f4f8}}
 <li><strong>F1</strong> (F1 Score): 从Q50回归模型派生的方向性预测F1分数，综合精确率和召回率
     <ul>
         <li>阈值: F1 &gt; 0.3 为良好，F1 &gt; 0.5 为优秀</li>
+        <li>⚠️ <strong>F1 = 0 或 None</strong>：模型完全无预测能力，自动标记为不可用</li>
         <li>反映模型对方向（涨/跌）的预测能力</li>
     </ul>
 </li>
@@ -488,6 +526,23 @@ tr:hover{{background-color:#e8f4f8}}
         <li>在不平衡数据集上比ROC AUC更有意义</li>
     </ul>
 </li>
+<li><strong>Quality</strong>: 综合评估模型质量（方向预测指标 + 模型可用性）
+    <ul>
+        <li>✅ <strong>可用</strong>: 方向预测指标（F1≥0.3或AUC≥0.6）且模型可用（Q50 loss ratio ≤ 1.2）</li>
+        <li>❌ <strong>不可用</strong>: 方向预测指标不达标（F1=0/None或F1&lt;0.3且AUC&lt;0.6）或模型不可用（Q50 loss ratio &gt; 1.2）</li>
+        <li>⚠️ <strong>重要</strong>: F1=0 表示模型完全没有预测能力，必须标记为不可用。不可用的模型不应用于实际预测，需要重新训练或检查数据质量</li>
+    </ul>
+</li>
+<li><strong>Q50质量</strong>: Q50模型的quantile loss质量指标
+    <ul>
+        <li><strong>Q50 loss ratio</strong> = Q50_loss / max(Q10_loss, Q90_loss)</li>
+        <li>✅ <strong>正常</strong>: ratio ≤ 1.2（绿色，符合分位数回归基本性质）</li>
+        <li>⚠️ <strong>轻微异常</strong>: 1.2 &lt; ratio ≤ 1.5（黄色，需要注意）</li>
+        <li>❌ <strong>严重异常</strong>: ratio &gt; 1.5（红色，违反分位数回归基本性质）</li>
+        <li>鼠标悬停可查看详细的Q50/Q10/Q90 loss值</li>
+        <li>参考文档: <code>docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md</code></li>
+    </ul>
+</li>
 <li><strong>模型架构</strong>: 使用4个回归模型（Q10, Q50, Q90, Volatility）替代分类模型
     <ul>
         <li><strong>Q10模型</strong>: 预测10%分位数，用于估计未来收益的下限（悲观情况）</li>
@@ -516,7 +571,7 @@ tr:hover{{background-color:#e8f4f8}}
 <p><strong>💡 建议:</strong> 比较不同特征类型时，重点关注CV RMSE和Quantile Loss，这些指标更能反映回归模型的真实性能。</p>
 </div>
 <table>
-<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Config</th></tr>
+<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Q50质量</th><th>Config</th></tr>
 {''.join(rows)}
 </table>
 </div>

@@ -98,7 +98,10 @@ class LightGBMModel:
         y: pd.Series,
         n_splits: int = 5,
         use_time_series_cv: bool = True,
-    ) -> Dict[str, float]:
+        sample_weight: Optional[np.ndarray] = None,
+        preprocess_fn: Optional[callable] = None,
+        preprocess_kwargs: Optional[Dict] = None,
+    ) -> Tuple[Dict[str, float], Optional[Dict]]:
         """
         Train the LightGBM model using TimeSeriesSplit for proper time series validation.
 
@@ -107,12 +110,35 @@ class LightGBMModel:
             y: Target vector
             n_splits: Number of time series splits (default: 5)
             use_time_series_cv: If True, use TimeSeriesSplit; if False, use train_test_split (default: True)
-
+            sample_weight: Optional sample weights
+            preprocess_fn: Optional preprocessing function called within CV loop.
+                          Signature: (y_train, y_test, **kwargs) -> (y_train_processed, y_test_processed, stats_dict)
+            preprocess_kwargs: Optional kwargs passed to preprocess_fn
+        
         Returns:
-            Training metrics
+            Tuple of (training_metrics, preprocess_params)
+            - training_metrics: Training metrics dictionary
+            - preprocess_params: Preprocessing parameters from first fold (for deployment), or None
         """
-        # Prepare data
+        # Prepare data (basic cleaning only, no target transformation)
         X_clean, y_clean = self.prepare_data(X, y)
+        
+        # Align sample weights with cleaned data if provided
+        sample_weight_clean = None
+        if sample_weight is not None:
+            # Get valid indices from prepare_data (where y is not NaN)
+            y_series = y.copy()
+            y_series.replace([np.inf, -np.inf], np.nan, inplace=True)
+            valid_indices = ~y_series.isna()
+            # Align sample_weight with valid indices
+            if len(sample_weight) == len(y):
+                sample_weight_clean = sample_weight[valid_indices]
+            elif len(sample_weight) == len(y_clean):
+                # Already aligned with cleaned data
+                sample_weight_clean = sample_weight
+            else:
+                print(f"  Warning: sample_weight length ({len(sample_weight)}) doesn't match y ({len(y)}) or y_clean ({len(y_clean)}), ignoring weights")
+                sample_weight_clean = None
 
         if use_time_series_cv:
             # ✅ 使用时间序列交叉验证 - 避免未来信息泄露
@@ -124,18 +150,50 @@ class LightGBMModel:
             metrics_list = []
             best_model = None
             best_metric = -np.inf if self.model_type == "classification" else np.inf
+            preprocess_stats_first_fold = None  # Store first fold stats for deployment
 
             for fold, (train_idx, val_idx) in enumerate(tscv.split(X_clean)):
-                X_train, X_val = X_clean.iloc[train_idx], X_clean.iloc[val_idx]
-                y_train, y_val = y_clean.iloc[train_idx], y_clean.iloc[val_idx]
+                X_train_raw, X_val_raw = X_clean.iloc[train_idx], X_clean.iloc[val_idx]
+                y_train_raw, y_val_raw = y_clean.iloc[train_idx], y_clean.iloc[val_idx]
+                
+                # Apply feature cleaning WITHIN CV loop (prevents lookahead bias)
+                # All statistics computed ONLY from training data
+                from ml_trading.pipeline.training.preprocessing import clean_features_train_test
+                X_train, X_val, feature_clean_stats = clean_features_train_test(
+                    X_train_raw, X_val_raw, k=4.0
+                )
+                if fold == 0 and feature_clean_stats.get("n_features_cleaned", 0) > 0:
+                    print(f"    Feature cleaning (fold {fold+1}): {feature_clean_stats['n_features_cleaned']} features cleaned")
+                
+                # Apply target preprocessing WITHIN CV loop (prevents lookahead bias)
+                # All statistics computed ONLY from training data
+                if preprocess_fn is not None:
+                    preprocess_kwargs_fold = preprocess_kwargs.copy() if preprocess_kwargs else {}
+                    # Add fold index for logging if needed
+                    preprocess_kwargs_fold['fold'] = fold
+                    y_train, y_val, preprocess_stats = preprocess_fn(
+                        y_train_raw, y_val_raw, **preprocess_kwargs_fold
+                    )
+                    if fold == 0:  # Log preprocessing stats for first fold only
+                        print(f"    Target preprocessing stats (fold {fold+1}): {preprocess_stats}")
+                        # Store first fold stats for deployment parameter extraction
+                        preprocess_stats_first_fold = preprocess_stats
+                else:
+                    y_train, y_val = y_train_raw, y_val_raw
 
                 print(
                     f"  Fold {fold+1}/{n_splits}: Train [{train_idx[0]}:{train_idx[-1]}], Val [{val_idx[0]}:{val_idx[-1]}]"
                 )
 
-                # Create LightGBM datasets
-                train_data = lgb.Dataset(X_train, label=y_train)
-                val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+                # Create LightGBM datasets with sample weights if provided
+                if sample_weight_clean is not None:
+                    train_weight = sample_weight_clean[train_idx]
+                    val_weight = sample_weight_clean[val_idx]
+                    train_data = lgb.Dataset(X_train, label=y_train, weight=train_weight)
+                    val_data = lgb.Dataset(X_val, label=y_val, weight=val_weight, reference=train_data)
+                else:
+                    train_data = lgb.Dataset(X_train, label=y_train)
+                    val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
 
                 # Train model
                 model = lgb.train(
@@ -194,6 +252,36 @@ class LightGBMModel:
 
             # Store the best model
             self.model = best_model
+            
+            # Extract preprocessing parameters from first fold (for deployment)
+            # These parameters will be used for consistent preprocessing in production
+            preprocess_params = None
+            if preprocess_fn is not None and preprocess_stats_first_fold is not None:
+                first_fold_stats = preprocess_stats_first_fold
+                # Extract key parameters for deployment
+                winsorize_stats = first_fold_stats.get('step1_winsorize', {})
+                ar1_stats = first_fold_stats.get('step2_ar1', {})
+                secondary_stats = first_fold_stats.get('step2b_secondary', {})
+                
+                preprocess_params = {
+                    "winsorize": {
+                        "median": float(winsorize_stats.get('median', 0.0)),
+                        "mad": float(winsorize_stats.get('mad', 0.0)),
+                        "sigma": float(winsorize_stats.get('sigma', 0.0)),
+                        "k": float(winsorize_stats.get('k', 3.5)),
+                    },
+                    "ar1": {
+                        "ar1_phi": float(ar1_stats.get('ar1_phi', 0.0)),
+                        "ar1_autocorr_after": float(ar1_stats.get('ar1_autocorr_after', 0.0)) if ar1_stats.get('ar1_autocorr_after') is not None else None,
+                    },
+                    "secondary": {
+                        "median": float(secondary_stats.get('median', 0.0)),
+                        "mad": float(secondary_stats.get('mad', 0.0)),
+                        "sigma": float(secondary_stats.get('sigma', 0.0)),
+                        "clip_threshold": float(secondary_stats.get('clip_threshold', 0.0)),
+                    },
+                    "note": "Parameters extracted from first CV fold. Use these for consistent preprocessing in deployment.",
+                }
 
             # Return average metrics across folds
             if self.model_type == "classification":
@@ -205,6 +293,7 @@ class LightGBMModel:
                     "fold_details": metrics_list,
                 }
                 print(f"  Average CV Accuracy: {avg_accuracy:.4f} ± {std_accuracy:.4f}")
+                return metrics, preprocess_params
             elif self.model_type == "quantile":
                 avg_quantile_loss = np.mean([m["quantile_loss"] for m in metrics_list])
                 std_quantile_loss = np.std([m["quantile_loss"] for m in metrics_list])
@@ -215,6 +304,7 @@ class LightGBMModel:
                     "fold_details": metrics_list,
                 }
                 print(f"  Average CV Quantile Loss (alpha={self.quantile_alpha}): {avg_quantile_loss:.6f} ± {std_quantile_loss:.6f}")
+                return metrics, preprocess_params
             else:
                 avg_mse = np.mean([m["mse"] for m in metrics_list])
                 avg_rmse = np.mean([m["rmse"] for m in metrics_list])
@@ -226,6 +316,7 @@ class LightGBMModel:
                     "fold_details": metrics_list,
                 }
                 print(f"  Average CV MSE: {avg_mse:.6f} ± {std_mse:.6f}")
+                return metrics, preprocess_params
         else:
             # ⚠️ 传统方法（不推荐用于时间序列）- 仅用于对比
             print(
@@ -271,7 +362,7 @@ class LightGBMModel:
                 }
 
         self.is_trained = True
-        return metrics
+        return metrics, None  # No preprocessing params for random split
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """

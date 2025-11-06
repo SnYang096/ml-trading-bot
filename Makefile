@@ -24,10 +24,10 @@ MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
-# SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT
-SYMBOLS ?= BTCUSDT
+SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT
+# SYMBOLS ?= BTCUSDT
 START_DATE ?= 2024-01-01
- END_DATE ?= 2025-04-30
+END_DATE ?= 2025-04-30
 YEAR ?= 2024
 START_YEAR ?= 2021
 END_YEAR ?= 2025
@@ -118,6 +118,9 @@ help:
 	@echo "  Core Workflow (Recommended):"
 	@echo "    make dim-compare        # Step 1: Research dimensionality reduction (find optimal features)"
 	@echo "    make train              # Step 2: Train regression model (single run, reports)"
+	@echo "    make train DIRECTION_THRESHOLD=f1_optimize  # Use F1-optimized threshold (default, recommended)"
+	@echo "    make train DIRECTION_THRESHOLD=median       # Use median threshold"
+	@echo "    make train DIRECTION_THRESHOLD=zero         # Use fixed threshold 0 (original method)"
 	@echo "    make rolling            # Step 3: Rolling training to latest data (main workflow)"
 	@echo ""
 	@echo "  Data commands:"
@@ -237,12 +240,14 @@ TRAIN_USE_TOP_FACTORS ?=
 TRAIN_FEATURE_TYPE ?= baseline
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
+DIRECTION_THRESHOLD ?= f1_optimize
 
 train:
 	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
 	@echo "Example: make train SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
 	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	@echo "       Direction Threshold: $(DIRECTION_THRESHOLD) (options: f1_optimize, median, zero)"
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
@@ -255,6 +260,7 @@ train:
 		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
 		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
 		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \
