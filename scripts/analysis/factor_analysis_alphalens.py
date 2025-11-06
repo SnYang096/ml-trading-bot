@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -100,52 +100,84 @@ def _collect_files(data_dir: Optional[str], start: Optional[str],
     symbol_list = [s.strip() for s in symbols.split(",")]
     files: List[str] = []
 
+    # Symbol mapping: BTCUSDT -> BTC-USD, ETHUSDT -> ETH-USD, SOLUSDT -> SOL-USD
+    symbol_map = {
+        "BTCUSDT": "BTC-USD",
+        "ETHUSDT": "ETH-USD",
+        "SOLUSDT": "SOL-USD",
+    }
+
     for symbol in symbol_list:
+        # Map symbol to file naming convention
+        file_symbol = symbol_map.get(symbol, symbol)
+        
         # Try different naming patterns
         patterns = [
-            f"{symbol}-aggTrades-*.parquet",
-            f"{symbol}_*.parquet",
-            f"{symbol}-*.parquet",
+            f"{file_symbol}_*.parquet",  # BTC-USD_2024-11.parquet
+            f"{symbol}-aggTrades-*.parquet",  # BTCUSDT-aggTrades-2024-10.parquet
+            f"{symbol}_*.parquet",  # BTCUSDT_2024-11.parquet
+            f"{symbol}-*.parquet",  # BTCUSDT-2024-11.parquet
         ]
 
         for pattern in patterns:
             for file in Path(data_dir).glob(pattern):
                 if file.is_file():
+                    file_str = str(file.name)
+                    
                     # Filter by date if specified
                     if start or end:
-                        # Extract date from filename (e.g., BTCUSDT-aggTrades-2024-10.parquet)
-                        file_str = str(file.name)
-                        if start:
-                            # Check if file date >= start
-                            if "-" in file_str:
-                                parts = file_str.split("-")
-                                if len(parts) >= 3:
-                                    try:
-                                        file_date = f"{parts[-2]}-{parts[-1].split('.')[0]}"
-                                        if file_date < start:
-                                            continue
-                                    except Exception:
-                                        pass
-                        if end:
-                            # Check if file date <= end
-                            if "-" in file_str:
-                                parts = file_str.split("-")
-                                if len(parts) >= 3:
-                                    try:
-                                        file_date = f"{parts[-2]}-{parts[-1].split('.')[0]}"
-                                        if file_date > end:
-                                            continue
-                                    except Exception:
-                                        pass
+                        # Extract date from filename
+                        # Formats: BTC-USD_2024-11.parquet, BTCUSDT-aggTrades-2024-10.parquet
+                        file_date = None
+                        
+                        # Try pattern: SYMBOL_YYYY-MM.parquet
+                        if "_" in file_str:
+                            parts = file_str.split("_")
+                            if len(parts) >= 2:
+                                date_part = parts[-1].replace(".parquet", "")
+                                if "-" in date_part and len(date_part) == 7:  # YYYY-MM
+                                    file_date = date_part
+                        
+                        # Try pattern: SYMBOL-aggTrades-YYYY-MM.parquet
+                        if file_date is None and "-" in file_str:
+                            parts = file_str.split("-")
+                            if len(parts) >= 3:
+                                try:
+                                    # Last two parts should be YYYY and MM.parquet
+                                    year = parts[-2]
+                                    month = parts[-1].replace(".parquet", "")
+                                    if len(year) == 4 and len(month) == 2:
+                                        file_date = f"{year}-{month}"
+                                except Exception:
+                                    pass
+                        
+                        # Filter by date
+                        if file_date:
+                            if start and file_date < start:
+                                continue
+                            if end and file_date > end:
+                                continue
+                        # If we can't parse date but date filter is specified, skip
+                        elif start or end:
+                            continue
+                    
                     files.append(str(file))
 
     return sorted(list(set(files)))
 
 
 def load_and_prepare_data(files: List[str], freq: str,
-                          feature_type: str) -> pd.DataFrame:
+                          feature_type: str) -> Tuple[pd.DataFrame, List[str]]:
     """Load and prepare data with features."""
     frames: List[pd.DataFrame] = []
+    
+    # Reverse symbol mapping: BTC-USD -> BTCUSDT, ETH-USD -> ETHUSDT, SOL-USD -> SOLUSDT
+    reverse_symbol_map = {
+        "BTC-USD": "BTCUSDT",
+        "ETH-USD": "ETHUSDT",
+        "SOL-USD": "SOLUSDT",
+    }
+    
     for f in files:
         df = load_parquet_file(f) if f.endswith(".parquet") else None
         if df is not None and len(df) > 0:
@@ -163,14 +195,26 @@ def load_and_prepare_data(files: List[str], freq: str,
             if "symbol" not in df.columns:
                 # Try to infer from filename
                 fname = os.path.basename(f)
-                if "BTC" in fname.upper():
-                    df["symbol"] = "BTCUSDT"
-                elif "ETH" in fname.upper():
-                    df["symbol"] = "ETHUSDT"
-                elif "SOL" in fname.upper():
-                    df["symbol"] = "SOLUSDT"
-                else:
-                    df["symbol"] = "UNKNOWN"
+                symbol = None
+                
+                # Try to match file symbol format (BTC-USD, ETH-USD, SOL-USD)
+                for file_symbol, symbol_name in reverse_symbol_map.items():
+                    if file_symbol in fname:
+                        symbol = symbol_name
+                        break
+                
+                # Fallback to simple matching
+                if symbol is None:
+                    if "BTC" in fname.upper():
+                        symbol = "BTCUSDT"
+                    elif "ETH" in fname.upper():
+                        symbol = "ETHUSDT"
+                    elif "SOL" in fname.upper():
+                        symbol = "SOLUSDT"
+                    else:
+                        symbol = "UNKNOWN"
+                
+                df["symbol"] = symbol
 
             frames.append(df)
 
@@ -181,19 +225,61 @@ def load_and_prepare_data(files: List[str], freq: str,
     combined = pd.concat(frames, axis=0)
     combined = combined.sort_index()
 
+    # Preserve symbol before engineering (some pipelines drop non-feature columns)
+    if "symbol" in combined.columns:
+        preserved_symbol = combined["symbol"].copy()
+    else:
+        preserved_symbol = None
+
     # Engineer features
     print(f"   🧪 Engineering {feature_type} features...")
     if feature_type == "baseline":
-        combined, _ = engineer_baseline_features(combined, None, fit=True)
-        feature_cols = get_baseline_feature_columns(combined)
+        combined_eng, _ = engineer_baseline_features(combined, None, fit=True)
+        feature_cols = get_baseline_feature_columns(combined_eng)
     else:
-        engineer = ComprehensiveFeatureEngineer(feature_types=[feature_type])
-        combined = engineer.engineer_features(combined, fit=True)
-        feature_cols = get_feature_columns_by_type(combined, feature_type)
+        engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
+        combined_eng = engineer.engineer_features(combined, fit=True)
+        feature_cols = get_feature_columns_by_type(combined_eng, feature_type)
+
+    # Reattach symbol column after engineering
+    if preserved_symbol is not None:
+        # Always ensure symbol column exists in the final DataFrame
+        if "symbol" not in combined_eng.columns:
+            try:
+                # Try direct reindexing first
+                combined_eng["symbol"] = preserved_symbol.reindex(
+                    combined_eng.index, method="ffill").bfill()
+            except Exception:
+                # Fallback approach: merge on timestamp
+                try:
+                    sym_df = preserved_symbol.to_frame(name="symbol")
+                    sym_df["timestamp"] = sym_df.index
+                    tmp = combined_eng.copy()
+                    tmp["timestamp"] = tmp.index
+                    combined_eng = tmp.merge(sym_df.drop_duplicates(subset=["timestamp"]),
+                                             on="timestamp",
+                                             how="left").set_index("timestamp")
+                except Exception:
+                    # Last resort: fill with UNKNOWN
+                    combined_eng["symbol"] = "UNKNOWN"
+        else:
+            # If symbol column already exists but might have NaN values, fill them
+            if combined_eng["symbol"].isna().any():
+                combined_eng["symbol"] = combined_eng["symbol"].fillna("UNKNOWN")
+    else:
+        # If no symbol was preserved, add a default one
+        if "symbol" not in combined_eng.columns:
+            combined_eng["symbol"] = "UNKNOWN"
+
+    # Ensure symbol column is of string type
+    combined_eng["symbol"] = combined_eng["symbol"].astype(str)
+
+    # Use engineered DataFrame going forward
+    combined = combined_eng
 
     print(f"   ✅ Generated {len(feature_cols)} features")
 
-    return combined, feature_cols
+    return combined_eng, feature_cols
 
 
 def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,

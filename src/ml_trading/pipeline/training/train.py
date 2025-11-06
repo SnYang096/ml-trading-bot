@@ -2013,7 +2013,7 @@ def main() -> None:
 
                 # Winsorize y_return with adaptive parameters
                 y_return_original = y_return.copy()
-                y_return = pd.Series(adaptive_winsorize(y_return, k=2.5),
+                y_return = pd.Series(adaptive_winsorize(y_return, base_k=2.5),
                                      index=y_return.index)
                 n_clipped_y = np.sum(
                     np.abs(y_return - y_return_original) > 1e-10)
@@ -2348,6 +2348,10 @@ def main() -> None:
                     # Limit scale factor to prevent over-amplification (clamp 1.0-3.0 as in doc)
                     scale_factor = min(max(scale_factor, 1.0), 3.0)
                     print(f"      缩放因子: {scale_factor:.2f} (限制在[1.0, 3.0]之间)")
+
+                    # Precompute medians for parameter logging regardless of method
+                    pred_median = float(np.median(pred_q50_retrain))
+                    true_median = float(np.median(y_diagnostic.values))
 
                     # Enhanced calibration: Multiple calibration strategies
                     def enhanced_calibration(pred_q50_retrain, y_diagnostic_values, method="shift_scale"):
