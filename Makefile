@@ -93,7 +93,7 @@ endif
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
+	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report factor-analysis
 
 help:
@@ -116,16 +116,12 @@ help:
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  Core Workflow (Recommended):"
-	@echo "    make dim-compare        # Step 1: Research dimensionality reduction (find optimal features)"
-	@echo "    make tune-q50-params    # Step 1.5: Pre-train Q50 parameter search (recommended, saves time)"
-	@echo "    make train              # Step 2: Train regression model (single run, reports)"
-	@echo "    make train DIRECTION_THRESHOLD=f1_optimize  # Use F1-optimized threshold (default, recommended)"
-	@echo "    make train DIRECTION_THRESHOLD=median       # Use median threshold"
-	@echo "    make train DIRECTION_THRESHOLD=zero         # Use fixed threshold 0 (original method)"
-	@echo "    make train PARAMS_FILE=results/params/q50_params_*.json  # Use pre-trained parameters (recommended)"
-	@echo "    make train AUTO_TUNE=1 TUNE_TRIALS=20       # Auto-tune LGBM during training (slower, not recommended)"
-	@echo "    make train SAFE_MULTI_ASSET=1               # Use safe multi-asset preprocessing (recommended for multi-asset)"
-	@echo "    make rolling            # Step 3: Rolling training to latest data (main workflow)"
+	@echo "    make train              # Train classification model (default: binary + return regression + volatility)"
+	@echo "    make train-quantile     # Train quantile regression model (q10, q50, q90 + volatility)"
+	@echo "    make train-quantile PARAMS_FILE=results/params/q50_params_*.json  # Use pre-trained parameters"
+	@echo "    make train-quantile AUTO_TUNE=1 TUNE_TRIALS=20  # Auto-tune hyperparameters"
+	@echo "    make tune-q50-params    # Pre-train Q50 parameter search (for quantile models)"
+	@echo "    make rolling            # Rolling training to latest data (main workflow)"
 	@echo ""
 	@echo "  Data commands:"
 	@echo "    make data-download     # Download Binance data"
@@ -277,10 +273,12 @@ TRAIN_USE_TOP_FACTORS ?=
 TRAIN_FEATURE_TYPE ?= comprehensive
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
+# Model type: classification (default) or quantile
+MODEL_TYPE ?= classification
 DIRECTION_THRESHOLD ?= f1_optimize
 SAFE_MULTI_ASSET ?= 1
 
-# Auto-tune hyperparameters (Q50-constraint-aware) for LGBM quantile models
+# Auto-tune hyperparameters
 AUTO_TUNE ?= 0
 TUNE_TRIALS ?= 20
 PARAMS_FILE ?=
@@ -305,11 +303,11 @@ tune-q50-params:
 		--max-files 10
 
 train:
-	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make train SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FORWARD_BARS_TRAIN=5"
-	@echo "       Forward Bars (Horizon): $(FORWARD_BARS_TRAIN) bars ahead for prediction"
+	@echo "🚀 Training classification model (default) for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Example: make train SYMBOLS=BTCUSDT,ETHUSDT START_DATE=2024-11-01 END_DATE=2025-04-01"
+	@echo "       Model Type: $(MODEL_TYPE) (classification: binary + return regression + volatility)"
+	@echo "       Forward Bars: $(FORWARD_BARS_TRAIN) bars ahead for prediction"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@echo "       Direction Threshold: $(DIRECTION_THRESHOLD) (options: f1_optimize, median, zero)"
 	@if [ "$(SAFE_MULTI_ASSET)" = "1" ]; then \
 		echo "       🔒 Safe Multi-Asset: Enabled (each symbol processed independently)"; \
 	fi
@@ -328,11 +326,50 @@ train:
 		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
 		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
 		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
+		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
+		$(if $(filter 1,$(AUTO_TUNE)),--auto-tune-params,) \
+		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS),) \
+		$(if $(PARAMS_FILE),--params-file /workspace/$(PARAMS_FILE),) \
+		--model-type $(MODEL_TYPE) \
+		--oos-months $(OOS_MONTHS) \
+		$(if $(OOS_START),--oos-start $(OOS_START),) \
+		$(if $(OOS_END),--oos-end $(OOS_END),) \
+        --gpu
+
+train-quantile:
+	@echo "🚀 Training quantile regression model (q10, q50, q90) for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Example: make train-quantile SYMBOLS=BTCUSDT,ETHUSDT START_DATE=2024-11-01 END_DATE=2025-04-01"
+	@echo "       Model Type: quantile (q10, q50, q90 + volatility)"
+	@echo "       Forward Bars: $(FORWARD_BARS_TRAIN) bars ahead for prediction"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	@echo "       Direction Threshold: $(DIRECTION_THRESHOLD) (options: f1_optimize, median, zero)"
+	@if [ "$(SAFE_MULTI_ASSET)" = "1" ]; then \
+		echo "       🔒 Safe Multi-Asset: Enabled (each symbol processed independently)"; \
+	fi
+	@if [ -n "$(PARAMS_FILE)" ]; then \
+		echo "       📂 Using pre-trained parameters from: $(PARAMS_FILE)"; \
+	fi
+	@if [ "$(AUTO_TUNE)" = "1" ]; then \
+		echo "       ⚙️  Auto-tune: Enabled (trials: $(TUNE_TRIALS))"; \
+	fi
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
+		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
+		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
+        --data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOLS) \
+		--freq $(FREQS) \
+        --forward-bars $(FORWARD_BARS_TRAIN) \
+		--cv-folds $(CV_FOLDS) \
+		--feature-type $(TRAIN_FEATURE_TYPE) \
+		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
+		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
+		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
 		--direction-threshold $(DIRECTION_THRESHOLD) \
 		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
 		$(if $(filter 1,$(AUTO_TUNE)),--auto-tune-params,) \
 		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS),) \
 		$(if $(PARAMS_FILE),--params-file /workspace/$(PARAMS_FILE),) \
+		--model-type quantile \
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \

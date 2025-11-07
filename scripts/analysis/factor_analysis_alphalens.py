@@ -426,6 +426,66 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
     matplotlib.use("Agg")  # Use non-interactive backend
     import matplotlib.pyplot as plt
 
+    def _save_figures() -> List[str]:
+        saved_paths: List[str] = []
+        factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
+        for idx, fig_num in enumerate(sorted(plt.get_fignums())):
+            fig = plt.figure(fig_num)
+            fig_path = os.path.join(output_dir,
+                                     f"{factor_safe_name}_fig_{idx}.png")
+            try:
+                fig.savefig(fig_path,
+                            dpi=150,
+                            bbox_inches="tight",
+                            facecolor="white")
+                saved_paths.append(fig_path)
+                print(f"      ✅ Figure {idx} saved to: {fig_path}")
+            except Exception as fig_e:
+                print(f"      ⚠️  Error saving figure {idx}: {fig_e}")
+        return saved_paths
+
+    def _generate_partial_tears() -> List[str]:
+        print("      ℹ️  Falling back to partial tear sheets (returns/information)...")
+        generated_any = False
+
+        try:
+            al.tears.create_returns_tear_sheet(
+                factor_data,
+                long_short=True,
+                group_neutral=False,
+                set_context=True,
+            )
+            generated_any = True
+        except Exception as ret_e:
+            print(f"      ⚠️  create_returns_tear_sheet error: {ret_e}")
+
+        try:
+            al.tears.create_information_tear_sheet(
+                factor_data,
+                group_neutral=False,
+                set_context=False,
+            )
+            generated_any = True
+        except Exception as info_e:
+            print(f"      ⚠️  create_information_tear_sheet error: {info_e}")
+
+        try:
+            al.tears.create_turnover_tear_sheet(
+                factor_data,
+                set_context=False,
+            )
+        except ValueError as turn_e:
+            if "No objects to concatenate" in str(turn_e):
+                print("      ⚠️  Turnover tear sheet skipped (no data to concatenate)")
+            else:
+                print(f"      ⚠️  create_turnover_tear_sheet error: {turn_e}")
+        except Exception as turn_e:
+            print(f"      ⚠️  create_turnover_tear_sheet error: {turn_e}")
+
+        if generated_any:
+            return _save_figures()
+        return []
+
     # Ensure output directory exists
     try:
         os.makedirs(output_dir, exist_ok=True)
@@ -448,29 +508,31 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
 
     # Create full tear sheet (this will display plots)
     try:
-        al.tears.create_full_tear_sheet(
-            factor_data,
-            long_short=True,
-            group_neutral=False,
-        )
+        fallback_needed = False
+        try:
+            al.tears.create_full_tear_sheet(
+                factor_data,
+                long_short=True,
+                group_neutral=False,
+            )
+        except ValueError as full_e:
+            if "No objects to concatenate" in str(full_e):
+                print(
+                    "      ⚠️  Full tear sheet turnover step failed (no objects to concatenate)."
+                )
+                fallback_needed = True
+            else:
+                raise
 
-        # Save all figures to files
-        factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
-        
-        # Save all figures that were created
-        saved_figures = []
-        for i, fig_num in enumerate(plt.get_fignums()):
-            fig = plt.figure(fig_num)
-            fig_path = os.path.join(output_dir, f"{factor_safe_name}_fig_{i}.png")
-            try:
-                fig.savefig(fig_path, dpi=150, bbox_inches="tight", facecolor="white")
-                saved_figures.append(fig_path)
-                print(f"      ✅ Figure {i} saved to: {fig_path}")
-            except Exception as fig_e:
-                print(f"      ⚠️  Error saving figure {i}: {fig_e}")
-        
-        plt.close("all")
-        
+        saved_figures: List[str]
+        if fallback_needed:
+            plt.close("all")
+            saved_figures = _generate_partial_tears()
+            plt.close("all")
+        else:
+            saved_figures = _save_figures()
+            plt.close("all")
+
         if saved_figures:
             print(f"      ✅ Total {len(saved_figures)} figures saved for {factor_name}")
         else:
@@ -482,6 +544,7 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             ic_summary = al.performance.mean_information_coefficient(factor_data)
 
             # Save IC summary to CSV
+            factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
             ic_csv_path = os.path.join(output_dir, f"{factor_safe_name}_ic_summary.csv")
             ic_summary.to_csv(ic_csv_path)
             print(f"      ✅ IC summary saved to: {ic_csv_path}")

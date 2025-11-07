@@ -31,6 +31,8 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
 from ml_trading.models.lightgbm_model import LightGBMModel
 from ml_trading.models.quant_trading_model import QuantTradingModel
 from ml_trading.pipeline.training.preprocessing import RobustWinsorizer
+from ml_trading.pipeline.training.quantile_model_trainer import QuantileModelTrainer
+from ml_trading.pipeline.training.classification_model_trainer import ClassificationModelTrainer
 import joblib
 
 
@@ -474,6 +476,12 @@ def main() -> None:
         "Path to JSON file containing pre-trained parameters (overrides auto-tune)"
     )
     parser.add_argument(
+        "--model-type",
+        type=str,
+        default="quantile",
+        choices=["quantile", "classification", "regression"],
+        help="Model type: quantile (default), classification, or regression")
+    parser.add_argument(
         "--safe-multi-asset",
         action="store_true",
         default=False,
@@ -622,23 +630,24 @@ def main() -> None:
                         # 因为它会从文件名推断 symbol
                         has_multiple_symbols = True
 
-                if has_multiple_symbols or len(files) > 1:
-                    from ml_trading.pipeline.training.safe_multi_asset_preprocessing import safe_multi_asset_preprocessing
-                    print(f"   🔒 使用安全的多标的预处理（完全隔离）")
-                    feat_df, preprocessing_metadata = safe_multi_asset_preprocessing(
-                        files=files,
-                        feature_type=args.feature_type,
-                        timeframe=freq,
-                        forward_bars=fb,
-                        feature_engineer=None,
-                    )
-                    # Extract feature_engineer from metadata if needed
-                    if args.feature_type == "baseline":
-                        _, feature_engineer = engineer_baseline_features(
-                            feat_df.head(100), None, fit=False)
-                    else:
-                        feature_engineer = ComprehensiveFeatureEngineer(
-                            feature_types=args.feature_type)
+                # Always use safe_multi_asset_preprocessing when safe_multi_asset is enabled
+                # It handles both single and multi-asset cases
+                from ml_trading.pipeline.training.safe_multi_asset_preprocessing import safe_multi_asset_preprocessing
+                print(f"   🔒 使用安全的多标的预处理（完全隔离）")
+                feat_df, preprocessing_metadata = safe_multi_asset_preprocessing(
+                    files=files,
+                    feature_type=args.feature_type,
+                    timeframe=freq,
+                    forward_bars=fb,
+                    feature_engineer=None,
+                )
+                # Extract feature_engineer from metadata if needed
+                if args.feature_type == "baseline":
+                    _, feature_engineer = engineer_baseline_features(
+                        feat_df.head(100), None, fit=False)
+                else:
+                    feature_engineer = ComprehensiveFeatureEngineer(
+                        feature_types=args.feature_type)
             else:
                 # Original preprocessing (merged data)
                 print(f"   Samples in resampled data: {len(resampled_data):,}")
@@ -662,8 +671,12 @@ def main() -> None:
             # future_return[t] = (close[t+fb] / close[t]) - 1
             # This represents the return over the next fb bars, using closing prices
             # Note: If using safe_multi_asset preprocessing, labels are already calculated
-            if not (args.safe_multi_asset
-                    and "future_return" in feat_df.columns):
+            # Check if future_return already exists (from safe_multi_asset preprocessing)
+            future_return_exists = (
+                args.safe_multi_asset
+                and "future_return" in feat_df.columns
+            )
+            if not future_return_exists:
                 # 🔧 FIX: For multi-asset training, calculate future_return per symbol to avoid cross-asset leakage
                 # 🔒 CRITICAL: 如果没有 symbol 信息，无法安全计算多标的的 future_return
                 # 必须按标的分别计算，否则会导致跨标的数据泄露
@@ -1383,20 +1396,6 @@ def main() -> None:
                 k_secondary=3.5,
                 verbose=True)
 
-            # 🔧 OPTIMIZATION: Staged training strategy
-            # Reference: docs suggestion - train Q50 first, then use residuals to guide Q10/Q90
-            # This ensures Q50 is optimized before fitting tails
-            print(
-                f"\n   🔧 Training strategy: Staged training (Q50 first, then Q10/Q90)"
-            )
-
-            # Stage 1: Train Q50 model first
-            print(
-                f"   Stage 1: Training Q50 model (primary point estimate)...")
-            model_q50 = LightGBMModel(model_type="quantile",
-                                      quantile_alpha=0.5,
-                                      params=q50_params,
-                                      use_gpu=args.gpu)
             # Use TimeSeries CV by default to avoid random split failures on edge cases
             # Pass preprocessing function to be called within CV loop
             # 🔒 CRITICAL: For multi-asset training, pass groups (symbol) for GroupKFold
@@ -1448,149 +1447,119 @@ def main() -> None:
 
             # Use pre-trained params if provided, otherwise allow auto-tuning
             use_auto_tune = args.auto_tune_params and not args.params_file
-            q50_metrics, q50_preprocess_params = model_q50.train(
-                X_df,
-                y_return,
+
+            # Use model trainers for different model types
+            if args.model_type == "classification":
+                trainer = ClassificationModelTrainer(
+                    use_gpu=args.gpu,
+                    auto_tune_params=use_auto_tune,
+                    tune_trials=args.tune_trials)
+            else:
+                trainer = QuantileModelTrainer(use_gpu=args.gpu,
+                                               auto_tune_params=use_auto_tune,
+                                               tune_trials=args.tune_trials)
+
+            # Train models using the trainer
+            models_dict, metrics_dict, preprocess_params_dict = trainer.train_models(
+                X_df=X_df,
+                y_return=y_return,
+                y_vol=y_vol,
+                train_df=train_df,
                 n_splits=max(2, args.cv_folds or 2),
-                use_time_series_cv=True,
+                groups=groups,
                 preprocess_fn=preprocess_fn,
                 preprocess_kwargs={},
-                groups=groups,
-                auto_tune_params=use_auto_tune,
-                tune_trials=args.tune_trials)
-
-            # Get Q50 predictions to calculate residuals for Q10/Q90 training
-            # Use a subset for initial prediction to avoid memory issues
-            n_pred_subset = min(50000, len(X_df))
-            X_pred_subset = X_df.iloc[:n_pred_subset]
-            y_pred_subset = y_return.iloc[:n_pred_subset] if isinstance(
-                y_return, pd.Series) else y_return[:n_pred_subset]
-            q50_pred_initial = model_q50.model.predict(X_pred_subset.values)
-            q50_residuals = y_pred_subset.values - q50_pred_initial
-
-            # Calculate residual-based sample weights for Q10/Q90 training
-            # Reference: docs template - use Huber-like downweighting formula
-            # Formula: 1.0 / (1.0 + (residual / (delta_scale * median(residual))))
-            residual_median = np.median(np.abs(q50_residuals))
-            if residual_median > 0:
-                # Huber-like downweighting: more robust than exponential decay
-                # delta_scale=1.0: samples with residual > median get lower weight
-                delta_scale = 1.0
-                q10_q90_weights = 1.0 / (
-                    1.0 + (np.abs(q50_residuals) /
-                           (delta_scale * residual_median + 1e-8)))
-                q10_q90_weights = q10_q90_weights / np.mean(
-                    q10_q90_weights)  # Normalize to mean=1
-            else:
-                q10_q90_weights = None
-
-            print(
-                f"   Stage 2: Training Q10/Q90 models (guided by Q50 residuals)..."
+                q50_params=q50_params,
             )
-            if q10_q90_weights is not None:
-                print(
-                    f"      Using residual-based weights (median abs residual: {residual_median:.6f})"
-                )
-                print(
-                    f"      Weight range: [{np.min(q10_q90_weights):.4f}, {np.max(q10_q90_weights):.4f}]"
-                )
 
-            # Stage 2: Train Q10 and Q90 with residual guidance
-            # q10: 10% quantile for uncertainty estimation
-            model_q10 = LightGBMModel(model_type="quantile",
-                                      quantile_alpha=0.1,
-                                      use_gpu=args.gpu)
+            # Extract models and metrics based on model type
+            if args.model_type == "classification":
+                model_classification = models_dict.get("classification")
+                model_return = models_dict.get("return")
+                model_vol = models_dict.get("vol")
+                classification_metrics = metrics_dict.get("classification")
+                return_metrics = metrics_dict.get("return")
+                vol_metrics = metrics_dict.get("vol")
+                classification_preprocess_params = preprocess_params_dict.get(
+                    "classification")
+                return_preprocess_params = preprocess_params_dict.get("return")
+                vol_preprocess_params = preprocess_params_dict.get("vol")
 
-            # Extend weights to full dataset if needed
-            if q10_q90_weights is not None and len(q10_q90_weights) < len(
-                    X_df):
-                # For full training, we need weights for all samples
-                # Use Q50 predictions on full dataset
-                q50_pred_full = model_q50.model.predict(X_df.values)
-                q50_residuals_full = y_return.values - q50_pred_full
-                residual_median_full = np.median(np.abs(q50_residuals_full))
-                if residual_median_full > 0:
-                    # Use Huber-like downweighting (same as subset)
-                    delta_scale = 1.0
-                    q10_q90_weights_full = 1.0 / (
-                        1.0 + (np.abs(q50_residuals_full) /
-                               (delta_scale * residual_median_full + 1e-8)))
-                    q10_q90_weights_full = q10_q90_weights_full / np.mean(
-                        q10_q90_weights_full)
-                else:
-                    q10_q90_weights_full = None
+                # Not used for classification
+                model_q50 = None
+                model_q10 = None
+                model_q90 = None
+                q50_metrics = None
+                q10_metrics = None
+                q90_metrics = None
+                q50_preprocess_params = None
+                q10_preprocess_params = None
+                q90_preprocess_params = None
             else:
-                q10_q90_weights_full = q10_q90_weights
+                model_q50 = models_dict.get("q50")
+                model_q10 = models_dict.get("q10")
+                model_q90 = models_dict.get("q90")
+                model_vol = models_dict.get("vol")
+                q50_metrics = metrics_dict.get("q50")
+                q10_metrics = metrics_dict.get("q10")
+                q90_metrics = metrics_dict.get("q90")
+                vol_metrics = metrics_dict.get("vol")
+                q50_preprocess_params = preprocess_params_dict.get("q50")
+                q10_preprocess_params = preprocess_params_dict.get("q10")
+                q90_preprocess_params = preprocess_params_dict.get("q90")
+                vol_preprocess_params = preprocess_params_dict.get("vol")
 
-            q10_metrics, q10_preprocess_params = model_q10.train(
-                X_df,
-                y_return,
-                n_splits=max(2, args.cv_folds or 2),
-                use_time_series_cv=True,
-                sample_weight=q10_q90_weights_full
-                if q10_q90_weights_full is not None else None,
-                preprocess_fn=preprocess_fn,
-                preprocess_kwargs={})
+                # Not used for quantile
+                model_classification = None
+                classification_metrics = None
+                classification_preprocess_params = None
 
-            # q90: 90% quantile for uncertainty estimation
-            model_q90 = LightGBMModel(model_type="quantile",
-                                      quantile_alpha=0.9,
-                                      use_gpu=args.gpu)
-            q90_metrics, q90_preprocess_params = model_q90.train(
-                X_df,
-                y_return,
-                n_splits=max(2, args.cv_folds or 2),
-                use_time_series_cv=True,
-                sample_weight=q10_q90_weights_full
-                if q10_q90_weights_full is not None else None,
-                preprocess_fn=preprocess_fn,
-                preprocess_kwargs={})
+                # Diagnostic: Check for quantile loss anomalies (Q50 > Q10/Q90)
+                # Reference: docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md
+                print("\n" + "=" * 70)
+                print("🔍 Quantile Model Diagnostics (检查Q50 loss异常)")
+                print("=" * 70)
+                q50_loss = q50_metrics.get('cv_quantile_loss', 0)
+                q10_loss = q10_metrics.get('cv_quantile_loss', 0)
+                q90_loss = q90_metrics.get('cv_quantile_loss', 0)
 
-            # Diagnostic: Check for quantile loss anomalies (Q50 > Q10/Q90)
-            # Reference: docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md
-            print("\n" + "=" * 70)
-            print("🔍 Quantile Model Diagnostics (检查Q50 loss异常)")
-            print("=" * 70)
-            q50_loss = q50_metrics.get('cv_quantile_loss', 0)
-            q10_loss = q10_metrics.get('cv_quantile_loss', 0)
-            q90_loss = q90_metrics.get('cv_quantile_loss', 0)
+                # Model usability flag: Q50 loss should be <= Q10/Q90 loss
+                # Threshold: Q50 loss ratio > 1.2 means model is unusable
+                max_other_loss = max(q10_loss, q90_loss) if (
+                    q10_loss > 0 and q90_loss > 0) else 1.0
+                q50_loss_ratio = q50_loss / max_other_loss if max_other_loss > 0 else float(
+                    'inf')
+                model_usable = q50_loss_ratio <= 1.2  # Allow 20% tolerance
 
-            # Model usability flag: Q50 loss should be <= Q10/Q90 loss
-            # Threshold: Q50 loss ratio > 1.2 means model is unusable
-            max_other_loss = max(
-                q10_loss, q90_loss) if (q10_loss > 0 and q90_loss > 0) else 1.0
-            q50_loss_ratio = q50_loss / max_other_loss if max_other_loss > 0 else float(
-                'inf')
-            model_usable = q50_loss_ratio <= 1.2  # Allow 20% tolerance
+                if q50_loss > q10_loss or q50_loss > q90_loss:
+                    print(
+                        f"⚠️  检测到Q50 loss异常: Q50={q50_loss:.6f}, Q10={q10_loss:.6f}, Q90={q90_loss:.6f}"
+                    )
+                    print(f"   正在检查预测值分布和异常值...")
 
-            if q50_loss > q10_loss or q50_loss > q90_loss:
-                print(
-                    f"⚠️  检测到Q50 loss异常: Q50={q50_loss:.6f}, Q10={q10_loss:.6f}, Q90={q90_loss:.6f}"
-                )
-                print(f"   正在检查预测值分布和异常值...")
+                    # Use a subset of data for prediction diagnostics (avoid full prediction if too large)
+                    n_diagnostic = min(10000, len(X_df))
+                    X_diagnostic = X_df.iloc[:n_diagnostic]
+                    y_diagnostic = y_return.iloc[:n_diagnostic] if isinstance(
+                        y_return, pd.Series) else y_return[:n_diagnostic]
 
-                # Use a subset of data for prediction diagnostics (avoid full prediction if too large)
-                n_diagnostic = min(10000, len(X_df))
-                X_diagnostic = X_df.iloc[:n_diagnostic]
-                y_diagnostic = y_return.iloc[:n_diagnostic] if isinstance(
-                    y_return, pd.Series) else y_return[:n_diagnostic]
+                    # Get predictions from all three models
+                    pred_q10 = model_q10.model.predict(X_diagnostic.values)
+                    pred_q50 = model_q50.model.predict(X_diagnostic.values)
+                    pred_q90 = model_q90.model.predict(X_diagnostic.values)
 
-                # Get predictions from all three models
-                pred_q10 = model_q10.model.predict(X_diagnostic.values)
-                pred_q50 = model_q50.model.predict(X_diagnostic.values)
-                pred_q90 = model_q90.model.predict(X_diagnostic.values)
+                    # Check if predictions satisfy Q10 <= Q50 <= Q90
+                    violation_count = np.sum(~(
+                        (pred_q10 <= pred_q50) & (pred_q50 <= pred_q90)))
+                    violation_pct = violation_count / len(pred_q10) * 100
 
-                # Check if predictions satisfy Q10 <= Q50 <= Q90
-                violation_count = np.sum(~(
-                    (pred_q10 <= pred_q50) & (pred_q50 <= pred_q90)))
-                violation_pct = violation_count / len(pred_q10) * 100
-
-                print(f"\n   📊 预测值合理性检查 (样本数: {n_diagnostic}):")
-                print(
-                    f"      Q10 <= Q50 <= Q90 违反次数: {violation_count} ({violation_pct:.1f}%)"
-                )
-                if violation_pct > 1.0:
-                    print(f"      ⚠️  警告: 超过1%的预测值违反quantile顺序，说明模型训练可能有问题")
+                    print(f"\n   📊 预测值合理性检查 (样本数: {n_diagnostic}):")
+                    print(
+                        f"      Q10 <= Q50 <= Q90 违反次数: {violation_count} ({violation_pct:.1f}%)"
+                    )
+                    if violation_pct > 1.0:
+                        print(
+                            f"      ⚠️  警告: 超过1%的预测值违反quantile顺序，说明模型训练可能有问题")
 
                 # Check statistics
                 print(f"\n   📊 目标变量 (y_return) 统计:")
@@ -1801,221 +1770,234 @@ def main() -> None:
                 print(f"         2. 检查特征质量: 特征可能不足以预测极端值")
                 print(f"         3. 考虑使用ensemble: 多个模型的平均可能更稳健")
 
-            # 🔧 Comprehensive validation framework
-            # Reference: docs suggestion - comprehensive validation beyond just loss ratio
-            print("\n" + "=" * 70)
-            print("🔍 Comprehensive Model Validation (综合模型验证)")
-            print("=" * 70)
-
-            # Use diagnostic subset for comprehensive validation
-            n_validation = min(10000, len(X_df))
-            X_validation = X_df.iloc[:n_validation]
-            y_validation = y_return.iloc[:n_validation] if isinstance(
-                y_return, pd.Series) else y_return[:n_validation]
-
-            pred_q10_val = model_q10.model.predict(X_validation.values)
-            pred_q50_val = model_q50.model.predict(X_validation.values)
-            pred_q90_val = model_q90.model.predict(X_validation.values)
-            y_validation_series = pd.Series(y_validation) if not isinstance(
-                y_validation, pd.Series) else y_validation
-
-            # Helper function for pinball loss
-            def pinball_loss(y_true, y_pred, tau=0.5):
-                """Calculate pinball loss (quantile loss)"""
-                resid = y_true - y_pred
-                return np.mean(
-                    np.where(resid >= 0, tau * resid, (1 - tau) * (-resid)))
-
-            # 1. Basic loss validation
-            pinball_loss_q10 = pinball_loss(y_validation_series.values,
-                                            pred_q10_val, 0.1)
-            pinball_loss_q50 = pinball_loss(y_validation_series.values,
-                                            pred_q50_val, 0.5)
-            pinball_loss_q90 = pinball_loss(y_validation_series.values,
-                                            pred_q90_val, 0.9)
-
-            q50_vs_q10_ratio = pinball_loss_q50 / pinball_loss_q10 if pinball_loss_q10 > 0 else float(
-                'inf')
-            q50_vs_q90_ratio = pinball_loss_q50 / pinball_loss_q90 if pinball_loss_q90 > 0 else float(
-                'inf')
-
-            # Outlier loss ratio: top 1% vs bottom 99% residual contribution
-            q50_residuals_abs = np.abs(y_validation_series.values -
-                                       pred_q50_val)
-            thresh_99 = np.percentile(q50_residuals_abs, 99)
-            top1_residuals = q50_residuals_abs[q50_residuals_abs >= thresh_99]
-            bottom99_residuals = q50_residuals_abs[q50_residuals_abs <
-                                                   thresh_99]
-            outlier_loss_ratio = top1_residuals.mean() / (
-                bottom99_residuals.mean() +
-                1e-12) if len(bottom99_residuals) > 0 else float('inf')
-
-            print(f"   1. Basic Loss Validation (验证集):")
-            print(
-                f"      Q50/Q10 loss ratio: {q50_vs_q10_ratio:.3f} (应 ≤ 1.0)")
-            print(
-                f"      Q50/Q90 loss ratio: {q50_vs_q90_ratio:.3f} (应 ≤ 1.0)")
-            print(
-                f"      Outlier loss ratio (top1% vs bottom99%): {outlier_loss_ratio:.2f} (应 ≤ 10.0)"
-            )
-
-            if outlier_loss_ratio > 10.0:
-                print(
-                    f"      ⚠️  极端值loss贡献过高（{outlier_loss_ratio:.1f}x），说明少数极端值主导了Q50 loss"
-                )
-
-            # 2. Prediction range validation (using 1st-99th percentile as in doc template)
-            pred_range_99 = np.percentile(pred_q50_val, 99) - np.percentile(
-                pred_q50_val, 1)
-            true_range_99 = np.percentile(y_validation_series.values,
-                                          99) - np.percentile(
-                                              y_validation_series.values, 1)
-            range_ratio = pred_range_99 / true_range_99 if true_range_99 > 0 else 0.0
-
-            print(f"\n   2. Prediction Range Validation:")
-            print(f"      Predicted range (99th-1st): {pred_range_99:.6f}")
-            print(f"      True range (99th-1st): {true_range_99:.6f}")
-            print(f"      Range ratio: {range_ratio:.3f} (应在 [0.5, 2.0] 之间)")
-
-            if range_ratio < 0.5:
-                print(f"      ⚠️  预测范围过窄（< 0.5），模型预测过于保守")
-            elif range_ratio > 2.0:
-                print(f"      ⚠️  预测范围过宽（> 2.0），模型预测过于激进")
-            else:
-                print(f"      ✅ 预测范围合理")
-
-            # 3. Conditional coverage validation
-            in_interval = (y_validation_series.values >= pred_q10_val) & (
-                y_validation_series.values <= pred_q90_val)
-            conditional_coverage = in_interval.mean()
-            expected_coverage = 0.8  # 80% for 10th-90th quantile interval
-
-            print(f"\n   3. Conditional Coverage Validation:")
-            print(
-                f"      Coverage (10th-90th interval): {conditional_coverage:.3f} (期望: {expected_coverage:.3f})"
-            )
-
-            if conditional_coverage < expected_coverage - 0.1:
-                print(
-                    f"      ⚠️  覆盖率过低（< {expected_coverage-0.1:.1f}），预测区间可能过窄")
-            elif conditional_coverage > expected_coverage + 0.1:
-                print(
-                    f"      ⚠️  覆盖率过高（> {expected_coverage+0.1:.1f}），预测区间可能过宽")
-            else:
-                print(f"      ✅ 覆盖率合理")
-
-            # 4. Direction prediction stability check (by volatility regime)
-            if len(y_validation_series) > 20:
-                validation_vol = pd.Series(y_validation_series).rolling(
-                    window=20, min_periods=5).std()
-                vol_median = validation_vol.median()
-                high_vol_mask = validation_vol > vol_median
-                low_vol_mask = ~high_vol_mask
-
-                if high_vol_mask.sum() > 10 and low_vol_mask.sum() > 10:
-                    y_true_dir = (y_validation_series.values > 0).astype(int)
-                    # Use dynamic threshold instead of fixed 0
-                    threshold_val = _compute_direction_threshold(
-                        pred_q50_val,
-                        y_true_dir,
-                        method=args.direction_threshold)
-                    y_pred_dir = (pred_q50_val > threshold_val).astype(int)
-
-                    acc_high_vol = np.mean(
-                        y_pred_dir[high_vol_mask] == y_true_dir[high_vol_mask])
-                    acc_low_vol = np.mean(
-                        y_pred_dir[low_vol_mask] == y_true_dir[low_vol_mask])
-
-                    print(
-                        f"\n   4. Direction Prediction Stability (by volatility regime):"
-                    )
-                    print(
-                        f"      Accuracy (high volatility): {acc_high_vol:.3f}"
-                    )
-                    print(
-                        f"      Accuracy (low volatility): {acc_low_vol:.3f}")
-                    print(
-                        f"      Difference: {abs(acc_high_vol - acc_low_vol):.3f}"
-                    )
-
-                    if abs(acc_high_vol - acc_low_vol) > 0.15:
-                        print(
-                            f"      ⚠️  方向准确率在不同波动率regime下差异较大（> 0.15），模型可能不稳定"
-                        )
-                    else:
-                        print(f"      ✅ 方向准确率在不同波动率regime下表现稳定")
-
-            # 5. Model acceptance criteria (enhanced with outlier loss ratio)
-            print(f"\n   5. Model Acceptance Criteria:")
-            acceptance_conditions = [
-                (q50_vs_q10_ratio <= 1.0, "Q50/Q10 loss ratio ≤ 1.0"),
-                (q50_vs_q90_ratio <= 1.0, "Q50/Q90 loss ratio ≤ 1.0"),
-                (0.5 <= range_ratio <= 2.0, "Range ratio in [0.5, 2.0]"),
-                (conditional_coverage >= 0.7, "Conditional coverage ≥ 0.7"),
-                (outlier_loss_ratio <= 10.0, "Outlier loss ratio ≤ 10.0"),
-            ]
-
-            all_passed = True
-            for condition, description in acceptance_conditions:
-                status = "✅" if condition else "❌"
-                print(f"      {status} {description}")
-                if not condition:
-                    all_passed = False
-
-            if all_passed:
-                print(f"\n   ✅ 所有验证标准通过，模型健康状况良好！")
-            else:
-                print(f"\n   ⚠️  部分验证标准未通过，模型可能存在问题")
-
-            print("=" * 70)
-
-            if q50_loss > q10_loss or q50_loss > q90_loss:
-                pass  # Already printed above
-            else:
-                print(
-                    f"✅ Quantile loss正常: Q50={q50_loss:.6f}, Q10={q10_loss:.6f}, Q90={q90_loss:.6f}"
-                )
-                if model_usable:
-                    print(
-                        f"✅ 模型状态: ✅ 可用 (Q50 loss ratio: {q50_loss_ratio:.2f})")
-
-            # Mark model as unusable if Q50 loss ratio > 1.2
-            if q50_loss_ratio > 1.2:
-                model_usable = False
+                # 🔧 Comprehensive validation framework
+                # Reference: docs suggestion - comprehensive validation beyond just loss ratio
                 print("\n" + "=" * 70)
-                print("🚨 模型标记为不可用 (Model Marked as UNUSABLE)")
+                print("🔍 Comprehensive Model Validation (综合模型验证)")
                 print("=" * 70)
-                print(f"   Timeframe: {freq}, Forward Bars: {fb}")
-                print(f"   Q50 loss ratio: {q50_loss_ratio:.2f} (阈值: 1.2)")
-                print(f"   Q50 loss: {q50_loss:.6f}")
-                print(f"   Max(Q10, Q90) loss: {max_other_loss:.6f}")
+
+                # Use diagnostic subset for comprehensive validation
+                n_validation = min(10000, len(X_df))
+                X_validation = X_df.iloc[:n_validation]
+                y_validation = y_return.iloc[:n_validation] if isinstance(
+                    y_return, pd.Series) else y_return[:n_validation]
+
+                pred_q10_val = model_q10.model.predict(X_validation.values)
+                pred_q50_val = model_q50.model.predict(X_validation.values)
+                pred_q90_val = model_q90.model.predict(X_validation.values)
+                y_validation_series = pd.Series(
+                    y_validation) if not isinstance(
+                        y_validation, pd.Series) else y_validation
+
+                # Helper function for pinball loss
+                def pinball_loss(y_true, y_pred, tau=0.5):
+                    """Calculate pinball loss (quantile loss)"""
+                    resid = y_true - y_pred
+                    return np.mean(
+                        np.where(resid >= 0, tau * resid,
+                                 (1 - tau) * (-resid)))
+
+                # 1. Basic loss validation
+                pinball_loss_q10 = pinball_loss(y_validation_series.values,
+                                                pred_q10_val, 0.1)
+                pinball_loss_q50 = pinball_loss(y_validation_series.values,
+                                                pred_q50_val, 0.5)
+                pinball_loss_q90 = pinball_loss(y_validation_series.values,
+                                                pred_q90_val, 0.9)
+
+                q50_vs_q10_ratio = pinball_loss_q50 / pinball_loss_q10 if pinball_loss_q10 > 0 else float(
+                    'inf')
+                q50_vs_q90_ratio = pinball_loss_q50 / pinball_loss_q90 if pinball_loss_q90 > 0 else float(
+                    'inf')
+
+                # Outlier loss ratio: top 1% vs bottom 99% residual contribution
+                q50_residuals_abs = np.abs(y_validation_series.values -
+                                           pred_q50_val)
+                thresh_99 = np.percentile(q50_residuals_abs, 99)
+                top1_residuals = q50_residuals_abs[q50_residuals_abs >=
+                                                   thresh_99]
+                bottom99_residuals = q50_residuals_abs[q50_residuals_abs <
+                                                       thresh_99]
+                outlier_loss_ratio = top1_residuals.mean() / (
+                    bottom99_residuals.mean() +
+                    1e-12) if len(bottom99_residuals) > 0 else float('inf')
+
+                print(f"   1. Basic Loss Validation (验证集):")
                 print(
-                    f"\n   ⚠️  根据文档要求（docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md）：")
-                print(f"      Q50 loss必须 ≤ Q10/Q90 loss，否则模型不可用")
-                print(
-                    f"      当前Q50 loss是Q10/Q90的{q50_loss_ratio:.1f}倍，违反了分位数回归基本性质"
+                    f"      Q50/Q10 loss ratio: {q50_vs_q10_ratio:.3f} (应 ≤ 1.0)"
                 )
-                print(f"\n   🔒 模型状态: ❌ 不可用")
-                print(f"   💡 建议: 不要使用此模型进行预测，重新训练或检查数据质量")
+                print(
+                    f"      Q50/Q90 loss ratio: {q50_vs_q90_ratio:.3f} (应 ≤ 1.0)"
+                )
+                print(
+                    f"      Outlier loss ratio (top1% vs bottom99%): {outlier_loss_ratio:.2f} (应 ≤ 10.0)"
+                )
+
+                if outlier_loss_ratio > 10.0:
+                    print(
+                        f"      ⚠️  极端值loss贡献过高（{outlier_loss_ratio:.1f}x），说明少数极端值主导了Q50 loss"
+                    )
+
+                # 2. Prediction range validation (using 1st-99th percentile as in doc template)
+                pred_range_99 = np.percentile(
+                    pred_q50_val, 99) - np.percentile(pred_q50_val, 1)
+                true_range_99 = np.percentile(
+                    y_validation_series.values, 99) - np.percentile(
+                        y_validation_series.values, 1)
+                range_ratio = pred_range_99 / true_range_99 if true_range_99 > 0 else 0.0
+
+                print(f"\n   2. Prediction Range Validation:")
+                print(f"      Predicted range (99th-1st): {pred_range_99:.6f}")
+                print(f"      True range (99th-1st): {true_range_99:.6f}")
+                print(
+                    f"      Range ratio: {range_ratio:.3f} (应在 [0.5, 2.0] 之间)")
+
+                if range_ratio < 0.5:
+                    print(f"      ⚠️  预测范围过窄（< 0.5），模型预测过于保守")
+                elif range_ratio > 2.0:
+                    print(f"      ⚠️  预测范围过宽（> 2.0），模型预测过于激进")
+                else:
+                    print(f"      ✅ 预测范围合理")
+
+                # 3. Conditional coverage validation
+                in_interval = (y_validation_series.values >= pred_q10_val) & (
+                    y_validation_series.values <= pred_q90_val)
+                conditional_coverage = in_interval.mean()
+                expected_coverage = 0.8  # 80% for 10th-90th quantile interval
+
+                print(f"\n   3. Conditional Coverage Validation:")
+                print(
+                    f"      Coverage (10th-90th interval): {conditional_coverage:.3f} (期望: {expected_coverage:.3f})"
+                )
+
+                if conditional_coverage < expected_coverage - 0.1:
+                    print(
+                        f"      ⚠️  覆盖率过低（< {expected_coverage-0.1:.1f}），预测区间可能过窄"
+                    )
+                elif conditional_coverage > expected_coverage + 0.1:
+                    print(
+                        f"      ⚠️  覆盖率过高（> {expected_coverage+0.1:.1f}），预测区间可能过宽"
+                    )
+                else:
+                    print(f"      ✅ 覆盖率合理")
+
+                # 4. Direction prediction stability check (by volatility regime)
+                if len(y_validation_series) > 20:
+                    validation_vol = pd.Series(y_validation_series).rolling(
+                        window=20, min_periods=5).std()
+                    vol_median = validation_vol.median()
+                    high_vol_mask = validation_vol > vol_median
+                    low_vol_mask = ~high_vol_mask
+
+                    if high_vol_mask.sum() > 10 and low_vol_mask.sum() > 10:
+                        y_true_dir = (y_validation_series.values
+                                      > 0).astype(int)
+                        # Use dynamic threshold instead of fixed 0
+                        threshold_val = _compute_direction_threshold(
+                            pred_q50_val,
+                            y_true_dir,
+                            method=args.direction_threshold)
+                        y_pred_dir = (pred_q50_val > threshold_val).astype(int)
+
+                        acc_high_vol = np.mean(y_pred_dir[high_vol_mask] ==
+                                               y_true_dir[high_vol_mask])
+                        acc_low_vol = np.mean(y_pred_dir[low_vol_mask] ==
+                                              y_true_dir[low_vol_mask])
+
+                        print(
+                            f"\n   4. Direction Prediction Stability (by volatility regime):"
+                        )
+                        print(
+                            f"      Accuracy (high volatility): {acc_high_vol:.3f}"
+                        )
+                        print(
+                            f"      Accuracy (low volatility): {acc_low_vol:.3f}"
+                        )
+                        print(
+                            f"      Difference: {abs(acc_high_vol - acc_low_vol):.3f}"
+                        )
+
+                        if abs(acc_high_vol - acc_low_vol) > 0.15:
+                            print(
+                                f"      ⚠️  方向准确率在不同波动率regime下差异较大（> 0.15），模型可能不稳定"
+                            )
+                        else:
+                            print(f"      ✅ 方向准确率在不同波动率regime下表现稳定")
+
+                # 5. Model acceptance criteria (enhanced with outlier loss ratio)
+                print(f"\n   5. Model Acceptance Criteria:")
+                acceptance_conditions = [
+                    (q50_vs_q10_ratio <= 1.0, "Q50/Q10 loss ratio ≤ 1.0"),
+                    (q50_vs_q90_ratio <= 1.0, "Q50/Q90 loss ratio ≤ 1.0"),
+                    (0.5 <= range_ratio <= 2.0, "Range ratio in [0.5, 2.0]"),
+                    (conditional_coverage
+                     >= 0.7, "Conditional coverage ≥ 0.7"),
+                    (outlier_loss_ratio <= 10.0, "Outlier loss ratio ≤ 10.0"),
+                ]
+
+                all_passed = True
+                for condition, description in acceptance_conditions:
+                    status = "✅" if condition else "❌"
+                    print(f"      {status} {description}")
+                    if not condition:
+                        all_passed = False
+
+                if all_passed:
+                    print(f"\n   ✅ 所有验证标准通过，模型健康状况良好！")
+                else:
+                    print(f"\n   ⚠️  部分验证标准未通过，模型可能存在问题")
+
+                print("=" * 70)
+
+                if q50_loss > q10_loss or q50_loss > q90_loss:
+                    pass  # Already printed above
+                else:
+                    print(
+                        f"✅ Quantile loss正常: Q50={q50_loss:.6f}, Q10={q10_loss:.6f}, Q90={q90_loss:.6f}"
+                    )
+                    if model_usable:
+                        print(
+                            f"✅ 模型状态: ✅ 可用 (Q50 loss ratio: {q50_loss_ratio:.2f})"
+                        )
+
+                # Mark model as unusable if Q50 loss ratio > 1.2
+                if q50_loss_ratio > 1.2:
+                    model_usable = False
+                    print("\n" + "=" * 70)
+                    print("🚨 模型标记为不可用 (Model Marked as UNUSABLE)")
+                    print("=" * 70)
+                    print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                    print(f"   Q50 loss ratio: {q50_loss_ratio:.2f} (阈值: 1.2)")
+                    print(f"   Q50 loss: {q50_loss:.6f}")
+                    print(f"   Max(Q10, Q90) loss: {max_other_loss:.6f}")
+                    print(
+                        f"\n   ⚠️  根据文档要求（docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md）："
+                    )
+                    print(f"      Q50 loss必须 ≤ Q10/Q90 loss，否则模型不可用")
+                    print(
+                        f"      当前Q50 loss是Q10/Q90的{q50_loss_ratio:.1f}倍，违反了分位数回归基本性质"
+                    )
+                    print(f"\n   🔒 模型状态: ❌ 不可用")
+                    print(f"   💡 建议: 不要使用此模型进行预测，重新训练或检查数据质量")
+                    print("=" * 70 + "\n")
+
                 print("=" * 70 + "\n")
 
-            print("=" * 70 + "\n")
+                # Store model usability flag for later use (will be saved to training_info.json)
+                quantile_model_usable = model_usable
 
-            # Store model usability flag for later use (will be saved to training_info.json)
-            quantile_model_usable = model_usable
-
-            # Auto-remediation: If Q50 model is unusable, apply fixes and retrain (max 1 time)
-            # Reference: docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md
-            retrain_attempted = False
-            calibration_params = {
-                "enabled": False
-            }  # Initialize calibration params
-            if not model_usable and q50_loss_ratio > 1.2:
-                print("\n" + "=" * 70)
-                print("🔧 自动修复和重训 (Auto-Remediation and Retraining)")
-                print("=" * 70)
-                print(f"   Timeframe: {freq}, Forward Bars: {fb}")
-                print(f"   检测到Q50 loss异常，开始自动修复和重训...")
+                # Auto-remediation: If Q50 model is unusable, apply fixes and retrain (max 1 time)
+                # Reference: docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md
+                retrain_attempted = False
+                calibration_params = {
+                    "enabled": False
+                }  # Initialize calibration params
+                if not model_usable and q50_loss_ratio > 1.2:
+                    print("\n" + "=" * 70)
+                    print("🔧 自动修复和重训 (Auto-Remediation and Retraining)")
+                    print("=" * 70)
+                    print(f"   Timeframe: {freq}, Forward Bars: {fb}")
+                    print(f"   检测到Q50 loss异常，开始自动修复和重训...")
                 print("=" * 70)
 
                 retrain_attempted = True
@@ -2655,10 +2637,22 @@ def main() -> None:
                 X_oos = oos_df[feature_cols].values
                 y_ret_oos = oos_df["future_return"].values
                 y_vol_oos = oos_df["future_volatility"].values
-                y_pred_q50 = model_q50.model.predict(X_oos)
 
-                # Apply range calibration if available (from retraining)
-                if 'calibration_params' in locals(
+                # Use appropriate model based on model type
+                if args.model_type == "classification":
+                    # For classification, use return regression model for magnitude prediction
+                    y_pred_return = model_return.model.predict(X_oos)
+                    y_pred_q50 = y_pred_return  # Use return regression for OOS evaluation
+                    y_pred_q10 = None
+                    y_pred_q90 = None
+                else:
+                    # For quantile, use Q50 predictions
+                    y_pred_q50 = model_q50.model.predict(X_oos)
+                    y_pred_q10 = model_q10.model.predict(X_oos)
+                    y_pred_q90 = model_q90.model.predict(X_oos)
+
+                # Apply range calibration if available (from retraining) - only for quantile mode
+                if args.model_type != "classification" and 'calibration_params' in locals(
                 ) and calibration_params and calibration_params.get(
                         "enabled", False):
                     print(
@@ -2671,20 +2665,32 @@ def main() -> None:
                     print(
                         f"      Calibration: scale={scale_factor:.2f}, pred_median={pred_median:.6f}, true_median={true_median:.6f}"
                     )
+
+                # Calculate OOS regression metrics
                 oos_rmse = float(
                     np.sqrt(mean_squared_error(y_ret_oos, y_pred_q50)))
                 oos_mae = float(mean_absolute_error(y_ret_oos, y_pred_q50))
-                y_pred_q10 = model_q10.model.predict(X_oos)
-                y_pred_q90 = model_q90.model.predict(X_oos)
-                coverage = float(
-                    np.mean((y_ret_oos >= y_pred_q10)
-                            & (y_ret_oos <= y_pred_q90)))
-                width = float(np.mean(np.maximum(0.0,
-                                                 y_pred_q90 - y_pred_q10)))
-                conf = float(
-                    np.mean(
-                        np.abs(y_pred_q50) /
-                        (np.maximum(1e-8, y_pred_q90 - y_pred_q10))))
+
+                # Calculate R² for regression models
+                from sklearn.metrics import r2_score
+                oos_r2 = float(r2_score(y_ret_oos, y_pred_q50))
+
+                # Quantile-specific metrics (only for quantile mode)
+                if args.model_type != "classification":
+                    coverage = float(
+                        np.mean((y_ret_oos >= y_pred_q10)
+                                & (y_ret_oos <= y_pred_q90)))
+                    width = float(
+                        np.mean(np.maximum(0.0, y_pred_q90 - y_pred_q10)))
+                    conf = float(
+                        np.mean(
+                            np.abs(y_pred_q50) /
+                            (np.maximum(1e-8, y_pred_q90 - y_pred_q10))))
+                else:
+                    coverage = None
+                    width = None
+                    conf = None
+
                 y_pred_vol = model_vol.model.predict(X_oos)
                 oos_vol_rmse = float(
                     np.sqrt(mean_squared_error(y_vol_oos, y_pred_vol)))
@@ -2977,6 +2983,12 @@ def main() -> None:
                             except Exception:
                                 symbol_ic_pearson = None
 
+                            # Calculate R² for regression models
+                            from sklearn.metrics import r2_score
+                            symbol_r2 = float(
+                                r2_score(symbol_y_true, symbol_y_pred)) if len(
+                                    symbol_y_true) > 1 else None
+
                             # Simple Sharpe-like metric (using predicted returns)
                             # Note: This is a simplified metric, not a true Sharpe ratio
                             if len(symbol_y_pred) > 1 and np.std(
@@ -2990,6 +3002,7 @@ def main() -> None:
                             per_symbol_metrics[symbol] = {
                                 "rmse": symbol_rmse,
                                 "mae": symbol_mae,
+                                "r2": symbol_r2,
                                 "accuracy": symbol_acc,
                                 "precision": float(symbol_prec),
                                 "recall": float(symbol_rec),
@@ -3002,6 +3015,7 @@ def main() -> None:
 
                             print(
                                 f"      {symbol}: RMSE={symbol_rmse:.6f}, MAE={symbol_mae:.6f}, "
+                                f"R²={symbol_r2:.4f if symbol_r2 is not None else 'N/A'}, "
                                 f"Acc={symbol_acc:.4f}, F1={symbol_f1:.4f}, "
                                 f"IC={symbol_ic_spearman:.4f if symbol_ic_spearman else 'N/A'}, "
                                 f"样本数={len(symbol_y_true)}")
@@ -3032,6 +3046,7 @@ def main() -> None:
                     "regression_return": {
                         "rmse": oos_rmse,
                         "mae": oos_mae,
+                        "r2": oos_r2,
                         "samples": len(oos_df)
                     },
                     "uncertainty": {
@@ -3050,18 +3065,31 @@ def main() -> None:
                 if per_symbol_metrics:
                     oos_metrics["per_symbol"] = per_symbol_metrics
             else:
-                # In-sample directional metrics (derived from q50 regression) for visibility when no OOS period
+                # In-sample directional metrics for visibility when no OOS period
                 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score, average_precision_score
                 X_all = train_df[feature_cols].values
                 y_ret_all = train_df["future_return"].values
-                y_score_all = model_q50.model.predict(X_all)
-                y_true_dir_all = (y_ret_all > 0).astype(int)
-                # Use dynamic threshold instead of fixed 0
-                threshold_train = _compute_direction_threshold(
-                    y_score_all,
-                    y_true_dir_all,
-                    method=args.direction_threshold)
-                y_pred_dir_all = (y_score_all > threshold_train).astype(int)
+
+                # Use appropriate model based on model type
+                if args.model_type == "classification":
+                    # For classification, use probability predictions (predict returns probabilities for binary)
+                    y_score_all = model_classification.model.predict(X_all)
+                    y_true_dir_all = (y_ret_all > 0).astype(int)
+                    # For classification, use fixed threshold of 0.5
+                    threshold_train = 0.5
+                    y_pred_dir_all = (y_score_all
+                                      > threshold_train).astype(int)
+                else:
+                    # For quantile, use Q50 predictions
+                    y_score_all = model_q50.model.predict(X_all)
+                    y_true_dir_all = (y_ret_all > 0).astype(int)
+                    # Use dynamic threshold instead of fixed 0
+                    threshold_train = _compute_direction_threshold(
+                        y_score_all,
+                        y_true_dir_all,
+                        method=args.direction_threshold)
+                    y_pred_dir_all = (y_score_all
+                                      > threshold_train).astype(int)
                 acc = float(accuracy_score(y_true_dir_all, y_pred_dir_all))
                 prec, rec, f1, _ = precision_recall_fscore_support(
                     y_true_dir_all,
@@ -3089,25 +3117,35 @@ def main() -> None:
                     "threshold_method": args.direction_threshold,
                 }
 
-            # Directional metrics (derived from q50 regression model) - CV metrics
+            # Directional metrics - CV metrics
             # Import metrics that may not be available from earlier imports
             from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
             # Import scipy.stats functions (already imported above for OOS, but need here for CV)
             from scipy.stats import spearmanr as spearmanr_cv, pearsonr as pearsonr_cv
-            y_score = model_q50.model.predict(X_df.values)
-            y_true_dir = (y_return.values > 0).astype(int)
+
+            # Use appropriate model based on model type
+            if args.model_type == "classification":
+                # For classification, use probability predictions (predict returns probabilities for binary)
+                y_score = model_classification.model.predict(X_df.values)
+                y_true_dir = (y_return.values > 0).astype(int)
+                # For classification, use fixed threshold of 0.5
+                threshold_cv_opt = 0.5
+                y_pred_dir = (y_score > threshold_cv_opt).astype(int)
+            else:
+                # For quantile, use Q50 predictions
+                y_score = model_q50.model.predict(X_df.values)
+                y_true_dir = (y_return.values > 0).astype(int)
+                # Use dynamic threshold instead of fixed 0 (recommended solution)
+                # This addresses the issue where all predictions <= 0 lead to F1=0 even with high AUC
+                threshold_cv_opt = _compute_direction_threshold(
+                    y_score, y_true_dir, method=args.direction_threshold)
+                y_pred_dir = (y_score > threshold_cv_opt).astype(int)
 
             # 🔍 DIAGNOSTIC: Calculate prediction statistics first
             y_score_min_cv = float(np.min(y_score))
             y_score_max_cv = float(np.max(y_score))
             y_score_mean_cv = float(np.mean(y_score))
             y_score_median_cv = float(np.median(y_score))
-
-            # Use dynamic threshold instead of fixed 0 (recommended solution)
-            # This addresses the issue where all predictions <= 0 lead to F1=0 even with high AUC
-            threshold_cv_opt = _compute_direction_threshold(
-                y_score, y_true_dir, method=args.direction_threshold)
-            y_pred_dir = (y_score > threshold_cv_opt).astype(int)
 
             # Log threshold information
             if threshold_cv_opt != 0.0:
@@ -3165,6 +3203,7 @@ def main() -> None:
             except Exception:
                 pr_auc = None
             cm = confusion_matrix(y_true_dir, y_pred_dir).tolist()
+            
             # Calculate IC (Information Coefficient) - Spearman correlation
             try:
                 ic_spearman, _ = spearmanr_cv(y_return.values,
@@ -3180,6 +3219,152 @@ def main() -> None:
                     ic_pearson) if not np.isnan(ic_pearson) else None
             except Exception:
                 ic_pearson = None
+            
+            # Calculate IR (Information Ratio) = IC_mean / IC_std
+            # For single fold, IR is undefined, but we can calculate it across multiple predictions
+            # For now, we'll use IC as a proxy for IR (IR = IC / std(IC) over time)
+            # In practice, IR is calculated over rolling windows of IC values
+            ir_spearman = None
+            ir_pearson = None
+            if ic_spearman is not None:
+                # For single evaluation, IR is approximately IC (assuming unit variance)
+                # In production, IR should be calculated over rolling windows
+                ir_spearman = ic_spearman  # Simplified: IR ≈ IC for single evaluation
+            if ic_pearson is not None:
+                ir_pearson = ic_pearson  # Simplified: IR ≈ IC for single evaluation
+            
+            # Calculate long/short separate metrics
+            # Long: predict up (y_pred_dir == 1), Short: predict down (y_pred_dir == 0)
+            long_mask = y_pred_dir == 1
+            short_mask = y_pred_dir == 0
+            long_metrics = {}
+            short_metrics = {}
+            
+            if np.sum(long_mask) > 0:
+                # Long position metrics
+                y_true_long = y_true_dir[long_mask]
+                y_pred_long = y_pred_dir[long_mask]
+                y_score_long = y_score[long_mask]
+                y_return_long = y_return.values[long_mask]
+                
+                long_accuracy = float(accuracy_score(y_true_long, y_pred_long))
+                long_precision = float(precision_score(y_true_long, y_pred_long, zero_division=0))
+                long_recall = float(recall_score(y_true_long, y_pred_long, zero_division=0))
+                long_f1 = float(f1_score(y_true_long, y_pred_long, zero_division=0))
+                
+                try:
+                    if len(np.unique(y_true_long)) >= 2:
+                        long_auc = float(roc_auc_score(y_true_long, y_score_long))
+                    else:
+                        long_auc = None
+                except Exception:
+                    long_auc = None
+                
+                try:
+                    long_pr_auc = float(average_precision_score(y_true_long, y_score_long))
+                except Exception:
+                    long_pr_auc = None
+                
+                # IC for long positions
+                try:
+                    long_ic_spearman, _ = spearmanr_cv(y_return_long, y_score_long, nan_policy="omit")
+                    long_ic_spearman = float(long_ic_spearman) if not np.isnan(long_ic_spearman) else None
+                except Exception:
+                    long_ic_spearman = None
+                
+                try:
+                    long_ic_pearson, _ = pearsonr_cv(y_return_long, y_score_long)
+                    long_ic_pearson = float(long_ic_pearson) if not np.isnan(long_ic_pearson) else None
+                except Exception:
+                    long_ic_pearson = None
+                
+                long_metrics = {
+                    "accuracy": long_accuracy,
+                    "precision": long_precision,
+                    "recall": long_recall,
+                    "f1": long_f1,
+                    "auc": long_auc,
+                    "pr_auc": long_pr_auc,
+                    "ic_spearman": long_ic_spearman,
+                    "ic_pearson": long_ic_pearson,
+                    "samples": int(np.sum(long_mask)),
+                }
+            
+            if np.sum(short_mask) > 0:
+                # Short position metrics (inverted: predict down, but we want to check if actual return < 0)
+                # For short positions, we predict down (y_pred_dir == 0), and we want actual return < 0
+                y_true_short = (y_return.values[short_mask] < 0).astype(int)  # Actual down
+                y_pred_short = (y_pred_dir[short_mask] == 0).astype(int)  # Predicted down
+                y_score_short = 1.0 - y_score[short_mask]  # Invert score for short (higher score = more confident in down)
+                y_return_short = y_return.values[short_mask]
+                
+                short_accuracy = float(accuracy_score(y_true_short, y_pred_short))
+                short_precision = float(precision_score(y_true_short, y_pred_short, zero_division=0))
+                short_recall = float(recall_score(y_true_short, y_pred_short, zero_division=0))
+                short_f1 = float(f1_score(y_true_short, y_pred_short, zero_division=0))
+                
+                try:
+                    if len(np.unique(y_true_short)) >= 2:
+                        short_auc = float(roc_auc_score(y_true_short, y_score_short))
+                    else:
+                        short_auc = None
+                except Exception:
+                    short_auc = None
+                
+                try:
+                    short_pr_auc = float(average_precision_score(y_true_short, y_score_short))
+                except Exception:
+                    short_pr_auc = None
+                
+                # IC for short positions (using negative returns)
+                try:
+                    short_ic_spearman, _ = spearmanr_cv(-y_return_short, y_score_short, nan_policy="omit")
+                    short_ic_spearman = float(short_ic_spearman) if not np.isnan(short_ic_spearman) else None
+                except Exception:
+                    short_ic_spearman = None
+                
+                try:
+                    short_ic_pearson, _ = pearsonr_cv(-y_return_short, y_score_short)
+                    short_ic_pearson = float(short_ic_pearson) if not np.isnan(short_ic_pearson) else None
+                except Exception:
+                    short_ic_pearson = None
+                
+                short_metrics = {
+                    "accuracy": short_accuracy,
+                    "precision": short_precision,
+                    "recall": short_recall,
+                    "f1": short_f1,
+                    "auc": short_auc,
+                    "pr_auc": short_pr_auc,
+                    "ic_spearman": short_ic_spearman,
+                    "ic_pearson": short_ic_pearson,
+                    "samples": int(np.sum(short_mask)),
+                }
+            
+            # Get feature importance from model
+            feature_importance = None
+            if args.model_type == "classification" and model_classification and model_classification.model:
+                try:
+                    # LightGBM feature importance (gain)
+                    importance_gain = model_classification.model.feature_importance(importance_type='gain')
+                    feature_names = model_classification.model.feature_name()
+                    if len(importance_gain) == len(feature_names):
+                        # Create DataFrame with feature importance
+                        feature_importance = pd.DataFrame({
+                            'feature': feature_names,
+                            'importance': importance_gain,
+                        }).sort_values('importance', ascending=False)
+                    else:
+                        # Fallback: use feature_cols if available
+                        if len(importance_gain) == len(feature_cols):
+                            feature_importance = pd.DataFrame({
+                                'feature': feature_cols,
+                                'importance': importance_gain,
+                            }).sort_values('importance', ascending=False)
+                        else:
+                            feature_importance = None
+                except Exception:
+                    feature_importance = None
             accuracy = float(accuracy_score(y_true_dir, y_pred_dir))
 
             # Get sample count for warning context
@@ -3403,8 +3588,10 @@ def main() -> None:
                 "auc": auc,
                 "pr_auc": pr_auc,
                 "ic_spearman": ic_spearman,
-                "pred_stats": pred_stats_cv,  # 🔍 Diagnostic info
                 "ic_pearson": ic_pearson,
+                "ir_spearman": ir_spearman,
+                "ir_pearson": ir_pearson,
+                "pred_stats": pred_stats_cv,  # 🔍 Diagnostic info
                 "balanced_accuracy": balanced_acc,
                 "positive_ratio": positive_ratio,
                 "negative_ratio": negative_ratio,
@@ -3412,6 +3599,9 @@ def main() -> None:
                 "threshold_method": args.direction_threshold,
                 "samples": int(len(y_true_dir)),
                 "confusion_matrix": cm,
+                "long_metrics": long_metrics if long_metrics else None,
+                "short_metrics": short_metrics if short_metrics else None,
+                "feature_importance": feature_importance.to_dict('records') if feature_importance is not None else None,
             }
 
             # Save artifacts and report (neutral naming, no 'baseline')
@@ -3425,6 +3615,58 @@ def main() -> None:
             # ✅ 保存一体化 Pipeline（使用 joblib）
             # 参考文档：docs/工作流："预处理 + 模型 + 后处理"一体化保存与部署.md
             # 使用统一的 Pipeline 保存方式，简化代码逻辑
+
+            # 保存分类模型 Pipeline
+            if args.model_type == "classification":
+                if classification_preprocess_params:
+                    classification_pipeline = QuantTradingModel(
+                        model_type="classification",
+                        forward_bars=fb,
+                        feature_cols=feature_cols,
+                        preprocess_params=classification_preprocess_params,
+                        use_gpu=args.gpu,
+                    )
+                    classification_pipeline.model = model_classification.model
+                    classification_pipeline.preprocessor = RobustWinsorizer.from_params(
+                        classification_preprocess_params, forward_bars=fb)
+                    classification_pipeline.save(
+                        os.path.join(combo_dir, "classification_pipeline.pkl"))
+                    print(
+                        f"  ✅ Saved Classification pipeline to {os.path.join(combo_dir, 'classification_pipeline.pkl')}"
+                    )
+
+                # 保存 Return Regression 模型 Pipeline
+                if return_preprocess_params:
+                    return_pipeline = QuantTradingModel(
+                        model_type="regression",
+                        forward_bars=fb,
+                        feature_cols=feature_cols,
+                        preprocess_params=return_preprocess_params,
+                        use_gpu=args.gpu,
+                    )
+                    return_pipeline.model = model_return.model
+                    return_pipeline.preprocessor = RobustWinsorizer.from_params(
+                        return_preprocess_params, forward_bars=fb)
+                    return_pipeline.save(
+                        os.path.join(combo_dir, "return_pipeline.pkl"))
+                    print(
+                        f"  ✅ Saved Return Regression pipeline to {os.path.join(combo_dir, 'return_pipeline.pkl')}"
+                    )
+                else:
+                    # Return regression model without preprocessing
+                    return_pipeline = QuantTradingModel(
+                        model_type="regression",
+                        forward_bars=fb,
+                        feature_cols=feature_cols,
+                        preprocess_params=None,
+                        use_gpu=args.gpu,
+                    )
+                    return_pipeline.model = model_return.model
+                    return_pipeline.save(
+                        os.path.join(combo_dir, "return_pipeline.pkl"))
+                    print(
+                        f"  ✅ Saved Return Regression pipeline to {os.path.join(combo_dir, 'return_pipeline.pkl')}"
+                    )
 
             # 保存 Q50 模型 Pipeline
             if q50_preprocess_params:
@@ -3594,11 +3836,23 @@ def main() -> None:
 
             model_info = {
                 "model_paths": {
-                    "q50": os.path.join(combo_dir, "q50_pipeline.pkl"),
-                    "q10": os.path.join(combo_dir, "q10_pipeline.pkl"),
-                    "q90": os.path.join(combo_dir, "q90_pipeline.pkl"),
-                    "volatility": os.path.join(combo_dir, "vol_pipeline.pkl"),
+                    "q50":
+                    os.path.join(combo_dir, "q50_pipeline.pkl")
+                    if model_q50 else None,
+                    "q10":
+                    os.path.join(combo_dir, "q10_pipeline.pkl")
+                    if model_q10 else None,
+                    "q90":
+                    os.path.join(combo_dir, "q90_pipeline.pkl")
+                    if model_q90 else None,
+                    "classification":
+                    os.path.join(combo_dir, "classification_pipeline.pkl")
+                    if model_classification else None,
+                    "volatility":
+                    os.path.join(combo_dir, "vol_pipeline.pkl"),
                 },
+                "model_type":
+                args.model_type,
                 "scaler_path":
                 os.path.join(combo_dir, "scalers.pkl"),
                 "training_date":
@@ -3637,13 +3891,20 @@ def main() -> None:
                 "metrics": {
                     "stage2": {
                         freq: q50_metrics
-                    },
+                    } if q50_metrics else {},
                     "q10": {
                         freq: q10_metrics
-                    },
+                    } if q10_metrics else {},
                     "q90": {
                         freq: q90_metrics
-                    },
+                    } if q90_metrics else {},
+                    "classification": {
+                        freq: classification_metrics
+                    } if classification_metrics else {},
+                    "return": {
+                        freq: return_metrics
+                    } if (args.model_type == "classification"
+                          and return_metrics) else {},
                     "volatility": {
                         freq: vol_metrics
                     },
@@ -3670,15 +3931,20 @@ def main() -> None:
                     # We store first fold stats for deployment consistency
                     "note":
                     "AR(1) preprocessing moved to CV loop - statistics computed per fold. Deployment params from first fold.",
-                    "ar1_phi":
-                    q50_preprocess_params.get("ar1", {}).get("ar1_phi")
-                    if q50_preprocess_params else None,
+                    "ar1_phi": (q50_preprocess_params.get(
+                        "ar1", {}).get("ar1_phi") if q50_preprocess_params else
+                                classification_preprocess_params.get(
+                                    "ar1", {}).get("ar1_phi")
+                                if classification_preprocess_params else None),
                     "ar1_autocorr_before":
                     None,  # Not available in current implementation
                     "ar1_autocorr_after":
-                    q50_preprocess_params.get("ar1",
-                                              {}).get("ar1_autocorr_after")
-                    if q50_preprocess_params else None,
+                    (q50_preprocess_params.get("ar1",
+                                               {}).get("ar1_autocorr_after")
+                     if q50_preprocess_params else
+                     classification_preprocess_params.get(
+                         "ar1", {}).get("ar1_autocorr_after")
+                     if classification_preprocess_params else None),
                     "continuity_bias_removed":
                     True,  # Always applied in CV loop
                 },
@@ -3686,10 +3952,12 @@ def main() -> None:
                 # These parameters MUST be used for consistent preprocessing in production
                 # See: RobustWinsorizer class in preprocessing.py for usage
                 "preprocess_params":
-                q50_preprocess_params if q50_preprocess_params else {
-                    "note":
-                    "Preprocessing parameters not available (preprocessing not applied or failed)",
-                },
+                (q50_preprocess_params
+                 if q50_preprocess_params else classification_preprocess_params
+                 if classification_preprocess_params else {
+                     "note":
+                     "Preprocessing parameters not available (preprocessing not applied or failed)",
+                 }),
                 "model_usability":
                 model_usability_info,
             }
@@ -3707,45 +3975,57 @@ def main() -> None:
                 # Extract AR(1) information if available (for fb=1)
                 ar1_info = info_json.get("ar1_info")
 
-                # Extract metrics for all 4 regression models
-                q10_metrics = info_json.get("metrics", {}).get("q10", {})
-                q50_metrics = info_json.get("metrics", {}).get("stage2", {})
-                q90_metrics = info_json.get("metrics", {}).get("q90", {})
+                # Extract metrics based on model type
+                model_type = info_json.get("model_type", "quantile")
+                if model_type == "classification":
+                    classification_metrics = info_json.get("metrics", {}).get(
+                        "classification", {})
+                    return_metrics = info_json.get("metrics",
+                                                   {}).get("return", {})
+                    q10_metrics = {}
+                    q50_metrics = {}
+                    q90_metrics = {}
+                else:
+                    q10_metrics = info_json.get("metrics", {}).get("q10", {})
+                    q50_metrics = info_json.get("metrics",
+                                                {}).get("stage2", {})
+                    q90_metrics = info_json.get("metrics", {}).get("q90", {})
+                    classification_metrics = {}
+                    return_metrics = {}
                 vol_metrics = info_json.get("metrics",
                                             {}).get("volatility", {})
 
-                # Quantile Loss section (q10, q50, q90)
+                # Quantile Loss section (q10, q50, q90) - only for quantile models
                 quantile_rows = []
-                for tf in q50_metrics.keys():
-                    q10_val = q10_metrics.get(tf,
-                                              {}).get('cv_quantile_loss',
-                                                      'N/A')
-                    q50_val = q50_metrics.get(tf,
-                                              {}).get('cv_quantile_loss',
-                                                      'N/A')
-                    q90_val = q90_metrics.get(tf,
-                                              {}).get('cv_quantile_loss',
-                                                      'N/A')
+                if q50_metrics and len(q50_metrics) > 0:
+                    for tf in q50_metrics.keys():
+                        q10_val = q10_metrics.get(tf, {}).get(
+                            'cv_quantile_loss', 'N/A')
+                        q50_val = q50_metrics.get(tf, {}).get(
+                            'cv_quantile_loss', 'N/A')
+                        q90_val = q90_metrics.get(tf, {}).get(
+                            'cv_quantile_loss', 'N/A')
 
                     # Format values with 6 decimal places, but show scientific notation for very small values
                     def fmt_val(v):
                         if v == 'N/A' or v is None:
                             return 'N/A'
-                        try:
-                            fv = float(v)
-                            # If value is very small (< 1e-6) or exactly 0, use scientific notation or show more precision
-                            if abs(fv) < 1e-6 and fv != 0.0:
-                                return f"{fv:.2e}"
-                            elif fv == 0.0:
-                                return "0.000000"
-                            else:
-                                return f"{fv:.6f}"
-                        except (ValueError, TypeError):
-                            return str(v)
+                            try:
+                                fv = float(v)
+                                # If value is very small (< 1e-6) or exactly 0, use scientific notation or show more precision
+                                if abs(fv) < 1e-6 and fv != 0.0:
+                                    return f"{fv:.2e}"
+                                elif fv == 0.0:
+                                    return "0.000000"
+                                else:
+                                    return f"{fv:.6f}"
+                            except (ValueError, TypeError):
+                                return str(v)
 
-                    quantile_rows.append(
-                        f"<tr><td>{tf}</td><td>{fmt_val(q10_val)}</td><td>{fmt_val(q50_val)}</td><td>{fmt_val(q90_val)}</td></tr>"
-                    )
+                        quantile_rows.append(
+                            f"<tr><td>{tf}</td><td>{fmt_val(q10_val)}</td><td>{fmt_val(q50_val)}</td><td>{fmt_val(q90_val)}</td></tr>"
+                        )
+
                 # AR(1) information section (for fb=1)
                 # NOTE: AR(1) preprocessing is now done in CV loop, so global statistics are not available
                 ar1_section = ""
@@ -3820,46 +4100,48 @@ def main() -> None:
                 if quantile_rows:
                     # Check for anomalies
                     warnings_list = []
-                    for tf in q50_metrics.keys():
-                        q10_val = q10_metrics.get(tf, {}).get(
-                            'cv_quantile_loss', 'N/A')
-                        q50_val = q50_metrics.get(tf, {}).get(
-                            'cv_quantile_loss', 'N/A')
-                        q90_val = q90_metrics.get(tf, {}).get(
-                            'cv_quantile_loss', 'N/A')
-                        try:
-                            q10_f = float(
-                                q10_val) if q10_val != 'N/A' else None
-                            q50_f = float(
-                                q50_val) if q50_val != 'N/A' else None
-                            q90_f = float(
-                                q90_val) if q90_val != 'N/A' else None
-                            if q10_f is not None and q50_f is not None and q90_f is not None:
-                                # Check for Q50 loss = 0 or suspiciously small (likely calculation error or data issue)
-                                if q50_f == 0.0 or (q50_f < 1e-6
-                                                    and q10_f > 1e-6):
-                                    warnings_list.append(
-                                        f"⚠️ {tf}: Q50 loss ({q50_f:.6f}) 异常小或为0！这可能是计算错误、数据问题或模型预测完全正确（不太可能）。请检查数据或计算逻辑。"
-                                    )
-                                # Check if Q50 loss violates quantile regression property (should be <= Q10 and Q90)
-                                elif q50_f > q10_f or q50_f > q90_f:
-                                    ratio_q10 = q50_f / q10_f if q10_f > 0 else float(
-                                        'inf')
-                                    ratio_q90 = q50_f / q90_f if q90_f > 0 else float(
-                                        'inf')
-                                    warnings_list.append(
-                                        f"⚠️ {tf}: Q50 loss ({q50_f:.6f}) > Q10/Q90 loss（Q10={q10_f:.6f}, Q90={q90_f:.6f}），违反quantile regression性质！"
-                                        f" Q50是Q10的{ratio_q10:.1f}倍，是Q90的{ratio_q90:.1f}倍。"
-                                        f" 可能原因：1) Q50模型训练质量差（过拟合/欠拟合）；2) 数据有异常值影响中位数预测；"
-                                        f" 3) AR(1)处理引入了异常值；4) LightGBM quantile回归训练不稳定。"
-                                        f" 建议：检查训练日志、Q50预测值分布、AR(1)处理后的数据异常值。")
-                                # Check if Q50 loss is abnormally large
-                                if q50_f > 1.0:
-                                    warnings_list.append(
-                                        f"⚠️ {tf}: Q50 loss ({q50_f:.6f})异常大！如果收益率是比例（±0.05），loss应在0.01-0.1量级，可能存在单位问题。"
-                                    )
-                        except (ValueError, TypeError):
-                            pass
+                    if q50_metrics and len(q50_metrics) > 0:
+                        for tf in q50_metrics.keys():
+                            q10_val = q10_metrics.get(tf, {}).get(
+                                'cv_quantile_loss', 'N/A')
+                            q50_val = q50_metrics.get(tf, {}).get(
+                                'cv_quantile_loss', 'N/A')
+                            q90_val = q90_metrics.get(tf, {}).get(
+                                'cv_quantile_loss', 'N/A')
+                            try:
+                                q10_f = float(
+                                    q10_val) if q10_val != 'N/A' else None
+                                q50_f = float(
+                                    q50_val) if q50_val != 'N/A' else None
+                                q90_f = float(
+                                    q90_val) if q90_val != 'N/A' else None
+                                if q10_f is not None and q50_f is not None and q90_f is not None:
+                                    # Check for Q50 loss = 0 or suspiciously small (likely calculation error or data issue)
+                                    if q50_f == 0.0 or (q50_f < 1e-6
+                                                        and q10_f > 1e-6):
+                                        warnings_list.append(
+                                            f"⚠️ {tf}: Q50 loss ({q50_f:.6f}) 异常小或为0！这可能是计算错误、数据问题或模型预测完全正确（不太可能）。请检查数据或计算逻辑。"
+                                        )
+                                    # Check if Q50 loss violates quantile regression property (should be <= Q10 and Q90)
+                                    elif q50_f > q10_f or q50_f > q90_f:
+                                        ratio_q10 = q50_f / q10_f if q10_f > 0 else float(
+                                            'inf')
+                                        ratio_q90 = q50_f / q90_f if q90_f > 0 else float(
+                                            'inf')
+                                        warnings_list.append(
+                                            f"⚠️ {tf}: Q50 loss ({q50_f:.6f}) > Q10/Q90 loss（Q10={q10_f:.6f}, Q90={q90_f:.6f}），违反quantile regression性质！"
+                                            f" Q50是Q10的{ratio_q10:.1f}倍，是Q90的{ratio_q90:.1f}倍。"
+                                            f" 可能原因：1) Q50模型训练质量差（过拟合/欠拟合）；2) 数据有异常值影响中位数预测；"
+                                            f" 3) AR(1)处理引入了异常值；4) LightGBM quantile回归训练不稳定。"
+                                            f" 建议：检查训练日志、Q50预测值分布、AR(1)处理后的数据异常值。"
+                                        )
+                                    # Check if Q50 loss is abnormally large
+                                    if q50_f > 1.0:
+                                        warnings_list.append(
+                                            f"⚠️ {tf}: Q50 loss ({q50_f:.6f})异常大！如果收益率是比例（±0.05），loss应在0.01-0.1量级，可能存在单位问题。"
+                                        )
+                            except (ValueError, TypeError):
+                                pass
 
                     warning_html = ""
                     if warnings_list:
@@ -3874,6 +4156,52 @@ def main() -> None:
                         + warning_html +
                         "<table><tr><th>Timeframe</th><th>Quantile Loss 0.1 (q10)</th><th>Quantile Loss 0.5 (q50)</th><th>Quantile Loss 0.9 (q90)</th></tr>"
                         + "".join(quantile_rows) + "</table>")
+
+                # Return Regression CV Metrics section (for classification mode)
+                return_rows = []
+                return_section = ""
+                if model_type == "classification" and return_metrics:
+                    for tf, m in return_metrics.items():
+                        cv_rmse = m.get('cv_rmse', 'N/A')
+                        cv_mse = m.get('cv_mse', 'N/A')
+                        cv_mae = m.get('cv_mae', 'N/A')
+                        cv_r2 = m.get('cv_r2', 'N/A')
+
+                        def fmt_val(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v):.6f}"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        def fmt_r2(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v):.4f}"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        return_rows.append(
+                            f"<tr><td>{tf}</td><td>{fmt_val(cv_rmse)}</td><td>{fmt_val(cv_mse)}</td><td>{fmt_val(cv_mae)}</td><td>{fmt_r2(cv_r2)}</td></tr>"
+                        )
+
+                    if return_rows:
+                        return_section = (
+                            "<h2>📊 Return Regression CV Metrics</h2>"
+                            "<p><em>单位: RMSE/MSE/MAE - 收益率比例 (例如 0.01 表示 1%)，R² - 决定系数 (范围 [0, 1]，越高越好)</em></p>"
+                            "<p><em>使用说明：</em></p>"
+                            "<ul style='margin:10px 0;padding-left:20px;'>"
+                            "<li><strong>RMSE (Root Mean Squared Error)</strong>：均方根误差，衡量预测收益率的平均误差大小。值越小越好，通常应在0.01-0.1量级（对应1%-10%的收益率误差）</li>"
+                            "<li><strong>MSE (Mean Squared Error)</strong>：均方误差，RMSE的平方。对大误差更敏感，用于评估模型对极端值的预测能力</li>"
+                            "<li><strong>MAE (Mean Absolute Error)</strong>：平均绝对误差，衡量预测收益率的平均绝对偏差。相比RMSE，MAE对大误差的惩罚较小</li>"
+                            "<li><strong>R² (R-squared)</strong>：决定系数，衡量模型解释目标变量变异的比例。R²=1表示完美预测，R²=0表示模型不优于均值预测，R²<0表示模型预测比均值更差。在金融预测中，R²>0.01通常表示模型有一定预测能力</li>"
+                            "<li><strong>使用场景</strong>：收益回归模型用于：1) 预测收益幅度（与分类模型配合，分类模型预测方向，回归模型预测幅度）；2) 计算信号强度（signal_strength = return_pred / vol_pred）；3) 仓位管理（根据预测收益幅度调整仓位大小）</li>"
+                            "</ul>"
+                            "<p><em>注意: 如果RMSE值>1.0，可能存在单位问题。正常情况下，收益率在±5%范围内时，RMSE应在0.01-0.1量级。</em></p>"
+                            "<table><tr><th>Timeframe</th><th>CV RMSE</th><th>CV MSE</th><th>CV MAE</th><th>CV R²</th></tr>"
+                            + "".join(return_rows) + "</table>")
 
                 # Volatility CV Metrics section
                 vol_rows = []
@@ -3917,6 +4245,12 @@ def main() -> None:
                     vol_section = (
                         "<h2>📈 Volatility (Regression) CV Metrics</h2>"
                         "<p><em>单位: RMSE/MSE - 波动率比例 (与收益率比例单位相同，例如 0.01 表示 1%)</em></p>"
+                        "<p><em>使用说明：</em></p>"
+                        "<ul style='margin:10px 0;padding-left:20px;'>"
+                        "<li><strong>RMSE (Root Mean Squared Error)</strong>：均方根误差，衡量预测波动率的平均误差大小。值越小越好，通常应在0.01-0.1量级（对应1%-10%的波动率误差）</li>"
+                        "<li><strong>MSE (Mean Squared Error)</strong>：均方误差，RMSE的平方。对大误差更敏感，用于评估模型对极端波动率的预测能力</li>"
+                        "<li><strong>使用场景</strong>：波动率模型用于：1) 风险调整收益（signal_strength = return / vol）；2) 仓位管理（根据预测波动率调整仓位大小）；3) 止损设置（高波动率时设置更宽的止损）</li>"
+                        "</ul>"
                         "<p><em>注意: 如果RMSE值>1.0，可能存在单位问题。正常情况下，波动率在1-5%范围内时，RMSE应在0.01-0.1量级。</em></p>"
                         + vol_warning_html +
                         "<table><tr><th>Timeframe</th><th>CV RMSE</th><th>CV MSE</th></tr>"
@@ -3928,6 +4262,9 @@ def main() -> None:
                 directional_section = ""
                 if directional_cv_metrics:
                     dir_rows = []
+                    long_short_rows_all = []
+                    feature_importance_all = None
+                    
                     for tf, dir_metrics in directional_cv_metrics.items():
                         if isinstance(dir_metrics, dict):
 
@@ -3954,19 +4291,107 @@ def main() -> None:
                             auc_val = fmt_pct(
                                 dir_metrics.get('auc')) if dir_metrics.get(
                                     'auc') is not None else 'N/A'
+                            pr_auc_val = fmt_pct(
+                                dir_metrics.get('pr_auc')) if dir_metrics.get(
+                                    'pr_auc') is not None else 'N/A'
                             ic_spearman = fmt_corr(
                                 dir_metrics.get('ic_spearman'))
                             ic_pearson = fmt_corr(
                                 dir_metrics.get('ic_pearson'))
+                            ir_spearman = fmt_corr(
+                                dir_metrics.get('ir_spearman')) if dir_metrics.get('ir_spearman') is not None else 'N/A'
+                            ir_pearson = fmt_corr(
+                                dir_metrics.get('ir_pearson')) if dir_metrics.get('ir_pearson') is not None else 'N/A'
                             dir_rows.append(
-                                f"<tr><td>{tf}</td><td>{acc}</td><td>{prec}</td><td>{rec}</td><td>{f1}</td><td>{auc_val}</td><td>{ic_spearman}</td><td>{ic_pearson}</td></tr>"
+                                f"<tr><td>{tf}</td><td>{acc}</td><td>{prec}</td><td>{rec}</td><td>{f1}</td><td>{auc_val}</td><td>{pr_auc_val}</td><td>{ic_spearman}</td><td>{ic_pearson}</td><td>{ir_spearman}</td><td>{ir_pearson}</td></tr>"
                             )
+                            
+                            # Collect long/short separate metrics (use first timeframe's data)
+                            if not long_short_rows_all:
+                                long_metrics = dir_metrics.get('long_metrics')
+                                short_metrics = dir_metrics.get('short_metrics')
+                                if long_metrics or short_metrics:
+                                    if long_metrics:
+                                        long_acc = fmt_pct(long_metrics.get('accuracy'))
+                                        long_prec = fmt_pct(long_metrics.get('precision'))
+                                        long_rec = fmt_pct(long_metrics.get('recall'))
+                                        long_f1 = fmt_pct(long_metrics.get('f1'))
+                                        long_auc = fmt_pct(long_metrics.get('auc')) if long_metrics.get('auc') is not None else 'N/A'
+                                        long_pr_auc = fmt_pct(long_metrics.get('pr_auc')) if long_metrics.get('pr_auc') is not None else 'N/A'
+                                        long_ic_spearman = fmt_corr(long_metrics.get('ic_spearman')) if long_metrics.get('ic_spearman') is not None else 'N/A'
+                                        long_ic_pearson = fmt_corr(long_metrics.get('ic_pearson')) if long_metrics.get('ic_pearson') is not None else 'N/A'
+                                        long_samples = long_metrics.get('samples', 'N/A')
+                                        long_short_rows_all.append(
+                                            f"<tr><td>做多 (Long)</td><td>{long_acc}</td><td>{long_prec}</td><td>{long_rec}</td><td>{long_f1}</td><td>{long_auc}</td><td>{long_pr_auc}</td><td>{long_ic_spearman}</td><td>{long_ic_pearson}</td><td>{long_samples}</td></tr>"
+                                        )
+                                    if short_metrics:
+                                        short_acc = fmt_pct(short_metrics.get('accuracy'))
+                                        short_prec = fmt_pct(short_metrics.get('precision'))
+                                        short_rec = fmt_pct(short_metrics.get('recall'))
+                                        short_f1 = fmt_pct(short_metrics.get('f1'))
+                                        short_auc = fmt_pct(short_metrics.get('auc')) if short_metrics.get('auc') is not None else 'N/A'
+                                        short_pr_auc = fmt_pct(short_metrics.get('pr_auc')) if short_metrics.get('pr_auc') is not None else 'N/A'
+                                        short_ic_spearman = fmt_corr(short_metrics.get('ic_spearman')) if short_metrics.get('ic_spearman') is not None else 'N/A'
+                                        short_ic_pearson = fmt_corr(short_metrics.get('ic_pearson')) if short_metrics.get('ic_pearson') is not None else 'N/A'
+                                        short_samples = short_metrics.get('samples', 'N/A')
+                                        long_short_rows_all.append(
+                                            f"<tr><td>做空 (Short)</td><td>{short_acc}</td><td>{short_prec}</td><td>{short_rec}</td><td>{short_f1}</td><td>{short_auc}</td><td>{short_pr_auc}</td><td>{short_ic_spearman}</td><td>{short_ic_pearson}</td><td>{short_samples}</td></tr>"
+                                        )
+                            
+                            # Collect feature importance (use first timeframe's data)
+                            if feature_importance_all is None:
+                                feature_importance_all = dir_metrics.get('feature_importance')
+                    
                     if dir_rows:
-                        directional_section = (
-                            "<h2>🎯 方向预测指标 (CV)</h2>"
-                            "<p><em>方向准确率: 预测涨跌方向的准确率 | IC: 信息系数 (Information Coefficient)，预测值与实际值的相关性</em></p>"
-                            "<table><tr><th>Timeframe</th><th>方向准确率</th><th>精确率</th><th>召回率</th><th>F1</th><th>AUC</th><th>IC (Spearman)</th><th>IC (Pearson)</th></tr>"
-                            + "".join(dir_rows) + "</table>")
+                        directional_section = "".join([
+                            "<h2>🎯 方向预测指标 (CV)</h2>",
+                            "<p><em>方向准确率: 预测涨跌方向的准确率 | IC: 信息系数 (Information Coefficient)，预测值与实际值的相关性</em></p>",
+                            "<p><em>使用说明：</em></p>",
+                            "<ul style='margin:10px 0;padding-left:20px;'>",
+                            "<li><strong>方向准确率 (Accuracy)</strong>：预测涨跌方向的正确率。在金融预测中，准确率>50%表示模型有预测能力，>55%表示较强的预测能力</li>",
+                            "<li><strong>精确率 (Precision)</strong>：预测为'涨'的样本中，实际为'涨'的比例。高精确率表示模型预测'涨'时可信度高</li>",
+                            "<li><strong>召回率 (Recall)</strong>：实际为'涨'的样本中，被正确预测为'涨'的比例。高召回率表示模型能捕捉到大部分上涨机会</li>",
+                            "<li><strong>F1 Score</strong>：精确率和召回率的调和平均数，平衡两者。F1>0.5表示模型有一定预测能力</li>",
+                            "<li><strong>AUC (Area Under ROC Curve)</strong>：ROC曲线下面积，衡量模型区分涨跌的能力。AUC>0.5表示模型优于随机，AUC>0.6表示较强的预测能力</li>",
+                            "<li><strong>IC (Spearman/Pearson)</strong>：信息系数，预测值与实际值的秩相关/线性相关。IC>0.05表示模型有预测能力，IC>0.1表示较强的预测能力</li>",
+                            "<li><strong>IR (Information Ratio)</strong>：信息比率，IC的均值除以标准差。IR>0.5表示模型有稳定的预测能力，IR>1.0表示较强的预测能力</li>",
+                            "<li><strong>PR-AUC (Precision-Recall AUC)</strong>：精确率-召回率曲线下面积，衡量模型在不平衡数据上的表现。PR-AUC>0.5表示模型有预测能力，PR-AUC>0.7表示较强的预测能力</li>",
+                            "</ul>",
+                            "<table><tr><th>Timeframe</th><th>方向准确率</th><th>精确率</th><th>召回率</th><th>F1</th><th>AUC</th><th>PR-AUC</th><th>IC (Spearman)</th><th>IC (Pearson)</th><th>IR (Spearman)</th><th>IR (Pearson)</th></tr>",
+                            "".join(dir_rows), "</table>"
+                        ])
+                        
+                        # Add long/short separate metrics section
+                        if long_short_rows_all:
+                            directional_section += "".join([
+                                "<h3>📈 做多/做空分开指标 (Long/Short Separate Metrics)</h3>",
+                                "<p><em>做多：预测上涨时的性能指标 | 做空：预测下跌时的性能指标</em></p>",
+                                "<table><tr><th>方向</th><th>准确率</th><th>精确率</th><th>召回率</th><th>F1</th><th>AUC</th><th>PR-AUC</th><th>IC (Spearman)</th><th>IC (Pearson)</th><th>样本数</th></tr>",
+                                "".join(long_short_rows_all), "</table>"
+                            ])
+                        
+                        # Add feature importance section
+                        if feature_importance_all and isinstance(feature_importance_all, list) and len(feature_importance_all) > 0:
+                            # Get top 20 features
+                            top_features = feature_importance_all[:20]
+                            feature_rows = []
+                            for feat in top_features:
+                                feat_name = feat.get('feature', 'N/A')
+                                feat_importance = feat.get('importance', 0)
+                                # Normalize importance to percentage
+                                total_importance = sum(f.get('importance', 0) for f in feature_importance_all)
+                                feat_pct = (feat_importance / total_importance * 100) if total_importance > 0 else 0
+                                feature_rows.append(
+                                    f"<tr><td>{feat_name}</td><td>{feat_importance:.2f}</td><td>{feat_pct:.2f}%</td></tr>"
+                                )
+                            
+                            if feature_rows:
+                                directional_section += "".join([
+                                    "<h3>🔍 特征重要性 (Top 20 Features)</h3>",
+                                    "<p><em>特征重要性：LightGBM gain-based importance，衡量特征对模型预测的贡献</em></p>",
+                                    "<table><tr><th>特征名称</th><th>重要性 (Gain)</th><th>占比 (%)</th></tr>",
+                                    "".join(feature_rows), "</table>"
+                                ])
 
                 # OOS section - regression metrics and directional metrics
                 oos_section = ""
@@ -4020,7 +4445,7 @@ def main() -> None:
                                 f"<tr><td>IC (Pearson)</td><td>{fmt_corr(dir_oos.get('ic_pearson'))}</td></tr>"
                             )
 
-                    # Q50 OOS metrics (regression_return)
+                    # Return Regression OOS metrics (for classification mode)
                     def fmt_val(v):
                         if v == 'N/A' or v is None:
                             return 'N/A'
@@ -4029,15 +4454,20 @@ def main() -> None:
                         except (ValueError, TypeError):
                             return str(v)
 
+                    # Check for return regression OOS metrics (classification mode)
                     if "regression_return" in oos_metrics:
                         reg_ret = oos_metrics["regression_return"]
                         oos_rows.append(
-                            f"<tr><td>Q50 RMSE</td><td>{fmt_val(reg_ret.get('rmse'))} <em>(收益率比例)</em></td></tr>"
+                            f"<tr><td>Return Regression RMSE</td><td>{fmt_val(reg_ret.get('rmse'))} <em>(收益率比例)</em></td></tr>"
                         )
                         oos_rows.append(
-                            f"<tr><td>Q50 MAE</td><td>{fmt_val(reg_ret.get('mae'))} <em>(收益率比例)</em></td></tr>"
+                            f"<tr><td>Return Regression MAE</td><td>{fmt_val(reg_ret.get('mae'))} <em>(收益率比例)</em></td></tr>"
                         )
-                    # Also check for legacy q50 key
+                        if reg_ret.get('r2') is not None:
+                            oos_rows.append(
+                                f"<tr><td>Return Regression R²</td><td>{fmt_val(reg_ret.get('r2'))} <em>(决定系数，越高越好)</em></td></tr>"
+                            )
+                    # Q50 OOS metrics (quantile mode)
                     elif "q50" in oos_metrics:
                         q50_oos = oos_metrics["q50"]
                         oos_rows.append(
@@ -4115,6 +4545,62 @@ def main() -> None:
                             f"<tr><td>Avg Signal Strength (|q50|/vol)</td><td>{fmt_val(sig_oos.get('avg_signal_strength'))}</td></tr>"
                         )
 
+                    # Per-symbol OOS metrics (for multi-asset training)
+                    per_symbol_section = ""
+                    if "per_symbol" in oos_metrics:
+                        per_symbol_metrics = oos_metrics["per_symbol"]
+                        per_symbol_rows = []
+
+                        def fmt_val(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v):.6f}"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        def fmt_pct(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v)*100:.2f}%"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        def fmt_corr(v):
+                            if v == 'N/A' or v is None:
+                                return 'N/A'
+                            try:
+                                return f"{float(v):.4f}"
+                            except (ValueError, TypeError):
+                                return str(v)
+
+                        for symbol, metrics in per_symbol_metrics.items():
+                            per_symbol_rows.append(
+                                f"<tr><td rowspan='2' style='vertical-align:middle;'><strong>{symbol}</strong></td>"
+                                f"<td>RMSE</td><td>{fmt_val(metrics.get('rmse'))}</td>"
+                                f"<td>MAE</td><td>{fmt_val(metrics.get('mae'))}</td>"
+                                f"<td>R²</td><td>{fmt_val(metrics.get('r2'))}</td></tr>"
+                                f"<tr><td>Accuracy</td><td>{fmt_pct(metrics.get('accuracy'))}</td>"
+                                f"<td>F1</td><td>{fmt_pct(metrics.get('f1'))}</td>"
+                                f"<td>IC (Spearman)</td><td>{fmt_corr(metrics.get('ic_spearman'))}</td></tr>"
+                            )
+
+                        if per_symbol_rows:
+                            per_symbol_section = (
+                                "<h2>📊 按标的 OOS 指标 (Per-Symbol OOS Metrics)</h2>"
+                                "<p><em>使用说明：</em></p>"
+                                "<ul style='margin:10px 0;padding-left:20px;'>"
+                                "<li><strong>按标的分开显示</strong>：多资产训练时，每个标的的模型表现可能不同。此表格按标的分别显示回归指标（RMSE、MAE、R²）和方向预测指标（Accuracy、F1、IC）</li>"
+                                "<li><strong>回归指标</strong>：RMSE、MAE、R² 衡量模型预测收益率的准确性。R²>0.01 表示模型有一定预测能力</li>"
+                                "<li><strong>方向预测指标</strong>：Accuracy、F1、IC 衡量模型预测涨跌方向的能力。Accuracy>50% 表示模型有预测能力</li>"
+                                "<li><strong>使用场景</strong>：如果某个标的的指标明显低于其他标的，可能需要：1) 检查该标的的数据质量；2) 考虑单独训练该标的的模型；3) 检查该标的的市场特征是否与其他标的不同</li>"
+                                "<li><strong>如何解读</strong>：比较不同标的的指标，如果某个标的的R²<0或Accuracy<50%，说明该标的的模型预测能力较弱，可能需要单独优化或排除该标的</li>"
+                                "</ul>"
+                                "<table><tr><th>Symbol</th><th>回归指标</th><th>Value</th><th>回归指标</th><th>Value</th><th>回归指标</th><th>Value</th></tr>"
+                                "<tr><th></th><th>方向指标</th><th>Value</th><th>方向指标</th><th>Value</th><th>方向指标</th><th>Value</th></tr>"
+                                + "".join(per_symbol_rows) + "</table>")
+
                     oos_sections = []
                     if oos_dir_rows:
                         oos_sections.append(
@@ -4126,21 +4612,34 @@ def main() -> None:
                             "<h2>📉 OOS 回归指标</h2>"
                             "<table><tr><th>Metric</th><th>Value</th></tr>" +
                             "".join(oos_rows) + "</table>")
+                    if per_symbol_section:
+                        oos_sections.append(per_symbol_section)
                     if oos_sections:
                         oos_section = "\n".join(oos_sections)
 
-                # Artifacts section - include all 4 models
+                # Artifacts section - include all models based on model type
                 # Get model directory from model_paths or fallback to old model_path
                 model_paths = info_json.get('model_paths', {})
                 if model_paths:
-                    model_dir = os.path.dirname(model_paths.get('q50', ''))
-                    artifacts_list = [
-                        f"<li>Q50 Model Pipeline: {model_paths.get('q50', 'N/A')}</li>",
-                        f"<li>Q10 Model Pipeline: {model_paths.get('q10', 'N/A')}</li>",
-                        f"<li>Q90 Model Pipeline: {model_paths.get('q90', 'N/A')}</li>",
-                        f"<li>Volatility Model Pipeline: {model_paths.get('volatility', 'N/A')}</li>",
-                        f"<li>Scalers: {info_json.get('scaler_path')}</li>"
-                    ]
+                    if model_type == "classification":
+                        model_dir = os.path.dirname(
+                            model_paths.get('classification', '')
+                            or model_paths.get('volatility', ''))
+                        artifacts_list = [
+                            f"<li>Classification Model Pipeline: {model_paths.get('classification', 'N/A')}</li>",
+                            f"<li>Return Regression Model Pipeline: {model_paths.get('return', 'N/A')}</li>",
+                            f"<li>Volatility Model Pipeline: {model_paths.get('volatility', 'N/A')}</li>",
+                            f"<li>Scalers: {info_json.get('scaler_path')}</li>"
+                        ]
+                    else:
+                        model_dir = os.path.dirname(model_paths.get('q50', ''))
+                        artifacts_list = [
+                            f"<li>Q50 Model Pipeline: {model_paths.get('q50', 'N/A')}</li>",
+                            f"<li>Q10 Model Pipeline: {model_paths.get('q10', 'N/A')}</li>",
+                            f"<li>Q90 Model Pipeline: {model_paths.get('q90', 'N/A')}</li>",
+                            f"<li>Volatility Model Pipeline: {model_paths.get('volatility', 'N/A')}</li>",
+                            f"<li>Scalers: {info_json.get('scaler_path')}</li>"
+                        ]
                 else:
                     # Fallback for old format
                     model_dir = os.path.dirname(info_json.get(
@@ -4177,12 +4676,15 @@ def main() -> None:
                 <ul>
                   <li><strong>Q50 (中位数预测):</strong> 预测未来{info_json.get('forward_bars', 'N/A')}个bar的收益率，单位：收益率比例（例如 0.01 表示 1%）</li>
                   <li><strong>Q10/Q90 (分位数预测):</strong> 用于构建不确定性区间，单位：收益率比例</li>
+                  <li><strong>Classification (分类预测):</strong> 预测未来涨跌方向的概率，范围 [0, 1]，0.5为阈值</li>
+                  <li><strong>Return Regression (收益回归):</strong> 预测未来收益率的幅度，单位：收益率比例（例如 0.01 表示 1%）</li>
                   <li><strong>Volatility:</strong> 预测未来波动率，单位：波动率比例（例如 0.01 表示 1%）</li>
                 </ul>
                 </div>
                 {ar1_section if 'ar1_section' in locals() and ar1_section else ""}
                 {directional_section}
                 {quantile_section}
+                {return_section if 'return_section' in locals() and return_section else ""}
                 {vol_section}
                 {oos_section}
                 <h2>📁 模型文件 (Artifacts)</h2>

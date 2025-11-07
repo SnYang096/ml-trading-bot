@@ -1,4 +1,4 @@
-"""LightGBM model implementation for returns regression and quantile models."""
+"""LightGBM model implementation for classification, regression, and quantile models."""
 
 import lightgbm as lgb
 import pandas as pd
@@ -6,7 +6,14 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from numbers import Number
 from sklearn.model_selection import train_test_split, TimeSeriesSplit
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import (
+    mean_squared_error,
+    accuracy_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    classification_report,
+)
 import optuna
 from ml_trading.config.settings import DEFAULT_LGBM_PARAMS, USE_GPU, GPU_LGBM_PARAMS
 
@@ -89,7 +96,7 @@ class GroupTimeSeriesSplit:
 
 
 class LightGBMModel:
-    """LightGBM model for return regression and quantile estimation."""
+    """LightGBM model for classification, regression, and quantile estimation."""
 
     def __init__(
         self,
@@ -102,14 +109,14 @@ class LightGBMModel:
         Initialize the LightGBM model.
 
         Args:
-            model_type: Either "regression" or "quantile"
+            model_type: "classification", "regression", or "quantile"
             params: LightGBM parameters (if None, use DEFAULT_LGBM_PARAMS)
             use_gpu: Enable GPU acceleration (if None, use USE_GPU from config)
             quantile_alpha: Alpha value for quantile regression (e.g., 0.1, 0.5, 0.9)
         """
-        if model_type not in {"regression", "quantile"}:
+        if model_type not in {"classification", "regression", "quantile"}:
             raise ValueError(
-                f"Unsupported model_type '{model_type}'. Use 'regression' or 'quantile'."
+                f"Unsupported model_type '{model_type}'. Use 'classification', 'regression', or 'quantile'."
             )
         self.model_type = model_type
         self.use_gpu = use_gpu if use_gpu is not None else USE_GPU
@@ -128,7 +135,11 @@ class LightGBMModel:
         self.is_trained = False
 
         # Adjust parameters based on model type
-        if model_type == "quantile":
+        if model_type == "classification":
+            # Binary classification (0=Down, 1=Up)
+            self.params["objective"] = "binary"
+            self.params["metric"] = "binary_logloss"
+        elif model_type == "quantile":
             # Quantile regression (for q10, q50, q90 models)
             if quantile_alpha is None:
                 raise ValueError(
@@ -237,18 +248,29 @@ class LightGBMModel:
             aggregated = _aggregate(stats_list)
             return aggregated if aggregated is not None else None
 
-        # Auto-tune parameters if requested
+        # Auto-tune parameters if requested (only for quantile models)
         if auto_tune_params:
-            log("  🔍 Auto-tuning hyperparameters...")
-            best_params = self.optimize_hyperparameters_for_q50_constraint(
-                X,
-                y,
-                n_trials=tune_trials,
-                n_splits=min(n_splits, 3),
-                groups=groups)
-            if best_params:
-                self.params.update(best_params)
-                log(f"  ✅ Updated parameters: {best_params}")
+            if self.model_type == "quantile" and self.quantile_alpha == 0.5:
+                log("  🔍 Auto-tuning hyperparameters (Q50 constraint-aware)..."
+                    )
+                best_params = self.optimize_hyperparameters_for_q50_constraint(
+                    X,
+                    y,
+                    n_trials=tune_trials,
+                    n_splits=min(n_splits, 3),
+                    groups=groups)
+                if best_params:
+                    self.params.update(best_params)
+                    log(f"  ✅ Updated parameters: {best_params}")
+            elif self.model_type == "classification":
+                log("  🔍 Auto-tuning hyperparameters (classification)...")
+                best_params = self.optimize_hyperparameters(
+                    X, y, n_trials=tune_trials)
+                if best_params:
+                    self.params.update(best_params)
+                    log(f"  ✅ Updated parameters: {best_params}")
+            else:
+                log("  ⚠️  Auto-tuning not implemented for this model type")
 
         # Prepare data (basic cleaning only, no target transformation)
         X_clean, y_clean = self.prepare_data(X, y)
@@ -306,7 +328,8 @@ class LightGBMModel:
 
             metrics_list = []
             best_model = None
-            best_metric = np.inf
+            # For classification, maximize F1; for regression/quantile, minimize loss
+            best_metric = -np.inf if self.model_type == "classification" else np.inf
             preprocess_stats_all: List[Dict[str, Any]] = []
 
             # Split data using the appropriate CV strategy
@@ -402,9 +425,72 @@ class LightGBMModel:
                 )
 
                 # Evaluate on this fold
-                y_pred = model.predict(X_val)
+                if self.model_type == "classification":
+                    # For classification, get probabilities
+                    y_pred_proba = model.predict_proba(
+                        X_val)[:, 1]  # Probability of positive class [0, 1]
+                    y_pred_binary = (y_pred_proba >= 0.5).astype(int)
 
-                if self.model_type == "quantile":
+                    # Calculate classification metrics
+                    fold_accuracy = accuracy_score(y_val, y_pred_binary)
+                    fold_f1 = f1_score(y_val,
+                                       y_pred_binary,
+                                       average='binary',
+                                       zero_division=0)
+
+                    # AUC (requires probabilities)
+                    try:
+                        fold_auc = roc_auc_score(y_val, y_pred_proba)
+                    except ValueError:
+                        # Handle case where only one class present
+                        fold_auc = 0.5
+
+                    # Confusion matrix
+                    cm = confusion_matrix(y_val, y_pred_binary)
+                    if cm.size == 4:
+                        tn, fp, fn, tp = cm.ravel()
+                    elif cm.size == 1:
+                        # Only one class present
+                        y_val_first = y_val.iloc[0] if isinstance(
+                            y_val, pd.Series) else y_val[0]
+                        if y_val_first == 0:
+                            tn, fp, fn, tp = int(cm[0, 0]), 0, 0, 0
+                        else:
+                            tn, fp, fn, tp = 0, 0, 0, int(cm[0, 0])
+                    else:
+                        tn, fp, fn, tp = 0, 0, 0, 0
+
+                    metrics_list.append({
+                        "fold":
+                        fold + 1,
+                        "accuracy":
+                        fold_accuracy,
+                        "f1":
+                        fold_f1,
+                        "auc":
+                        fold_auc,
+                        "confusion_matrix": {
+                            "tn": int(tn),
+                            "fp": int(fp),
+                            "fn": int(fn),
+                            "tp": int(tp),
+                        },
+                        "precision":
+                        tp / (tp + fp) if (tp + fp) > 0 else 0.0,
+                        "recall":
+                        tp / (tp + fn) if (tp + fn) > 0 else 0.0,
+                    })
+
+                    log(f"    Accuracy: {fold_accuracy:.4f}, F1: {fold_f1:.4f}, AUC: {fold_auc:.4f}"
+                        )
+                    log(f"    Confusion Matrix: TN={tn}, FP={fp}, FN={fn}, TP={tp}"
+                        )
+
+                    # Keep best model based on F1 score
+                    if fold_f1 > best_metric:
+                        best_metric = fold_f1
+                        best_model = model
+                elif self.model_type == "quantile":
                     if verbose and fold == 0:
                         log(f"    DEBUG: y_val range: [{np.nanmin(y_val):.6f}, {np.nanmax(y_val):.6f}], mean={np.nanmean(y_val):.6f}"
                             )
@@ -454,7 +540,51 @@ class LightGBMModel:
                 )
 
             # Return average metrics across folds
-            if self.model_type == "quantile":
+            if self.model_type == "classification":
+                avg_accuracy = np.mean([m["accuracy"] for m in metrics_list])
+                std_accuracy = np.std([m["accuracy"] for m in metrics_list])
+                avg_f1 = np.mean([m["f1"] for m in metrics_list])
+                std_f1 = np.std([m["f1"] for m in metrics_list])
+                avg_auc = np.mean([m["auc"] for m in metrics_list])
+                std_auc = np.std([m["auc"] for m in metrics_list])
+                avg_precision = np.mean([m["precision"] for m in metrics_list])
+                avg_recall = np.mean([m["recall"] for m in metrics_list])
+
+                # Aggregate confusion matrix across folds
+                total_tn = sum(m["confusion_matrix"]["tn"]
+                               for m in metrics_list)
+                total_fp = sum(m["confusion_matrix"]["fp"]
+                               for m in metrics_list)
+                total_fn = sum(m["confusion_matrix"]["fn"]
+                               for m in metrics_list)
+                total_tp = sum(m["confusion_matrix"]["tp"]
+                               for m in metrics_list)
+
+                metrics = {
+                    "cv_accuracy": avg_accuracy,
+                    "cv_accuracy_std": std_accuracy,
+                    "cv_f1": avg_f1,
+                    "cv_f1_std": std_f1,
+                    "cv_auc": avg_auc,
+                    "cv_auc_std": std_auc,
+                    "cv_precision": avg_precision,
+                    "cv_recall": avg_recall,
+                    "confusion_matrix": {
+                        "tn": int(total_tn),
+                        "fp": int(total_fp),
+                        "fn": int(total_fn),
+                        "tp": int(total_tp),
+                    },
+                    "fold_details": metrics_list,
+                }
+                log(f"  Average CV Accuracy: {avg_accuracy:.4f} ± {std_accuracy:.4f}"
+                    )
+                log(f"  Average CV F1: {avg_f1:.4f} ± {std_f1:.4f}")
+                log(f"  Average CV AUC: {avg_auc:.4f} ± {std_auc:.4f}")
+                log(f"  Total Confusion Matrix: TN={total_tn}, FP={total_fp}, FN={total_fn}, TP={total_tp}"
+                    )
+                return metrics, preprocess_params
+            elif self.model_type == "quantile":
                 avg_quantile_loss = np.mean(
                     [m["quantile_loss"] for m in metrics_list])
                 std_quantile_loss = np.std(
@@ -468,7 +598,7 @@ class LightGBMModel:
                 log(f"  Average CV Quantile Loss (alpha={self.quantile_alpha}): {avg_quantile_loss:.6f} ± {std_quantile_loss:.6f}"
                     )
                 return metrics, preprocess_params
-            else:
+            else:  # regression
                 avg_mse = np.mean([m["mse"] for m in metrics_list])
                 avg_rmse = np.mean([m["rmse"] for m in metrics_list])
                 std_mse = np.std([m["mse"] for m in metrics_list])
@@ -506,8 +636,44 @@ class LightGBMModel:
             )
 
             # Evaluate model
-            if self.model_type == "quantile":
-                y_pred = self.model.predict(X_val)
+            y_pred = self.model.predict(X_val)
+
+            if self.model_type == "classification":
+                # Binary classification: convert probabilities to binary predictions
+                y_pred_proba = y_pred  # Probabilities [0, 1]
+                y_pred_binary = (y_pred_proba >= 0.5).astype(int)
+
+                # Calculate classification metrics
+                accuracy = accuracy_score(y_val, y_pred_binary)
+                f1 = f1_score(y_val,
+                              y_pred_binary,
+                              average='binary',
+                              zero_division=0)
+
+                # AUC (requires probabilities)
+                try:
+                    auc = roc_auc_score(y_val, y_pred_proba)
+                except ValueError:
+                    auc = 0.5
+
+                # Confusion matrix
+                cm = confusion_matrix(y_val, y_pred_binary)
+                tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
+
+                metrics = {
+                    "accuracy": accuracy,
+                    "f1": f1,
+                    "auc": auc,
+                    "precision": tp / (tp + fp) if (tp + fp) > 0 else 0.0,
+                    "recall": tp / (tp + fn) if (tp + fn) > 0 else 0.0,
+                    "confusion_matrix": {
+                        "tn": int(tn),
+                        "fp": int(fp),
+                        "fn": int(fn),
+                        "tp": int(tp),
+                    },
+                }
+            elif self.model_type == "quantile":
                 error = y_val - y_pred
                 quantile_loss = np.mean(
                     np.where(error >= 0, self.quantile_alpha * error,
@@ -516,8 +682,7 @@ class LightGBMModel:
                     "quantile_loss": quantile_loss,
                     "quantile_alpha": self.quantile_alpha
                 }
-            else:
-                y_pred = self.model.predict(X_val)
+            else:  # regression
                 metrics = {
                     "mse": mean_squared_error(y_val, y_pred),
                     "rmse": np.sqrt(mean_squared_error(y_val, y_pred)),
@@ -534,13 +699,23 @@ class LightGBMModel:
             X: Feature matrix
 
         Returns:
-            Predictions
+            Predictions:
+                - For classification: probabilities [0, 1] (probability of positive class)
+                - For regression/quantile: predicted values
         """
         if not self.is_trained:
             raise ValueError("Model must be trained before making predictions")
 
         X_clean = self._prepare_features(X)
-        predictions = self.model.predict(X_clean)
+
+        if self.model_type == "classification":
+            # For classification, return probabilities (probability of positive class)
+            # predict_proba returns [prob_class_0, prob_class_1], we want prob_class_1
+            predictions = self.model.predict_proba(X_clean)[:, 1]
+        else:
+            # For regression/quantile, return predicted values
+            predictions = self.model.predict(X_clean)
+
         return predictions
 
     def optimize_hyperparameters(self,
@@ -629,20 +804,37 @@ class LightGBMModel:
                     ],
                 )
 
-                y_pred = model.predict(X_val_fold)
-                if self.model_type == "quantile":
+                if self.model_type == "classification":
+                    # For classification, get probabilities
+                    y_pred_proba = model.predict_proba(
+                        X_val_fold)[:,
+                                    1]  # Probability of positive class [0, 1]
+                    y_pred_binary = (y_pred_proba >= 0.5).astype(int)
+                    # Binary classification: use F1 score as optimization target
+                    score = f1_score(y_val_fold,
+                                     y_pred_binary,
+                                     average='binary',
+                                     zero_division=0)
+                    losses.append(
+                        -float(score))  # Negative because we minimize
+                elif self.model_type == "quantile":
+                    # For quantile, get predicted values
+                    y_pred = model.predict(X_val_fold)
                     error = y_val_fold - y_pred
                     loss = np.mean(
                         np.where(error >= 0, self.quantile_alpha * error,
                                  (1.0 - self.quantile_alpha) * (-error)))
-                else:
+                    losses.append(float(loss))
+                else:  # regression
+                    # For regression, get predicted values
+                    y_pred = model.predict(X_val_fold)
                     loss = mean_squared_error(y_val_fold, y_pred)
-                losses.append(float(loss))
+                    losses.append(float(loss))
 
             mean_loss = float(np.mean(losses)) if losses else np.inf
             if not np.isfinite(mean_loss):
                 return -np.inf
-            return -mean_loss
+            return -mean_loss  # Negative because we maximize (for classification F1) or minimize (for regression/quantile)
 
         # Run optimization
         study = optuna.create_study(direction="maximize")
