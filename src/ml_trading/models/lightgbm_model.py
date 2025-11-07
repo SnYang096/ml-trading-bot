@@ -320,7 +320,9 @@ class LightGBMModel:
             # ✅ 使用时间序列交叉验证 - 避免未来信息泄露
             if groups_clean is not None:
                 log(f"  🔒 使用 GroupTimeSeriesSplit（保持时间顺序 + 可选 purge gap）")
-                cv = GroupTimeSeriesSplit(n_splits=n_splits)
+                # Set drop_same_group=False because time series split already ensures chronological order
+                # Group separation is not needed when using time series split
+                cv = GroupTimeSeriesSplit(n_splits=n_splits, drop_same_group=False)
             else:
                 log(f"  Using TimeSeriesSplit with {n_splits} folds (prevents look-ahead bias)"
                     )
@@ -427,8 +429,8 @@ class LightGBMModel:
                 # Evaluate on this fold
                 if self.model_type == "classification":
                     # For classification, get probabilities
-                    y_pred_proba = model.predict_proba(
-                        X_val)[:, 1]  # Probability of positive class [0, 1]
+                    # LightGBM Booster.predict() returns probabilities for classification
+                    y_pred_proba = model.predict(X_val, raw_score=False)  # Probability of positive class [0, 1]
                     y_pred_binary = (y_pred_proba >= 0.5).astype(int)
 
                     # Calculate classification metrics
@@ -513,7 +515,9 @@ class LightGBMModel:
                     # Keep best model (last fold is typically best for time series)
                     if fold == n_splits - 1:  # Use last fold model
                         best_model = model
-                else:
+                else:  # regression
+                    # For regression, get predicted values
+                    y_pred = model.predict(X_val)
                     fold_mse = mean_squared_error(y_val, y_pred)
                     fold_rmse = np.sqrt(fold_mse)
                     metrics_list.append({
@@ -710,8 +714,8 @@ class LightGBMModel:
 
         if self.model_type == "classification":
             # For classification, return probabilities (probability of positive class)
-            # predict_proba returns [prob_class_0, prob_class_1], we want prob_class_1
-            predictions = self.model.predict_proba(X_clean)[:, 1]
+            # LightGBM Booster.predict() returns probabilities for classification
+            predictions = self.model.predict(X_clean, raw_score=False)
         else:
             # For regression/quantile, return predicted values
             predictions = self.model.predict(X_clean)
@@ -806,9 +810,8 @@ class LightGBMModel:
 
                 if self.model_type == "classification":
                     # For classification, get probabilities
-                    y_pred_proba = model.predict_proba(
-                        X_val_fold)[:,
-                                    1]  # Probability of positive class [0, 1]
+                    # LightGBM Booster.predict() returns probabilities for classification
+                    y_pred_proba = model.predict(X_val_fold, raw_score=False)  # Probability of positive class [0, 1]
                     y_pred_binary = (y_pred_proba >= 0.5).astype(int)
                     # Binary classification: use F1 score as optimization target
                     score = f1_score(y_val_fold,

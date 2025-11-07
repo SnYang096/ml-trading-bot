@@ -493,10 +493,40 @@ def main() -> None:
     freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
     fbs = [int(x.strip()) for x in args.forward_bars.split(",") if x.strip()]
 
+    # Calculate OOS date range to include OOS data files
+    data_end = args.end
+    if args.oos_months > 0 or args.oos_start:
+        from dateutil.relativedelta import relativedelta
+        if args.oos_start:
+            try:
+                oos_start_dt = pd.to_datetime(args.oos_start)
+                oos_end_dt = pd.to_datetime(
+                    args.oos_end
+                ) if args.oos_end else oos_start_dt + relativedelta(
+                    months=args.oos_months if args.oos_months > 0 else 3)
+                oos_end_ym = oos_end_dt.strftime("%Y-%m")
+                if not data_end or oos_end_ym > data_end:
+                    data_end = oos_end_ym
+            except Exception:
+                pass
+        elif args.start and args.end:
+            try:
+                # Calculate OOS end date: train_end + oos_months + oos_months (for OOS period)
+                train_end_dt = pd.to_datetime(args.end + "-28")
+                oos_start_dt = train_end_dt + relativedelta(
+                    days=1)  # Start from next day
+                oos_end_dt = oos_start_dt + relativedelta(
+                    months=args.oos_months if args.oos_months > 0 else 3)
+                oos_end_ym = oos_end_dt.strftime("%Y-%m")
+                if oos_end_ym > data_end:
+                    data_end = oos_end_ym
+            except Exception:
+                pass
+
     files = _collect_files(args.data,
                            args.data_dir,
                            args.start,
-                           args.end,
+                           data_end,
                            symbols=args.symbol)
     raw = _load_many(files)
 
@@ -672,10 +702,8 @@ def main() -> None:
             # This represents the return over the next fb bars, using closing prices
             # Note: If using safe_multi_asset preprocessing, labels are already calculated
             # Check if future_return already exists (from safe_multi_asset preprocessing)
-            future_return_exists = (
-                args.safe_multi_asset
-                and "future_return" in feat_df.columns
-            )
+            future_return_exists = (args.safe_multi_asset
+                                    and "future_return" in feat_df.columns)
             if not future_return_exists:
                 # 🔧 FIX: For multi-asset training, calculate future_return per symbol to avoid cross-asset leakage
                 # 🔒 CRITICAL: 如果没有 symbol 信息，无法安全计算多标的的 future_return
@@ -751,7 +779,28 @@ def main() -> None:
                     subset=["future_return", "future_volatility"]).copy()
 
             from dateutil.relativedelta import relativedelta
-            train_end = feat_df.index.max() if not feat_df.empty else None
+            # Calculate train_end from args.end, not from feat_df.index.max()
+            # feat_df now includes OOS data, so we need to use args.end to determine training period
+            train_end = None
+            if args.end:
+                try:
+                    # Use last day of the training month
+                    from calendar import monthrange
+                    train_end_dt = pd.to_datetime(args.end + "-01")
+                    last_day = monthrange(train_end_dt.year,
+                                          train_end_dt.month)[1]
+                    train_end = pd.to_datetime(args.end +
+                                               f"-{last_day:02d} 23:59:59")
+                except Exception:
+                    # Fallback: use feat_df.index.max() but filter by args.end first
+                    if not feat_df.empty:
+                        train_end = feat_df[feat_df.index <= pd.to_datetime(
+                            args.end +
+                            "-28")].index.max() if args.end else None
+            else:
+                # If no args.end, use feat_df.index.max() as fallback
+                train_end = feat_df.index.max() if not feat_df.empty else None
+
             oos_start_dt = None
             oos_end_dt = None
             oos_df = pd.DataFrame()
@@ -762,23 +811,39 @@ def main() -> None:
                     except Exception:
                         oos_start_dt = None
                 if oos_start_dt is None and train_end is not None:
-                    oos_start_dt = train_end + relativedelta(
-                        months=args.oos_months)
+                    # OOS starts from the day after training ends
+                    oos_start_dt = train_end + pd.Timedelta(seconds=1)
                 if args.oos_end:
                     try:
                         oos_end_dt = pd.to_datetime(args.oos_end)
                     except Exception:
                         oos_end_dt = None
                 if oos_end_dt is None and oos_start_dt is not None:
-                    oos_end_dt = oos_start_dt + relativedelta(months=3)
+                    oos_end_dt = oos_start_dt + relativedelta(
+                        months=args.oos_months if args.oos_months > 0 else 3)
                 if oos_start_dt is not None and oos_end_dt is not None:
                     oos_mask = (feat_df.index >= oos_start_dt) & (
                         feat_df.index <= oos_end_dt)
                     oos_df = feat_df[oos_mask].copy()
+                    if len(oos_df) == 0:
+                        print(f"\n   ⚠️  警告: OOS数据为空！")
+                        print(f"      OOS开始时间: {oos_start_dt}")
+                        print(f"      OOS结束时间: {oos_end_dt}")
+                        print(
+                            f"      数据时间范围: {feat_df.index.min()} 至 {feat_df.index.max()}"
+                        )
+                        print(f"      💡 建议: 检查数据文件是否包含OOS时间段的数据")
+                    else:
+                        print(f"\n   ✅ OOS数据加载成功: {len(oos_df)} 个样本")
+                        print(
+                            f"      OOS时间范围: {oos_df.index.min()} 至 {oos_df.index.max()}"
+                        )
 
-            train_df = feat_df if len(
-                oos_df) == 0 or oos_start_dt is None else feat_df[
-                    feat_df.index < oos_start_dt]
+            # Split train and OOS data
+            if len(oos_df) > 0 and oos_start_dt is not None:
+                train_df = feat_df[feat_df.index < oos_start_dt].copy()
+            else:
+                train_df = feat_df.copy()
 
             if args.feature_type == "baseline":
                 feature_cols = get_baseline_feature_columns(train_df)
@@ -1438,12 +1503,70 @@ def main() -> None:
                         f"      对齐后: X_df 长度={len(X_df)}, y_return 长度={len(y_return)}"
                     )
 
-                groups = train_df.loc[y_return.index,
-                                      "symbol"].map(symbol_to_group).values
+                # Ensure groups length matches y_return length
+                # Check if y_return.index has duplicates
+                if y_return.index.duplicated().any():
+                    print(
+                        f"   ⚠️  警告: y_return.index 中有 {y_return.index.duplicated().sum()} 个重复索引，正在处理..."
+                    )
+                    # If there are duplicates, we need to handle them
+                    # Since y_return and train_df are both subsets of feat_df with the same order,
+                    # we can use positional matching: y_return[i] should correspond to train_df[j]
+                    # where j is the position of y_return.index[i] in train_df
+                    # We'll use a counter to track which occurrence of each index we're on
+                    from collections import defaultdict
+                    index_counter = defaultdict(int)
+                    groups = []
+
+                    for idx in y_return.index:
+                        # Find all positions of this index in train_df
+                        positions = train_df.index.get_loc(idx)
+                        if isinstance(positions, slice):
+                            # If it's a slice, get all positions
+                            all_positions = list(
+                                range(positions.start, positions.stop))
+                        elif isinstance(positions, np.ndarray):
+                            # If it's a boolean array, get all True positions
+                            all_positions = np.where(positions)[0].tolist()
+                        else:
+                            # Single position
+                            all_positions = [positions]
+
+                        # Use the counter to get the correct occurrence
+                        counter = index_counter[idx]
+                        if counter < len(all_positions):
+                            pos = all_positions[counter]
+                            index_counter[idx] += 1
+                        else:
+                            # If we've used all occurrences, use the last one
+                            pos = all_positions[-1]
+
+                        symbol = train_df.iloc[pos]["symbol"]
+                        groups.append(symbol_to_group.get(symbol, 0))
+
+                    groups = np.array(groups)
+                else:
+                    # No duplicates, use index-based alignment
+                    groups_series = train_df.loc[y_return.index,
+                                                 "symbol"].map(symbol_to_group)
+                    # If lengths don't match, use reindex to align
+                    if len(groups_series) != len(y_return):
+                        # If lengths don't match, use reindex to align
+                        groups_series = groups_series.reindex(y_return.index)
+                    groups = groups_series.values
                 print(f"   🔒 使用 GroupKFold 交叉验证（按 symbol 分组，避免跨标的数据泄露）")
                 print(
                     f"      groups 长度: {len(groups)}, y_return 长度: {len(y_return)}, train_df 长度: {len(train_df)}, X_df 长度: {len(X_df)}"
                 )
+                # Debug: Check groups distribution
+                unique_groups, counts = np.unique(groups, return_counts=True)
+                print(f"      groups 分布: {dict(zip(unique_groups, counts))}")
+                # Validate groups length matches X_df length
+                if len(groups) != len(X_df):
+                    raise ValueError(
+                        f"groups length ({len(groups)}) does not match X_df length ({len(X_df)}). "
+                        f"This may be due to duplicate indices in y_return.index. "
+                        f"Please check data alignment.")
 
             # Use pre-trained params if provided, otherwise allow auto-tuning
             use_auto_tune = args.auto_tune_params and not args.params_file
@@ -3013,11 +3136,17 @@ def main() -> None:
                                 "samples": int(len(symbol_y_true)),
                             }
 
+                            # Format values for printing
+                            rmse_str = f"{symbol_rmse:.6f}" if symbol_rmse is not None else "N/A"
+                            mae_str = f"{symbol_mae:.6f}" if symbol_mae is not None else "N/A"
+                            r2_str = f"{symbol_r2:.4f}" if symbol_r2 is not None else "N/A"
+                            ic_str = f"{symbol_ic_spearman:.4f}" if symbol_ic_spearman is not None else "N/A"
+
                             print(
-                                f"      {symbol}: RMSE={symbol_rmse:.6f}, MAE={symbol_mae:.6f}, "
-                                f"R²={symbol_r2:.4f if symbol_r2 is not None else 'N/A'}, "
+                                f"      {symbol}: RMSE={rmse_str}, MAE={mae_str}, "
+                                f"R²={r2_str}, "
                                 f"Acc={symbol_acc:.4f}, F1={symbol_f1:.4f}, "
-                                f"IC={symbol_ic_spearman:.4f if symbol_ic_spearman else 'N/A'}, "
+                                f"IC={ic_str}, "
                                 f"样本数={len(symbol_y_true)}")
 
                 oos_metrics = {
@@ -3203,7 +3332,7 @@ def main() -> None:
             except Exception:
                 pr_auc = None
             cm = confusion_matrix(y_true_dir, y_pred_dir).tolist()
-            
+
             # Calculate IC (Information Coefficient) - Spearman correlation
             try:
                 ic_spearman, _ = spearmanr_cv(y_return.values,
@@ -3219,7 +3348,7 @@ def main() -> None:
                     ic_pearson) if not np.isnan(ic_pearson) else None
             except Exception:
                 ic_pearson = None
-            
+
             # Calculate IR (Information Ratio) = IC_mean / IC_std
             # For single fold, IR is undefined, but we can calculate it across multiple predictions
             # For now, we'll use IC as a proxy for IR (IR = IC / std(IC) over time)
@@ -3232,52 +3361,62 @@ def main() -> None:
                 ir_spearman = ic_spearman  # Simplified: IR ≈ IC for single evaluation
             if ic_pearson is not None:
                 ir_pearson = ic_pearson  # Simplified: IR ≈ IC for single evaluation
-            
+
             # Calculate long/short separate metrics
             # Long: predict up (y_pred_dir == 1), Short: predict down (y_pred_dir == 0)
             long_mask = y_pred_dir == 1
             short_mask = y_pred_dir == 0
             long_metrics = {}
             short_metrics = {}
-            
+
             if np.sum(long_mask) > 0:
                 # Long position metrics
                 y_true_long = y_true_dir[long_mask]
                 y_pred_long = y_pred_dir[long_mask]
                 y_score_long = y_score[long_mask]
                 y_return_long = y_return.values[long_mask]
-                
+
                 long_accuracy = float(accuracy_score(y_true_long, y_pred_long))
-                long_precision = float(precision_score(y_true_long, y_pred_long, zero_division=0))
-                long_recall = float(recall_score(y_true_long, y_pred_long, zero_division=0))
-                long_f1 = float(f1_score(y_true_long, y_pred_long, zero_division=0))
-                
+                long_precision = float(
+                    precision_score(y_true_long, y_pred_long, zero_division=0))
+                long_recall = float(
+                    recall_score(y_true_long, y_pred_long, zero_division=0))
+                long_f1 = float(
+                    f1_score(y_true_long, y_pred_long, zero_division=0))
+
                 try:
                     if len(np.unique(y_true_long)) >= 2:
-                        long_auc = float(roc_auc_score(y_true_long, y_score_long))
+                        long_auc = float(
+                            roc_auc_score(y_true_long, y_score_long))
                     else:
                         long_auc = None
                 except Exception:
                     long_auc = None
-                
+
                 try:
-                    long_pr_auc = float(average_precision_score(y_true_long, y_score_long))
+                    long_pr_auc = float(
+                        average_precision_score(y_true_long, y_score_long))
                 except Exception:
                     long_pr_auc = None
-                
+
                 # IC for long positions
                 try:
-                    long_ic_spearman, _ = spearmanr_cv(y_return_long, y_score_long, nan_policy="omit")
-                    long_ic_spearman = float(long_ic_spearman) if not np.isnan(long_ic_spearman) else None
+                    long_ic_spearman, _ = spearmanr_cv(y_return_long,
+                                                       y_score_long,
+                                                       nan_policy="omit")
+                    long_ic_spearman = float(long_ic_spearman) if not np.isnan(
+                        long_ic_spearman) else None
                 except Exception:
                     long_ic_spearman = None
-                
+
                 try:
-                    long_ic_pearson, _ = pearsonr_cv(y_return_long, y_score_long)
-                    long_ic_pearson = float(long_ic_pearson) if not np.isnan(long_ic_pearson) else None
+                    long_ic_pearson, _ = pearsonr_cv(y_return_long,
+                                                     y_score_long)
+                    long_ic_pearson = float(long_ic_pearson) if not np.isnan(
+                        long_ic_pearson) else None
                 except Exception:
                     long_ic_pearson = None
-                
+
                 long_metrics = {
                     "accuracy": long_accuracy,
                     "precision": long_precision,
@@ -3289,46 +3428,63 @@ def main() -> None:
                     "ic_pearson": long_ic_pearson,
                     "samples": int(np.sum(long_mask)),
                 }
-            
+
             if np.sum(short_mask) > 0:
                 # Short position metrics (inverted: predict down, but we want to check if actual return < 0)
                 # For short positions, we predict down (y_pred_dir == 0), and we want actual return < 0
-                y_true_short = (y_return.values[short_mask] < 0).astype(int)  # Actual down
-                y_pred_short = (y_pred_dir[short_mask] == 0).astype(int)  # Predicted down
-                y_score_short = 1.0 - y_score[short_mask]  # Invert score for short (higher score = more confident in down)
+                y_true_short = (y_return.values[short_mask]
+                                < 0).astype(int)  # Actual down
+                y_pred_short = (y_pred_dir[short_mask] == 0).astype(
+                    int)  # Predicted down
+                y_score_short = 1.0 - y_score[
+                    short_mask]  # Invert score for short (higher score = more confident in down)
                 y_return_short = y_return.values[short_mask]
-                
-                short_accuracy = float(accuracy_score(y_true_short, y_pred_short))
-                short_precision = float(precision_score(y_true_short, y_pred_short, zero_division=0))
-                short_recall = float(recall_score(y_true_short, y_pred_short, zero_division=0))
-                short_f1 = float(f1_score(y_true_short, y_pred_short, zero_division=0))
-                
+
+                short_accuracy = float(
+                    accuracy_score(y_true_short, y_pred_short))
+                short_precision = float(
+                    precision_score(y_true_short,
+                                    y_pred_short,
+                                    zero_division=0))
+                short_recall = float(
+                    recall_score(y_true_short, y_pred_short, zero_division=0))
+                short_f1 = float(
+                    f1_score(y_true_short, y_pred_short, zero_division=0))
+
                 try:
                     if len(np.unique(y_true_short)) >= 2:
-                        short_auc = float(roc_auc_score(y_true_short, y_score_short))
+                        short_auc = float(
+                            roc_auc_score(y_true_short, y_score_short))
                     else:
                         short_auc = None
                 except Exception:
                     short_auc = None
-                
+
                 try:
-                    short_pr_auc = float(average_precision_score(y_true_short, y_score_short))
+                    short_pr_auc = float(
+                        average_precision_score(y_true_short, y_score_short))
                 except Exception:
                     short_pr_auc = None
-                
+
                 # IC for short positions (using negative returns)
                 try:
-                    short_ic_spearman, _ = spearmanr_cv(-y_return_short, y_score_short, nan_policy="omit")
-                    short_ic_spearman = float(short_ic_spearman) if not np.isnan(short_ic_spearman) else None
+                    short_ic_spearman, _ = spearmanr_cv(-y_return_short,
+                                                        y_score_short,
+                                                        nan_policy="omit")
+                    short_ic_spearman = float(
+                        short_ic_spearman
+                    ) if not np.isnan(short_ic_spearman) else None
                 except Exception:
                     short_ic_spearman = None
-                
+
                 try:
-                    short_ic_pearson, _ = pearsonr_cv(-y_return_short, y_score_short)
-                    short_ic_pearson = float(short_ic_pearson) if not np.isnan(short_ic_pearson) else None
+                    short_ic_pearson, _ = pearsonr_cv(-y_return_short,
+                                                      y_score_short)
+                    short_ic_pearson = float(short_ic_pearson) if not np.isnan(
+                        short_ic_pearson) else None
                 except Exception:
                     short_ic_pearson = None
-                
+
                 short_metrics = {
                     "accuracy": short_accuracy,
                     "precision": short_precision,
@@ -3340,26 +3496,31 @@ def main() -> None:
                     "ic_pearson": short_ic_pearson,
                     "samples": int(np.sum(short_mask)),
                 }
-            
+
             # Get feature importance from model
             feature_importance = None
             if args.model_type == "classification" and model_classification and model_classification.model:
                 try:
                     # LightGBM feature importance (gain)
-                    importance_gain = model_classification.model.feature_importance(importance_type='gain')
+                    importance_gain = model_classification.model.feature_importance(
+                        importance_type='gain')
                     feature_names = model_classification.model.feature_name()
                     if len(importance_gain) == len(feature_names):
                         # Create DataFrame with feature importance
                         feature_importance = pd.DataFrame({
-                            'feature': feature_names,
-                            'importance': importance_gain,
+                            'feature':
+                            feature_names,
+                            'importance':
+                            importance_gain,
                         }).sort_values('importance', ascending=False)
                     else:
                         # Fallback: use feature_cols if available
                         if len(importance_gain) == len(feature_cols):
                             feature_importance = pd.DataFrame({
-                                'feature': feature_cols,
-                                'importance': importance_gain,
+                                'feature':
+                                feature_cols,
+                                'importance':
+                                importance_gain,
                             }).sort_values('importance', ascending=False)
                         else:
                             feature_importance = None
@@ -3581,27 +3742,49 @@ def main() -> None:
                 quality_issues_cv.append("所有预测值≤0: 模型过于保守，从未预测'涨'")
 
             directional_metrics_cv = {
-                "accuracy": accuracy,
-                "precision": precision,
-                "recall": recall,
-                "f1": f1,
-                "auc": auc,
-                "pr_auc": pr_auc,
-                "ic_spearman": ic_spearman,
-                "ic_pearson": ic_pearson,
-                "ir_spearman": ir_spearman,
-                "ir_pearson": ir_pearson,
-                "pred_stats": pred_stats_cv,  # 🔍 Diagnostic info
-                "balanced_accuracy": balanced_acc,
-                "positive_ratio": positive_ratio,
-                "negative_ratio": negative_ratio,
-                "best_threshold": float(threshold_cv_opt),
-                "threshold_method": args.direction_threshold,
-                "samples": int(len(y_true_dir)),
-                "confusion_matrix": cm,
-                "long_metrics": long_metrics if long_metrics else None,
-                "short_metrics": short_metrics if short_metrics else None,
-                "feature_importance": feature_importance.to_dict('records') if feature_importance is not None else None,
+                "accuracy":
+                accuracy,
+                "precision":
+                precision,
+                "recall":
+                recall,
+                "f1":
+                f1,
+                "auc":
+                auc,
+                "pr_auc":
+                pr_auc,
+                "ic_spearman":
+                ic_spearman,
+                "ic_pearson":
+                ic_pearson,
+                "ir_spearman":
+                ir_spearman,
+                "ir_pearson":
+                ir_pearson,
+                "pred_stats":
+                pred_stats_cv,  # 🔍 Diagnostic info
+                "balanced_accuracy":
+                balanced_acc,
+                "positive_ratio":
+                positive_ratio,
+                "negative_ratio":
+                negative_ratio,
+                "best_threshold":
+                float(threshold_cv_opt),
+                "threshold_method":
+                args.direction_threshold,
+                "samples":
+                int(len(y_true_dir)),
+                "confusion_matrix":
+                cm,
+                "long_metrics":
+                long_metrics if long_metrics else None,
+                "short_metrics":
+                short_metrics if short_metrics else None,
+                "feature_importance":
+                feature_importance.to_dict('records')
+                if feature_importance is not None else None,
             }
 
             # Save artifacts and report (neutral naming, no 'baseline')
@@ -4264,7 +4447,7 @@ def main() -> None:
                     dir_rows = []
                     long_short_rows_all = []
                     feature_importance_all = None
-                    
+
                     for tf, dir_metrics in directional_cv_metrics.items():
                         if isinstance(dir_metrics, dict):
 
@@ -4299,49 +4482,92 @@ def main() -> None:
                             ic_pearson = fmt_corr(
                                 dir_metrics.get('ic_pearson'))
                             ir_spearman = fmt_corr(
-                                dir_metrics.get('ir_spearman')) if dir_metrics.get('ir_spearman') is not None else 'N/A'
-                            ir_pearson = fmt_corr(
-                                dir_metrics.get('ir_pearson')) if dir_metrics.get('ir_pearson') is not None else 'N/A'
+                                dir_metrics.get(
+                                    'ir_spearman')) if dir_metrics.get(
+                                        'ir_spearman') is not None else 'N/A'
+                            ir_pearson = fmt_corr(dir_metrics.get(
+                                'ir_pearson')) if dir_metrics.get(
+                                    'ir_pearson') is not None else 'N/A'
                             dir_rows.append(
                                 f"<tr><td>{tf}</td><td>{acc}</td><td>{prec}</td><td>{rec}</td><td>{f1}</td><td>{auc_val}</td><td>{pr_auc_val}</td><td>{ic_spearman}</td><td>{ic_pearson}</td><td>{ir_spearman}</td><td>{ir_pearson}</td></tr>"
                             )
-                            
+
                             # Collect long/short separate metrics (use first timeframe's data)
                             if not long_short_rows_all:
                                 long_metrics = dir_metrics.get('long_metrics')
-                                short_metrics = dir_metrics.get('short_metrics')
+                                short_metrics = dir_metrics.get(
+                                    'short_metrics')
                                 if long_metrics or short_metrics:
                                     if long_metrics:
-                                        long_acc = fmt_pct(long_metrics.get('accuracy'))
-                                        long_prec = fmt_pct(long_metrics.get('precision'))
-                                        long_rec = fmt_pct(long_metrics.get('recall'))
-                                        long_f1 = fmt_pct(long_metrics.get('f1'))
-                                        long_auc = fmt_pct(long_metrics.get('auc')) if long_metrics.get('auc') is not None else 'N/A'
-                                        long_pr_auc = fmt_pct(long_metrics.get('pr_auc')) if long_metrics.get('pr_auc') is not None else 'N/A'
-                                        long_ic_spearman = fmt_corr(long_metrics.get('ic_spearman')) if long_metrics.get('ic_spearman') is not None else 'N/A'
-                                        long_ic_pearson = fmt_corr(long_metrics.get('ic_pearson')) if long_metrics.get('ic_pearson') is not None else 'N/A'
-                                        long_samples = long_metrics.get('samples', 'N/A')
+                                        long_acc = fmt_pct(
+                                            long_metrics.get('accuracy'))
+                                        long_prec = fmt_pct(
+                                            long_metrics.get('precision'))
+                                        long_rec = fmt_pct(
+                                            long_metrics.get('recall'))
+                                        long_f1 = fmt_pct(
+                                            long_metrics.get('f1'))
+                                        long_auc = fmt_pct(
+                                            long_metrics.get('auc')
+                                        ) if long_metrics.get(
+                                            'auc') is not None else 'N/A'
+                                        long_pr_auc = fmt_pct(
+                                            long_metrics.get('pr_auc')
+                                        ) if long_metrics.get(
+                                            'pr_auc') is not None else 'N/A'
+                                        long_ic_spearman = fmt_corr(
+                                            long_metrics.get('ic_spearman')
+                                        ) if long_metrics.get(
+                                            'ic_spearman'
+                                        ) is not None else 'N/A'
+                                        long_ic_pearson = fmt_corr(
+                                            long_metrics.get('ic_pearson')
+                                        ) if long_metrics.get(
+                                            'ic_pearson'
+                                        ) is not None else 'N/A'
+                                        long_samples = long_metrics.get(
+                                            'samples', 'N/A')
                                         long_short_rows_all.append(
                                             f"<tr><td>做多 (Long)</td><td>{long_acc}</td><td>{long_prec}</td><td>{long_rec}</td><td>{long_f1}</td><td>{long_auc}</td><td>{long_pr_auc}</td><td>{long_ic_spearman}</td><td>{long_ic_pearson}</td><td>{long_samples}</td></tr>"
                                         )
                                     if short_metrics:
-                                        short_acc = fmt_pct(short_metrics.get('accuracy'))
-                                        short_prec = fmt_pct(short_metrics.get('precision'))
-                                        short_rec = fmt_pct(short_metrics.get('recall'))
-                                        short_f1 = fmt_pct(short_metrics.get('f1'))
-                                        short_auc = fmt_pct(short_metrics.get('auc')) if short_metrics.get('auc') is not None else 'N/A'
-                                        short_pr_auc = fmt_pct(short_metrics.get('pr_auc')) if short_metrics.get('pr_auc') is not None else 'N/A'
-                                        short_ic_spearman = fmt_corr(short_metrics.get('ic_spearman')) if short_metrics.get('ic_spearman') is not None else 'N/A'
-                                        short_ic_pearson = fmt_corr(short_metrics.get('ic_pearson')) if short_metrics.get('ic_pearson') is not None else 'N/A'
-                                        short_samples = short_metrics.get('samples', 'N/A')
+                                        short_acc = fmt_pct(
+                                            short_metrics.get('accuracy'))
+                                        short_prec = fmt_pct(
+                                            short_metrics.get('precision'))
+                                        short_rec = fmt_pct(
+                                            short_metrics.get('recall'))
+                                        short_f1 = fmt_pct(
+                                            short_metrics.get('f1'))
+                                        short_auc = fmt_pct(
+                                            short_metrics.get('auc')
+                                        ) if short_metrics.get(
+                                            'auc') is not None else 'N/A'
+                                        short_pr_auc = fmt_pct(
+                                            short_metrics.get('pr_auc')
+                                        ) if short_metrics.get(
+                                            'pr_auc') is not None else 'N/A'
+                                        short_ic_spearman = fmt_corr(
+                                            short_metrics.get('ic_spearman')
+                                        ) if short_metrics.get(
+                                            'ic_spearman'
+                                        ) is not None else 'N/A'
+                                        short_ic_pearson = fmt_corr(
+                                            short_metrics.get('ic_pearson')
+                                        ) if short_metrics.get(
+                                            'ic_pearson'
+                                        ) is not None else 'N/A'
+                                        short_samples = short_metrics.get(
+                                            'samples', 'N/A')
                                         long_short_rows_all.append(
                                             f"<tr><td>做空 (Short)</td><td>{short_acc}</td><td>{short_prec}</td><td>{short_rec}</td><td>{short_f1}</td><td>{short_auc}</td><td>{short_pr_auc}</td><td>{short_ic_spearman}</td><td>{short_ic_pearson}</td><td>{short_samples}</td></tr>"
                                         )
-                            
+
                             # Collect feature importance (use first timeframe's data)
                             if feature_importance_all is None:
-                                feature_importance_all = dir_metrics.get('feature_importance')
-                    
+                                feature_importance_all = dir_metrics.get(
+                                    'feature_importance')
+
                     if dir_rows:
                         directional_section = "".join([
                             "<h2>🎯 方向预测指标 (CV)</h2>",
@@ -4360,7 +4586,7 @@ def main() -> None:
                             "<table><tr><th>Timeframe</th><th>方向准确率</th><th>精确率</th><th>召回率</th><th>F1</th><th>AUC</th><th>PR-AUC</th><th>IC (Spearman)</th><th>IC (Pearson)</th><th>IR (Spearman)</th><th>IR (Pearson)</th></tr>",
                             "".join(dir_rows), "</table>"
                         ])
-                        
+
                         # Add long/short separate metrics section
                         if long_short_rows_all:
                             directional_section += "".join([
@@ -4369,9 +4595,11 @@ def main() -> None:
                                 "<table><tr><th>方向</th><th>准确率</th><th>精确率</th><th>召回率</th><th>F1</th><th>AUC</th><th>PR-AUC</th><th>IC (Spearman)</th><th>IC (Pearson)</th><th>样本数</th></tr>",
                                 "".join(long_short_rows_all), "</table>"
                             ])
-                        
+
                         # Add feature importance section
-                        if feature_importance_all and isinstance(feature_importance_all, list) and len(feature_importance_all) > 0:
+                        if feature_importance_all and isinstance(
+                                feature_importance_all,
+                                list) and len(feature_importance_all) > 0:
                             # Get top 20 features
                             top_features = feature_importance_all[:20]
                             feature_rows = []
@@ -4379,12 +4607,16 @@ def main() -> None:
                                 feat_name = feat.get('feature', 'N/A')
                                 feat_importance = feat.get('importance', 0)
                                 # Normalize importance to percentage
-                                total_importance = sum(f.get('importance', 0) for f in feature_importance_all)
-                                feat_pct = (feat_importance / total_importance * 100) if total_importance > 0 else 0
+                                total_importance = sum(
+                                    f.get('importance', 0)
+                                    for f in feature_importance_all)
+                                feat_pct = (feat_importance /
+                                            total_importance *
+                                            100) if total_importance > 0 else 0
                                 feature_rows.append(
                                     f"<tr><td>{feat_name}</td><td>{feat_importance:.2f}</td><td>{feat_pct:.2f}%</td></tr>"
                                 )
-                            
+
                             if feature_rows:
                                 directional_section += "".join([
                                     "<h3>🔍 特征重要性 (Top 20 Features)</h3>",
@@ -4395,54 +4627,114 @@ def main() -> None:
 
                 # OOS section - regression metrics and directional metrics
                 oos_section = ""
+                model_usable = True
+                model_issues = []
+
                 if info_json.get("oos_metrics"):
                     oos_metrics = info_json["oos_metrics"]
                     oos_rows = []
                     oos_dir_rows = []
 
+                    # Helper function to format with color based on threshold
+                    def fmt_pct_with_color(v,
+                                           good_threshold=0.5,
+                                           excellent_threshold=0.55):
+                        if v == 'N/A' or v is None:
+                            return '<td>N/A</td>'
+                        try:
+                            val = float(v)
+                            color = 'green' if val >= excellent_threshold else (
+                                '#90EE90' if val >= good_threshold else 'red')
+                            return f'<td style="color: {color}; font-weight: bold;">{val*100:.2f}%</td>'
+                        except (ValueError, TypeError):
+                            return f'<td>{str(v)}</td>'
+
+                    def fmt_corr_with_color(v,
+                                            good_threshold=0.05,
+                                            excellent_threshold=0.1):
+                        if v == 'N/A' or v is None:
+                            return '<td>N/A</td>'
+                        try:
+                            val = float(v)
+                            color = 'green' if abs(
+                                val) >= excellent_threshold else (
+                                    '#90EE90'
+                                    if abs(val) >= good_threshold else 'red')
+                            return f'<td style="color: {color}; font-weight: bold;">{val:.4f}</td>'
+                        except (ValueError, TypeError):
+                            return f'<td>{str(v)}</td>'
+
+                    def fmt_val_with_color(v,
+                                           is_lower_better=True,
+                                           good_threshold=None,
+                                           excellent_threshold=None):
+                        if v == 'N/A' or v is None:
+                            return '<td>N/A</td>'
+                        try:
+                            val = float(v)
+                            if good_threshold is None or excellent_threshold is None:
+                                return f'<td>{val:.6f}</td>'
+                            if is_lower_better:
+                                color = 'green' if val <= excellent_threshold else (
+                                    '#90EE90'
+                                    if val <= good_threshold else 'red')
+                            else:
+                                color = 'green' if val >= excellent_threshold else (
+                                    '#90EE90'
+                                    if val >= good_threshold else 'red')
+                            return f'<td style="color: {color}; font-weight: bold;">{val:.6f}</td>'
+                        except (ValueError, TypeError):
+                            return f'<td>{str(v)}</td>'
+
                     # Directional OOS metrics
                     if "directional_oos" in oos_metrics:
                         dir_oos = oos_metrics["directional_oos"]
 
-                        def fmt_pct(v):
-                            if v == 'N/A' or v is None:
-                                return 'N/A'
-                            try:
-                                return f"{float(v)*100:.2f}%"
-                            except (ValueError, TypeError):
-                                return str(v)
+                        acc_val = dir_oos.get('accuracy')
+                        f1_val = dir_oos.get('f1')
+                        auc_val = dir_oos.get('auc')
+                        ic_spearman_val = dir_oos.get('ic_spearman')
 
-                        def fmt_corr(v):
-                            if v == 'N/A' or v is None:
-                                return 'N/A'
-                            try:
-                                return f"{float(v):.4f}"
-                            except (ValueError, TypeError):
-                                return str(v)
+                        # Check model usability based on OOS metrics
+                        if acc_val is not None and acc_val < 0.5:
+                            model_usable = False
+                            model_issues.append(
+                                f"OOS准确率 {acc_val*100:.2f}% < 50%（低于随机）")
+                        if f1_val is not None and f1_val < 0.5:
+                            model_issues.append(
+                                f"OOS F1 {f1_val*100:.2f}% < 50%")
+                        if auc_val is not None and auc_val < 0.5:
+                            model_issues.append(
+                                f"OOS AUC {auc_val*100:.2f}% < 50%（低于随机）")
+                        if ic_spearman_val is not None and abs(
+                                ic_spearman_val) < 0.05:
+                            model_issues.append(
+                                f"OOS IC (Spearman) {ic_spearman_val:.4f} < 0.05（预测能力弱）"
+                            )
 
                         oos_dir_rows.append(
-                            f"<tr><td>方向准确率</td><td>{fmt_pct(dir_oos.get('accuracy'))}</td></tr>"
+                            f"<tr><td>方向准确率</td>{fmt_pct_with_color(acc_val)}</tr>"
                         )
                         oos_dir_rows.append(
-                            f"<tr><td>精确率</td><td>{fmt_pct(dir_oos.get('precision'))}</td></tr>"
+                            f"<tr><td>精确率</td>{fmt_pct_with_color(dir_oos.get('precision'))}</tr>"
                         )
                         oos_dir_rows.append(
-                            f"<tr><td>召回率</td><td>{fmt_pct(dir_oos.get('recall'))}</td></tr>"
+                            f"<tr><td>召回率</td>{fmt_pct_with_color(dir_oos.get('recall'))}</tr>"
                         )
                         oos_dir_rows.append(
-                            f"<tr><td>F1</td><td>{fmt_pct(dir_oos.get('f1'))}</td></tr>"
+                            f"<tr><td>F1</td>{fmt_pct_with_color(f1_val)}</tr>"
                         )
                         if dir_oos.get('auc') is not None:
                             oos_dir_rows.append(
-                                f"<tr><td>AUC</td><td>{fmt_pct(dir_oos.get('auc'))}</td></tr>"
+                                f"<tr><td>AUC</td>{fmt_pct_with_color(auc_val)}</tr>"
                             )
                         if dir_oos.get('ic_spearman') is not None:
                             oos_dir_rows.append(
-                                f"<tr><td>IC (Spearman)</td><td>{fmt_corr(dir_oos.get('ic_spearman'))}</td></tr>"
+                                f"<tr><td>IC (Spearman)</td>{fmt_corr_with_color(ic_spearman_val)}</tr>"
                             )
                         if dir_oos.get('ic_pearson') is not None:
                             oos_dir_rows.append(
-                                f"<tr><td>IC (Pearson)</td><td>{fmt_corr(dir_oos.get('ic_pearson'))}</td></tr>"
+                                f"<tr><td>IC (Pearson)</td>{fmt_corr_with_color(dir_oos.get('ic_pearson'))}</tr>"
                             )
 
                     # Return Regression OOS metrics (for classification mode)
@@ -4614,6 +4906,44 @@ def main() -> None:
                             "".join(oos_rows) + "</table>")
                     if per_symbol_section:
                         oos_sections.append(per_symbol_section)
+
+                    # Add model usability conclusion
+                    if model_issues:
+                        status_color = "red" if not model_usable else "orange"
+                        status_text = "❌ 不可用" if not model_usable else "⚠️ 可用但有问题"
+                        # Mark issues in red
+                        issues_html = "".join([
+                            f"<li style='color: red; font-weight: bold;'>{issue}</li>"
+                            for issue in model_issues
+                        ])
+                        oos_sections.append(
+                            f"<h2 style='color: {status_color};'>🔍 模型可用性结论 (Model Usability)</h2>"
+                            f"<div style='background-color: {'#ffebee' if not model_usable else '#fff3e0'}; padding: 15px; border-left: 4px solid {status_color}; border-radius: 5px; margin: 15px 0;'>"
+                            f"<p style='font-size: 18px; font-weight: bold; color: {status_color};'>{status_text}</p>"
+                            f"<p><strong>问题列表：</strong></p>"
+                            f"<ul style='margin: 10px 0; padding-left: 20px;'>{issues_html}</ul>"
+                            f"<p><strong>建议：</strong></p>"
+                            f"<ul style='margin: 10px 0; padding-left: 20px;'>"
+                            f"<li>如果模型不可用，建议重新训练或检查数据质量</li>"
+                            f"<li>如果模型可用但有问题，建议优化特征或调整模型参数</li>"
+                            f"<li>检查训练数据是否包含足够的样本和多样性</li>"
+                            f"<li>考虑使用更长的时间跨度训练，包含不同的市场状态</li>"
+                            f"</ul>"
+                            f"</div>")
+                    elif oos_sections:
+                        oos_sections.append(
+                            "<h2 style='color: green;'>✅ 模型可用性结论 (Model Usability)</h2>"
+                            "<div style='background-color: #e8f5e9; padding: 15px; border-left: 4px solid green; border-radius: 5px; margin: 15px 0;'>"
+                            "<p style='font-size: 18px; font-weight: bold; color: green;'>✅ 模型可用</p>"
+                            "<p>所有OOS指标均达到可接受水平，模型可以用于实盘交易。</p>"
+                            "<p><strong>建议：</strong></p>"
+                            "<ul style='margin: 10px 0; padding-left: 20px;'>"
+                            "<li>继续监控模型在实盘中的表现</li>"
+                            "<li>定期重新训练模型以保持预测能力</li>"
+                            "<li>关注市场环境变化，必要时调整模型参数</li>"
+                            "</ul>"
+                            "</div>")
+
                     if oos_sections:
                         oos_section = "\n".join(oos_sections)
 
@@ -4626,27 +4956,38 @@ def main() -> None:
                             model_paths.get('classification', '')
                             or model_paths.get('volatility', ''))
                         artifacts_list = [
-                            f"<li>Classification Model Pipeline: {model_paths.get('classification', 'N/A')}</li>",
-                            f"<li>Return Regression Model Pipeline: {model_paths.get('return', 'N/A')}</li>",
-                            f"<li>Volatility Model Pipeline: {model_paths.get('volatility', 'N/A')}</li>",
-                            f"<li>Scalers: {info_json.get('scaler_path')}</li>"
+                            f"<li><strong>Classification Model Pipeline</strong> ({model_paths.get('classification', 'N/A')}): "
+                            f"<em>分类模型，用于预测未来涨跌方向的概率（0-1之间，0.5为阈值）。输出概率可用于计算信号强度。</em></li>",
+                            f"<li><strong>Return Regression Model Pipeline</strong> ({model_paths.get('return', 'N/A')}): "
+                            f"<em>收益回归模型，用于预测未来收益率的幅度。与分类模型配合使用，分类模型预测方向，回归模型预测幅度。</em></li>",
+                            f"<li><strong>Volatility Model Pipeline</strong> ({model_paths.get('volatility', 'N/A')}): "
+                            f"<em>波动率模型，用于预测未来波动率。用于风险调整收益计算（signal_strength = return / vol）和仓位管理。</em></li>",
+                            f"<li><strong>Scalers</strong> ({info_json.get('scaler_path', 'N/A')}): "
+                            f"<em>数据标准化器，用于特征预处理。包含RobustWinsorizer等预处理参数，确保推理时使用与训练时相同的预处理方式。</em></li>"
                         ]
                     else:
                         model_dir = os.path.dirname(model_paths.get('q50', ''))
                         artifacts_list = [
-                            f"<li>Q50 Model Pipeline: {model_paths.get('q50', 'N/A')}</li>",
-                            f"<li>Q10 Model Pipeline: {model_paths.get('q10', 'N/A')}</li>",
-                            f"<li>Q90 Model Pipeline: {model_paths.get('q90', 'N/A')}</li>",
-                            f"<li>Volatility Model Pipeline: {model_paths.get('volatility', 'N/A')}</li>",
-                            f"<li>Scalers: {info_json.get('scaler_path')}</li>"
+                            f"<li><strong>Q50 Model Pipeline</strong> ({model_paths.get('q50', 'N/A')}): "
+                            f"<em>中位数预测模型，用于预测未来收益率的中位数。这是主要的预测模型，输出期望收益率。</em></li>",
+                            f"<li><strong>Q10 Model Pipeline</strong> ({model_paths.get('q10', 'N/A')}): "
+                            f"<em>10%分位数预测模型，用于构建不确定性区间的下界。与Q90配合使用，构建预测区间。</em></li>",
+                            f"<li><strong>Q90 Model Pipeline</strong> ({model_paths.get('q90', 'N/A')}): "
+                            f"<em>90%分位数预测模型，用于构建不确定性区间的上界。与Q10配合使用，构建预测区间。</em></li>",
+                            f"<li><strong>Volatility Model Pipeline</strong> ({model_paths.get('volatility', 'N/A')}): "
+                            f"<em>波动率模型，用于预测未来波动率。用于风险调整收益计算和仓位管理。</em></li>",
+                            f"<li><strong>Scalers</strong> ({info_json.get('scaler_path', 'N/A')}): "
+                            f"<em>数据标准化器，用于特征预处理。包含RobustWinsorizer等预处理参数，确保推理时使用与训练时相同的预处理方式。</em></li>"
                         ]
                 else:
                     # Fallback for old format
                     model_dir = os.path.dirname(info_json.get(
                         'model_path', ''))
                     artifacts_list = [
-                        f"<li>Models: {model_dir}</li>",
-                        f"<li>Scalers: {info_json.get('scaler_path')}</li>"
+                        f"<li><strong>Models</strong> ({model_dir}): "
+                        f"<em>模型文件目录，包含所有训练好的模型文件。</em></li>",
+                        f"<li><strong>Scalers</strong> ({info_json.get('scaler_path', 'N/A')}): "
+                        f"<em>数据标准化器，用于特征预处理。包含RobustWinsorizer等预处理参数，确保推理时使用与训练时相同的预处理方式。</em></li>"
                     ]
 
                 html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>Training Report</title>
@@ -4674,8 +5015,6 @@ def main() -> None:
                 <p><strong>Feature Type:</strong> {info_json.get('feature_type', 'N/A')} &nbsp; <strong>Forward Bars:</strong> {info_json.get('forward_bars', 'N/A')}</p>
                 <p><strong>📝 预测输出说明:</strong></p>
                 <ul>
-                  <li><strong>Q50 (中位数预测):</strong> 预测未来{info_json.get('forward_bars', 'N/A')}个bar的收益率，单位：收益率比例（例如 0.01 表示 1%）</li>
-                  <li><strong>Q10/Q90 (分位数预测):</strong> 用于构建不确定性区间，单位：收益率比例</li>
                   <li><strong>Classification (分类预测):</strong> 预测未来涨跌方向的概率，范围 [0, 1]，0.5为阈值</li>
                   <li><strong>Return Regression (收益回归):</strong> 预测未来收益率的幅度，单位：收益率比例（例如 0.01 表示 1%）</li>
                   <li><strong>Volatility:</strong> 预测未来波动率，单位：波动率比例（例如 0.01 表示 1%）</li>
@@ -4688,6 +5027,36 @@ def main() -> None:
                 {vol_section}
                 {oos_section}
                 <h2>📁 模型文件 (Artifacts)</h2>
+                <p><em>所有训练好的模型文件，可以直接用于实盘推理。每个Pipeline包含完整的预处理+模型+后处理流程。</em></p>
+                <p><strong>使用说明：</strong></p>
+                <ul style='margin:10px 0;padding-left:20px;'>
+                  <li><strong>Pipeline文件（.pkl）</strong>：使用joblib保存的完整Pipeline，包含预处理、模型和后处理。可以直接加载使用：<code>pipeline = joblib.load('xxx_pipeline.pkl')</code>，然后调用<code>pipeline.predict(X)</code>进行预测。
+                    <ul style='margin:5px 0;padding-left:20px;'>
+                      <li>✅ <strong>已包含</strong>：模型本身（LightGBM）、目标变量预处理参数（RobustWinsorizer）、特征列列表、模型配置</li>
+                      <li>✅ <strong>可以直接使用</strong>：加载Pipeline后，传入特征数据即可直接预测，无需额外配置</li>
+                    </ul>
+                  </li>
+                  <li><strong>Scalers文件（scalers.pkl）</strong>：包含特征工程阶段的标准化参数，用于特征预处理。
+                    <ul style='margin:5px 0;padding-left:20px;'>
+                      <li>📌 <strong>用途</strong>：在特征工程阶段标准化特征（如StandardScaler、ATR分位数、波动率分位数等）</li>
+                      <li>📌 <strong>何时需要</strong>：如果使用特征工程器（FeatureEngineer）生成特征，需要<strong>手动加载</strong>scalers.pkl来标准化特征，确保推理时使用与训练时相同的预处理方式</li>
+                      <li>📌 <strong>使用方法</strong>：
+                        <pre style='background:#f5f5f5;padding:10px;border-radius:5px;margin:5px 0;'><code>from ml_trading.data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+
+# 初始化特征工程器
+fe = ComprehensiveFeatureEngineer()
+
+# 手动加载scalers（重要！）
+fe.load_scalers('scalers.pkl')
+
+# 生成特征（会自动使用加载的scalers）
+features = fe.engineer_all_features(df, fit=False)</code></pre>
+                      </li>
+                      <li>📌 <strong>注意</strong>：Pipeline文件中的预处理（RobustWinsorizer）是针对目标变量的，而scalers.pkl是针对特征变量的，两者作用不同。如果特征已经准备好（已标准化），则不需要scalers.pkl</li>
+                    </ul>
+                  </li>
+                  <li><strong>部署建议</strong>：在生产环境中，建议定期重新训练模型以保持预测能力。同时监控模型在实盘中的表现，如果指标下降，及时更新模型。</li>
+                </ul>
                 <ul>
                   {''.join(artifacts_list)}
                 </ul>

@@ -141,10 +141,29 @@ class ClassificationModelTrainer(BaseModelTrainer):
         # Return and volatility models use full data (preserve continuous information)
         if isinstance(valid_mask, pd.Series):
             valid_mask = valid_mask.values
+        else:
+            valid_mask = np.asarray(valid_mask)
+        
+        # Ensure valid_mask length matches X_df length
+        if len(valid_mask) != len(X_df):
+            raise ValueError(
+                f"valid_mask length ({len(valid_mask)}) does not match X_df length ({len(X_df)})"
+            )
+        
         X_df_filtered = X_df.loc[valid_mask] if hasattr(
             X_df.index, 'is_monotonic') else X_df[valid_mask]
         y_classification_filtered = y_classification
-        groups_filtered = groups[valid_mask] if groups is not None else None
+        
+        # Filter groups to match filtered data
+        if groups is not None:
+            # Ensure groups length matches X_df length
+            if len(groups) != len(X_df):
+                raise ValueError(
+                    f"groups length ({len(groups)}) does not match X_df length ({len(X_df)})"
+                )
+            groups_filtered = groups[valid_mask]
+        else:
+            groups_filtered = None
 
         # Train classification model (direction prediction) with filtered data
         logger.info("Training classification model (binary: up/down)...")

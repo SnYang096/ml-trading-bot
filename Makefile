@@ -15,7 +15,7 @@ INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),ye
 # Docker configuration
 DOCKER_COMPOSE := docker-compose
 DOCKER_SERVICE := ml-gpu
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.4
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.5
 BUILDER_IMAGE ?= lightgbm-builder
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
@@ -267,10 +267,10 @@ factor-analysis:
 		--quantiles $(FACTOR_ANALYSIS_QUANTILES) \
 		$(if $(FACTOR_ANALYSIS_FACTOR_NAME),--factor-name $(FACTOR_ANALYSIS_FACTOR_NAME),)
 
-FORWARD_BARS_TRAIN ?= 1,5,15,45
+FORWARD_BARS_TRAIN ?= 5,15,45,288
 
 TRAIN_USE_TOP_FACTORS ?=
-TRAIN_FEATURE_TYPE ?= comprehensive
+TRAIN_FEATURE_TYPE ?= baseline
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
 # Model type: classification (default) or quantile

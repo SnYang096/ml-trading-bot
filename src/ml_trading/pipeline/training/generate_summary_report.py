@@ -9,6 +9,7 @@ from typing import Optional
 from datetime import datetime
 
 import pandas as pd
+import numpy as np
 
 
 def collect_training_results(
@@ -27,19 +28,28 @@ def collect_training_results(
     # New format: YYYYMMDD_HHMMSS_{SYMBOL}_{FEATURE_TYPE}/
     # Legacy format: results/training/ with fb*_tf* subdirectories
 
+    # First, check if results_path itself is a timestamped directory
+    is_timestamped_dir = (results_path.name[0].isdigit() if results_path.name else False) and len(
+        results_path.name) >= 15 and "_" in results_path.name[:15]
+    
     # First, try to find timestamped directories (new format)
     timestamped_dirs = []
     legacy_found = False
 
-    for item in results_path.iterdir():
-        if item.is_dir():
-            # Check if it's a timestamped directory (format: YYYYMMDD_HHMMSS_*)
-            if item.name[0].isdigit() and len(
-                    item.name) >= 15 and "_" in item.name[:15]:
-                timestamped_dirs.append(item)
-            # Check for legacy format (fb*_tf*)
-            elif item.name.startswith("fb"):
-                legacy_found = True
+    if is_timestamped_dir:
+        # results_path is already a timestamped directory
+        timestamped_dirs.append(results_path)
+    else:
+        # results_path is the parent directory, search for timestamped subdirectories
+        for item in results_path.iterdir():
+            if item.is_dir():
+                # Check if it's a timestamped directory (format: YYYYMMDD_HHMMSS_*)
+                if item.name[0].isdigit() and len(
+                        item.name) >= 15 and "_" in item.name[:15]:
+                    timestamped_dirs.append(item)
+                # Check for legacy format (fb*_tf*)
+                elif item.name.startswith("fb"):
+                    legacy_found = True
 
     # If timestamped directories exist, use them (new format)
     if timestamped_dirs:
@@ -171,15 +181,40 @@ def generate_summary_report(results_dir: str = "results/training",
 
     # Generate filename
     if output_path is None:
-        filename_parts = [symbol, feature_type]
-        if train_start_str and train_end_str:
-            filename_parts.append(f"{train_start_str}_{train_end_str}")
-        if actual_start_str and actual_end_str and (
-                actual_start_str != train_start_str
-                or actual_end_str != train_end_str):
-            filename_parts.append(f"oos_{actual_start_str}_{actual_end_str}")
-        filename = "_".join(filename_parts) + "_summary_report.html"
-        output_path = os.path.join(results_dir, filename)
+        # Generate summary report in the same directory as training results
+        # If results_dir is a timestamped directory, use it directly
+        # Otherwise, find the most recent timestamped directory from the collected data
+        if os.path.basename(results_dir).startswith("20") and "_" in os.path.basename(results_dir)[:15]:
+            # results_dir is already a timestamped directory
+            filename = "summary_report.html"
+            output_path = os.path.join(results_dir, filename)
+        else:
+            # results_dir is the parent directory, find the most recent timestamped directory
+            # by checking where the training_info.json files are located
+            results_path = Path(results_dir)
+            timestamped_dirs = []
+            for item in results_path.iterdir():
+                if item.is_dir() and item.name[0].isdigit() and len(item.name) >= 15 and "_" in item.name[:15]:
+                    timestamped_dirs.append(item)
+            
+            if timestamped_dirs:
+                # Sort by timestamp (newest first)
+                timestamped_dirs.sort(key=lambda x: x.name, reverse=True)
+                most_recent_dir = timestamped_dirs[0]
+                # Generate summary report in the most recent timestamped directory
+                filename = "summary_report.html"
+                output_path = os.path.join(str(most_recent_dir), filename)
+            else:
+                # Fallback: generate filename with symbol and dates in parent directory
+                filename_parts = [symbol, feature_type]
+                if train_start_str and train_end_str:
+                    filename_parts.append(f"{train_start_str}_{train_end_str}")
+                if actual_start_str and actual_end_str and (
+                        actual_start_str != train_start_str
+                        or actual_end_str != train_end_str):
+                    filename_parts.append(f"oos_{actual_start_str}_{actual_end_str}")
+                filename = "_".join(filename_parts) + "_summary_report.html"
+                output_path = os.path.join(results_dir, filename)
 
     # Collect unique feature types for title
     # Use the feature_type from first row (most recent training run)
@@ -266,6 +301,48 @@ def generate_summary_report(results_dir: str = "results/training",
         title_parts.append(f"Test: {actual_start_str} to {actual_end_str}")
     report_title = " | ".join(title_parts)
 
+    # Collect unique timeframes and forward_bars for display
+    unique_timeframes = set()
+    unique_forward_bars = set()
+    if "timeframe" in df.columns:
+        unique_timeframes = set(df["timeframe"].dropna().unique())
+    if "forward_bars" in df.columns:
+        unique_forward_bars = set(df["forward_bars"].dropna().unique())
+    
+    # Collect all issues and feature importance across all configurations
+    all_issues = []
+    all_feature_importance = {}  # Aggregate feature importance across configs
+    
+    # Helper functions for generating sections
+    def _generate_issues_section(issues_list):
+        if not issues_list:
+            return ''
+        issues_html = '\n'.join([f'<li style="color:red;font-weight:bold;">{issue}</li>' for issue in issues_list])
+        return f'''
+<h2>⚠️ 异常信号汇总 (Issues Summary)</h2>
+<div style="background-color:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:20px 0;border-radius:4px;">
+<p><strong>发现的问题:</strong></p>
+<ul style="margin:10px 0;padding-left:20px;">
+{issues_html}
+</ul>
+</div>'''
+    
+    def _generate_feature_importance_section(feat_imp_dict):
+        if not feat_imp_dict:
+            return ''
+        # Sort by average importance
+        sorted_features = sorted(feat_imp_dict.items(), key=lambda x: np.mean(x[1]), reverse=True)[:20]
+        feat_rows = '\n'.join([f'<tr><td style="padding:8px;">{i+1}</td><td style="padding:8px;"><strong>{feat_name}</strong></td><td style="padding:8px;">{np.mean(imp_list):.2f}</td><td style="padding:8px;">{np.std(imp_list):.2f}</td></tr>' for i, (feat_name, imp_list) in enumerate(sorted_features)])
+        return f'''
+<h2>📊 特征重要性汇总 (Feature Importance Summary)</h2>
+<div style="background-color:#e8f4f8;border-left:4px solid #3498db;padding:15px;margin:20px 0;border-radius:4px;">
+<p><strong>说明:</strong> 以下特征重要性为所有配置的平均值，按重要性降序排列。重要性越高，说明该特征对模型预测的贡献越大。</p>
+<table style="width:100%;margin:20px 0;font-size:0.9em;">
+<tr><th style="background:#3498db;color:#fff;padding:10px;">排名</th><th style="background:#3498db;color:#fff;padding:10px;">特征名称</th><th style="background:#3498db;color:#fff;padding:10px;">平均重要性</th><th style="background:#3498db;color:#fff;padding:10px;">标准差</th></tr>
+{feat_rows}
+</table>
+</div>'''
+    
     # Build rows
     rows = []
     # Store per-symbol metrics for each configuration
@@ -279,17 +356,64 @@ def generate_summary_report(results_dir: str = "results/training",
         symbol_row = row_dict.get("symbol", "N/A")
         config_dir = row_dict.get("config_dir", "N/A")
         metrics = row_dict.get("metrics", {}) or {}
+        model_type = row_dict.get("model_type", "quantile")  # Default to quantile for backward compatibility
         
         # Extract per-symbol metrics from oos_metrics if available
         oos_metrics = row_dict.get("oos_metrics", {}) or {}
         per_symbol_metrics = oos_metrics.get("per_symbol", {}) if isinstance(oos_metrics, dict) else {}
-        # CV RMSE/MSE should come from volatility model (regression), not stage2 (quantile)
-        volatility_metrics = metrics.get("volatility", {}) if isinstance(
-            metrics, dict) else {}
-        vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(
-            volatility_metrics, dict) else {}
-        cv_rmse = vol_tf.get("cv_rmse")
-        cv_mse = vol_tf.get("cv_mse")
+        
+        # Extract metrics based on model type
+        if model_type == "classification":
+            # Classification model: extract metrics from classification, return, and volatility models
+            classification_metrics = metrics.get("classification", {}) if isinstance(metrics, dict) else {}
+            classification_tf = classification_metrics.get(timeframe, {}) if isinstance(classification_metrics, dict) else {}
+            
+            return_metrics = metrics.get("return", {}) if isinstance(metrics, dict) else {}
+            return_tf = return_metrics.get(timeframe, {}) if isinstance(return_metrics, dict) else {}
+            
+            volatility_metrics = metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
+            vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(volatility_metrics, dict) else {}
+            
+            # Classification model metrics (classification task, not regression)
+            classification_cv_accuracy = classification_tf.get("cv_accuracy")
+            classification_cv_precision = classification_tf.get("cv_precision")
+            classification_cv_recall = classification_tf.get("cv_recall")
+            classification_cv_f1 = classification_tf.get("cv_f1")
+            classification_cv_auc = classification_tf.get("cv_auc")
+            classification_cv_pr_auc = classification_tf.get("cv_pr_auc")
+            
+            # Return regression model metrics
+            return_cv_rmse = return_tf.get("cv_rmse")
+            return_cv_mse = return_tf.get("cv_mse")
+            return_cv_r2 = return_tf.get("cv_r2")
+            
+            # Volatility model metrics
+            vol_cv_rmse = vol_tf.get("cv_rmse")
+            vol_cv_mse = vol_tf.get("cv_mse")
+            
+            # Use volatility RMSE/MSE for main table (backward compatibility)
+            cv_rmse = vol_cv_rmse
+            cv_mse = vol_cv_mse
+        else:
+            # Quantile model: use existing logic
+            volatility_metrics = metrics.get("volatility", {}) if isinstance(
+                metrics, dict) else {}
+            vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(
+                volatility_metrics, dict) else {}
+            cv_rmse = vol_tf.get("cv_rmse")
+            cv_mse = vol_tf.get("cv_mse")
+            # Set classification/return metrics to None for quantile model
+            classification_cv_accuracy = None
+            classification_cv_precision = None
+            classification_cv_recall = None
+            classification_cv_f1 = None
+            classification_cv_auc = None
+            classification_cv_pr_auc = None
+            return_cv_rmse = None
+            return_cv_mse = None
+            return_cv_r2 = None
+            vol_cv_rmse = cv_rmse
+            vol_cv_mse = cv_mse
         # Quantile loss metrics: q10, q50 (stage2), q90
         q10_metrics = metrics.get("q10", {}) if isinstance(metrics,
                                                            dict) else {}
@@ -375,11 +499,43 @@ def generate_summary_report(results_dir: str = "results/training",
         model_usability = row_dict.get("model_usability", {}) or {}
         model_usable = model_usability.get(
             "usable", True)  # Default to True if not found
-        q50_loss_ratio = model_usability.get("q50_loss_ratio", 1.0)
-        q50_loss = model_usability.get("q50_loss", 0.0)
-        q10_loss = model_usability.get("q10_loss", 0.0)
-        q90_loss = model_usability.get("q90_loss", 0.0)
-        unusable_reason = model_usability.get("reason", None)
+        
+        # Extract issues from OOS metrics
+        oos_issues = []
+        if oos_metrics and isinstance(oos_metrics, dict):
+            directional_oos = oos_metrics.get("directional_oos", {})
+            if isinstance(directional_oos, dict):
+                oos_acc = directional_oos.get("accuracy")
+                oos_f1 = directional_oos.get("f1")
+                oos_auc = directional_oos.get("auc")
+                oos_ic_spearman = directional_oos.get("ic_spearman")
+                if oos_acc is not None and oos_acc < 0.5:
+                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS准确率 {oos_acc*100:.2f}% < 50%")
+                if oos_f1 is not None and oos_f1 < 0.5:
+                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS F1 {oos_f1*100:.2f}% < 50%")
+                if oos_auc is not None and oos_auc < 0.5:
+                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS AUC {oos_auc*100:.2f}% < 50%")
+                if oos_ic_spearman is not None and abs(oos_ic_spearman) < 0.05:
+                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS IC (Spearman) {oos_ic_spearman:.4f} < 0.05")
+        
+        # Collect issues for summary
+        if oos_issues:
+            all_issues.extend(oos_issues)
+        
+        # Extract feature importance
+        directional_cv_metrics = metrics.get("directional_cv", {}) if isinstance(metrics, dict) else {}
+        directional_cv_tf = directional_cv_metrics.get(timeframe, {}) if isinstance(directional_cv_metrics, dict) else {}
+        feature_importance_list = directional_cv_tf.get("feature_importance")
+        if feature_importance_list and isinstance(feature_importance_list, list):
+            # Aggregate feature importance across configs
+            for feat_imp in feature_importance_list:
+                if isinstance(feat_imp, dict):
+                    feat_name = feat_imp.get("feature")
+                    feat_importance = feat_imp.get("importance", 0)
+                    if feat_name:
+                        if feat_name not in all_feature_importance:
+                            all_feature_importance[feat_name] = []
+                        all_feature_importance[feat_name].append(feat_importance)
 
         # Helper functions
         def _format_metric(val, fmt=".4f"):
@@ -417,45 +573,144 @@ def generate_summary_report(results_dir: str = "results/training",
         # ⚠️ But if F1=0, quality should fail regardless of AUC (F1=0 means no "up" predictions)
         if f1 == 0.0:
             quality_passed = False
-        # Quality must pass BOTH directional metrics AND model usability
-        quality_passed = quality_passed and model_usable
+        
+        # ⚠️ CRITICAL: Check OOS metrics - if OOS performance is poor, mark as unusable
+        # OOS metrics are more important than CV metrics for model usability
+        oos_quality_passed = True
+        if oos_metrics and isinstance(oos_metrics, dict):
+            directional_oos = oos_metrics.get("directional_oos", {})
+            if isinstance(directional_oos, dict):
+                oos_acc = directional_oos.get("accuracy")
+                oos_f1 = directional_oos.get("f1")
+                oos_auc = directional_oos.get("auc")
+                oos_ic_spearman = directional_oos.get("ic_spearman")
+                
+                # OOS准确率 < 50% → 不可用（模型在样本外表现比随机猜测还差）
+                if oos_acc is not None and oos_acc < 0.5:
+                    oos_quality_passed = False
+                # OOS AUC < 50% → 不可用（模型在样本外无法区分涨跌）
+                if oos_auc is not None and oos_auc < 0.5:
+                    oos_quality_passed = False
+                # OOS F1 < 0.5 → 不可用（模型在样本外预测能力不足）
+                if oos_f1 is not None and oos_f1 < 0.5:
+                    oos_quality_passed = False
+                # OOS IC (Spearman) < 0.05 → 不可用（预测与真实收益相关性太低）
+                if oos_ic_spearman is not None and abs(oos_ic_spearman) < 0.05:
+                    oos_quality_passed = False
+        
+        # Quality must pass BOTH:
+        # 1. CV directional metrics AND model usability
+        # 2. OOS metrics (if available)
+        quality_passed = quality_passed and model_usable and oos_quality_passed
         quality_badge = (
             '<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ 可用</span>'
             if quality_passed else
             '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ 不可用</span>'
         )
 
-        # Q50 quality column: show Q50 loss ratio and individual losses
-        if q50_loss_ratio <= 1.2:
-            q50_quality_badge = f'<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ {q50_loss_ratio:.2f}</span>'
-            q50_quality_tooltip = f' title="Q50 loss ratio: {q50_loss_ratio:.2f} (正常)&#10;Q50 loss: {q50_loss:.6f}&#10;Q10 loss: {q10_loss:.6f}&#10;Q90 loss: {q90_loss:.6f}"'
-        elif q50_loss_ratio <= 1.5:
-            q50_quality_badge = f'<span style="background-color:#fff3cd; color:#856404; padding:2px 6px; border-radius:4px;">⚠️ {q50_loss_ratio:.2f}</span>'
-            q50_quality_tooltip = f' title="Q50 loss ratio: {q50_loss_ratio:.2f} (轻微异常)&#10;Q50 loss: {q50_loss:.6f}&#10;Q10 loss: {q10_loss:.6f}&#10;Q90 loss: {q90_loss:.6f}"'
-        else:
-            q50_quality_badge = f'<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ {q50_loss_ratio:.2f}</span>'
-            q50_quality_tooltip = f' title="Q50 loss ratio: {q50_loss_ratio:.2f} (严重异常)&#10;Q50 loss: {q50_loss:.6f}&#10;Q10 loss: {q10_loss:.6f}&#10;Q90 loss: {q90_loss:.6f}&#10;{unusable_reason or "Q50 loss > Q10/Q90 loss"}"'
-
         cv_rmse_color = _quality_color(cv_rmse, None, None) if cv_rmse else ""
 
         # Add row styling for unusable models
         row_style = ' style="background-color:#ffe6e6;"' if not model_usable else ''
 
-        rows.append(
-            f"<tr{row_style}><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
-            f"<td>{train_bars:,}</td>"
-            f"<td{cv_rmse_color}>{_format_metric(cv_rmse, '.6f')}</td>"
-            f"<td>{_format_metric(cv_mse, '.8f')}</td>"
-            f"<td{f1_color}>{_format_metric(f1)}</td>"
-            f"<td>{_format_metric(acc)}</td>"
-            f"<td>{_format_metric(prec)}</td>"
-            f"<td>{_format_metric(rec)}</td>"
-            f"<td{auc_color}>{_format_metric(auc)}</td>"
-            f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
-            f"<td>{feature_type}</td>"
-            f"<td>{quality_badge}</td>"
-            f"<td{q50_quality_tooltip}>{q50_quality_badge}</td>"
-            f"<td>{config_dir}</td></tr>")
+        # Extract OOS metrics for classification model
+        oos_classification_metrics = None
+        oos_return_metrics = None
+        oos_volatility_metrics = None
+        if model_type == "classification" and oos_metrics:
+            oos_classification_metrics = oos_metrics.get("directional_oos", {}) if isinstance(oos_metrics, dict) else {}
+            oos_return_metrics = oos_metrics.get("regression_return", {}) if isinstance(oos_metrics, dict) else {}
+            oos_volatility_metrics = oos_metrics.get("regression_volatility", {}) if isinstance(oos_metrics, dict) else {}
+        
+        # Build row based on model type
+        if model_type == "classification":
+            # Classification model: show separate metrics for three models in sub-tables
+            # CV metrics sub-table
+            cv_subtable = f"""
+            <table style="width:100%; margin:5px 0; border-collapse:collapse; font-size:0.85em;">
+            <tr style="background-color:#e8f4f8;"><th style="padding:4px; text-align:left;">模型</th><th style="padding:4px;">指标</th><th style="padding:4px;">CV值</th></tr>
+            <tr><td rowspan="5" style="padding:4px; vertical-align:top; font-weight:bold;">分类模型</td><td style="padding:4px;">Accuracy</td><td style="padding:4px;">{_format_metric(classification_cv_accuracy)}</td></tr>
+            <tr><td style="padding:4px;">Precision</td><td style="padding:4px;">{_format_metric(classification_cv_precision)}</td></tr>
+            <tr><td style="padding:4px;">Recall</td><td style="padding:4px;">{_format_metric(classification_cv_recall)}</td></tr>
+            <tr><td style="padding:4px;">F1</td><td style="padding:4px;">{_format_metric(classification_cv_f1)}</td></tr>
+            <tr><td style="padding:4px;">AUC</td><td style="padding:4px;">{_format_metric(classification_cv_auc)}</td></tr>
+            <tr><td rowspan="3" style="padding:4px; vertical-align:top; font-weight:bold;">收益回归</td><td style="padding:4px;">RMSE</td><td style="padding:4px;">{_format_metric(return_cv_rmse, '.6f')}</td></tr>
+            <tr><td style="padding:4px;">MSE</td><td style="padding:4px;">{_format_metric(return_cv_mse, '.8f')}</td></tr>
+            <tr><td style="padding:4px;">R²</td><td style="padding:4px;">{_format_metric(return_cv_r2)}</td></tr>
+            <tr><td rowspan="2" style="padding:4px; vertical-align:top; font-weight:bold;">波动率模型</td><td style="padding:4px;">RMSE</td><td style="padding:4px;">{_format_metric(vol_cv_rmse, '.6f')}</td></tr>
+            <tr><td style="padding:4px;">MSE</td><td style="padding:4px;">{_format_metric(vol_cv_mse, '.8f')}</td></tr>
+            </table>"""
+            
+            # OOS metrics sub-table (if available)
+            oos_subtable = ""
+            if oos_classification_metrics or oos_return_metrics or oos_volatility_metrics:
+                oos_rows = []
+                if oos_classification_metrics:
+                    oos_acc = oos_classification_metrics.get("accuracy")
+                    oos_f1 = oos_classification_metrics.get("f1")
+                    oos_auc = oos_classification_metrics.get("auc")
+                    oos_ic_spearman = oos_classification_metrics.get("ic_spearman")
+                    if oos_acc is not None:
+                        oos_rows.append(f"<tr><td rowspan=\"4\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">分类模型</td><td style=\"padding:4px;\">Accuracy</td><td style=\"padding:4px;\">{_format_metric(oos_acc)}</td></tr>")
+                        oos_rows.append(f"<tr><td style=\"padding:4px;\">F1</td><td style=\"padding:4px;\">{_format_metric(oos_f1)}</td></tr>")
+                        oos_rows.append(f"<tr><td style=\"padding:4px;\">AUC</td><td style=\"padding:4px;\">{_format_metric(oos_auc)}</td></tr>")
+                        oos_rows.append(f"<tr><td style=\"padding:4px;\">IC (Spearman)</td><td style=\"padding:4px;\">{_format_metric(oos_ic_spearman)}</td></tr>")
+                if oos_return_metrics:
+                    oos_return_rmse = oos_return_metrics.get("rmse")
+                    oos_return_mae = oos_return_metrics.get("mae")
+                    oos_return_r2 = oos_return_metrics.get("r2")
+                    if oos_return_rmse is not None:
+                        oos_rows.append(f"<tr><td rowspan=\"3\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">收益回归</td><td style=\"padding:4px;\">RMSE</td><td style=\"padding:4px;\">{_format_metric(oos_return_rmse, '.6f')}</td></tr>")
+                        oos_rows.append(f"<tr><td style=\"padding:4px;\">MAE</td><td style=\"padding:4px;\">{_format_metric(oos_return_mae, '.6f')}</td></tr>")
+                        oos_rows.append(f"<tr><td style=\"padding:4px;\">R²</td><td style=\"padding:4px;\">{_format_metric(oos_return_r2)}</td></tr>")
+                if oos_volatility_metrics:
+                    oos_vol_rmse = oos_volatility_metrics.get("rmse")
+                    oos_vol_mae = oos_volatility_metrics.get("mae")
+                    if oos_vol_rmse is not None:
+                        oos_rows.append(f"<tr><td rowspan=\"2\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">波动率模型</td><td style=\"padding:4px;\">RMSE</td><td style=\"padding:4px;\">{_format_metric(oos_vol_rmse, '.6f')}</td></tr>")
+                        oos_rows.append(f"<tr><td style=\"padding:4px;\">MAE</td><td style=\"padding:4px;\">{_format_metric(oos_vol_mae, '.6f')}</td></tr>")
+                
+                if oos_rows:
+                    oos_subtable = f"""
+                    <details style="margin-top:5px;">
+                    <summary style="cursor:pointer; color:#3498db; font-weight:bold;">📊 OOS指标 (点击展开)</summary>
+                    <table style="width:100%; margin:5px 0; border-collapse:collapse; font-size:0.85em;">
+                    <tr style="background-color:#fff3cd;"><th style="padding:4px; text-align:left;">模型</th><th style="padding:4px;">指标</th><th style="padding:4px;">OOS值</th></tr>
+                    {''.join(oos_rows)}
+                    </table>
+                    </details>"""
+            
+            model_metrics_html = f"<div style=\"max-width:400px;\">{cv_subtable}{oos_subtable}</div>"
+            
+            rows.append(
+                f"<tr{row_style}><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
+                f"<td>{train_bars:,}</td>"
+                f"<td>{model_metrics_html}</td>"
+                f"<td{f1_color}>{_format_metric(f1)}</td>"
+                f"<td>{_format_metric(acc)}</td>"
+                f"<td>{_format_metric(prec)}</td>"
+                f"<td>{_format_metric(rec)}</td>"
+                f"<td{auc_color}>{_format_metric(auc)}</td>"
+                f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
+                f"<td>{feature_type}</td>"
+                f"<td>{quality_badge}</td>"
+                f"<td>{config_dir}</td></tr>")
+        else:
+            # Quantile model: use existing format (CV RMSE and CV MSE in separate columns)
+            rows.append(
+                f"<tr{row_style}><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
+                f"<td>{train_bars:,}</td>"
+                f"<td{cv_rmse_color}>{_format_metric(cv_rmse, '.6f')}</td>"
+                f"<td>{_format_metric(cv_mse, '.8f')}</td>"
+                f"<td{f1_color}>{_format_metric(f1)}</td>"
+                f"<td>{_format_metric(acc)}</td>"
+                f"<td>{_format_metric(prec)}</td>"
+                f"<td>{_format_metric(rec)}</td>"
+                f"<td{auc_color}>{_format_metric(auc)}</td>"
+                f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
+                f"<td>{feature_type}</td>"
+                f"<td>{quality_badge}</td>"
+                f"<td>{config_dir}</td></tr>")
         
         # Build per-symbol metrics section if available
         if per_symbol_metrics and isinstance(per_symbol_metrics, dict):
@@ -531,83 +786,92 @@ tr:hover{{background-color:#e8f4f8}}
 {oos_info_html}
 <li><strong>特征类型:</strong> {feature_types_str if feature_types_str != "unknown" else 'N/A'}</li>
 <li><strong>交易对:</strong> {symbol_display if 'symbol_display' in locals() else symbol.replace("_", ",")}</li>
+<li><strong>时间框架 (Timeframe):</strong> {', '.join(sorted([str(tf) for tf in unique_timeframes])) if unique_timeframes else 'N/A'}</li>
+<li><strong>前向周期 (Forward Bars):</strong> {', '.join(sorted([str(fb) for fb in unique_forward_bars])) if unique_forward_bars else 'N/A'}</li>
 </ul>
 </div>
 <div class="explanation">
 <h3>📊 指标说明与好坏判断</h3>
 <ul>
-<li><strong>CV RMSE</strong> (交叉验证均方根误差): Q50模型的预测误差，越低越好
+<li><strong>CV RMSE</strong> (交叉验证均方根误差): 收益回归模型的预测误差，越低越好
     <ul>
         <li>✅ 优秀: RMSE 较小，说明预测精度高</li>
         <li>⚠️ 注意: 如果RMSE过大，说明模型预测不准确</li>
     </ul>
 </li>
-<li><strong>CV MSE</strong> (交叉验证均方误差): Q50模型的预测误差平方，越低越好</li>
-<li><strong>F1</strong> (F1 Score): 从Q50回归模型派生的方向性预测F1分数，综合精确率和召回率
+<li><strong>CV MSE</strong> (交叉验证均方误差): 收益回归模型的预测误差平方，越低越好</li>
+<li><strong>F1</strong> (F1 Score): 分类模型的方向性预测F1分数，综合精确率和召回率
     <ul>
         <li>阈值: F1 &gt; 0.3 为良好，F1 &gt; 0.5 为优秀</li>
         <li>⚠️ <strong>F1 = 0 或 None</strong>：模型完全无预测能力，自动标记为不可用</li>
         <li>反映模型对方向（涨/跌）的预测能力</li>
     </ul>
 </li>
-<li><strong>Acc</strong> (Accuracy): 从Q50回归模型派生的方向性预测准确率
+<li><strong>Acc</strong> (Accuracy): 分类模型的方向性预测准确率
     <ul>
         <li>反映模型预测方向的正确率</li>
         <li>Acc &gt; 0.5 表示模型有预测能力</li>
     </ul>
 </li>
-<li><strong>Prec</strong> (Precision): 从Q50回归模型派生的方向性预测精确率
+<li><strong>Prec</strong> (Precision): 分类模型的方向性预测精确率
     <ul>
         <li>反映模型预测为"涨"时，实际确实是"涨"的比例</li>
     </ul>
 </li>
-<li><strong>Rec</strong> (Recall): 从Q50回归模型派生的方向性预测召回率
+<li><strong>Rec</strong> (Recall): 分类模型的方向性预测召回率
     <ul>
         <li>反映模型捕获所有"涨"的情况的能力</li>
     </ul>
 </li>
-<li><strong>AUC</strong> (ROC AUC): 从Q50回归模型派生的方向性预测ROC曲线下面积
+<li><strong>AUC</strong> (ROC AUC): 方向性预测ROC曲线下面积
     <ul>
         <li>阈值: AUC &gt; 0.6 为良好，AUC &gt; 0.7 为优秀</li>
         <li>反映模型区分"涨"和"跌"的能力</li>
+        <li>⚠️ <strong>注意</strong>：仅AUC优秀不足以判断模型质量，需要结合其他指标综合评估</li>
     </ul>
 </li>
-<li><strong>PR-AUC</strong> (Precision-Recall AUC): 从Q50回归模型派生的方向性预测PR曲线下面积
+<li><strong>PR-AUC</strong> (Precision-Recall AUC): 方向性预测PR曲线下面积
     <ul>
         <li>阈值: PR-AUC &gt; 0.4 为良好，PR-AUC &gt; 0.6 为优秀</li>
         <li>在不平衡数据集上比ROC AUC更有意义</li>
+        <li>⚠️ <strong>注意</strong>：仅PR-AUC优秀不足以判断模型质量，需要结合其他指标综合评估</li>
     </ul>
 </li>
-<li><strong>Quality</strong>: 综合评估模型质量（方向预测指标 + 模型可用性）
+<li><strong>Quality</strong>: 综合评估模型质量（CV指标 + OOS指标 + 模型可用性）
     <ul>
-        <li>✅ <strong>可用</strong>: 方向预测指标（F1≥0.3或AUC≥0.6）且模型可用（Q50 loss ratio ≤ 1.2）</li>
-        <li>❌ <strong>不可用</strong>: 方向预测指标不达标（F1=0/None或F1&lt;0.3且AUC&lt;0.6）或模型不可用（Q50 loss ratio &gt; 1.2）</li>
-        <li>⚠️ <strong>重要</strong>: F1=0 表示模型完全没有预测能力，必须标记为不可用。不可用的模型不应用于实际预测，需要重新训练或检查数据质量</li>
+        <li>✅ <strong>可用</strong>: CV方向预测指标（F1≥0.3或AUC≥0.6）且模型可用 <strong>且</strong> OOS指标达标（OOS准确率≥50%、OOS AUC≥50%、OOS F1≥0.5、OOS IC≥0.05）</li>
+        <li>⭐ <strong>优秀</strong>: 所有指标达到优秀水平（F1≥0.5且AUC≥0.7且PR-AUC≥0.6）时，模型质量才算过关</li>
+        <li>❌ <strong>不可用</strong>: CV方向预测指标不达标（F1=0/None或F1&lt;0.3且AUC&lt;0.6）<strong>或</strong> 模型不可用 <strong>或</strong> OOS指标不达标（OOS准确率&lt;50%、OOS AUC&lt;50%、OOS F1&lt;0.5、OOS IC&lt;0.05）</li>
+        <li>⚠️ <strong>重要</strong>: F1=0 表示模型完全没有预测能力，必须标记为不可用。OOS指标不达标表示模型在样本外表现差，也必须标记为不可用。不可用的模型不应用于实际预测，需要重新训练或检查数据质量</li>
+        <li>💡 <strong>评估建议</strong>: 综合评估CV和OOS的F1、AUC、PR-AUC、IC等多个指标，所有指标达到优秀水平时，模型质量才算过关。单一指标优秀不足以判断模型质量。OOS指标比CV指标更重要，因为OOS指标反映模型在真实场景中的表现。</li>
     </ul>
 </li>
-<li><strong>Q50质量</strong>: Q50模型的quantile loss质量指标
+<li><strong>模型架构</strong>: 使用3个模型（Classification, Return Regression, Volatility）的组合架构
     <ul>
-        <li><strong>Q50 loss ratio</strong> = Q50_loss / max(Q10_loss, Q90_loss)</li>
-        <li>✅ <strong>正常</strong>: ratio ≤ 1.2（绿色，符合分位数回归基本性质）</li>
-        <li>⚠️ <strong>轻微异常</strong>: 1.2 &lt; ratio ≤ 1.5（黄色，需要注意）</li>
-        <li>❌ <strong>严重异常</strong>: ratio &gt; 1.5（红色，违反分位数回归基本性质）</li>
-        <li>鼠标悬停可查看详细的Q50/Q10/Q90 loss值</li>
-        <li>参考文档: <code>docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md</code></li>
-    </ul>
-</li>
-<li><strong>模型架构</strong>: 使用4个回归模型（Q10, Q50, Q90, Volatility）替代分类模型
-    <ul>
-        <li><strong>Q10模型</strong>: 预测10%分位数，用于估计未来收益的下限（悲观情况）</li>
-        <li><strong>Q50模型</strong>: 预测中位数，用于点估计和方向判断</li>
-        <li><strong>Q90模型</strong>: 预测90%分位数，用于估计未来收益的上限（乐观情况）</li>
+        <li><strong>Classification模型</strong>: 预测未来涨跌方向的概率（0-1之间，0.5为阈值），用于判断方向（涨/跌）</li>
+        <li><strong>Return Regression模型</strong>: 预测未来收益率的幅度，用于估计潜在收益（方向正确时的幅度）</li>
         <li><strong>Volatility模型</strong>: 预测未来波动率，用于风险调整和仓位管理</li>
-        <li><strong>决策逻辑</strong>: signal_strength = |q50| / vol, confidence = |q50| / (q90 - q10)</li>
+        <li><strong>决策逻辑</strong>: signal_strength = p_up * expected_return / expected_volatility
+            <ul>
+                <li>p_up: 分类模型预测的上涨概率</li>
+                <li>expected_return: 收益回归模型预测的期望收益</li>
+                <li>expected_volatility: 波动率模型预测的期望波动率</li>
+                <li>signal_strength: 风险调整后的信号强度，用于仓位分配和交易决策</li>
+            </ul>
+        </li>
         <li><strong>使用说明</strong>: 
             <ul>
-                <li>比较三个quantile loss可以评估模型的不确定性估计能力：如果0.1和0.9的loss显著高于0.5，说明模型在极端情况下预测能力较弱。</li>
-                <li>理想的quantile loss应该：0.5最小（中位数预测最准确），0.1和0.9略高但合理（不确定性区间适度）。</li>
-                <li>如果0.1和0.9的loss过高，说明模型对尾部风险估计不足，需要调整模型或特征工程。</li>
-                <li>这三个值通常用于构建预测区间（prediction interval），例如：预测中位数 ± 不确定性区间，可以用于风险管理。</li>
+                <li><strong>分类模型评估</strong>: 关注Accuracy、F1、AUC、PR-AUC等指标。F1≥0.5且AUC≥0.7且PR-AUC≥0.6时，模型质量才算过关。</li>
+                <li><strong>收益回归模型评估</strong>: 关注RMSE、MSE、R²等指标。RMSE越小，预测精度越高。</li>
+                <li><strong>波动率模型评估</strong>: 关注RMSE、MSE等指标。波动率预测准确有助于风险管理和仓位控制。</li>
+                <li><strong>综合评估</strong>: 需要同时评估CV指标和OOS指标。OOS指标比CV指标更重要，因为OOS指标反映模型在真实场景中的表现。</li>
+                <li><strong>信号生成</strong>: 使用三个模型的输出计算风险调整后的信号强度，可以用于：
+                    <ul>
+                        <li>仓位分配：根据signal_strength的大小决定仓位大小</li>
+                        <li>交易决策：signal_strength > 阈值时开仓，否则不开仓</li>
+                        <li>风险管理：结合expected_volatility进行止损和止盈设置</li>
+                    </ul>
+                </li>
             </ul>
         </li>
     </ul>
@@ -620,10 +884,10 @@ tr:hover{{background-color:#e8f4f8}}
 <li><strong>enhanced</strong>: 增强特征（包含更多高级特征），特征更全面但计算更慢</li>
 <li><strong>comprehensive</strong>: 综合特征（最完整，包含所有特征类型），特征最丰富但可能过拟合</li>
 </ul>
-<p><strong>💡 建议:</strong> 比较不同特征类型时，重点关注CV RMSE和Quantile Loss，这些指标更能反映回归模型的真实性能。</p>
+<p><strong>💡 建议:</strong> 比较不同特征类型时，重点关注分类模型的F1、AUC、PR-AUC和收益回归模型的RMSE、R²，以及OOS指标，这些指标更能反映模型的真实性能。</p>
 </div>
 <table>
-<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th>CV RMSE</th><th>CV MSE</th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Q50质量</th><th>Config</th></tr>
+<tr><th>Symbol</th><th>Timeframe</th><th>Forward Bars</th><th>Training Bars</th><th style="min-width:400px;">模型指标 (Model Metrics)<br/><em>CV指标 + OOS指标（可展开）</em></th><th>F1</th><th>Acc</th><th>Prec</th><th>Rec</th><th>AUC</th><th>PR-AUC</th><th>Feature Type</th><th>Quality</th><th>Config</th></tr>
 {''.join(rows)}
 </table>
 {chr(10).join([f'''
@@ -636,6 +900,8 @@ tr:hover{{background-color:#e8f4f8}}
 {chr(10).join(section["rows"])}
 </table>
 ''' for section in per_symbol_sections]) if per_symbol_sections else ''}
+{_generate_issues_section(all_issues)}
+{_generate_feature_importance_section(all_feature_importance)}
 </div>
 </body></html>"""
 
