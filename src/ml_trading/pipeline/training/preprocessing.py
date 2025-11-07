@@ -197,6 +197,18 @@ def robust_winsorize_train_test(
         Tuple of (y_train_cleaned, y_test_cleaned, stats_dict)
         stats_dict contains: median, mad, sigma, lower_bound, upper_bound
     """
+    # Short-circuit: disable winsorization when k <= 0
+    if k is None or k <= 0:
+        return y_train.copy(), y_test.copy(), {
+            "median":
+            float(np.nanmedian(y_train.values)) if len(y_train) else 0.0,
+            "mad": 0.0,
+            "sigma": 0.0,
+            "k": k,
+            "n_clipped_train": 0,
+            "n_clipped_test": 0,
+        }
+
     # Calculate statistics ONLY from training data
     # Performance optimization: use numpy for faster computation
     y_train_values = y_train.values
@@ -542,7 +554,7 @@ def secondary_clean_train_test(
     y_train: pd.Series,
     y_test: pd.Series,
     k: float = 3.5,
-    use_symmetric_quantile: bool = True,
+    use_symmetric_quantile: Optional[bool] = None,
     smooth_clip: bool = True,
 ) -> Tuple[pd.Series, pd.Series, Dict]:
     """
@@ -552,12 +564,23 @@ def secondary_clean_train_test(
         y_train: Training target variable (after AR(1))
         y_test: Test target variable (after AR(1))
         k: Winsorize threshold (default: 3.5)
-        use_symmetric_quantile: If True, use symmetric quantiles (0.005, 0.995) instead of (0.01, 0.99)
+        use_symmetric_quantile: Control percentile-based clipping (see preprocess_target_cv)
         smooth_clip: If True, use weighted average of MAD and percentile thresholds instead of min
     
     Returns:
         Tuple of (y_train_cleaned, y_test_cleaned, stats_dict)
     """
+    if k is None or k <= 0:
+        return y_train.copy(), y_test.copy(), {
+            "median":
+            float(np.nanmedian(y_train.values)) if len(y_train) else 0.0,
+            "mad": 0.0,
+            "sigma": 0.0,
+            "clip_threshold": np.inf,
+            "n_clipped_train": 0,
+            "n_clipped_test": 0,
+        }
+
     # Calculate statistics ONLY from training data
     # Performance optimization: use numpy for faster computation
     y_train_values = y_train.values
@@ -581,18 +604,22 @@ def secondary_clean_train_test(
 
     # Improved: Use symmetric quantiles for more robust threshold estimation
     # Performance: compute quantiles in one call
-    if use_symmetric_quantile:
+    percentile_clip_high = None
+    if use_symmetric_quantile is True:
         q_low, q_high = np.nanpercentile(y_train_values, [0.5, 99.5])
         percentile_clip_high = max(abs(q_high), abs(q_low))
-    else:
-        # Original approach: use (0.01, 0.99)
+    elif use_symmetric_quantile is False:
+        # Legacy approach: use (0.01, 0.99)
         p01_train, p99_train = np.nanpercentile(y_train_values, [1.0, 99.0])
         percentile_clip_high = abs(p99_train) if abs(p99_train) > abs(
             p01_train) else abs(p01_train)
+    else:
+        # Disable percentile-based clipping
+        percentile_clip_high = np.nan
 
     # Improved: Adaptive weight mixing based on volatility regime
     clip_threshold_mad = k * sigma_train
-    if smooth_clip:
+    if smooth_clip and np.isfinite(percentile_clip_high):
         # Adaptive weight: low volatility -> more MAD, high volatility -> more percentile
         vol_ratio = sigma_train / (percentile_clip_high + 1e-9)
         # Use tanh for smooth transition: 0.5 + 0.5 * tanh(2 * (1 - vol_ratio))
@@ -602,8 +629,8 @@ def secondary_clean_train_test(
         final_clip = mad_weight * clip_threshold_mad + (1 - mad_weight) * (
             percentile_clip_high * 1.5)
     else:
-        # Original: use the more conservative threshold
-        final_clip = min(clip_threshold_mad, percentile_clip_high * 1.5)
+        # When percentile information is unavailable/disabled, rely on MAD only
+        final_clip = clip_threshold_mad
 
     # Apply clipping using training statistics
     lower_bound = median_train - final_clip
@@ -665,7 +692,7 @@ def preprocess_target_cv(
     k_secondary: float = 3.5,
     dynamic_threshold: Optional[pd.Series] = None,
     accurate_forward: bool = True,
-    use_symmetric_quantile: bool = True,
+    use_symmetric_quantile: Optional[bool] = None,
     smooth_clip: bool = True,
     verbose: bool = False,
 ) -> Tuple[pd.Series, pd.Series, TargetPreprocessStats]:
@@ -683,8 +710,11 @@ def preprocess_target_cv(
         k_secondary: Winsorize threshold for Step 2b (default: 3.5)
         dynamic_threshold: Optional dynamic k values
         accurate_forward: If True, use phi^fb for forward_bars > 1 (more accurate)
-        use_symmetric_quantile: If True, use symmetric quantiles (0.005, 0.995) for Step 2b
-        smooth_clip: If True, use weighted average of MAD and percentile thresholds
+        use_symmetric_quantile: Control percentile-based pre-clipping in Step 2b.
+            - None (default): disable percentile clipping, rely purely on MAD.
+            - True: use symmetric quantiles (0.005, 0.995).
+            - False: use legacy quantiles (0.01, 0.99).
+        smooth_clip: If True, blend MAD and percentile thresholds (if available)
         verbose: If True, print detailed preprocessing statistics
     
     Returns:
@@ -704,6 +734,34 @@ def preprocess_target_cv(
         print(
             f"  [Step 1: Winsorize] Clipped: train={stats_step1['n_clipped_train']}, "
             f"test={stats_step1['n_clipped_test']}, MAD={stats_step1['mad']:.6f}"
+        )
+
+    # Over-clipping diagnostics for Step 1
+    total_train_samples = max(len(y_train), 1)
+    clipped_ratio_step1 = stats_step1["n_clipped_train"] / total_train_samples
+    if clipped_ratio_step1 > 0.05:
+        print(
+            f"  ⚠️  Warning: Step 1 clipped {clipped_ratio_step1:,.2%} of training samples (>5%). "
+            "Consider relaxing Winsorize parameters.")
+    # Check distribution shift (mean / std change greater than 10%)
+    orig_mean_step1 = float(np.nanmean(
+        y_train.values)) if len(y_train) else 0.0
+    clipped_mean_step1 = float(np.nanmean(
+        y_train_step1.values)) if len(y_train_step1) else 0.0
+    orig_std_step1 = float(np.nanstd(y_train.values,
+                                     ddof=1)) if len(y_train) > 1 else 0.0
+    clipped_std_step1 = float(np.nanstd(
+        y_train_step1.values, ddof=1)) if len(y_train_step1) > 1 else 0.0
+    mean_shift = abs(clipped_mean_step1 - orig_mean_step1)
+    std_shift = abs(clipped_std_step1 - orig_std_step1)
+    if orig_std_step1 > 0 and std_shift / (orig_std_step1 + 1e-9) > 0.2:
+        print(
+            f"  ⚠️  Warning: Step 1 changed std by {std_shift / (orig_std_step1 + 1e-9):.1%}. "
+            "Large variance shifts may indicate over-trimming.")
+    if abs(orig_mean_step1) > 1e-9 and mean_shift / (abs(orig_mean_step1) +
+                                                     1e-9) > 0.2:
+        print(
+            f"  ⚠️  Warning: Step 1 changed mean by {mean_shift / (abs(orig_mean_step1) + 1e-9):.1%}."
         )
 
     # Step 2: AR(1) residual (using training statistics)
@@ -739,6 +797,30 @@ def preprocess_target_cv(
             f"test={stats_step2b['n_clipped_test']}, clip_threshold={clip_threshold_str}"
         )
         print(f"  ✅ Target preprocessing completed.")
+
+    # Over-clipping diagnostics for Step 2b
+    clipped_ratio_step2b = stats_step2b["n_clipped_train"] / total_train_samples
+    if clipped_ratio_step2b > 0.05:
+        print(
+            f"  ⚠️  Warning: Step 2b clipped {clipped_ratio_step2b:,.2%} of training samples (>5%). "
+            "Consider adjusting secondary cleaning thresholds.")
+
+    orig_mean_final = clipped_mean_step1
+    final_mean = float(np.nanmean(
+        y_train_final.values)) if len(y_train_final) else 0.0
+    orig_std_final = clipped_std_step1
+    final_std = float(np.nanstd(y_train_final.values,
+                                ddof=1)) if len(y_train_final) > 1 else 0.0
+    if orig_std_final > 0 and abs(final_std - orig_std_final) / (
+            orig_std_final + 1e-9) > 0.2:
+        print(
+            f"  ⚠️  Warning: Secondary cleaning changed std by {abs(final_std - orig_std_final) / (orig_std_final + 1e-9):.1%}."
+        )
+    if abs(orig_mean_final) > 1e-9 and abs(final_mean - orig_mean_final) / (
+            abs(orig_mean_final) + 1e-9) > 0.2:
+        print(
+            f"  ⚠️  Warning: Secondary cleaning changed mean by {abs(final_mean - orig_mean_final) / (abs(orig_mean_final) + 1e-9):.1%}."
+        )
 
     # Final validation: ensure no Inf/NaN for LightGBM/XGBoost compatibility
     # This is critical for production deployment
@@ -804,12 +886,16 @@ def clean_features_train_test(
         "n_filled_per_feature": {},
     }
 
+    skip_clipping = k is None or k <= 0
+
     # Clean each numeric column using training statistics
     for col in X_train.columns:
         if X_train[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
             # Replace infinities with NaN first
-            train_series = X_train_cleaned[col].replace([np.inf, -np.inf], np.nan)
-            test_series = X_test_cleaned[col].replace([np.inf, -np.inf], np.nan)
+            train_series = X_train_cleaned[col].replace([np.inf, -np.inf],
+                                                        np.nan)
+            test_series = X_test_cleaned[col].replace([np.inf, -np.inf],
+                                                      np.nan)
 
             # Compute statistics using training data only
             median_train = train_series.median()
@@ -829,8 +915,12 @@ def clean_features_train_test(
             if not np.isfinite(sigma_train) or sigma_train == 0:
                 sigma_train = 1e-9
 
-            lower_bound = median_train - k * sigma_train
-            upper_bound = median_train + k * sigma_train
+            if skip_clipping:
+                lower_bound = -np.inf
+                upper_bound = np.inf
+            else:
+                lower_bound = median_train - k * sigma_train
+                upper_bound = median_train + k * sigma_train
 
             X_train_cleaned[col] = train_filled.clip(lower_bound, upper_bound)
             X_test_cleaned[col] = test_filled.clip(lower_bound, upper_bound)

@@ -29,6 +29,7 @@ class QuantileModelTrainer(BaseModelTrainer):
         preprocess_fn: Optional[Callable] = None,
         preprocess_kwargs: Optional[Dict] = None,
         q50_params: Optional[Dict] = None,
+        feature_winsorize_k: float = 4.0,
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """
         Train quantile models (Q10, Q50, Q90) and volatility model.
@@ -57,7 +58,8 @@ class QuantileModelTrainer(BaseModelTrainer):
             preprocess_kwargs=preprocess_kwargs or {},
             groups=groups,
             auto_tune_params=use_auto_tune,
-            tune_trials=self.tune_trials
+            tune_trials=self.tune_trials,
+            feature_winsorize_k=feature_winsorize_k,
         )
 
         # Get Q50 predictions to calculate residuals for Q10/Q90 training
@@ -110,6 +112,7 @@ class QuantileModelTrainer(BaseModelTrainer):
             sample_weight=q10_q90_weights_full if q10_q90_weights_full is not None else None,
             preprocess_fn=preprocess_fn,
             preprocess_kwargs=preprocess_kwargs or {},
+            feature_winsorize_k=feature_winsorize_k,
         )
 
         model_q90 = LightGBMModel(model_type="quantile", quantile_alpha=0.9, use_gpu=self.use_gpu)
@@ -121,6 +124,7 @@ class QuantileModelTrainer(BaseModelTrainer):
             sample_weight=q10_q90_weights_full if q10_q90_weights_full is not None else None,
             preprocess_fn=preprocess_fn,
             preprocess_kwargs=preprocess_kwargs or {},
+            feature_winsorize_k=feature_winsorize_k,
         )
 
         # Train volatility model
@@ -132,6 +136,7 @@ class QuantileModelTrainer(BaseModelTrainer):
             n_splits=max(2, n_splits),
             use_time_series_cv=True,
             groups=groups,
+            feature_winsorize_k=feature_winsorize_k,
         )
 
         models_dict = {

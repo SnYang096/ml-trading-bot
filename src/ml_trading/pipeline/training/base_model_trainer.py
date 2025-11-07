@@ -42,6 +42,7 @@ class BaseModelTrainer(ABC):
         preprocess_fn: Optional[Callable] = None,
         preprocess_kwargs: Optional[Dict] = None,
         q50_params: Optional[Dict] = None,
+        feature_winsorize_k: float = 4.0,
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """
         Train models for the given model type.
@@ -56,6 +57,7 @@ class BaseModelTrainer(ABC):
             preprocess_fn: Optional preprocessing function
             preprocess_kwargs: Optional preprocessing kwargs
             q50_params: Optional Q50 parameters (for quantile models)
+            feature_winsorize_k: Feature-level winsorize multiplier (<=0 disables)
 
         Returns:
             Tuple of (models_dict, metrics_dict, preprocess_params_dict)

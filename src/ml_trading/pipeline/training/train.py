@@ -464,6 +464,32 @@ def main() -> None:
         help="Auto-tune hyperparameters (Q50-constraint-aware) before training"
     )
     parser.add_argument(
+        "--winsorize-k",
+        type=float,
+        default=3.5,
+        help="MAD-based winsorize multiplier for target Step 1 (<=0 disables)")
+    parser.add_argument(
+        "--secondary-winsorize-k",
+        type=float,
+        default=3.5,
+        help="MAD-based winsorize multiplier for target Step 2b (<=0 disables)"
+    )
+    parser.add_argument(
+        "--feature-winsorize-k",
+        type=float,
+        default=4.0,
+        help=
+        "MAD-based winsorize multiplier for feature cleaning (<=0 disables)")
+    parser.add_argument(
+        "--disable-target-winsorize",
+        action="store_true",
+        default=False,
+        help="Disable target winsorization (both Step 1 and Step 2b)")
+    parser.add_argument("--disable-feature-winsorize",
+                        action="store_true",
+                        default=False,
+                        help="Disable feature winsorization during training")
+    parser.add_argument(
         "--tune-trials",
         type=int,
         default=20,
@@ -489,6 +515,23 @@ def main() -> None:
         "Use safe multi-asset preprocessing: each symbol is processed independently (resample, features, labels) before merging. This prevents cross-asset data leakage but may reduce sample size."
     )
     args = parser.parse_args()
+
+    if args.model_type == "classification":
+        # Classification workflow skips winsorization entirely
+        if (args.disable_target_winsorize or args.disable_feature_winsorize
+                or args.winsorize_k != 3.5 or args.secondary_winsorize_k != 3.5
+                or args.feature_winsorize_k != 4.0):
+            print("ℹ️  分类模型忽略 winsorize 相关参数，始终不进行裁剪")
+        target_winsorize_k = 0.0
+        secondary_winsorize_k = 0.0
+        feature_winsorize_k = 0.0
+    else:
+        target_winsorize_k = 0.0 if args.disable_target_winsorize else max(
+            args.winsorize_k, 0.0)
+        secondary_winsorize_k = 0.0 if args.disable_target_winsorize else max(
+            args.secondary_winsorize_k, 0.0)
+        feature_winsorize_k = 0.0 if args.disable_feature_winsorize else max(
+            args.feature_winsorize_k, 0.0)
 
     freqs = [f.strip() for f in args.freq.split(",") if f.strip()]
     fbs = [int(x.strip()) for x in args.forward_bars.split(",") if x.strip()]
@@ -1385,9 +1428,9 @@ def main() -> None:
                         accurate_forward=
                         True,  # Use accurate phi^fb for forward_bars > 1
                         use_symmetric_quantile=
-                        True,  # Use symmetric quantiles (0.005, 0.995)
+                        None,  # Disable percentile-based pre-clipping; rely on MAD winsorize
                         smooth_clip=
-                        True,  # Use weighted average for clip threshold
+                        False,  # Use pure MAD clipping to preserve tail structure
                         verbose=verbose_fold,
                     )
                     # Convert NamedTuple to dict for backward compatibility
@@ -1457,8 +1500,8 @@ def main() -> None:
                 current_returns_array,  # Pass numpy array instead of Series
                 current_returns_index,  # Pass index separately for mapping
                 fb,
-                k_winsorize=3.5,
-                k_secondary=3.5,
+                k_winsorize=target_winsorize_k,
+                k_secondary=secondary_winsorize_k,
                 verbose=True)
 
             # Use TimeSeries CV by default to avoid random split failures on edge cases
@@ -1593,6 +1636,7 @@ def main() -> None:
                 preprocess_fn=preprocess_fn,
                 preprocess_kwargs={},
                 q50_params=q50_params,
+                feature_winsorize_k=feature_winsorize_k,
             )
 
             # Extract models and metrics based on model type
@@ -2166,41 +2210,46 @@ def main() -> None:
                     upper = median + k * sigma
                     return np.clip(data, lower, upper)
 
-                # Winsorize y_return with adaptive parameters
-                y_return_original = y_return.copy()
-                y_return = pd.Series(adaptive_winsorize(y_return, base_k=2.5),
-                                     index=y_return.index)
-                n_clipped_y = np.sum(
-                    np.abs(y_return - y_return_original) > 1e-10)
-                if n_clipped_y > 0:
-                    print(
-                        f"      ✅ y_return: 已clip {n_clipped_y}个极端值（k=2.5，自适应）"
-                    )
+                if target_winsorize_k > 0:
+                    # Winsorize y_return with adaptive parameters
+                    y_return_original = y_return.copy()
+                    y_return = pd.Series(adaptive_winsorize(y_return,
+                                                            base_k=2.5),
+                                         index=y_return.index)
+                    n_clipped_y = np.sum(
+                        np.abs(y_return - y_return_original) > 1e-10)
+                    if n_clipped_y > 0:
+                        print(
+                            f"      ✅ y_return: 已clip {n_clipped_y}个极端值（k=2.5，自适应）"
+                        )
+                else:
+                    print("      ℹ️ 已禁用目标 winsorize，跳过 y_return 自适应剪裁")
 
                 # Winsorize features X (only for return-based and derived features, not raw prices)
                 # Apply winsorize to all numeric columns (features are already normalized/derived)
                 print(f"      正在对特征X进行Winsorize处理（{len(X_df.columns)}个特征）...")
                 X_df_original = X_df.copy()
                 n_clipped_features = 0
-                for col in X_df.columns:
-                    if X_df[col].dtype in [
-                            np.float64, np.float32, np.int64, np.int32
-                    ]:
-                        X_df[col] = adaptive_winsorize(
-                            X_df[col], base_k=4.0
-                        )  # Use adaptive winsorize with base k=4.0
-                        n_clipped = np.sum(
-                            np.abs(X_df[col] - X_df_original[col]) > 1e-10)
-                        if n_clipped > 0:
-                            n_clipped_features += 1
-                if n_clipped_features > 0:
-                    print(
-                        f"      ✅ 特征X: {n_clipped_features}个特征包含极端值并已clip（自适应参数）"
-                    )
+                if feature_winsorize_k > 0:
+                    for col in X_df.columns:
+                        if X_df[col].dtype in [
+                                np.float64, np.float32, np.int64, np.int32
+                        ]:
+                            X_df[col] = adaptive_winsorize(
+                                X_df[col], base_k=4.0
+                            )  # Use adaptive winsorize with base k=4.0
+                            n_clipped = np.sum(
+                                np.abs(X_df[col] - X_df_original[col]) > 1e-10)
+                            if n_clipped > 0:
+                                n_clipped_features += 1
+                    if n_clipped_features > 0:
+                        print(
+                            f"      ✅ 特征X: {n_clipped_features}个特征包含极端值并已clip（自适应参数）"
+                        )
+                    else:
+                        print(f"      ✅ 特征X: 未发现极端值")
                 else:
-                    print(f"      ✅ 特征X: 未发现极端值")
-
-                    print(f"      ✅ 特征X: 未发现极端值")
+                    print("      ℹ️ 已禁用特征 winsorize，跳过特征自适应剪裁")
 
                 # Step 2: Calculate sample weights to reduce extreme value influence
                 print("\n   步骤2: 计算样本权重（降低极端值影响）")

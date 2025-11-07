@@ -77,6 +77,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
         preprocess_fn: Optional[Callable] = None,
         preprocess_kwargs: Optional[Dict] = None,
         q50_params: Optional[Dict] = None,
+        feature_winsorize_k: float = 4.0,
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """
         Train classification, return regression, and volatility models.
@@ -177,7 +178,8 @@ class ClassificationModelTrainer(BaseModelTrainer):
             use_time_series_cv=True,
             groups=groups_filtered,
             auto_tune_params=self.auto_tune_params,
-            tune_trials=self.tune_trials)
+            tune_trials=self.tune_trials,
+            feature_winsorize_k=feature_winsorize_k)
 
         # Train return regression model (magnitude prediction)
         logger.info(
@@ -192,6 +194,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
             groups=groups,
             auto_tune_params=self.auto_tune_return,
             tune_trials=self.tune_trials if self.auto_tune_return else None,
+            feature_winsorize_k=feature_winsorize_k,
         )
 
         # Train volatility model (risk prediction)
@@ -206,6 +209,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
             groups=groups,
             auto_tune_params=self.auto_tune_vol,
             tune_trials=self.tune_trials if self.auto_tune_vol else None,
+            feature_winsorize_k=feature_winsorize_k,
         )
 
         models_dict = {

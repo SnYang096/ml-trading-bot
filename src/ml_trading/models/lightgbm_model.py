@@ -185,6 +185,7 @@ class LightGBMModel:
         auto_tune_params: bool = False,
         tune_trials: int = 20,
         verbose: bool = True,
+        feature_winsorize_k: Optional[float] = None,
     ) -> Tuple[Dict[str, float], Optional[Dict]]:
         """
         Train the LightGBM model using TimeSeriesSplit for proper time series validation.
@@ -204,6 +205,7 @@ class LightGBMModel:
             auto_tune_params: If True, run Q50-aware hyperparameter search prior to training.
             tune_trials: Number of trials for hyperparameter tuning when enabled.
             verbose: If False, suppress training progress logs.
+            feature_winsorize_k: Winsorize multiplier for feature cleaning (<=0 disables)
         
         Returns:
             Tuple of (training_metrics, preprocess_params)
@@ -211,6 +213,9 @@ class LightGBMModel:
             - preprocess_params: Aggregated preprocessing parameters for deployment, or None
         """
         log = print if verbose else (lambda *args, **kwargs: None)
+
+        effective_feature_k = 4.0 if feature_winsorize_k is None else feature_winsorize_k
+        self._feature_winsorize_k = effective_feature_k
 
         def aggregate_preprocess_stats(
                 stats_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -365,7 +370,7 @@ class LightGBMModel:
                 # All statistics computed ONLY from training data
                 from ml_trading.pipeline.training.preprocessing import clean_features_train_test
                 X_train, X_val, feature_clean_stats = clean_features_train_test(
-                    X_train_raw, X_val_raw, k=4.0)
+                    X_train_raw, X_val_raw, k=effective_feature_k)
                 if fold == 0 and feature_clean_stats.get(
                         "n_features_cleaned", 0) > 0:
                     log(f"    Feature cleaning (fold {fold+1}): {feature_clean_stats['n_features_cleaned']} features cleaned"

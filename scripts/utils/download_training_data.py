@@ -79,8 +79,13 @@ class BinanceMultiSymbolDownloader:
             return symbol.replace("USDT", "-USD")
         return symbol
 
-    def check_local_file(self, symbol: str, year: int, month: int) -> bool:
-        """检查本地是否已具备该月份数据：优先检查Parquet；否则检查ZIP完整性"""
+    def check_local_file(self, symbol: str, year: int, month: int) -> Optional[str]:
+        """检查本地是否已具备该月份数据：优先检查Parquet；否则检查ZIP完整性
+
+        Returns:
+            Optional[str]: "parquet" if parquet file already exists,
+            "zip" if a valid zip exists, or None if data is missing.
+        """
         # 1) 如果提供了Parquet目录，先检查是否已有对应月份的Parquet
         if self.parquet_dir:
             parquet_symbol = self._symbol_to_usd(symbol)
@@ -88,7 +93,7 @@ class BinanceMultiSymbolDownloader:
             parquet_path = self.parquet_dir / parquet_name
             if parquet_path.exists() and parquet_path.stat().st_size > 0:
                 print(f"✅ Parquet 已存在: {parquet_name}")
-                return True
+                return "parquet"
 
         # 2) 回退检查ZIP是否已完整下载
         filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
@@ -102,9 +107,9 @@ class BinanceMultiSymbolDownloader:
         if file_size < 1 * 1024 * 1024:  # 1MB
             print(f"   ⚠️  {filename} 文件太小 ({file_size} bytes)，将重新下载")
             file_path.unlink()  # 删除不完整的文件
-            return False
+            return None
 
-        return True
+        return "zip"
 
     def download_file(
         self,
@@ -200,11 +205,13 @@ class BinanceMultiSymbolDownloader:
             self.stats["total"] += 1
 
             # 检查本地是否已有文件
-            if self.check_local_file(symbol, year, month):
-                filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
-                file_path = self.data_dir / filename
-                size_mb = file_path.stat().st_size / 1024 / 1024
-                print(f"✅ 已存在 ({size_mb:.1f}MB)")
+            existing_type = self.check_local_file(symbol, year, month)
+            if existing_type:
+                if existing_type == "zip":
+                    filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
+                    file_path = self.data_dir / filename
+                    size_mb = file_path.stat().st_size / 1024 / 1024
+                    print(f"✅ 已存在 ({size_mb:.1f}MB)")
                 symbol_stats["skipped"] += 1
                 self.stats["skipped"] += 1
                 continue

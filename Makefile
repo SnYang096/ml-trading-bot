@@ -46,10 +46,10 @@ OVERWRITE_FLAG := $(if $(filter 1 true yes,$(OVERWRITE)),--overwrite,)
 # ---------------------------------------------------------------------------
 # Training configuration (simple names) + backward-compatible BASELINE_* aliases
 # ---------------------------------------------------------------------------
-FREQ ?= 5T
-FREQS ?= 5T,15T,45T,240T
+FREQ ?= 15T
+FREQS ?= 15T,60T,240T
 CV_FOLDS ?= 5
-OOS_MONTHS ?= 2
+OOS_MONTHS ?= 4
 OOS_START ?=
 OOS_END ?=
 INITIAL_TRAIN_MONTHS ?= 6
@@ -171,7 +171,9 @@ docker-install:
 # Download configuration
 AGG_DATA_DIR ?= data/agg_data
 DOWNLOAD_SYMBOLS ?= $(SYMBOLS)
-DOWNLOAD_START_YEAR ?= 2021
+comma := ,
+DOWNLOAD_SYMBOLS_LIST := $(strip $(subst $(comma), ,$(DOWNLOAD_SYMBOLS)))
+DOWNLOAD_START_YEAR ?= 2020
 DOWNLOAD_START_MONTH ?= 1
 DOWNLOAD_END_YEAR ?= $(shell date +%Y)
 DOWNLOAD_END_MONTH ?= $(shell date +%m)
@@ -184,7 +186,7 @@ data-download:
 	@yes | $(PYTHON) scripts/utils/download_training_data.py \
 		--data-dir $(AGG_DATA_DIR) \
 		--parquet-dir $(DATA_DIR) \
-		$(if $(DOWNLOAD_SYMBOLS),--symbols $(DOWNLOAD_SYMBOLS)) \
+		$(if $(DOWNLOAD_SYMBOLS_LIST),--symbols $(DOWNLOAD_SYMBOLS_LIST)) \
 		--start-year $(DOWNLOAD_START_YEAR) \
 		--start-month $(DOWNLOAD_START_MONTH) \
 		--end-year $(DOWNLOAD_END_YEAR) \
@@ -334,6 +336,8 @@ train:
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \
+		--disable-target-winsorize \
+  	--disable-feature-winsorize \
         --gpu
 
 train-quantile:
