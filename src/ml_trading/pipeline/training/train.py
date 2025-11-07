@@ -459,12 +459,20 @@ def main() -> None:
         "--auto-tune-params",
         action="store_true",
         default=False,
-        help="Auto-tune hyperparameters (Q50-constraint-aware) before training")
+        help="Auto-tune hyperparameters (Q50-constraint-aware) before training"
+    )
     parser.add_argument(
         "--tune-trials",
         type=int,
         default=20,
         help="Number of trials for hyperparameter tuning (default: 20)")
+    parser.add_argument(
+        "--params-file",
+        type=str,
+        default=None,
+        help=
+        "Path to JSON file containing pre-trained parameters (overrides auto-tune)"
+    )
     parser.add_argument(
         "--safe-multi-asset",
         action="store_true",
@@ -1002,30 +1010,49 @@ def main() -> None:
             n_splits = args.cv_folds if use_cv else 0
 
             # q50: median as primary point estimate (using new quantile API)
-            # Auto-adjust parameters for Q50 if we detect potential issues
-            # Use more aggressive parameters to prevent underfitting
+            # Load pre-trained parameters if provided, otherwise use defaults
             q50_params = None
-            # Check if y_return has extreme values that might cause Q50 issues
-            if isinstance(y_return, pd.Series):
-                std_y = y_return.std()
-                mean_y = y_return.mean()
-                extreme_count = np.sum(np.abs(y_return - mean_y) > 3 * std_y)
-                if extreme_count > len(
-                        y_return) * 0.01:  # More than 1% extreme values
-                    # Adjust parameters for better prediction of extremes
-                    from ml_trading.config.settings import DEFAULT_LGBM_PARAMS
-                    q50_params = DEFAULT_LGBM_PARAMS.copy()
-                    q50_params["num_leaves"] = 127  # Increase from default 31
-                    q50_params[
-                        "min_data_in_leaf"] = 10  # Decrease from default 20
-                    q50_params[
-                        "learning_rate"] = 0.03  # Slightly lower for finer predictions
-                    print(
-                        f"   🔧 Auto-adjust: 检测到{extreme_count}个极端值（>1%），自动调整Q50模型参数:"
-                    )
-                    print(f"      num_leaves: 31 → 127")
-                    print(f"      min_data_in_leaf: 20 → 10")
-                    print(f"      learning_rate: 0.05 → 0.03")
+            if args.params_file and os.path.exists(args.params_file):
+                print(
+                    f"\n   📂 Loading pre-trained parameters from: {args.params_file}"
+                )
+                with open(args.params_file, "r") as f:
+                    loaded_params = json.load(f)
+                from ml_trading.config.settings import DEFAULT_LGBM_PARAMS
+                q50_params = DEFAULT_LGBM_PARAMS.copy()
+                q50_params.update(loaded_params)
+                print(f"   ✅ Loaded {len(loaded_params)} parameters")
+                print(
+                    f"      Key params: num_leaves={q50_params.get('num_leaves')}, "
+                    f"learning_rate={q50_params.get('learning_rate')}, "
+                    f"num_boost_round={q50_params.get('num_boost_round', 'default')}"
+                )
+            else:
+                # Auto-adjust parameters for Q50 if we detect potential issues
+                # Use more aggressive parameters to prevent underfitting
+                # Check if y_return has extreme values that might cause Q50 issues
+                if isinstance(y_return, pd.Series):
+                    std_y = y_return.std()
+                    mean_y = y_return.mean()
+                    extreme_count = np.sum(
+                        np.abs(y_return - mean_y) > 3 * std_y)
+                    if extreme_count > len(
+                            y_return) * 0.01:  # More than 1% extreme values
+                        # Adjust parameters for better prediction of extremes
+                        from ml_trading.config.settings import DEFAULT_LGBM_PARAMS
+                        q50_params = DEFAULT_LGBM_PARAMS.copy()
+                        q50_params[
+                            "num_leaves"] = 127  # Increase from default 31
+                        q50_params[
+                            "min_data_in_leaf"] = 10  # Decrease from default 20
+                        q50_params[
+                            "learning_rate"] = 0.03  # Slightly lower for finer predictions
+                        print(
+                            f"   🔧 Auto-adjust: 检测到{extreme_count}个极端值（>1%），自动调整Q50模型参数:"
+                        )
+                        print(f"      num_leaves: 31 → 127")
+                        print(f"      min_data_in_leaf: 20 → 10")
+                        print(f"      learning_rate: 0.05 → 0.03")
 
             # 🔧 CRITICAL FIX: Move preprocessing INSIDE CV loop to prevent lookahead bias
             # All preprocessing statistics (median, mad, ar1_phi) must be computed ONLY from training data
@@ -1148,113 +1175,121 @@ def main() -> None:
                     # 🔒 CRITICAL: For multi-asset training, indices have duplicate timestamps
                     # get_indexer() doesn't work with duplicate indices (raises InvalidIndexError)
                     # .loc[] also doesn't work correctly because it returns all matches for duplicate indices
-                    # 
+                    #
                     # 🚀 SOLUTION: Since current_returns and y_return have the same index structure,
                     # and y_train/y_val are positional subsets, we can use positional indexing directly
                     # We need to find the positions of y_train/y_val in the full dataset
-                    # 
+                    #
                     # Since indices match exactly (same order), we can find positions by matching
                     # the first and last indices, then use positional slicing
-                    
+
                     # Find start and end positions in the full index
                     # For duplicate indices, we need to match by position, not by label
                     # Since y_train and y_val are subsets of y_return, and y_return has the same
                     # index as current_returns, we can use the fact that they're in the same order
-                    
+
                     # Get the position of the first element of y_train in the full index
                     # We'll use a different approach: since indices should match exactly,
                     # we can create a mapping using enumerate
                     # But this is slow. Instead, let's assume indices match and use direct indexing
-                    
+
                     # 🚀 BEST APPROACH: Since y_train/y_val are created from y_return by positional
                     # indexing (train_idx, val_idx), and current_returns has the same index as y_return,
                     # we can directly use the same positional indices to extract from current_returns_array
                     # But we don't have train_idx/val_idx here. We need to find them.
-                    
+
                     # Alternative: Use a simple loop to match indices by position
                     # This is O(n) but should be fast enough for our use case
                     # Create a mapping: for each index in y_train/y_val, find its position in _current_returns_index
                     # Since indices match exactly, we can use a simple approach:
                     # - Iterate through _current_returns_index and y_train.index simultaneously
                     # - Match by position (assuming same order)
-                    
+
                     # Actually, the simplest solution: since indices should match exactly,
                     # we can use the fact that y_train/y_val are subsets of y_return
                     # and find their positions in y_return, then use those same positions in current_returns
                     # But we don't have y_return here either.
-                    
+
                     # 🚀 FINAL SOLUTION: Use a dictionary to map (index, occurrence) to position
                     # But this is complex. Instead, let's use a simpler approach:
                     # Since we know the indices match, we can iterate and match by position
                     # For each index in y_train.index, find its first occurrence in _current_returns_index
                     # and use that position. This works if indices are in the same order.
-                    
+
                     # Create position arrays by matching indices sequentially
                     # This assumes indices are in the same order (which they should be)
                     train_positions = []
                     val_positions = []
-                    
+
                     # Create a position counter for the full index
                     full_idx_pos = 0
-                    full_idx_dict = {}  # Map (index, occurrence_count) to position
-                    
+                    full_idx_dict = {
+                    }  # Map (index, occurrence_count) to position
+
                     # Build mapping: for each unique index, track its occurrences
                     for idx in _current_returns_index:
                         if idx not in full_idx_dict:
                             full_idx_dict[idx] = []
                         full_idx_dict[idx].append(full_idx_pos)
                         full_idx_pos += 1
-                    
+
                     # Now match y_train and y_val indices
                     train_occurrence = {}
                     val_occurrence = {}
-                    
+
                     for idx in y_train.index:
                         if idx not in train_occurrence:
                             train_occurrence[idx] = 0
-                        if idx in full_idx_dict and train_occurrence[idx] < len(full_idx_dict[idx]):
-                            train_positions.append(full_idx_dict[idx][train_occurrence[idx]])
+                        if idx in full_idx_dict and train_occurrence[
+                                idx] < len(full_idx_dict[idx]):
+                            train_positions.append(
+                                full_idx_dict[idx][train_occurrence[idx]])
                             train_occurrence[idx] += 1
                         else:
                             train_positions.append(-1)  # Not found
-                    
+
                     for idx in y_val.index:
                         if idx not in val_occurrence:
                             val_occurrence[idx] = 0
-                        if idx in full_idx_dict and val_occurrence[idx] < len(full_idx_dict[idx]):
-                            val_positions.append(full_idx_dict[idx][val_occurrence[idx]])
+                        if idx in full_idx_dict and val_occurrence[idx] < len(
+                                full_idx_dict[idx]):
+                            val_positions.append(
+                                full_idx_dict[idx][val_occurrence[idx]])
                             val_occurrence[idx] += 1
                         else:
                             val_positions.append(-1)  # Not found
-                    
+
                     # Convert to numpy arrays
                     train_positions = np.array(train_positions, dtype=np.int32)
                     val_positions = np.array(val_positions, dtype=np.int32)
-                    
+
                     # Extract values using positions
                     train_mask = train_positions >= 0
                     val_mask = val_positions >= 0
-                    current_returns_train_values = np.zeros(len(train_positions), dtype=np.float32)
-                    current_returns_val_values = np.zeros(len(val_positions), dtype=np.float32)
-                    
+                    current_returns_train_values = np.zeros(
+                        len(train_positions), dtype=np.float32)
+                    current_returns_val_values = np.zeros(len(val_positions),
+                                                          dtype=np.float32)
+
                     if train_mask.any():
-                        current_returns_train_values[train_mask] = current_returns_array[train_positions[train_mask]]
+                        current_returns_train_values[
+                            train_mask] = current_returns_array[
+                                train_positions[train_mask]]
                     if val_mask.any():
-                        current_returns_val_values[val_mask] = current_returns_array[val_positions[val_mask]]
-                    
+                        current_returns_val_values[
+                            val_mask] = current_returns_array[
+                                val_positions[val_mask]]
+
                     # Convert to Series for compatibility with preprocess_target_cv
                     current_returns_train = pd.Series(
                         current_returns_train_values,
                         index=y_train.index,
                         dtype=np.float32,
-                        copy=False
-                    )
-                    current_returns_val = pd.Series(
-                        current_returns_val_values,
-                        index=y_val.index,
-                        dtype=np.float32,
-                        copy=False
-                    )
+                        copy=False)
+                    current_returns_val = pd.Series(current_returns_val_values,
+                                                    index=y_val.index,
+                                                    dtype=np.float32,
+                                                    copy=False)
 
                     # Get fold index for verbose logging (only first fold)
                     fold = kwargs.get('fold', 0)
@@ -1296,7 +1331,8 @@ def main() -> None:
             # their indices should match. Use direct indexing to avoid memory explosion.
             # For duplicate indices (multi-asset), we need to use positional indexing
             # Check if indices match (they should, since both come from feat_df)
-            if len(current_returns) == len(y_return) and current_returns.index.equals(y_return.index):
+            if len(current_returns) == len(
+                    y_return) and current_returns.index.equals(y_return.index):
                 # Indices match perfectly, use directly
                 current_returns_filtered = current_returns.fillna(0.0)
             else:
@@ -1305,34 +1341,34 @@ def main() -> None:
                 # 🚀 OPTIMIZATION: Convert to arrays first to avoid Series overhead
                 current_returns_arr = current_returns.values.astype(np.float32)
                 y_return_arr = y_return.values
-                
+
                 # If lengths match, assume positional alignment
                 if len(current_returns) == len(y_return):
                     # Use positional alignment (indices may differ but positions match)
                     current_returns_filtered = pd.Series(
                         current_returns_arr,
                         index=y_return.index,
-                        dtype=np.float32
-                    ).fillna(0.0)
+                        dtype=np.float32).fillna(0.0)
                 else:
                     # Lengths don't match - need to filter current_returns to match y_return
                     # This should be rare, but handle it by using index intersection
                     # Use a simple loop-based approach to avoid memory explosion
                     current_returns_dict = {}
-                    for idx, val in zip(current_returns.index, current_returns_arr):
+                    for idx, val in zip(current_returns.index,
+                                        current_returns_arr):
                         if idx in y_return.index:
                             current_returns_dict[idx] = val
-                    
+
                     # Create filtered series
                     current_returns_values = np.array([
-                        current_returns_dict.get(idx, 0.0) 
+                        current_returns_dict.get(idx, 0.0)
                         for idx in y_return.index
-                    ], dtype=np.float32)
+                    ],
+                                                      dtype=np.float32)
                     current_returns_filtered = pd.Series(
                         current_returns_values,
                         index=y_return.index,
-                        dtype=np.float32
-                    )
+                        dtype=np.float32)
             # 🚀 OPTIMIZATION: Convert to numpy array with index mapping for memory efficiency
             # This avoids creating multiple Series copies during CV loops
             current_returns_array = current_returns_filtered.values.astype(
@@ -1410,6 +1446,8 @@ def main() -> None:
                     f"      groups 长度: {len(groups)}, y_return 长度: {len(y_return)}, train_df 长度: {len(train_df)}, X_df 长度: {len(X_df)}"
                 )
 
+            # Use pre-trained params if provided, otherwise allow auto-tuning
+            use_auto_tune = args.auto_tune_params and not args.params_file
             q50_metrics, q50_preprocess_params = model_q50.train(
                 X_df,
                 y_return,
@@ -1418,7 +1456,7 @@ def main() -> None:
                 preprocess_fn=preprocess_fn,
                 preprocess_kwargs={},
                 groups=groups,
-                auto_tune_params=args.auto_tune_params,
+                auto_tune_params=use_auto_tune,
                 tune_trials=args.tune_trials)
 
             # Get Q50 predictions to calculate residuals for Q10/Q90 training
@@ -2004,16 +2042,16 @@ def main() -> None:
                     """Adaptive winsorize that adjusts k based on data skewness"""
                     if isinstance(data, pd.Series):
                         data = data.values
-                    
+
                     # Calculate skewness to determine if we need more aggressive clipping
                     skewness = scipy.stats.skew(data)
                     k = base_k
-                    
+
                     # Increase clipping aggressiveness for highly skewed data
                     if abs(skewness) > skew_threshold:
                         k = base_k * (1 + abs(skewness) / 2)
                         k = min(k, base_k * 2)  # Cap at 2x base_k
-                        
+
                     median = np.median(data)
                     mad = np.median(np.abs(data - median))
                     if mad == 0:
@@ -2030,7 +2068,9 @@ def main() -> None:
                 n_clipped_y = np.sum(
                     np.abs(y_return - y_return_original) > 1e-10)
                 if n_clipped_y > 0:
-                    print(f"      ✅ y_return: 已clip {n_clipped_y}个极端值（k=2.5，自适应）")
+                    print(
+                        f"      ✅ y_return: 已clip {n_clipped_y}个极端值（k=2.5，自适应）"
+                    )
 
                 # Winsorize features X (only for return-based and derived features, not raw prices)
                 # Apply winsorize to all numeric columns (features are already normalized/derived)
@@ -2042,8 +2082,8 @@ def main() -> None:
                             np.float64, np.float32, np.int64, np.int32
                     ]:
                         X_df[col] = adaptive_winsorize(
-                            X_df[col],
-                            base_k=4.0)  # Use adaptive winsorize with base k=4.0
+                            X_df[col], base_k=4.0
+                        )  # Use adaptive winsorize with base k=4.0
                         n_clipped = np.sum(
                             np.abs(X_df[col] - X_df_original[col]) > 1e-10)
                         if n_clipped > 0:
@@ -2089,7 +2129,8 @@ def main() -> None:
                         delta = 2.0 * residual_median  # Huber threshold
                         # Weight: 1.0 for normal residuals, decreasing for extreme residuals
                         sample_weights = np.where(
-                            np.abs(residuals) < delta, 1.0, delta / np.abs(residuals))
+                            np.abs(residuals) < delta, 1.0,
+                            delta / np.abs(residuals))
                     elif method == "tukey":
                         # Tukey's biweight function (more aggressive down-weighting)
                         residual_median = np.median(np.abs(residuals))
@@ -2103,50 +2144,57 @@ def main() -> None:
                         residual_std = np.std(residuals)
                         # Exponential decay: exp(-|residual| / (k * std))
                         k = 2.0  # Decay rate parameter
-                        sample_weights = np.exp(-np.abs(residuals) / (k * residual_std))
+                        sample_weights = np.exp(-np.abs(residuals) /
+                                                (k * residual_std))
                     elif method == "combined":
                         # Combined approach: Huber for moderate outliers, Tukey for extreme
                         residual_median = np.median(np.abs(residuals))
                         delta = 2.0 * residual_median
                         u = np.abs(residuals) / delta
-                        
+
                         # For |u| <= 1: Huber-like weighting
                         # For |u| > 1: Tukey's biweight
                         sample_weights = np.where(
-                            u <= 1, 
+                            u <= 1,
                             np.where(u < 0.5, 1.0, delta / np.abs(residuals)),
-                            (1 - np.minimum(u, 2)**2)**2  # Tukey for extreme values
+                            (1 - np.minimum(u, 2)**
+                             2)**2  # Tukey for extreme values
                         )
                     else:
                         raise ValueError(f"Unknown weighting method: {method}")
-                    
+
                     # Ensure no zero weights (add small epsilon)
                     sample_weights = np.maximum(sample_weights, 1e-6)
-                    
+
                     # Normalize weights to have mean=1.0
                     sample_weights = sample_weights / np.mean(sample_weights)
                     return sample_weights
 
                 # Try different weighting strategies and select the best one
-                weighting_methods = ["huber", "tukey", "exponential", "combined"]
+                weighting_methods = [
+                    "huber", "tukey", "exponential", "combined"
+                ]
                 best_weights = None
                 best_weighting_method = "huber"
-                
+
                 print(f"      尝试不同的样本权重策略...")
                 for method in weighting_methods:
                     try:
-                        weights = compute_sample_weights(residuals, method=method)
+                        weights = compute_sample_weights(residuals,
+                                                         method=method)
                         # Evaluate weights by computing weighted loss
                         weighted_loss = np.mean(weights * np.abs(residuals))
-                        print(f"        {method}: 加权平均损失 = {weighted_loss:.6f}")
-                        
+                        print(
+                            f"        {method}: 加权平均损失 = {weighted_loss:.6f}")
+
                         # Select the method that gives the lowest weighted loss
-                        if best_weights is None or weighted_loss < np.mean(best_weights * np.abs(residuals)):
+                        if best_weights is None or weighted_loss < np.mean(
+                                best_weights * np.abs(residuals)):
                             best_weights = weights
                             best_weighting_method = method
                     except Exception as e:
                         print(f"        {method}: 计算失败 ({str(e)})")
-                
+
                 sample_weights = best_weights
                 print(f"      选择最佳权重策略: {best_weighting_method}")
 
@@ -2198,7 +2246,8 @@ def main() -> None:
                     "lambda_l1": lambda_l1,
                     "lambda_l2": lambda_l2,
                     "feature_fraction": feature_fraction,
-                    "bagging_fraction": 0.8,  # Add bagging for additional robustness
+                    "bagging_fraction":
+                    0.8,  # Add bagging for additional robustness
                     "bagging_freq": 5,  # Bagging frequency
                     "min_gain_to_split": 0.01,  # Minimum gain to make a split
                     "max_depth": 8,  # Limit tree depth to prevent overfitting
@@ -2217,9 +2266,10 @@ def main() -> None:
 
                 # Step 4: Retrain Q50 model with fixed data and weights
                 print("\n   步骤4: 使用修复后的数据和权重重训Q50模型")
-                
+
                 # Enhanced training with multiple strategies
-                def enhanced_q50_training(X_df, y_return, sample_weights, q50_params_retrain, args):
+                def enhanced_q50_training(X_df, y_return, sample_weights,
+                                          q50_params_retrain, args):
                     """
                     Enhanced Q50 training with multiple strategies to improve model robustness.
                     
@@ -2234,70 +2284,85 @@ def main() -> None:
                         Trained model and metrics
                     """
                     from ml_trading.models.lightgbm_model import LightGBMModel
-                    
+
                     # Strategy 1: Original training
-                    model_q50_retrain = LightGBMModel(model_type="quantile",
-                                                      quantile_alpha=0.5,
-                                                      params=q50_params_retrain,
-                                                      use_gpu=args.gpu)
-                    
+                    model_q50_retrain = LightGBMModel(
+                        model_type="quantile",
+                        quantile_alpha=0.5,
+                        params=q50_params_retrain,
+                        use_gpu=args.gpu)
+
                     # Ensure sample_weights is numpy array
                     if not isinstance(sample_weights, np.ndarray):
                         sample_weights = np.array(sample_weights)
-                    
+
                     q50_metrics_retrain, q50_preprocess_params_retrain = model_q50_retrain.train(
                         X_df,
                         y_return,
                         n_splits=max(2, args.cv_folds or 2),
                         use_time_series_cv=True,
                         sample_weight=sample_weights)
-                    
+
                     # Strategy 2: Ensemble approach - train multiple models with different parameters
                     # This can help improve robustness by reducing variance
                     if freq in ["5T", "15T"]:
                         print(f"      🔄 训练集成模型以提高鲁棒性...")
-                        
+
                         # Create multiple models with slightly different parameters
                         ensemble_models = []
                         ensemble_metrics = []
-                        
+
                         # Base parameters
                         base_params = q50_params_retrain.copy()
-                        
+
                         # Train 3 models with different parameters
                         for i in range(3):
                             # Perturb parameters slightly
                             perturbed_params = base_params.copy()
-                            perturbed_params["seed"] = 42 + i  # Different random seed
-                            perturbed_params["feature_fraction"] = min(1.0, base_params["feature_fraction"] + (i - 1) * 0.05)
-                            perturbed_params["bagging_fraction"] = min(1.0, base_params.get("bagging_fraction", 1.0) + (i - 1) * 0.05)
-                            
+                            perturbed_params[
+                                "seed"] = 42 + i  # Different random seed
+                            perturbed_params["feature_fraction"] = min(
+                                1.0, base_params["feature_fraction"] +
+                                (i - 1) * 0.05)
+                            perturbed_params["bagging_fraction"] = min(
+                                1.0,
+                                base_params.get("bagging_fraction", 1.0) +
+                                (i - 1) * 0.05)
+
                             model = LightGBMModel(model_type="quantile",
                                                   quantile_alpha=0.5,
                                                   params=perturbed_params,
                                                   use_gpu=args.gpu)
-                            
+
                             metrics, preprocess_params = model.train(
                                 X_df,
                                 y_return,
                                 n_splits=max(2, args.cv_folds or 2),
                                 use_time_series_cv=True,
                                 sample_weight=sample_weights)
-                            
+
                             ensemble_models.append(model)
                             ensemble_metrics.append(metrics)
-                        
+
                         # Select the best model based on CV loss
-                        cv_losses = [metrics.get('cv_quantile_loss', float('inf')) for metrics in ensemble_metrics]
+                        cv_losses = [
+                            metrics.get('cv_quantile_loss', float('inf'))
+                            for metrics in ensemble_metrics
+                        ]
                         best_idx = np.argmin(cv_losses)
-                        
-                        print(f"      选择最佳集成模型 (CV loss: {cv_losses[best_idx]:.6f})")
-                        
+
+                        print(
+                            f"      选择最佳集成模型 (CV loss: {cv_losses[best_idx]:.6f})"
+                        )
+
                         # Use the best model
                         model_q50_retrain = ensemble_models[best_idx]
                         q50_metrics_retrain = ensemble_metrics[best_idx]
-                        q50_preprocess_params_retrain = ensemble_models[best_idx].preprocess_params if hasattr(ensemble_models[best_idx], 'preprocess_params') else {}
-                    
+                        q50_preprocess_params_retrain = ensemble_models[
+                            best_idx].preprocess_params if hasattr(
+                                ensemble_models[best_idx],
+                                'preprocess_params') else {}
+
                     return model_q50_retrain, q50_metrics_retrain, q50_preprocess_params_retrain
 
                 # Use enhanced training
@@ -2366,7 +2431,9 @@ def main() -> None:
                     true_median = float(np.median(y_diagnostic.values))
 
                     # Enhanced calibration: Multiple calibration strategies
-                    def enhanced_calibration(pred_q50_retrain, y_diagnostic_values, method="shift_scale"):
+                    def enhanced_calibration(pred_q50_retrain,
+                                             y_diagnostic_values,
+                                             method="shift_scale"):
                         """
                         Enhanced calibration with multiple strategies.
                         
@@ -2383,24 +2450,30 @@ def main() -> None:
                             # Original method: shift to match median, then scale
                             pred_median = np.median(pred_q50_retrain)
                             true_median = np.median(y_diagnostic_values)
-                            calibrated = (pred_q50_retrain - pred_median) * scale_factor + true_median
+                            calibrated = (pred_q50_retrain - pred_median
+                                          ) * scale_factor + true_median
                         elif method == "quantile_mapping":
                             # Quantile mapping calibration
                             # Map prediction quantiles to true quantiles
                             pred_sorted = np.sort(pred_q50_retrain)
                             true_sorted = np.sort(y_diagnostic_values)
-                            
+
                             # Create quantile mapping function
                             from scipy.interpolate import interp1d
-                            pred_quantiles = np.linspace(0, 1, len(pred_sorted))
-                            true_quantiles = np.linspace(0, 1, len(true_sorted))
-                            
+                            pred_quantiles = np.linspace(
+                                0, 1, len(pred_sorted))
+                            true_quantiles = np.linspace(
+                                0, 1, len(true_sorted))
+
                             # Interpolate to map prediction quantiles to true quantiles
-                            quantile_map = interp1d(pred_sorted, 
-                                                  np.percentile(y_diagnostic_values, 
-                                                               np.linspace(0, 100, len(pred_sorted))),
-                                                  kind='linear', 
-                                                  fill_value='extrapolate')
+                            quantile_map = interp1d(pred_sorted,
+                                                    np.percentile(
+                                                        y_diagnostic_values,
+                                                        np.linspace(
+                                                            0, 100,
+                                                            len(pred_sorted))),
+                                                    kind='linear',
+                                                    fill_value='extrapolate')
                             calibrated = quantile_map(pred_q50_retrain)
                         elif method == "isotonic":
                             # Isotonic regression calibration
@@ -2408,50 +2481,66 @@ def main() -> None:
                             iso_reg = IsotonicRegression(out_of_bounds='clip')
                             # Use a subset for fitting to avoid overfitting
                             n_fit = min(5000, len(pred_q50_retrain))
-                            idx_fit = np.random.choice(len(pred_q50_retrain), n_fit, replace=False)
-                            iso_reg.fit(pred_q50_retrain[idx_fit], y_diagnostic_values[idx_fit])
+                            idx_fit = np.random.choice(len(pred_q50_retrain),
+                                                       n_fit,
+                                                       replace=False)
+                            iso_reg.fit(pred_q50_retrain[idx_fit],
+                                        y_diagnostic_values[idx_fit])
                             calibrated = iso_reg.predict(pred_q50_retrain)
                         elif method == "combined":
                             # Combined approach: first shift_scale, then fine-tune with quantile mapping
                             # Step 1: Apply shift_scale calibration
                             pred_median = np.median(pred_q50_retrain)
                             true_median = np.median(y_diagnostic_values)
-                            intermediate = (pred_q50_retrain - pred_median) * scale_factor + true_median
-                            
+                            intermediate = (pred_q50_retrain - pred_median
+                                            ) * scale_factor + true_median
+
                             # Step 2: Apply quantile mapping to fine-tune
                             from scipy.interpolate import interp1d
                             intermediate_sorted = np.sort(intermediate)
                             true_sorted = np.sort(y_diagnostic_values)
-                            
+
                             # Create quantile mapping function
-                            quantile_map = interp1d(intermediate_sorted, 
-                                                  np.percentile(y_diagnostic_values, 
-                                                               np.linspace(0, 100, len(intermediate_sorted))),
-                                                  kind='linear', 
-                                                  fill_value='extrapolate')
+                            quantile_map = interp1d(
+                                intermediate_sorted,
+                                np.percentile(
+                                    y_diagnostic_values,
+                                    np.linspace(0, 100,
+                                                len(intermediate_sorted))),
+                                kind='linear',
+                                fill_value='extrapolate')
                             calibrated = quantile_map(intermediate)
                         else:
-                            raise ValueError(f"Unknown calibration method: {method}")
-                        
+                            raise ValueError(
+                                f"Unknown calibration method: {method}")
+
                         return calibrated
 
                     # Try different calibration strategies and select the best one
-                    calibration_methods = ["shift_scale", "quantile_mapping", "combined"]
+                    calibration_methods = [
+                        "shift_scale", "quantile_mapping", "combined"
+                    ]
                     best_calibrated = None
                     best_calibration_method = "shift_scale"
                     best_coverage = coverage
-                    
+
                     print(f"      尝试不同的校准策略...")
                     for method in calibration_methods:
                         try:
-                            calibrated = enhanced_calibration(pred_q50_retrain, y_diagnostic.values, method=method)
-                            
+                            calibrated = enhanced_calibration(
+                                pred_q50_retrain,
+                                y_diagnostic.values,
+                                method=method)
+
                             # Evaluate calibration by computing coverage after calibration
-                            calibrated_range = np.percentile(calibrated, 99) - np.percentile(calibrated, 1)
+                            calibrated_range = np.percentile(
+                                calibrated, 99) - np.percentile(calibrated, 1)
                             calibrated_coverage = calibrated_range / true_range_99 if true_range_99 > 0 else 0.0
-                            
-                            print(f"        {method}: 校准后覆盖 = {calibrated_coverage:.2%}")
-                            
+
+                            print(
+                                f"        {method}: 校准后覆盖 = {calibrated_coverage:.2%}"
+                            )
+
                             # Select the method that gives the best coverage without overfitting
                             if calibrated_coverage > best_coverage and calibrated_coverage <= 1.2:
                                 best_calibrated = calibrated
@@ -2459,7 +2548,7 @@ def main() -> None:
                                 best_coverage = calibrated_coverage
                         except Exception as e:
                             print(f"        {method}: 校准失败 ({str(e)})")
-                    
+
                     # Use the best calibration result
                     if best_calibrated is not None:
                         pred_q50_calibrated = best_calibrated
@@ -2468,7 +2557,8 @@ def main() -> None:
                         # Fall back to original shift_scale method
                         pred_median = np.median(pred_q50_retrain)
                         true_median = np.median(y_diagnostic.values)
-                        pred_q50_calibrated = (pred_q50_retrain - pred_median) * scale_factor + true_median
+                        pred_q50_calibrated = (pred_q50_retrain - pred_median
+                                               ) * scale_factor + true_median
                         print(f"      回退到原始校准策略: shift_scale")
 
                     # Recalculate coverage after calibration using 1st-99th percentile

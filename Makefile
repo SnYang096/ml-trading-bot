@@ -93,7 +93,7 @@ endif
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train rolling rolling-multi rolling-update-only vectorbot-backtest \
+	train tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report factor-analysis
 
 help:
@@ -117,11 +117,13 @@ help:
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  Core Workflow (Recommended):"
 	@echo "    make dim-compare        # Step 1: Research dimensionality reduction (find optimal features)"
+	@echo "    make tune-q50-params    # Step 1.5: Pre-train Q50 parameter search (recommended, saves time)"
 	@echo "    make train              # Step 2: Train regression model (single run, reports)"
 	@echo "    make train DIRECTION_THRESHOLD=f1_optimize  # Use F1-optimized threshold (default, recommended)"
 	@echo "    make train DIRECTION_THRESHOLD=median       # Use median threshold"
 	@echo "    make train DIRECTION_THRESHOLD=zero         # Use fixed threshold 0 (original method)"
-	@echo "    make train AUTO_TUNE=1 TUNE_TRIALS=20       # Auto-tune LGBM (Q50 constraint-aware) before training"
+	@echo "    make train PARAMS_FILE=results/params/q50_params_*.json  # Use pre-trained parameters (recommended)"
+	@echo "    make train AUTO_TUNE=1 TUNE_TRIALS=20       # Auto-tune LGBM during training (slower, not recommended)"
 	@echo "    make train SAFE_MULTI_ASSET=1               # Use safe multi-asset preprocessing (recommended for multi-asset)"
 	@echo "    make rolling            # Step 3: Rolling training to latest data (main workflow)"
 	@echo ""
@@ -272,15 +274,35 @@ factor-analysis:
 FORWARD_BARS_TRAIN ?= 1,5,15,45
 
 TRAIN_USE_TOP_FACTORS ?=
-TRAIN_FEATURE_TYPE ?= baseline
+TRAIN_FEATURE_TYPE ?= comprehensive
 TRAIN_TOPK ?=
 TRAIN_TOPK_SOURCE ?=
 DIRECTION_THRESHOLD ?= f1_optimize
 SAFE_MULTI_ASSET ?= 1
 
 # Auto-tune hyperparameters (Q50-constraint-aware) for LGBM quantile models
-AUTO_TUNE ?= 1
+AUTO_TUNE ?= 0
 TUNE_TRIALS ?= 20
+PARAMS_FILE ?=
+
+tune-q50-params:
+	@echo "🔍 Pre-training Q50 parameter search for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
+	@echo "Example: make tune-q50-params SYMBOLS=BTCUSDT,ETHUSDT START_DATE=2024-11-01 END_DATE=2025-04-30"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated)"
+	@echo "       Timeframe: $(FREQ)"
+	@echo "       Forward Bars: $(FORWARD_BARS_TRAIN)"
+	@echo "       Trials: $(TUNE_TRIALS)"
+	@mkdir -p results/params
+	$(DOCKER_RUN_NO_TTY) python3 scripts/optimization/tune_q50_params.py \
+		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
+		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOLS) \
+		--freq $(FREQ) \
+		--forward-bars $(shell echo $(FORWARD_BARS_TRAIN) | cut -d',' -f1) \
+		--n-trials $(TUNE_TRIALS) \
+		--n-splits 3 \
+		--max-files 10
 
 train:
 	@echo "🚀 Training (regression-only) via baseline-train for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
@@ -290,6 +312,9 @@ train:
 	@echo "       Direction Threshold: $(DIRECTION_THRESHOLD) (options: f1_optimize, median, zero)"
 	@if [ "$(SAFE_MULTI_ASSET)" = "1" ]; then \
 		echo "       🔒 Safe Multi-Asset: Enabled (each symbol processed independently)"; \
+	fi
+	@if [ -n "$(PARAMS_FILE)" ]; then \
+		echo "       📂 Using pre-trained parameters from: $(PARAMS_FILE)"; \
 	fi
 	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
@@ -307,6 +332,7 @@ train:
 		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
 		$(if $(filter 1,$(AUTO_TUNE)),--auto-tune-params,) \
 		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS),) \
+		$(if $(PARAMS_FILE),--params-file /workspace/$(PARAMS_FILE),) \
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \
