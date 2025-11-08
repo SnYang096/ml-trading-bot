@@ -94,7 +94,7 @@ endif
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
-		dim-compare nautilus-backtest feature-report factor-analysis
+		dim-compare nautilus-backtest feature-report factor-analysis cross-sectional-report
 
 help:
 	@echo "ML Trading Project"
@@ -131,6 +131,7 @@ help:
 	@echo "  Other commands:"
 	@echo "    make feature-report    # Generate feature IC/IR HTML report"
 	@echo "    make factor-analysis   # Factor effectiveness analysis using Alphalens (IC, quantile backtest, decay)"
+	@echo "    make cross-sectional-report  # Fama-MacBeth + Newey-West + IC/IR markdown report"
 	@echo "    make vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo ""
@@ -268,6 +269,30 @@ factor-analysis:
 		--periods $(FACTOR_ANALYSIS_PERIODS) \
 		--quantiles $(FACTOR_ANALYSIS_QUANTILES) \
 		$(if $(FACTOR_ANALYSIS_FACTOR_NAME),--factor-name $(FACTOR_ANALYSIS_FACTOR_NAME),)
+
+# ---------------------------------------------------------------------------
+# Cross-sectional Fama-MacBeth + Newey-West reporting
+# ---------------------------------------------------------------------------
+
+CS_INPUT ?= $(RESULTS_DIR)/feature_exports/*.parquet
+CS_OUTPUT ?= $(RESULTS_DIR)/cross_sectional/fama_macbeth_report.md
+CS_HORIZON ?= 12
+CS_MAX_LAG ?= 5
+CS_PERIODS_PER_YEAR ?= 252
+CS_WINSOR ?= 3.0
+
+cross-sectional-report:
+	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
+	@mkdir -p $(dir $(CS_OUTPUT))
+	PYTHONPATH=src $(PYTHON) scripts/cross_sectional/run_famacbeth_report.py \
+		--input $(CS_INPUT) \
+		--output $(CS_OUTPUT) \
+		--symbols "$(SYMBOLS)" \
+		--horizon $(CS_HORIZON) \
+		--max-lag $(CS_MAX_LAG) \
+		--periods-per-year $(CS_PERIODS_PER_YEAR) \
+		--winsor $(CS_WINSOR)
+	@echo "✅ Report generated: $(CS_OUTPUT)"
 
 FORWARD_BARS_TRAIN ?= 5,15,45,288
 
