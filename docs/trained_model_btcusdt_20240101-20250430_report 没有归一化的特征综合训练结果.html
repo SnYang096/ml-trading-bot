@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Training Report: BTCUSDT</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 24px;
+            color: #222;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #34495e;
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+            margin-top: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        .metric-fail {
+            color: #c0392b;
+            font-weight: 600;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .info-box {
+            background-color: #ecf0f1;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .file-list {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        .explanation {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Training Report: BTCUSDT</h1>
+        
+        <div class="info-box">
+            <h3>Training Information</h3>
+            <table>
+                <tr><th>Symbol</th><td>BTCUSDT</td></tr>
+                <tr><th>Training Date</th><td>2025-11-08T08:44:02.169212</td></tr>
+                <tr><th>Feature Set</th><td>enhanced</td></tr>
+                <tr><th>Quality</th><td><span class="quality-badge quality-good">⭐ 优秀</span></td></tr>
+                <tr><th>Data Period</th><td>2024-01-01 to 2025-04-30</td></tr>
+                <tr><th>Training Period</th><td>2024-01-01 to 2025-01-29</td></tr>
+                <tr><th>OOS Test Period</th><td>2025-01-30 to 2025-04-30 (3 months)</td></tr>
+                <tr><th>Total Bars</th><td>139,679</td></tr>
+                <tr><th>Training Bars</th><td>113,758</td></tr>
+                <tr><th>OOS Test Bars</th><td>25,921</td></tr>
+                <tr><th>Price Range</th><td>$38,587.90 - $109,024.40</td></tr>
+            </table>
+        </div>
+        
+        <div class="explanation">
+            <h3>📦 Model Files Explanation</h3>
+            <ul>
+                <li><strong>Model File (.pkl)</strong>: Contains the trained LightGBM model, strategy, data loader, and feature engineer.</li>
+                <li><strong>Scalers File (_scalers.pkl)</strong>: Contains the StandardScaler objects for each timeframe used to normalize features during training. 
+                    These are <strong>required</strong> for making predictions - new data must be scaled using the same scalers before feeding to the model.</li>
+                <li><strong>Info File (_info.json)</strong>: Contains metadata about the training run, including metrics and data sources.</li>
+            </ul>
+            <p><strong>Why two model files?</strong> The scalers (feature normalizers) are separate because:</p>
+            <ul>
+                <li>They contain the mean/std statistics calculated from training data</li>
+                <li>They must be applied to new data before prediction</li>
+                <li>Keeping them separate makes it easier to version and update scalers independently</li>
+            </ul>
+        </div>
+        
+        <h2>📁 Data Files</h2>
+        <div class="file-list">
+            <ul>
+                <li>data/parquet_data/BTC-USD_2024-01.parquet</li><li>data/parquet_data/BTC-USD_2024-02.parquet</li><li>data/parquet_data/BTC-USD_2024-03.parquet</li><li>data/parquet_data/BTC-USD_2024-04.parquet</li><li>data/parquet_data/BTC-USD_2024-05.parquet</li><li>data/parquet_data/BTC-USD_2024-06.parquet</li><li>data/parquet_data/BTC-USD_2024-07.parquet</li><li>data/parquet_data/BTC-USD_2024-08.parquet</li><li>data/parquet_data/BTC-USD_2024-09.parquet</li><li>data/parquet_data/BTC-USD_2024-10.parquet</li><li>data/parquet_data/BTC-USD_2024-11.parquet</li><li>data/parquet_data/BTC-USD_2024-12.parquet</li><li>data/parquet_data/BTC-USD_2025-01.parquet</li><li>data/parquet_data/BTC-USD_2025-02.parquet</li><li>data/parquet_data/BTC-USD_2025-03.parquet</li><li>data/parquet_data/BTC-USD_2025-04.parquet</li>
+            </ul>
+        </div>
+        
+        <h2>Multi-Timeframe Metrics</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Bars</th>
+                <th>Stage1: CV Accuracy</th>
+                <th>Stage1: Std Dev</th>
+                <th>Stage2: CV RMSE</th><th>Stage2: CV MSE</th>
+            </tr>
+            
+        <tr>
+            <td>5T</td>
+            <td>113,758</td>
+            <td>0.5827</td>
+            <td>0.0161</td>
+            <td>0.002967</td>
+            <td>0.00000915</td>
+        </tr>
+        <tr>
+            <td>15T</td>
+            <td>37,920</td>
+            <td>0.5809</td>
+            <td>0.0065</td>
+            <td>0.005305</td>
+            <td>0.00002905</td>
+        </tr>
+        <tr>
+            <td>45T</td>
+            <td>12,640</td>
+            <td>0.5783</td>
+            <td>0.0187</td>
+            <td>0.009382</td>
+            <td>0.00009006</td>
+        </tr>
+        <tr>
+            <td>60T</td>
+            <td>9,480</td>
+            <td>0.6010</td>
+            <td>0.0195</td>
+            <td>0.010851</td>
+            <td>0.00012017</td>
+        </tr>
+        <tr>
+            <td>240T</td>
+            <td>2,370</td>
+            <td>0.5959</td>
+            <td>0.0416</td>
+            <td>0.022217</td>
+            <td>0.00050316</td>
+        </tr>
+        </table>
+        
+        <div class="explanation">
+            <h3>Metrics Explanation</h3>
+            <ul>
+                <li><strong>Stage1 (CV Accuracy)</strong>: Cross-validation accuracy for direction prediction (classification task). 
+                    Higher is better. Range: 0-1 (0.5 = random, 1.0 = perfect).</li>
+                <li><strong>Stage1 (Std Dev)</strong>: Standard deviation of accuracy across CV folds. Lower means more stable.</li>
+                
+                <li><strong>Stage2 (CV RMSE)</strong>: Cross-validation Root Mean Squared Error for price prediction (regression task). 
+                    Lower is better. Units: price difference (e.g., for BTC, RMSE of 0.001 ~ $0.001 price error).</li>
+                <li><strong>Stage2 (CV MSE)</strong>: Cross-validation Mean Squared Error. Lower is better. MSE = RMSE^2.</li>
+                
+            </ul>
+        </div>
+        
+        
+        <h2>📊 指标说明与好坏判断</h2>
+        <div class="summary">
+            <p><strong>质量评级：</strong> ⭐ 优秀</p>
+            <p><strong>CV 指标：</strong> ✅ 达标</p>
+            <p><strong>OOS 指标：</strong> ✅ 达标</p>
+            <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:12px;">
+                <div style="flex:1 1 240px;">
+                    <strong>亮点</strong>
+                    <ul><li>CV 指标达标 (F1≥0.3 或 AUC≥0.6)。</li><li>CV 指标达到 ⭐ 优秀阈值 (F1≥0.5, AUC≥0.7, PR-AUC≥0.6)。</li><li>OOS Accuracy ≥ 50%。</li><li>OOS AUC ≥ 0.5。</li><li>OOS F1 ≥ 0.5。</li><li>OOS IC (Spearman) ≥ 0.05。</li><li>CV/OOS 指标均达到 ⭐ 优秀阈值。</li></ul>
+                </div>
+                <div style="flex:1 1 240px;">
+                    <strong>风险/待改进</strong>
+                    <ul><li>暂无风险</li></ul>
+                </div>
+            </div>
+        </div>
+        <h3>CV 指标概览</h3>
+        <table>
+            <tr><th>指标</th><th>数值</th><th>阈值/目标</th></tr>
+            <tr><td>CV F1</td><td>57.85%</td><td>≥0.30 可用 / ≥0.50 ⭐</td></tr><tr><td>CV AUC</td><td>76.88%</td><td>≥0.60 可用 / ≥0.70 ⭐</td></tr><tr><td>CV PR-AUC</td><td>62.87%</td><td>≥0.40 可用 / ≥0.60 ⭐</td></tr><tr><td>CV Accuracy</td><td>60.10%</td><td>参考：≥0.50</td></tr><tr><td>CV Precision</td><td>58.15%</td><td>参考：≥0.50</td></tr><tr><td>CV Recall</td><td>57.91%</td><td>参考：≥0.50</td></tr><tr><td>CV RMSE</td><td>0.022217</td><td>越低越好</td></tr><tr><td>CV MSE</td><td>0.000503</td><td>越低越好</td></tr>
+        </table>
+        <h3>OOS 指标概览</h3>
+        <table>
+            <tr><th>指标</th><th>数值</th><th>阈值/目标</th></tr>
+            <tr><td>OOS Accuracy</td><td>61.00%</td><td>≥0.50</td></tr><tr><td>OOS F1</td><td>61.07%</td><td>≥0.50</td></tr><tr><td>OOS AUC</td><td>79.48%</td><td>≥0.50 (≥0.70 ⭐ 推荐)</td></tr><tr><td>OOS PR-AUC</td><td>66.29%</td><td>≥0.40 (≥0.60 ⭐ 推荐)</td></tr><tr><td>OOS Precision</td><td>61.31%</td><td>参考：≥0.50</td></tr><tr><td>OOS Recall</td><td>61.11%</td><td>参考：≥0.50</td></tr><tr><td>OOS IC (Spearman)</td><td>0.6030</td><td>≥0.05</td></tr><tr><td>OOS IC (Pearson)</td><td>0.6363</td><td>参考</td></tr>
+        </table>
+        
+        <div class="explanation">
+            <h3>📋 指标说明</h3>
+            <ul>
+                <li><strong>CV RMSE (交叉验证均方根误差)</strong>：收益回归模型的预测误差，越低越好。<br/>✅ 优秀：RMSE 较小，说明预测精度高。<br/>⚠️ 注意：如果 RMSE 过大，说明模型预测不准确。</li>
+                <li><strong>CV MSE (交叉验证均方误差)</strong>：收益回归模型的预测误差平方，越低越好。</li>
+                <li><strong>F1 (F1 Score)</strong>：分类模型的方向性预测 F1 分数，综合精确率和召回率。<br/>阈值：F1 &gt; 0.3 为良好，F1 &gt; 0.5 为优秀。<br/>⚠️ F1 = 0 或 None：模型完全无预测能力，自动标记为不可用。<br/>反映模型对方向（涨/跌）的预测能力。</li>
+                <li><strong>Acc (Accuracy)</strong>：分类模型的方向性预测准确率，反映模型预测方向的正确率。Acc &gt; 0.5 表示模型具备预测能力。</li>
+                <li><strong>Prec / Rec</strong>：Precision 表示预测为“涨”时的正确率，Recall 表示捕获所有“涨”的能力。</li>
+                <li><strong>AUC (ROC AUC)</strong>：方向性预测 ROC 曲线下面积。<br/>阈值：AUC &gt; 0.6 为良好，AUC &gt; 0.7 为优秀。<br/>⚠️ 注意：仅 AUC 优秀不足以判定模型质量，需要结合其他指标。</li>
+                <li><strong>PR-AUC (Precision-Recall AUC)</strong>：不平衡数据集上更敏感的指标。<br/>阈值：PR-AUC &gt; 0.4 为良好，PR-AUC &gt; 0.6 为优秀。<br/>⚠️ 注意：仅 PR-AUC 优秀不足以判断模型质量。</li>
+                <li><strong>Quality (模型质量)</strong>：综合评估 CV 指标 + OOS 指标 + 模型可用性。<br/>✅ 可用：CV 方向指标达标且 OOS 指标达标 (Accuracy≥50%、AUC≥50%、F1≥0.5、IC≥0.05)。<br/>⭐ 优秀：F1≥0.5 且 AUC≥0.7 且 PR-AUC≥0.6 均达标。<br/>❌ 不可用：CV 指标不达标或 OOS 指标不达标。<br/>⚠️ 重要：F1=0 表示模型无预测能力；OOS 指标不达标也需标记为不可用。</li>
+                <li><strong>评估建议</strong>：综合 CV 和 OOS 的 F1、AUC、PR-AUC、IC 等指标，所有指标达到优秀水平时模型质量才算过关。单一指标优秀不足以判断模型质量，OOS 指标更重要。</li>
+            </ul>
+        </div>
+    
+        
+        <div class="explanation">
+            <h3>🧠 模型架构</h3>
+            <p>使用 3 个模型（Classification, Return Regression, Volatility）的组合架构：</p>
+            <ul>
+                <li><strong>Classification 模型</strong>：预测未来涨跌方向的概率（0-1），用于判断方向。</li>
+                <li><strong>Return Regression 模型</strong>：预测未来收益率幅度，用于估计潜在收益。</li>
+                <li><strong>Volatility 模型</strong>：预测未来波动率，用于风险调整与仓位管理。</li>
+            </ul>
+        </div>
+        <div class="explanation">
+            <h3>🧭 决策逻辑</h3>
+            <p><code>signal_strength = p_up * expected_return / expected_volatility</code></p>
+            <ul>
+                <li><strong>p_up</strong>：分类模型预测的上涨概率。</li>
+                <li><strong>expected_return</strong>：收益回归模型预测的期望收益。</li>
+                <li><strong>expected_volatility</strong>：波动率模型预测的期望波动率。</li>
+            </ul>
+            <p>signal_strength 用于仓位分配与交易决策。</p>
+        </div>
+    
+        
+        <div class="explanation">
+            <h3>💡 使用说明</h3>
+            <ul>
+                <li><strong>分类模型评估</strong>：关注 Accuracy、F1、AUC、PR-AUC，F1≥0.5 且 AUC≥0.7 且 PR-AUC≥0.6 时认为过关。</li>
+                <li><strong>收益回归模型评估</strong>：关注 RMSE、MSE、R² 等指标，越低越好。</li>
+                <li><strong>波动率模型评估</strong>：关注 RMSE、MSE，波动率预测准确有助于风险管理。</li>
+                <li><strong>综合评估</strong>：优先关注 OOS 指标，因其反映真实场景表现。</li>
+                <li><strong>信号生成</strong>：根据 signal_strength 做仓位分配、交易决策、风险管理。</li>
+            </ul>
+        </div>
+    
+        
+        <div class="explanation">
+            <h3>💡 特征类型比较</h3>
+            <ul>
+                <li><strong>baseline</strong>：基础特征，数量少、计算快，适合快速验证。</li>
+                <li><strong>default</strong>：默认特征（TA-Lib + base_indicators），推荐用于生产。</li>
+                <li><strong>enhanced</strong>：增强特征，包含更多高级特征但计算较慢。</li>
+                <li><strong>comprehensive</strong>：综合特征，最丰富但可能过拟合。</li>
+            </ul>
+            <p>建议比较不同特征类型时重点关注分类 F1、AUC、PR-AUC，以及收益回归的 RMSE、R² 与 OOS 表现。</p>
+        </div>
+    
+    
+        
+        <h2>Stage1: Classification Metrics (Per Fold)</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Fold</th>
+                <th>Accuracy</th>
+            </tr>
+            
+            <tr>
+                <td>5T</td>
+                <td>1</td>
+                <td>0.5522</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>2</td>
+                <td>0.5975</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>3</td>
+                <td>0.5826</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>4</td>
+                <td>0.5875</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>5</td>
+                <td>0.5936</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>1</td>
+                <td>0.5782</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>2</td>
+                <td>0.5715</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>3</td>
+                <td>0.5802</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>4</td>
+                <td>0.5828</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>5</td>
+                <td>0.5916</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>1</td>
+                <td>0.5802</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>2</td>
+                <td>0.5589</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>3</td>
+                <td>0.6073</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>4</td>
+                <td>0.5575</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>5</td>
+                <td>0.5878</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>1</td>
+                <td>0.6000</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>2</td>
+                <td>0.5747</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>3</td>
+                <td>0.6354</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>4</td>
+                <td>0.5975</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>5</td>
+                <td>0.5975</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>1</td>
+                <td>0.5468</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>2</td>
+                <td>0.6532</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>3</td>
+                <td>0.6101</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>4</td>
+                <td>0.6203</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>5</td>
+                <td>0.5494</td>
+            </tr>
+        </table>
+        
+        
+        <h2>Stage2: Regression Metrics (Per Fold)</h2>
+        <table>
+            <tr>
+                <th>Timeframe</th>
+                <th>Fold</th>
+                <th>RMSE</th>
+                <th>MSE</th>
+            </tr>
+            
+            <tr>
+                <td>5T</td>
+                <td>1</td>
+                <td>0.003944</td>
+                <td>0.00001556</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>2</td>
+                <td>0.002190</td>
+                <td>0.00000479</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>3</td>
+                <td>0.003080</td>
+                <td>0.00000948</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>4</td>
+                <td>0.002579</td>
+                <td>0.00000665</td>
+            </tr>
+            <tr>
+                <td>5T</td>
+                <td>5</td>
+                <td>0.003044</td>
+                <td>0.00000926</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>1</td>
+                <td>0.006778</td>
+                <td>0.00004594</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>2</td>
+                <td>0.003972</td>
+                <td>0.00001577</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>3</td>
+                <td>0.005645</td>
+                <td>0.00003186</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>4</td>
+                <td>0.004628</td>
+                <td>0.00002142</td>
+            </tr>
+            <tr>
+                <td>15T</td>
+                <td>5</td>
+                <td>0.005501</td>
+                <td>0.00003026</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>1</td>
+                <td>0.011526</td>
+                <td>0.00013286</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>2</td>
+                <td>0.007273</td>
+                <td>0.00005289</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>3</td>
+                <td>0.009770</td>
+                <td>0.00009546</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>4</td>
+                <td>0.008484</td>
+                <td>0.00007198</td>
+            </tr>
+            <tr>
+                <td>45T</td>
+                <td>5</td>
+                <td>0.009854</td>
+                <td>0.00009711</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>1</td>
+                <td>0.013180</td>
+                <td>0.00017372</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>2</td>
+                <td>0.008773</td>
+                <td>0.00007697</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>3</td>
+                <td>0.011344</td>
+                <td>0.00012868</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>4</td>
+                <td>0.009515</td>
+                <td>0.00009054</td>
+            </tr>
+            <tr>
+                <td>60T</td>
+                <td>5</td>
+                <td>0.011443</td>
+                <td>0.00013094</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>1</td>
+                <td>0.026783</td>
+                <td>0.00071733</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>2</td>
+                <td>0.018215</td>
+                <td>0.00033178</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>3</td>
+                <td>0.024479</td>
+                <td>0.00059923</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>4</td>
+                <td>0.019859</td>
+                <td>0.00039438</td>
+            </tr>
+            <tr>
+                <td>240T</td>
+                <td>5</td>
+                <td>0.021751</td>
+                <td>0.00047309</td>
+            </tr>
+        </table>
+        
+        
+        
+        <h2>Out-of-Sample (OOS) Test Results</h2>
+        <div class="explanation">
+            <h3>OOS Testing Explanation</h3>
+            <p>The last 3 months of data were reserved for out-of-sample testing. 
+            This provides an unbiased evaluation of model performance on unseen data, 
+            simulating real-world deployment scenarios.</p>
+        </div>
+        <table>
+            <tr>
+                <th>Stage</th>
+                <th>Metric</th>
+                <th>Value</th>
+                <th>Samples</th>
+            </tr>
+            
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>Accuracy</td>
+                <td>0.6100</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>Precision</td>
+                <td>0.6131</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>Recall</td>
+                <td>0.6111</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>F1</td>
+                <td>0.6107</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>AUC</td>
+                <td>0.7948</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Stage1 (Classification)</td>
+                <td>PR-AUC</td>
+                <td>0.6629</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Signal Quality</td>
+                <td>IC (Spearman)</td>
+                <td>0.6030</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Signal Quality</td>
+                <td>IC (Pearson)</td>
+                <td>0.6363</td>
+                <td>25,921</td>
+            </tr>
+            <tr>
+                <td>Stage2 (Regression)</td>
+                <td>RMSE</td>
+                <td>0.002901</td>
+                <td>25,916</td>
+            </tr>
+            <tr>
+                <td>Stage2 (Regression)</td>
+                <td>MSE</td>
+                <td>0.00000841</td>
+                <td>25,916</td>
+            </tr>
+        </table>
+        
+        
+        <h2>Model Artifacts</h2>
+        <table>
+            <tr><th>Model Path</th><td>models/trained_model_btcusdt_20240101-20250430.pkl</td></tr>
+            <tr><th>Scalers Path</th><td>models/trained_model_btcusdt_20240101-20250430_scalers.pkl</td></tr>
+        </table>
+        
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #7f8c8d;">
+            <p>Generated by ML Trading Bot Training System</p>
+        </div>
+    </div>
+</body>
+</html>

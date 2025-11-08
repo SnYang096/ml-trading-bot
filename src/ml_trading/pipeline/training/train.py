@@ -1211,9 +1211,9 @@ def main() -> None:
                                             index=feat_df.index)
 
             # 🔒 CRITICAL: Winsorize current_returns to prevent extreme AR(1) predictions
-            # Clip to reasonable range (e.g., ±0.5 log return = ±65% price change)
+            # Clip to reasonable range (e.g., ±0.8 log return ≈ ±123% price change)
             # This prevents numerical issues in AR(1) residual transformation
-            max_log_return = 0.5
+            max_log_return = 0.8
             current_returns = current_returns.clip(-max_log_return,
                                                    max_log_return)
 
@@ -1227,6 +1227,11 @@ def main() -> None:
                 cr_min = current_returns_valid.min()
                 cr_max = current_returns_valid.max()
                 cr_abs_max = current_returns_valid.abs().max()
+                clip_hits = np.isclose(
+                    current_returns_valid, max_log_return) | np.isclose(
+                        current_returns_valid, -max_log_return)
+                clip_ratio = (clip_hits.sum() / len(current_returns_valid)
+                              ) if len(current_returns_valid) > 0 else 0.0
                 cr_p1 = current_returns_valid.quantile(0.01)
                 cr_p99 = current_returns_valid.quantile(0.99)
 
@@ -1238,6 +1243,10 @@ def main() -> None:
                 print(
                     f"      绝对值最大值: {cr_abs_max:.6f} ({cr_abs_max*100:.2f}%)")
                 print(f"      1%分位数: {cr_p1:.6f}, 99%分位数: {cr_p99:.6f}")
+                if clip_ratio > 0:
+                    print(
+                        f"      ⚠️ clip比例: {clip_ratio:.2%} (命中 ±{max_log_return})"
+                    )
 
                 # Check for extreme values (>30% log return = >35% price change)
                 # Note: After clipping to ±0.5, values > 0.3 are expected to be rare

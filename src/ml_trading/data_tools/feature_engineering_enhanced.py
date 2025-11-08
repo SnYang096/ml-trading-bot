@@ -9,7 +9,7 @@
 import pandas as pd
 import numpy as np
 import pywt
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, List
 from scipy import signal
 from scipy.signal import hilbert
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
@@ -31,6 +31,9 @@ class EnhancedFeatureEngineer:
         wavelet: str = "db4",
         wpt_level: int = 3,
         hurst_window: int = 100,
+        feature_shift: int = 0,
+        feature_clip_bound: float = 10.0,
+        enable_diagnostics: bool = False,
     ):
         """
         Initialize enhanced feature engineer.
@@ -46,6 +49,10 @@ class EnhancedFeatureEngineer:
         self.wavelet = wavelet
         self.wpt_level = wpt_level
         self.hurst_window = hurst_window
+        self.feature_shift = feature_shift
+        self.feature_clip_bound = float(feature_clip_bound)
+        self.enable_diagnostics = enable_diagnostics
+        self.diagnostic_report: Dict[str, Dict[str, Dict[str, float]]] = {}
 
         if scaler_type == "standard":
             self.scaler_class = StandardScaler
@@ -55,6 +62,98 @@ class EnhancedFeatureEngineer:
             self.scaler_class = RobustScaler
         else:
             raise ValueError(f"Unknown scaler type: {scaler_type}")
+
+        if self.feature_clip_bound <= 0:
+            raise ValueError("feature_clip_bound must be positive")
+
+    def _shift_feature(self,
+                       series: pd.Series,
+                       *,
+                       offset: int = 0) -> pd.Series:
+        """Apply configurable lag to feature series."""
+        total_shift = self.feature_shift + offset
+        if total_shift == 0:
+            return series
+        return series.shift(total_shift)
+
+    def _run_diagnostics(self, timeframe: str, df: pd.DataFrame,
+                         feature_cols: List[str]) -> None:
+        """Collect diagnostics for clipping/zero saturation per timeframe."""
+        report: Dict[str, Dict[str, float]] = {}
+        tol_zero = 1e-9
+        tol_clip = 1e-3
+        clip_bound = float(self.feature_clip_bound)
+        near_clip = 0.9 * clip_bound
+        clip_markers = {
+            "at_pos_bound_ratio": clip_bound,
+            "at_neg_bound_ratio": -clip_bound,
+            "at_pos1_ratio": 1.0,
+            "at_neg1_ratio": -1.0,
+        }
+
+        flagged_clip: List[Tuple[str, float, float]] = []
+        flagged_zero: List[Tuple[str, float]] = []
+
+        for col in feature_cols:
+            series = df[col].replace([np.inf, -np.inf], np.nan)
+            if series.empty:
+                continue
+
+            metrics: Dict[str, float] = {}
+            metrics["nan_ratio"] = float(series.isna().mean())
+
+            valid = series.dropna()
+            if valid.empty:
+                report[col] = metrics
+                continue
+
+            metrics["zero_ratio"] = float(
+                np.isclose(valid, 0.0, atol=tol_zero).mean())
+            metrics["abs_ge_90pct_ratio"] = float((valid.abs()
+                                                   >= near_clip).mean())
+            metrics["abs_ge_99pct_ratio"] = float(
+                (valid.abs() >= 0.99 * clip_bound).mean())
+            metrics["mean"] = float(valid.mean())
+            metrics["std"] = float(valid.std())
+
+            for key, marker in clip_markers.items():
+                metrics[key] = float(
+                    np.isclose(valid, marker, atol=tol_clip).mean())
+
+            report[col] = metrics
+
+            if metrics["abs_ge_90pct_ratio"] > 0.05 or metrics[
+                    "abs_ge_99pct_ratio"] > 0.01:
+                flagged_clip.append((col, metrics["abs_ge_90pct_ratio"],
+                                     metrics["abs_ge_99pct_ratio"]))
+            if metrics["zero_ratio"] > 0.5:
+                flagged_zero.append((col, metrics["zero_ratio"]))
+
+        self.diagnostic_report[timeframe] = report
+
+        messages: List[str] = []
+        if flagged_clip:
+            top_clip = sorted(flagged_clip, key=lambda x: x[1],
+                              reverse=True)[:5]
+            clip_msg = (f"   Possible clipping (abs>={near_clip:.2f}) "
+                        "detected:")
+            details = ", ".join(
+                f"{col}: {ratio:.1%} (abs>={0.99*clip_bound:.2f} {ratio99:.1%})"
+                for col, ratio, ratio99 in top_clip)
+            messages.append(f"{clip_msg} {details}")
+
+        if flagged_zero:
+            top_zero = sorted(flagged_zero, key=lambda x: x[1],
+                              reverse=True)[:5]
+            zero_msg = "   High zero saturation detected:"
+            zero_details = ", ".join(f"{col}: {ratio:.1%}"
+                                     for col, ratio in top_zero)
+            messages.append(f"{zero_msg} {zero_details}")
+
+        if messages:
+            print(f"⚠️  EnhancedFeatureEngineer diagnostics ({timeframe}):")
+            for msg in messages:
+                print(msg)
 
     def calculate_hurst_exponent(self,
                                  ts: np.ndarray,
@@ -576,9 +675,11 @@ class EnhancedFeatureEngineer:
                                              < (2.0 * df["atr"])).astype(int)
 
             # 8. Price range symmetry
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            df["price_range_symmetry"] = (df["high"].shift(1) - df["close"].shift(1)) / (
-                (df["close"].shift(1) - df["low"].shift(1)).replace(0, np.nan))
+            # Use configurable shift to avoid using current close (data leakage)
+            df["price_range_symmetry"] = (self._shift_feature(
+                df["high"]) - self._shift_feature(df["close"])) / (
+                    (self._shift_feature(df["close"]) -
+                     self._shift_feature(df["low"])).replace(0, np.nan))
             df["price_range_symmetry"] = (df["price_range_symmetry"].replace(
                 [np.inf, -np.inf], np.nan).fillna(1))
 
@@ -588,8 +689,10 @@ class EnhancedFeatureEngineer:
                 df["volume"].ewm(span=20, min_periods=10).mean())
 
             # 10. Up/Down volume ratio
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            up = (df["close"].shift(1) > df["close"].shift(2)).astype(int)
+            # Use configurable shift to avoid using current close (data leakage)
+            close_ref = self._shift_feature(df["close"])
+            up = (close_ref > self._shift_feature(df["close"],
+                                                  offset=1)).astype(int)
             df["up_vol"] = (df["volume"] * up).rolling(20).sum()
             df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
             df["upvol_downvol_ratio"] = df["up_vol"] / df["down_vol"].replace(
@@ -598,21 +701,27 @@ class EnhancedFeatureEngineer:
                 [np.inf, -np.inf], np.nan).fillna(1))
 
             # 11. ROC and acceleration
-            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's ROC
-            df["roc_5"] = df["close"].pct_change(5).shift(1)
-            roc_3 = df["close"].pct_change(3).shift(1)
-            df["acceleration_3"] = roc_3 - roc_3.shift(1)
+            # Note: pct_change() already uses past data, configurable shift ensures alignment
+            roc_5_raw = df["close"].pct_change(5)
+            df["roc_5"] = self._shift_feature(roc_5_raw)
+            roc_3 = df["close"].pct_change(3)
+            roc_3_shifted = self._shift_feature(roc_3)
+            df["acceleration_3"] = roc_3_shifted - self._shift_feature(
+                roc_3, offset=1)
 
             # 12. Price vs EMA distance
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             df["price_vs_ema_distance"] = (
-                (df["close"].shift(1) - df["sma_20"].shift(1)) / df["atr"].shift(1).replace(0, np.nan))
+                (self._shift_feature(df["close"]) -
+                 self._shift_feature(df["sma_20"])) /
+                self._shift_feature(df["atr"]).replace(0, np.nan))
             df["price_vs_ema_distance"] = (df["price_vs_ema_distance"].replace(
                 [np.inf, -np.inf], np.nan).fillna(0))
 
             # 13. Momentum persistence
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            sig = np.sign(df["close"].diff().shift(1))
+            # Use configurable shift to avoid using current close (data leakage)
+            sig = np.sign(df["close"].diff())
+            sig = self._shift_feature(sig)
             df["momentum_persistence"] = sig.rolling(10).apply(
                 lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
 
@@ -653,11 +762,14 @@ class EnhancedFeatureEngineer:
                 df["day_of_week_cos"] = 1
 
             # 16. Structure tension
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            dist_high = (df["high"].shift(1).rolling(50).max() -
-                         df["close"].shift(1)).abs() / df["close"].shift(1).replace(0, np.nan)
-            dist_low = (df["close"].shift(1) -
-                        df["low"].shift(1).rolling(50).min()).abs() / df["close"].shift(1).replace(0, np.nan)
+            # Use configurable shift to avoid using current close (data leakage)
+            dist_high = (
+                self._shift_feature(df["high"]).rolling(50).max() -
+                self._shift_feature(df["close"])).abs() / self._shift_feature(
+                    df["close"]).replace(0, np.nan)
+            dist_low = (self._shift_feature(df["close"]) - self._shift_feature(
+                df["low"]).rolling(50).min()).abs() / self._shift_feature(
+                    df["close"]).replace(0, np.nan)
             df["structure_tension"] = (
                 dist_high + dist_low) / df["bb_width"].replace(0, np.nan)
             df["structure_tension"] = (df["structure_tension"].replace(
@@ -716,7 +828,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_short"] = ((ofi_short_raw - ofi_short_mean) /
                                    ofi_short_std.replace(0, np.nan)).replace(
                                        [np.inf, -np.inf],
-                                       np.nan).fillna(0).clip(-5, 5)
+                                       np.nan).fillna(0).clip(
+                                           -self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
                 ofi_medium_mean = ofi_medium_raw.rolling(
                     100, min_periods=20).mean()
@@ -725,7 +839,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_medium"] = ((ofi_medium_raw - ofi_medium_mean) /
                                     ofi_medium_std.replace(0, np.nan)).replace(
                                         [np.inf, -np.inf],
-                                        np.nan).fillna(0).clip(-5, 5)
+                                        np.nan).fillna(0).clip(
+                                            -self.feature_clip_bound,
+                                            self.feature_clip_bound)
 
                 ofi_long_mean = ofi_long_raw.rolling(100,
                                                      min_periods=20).mean()
@@ -733,7 +849,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_long"] = ((ofi_long_raw - ofi_long_mean) /
                                   ofi_long_std.replace(0, np.nan)).replace(
                                       [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
+                                      np.nan).fillna(0).clip(
+                                          -self.feature_clip_bound,
+                                          self.feature_clip_bound)
 
                 # 向后兼容：保留cumulative_ofi，并进行Z-score标准化
                 cumulative_ofi_raw = df["order_flow_imbalance"].cumsum()
@@ -744,7 +862,9 @@ class EnhancedFeatureEngineer:
                 df["cumulative_ofi"] = (
                     (cumulative_ofi_raw - cumulative_ofi_mean) /
                     cumulative_ofi_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # Order flow momentum (OFI变化率)，已经是[-1,1]范围内，但进一步标准化
                 ofi_momentum_5_raw = df["order_flow_imbalance"].rolling(
@@ -760,7 +880,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_momentum_5"] = (
                     (ofi_momentum_5_raw - ofi_momentum_5_mean) /
                     ofi_momentum_5_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 ofi_momentum_20_mean = ofi_momentum_20_raw.rolling(
                     50, min_periods=20).mean()
@@ -769,7 +891,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_momentum_20"] = (
                     (ofi_momentum_20_raw - ofi_momentum_20_mean) /
                     ofi_momentum_20_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # Order flow volatility，Z-score标准化
                 ofi_volatility_raw = df["order_flow_imbalance"].rolling(
@@ -781,7 +905,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_volatility"] = (
                     (ofi_volatility_raw - ofi_volatility_mean) /
                     ofi_volatility_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
             else:
                 # 从taker_buy_ratio推导
                 df["order_flow_imbalance"] = (df["taker_buy_ratio"] -
@@ -803,7 +929,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_short"] = ((ofi_short_raw - ofi_short_mean) /
                                    ofi_short_std.replace(0, np.nan)).replace(
                                        [np.inf, -np.inf],
-                                       np.nan).fillna(0).clip(-5, 5)
+                                       np.nan).fillna(0).clip(
+                                           -self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
                 ofi_medium_mean = ofi_medium_raw.rolling(
                     100, min_periods=20).mean()
@@ -812,7 +940,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_medium"] = ((ofi_medium_raw - ofi_medium_mean) /
                                     ofi_medium_std.replace(0, np.nan)).replace(
                                         [np.inf, -np.inf],
-                                        np.nan).fillna(0).clip(-5, 5)
+                                        np.nan).fillna(0).clip(
+                                            -self.feature_clip_bound,
+                                            self.feature_clip_bound)
 
                 ofi_long_mean = ofi_long_raw.rolling(100,
                                                      min_periods=20).mean()
@@ -820,7 +950,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_long"] = ((ofi_long_raw - ofi_long_mean) /
                                   ofi_long_std.replace(0, np.nan)).replace(
                                       [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
+                                      np.nan).fillna(0).clip(
+                                          -self.feature_clip_bound,
+                                          self.feature_clip_bound)
 
                 # 向后兼容，并进行Z-score标准化
                 cumulative_ofi_raw = df["order_flow_imbalance"].cumsum()
@@ -831,7 +963,9 @@ class EnhancedFeatureEngineer:
                 df["cumulative_ofi"] = (
                     (cumulative_ofi_raw - cumulative_ofi_mean) /
                     cumulative_ofi_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # Z-score标准化
                 ofi_momentum_5_raw = df["order_flow_imbalance"].rolling(
@@ -846,7 +980,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_momentum_5"] = (
                     (ofi_momentum_5_raw - ofi_momentum_5_mean) /
                     ofi_momentum_5_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 ofi_momentum_20_mean = ofi_momentum_20_raw.rolling(
                     50, min_periods=20).mean()
@@ -855,7 +991,9 @@ class EnhancedFeatureEngineer:
                 df["ofi_momentum_20"] = (
                     (ofi_momentum_20_raw - ofi_momentum_20_mean) /
                     ofi_momentum_20_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 ofi_volatility_raw = df["order_flow_imbalance"].rolling(
                     20).std()
@@ -866,13 +1004,17 @@ class EnhancedFeatureEngineer:
                 df["ofi_volatility"] = (
                     (ofi_volatility_raw - ofi_volatility_mean) /
                     ofi_volatility_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
             # 2. Delta Divergence (CVD vs Price背离)
             # 价格动量
-            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's momentum
-            price_momentum_5 = df["close"].pct_change(5).shift(1)
-            price_momentum_20 = df["close"].pct_change(20).shift(1)
+            # pct_change() already uses past data; configurable shift ensures alignment
+            price_momentum_5_raw = df["close"].pct_change(5)
+            price_momentum_20_raw = df["close"].pct_change(20)
+            price_momentum_5 = self._shift_feature(price_momentum_5_raw)
+            price_momentum_20 = self._shift_feature(price_momentum_20_raw)
 
             # 优先使用新的CVD滚动窗口特征，如果不存在则使用原始CVD
             if "cvd_change_5" in df.columns and "cvd_change_20" in df.columns:
@@ -900,7 +1042,9 @@ class EnhancedFeatureEngineer:
             price_momentum_5_norm = (
                 (price_momentum_5 - price_momentum_5_mean) /
                 price_momentum_5_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    [np.inf, -np.inf],
+                    np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
             price_momentum_20_mean = price_momentum_20.rolling(
                 50, min_periods=20).mean()
@@ -909,7 +1053,9 @@ class EnhancedFeatureEngineer:
             price_momentum_20_norm = (
                 (price_momentum_20 - price_momentum_20_mean) /
                 price_momentum_20_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    [np.inf, -np.inf],
+                    np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
             # Delta divergence = price momentum - CVD momentum（两个都标准化后）
             df["delta_divergence_5"] = price_momentum_5_norm - cvd_change_5_norm
@@ -930,7 +1076,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_short_trend"] = (
                     (cvd_short_trend_raw - cvd_short_trend_mean) /
                     cvd_short_trend_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 cvd_short_momentum_raw = df["cvd_short_trend"].diff()
                 cvd_short_momentum_mean = cvd_short_momentum_raw.rolling(
@@ -940,7 +1088,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_short_momentum"] = (
                     (cvd_short_momentum_raw - cvd_short_momentum_mean) /
                     cvd_short_momentum_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # 中期CVD趋势，Z-score标准化
                 cvd_medium_trend_raw = df["cvd_medium"].diff(10)
@@ -951,7 +1101,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_medium_trend"] = (
                     (cvd_medium_trend_raw - cvd_medium_trend_mean) /
                     cvd_medium_trend_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 cvd_medium_momentum_raw = df["cvd_medium_trend"].diff()
                 cvd_medium_momentum_mean = cvd_medium_momentum_raw.rolling(
@@ -961,7 +1113,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_medium_momentum"] = (
                     (cvd_medium_momentum_raw - cvd_medium_momentum_mean) /
                     cvd_medium_momentum_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # 长期CVD趋势，Z-score标准化
                 cvd_long_trend_raw = df["cvd_long"].diff(20)
@@ -972,7 +1126,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_long_trend"] = (
                     (cvd_long_trend_raw - cvd_long_trend_mean) /
                     cvd_long_trend_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # CVD跨周期关系，使用log转换和标准化
                 cvd_short_medium_ratio_raw = df["cvd_short"] / (
@@ -988,7 +1144,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_short_medium_ratio"] = (
                     (cvd_short_medium_ratio_log - cvd_short_medium_ratio_mean)
                     / cvd_short_medium_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 cvd_medium_long_ratio_raw = df["cvd_medium"] / (
                     df["cvd_long"].abs() + 1e-10)
@@ -1002,7 +1160,9 @@ class EnhancedFeatureEngineer:
                 df["cvd_medium_long_ratio"] = (
                     (cvd_medium_long_ratio_log - cvd_medium_long_ratio_mean) /
                     cvd_medium_long_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # CVD趋势一致性（短中长期同向），已经是0/1，不需要归一化
                 cvd_short_sign = np.sign(df["cvd_short"])
@@ -1031,7 +1191,9 @@ class EnhancedFeatureEngineer:
             df["tbr_momentum_5"] = (
                 (tbr_momentum_5_raw - tbr_momentum_5_mean) /
                 tbr_momentum_5_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    [np.inf, -np.inf],
+                    np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
             tbr_momentum_20_mean = tbr_momentum_20_raw.rolling(
                 50, min_periods=20).mean()
@@ -1040,7 +1202,9 @@ class EnhancedFeatureEngineer:
             df["tbr_momentum_20"] = (
                 (tbr_momentum_20_raw - tbr_momentum_20_mean) /
                 tbr_momentum_20_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    [np.inf, -np.inf],
+                    np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
             # TBR极值（买方/卖方主导）
             df["tbr_extreme_buy"] = (df["taker_buy_ratio"]
@@ -1068,8 +1232,9 @@ class EnhancedFeatureEngineer:
             cvd_slope_3_std = cvd_slope_3_raw.rolling(50, min_periods=3).std()
             df["cvd_slope_3"] = ((cvd_slope_3_raw - cvd_slope_3_mean) /
                                  cvd_slope_3_std.replace(0, np.nan)).replace(
-                                     [np.inf, -np.inf],
-                                     np.nan).fillna(0).clip(-5, 5)
+                                     [np.inf, -np.inf], np.nan).fillna(0).clip(
+                                         -self.feature_clip_bound,
+                                         self.feature_clip_bound)
 
             cvd_slope_10_mean = cvd_slope_10_raw.rolling(
                 50, min_periods=10).mean()
@@ -1078,7 +1243,9 @@ class EnhancedFeatureEngineer:
             df["cvd_slope_10"] = ((cvd_slope_10_raw - cvd_slope_10_mean) /
                                   cvd_slope_10_std.replace(0, np.nan)).replace(
                                       [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
+                                      np.nan).fillna(0).clip(
+                                          -self.feature_clip_bound,
+                                          self.feature_clip_bound)
 
             cvd_slope_30_mean = cvd_slope_30_raw.rolling(
                 50, min_periods=30).mean()
@@ -1087,7 +1254,9 @@ class EnhancedFeatureEngineer:
             df["cvd_slope_30"] = ((cvd_slope_30_raw - cvd_slope_30_mean) /
                                   cvd_slope_30_std.replace(0, np.nan)).replace(
                                       [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
+                                      np.nan).fillna(0).clip(
+                                          -self.feature_clip_bound,
+                                          self.feature_clip_bound)
 
             # CVD加速度，Z-score标准化
             cvd_acceleration_raw = df["cvd_slope_10"].diff()
@@ -1098,7 +1267,9 @@ class EnhancedFeatureEngineer:
             df["cvd_acceleration"] = (
                 (cvd_acceleration_raw - cvd_acceleration_mean) /
                 cvd_acceleration_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    [np.inf, -np.inf],
+                    np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
             # 7. Liquidity Drain特征（成交量突然下降）
             volume_ma_20 = df["volume"].rolling(20).mean()
@@ -1120,7 +1291,9 @@ class EnhancedFeatureEngineer:
             df["liquidity_ratio"] = (
                 (liquidity_ratio_log - liquidity_ratio_mean) /
                 liquidity_ratio_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    [np.inf, -np.inf],
+                    np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                           self.feature_clip_bound)
 
             # 6. Buy/Sell Pressure Ratio（买卖压力比）
             if "buy_qty" in df.columns and "sell_qty" in df.columns:
@@ -1143,7 +1316,9 @@ class EnhancedFeatureEngineer:
                     (buy_sell_pressure_ratio_log -
                      buy_sell_pressure_ratio_mean) /
                     buy_sell_pressure_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # 压力差，Z-score标准化
                 pressure_diff_raw = buy_pressure_20 - sell_pressure_20
@@ -1154,7 +1329,9 @@ class EnhancedFeatureEngineer:
                 df["pressure_diff"] = (
                     (pressure_diff_raw - pressure_diff_mean) /
                     pressure_diff_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
                 # 压力差归一化（相对值）
                 df["pressure_diff_norm"] = df["pressure_diff"] / (
@@ -1164,9 +1341,11 @@ class EnhancedFeatureEngineer:
                     0).clip(-1, 1)
 
             # 7. Volume-Price Divergence（量价背离）
-            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's change
-            price_change_20 = df["close"].pct_change(20).shift(1)
-            volume_change_20 = df["volume"].pct_change(20).shift(1)
+            # pct_change() already uses past data; configurable shift ensures alignment
+            price_change_20_raw = df["close"].pct_change(20)
+            volume_change_20_raw = df["volume"].pct_change(20)
+            price_change_20 = self._shift_feature(price_change_20_raw)
+            volume_change_20 = self._shift_feature(volume_change_20_raw)
 
             # 标准化
             price_change_norm = (price_change_20 -
@@ -1293,6 +1472,12 @@ class EnhancedFeatureEngineer:
 
             # Remove NaN rows
             df = df.dropna()
+
+            if self.enable_diagnostics:
+                diag_cols = [
+                    col for col in feature_columns if col in df.columns
+                ]
+                self._run_diagnostics(timeframe, df, diag_cols)
 
             engineered_data[timeframe] = df
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 from sklearn.linear_model import LinearRegression
 
 
@@ -23,11 +23,21 @@ class BaselineFeatureEngineer:
 
     def __init__(self,
                  percentile_window: int = 288,
-                 compression_threshold_pct: float = 0.2) -> None:
+                 compression_threshold_pct: float = 0.2,
+                 feature_shift: int = 0,
+                 feature_clip_bound: float = 10.0,
+                 enable_diagnostics: bool = False) -> None:
         self.percentile_window = percentile_window
         self.compression_threshold_pct = compression_threshold_pct
+        self.feature_shift = feature_shift
+        self.feature_clip_bound = float(feature_clip_bound)
+        self.enable_diagnostics = enable_diagnostics
+        self.diagnostic_report: Dict[str, Dict[str, float]] = {}
         self._fitted_atr_quantiles: Optional[np.ndarray] = None
         self._fitted_vol_quantiles: Optional[np.ndarray] = None
+
+        if self.feature_clip_bound <= 0:
+            raise ValueError("feature_clip_bound must be positive")
 
     @staticmethod
     def _compute_atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
@@ -59,7 +69,10 @@ class BaselineFeatureEngineer:
                                                                   raw=True)
 
     @staticmethod
-    def _trend_r2(prices: pd.Series, window: int = 20) -> pd.Series:
+    def _trend_r2(prices: pd.Series,
+                  window: int = 20,
+                  *,
+                  lag: int = 0) -> pd.Series:
         """
         计算趋势R²特征（基于对数价格序列）
         
@@ -72,7 +85,7 @@ class BaselineFeatureEngineer:
             window: 滚动窗口大小
             
         Returns:
-            R²值序列（0-1范围），已shift(1)避免未来信息
+            R²值序列（0-1范围），可选shift避免未来信息
         """
         # 使用对数价格（更稳定，避免价格水平影响R²）
         # 例如：BTC从10k→20k和从60k→120k，趋势强度应相同
@@ -101,14 +114,16 @@ class BaselineFeatureEngineer:
             except Exception:
                 return 0.0
 
-        # 滚动计算R²，并shift(1)确保在t时刻只能用到t-1及之前的信息
-        # 这样在t时刻预测t+1时，这个特征是可用的（基于t-1及之前的数据）
+        # 滚动计算R²，可选shift确保在t时刻只能用到t-1及之前的信息
+        # 这样在t时刻预测t+1时，这个特征是可用的（基于历史数据）
         r2_series = log_price.rolling(window=window,
                                       min_periods=3).apply(_compute_r2,
                                                            raw=False)
 
-        # shift(1)确保不包含当前未完成的K线
-        return r2_series.shift(1).fillna(0.0)
+        # shift(lag)确保不包含当前未完成的K线
+        if lag == 0:
+            return r2_series.fillna(0.0)
+        return r2_series.shift(lag).fillna(0.0)
 
     @staticmethod
     def _price_entropy(close: pd.Series, window: int = 50) -> pd.Series:
@@ -132,6 +147,105 @@ class BaselineFeatureEngineer:
     @staticmethod
     def _ema(series: pd.Series, span: int) -> pd.Series:
         return series.ewm(span=span, adjust=False).mean()
+
+    def _shift_feature(self,
+                       series: pd.Series,
+                       *,
+                       offset: int = 0) -> pd.Series:
+        """Apply configurable lag to feature series.
+
+        Args:
+            series: Series to shift.
+            offset: Additional offset relative to base `feature_shift`.
+
+        Returns:
+            Shifted series with total lag = feature_shift + offset.
+        """
+        total_shift = self.feature_shift + offset
+        if total_shift == 0:
+            return series
+        return series.shift(total_shift)
+
+    def _run_diagnostics(self, df: pd.DataFrame,
+                         feature_cols: List[str]) -> None:
+        """Collect simple diagnostics to detect heavy clipping or zero saturation."""
+        report: Dict[str, Dict[str, float]] = {}
+        tol_zero = 1e-9
+        tol_clip = 1e-3
+        clip_bound = float(self.feature_clip_bound)
+        near_clip = 0.9 * clip_bound
+
+        clip_markers = {
+            "at_pos_bound_ratio": clip_bound,
+            "at_neg_bound_ratio": -clip_bound,
+            "at_pos1_ratio": 1.0,
+            "at_neg1_ratio": -1.0,
+        }
+
+        flagged_clip: List[Tuple[str, float, float]] = []
+        flagged_zero: List[Tuple[str, float]] = []
+
+        for col in feature_cols:
+            series = df[col].replace([np.inf, -np.inf], np.nan)
+            total = len(series)
+            if total == 0:
+                continue
+
+            metrics: Dict[str, float] = {}
+            metrics["nan_ratio"] = float(series.isna().mean())
+
+            valid = series.dropna()
+            if valid.empty:
+                report[col] = metrics
+                continue
+
+            metrics["zero_ratio"] = float(
+                np.isclose(valid, 0.0, atol=tol_zero).mean())
+            metrics["abs_ge_90pct_ratio"] = float((valid.abs()
+                                                   >= near_clip).mean())
+            metrics["abs_ge_99pct_ratio"] = float(
+                (valid.abs() >= 0.99 * clip_bound).mean())
+            metrics["mean"] = float(valid.mean())
+            metrics["std"] = float(valid.std())
+
+            for key, marker in clip_markers.items():
+                metrics[key] = float(
+                    np.isclose(valid, marker, atol=tol_clip).mean())
+
+            report[col] = metrics
+
+            if metrics["abs_ge_90pct_ratio"] > 0.05 or metrics[
+                    "abs_ge_99pct_ratio"] > 0.01:
+                flagged_clip.append((col, metrics["abs_ge_90pct_ratio"],
+                                     metrics["abs_ge_99pct_ratio"]))
+            if metrics["zero_ratio"] > 0.5:
+                flagged_zero.append((col, metrics["zero_ratio"]))
+
+        self.diagnostic_report = report
+
+        messages: List[str] = []
+        if flagged_clip:
+            top_clip = sorted(flagged_clip, key=lambda x: x[1],
+                              reverse=True)[:5]
+            clip_msg = (f"   Possible clipping (abs>={near_clip:.2f}) "
+                        "detected:")
+            details = ", ".join(
+                f"{col}: {ratio:.1%} (abs>={0.99*clip_bound:.2f} {ratio99:.1%})"
+                for col, ratio, ratio99 in top_clip)
+            messages.append(f"{clip_msg} {details}")
+
+        if flagged_zero:
+            top_zero = sorted(flagged_zero, key=lambda x: x[1],
+                              reverse=True)[:5]
+            zero_msg = "   High zero saturation detected:"
+            zero_details = ", ".join(f"{col}: {ratio:.1%}"
+                                     for col, ratio in top_zero)
+            messages.append(f"{zero_msg} {zero_details}")
+
+        if messages:
+            print("⚠️  BaselineFeatureEngineer diagnostics:")
+            for msg in messages:
+                print(msg)
 
     def _add_advanced_derived_features(self,
                                        data: pd.DataFrame) -> pd.DataFrame:
@@ -187,7 +301,9 @@ class BaselineFeatureEngineer:
                     df["compression_energy"] = (
                         (compression_energy_log - compression_energy_mean) /
                         compression_energy_std.replace(0, np.nan)).replace(
-                            [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                            [np.inf, -np.inf],
+                            np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                                   self.feature_clip_bound)
 
                 # 7. Volatility squeeze flag
                 if "volatility_squeeze_flag" not in df.columns and "bb_width" in df.columns:
@@ -196,14 +312,16 @@ class BaselineFeatureEngineer:
                                                         df["atr"])).astype(int)
 
                 # 16. Structure tension，使用log转换和标准化
-                # FIXED: Use shift(1) to avoid using current close (data leakage)
+                # Use configurable shift to avoid using current close (data leakage)
                 if "structure_tension" not in df.columns and "bb_width" in df.columns:
-                    dist_high = (df["high"].shift(1).rolling(50).max() -
-                                 df["close"].shift(1)).abs(
-                                 ) / df["close"].shift(1).replace(0, np.nan)
-                    dist_low = (df["close"].shift(1) -
-                                df["low"].shift(1).rolling(50).min()).abs(
-                                ) / df["close"].shift(1).replace(0, np.nan)
+                    dist_high = (self._shift_feature(
+                        df["high"]).rolling(50).max() - self._shift_feature(
+                            df["close"])).abs() / self._shift_feature(
+                                df["close"]).replace(0, np.nan)
+                    dist_low = (self._shift_feature(df["close"]) -
+                                self._shift_feature(df["low"]).rolling(
+                                    50).min()).abs() / self._shift_feature(
+                                        df["close"]).replace(0, np.nan)
                     structure_tension_raw = (
                         dist_high.fillna(0) +
                         dist_low.fillna(0)) / df["bb_width"].replace(
@@ -219,7 +337,9 @@ class BaselineFeatureEngineer:
                     df["structure_tension"] = (
                         (structure_tension_log - structure_tension_mean) /
                         structure_tension_std.replace(0, np.nan)).replace(
-                            [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                            [np.inf, -np.inf],
+                            np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                                   self.feature_clip_bound)
 
             # 2. Range ratio (不依赖BB/ATR)，使用log转换和标准化
             if "range_ratio_5bar" not in df.columns:
@@ -237,7 +357,9 @@ class BaselineFeatureEngineer:
                 df["range_ratio_5bar"] = (
                     (range_ratio_log - range_ratio_mean) /
                     range_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
             # 5. ATR percentile (注意：baseline已有atr_percentile，但这里用不同的窗口，所以跳过或改名)
             # Skip since baseline already has atr_percentile
@@ -252,12 +374,12 @@ class BaselineFeatureEngineer:
                     "volatility_reversal_score"].fillna(0)
 
             # 8. Price range symmetry，使用log转换和标准化
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             if "price_range_symmetry" not in df.columns:
-                price_range_symmetry_raw = (
-                    df["high"].shift(1) - df["close"].shift(1)) / (
-                        (df["close"].shift(1) - df["low"].shift(1)).replace(
-                            0, np.nan))
+                price_range_symmetry_raw = (self._shift_feature(
+                    df["high"]) - self._shift_feature(df["close"])) / (
+                        (self._shift_feature(df["close"]) -
+                         self._shift_feature(df["low"])).replace(0, np.nan))
                 price_range_symmetry_raw = price_range_symmetry_raw.replace(
                     [np.inf, -np.inf], np.nan).fillna(1)
                 # 使用log转换避免极端值，然后标准化
@@ -271,7 +393,9 @@ class BaselineFeatureEngineer:
                 df["price_range_symmetry"] = (
                     (price_range_symmetry_log - price_range_symmetry_mean) /
                     price_range_symmetry_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
             # 9. Volume anomaly，使用log转换和标准化
             if "volume_anomaly" not in df.columns:
@@ -287,11 +411,15 @@ class BaselineFeatureEngineer:
                 df["volume_anomaly"] = (
                     (volume_anomaly_log - volume_anomaly_mean) /
                     volume_anomaly_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
             # 10. Up/Down volume ratio，使用log转换和标准化
             if "upvol_downvol_ratio" not in df.columns:
-                up = (df["close"] > df["close"].shift()).astype(int)
+                close_ref = self._shift_feature(df["close"])
+                up = (close_ref > self._shift_feature(df["close"],
+                                                      offset=1)).astype(int)
                 df["up_vol"] = (df["volume"] * up).rolling(20).sum()
                 df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
                 upvol_downvol_ratio_raw = df["up_vol"] / df[
@@ -307,7 +435,9 @@ class BaselineFeatureEngineer:
                 df["upvol_downvol_ratio"] = (
                     (upvol_downvol_ratio_log - upvol_downvol_ratio_mean) /
                     upvol_downvol_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                        [np.inf, -np.inf],
+                        np.nan).fillna(0).clip(-self.feature_clip_bound,
+                                               self.feature_clip_bound)
 
             # 11. ROC and acceleration (with normalization)
             if "roc_5" not in df.columns:
@@ -320,8 +450,9 @@ class BaselineFeatureEngineer:
                 roc_std = roc_std.clip(lower=roc_raw.abs().quantile(0.01))
                 df["roc_5"] = ((roc_raw - roc_mean) /
                                roc_std.replace(0, np.nan)).replace(
-                                   [np.inf, -np.inf],
-                                   np.nan).fillna(0).clip(-5, 5)
+                                   [np.inf, -np.inf], np.nan).fillna(0).clip(
+                                       -self.feature_clip_bound,
+                                       self.feature_clip_bound)
             if "acceleration_3" not in df.columns:
                 roc_3 = df["close"].pct_change(3)
                 roc_3_mean = roc_3.rolling(window=50, min_periods=5).mean()
@@ -329,25 +460,33 @@ class BaselineFeatureEngineer:
                 roc_3_std = roc_3_std.clip(lower=roc_3.abs().quantile(0.01))
                 roc_3_norm = ((roc_3 - roc_3_mean) /
                               roc_3_std.replace(0, np.nan)).replace(
-                                  [np.inf, -np.inf],
-                                  np.nan).fillna(0).clip(-5, 5)
-                df["acceleration_3"] = roc_3_norm - roc_3_norm.shift(1)
+                                  [np.inf, -np.inf], np.nan).fillna(0).clip(
+                                      -self.feature_clip_bound,
+                                      self.feature_clip_bound)
+                current = self._shift_feature(roc_3_norm)
+                prev = self._shift_feature(roc_3_norm, offset=1)
+                df["acceleration_3"] = current - prev
 
             # 12. Trend R² (R-squared) - 衡量趋势强度
             # CORRECTED: 趋势应该体现在价格路径上，而不是收益率上
             # 收益率序列本质上是白噪声，对收益率计算R²没有意义
-            # 正确做法：在对数价格序列上计算R²，并shift(1)避免未来信息
+            # 正确做法：在对数价格序列上计算R²，可选shift避免未来信息
             if "trend_r2_20" not in df.columns:
-                df["trend_r2_20"] = self._trend_r2(df["close"], window=20)
+                df["trend_r2_20"] = self._trend_r2(df["close"],
+                                                   window=20,
+                                                   lag=self.feature_shift)
             if "trend_r2_50" not in df.columns:
-                df["trend_r2_50"] = self._trend_r2(df["close"], window=50)
+                df["trend_r2_50"] = self._trend_r2(df["close"],
+                                                   window=50,
+                                                   lag=self.feature_shift)
 
             # 12.1 Price vs EMA/SMA distance (normalized)
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             if "price_vs_ema_distance" not in df.columns and "sma_20" in df.columns and "atr" in df.columns:
                 df["price_vs_ema_distance"] = (
-                    (df["close"].shift(1) - df["sma_20"].shift(1)) /
-                    df["atr"].shift(1).replace(0, np.nan))
+                    (self._shift_feature(df["close"]) -
+                     self._shift_feature(df["sma_20"])) /
+                    self._shift_feature(df["atr"]).replace(0, np.nan))
                 df["price_vs_ema_distance"] = (
                     df["price_vs_ema_distance"].replace([np.inf, -np.inf],
                                                         np.nan).fillna(0))
@@ -366,30 +505,30 @@ class BaselineFeatureEngineer:
                 df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
 
             # SMA距离特征（归一化）
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             if "sma_20_distance" not in df.columns:
                 df["sma_20_distance"] = (
-                    (df["close"].shift(1) /
-                     df["sma_20"].shift(1).replace(0, np.nan) - 1)).replace(
-                         [np.inf, -np.inf], np.nan).fillna(0)
+                    (self._shift_feature(df["close"]) /
+                     self._shift_feature(df["sma_20"]).replace(0, np.nan) -
+                     1)).replace([np.inf, -np.inf], np.nan).fillna(0)
             if "sma_50_distance" not in df.columns:
                 df["sma_50_distance"] = (
-                    (df["close"].shift(1) /
-                     df["sma_50"].shift(1).replace(0, np.nan) - 1)).replace(
-                         [np.inf, -np.inf], np.nan).fillna(0)
+                    (self._shift_feature(df["close"]) /
+                     self._shift_feature(df["sma_50"]).replace(0, np.nan) -
+                     1)).replace([np.inf, -np.inf], np.nan).fillna(0)
 
             # EMA距离特征（归一化）
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             if "ema_20_distance" not in df.columns:
                 df["ema_20_distance"] = (
-                    (df["close"].shift(1) /
-                     df["ema_20"].shift(1).replace(0, np.nan) - 1)).replace(
-                         [np.inf, -np.inf], np.nan).fillna(0)
+                    (self._shift_feature(df["close"]) /
+                     self._shift_feature(df["ema_20"]).replace(0, np.nan) -
+                     1)).replace([np.inf, -np.inf], np.nan).fillna(0)
             if "ema_50_distance" not in df.columns:
                 df["ema_50_distance"] = (
-                    (df["close"].shift(1) /
-                     df["ema_50"].shift(1).replace(0, np.nan) - 1)).replace(
-                         [np.inf, -np.inf], np.nan).fillna(0)
+                    (self._shift_feature(df["close"]) /
+                     self._shift_feature(df["ema_50"]).replace(0, np.nan) -
+                     1)).replace([np.inf, -np.inf], np.nan).fillna(0)
 
             # WMA距离特征（如果存在）
             try:
@@ -401,28 +540,31 @@ class BaselineFeatureEngineer:
                             lambda x: np.dot(x, weights) / weights.sum(),
                             raw=True)
                 if "wma_20" in df.columns and "wma_20_distance" not in df.columns:
-                    # FIXED: Use shift(1) to avoid using current close (data leakage)
-                    df["wma_20_distance"] = ((
-                        df["close"].shift(1) /
-                        df["wma_20"].shift(1).replace(0, np.nan) - 1)).replace(
-                            [np.inf, -np.inf], np.nan).fillna(0)
+                    # Use configurable shift to avoid using current close (data leakage)
+                    df["wma_20_distance"] = (
+                        (self._shift_feature(df["close"]) /
+                         self._shift_feature(df["wma_20"]).replace(0, np.nan) -
+                         1)).replace([np.inf, -np.inf], np.nan).fillna(0)
             except Exception:
                 pass
 
             # VWAP距离特征（如果存在）
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             if "vwap" in df.columns and "vwap_distance" not in df.columns:
                 df["vwap_distance"] = (
-                    (df["close"].shift(1) /
-                     df["vwap"].shift(1).replace(0, np.nan) - 1)).replace(
-                         [np.inf, -np.inf], np.nan).fillna(0)
+                    (self._shift_feature(df["close"]) /
+                     self._shift_feature(df["vwap"]).replace(0, np.nan) -
+                     1)).replace([np.inf, -np.inf], np.nan).fillna(0)
 
             # 13. Momentum persistence
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
+            # Use configurable shift to avoid using current close (data leakage)
             if "momentum_persistence" not in df.columns:
-                sig = np.sign(df["close"].diff().shift(1))
+                sig = np.sign(df["close"].diff())
+                sig = self._shift_feature(sig)
                 df["momentum_persistence"] = sig.rolling(10).apply(
-                    lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
+                    lambda x: (np.sum(x > 0) / max(len(x), 1)),
+                    raw=True).clip(-self.feature_clip_bound,
+                                   self.feature_clip_bound)
 
             # 14. Slope consistency
             if "slope_consistency_score" not in df.columns:
@@ -603,15 +745,15 @@ class BaselineFeatureEngineer:
                     else:
                         # Assume timestamps are already UTC
                         hour = idx.hour.astype(int)
-                    
+
                     # Cyclic encoding: sin/cos transformation
                     # This preserves the periodic nature of hours (23 and 0 are close)
                     data["hour_sin"] = np.sin(2 * np.pi * hour / 24)
                     data["hour_cos"] = np.cos(2 * np.pi * hour / 24)
-                    
+
                     # Also keep raw hour for reference (optional, can be excluded later)
                     data["Hour_of_Day"] = hour
-                    
+
                 except Exception:
                     data["hour_sin"] = 0.0
                     data["hour_cos"] = 1.0
@@ -643,7 +785,8 @@ class BaselineFeatureEngineer:
                     try:
                         # Use median to be robust
                         diffs = pd.Series(idx).diff().dt.total_seconds()
-                        med_sec = float(diffs.median()) if diffs.notna().any() else None
+                        med_sec = float(
+                            diffs.median()) if diffs.notna().any() else None
                         if med_sec is not None and med_sec > 0:
                             inferred_bar_minutes = med_sec / 60.0
                     except Exception:
@@ -653,19 +796,20 @@ class BaselineFeatureEngineer:
                         # Fallback: just use bars since last trade as minutes proxy
                         minutes_raw = run.astype(float)
                     else:
-                        minutes_raw = run.astype(float) * float(inferred_bar_minutes)
-                    
+                        minutes_raw = run.astype(float) * float(
+                            inferred_bar_minutes)
+
                     # Step 1: Winsorize (clip upper bound at 60 minutes)
                     # Beyond 60 minutes, the signal is similar (long-term no-trade)
                     minutes_clipped = minutes_raw.clip(upper=60.0)
                     data["Minutes_Since_Last_Trade"] = minutes_clipped
-                    
+
                     # Step 2: Add boolean features for common thresholds
                     # These are more interpretable and robust for tree models
                     data["no_trade_5min"] = (minutes_clipped > 5).astype(int)
                     data["no_trade_15min"] = (minutes_clipped > 15).astype(int)
                     data["no_trade_30min"] = (minutes_clipped > 30).astype(int)
-                    
+
                     # Step 3: Optional binning (discretization)
                     # This can help tree models by creating clear splits
                     try:
@@ -681,7 +825,7 @@ class BaselineFeatureEngineer:
                     except Exception:
                         # If binning fails, just use the clipped value
                         pass
-                        
+
                 except Exception:
                     data["Minutes_Since_Last_Trade"] = 0.0
                     data["no_trade_5min"] = 0
@@ -744,6 +888,11 @@ class BaselineFeatureEngineer:
         # Only keep columns that exist
         keep_cols = [c for c in keep_cols if c in data.columns]
         data = data[keep_cols]
+
+        if self.enable_diagnostics:
+            diag_cols = [c for c in all_feature_cols if c in data.columns]
+            self._run_diagnostics(data, diag_cols)
+
         return data
 
     def save_scalers(self, path: str) -> None:
@@ -825,53 +974,21 @@ def create_binary_labels_baseline(df: pd.DataFrame,
 
 def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
     exclude = {
-        "open", "high", "low", "close", "volume", "signal", "binary_signal",
-        "future_return"
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "signal",
+        "binary_signal",
+        "future_return",
     }
-    # Also exclude multi-horizon label columns
     exclude.update([
         col for col in df.columns
         if (col.startswith("signal_") or col.startswith("binary_signal_")
             or col.startswith("future_return_"))
     ])
-    # Exclude unnormalized/raw columns; prefer normalized variants
-    exclude.update({
-        "bb_upper",
-        "bb_lower",
-        "bb_middle",
-        "bb_width",  # use bb_width_normalized
-        "hl",  # helper
-        "up_vol",
-        "down_vol",  # helpers
-        "macd",
-        "macd_signal",
-        "macd_hist",
-        "macd_ext_hist",
-        "macd_fix_hist",
-        "atr",  # 原始ATR（未归一化），保留natr和atr_normalized
-        "channel_mid",  # 原始价格量纲，保留归一化的距离特征
-        "channel_upper",  # 原始价格量纲
-        "channel_lower",  # 原始价格量纲
-        # 原始滚动高低点（使用原始价格），保留标准化的距离特征（sr_dist_*）
-        "roll_high_s",  # 使用原始 high，保留 sr_dist_high_s（标准化）
-        "roll_low_s",  # 使用原始 low，保留 sr_dist_low_s（标准化）
-        "roll_high_l",  # 使用原始 high，保留 sr_dist_high_l（标准化）
-        "roll_low_l",  # 使用原始 low，保留 sr_dist_low_l（标准化）
-    })
-    # Exclude raw-scale prefixes
-    raw_prefixes = ("sma_", "ema_", "wma_", "tema_", "kama_", "volume_sma_",
-                    "atr_")
-    # Exclude unnormalized WPT features (wpt_*_energy, wpt_*_mean, wpt_*_std)
-    # but keep normalized WPT features (wpt_*_energy_ratio, wpt_shannon_entropy, etc.)
-    wpt_raw_patterns = ("_energy", "_mean", "_std")
-    return [
-        c for c in df.columns if (c not in exclude and not any(
-            c.startswith(p)
-            for p in raw_prefixes) and not (c.startswith("wpt_") and any(
-                c.endswith(p)
-                for p in wpt_raw_patterns) and not c.endswith("_energy_ratio"))
-                                  )
-    ]
+    return [c for c in df.columns if c not in exclude]
 
 
 __all__ = [
