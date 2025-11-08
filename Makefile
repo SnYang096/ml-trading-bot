@@ -336,6 +336,7 @@ train:
 		--oos-months $(OOS_MONTHS) \
 		$(if $(OOS_START),--oos-start $(OOS_START),) \
 		$(if $(OOS_END),--oos-end $(OOS_END),) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
 		--disable-target-winsorize \
   	--disable-feature-winsorize \
         --gpu
@@ -345,6 +346,7 @@ FORWARD_BARS ?= 3
 
 ROLLING_FREQ ?= $(FREQ)
 ROLLING_FBS ?= $(FORWARD_BARS)
+DIRECTION_THRESHOLD ?= f1_optimize
 ROLLING_OUTPUT ?=
 ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
 ROLLING_USE_TOP_FACTORS ?=
@@ -369,6 +371,7 @@ rolling:
 		--freq $(ROLLING_FREQ) \
 		--forward-bars $(ROLLING_FBS) \
 		--cv-folds $(CV_FOLDS) \
+		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
 		$(if $(ROLLING_OUTPUT),--output $(ROLLING_OUTPUT),) \
 		--feature-type $(ROLLING_FEATURE_TYPE) \
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
@@ -376,6 +379,7 @@ rolling:
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
 		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
 		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
 		--gpu
 
 rolling-multi:
@@ -394,12 +398,14 @@ rolling-multi:
 		--min-train-months $(MIN_TRAIN_MONTHS) \
 		$(foreach tf,$(subst ,, $(FREQS)),--freq $(tf)) \
 		--cv-folds $(CV_FOLDS) \
+		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
 		--feature-type $(ROLLING_FEATURE_TYPE) \
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
 		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
 		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
 		--gpu; \
 	else \
 		docker run --rm \
@@ -422,12 +428,14 @@ rolling-multi:
 		--min-train-months $(MIN_TRAIN_MONTHS) \
 		$(foreach tf,$(subst ,, $(FREQS)),--freq $(tf)) \
 		--cv-folds $(CV_FOLDS) \
+		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
 		--feature-type $(ROLLING_FEATURE_TYPE) \
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
 		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
 		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
 		--gpu; \
 	fi
 
