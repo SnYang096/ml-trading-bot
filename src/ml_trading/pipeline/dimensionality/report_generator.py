@@ -75,6 +75,51 @@ def _build_feature_importance_table(info: Dict) -> str:
         </table>"""
 
 
+def _build_rolling_feature_importance_section(
+        summary: Dict) -> str:
+    """Build aggregated feature-importance section for rolling reports."""
+    feature_map = summary.get("feature_importance", {})
+    if not feature_map:
+        return ""
+
+    label_map = {
+        "classification": "Directional Classification",
+        "return": "Return Regression",
+        "volatility": "Volatility Regression",
+    }
+
+    sections: list[str] = []
+    for key, label in label_map.items():
+        data = feature_map.get(key)
+        if not data:
+            continue
+        rows = []
+        for rank, item in enumerate(data, start=1):
+            feat = item.get("feature", "N/A")
+            importance = _format_float(item.get("importance", 0.0), 6)
+            rows.append(
+                f"<tr><td>{rank}</td><td>{feat}</td><td>{importance}</td></tr>")
+        if rows:
+            sections.append(f"""
+            <h3>{label}</h3>
+            <table>
+                <tr><th>Rank</th><th>Feature</th><th>Importance (Gain)</th></tr>
+                {''.join(rows)}
+            </table>
+            """)
+
+    if not sections:
+        return ""
+
+    return f"""
+    <h2>📊 Rolling Feature Importance (Top 100 per Model)</h2>
+    <div class="explanation">
+        <p>基于所有滚动窗口累积的 LightGBM gain，展示各模型贡献最大的特征（每类最多 100 个）。</p>
+    </div>
+    {''.join(sections)}
+    """
+
+
 def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
     """Build OOS test results table HTML."""
     if not oos_metrics or oos_months <= 0:
@@ -1495,6 +1540,8 @@ def _build_rolling_report_html(
         </ul>
     </div>
     """
+    feature_importance_section = _build_rolling_feature_importance_section(
+        summary)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1579,6 +1626,10 @@ def _build_rolling_report_html(
                 <tr><th>Total Periods Tested</th><td>{total_periods}</td></tr>
                 <tr><th>Total Trades</th><td>{total_trades:,}</td></tr>
                 <tr><th>Feature Engineering</th><td>{feature_engineering}</td></tr>
+                <tr><th>Avg Direction F1</th><td>{_format_float(summary.get('avg_cls_f1'), 4)}</td></tr>
+                <tr><th>Avg Direction AUC</th><td>{_format_float(summary.get('avg_cls_auc'), 4)}</td></tr>
+                <tr><th>Avg Return R²</th><td>{_format_float(summary.get('avg_return_r2'), 4)}</td></tr>
+                <tr><th>Avg Volatility R²</th><td>{_format_float(summary.get('avg_vol_r2'), 4)}</td></tr>
             </table>
         </div>
         
@@ -1604,6 +1655,8 @@ def _build_rolling_report_html(
             </tr>
             {"".join(stats_rows)}
         </table>
+
+        {feature_importance_section}
         
         {cv_section}
         {guidance_section}

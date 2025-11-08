@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -311,7 +312,7 @@ def generate_summary_report(results_dir: str = "results/training",
     
     # Collect all issues and feature importance across all configurations
     all_issues = []
-    all_feature_importance = {}  # Aggregate feature importance across configs
+    all_feature_importance: dict[str, dict[str, list[float]]] = {}
     
     # Helper functions for generating sections
     def _generate_issues_section(issues_list):
@@ -327,20 +328,71 @@ def generate_summary_report(results_dir: str = "results/training",
 </ul>
 </div>'''
     
-    def _generate_feature_importance_section(feat_imp_dict):
+    def _accumulate_feature_importance(category: str,
+                                       records: Optional[list]) -> None:
+        if not records:
+            return
+        cat_dict = all_feature_importance.setdefault(category, {})
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            feat_name = record.get("feature")
+            if not feat_name:
+                continue
+            importance = record.get("importance")
+            try:
+                importance_val = float(importance)
+            except (TypeError, ValueError):
+                continue
+            cat_dict.setdefault(feat_name, []).append(importance_val)
+
+    def _generate_feature_importance_section(
+            feat_imp_dict: dict[str, dict[str, list[float]]]) -> str:
         if not feat_imp_dict:
             return ''
-        # Sort by average importance
-        sorted_features = sorted(feat_imp_dict.items(), key=lambda x: np.mean(x[1]), reverse=True)[:20]
-        feat_rows = '\n'.join([f'<tr><td style="padding:8px;">{i+1}</td><td style="padding:8px;"><strong>{feat_name}</strong></td><td style="padding:8px;">{np.mean(imp_list):.2f}</td><td style="padding:8px;">{np.std(imp_list):.2f}</td></tr>' for i, (feat_name, imp_list) in enumerate(sorted_features)])
+
+        label_map = {
+            "classification": "Directional Classification",
+            "return": "Return Regression",
+            "volatility": "Volatility Regression",
+        }
+
+        sections = []
+        for category, feats in feat_imp_dict.items():
+            if not feats:
+                continue
+            sorted_features = sorted(
+                feats.items(),
+                key=lambda x: np.mean(x[1]) if x[1] else 0.0,
+                reverse=True)[:20]
+            if not sorted_features:
+                continue
+            rows = []
+            for idx, (feat_name, values) in enumerate(sorted_features, start=1):
+                avg_val = np.mean(values) if values else 0.0
+                std_val = np.std(values) if values else 0.0
+                rows.append(
+                    f'<tr><td style="padding:8px;">{idx}</td>'
+                    f'<td style="padding:8px;"><strong>{feat_name}</strong></td>'
+                    f'<td style="padding:8px;">{avg_val:.2f}</td>'
+                    f'<td style="padding:8px;">{std_val:.2f}</td></tr>'
+                )
+            if rows:
+                sections.append(f'''
+<h3 style="margin-top:20px;">{label_map.get(category, category.title())}</h3>
+<table style="width:100%;margin:10px 0;font-size:0.9em;">
+<tr><th style="background:#3498db;color:#fff;padding:10px;">排名</th><th style="background:#3498db;color:#fff;padding:10px;">特征名称</th><th style="background:#3498db;color:#fff;padding:10px;">平均重要性</th><th style="background:#3498db;color:#fff;padding:10px;">标准差</th></tr>
+{''.join(rows)}
+</table>''')
+
+        if not sections:
+            return ''
+
         return f'''
 <h2>📊 特征重要性汇总 (Feature Importance Summary)</h2>
 <div style="background-color:#e8f4f8;border-left:4px solid #3498db;padding:15px;margin:20px 0;border-radius:4px;">
-<p><strong>说明:</strong> 以下特征重要性为所有配置的平均值，按重要性降序排列。重要性越高，说明该特征对模型预测的贡献越大。</p>
-<table style="width:100%;margin:20px 0;font-size:0.9em;">
-<tr><th style="background:#3498db;color:#fff;padding:10px;">排名</th><th style="background:#3498db;color:#fff;padding:10px;">特征名称</th><th style="background:#3498db;color:#fff;padding:10px;">平均重要性</th><th style="background:#3498db;color:#fff;padding:10px;">标准差</th></tr>
-{feat_rows}
-</table>
+<p><strong>说明:</strong> 以下为所有配置的特征重要性统计，按类别（方向/收益/波动）展示 Top 20 特征。</p>
+{''.join(sections)}
 </div>'''
     
     # Build rows
@@ -373,6 +425,13 @@ def generate_summary_report(results_dir: str = "results/training",
             
             volatility_metrics = metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
             vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(volatility_metrics, dict) else {}
+
+            _accumulate_feature_importance(
+                "classification", classification_tf.get("feature_importance"))
+            _accumulate_feature_importance(
+                "return", return_tf.get("feature_importance"))
+            _accumulate_feature_importance(
+                "volatility", vol_tf.get("feature_importance"))
             
             # Classification model metrics (classification task, not regression)
             classification_cv_accuracy = classification_tf.get("cv_accuracy")
@@ -400,6 +459,8 @@ def generate_summary_report(results_dir: str = "results/training",
                 metrics, dict) else {}
             vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(
                 volatility_metrics, dict) else {}
+            _accumulate_feature_importance(
+                "volatility", vol_tf.get("feature_importance"))
             cv_rmse = vol_tf.get("cv_rmse")
             cv_mse = vol_tf.get("cv_mse")
             # Set classification/return metrics to None for quantile model
@@ -526,16 +587,8 @@ def generate_summary_report(results_dir: str = "results/training",
         directional_cv_metrics = metrics.get("directional_cv", {}) if isinstance(metrics, dict) else {}
         directional_cv_tf = directional_cv_metrics.get(timeframe, {}) if isinstance(directional_cv_metrics, dict) else {}
         feature_importance_list = directional_cv_tf.get("feature_importance")
-        if feature_importance_list and isinstance(feature_importance_list, list):
-            # Aggregate feature importance across configs
-            for feat_imp in feature_importance_list:
-                if isinstance(feat_imp, dict):
-                    feat_name = feat_imp.get("feature")
-                    feat_importance = feat_imp.get("importance", 0)
-                    if feat_name:
-                        if feat_name not in all_feature_importance:
-                            all_feature_importance[feat_name] = []
-                        all_feature_importance[feat_name].append(feat_importance)
+        _accumulate_feature_importance("classification",
+                                       feature_importance_list)
 
         # Helper functions
         def _format_metric(val, fmt=".4f"):

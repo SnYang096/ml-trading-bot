@@ -22,8 +22,12 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
     get_feature_columns_by_type,
 )
 from ml_trading.models.lightgbm_model import LightGBMModel
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import (mean_squared_error, mean_absolute_error,
+                             r2_score, accuracy_score,
+                             precision_recall_fscore_support, roc_auc_score,
+                             average_precision_score)
 from sklearn.preprocessing import StandardScaler
+from ml_trading.pipeline.training.train import _compute_direction_threshold
 
 
 def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
@@ -134,6 +138,12 @@ def main() -> None:
         type=str,
         default="comprehensive",
         help="baseline/default/enhanced/dl_sequence/comprehensive")
+    parser.add_argument(
+        "--direction-threshold",
+        type=str,
+        default="f1_optimize",
+        help="Threshold method for directional prediction (zero|median|f1_optimize)",
+    )
     parser.add_argument("--use-top-factors",
                         type=str,
                         default=None,
@@ -227,6 +237,50 @@ def main() -> None:
         comp_engineer = None
         combo_dir = results_dir
         os.makedirs(combo_dir, exist_ok=True)
+
+        importance_accumulators = {
+            "classification": {},
+            "return": {},
+            "volatility": {},
+        }
+
+        def _accumulate_importance(df: Optional[pd.DataFrame],
+                                   bucket: str) -> None:
+            if df is None or df.empty:
+                return
+            store = importance_accumulators.setdefault(bucket, {})
+            for _, row in df.iterrows():
+                feat = row["feature"]
+                val = float(row["importance"])
+                store[feat] = store.get(feat, 0.0) + val
+
+        def _extract_importance(model: LightGBMModel,
+                                feature_names: List[str]
+                                ) -> Optional[pd.DataFrame]:
+            if not model or not hasattr(model, "model") or model.model is None:
+                return None
+            try:
+                booster = model.model
+                gains = booster.feature_importance(importance_type='gain')
+                names = booster.feature_name()
+                if gains is None or names is None:
+                    return None
+                if len(gains) != len(names):
+                    # fallback to provided feature names
+                    names = feature_names
+                    if len(gains) != len(feature_names):
+                        return None
+                df_imp = pd.DataFrame({
+                    "feature": names,
+                    "importance": gains,
+                })
+                df_imp = df_imp.groupby("feature",
+                                        as_index=False)["importance"].sum()
+                df_imp = df_imp.sort_values("importance",
+                                            ascending=False).head(100)
+                return df_imp
+            except Exception:
+                return None
 
         for i in range(start_idx, len(files)):
             train_files = files[:i]
@@ -421,34 +475,23 @@ def main() -> None:
 
             n_splits = args.cv_folds if (args.cv_on_rolling
                                          and args.cv_folds > 0) else 0
-            # q50: median as primary point estimate (using new quantile API)
-            model_q50 = LightGBMModel(model_type="quantile",
-                                      quantile_alpha=0.5,
-                                      use_gpu=args.gpu)
-            _ = model_q50.train(pd.DataFrame(X_train, columns=feat_cols),
-                                pd.Series(y_ret_tr),
-                                n_splits=0,
-                                use_time_series_cv=False)
+            y_cls_tr = (y_ret_tr > 0).astype(int)
+            y_cls_te = (y_ret_te > 0).astype(int)
 
-            # q10: 10% quantile for uncertainty estimation
-            model_q10 = LightGBMModel(model_type="quantile",
-                                      quantile_alpha=0.1,
+            model_cls = LightGBMModel(model_type="classification",
                                       use_gpu=args.gpu)
-            _ = model_q10.train(pd.DataFrame(X_train, columns=feat_cols),
-                                pd.Series(y_ret_tr),
-                                n_splits=0,
-                                use_time_series_cv=False)
+            _ = model_cls.train(pd.DataFrame(X_train, columns=feat_cols),
+                                pd.Series(y_cls_tr),
+                                n_splits=n_splits,
+                                use_time_series_cv=bool(n_splits))
 
-            # q90: 90% quantile for uncertainty estimation
-            model_q90 = LightGBMModel(model_type="quantile",
-                                      quantile_alpha=0.9,
-                                      use_gpu=args.gpu)
-            _ = model_q90.train(pd.DataFrame(X_train, columns=feat_cols),
-                                pd.Series(y_ret_tr),
-                                n_splits=0,
-                                use_time_series_cv=False)
+            model_return = LightGBMModel(model_type="regression",
+                                         use_gpu=args.gpu)
+            _ = model_return.train(pd.DataFrame(X_train, columns=feat_cols),
+                                   pd.Series(y_ret_tr),
+                                   n_splits=n_splits,
+                                   use_time_series_cv=bool(n_splits))
 
-            # volatility: regression model for volatility prediction
             model_vol = LightGBMModel(model_type="regression",
                                       use_gpu=args.gpu)
             _ = model_vol.train(pd.DataFrame(X_train, columns=feat_cols),
@@ -457,16 +500,35 @@ def main() -> None:
                                 use_time_series_cv=bool(n_splits))
 
             # Evaluate
-            ypr = model_q50.model.predict(X_test)
-            yp10 = model_q10.model.predict(X_test)
-            yp90 = model_q90.model.predict(X_test)
-            ypv = model_vol.model.predict(X_test)
-            ret_rmse = float(np.sqrt(mean_squared_error(y_ret_te, ypr)))
-            ret_mae = float(mean_absolute_error(y_ret_te, ypr))
-            vol_rmse = float(np.sqrt(mean_squared_error(y_vol_te, ypv)))
-            vol_mae = float(mean_absolute_error(y_vol_te, ypv))
-            coverage = float(np.mean((y_ret_te >= yp10) & (y_ret_te <= yp90)))
-            width = float(np.mean(np.maximum(0.0, yp90 - yp10)))
+            y_prob = model_cls.model.predict(X_test, raw_score=False)
+            try:
+                threshold = _compute_direction_threshold(
+                    y_prob, y_cls_te, method=args.direction_threshold)
+            except Exception:
+                threshold = 0.5
+            y_pred_dir = (y_prob > threshold).astype(int)
+            cls_accuracy = float(accuracy_score(y_cls_te, y_pred_dir))
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_cls_te, y_pred_dir, average='binary', zero_division=0)
+            try:
+                cls_auc = float(roc_auc_score(y_cls_te, y_prob))
+            except Exception:
+                cls_auc = None
+            try:
+                cls_pr_auc = float(average_precision_score(y_cls_te, y_prob))
+            except Exception:
+                cls_pr_auc = None
+
+            y_pred_return = model_return.model.predict(X_test)
+            y_pred_vol = model_vol.model.predict(X_test)
+            ret_rmse = float(np.sqrt(mean_squared_error(y_ret_te,
+                                                        y_pred_return)))
+            ret_mae = float(mean_absolute_error(y_ret_te, y_pred_return))
+            ret_r2 = float(r2_score(y_ret_te, y_pred_return))
+            vol_rmse = float(np.sqrt(mean_squared_error(y_vol_te,
+                                                        y_pred_vol)))
+            vol_mae = float(mean_absolute_error(y_vol_te, y_pred_vol))
+            vol_r2 = float(r2_score(y_vol_te, y_pred_vol))
 
             res = {
                 "symbol": symbols_str,
@@ -477,26 +539,49 @@ def main() -> None:
                 "num_features": len(feat_cols),
                 "train_samples": len(X_train),
                 "test_samples": len(X_test),
+                "cls_accuracy": cls_accuracy,
+                "cls_precision": float(precision),
+                "cls_recall": float(recall),
+                "cls_f1": float(f1),
+                "cls_auc": cls_auc,
+                "cls_pr_auc": cls_pr_auc,
+                "cls_threshold": float(threshold),
                 "test_rmse_return": ret_rmse,
                 "test_mae_return": ret_mae,
-                "coverage_10_90": coverage,
-                "avg_interval_width": width,
+                "test_r2_return": ret_r2,
                 "test_rmse_vol": vol_rmse,
                 "test_mae_vol": vol_mae,
+                "test_r2_vol": vol_r2,
             }
+
+            imp_cls = _extract_importance(model_cls, feat_cols)
+            imp_ret = _extract_importance(model_return, feat_cols)
+            imp_vol = _extract_importance(model_vol, feat_cols)
+
+            _accumulate_importance(imp_cls, "classification")
+            _accumulate_importance(imp_ret, "return")
+            _accumulate_importance(imp_vol, "volatility")
+
+            res["feature_importance"] = {
+                "classification":
+                imp_cls.to_dict("records") if imp_cls is not None else None,
+                "return":
+                imp_ret.to_dict("records") if imp_ret is not None else None,
+                "volatility":
+                imp_vol.to_dict("records") if imp_vol is not None else None,
+            }
+
             all_results.append(res)
             print(
-                f"      Test return RMSE: {ret_rmse:.6f}, MAE: {ret_mae:.6f}; coverage: {coverage:.3f}"
+                f"      Test return RMSE: {ret_rmse:.6f}, MAE: {ret_mae:.6f}; cls F1: {f1:.3f}"
             )
 
             # Save models
             base = f"fb{fb}_tf{freq}_{test_file['month_str']}"
-            model_q50.model.save_model(
-                os.path.join(combo_dir, f"model_return_q50_{base}.txt"))
-            model_q10.model.save_model(
-                os.path.join(combo_dir, f"model_return_q10_{base}.txt"))
-            model_q90.model.save_model(
-                os.path.join(combo_dir, f"model_return_q90_{base}.txt"))
+            model_cls.model.save_model(
+                os.path.join(combo_dir, f"model_direction_{base}.txt"))
+            model_return.model.save_model(
+                os.path.join(combo_dir, f"model_return_{base}.txt"))
             model_vol.model.save_model(
                 os.path.join(combo_dir, f"model_volatility_{base}.txt"))
 
@@ -515,6 +600,18 @@ def main() -> None:
         avg_test_mae = float(results_df["test_mae_return"].mean(
         )) if "test_mae_return" in results_df.columns and len(
             results_df) > 0 else None
+        avg_cls_f1 = float(results_df["cls_f1"].mean()
+                           ) if "cls_f1" in results_df.columns and len(
+                               results_df) > 0 else None
+        avg_cls_auc = float(results_df["cls_auc"].mean()
+                            ) if "cls_auc" in results_df.columns and len(
+                                results_df) > 0 else None
+        avg_return_r2 = float(results_df["test_r2_return"].mean()
+                              ) if "test_r2_return" in results_df.columns and len(
+                                  results_df) > 0 else None
+        avg_vol_r2 = float(results_df["test_r2_vol"].mean()
+                           ) if "test_r2_vol" in results_df.columns and len(
+                               results_df) > 0 else None
         summary = {
             "symbol":
             symbols_str,
@@ -528,6 +625,14 @@ def main() -> None:
             avg_test_rmse,
             "avg_test_mae":
             avg_test_mae,
+            "avg_cls_f1":
+            avg_cls_f1,
+            "avg_cls_auc":
+            avg_cls_auc,
+            "avg_return_r2":
+            avg_return_r2,
+            "avg_vol_r2":
+            avg_vol_r2,
             "created_at":
             datetime.now().isoformat(),
             "feature_engineering":
@@ -546,10 +651,29 @@ def main() -> None:
                 "feature_type": args.feature_type,
             },
         }
+
+        def _finalize_importance(
+                acc: Dict[str, Dict[str, float]]) -> Dict[str, List[Dict]]:
+            finalized: Dict[str, List[Dict]] = {}
+            for bucket, data in acc.items():
+                if not data:
+                    continue
+                sorted_items = sorted(data.items(),
+                                      key=lambda x: x[1],
+                                      reverse=True)[:100]
+                finalized[bucket] = [{
+                    "feature": feat,
+                    "importance": float(val)
+                } for feat, val in sorted_items]
+            return finalized
+
+        summary["feature_importance"] = _finalize_importance(
+            importance_accumulators)
         with open(os.path.join(combo_dir, "summary.json"), "w") as f:
             json.dump(summary, f, indent=2)
         try:
             from ml_trading.pipeline.dimensionality.report_generator import write_rolling_report
+            from ml_trading.pipeline.training.generate_summary_report import generate_summary_report
             report_path = write_rolling_report(
                 combo_dir,
                 summary_path=os.path.join(combo_dir, "summary.json"),
@@ -558,6 +682,15 @@ def main() -> None:
                 report_type="monthly",
             )
             print(f"   - combo report: {report_path}")
+            # Generate summary report (HTML) for rolling results
+            rolling_summary_dir = os.path.join(combo_dir, "summary")
+            os.makedirs(rolling_summary_dir, exist_ok=True)
+            summary_html = generate_summary_report(
+                results_dir=combo_dir, output_path=os.path.join(
+                    rolling_summary_dir, "summary_report.html"))
+            if summary_html:
+                print(
+                    f"   - summary report (train-style): {summary_html}")
         except Exception as exc:
             print(f"   ⚠️  Failed to generate HTML report: {exc}")
 

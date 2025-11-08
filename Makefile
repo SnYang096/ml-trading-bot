@@ -340,45 +340,6 @@ train:
   	--disable-feature-winsorize \
         --gpu
 
-train-quantile:
-	@echo "🚀 Training quantile regression model (q10, q50, q90) for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make train-quantile SYMBOLS=BTCUSDT,ETHUSDT START_DATE=2024-11-01 END_DATE=2025-04-01"
-	@echo "       Model Type: quantile (q10, q50, q90 + volatility)"
-	@echo "       Forward Bars: $(FORWARD_BARS_TRAIN) bars ahead for prediction"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@echo "       Direction Threshold: $(DIRECTION_THRESHOLD) (options: f1_optimize, median, zero)"
-	@if [ "$(SAFE_MULTI_ASSET)" = "1" ]; then \
-		echo "       🔒 Safe Multi-Asset: Enabled (each symbol processed independently)"; \
-	fi
-	@if [ -n "$(PARAMS_FILE)" ]; then \
-		echo "       📂 Using pre-trained parameters from: $(PARAMS_FILE)"; \
-	fi
-	@if [ "$(AUTO_TUNE)" = "1" ]; then \
-		echo "       ⚙️  Auto-tune: Enabled (trials: $(TUNE_TRIALS))"; \
-	fi
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
-		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
-		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
-        --data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		--freq $(FREQS) \
-        --forward-bars $(FORWARD_BARS_TRAIN) \
-		--cv-folds $(CV_FOLDS) \
-		--feature-type $(TRAIN_FEATURE_TYPE) \
-		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
-		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
-		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
-		$(if $(filter 1,$(AUTO_TUNE)),--auto-tune-params,) \
-		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS),) \
-		$(if $(PARAMS_FILE),--params-file /workspace/$(PARAMS_FILE),) \
-		--model-type quantile \
-		--oos-months $(OOS_MONTHS) \
-		$(if $(OOS_START),--oos-start $(OOS_START),) \
-		$(if $(OOS_END),--oos-end $(OOS_END),) \
-        --gpu
-
 
 FORWARD_BARS ?= 3
 

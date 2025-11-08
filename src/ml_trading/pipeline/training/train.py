@@ -173,6 +173,32 @@ def _compute_direction_threshold(y_score: np.ndarray,
         )
 
 
+def _extract_feature_importance_df(
+        model: Optional[LightGBMModel],
+        feature_cols: Optional[List[str]]) -> Optional[pd.DataFrame]:
+    """Return top gain-based feature importance for a trained LightGBM model."""
+    if not model or not hasattr(model, "model") or model.model is None:
+        return None
+    try:
+        booster = model.model
+        gains = booster.feature_importance(importance_type="gain")
+        names = booster.feature_name()
+        if gains is None or names is None:
+            return None
+        if len(gains) != len(names):
+            if not feature_cols or len(gains) != len(feature_cols):
+                return None
+            names = feature_cols
+        df_imp = pd.DataFrame({"feature": names, "importance": gains})
+        df_imp = df_imp.groupby("feature",
+                                as_index=False)["importance"].sum()
+        df_imp = df_imp.sort_values("importance",
+                                    ascending=False).head(100)
+        return df_imp
+    except Exception:
+        return None
+
+
 def _resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """
     Resample OHLCV data to specified timeframe.
@@ -3555,35 +3581,23 @@ def main() -> None:
                     "samples": int(np.sum(short_mask)),
                 }
 
-            # Get feature importance from model
-            feature_importance = None
-            if args.model_type == "classification" and model_classification and model_classification.model:
-                try:
-                    # LightGBM feature importance (gain)
-                    importance_gain = model_classification.model.feature_importance(
-                        importance_type='gain')
-                    feature_names = model_classification.model.feature_name()
-                    if len(importance_gain) == len(feature_names):
-                        # Create DataFrame with feature importance
-                        feature_importance = pd.DataFrame({
-                            'feature':
-                            feature_names,
-                            'importance':
-                            importance_gain,
-                        }).sort_values('importance', ascending=False)
-                    else:
-                        # Fallback: use feature_cols if available
-                        if len(importance_gain) == len(feature_cols):
-                            feature_importance = pd.DataFrame({
-                                'feature':
-                                feature_cols,
-                                'importance':
-                                importance_gain,
-                            }).sort_values('importance', ascending=False)
-                        else:
-                            feature_importance = None
-                except Exception:
-                    feature_importance = None
+            # Get feature importance for all trained models
+            feature_importance = _extract_feature_importance_df(
+                model_classification, feature_cols)
+            return_feature_importance = _extract_feature_importance_df(
+                model_return, feature_cols)
+            vol_feature_importance = _extract_feature_importance_df(
+                model_vol, feature_cols)
+
+            if classification_metrics is not None and feature_importance is not None:
+                classification_metrics["feature_importance"] = feature_importance.to_dict(
+                    "records")
+            if return_metrics is not None and return_feature_importance is not None:
+                return_metrics["feature_importance"] = return_feature_importance.to_dict(
+                    "records")
+            if vol_metrics is not None and vol_feature_importance is not None:
+                vol_metrics["feature_importance"] = vol_feature_importance.to_dict(
+                    "records")
             accuracy = float(accuracy_score(y_true_dir, y_pred_dir))
 
             # Get sample count for warning context
@@ -4235,6 +4249,35 @@ def main() -> None:
                     return_metrics = {}
                 vol_metrics = info_json.get("metrics",
                                             {}).get("volatility", {})
+
+                def _format_feature_table(records, heading):
+                    if not records or not isinstance(records, list):
+                        return ""
+                    total = 0.0
+                    values = []
+                    for rec in records:
+                        if not isinstance(rec, dict):
+                            continue
+                        try:
+                            val = float(rec.get("importance", 0.0))
+                        except (TypeError, ValueError):
+                            val = 0.0
+                        values.append((rec.get("feature", "N/A"), val))
+                        total += max(val, 0.0)
+                    if not values:
+                        return ""
+                    total = total if total > 0 else 1.0
+                    rows = []
+                    for feat_name, val in values[:20]:
+                        pct = val / total * 100.0
+                        rows.append(
+                            f"<tr><td>{feat_name}</td><td>{val:.2f}</td><td>{pct:.2f}%</td></tr>"
+                        )
+                    return "".join([
+                        f"<h3>{heading}</h3>",
+                        "<table><tr><th>特征名称</th><th>重要性 (Gain)</th><th>占比 (%)</th></tr>",
+                        "".join(rows), "</table>"
+                    ])
 
                 # Quantile Loss section (q10, q50, q90) - only for quantile models
                 quantile_rows = []
@@ -5048,6 +5091,25 @@ def main() -> None:
                         f"<em>数据标准化器，用于特征预处理。包含RobustWinsorizer等预处理参数，确保推理时使用与训练时相同的预处理方式。</em></li>"
                     ]
 
+                current_timeframe = info_json.get("timeframe")
+                return_feature_section = ""
+                if (model_type == "classification" and current_timeframe
+                        and isinstance(return_metrics, dict)):
+                    return_tf_metrics = return_metrics.get(
+                        current_timeframe, {})
+                    if isinstance(return_tf_metrics, dict):
+                        return_feature_section = _format_feature_table(
+                            return_tf_metrics.get("feature_importance"),
+                            "🔍 Return Regression Feature Importance (Top 20)")
+
+                vol_feature_section = ""
+                if current_timeframe and isinstance(vol_metrics, dict):
+                    vol_tf_metrics = vol_metrics.get(current_timeframe, {})
+                    if isinstance(vol_tf_metrics, dict):
+                        vol_feature_section = _format_feature_table(
+                            vol_tf_metrics.get("feature_importance"),
+                            "🔍 Volatility Feature Importance (Top 20)")
+
                 html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'><title>Training Report</title>
                 <style>
                 body{{font-family:Arial,sans-serif;margin:24px;color:#222;background:#f5f5f5}}
@@ -5082,7 +5144,9 @@ def main() -> None:
                 {directional_section}
                 {quantile_section}
                 {return_section if 'return_section' in locals() and return_section else ""}
+                {return_feature_section}
                 {vol_section}
+                {vol_feature_section}
                 {oos_section}
                 <h2>📁 模型文件 (Artifacts)</h2>
                 <p><em>所有训练好的模型文件，可以直接用于实盘推理。每个Pipeline包含完整的预处理+模型+后处理流程。</em></p>

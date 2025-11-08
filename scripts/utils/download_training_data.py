@@ -40,6 +40,26 @@ class BinanceMultiSymbolDownloader:
             "BTCUSDT": "Bitcoin",
             "ETHUSDT": "Ethereum",
             "SOLUSDT": "Solana",
+            "BNBUSDT": "BNB",
+            "XRPUSDT": "Ripple",
+            "ADAUSDT": "Cardano",
+            "DOGEUSDT": "Dogecoin",
+            "DOTUSDT": "Polkadot",
+            "MATICUSDT": "Polygon",
+            "SHIBUSDT": "Shiba Inu",
+        }
+        self.default_symbols = list(self.symbols.keys())
+        self.symbol_aliases = {
+            "BTC": "BTCUSDT",
+            "ETH": "ETHUSDT",
+            "SOL": "SOLUSDT",
+            "BNB": "BNBUSDT",
+            "XRP": "XRPUSDT",
+            "ADA": "ADAUSDT",
+            "DOGE": "DOGEUSDT",
+            "DOT": "DOTUSDT",
+            "MATIC": "MATICUSDT",
+            "SHIB": "SHIBUSDT",
         }
 
         # 下载统计
@@ -73,13 +93,32 @@ class BinanceMultiSymbolDownloader:
 
         return months
 
+    def normalize_symbol(self, symbol: str) -> Optional[str]:
+        """标准化交易对名称，支持别名（如BTC -> BTCUSDT）"""
+        if not symbol:
+            return None
+
+        normalized = symbol.upper().replace("-", "").replace("/", "")
+
+        if normalized in self.symbol_aliases:
+            normalized = self.symbol_aliases[normalized]
+        elif not normalized.endswith("USDT"):
+            normalized = f"{normalized}USDT"
+
+        if normalized not in self.symbols:
+            # 对于未预置的币种，使用符号本身作为名称
+            self.symbols[normalized] = normalized
+
+        return normalized
+
     def _symbol_to_usd(self, symbol: str) -> str:
         """将交易对从 *USDT 转换为 *-USD（用于Parquet文件名对齐）"""
         if symbol.endswith("USDT"):
             return symbol.replace("USDT", "-USD")
         return symbol
 
-    def check_local_file(self, symbol: str, year: int, month: int) -> Optional[str]:
+    def check_local_file(self, symbol: str, year: int,
+                         month: int) -> Optional[str]:
         """检查本地是否已具备该月份数据：优先检查Parquet；否则检查ZIP完整性
 
         Returns:
@@ -248,10 +287,18 @@ class BinanceMultiSymbolDownloader:
 
         # 确定要下载的币种
         if symbols is None:
-            symbols = list(self.symbols.keys())
+            symbols = list(self.default_symbols)
         else:
-            # 验证币种
-            symbols = [s for s in symbols if s in self.symbols]
+            normalized = []
+            for raw_symbol in symbols:
+                normalized_symbol = self.normalize_symbol(raw_symbol)
+                if normalized_symbol:
+                    normalized.append(normalized_symbol)
+            # 去重同时保持顺序
+            symbols = list(dict.fromkeys(normalized))
+            if not symbols:
+                print("❌ 未找到有效的交易对，请检查输入。")
+                return
 
         print(f"💰 币种: {', '.join(symbols)}")
 
@@ -388,12 +435,9 @@ def main():
     parser.add_argument("--parquet-dir",
                         default=None,
                         help="Parquet目录 (提供后将跳过已存在月份)")
-    parser.add_argument(
-        "--symbols",
-        nargs="+",
-        choices=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-        help="指定要下载的币种",
-    )
+    parser.add_argument("--symbols",
+                        nargs="+",
+                        help="指定要下载的币种（支持 BTC、BTCUSDT 等别名）")
     parser.add_argument("--start-year",
                         type=int,
                         default=2021,
