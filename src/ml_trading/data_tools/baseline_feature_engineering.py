@@ -438,6 +438,23 @@ class BaselineFeatureEngineer:
                         [np.inf, -np.inf],
                         np.nan).fillna(0).clip(-self.feature_clip_bound,
                                                self.feature_clip_bound)
+                # 归一化的多空成交量分布，便于跨标的比较
+                vol_total_20 = df["volume"].rolling(
+                    20, min_periods=1).sum().replace(0, np.nan)
+                df["up_vol_share_20"] = (df["up_vol"] / vol_total_20).replace(
+                    [np.inf, -np.inf], np.nan).fillna(0).clip(0.0, 1.0)
+                df["down_vol_share_20"] = (df["down_vol"] /
+                                           vol_total_20).replace(
+                                               [np.inf, -np.inf],
+                                               np.nan).fillna(0).clip(
+                                                   0.0, 1.0)
+                updown_total = (df["up_vol"] + df["down_vol"]).replace(
+                    0, np.nan)
+                df["up_down_vol_balance"] = ((df["up_vol"] - df["down_vol"]) /
+                                             updown_total).replace(
+                                                 [np.inf, -np.inf],
+                                                 np.nan).fillna(0).clip(
+                                                     -1.0, 1.0)
 
             # 11. ROC and acceleration (with normalization)
             if "roc_5" not in df.columns:
@@ -547,6 +564,20 @@ class BaselineFeatureEngineer:
                          1)).replace([np.inf, -np.inf], np.nan).fillna(0)
             except Exception:
                 pass
+
+            # 归一化均线（相对close），便于跨标的比较
+            close_now = df["close"].replace(0, np.nan)
+
+            def _pct_vs_close(series: pd.Series) -> pd.Series:
+                return (series / close_now - 1.0).replace([np.inf, -np.inf],
+                                                          np.nan).fillna(0.0)
+
+            df["sma_20_pct_close"] = _pct_vs_close(df["sma_20"])
+            df["sma_50_pct_close"] = _pct_vs_close(df["sma_50"])
+            df["ema_20_pct_close"] = _pct_vs_close(df["ema_20"])
+            df["ema_50_pct_close"] = _pct_vs_close(df["ema_50"])
+            if "wma_20" in df.columns:
+                df["wma_20_pct_close"] = _pct_vs_close(df["wma_20"])
 
             # VWAP距离特征（如果存在）
             # Use configurable shift to avoid using current close (data leakage)
@@ -670,6 +701,13 @@ class BaselineFeatureEngineer:
                                           data["close"]) / (data["atr"] + eps)
         data["channel_lower_distance"] = (data["close"] -
                                           lower) / (data["atr"] + eps)
+        close_safe = data["close"].replace(0, np.nan)
+        data["channel_upper_pct_close"] = (upper / close_safe - 1.0).replace(
+            [np.inf, -np.inf], np.nan).fillna(0.0)
+        data["channel_lower_pct_close"] = (lower / close_safe - 1.0).replace(
+            [np.inf, -np.inf], np.nan).fillna(0.0)
+        data["channel_mid_pct_close"] = (mid / close_safe - 1.0).replace(
+            [np.inf, -np.inf], np.nan).fillna(0.0)
 
         # Compression features
         # ATR percentile (rolling)

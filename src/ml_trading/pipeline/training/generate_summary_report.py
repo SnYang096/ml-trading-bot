@@ -546,6 +546,23 @@ def generate_summary_report(results_dir: str = "results/training",
             except:
                 return str(val)
 
+        def _metric_cell(val,
+                         *,
+                         fmt=".4f",
+                         warn_func=None,
+                         default_style="padding:4px;"):
+            text = _format_metric(val, fmt)
+            if val is None or warn_func is None:
+                return f'<td style="{default_style}">{text}</td>'
+            try:
+                warn = warn_func(val)
+            except Exception:
+                warn = False
+            if warn:
+                return (f'<td style="{default_style} color:#721c24; '
+                        f'font-weight:bold;">{text}</td>')
+            return f'<td style="{default_style}">{text}</td>'
+
         def _quality_color(val, threshold_good, threshold_excellent=None):
             if val is None:
                 return ""
@@ -626,20 +643,37 @@ def generate_summary_report(results_dir: str = "results/training",
         if model_type == "classification":
             # Classification model: show separate metrics for three models in sub-tables
             # CV metrics sub-table
-            cv_subtable = f"""
-            <table style="width:100%; margin:5px 0; border-collapse:collapse; font-size:0.85em;">
-            <tr style="background-color:#e8f4f8;"><th style="padding:4px; text-align:left;">模型</th><th style="padding:4px;">指标</th><th style="padding:4px;">CV值</th></tr>
-            <tr><td rowspan="5" style="padding:4px; vertical-align:top; font-weight:bold;">分类模型</td><td style="padding:4px;">Accuracy</td><td style="padding:4px;">{_format_metric(classification_cv_accuracy)}</td></tr>
-            <tr><td style="padding:4px;">Precision</td><td style="padding:4px;">{_format_metric(classification_cv_precision)}</td></tr>
-            <tr><td style="padding:4px;">Recall</td><td style="padding:4px;">{_format_metric(classification_cv_recall)}</td></tr>
-            <tr><td style="padding:4px;">F1</td><td style="padding:4px;">{_format_metric(classification_cv_f1)}</td></tr>
-            <tr><td style="padding:4px;">AUC</td><td style="padding:4px;">{_format_metric(classification_cv_auc)}</td></tr>
-            <tr><td rowspan="3" style="padding:4px; vertical-align:top; font-weight:bold;">收益回归</td><td style="padding:4px;">RMSE</td><td style="padding:4px;">{_format_metric(return_cv_rmse, '.6f')}</td></tr>
-            <tr><td style="padding:4px;">MSE</td><td style="padding:4px;">{_format_metric(return_cv_mse, '.8f')}</td></tr>
-            <tr><td style="padding:4px;">R²</td><td style="padding:4px;">{_format_metric(return_cv_r2)}</td></tr>
-            <tr><td rowspan="2" style="padding:4px; vertical-align:top; font-weight:bold;">波动率模型</td><td style="padding:4px;">RMSE</td><td style="padding:4px;">{_format_metric(vol_cv_rmse, '.6f')}</td></tr>
-            <tr><td style="padding:4px;">MSE</td><td style="padding:4px;">{_format_metric(vol_cv_mse, '.8f')}</td></tr>
-            </table>"""
+            cv_rows = [
+                '<tr style="background-color:#e8f4f8;"><th style="padding:4px; text-align:left;">模型</th><th style="padding:4px;">指标</th><th style="padding:4px;">CV值</th></tr>',
+                '<tr><td rowspan="5" style="padding:4px; vertical-align:top; font-weight:bold;">分类模型</td>'
+                '<td style="padding:4px;">Accuracy</td>'
+                f'{_metric_cell(classification_cv_accuracy, warn_func=lambda v: v < 0.5)}</tr>',
+                '<tr><td style="padding:4px;">Precision</td>'
+                f'{_metric_cell(classification_cv_precision, warn_func=lambda v: v < 0.3)}</tr>',
+                '<tr><td style="padding:4px;">Recall</td>'
+                f'{_metric_cell(classification_cv_recall, warn_func=lambda v: v < 0.3)}</tr>',
+                '<tr><td style="padding:4px;">F1</td>'
+                f'{_metric_cell(classification_cv_f1, warn_func=lambda v: v < 0.3)}</tr>',
+                '<tr><td style="padding:4px;">AUC</td>'
+                f'{_metric_cell(classification_cv_auc, warn_func=lambda v: v < 0.6)}</tr>',
+                '<tr><td rowspan="3" style="padding:4px; vertical-align:top; font-weight:bold;">收益回归</td>'
+                '<td style="padding:4px;">RMSE</td>'
+                f'{_metric_cell(return_cv_rmse, fmt=".6f")}</tr>',
+                '<tr><td style="padding:4px;">MSE</td>'
+                f'{_metric_cell(return_cv_mse, fmt=".8f")}</tr>',
+                '<tr><td style="padding:4px;">R²</td>'
+                f'{_metric_cell(return_cv_r2)}</tr>',
+                '<tr><td rowspan="2" style="padding:4px; vertical-align:top; font-weight:bold;">波动率模型</td>'
+                '<td style="padding:4px;">RMSE</td>'
+                f'{_metric_cell(vol_cv_rmse, fmt=".6f")}</tr>',
+                '<tr><td style="padding:4px;">MSE</td>'
+                f'{_metric_cell(vol_cv_mse, fmt=".8f")}</tr>',
+            ]
+            cv_subtable = (
+                '<table style="width:100%; margin:5px 0; border-collapse:collapse; font-size:0.85em;">'
+                f'{"".join(cv_rows)}'
+                '</table>'
+            )
             
             # OOS metrics sub-table (if available)
             oos_subtable = ""
@@ -651,10 +685,19 @@ def generate_summary_report(results_dir: str = "results/training",
                     oos_auc = oos_classification_metrics.get("auc")
                     oos_ic_spearman = oos_classification_metrics.get("ic_spearman")
                     if oos_acc is not None:
-                        oos_rows.append(f"<tr><td rowspan=\"4\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">分类模型</td><td style=\"padding:4px;\">Accuracy</td><td style=\"padding:4px;\">{_format_metric(oos_acc)}</td></tr>")
-                        oos_rows.append(f"<tr><td style=\"padding:4px;\">F1</td><td style=\"padding:4px;\">{_format_metric(oos_f1)}</td></tr>")
-                        oos_rows.append(f"<tr><td style=\"padding:4px;\">AUC</td><td style=\"padding:4px;\">{_format_metric(oos_auc)}</td></tr>")
-                        oos_rows.append(f"<tr><td style=\"padding:4px;\">IC (Spearman)</td><td style=\"padding:4px;\">{_format_metric(oos_ic_spearman)}</td></tr>")
+                        oos_rows.append(
+                            "<tr><td rowspan=\"4\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">分类模型</td>"
+                            "<td style=\"padding:4px;\">Accuracy</td>"
+                            f"{_metric_cell(oos_acc, warn_func=lambda v: v < 0.5)}</tr>")
+                        oos_rows.append(
+                            "<tr><td style=\"padding:4px;\">F1</td>"
+                            f"{_metric_cell(oos_f1, warn_func=lambda v: v is not None and v < 0.5)}</tr>")
+                        oos_rows.append(
+                            "<tr><td style=\"padding:4px;\">AUC</td>"
+                            f"{_metric_cell(oos_auc, warn_func=lambda v: v < 0.5)}</tr>")
+                        oos_rows.append(
+                            "<tr><td style=\"padding:4px;\">IC (Spearman)</td>"
+                            f"{_metric_cell(oos_ic_spearman, warn_func=lambda v: abs(v) < 0.05)}</tr>")
                 if oos_return_metrics:
                     oos_return_rmse = oos_return_metrics.get("rmse")
                     oos_return_mae = oos_return_metrics.get("mae")

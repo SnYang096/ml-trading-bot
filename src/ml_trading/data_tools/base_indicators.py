@@ -365,6 +365,14 @@ COMMON_DERIVED_COLUMNS = {
     "sma_5",
     "sma_10",
     "sma_20",
+    "sma_5_pct_close",
+    "sma_10_pct_close",
+    "sma_20_pct_close",
+    "ema_5_pct_close",
+    "ema_10_pct_close",
+    "ema_20_pct_close",
+    "ema_50_pct_close",
+    "wma_20_pct_close",
     "sma_ratio_5_20",
     "sma_ratio_10_20",
     "volume_sma_20",
@@ -426,6 +434,14 @@ def add_common_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     for window, col_name in sma_map.items():
         if col_name not in result.columns:
             result[col_name] = _maybe_talib_sma(close, window)
+
+    close_safe = close.replace(0, np.nan)
+    for col_name in ["sma_5", "sma_10", "sma_20", "ema_5", "ema_10", "ema_20", "ema_50", "wma_20"]:
+        if col_name in result.columns:
+            pct_col = f"{col_name}_pct_close"
+            result[pct_col] = (
+                result[col_name] / close_safe - 1.0
+            ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     if {"sma_5", "sma_20"}.issubset(
             result.columns) and "sma_ratio_5_20" not in result.columns:
