@@ -576,9 +576,8 @@ class EnhancedFeatureEngineer:
                                              < (2.0 * df["atr"])).astype(int)
 
             # 8. Price range symmetry
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            df["price_range_symmetry"] = (df["high"].shift(1) - df["close"].shift(1)) / (
-                (df["close"].shift(1) - df["low"].shift(1)).replace(0, np.nan))
+            df["price_range_symmetry"] = (df["high"] - df["close"]) / (
+                df["close"] - df["low"]).replace(0, np.nan)
             df["price_range_symmetry"] = (df["price_range_symmetry"].replace(
                 [np.inf, -np.inf], np.nan).fillna(1))
 
@@ -588,8 +587,7 @@ class EnhancedFeatureEngineer:
                 df["volume"].ewm(span=20, min_periods=10).mean())
 
             # 10. Up/Down volume ratio
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            up = (df["close"].shift(1) > df["close"].shift(2)).astype(int)
+            up = (df["close"] > df["close"].shift()).astype(int)
             df["up_vol"] = (df["volume"] * up).rolling(20).sum()
             df["down_vol"] = (df["volume"] * (1 - up)).rolling(20).sum()
             df["upvol_downvol_ratio"] = df["up_vol"] / df["down_vol"].replace(
@@ -598,21 +596,18 @@ class EnhancedFeatureEngineer:
                 [np.inf, -np.inf], np.nan).fillna(1))
 
             # 11. ROC and acceleration
-            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's ROC
-            df["roc_5"] = df["close"].pct_change(5).shift(1)
-            roc_3 = df["close"].pct_change(3).shift(1)
+            df["roc_5"] = df["close"].pct_change(5)
+            roc_3 = df["close"].pct_change(3)
             df["acceleration_3"] = roc_3 - roc_3.shift(1)
 
             # 12. Price vs EMA distance
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
             df["price_vs_ema_distance"] = (
-                (df["close"].shift(1) - df["sma_20"].shift(1)) / df["atr"].shift(1).replace(0, np.nan))
+                df["close"] - df["sma_20"]) / df["atr"].replace(0, np.nan)
             df["price_vs_ema_distance"] = (df["price_vs_ema_distance"].replace(
                 [np.inf, -np.inf], np.nan).fillna(0))
 
             # 13. Momentum persistence
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            sig = np.sign(df["close"].diff().shift(1))
+            sig = np.sign(df["close"].diff())
             df["momentum_persistence"] = sig.rolling(10).apply(
                 lambda x: (np.sum(x > 0) / max(len(x), 1)), raw=True)
 
@@ -653,11 +648,10 @@ class EnhancedFeatureEngineer:
                 df["day_of_week_cos"] = 1
 
             # 16. Structure tension
-            # FIXED: Use shift(1) to avoid using current close (data leakage)
-            dist_high = (df["high"].shift(1).rolling(50).max() -
-                         df["close"].shift(1)).abs() / df["close"].shift(1).replace(0, np.nan)
-            dist_low = (df["close"].shift(1) -
-                        df["low"].shift(1).rolling(50).min()).abs() / df["close"].shift(1).replace(0, np.nan)
+            dist_high = (df["high"].rolling(50).max() -
+                         df["close"]).abs() / df["close"]
+            dist_low = (df["close"] -
+                        df["low"].rolling(50).min()).abs() / df["close"]
             df["structure_tension"] = (
                 dist_high + dist_low) / df["bb_width"].replace(0, np.nan)
             df["structure_tension"] = (df["structure_tension"].replace(
@@ -700,179 +694,53 @@ class EnhancedFeatureEngineer:
                 df["order_flow_imbalance"] = df["order_flow_imbalance"].fillna(
                     0)
 
-                # 改用滚动窗口OFI（避免全局cumsum），并进行Z-score标准化
-                ofi_short_raw = df["order_flow_imbalance"].rolling(
-                    20, min_periods=1).sum()
-                ofi_medium_raw = df["order_flow_imbalance"].rolling(
-                    60, min_periods=1).sum()
-                ofi_long_raw = df["order_flow_imbalance"].rolling(
-                    288, min_periods=1).sum()
+                # 改用滚动窗口OFI（避免全局cumsum）
+                df["ofi_short"] = (df["order_flow_imbalance"].rolling(
+                    20, min_periods=1).sum())
+                df["ofi_medium"] = (df["order_flow_imbalance"].rolling(
+                    60, min_periods=1).sum())
+                df["ofi_long"] = (df["order_flow_imbalance"].rolling(
+                    288, min_periods=1).sum())
 
-                # Z-score标准化
-                ofi_short_mean = ofi_short_raw.rolling(100,
-                                                       min_periods=20).mean()
-                ofi_short_std = ofi_short_raw.rolling(100,
-                                                      min_periods=20).std()
-                df["ofi_short"] = ((ofi_short_raw - ofi_short_mean) /
-                                   ofi_short_std.replace(0, np.nan)).replace(
-                                       [np.inf, -np.inf],
-                                       np.nan).fillna(0).clip(-5, 5)
+                # 向后兼容：保留cumulative_ofi
+                df["cumulative_ofi"] = df["order_flow_imbalance"].cumsum()
 
-                ofi_medium_mean = ofi_medium_raw.rolling(
-                    100, min_periods=20).mean()
-                ofi_medium_std = ofi_medium_raw.rolling(100,
-                                                        min_periods=20).std()
-                df["ofi_medium"] = ((ofi_medium_raw - ofi_medium_mean) /
-                                    ofi_medium_std.replace(0, np.nan)).replace(
-                                        [np.inf, -np.inf],
-                                        np.nan).fillna(0).clip(-5, 5)
-
-                ofi_long_mean = ofi_long_raw.rolling(100,
-                                                     min_periods=20).mean()
-                ofi_long_std = ofi_long_raw.rolling(100, min_periods=20).std()
-                df["ofi_long"] = ((ofi_long_raw - ofi_long_mean) /
-                                  ofi_long_std.replace(0, np.nan)).replace(
-                                      [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
-
-                # 向后兼容：保留cumulative_ofi，并进行Z-score标准化
-                cumulative_ofi_raw = df["order_flow_imbalance"].cumsum()
-                cumulative_ofi_mean = cumulative_ofi_raw.rolling(
-                    100, min_periods=20).mean()
-                cumulative_ofi_std = cumulative_ofi_raw.rolling(
-                    100, min_periods=20).std()
-                df["cumulative_ofi"] = (
-                    (cumulative_ofi_raw - cumulative_ofi_mean) /
-                    cumulative_ofi_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                # Order flow momentum (OFI变化率)，已经是[-1,1]范围内，但进一步标准化
-                ofi_momentum_5_raw = df["order_flow_imbalance"].rolling(
+                # Order flow momentum (OFI变化率)
+                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(
                     5).mean()
-                ofi_momentum_20_raw = df["order_flow_imbalance"].rolling(
+                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(
                     20).mean()
 
-                # Z-score标准化
-                ofi_momentum_5_mean = ofi_momentum_5_raw.rolling(
-                    50, min_periods=5).mean()
-                ofi_momentum_5_std = ofi_momentum_5_raw.rolling(
-                    50, min_periods=5).std()
-                df["ofi_momentum_5"] = (
-                    (ofi_momentum_5_raw - ofi_momentum_5_mean) /
-                    ofi_momentum_5_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                ofi_momentum_20_mean = ofi_momentum_20_raw.rolling(
-                    50, min_periods=20).mean()
-                ofi_momentum_20_std = ofi_momentum_20_raw.rolling(
-                    50, min_periods=20).std()
-                df["ofi_momentum_20"] = (
-                    (ofi_momentum_20_raw - ofi_momentum_20_mean) /
-                    ofi_momentum_20_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                # Order flow volatility，Z-score标准化
-                ofi_volatility_raw = df["order_flow_imbalance"].rolling(
+                # Order flow volatility
+                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(
                     20).std()
-                ofi_volatility_mean = ofi_volatility_raw.rolling(
-                    50, min_periods=20).mean()
-                ofi_volatility_std = ofi_volatility_raw.rolling(
-                    50, min_periods=20).std()
-                df["ofi_volatility"] = (
-                    (ofi_volatility_raw - ofi_volatility_mean) /
-                    ofi_volatility_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
             else:
                 # 从taker_buy_ratio推导
                 df["order_flow_imbalance"] = (df["taker_buy_ratio"] -
                                               0.5) * 2  # 映射到[-1, 1]
 
-                # 改用滚动窗口OFI，并进行Z-score标准化
-                ofi_short_raw = df["order_flow_imbalance"].rolling(
-                    20, min_periods=1).sum()
-                ofi_medium_raw = df["order_flow_imbalance"].rolling(
-                    60, min_periods=1).sum()
-                ofi_long_raw = df["order_flow_imbalance"].rolling(
-                    288, min_periods=1).sum()
+                # 改用滚动窗口OFI
+                df["ofi_short"] = (df["order_flow_imbalance"].rolling(
+                    20, min_periods=1).sum())
+                df["ofi_medium"] = (df["order_flow_imbalance"].rolling(
+                    60, min_periods=1).sum())
+                df["ofi_long"] = (df["order_flow_imbalance"].rolling(
+                    288, min_periods=1).sum())
 
-                # Z-score标准化
-                ofi_short_mean = ofi_short_raw.rolling(100,
-                                                       min_periods=20).mean()
-                ofi_short_std = ofi_short_raw.rolling(100,
-                                                      min_periods=20).std()
-                df["ofi_short"] = ((ofi_short_raw - ofi_short_mean) /
-                                   ofi_short_std.replace(0, np.nan)).replace(
-                                       [np.inf, -np.inf],
-                                       np.nan).fillna(0).clip(-5, 5)
+                # 向后兼容
+                df["cumulative_ofi"] = df["order_flow_imbalance"].cumsum()
 
-                ofi_medium_mean = ofi_medium_raw.rolling(
-                    100, min_periods=20).mean()
-                ofi_medium_std = ofi_medium_raw.rolling(100,
-                                                        min_periods=20).std()
-                df["ofi_medium"] = ((ofi_medium_raw - ofi_medium_mean) /
-                                    ofi_medium_std.replace(0, np.nan)).replace(
-                                        [np.inf, -np.inf],
-                                        np.nan).fillna(0).clip(-5, 5)
-
-                ofi_long_mean = ofi_long_raw.rolling(100,
-                                                     min_periods=20).mean()
-                ofi_long_std = ofi_long_raw.rolling(100, min_periods=20).std()
-                df["ofi_long"] = ((ofi_long_raw - ofi_long_mean) /
-                                  ofi_long_std.replace(0, np.nan)).replace(
-                                      [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
-
-                # 向后兼容，并进行Z-score标准化
-                cumulative_ofi_raw = df["order_flow_imbalance"].cumsum()
-                cumulative_ofi_mean = cumulative_ofi_raw.rolling(
-                    100, min_periods=20).mean()
-                cumulative_ofi_std = cumulative_ofi_raw.rolling(
-                    100, min_periods=20).std()
-                df["cumulative_ofi"] = (
-                    (cumulative_ofi_raw - cumulative_ofi_mean) /
-                    cumulative_ofi_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                # Z-score标准化
-                ofi_momentum_5_raw = df["order_flow_imbalance"].rolling(
+                df["ofi_momentum_5"] = df["order_flow_imbalance"].rolling(
                     5).mean()
-                ofi_momentum_20_raw = df["order_flow_imbalance"].rolling(
+                df["ofi_momentum_20"] = df["order_flow_imbalance"].rolling(
                     20).mean()
-
-                ofi_momentum_5_mean = ofi_momentum_5_raw.rolling(
-                    50, min_periods=5).mean()
-                ofi_momentum_5_std = ofi_momentum_5_raw.rolling(
-                    50, min_periods=5).std()
-                df["ofi_momentum_5"] = (
-                    (ofi_momentum_5_raw - ofi_momentum_5_mean) /
-                    ofi_momentum_5_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                ofi_momentum_20_mean = ofi_momentum_20_raw.rolling(
-                    50, min_periods=20).mean()
-                ofi_momentum_20_std = ofi_momentum_20_raw.rolling(
-                    50, min_periods=20).std()
-                df["ofi_momentum_20"] = (
-                    (ofi_momentum_20_raw - ofi_momentum_20_mean) /
-                    ofi_momentum_20_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                ofi_volatility_raw = df["order_flow_imbalance"].rolling(
+                df["ofi_volatility"] = df["order_flow_imbalance"].rolling(
                     20).std()
-                ofi_volatility_mean = ofi_volatility_raw.rolling(
-                    50, min_periods=20).mean()
-                ofi_volatility_std = ofi_volatility_raw.rolling(
-                    50, min_periods=20).std()
-                df["ofi_volatility"] = (
-                    (ofi_volatility_raw - ofi_volatility_mean) /
-                    ofi_volatility_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
             # 2. Delta Divergence (CVD vs Price背离)
             # 价格动量
-            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's momentum
-            price_momentum_5 = df["close"].pct_change(5).shift(1)
-            price_momentum_20 = df["close"].pct_change(20).shift(1)
+            price_momentum_5 = df["close"].pct_change(5)
+            price_momentum_20 = df["close"].pct_change(20)
 
             # 优先使用新的CVD滚动窗口特征，如果不存在则使用原始CVD
             if "cvd_change_5" in df.columns and "cvd_change_20" in df.columns:
@@ -892,119 +760,34 @@ class EnhancedFeatureEngineer:
                                   cvd_change_20.rolling(50).mean()
                                   ) / cvd_change_20.rolling(50).std()
 
-            # 价格动量也需要标准化
-            price_momentum_5_mean = price_momentum_5.rolling(
-                50, min_periods=5).mean()
-            price_momentum_5_std = price_momentum_5.rolling(
-                50, min_periods=5).std()
-            price_momentum_5_norm = (
-                (price_momentum_5 - price_momentum_5_mean) /
-                price_momentum_5_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+            # Delta divergence = price momentum - CVD momentum
+            df["delta_divergence_5"] = price_momentum_5 - cvd_change_5_norm
+            df["delta_divergence_20"] = price_momentum_20 - cvd_change_20_norm
 
-            price_momentum_20_mean = price_momentum_20.rolling(
-                50, min_periods=20).mean()
-            price_momentum_20_std = price_momentum_20.rolling(
-                50, min_periods=20).std()
-            price_momentum_20_norm = (
-                (price_momentum_20 - price_momentum_20_mean) /
-                price_momentum_20_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-            # Delta divergence = price momentum - CVD momentum（两个都标准化后）
-            df["delta_divergence_5"] = price_momentum_5_norm - cvd_change_5_norm
-            df["delta_divergence_20"] = price_momentum_20_norm - cvd_change_20_norm
-
-            # Divergence strength (绝对值)，不需要归一化，因为已经是标准化的差值
+            # Divergence strength (绝对值)
             df["divergence_strength"] = df["delta_divergence_20"].abs()
 
             # 3. 多时间框架CVD特征（如果有新的滚动窗口CVD）
             if ("cvd_short" in df.columns and "cvd_medium" in df.columns
                     and "cvd_long" in df.columns):
-                # 短期CVD趋势，Z-score标准化
-                cvd_short_trend_raw = df["cvd_short"].diff(5)
-                cvd_short_trend_mean = cvd_short_trend_raw.rolling(
-                    50, min_periods=5).mean()
-                cvd_short_trend_std = cvd_short_trend_raw.rolling(
-                    50, min_periods=5).std()
-                df["cvd_short_trend"] = (
-                    (cvd_short_trend_raw - cvd_short_trend_mean) /
-                    cvd_short_trend_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                # 短期CVD趋势
+                df["cvd_short_trend"] = df["cvd_short"].diff(5)
+                df["cvd_short_momentum"] = df["cvd_short_trend"].diff()
 
-                cvd_short_momentum_raw = df["cvd_short_trend"].diff()
-                cvd_short_momentum_mean = cvd_short_momentum_raw.rolling(
-                    50, min_periods=5).mean()
-                cvd_short_momentum_std = cvd_short_momentum_raw.rolling(
-                    50, min_periods=5).std()
-                df["cvd_short_momentum"] = (
-                    (cvd_short_momentum_raw - cvd_short_momentum_mean) /
-                    cvd_short_momentum_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                # 中期CVD趋势
+                df["cvd_medium_trend"] = df["cvd_medium"].diff(10)
+                df["cvd_medium_momentum"] = df["cvd_medium_trend"].diff()
 
-                # 中期CVD趋势，Z-score标准化
-                cvd_medium_trend_raw = df["cvd_medium"].diff(10)
-                cvd_medium_trend_mean = cvd_medium_trend_raw.rolling(
-                    50, min_periods=10).mean()
-                cvd_medium_trend_std = cvd_medium_trend_raw.rolling(
-                    50, min_periods=10).std()
-                df["cvd_medium_trend"] = (
-                    (cvd_medium_trend_raw - cvd_medium_trend_mean) /
-                    cvd_medium_trend_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                # 长期CVD趋势
+                df["cvd_long_trend"] = df["cvd_long"].diff(20)
 
-                cvd_medium_momentum_raw = df["cvd_medium_trend"].diff()
-                cvd_medium_momentum_mean = cvd_medium_momentum_raw.rolling(
-                    50, min_periods=10).mean()
-                cvd_medium_momentum_std = cvd_medium_momentum_raw.rolling(
-                    50, min_periods=10).std()
-                df["cvd_medium_momentum"] = (
-                    (cvd_medium_momentum_raw - cvd_medium_momentum_mean) /
-                    cvd_medium_momentum_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                # 长期CVD趋势，Z-score标准化
-                cvd_long_trend_raw = df["cvd_long"].diff(20)
-                cvd_long_trend_mean = cvd_long_trend_raw.rolling(
-                    50, min_periods=20).mean()
-                cvd_long_trend_std = cvd_long_trend_raw.rolling(
-                    50, min_periods=20).std()
-                df["cvd_long_trend"] = (
-                    (cvd_long_trend_raw - cvd_long_trend_mean) /
-                    cvd_long_trend_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                # CVD跨周期关系，使用log转换和标准化
-                cvd_short_medium_ratio_raw = df["cvd_short"] / (
+                # CVD跨周期关系
+                df["cvd_short_medium_ratio"] = df["cvd_short"] / (
                     df["cvd_medium"].abs() + 1e-10)
-                # 使用log转换避免极端值，然后标准化
-                cvd_short_medium_ratio_log = np.log1p(
-                    np.abs(cvd_short_medium_ratio_raw)) * np.sign(
-                        cvd_short_medium_ratio_raw)
-                cvd_short_medium_ratio_mean = cvd_short_medium_ratio_log.rolling(
-                    50, min_periods=10).mean()
-                cvd_short_medium_ratio_std = cvd_short_medium_ratio_log.rolling(
-                    50, min_periods=10).std()
-                df["cvd_short_medium_ratio"] = (
-                    (cvd_short_medium_ratio_log - cvd_short_medium_ratio_mean)
-                    / cvd_short_medium_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                cvd_medium_long_ratio_raw = df["cvd_medium"] / (
+                df["cvd_medium_long_ratio"] = df["cvd_medium"] / (
                     df["cvd_long"].abs() + 1e-10)
-                cvd_medium_long_ratio_log = np.log1p(
-                    np.abs(cvd_medium_long_ratio_raw)) * np.sign(
-                        cvd_medium_long_ratio_raw)
-                cvd_medium_long_ratio_mean = cvd_medium_long_ratio_log.rolling(
-                    50, min_periods=10).mean()
-                cvd_medium_long_ratio_std = cvd_medium_long_ratio_log.rolling(
-                    50, min_periods=10).std()
-                df["cvd_medium_long_ratio"] = (
-                    (cvd_medium_long_ratio_log - cvd_medium_long_ratio_mean) /
-                    cvd_medium_long_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
 
-                # CVD趋势一致性（短中长期同向），已经是0/1，不需要归一化
+                # CVD趋势一致性（短中长期同向）
                 cvd_short_sign = np.sign(df["cvd_short"])
                 cvd_medium_sign = np.sign(df["cvd_medium"])
                 cvd_long_sign = np.sign(df["cvd_long"])
@@ -1020,27 +803,8 @@ class EnhancedFeatureEngineer:
                                           > 0.6).astype(int)
 
             # 5. Taker Buy Ratio动量和极值
-            # taker_buy_ratio 在 [0, 1] 范围内，diff值在 [-1, 1] 范围内，但需要标准化
-            tbr_momentum_5_raw = df["taker_buy_ratio"].diff(5)
-            tbr_momentum_20_raw = df["taker_buy_ratio"].diff(20)
-
-            tbr_momentum_5_mean = tbr_momentum_5_raw.rolling(
-                50, min_periods=5).mean()
-            tbr_momentum_5_std = tbr_momentum_5_raw.rolling(
-                50, min_periods=5).std()
-            df["tbr_momentum_5"] = (
-                (tbr_momentum_5_raw - tbr_momentum_5_mean) /
-                tbr_momentum_5_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-            tbr_momentum_20_mean = tbr_momentum_20_raw.rolling(
-                50, min_periods=20).mean()
-            tbr_momentum_20_std = tbr_momentum_20_raw.rolling(
-                50, min_periods=20).std()
-            df["tbr_momentum_20"] = (
-                (tbr_momentum_20_raw - tbr_momentum_20_mean) /
-                tbr_momentum_20_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+            df["tbr_momentum_5"] = df["taker_buy_ratio"].diff(5)
+            df["tbr_momentum_20"] = df["taker_buy_ratio"].diff(20)
 
             # TBR极值（买方/卖方主导）
             df["tbr_extreme_buy"] = (df["taker_buy_ratio"]
@@ -1050,55 +814,20 @@ class EnhancedFeatureEngineer:
             df["tbr_neutral"] = ((df["taker_buy_ratio"] >= 0.45) &
                                  (df["taker_buy_ratio"] <= 0.55)).astype(int)
 
-            # 6. CVD Slope (CVD变化趋势) - 向后兼容，并进行Z-score标准化
+            # 6. CVD Slope (CVD变化趋势) - 向后兼容
             if "cvd_change_1" in df.columns:
                 # 使用预计算的delta
-                cvd_slope_3_raw = df["cvd_change_1"].rolling(3).sum()
-                cvd_slope_10_raw = df["cvd_change_1"].rolling(10).sum()
-                cvd_slope_30_raw = df["cvd_change_1"].rolling(30).sum()
+                df["cvd_slope_3"] = df["cvd_change_1"].rolling(3).sum()
+                df["cvd_slope_10"] = df["cvd_change_1"].rolling(10).sum()
+                df["cvd_slope_30"] = df["cvd_change_1"].rolling(30).sum()
             else:
                 # 向后兼容
-                cvd_slope_3_raw = df["cvd"].diff(3)
-                cvd_slope_10_raw = df["cvd"].diff(10)
-                cvd_slope_30_raw = df["cvd"].diff(30)
+                df["cvd_slope_3"] = df["cvd"].diff(3)
+                df["cvd_slope_10"] = df["cvd"].diff(10)
+                df["cvd_slope_30"] = df["cvd"].diff(30)
 
-            # Z-score标准化
-            cvd_slope_3_mean = cvd_slope_3_raw.rolling(50,
-                                                       min_periods=3).mean()
-            cvd_slope_3_std = cvd_slope_3_raw.rolling(50, min_periods=3).std()
-            df["cvd_slope_3"] = ((cvd_slope_3_raw - cvd_slope_3_mean) /
-                                 cvd_slope_3_std.replace(0, np.nan)).replace(
-                                     [np.inf, -np.inf],
-                                     np.nan).fillna(0).clip(-5, 5)
-
-            cvd_slope_10_mean = cvd_slope_10_raw.rolling(
-                50, min_periods=10).mean()
-            cvd_slope_10_std = cvd_slope_10_raw.rolling(50,
-                                                        min_periods=10).std()
-            df["cvd_slope_10"] = ((cvd_slope_10_raw - cvd_slope_10_mean) /
-                                  cvd_slope_10_std.replace(0, np.nan)).replace(
-                                      [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
-
-            cvd_slope_30_mean = cvd_slope_30_raw.rolling(
-                50, min_periods=30).mean()
-            cvd_slope_30_std = cvd_slope_30_raw.rolling(50,
-                                                        min_periods=30).std()
-            df["cvd_slope_30"] = ((cvd_slope_30_raw - cvd_slope_30_mean) /
-                                  cvd_slope_30_std.replace(0, np.nan)).replace(
-                                      [np.inf, -np.inf],
-                                      np.nan).fillna(0).clip(-5, 5)
-
-            # CVD加速度，Z-score标准化
-            cvd_acceleration_raw = df["cvd_slope_10"].diff()
-            cvd_acceleration_mean = cvd_acceleration_raw.rolling(
-                50, min_periods=10).mean()
-            cvd_acceleration_std = cvd_acceleration_raw.rolling(
-                50, min_periods=10).std()
-            df["cvd_acceleration"] = (
-                (cvd_acceleration_raw - cvd_acceleration_mean) /
-                cvd_acceleration_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+            # CVD加速度
+            df["cvd_acceleration"] = df["cvd_slope_10"].diff()
 
             # 7. Liquidity Drain特征（成交量突然下降）
             volume_ma_20 = df["volume"].rolling(20).mean()
@@ -1109,18 +838,8 @@ class EnhancedFeatureEngineer:
                                      < (volume_ma_20 -
                                         2 * volume_std_20)).astype(int)
 
-            # 流动性比率，使用log转换和标准化
-            liquidity_ratio_raw = df["volume"] / volume_ma_20.replace(
-                0, np.nan)
-            liquidity_ratio_log = np.log1p(liquidity_ratio_raw.fillna(1))
-            liquidity_ratio_mean = liquidity_ratio_log.rolling(
-                50, min_periods=20).mean()
-            liquidity_ratio_std = liquidity_ratio_log.rolling(
-                50, min_periods=20).std()
-            df["liquidity_ratio"] = (
-                (liquidity_ratio_log - liquidity_ratio_mean) /
-                liquidity_ratio_std.replace(0, np.nan)).replace(
-                    [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+            # 流动性比率
+            df["liquidity_ratio"] = df["volume"] / volume_ma_20
 
             # 6. Buy/Sell Pressure Ratio（买卖压力比）
             if "buy_qty" in df.columns and "sell_qty" in df.columns:
@@ -1128,45 +847,20 @@ class EnhancedFeatureEngineer:
                 buy_pressure_20 = df["buy_qty"].rolling(20).sum()
                 sell_pressure_20 = df["sell_qty"].rolling(20).sum()
 
-                # 买卖压力比，使用log转换和标准化
-                buy_sell_pressure_ratio_raw = buy_pressure_20 / sell_pressure_20.replace(
-                    0, np.nan)
-                buy_sell_pressure_ratio_raw = buy_sell_pressure_ratio_raw.fillna(
-                    1)
-                buy_sell_pressure_ratio_log = np.log1p(
-                    buy_sell_pressure_ratio_raw)
-                buy_sell_pressure_ratio_mean = buy_sell_pressure_ratio_log.rolling(
-                    50, min_periods=20).mean()
-                buy_sell_pressure_ratio_std = buy_sell_pressure_ratio_log.rolling(
-                    50, min_periods=20).std()
                 df["buy_sell_pressure_ratio"] = (
-                    (buy_sell_pressure_ratio_log -
-                     buy_sell_pressure_ratio_mean) /
-                    buy_sell_pressure_ratio_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
+                    buy_pressure_20 / sell_pressure_20.replace(0, np.nan))
+                df["buy_sell_pressure_ratio"] = df[
+                    "buy_sell_pressure_ratio"].fillna(1)
 
-                # 压力差，Z-score标准化
-                pressure_diff_raw = buy_pressure_20 - sell_pressure_20
-                pressure_diff_mean = pressure_diff_raw.rolling(
-                    50, min_periods=20).mean()
-                pressure_diff_std = pressure_diff_raw.rolling(
-                    50, min_periods=20).std()
-                df["pressure_diff"] = (
-                    (pressure_diff_raw - pressure_diff_mean) /
-                    pressure_diff_std.replace(0, np.nan)).replace(
-                        [np.inf, -np.inf], np.nan).fillna(0).clip(-5, 5)
-
-                # 压力差归一化（相对值）
+                # 压力差
+                df["pressure_diff"] = buy_pressure_20 - sell_pressure_20
                 df["pressure_diff_norm"] = df["pressure_diff"] / (
-                    (buy_pressure_20 + sell_pressure_20).replace(0, np.nan) +
-                    1e-10)
-                df["pressure_diff_norm"] = df["pressure_diff_norm"].fillna(
-                    0).clip(-1, 1)
+                    buy_pressure_20 + sell_pressure_20).replace(0, np.nan)
+                df["pressure_diff_norm"] = df["pressure_diff_norm"].fillna(0)
 
             # 7. Volume-Price Divergence（量价背离）
-            # Note: pct_change() already uses past data, but we shift(1) to ensure we use previous bar's change
-            price_change_20 = df["close"].pct_change(20).shift(1)
-            volume_change_20 = df["volume"].pct_change(20).shift(1)
+            price_change_20 = df["close"].pct_change(20)
+            volume_change_20 = df["volume"].pct_change(20)
 
             # 标准化
             price_change_norm = (price_change_20 -
@@ -1273,11 +967,9 @@ class EnhancedFeatureEngineer:
             print(f"    - Calculating spectral features for all sources...")
             df = self.add_spectral_features(df)
 
-            # 6. Advanced derived features (moved to baseline model)
-            # Note: Advanced derived features are now in BaselineFeatureEngineer._add_advanced_derived_features
-            # Uncomment below if you need them in this context, but they will be added by baseline model
-            # print(f"    - Calculating advanced derived features...")
-            # df = self.add_advanced_derived_features(df)
+            # 6. Advanced derived features (from baseline model)
+            print(f"    - Calculating advanced derived features...")
+            df = self.add_advanced_derived_features(df)
 
             # 7. Order flow features (advanced)
             print(f"    - Calculating order flow features...")
