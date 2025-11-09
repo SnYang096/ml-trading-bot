@@ -1471,11 +1471,11 @@ def _build_rolling_report_html(
     period_col = "test_month" if report_type == "monthly" else "quarter"
 
     # Extract summary info
-    symbol = summary.get("configuration", {}).get(
-        "symbol",
-        summary.get("configuration", {}).get("symbols", ["N/A"])[0]
-        if isinstance(summary.get("configuration", {}).get("symbols"), list)
-        else "N/A")
+    config = summary.get("configuration", {})
+    symbol = (summary.get("symbol") or config.get("symbol")
+              or (", ".join(config.get("symbols", [])) if isinstance(
+                  config.get("symbols"), list) else config.get("symbols"))
+              or "N/A")
     total_periods = summary.get(f"total_{report_type}s_tested",
                                 len(results_df))
     avg_return = summary.get("avg_return", 0)
@@ -1485,7 +1485,6 @@ def _build_rolling_report_html(
     total_trades = summary.get("total_trades", 0)
     feature_engineering = summary.get("feature_engineering",
                                       "EnhancedFeatureEngineer")
-    config = summary.get("configuration", {})
     # Training time range (prefer training dates over creation time)
     train_start_date = summary.get("train_start_date") or summary.get(
         "configuration", {}).get("start")
@@ -1532,6 +1531,60 @@ def _build_rolling_report_html(
                     <td>{_format_float(min_val, 2)}</td>
                     <td>{_format_float(max_val, 2)}</td>
                 </tr>""")
+
+    long_term_section = ""
+    if not results_df.empty:
+        thresholds = {
+            "cls_accuracy": ("≥", 0.5, False, "Accuracy"),
+            "cls_precision": ("≥", 0.5, False, "Precision"),
+            "cls_recall": ("≥", 0.5, False, "Recall"),
+            "cls_f1": ("≥", 0.5, False, "F1"),
+            "cls_auc": ("≥", 0.5, False, "AUC"),
+            "cls_pr_auc": ("≥", 0.5, False, "PR-AUC"),
+            "cls_ic_spearman": ("≥", 0.05, True, "IC (Spearman)"),
+            "cls_ic_pearson": ("≥", 0.05, True, "IC (Pearson)"),
+            "test_r2_return": ("≥", 0.0, False, "Return R²"),
+        }
+        failing_periods = []
+        for _, row in results_df.iterrows():
+            period = row.get(period_col, "N/A")
+            issues = []
+            for col, (symbol, thresh, use_abs, label) in thresholds.items():
+                val = row.get(col)
+                if pd.isna(val):
+                    continue
+                comp_val = abs(val) if use_abs else val
+                if comp_val < thresh:
+                    fmt_val = f"{val:.2f}" if not pd.isna(val) else "N/A"
+                    issues.append(f"{label} {fmt_val} < {thresh:.2f}")
+            if issues:
+                failing_periods.append((period, issues))
+
+        thresholds_text = (
+            "1) Accuracy/F1/AUC/PR-AUC ≥ 0.50 保证分类器具备基础识别能力；"
+            "2) Precision/Recall ≥ 0.50 代表模型既能控制误开仓也能抓住行情；"
+            "3) |IC| ≥ 0.05 表示信号与收益相关性显著；"
+            "4) Return R² ≥ 0 说明收益回归模型至少不会反向预测（若 R² < 0，回归模型会削弱信号，可视为不可用）。")
+        if failing_periods:
+            issue_rows = "".join([
+                f"<li><strong>{period}</strong>: " + "; ".join(issues) +
+                "</li>" for period, issues in failing_periods
+            ])
+            long_term_section = f"""
+        <div class="explanation" style="background-color:#ffebee;border-left-color:#e53935;">
+            <h3>📉 长期有效性结论</h3>
+            <p>部分测试周期未达到默认阈值。阈值含义如下：{thresholds_text}</p>
+            <p><strong>Return R² 未达标</strong> 说明收益回归模型对收益的“方向/幅度”预测反向或噪声较大，会削弱评分结果，应降低该月回归分数权重或重新训练。</p>
+            <ul>{issue_rows}</ul>
+        </div>
+        """
+        else:
+            long_term_section = f"""
+        <div class="explanation" style="background-color:#e8f5e9;border-left-color:#2e7d32;">
+            <h3>✅ 长期有效性结论</h3>
+            <p>全部测试周期均达到默认阈值，说明分类与回归模型在滚动窗口内表现稳定，可侧重部署。阈值含义：{thresholds_text}</p>
+        </div>
+        """
 
     # Optional CV metrics table if present
     cv_section = ""
@@ -1672,6 +1725,7 @@ def _build_rolling_report_html(
             </tr>
             {"".join(stats_rows)}
         </table>
+        {long_term_section}
 
         {feature_importance_section}
         

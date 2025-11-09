@@ -109,15 +109,23 @@ def _add_relative_volatility(
     windows: Iterable[int],
 ) -> None:
     close = df["close"].astype(float)
-    grouped_symbol = close.groupby(level=symbol_level)
-
+    multi_asset = df.index.get_level_values(time_level).nunique() > 1
     for window in windows:
         if window <= 1:
             continue
-        log_returns = grouped_symbol.apply(
-            lambda s: np.log(s).diff()).droplevel(0)
-        vol = (log_returns.groupby(level=symbol_level).rolling(
-            window=window, min_periods=window // 2).std().droplevel(0))
+        if multi_asset:
+            log_returns = close.groupby(level=symbol_level).apply(lambda s: np.log(s).diff())
+            if isinstance(log_returns.index, pd.MultiIndex):
+                log_returns = log_returns.droplevel(0)
+            vol = log_returns.groupby(level=symbol_level).apply(
+                lambda s: s.rolling(window=window, min_periods=window // 2).std()
+            )
+            if isinstance(vol.index, pd.MultiIndex):
+                vol = vol.droplevel(0)
+        else:
+            symbol_series = close.droplevel(symbol_level) if symbol_level < close.index.nlevels else close
+            log_returns = np.log(symbol_series).diff()
+            vol = log_returns.rolling(window=window, min_periods=window // 2).std()
         vol_mean_cs = vol.groupby(level=time_level).transform("mean")
         vol_median_cs = vol.groupby(level=time_level).transform("median")
         prefix = f"{CRYPTO_FACTOR_PREFIX}vol_rel_{window}"
@@ -137,11 +145,14 @@ def _add_dominance_metrics(
     # Log return dominance vs strongest asset in cross-section
     close = df["close"].astype(float)
     log_return = close.groupby(
-        level=symbol_level).apply(lambda s: np.log(s).diff()).droplevel(0)
+        level=symbol_level).apply(lambda s: np.log(s).diff())
+    if isinstance(log_return.index, pd.MultiIndex):
+        log_return = log_return.droplevel(0)
     max_ret = log_return.groupby(level=time_level).transform("max")
     min_ret = log_return.groupby(level=time_level).transform("min")
-    df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = (log_return - min_ret) / (
-        (max_ret - min_ret).replace(0, np.nan))
+    range_ret = (max_ret - min_ret).replace(0, np.nan)
+    df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = (log_return -
+                                                     min_ret) / range_ret
     df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = df[
         f"{CRYPTO_FACTOR_PREFIX}return_dominance"].clip(0.0, 1.0).fillna(0.0)
 

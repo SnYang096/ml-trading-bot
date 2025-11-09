@@ -99,6 +99,17 @@ ic_stats = eval_result.ic_summary()
 - Uses `sklearn`'s `HistGradientBoostingRegressor` by default; pass your own estimator if needed.
 - `evaluate` returns IC / rank-IC per timestamp plus MSE diagnostics.
 - Combine with ranking or neutralization steps before fitting to control exposure structure.
+- Want automatic screening? Use the built-in IC/IR selector:
+
+```bash
+make cross-sectional-train \
+  CS_TRAIN_AUTO_SELECT=1 \
+  CS_TRAIN_SELECT_TOPK=50 \
+  CS_TRAIN_IC_THRESHOLD=0.01 \
+  CS_TRAIN_IR_THRESHOLD=0.5
+```
+
+This computes per-timestamp rank ICs, filters by the given thresholds, keeps the top-K by `ic_mean` (or `ic_ir` if `CS_TRAIN_SELECTION_STAT=ir`), and logs the selection metrics to `selection_metrics.json`.
 
 ## 5. Generate Expected Returns
 
@@ -114,6 +125,27 @@ Predicted returns can be consumed by portfolio construction modules or buckets.
 - Plug panel construction into the existing `pipeline/training` flow to create CS-aware datasets.
 - Add control variables (e.g. size, liquidity buckets) and use `neutralize_against` before regression.
 - Evaluate the resulting spreads or IC time-series in `scripts/analysis` utilities.
+
+### CLI Shortcuts
+
+```bash
+# 生成面板 + 报告 + 训练（自动推断年化频次）
+make cross-sectional-workflow \
+  CS_BUILD_SYMBOLS="BTCUSDT ETHUSDT" \
+  CS_BUILD_TIMEFRAME=15T \
+  CS_BUILD_HORIZON=12 \
+  CS_BUILD_START=2024-11-01 \
+  CS_BUILD_END=2025-04-30 \
+  CS_PERIODS_PER_YEAR=auto \
+  CS_TRAIN_AUTO_SELECT=1 \
+  CS_TRAIN_SELECT_TOPK=50 \
+  CS_TRAIN_IC_THRESHOLD=0.01 \
+  CS_TRAIN_IR_THRESHOLD=0.5
+```
+
+- `CS_PERIODS_PER_YEAR=auto` 会根据索引间隔推断一年内的截面次数（例如 5 分钟约等于 17520）。
+- 若 panel 中混入多个 timeframes，脚本会报错提示拆分；请确保每次输入仅含单周期数据。
+- 若需要固定值，可自行覆盖（如 `CS_PERIODS_PER_YEAR=252`）。
 
 ## Module Overview
 

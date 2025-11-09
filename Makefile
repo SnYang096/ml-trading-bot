@@ -24,8 +24,8 @@ MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
-SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT,MATICUSDT
-# SYMBOLS ?= BTCUSDT
+# SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT,MATICUSDT
+SYMBOLS ?= BTCUSDT,ETHUSDT
 START_DATE ?= 2024-11-01
 END_DATE ?= 2025-04-30
 YEAR ?= 2024
@@ -52,13 +52,13 @@ CV_FOLDS ?= 5
 OOS_MONTHS ?= 4
 OOS_START ?=
 OOS_END ?=
-INITIAL_TRAIN_MONTHS ?= 6
+INITIAL_TRAIN_MONTHS ?= 3
 MIN_TRAIN_MONTHS ?= 3
 FBS ?= 1,3,5
 
 # Optional rolling window month bounds
-ROLLING_START ?=
-ROLLING_END ?=
+ROLLING_START ?= 2024-11-01
+ROLLING_END ?= 2025-04-30
 
 # Docker command template (mounts volumes and sets PYTHONPATH)
 ifeq ($(INSIDE_CONTAINER),yes)
@@ -283,15 +283,16 @@ CS_BUILD_TIMEFRAME ?= $(FREQ)
 CS_BUILD_HORIZON ?= 12
 CS_BUILD_START ?= 2024-11-01
 CS_BUILD_END ?= 2025-04-30
-CS_BUILD_FEATURE_TYPE ?= comprehensive
+CS_BUILD_FEATURE_TYPE ?= baseline
 CS_BUILD_OUTPUT ?= $(RESULTS_DIR)/feature_exports/cs_panel_$(shell echo $(CS_BUILD_SYMBOLS) | tr ' ,' '__' | cut -c1-40)_$(CS_BUILD_TIMEFRAME)_$(CS_BUILD_HORIZON)b_$(CS_BUILD_FEATURE_TYPE)_$(shell echo $(CS_BUILD_START))_$(shell echo $(CS_BUILD_END)).parquet
 CS_BUILD_DROPNA ?= 1
 
 cross-sectional-build-panel:
 	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
 	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
-	PYTHONPATH=src $(PYTHON) scripts/cross_sectional/generate_panel.py \
-		--symbols $(CS_BUILD_SYMBOLS) \
+	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/generate_panel.py \
+		--symbols $$CS_BUILD_SYMBOLS_SPACE \
 		--timeframe $(CS_BUILD_TIMEFRAME) \
 		--horizon $(CS_BUILD_HORIZON) \
 		$(if $(CS_BUILD_START),--start-date $(CS_BUILD_START),) \
@@ -310,13 +311,13 @@ CS_INPUT ?= $(RESULTS_DIR)/feature_exports/*.parquet
 CS_OUTPUT ?= $(RESULTS_DIR)/cross_sectional/fama_macbeth_report.md
 CS_HORIZON ?= 12
 CS_MAX_LAG ?= 5
-CS_PERIODS_PER_YEAR ?= 252
+CS_PERIODS_PER_YEAR ?= auto
 CS_WINSOR ?= 3.0
 
 cross-sectional-report:
 	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
 	@mkdir -p $(dir $(CS_OUTPUT))
-	PYTHONPATH=src $(PYTHON) scripts/cross_sectional/run_famacbeth_report.py \
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_famacbeth_report.py \
 		--input $(CS_INPUT) \
 		--output $(CS_OUTPUT) \
 		--symbols "$(SYMBOLS)" \
@@ -338,11 +339,16 @@ CS_TRAIN_FEATURE_COLS ?=
 CS_TRAIN_EXTRA ?=
 CS_TRAIN_PRED_NAME ?= predictions.parquet
 CS_TRAIN_METRICS_NAME ?= metrics.json
+CS_TRAIN_AUTO_SELECT ?= 0
+CS_TRAIN_SELECT_TOPK ?=
+CS_TRAIN_IC_THRESHOLD ?=
+CS_TRAIN_IR_THRESHOLD ?=
+CS_TRAIN_SELECTION_STAT ?= ic
 
 cross-sectional-train:
 	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
 	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
-	PYTHONPATH=src $(PYTHON) scripts/cross_sectional/train_cross_sectional_model.py \
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/train_cross_sectional_model.py \
 		--input $(CS_TRAIN_INPUT) \
 		--output-dir $(CS_TRAIN_OUTPUT_DIR) \
 		--symbols "$(SYMBOLS)" \
@@ -353,6 +359,11 @@ cross-sectional-train:
 		--model-name $(CS_TRAIN_MODEL_NAME) \
 		--predictions-name $(CS_TRAIN_PRED_NAME) \
 		--metrics-name $(CS_TRAIN_METRICS_NAME) \
+		$(if $(filter 1,$(CS_TRAIN_AUTO_SELECT)),--auto-select,) \
+		$(if $(CS_TRAIN_SELECT_TOPK),--select-topk $(CS_TRAIN_SELECT_TOPK),) \
+		$(if $(CS_TRAIN_IC_THRESHOLD),--ic-threshold $(CS_TRAIN_IC_THRESHOLD),) \
+		$(if $(CS_TRAIN_IR_THRESHOLD),--ir-threshold $(CS_TRAIN_IR_THRESHOLD),) \
+		$(if $(CS_TRAIN_SELECTION_STAT),--selection-stat $(CS_TRAIN_SELECTION_STAT),) \
 		$(if $(CS_TRAIN_FEATURE_COLS),--feature-cols "$(CS_TRAIN_FEATURE_COLS)",) \
 		$(CS_TRAIN_EXTRA)
 	@echo "✅ Cross-sectional artefacts saved under $(CS_TRAIN_OUTPUT_DIR)"
@@ -364,8 +375,8 @@ cross-sectional-train:
 cross-sectional-workflow:
 	@echo "🔄 Running end-to-end cross-sectional pipeline..."
 	$(MAKE) cross-sectional-build-panel
-	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)"
-	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)"
+	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
 
 FORWARD_BARS_TRAIN ?= 5,15,45,288
 
@@ -382,25 +393,6 @@ SAFE_MULTI_ASSET ?= 1
 AUTO_TUNE ?= 0
 TUNE_TRIALS ?= 20
 PARAMS_FILE ?=
-
-tune-q50-params:
-	@echo "🔍 Pre-training Q50 parameter search for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make tune-q50-params SYMBOLS=BTCUSDT,ETHUSDT START_DATE=2024-11-01 END_DATE=2025-04-30"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated)"
-	@echo "       Timeframe: $(FREQ)"
-	@echo "       Forward Bars: $(FORWARD_BARS_TRAIN)"
-	@echo "       Trials: $(TUNE_TRIALS)"
-	@mkdir -p results/params
-	$(DOCKER_RUN_NO_TTY) python3 scripts/optimization/tune_q50_params.py \
-		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
-		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
-		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		--freq $(FREQ) \
-		--forward-bars $(shell echo $(FORWARD_BARS_TRAIN) | cut -d',' -f1) \
-		--n-trials $(TUNE_TRIALS) \
-		--n-splits 3 \
-		--max-files 10
 
 train:
 	@echo "🚀 Training classification model (default) for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."

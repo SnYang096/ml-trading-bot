@@ -22,11 +22,17 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
     get_feature_columns_by_type,
 )
 from ml_trading.models.lightgbm_model import LightGBMModel
+from ml_trading.models.quant_trading_model import QuantTradingModel
+from ml_trading.pipeline.training.classification_model_trainer import (
+    ClassificationModelTrainer,
+)
+from ml_trading.pipeline.training.preprocessing import RobustWinsorizer
 from sklearn.metrics import (mean_squared_error, mean_absolute_error, r2_score,
                              accuracy_score, precision_recall_fscore_support,
                              roc_auc_score, average_precision_score)
 from sklearn.preprocessing import StandardScaler
 from ml_trading.pipeline.training.train import _compute_direction_threshold
+from ml_trading.utils.training import simple_backtest, print_backtest_results
 
 
 def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
@@ -259,6 +265,195 @@ def main() -> None:
             "return": {},
             "volatility": {},
         }
+        classification_trainer = ClassificationModelTrainer(use_gpu=args.gpu)
+        artifacts_entries: List[Dict[str, str]] = []
+
+        def _format_pct(value: Optional[float],
+                        good_threshold: float = 0.5,
+                        excellent_threshold: float = 0.55) -> str:
+            if value is None:
+                return "<td>N/A</td>"
+            try:
+                val = float(value)
+                color = ("green" if val >= excellent_threshold else
+                         "#90EE90" if val >= good_threshold else "red")
+                return (
+                    f'<td style="color: {color}; font-weight: bold;">'
+                    f"{val * 100:.2f}%</td>")
+            except (TypeError, ValueError):
+                return f"<td>{value}</td>"
+
+        def _format_corr(value: Optional[float],
+                         good_threshold: float = 0.05,
+                         excellent_threshold: float = 0.1) -> str:
+            if value is None:
+                return "<td>N/A</td>"
+            try:
+                val = float(value)
+                abs_val = abs(val)
+                color = ("green" if abs_val >= excellent_threshold else
+                         "#90EE90" if abs_val >= good_threshold else "red")
+                return (
+                    f'<td style="color: {color}; font-weight: bold;">'
+                    f"{val:.4f}</td>")
+            except (TypeError, ValueError):
+                return f"<td>{value}</td>"
+
+        def _format_r2(value: Optional[float],
+                       good_threshold: float = 0.0,
+                       excellent_threshold: float = 0.05) -> str:
+            if value is None:
+                return "<td>N/A</td>"
+            try:
+                val = float(value)
+                color = ("green" if val >= excellent_threshold else
+                         "#90EE90" if val >= good_threshold else "red")
+                return (
+                    f'<td style="color: {color}; font-weight: bold;">'
+                    f"{val:.4f}</td>")
+            except (TypeError, ValueError):
+                return f"<td>{value}</td>"
+
+        def _format_float(value: Optional[float],
+                          digits: int = 6) -> str:
+            if value is None:
+                return "<td>N/A</td>"
+            try:
+                return f"<td>{float(value):.{digits}f}</td>"
+            except (TypeError, ValueError):
+                return f"<td>{value}</td>"
+
+        def _build_feature_table(df: Optional[pd.DataFrame],
+                                 title: str) -> str:
+            if df is None or df.empty:
+                return ""
+            rows = []
+            for rank, row in enumerate(df.head(20).itertuples(), start=1):
+                feat = getattr(row, "feature", "N/A")
+                imp = getattr(row, "importance", None)
+                try:
+                    imp_str = f"{float(imp):.6f}"
+                except (TypeError, ValueError):
+                    imp_str = str(imp)
+                rows.append(
+                    f"<tr><td>{rank}</td><td>{feat}</td><td>{imp_str}</td></tr>"
+                )
+            return (
+                f"<h3>{title}</h3>"
+                "<table><tr><th>#</th><th>Feature</th>"
+                "<th>Importance (Gain)</th></tr>"
+                f"{''.join(rows)}</table>"
+            )
+
+        def _write_window_report(res_row: Dict,
+                                 cls_imp: Optional[pd.DataFrame],
+                                 ret_imp: Optional[pd.DataFrame],
+                                 vol_imp: Optional[pd.DataFrame],
+                                 train_months: List[Dict],
+                                 test_month: Dict,
+                                 output_dir: str) -> None:
+            os.makedirs(output_dir, exist_ok=True)
+            report_path = os.path.join(output_dir,
+                                       f"{test_month['month_str']}.html")
+
+            train_start = train_months[0]["month_str"]
+            train_end = train_months[-1]["month_str"]
+            info_rows = [
+                ("Symbol(s)", symbols_str),
+                ("Timeframe", freq),
+                ("Forward Bars", fb),
+                ("Feature Type", args.feature_type),
+                ("Train Months", len(train_months)),
+                ("Train Range", f"{train_start} → {train_end}"),
+                ("Test Month", test_month["month_str"]),
+                ("Train Samples", res_row.get("train_samples")),
+                ("Test Samples", res_row.get("test_samples")),
+            ]
+            info_table = "".join([
+                f"<tr><th>{label}</th><td>{value}</td></tr>"
+                for label, value in info_rows
+            ])
+
+            cls_rows = [
+                f"<tr><td>Accuracy</td>{_format_pct(res_row.get('cls_accuracy'))}</tr>",
+                f"<tr><td>Precision</td>{_format_pct(res_row.get('cls_precision'))}</tr>",
+                f"<tr><td>Recall</td>{_format_pct(res_row.get('cls_recall'))}</tr>",
+                f"<tr><td>F1</td>{_format_pct(res_row.get('cls_f1'))}</tr>",
+            ]
+            if res_row.get("cls_auc") is not None:
+                cls_rows.append(
+                    f"<tr><td>AUC</td>{_format_pct(res_row.get('cls_auc'))}</tr>"
+                )
+            if res_row.get("cls_pr_auc") is not None:
+                cls_rows.append(
+                    f"<tr><td>PR-AUC</td>{_format_pct(res_row.get('cls_pr_auc'))}</tr>"
+                )
+            if res_row.get("cls_threshold") is not None:
+                cls_rows.append(
+                    "<tr><td>Best Threshold (F1)</td>"
+                    f"{_format_float(res_row.get('cls_threshold'), digits=3)}</tr>"
+                )
+            cls_rows.append(
+                f"<tr><td>IC (Spearman)</td>{_format_corr(res_row.get('cls_ic_spearman'))}</tr>"
+            )
+            cls_rows.append(
+                f"<tr><td>IC (Pearson)</td>{_format_corr(res_row.get('cls_ic_pearson'))}</tr>"
+            )
+
+            return_rows = [
+                f"<tr><td>RMSE</td>{_format_float(res_row.get('test_rmse_return'))}</tr>",
+                f"<tr><td>MAE</td>{_format_float(res_row.get('test_mae_return'))}</tr>",
+                f"<tr><td>R²</td>{_format_r2(res_row.get('test_r2_return'))}</tr>",
+            ]
+            vol_rows = [
+                f"<tr><td>RMSE</td>{_format_float(res_row.get('test_rmse_vol'))}</tr>",
+                f"<tr><td>MAE</td>{_format_float(res_row.get('test_mae_vol'))}</tr>",
+                f"<tr><td>R²</td>{_format_r2(res_row.get('test_r2_vol'))}</tr>",
+            ]
+
+            feature_sections = "".join([
+                _build_feature_table(cls_imp, "🔍 Directional Feature Importance (Top 20)"),
+                _build_feature_table(ret_imp, "📈 Return Regression Feature Importance (Top 20)"),
+                _build_feature_table(vol_imp, "📉 Volatility Feature Importance (Top 20)"),
+            ])
+
+            html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Rolling Window Report - {test_month['month_str']}</title>
+<style>
+body{{font-family:Arial,sans-serif;margin:24px;color:#222;background:#f5f5f5}}
+.container{{max-width:1100px;margin:0 auto;background:white;padding:24px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}}
+h1{{color:#2c3e50;border-bottom:3px solid #3498db;padding-bottom:10px}}
+h2{{color:#34495e;margin-top:28px;margin-bottom:14px;padding-left:10px;border-left:4px solid #3498db}}
+table{{border-collapse:collapse;width:100%;margin:15px 0;background:white}}
+th{{background:#3498db;color:#fff;padding:10px;text-align:left;font-weight:600}}
+td{{border:1px solid #ddd;padding:10px}}
+tr:nth-child(even){{background:#f9f9f9}}
+tr:hover{{background:#f0f8ff}}
+.info-section{{background:#ecf0f1;padding:15px;border-radius:6px;margin:15px 0}}
+.note{{font-size:0.9em;color:#7f8c8d;margin:6px 0}}
+</style>
+</head><body>
+<div class="container">
+<h1>📊 Rolling Window Report ({test_month['month_str']})</h1>
+<div class="info-section">
+<table>{info_table}</table>
+<p class="note">红色标注表示指标低于默认阈值（准确率/精确率/召回率/F1/AUC &lt; 50%，PR-AUC &lt; 50%，IC &lt; 0.05，R² &lt; 0）。</p>
+</div>
+<h2>🎯 Directional Metrics</h2>
+<table><tr><th>Metric</th><th>Value</th></tr>{''.join(cls_rows)}</table>
+<h2>📈 Return Regression Metrics</h2>
+<table><tr><th>Metric</th><th>Value</th></tr>{''.join(return_rows)}</table>
+<h2>📉 Volatility Regression Metrics</h2>
+<table><tr><th>Metric</th><th>Value</th></tr>{''.join(vol_rows)}</table>
+{feature_sections if feature_sections else ''}
+</div></body></html>"""
+
+            try:
+                with open(report_path, "w", encoding="utf-8") as handle:
+                    handle.write(html)
+                print(f"   - window report: {report_path}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"   ⚠️  Failed to write window report for {test_month['month_str']}: {exc}")
 
         def _accumulate_importance(df: Optional[pd.DataFrame],
                                    bucket: str) -> None:
@@ -304,7 +499,7 @@ def main() -> None:
 
             print("\n" + "-" * 80)
             print(
-                f"Train: {train_files[0]['month_str']} → {train_files[-1]['month_str']} ({len(train_files)} months)"
+                f"Train: {train_files[0]['month_str']} → {train_files[-1]['month_str']} (assets: {len(symbol_list)})"
             )
             print(f"Test:  {test_file['month_str']}")
 
@@ -497,66 +692,175 @@ def main() -> None:
                 X_train = train_labeled[feat_cols].values
                 X_test = test_labeled[feat_cols].values
 
-            y_ret_tr = train_labeled['future_return'].values
-            y_vol_tr = train_labeled['future_volatility'].values
-            y_ret_te = test_labeled['future_return'].values
-            y_vol_te = test_labeled['future_volatility'].values
+            X_train_df = pd.DataFrame(
+                X_train, index=train_labeled.index, columns=feat_cols)
+            X_test_df = pd.DataFrame(
+                X_test, index=test_labeled.index, columns=feat_cols)
 
-            n_splits = args.cv_folds if (args.cv_on_rolling
-                                         and args.cv_folds > 0) else 0
-            y_cls_tr = (y_ret_tr > 0).astype(int)
-            y_cls_te = (y_ret_te > 0).astype(int)
+            y_return_train = train_labeled["future_return"]
+            y_vol_train = train_labeled["future_volatility"]
+            y_return_test = test_labeled["future_return"]
+            y_vol_test = test_labeled["future_volatility"]
 
-            model_cls = LightGBMModel(model_type="classification",
-                                      use_gpu=args.gpu)
-            _ = model_cls.train(pd.DataFrame(X_train, columns=feat_cols),
-                                pd.Series(y_cls_tr),
-                                n_splits=n_splits,
-                                use_time_series_cv=bool(n_splits))
+            y_cls_train = (y_return_train > 0).astype(int)
+            y_cls_test = (y_return_test > 0).astype(int)
 
-            model_return = LightGBMModel(model_type="regression",
-                                         use_gpu=args.gpu)
-            _ = model_return.train(pd.DataFrame(X_train, columns=feat_cols),
-                                   pd.Series(y_ret_tr),
-                                   n_splits=n_splits,
-                                   use_time_series_cv=bool(n_splits))
+            groups = None
+            if "symbol" in train_labeled.columns:
+                try:
+                    groups = train_labeled["symbol"].astype("category").cat.codes.values
+                except Exception:
+                    groups = None
 
-            model_vol = LightGBMModel(model_type="regression",
-                                      use_gpu=args.gpu)
-            _ = model_vol.train(pd.DataFrame(X_train, columns=feat_cols),
-                                pd.Series(y_vol_tr),
-                                n_splits=n_splits,
-                                use_time_series_cv=bool(n_splits))
+            classification_preprocess_params = None
+            return_preprocess_params = None
+            vol_preprocess_params = None
+            trainer_splits = max(
+                2,
+                args.cv_folds
+                if (args.cv_on_rolling and args.cv_folds and args.cv_folds > 0)
+                else 2,
+            )
+            try:
+                models_dict, metrics_dict, preprocess_params_dict = classification_trainer.train_models(
+                    X_df=X_train_df,
+                    y_return=y_return_train,
+                    y_vol=y_vol_train,
+                    train_df=train_labeled,
+                    n_splits=trainer_splits,
+                    groups=groups,
+                    preprocess_fn=None,
+                    preprocess_kwargs={},
+                    feature_winsorize_k=4.0,
+                )
+                model_cls = models_dict.get("classification")
+                model_return = models_dict.get("return")
+                model_vol = models_dict.get("vol")
+                classification_preprocess_params = preprocess_params_dict.get(
+                    "classification")
+                return_preprocess_params = preprocess_params_dict.get("return")
+                vol_preprocess_params = preprocess_params_dict.get("vol")
+                classification_metrics_cv = metrics_dict.get(
+                    "classification", {})
+                if classification_metrics_cv:
+                    cv_acc = classification_metrics_cv.get("accuracy")
+                    cv_f1 = classification_metrics_cv.get("f1")
+                    cv_auc = classification_metrics_cv.get("auc")
+                    if all(val is not None for val in [cv_acc, cv_f1, cv_auc]):
+                        print(
+                            f"   CV metrics → Accuracy: {cv_acc:.3f} | F1: {cv_f1:.3f} | AUC: {cv_auc:.3f}"
+                        )
+            except Exception as exc:
+                print(
+                    f"   ⚠️ Classification trainer fallback: {exc}. Reverting to direct LightGBM training."
+                )
+                fallback_cv = (
+                    args.cv_folds if (args.cv_on_rolling and args.cv_folds
+                                      and args.cv_folds > 1) else 0)
+                model_cls = LightGBMModel(model_type="classification",
+                                          use_gpu=args.gpu)
+                _ = model_cls.train(X_train_df,
+                                    y_cls_train,
+                                    n_splits=fallback_cv,
+                                    use_time_series_cv=bool(fallback_cv))
+
+                model_return = LightGBMModel(model_type="regression",
+                                             use_gpu=args.gpu)
+                _ = model_return.train(X_train_df,
+                                       y_return_train,
+                                       n_splits=fallback_cv,
+                                       use_time_series_cv=bool(fallback_cv))
+
+                model_vol = LightGBMModel(model_type="regression",
+                                          use_gpu=args.gpu)
+                _ = model_vol.train(X_train_df,
+                                    y_vol_train,
+                                    n_splits=fallback_cv,
+                                    use_time_series_cv=bool(fallback_cv))
+
+            # Ensure models are trained even if trainer returned placeholders
+            fallback_cv = (
+                args.cv_folds if (args.cv_on_rolling and args.cv_folds
+                                  and args.cv_folds > 1) else 0)
+            if model_cls is None or not getattr(model_cls, "is_trained", False):
+                print(
+                    "   ⚠️ Classification model unavailable after trainer run; using fallback LightGBM training."
+                )
+                model_cls = LightGBMModel(model_type="classification",
+                                          use_gpu=args.gpu)
+                _ = model_cls.train(X_train_df,
+                                    y_cls_train,
+                                    n_splits=fallback_cv,
+                                    use_time_series_cv=bool(fallback_cv))
+                classification_preprocess_params = None
+
+            if model_return is None or not getattr(model_return, "is_trained",
+                                                   False):
+                print(
+                    "   ⚠️ Return model unavailable after trainer run; using fallback LightGBM training."
+                )
+                model_return = LightGBMModel(model_type="regression",
+                                             use_gpu=args.gpu)
+                _ = model_return.train(X_train_df,
+                                       y_return_train,
+                                       n_splits=fallback_cv,
+                                       use_time_series_cv=bool(fallback_cv))
+                return_preprocess_params = None
+
+            if model_vol is None or not getattr(model_vol, "is_trained", False):
+                print(
+                    "   ⚠️ Volatility model unavailable after trainer run; using fallback LightGBM training."
+                )
+                model_vol = LightGBMModel(model_type="regression",
+                                          use_gpu=args.gpu)
+                _ = model_vol.train(X_train_df,
+                                    y_vol_train,
+                                    n_splits=fallback_cv,
+                                    use_time_series_cv=bool(fallback_cv))
+                vol_preprocess_params = None
+
+            # Guard against edge cases where LightGBMModel preserves booster but flag remains unset
+            for mdl in (model_cls, model_return, model_vol):
+                if mdl is not None and getattr(mdl, "model", None) is not None:
+                    mdl.is_trained = True
 
             # Evaluate
-            y_prob = model_cls.model.predict(X_test, raw_score=False)
+            print(
+                f"   Model status → cls_trained={getattr(model_cls, 'is_trained', False)}, "
+                f"return_trained={getattr(model_return, 'is_trained', False)}, "
+                f"vol_trained={getattr(model_vol, 'is_trained', False)}")
+            y_prob = model_cls.predict(X_test_df)
             try:
                 threshold = _compute_direction_threshold(
-                    y_prob, y_cls_te, method=args.direction_threshold)
+                    y_prob, y_cls_test, method=args.direction_threshold)
             except Exception:
                 threshold = 0.5
             y_pred_dir = (y_prob > threshold).astype(int)
-            cls_accuracy = float(accuracy_score(y_cls_te, y_pred_dir))
+            cls_accuracy = float(accuracy_score(y_cls_test, y_pred_dir))
             precision, recall, f1, _ = precision_recall_fscore_support(
-                y_cls_te, y_pred_dir, average='binary', zero_division=0)
+                y_cls_test, y_pred_dir, average='binary', zero_division=0)
             try:
-                cls_auc = float(roc_auc_score(y_cls_te, y_prob))
+                cls_auc = float(roc_auc_score(y_cls_test, y_prob))
             except Exception:
                 cls_auc = None
             try:
-                cls_pr_auc = float(average_precision_score(y_cls_te, y_prob))
+                cls_pr_auc = float(average_precision_score(y_cls_test, y_prob))
             except Exception:
                 cls_pr_auc = None
 
-            y_pred_return = model_return.model.predict(X_test)
-            y_pred_vol = model_vol.model.predict(X_test)
+            y_pred_return = model_return.predict(X_test_df)
+            y_pred_vol = model_vol.predict(X_test_df)
             ret_rmse = float(
-                np.sqrt(mean_squared_error(y_ret_te, y_pred_return)))
-            ret_mae = float(mean_absolute_error(y_ret_te, y_pred_return))
-            ret_r2 = float(r2_score(y_ret_te, y_pred_return))
-            vol_rmse = float(np.sqrt(mean_squared_error(y_vol_te, y_pred_vol)))
-            vol_mae = float(mean_absolute_error(y_vol_te, y_pred_vol))
-            vol_r2 = float(r2_score(y_vol_te, y_pred_vol))
+                np.sqrt(mean_squared_error(y_return_test, y_pred_return)))
+            ret_mae = float(mean_absolute_error(y_return_test, y_pred_return))
+            ret_r2 = float(r2_score(y_return_test, y_pred_return))
+            vol_rmse = float(
+                np.sqrt(mean_squared_error(y_vol_test, y_pred_vol)))
+            vol_mae = float(mean_absolute_error(y_vol_test, y_pred_vol))
+            vol_r2 = float(r2_score(y_vol_test, y_pred_vol))
+
+            train_samples = int(X_train_df.shape[0])
+            test_samples = int(X_test_df.shape[0])
 
             res = {
                 "symbol": symbols_str,
@@ -565,8 +869,9 @@ def main() -> None:
                 "test_month": test_file["month_str"],
                 "train_months": len(train_files),
                 "num_features": len(feat_cols),
-                "train_samples": len(X_train),
-                "test_samples": len(X_test),
+                "train_samples": train_samples,
+                "test_samples": test_samples,
+                "feature_type": args.feature_type,
                 "cls_accuracy": cls_accuracy,
                 "cls_precision": float(precision),
                 "cls_recall": float(recall),
@@ -574,6 +879,18 @@ def main() -> None:
                 "cls_auc": cls_auc,
                 "cls_pr_auc": cls_pr_auc,
                 "cls_threshold": float(threshold),
+                "cls_ic_spearman": (
+                    lambda val: float(val)
+                    if val is not None and pd.notna(val) else None
+                )(pd.Series(y_cls_test).corr(pd.Series(y_prob),
+                                           method="spearman")
+                  if len(y_cls_test) > 1 else None),
+                "cls_ic_pearson": (
+                    lambda val: float(val)
+                    if val is not None and pd.notna(val) else None
+                )(pd.Series(y_cls_test).corr(pd.Series(y_prob),
+                                           method="pearson")
+                  if len(y_cls_test) > 1 else None),
                 "test_rmse_return": ret_rmse,
                 "test_mae_return": ret_mae,
                 "test_r2_return": ret_r2,
@@ -599,13 +916,137 @@ def main() -> None:
                 imp_vol.to_dict("records") if imp_vol is not None else None,
             }
 
+            # Backtest the classification probabilities
+            bt_results = simple_backtest(test_labeled.copy(),
+                                         y_prob,
+                                         signal_threshold=float(threshold))
+            print_backtest_results(bt_results,
+                                   f"{test_file['month_str']} Backtest")
+            res.update({
+                "total_trades":
+                int(bt_results.get("total_trades", 0)),
+                "total_return":
+                float(bt_results.get("total_return", 0.0)),
+                "win_rate":
+                float(bt_results.get("win_rate", 0.0)),
+                "avg_win":
+                float(bt_results.get("avg_win", 0.0)),
+                "avg_loss":
+                float(bt_results.get("avg_loss", 0.0)),
+                "profit_factor":
+                float(bt_results.get("profit_factor", 0.0)),
+                "max_drawdown":
+                float(bt_results.get("max_drawdown", 0.0)),
+                "final_equity":
+                float(bt_results.get("final_equity", 0.0)),
+            })
+
             all_results.append(res)
             print(
                 f"      Test return RMSE: {ret_rmse:.6f}, MAE: {ret_mae:.6f}; cls F1: {f1:.3f}"
             )
 
-            # Save models
+            _write_window_report(
+                res_row=res,
+                cls_imp=imp_cls,
+                ret_imp=imp_ret,
+                vol_imp=imp_vol,
+                train_months=train_files,
+                test_month=test_file,
+                output_dir=os.path.join(combo_dir, "window_reports"),
+            )
+
+            # Persist model artifacts
             base = f"fb{fb}_tf{freq}_{test_file['month_str']}"
+            artifact_paths: Dict[str, str] = {}
+
+            cls_pipeline = QuantTradingModel(
+                model_type="classification",
+                forward_bars=fb,
+                feature_cols=feat_cols,
+                preprocess_params=classification_preprocess_params,
+                use_gpu=args.gpu,
+            )
+            cls_pipeline.model = model_cls.model
+            if classification_preprocess_params:
+                cls_pipeline.preprocessor = RobustWinsorizer.from_params(
+                    classification_preprocess_params, forward_bars=fb)
+            cls_pipeline_path = os.path.join(
+                combo_dir, f"classification_pipeline_{base}.pkl")
+            cls_pipeline.save(cls_pipeline_path)
+            artifact_paths["classification_pipeline"] = cls_pipeline_path
+
+            return_pipeline = QuantTradingModel(
+                model_type="regression",
+                forward_bars=fb,
+                feature_cols=feat_cols,
+                preprocess_params=return_preprocess_params,
+                use_gpu=args.gpu,
+            )
+            return_pipeline.model = model_return.model
+            if return_preprocess_params:
+                return_pipeline.preprocessor = RobustWinsorizer.from_params(
+                    return_preprocess_params, forward_bars=fb)
+            return_pipeline_path = os.path.join(
+                combo_dir, f"return_pipeline_{base}.pkl")
+            return_pipeline.save(return_pipeline_path)
+            artifact_paths["return_pipeline"] = return_pipeline_path
+
+            vol_pipeline = QuantTradingModel(
+                model_type="regression",
+                forward_bars=fb,
+                feature_cols=feat_cols,
+                preprocess_params=None,
+                use_gpu=args.gpu,
+            )
+            vol_pipeline.model = model_vol.model
+            vol_pipeline_path = os.path.join(combo_dir,
+                                             f"vol_pipeline_{base}.pkl")
+            vol_pipeline.save(vol_pipeline_path)
+            artifact_paths["vol_pipeline"] = vol_pipeline_path
+
+            feature_engineer_obj = (baseline_engineer if args.feature_type
+                                    == "baseline" else comp_engineer)
+            scaler_path = os.path.join(combo_dir, f"scalers_{base}.pkl")
+            if feature_engineer_obj is not None and hasattr(
+                    feature_engineer_obj, "save_scalers"):
+                try:
+                    feature_engineer_obj.save_scalers(scaler_path)
+                    artifact_paths["scalers"] = scaler_path
+                except Exception as exc:
+                    print(f"   ⚠️ Failed to save scalers: {exc}")
+
+            features_path = os.path.join(combo_dir, f"features_{base}.txt")
+            try:
+                with open(features_path, "w") as f:
+                    f.write("\n".join(feat_cols))
+                artifact_paths["features"] = features_path
+            except Exception as exc:
+                print(f"   ⚠️ Failed to write features file: {exc}")
+
+            trades = bt_results.get("trades", [])
+            if trades:
+                trades_path = os.path.join(combo_dir, f"trades_{base}.json")
+                try:
+                    serialized_trades = []
+                    for trade in trades:
+                        serialized_trades.append({
+                            key: (str(value) if isinstance(value, pd.Timestamp)
+                                  else value)
+                            for key, value in trade.items()
+                        })
+                    with open(trades_path, "w") as f:
+                        json.dump(serialized_trades, f, indent=2)
+                    artifact_paths["trades"] = trades_path
+                except Exception as exc:
+                    print(f"   ⚠️ Failed to persist trade log: {exc}")
+
+            res["artifacts"] = artifact_paths
+            artifacts_entries.append({
+                "test_month": test_file["month_str"], **artifact_paths
+            })
+
+            # Save raw LightGBM models for reference
             model_cls.model.save_model(
                 os.path.join(combo_dir, f"model_direction_{base}.txt"))
             model_return.model.save_model(
@@ -638,9 +1079,29 @@ def main() -> None:
         avg_vol_r2 = float(results_df["test_r2_vol"].mean()
                            ) if "test_r2_vol" in results_df.columns and len(
                                results_df) > 0 else None
+        total_trades_sum = int(results_df["total_trades"].sum()
+                               ) if "total_trades" in results_df.columns else 0
+        avg_total_return = float(results_df["total_return"].mean()
+                                 ) if "total_return" in results_df.columns and len(
+                                     results_df) > 0 else None
+        avg_win_rate = float(results_df["win_rate"].mean()
+                             ) if "win_rate" in results_df.columns and len(
+                                 results_df) > 0 else None
+        avg_profit_factor = float(
+            results_df["profit_factor"].mean()
+        ) if "profit_factor" in results_df.columns and len(
+            results_df) > 0 else None
+        avg_max_drawdown = float(results_df["max_drawdown"].mean()
+                                 ) if "max_drawdown" in results_df.columns and len(
+                                     results_df) > 0 else None
+        avg_final_equity = float(results_df["final_equity"].mean()
+                                 ) if "final_equity" in results_df.columns and len(
+                                     results_df) > 0 else None
         summary = {
             "symbol":
             symbols_str,
+            "feature_type":
+            args.feature_type,
             "total_months_tested":
             len(results_df),
             "train_start_date":
@@ -659,6 +1120,18 @@ def main() -> None:
             avg_return_r2,
             "avg_vol_r2":
             avg_vol_r2,
+            "avg_total_return":
+            avg_total_return,
+            "avg_win_rate":
+            avg_win_rate,
+            "avg_profit_factor":
+            avg_profit_factor,
+            "avg_max_drawdown":
+            avg_max_drawdown,
+            "avg_final_equity":
+            avg_final_equity,
+            "total_trades":
+            total_trades_sum,
             "created_at":
             datetime.now().isoformat(),
             "feature_engineering":
@@ -676,6 +1149,9 @@ def main() -> None:
                 "end": getattr(args, "end", None),
                 "feature_type": args.feature_type,
             },
+            "artifacts":
+            artifacts_entries,
+            "monthly_results": all_results,
         }
 
         def _finalize_importance(

@@ -71,9 +71,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--periods-per-year",
-        type=int,
-        default=252,
-        help="Annualisation factor (e.g., 252 for daily, 17520 for 5-minute).",
+        type=str,
+        default="auto",
+        help="Annualisation factor (e.g., 252 for daily, 17520 for 5-minute). Use 'auto' to infer from data.",
     )
     parser.add_argument(
         "--winsor",
@@ -132,8 +132,11 @@ def load_frames(paths: Sequence[str]) -> pd.DataFrame:
             raise ValueError(f"Unsupported file extension: {path}")
         if df.empty:
             continue
-        if "timestamp" not in df.columns and isinstance(df.index, pd.DatetimeIndex):
-            df = df.reset_index().rename(columns={"index": "timestamp"})
+        if "timestamp" not in df.columns:
+            if isinstance(df.index, pd.MultiIndex) and "timestamp" in df.index.names:
+                df = df.reset_index()
+            elif isinstance(df.index, pd.DatetimeIndex):
+                df = df.reset_index().rename(columns={"index": "timestamp"})
         if "timestamp" not in df.columns:
             raise ValueError(f"'timestamp' column missing in {path}")
         if "symbol" not in df.columns:
@@ -144,8 +147,11 @@ def load_frames(paths: Sequence[str]) -> pd.DataFrame:
         raise ValueError("All input frames are empty.")
     combined = pd.concat(frames, axis=0, ignore_index=True)
     combined["timestamp"] = pd.to_datetime(combined["timestamp"], utc=True, errors="coerce")
-    combined = combined.dropna(subset=["timestamp"])
+    combined = combined.dropna(subset=["timestamp", "symbol"])
     combined = combined.sort_values(["timestamp", "symbol"])
+    combined = combined.set_index(["timestamp", "symbol"])
+    combined["timestamp"] = combined.index.get_level_values("timestamp")
+    combined["symbol"] = combined.index.get_level_values("symbol")
     return combined
 
 
@@ -162,7 +168,13 @@ def filter_symbols(df: pd.DataFrame, symbols: Optional[str]) -> pd.DataFrame:
     if not symbols:
         return df
     symbol_list = [s.strip().upper() for s in symbols.replace(" ", ",").split(",") if s.strip()]
-    return df[df["symbol"].str.upper().isin(symbol_list)].copy()
+    if isinstance(df.index, pd.MultiIndex) and "symbol" in df.index.names:
+        mask = df.index.get_level_values("symbol").str.upper().isin(symbol_list)
+        filtered = df[mask].copy()
+        return filtered
+    if "symbol" in df.columns:
+        return df[df["symbol"].str.upper().isin(symbol_list)].copy()
+    raise ValueError("Symbol filtering requested but 'symbol' column/level not found.")
 
 
 def ensure_future_return_column(
@@ -226,6 +238,12 @@ def main() -> None:
     if filtered_df.empty:
         raise ValueError("No data available after symbol filtering.")
 
+    if isinstance(filtered_df.index, pd.MultiIndex):
+        cols_to_drop = [col for col in ["timestamp", "symbol"] if col in filtered_df.columns]
+        if cols_to_drop:
+            filtered_df = filtered_df.drop(columns=cols_to_drop)
+        filtered_df = filtered_df.reset_index()
+
     filtered_df, target_col = ensure_future_return_column(filtered_df, args.horizon)
     feature_cols = (
         [c.strip() for c in args.feature_cols.split(",") if c.strip()]
@@ -233,24 +251,38 @@ def main() -> None:
         else None
     )
 
+    symbol_count = filtered_df["symbol"].nunique()
+    min_assets_required = 3
+    if symbol_count < min_assets_required:
+        min_assets_required = max(1, symbol_count)
+
+    print("   📥 Assembling panel...")
     panel, detected_features = build_panel(
         filtered_df,
         target_col=target_col,
         feature_cols=feature_cols,
-        min_assets=3,
+        min_assets=min_assets_required,
         horizon=args.horizon,
         dropna_after_fill=not args.skip_na_drop,
     )
     factor_cols = list(feature_cols) if feature_cols else list(detected_features)
+    print(f"   📦 Initial factor count: {len(factor_cols)}")
 
     if args.crypto_factors:
+        print("   🔧 Adding crypto-specific factors...")
         panel = add_crypto_cross_sectional_factors(panel)
         crypto_cols = [
             col for col in panel.columns if col.startswith("cs_crypto_") and col != target_col
         ]
         factor_cols = list(dict.fromkeys(factor_cols + crypto_cols))
+        print(f"   📦 Factor count after crypto enrichment: {len(factor_cols)}")
 
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
+    periods_per_year = resolve_periods_per_year(args.periods_per_year, processed_panel.index)
+    print(
+        f"   📊 Panel ready: {processed_panel.shape[0]} observations, "
+        f"{len(factor_cols)} factors, periods_per_year={periods_per_year:.2f}"
+    )
 
     model = CrossSectionalRegressor(add_intercept=True, min_assets=3)
     result = model.fit(processed_panel, factor_cols=factor_cols, target_col=target_col)
@@ -260,7 +292,7 @@ def main() -> None:
     context = ReportContext(
         title="Cross-Sectional Factor Efficacy Report",
         max_lag=args.max_lag,
-        periods_per_year=args.periods_per_year,
+        periods_per_year=periods_per_year,
         preprocessing=_describe_preprocessing(args.winsor, args.zscore),
         symbols=args.symbols or ", ".join(sorted(filtered_df["symbol"].unique())),
         horizon=args.horizon,
@@ -283,6 +315,42 @@ def _describe_preprocessing(winsor_sigma: float, apply_zscore: bool) -> str:
     if not steps:
         return "none"
     return " + ".join(steps)
+
+
+def resolve_periods_per_year(arg_value: str, index: pd.Index) -> float:
+    value = (arg_value or "auto").strip().lower()
+    if value != "auto":
+        try:
+            parsed = float(value)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            pass
+
+    timestamps = index
+    if isinstance(timestamps, pd.MultiIndex):
+        timestamps = timestamps.get_level_values(0)
+    timestamps = pd.to_datetime(timestamps)
+    timestamps = timestamps.sort_values().unique()
+    if len(timestamps) < 2:
+        return 252.0
+
+    diffs_series = pd.Series(timestamps)
+    diffs = diffs_series.diff().dropna()
+    if diffs.empty:
+        return 252.0
+    if diffs.nunique() > 1:
+        raise ValueError(
+            "Detected multiple bar intervals in panel; please provide a single timeframe per run."
+        )
+
+    median_seconds = diffs.dt.total_seconds().iloc[0]
+    if not median_seconds or median_seconds <= 0:
+        return 252.0
+
+    seconds_per_year = 365.0 * 24.0 * 3600.0
+    inferred = seconds_per_year / median_seconds
+    return float(inferred)
 
 
 if __name__ == "__main__":

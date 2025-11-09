@@ -237,3 +237,5 @@ make train
 支持动态滚动训练窗口
 添加模型版本管理和预测缓存
 整体而言，代码质量高，结构清晰，工程实践成熟。
+
+make rolling-multi SYMBOLS="BTCUSDT"      FREQS="15T" FBS="5"      INITIAL_TRAIN_MONTHS=3 MIN_TRAIN_MONTHS=3      ROLLING_START=2025-01 ROLLING_END=2025-10 

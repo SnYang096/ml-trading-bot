@@ -98,9 +98,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--periods-per-year",
-        type=int,
-        default=252,
-        help="Annualisation factor for report metrics (e.g., 17520 for 5-min bars).",
+        type=str,
+        default="auto",
+        help="Annualisation factor for report metrics (e.g., 17520 for 5-min bars). Use 'auto' to infer from data.",
     )
     parser.add_argument(
         "--save-markdown",
@@ -126,6 +126,42 @@ def parse_args() -> argparse.Namespace:
         default="metrics.json",
         help="File name for saved evaluation metrics.",
     )
+    parser.add_argument(
+        "--auto-select",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Automatically score factors via IC/IR and keep the best subset.",
+    )
+    parser.add_argument(
+        "--select-topk",
+        type=int,
+        default=0,
+        help="Keep only the top-K factors ranked by the chosen statistic.",
+    )
+    parser.add_argument(
+        "--ic-threshold",
+        type=float,
+        default=None,
+        help="Minimum absolute IC mean required to retain a factor.",
+    )
+    parser.add_argument(
+        "--ir-threshold",
+        type=float,
+        default=None,
+        help="Minimum absolute IC IR required to retain a factor.",
+    )
+    parser.add_argument(
+        "--selection-stat",
+        choices=["ic", "ir"],
+        default="ic",
+        help="Statistic used to rank factors when selecting top-K (default: ic).",
+    )
+    parser.add_argument(
+        "--selection-output",
+        type=str,
+        default="selection_metrics.json",
+        help="File name for saving IC/IR selection diagnostics (relative to output dir).",
+    )
     return parser.parse_args()
 
 
@@ -137,10 +173,18 @@ def main() -> None:
 
     input_paths = collect_inputs(args.input)
     raw_df = load_frames(input_paths)
+    print(f"📥 Loaded {len(input_paths)} files -> raw shape {raw_df.shape}")
     filtered_df = filter_symbols(raw_df, args.symbols)
+    print(f"📑 After symbol filter: {filtered_df.shape}")
 
     if filtered_df.empty:
         raise ValueError("No data available after applying symbol filters.")
+
+    if isinstance(filtered_df.index, pd.MultiIndex):
+        cols_to_drop = [col for col in ["timestamp", "symbol"] if col in filtered_df.columns]
+        if cols_to_drop:
+            filtered_df = filtered_df.drop(columns=cols_to_drop)
+        filtered_df = filtered_df.reset_index()
 
     filtered_df, target_col = ensure_future_return_column(filtered_df, args.horizon)
 
@@ -150,11 +194,16 @@ def main() -> None:
         else None
     )
 
+    symbol_count = filtered_df["symbol"].nunique()
+    min_assets_required = 3
+    if symbol_count < min_assets_required:
+        min_assets_required = max(1, symbol_count)
+
     panel, base_features = build_panel(
         filtered_df,
         target_col=target_col,
         feature_cols=feature_cols,
-        min_assets=3,
+        min_assets=min_assets_required,
         horizon=args.horizon,
     )
     factor_cols = list(feature_cols) if feature_cols else list(base_features)
@@ -169,6 +218,42 @@ def main() -> None:
         factor_cols.extend(crypto_cols)
 
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
+    periods_per_year = resolve_periods_per_year(args.periods_per_year, processed_panel.index)
+
+    selection_metrics: Optional[pd.DataFrame] = None
+    if (
+        args.auto_select
+        or (args.select_topk and args.select_topk > 0)
+        or args.ic_threshold is not None
+        or args.ir_threshold is not None
+    ):
+        print("🔍 Running factor selection (IC / IR scoring)...")
+        selection_metrics = compute_cross_sectional_ic(processed_panel, factor_cols, target_col)
+        if selection_metrics.empty:
+            print("   ⚠️  Unable to compute IC/IR metrics; retaining original factor set.")
+        else:
+            factor_cols = apply_factor_selection(
+                selection_metrics,
+                factor_cols,
+                select_topk=args.select_topk,
+                ic_threshold=args.ic_threshold,
+                ir_threshold=args.ir_threshold,
+                ranking_stat=args.selection_stat,
+            )
+            if not factor_cols:
+                print("   ⚠️  Selection filters removed all factors; reverting to original list.")
+                factor_cols = list(selection_metrics.index)
+            else:
+                print(f"   ✅ Selected {len(factor_cols)} factors after applying IC/IR criteria.")
+                preview = (
+                    selection_metrics.loc[factor_cols]
+                    .sort_values(by="ic_mean", ascending=False)
+                    .head(min(10, len(factor_cols)))
+                )
+                for factor, row in preview.iterrows():
+                    print(
+                        f"      {factor}: ic_mean={row['ic_mean']:.4f}, ic_ir={row['ic_ir']:.4f}, count={int(row['ic_count'])}"
+                    )
 
     if args.model == "boosting":
         model = CrossSectionalBoostingModel()
@@ -180,6 +265,9 @@ def main() -> None:
         save_metrics(
             eval_result,
             output_dir / args.metrics_name,
+            selected_features=factor_cols,
+            selection_metrics=selection_metrics,
+            periods_per_year=periods_per_year,
         )
         dump(model, output_dir / args.model_name)
 
@@ -192,18 +280,28 @@ def main() -> None:
             )
             write_report(output_dir / "boosting_report.md", report)
 
+        if selection_metrics is not None and not selection_metrics.empty:
+            selection_path = output_dir / args.selection_output
+            selection_path.write_text(
+                selection_metrics.to_json(orient="index", indent=2), encoding="utf-8"
+            )
+            print(f"   📄 Factor selection metrics saved to {selection_path}")
+
         print(f"✅ Boosting model trained. Artefacts saved under {output_dir}")
 
     elif args.model == "fama_macbeth":
         reg = CrossSectionalRegressor(add_intercept=True, min_assets=3)
         result = reg.fit(processed_panel, factor_cols=factor_cols, target_col=target_col)
         metrics = {
-            "factor_summary": result.factor_summary(args.periods_per_year).to_dict(),
-            "ic_summary": result.ic_summary(args.periods_per_year).to_dict(),
+            "factor_summary": result.factor_summary(periods_per_year).to_dict(),
+            "ic_summary": result.ic_summary(periods_per_year).to_dict(),
             "newey_west": result.newey_west_summary(
-                max_lag=5, periods_per_year=args.periods_per_year
+                max_lag=5, periods_per_year=periods_per_year
             ).to_dict(),
+            "selected_features": factor_cols,
         }
+        if selection_metrics is not None and not selection_metrics.empty:
+            metrics["selection_metrics"] = selection_metrics.to_dict(orient="index")
         (output_dir / args.metrics_name).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
         if args.save_markdown:
@@ -213,7 +311,7 @@ def main() -> None:
                 ReportContext(
                     title="Cross-Sectional Fama-MacBeth Training Report",
                     max_lag=5,
-                    periods_per_year=args.periods_per_year,
+                    periods_per_year=periods_per_year,
                     preprocessing=_describe_preprocessing(args.winsor, args.zscore),
                     symbols=args.symbols or ", ".join(sorted(filtered_df["symbol"].unique())),
                     horizon=args.horizon,
@@ -223,6 +321,13 @@ def main() -> None:
                 ),
             )
             write_report(output_dir / "fama_macbeth_report.md", report)
+
+        if selection_metrics is not None and not selection_metrics.empty:
+            selection_path = output_dir / args.selection_output
+            selection_path.write_text(
+                selection_metrics.to_json(orient="index", indent=2), encoding="utf-8"
+            )
+            print(f"   📄 Factor selection metrics saved to {selection_path}")
 
         print(f"✅ Fama-MacBeth regression complete. Metrics saved under {output_dir}")
     else:
@@ -269,8 +374,11 @@ def load_frames(paths: Sequence[str]) -> pd.DataFrame:
         raise ValueError("All input frames are empty.")
     combined = pd.concat(frames, axis=0, ignore_index=True)
     combined["timestamp"] = pd.to_datetime(combined["timestamp"], utc=True, errors="coerce")
-    combined = combined.dropna(subset=["timestamp"])
+    combined = combined.dropna(subset=["timestamp", "symbol"])
     combined = combined.sort_values(["timestamp", "symbol"])
+    combined = combined.set_index(["timestamp", "symbol"])
+    combined["timestamp"] = combined.index.get_level_values("timestamp")
+    combined["symbol"] = combined.index.get_level_values("symbol")
     return combined
 
 
@@ -278,7 +386,12 @@ def filter_symbols(df: pd.DataFrame, symbols: Optional[str]) -> pd.DataFrame:
     if not symbols:
         return df
     symbol_list = [s.strip().upper() for s in symbols.replace(" ", ",").split(",") if s.strip()]
-    return df[df["symbol"].str.upper().isin(symbol_list)].copy()
+    if isinstance(df.index, pd.MultiIndex) and "symbol" in df.index.names:
+        mask = df.index.get_level_values("symbol").str.upper().isin(symbol_list)
+        return df[mask].copy()
+    if "symbol" in df.columns:
+        return df[df["symbol"].str.upper().isin(symbol_list)].copy()
+    raise ValueError("Symbol filtering requested but 'symbol' column/level not found.")
 
 
 def ensure_future_return_column(
@@ -348,13 +461,24 @@ def save_predictions(predictions: pd.Series, path: Path) -> None:
     df.to_parquet(path)
 
 
-def save_metrics(eval_result, path: Path) -> None:
+def save_metrics(
+    eval_result,
+    path: Path,
+    *,
+    selected_features: Sequence[str],
+    selection_metrics: Optional[pd.DataFrame],
+    periods_per_year: float,
+) -> None:
     metrics = {
         "ic_mean": float(eval_result.information_coefficients.mean()),
         "ic_std": float(eval_result.information_coefficients.std(ddof=0)),
         "rank_ic_mean": float(eval_result.rank_ic.mean()),
         "rank_ic_std": float(eval_result.rank_ic.std(ddof=0)),
+        "selected_features": list(selected_features),
+        "periods_per_year": periods_per_year,
     }
+    if selection_metrics is not None and not selection_metrics.empty:
+        metrics["selection_metrics"] = selection_metrics.to_dict(orient="index")
     path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
 
@@ -398,6 +522,84 @@ def build_report_from_eval(
     return "\n".join(lines) + "\n"
 
 
+def compute_cross_sectional_ic(
+    panel: pd.DataFrame,
+    factor_cols: Sequence[str],
+    target_col: str,
+) -> pd.DataFrame:
+    subset = panel[[target_col] + list(factor_cols)].dropna(subset=[target_col])
+    if subset.empty:
+        return pd.DataFrame(columns=["ic_mean", "ic_std", "ic_ir", "ic_count"])
+
+    groups = []
+    for _, group in subset.groupby(level=0):
+        if len(group) >= 3:
+            groups.append(group)
+
+    results: List[Dict[str, float]] = []
+    for factor in factor_cols:
+        ic_values: List[float] = []
+        for group in groups:
+            if factor not in group.columns:
+                continue
+            series = group[[factor, target_col]].dropna()
+            if len(series) < 5 or series[factor].nunique() < 3:
+                continue
+            corr = series[factor].corr(series[target_col], method="spearman")
+            if pd.notna(corr):
+                ic_values.append(float(corr))
+        if not ic_values:
+            continue
+        arr = np.asarray(ic_values)
+        ic_mean = float(arr.mean())
+        ic_std = float(arr.std(ddof=0))
+        ic_ir = ic_mean / ic_std if ic_std > 0 else float("nan")
+        results.append(
+            {
+                "factor": factor,
+                "ic_mean": ic_mean,
+                "ic_std": ic_std,
+                "ic_ir": ic_ir,
+                "ic_count": float(len(arr)),
+            }
+        )
+
+    if not results:
+        return pd.DataFrame(columns=["ic_mean", "ic_std", "ic_ir", "ic_count"])
+
+    metrics = pd.DataFrame(results).set_index("factor")
+    metrics.sort_values(by="ic_mean", ascending=False, inplace=True)
+    return metrics
+
+
+def apply_factor_selection(
+    metrics: pd.DataFrame,
+    original_factors: Sequence[str],
+    *,
+    select_topk: int,
+    ic_threshold: Optional[float],
+    ir_threshold: Optional[float],
+    ranking_stat: str,
+) -> List[str]:
+    if metrics.empty:
+        return list(original_factors)
+
+    selected = metrics.copy()
+
+    if ic_threshold is not None:
+        selected = selected[selected["ic_mean"].abs() >= float(ic_threshold)]
+
+    if ir_threshold is not None and "ic_ir" in selected.columns:
+        selected = selected[selected["ic_ir"].abs() >= float(ir_threshold)]
+
+    if select_topk and select_topk > 0:
+        key = "ic_ir" if ranking_stat == "ir" and "ic_ir" in selected.columns else "ic_mean"
+        selected = selected.sort_values(by=key, ascending=False).head(select_topk)
+
+    selected_factors = [factor for factor in selected.index if factor in original_factors]
+    return selected_factors
+
+
 def _describe_preprocessing(winsor_sigma: float, apply_zscore: bool) -> str:
     steps = []
     if winsor_sigma and winsor_sigma > 0:
@@ -407,6 +609,42 @@ def _describe_preprocessing(winsor_sigma: float, apply_zscore: bool) -> str:
     if not steps:
         return "none"
     return " + ".join(steps)
+
+
+def resolve_periods_per_year(arg_value: str, index: pd.Index) -> float:
+    value = (arg_value or "auto").strip().lower()
+    if value != "auto":
+        try:
+            parsed = float(value)
+            if parsed > 0:
+                return parsed
+        except ValueError:
+            pass
+
+    timestamps = index
+    if isinstance(timestamps, pd.MultiIndex):
+        timestamps = timestamps.get_level_values(0)
+    timestamps = pd.to_datetime(timestamps)
+    timestamps = timestamps.sort_values().unique()
+    if len(timestamps) < 2:
+        return 252.0
+
+    diffs_series = pd.Series(timestamps)
+    diffs = diffs_series.diff().dropna()
+    if diffs.empty:
+        return 252.0
+    if diffs.nunique() > 1:
+        raise ValueError(
+            "Detected multiple bar intervals in panel; please provide a single timeframe per run."
+        )
+
+    median_seconds = diffs.dt.total_seconds().iloc[0]
+    if not median_seconds or median_seconds <= 0:
+        return 252.0
+
+    seconds_per_year = 365.0 * 24.0 * 3600.0
+    inferred = seconds_per_year / median_seconds
+    return float(inferred)
 
 
 def _infer_symbol_from_path(path: str) -> str:
