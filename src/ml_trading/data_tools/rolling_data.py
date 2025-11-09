@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import re
 
 from ml_trading.data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer, )
@@ -46,17 +47,18 @@ def _infer_default_parquet_dir(zip_path: str) -> str:
 
 
 def _infer_parquet_name(zip_basename: str) -> str:
-    if "BTCUSDT-aggTrades-" in zip_basename:
-        date_part = zip_basename.replace("BTCUSDT-aggTrades-",
-                                         "").replace(".zip", "")
-        return f"BTC-USD_{date_part}.parquet"
+    upper_name = zip_basename.upper()
+    symbol_match = re.search(r"([A-Z]+USDT)", upper_name)
+    symbol = symbol_match.group(1) if symbol_match else zip_basename.replace(
+        ".zip", "")
 
-    if "ETHUSDT-aggTrades-" in zip_basename:
-        date_part = zip_basename.replace("ETHUSDT-aggTrades-",
-                                         "").replace(".zip", "")
-        return f"ETH-USD_{date_part}.parquet"
+    date_match = re.search(r"(\d{4})-(\d{2})", zip_basename)
+    if date_match:
+        date_part = f"{date_match.group(1)}-{date_match.group(2)}"
+    else:
+        date_part = "unknown"
 
-    return zip_basename.replace(".zip", ".parquet")
+    return f"{symbol}_{date_part}.parquet"
 
 
 def load_and_process_file(
@@ -283,21 +285,19 @@ def create_labels(df: pd.DataFrame,
 
     # Create 3-class labels (0=Hold, 1=Long, 2=Short) for multiclass classification
     df["signal"] = 0  # Hold by default
-    df.loc[df["future_return"] > threshold, "signal"] = 1   # Long
+    df.loc[df["future_return"] > threshold, "signal"] = 1  # Long
     df.loc[df["future_return"] < -threshold, "signal"] = 2  # Short
-    
+
     # Keep backward compatibility: binary_signal for legacy code (1=Long, 0=not Long)
     df["binary_signal"] = (df["signal"] == 1).astype(int)
 
     return df
 
 
-def create_labels_multi_horizon(
-    df: pd.DataFrame,
-    *,
-    horizons: list[int] = [1, 5, 10, 15],
-    threshold: float = 0.005
-) -> pd.DataFrame:
+def create_labels_multi_horizon(df: pd.DataFrame,
+                                *,
+                                horizons: list[int] = [1, 5, 10, 15],
+                                threshold: float = 0.005) -> pd.DataFrame:
     """Create future-return based labels for multiple horizons (3-class: 0=Hold, 1=Long, 2=Short).
     
     Args:
@@ -312,27 +312,27 @@ def create_labels_multi_horizon(
         - Also creates backward-compatible 'signal' and 'binary_signal' using the first horizon
     """
     df = df.copy()
-    
+
     for horizon in horizons:
         # Create future return for this horizon
         future_return_col = f"future_return_{horizon}"
         df[future_return_col] = df["close"].shift(-horizon) / df["close"] - 1
-        
+
         # Create 3-class signal for this horizon (0=Hold, 1=Long, 2=Short)
         signal_col = f"signal_{horizon}"
         df[signal_col] = 0  # Hold by default
-        df.loc[df[future_return_col] > threshold, signal_col] = 1   # Long
+        df.loc[df[future_return_col] > threshold, signal_col] = 1  # Long
         df.loc[df[future_return_col] < -threshold, signal_col] = 2  # Short
-        
+
         # Keep backward compatibility: binary_signal for legacy code
         binary_signal_col = f"binary_signal_{horizon}"
         df[binary_signal_col] = (df[signal_col] == 1).astype(int)
-    
+
     # Create backward-compatible columns using the first horizon
     if horizons:
         df["signal"] = df[f"signal_{horizons[0]}"]
         df["binary_signal"] = df[f"binary_signal_{horizons[0]}"]
-    
+
     return df
 
 
@@ -386,13 +386,11 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         "lc",
         "tr",
     }
-    
+
     # Also exclude multi-horizon label columns (e.g., signal_1, binary_signal_5, future_return_10)
     exclude_cols.update([
-        col for col in df.columns 
-        if col.startswith("signal_") or 
-           col.startswith("binary_signal_") or 
-           col.startswith("future_return_")
+        col for col in df.columns if col.startswith("signal_")
+        or col.startswith("binary_signal_") or col.startswith("future_return_")
     ])
 
     return [col for col in df.columns if col not in exclude_cols]

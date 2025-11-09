@@ -111,11 +111,12 @@ class BinanceMultiSymbolDownloader:
 
         return normalized
 
-    def _symbol_to_usd(self, symbol: str) -> str:
-        """将交易对从 *USDT 转换为 *-USD（用于Parquet文件名对齐）"""
-        if symbol.endswith("USDT"):
-            return symbol.replace("USDT", "-USD")
-        return symbol
+    def _parquet_symbol(self, symbol: str) -> str:
+        """Normalize symbol for parquet filenames (e.g., BTCUSDT)."""
+        normalized = symbol.upper().replace("-", "").replace("/", "")
+        if not normalized.endswith("USDT"):
+            normalized = f"{normalized}USDT"
+        return normalized
 
     def check_local_file(self, symbol: str, year: int,
                          month: int) -> Optional[str]:
@@ -127,7 +128,7 @@ class BinanceMultiSymbolDownloader:
         """
         # 1) 如果提供了Parquet目录，先检查是否已有对应月份的Parquet
         if self.parquet_dir:
-            parquet_symbol = self._symbol_to_usd(symbol)
+            parquet_symbol = self._parquet_symbol(symbol)
             parquet_name = f"{parquet_symbol}_{year}-{month:02d}.parquet"
             parquet_path = self.parquet_dir / parquet_name
             if parquet_path.exists() and parquet_path.stat().st_size > 0:

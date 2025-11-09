@@ -39,10 +39,10 @@ def _build_feature_importance_table(info: Dict) -> str:
     feature_importance = info.get('feature_importance', [])
     if not feature_importance:
         return ""
-    
+
     # Get top 20 features
     top_features = feature_importance[:20]
-    
+
     rows = []
     for feat in top_features:
         feat_name = feat.get('feature', 'N/A')
@@ -54,7 +54,7 @@ def _build_feature_importance_table(info: Dict) -> str:
                 <td>{importance_gain}</td>
                 <td>{importance_split:,}</td>
             </tr>""")
-    
+
     return f"""
         <h2>Feature Importance (Top 20)</h2>
         <div class="explanation">
@@ -75,8 +75,7 @@ def _build_feature_importance_table(info: Dict) -> str:
         </table>"""
 
 
-def _build_rolling_feature_importance_section(
-        summary: Dict) -> str:
+def _build_rolling_feature_importance_section(summary: Dict) -> str:
     """Build aggregated feature-importance section for rolling reports."""
     feature_map = summary.get("feature_importance", {})
     if not feature_map:
@@ -98,7 +97,8 @@ def _build_rolling_feature_importance_section(
             feat = item.get("feature", "N/A")
             importance = _format_float(item.get("importance", 0.0), 6)
             rows.append(
-                f"<tr><td>{rank}</td><td>{feat}</td><td>{importance}</td></tr>")
+                f"<tr><td>{rank}</td><td>{feat}</td><td>{importance}</td></tr>"
+            )
         if rows:
             sections.append(f"""
             <h3>{label}</h3>
@@ -133,7 +133,7 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
     stage1_auc = _format_float(stage1.get('auc'), 4)
     stage1_pr_auc = _format_float(stage1.get('pr_auc'), 4)
     stage1_samples = stage1.get('samples', 0)
-    
+
     # Confusion matrix
     cm = stage1.get('confusion_matrix', [])
     cm_html = ""
@@ -161,11 +161,11 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
             </table>
             <p><strong>TN (True Negative):</strong> {tn}, <strong>FP (False Positive):</strong> {fp}, 
             <strong>FN (False Negative):</strong> {fn}, <strong>TP (True Positive):</strong> {tp}</p>"""
-    
+
     # Best threshold
     best_threshold = _format_float(stage1.get('best_threshold'), 3)
     best_threshold_f1 = _format_float(stage1.get('best_threshold_f1'), 4)
-    
+
     # Quality check
     quality_check = stage1.get('quality_check', {})
     quality_check_passed = quality_check.get('passed', True)
@@ -1116,6 +1116,23 @@ def _build_training_report_html(info: Dict) -> str:
     scaler_path = info.get("scaler_path", "N/A")
     pr_curve_path = info.get("pr_curve_path", None)
     roc_curve_path = info.get("roc_curve_path", None)
+
+    pr_roc_section = ""
+    if pr_curve_path or roc_curve_path:
+        items: list[str] = []
+        if pr_curve_path:
+            items.append(
+                f'<div><img src="{pr_curve_path}" alt="PR Curve" style="max-width:520px; border:1px solid #ddd;"><div style="text-align:center; color:#555; margin-top:6px;">Precision-Recall Curve</div></div>'
+            )
+        if roc_curve_path:
+            items.append(
+                f'<div><img src="{roc_curve_path}" alt="ROC Curve" style="max-width:520px; border:1px solid #ddd;"><div style="text-align:center; color:#555; margin-top:6px;">ROC Curve</div></div>'
+            )
+        pr_roc_section = (
+            "<h2>PR / ROC Curves</h2>"
+            '<div style="display:flex; gap:20px; flex-wrap: wrap;">'
+            f'{"".join(items)}'
+            "</div>")
     data_files = info.get("data_files", [])
 
     # Format date range
@@ -1369,7 +1386,7 @@ def _build_training_report_html(info: Dict) -> str:
         
         {_build_feature_importance_table(info) if info.get('feature_importance') else ""}
 
-        {(f"<h2>PR / ROC Curves</h2>\n        <div style=\"display:flex; gap:20px; flex-wrap: wrap;\">\n            {f'<div><img src=\"{pr_curve_path}\" alt=\"PR Curve\" style=\"max-width:520px; border:1px solid #ddd;\"><div style=\"text-align:center; color:#555; margin-top:6px;\">Precision-Recall Curve</div></div>' if pr_curve_path else ''}\n            {f'<div><img src=\"{roc_curve_path}\" alt=\"ROC Curve\" style=\"max-width:520px; border:1px solid #ddd;\"><div style=\"text-align:center; color:#555; margin-top:6px;\">ROC Curve</div></div>' if roc_curve_path else ''}\n        </div>" if (pr_curve_path or roc_curve_path) else '')}
+        {pr_roc_section}
         
         <h2>Model Artifacts</h2>
         <table>

@@ -7,7 +7,7 @@ import os
 import json
 import argparse
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import pandas as pd
 import numpy as np
@@ -22,10 +22,9 @@ from ml_trading.data_tools.comprehensive_feature_engineering import (
     get_feature_columns_by_type,
 )
 from ml_trading.models.lightgbm_model import LightGBMModel
-from sklearn.metrics import (mean_squared_error, mean_absolute_error,
-                             r2_score, accuracy_score,
-                             precision_recall_fscore_support, roc_auc_score,
-                             average_precision_score)
+from sklearn.metrics import (mean_squared_error, mean_absolute_error, r2_score,
+                             accuracy_score, precision_recall_fscore_support,
+                             roc_auc_score, average_precision_score)
 from sklearn.preprocessing import StandardScaler
 from ml_trading.pipeline.training.train import _compute_direction_threshold
 
@@ -46,29 +45,32 @@ def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
 
     # Support multiple symbols (comma-separated)
     symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
-    symbol_mapping = {
-        "BTCUSDT": "BTC-USD",
-        "ETHUSDT": "ETH-USD",
-        "BNBUSDT": "BNB-USD",
-        "ADAUSDT": "ADA-USD",
-        "SOLUSDT": "SOL-USD"
-    }
-    
+
     all_files = []
     for symbol in symbol_list:
-        file_symbol = symbol_mapping.get(symbol, symbol)
+        normalized = symbol.upper().replace("-", "").replace("/", "")
+        if not normalized.endswith("USDT"):
+            normalized = f"{normalized}USDT"
+        legacy_symbol = normalized.replace("USDT", "-USD")
         patterns = [
-            f"{symbol}-aggTrades-*.parquet", f"{file_symbol}_*.parquet",
-            f"{file_symbol}-*.parquet"
+            f"{normalized}-aggTrades-*.parquet",
+            f"{normalized}-aggTrades-*.zip",
+            f"{normalized}_*.parquet",
+            f"{normalized}_*.zip",
+            f"{legacy_symbol}-aggTrades-*.parquet",
+            f"{legacy_symbol}-aggTrades-*.zip",
+            f"{legacy_symbol}_*.parquet",
+            f"{legacy_symbol}_*.zip",
         ]
-        
+
         date_patterns = [
-            rf"{symbol}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
-            rf"{file_symbol}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
-            rf"{file_symbol}-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"{normalized}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"{normalized}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"{legacy_symbol}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+            rf"{legacy_symbol}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
             rf"(?P<year>\d{{4}})-(?P<month>\d{{2}})",
         ]
-        
+
         for pattern in patterns:
             for file_path in data_path.glob(pattern):
                 stem = file_path.stem
@@ -83,14 +85,15 @@ def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
                         month = int(match.group("month"))
                         file_info = {
                             "path": str(file_path),
-                            "symbol": symbol,  # Track which symbol this file belongs to
+                            "symbol": normalized,  # Track normalized symbol
                             "year": year,
                             "month": month,
                             "month_str": f"{year}-{month:02d}",
                             "timestamp": pd.Timestamp(year, month, 1),
                         }
                         # Avoid duplicates
-                        if not any(f["path"] == file_info["path"] for f in all_files):
+                        if not any(f["path"] == file_info["path"]
+                                   for f in all_files):
                             all_files.append(file_info)
                     except Exception:
                         continue
@@ -105,8 +108,13 @@ def main() -> None:
                         type=str,
                         default=os.environ.get("DATA_DIR",
                                                "data/parquet_data"))
-    parser.add_argument("--symbol", type=str, default="BTCUSDT",
-                        help="Symbol(s) for rolling training. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset training")
+    parser.add_argument(
+        "--symbol",
+        type=str,
+        default="BTCUSDT",
+        help=
+        "Symbol(s) for rolling training. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset training"
+    )
     parser.add_argument("--initial-train-months", type=int, default=6)
     parser.add_argument("--min-train-months", type=int, default=3)
     parser.add_argument("--forward-bars", type=int, default=3)
@@ -142,7 +150,8 @@ def main() -> None:
         "--direction-threshold",
         type=str,
         default="f1_optimize",
-        help="Threshold method for directional prediction (zero|median|f1_optimize)",
+        help=
+        "Threshold method for directional prediction (zero|median|f1_optimize)",
     )
     parser.add_argument("--use-top-factors",
                         type=str,
@@ -189,22 +198,26 @@ def main() -> None:
         return out
 
     freqs = _parse_list(args.freq)
-    
+
     # Parse symbols for multi-asset training
     symbol_list = [s.strip() for s in args.symbol.split(",") if s.strip()]
-    symbols_str = ",".join(symbol_list) if len(symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
+    symbols_str = ",".join(symbol_list) if len(
+        symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
     print(f"📊 Rolling training with symbol(s): {symbols_str}")
     if len(symbol_list) > 1:
         print(f"   Multi-asset training: {len(symbol_list)} assets")
-    
+
     # Validate autoencoder arguments
     if args.use_autoencoder and not args.encoding_dim:
-        print("❌ --encoding-dim is required when --use-autoencoder is provided")
+        print(
+            "❌ --encoding-dim is required when --use-autoencoder is provided")
         return
-    
+
     if args.use_autoencoder:
-        print(f"   Autoencoder: {args.use_autoencoder} (dim={args.encoding_dim})")
-    
+        print(
+            f"   Autoencoder: {args.use_autoencoder} (dim={args.encoding_dim})"
+        )
+
     files = find_all_available_files(args.data_dir, args.symbol)
 
     if args.start or args.end:
@@ -225,7 +238,10 @@ def main() -> None:
     if args.output is None:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         # Handle multiple symbols in output name
-        symbol_name = symbols_str.replace(",", "_").lower() if len(symbol_list) > 1 else symbol_list[0].lower() if symbol_list else "unknown"
+        symbol_name = symbols_str.replace(
+            ",",
+            "_").lower() if len(symbol_list) > 1 else symbol_list[0].lower(
+            ) if symbol_list else "unknown"
         args.output = f"rolling_{symbol_name}_{ts}"
     results_dir = os.path.join("results", args.output)
     os.makedirs(results_dir, exist_ok=True)
@@ -254,9 +270,9 @@ def main() -> None:
                 val = float(row["importance"])
                 store[feat] = store.get(feat, 0.0) + val
 
-        def _extract_importance(model: LightGBMModel,
-                                feature_names: List[str]
-                                ) -> Optional[pd.DataFrame]:
+        def _extract_importance(
+                model: LightGBMModel,
+                feature_names: List[str]) -> Optional[pd.DataFrame]:
             if not model or not hasattr(model, "model") or model.model is None:
                 return None
             try:
@@ -306,7 +322,9 @@ def main() -> None:
             # common patterns across different assets
             train_df = pd.concat(train_parts, axis=0).sort_index()
             if len(symbol_list) > 1:
-                print(f"   Multi-asset training: {len(train_parts)} files merged, {len(train_df)} samples")
+                print(
+                    f"   Multi-asset training: {len(train_parts)} files merged, {len(train_df)} samples"
+                )
 
             # Load test
             test_df = load_and_process_file(test_file["path"], freq=freq)
@@ -420,18 +438,20 @@ def main() -> None:
                 try:
                     import torch
                     from ml_trading.models.autoencoder import UnifiedAutoencoder
-                    
-                    print(f"   🔄 Applying autoencoder compression ({len(feat_cols)} → {args.encoding_dim})...")
-                    
+
+                    print(
+                        f"   🔄 Applying autoencoder compression ({len(feat_cols)} → {args.encoding_dim})..."
+                    )
+
                     # Prepare features for autoencoder
                     X_train_raw = train_labeled[feat_cols].values
                     X_test_raw = test_labeled[feat_cols].values
-                    
+
                     # Standardize features (required for autoencoder)
                     scaler_ae = StandardScaler()
                     X_train_scaled = scaler_ae.fit_transform(X_train_raw)
                     X_test_scaled = scaler_ae.transform(X_test_raw)
-                    
+
                     # Load autoencoder
                     input_dim = len(feat_cols)
                     encoding_dim = int(args.encoding_dim)
@@ -440,25 +460,34 @@ def main() -> None:
                         encoding_dim,
                         architecture="production",
                     )
-                    state = torch.load(args.use_autoencoder, map_location="cpu")
+                    state = torch.load(args.use_autoencoder,
+                                       map_location="cpu")
                     autoencoder.load_state_dict(state)
                     autoencoder.eval()
-                    
+
                     # Transform features
                     with torch.no_grad():
-                        X_train_tensor = torch.as_tensor(X_train_scaled, dtype=torch.float32)
-                        X_test_tensor = torch.as_tensor(X_test_scaled, dtype=torch.float32)
+                        X_train_tensor = torch.as_tensor(X_train_scaled,
+                                                         dtype=torch.float32)
+                        X_test_tensor = torch.as_tensor(X_test_scaled,
+                                                        dtype=torch.float32)
                         _, Z_train = autoencoder(X_train_tensor)
                         _, Z_test = autoencoder(X_test_tensor)
                         X_train = Z_train.numpy()
                         X_test = Z_test.numpy()
-                    
+
                     # Update feature columns for compressed features
-                    feat_cols = [f"compressed_feature_{i}" for i in range(encoding_dim)]
-                    
-                    print(f"   ✓ Applied autoencoder compression: {len(feat_cols)} compressed features")
+                    feat_cols = [
+                        f"compressed_feature_{i}" for i in range(encoding_dim)
+                    ]
+
+                    print(
+                        f"   ✓ Applied autoencoder compression: {len(feat_cols)} compressed features"
+                    )
                 except Exception as exc:
-                    print(f"   ⚠️ Failed to apply autoencoder compression: {exc}")
+                    print(
+                        f"   ⚠️ Failed to apply autoencoder compression: {exc}"
+                    )
                     print("   Falling back to original features")
                     # Fall back to original features
                     X_train = train_labeled[feat_cols].values
@@ -467,7 +496,7 @@ def main() -> None:
                 # Use original features
                 X_train = train_labeled[feat_cols].values
                 X_test = test_labeled[feat_cols].values
-            
+
             y_ret_tr = train_labeled['future_return'].values
             y_vol_tr = train_labeled['future_volatility'].values
             y_ret_te = test_labeled['future_return'].values
@@ -521,12 +550,11 @@ def main() -> None:
 
             y_pred_return = model_return.model.predict(X_test)
             y_pred_vol = model_vol.model.predict(X_test)
-            ret_rmse = float(np.sqrt(mean_squared_error(y_ret_te,
-                                                        y_pred_return)))
+            ret_rmse = float(
+                np.sqrt(mean_squared_error(y_ret_te, y_pred_return)))
             ret_mae = float(mean_absolute_error(y_ret_te, y_pred_return))
             ret_r2 = float(r2_score(y_ret_te, y_pred_return))
-            vol_rmse = float(np.sqrt(mean_squared_error(y_vol_te,
-                                                        y_pred_vol)))
+            vol_rmse = float(np.sqrt(mean_squared_error(y_vol_te, y_pred_vol)))
             vol_mae = float(mean_absolute_error(y_vol_te, y_pred_vol))
             vol_r2 = float(r2_score(y_vol_te, y_pred_vol))
 
@@ -600,15 +628,13 @@ def main() -> None:
         avg_test_mae = float(results_df["test_mae_return"].mean(
         )) if "test_mae_return" in results_df.columns and len(
             results_df) > 0 else None
-        avg_cls_f1 = float(results_df["cls_f1"].mean()
-                           ) if "cls_f1" in results_df.columns and len(
-                               results_df) > 0 else None
-        avg_cls_auc = float(results_df["cls_auc"].mean()
-                            ) if "cls_auc" in results_df.columns and len(
-                                results_df) > 0 else None
-        avg_return_r2 = float(results_df["test_r2_return"].mean()
-                              ) if "test_r2_return" in results_df.columns and len(
-                                  results_df) > 0 else None
+        avg_cls_f1 = float(results_df["cls_f1"].mean(
+        )) if "cls_f1" in results_df.columns and len(results_df) > 0 else None
+        avg_cls_auc = float(results_df["cls_auc"].mean(
+        )) if "cls_auc" in results_df.columns and len(results_df) > 0 else None
+        avg_return_r2 = float(results_df["test_r2_return"].mean(
+        )) if "test_r2_return" in results_df.columns and len(
+            results_df) > 0 else None
         avg_vol_r2 = float(results_df["test_r2_vol"].mean()
                            ) if "test_r2_vol" in results_df.columns and len(
                                results_df) > 0 else None
@@ -685,12 +711,12 @@ def main() -> None:
             # Generate summary report (HTML) for rolling results
             rolling_summary_dir = os.path.join(combo_dir, "summary")
             os.makedirs(rolling_summary_dir, exist_ok=True)
-            summary_html = generate_summary_report(
-                results_dir=combo_dir, output_path=os.path.join(
-                    rolling_summary_dir, "summary_report.html"))
+            summary_html = generate_summary_report(results_dir=combo_dir,
+                                                   output_path=os.path.join(
+                                                       rolling_summary_dir,
+                                                       "summary_report.html"))
             if summary_html:
-                print(
-                    f"   - summary report (train-style): {summary_html}")
+                print(f"   - summary report (train-style): {summary_html}")
         except Exception as exc:
             print(f"   ⚠️  Failed to generate HTML report: {exc}")
 

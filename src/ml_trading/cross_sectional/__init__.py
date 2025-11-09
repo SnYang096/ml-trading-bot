@@ -23,6 +23,7 @@ from .processing import (
     winsorize_by_sigma,
 )
 from .crypto_factors import CryptoCSFactorConfig, add_crypto_cross_sectional_factors
+from .panel_generation import PanelGenerationConfig, generate_cross_sectional_panel
 from .model import CrossSectionalRegressor, FactorBacktestResult
 from .boosting import CrossSectionalBoostingModel, BoostingEvalResult
 from .report import ReportContext, generate_markdown_report, write_report
@@ -43,5 +44,7 @@ __all__ = [
     "write_report",
     "CryptoCSFactorConfig",
     "add_crypto_cross_sectional_factors",
+    "PanelGenerationConfig",
+    "generate_cross_sectional_panel",
 ]
 

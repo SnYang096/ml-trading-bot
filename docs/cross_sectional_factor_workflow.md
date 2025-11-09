@@ -3,6 +3,23 @@
 This guide explains how to build and evaluate cross-sectional (CS) models using
 the utilities under `src/ml_trading/cross_sectional`.
 
+## 0. Generate a Cross-Sectional Panel
+
+```bash
+PYTHONPATH=src python scripts/cross_sectional/generate_panel.py \
+  --symbols BTCUSDT ETHUSDT SOLUSDT \
+  --timeframe 15T \
+  --horizon 12 \
+  --start-date 2024-11-01 \
+  --end-date 2025-04-30 \
+  --feature-type baseline \
+  --output results/feature_exports/15T_baseline_12b.parquet
+```
+
+- Creates a parquet with MultiIndex `(timestamp, symbol)` and columns `close`, engineered factors, and `future_return_12`.
+- Internally uses `PanelGenerationConfig` with either baseline or comprehensive feature engineer. Pass `--no-dropna` if you prefer to keep NaNs for later filtering.
+- Expects raw agg-trade parquet/zip files under `data/parquet_data/`. If your order-flow archives are unavailable (or you only want OHLCV), pass `--no-orderflow`.
+
 ## 1. Assemble a Factor Panel
 
 ```python
@@ -103,6 +120,7 @@ Predicted returns can be consumed by portfolio construction modules or buckets.
 | File | Purpose |
 | ---- | ------- |
 | `src/ml_trading/cross_sectional/panel.py` | Panel assembly and diagnostics |
+| `src/ml_trading/cross_sectional/panel_generation.py` | Generate multi-asset panels from raw data |
 | `src/ml_trading/cross_sectional/processing.py` | Cross-sectional preprocessing (winsorize, z-score, neutralize) |
 | `src/ml_trading/cross_sectional/crypto_factors.py` | Crypto-specific cross-sectional factors (momentum dominance, liquidity, order flow) |
 | `src/ml_trading/cross_sectional/model.py` | Fama-MacBeth style regression and prediction |

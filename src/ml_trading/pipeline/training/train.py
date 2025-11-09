@@ -11,7 +11,7 @@ Feature selection options: --feature-type, --use-top-factors, --topk, --topk-sou
 import os
 import argparse
 import json
-from typing import List
+from typing import List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 import scipy.stats
@@ -190,10 +190,8 @@ def _extract_feature_importance_df(
                 return None
             names = feature_cols
         df_imp = pd.DataFrame({"feature": names, "importance": gains})
-        df_imp = df_imp.groupby("feature",
-                                as_index=False)["importance"].sum()
-        df_imp = df_imp.sort_values("importance",
-                                    ascending=False).head(100)
+        df_imp = df_imp.groupby("feature", as_index=False)["importance"].sum()
+        df_imp = df_imp.sort_values("importance", ascending=False).head(100)
         return df_imp
     except Exception:
         return None
@@ -358,21 +356,23 @@ def _collect_files(data: List[str],
     if symbols:
         # Support multiple symbols (comma-separated)
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
-        mapping = {
-            "BTCUSDT": "BTC-USD",
-            "ETHUSDT": "ETH-USD",
-            "BNBUSDT": "BNB-USD",
-            "ADAUSDT": "ADA-USD",
-            "SOLUSDT": "SOL-USD"
-        }
         filtered = []
         for symbol in symbol_list:
-            file_symbol = mapping.get(symbol, symbol.replace("USDT", "-USD"))
+            normalized = symbol.upper().replace("-", "").replace("/", "")
+            if not normalized.endswith("USDT"):
+                normalized = f"{normalized}USDT"
+            legacy_symbol = normalized.replace("USDT", "-USD")
+            prefixes = {
+                normalized,
+                legacy_symbol,
+                legacy_symbol.replace("-", ""),
+            }
             for p in files:
                 fn = os.path.basename(p).upper()
-                if (fn.startswith(symbol.upper())
-                        or fn.startswith(file_symbol.upper()) or fn.startswith(
-                            file_symbol.replace("-", "_").upper())):
+                if any(
+                        fn.startswith(prefix.upper())
+                        or fn.startswith(prefix.replace("-", "_").upper())
+                        for prefix in prefixes):
                     if p not in filtered:  # Avoid duplicates
                         filtered.append(p)
         files = filtered
@@ -3590,14 +3590,17 @@ def main() -> None:
                 model_vol, feature_cols)
 
             if classification_metrics is not None and feature_importance is not None:
-                classification_metrics["feature_importance"] = feature_importance.to_dict(
-                    "records")
+                classification_metrics[
+                    "feature_importance"] = feature_importance.to_dict(
+                        "records")
             if return_metrics is not None and return_feature_importance is not None:
-                return_metrics["feature_importance"] = return_feature_importance.to_dict(
-                    "records")
+                return_metrics[
+                    "feature_importance"] = return_feature_importance.to_dict(
+                        "records")
             if vol_metrics is not None and vol_feature_importance is not None:
-                vol_metrics["feature_importance"] = vol_feature_importance.to_dict(
-                    "records")
+                vol_metrics[
+                    "feature_importance"] = vol_feature_importance.to_dict(
+                        "records")
             accuracy = float(accuracy_score(y_true_dir, y_pred_dir))
 
             # Get sample count for warning context

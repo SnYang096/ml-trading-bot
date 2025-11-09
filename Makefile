@@ -24,7 +24,7 @@ MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
-SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNB,XRP,ADA,DOGE,DOT,MATIC,SHIB
+SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT,MATICUSDT
 # SYMBOLS ?= BTCUSDT
 START_DATE ?= 2024-11-01
 END_DATE ?= 2025-04-30
@@ -94,7 +94,8 @@ endif
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
-		dim-compare nautilus-backtest feature-report factor-analysis cross-sectional-report
+		dim-compare nautilus-backtest feature-report factor-analysis \
+		cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
 
 help:
 	@echo "ML Trading Project"
@@ -131,7 +132,10 @@ help:
 	@echo "  Other commands:"
 	@echo "    make feature-report    # Generate feature IC/IR HTML report"
 	@echo "    make factor-analysis   # Factor effectiveness analysis using Alphalens (IC, quantile backtest, decay)"
+	@echo "    make cross-sectional-build-panel  # Generate multi-asset factor panels for CS modelling"
 	@echo "    make cross-sectional-report  # Fama-MacBeth + Newey-West + IC/IR markdown report"
+	@echo "    make cross-sectional-train   # Train cross-sectional models (boosting/Fama-MacBeth)"
+	@echo "    make cross-sectional-workflow# Build panel + report + train in one go"
 	@echo "    make vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo ""
@@ -214,7 +218,7 @@ builder-shell:
 # Feature diagnostics
 # ---------------------------------------------------------------------------
 
-FEATURE_REPORT_INPUT ?= data/parquet_data/BTC-USD_2024-10.parquet
+FEATURE_REPORT_INPUT ?= data/parquet_data/BTCUSDT_2024-10.parquet
 FEATURE_REPORT_OUTPUT ?= reports/feature_report.html
 FEATURE_REPORT_START ?=
 FEATURE_REPORT_END ?=
@@ -239,7 +243,7 @@ feature-report:
 		$(FEATURE_REPORT_ARGS)
 
 # ---------------------------------------------------------------------------
-# Factor analysis using Alphalens
+# Factor analysis using Alphalens （跑不起来）
 # ---------------------------------------------------------------------------
 
 FACTOR_ANALYSIS_OUTPUT_DIR ?= results/factor_analysis
@@ -271,6 +275,34 @@ factor-analysis:
 		$(if $(FACTOR_ANALYSIS_FACTOR_NAME),--factor-name $(FACTOR_ANALYSIS_FACTOR_NAME),)
 
 # ---------------------------------------------------------------------------
+# Cross-sectional feature generation & analysis
+# ---------------------------------------------------------------------------
+
+CS_BUILD_SYMBOLS ?= $(SYMBOLS)
+CS_BUILD_TIMEFRAME ?= $(FREQ)
+CS_BUILD_HORIZON ?= 12
+CS_BUILD_START ?= 2024-11-01
+CS_BUILD_END ?= 2025-04-30
+CS_BUILD_FEATURE_TYPE ?= comprehensive
+CS_BUILD_OUTPUT ?= $(RESULTS_DIR)/feature_exports/cs_panel_$(shell echo $(CS_BUILD_SYMBOLS) | tr ' ,' '__' | cut -c1-40)_$(CS_BUILD_TIMEFRAME)_$(CS_BUILD_HORIZON)b_$(CS_BUILD_FEATURE_TYPE)_$(shell echo $(CS_BUILD_START))_$(shell echo $(CS_BUILD_END)).parquet
+CS_BUILD_DROPNA ?= 1
+
+cross-sectional-build-panel:
+	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
+	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
+	PYTHONPATH=src $(PYTHON) scripts/cross_sectional/generate_panel.py \
+		--symbols $(CS_BUILD_SYMBOLS) \
+		--timeframe $(CS_BUILD_TIMEFRAME) \
+		--horizon $(CS_BUILD_HORIZON) \
+		$(if $(CS_BUILD_START),--start-date $(CS_BUILD_START),) \
+		$(if $(CS_BUILD_END),--end-date $(CS_BUILD_END),) \
+		--feature-type $(CS_BUILD_FEATURE_TYPE) \
+		--output $(CS_BUILD_OUTPUT) \
+		$(if $(filter 0,$(CS_BUILD_DROPNA)),--no-dropna,) \
+		$(if $(DATA_DIR),--data-path $(DATA_DIR),)
+	@echo "✅ Panel saved to $(CS_BUILD_OUTPUT)"
+
+# ---------------------------------------------------------------------------
 # Cross-sectional Fama-MacBeth + Newey-West reporting
 # ---------------------------------------------------------------------------
 
@@ -293,6 +325,47 @@ cross-sectional-report:
 		--periods-per-year $(CS_PERIODS_PER_YEAR) \
 		--winsor $(CS_WINSOR)
 	@echo "✅ Report generated: $(CS_OUTPUT)"
+
+# ---------------------------------------------------------------------------
+# Cross-sectional training (boosting / Fama-MacBeth)
+# ---------------------------------------------------------------------------
+
+CS_TRAIN_INPUT ?= $(CS_INPUT)
+CS_TRAIN_OUTPUT_DIR ?= $(RESULTS_DIR)/cross_sectional/models
+CS_TRAIN_MODEL ?= boosting
+CS_TRAIN_MODEL_NAME ?= cs_boosting.joblib
+CS_TRAIN_FEATURE_COLS ?=
+CS_TRAIN_EXTRA ?=
+CS_TRAIN_PRED_NAME ?= predictions.parquet
+CS_TRAIN_METRICS_NAME ?= metrics.json
+
+cross-sectional-train:
+	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
+	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
+	PYTHONPATH=src $(PYTHON) scripts/cross_sectional/train_cross_sectional_model.py \
+		--input $(CS_TRAIN_INPUT) \
+		--output-dir $(CS_TRAIN_OUTPUT_DIR) \
+		--symbols "$(SYMBOLS)" \
+		--horizon $(CS_HORIZON) \
+		--model $(CS_TRAIN_MODEL) \
+		--winsor $(CS_WINSOR) \
+		--periods-per-year $(CS_PERIODS_PER_YEAR) \
+		--model-name $(CS_TRAIN_MODEL_NAME) \
+		--predictions-name $(CS_TRAIN_PRED_NAME) \
+		--metrics-name $(CS_TRAIN_METRICS_NAME) \
+		$(if $(CS_TRAIN_FEATURE_COLS),--feature-cols "$(CS_TRAIN_FEATURE_COLS)",) \
+		$(CS_TRAIN_EXTRA)
+	@echo "✅ Cross-sectional artefacts saved under $(CS_TRAIN_OUTPUT_DIR)"
+
+# ---------------------------------------------------------------------------
+# Full cross-sectional workflow (panel -> report -> training)
+# ---------------------------------------------------------------------------
+
+cross-sectional-workflow:
+	@echo "🔄 Running end-to-end cross-sectional pipeline..."
+	$(MAKE) cross-sectional-build-panel
+	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)"
+	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)"
 
 FORWARD_BARS_TRAIN ?= 5,15,45,288
 

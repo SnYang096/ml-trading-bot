@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import shutil
 import logging
 import argparse
+import re
 
 # 设置日志
 logging.basicConfig(level=logging.INFO,
@@ -59,16 +60,20 @@ class DataConverter:
             # 从文件名自动检测交易对
             if symbol is None:
                 zip_basename = os.path.basename(zip_file)
-                if "ETHUSDT" in zip_basename or "ETH-USDT" in zip_basename:
-                    symbol = "ETH-USDT"
-                elif "BTCUSDT" in zip_basename or "BTC-USDT" in zip_basename:
-                    symbol = "BTC-USDT"
-                elif "SOLUSDT" in zip_basename or "SOL-USDT" in zip_basename:
-                    symbol = "SOL-USDT"
+                upper_name = zip_basename.upper()
+                match = re.search(r"([A-Z]+)(USDT|USD)", upper_name)
+                if match:
+                    base = match.group(1)
+                    quote = match.group(2)
+                    if quote != "USDT":
+                        quote = "USDT"
+                    symbol = f"{base}{quote}"
                 else:
                     symbol = "UNKNOWN"
                     logger.warning(
-                        f"Could not detect symbol from filename, using {symbol}"
+                        "Could not detect symbol from filename %s, using %s",
+                        zip_basename,
+                        symbol,
                     )
 
             # 解压zip文件
@@ -130,12 +135,12 @@ class DataConverter:
 
                 # 设置 symbol
                 # 转换符号格式：ETH-USDT -> ETH-USD
-                output_symbol = symbol.replace("USDT", "USD")
-                df_ohlc["symbol"] = output_symbol
+                normalized_symbol = symbol.upper()
+                df_ohlc["symbol"] = normalized_symbol
 
                 # 生成输出文件名
                 output_file = self._generate_output_filename(
-                    zip_file, output_symbol)
+                    zip_file, normalized_symbol)
 
                 # 保存为parquet
                 df_ohlc.to_parquet(output_file, compression="snappy")
@@ -256,12 +261,21 @@ class DataConverter:
                 order_flow["cvd"] = delta.cumsum()
 
                 # 合并到 OHLC 数据
-                df_ohlc = df_ohlc.join(order_flow[[
-                    "buy_qty", "sell_qty", "taker_buy_ratio", "cvd",
-                    "cvd_short", "cvd_medium", "cvd_long", "cvd_change_1",
-                    "cvd_change_5", "cvd_change_20", "cvd_normalized"
-                ]],
-                                       how="left").ffill().fillna(0)
+                order_flow_subset = order_flow[[
+                    "buy_qty",
+                    "sell_qty",
+                    "taker_buy_ratio",
+                    "cvd",
+                    "cvd_short",
+                    "cvd_medium",
+                    "cvd_long",
+                    "cvd_change_1",
+                    "cvd_change_5",
+                    "cvd_change_20",
+                    "cvd_normalized",
+                ]]
+                df_ohlc = df_ohlc.join(order_flow_subset, how="left")
+                df_ohlc = df_ohlc.ffill().fillna(0)
 
             return df_ohlc
 
@@ -274,23 +288,16 @@ class DataConverter:
         zip_basename = os.path.basename(zip_file)
 
         # 提取日期信息 - 支持多种格式
-        if "ETHUSDT-aggTrades-" in zip_basename:
-            date_part = zip_basename.replace("ETHUSDT-aggTrades-",
-                                             "").replace(".zip", "")
-        elif "BTCUSDT-aggTrades-" in zip_basename:
-            date_part = zip_basename.replace("BTCUSDT-aggTrades-",
-                                             "").replace(".zip", "")
-        elif "SOLUSDT-aggTrades-" in zip_basename:
-            date_part = zip_basename.replace("SOLUSDT-aggTrades-",
-                                             "").replace(".zip", "")
-        elif "aggTrades-" in zip_basename:
-            # 通用格式
-            date_part = zip_basename.split("aggTrades-")[1].replace(".zip", "")
+        match = re.search(r"(\d{4})-(\d{2})", zip_basename)
+        if match:
+            date_part = f"{match.group(1)}-{match.group(2)}"
         else:
-            # 无法识别，使用当前日期
             date_part = datetime.now().strftime("%Y-%m")
             logger.warning(
-                f"Could not extract date from filename, using {date_part}")
+                "Could not extract date from filename %s, using %s",
+                zip_basename,
+                date_part,
+            )
 
         # 生成输出文件名
         output_filename = f"{symbol}_{date_part}.parquet"
@@ -363,21 +370,27 @@ def main():
     parser = argparse.ArgumentParser(
         description=
         "Convert Binance ZIP aggTrades to Parquet (5min OHLC + orderflow)")
-    parser.add_argument("--input-dir",
-                        default=None,
-                        help="ZIP input directory (default: data/agg_data)")
+    parser.add_argument(
+        "--input-dir",
+        default=None,
+        help="ZIP input directory (default: data/agg_data)",
+    )
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Parquet output directory (default: data/parquet_data)")
-    parser.add_argument("--backup-dir",
-                        default=None,
-                        help="Backup directory for original ZIPs (optional)")
+        help="Parquet output directory (default: data/parquet_data)",
+    )
+    parser.add_argument(
+        "--backup-dir",
+        default=None,
+        help="Backup directory for original ZIPs (optional)",
+    )
     parser.add_argument(
         "--cleanup",
         choices=["yes", "no"],
         default="yes",
-        help="Delete converted ZIPs without prompt (default: yes)")
+        help="Delete converted ZIPs without prompt (default: yes)",
+    )
     args = parser.parse_args()
 
     print("🚀 Converting ZIP files to Parquet format...")
