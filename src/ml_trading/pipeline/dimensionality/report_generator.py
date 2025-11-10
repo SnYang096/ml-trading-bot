@@ -651,7 +651,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     stage4_vs_3 = p.get("stage4_vs_stage3", {})
     delta_r2 = p.get("performance_change", stage4_vs_3.get("delta_r2"))
 
-    has_4_stages = stage2 and stage3
+    has_4_stages = bool(stage4)
 
     conclusion = ("Dimensionality reduction appears beneficial." if
                   (delta_r2 is not None and delta_r2 > 0) else

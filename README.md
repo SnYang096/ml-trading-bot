@@ -127,6 +127,38 @@ make auto-rolling-update-only SYMBOL=BTCUSDT \
   ENCODING_DIM=32
 ```
 
+### One-Command Automation
+
+When you already know大概的训练区间，但想把“特征对比 → 正式训练 → 滚动评估”串成一个命令时，可以使用：
+
+```bash
+# 单资产、单频率（15T）、分类模型、GPU 加速
+make auto-workflow SYMBOLS=BTCUSDT \
+  START_DATE=2025-01-01 END_DATE=2025-04-30 \
+  ROLLING_START=2025-01 ROLLING_END=2025-04 \
+  AUTO_FEATURE_TYPE=baseline \
+  AUTO_FREQS=15T \
+  AUTO_FORWARD_BARS_TRAIN=5 \
+  AUTO_FORWARD_BARS_ROLLING=5 \
+  AUTO_MODEL_TYPE=classification \
+  AUTO_GPU=1 \
+  AUTO_MAX_ITER=1
+```
+
+该命令会自动执行：
+
+1. `make dim-compare` 等价的特征对比（生成 `top_factors.json`）
+2. 基于最佳特征调用训练管线（`make train`）
+3. 使用相同配置运行滚动评估（`make rolling`）
+
+并会读取滚动报告的阈值检查，若检测到明显漂移，可通过 `AUTO_MAX_ITER` / `AUTO_RETRY_MONTHS` 启用自动重跑，快速定位新的特征窗口。
+
+> 小贴士  
+> - `AUTO_GPU=1` 会在容器中开启 GPU 训练；若环境无 GPU，可省略。  
+> - `AUTO_MODEL_TYPE=classification` 能跳过量化分位回归阶段，适合做方向预测/快速验证。  
+> - 运行结束后，检查 `results/rolling_*/summary.json` 中的 `monthly_results`。如果输出提示 `drift detected`，说明最新月份未达标，建议重新跑一次 `make auto-workflow` 或手动调整特征/参数。  
+
+
 ## Data Pipeline
 
 Before training, ensure you have data:
@@ -238,4 +270,39 @@ make train
 添加模型版本管理和预测缓存
 整体而言，代码质量高，结构清晰，工程实践成熟。
 
-make rolling-multi SYMBOLS="BTCUSDT"      FREQS="15T" FBS="5"      INITIAL_TRAIN_MONTHS=3 MIN_TRAIN_MONTHS=3      ROLLING_START=2025-01 ROLLING_END=2025-10 
+make rolling-multi SYMBOLS="BTCUSDT,ETHUSDT" FREQS="15T,60T,240T" FBS="5" INITIAL_TRAIN_MONTHS=3 MIN_TRAIN_MONTHS=3 ROLLING_START=2021-01 ROLLING_END=2025-10 ROLLING_FEATURE_TYPE=comprehansive
+
+make cross-sectional-select \
+  CS_INPUT="results/feature_exports/cs_panel_BTCUSDT_15T_12b_comprehensive_2024-11-01_2025-04-30.parquet" \
+  CS_SELECT_MIN_ASSETS=8 \
+  CS_SELECT_PER_CATEGORY_TOP=2 \
+  CS_SELECT_GLOBAL_TOP=12 \
+  CS_SELECT_IC_THRESHOLD=0.01 \
+  CS_SELECT_IR_THRESHOLD=0.5
+
+make cross-sectional-auto \
+  CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
+  CS_BUILD_TIMEFRAME=15T \
+  CS_BUILD_HORIZON=12 \
+  CS_PERIODS_PER_YEAR=auto \
+  CS_AUTO_PER_CATEGORY_TOP=2 \
+  CS_AUTO_GLOBAL_TOP=12 \
+  CS_AUTO_IC_THRESHOLD=0.01 \
+  CS_AUTO_IR_THRESHOLD=0.5
+
+make cross-sectional-auto \
+  CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
+  CS_BUILD_TIMEFRAME=15T \
+  CS_BUILD_HORIZON=12 \
+  CS_BUILD_START=2024-11-01 \
+  CS_BUILD_END=2025-04-30 \
+  CS_PERIODS_PER_YEAR=auto \
+  CS_AUTO_PER_CATEGORY_TOP=2 \
+  CS_AUTO_GLOBAL_TOP=12 \
+  CS_AUTO_IC_THRESHOLD=0.01 \
+  CS_AUTO_IR_THRESHOLD=0.5 \
+  CS_LOGIC_EXPECTATIONS="configs/factor_expectations.json" \
+  CS_DRIFT_BASELINE="results/cross_sectional/shap_baseline.json"
+
+
+make auto-workflow SYMBOLS="BTCUSDT" START_DATE=2025-01-01 END_DATE=2025-06-30 ROLLING_START=2025-01 ROLLING_END=2025-06 AUTO_FEATURE_TYPE=comprehensive AUTO_FREQS=15T AUTO_FORWARD_BARS_TRAIN=5 AUTO_FORWARD_BARS_ROLLING=5 AUTO_MODEL_TYPE=classification AUTO_OOS_MONTHS=1 AUTO_GPU=1 AUTO_MAX_ITER=1 AUTO_TOP_K=120 AUTO_SHAP=1

@@ -36,6 +36,10 @@ from ml_trading.cross_sectional import (
     generate_markdown_report,
     write_report,
 )
+from ml_trading.cross_sectional.factor_selection import (
+    apply_factor_selection,
+    compute_cross_sectional_ic,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +81,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Optional comma-separated feature list. If omitted, numeric columns excluding OHLCV/labels are used.",
+    )
+    parser.add_argument(
+        "--feature-file",
+        type=str,
+        default=None,
+        help="Path to text file containing feature names (one per line). Overrides --feature-cols.",
     )
     parser.add_argument(
         "--winsor",
@@ -188,11 +198,31 @@ def main() -> None:
 
     filtered_df, target_col = ensure_future_return_column(filtered_df, args.horizon)
 
-    feature_cols = (
-        [c.strip() for c in args.feature_cols.split(",") if c.strip()]
-        if args.feature_cols
-        else None
-    )
+    feature_cols = None
+    if args.feature_file:
+        feature_path = Path(args.feature_file)
+        if not feature_path.exists():
+            raise FileNotFoundError(feature_path)
+        feature_cols = [
+            line.strip()
+            for line in feature_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        print(f"📄 Loaded {len(feature_cols)} features from {feature_path}")
+    elif args.feature_cols:
+        feature_cols = [c.strip() for c in args.feature_cols.split(",") if c.strip()]
+    if feature_cols:
+        feature_cols = list(dict.fromkeys(feature_cols))
+        available = set(filtered_df.columns)
+        missing = [c for c in feature_cols if c not in available]
+        if missing:
+            print(
+                f"⚠️  Warning: {len(missing)} requested features not present: {missing[:5]}"
+                f"{' ...' if len(missing) > 5 else ''}"
+            )
+        feature_cols = [c for c in feature_cols if c in available]
+        if not feature_cols:
+            raise ValueError("No valid features remaining after filtering against dataframe columns.")
 
     symbol_count = filtered_df["symbol"].nunique()
     min_assets_required = 3
@@ -207,6 +237,7 @@ def main() -> None:
         horizon=args.horizon,
     )
     factor_cols = list(feature_cols) if feature_cols else list(base_features)
+    print(f"📦 Initial factor count: {len(factor_cols)}")
 
     if args.crypto_factors:
         panel = add_crypto_cross_sectional_factors(panel)
@@ -216,9 +247,14 @@ def main() -> None:
             if col.startswith("cs_crypto_") and col not in factor_cols and col != target_col
         ]
         factor_cols.extend(crypto_cols)
+    print(f"📦 Factor count after augmentation: {len(factor_cols)}")
 
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
     periods_per_year = resolve_periods_per_year(args.periods_per_year, processed_panel.index)
+    print(
+        f"📊 Panel ready: {processed_panel.shape[0]} observations, "
+        f"{len(factor_cols)} factors, periods_per_year={periods_per_year:.2f}"
+    )
 
     selection_metrics: Optional[pd.DataFrame] = None
     if (
@@ -520,84 +556,6 @@ def build_report_from_eval(
         json.dumps(mse_summary, indent=2),
     ]
     return "\n".join(lines) + "\n"
-
-
-def compute_cross_sectional_ic(
-    panel: pd.DataFrame,
-    factor_cols: Sequence[str],
-    target_col: str,
-) -> pd.DataFrame:
-    subset = panel[[target_col] + list(factor_cols)].dropna(subset=[target_col])
-    if subset.empty:
-        return pd.DataFrame(columns=["ic_mean", "ic_std", "ic_ir", "ic_count"])
-
-    groups = []
-    for _, group in subset.groupby(level=0):
-        if len(group) >= 3:
-            groups.append(group)
-
-    results: List[Dict[str, float]] = []
-    for factor in factor_cols:
-        ic_values: List[float] = []
-        for group in groups:
-            if factor not in group.columns:
-                continue
-            series = group[[factor, target_col]].dropna()
-            if len(series) < 5 or series[factor].nunique() < 3:
-                continue
-            corr = series[factor].corr(series[target_col], method="spearman")
-            if pd.notna(corr):
-                ic_values.append(float(corr))
-        if not ic_values:
-            continue
-        arr = np.asarray(ic_values)
-        ic_mean = float(arr.mean())
-        ic_std = float(arr.std(ddof=0))
-        ic_ir = ic_mean / ic_std if ic_std > 0 else float("nan")
-        results.append(
-            {
-                "factor": factor,
-                "ic_mean": ic_mean,
-                "ic_std": ic_std,
-                "ic_ir": ic_ir,
-                "ic_count": float(len(arr)),
-            }
-        )
-
-    if not results:
-        return pd.DataFrame(columns=["ic_mean", "ic_std", "ic_ir", "ic_count"])
-
-    metrics = pd.DataFrame(results).set_index("factor")
-    metrics.sort_values(by="ic_mean", ascending=False, inplace=True)
-    return metrics
-
-
-def apply_factor_selection(
-    metrics: pd.DataFrame,
-    original_factors: Sequence[str],
-    *,
-    select_topk: int,
-    ic_threshold: Optional[float],
-    ir_threshold: Optional[float],
-    ranking_stat: str,
-) -> List[str]:
-    if metrics.empty:
-        return list(original_factors)
-
-    selected = metrics.copy()
-
-    if ic_threshold is not None:
-        selected = selected[selected["ic_mean"].abs() >= float(ic_threshold)]
-
-    if ir_threshold is not None and "ic_ir" in selected.columns:
-        selected = selected[selected["ic_ir"].abs() >= float(ir_threshold)]
-
-    if select_topk and select_topk > 0:
-        key = "ic_ir" if ranking_stat == "ir" and "ic_ir" in selected.columns else "ic_mean"
-        selected = selected.sort_values(by=key, ascending=False).head(select_topk)
-
-    selected_factors = [factor for factor in selected.index if factor in original_factors]
-    return selected_factors
 
 
 def _describe_preprocessing(winsor_sigma: float, apply_zscore: bool) -> str:

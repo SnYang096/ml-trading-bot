@@ -11,6 +11,7 @@ Feature selection options: --feature-type, --use-top-factors, --topk, --topk-sou
 import os
 import argparse
 import json
+import shutil
 from typing import List, Optional, Dict, Any
 import numpy as np
 import pandas as pd
@@ -627,8 +628,11 @@ def main() -> None:
     # We'll finalize by appending train_start/train_end (YYYYMMDD) after first config is processed
     base_dir = f"{training_timestamp}_{symbol_dir}_{args.feature_type}"
     base_results_dir = os.path.join("results/training", base_dir)
+    base_models_dir = os.path.join("models", base_dir)
     base_dir_finalized = False
     print(f"📁 Results will be saved to: {base_results_dir}")
+    os.makedirs(base_models_dir, exist_ok=True)
+    print(f"📁 Model artifacts will be saved to: {base_models_dir}")
 
     # 🔍 CRITICAL: Check if training data contains future data (data leakage)
     if isinstance(raw.index, pd.DatetimeIndex) and len(raw) > 0:
@@ -1345,7 +1349,7 @@ def main() -> None:
                     # index as current_returns, we can use the fact that they're in the same order
 
                     # Get the position of the first element of y_train in the full index
-                    # We'll use a different approach: since indices should match exactly,
+                    # We'll use a different approach: since indices match exactly,
                     # we can create a mapping using enumerate
                     # But this is slow. Instead, let's assume indices match and use direct indexing
 
@@ -1362,13 +1366,7 @@ def main() -> None:
                     # - Match by position (assuming same order)
 
                     # Actually, the simplest solution: since indices should match exactly,
-                    # we can use the fact that y_train/y_val are subsets of y_return
-                    # and find their positions in y_return, then use those same positions in current_returns
-                    # But we don't have y_return here either.
-
-                    # 🚀 FINAL SOLUTION: Use a dictionary to map (index, occurrence) to position
-                    # But this is complex. Instead, let's use a simpler approach:
-                    # Since we know the indices match, we can iterate and match by position
+                    # we can iterate and match by position
                     # For each index in y_train.index, find its first occurrence in _current_returns_index
                     # and use that position. This works if indices are in the same order.
 
@@ -1379,8 +1377,7 @@ def main() -> None:
 
                     # Create a position counter for the full index
                     full_idx_pos = 0
-                    full_idx_dict = {
-                    }  # Map (index, occurrence_count) to position
+                    full_idx_dict = {}  # Map (index, occurrence) to position
 
                     # Build mapping: for each unique index, track its occurrences
                     for idx in _current_returns_index:
@@ -2452,7 +2449,6 @@ def main() -> None:
                 print(f"        feature_fraction: 0.9 → {feature_fraction}")
                 print(f"        bagging_fraction: 1.0 → 0.8")
                 print(f"        max_depth: -1 → 8")
-
                 # Step 4: Retrain Q50 model with fixed data and weights
                 print("\n   步骤4: 使用修复后的数据和权重重训Q50模型")
 
@@ -2835,7 +2831,6 @@ def main() -> None:
                                       use_gpu=args.gpu)
             vol_metrics, vol_preprocess_params = model_vol.train(
                 X_df, y_vol, n_splits=n_splits, use_time_series_cv=use_cv)
-
             # Directional metrics (derived from q50 regression) and regression metrics containers
             oos_metrics = {}
             directional_metrics_train = {}
@@ -3633,7 +3628,6 @@ def main() -> None:
                 # For larger fb (e.g., fb=45), high accuracy can be suspicious but also legitimate
                 # In trending markets (e.g., 2025 Q1 BTC bull run), predicting long-term direction
                 # can achieve 75-85% accuracy without data leakage
-                # We use a tiered approach: 75-85% = medium warning, >85% = high warning
                 if accuracy > 0.85:
                     suspicious = True
                     warning_level = "high"
@@ -3865,10 +3859,17 @@ def main() -> None:
             # Save artifacts and report (neutral naming, no 'baseline')
             # Use timestamped base directory for this training run to avoid mixing old data
             combo_dir = base_results_dir
+            models_combo_dir = base_models_dir
             if len(freqs) > 1 or len(fbs) > 1:
                 # If multiple configs, create subdirectory for each config
                 combo_dir = os.path.join(base_results_dir, f"fb{fb}_tf{freq}")
+                models_combo_dir = os.path.join(base_models_dir,
+                                                f"fb{fb}_tf{freq}")
+            else:
+                combo_dir = base_results_dir
+                models_combo_dir = base_models_dir
             os.makedirs(combo_dir, exist_ok=True)
+            os.makedirs(models_combo_dir, exist_ok=True)
 
             # ✅ 保存一体化 Pipeline（使用 joblib）
             # 参考文档：docs/工作流："预处理 + 模型 + 后处理"一体化保存与部署.md
@@ -4019,6 +4020,8 @@ def main() -> None:
                         finalized_dir = f"{training_timestamp}_{symbol_dir}_{args.feature_type}_{_ts_s}_{_te_s}"
                         finalized_path = os.path.join("results/training",
                                                       finalized_dir)
+                        finalized_models_path = os.path.join(
+                            "models", finalized_dir)
                         if finalized_path != base_results_dir:
                             os.makedirs(os.path.dirname(finalized_path),
                                         exist_ok=True)
@@ -4028,11 +4031,21 @@ def main() -> None:
                             print(
                                 f"📁 Renamed results directory to: {base_results_dir}"
                             )
+                        if finalized_models_path != base_models_dir:
+                            os.makedirs(os.path.dirname(finalized_models_path),
+                                        exist_ok=True)
+                            os.rename(base_models_dir, finalized_models_path)
+                            base_models_dir = finalized_models_path
+                            print(
+                                f"📂 Renamed model directory to: {base_models_dir}"
+                            )
                         base_dir_finalized = True
                         # Update combo_dir to finalized base for subsequent saves in this loop iteration
                         if len(freqs) > 1 or len(fbs) > 1:
                             combo_dir = os.path.join(base_results_dir,
                                                      f"fb{fb}_tf{freq}")
+                            models_combo_dir = os.path.join(
+                                base_models_dir, f"fb{fb}_tf{freq}")
                 except Exception as _e:
                     print(
                         f"Note: Could not finalize results directory name: {_e}"
@@ -4041,9 +4054,13 @@ def main() -> None:
             # Recompute output paths after potential rename and ensure directory exists
             if len(freqs) > 1 or len(fbs) > 1:
                 combo_dir = os.path.join(base_results_dir, f"fb{fb}_tf{freq}")
+                models_combo_dir = os.path.join(base_models_dir,
+                                                f"fb{fb}_tf{freq}")
             else:
                 combo_dir = base_results_dir
+                models_combo_dir = base_models_dir
             os.makedirs(combo_dir, exist_ok=True)
+            os.makedirs(models_combo_dir, exist_ok=True)
 
             # Compose model_info and write training_info.json with finalized paths
             info_path = os.path.join(combo_dir, "training_info.json")
@@ -4223,7 +4240,6 @@ def main() -> None:
                 model_info["oos_metrics"] = oos_metrics
             with open(info_path, "w") as f:
                 json.dump(model_info, f, indent=2, default=str)
-
             # Write a compact training HTML report (self-contained)
             report_path = os.path.join(combo_dir, "training_report.html")
             try:
@@ -4728,12 +4744,10 @@ def main() -> None:
                                     "<table><tr><th>特征名称</th><th>重要性 (Gain)</th><th>占比 (%)</th></tr>",
                                     "".join(feature_rows), "</table>"
                                 ])
-
                 # OOS section - regression metrics and directional metrics
                 oos_section = ""
                 model_usable = True
                 model_issues = []
-
                 if info_json.get("oos_metrics"):
                     oos_metrics = info_json["oos_metrics"]
                     oos_rows = []
@@ -5190,6 +5204,26 @@ features = fe.engineer_all_features(df, fit=False)</code></pre>
                 with open(report_path, "w", encoding="utf-8") as f:
                     f.write(html)
                 print(f"📝 HTML report written to: {report_path}")
+
+                artifacts_to_copy = [
+                    "classification_pipeline.pkl",
+                    "return_pipeline.pkl",
+                    "vol_pipeline.pkl",
+                    "q10_pipeline.pkl",
+                    "q50_pipeline.pkl",
+                    "q90_pipeline.pkl",
+                    "scalers.pkl",
+                    "features.txt",
+                    "training_info.json",
+                    "training_report.html",
+                ]
+                for artifact_name in artifacts_to_copy:
+                    src_path = os.path.join(combo_dir, artifact_name)
+                    if os.path.isfile(src_path):
+                        dst_path = os.path.join(models_combo_dir,
+                                                artifact_name)
+                        shutil.copy2(src_path, dst_path)
+
             except Exception as exc:  # noqa: BLE001
                 print(f"Note: Could not write compact training report: {exc}")
 
@@ -5200,6 +5234,10 @@ features = fe.engineer_all_features(df, fit=False)</code></pre>
         # Generate report in the timestamped base directory
         generate_summary_report(base_results_dir, None)
         print(f"\n📊 Training summary report generated in: {base_results_dir}")
+        summary_path = os.path.join(base_results_dir, "summary_report.html")
+        if os.path.exists(summary_path):
+            shutil.copy2(summary_path,
+                         os.path.join(base_models_dir, "summary_report.html"))
     except Exception as exc:  # noqa: BLE001
         print(f"Note: Could not generate training summary report: {exc}")
 

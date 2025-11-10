@@ -147,6 +147,36 @@ make cross-sectional-workflow \
 - 若 panel 中混入多个 timeframes，脚本会报错提示拆分；请确保每次输入仅含单周期数据。
 - 若需要固定值，可自行覆盖（如 `CS_PERIODS_PER_YEAR=252`）。
 
+```bash
+# 从指定面板自动筛选因子（分类别→全局 Top-K）
+make cross-sectional-select \
+  CS_SELECT_INPUT="results/feature_exports/15T_baseline_12b.parquet" \
+  CS_SELECT_MIN_ASSETS=8 \
+  CS_SELECT_PER_CATEGORY_TOP=2 \
+  CS_SELECT_GLOBAL_TOP=12 \
+  CS_SELECT_IC_THRESHOLD=0.01 \
+  CS_SELECT_IR_THRESHOLD=0.5
+cat results/cross_sectional/selected_factors.txt
+```
+
+```bash
+# 一键：生成面板 → 自动筛因子 → 报告 → 训练
+make cross-sectional-auto \
+  CS_BUILD_SYMBOLS="BTCUSDT ETHUSDT SOLUSDT BNBUSDT XRPUSDT ADAUSDT DOGEUSDT DOTUSDT" \
+  CS_BUILD_TIMEFRAME=15T \
+  CS_BUILD_HORIZON=12 \
+  CS_BUILD_START=2024-11-01 \
+  CS_BUILD_END=2025-04-30 \
+  CS_PERIODS_PER_YEAR=auto \
+  CS_AUTO_PER_CATEGORY_TOP=2 \
+  CS_AUTO_GLOBAL_TOP=12 \
+  CS_AUTO_IC_THRESHOLD=0.01 \
+  CS_AUTO_IR_THRESHOLD=0.5
+```
+
+- 自动流程会生成 `selected_factors.txt` 与 `selection_summary.json` 供复盘；后续可调整阈值/Top-K 或重新运行。
+- 如果报告效果不佳，可调大 `CS_AUTO_PER_CATEGORY_TOP` 或 `CS_AUTO_GLOBAL_TOP`（前提是同截面的资产数足够），或通过 `CS_REPORT_EXTRA="--no-crypto-factors"` 等参数控制加入的特征族。
+
 ## Module Overview
 
 | File | Purpose |
@@ -155,7 +185,11 @@ make cross-sectional-workflow \
 | `src/ml_trading/cross_sectional/panel_generation.py` | Generate multi-asset panels from raw data |
 | `src/ml_trading/cross_sectional/processing.py` | Cross-sectional preprocessing (winsorize, z-score, neutralize) |
 | `src/ml_trading/cross_sectional/crypto_factors.py` | Crypto-specific cross-sectional factors (momentum dominance, liquidity, order flow) |
+| `src/ml_trading/cross_sectional/factor_catalog.py` | Categorise factors into heuristic groups |
+| `src/ml_trading/cross_sectional/factor_selection.py` | IC/IR scoring helpers and Top-K selection |
 | `src/ml_trading/cross_sectional/model.py` | Fama-MacBeth style regression and prediction |
 | `src/ml_trading/cross_sectional/boosting.py` | Gradient boosting wrapper for CS alphas |
+| `scripts/cross_sectional/export_factor_catalog.py` | Export factor lists per category |
+| `scripts/cross_sectional/auto_select_factors.py` | Fully automated factor selection CLI |
 
 

@@ -27,6 +27,8 @@ from .panel_generation import PanelGenerationConfig, generate_cross_sectional_pa
 from .model import CrossSectionalRegressor, FactorBacktestResult
 from .boosting import CrossSectionalBoostingModel, BoostingEvalResult
 from .report import ReportContext, generate_markdown_report, write_report
+from .factor_catalog import categorize_columns
+from .factor_selection import compute_cross_sectional_ic, apply_factor_selection
 
 __all__ = [
     "FactorPanelBuilder",
@@ -46,5 +48,8 @@ __all__ = [
     "add_crypto_cross_sectional_factors",
     "PanelGenerationConfig",
     "generate_cross_sectional_panel",
+    "categorize_columns",
+    "compute_cross_sectional_ic",
+    "apply_factor_selection",
 ]
 

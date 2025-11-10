@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 import argparse
 
 import joblib
@@ -44,6 +45,136 @@ def sanitize_features(X: np.ndarray, clip_std: float = 5.0) -> np.ndarray:
     return X
 
 
+def _generate_shap_outputs(
+    model: lgb.Booster,
+    X: np.ndarray,
+    feature_names: list[str],
+    output_dir: str,
+    prefix: str = "stage3",
+    sample_size: int = 2000,
+) -> Optional[str]:
+    """Generate SHAP explainability artifacts for the provided LightGBM model."""
+    try:
+        import shap
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        print(f"   ⚠️ SHAP not available ({exc}); skipping SHAP analysis.")
+        return None
+
+    if X.size == 0 or len(feature_names) == 0:
+        print("   ⚠️ SHAP skipped: no data or feature names available.")
+        return None
+
+    sample_size = int(min(sample_size, X.shape[0]))
+    if sample_size <= 0:
+        print("   ⚠️ SHAP skipped: insufficient samples.")
+        return None
+
+    rng = np.random.default_rng(42)
+    sample_indices = rng.choice(X.shape[0], size=sample_size, replace=False)
+    X_sample = X[sample_indices]
+
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_sample)
+    except Exception as exc:
+        print(f"   ⚠️ SHAP computation failed: {exc}")
+        return None
+
+    if isinstance(shap_values, list):
+        if len(shap_values) == 1:
+            shap_array = shap_values[0]
+        else:
+            # For multiclass, use the last class (typically positive class)
+            shap_array = shap_values[-1]
+    else:
+        shap_array = shap_values
+
+    shap_dir = Path(output_dir) / "shap"
+    shap_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        shap.summary_plot(
+            shap_array,
+            X_sample,
+            feature_names=feature_names,
+            show=False,
+            plot_type="bar",
+            color_bar=True,
+        )
+        plt.tight_layout()
+        plt.savefig(shap_dir / f"{prefix}_summary_bar.png", dpi=200)
+        plt.close()
+
+        shap.summary_plot(
+            shap_array,
+            X_sample,
+            feature_names=feature_names,
+            show=False,
+        )
+        plt.tight_layout()
+        plt.savefig(shap_dir / f"{prefix}_summary_beeswarm.png", dpi=200)
+        plt.close()
+    except Exception as exc:
+        print(f"   ⚠️ Failed to render SHAP plots: {exc}")
+
+    mean_abs_shap = np.abs(shap_array).mean(axis=0)
+    shap_ranking = sorted(
+        [{
+            "feature": feat,
+            "mean_abs_shap": float(val),
+            "rank": idx + 1,
+        } for idx, (feat, val) in enumerate(
+            sorted(
+                zip(feature_names, mean_abs_shap),
+                key=lambda kv: kv[1],
+                reverse=True,
+            ))],
+        key=lambda item: item["rank"],
+    )
+
+    with open(shap_dir / f"{prefix}_shap_importance.json",
+              "w",
+              encoding="utf-8") as f:
+        json.dump(shap_ranking, f, indent=2)
+
+    print(f"   💾 SHAP summary saved to: {shap_dir}")
+    return str(shap_dir)
+
+
+def compute_selection_score(
+    perf: Dict,
+    metric: str,
+    *,
+    max_dd_threshold: float = -20.0,
+    alpha: float = 0.5,
+    beta: float = 0.5,
+) -> float:
+    """Compute selection score from a performance dictionary using the chosen metric."""
+    fm = perf.get("financial_metrics", {}) if isinstance(perf, dict) else {}
+    sharpe = float(fm.get("sharpe_ratio", 0.0))
+    max_dd = float(fm.get("max_drawdown", 0.0))
+    f1 = float(fm.get("f1", fm.get("directional_f1", 0.0)))
+    if f1 == 0.0:
+        f1 = float(fm.get("win_rate", 0.0)) / 100.0
+
+    if metric == "sharpe":
+        return sharpe
+    if metric == "f1":
+        return f1
+    if metric == "r2":
+        return float(perf.get("r2", 0.0))
+
+    # Composite score: Sharpe - alpha * penalty(DD) - beta * (1 - F1)
+    dd_penalty = 0.0
+    if max_dd < max_dd_threshold:
+        dd_penalty = abs(max_dd - max_dd_threshold)
+    return sharpe - alpha * dd_penalty - beta * (1.0 - f1)
+
+
 def load_real_market_data(
     data_path: str,
     symbol: str = "ETH-USD",
@@ -59,7 +190,8 @@ def load_real_market_data(
     """
     # Support multiple symbols (comma-separated)
     symbol_list = [s.strip() for s in symbol.split(",") if s.strip()]
-    symbols_str = ",".join(symbol_list) if len(symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
+    symbols_str = ",".join(symbol_list) if len(
+        symbol_list) > 1 else symbol_list[0] if symbol_list else "UNKNOWN"
     print(f"📊 Loading real market data for {symbols_str}...")
     print(f"   Feature type: {feature_type}")
     if len(symbol_list) > 1:
@@ -90,18 +222,21 @@ def load_real_market_data(
                     }).dropna()
                 if df_single is not None and not df_single.empty:
                     all_dfs.append(df_single)
-        
+
         if not all_dfs:
-            print("⚠️ No real data found for any symbol, generating sample data...")
+            print(
+                "⚠️ No real data found for any symbol, generating sample data..."
+            )
             return create_enhanced_sample_data()
-        
+
         # Merge all dataframes (already resampled)
         # For multi-asset training, all assets' data are merged together
         # All features are normalized (asset-agnostic), so the model can learn
         # common patterns across different assets
         df = pd.concat(all_dfs, axis=0).sort_index()
         if len(symbol_list) > 1:
-            print(f"   Merged {len(all_dfs)} asset(s), total {len(df)} samples")
+            print(
+                f"   Merged {len(all_dfs)} asset(s), total {len(df)} samples")
 
         comprehensive_engineer = ComprehensiveFeatureEngineer(
             feature_types=feature_type)
@@ -814,17 +949,21 @@ def run_dimensionality_comparison(
     train_start: str | None = None,
     train_end: str | None = None,
     feature_type: str = "comprehensive",
+    top_k: Optional[int] = None,
+    shap_analysis: bool = False,
 ) -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
     start_dt = datetime.now()
     timestamp_start = start_dt.strftime("%Y%m%d_%H%M%S")
 
-    X, y, feature_names = load_real_market_data(data_path,
-                                                symbol,
-                                                start_date=train_start,
-                                                end_date=train_end,
-                                                feature_type=feature_type)
+    X, y, feature_names, horizons_loaded, df_features_full = load_real_market_data(
+        data_path,
+        symbol,
+        start_date=train_start,
+        end_date=train_end,
+        feature_type=feature_type,
+    )
 
     print(f"✅ Data loaded: {X.shape}, {y.shape}")
     print(f"✅ Features: {len(feature_names)}")
@@ -1004,7 +1143,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     parser.add_argument(
         "--symbol",
         default="ETH-USD",
-        help="Symbol name(s) (e.g., BTC-USD, ETH-USD or BTC-USD,ETH-USD,SOL-USD for multi-asset training)",
+        help=
+        "Symbol name(s) (e.g., BTC-USD, ETH-USD or BTC-USD,ETH-USD,SOL-USD for multi-asset training)",
     )
     parser.add_argument(
         "--encoding-dim",
@@ -1128,7 +1268,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         type=int,
         default=None,
         help=
-        "Optional: number of top factors (informational; not applied in this script)",
+        "Optional: number of top factors retained after IC ranking/representative selection",
     )
     parser.add_argument(
         "--horizons",
@@ -1141,26 +1281,40 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         "--binary-signals",
         action="store_true",
         default=False,
-        help="Use binary labels (1=Long, 0=Short) without Hold. Threshold controlled by --label-threshold",
+        help=
+        "Use binary labels (1=Long, 0=Short) without Hold. Threshold controlled by --label-threshold",
     )
     parser.add_argument(
         "--label-threshold",
         type=float,
         default=0.0,
-        help="Threshold for future return to classify Long vs Short in binary mode (default 0.0)",
+        help=
+        "Threshold for future return to classify Long vs Short in binary mode (default 0.0)",
+    )
+    parser.add_argument(
+        "--shap-analysis",
+        action="store_true",
+        help="Generate SHAP explainability plots for representative factors.",
+    )
+    parser.add_argument(
+        "--enable-autoencoder",
+        action="store_true",
+        help="Run Stage 4 autoencoder compression (disabled by default).",
     )
     parser.add_argument(
         "--task",
         type=str,
         default="both",
         choices=["classification", "regression", "both"],
-        help="Task type to evaluate: classification | regression | both (default)",
+        help=
+        "Task type to evaluate: classification | regression | both (default)",
     )
     parser.add_argument(
         "--feature-type",
         type=str,
         default="comprehensive",
-        help="Feature type: baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (default: comprehensive)",
+        help=
+        "Feature type: baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (default: comprehensive)",
     )
 
     args = parser.parse_args()
@@ -1241,9 +1395,13 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     fr = np.roll(close, -default_h) / close - 1.0
                 thr = float(args.label_threshold)
                 y_series = pd.Series((fr > thr).astype(int))
-                print(f"[Label] Using binary signals (thr={thr}), positives={y_series.mean():.4f}")
+                print(
+                    f"[Label] Using binary signals (thr={thr}), positives={y_series.mean():.4f}"
+                )
             except Exception as exc:
-                print(f"⚠️ Binary label remap failed, keep original labels: {exc}")
+                print(
+                    f"⚠️ Binary label remap failed, keep original labels: {exc}"
+                )
 
         # Stage 1: All original features (482) - missing/stability filter only
         print(f"\n[Stage 1] All original features: {len(dfX.columns)}")
@@ -1275,12 +1433,18 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         top_sorted = sorted(ic_scores.items(),
                             key=lambda kv: abs(kv[1]),
                             reverse=True)
-        top_cols = [c for c, _ in top_sorted[:120]]
+        target_top_k = args.top_k or 120
+        ic_top_k = min(max(target_top_k, 1), len(top_sorted))
+        if ic_top_k == 0:
+            ic_top_k = min(60, len(top_sorted))
+        top_cols = [c for c, _ in top_sorted[:ic_top_k]]
         df_ic = df_all[top_cols].copy()
         X_ic = df_ic.values
         scaler_ic = StandardScaler()
         X_ic_scaled = sanitize_features(scaler_ic.fit_transform(X_ic))
-        print(f"[DEBUG] Stage 2: {len(top_cols)} features after IC ranking")
+        print(
+            f"[DEBUG] Stage 2: {len(top_cols)} features after IC ranking (target={target_top_k})"
+        )
 
         # Stage 3: Correlation-based representative selection
         print(f"\n[Stage 3] Correlation-based representative selection...")
@@ -1301,12 +1465,30 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 if all(corr.loc[c, r] < 0.9 for r in reps):
                     reps.append(c)
         # Bound reps between 60 and 100
-        if len(reps) < 60:
-            reps = list(df_ic_clean.columns)[:60]
-        elif len(reps) > 100:
-            reps = reps[:100]
-        df_reps = df_ic_clean[reps] if set(reps).issubset(
-            df_ic_clean.columns) else df_all[reps].fillna(0.0)
+        desired_reps = (min(target_top_k, len(df_ic_clean.columns))
+                        if target_top_k and not df_ic_clean.empty else None)
+        if not df_ic_clean.empty:
+            if desired_reps:
+                if len(reps) > desired_reps:
+                    reps = reps[:desired_reps]
+                elif len(reps) < desired_reps:
+                    additional = [
+                        c for c in df_ic_clean.columns if c not in reps
+                    ][:max(desired_reps - len(reps), 0)]
+                    reps.extend(additional)
+            else:
+                if len(reps) < 60:
+                    reps = list(df_ic_clean.columns)[:60]
+                elif len(reps) > 100:
+                    reps = reps[:100]
+        if not reps:
+            fallback_source = (df_ic_clean.columns
+                               if not df_ic_clean.empty else df_ic.columns)
+            if len(fallback_source) == 0:
+                fallback_source = df_all.columns
+            reps = list(fallback_source)[:max(target_top_k or 60, 1)]
+        df_reps = (df_ic_clean[reps] if set(reps).issubset(df_ic_clean.columns)
+                   else df_all[reps].fillna(0.0))
         X_reps = df_reps.values
         scaler_reps = StandardScaler()
         X_reps_scaled = sanitize_features(scaler_reps.fit_transform(X_reps))
@@ -1314,11 +1496,14 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             f"[DEBUG] Stage 3: {len(reps)} representative features after correlation filtering"
         )
 
-        # Stage 4: Autoencoder compression (will be done in the loop)
-        print(f"\n[Stage 4] Autoencoder compression (to be evaluated)...")
-        print(
-            f"[DEBUG] Label variance: y.std={float(np.std(y_series.values)):.6f}"
-        )
+        # Stage 4: Autoencoder compression (optional)
+        if args.enable_autoencoder:
+            print(f"\n[Stage 4] Autoencoder compression (to be evaluated)...")
+            print(
+                f"[DEBUG] Label variance: y.std={float(np.std(y_series.values)):.6f}"
+            )
+        else:
+            print(f"\n[Stage 4] Autoencoder compression skipped (disabled).")
 
         # Split data (same split for all stages - use consistent random state)
         # All stages should have the same number of samples, so we can use the same split
@@ -1355,9 +1540,13 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         # Multi-horizon training (if enabled) - will be done after all 4 stages
         multi_horizon_results = {}
 
-        # Train and evaluate models for all 4 stages
+        # Train and evaluate models for the selected stages
         print("\n" + "=" * 60)
-        print("Training and evaluating all 4 stages for comparison:")
+        print("Training and evaluating feature sets (Stages 1-3)")
+        if args.enable_autoencoder:
+            print("(Stage 4: Autoencoder compressed features enabled)")
+        else:
+            print("(Stage 4 disabled)")
         print("=" * 60)
 
         # Stage 1: All features (482 -> ~470 after filtering)
@@ -1381,92 +1570,190 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         perf_reps = evaluate_model_performance(model_reps, X_test_reps, y_test,
                                                "Representative Features")
 
-        # Stage 4: Autoencoder compressed features
-        # Try multiple compression dimensions
-        num_features = len(reps)
+        # Default best result to Stage 3 (representative features)
+        best_model = model_reps
+        best_ae = None
+        best_result = {
+            "timestamp_start": ablation_start_ts,
+            "timestamp_end": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "train_start_date": train_start_date,
+            "train_end_date": train_end_date,
+            "duration_sec":
+            (datetime.now() - ablation_start_dt).total_seconds(),
+            "data_info": {
+                "stage1_all_features": int(len(keep_all)),
+                "stage2_ic_filtered": int(len(top_cols)),
+                "stage3_representatives": int(len(reps)),
+                "stage4_compressed_dim": None,
+                "original_features_count": int(original_feature_count),
+                "compressed_dimensions": None,
+                "compression_ratio": None,
+                "training_samples": int(len(X_train_reps)),
+                "validation_samples": int(len(X_val_reps)),
+                "test_samples": int(len(X_test_reps)),
+            },
+            "performance": {
+                "stage1_all": perf_all,
+                "stage2_ic": perf_ic,
+                "stage3_representatives": perf_reps,
+                "stage4_compressed": None,
+                "selection_metric": args.selection_metric,
+            },
+        }
 
-        # Determine encoding dimensions to try
-        if args.auto_encoding_grid:
-            # Auto-generate grid based on compression ratios
-            trial_dims = generate_auto_encoding_grid(num_features)
-            print(f"   Auto-generated encoding grid: {trial_dims}")
-        elif args.encoding_grid:
-            # Use provided grid
-            try:
-                trial_dims = [
-                    int(x.strip()) for x in args.encoding_grid.split(',')
-                    if x.strip()
-                ]
-                trial_dims = [
-                    d for d in trial_dims if d < num_features and d >= 8
-                ]
-                trial_dims = sorted(set(trial_dims), reverse=True)
-            except Exception:
-                print(f"   ⚠️ Invalid --encoding-grid, using auto-generation")
-                trial_dims = generate_auto_encoding_grid(num_features)
-        else:
-            # Default: use compression ratios
-            trial_dims = []
-            for ratio in [10, 20, 30, 40]:
-                dim = max(8, int(num_features / ratio))
-                if dim < num_features and dim >= 8:
-                    trial_dims.append(dim)
-            trial_dims.extend([32, 16, 8])
-            trial_dims = sorted(set([
-                d for d in trial_dims
-                if d < num_features and d <= X_train_reps.shape[1] and d >= 8
-            ]),
-                                reverse=True)
-            if not trial_dims:
-                trial_dims = [max(8, int(num_features / 10)), 16, 8]
-                trial_dims = [
-                    d for d in trial_dims
-                    if d <= X_train_reps.shape[1] and d >= 8
-                ]
-
-        print(
-            f"\n[Stage 4] Training on Autoencoder compressed features (trying dims: {trial_dims}, AE type: {args.ae_type})..."
+        selection_score_stage1 = compute_selection_score(
+            perf_all,
+            args.selection_metric,
+            max_dd_threshold=float(args.max_dd_threshold),
+            alpha=float(args.composite_alpha),
+            beta=float(args.composite_beta),
         )
-        grid_rows = []
-        best_row = None
-        best_result = None
-        best_model = None
+        selection_score_stage2 = compute_selection_score(
+            perf_ic,
+            args.selection_metric,
+            max_dd_threshold=float(args.max_dd_threshold),
+            alpha=float(args.composite_alpha),
+            beta=float(args.composite_beta),
+        )
+        selection_score_stage3 = compute_selection_score(
+            perf_reps,
+            args.selection_metric,
+            max_dd_threshold=float(args.max_dd_threshold),
+            alpha=float(args.composite_alpha),
+            beta=float(args.composite_beta),
+        )
+        delta_selection_stage3 = selection_score_stage3 - selection_score_stage1
+        compression_ratio_stage3 = (float(original_feature_count) /
+                                    float(len(reps)) if reps else None)
+
+        best_result = {
+            "timestamp_start":
+            ablation_start_ts,
+            "train_start_date":
+            train_start_date,
+            "train_end_date":
+            train_end_date,
+            "task_type": ("classification_binary" if args.binary_signals else
+                          "classification_multiclass"),
+            "data_info": {
+                "stage1_all_features": int(len(keep_all)),
+                "stage2_ic_filtered": int(len(top_cols)),
+                "stage3_representatives": int(len(reps)),
+                "stage4_compressed_dim": None,
+                "original_features_count": int(original_feature_count),
+                "compressed_dimensions": None,
+                "compression_ratio": compression_ratio_stage3,
+                "training_samples": int(len(X_train_reps)),
+                "validation_samples": int(len(X_val_reps)),
+                "test_samples": int(len(X_test_reps)),
+            },
+            "performance": {
+                "stage1_all_features": perf_all,
+                "stage2_ic_filtered": perf_ic,
+                "stage3_representatives": perf_reps,
+                "selection_metric": args.selection_metric,
+                "selection_scores": {
+                    "stage1":
+                    selection_score_stage1,
+                    "stage2":
+                    selection_score_stage2,
+                    "stage3":
+                    selection_score_stage3,
+                    "delta_stage3_vs_stage1":
+                    delta_selection_stage3,
+                    "delta_stage3_vs_stage2":
+                    selection_score_stage3 - selection_score_stage2,
+                },
+            },
+            "training_info": {
+                "autoencoder_epochs":
+                0,
+                "autoencoder_final_loss":
+                None,
+                "lightgbm_stage1_iterations":
+                getattr(model_all, "best_iteration", None),
+                "lightgbm_stage2_iterations":
+                getattr(model_ic, "best_iteration", None),
+                "lightgbm_stage3_iterations":
+                getattr(model_reps, "best_iteration", None),
+            },
+            "model_info": {
+                "device_used": "cuda" if torch.cuda.is_available() else "cpu",
+                "feature_names": reps[:10] if reps else feature_names[:10],
+            },
+            "selection": {
+                "metric": args.selection_metric,
+                "best_stage": "stage3",
+            },
+        }
+        best_model = model_reps
         best_ae = None
         best_dir = None
         best_dim = None
+        trial_dims: list[int] = []
 
-        def _selection_score(perf: Dict, metric: str) -> float:
-            """Compute selection score from performance dict using chosen metric.
-            perf: dict with keys r2, rmse, mae, and financial_metrics if available
-            """
-            fm = perf.get("financial_metrics", {}) if isinstance(perf,
-                                                                 dict) else {}
-            sharpe = float(fm.get("sharpe_ratio", 0.0))
-            max_dd = float(fm.get("max_drawdown", 0.0))  # negative percentage
-            # Prefer 'f1' if present; fallback to win_rate/100 as proxy
-            f1 = float(fm.get("f1", fm.get("directional_f1", 0.0)))
-            if f1 == 0.0:
-                f1 = float(fm.get("win_rate", 0.0)) / 100.0
+        if not args.enable_autoencoder:
+            print("\n[Stage 4] Autoencoder compression skipped (default).")
+        else:
+            # Stage 4: Autoencoder compressed features
+            # Try multiple compression dimensions
+            num_features = len(reps)
 
-            if metric == "sharpe":
-                return sharpe
-            if metric == "f1":
-                return f1
-            if metric == "r2":
-                return float(perf.get("r2", 0.0))
+            # Determine encoding dimensions to try
+            if args.auto_encoding_grid:
+                # Auto-generate grid based on compression ratios
+                trial_dims = generate_auto_encoding_grid(num_features)
+                print(f"   Auto-generated encoding grid: {trial_dims}")
+            elif args.encoding_grid:
+                # Use provided grid
+                try:
+                    trial_dims = [
+                        int(x.strip()) for x in args.encoding_grid.split(',')
+                        if x.strip()
+                    ]
+                    trial_dims = [
+                        d for d in trial_dims if d < num_features and d >= 8
+                    ]
+                    trial_dims = sorted(set(trial_dims), reverse=True)
+                except Exception:
+                    print(
+                        f"   ⚠️ Invalid --encoding-grid, using auto-generation"
+                    )
+                    trial_dims = generate_auto_encoding_grid(num_features)
+            else:
+                # Default: use compression ratios
+                trial_dims = []
+                for ratio in [10, 20, 30, 40]:
+                    dim = max(8, int(num_features / ratio))
+                    if dim < num_features and dim >= 8:
+                        trial_dims.append(dim)
+                trial_dims.extend([32, 16, 8])
+                trial_dims = sorted(set([
+                    d for d in trial_dims if d < num_features
+                    and d <= X_train_reps.shape[1] and d >= 8
+                ]),
+                                    reverse=True)
+                if not trial_dims:
+                    trial_dims = [max(8, int(num_features / 10)), 16, 8]
+                    trial_dims = [
+                        d for d in trial_dims
+                        if d <= X_train_reps.shape[1] and d >= 8
+                    ]
 
-            # composite: score = Sharpe - alpha * penalty(DD) - beta * (1 - F1)
-            dd_threshold = float(
-                args.max_dd_threshold)  # negative value e.g., -20
-            alpha = float(args.composite_alpha)
-            beta = float(args.composite_beta)
-            dd_penalty = 0.0
-            # If max drawdown is worse (more negative) than threshold, penalize the excess magnitude
-            if max_dd < dd_threshold:
-                dd_excess = abs(
-                    max_dd - dd_threshold)  # both negative, excess is positive
-                dd_penalty = dd_excess
-            return sharpe - alpha * dd_penalty - beta * (1.0 - f1)
+            if trial_dims:
+                print(
+                    f"\n[Stage 4] Training on Autoencoder compressed features (trying dims: {trial_dims}, AE type: {args.ae_type})..."
+                )
+            else:
+                print(
+                    "   ⚠️ No valid encoding dimensions found; skipping Stage 4."
+                )
+
+        grid_rows = []
+        best_row = None
+        stage4_best_result = None
+        stage4_best_model = None
+        stage4_best_ae = None
 
         for dim in trial_dims:
             try:
@@ -1583,12 +1870,17 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
                     # Build comprehensive result struct with all 4 stages
                     results = {
-                        "timestamp_start": ablation_start_ts,
+                        "timestamp_start":
+                        ablation_start_ts,
                         "timestamp_end":
                         datetime.now().strftime("%Y%m%d_%H%M%S"),
-                        "train_start_date": train_start_date,
-                        "train_end_date": train_end_date,
-                        "task_type": ("classification_binary" if args.binary_signals else "classification_multiclass"),
+                        "train_start_date":
+                        train_start_date,
+                        "train_end_date":
+                        train_end_date,
+                        "task_type":
+                        ("classification_binary" if args.binary_signals else
+                         "classification_multiclass"),
                         "data_info": {
                             # Feature counts at each stage
                             "stage1_all_features":
@@ -1897,6 +2189,20 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 f"   💾 Top factors (compatible format) saved to: {top_factors_path}"
             )
 
+            shap_dir_path = None
+            if getattr(args, "shap_analysis", False):
+                shap_dir_path = _generate_shap_outputs(
+                    model_reps,
+                    X_train_reps,
+                    reps,
+                    best_dir,
+                    prefix="stage3_representatives",
+                )
+                if shap_dir_path:
+                    best_result.setdefault(
+                        "explainability",
+                        {})["stage3_shap_dir"] = shap_dir_path
+
         # Save best Autoencoder model - after best_dir is set
         if best_ae is not None:
             ae_path = os.path.join(best_dir, "production_autoencoder.pth")
@@ -1915,7 +2221,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
         with open(f"{best_dir}/production_results.json", "w") as f:
             json.dump(best_result, f, indent=2, default=_to_py)
-        
+
         # Generate report filename with symbol, feature_type, and time range
         def _format_date_for_filename(date_str):
             if not date_str:
@@ -1936,17 +2242,19 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     except:
                         return ""
                 return ""
-        
-        train_start_str = _format_date_for_filename(args.train_start) if args.train_start else ""
-        train_end_str = _format_date_for_filename(args.train_end) if args.train_end else ""
-        
+
+        train_start_str = _format_date_for_filename(
+            args.train_start) if args.train_start else ""
+        train_end_str = _format_date_for_filename(
+            args.train_end) if args.train_end else ""
+
         # Build report filename
         if train_start_str and train_end_str:
             report_filename = f"{args.symbol}_{args.feature_type}_{train_start_str}_{train_end_str}_dimensionality_report.html"
         else:
             # Fallback to timestamps
             report_filename = f"{args.symbol}_{args.feature_type}_{ablation_start_ts}_dimensionality_report.html"
-        
+
         default_report_path = os.path.join(best_dir, report_filename)
         write_html_report(best_result, default_report_path)
         print(f"📝 HTML report saved to: {default_report_path}")
@@ -1977,6 +2285,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     train_start=args.train_start,
                     train_end=args.train_end,
                     feature_type=args.feature_type,
+                    top_k=args.top_k,
+                    shap_analysis=args.shap_analysis,
                 )
                 perf = trial_results.get('performance', {})
                 orig = perf.get('original_features', {})
@@ -2014,6 +2324,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             train_start=args.train_start,
             train_end=args.train_end,
             feature_type=args.feature_type,
+            top_k=args.top_k,
+            shap_analysis=args.shap_analysis,
         )
 
     # Record Top-K hint if provided
@@ -2042,10 +2354,12 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     except:
                         return ""
                 return ""
-        
-        train_start_str = _format_date_for_filename(args.train_start) if args.train_start else ""
-        train_end_str = _format_date_for_filename(args.train_end) if args.train_end else ""
-        
+
+        train_start_str = _format_date_for_filename(
+            args.train_start) if args.train_start else ""
+        train_end_str = _format_date_for_filename(
+            args.train_end) if args.train_end else ""
+
         # Build report filename
         if train_start_str and train_end_str:
             report_filename = f"{args.symbol}_{args.feature_type}_{train_start_str}_{train_end_str}_dimensionality_report.html"
@@ -2053,7 +2367,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             # Fallback: extract from results_dir or use timestamp
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
             report_filename = f"{args.symbol}_{args.feature_type}_{timestamp_str}_dimensionality_report.html"
-        
+
         default_report_path = os.path.join(results_dir, report_filename)
         write_html_report(results, default_report_path)
     except Exception as exc:  # noqa: BLE001

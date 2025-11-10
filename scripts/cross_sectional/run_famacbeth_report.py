@@ -94,6 +94,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional comma-separated feature list. When omitted, auto-detect features.",
     )
     parser.add_argument(
+        "--feature-file",
+        type=str,
+        default=None,
+        help="Path to text file containing feature names (one per line). Overrides --feature-cols.",
+    )
+    parser.add_argument(
         "--skip-na-drop",
         action="store_true",
         help="Skip dropping timestamps with insufficient assets (retain partial panels).",
@@ -245,11 +251,31 @@ def main() -> None:
         filtered_df = filtered_df.reset_index()
 
     filtered_df, target_col = ensure_future_return_column(filtered_df, args.horizon)
-    feature_cols = (
-        [c.strip() for c in args.feature_cols.split(",") if c.strip()]
-        if args.feature_cols
-        else None
-    )
+    feature_cols = None
+    if args.feature_file:
+        feature_path = Path(args.feature_file)
+        if not feature_path.exists():
+            raise FileNotFoundError(feature_path)
+        feature_cols = [
+            line.strip()
+            for line in feature_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        feature_cols = list(dict.fromkeys(feature_cols))
+        print(f"   📄 Loaded {len(feature_cols)} features from {feature_path}")
+    elif args.feature_cols:
+        feature_cols = [c.strip() for c in args.feature_cols.split(",") if c.strip()]
+    if feature_cols:
+        available = set(filtered_df.columns)
+        missing = [c for c in feature_cols if c not in available]
+        if missing:
+            print(
+                f"   ⚠️  Warning: {len(missing)} requested features not found in data: {missing[:5]}"
+                f"{' ...' if len(missing) > 5 else ''}"
+            )
+        feature_cols = [c for c in feature_cols if c in available]
+        if not feature_cols:
+            raise ValueError("No valid features remaining after filtering against dataframe columns.")
 
     symbol_count = filtered_df["symbol"].nunique()
     min_assets_required = 3

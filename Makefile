@@ -93,9 +93,10 @@ endif
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
+	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only auto-workflow vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report factor-analysis \
-		cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
+	cross-sectional-catalog \
+	cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
 
 help:
 	@echo "ML Trading Project"
@@ -136,6 +137,7 @@ help:
 	@echo "    make cross-sectional-report  # Fama-MacBeth + Newey-West + IC/IR markdown report"
 	@echo "    make cross-sectional-train   # Train cross-sectional models (boosting/Fama-MacBeth)"
 	@echo "    make cross-sectional-workflow# Build panel + report + train in one go"
+	@echo "    make cross-sectional-catalog # Categorise factors from an existing panel"
 	@echo "    make vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo ""
@@ -313,6 +315,7 @@ CS_HORIZON ?= 12
 CS_MAX_LAG ?= 5
 CS_PERIODS_PER_YEAR ?= auto
 CS_WINSOR ?= 3.0
+CS_REPORT_EXTRA ?=
 
 cross-sectional-report:
 	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
@@ -324,7 +327,8 @@ cross-sectional-report:
 		--horizon $(CS_HORIZON) \
 		--max-lag $(CS_MAX_LAG) \
 		--periods-per-year $(CS_PERIODS_PER_YEAR) \
-		--winsor $(CS_WINSOR)
+		--winsor $(CS_WINSOR) \
+		$(CS_REPORT_EXTRA)
 	@echo "✅ Report generated: $(CS_OUTPUT)"
 
 # ---------------------------------------------------------------------------
@@ -336,6 +340,7 @@ CS_TRAIN_OUTPUT_DIR ?= $(RESULTS_DIR)/cross_sectional/models
 CS_TRAIN_MODEL ?= boosting
 CS_TRAIN_MODEL_NAME ?= cs_boosting.joblib
 CS_TRAIN_FEATURE_COLS ?=
+CS_TRAIN_FEATURE_FILE ?=
 CS_TRAIN_EXTRA ?=
 CS_TRAIN_PRED_NAME ?= predictions.parquet
 CS_TRAIN_METRICS_NAME ?= metrics.json
@@ -359,6 +364,7 @@ cross-sectional-train:
 		--model-name $(CS_TRAIN_MODEL_NAME) \
 		--predictions-name $(CS_TRAIN_PRED_NAME) \
 		--metrics-name $(CS_TRAIN_METRICS_NAME) \
+		$(if $(CS_TRAIN_FEATURE_FILE),--feature-file $(CS_TRAIN_FEATURE_FILE),) \
 		$(if $(filter 1,$(CS_TRAIN_AUTO_SELECT)),--auto-select,) \
 		$(if $(CS_TRAIN_SELECT_TOPK),--select-topk $(CS_TRAIN_SELECT_TOPK),) \
 		$(if $(CS_TRAIN_IC_THRESHOLD),--ic-threshold $(CS_TRAIN_IC_THRESHOLD),) \
@@ -377,6 +383,136 @@ cross-sectional-workflow:
 	$(MAKE) cross-sectional-build-panel
 	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
 	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+
+CS_CATALOG_INPUT ?= $(CS_BUILD_OUTPUT)
+CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
+
+cross-sectional-catalog:
+	@echo "🗂  Exporting factor catalogue from $(CS_CATALOG_INPUT)..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/export_factor_catalog.py \
+		--input $(CS_CATALOG_INPUT) \
+		--output-dir $(CS_CATALOG_OUTPUT)
+	@echo "✅ Factor sets saved to $(CS_CATALOG_OUTPUT)"
+
+CS_SELECT_INPUT ?= $(CS_BUILD_OUTPUT)
+CS_SELECT_OUTPUT ?= results/cross_sectional/selected_factors.txt
+CS_SELECT_OUTPUT_JSON ?= results/cross_sectional/selection_summary.json
+CS_SELECT_TARGET ?=
+CS_SELECT_MIN_ASSETS ?= 4
+CS_SELECT_PER_CATEGORY_TOP ?= 2
+CS_SELECT_GLOBAL_TOP ?= 12
+CS_SELECT_IC_THRESHOLD ?=
+CS_SELECT_IR_THRESHOLD ?=
+CS_SELECT_RANKING ?= ic
+CS_SELECT_INCLUDE ?=
+CS_SELECT_EXTRA ?=
+
+cross-sectional-select:
+	@echo "🧠 Auto-selecting factors from $(CS_SELECT_INPUT)..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/auto_select_factors.py \
+		--input $(CS_SELECT_INPUT) \
+		$(if $(CS_SELECT_TARGET),--target $(CS_SELECT_TARGET),) \
+		--min-assets $(CS_SELECT_MIN_ASSETS) \
+		--per-category-top $(CS_SELECT_PER_CATEGORY_TOP) \
+		--global-top $(CS_SELECT_GLOBAL_TOP) \
+		$(if $(CS_SELECT_IC_THRESHOLD),--ic-threshold $(CS_SELECT_IC_THRESHOLD),) \
+		$(if $(CS_SELECT_IR_THRESHOLD),--ir-threshold $(CS_SELECT_IR_THRESHOLD),) \
+		--ranking-stat $(CS_SELECT_RANKING) \
+		$(if $(CS_SELECT_INCLUDE),--include-categories $(CS_SELECT_INCLUDE),) \
+		--output $(CS_SELECT_OUTPUT) \
+		--output-json $(CS_SELECT_OUTPUT_JSON) \
+		$(CS_SELECT_EXTRA)
+	@echo "✅ Selected factors saved to $(CS_SELECT_OUTPUT)"
+
+CS_SHAP_MODEL ?= $(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)
+CS_SHAP_PANEL ?= $(CS_BUILD_OUTPUT)
+CS_SHAP_FEATURE_FILE ?= $(CS_AUTO_FEATURE_FILE)
+CS_SHAP_TARGET ?=
+CS_SHAP_TOPK ?= 10
+CS_SHAP_OUTPUT ?= results/cross_sectional/shap_reports
+CS_SHAP_MAX_SAMPLES ?= 2000
+CS_SHAP_ADDITIONAL ?=
+
+cross-sectional-shap:
+	@echo "📈 Running SHAP analysis..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_analysis.py \
+		--model $(CS_SHAP_MODEL) \
+		--panel $(CS_SHAP_PANEL) \
+		$(if $(CS_SHAP_FEATURE_FILE),--feature-file $(CS_SHAP_FEATURE_FILE),) \
+		$(if $(CS_SHAP_TARGET),--target $(CS_SHAP_TARGET),) \
+		--topk $(CS_SHAP_TOPK) \
+		--output-dir $(CS_SHAP_OUTPUT) \
+		--max-samples $(CS_SHAP_MAX_SAMPLES) \
+		$(CS_SHAP_ADDITIONAL)
+
+CS_LOGIC_EXPECTATIONS ?=
+CS_LOGIC_OUTPUT ?= results/cross_sectional/shap_logic_report.md
+CS_LOGIC_TOLERANCE ?= 0.0
+CS_LOGIC_EXTRA ?=
+
+cross-sectional-logic-check:
+	@echo "🧐 Validating factor economic logic..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_factor_logic_check.py \
+		--shap-manifest $(CS_SHAP_OUTPUT)/manifest.json \
+		--expectations $(CS_LOGIC_EXPECTATIONS) \
+		--tolerance $(CS_LOGIC_TOLERANCE) \
+		--output $(CS_LOGIC_OUTPUT) \
+		$(CS_LOGIC_EXTRA)
+
+CS_DRIFT_BASELINE ?= results/cross_sectional/shap_baseline.json
+CS_DRIFT_THRESHOLD ?= 0.5
+CS_DRIFT_OUTPUT ?= results/cross_sectional/shap_drift_report.md
+CS_DRIFT_UPDATE ?= 0
+CS_DRIFT_EXTRA ?=
+
+cross-sectional-shap-drift:
+	@echo "📉 Checking SHAP drift..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_drift_monitor.py \
+		--current $(CS_SHAP_OUTPUT)/manifest.json \
+		--baseline $(CS_DRIFT_BASELINE) \
+		--threshold $(CS_DRIFT_THRESHOLD) \
+		--output $(CS_DRIFT_OUTPUT) \
+		$(if $(filter 1,$(CS_DRIFT_UPDATE)),--update-baseline,) \
+		$(CS_DRIFT_EXTRA)
+
+CS_AUTO_PER_CATEGORY_TOP ?= 2
+CS_AUTO_GLOBAL_TOP ?= 12
+CS_AUTO_IC_THRESHOLD ?= 0.01
+CS_AUTO_IR_THRESHOLD ?= 0.5
+CS_AUTO_MIN_ASSETS ?= 4
+CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
+
+cross-sectional-auto:
+	@echo "🤖 Running fully automated cross-sectional pipeline..."
+	$(MAKE) cross-sectional-build-panel
+	$(MAKE) cross-sectional-select \
+		CS_SELECT_INPUT="$(CS_BUILD_OUTPUT)" \
+		CS_SELECT_OUTPUT="$(CS_AUTO_FEATURE_FILE)" \
+		CS_SELECT_OUTPUT_JSON="results/cross_sectional/selection_summary.json" \
+		CS_SELECT_MIN_ASSETS=$(CS_AUTO_MIN_ASSETS) \
+		CS_SELECT_PER_CATEGORY_TOP=$(CS_AUTO_PER_CATEGORY_TOP) \
+		CS_SELECT_GLOBAL_TOP=$(CS_AUTO_GLOBAL_TOP) \
+		CS_SELECT_IC_THRESHOLD=$(CS_AUTO_IC_THRESHOLD) \
+		CS_SELECT_IR_THRESHOLD=$(CS_AUTO_IR_THRESHOLD)
+	$(MAKE) cross-sectional-report \
+		CS_INPUT="$(CS_BUILD_OUTPUT)" \
+		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
+		CS_HORIZON=$(CS_BUILD_HORIZON) \
+		CS_REPORT_EXTRA="--feature-file $(CS_AUTO_FEATURE_FILE)"
+	$(MAKE) cross-sectional-train \
+		CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" \
+		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
+		CS_HORIZON=$(CS_BUILD_HORIZON) \
+		CS_PERIODS_PER_YEAR=$(CS_PERIODS_PER_YEAR) \
+		CS_TRAIN_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
+	$(MAKE) cross-sectional-shap \
+		CS_SHAP_MODEL="$(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)" \
+		CS_SHAP_PANEL="$(CS_BUILD_OUTPUT)" \
+		CS_SHAP_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
+	$(MAKE) cross-sectional-logic-check \
+		CS_LOGIC_EXPECTATIONS="$(CS_LOGIC_EXPECTATIONS)"
+	$(MAKE) cross-sectional-shap-drift \
+		CS_DRIFT_BASELINE="$(CS_DRIFT_BASELINE)"
 
 FORWARD_BARS_TRAIN ?= 5,15,45,288
 
@@ -444,6 +580,26 @@ ROLLING_TOPK ?=
 ROLLING_TOPK_SOURCE ?=
 ROLLING_USE_AUTOENCODER ?=
 ROLLING_ENCODING_DIM ?=
+
+AUTO_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
+AUTO_COMPARE_START ?= $(START_DATE)
+AUTO_COMPARE_END ?= $(END_DATE)
+AUTO_TRAIN_START ?= $(START_DATE)
+AUTO_TRAIN_END ?= $(END_DATE)
+AUTO_ROLLING_START ?= $(ROLLING_START)
+AUTO_ROLLING_END ?= $(ROLLING_END)
+AUTO_FREQS ?= $(FREQS)
+AUTO_FORWARD_BARS_TRAIN ?= $(FORWARD_BARS_TRAIN)
+AUTO_FORWARD_BARS_ROLLING ?= $(FORWARD_BARS)
+AUTO_MAX_ITER ?= 1
+AUTO_RETRY_MONTHS ?= 6
+AUTO_SKIP_COMPARE ?= 0
+AUTO_AUTO_RECOMPARE ?= 1
+AUTO_TOP_FACTORS ?=
+AUTO_GPU ?= 1
+AUTO_MODEL_TYPE ?= $(MODEL_TYPE)
+AUTO_TOP_K ?= 120
+AUTO_SHAP ?= 0
 
 rolling:
 	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
@@ -529,6 +685,36 @@ rolling-multi:
 		--gpu; \
 	fi
 
+auto-workflow:
+	@echo "🤖 Running automated compare → train → rolling workflow for $(SYMBOLS)"
+	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.workflows.auto_workflow \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbols "$(SYMBOLS)" \
+		--feature-type $(AUTO_FEATURE_TYPE) \
+		--top-k $(AUTO_TOP_K) \
+		$(if $(AUTO_COMPARE_START),--compare-start $(AUTO_COMPARE_START),) \
+		$(if $(AUTO_COMPARE_END),--compare-end $(AUTO_COMPARE_END),) \
+		$(if $(AUTO_TRAIN_START),--train-start $(AUTO_TRAIN_START),) \
+		$(if $(AUTO_TRAIN_END),--train-end $(AUTO_TRAIN_END),) \
+		$(if $(AUTO_ROLLING_START),--rolling-start $(AUTO_ROLLING_START),) \
+		$(if $(AUTO_ROLLING_END),--rolling-end $(AUTO_ROLLING_END),) \
+		--freqs "$(AUTO_FREQS)" \
+		--forward-bars-train "$(AUTO_FORWARD_BARS_TRAIN)" \
+		--forward-bars-rolling "$(AUTO_FORWARD_BARS_ROLLING)" \
+		--cv-folds $(CV_FOLDS) \
+		--oos-months $(OOS_MONTHS) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
+		--model-type $(AUTO_MODEL_TYPE) \
+		--max-iterations $(AUTO_MAX_ITER) \
+		--retry-train-months $(AUTO_RETRY_MONTHS) \
+		$(if $(filter 1,$(AUTO_SKIP_COMPARE)),--skip-compare,) \
+		$(if $(AUTO_TOP_FACTORS),--top-factors $(AUTO_TOP_FACTORS),) \
+		$(if $(filter 1,$(AUTO_AUTO_RECOMPARE)),--auto-recompare,) \
+		$(if $(filter 1,$(AUTO_SHAP)),--shap-analysis,) \
+		$(if $(filter 1,$(AUTO_GPU)),--gpu,)
+
 BACKTEST_START ?=$(START_DATE)
 BACKTEST_END ?=$(END_DATE)
 BACKTEST_SYMBOL ?=$(SYMBOL)
@@ -536,7 +722,7 @@ BACKTEST_MODEL ?=$(MODEL_PATH)
 
 vectorbot-backtest:
 	@echo "🤖 Running VectorBot backtest with model=$(BACKTEST_MODEL) symbol=$(BACKTEST_SYMBOL) range=$(BACKTEST_START)→$(BACKTEST_END) ..."
-	$(DOCKER_RUN_NO_TTY) bash -c "python3 scripts/backtesting/vectorbot_backtest.py \
+	$(DOCKER_RUN_NO_TTY) bash -c "python3 -m ml_trading.backtesting.vectorbot \
 		$(if $(BACKTEST_MODEL),--model '$(BACKTEST_MODEL)') \
 		$(if $(BACKTEST_SYMBOL),--symbol '$(BACKTEST_SYMBOL)') \
 		$(if $(BACKTEST_START),--start '$(BACKTEST_START)') \
@@ -544,12 +730,13 @@ vectorbot-backtest:
 
 nautilus-backtest:
 	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
-	PYTHONPATH=src $(PYTHON) scripts/backtesting/nautilus_dim_backtest.py \
+	PYTHONPATH=src $(PYTHON) -m ml_trading.backtesting.nautilus_dim \
 		--data-dir $(DATA_DIR) \
 		--results-dir $(RESULTS_DIR)/$(NAUTILUS_RESULTS_DIR) \
 		--symbols $(SYMBOLS) \
 		--timeframe 5T \
-		--start $(START_DATE) --end $(END_DATE)
+		--start $(START_DATE) --end $(END_DATE) \
+		--output-dir $(RESULTS_DIR)/nautilus_backtests
 
 
 

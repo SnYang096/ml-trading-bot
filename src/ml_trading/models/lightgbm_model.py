@@ -498,6 +498,7 @@ class LightGBMModel:
                         best_metric = fold_f1
                         best_model = model
                 elif self.model_type == "quantile":
+                    y_pred = model.predict(X_val)
                     if verbose and fold == 0:
                         log(f"    DEBUG: y_val range: [{np.nanmin(y_val):.6f}, {np.nanmax(y_val):.6f}], mean={np.nanmean(y_val):.6f}"
                             )
