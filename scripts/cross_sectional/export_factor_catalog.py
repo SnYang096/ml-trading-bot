@@ -16,7 +16,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from ml_trading.cross_sectional.factor_catalog import (
+from cross_sectional.factor_catalog import (
     categorize_columns,
     format_summary,
 )

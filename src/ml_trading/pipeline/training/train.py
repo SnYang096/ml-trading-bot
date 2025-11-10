@@ -20,20 +20,20 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import f1_score
 from scipy.interpolate import interp1d
 
-from ml_trading.data_tools.rolling_data import load_parquet_file
-from ml_trading.data_tools.baseline_feature_engineering import (
+from time_series_model.data_tools.rolling_data import load_parquet_file
+from time_series_model.data_tools.baseline_feature_engineering import (
     engineer_baseline_features,
     get_baseline_feature_columns,
 )
-from ml_trading.data_tools.comprehensive_feature_engineering import (
+from time_series_model.data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )
-from ml_trading.models.lightgbm_model import LightGBMModel
-from ml_trading.models.quant_trading_model import QuantTradingModel
-from ml_trading.pipeline.training.preprocessing import RobustWinsorizer
-from ml_trading.pipeline.training.quantile_model_trainer import QuantileModelTrainer
-from ml_trading.pipeline.training.classification_model_trainer import ClassificationModelTrainer
+from time_series_model.models.lightgbm_model import LightGBMModel
+from time_series_model.models.quant_trading_model import QuantTradingModel
+from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
+from time_series_model.pipeline.training.quantile_model_trainer import QuantileModelTrainer
+from time_series_model.pipeline.training.classification_model_trainer import ClassificationModelTrainer
 import joblib
 
 
@@ -735,7 +735,7 @@ def main() -> None:
 
                 # Always use safe_multi_asset_preprocessing when safe_multi_asset is enabled
                 # It handles both single and multi-asset cases
-                from ml_trading.pipeline.training.safe_multi_asset_preprocessing import safe_multi_asset_preprocessing
+                from time_series_model.pipeline.training.safe_multi_asset_preprocessing import safe_multi_asset_preprocessing
                 print(f"   🔒 使用安全的多标的预处理（完全隔离）")
                 feat_df, preprocessing_metadata = safe_multi_asset_preprocessing(
                     files=files,
@@ -1169,7 +1169,7 @@ def main() -> None:
                 )
                 with open(args.params_file, "r") as f:
                     loaded_params = json.load(f)
-                from ml_trading.config.settings import DEFAULT_LGBM_PARAMS
+                from time_series_model.config.settings import DEFAULT_LGBM_PARAMS
                 q50_params = DEFAULT_LGBM_PARAMS.copy()
                 q50_params.update(loaded_params)
                 print(f"   ✅ Loaded {len(loaded_params)} parameters")
@@ -1190,7 +1190,7 @@ def main() -> None:
                     if extreme_count > len(
                             y_return) * 0.01:  # More than 1% extreme values
                         # Adjust parameters for better prediction of extremes
-                        from ml_trading.config.settings import DEFAULT_LGBM_PARAMS
+                        from time_series_model.config.settings import DEFAULT_LGBM_PARAMS
                         q50_params = DEFAULT_LGBM_PARAMS.copy()
                         q50_params[
                             "num_leaves"] = 127  # Increase from default 31
@@ -1303,7 +1303,7 @@ def main() -> None:
 
             # Create preprocessing function wrapper that has access to current_returns
             # This function will be called within each CV fold
-            from ml_trading.pipeline.training.preprocessing import preprocess_target_cv
+            from time_series_model.pipeline.training.preprocessing import preprocess_target_cv
 
             def create_preprocess_fn(current_returns_array,
                                      current_returns_index,
@@ -2395,7 +2395,7 @@ def main() -> None:
                 # Step 3: Adjust Q50 model parameters for better robustness
                 # Reference: docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md
                 print("\n   步骤3: 调整Q50模型参数（增加正则化，防止过拟合噪声）")
-                from ml_trading.config.settings import DEFAULT_LGBM_PARAMS
+                from time_series_model.config.settings import DEFAULT_LGBM_PARAMS
                 q50_params_retrain = DEFAULT_LGBM_PARAMS.copy()
 
                 # Determine appropriate min_data_in_leaf based on sample size
@@ -2468,7 +2468,7 @@ def main() -> None:
                     Returns:
                         Trained model and metrics
                     """
-                    from ml_trading.models.lightgbm_model import LightGBMModel
+                    from time_series_model.models.lightgbm_model import LightGBMModel
 
                     # Strategy 1: Original training
                     model_q50_retrain = LightGBMModel(
@@ -5180,7 +5180,7 @@ def main() -> None:
                       <li>📌 <strong>用途</strong>：在特征工程阶段标准化特征（如StandardScaler、ATR分位数、波动率分位数等）</li>
                       <li>📌 <strong>何时需要</strong>：如果使用特征工程器（FeatureEngineer）生成特征，需要<strong>手动加载</strong>scalers.pkl来标准化特征，确保推理时使用与训练时相同的预处理方式</li>
                       <li>📌 <strong>使用方法</strong>：
-                        <pre style='background:#f5f5f5;padding:10px;border-radius:5px;margin:5px 0;'><code>from ml_trading.data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+                        <pre style='background:#f5f5f5;padding:10px;border-radius:5px;margin:5px 0;'><code>from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 
 # 初始化特征工程器
 fe = ComprehensiveFeatureEngineer()
@@ -5230,7 +5230,7 @@ features = fe.engineer_all_features(df, fit=False)</code></pre>
     # Generate training summary report for this training run
     # Generate report in the timestamped directory to avoid mixing with old data
     try:
-        from ml_trading.pipeline.training.generate_summary_report import generate_summary_report
+        from time_series_model.pipeline.training.generate_summary_report import generate_summary_report
         # Generate report in the timestamped base directory
         generate_summary_report(base_results_dir, None)
         print(f"\n📊 Training summary report generated in: {base_results_dir}")
@@ -5244,3 +5244,4 @@ features = fe.engineer_all_features(df, fit=False)</code></pre>
 
 if __name__ == "__main__":
     main()
+

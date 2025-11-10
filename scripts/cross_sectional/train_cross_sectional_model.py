@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from joblib import dump
 
-from ml_trading.cross_sectional import (
+from cross_sectional import (
     FactorPanelBuilder,
     PanelConfig,
     CrossSectionalBoostingModel,
@@ -36,7 +36,7 @@ from ml_trading.cross_sectional import (
     generate_markdown_report,
     write_report,
 )
-from ml_trading.cross_sectional.factor_selection import (
+from cross_sectional.factor_selection import (
     apply_factor_selection,
     compute_cross_sectional_ic,
 )

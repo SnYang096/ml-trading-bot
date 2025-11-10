@@ -16,16 +16,16 @@ from typing import Dict, List, Tuple
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from ml_trading.data_tools.baseline_feature_engineering import (
+from data_tools.baseline_feature_engineering import (
     BaselineFeatureEngineer,
     engineer_baseline_features,
     get_baseline_feature_columns,
 )
-from ml_trading.data_tools.comprehensive_feature_engineering import (
+from data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )
-from ml_trading.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMModel
 
 
 class TestFeatureCleaningQ50(unittest.TestCase):

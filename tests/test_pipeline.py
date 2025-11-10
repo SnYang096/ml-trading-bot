@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import unittest
 import pandas as pd
 import numpy as np
-from ml_trading.pipeline.multi_tf_pipeline import MultiTimeframePipeline
-from ml_trading.pipeline.risk_management import RiskManager
+from time_series_model.pipeline.multi_tf_pipeline import MultiTimeframePipeline
+from time_series_model.pipeline.risk_management import RiskManager
 
 
 class TestMultiTimeframePipeline(unittest.TestCase):

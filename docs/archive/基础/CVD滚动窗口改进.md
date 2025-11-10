@@ -195,7 +195,7 @@ df = add_order_flow_features('BTCUSDT-aggTrades-2024-10.zip', df)
 ### 特征工程
 
 ```python
-from ml_trading.data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
+from data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
 
 # 创建特征工程器
 fe = EnhancedFeatureEngineer()
@@ -327,7 +327,7 @@ plt.tight_layout()
 ### 文件修改
 
 - ✅ `ml_project/scripts/common/data_utils.py` - CVD计算逻辑
-- ✅ `ml_project/src/ml_trading/data_tools/feature_engineering_enhanced.py` - 特征工程增强
+- ✅ `ml_project/src/data_tools/feature_engineering_enhanced.py` - 特征工程增强
 
 ---
 

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from ml_trading.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMModel
 
 
 class TestQ50Remediation(unittest.TestCase):

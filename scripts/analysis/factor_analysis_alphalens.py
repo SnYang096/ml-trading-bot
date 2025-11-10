@@ -23,12 +23,12 @@ except ImportError:
     raise ImportError(
         "Alphalens is required. Install with: pip install alphalens")
 
-from ml_trading.data_tools.rolling_data import load_parquet_file
-from ml_trading.data_tools.baseline_feature_engineering import (
+from data_tools.rolling_data import load_parquet_file
+from data_tools.baseline_feature_engineering import (
     engineer_baseline_features,
     get_baseline_feature_columns,
 )
-from ml_trading.data_tools.comprehensive_feature_engineering import (
+from data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )

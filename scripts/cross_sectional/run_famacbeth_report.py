@@ -22,7 +22,7 @@ from typing import List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from ml_trading.cross_sectional import (
+from cross_sectional import (
     FactorPanelBuilder,
     PanelConfig,
     CrossSectionalRegressor,

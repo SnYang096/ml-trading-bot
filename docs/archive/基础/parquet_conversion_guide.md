@@ -77,14 +77,14 @@ make convert-zip-to-parquet
 
 ## 训练脚本自动使用 Parquet
 
-所有使用 `ml_trading.data_tools.rolling_data` 中 `load_and_process_file()` 函数的训练脚本会自动：
+所有使用 `data_tools.rolling_data` 中 `load_and_process_file()` 函数的训练脚本会自动：
 1. 首先检查是否存在对应的 Parquet 文件
 2. 如果存在，直接加载 Parquet（快速）
 3. 如果不存在，则回退到加载 ZIP 文件（兼容性）
 
 示例：
 ```python
-from ml_trading.data_tools.rolling_data import load_and_process_file
+from data_tools.rolling_data import load_and_process_file
 
 # 会自动检查并优先使用 parquet
 df = load_and_process_file("data/agg_data/BTCUSDT-aggTrades-2021-01.zip")

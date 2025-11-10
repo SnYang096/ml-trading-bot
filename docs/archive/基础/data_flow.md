@@ -102,18 +102,18 @@ Three-stage approach for each timeframe (5m, 15m, 45m):
 
 ## Implementation Components
 
-### Data Module (`src/ml_trading/data/`)
+### Data Module (`src/time_series_model/data/`)
 - `data_loader.py`: Handles market data loading and multi-timeframe resampling
 - `feature_engineering.py`: Computes all technical indicators
 
-### Models Module (`src/ml_trading/models/`)
+### Models Module (`src/time_series_model/models/`)
 - `lightgbm_model.py`: LightGBM implementation with Optuna optimization support
 
-### Pipeline Module (`src/ml_trading/pipeline/`)
+### Pipeline Module (`src/time_series_model/pipeline/`)
 - `multi_tf_pipeline.py`: Implements the three-stage multi-timeframe pipeline
 - `risk_management.py`: Dynamic risk management algorithms
 
-### Strategies Module (`src/ml_trading/strategies/`)
+### Strategies Module (`src/time_series_model/strategies/`)
 - `ml_strategy.py`: Main strategy integrating all components
 
 ## Key Features

@@ -16,12 +16,12 @@ from typing import Dict, Optional, Any
 import pandas as pd
 import numpy as np
 
-from ml_trading.models.lightgbm_model import LightGBMModel
-from ml_trading.data_tools.baseline_feature_engineering import (
+from time_series_model.models.lightgbm_model import LightGBMModel
+from data_tools.baseline_feature_engineering import (
     BaselineFeatureEngineer,
     get_baseline_feature_columns,
 )
-from ml_trading.pipeline.training.preprocessing import clean_features_train_test
+from time_series_model.pipeline.training.preprocessing import clean_features_train_test
 
 
 def load_data(
@@ -33,7 +33,7 @@ def load_data(
     max_files: int = 10,
 ) -> pd.DataFrame:
     """Load and prepare data for parameter tuning."""
-    from ml_trading.pipeline.training.train import _collect_files, _resample_ohlcv
+    from time_series_model.pipeline.training.train import _collect_files, _resample_ohlcv
 
     symbol_list = [s.strip() for s in symbols.split(",")]
     files = _collect_files([], data_dir, start_date, end_date, ",".join(symbol_list))

@@ -222,7 +222,7 @@ make dim-compare \
 
 ### 优先级 1: 修改 `create_labels` 函数（必需）
 
-**文件**: `src/ml_trading/data_tools/rolling_data.py`
+**文件**: `src/data_tools/rolling_data.py`
 
 **修改内容**:
 - 添加 `create_labels_multi_horizon` 函数
@@ -230,7 +230,7 @@ make dim-compare \
 
 ### 优先级 2: 修改 `dim-compare`（必需）
 
-**文件**: `src/ml_trading/pipeline/dimensionality/dimensionality_comparison.py`
+**文件**: `src/time_series_model/pipeline/dimensionality/dimensionality_comparison.py`
 
 **修改内容**:
 - 添加 `--horizons` 参数

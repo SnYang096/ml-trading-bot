@@ -109,7 +109,7 @@ make dim-compare SYMBOL=BTCUSDT \
 
 #### 2.1 封装完整 Pipeline
 
-**使用 `QuantTradingModel` 类**（`src/ml_trading/models/quant_trading_model.py`）
+**使用 `QuantTradingModel` 类**（`src/time_series_model/models/quant_trading_model.py`）
 
 **包含内容**：
 - 特征计算 → 标签清洗（Winsorize）→ AR(1) 残差 → 模型预测 → 信号生成
@@ -120,7 +120,7 @@ make dim-compare SYMBOL=BTCUSDT \
 **保存方式**（使用 joblib）：
 
 ```python
-from ml_trading.models.quant_trading_model import QuantTradingModel
+from time_series_model.models.quant_trading_model import QuantTradingModel
 
 # 训练和保存
 model = QuantTradingModel(
@@ -399,7 +399,7 @@ make auto-rolling-update-only SYMBOL=BTCUSDT \
 ### 加载模型 Pipeline
 
 ```python
-from ml_trading.models.quant_trading_model import QuantTradingModel
+from time_series_model.models.quant_trading_model import QuantTradingModel
 
 # 加载模型（一个文件包含所有内容）
 model_q50 = QuantTradingModel.load("q50_pipeline.pkl")

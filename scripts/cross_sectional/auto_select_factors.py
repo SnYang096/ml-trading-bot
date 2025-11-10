@@ -24,8 +24,8 @@ from typing import Dict, Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
-from ml_trading.cross_sectional.factor_catalog import categorize_columns
-from ml_trading.cross_sectional.factor_selection import (
+from cross_sectional.factor_catalog import categorize_columns
+from cross_sectional.factor_selection import (
     apply_factor_selection,
     compute_cross_sectional_ic,
     filter_panel_by_assets,

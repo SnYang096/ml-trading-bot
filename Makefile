@@ -154,10 +154,10 @@ clean:
 	find . -type d -name "__pycache__" -delete
 
 format:
-	PYTHONPATH=src $(PYTHON) -m black src/ml_trading/ tests/ scripts/
+	PYTHONPATH=src $(PYTHON) -m black src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
 
 lint:
-	PYTHONPATH=src $(PYTHON) -m flake8 src/ tests/ scripts/
+	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
 
 dev-install:
 	$(PIP) install -e .
@@ -542,7 +542,7 @@ train:
 	@if [ -n "$(PARAMS_FILE)" ]; then \
 		echo "       📂 Using pre-trained parameters from: $(PARAMS_FILE)"; \
 	fi
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.train \
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
         --data-dir /workspace/$(DATA_DIR) \
@@ -607,7 +607,7 @@ rolling:
 	@if [ -n "$(ROLLING_USE_AUTOENCODER)" ]; then \
 		echo "       Autoencoder: $(ROLLING_USE_AUTOENCODER) (dim=$(ROLLING_ENCODING_DIM))"; \
 	fi
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.training.rolling \
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOLS) \
 		$(if $(ROLLING_START),--start $(ROLLING_START),) \
@@ -635,7 +635,7 @@ rolling-multi:
 		echo "       Autoencoder: $(ROLLING_USE_AUTOENCODER) (dim=$(ROLLING_ENCODING_DIM))"; \
 	fi
 	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
-		FB_LIST=$(FBS) python3 -m ml_trading.pipeline.training.rolling \
+		FB_LIST=$(FBS) python3 -m time_series_model.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOLS) \
 		$(if $(ROLLING_START),--start $(ROLLING_START),) \
@@ -665,7 +665,7 @@ rolling-multi:
 			-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
 			-w /workspace \
 			--shm-size=8gb \
-			$(DOCKER_IMAGE) python3 -m ml_trading.pipeline.training.rolling \
+			$(DOCKER_IMAGE) python3 -m time_series_model.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOLS) \
 		$(if $(ROLLING_START),--start $(ROLLING_START),) \
@@ -687,7 +687,7 @@ rolling-multi:
 
 auto-workflow:
 	@echo "🤖 Running automated compare → train → rolling workflow for $(SYMBOLS)"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.workflows.auto_workflow \
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.workflows.auto_workflow \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbols "$(SYMBOLS)" \
 		--feature-type $(AUTO_FEATURE_TYPE) \
@@ -722,7 +722,7 @@ BACKTEST_MODEL ?=$(MODEL_PATH)
 
 vectorbot-backtest:
 	@echo "🤖 Running VectorBot backtest with model=$(BACKTEST_MODEL) symbol=$(BACKTEST_SYMBOL) range=$(BACKTEST_START)→$(BACKTEST_END) ..."
-	$(DOCKER_RUN_NO_TTY) bash -c "python3 -m ml_trading.backtesting.vectorbot \
+	$(DOCKER_RUN_NO_TTY) bash -c "python3 -m time_series_model.backtesting.vectorbot \
 		$(if $(BACKTEST_MODEL),--model '$(BACKTEST_MODEL)') \
 		$(if $(BACKTEST_SYMBOL),--symbol '$(BACKTEST_SYMBOL)') \
 		$(if $(BACKTEST_START),--start '$(BACKTEST_START)') \
@@ -730,7 +730,7 @@ vectorbot-backtest:
 
 nautilus-backtest:
 	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
-	PYTHONPATH=src $(PYTHON) -m ml_trading.backtesting.nautilus_dim \
+	PYTHONPATH=src $(PYTHON) -m time_series_model.backtesting.nautilus_dim \
 		--data-dir $(DATA_DIR) \
 		--results-dir $(RESULTS_DIR)/$(NAUTILUS_RESULTS_DIR) \
 		--symbols $(SYMBOLS) \
@@ -767,7 +767,7 @@ dim-compare:
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	$(DOCKER_RUN_NO_TTY) python3 -m ml_trading.pipeline.dimensionality.dimensionality_comparison \
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOLS) \
 		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \

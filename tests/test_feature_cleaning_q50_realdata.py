@@ -16,11 +16,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from ml_trading.data_tools.baseline_feature_engineering import (
+from data_tools.baseline_feature_engineering import (
     BaselineFeatureEngineer,
     get_baseline_feature_columns,
 )
-from ml_trading.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMModel
 
 PARQUET_DIR = "/home/yin/trading/ml_trading_bot/data/parquet_data"
 

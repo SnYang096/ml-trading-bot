@@ -9,11 +9,11 @@ from typing import Dict, Iterable, Tuple
 import numpy as np
 import pandas as pd
 
-from ml_trading.models.train_model import prepare_ohlcv_dataframe
-from ml_trading.data_tools.feature_engineering import FeatureEngineer
-from ml_trading.data_tools.feature_engineering_enhanced import (
+from time_series_model.models.train_model import prepare_ohlcv_dataframe
+from data_tools.feature_engineering import FeatureEngineer
+from data_tools.feature_engineering_enhanced import (
     EnhancedFeatureEngineer, )
-from ml_trading.data_tools.dl_sequence_features import add_dl_sequence_features
+from data_tools.dl_sequence_features import add_dl_sequence_features
 
 
 def parse_args() -> argparse.Namespace:

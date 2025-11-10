@@ -211,7 +211,7 @@ if avg_signal < -0.1: SELL
 ### 使用方法
 
 ```python
-from ml_trading.strategies.ml_strategy import MLTradingStrategy
+from time_series_model.strategies.ml_strategy import MLTradingStrategy
 
 # 1. 默认加权方法（推荐）
 strategy = MLTradingStrategy(ensemble_method='weighted')
@@ -278,7 +278,7 @@ else:
 
 ```python
 import pandas as pd
-from ml_trading.strategies.ml_strategy import MLTradingStrategy
+from time_series_model.strategies.ml_strategy import MLTradingStrategy
 
 methods = ['average', 'weighted', 'hierarchical', 'independent', 'majority']
 results = {}

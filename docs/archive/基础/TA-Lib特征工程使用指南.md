@@ -33,7 +33,7 @@
 ### 基本使用
 
 ```python
-from src.ml_trading.data_tools.feature_engineering_talib import TalibFeatureEngineer
+from src.data_tools.feature_engineering_talib import TalibFeatureEngineer
 
 # 创建特征工程器
 engineer = TalibFeatureEngineer(scaler_type='standard')

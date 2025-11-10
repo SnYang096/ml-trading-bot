@@ -1,7 +1,7 @@
 # Cross-Sectional Multi-Factor Workflow
 
 This guide explains how to build and evaluate cross-sectional (CS) models using
-the utilities under `src/ml_trading/cross_sectional`.
+the utilities under `src/cross_sectional`.
 
 ## 0. Generate a Cross-Sectional Panel
 
@@ -23,7 +23,7 @@ PYTHONPATH=src python scripts/cross_sectional/generate_panel.py \
 ## 1. Assemble a Factor Panel
 
 ```python
-from ml_trading.cross_sectional import FactorPanelBuilder, PanelConfig
+from cross_sectional import FactorPanelBuilder, PanelConfig
 
 config = PanelConfig(
     timestamp_col="timestamp",
@@ -48,7 +48,7 @@ diagnostics = builder.describe_panel(panel)
 ## 2. Cross-Sectional Processing
 
 ```python
-from ml_trading.cross_sectional import (
+from cross_sectional import (
     winsorize_by_sigma,
     cross_sectional_zscore,
     add_crypto_cross_sectional_factors,
@@ -71,7 +71,7 @@ factor_cols = factor_cols + [
 ## 3. Fit a Cross-Sectional Model
 
 ```python
-from ml_trading.cross_sectional import CrossSectionalRegressor
+from cross_sectional import CrossSectionalRegressor
 
 model = CrossSectionalRegressor(add_intercept=True, min_assets=4)
 result = model.fit(panel, factor_cols=factor_cols, target_col="future_return_1h")
@@ -87,7 +87,7 @@ ic_summary = result.ic_summary()
 ## 4. Boosting-Based Cross-Sectional Model
 
 ```python
-from ml_trading.cross_sectional import CrossSectionalBoostingModel
+from cross_sectional import CrossSectionalBoostingModel
 
 boost = CrossSectionalBoostingModel()
 boost.fit(panel, feature_cols=factor_cols, target_col="future_return_1h")
@@ -181,14 +181,14 @@ make cross-sectional-auto \
 
 | File | Purpose |
 | ---- | ------- |
-| `src/ml_trading/cross_sectional/panel.py` | Panel assembly and diagnostics |
-| `src/ml_trading/cross_sectional/panel_generation.py` | Generate multi-asset panels from raw data |
-| `src/ml_trading/cross_sectional/processing.py` | Cross-sectional preprocessing (winsorize, z-score, neutralize) |
-| `src/ml_trading/cross_sectional/crypto_factors.py` | Crypto-specific cross-sectional factors (momentum dominance, liquidity, order flow) |
-| `src/ml_trading/cross_sectional/factor_catalog.py` | Categorise factors into heuristic groups |
-| `src/ml_trading/cross_sectional/factor_selection.py` | IC/IR scoring helpers and Top-K selection |
-| `src/ml_trading/cross_sectional/model.py` | Fama-MacBeth style regression and prediction |
-| `src/ml_trading/cross_sectional/boosting.py` | Gradient boosting wrapper for CS alphas |
+| `src/cross_sectional/panel.py` | Panel assembly and diagnostics |
+| `src/cross_sectional/panel_generation.py` | Generate multi-asset panels from raw data |
+| `src/cross_sectional/processing.py` | Cross-sectional preprocessing (winsorize, z-score, neutralize) |
+| `src/cross_sectional/crypto_factors.py` | Crypto-specific cross-sectional factors (momentum dominance, liquidity, order flow) |
+| `src/cross_sectional/factor_catalog.py` | Categorise factors into heuristic groups |
+| `src/cross_sectional/factor_selection.py` | IC/IR scoring helpers and Top-K selection |
+| `src/cross_sectional/model.py` | Fama-MacBeth style regression and prediction |
+| `src/cross_sectional/boosting.py` | Gradient boosting wrapper for CS alphas |
 | `scripts/cross_sectional/export_factor_catalog.py` | Export factor lists per category |
 | `scripts/cross_sectional/auto_select_factors.py` | Fully automated factor selection CLI |
 

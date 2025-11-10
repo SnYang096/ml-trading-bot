@@ -149,7 +149,7 @@ cd ml_project\scripts\analysis
 
 ### 快速原型 → 基础版 (13个特征)
 ```python
-from ml_trading.data_tools.feature_engineering import FeatureEngineer
+from data_tools.feature_engineering import FeatureEngineer
 
 engineer = FeatureEngineer()
 features = engineer.engineer_features(multi_tf_data)
@@ -160,7 +160,7 @@ features = engineer.engineer_features(multi_tf_data)
 
 ### 标准训练 → 改进版 (25个特征)
 ```python
-from ml_trading.data_tools.feature_engineering import FeatureEngineer
+from data_tools.feature_engineering import FeatureEngineer
 
 engineer = FeatureEngineer()
 features = engineer.engineer_features(multi_tf_data)
@@ -171,7 +171,7 @@ features = engineer.engineer_features(multi_tf_data)
 
 ### 高级研究 → 增强版 (331个特征) ⭐
 ```python
-from ml_trading.data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
+from data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
 
 engineer = EnhancedFeatureEngineer(
     wavelet='db4',
@@ -187,7 +187,7 @@ features = engineer.engineer_features(multi_tf_data)
 
 ### 深度学习增强 → DL序列特征 (64个)
 ```python
-from ml_trading.data_tools.dl_sequence_features import add_dl_sequence_features
+from data_tools.dl_sequence_features import add_dl_sequence_features
 
 df_with_dl = add_dl_sequence_features(
     df,
@@ -253,7 +253,7 @@ df_with_dl = add_dl_sequence_features(
 
 ```python
 # 示例：使用增强版 + 特征选择
-from ml_trading.data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
+from data_tools.feature_engineering_enhanced import EnhancedFeatureEngineer
 import lightgbm as lgb
 import numpy as np
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ml_trading.cross_sectional import (
+from cross_sectional import (
     PanelGenerationConfig,
     generate_cross_sectional_panel,
 )

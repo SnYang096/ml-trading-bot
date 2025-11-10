@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import optuna
 
-from ml_trading.data_tools.data_loader import MarketDataLoader
+from data_tools.data_loader import MarketDataLoader
 
 MODEL_PATH = os.path.join("models", "trained_model_wavelet_may_2025.pkl")
 SCALER_PATH = os.path.join("models", "feature_scalers_wavelet_may_2025.pkl")
