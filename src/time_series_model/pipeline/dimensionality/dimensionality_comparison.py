@@ -8,14 +8,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 import argparse
+import re
 
 import joblib
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import (
+    average_precision_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, label_binarize
 from sklearn.linear_model import Ridge
 from scipy.stats import spearmanr
 import lightgbm as lgb
@@ -28,6 +38,74 @@ from time_series_model.utils.training import train_lightgbm_model
 
 # Import report generator for HTML report writing
 from time_series_model.pipeline.dimensionality.report_generator import write_html_report
+
+DIM_COMPARE_RESULTS_ROOT = Path("results") / "dim_compare"
+
+
+def _slugify(value: str, default: str = "unknown") -> str:
+    """Create a filesystem-friendly slug."""
+    if value is None:
+        return default
+    value = str(value).strip()
+    if not value:
+        return default
+    # Replace commas with hyphens first to keep multi-symbol ordering visible
+    value = value.replace(",", "-")
+    slug = re.sub(r"[^A-Za-z0-9_\-]+", "-", value)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-_")
+    return slug or default
+
+
+def _get_primary_metric(perf: Dict) -> Tuple[str, Optional[float]]:
+    """Return the primary evaluation metric name/value for a stage."""
+    if not perf:
+        return "", None
+
+    financial = perf.get("financial_metrics") or {}
+    win_rate = financial.get("win_rate")
+    if win_rate is not None:
+        return "win_rate", float(win_rate)
+
+    classification = perf.get("classification_metrics") or {}
+    for key in ("f1_macro", "f1_weighted", "accuracy"):
+        val = classification.get(key)
+        if val is not None:
+            return key, float(val)
+
+    return "r2", perf.get("r2")
+
+
+def _derive_feature_insights(stage_baseline: Dict,
+                             stage_candidate: Dict) -> Dict:
+    """Summarise whether representative features improve over baseline."""
+    metric_name_base, metric_base = _get_primary_metric(stage_baseline)
+    metric_name_cand, metric_cand = _get_primary_metric(stage_candidate)
+
+    metric_name = metric_name_cand or metric_name_base or "r2"
+    delta = None
+    if metric_base is not None and metric_cand is not None:
+        delta = float(metric_cand) - float(metric_base)
+
+    effective = delta is not None and delta > 0
+
+    return {
+        "metric_name":
+        metric_name,
+        "baseline_value":
+        float(metric_base) if metric_base is not None else None,
+        "candidate_value":
+        float(metric_cand) if metric_cand is not None else None,
+        "delta":
+        delta,
+        "effective":
+        effective,
+        "baseline_stage":
+        "stage1_all_features",
+        "candidate_stage":
+        "stage3_representatives",
+        "recommended_stage":
+        "stage3_representatives" if effective else "stage1_all_features",
+    }
 
 
 def sanitize_features(X: np.ndarray, clip_std: float = 5.0) -> np.ndarray:
@@ -619,11 +697,13 @@ def train_production_lightgbm(
     if num_unique <= 3 and np.all(np.equal(
             np.mod(unique_labels, 1),
             0)) and np.all(unique_labels >= 0) and np.all(unique_labels <= 2):
-        # 3-class classification for signal prediction (0=Hold, 1=Long, 2=Short)
-        objective = "multiclass"
-        metric = "multi_logloss"
-        task_params = {"num_class": 3}
-        print(f"   Using 3-class classification (0=Hold, 1=Long, 2=Short)")
+        # Binary classification for signal prediction (drop neutral / map short)
+        objective = "binary"
+        metric = "binary_logloss"
+        task_params = {}
+        print(
+            "   Using binary classification (1=Long, 0=Short); neutral labels (0=Hold) will be removed"
+        )
     elif num_unique == 2:
         # Binary classification (fallback for compatibility)
         objective = "binary"
@@ -636,6 +716,26 @@ def train_production_lightgbm(
         metric = "rmse"
         task_params = {}
         print(f"   Using regression for return prediction")
+
+    if objective == "binary":
+
+        def _filter_and_map(X, y, split_name: str):
+            mask = (y == 1) | (y == 2)
+            removed = int(len(y) - mask.sum())
+            if mask.sum() == 0:
+                raise ValueError(
+                    f"No valid long/short samples remain in {split_name} after removing neutral labels."
+                )
+            if removed > 0:
+                print(
+                    f"   [{split_name}] Removed {removed} neutral samples; keeping {mask.sum()} long/short samples."
+                )
+            X_filtered = X[mask]
+            y_filtered = np.where(y[mask] == 1, 1, 0).astype(int)
+            return X_filtered, y_filtered
+
+        X_train, y_train = _filter_and_map(X_train, y_train, "train")
+        X_val, y_val = _filter_and_map(X_val, y_val, "validation")
 
     if params is None:
         params = {
@@ -816,7 +916,23 @@ def evaluate_model_performance(
     model_name: str = "Model",
     include_financial_metrics: bool = True,
 ):
-    predictions = model.predict(X_test)
+    X_eval = X_test
+    y_eval = y_test
+
+    # Remove neutral (0 = hold) labels for classification metrics if present
+    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
+        unique_targets = np.unique(y_eval)
+        if np.any(unique_targets == 0) and np.all(
+                np.isin(unique_targets, [0, 1, 2])):
+            mask_active = y_eval != 0
+            if mask_active.sum() == 0:
+                raise ValueError(
+                    "No active samples remain after removing neutral labels in evaluation set."
+                )
+            X_eval = X_eval[mask_active]
+            y_eval = y_eval[mask_active]
+
+    predictions = model.predict(X_eval)
 
     # Handle multiclass predictions: LightGBM returns probability array for multiclass
     # Shape: (n_samples, n_classes) for multiclass, (n_samples,) for binary/regression
@@ -827,18 +943,55 @@ def evaluate_model_performance(
         # For metrics, use class predictions
         predictions_for_metrics = predictions_class
         predictions_to_store = predictions_class
+        probabilities = predictions
     else:
         # Binary or regression: use predictions as-is
         predictions_for_metrics = predictions
         predictions_to_store = predictions
+        probabilities = None
+
+    # Identify binary classification
+    is_binary_classification = False
+    if not is_multiclass and y_eval.ndim == 1 and np.issubdtype(
+            y_eval.dtype, np.integer):
+        unique_eval = np.unique(y_eval)
+        if np.all(np.isin(unique_eval, [0, 1, 2])):
+            # Map to binary labels (1=Long, 0=Short)
+            y_eval_binary = np.where(y_eval == 1, 1, 0).astype(int)
+            is_binary_classification = True
+        elif np.all(np.isin(unique_eval, [0, 1])):
+            y_eval_binary = y_eval.astype(int)
+            is_binary_classification = True
+        else:
+            y_eval_binary = None
+    else:
+        y_eval_binary = None
+
+    if is_binary_classification:
+        if predictions.ndim == 1:
+            probabilities = predictions
+        elif predictions.ndim == 2 and predictions.shape[1] == 1:
+            probabilities = predictions[:, 0]
+        elif predictions.ndim == 2 and predictions.shape[1] == 2:
+            probabilities = predictions[:, 1]
+        else:
+            probabilities = predictions
+        predictions_class = (probabilities >= 0.5).astype(int)
+        predictions_for_metrics = predictions_class
+        predictions_to_store = predictions_class
 
     # Basic numeric metrics (note: for multiclass these are not very meaningful)
-    mse = mean_squared_error(y_test, predictions_for_metrics)
+    mse = mean_squared_error(
+        y_eval if not is_binary_classification else y_eval_binary,
+        predictions_for_metrics)
     rmse = np.sqrt(mse)
-    mae = mean_absolute_error(y_test, predictions_for_metrics)
+    mae = mean_absolute_error(
+        y_eval if not is_binary_classification else y_eval_binary,
+        predictions_for_metrics)
     # For multiclass, R² may not be meaningful, but we'll calculate it anyway
-    r2 = r2_score(y_test, predictions_for_metrics) if len(
-        np.unique(y_test)) > 1 else 0.0
+    target_for_r2 = (y_eval if not is_binary_classification else y_eval_binary)
+    r2 = r2_score(target_for_r2, predictions_for_metrics) if len(
+        np.unique(target_for_r2)) > 1 else 0.0
 
     print(f"📊 {model_name} Performance:")
     print(f"  R²: {r2:.4f}")
@@ -857,8 +1010,8 @@ def evaluate_model_performance(
     if include_financial_metrics:
         if is_multiclass:
             # Compute directional win rate among non-hold predictions (1=Long, 2=Short)
-            y_pred_cls = predictions_class
-            y_true_cls = y_test
+            y_pred_cls = predictions_class.astype(int)
+            y_true_cls = y_eval.astype(int)
             non_hold_mask = y_pred_cls != 0
             long_mask = y_pred_cls == 1
             short_mask = y_pred_cls == 2
@@ -900,10 +1053,166 @@ def evaluate_model_performance(
             print(f"  Long Win Rate: {long_win_rate:.4f}")
             print(f"  Short Win Rate: {short_win_rate:.4f}")
             print(f"  Active Ratio: {active_ratio:.4f}")
+
+            # Classification diagnostics
+            metrics = results.setdefault("classification_metrics", {})
+            accuracy = float(np.mean(y_pred_cls == y_true_cls))
+            metrics["accuracy"] = accuracy
+            try:
+                metrics["f1_macro"] = float(
+                    f1_score(y_true_cls, y_pred_cls, average="macro"))
+            except Exception:
+                metrics["f1_macro"] = None
+            try:
+                metrics["f1_weighted"] = float(
+                    f1_score(y_true_cls, y_pred_cls, average="weighted"))
+            except Exception:
+                metrics["f1_weighted"] = None
+
+            active_mask_true = y_true_cls != 0
+            active_mask_pred = y_pred_cls != 0
+            active_mask = active_mask_true | active_mask_pred
+            if np.any(active_mask):
+                try:
+                    metrics["f1_active_macro"] = float(
+                        f1_score(
+                            y_true_cls[active_mask],
+                            y_pred_cls[active_mask],
+                            average="macro",
+                        ))
+                except Exception:
+                    metrics["f1_active_macro"] = None
+            else:
+                metrics["f1_active_macro"] = None
+
+            class_labels = list(range(probabilities.shape[1]))
+            y_true_onehot = label_binarize(y_true_cls, classes=class_labels)
+            if y_true_onehot.shape[1] != probabilities.shape[1]:
+                # Align shapes by padding if necessary
+                diff = probabilities.shape[1] - y_true_onehot.shape[1]
+                if diff > 0:
+                    y_true_onehot = np.hstack([
+                        y_true_onehot,
+                        np.zeros((y_true_onehot.shape[0], diff))
+                    ])
+
+            if y_true_onehot.shape[1] == 1:
+                # Binary case after binarize -> single column
+                y_true_onehot = np.hstack((1 - y_true_onehot, y_true_onehot))
+
+            try:
+                metrics["roc_auc_macro"] = float(
+                    roc_auc_score(
+                        y_true_cls,
+                        probabilities,
+                        multi_class="ovr",
+                        average="macro",
+                    ))
+            except Exception:
+                metrics["roc_auc_macro"] = None
+            try:
+                metrics["pr_auc_macro"] = float(
+                    average_precision_score(
+                        y_true_onehot,
+                        probabilities,
+                        average="macro",
+                    ))
+            except Exception:
+                metrics["pr_auc_macro"] = None
+            try:
+                cm = confusion_matrix(y_true_cls,
+                                      y_pred_cls,
+                                      labels=class_labels)
+                metrics["confusion_matrix"] = cm.tolist()
+                metrics["labels"] = [int(c) for c in class_labels]
+            except Exception:
+                metrics["confusion_matrix"] = None
+                metrics["labels"] = None
+
+            try:
+                cls_report = classification_report(
+                    y_true_cls,
+                    y_pred_cls,
+                    output_dict=True,
+                    zero_division=0,
+                )
+                metrics["classification_report"] = cls_report
+            except Exception:
+                metrics["classification_report"] = None
+
+            metrics["support"] = int(len(y_true_cls))
+
+            print(f"  Accuracy: {accuracy:.4f}")
+            if metrics["f1_macro"] is not None:
+                print(f"  F1 (macro): {metrics['f1_macro']:.4f}")
+            if metrics["roc_auc_macro"] is not None:
+                print(f"  ROC AUC (macro): {metrics['roc_auc_macro']:.4f}")
+            if metrics["pr_auc_macro"] is not None:
+                print(f"  PR AUC (macro): {metrics['pr_auc_macro']:.4f}")
+        elif is_binary_classification:
+            y_true_bin = y_eval_binary
+            y_pred_bin = predictions_for_metrics.astype(int)
+            fm = results.setdefault("financial_metrics", {})
+            accuracy = float(np.mean(y_pred_bin == y_true_bin))
+            fm["win_rate"] = accuracy
+            fm["active_ratio"] = 1.0
+
+            long_mask = y_pred_bin == 1
+            short_mask = y_pred_bin == 0
+            long_total = int(np.sum(long_mask))
+            short_total = int(np.sum(short_mask))
+            fm["long_win_rate"] = float(np.mean(
+                y_true_bin[long_mask] == 1)) if long_total > 0 else 0.0
+            fm["short_win_rate"] = float(np.mean(
+                y_true_bin[short_mask] == 0)) if short_total > 0 else 0.0
+
+            metrics = results.setdefault("classification_metrics", {})
+            metrics["accuracy"] = accuracy
+            try:
+                metrics["f1_macro"] = float(
+                    f1_score(y_true_bin, y_pred_bin, average="macro"))
+            except Exception:
+                metrics["f1_macro"] = None
+            try:
+                metrics["f1_weighted"] = float(
+                    f1_score(y_true_bin, y_pred_bin, average="weighted"))
+            except Exception:
+                metrics["f1_weighted"] = None
+            try:
+                metrics["roc_auc_macro"] = float(
+                    roc_auc_score(y_true_bin, probabilities))
+            except Exception:
+                metrics["roc_auc_macro"] = None
+            try:
+                metrics["pr_auc_macro"] = float(
+                    average_precision_score(y_true_bin, probabilities))
+            except Exception:
+                metrics["pr_auc_macro"] = None
+            try:
+                cm = confusion_matrix(y_true_bin, y_pred_bin, labels=[0, 1])
+                metrics["confusion_matrix"] = cm.tolist()
+                metrics["labels"] = [0, 1]
+            except Exception:
+                metrics["confusion_matrix"] = None
+                metrics["labels"] = None
+            try:
+                metrics["classification_report"] = classification_report(
+                    y_true_bin, y_pred_bin, output_dict=True, zero_division=0)
+            except Exception:
+                metrics["classification_report"] = None
+            metrics["support"] = int(len(y_true_bin))
+
+            print(f"  Accuracy: {accuracy:.4f}")
+            if metrics.get("f1_macro") is not None:
+                print(f"  F1 (macro): {metrics['f1_macro']:.4f}")
+            if metrics.get("roc_auc_macro") is not None:
+                print(f"  ROC AUC: {metrics['roc_auc_macro']:.4f}")
+            if metrics.get("pr_auc_macro") is not None:
+                print(f"  PR AUC: {metrics['pr_auc_macro']:.4f}")
         else:
             # Regression/binary: compute financial metrics using returns-like predictions
             financial_metrics = calculate_financial_metrics(
-                y_test, predictions_for_metrics)
+                y_eval, predictions_for_metrics)
             results["financial_metrics"] = financial_metrics
             print(
                 f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}"
@@ -949,12 +1258,14 @@ def run_dimensionality_comparison(
     train_end: str | None = None,
     feature_type: str = "comprehensive",
     top_k: Optional[int] = None,
-    shap_analysis: bool = False,
+    shap_analysis: bool = True,
 ) -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
     start_dt = datetime.now()
     timestamp_start = start_dt.strftime("%Y%m%d_%H%M%S")
+    symbol_slug = _slugify(symbol)
+    feature_slug = _slugify(feature_type)
 
     X, y, feature_names, horizons_loaded, df_features_full = load_real_market_data(
         data_path,
@@ -1055,13 +1366,16 @@ def run_dimensionality_comparison(
         # Extract date parts (YYYY-MM-DD -> YYYYMMDD)
         train_start_date = train_start.replace("-", "")[:8]
         train_end_date = train_end.replace("-", "")[:8]
-        dir_date_suffix = f"{symbol}_{feature_type}_{train_start_date}_{train_end_date}"
+        dir_date_suffix = f"{symbol_slug}_{feature_slug}_{train_start_date}_{train_end_date}"
     else:
         # Fallback to runtime timestamps if no date range provided
         train_start_date = None
         train_end_date = None
         timestamp_end = datetime.now().strftime('%Y%m%d_%H%M%S')
-        dir_date_suffix = f"{symbol}_{feature_type}_{timestamp_start}_{timestamp_end}"
+        dir_date_suffix = f"{symbol_slug}_{feature_slug}_{timestamp_start}_{timestamp_end}"
+
+    stage3_feature_count = len(feature_names)
+    ae_enabled = autoencoder is not None
 
     results = {
         "timestamp_start": timestamp_start,
@@ -1070,12 +1384,20 @@ def run_dimensionality_comparison(
         "train_end_date": train_end_date,
         "duration_sec": (datetime.now() - start_dt).total_seconds(),
         "data_info": {
-            "original_features_count": X.shape[1],
-            "compressed_dimensions": X.shape[1],
-            "compression_ratio": compression_ratio,
-            "training_samples": len(X_train),
-            "validation_samples": len(X_val),
-            "test_samples": len(X_test),
+            "original_features_count":
+            X.shape[1],
+            "compressed_dimensions":
+            results_compressed.get("feature_count", X.shape[1])
+            if ae_enabled else len(feature_names),
+            "compression_ratio":
+            compression_ratio if ae_enabled else
+            ((X.shape[1] / len(feature_names)) if len(feature_names) else 1.0),
+            "training_samples":
+            len(X_train),
+            "validation_samples":
+            len(X_val),
+            "test_samples":
+            len(X_test),
         },
         "training_info": {
             # Autoencoder disabled
@@ -1106,13 +1428,17 @@ def run_dimensionality_comparison(
         },
     }
 
+    results["insights"] = _derive_feature_insights(results_original,
+                                                   results_compressed)
+
     # Build results directory name using training date range (if available) or runtime timestamps
-    results_dir = f"results/production_dimensionality_{dir_date_suffix}"
+    DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+    results_dir_path = DIM_COMPARE_RESULTS_ROOT / dir_date_suffix
     results_dir = save_production_results(
         results,
         model_compressed,
         autoencoder,
-        results_dir,
+        str(results_dir_path),
     )
 
     print("\n" + "=" * 60)
@@ -1123,7 +1449,6 @@ def run_dimensionality_comparison(
         f"📈 Performance Change: {performance_change:.4f} ({results['performance']['performance_change_percent']:.1f}%)"
     )
     print(f"💾 Results saved to: {results_dir}")
-    print("🔧 Model ready for production deployment!")
 
     return results, model_compressed, autoencoder, results_dir
 
@@ -1290,10 +1615,19 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         help=
         "Threshold for future return to classify Long vs Short in binary mode (default 0.0)",
     )
+    parser.set_defaults(shap_analysis=True)
     parser.add_argument(
         "--shap-analysis",
+        dest="shap_analysis",
         action="store_true",
-        help="Generate SHAP explainability plots for representative factors.",
+        help=
+        "Generate SHAP explainability plots for representative factors (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-shap-analysis",
+        dest="shap_analysis",
+        action="store_false",
+        help="Disable SHAP explainability plots.",
     )
     parser.add_argument(
         "--enable-autoencoder",
@@ -1317,6 +1651,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     )
 
     args = parser.parse_args()
+    symbol_slug = _slugify(args.symbol)
+    feature_type_slug = _slugify(args.feature_type)
 
     # Enforce minimal training window (one quarter ~ 90 days)
     if args.train_start and args.train_end:
@@ -1352,11 +1688,11 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         if args.train_start and args.train_end:
             train_start_date = args.train_start.replace("-", "")[:8]
             train_end_date = args.train_end.replace("-", "")[:8]
-            ablation_dir_date_suffix = f"{args.symbol}_{args.feature_type}_{train_start_date}_{train_end_date}"
+            ablation_dir_date_suffix = f"{symbol_slug}_{feature_type_slug}_{train_start_date}_{train_end_date}"
         else:
             train_start_date = None
             train_end_date = None
-            ablation_dir_date_suffix = f"{args.symbol}_{args.feature_type}_{ablation_start_ts}"  # Use runtime timestamps with symbol and feature_type
+            ablation_dir_date_suffix = f"{symbol_slug}_{feature_type_slug}_{ablation_start_ts}"  # Use runtime timestamps with symbol and feature_type
         # Parse horizons from args
         horizons_list = [int(h.strip()) for h in args.horizons.split(",")
                          ] if args.horizons else [1]
@@ -1501,8 +1837,6 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             print(
                 f"[DEBUG] Label variance: y.std={float(np.std(y_series.values)):.6f}"
             )
-        else:
-            print(f"\n[Stage 4] Autoencoder compression skipped (disabled).")
 
         # Split data (same split for all stages - use consistent random state)
         # All stages should have the same number of samples, so we can use the same split
@@ -1538,14 +1872,18 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
         # Multi-horizon training (if enabled) - will be done after all 4 stages
         multi_horizon_results = {}
+        best_horizon = None
+        best_horizon_metric = float("-inf")
+        best_horizon_metric_name: Optional[str] = None
+        fallback_horizon = None
+        fallback_metric = float("-inf")
+        fallback_metric_name: Optional[str] = None
 
         # Train and evaluate models for the selected stages
         print("\n" + "=" * 60)
         print("Training and evaluating feature sets (Stages 1-3)")
         if args.enable_autoencoder:
             print("(Stage 4: Autoencoder compressed features enabled)")
-        else:
-            print("(Stage 4 disabled)")
         print("=" * 60)
 
         # Stage 1: All features (482 -> ~470 after filtering)
@@ -1569,6 +1907,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         perf_reps = evaluate_model_performance(model_reps, X_test_reps, y_test,
                                                "Representative Features")
 
+        feature_insights_stage3 = _derive_feature_insights(perf_all, perf_reps)
+
         # Default best result to Stage 3 (representative features)
         best_model = model_reps
         best_ae = None
@@ -1580,16 +1920,24 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             "duration_sec":
             (datetime.now() - ablation_start_dt).total_seconds(),
             "data_info": {
-                "stage1_all_features": int(len(keep_all)),
-                "stage2_ic_filtered": int(len(top_cols)),
-                "stage3_representatives": int(len(reps)),
-                "stage4_compressed_dim": None,
-                "original_features_count": int(original_feature_count),
-                "compressed_dimensions": None,
-                "compression_ratio": None,
-                "training_samples": int(len(X_train_reps)),
-                "validation_samples": int(len(X_val_reps)),
-                "test_samples": int(len(X_test_reps)),
+                "stage1_all_features":
+                int(len(keep_all)),
+                "stage2_ic_filtered":
+                int(len(top_cols)),
+                "stage3_representatives":
+                int(len(reps)),
+                "original_features_count":
+                int(original_feature_count),
+                "compressed_dimensions":
+                int(len(reps)),
+                "compression_ratio":
+                float(original_feature_count / max(len(reps), 1)),
+                "training_samples":
+                int(len(X_train_reps)),
+                "validation_samples":
+                int(len(X_val_reps)),
+                "test_samples":
+                int(len(X_test_reps)),
             },
             "performance": {
                 "stage1_all": perf_all,
@@ -1598,6 +1946,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 "stage4_compressed": None,
                 "selection_metric": args.selection_metric,
             },
+            "insights": feature_insights_stage3,
         }
 
         selection_score_stage1 = compute_selection_score(
@@ -1638,9 +1987,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 "stage1_all_features": int(len(keep_all)),
                 "stage2_ic_filtered": int(len(top_cols)),
                 "stage3_representatives": int(len(reps)),
-                "stage4_compressed_dim": None,
                 "original_features_count": int(original_feature_count),
-                "compressed_dimensions": None,
+                "compressed_dimensions": int(len(reps)),
                 "compression_ratio": compression_ratio_stage3,
                 "training_samples": int(len(X_train_reps)),
                 "validation_samples": int(len(X_val_reps)),
@@ -1682,8 +2030,10 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             },
             "selection": {
                 "metric": args.selection_metric,
-                "best_stage": "stage3",
+                "best_stage": feature_insights_stage3["recommended_stage"],
             },
+            "insights":
+            feature_insights_stage3,
         }
         best_model = model_reps
         best_ae = None
@@ -1691,9 +2041,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         best_dim = None
         trial_dims: list[int] = []
 
-        if not args.enable_autoencoder:
-            print("\n[Stage 4] Autoencoder compression skipped (default).")
-        else:
+        if args.enable_autoencoder:
             # Stage 4: Autoencoder compressed features
             # Try multiple compression dimensions
             num_features = len(reps)
@@ -1983,10 +2331,16 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 best_result = results
                 # Use training date range for directory name if available, otherwise runtime timestamps
                 if ablation_dir_date_suffix:
-                    best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
+                    DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+                    best_dir = str(DIM_COMPARE_RESULTS_ROOT /
+                                   ablation_dir_date_suffix)
                 else:
                     # Fallback: use symbol, feature_type, and timestamps
-                    best_dir = f"results/production_dimensionality_{args.symbol}_{args.feature_type}_{results['timestamp_start']}_{results['timestamp_end']}"
+                    DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+                    best_dir = str(
+                        DIM_COMPARE_RESULTS_ROOT /
+                        f"{symbol_slug}_{feature_type_slug}_{results['timestamp_start']}_{results['timestamp_end']}"
+                    )
             except Exception as exc:
                 print(f"⚠️ Ablation ENCODING_DIM={dim} failed: {exc}")
                 continue
@@ -2095,17 +2449,29 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                         perf_h_ae = None
 
                     # Store results for this horizon
-                    multi_horizon_results[f"horizon_{horizon}"] = {
-                        "stage1_all_features":
-                        perf_h_all,
-                        "stage2_ic_filtered":
-                        perf_h_ic,
-                        "stage3_representatives":
-                        perf_h_reps,
-                        "stage4_compressed":
-                        perf_h_ae if perf_h_ae is not None else
-                        perf_h_reps,  # Fallback to reps if AE failed
+                    horizon_perf = {
+                        "stage1_all_features": perf_h_all,
+                        "stage2_ic_filtered": perf_h_ic,
+                        "stage3_representatives": perf_h_reps,
                     }
+                    if args.enable_autoencoder and perf_h_ae is not None:
+                        horizon_perf["stage4_compressed"] = perf_h_ae
+                    feature_insight_h = _derive_feature_insights(
+                        perf_h_all, perf_h_reps)
+                    horizon_perf["feature_insights"] = feature_insight_h
+                    metric_val_h = feature_insight_h.get("candidate_value")
+                    metric_name_h = feature_insight_h.get("metric_name")
+                    if (feature_insight_h.get("effective")
+                            and metric_val_h is not None
+                            and metric_val_h > best_horizon_metric):
+                        best_horizon_metric = float(metric_val_h)
+                        best_horizon_metric_name = metric_name_h
+                        best_horizon = horizon
+                    if metric_val_h is not None and metric_val_h > fallback_metric:
+                        fallback_metric = float(metric_val_h)
+                        fallback_metric_name = metric_name_h
+                        fallback_horizon = horizon
+                    multi_horizon_results[f"horizon_{horizon}"] = horizon_perf
 
                     print(f"\n  ✅ Horizon {horizon} Complete:")
                     print(
@@ -2117,7 +2483,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     print(
                         f"     Stage 3 (Reps):     R²={perf_h_reps['r2']:.4f}, RMSE={perf_h_reps['rmse']:.6f}"
                     )
-                    if perf_h_ae is not None:
+                    if args.enable_autoencoder and perf_h_ae is not None:
                         print(
                             f"     Stage 4 (AE):       R²={perf_h_ae['r2']:.4f}, RMSE={perf_h_ae['rmse']:.6f}"
                         )
@@ -2129,6 +2495,28 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         # Add multi-horizon results to best_result
         if multi_horizon_results:
             best_result["multi_horizon_results"] = multi_horizon_results
+            insights_ref = best_result.setdefault("insights", {})
+            horizon_choice = best_horizon
+            horizon_metric = best_horizon_metric
+            horizon_metric_name = best_horizon_metric_name
+            horizon_effective = True
+            if horizon_choice is None and fallback_horizon is not None:
+                horizon_choice = fallback_horizon
+                horizon_metric = fallback_metric
+                horizon_metric_name = fallback_metric_name
+                horizon_effective = False
+            if horizon_choice is not None:
+                insights_ref.update({
+                    "recommended_horizon":
+                    int(horizon_choice),
+                    "recommended_horizon_metric":
+                    float(horizon_metric)
+                    if horizon_metric is not None else None,
+                    "recommended_horizon_metric_name":
+                    horizon_metric_name,
+                    "recommended_horizon_effective":
+                    horizon_effective,
+                })
 
         # finalize end timestamp using actual ablation end
         ablation_end_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2145,10 +2533,16 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 pass
             # rebuild dir using training date range if available, otherwise runtime timestamps
             if ablation_dir_date_suffix:
-                best_dir = f"results/production_dimensionality_{ablation_dir_date_suffix}"
+                DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+                best_dir = str(DIM_COMPARE_RESULTS_ROOT /
+                               ablation_dir_date_suffix)
             else:
                 # Fallback: use symbol, feature_type, and timestamps
-                best_dir = f"results/production_dimensionality_{args.symbol}_{args.feature_type}_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
+                DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+                best_dir = str(
+                    DIM_COMPARE_RESULTS_ROOT /
+                    f"{symbol_slug}_{feature_type_slug}_{best_result['timestamp_start']}_{best_result['timestamp_end']}"
+                )
         os.makedirs(best_dir, exist_ok=True)
 
         # Save representative features list (Stage 3) - after best_dir is set
@@ -2164,7 +2558,9 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                         "stage":
                         "Stage 3: Correlation-based representative selection",
                         "description":
-                        "Features selected by greedy correlation filtering (threshold=0.9)"
+                        "Features selected by greedy correlation filtering (threshold=0.9)",
+                        "effective":
+                        feature_insights_stage3.get("effective", False),
                     },
                     f,
                     indent=2)
@@ -2178,18 +2574,26 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                         "top_factors": [{
                             "name": factor
                         } for factor in reps],
-                        "count": len(reps),
-                        "source": "dim-compare",
-                        "stage": "Stage 3: Representative features"
+                        "count":
+                        len(reps),
+                        "source":
+                        "dim-compare",
+                        "stage":
+                        "Stage 3: Representative features",
+                        "effective":
+                        feature_insights_stage3.get("effective", False),
                     },
                     f,
                     indent=2)
             print(
                 f"   💾 Top factors (compatible format) saved to: {top_factors_path}"
             )
+            best_result.setdefault("data_info",
+                                   {})["representatives_path"] = reps_path
+            best_result["data_info"]["top_factors_path"] = top_factors_path
 
             shap_dir_path = None
-            if getattr(args, "shap_analysis", False):
+            if args.shap_analysis:
                 shap_dir_path = _generate_shap_outputs(
                     model_reps,
                     X_train_reps,
@@ -2249,10 +2653,10 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
         # Build report filename
         if train_start_str and train_end_str:
-            report_filename = f"{args.symbol}_{args.feature_type}_{train_start_str}_{train_end_str}_dimensionality_report.html"
+            report_filename = f"{symbol_slug}_{feature_type_slug}_{train_start_str}_{train_end_str}_dimensionality_report.html"
         else:
             # Fallback to timestamps
-            report_filename = f"{args.symbol}_{args.feature_type}_{ablation_start_ts}_dimensionality_report.html"
+            report_filename = f"{symbol_slug}_{feature_type_slug}_{ablation_start_ts}_dimensionality_report.html"
 
         default_report_path = os.path.join(best_dir, report_filename)
         write_html_report(best_result, default_report_path)
@@ -2361,11 +2765,11 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
         # Build report filename
         if train_start_str and train_end_str:
-            report_filename = f"{args.symbol}_{args.feature_type}_{train_start_str}_{train_end_str}_dimensionality_report.html"
+            report_filename = f"{symbol_slug}_{feature_type_slug}_{train_start_str}_{train_end_str}_dimensionality_report.html"
         else:
             # Fallback: extract from results_dir or use timestamp
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_filename = f"{args.symbol}_{args.feature_type}_{timestamp_str}_dimensionality_report.html"
+            report_filename = f"{symbol_slug}_{feature_type_slug}_{timestamp_str}_dimensionality_report.html"
 
         default_report_path = os.path.join(results_dir, report_filename)
         write_html_report(results, default_report_path)

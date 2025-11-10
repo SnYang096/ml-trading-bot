@@ -75,6 +75,192 @@ def _build_feature_importance_table(info: Dict) -> str:
         </table>"""
 
 
+def _format_percent(val, digits: int = 2) -> str:
+    if val is None:
+        return "NA"
+    try:
+        return f"{float(val) * 100:.{digits}f}%"
+    except Exception:
+        return "NA"
+
+
+PERCENT_METRICS = {
+    "accuracy",
+    "win_rate",
+    "long_win_rate",
+    "short_win_rate",
+    "active_ratio",
+    "f1_macro",
+    "f1_weighted",
+    "f1_active_macro",
+    "roc_auc_macro",
+    "pr_auc_macro",
+    "precision",
+    "recall",
+}
+
+
+def _format_metric_for_display(metric: str, value) -> str:
+    """Format metric value based on its semantic meaning."""
+    if value is None:
+        return "NA"
+    try:
+        if metric in PERCENT_METRICS:
+            return _format_percent(float(value), 2)
+        return _format_float(float(value))
+    except Exception:
+        return str(value)
+
+
+def _format_metric_delta(metric: str, delta) -> str:
+    if delta is None:
+        return "NA"
+    try:
+        if metric in PERCENT_METRICS:
+            return _format_percent(float(delta), 2)
+        return _format_float(float(delta))
+    except Exception:
+        return str(delta)
+
+
+def _build_classification_metrics_table(
+    stage_baseline: Dict,
+    stage_candidate: Dict,
+    baseline_label: str,
+    candidate_label: str,
+) -> str:
+    base_fin = stage_baseline.get("financial_metrics", {})
+    cand_fin = stage_candidate.get("financial_metrics", {})
+    base_cls = stage_baseline.get("classification_metrics", {})
+    cand_cls = stage_candidate.get("classification_metrics", {})
+
+    def _row(label, base_val, cand_val, is_percent: bool = False):
+        base_fmt = (_format_percent(base_val) if is_percent else
+                    _format_float(base_val))
+        cand_fmt = (_format_percent(cand_val) if is_percent else
+                    _format_float(cand_val))
+        if base_val is not None and cand_val is not None:
+            delta_val = cand_val - base_val
+            delta_fmt = (_format_percent(delta_val)
+                         if is_percent else _format_float(delta_val))
+        else:
+            delta_fmt = "NA"
+        return (f"<tr><td>{label}</td>"
+                f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>")
+
+    rows = [
+        _row("Directional Win Rate", base_fin.get("win_rate"),
+             cand_fin.get("win_rate"),
+             is_percent=True),
+        _row("Active Ratio", base_fin.get("active_ratio"),
+             cand_fin.get("active_ratio"),
+             is_percent=True),
+        _row("F1 (Macro)", base_cls.get("f1_macro"),
+             cand_cls.get("f1_macro")),
+        _row("F1 (Weighted)", base_cls.get("f1_weighted"),
+             cand_cls.get("f1_weighted")),
+        _row("Accuracy", base_cls.get("accuracy"),
+             cand_cls.get("accuracy")),
+        _row("ROC AUC (Macro)", base_cls.get("roc_auc_macro"),
+             cand_cls.get("roc_auc_macro")),
+        _row("PR AUC (Macro)", base_cls.get("pr_auc_macro"),
+             cand_cls.get("pr_auc_macro")),
+    ]
+
+    rows_html = "".join(rows)
+    return f"""
+    <div class="card">
+        <h3>Classification Metrics Comparison</h3>
+        <table class="metric-table">
+            <tr><th>Metric</th><th>{baseline_label}</th><th>{candidate_label}</th><th>Δ ({candidate_label}-{baseline_label})</th></tr>
+            {rows_html}
+        </table>
+    </div>
+    """
+
+
+def _build_regression_metrics_table(
+    stage_baseline: Dict,
+    stage_candidate: Dict,
+    baseline_label: str,
+    candidate_label: str,
+) -> str:
+    rows = []
+    for metric in ("r2", "rmse", "mae"):
+        base_val = stage_baseline.get(metric)
+        cand_val = stage_candidate.get(metric)
+        if base_val is None and cand_val is None:
+            continue
+        base_fmt = _format_float(base_val)
+        cand_fmt = _format_float(cand_val)
+        delta_fmt = ("NA" if base_val is None or cand_val is None else
+                     _format_float(cand_val - base_val))
+        rows.append(
+            f"<tr><td>{metric.upper()}</td><td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>"
+        )
+
+    if not rows:
+        return ""
+
+    return f"""
+    <div class="card">
+        <h3>Regression Metrics Comparison</h3>
+        <table class="metric-table">
+            <tr><th>Metric</th><th>{baseline_label}</th><th>{candidate_label}</th><th>Δ ({candidate_label}-{baseline_label})</th></tr>
+            {''.join(rows)}
+        </table>
+    </div>
+    """
+
+
+def _build_confusion_matrix_html(class_metrics: Dict,
+                                 title: str = "Confusion Matrix") -> str:
+    if not class_metrics:
+        return ""
+    matrix = class_metrics.get("confusion_matrix")
+    labels = class_metrics.get("labels")
+    if matrix is None or labels is None:
+        return ""
+
+    header = "".join(f"<th>{lbl}</th>" for lbl in labels)
+    body_rows = []
+    for lbl, row in zip(labels, matrix):
+        cells = "".join(f"<td>{int(val)}</td>" for val in row)
+        body_rows.append(f"<tr><th>{lbl}</th>{cells}</tr>")
+    body_html = "".join(body_rows)
+    return f"""
+    <div class="card">
+        <h3>{title}</h3>
+        <table class="metric-table">
+            <tr><th></th>{header}</tr>
+            {body_html}
+        </table>
+    </div>
+    """
+
+
+def _load_factor_preview(path: str, key: str, limit: int = 30) -> list[str]:
+    """Load a preview list of factor names from JSON artifacts."""
+    names: list[str] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        factors = data.get(key, [])
+        if key == "top_factors":
+            for item in factors:
+                if isinstance(item, dict):
+                    name = item.get("name")
+                else:
+                    name = str(item)
+                if name:
+                    names.append(str(name))
+        else:
+            names = [str(item) for item in factors if item]
+    except Exception:
+        return []
+    return names[:limit]
+
+
 def _build_rolling_feature_importance_section(summary: Dict) -> str:
     """Build aggregated feature-importance section for rolling reports."""
     feature_map = summary.get("feature_importance", {})
@@ -623,15 +809,84 @@ def write_html_report(results: Dict, html_path: str) -> None:
         "selection_metric",
         results.get("selection", {}).get("metric", "composite"))
     label_threshold = results.get("label_threshold", None)
-    artifacts = {
-        "top_factors":
-        d.get("top_factors_path") or results.get("top_factors_path"),
-        "representatives":
-        d.get("representatives_path") or results.get("representatives_path"),
-        "autoencoder":
-        d.get("autoencoder_path") or results.get("autoencoder_path")
-        or "results/production_autoencoder.pth",
+    insights = results.get("insights", {})
+    feature_effective = insights.get("effective")
+    if feature_effective is True:
+        feature_effective_display = "✅ Effective"
+    elif feature_effective is False:
+        feature_effective_display = "⚠️ Not Effective"
+    else:
+        feature_effective_display = "Unknown"
+    recomm_horizon = insights.get("recommended_horizon")
+    recomm_horizon_metric = insights.get("recommended_horizon_metric")
+    recomm_horizon_metric_name = insights.get(
+        "recommended_horizon_metric_name", "metric")
+    recomm_horizon_effective = insights.get("recommended_horizon_effective")
+    stage_label_map = {
+        "stage1_all_features": "Stage 1: All Features",
+        "stage2_ic_filtered": "Stage 2: IC-Filtered",
+        "stage3_representatives": "Stage 3: Representatives",
+        "stage4_compressed": "Stage 4: Compressed",
     }
+    recommended_stage_key = insights.get("recommended_stage")
+    recommended_stage_label = (
+        stage_label_map.get(recommended_stage_key, recommended_stage_key)
+        if recommended_stage_key else None)
+    if recomm_horizon is not None:
+        horizon_badge = ("✅ Effective"
+                         if recomm_horizon_effective else "ℹ️ Best Candidate")
+        horizon_metric_fmt = _format_metric_for_display(
+            recomm_horizon_metric_name, recomm_horizon_metric)
+        recommended_horizon_row = (
+            "<tr><th>Recommended Forward Horizon</th>"
+            f"<td>{int(recomm_horizon)} bars "
+            f"({recomm_horizon_metric_name}: {horizon_metric_fmt}) "
+            f"{horizon_badge}</td></tr>")
+    else:
+        recommended_horizon_row = ""
+    html_dir = os.path.dirname(os.path.abspath(html_path))
+
+    def _rel_path(target: str | None) -> str | None:
+        if not target:
+            return None
+        try:
+            return os.path.relpath(target, start=html_dir)
+        except Exception:
+            return target
+
+    artifacts: Dict[str, any] = {}
+    top_factors_path = d.get("top_factors_path") or results.get(
+        "top_factors_path")
+    representatives_path = d.get("representatives_path") or results.get(
+        "representatives_path")
+    shap_dir_path = (results.get("explainability", {}).get("stage3_shap_dir")
+                     or results.get("selection", {}).get(
+                         "explainability", {}).get("stage3_shap_dir"))
+
+    if top_factors_path and os.path.exists(top_factors_path):
+        artifacts["top_factors"] = _rel_path(top_factors_path)
+        artifacts["top_factors_preview"] = _load_factor_preview(
+            top_factors_path, "top_factors")
+    else:
+        artifacts["top_factors_preview"] = []
+
+    if representatives_path and os.path.exists(representatives_path):
+        artifacts["representatives"] = _rel_path(representatives_path)
+        artifacts["representatives_preview"] = _load_factor_preview(
+            representatives_path, "representative_factors")
+    else:
+        artifacts["representatives_preview"] = []
+
+    shap_importance_preview: list[Dict] = []
+    if shap_dir_path and os.path.exists(shap_dir_path):
+        artifacts["shap"] = _rel_path(shap_dir_path)
+        shap_importance_path = Path(shap_dir_path) / "stage3_representatives_shap_importance.json"
+        if shap_importance_path.exists():
+            try:
+                with open(shap_importance_path, "r", encoding="utf-8") as f:
+                    shap_importance_preview = json.load(f)[:15]
+            except Exception as exc:
+                print(f"⚠️ Failed to load SHAP importance: {exc}")
 
     # Support both old format (original/compressed) and new 4-stage format
     stage1 = p.get("stage1_all_features", p.get("original_features", {}))
@@ -641,9 +896,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
 
     # Legacy support
     orig = p.get("original_features", stage1)
-    comp = p.get("compressed_features", stage4)
+    comp = p.get("compressed_features", stage4) or stage3
     orig_val = p.get("original_features_val", {})
-    comp_val = p.get("compressed_features_val", {})
+    comp_val = p.get("compressed_features_val", {}) or {}
 
     # Get delta comparisons
     stage2_vs_1 = p.get("stage2_vs_stage1", {})
@@ -651,21 +906,30 @@ def write_html_report(results: Dict, html_path: str) -> None:
     stage4_vs_3 = p.get("stage4_vs_stage3", {})
     delta_r2 = p.get("performance_change", stage4_vs_3.get("delta_r2"))
 
-    has_4_stages = bool(stage4)
+    compressed_dims = d.get("compressed_dimensions")
+    has_4_stages = bool(
+        stage4
+        and (stage4.get("r2") is not None or stage4.get("rmse") is not None)
+        and compressed_dims not in (None, 0, d.get("original_features_count"))
+    )
+    if not has_4_stages:
+        compressed_dims = d.get("stage3_representatives")
 
-    conclusion = ("Dimensionality reduction appears beneficial." if
-                  (delta_r2 is not None and delta_r2 > 0) else
-                  "Dimensionality reduction is not beneficial under this run.")
+    conclusion_delta = delta_r2
+    if not has_4_stages:
+        if stage3_vs_2:
+            conclusion_delta = stage3_vs_2.get("delta_r2", conclusion_delta)
+        elif stage2_vs_1:
+            conclusion_delta = stage2_vs_1.get("delta_r2", conclusion_delta)
+    conclusion = ("Dimensionality reduction appears beneficial."
+                  if (conclusion_delta is not None and conclusion_delta > 0)
+                  else "Dimensionality reduction is not beneficial under this run.")
 
     # Extract financial metrics
     stage1_fin = stage1.get("financial_metrics", {})
     stage2_fin = stage2.get("financial_metrics", {})
     stage3_fin = stage3.get("financial_metrics", {})
     stage4_fin = stage4.get("financial_metrics", {})
-    orig_fin = orig.get("financial_metrics", stage1_fin)
-    comp_fin = comp.get("financial_metrics", stage4_fin)
-    orig_val_fin = orig_val.get("financial_metrics", {})
-    comp_val_fin = comp_val.get("financial_metrics", {})
 
     # Optional grid table
     grid_rows = []
@@ -681,14 +945,119 @@ def write_html_report(results: Dict, html_path: str) -> None:
                 f"<td>{_format_float(row.get('rmse_compressed'))}</td>"
                 "</tr>")
 
+    classification_section = ""
+    confusion_html = ""
+    if task_type.startswith("classification") and stage1 and stage3:
+        classification_section = _build_classification_metrics_table(
+            stage1,
+            stage3,
+            "Stage 1: All Features",
+            "Stage 3: Representatives",
+        )
+        confusion_html = _build_confusion_matrix_html(
+            stage3.get("classification_metrics"),
+            title="Stage 3 Confusion Matrix (Test Set)",
+        )
+
+    insight_items: list[str] = []
+    if feature_effective is True:
+        insight_items.append(
+            "✅ Representative features outperformed the baseline.")
+    elif feature_effective is False:
+        insight_items.append(
+            "⚠️ Representative features did not beat the baseline.")
+    else:
+        insight_items.append(
+            "ℹ️ Feature effectiveness could not be conclusively determined.")
+
+    metric_name = insights.get("metric_name")
+    metric_display_map = {
+        "win_rate": "Directional Win Rate",
+        "long_win_rate": "Long Win Rate",
+        "short_win_rate": "Short Win Rate",
+        "f1_macro": "F1 (Macro)",
+        "f1_weighted": "F1 (Weighted)",
+        "accuracy": "Accuracy",
+        "roc_auc_macro": "ROC AUC",
+        "pr_auc_macro": "PR AUC",
+        "r2": "R²",
+        "rmse": "RMSE",
+        "mae": "MAE",
+    }
+    metric_display = metric_display_map.get(
+        metric_name,
+        metric_name.replace("_", " ").title()
+        if isinstance(metric_name, str) else "Metric",
+    )
+    baseline_val = insights.get("baseline_value")
+    candidate_val = insights.get("candidate_value")
+    delta_val = insights.get("delta")
+    if baseline_val is not None and candidate_val is not None:
+        base_fmt = _format_metric_for_display(metric_name, baseline_val)
+        cand_fmt = _format_metric_for_display(metric_name, candidate_val)
+        delta_fmt = _format_metric_delta(metric_name, delta_val)
+        insight_items.append(
+            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt})."
+        )
+
+    if recommended_stage_label:
+        insight_items.append(
+            f"Recommended feature stage: {recommended_stage_label}.")
+
+    if recomm_horizon is not None:
+        horizon_badge = ("✅ Effective horizon"
+                         if recomm_horizon_effective else "ℹ️ Horizon candidate")
+        horizon_metric_fmt = _format_metric_for_display(
+            recomm_horizon_metric_name, recomm_horizon_metric)
+        insight_items.append(
+            f"{horizon_badge}: {int(recomm_horizon)} bars ({recomm_horizon_metric_name}: {horizon_metric_fmt})."
+        )
+
+    insights_html = ""
+    if insight_items:
+        insights_html = (
+            "<div class=\"card\">"
+            "<h3>Insights Summary</h3>"
+            f"<ul>{''.join(f'<li>{item}</li>' for item in insight_items)}</ul>"
+            "</div>")
+
     # Build HTML content
     html = _build_html_report_content(
-        date_range_str, runtime_str, d, stage1, stage2, stage3, stage4,
-        has_4_stages, orig, comp, delta_r2, stage1_fin, stage2_fin, stage3_fin,
-        stage4_fin, orig_fin, comp_fin, orig_val_fin, comp_val_fin, train_info,
-        grid_rows, conclusion, stage2_vs_1, stage3_vs_2, stage4_vs_3,
-        multi_horizon_results, task_type, selection_metric, label_threshold,
-        artifacts)
+        date_range_str,
+        runtime_str,
+        d,
+        stage1,
+        stage2,
+        stage3,
+        stage4,
+        has_4_stages,
+        orig,
+        comp,
+        delta_r2,
+        stage1_fin,
+        stage2_fin,
+        stage3_fin,
+        stage4_fin,
+        train_info,
+        grid_rows,
+        conclusion,
+        stage2_vs_1,
+        stage3_vs_2,
+        stage4_vs_3,
+        multi_horizon_results,
+        task_type,
+        selection_metric,
+        label_threshold,
+        artifacts,
+        shap_importance=shap_importance_preview,
+        feature_effective=feature_effective,
+        feature_effective_display=feature_effective_display,
+        recommended_horizon_row=recommended_horizon_row,
+        recommended_stage_label=recommended_stage_label,
+        insights_html=insights_html,
+        classification_section=classification_section,
+        confusion_html=confusion_html,
+    )
 
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -711,10 +1080,6 @@ def _build_html_report_content(
     stage2_fin: Dict,
     stage3_fin: Dict,
     stage4_fin: Dict,
-    orig_fin: Dict,
-    comp_fin: Dict,
-    orig_val_fin: Dict,
-    comp_val_fin: Dict,
     train_info: Dict,
     grid_rows: list,
     conclusion: str,
@@ -726,15 +1091,22 @@ def _build_html_report_content(
     selection_metric: str | None = None,
     label_threshold: float | None = None,
     artifacts: Dict | None = None,
+    shap_importance: list | None = None,
+    feature_effective: bool | None = None,
+    feature_effective_display: str | None = None,
+    recommended_horizon_row: str = "",
+    recommended_stage_label: str | None = None,
+    insights_html: str = "",
+    classification_section: str = "",
+    confusion_html: str = "",
 ) -> str:
     """Build HTML content string for the report."""
     # Build conditional 4-stage comparison table
     stage_comparison_table = ""
     if has_4_stages:
         if task_type.startswith("classification"):
-            # Show classification-centric table
             stage_comparison_table = (
-                f'<h2>4-Stage Comparison (Test Set)</h2><table>'
+                f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
                 f'<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>'
                 f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
                 f'<td>{_format_float(stage1_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage1_fin.get("active_ratio",0)*100,2)}%</td></tr>'
@@ -744,10 +1116,10 @@ def _build_html_report_content(
                 f'<td>{_format_float(stage3_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage3_fin.get("active_ratio",0)*100,2)}%</td></tr>'
                 f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
                 f'<td>{_format_float(stage4_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage4_fin.get("active_ratio",0)*100,2)}%</td></tr>'
-                f'</table>')
+                f'</table></div>')
         else:
             stage_comparison_table = (
-                f'<h2>4-Stage Comparison (Test Set)</h2><table>'
+                f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
                 f'<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>'
                 f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
                 f'<td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td>'
@@ -761,52 +1133,199 @@ def _build_html_report_content(
                 f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
                 f'<td>{_format_float(stage4.get("r2"))}</td><td>{_format_float(stage4.get("rmse"))}</td>'
                 f'<td>{_format_float(stage4.get("mae"))}</td><td>{_format_float(stage4_vs_3.get("delta_r2"))}</td></tr>'
-                f'</table>')
+                f'</table></div>')
+    else:
+        if task_type.startswith("classification"):
+            stage_comparison_table = (
+                f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
+                f'<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>'
+                f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
+                f'<td>{_format_float(stage1_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage1_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
+                f'<td>{_format_float(stage2_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage2_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
+                f'<td>{_format_float(stage3_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage3_fin.get("active_ratio",0)*100,2)}%</td></tr>'
+                f'</table></div>')
+        else:
+            stage_comparison_table = (
+                f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
+                f'<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>'
+                f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
+                f'<td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td>'
+                f'<td>{_format_float(stage1.get("mae"))}</td><td>-</td></tr>'
+                f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
+                f'<td>{_format_float(stage2.get("r2"))}</td><td>{_format_float(stage2.get("rmse"))}</td>'
+                f'<td>{_format_float(stage2.get("mae"))}</td><td>{_format_float(stage2_vs_1.get("delta_r2"))}</td></tr>'
+                f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
+                f'<td>{_format_float(stage3.get("r2"))}</td><td>{_format_float(stage3.get("rmse"))}</td>'
+                f'<td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr>'
+                f'</table></div>')
 
-    # Build conditional 4-stage financial metrics tables
-    val_4stage_fin_table = ""
-    test_4stage_fin_table = ""
-    if has_4_stages and stage1_fin and stage2_fin:
-        val_4stage_fin_table = (
-            f'<h2>Financial Metrics - 4-Stage Comparison (Validation Set)</h2>'
-            f'<table><tr><th>Metric</th><th>Stage 1: All</th><th>Stage 2: IC</th>'
-            f'<th>Stage 3: Reps</th><th>Stage 4: AE</th></tr>'
-            f'<tr><td>Sharpe Ratio</td><td>{_format_float(stage1_fin.get("sharpe_ratio"))}</td>'
-            f'<td>{_format_float(stage2_fin.get("sharpe_ratio"))}</td>'
-            f'<td>{_format_float(stage3_fin.get("sharpe_ratio"))}</td>'
-            f'<td>{_format_float(stage4_fin.get("sharpe_ratio"))}</td></tr>'
-            f'<tr><td>Total Return</td><td>{_format_float(stage1_fin.get("total_return"))}</td>'
-            f'<td>{_format_float(stage2_fin.get("total_return"))}</td>'
-            f'<td>{_format_float(stage3_fin.get("total_return"))}</td>'
-            f'<td>{_format_float(stage4_fin.get("total_return"))}</td></tr>'
-            f'<tr><td>Max Drawdown</td><td>{_format_float(stage1_fin.get("max_drawdown"))}</td>'
-            f'<td>{_format_float(stage2_fin.get("max_drawdown"))}</td>'
-            f'<td>{_format_float(stage3_fin.get("max_drawdown"))}</td>'
-            f'<td>{_format_float(stage4_fin.get("max_drawdown"))}</td></tr>'
-            f'<tr><td>Win Rate</td><td>{_format_float(stage1_fin.get("win_rate") * 100, 2)}%</td>'
-            f'<td>{_format_float(stage2_fin.get("win_rate") * 100, 2)}%</td>'
-            f'<td>{_format_float(stage3_fin.get("win_rate") * 100, 2)}%</td>'
-            f'<td>{_format_float(stage4_fin.get("win_rate") * 100, 2)}%</td></tr></table>'
+    top_factor_preview = artifacts.get("top_factors_preview") if artifacts else []
+    rep_factor_preview = artifacts.get("representatives_preview") if artifacts else []
+    shap_link = artifacts.get("shap") if artifacts else None
+
+    artifact_lines: list[str] = []
+    effective_badge_text = None
+    if feature_effective is True:
+        effective_badge_text = "✅ effective"
+    elif feature_effective is False:
+        effective_badge_text = "⚠️ not effective"
+    if artifacts is not None:
+        top_link = artifacts.get("top_factors")
+        if top_link:
+            line = (
+                f'Top Factors: <a href="{top_link}">{os.path.basename(top_link)}</a>'
+            )
+            if effective_badge_text:
+                line = f"{line} ({effective_badge_text})"
+            artifact_lines.append(line)
+        elif top_factor_preview:
+            artifact_lines.append("Top Factors: (inline preview below)")
+        else:
+            artifact_lines.append("Top Factors: —")
+
+        rep_link = artifacts.get("representatives")
+        if rep_link:
+            line = (
+                f'Representatives: <a href="{rep_link}">{os.path.basename(rep_link)}</a>'
+            )
+            if effective_badge_text:
+                line = f"{line} ({effective_badge_text})"
+            artifact_lines.append(line)
+        elif rep_factor_preview:
+            artifact_lines.append("Representatives: (inline preview below)")
+        else:
+            artifact_lines.append("Representatives: —")
+
+        if shap_link:
+            artifact_lines.append(
+                f'SHAP Visualisations: <a href="{shap_link}">Open directory</a>'
+            )
+        else:
+            artifact_lines.append(
+                "SHAP Visualisations: Not generated (run with --shap-analysis)"
+            )
+
+    artifacts_html = "<br/>".join(artifact_lines) if artifact_lines else "—"
+
+    top_factor_html = ""
+    if top_factor_preview:
+        top_factor_html = (
+            "<div class=\"card\">"
+            "<h3>Top Factors (IC Ranking)</h3>"
+            "<ul class=\"pill-list\">"
+            f"{''.join(f'<li>{name}</li>' for name in top_factor_preview[:30])}"
+            "</ul>"
+            "</div>"
         )
-        test_4stage_fin_table = val_4stage_fin_table.replace(
-            "Validation Set", "Test Set")
 
-    # Helper to safely get financial metric
-    def safe_fin_metric(metric: str, use_val: bool = False) -> str:
-        val_dict = orig_val_fin if use_val else orig_fin
-        comp_dict = comp_val_fin if use_val else comp_fin
-        if not val_dict:
-            val_dict = orig_fin
-        if not comp_dict:
-            comp_dict = comp_fin
-        orig_val = val_dict.get(metric, 0) or 0
-        comp_val = comp_dict.get(metric, 0) or 0
-        return _format_float(orig_val), _format_float(comp_val), _format_float(
-            comp_val - orig_val)
+    rep_factor_html = ""
+    if rep_factor_preview:
+        rep_factor_html = (
+            "<div class=\"card\">"
+            "<h3>Representative Feature Set</h3>"
+            "<ul class=\"pill-list\">"
+            f"{''.join(f'<li>{name}</li>' for name in rep_factor_preview[:30])}"
+            "</ul>"
+            "</div>"
+        )
+
+    factor_section = ""
+    if top_factor_html or rep_factor_html:
+        factor_section = f'<div class="grid-two">{top_factor_html}{rep_factor_html}</div>'
+
+    shap_html = ""
+    if shap_importance:
+        shap_rows = "".join(
+            f"<tr><td>{item.get('rank')}</td><td>{item.get('feature')}</td><td>{_format_float(item.get('mean_abs_shap'))}</td></tr>"
+            for item in shap_importance)
+        shap_html = (
+            "<div class=\"card\">"
+            "<h3>SHAP Importance (Top Factors)</h3>"
+            "<table class=\"metric-table\">"
+            "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
+            f"{shap_rows}"
+            "</table>"
+            "</div>"
+        )
+
+    regression_section = ""
+    if not task_type.startswith("classification") and stage1 and stage3:
+        regression_section = _build_regression_metrics_table(
+            stage1,
+            stage3,
+            "Stage 1: All Features",
+            "Stage 3: Representatives",
+        )
+
+    grid_html = ""
+    if grid_rows:
+        grid_html = (
+            "<div class=\"card\">"
+            "<h3>Autoencoder Grid Search</h3>"
+            "<table class=\"metric-table\">"
+            "<tr><th>Encoding Dim</th><th>Stage 3 R²</th><th>Compressed R²</th>"
+            "<th>ΔR²</th><th>Stage 3 RMSE</th><th>Compressed RMSE</th></tr>"
+            f"{''.join(grid_rows)}"
+            "</table>"
+            "</div>"
+        )
+
+    training_html = ""
+    train_rows = []
+    diag_map = {
+        "lightgbm_original_iterations": "Stage 1 · All Features",
+        "lightgbm_stage1_iterations": "Stage 1 · All Features",
+        "lightgbm_stage2_iterations": "Stage 2 · IC-Filtered",
+        "lightgbm_stage3_iterations": "Stage 3 · Representatives",
+        "lightgbm_compressed_iterations": "Stage 3 · Representatives",
+        "lightgbm_stage4_iterations": "Stage 4 · Autoencoder",
+    }
+    for key, label in diag_map.items():
+        if train_info.get(key) is not None:
+            train_rows.append(
+                f"<tr><td>{label}</td><td>{train_info.get(key)}</td></tr>")
+    if train_rows:
+        training_html = (
+            "<div class=\"card\">"
+            "<h3>Training Diagnostics</h3>"
+            "<table class=\"metric-table\">"
+            "<tr><th>Model</th><th>Best Iteration</th></tr>"
+            f"{''.join(train_rows)}"
+            "</table>"
+            "</div>"
+        )
+
+    multi_horizon_html = _build_multi_horizon_table(multi_horizon_results,
+                                                    task_type)
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"/><title>Dimensionality Reduction Comparison</title>
-<style>body{{font-family:Arial,sans-serif;margin:24px;color:#222}}table{{border-collapse:collapse;margin-top:16px;width:100%;max-width:900px}}th,td{{border:1px solid #ddd;padding:8px 10px;text-align:left}}th{{background:#f7f7f7}}.bad{{color:#b00020;font-weight:600}}.good{{color:#0a7c2f;font-weight:600}}.warn{{color:#b36b00;font-weight:600}}</style>
+<style>
+body{{font-family:Arial,sans-serif;margin:24px;color:#1f2d3d;background:#f5f7fb}}
+h1,h2,h3{{color:#24344d}}
+table{{border-collapse:collapse;margin-top:16px;width:100%;max-width:960px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 6px 14px rgba(27,39,53,0.08)}}
+th,td{{border:1px solid #e6ecf5;padding:10px 14px;text-align:left;font-size:0.95rem}}
+th{{background:#eef2f8;font-weight:600;color:#2b3f64}}
+.bad{{color:#c53030;font-weight:600}}
+.good{{color:#167a3d;font-weight:600}}
+.warn{{color:#b36b00;font-weight:600}}
+.badge{{display:inline-block;padding:0.2rem 0.55rem;border-radius:999px;font-size:0.75rem;font-weight:600;margin-left:0.45rem;background:#e6edff;color:#2f4cdd}}
+.badge.bad{{background:#fde8e8;color:#c53030}}
+.badge.good{{background:#e6f4ea;color:#167a3d}}
+.badge.warn{{background:#fff3cd;color:#b36b00}}
+.card{{background:#fff;border-radius:10px;padding:18px 22px;box-shadow:0 10px 24px rgba(27,39,53,0.1);margin:20px 0}}
+.card h3{{margin:0 0 10px 0;color:#1f2d3d}}
+.card p{{margin:6px 0;color:#42516d}}
+.grid-two{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin:18px 0}}
+.grid-two .card{{margin:0}}
+.pill-list{{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 0;padding:0;list-style:none}}
+.pill-list li{{background:#eef2f8;color:#2b3f64;border-radius:999px;padding:6px 16px;font-size:0.9rem}}
+.metric-table{{margin-top:12px}}
+.reason{{margin-top:8px;font-size:0.95rem;color:#384860}}
+.reason strong{{color:#1f2d3d}}
+</style>
 </head><body>
 <h1>Dimensionality Reduction Comparison</h1>
 <div>{date_range_str}</div>
@@ -818,208 +1337,119 @@ def _build_html_report_content(
 <tr><td>Stage 1: All Features</td><td>{d.get('stage1_all_features', d.get('original_features_count','-'))}</td><td>All original features after missing/stability filter</td></tr>
 {f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td><td>Top features by |IC| (Spearman correlation)</td></tr>' if d.get('stage2_ic_filtered') else ''}
 {f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td><td>Correlation-filtered representative features (60-100)</td></tr>' if d.get('stage3_representatives') else ''}
-<tr><td>Stage 4: Compressed</td><td>{d.get('compressed_dimensions','-')}</td><td>Compressed feature dimensions</td></tr>
+{f'<tr><td>Stage 4: Compressed</td><td>{compressed_dims}</td><td>Compressed feature dimensions</td></tr>' if has_4_stages else ''}
 <tr><th colspan="3">Summary</th></tr>
-<tr><td>Final Compression Ratio</td><td colspan="2">{_format_float(d.get('compression_ratio'),2)}x ({d.get('original_features_count','-')} → {d.get('compressed_dimensions','-')})</td></tr>
+<tr><td>Final Compression Ratio</td><td colspan="2">{_format_float(d.get('compression_ratio'),2)}x ({d.get('original_features_count','-')} → {compressed_dims if has_4_stages else d.get('stage3_representatives','-')})</td></tr>
 <tr><td>Samples (train/val/test)</td><td colspan="2">{d.get('training_samples','-')} / {d.get('validation_samples','-')} / {d.get('test_samples','-')}</td></tr>
 </table>
 
-<div class="section" style="background:#f8f9fa">
+<div class="card">
 <h3>Run Configuration</h3>
-<table>
+<table class="metric-table">
 <tr><th>Task Type</th><td>{task_type}</td></tr>
 <tr><th>Selection Metric</th><td>{selection_metric or '-'}</td></tr>
 {f'<tr><th>Label Threshold</th><td>{_format_float(label_threshold,6)}</td></tr>' if label_threshold is not None else ''}
-<tr><th>Artifacts</th><td>
-{('Top Factors: ' + (artifacts.get('top_factors') or '-')) if artifacts else ''}<br/>
-{('Representatives: ' + (artifacts.get('representatives') or '-')) if artifacts else ''}<br/>
-
-</td></tr>
+<tr><th>Feature Effectiveness</th><td>{feature_effective_display or 'Unknown'}</td></tr>
+{f'<tr><th>Recommended Stage</th><td>{recommended_stage_label}</td></tr>' if recommended_stage_label else ''}
+{recommended_horizon_row}
+<tr><th>Artifacts</th><td>{artifacts_html}</td></tr>
 </table>
 </div>
 
+{insights_html}
+
+{factor_section}
+{shap_html}
+
 {stage_comparison_table}
 
-{('<h2>Classification Performance (Test Set)</h2>'
-  '<table>'
-  '<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>'
-  f"<tr><td>Directional Win Rate</td><td>{_format_float(orig_fin.get('win_rate',0)*100,2)}%</td><td>{_format_float(comp_fin.get('win_rate',0)*100,2)}%</td><td>{_format_float((comp_fin.get('win_rate',0)-orig_fin.get('win_rate',0))*100,2)}%</td></tr>"
-  f"<tr><td>Active Ratio</td><td>{_format_float(orig_fin.get('active_ratio',0)*100,2)}%</td><td>{_format_float(comp_fin.get('active_ratio',0)*100,2)}%</td><td>{_format_float((comp_fin.get('active_ratio',0)-orig_fin.get('active_ratio',0))*100,2)}%</td></tr>"
-  '</table>') if task_type.startswith('classification') else (
-  '<h2>Performance (Test Set)</h2>'
-  '<table>'
-  '<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>'
-  f"<tr><td>R²</td><td>{_format_float(orig.get('r2'))}</td><td>{_format_float(comp.get('r2'))}</td><td>{_format_float(delta_r2)}</td></tr>"
-  f"<tr><td>RMSE</td><td>{_format_float(orig.get('rmse'))}</td><td>{_format_float(comp.get('rmse'))}</td><td>{_format_float((comp.get('rmse') or 0)-(orig.get('rmse') or 0))}</td></tr>"
-  f"<tr><td>MAE</td><td>{_format_float(orig.get('mae'))}</td><td>{_format_float(comp.get('mae'))}</td><td>{_format_float((comp.get('mae') or 0)-(orig.get('mae') or 0))}</td></tr>"
-  '</table>')}
+{classification_section or regression_section}
+{confusion_html}
 
-{val_4stage_fin_table}
-
-<h2>Financial Metrics (Validation Set)</h2>
-<table>
-<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
-{_build_financial_metrics_table(orig_val_fin or orig_fin, comp_val_fin or comp_fin)}
-</table>
-{('<div class="section" style="color:#7a6">Note: Financial metrics appear as 0/NA when no trades were triggered (Active Ratio ~ 0). Consider binary labels or lower thresholds to increase signal activity.</div>' if (isinstance(orig_fin, dict) and (orig_fin.get('active_ratio', 0) == 0 and comp_fin.get('active_ratio', 0) == 0)) else '')}
-
-{test_4stage_fin_table}
-
-<h2>Financial Metrics (Test Set)</h2>
-<table>
-<tr><th>Metric</th><th>Original</th><th>Compressed</th><th>Delta</th></tr>
-{_build_financial_metrics_table(orig_fin, comp_fin)}
-</table>
-
-{('<h2>Encoding Grid Results</h2>'
-  '<table>'
-  '<tr><th>ENCODING_DIM</th><th>R² Original</th><th>R² Compressed</th><th>ΔR²</th><th>RMSE Original</th><th>RMSE Compressed</th></tr>'
-  f"{''.join(grid_rows)}"
-  '</table>') if grid_rows else ''}
-
-<h2>Training Diagnostics</h2>
-<ul>
-
-<li>LightGBM iterations (original/compressed): {train_info.get('lightgbm_original_iterations','-')} / {train_info.get('lightgbm_compressed_iterations','-')}</li>
-</ul>
-
-<h2>Conclusion</h2>
+{grid_html}
+{training_html}
+<div class="card">
+<h3>Conclusion</h3>
 <p>{conclusion}</p>
+</div>
 
-{_build_multi_horizon_table(multi_horizon_results) if multi_horizon_results else ''}
+{multi_horizon_html}
 </body></html>"""
     return html
 
 
-def _build_multi_horizon_table(multi_horizon_results: Dict) -> str:
+def _build_multi_horizon_table(multi_horizon_results: Dict,
+                               task_type: str) -> str:
     """Build multi-horizon comparison table."""
     if not multi_horizon_results:
         return ""
 
-    html = """
-<h2>📊 Multi-Horizon Comparison</h2>
-<div class="section">
-    <p>This table compares the performance of all 4 stages across different prediction horizons (bars ahead).</p>
-    <table>
-        <thead>
-            <tr>
-                <th>Horizon</th>
-                <th>Stage</th>
-                <th>R²</th>
-                <th>RMSE</th>
-                <th>MAE</th>
-                <th>Sharpe Ratio</th>
-                <th>Total Return</th>
-                <th>Max Drawdown</th>
-                <th>Win Rate</th>
-            </tr>
-        </thead>
-        <tbody>
-"""
+    if task_type.startswith("classification"):
+        header = (
+            "<tr><th>Horizon</th><th>Stage</th><th>Accuracy</th>"
+            "<th>F1 (Macro)</th><th>ROC AUC</th><th>Directional Win Rate</th></tr>"
+        )
+    else:
+        header = (
+            "<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
+            "<th>MAE</th></tr>"
+        )
 
-    # Sort horizons numerically
+    rows = []
     horizon_keys = sorted(
         [k for k in multi_horizon_results.keys() if k.startswith("horizon_")],
         key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0)
 
+    stage_map = [
+        ("Stage 1: All Features", "stage1_all_features"),
+        ("Stage 2: IC-Filtered", "stage2_ic_filtered"),
+        ("Stage 3: Representatives", "stage3_representatives"),
+        ("Stage 4: Compressed", "stage4_compressed"),
+    ]
+
     for horizon_key in horizon_keys:
         horizon_num = horizon_key.split("_")[1]
         horizon_data = multi_horizon_results[horizon_key]
-
-        stages = [
-            ("Stage 1: All Features", "stage1_all_features"),
-            ("Stage 2: IC-Filtered", "stage2_ic_filtered"),
-            ("Stage 3: Representatives", "stage3_representatives"),
-            ("Stage 4: Compressed", "stage4_compressed"),
-        ]
-
-        for stage_name, stage_key in stages:
-            stage_perf = horizon_data.get(stage_key, {})
+        for stage_label, stage_key in stage_map:
+            stage_perf = horizon_data.get(stage_key)
             if not stage_perf:
                 continue
+            if task_type.startswith("classification"):
+                cls_metrics = stage_perf.get("classification_metrics", {})
+                financial = stage_perf.get("financial_metrics", {})
+                rows.append(
+                    "<tr>"
+                    f"<td><strong>{horizon_num} bars</strong></td>"
+                    f"<td>{stage_label}</td>"
+                    f"<td>{_format_metric_for_display('accuracy', cls_metrics.get('accuracy'))}</td>"
+                    f"<td>{_format_metric_for_display('f1_macro', cls_metrics.get('f1_macro'))}</td>"
+                    f"<td>{_format_metric_for_display('roc_auc_macro', cls_metrics.get('roc_auc_macro'))}</td>"
+                    f"<td>{_format_metric_for_display('win_rate', financial.get('win_rate'))}</td>"
+                    "</tr>"
+                )
+            else:
+                rows.append(
+                    "<tr>"
+                    f"<td><strong>{horizon_num} bars</strong></td>"
+                    f"<td>{stage_label}</td>"
+                    f"<td>{_format_float(stage_perf.get('r2'))}</td>"
+                    f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
+                    f"<td>{_format_float(stage_perf.get('mae'))}</td>"
+                    "</tr>"
+                )
 
-            fin_metrics = stage_perf.get("financial_metrics", {})
+    if not rows:
+        return ""
 
-            html += f"""            <tr>
-                <td><strong>{horizon_num} bars</strong></td>
-                <td>{stage_name}</td>
-                <td>{_format_float(stage_perf.get('r2'))}</td>
-                <td>{_format_float(stage_perf.get('rmse'))}</td>
-                <td>{_format_float(stage_perf.get('mae'))}</td>
-                <td>{_format_float(fin_metrics.get('sharpe_ratio'))}</td>
-                <td>{_format_float(fin_metrics.get('total_return'))}</td>
-                <td>{_format_float(fin_metrics.get('max_drawdown'))}</td>
-                <td>{_format_float(fin_metrics.get('win_rate'))}</td>
-            </tr>
-"""
-
-    html += """
-        </tbody>
-    </table>
-</div>
-"""
-
-    return html
-
-
-def _build_financial_metrics_table(orig_fin: Dict, comp_fin: Dict) -> str:
-    """Build financial metrics table rows."""
-
-    def safe_get(key):
-        o = orig_fin.get(key, 0) or 0
-        c = comp_fin.get(key, 0) or 0
-        return o, c, c - o
-
-    rows = []
-    o, c, d = safe_get('sharpe_ratio')
-    rows.append(
-        f'<tr><td>Sharpe Ratio</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
+    return (
+        "<div class=\"card\">"
+        "<h3>📊 Multi-Horizon Comparison</h3>"
+        "<table class=\"metric-table\">"
+        f"{header}"
+        f"{''.join(rows)}"
+        "</table>"
+        "</div>"
     )
-    o, c, d = safe_get('total_return')
-    rows.append(
-        f'<tr><td>Total Return</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
-    )
-    o, c, d = safe_get('annualized_return')
-    rows.append(
-        f'<tr><td>Annualized Return</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
-    )
-    o, c, d = safe_get('max_drawdown')
-    rows.append(
-        f'<tr><td>Max Drawdown</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
-    )
-    o, c, d = safe_get('max_drawdown_pct')
-    rows.append(
-        f'<tr><td>Max Drawdown %</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
-    )
-    o, c, d = safe_get('win_rate')
-    rows.append(
-        f'<tr><td>Directional Win Rate (non-hold)</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
-    )
-    o, c, d = safe_get('long_win_rate')
-    rows.append(
-        f'<tr><td>Long Win Rate</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
-    )
-    o, c, d = safe_get('short_win_rate')
-    rows.append(
-        f'<tr><td>Short Win Rate</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
-    )
-    o, c, d = safe_get('active_ratio')
-    rows.append(
-        f'<tr><td>Active Ratio (non-hold share)</td><td>{_format_float(o * 100, 2)}%</td><td>{_format_float(c * 100, 2)}%</td><td>{_format_float(d * 100, 2)}%</td></tr>'
-    )
-    o, c, d = safe_get('win_loss_ratio')
-    rows.append(
-        f'<tr><td>Win/Loss Ratio</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
-    )
-    o, c, d = safe_get('volatility')
-    rows.append(
-        f'<tr><td>Volatility</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
-    )
-    o, c, d = safe_get('calmar_ratio')
-    rows.append(
-        f'<tr><td>Calmar Ratio</td><td>{_format_float(o)}</td><td>{_format_float(c)}</td><td>{_format_float(d)}</td></tr>'
-    )
-    return '\n'.join(rows)
 
 
 def create_recommendations_section(results: Dict[str, any]) -> str:

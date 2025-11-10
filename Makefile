@@ -746,9 +746,7 @@ nautilus-backtest:
 # ---------------------------------------------------------------------------
 
 DIM_COMPARE_ARGS ?=
-HORIZONS ?= 1,5,10,15
-BINARY_SIGNALS ?= 1
-LABEL_THRESHOLD ?= 0.0
+HORIZONS ?= 5,15
 DIM_COMPARE_FEATURE_TYPE ?= comprehensive
 
 # make dim-compare SYMBOL=BTCUSDT \
@@ -775,6 +773,5 @@ dim-compare:
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \
 		$(DIM_COMPARE_ARGS)
-	@echo "📝 HTML report saved with: {SYMBOL}_{FEATURE_TYPE}_{START_DATE}_{END_DATE}_dimensionality_report.html"
 
 
