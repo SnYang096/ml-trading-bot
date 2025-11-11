@@ -13,12 +13,44 @@
 
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Sequence, Tuple
 from pathlib import Path
 
 from data_tools.baseline_feature_engineering import engineer_baseline_features
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 from .label_utils import rolling_rms_volatility
+
+
+def ensure_feature_consistency(
+    frames: Sequence[pd.DataFrame],
+    require_numeric: bool = True,
+) -> List[str]:
+    """
+    Return the list of feature columns that exist (and are non-empty) across all frames.
+
+    Args:
+        frames: Sequence of feature DataFrames (e.g., multi-timeframe outputs).
+        require_numeric: If True, limit to numeric columns to avoid object dtypes.
+
+    Returns:
+        Sorted list of common columns present in every frame with at least one non-NaN value.
+    """
+    if not frames:
+        return []
+    common_cols = set(frames[0].columns)
+    for df in frames[1:]:
+        common_cols &= set(df.columns)
+    if not common_cols:
+        return []
+    valid_cols: List[str] = []
+    for col in sorted(common_cols):
+        if require_numeric and not all(
+            pd.api.types.is_numeric_dtype(df[col]) for df in frames
+        ):
+            continue
+        if all(df[col].dropna().shape[0] > 0 for df in frames):
+            valid_cols.append(col)
+    return valid_cols
 
 
 def safe_multi_asset_preprocessing(

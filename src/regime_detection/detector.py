@@ -96,8 +96,9 @@ class RuleBasedRegimeDetector:
     ) -> VolatilityFeatureSet:
         atr = average_true_range(high, low, close, self.config.atr_window)
         atr_rank = atr_percentile(atr, self.config.atr_percentile_window).clip(0, 1)
-        band_width = bollinger_band_width(close, self.config.regression_window).fillna(
-            method="ffill"
+        band_width = (
+            bollinger_band_width(close, self.config.regression_window)
+            .ffill()
         )
         return VolatilityFeatureSet(
             atr=atr,
@@ -163,7 +164,7 @@ class RuleBasedRegimeDetector:
         labels.loc[trending] = RegimeLabel.TRENDING
         labels.loc[collapse] = RegimeLabel.COLLAPSE
 
-        return labels.astype(RegimeLabel)
+        return labels.astype(object)
 
     def detect(
         self,
@@ -275,7 +276,7 @@ class RuleBasedRegimeDetector:
         combined_score = pd.Series(0.0, index=union_index)
         for tf, weight in weights.items():
             combined_score = combined_score.add(
-                scores[tf].reindex(union_index).fillna(method="ffill").fillna(0.0)
+                scores[tf].reindex(union_index).ffill().fillna(0.0)
                 * weight,
                 fill_value=0.0,
             )

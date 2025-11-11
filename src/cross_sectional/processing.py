@@ -170,3 +170,72 @@ def neutralize_against(
 
     return panel.groupby(level=timestamp_level, group_keys=False).apply(_neutralize)
 
+
+def filter_by_liquidity(
+    panel: pd.DataFrame,
+    liq_col: str = "dollar_volume",
+    min_quantile: float = 0.2,
+    timestamp_level: int = 0,
+) -> pd.DataFrame:
+    """
+    Filter panel by per-timestamp liquidity quantile threshold.
+    
+    Args:
+        panel: MultiIndex (timestamp, symbol) panel
+        liq_col: Liquidity proxy column (e.g., 'dollar_volume')
+        min_quantile: Keep assets with liquidity >= this quantile per timestamp
+        timestamp_level: Level index for timestamp
+    """
+    if not 0.0 <= min_quantile <= 1.0:
+        raise ValueError("min_quantile must be within [0, 1].")
+    panel = _ensure_panel(panel).copy()
+    if liq_col not in panel.columns:
+        raise ValueError(f"Liquidity column '{liq_col}' not present in panel.")
+
+    def _filter(group: pd.DataFrame) -> pd.DataFrame:
+        series = group[liq_col].astype(float)
+        threshold = series.quantile(min_quantile) if len(series) > 0 else np.nan
+        if np.isnan(threshold):
+            return group.iloc[0:0]
+        return group.loc[series >= threshold]
+
+    return panel.groupby(level=timestamp_level, group_keys=False).apply(_filter)
+
+
+def drop_correlated_factors(
+    panel: pd.DataFrame,
+    factor_cols: Sequence[str],
+    *,
+    threshold: float = 0.9,
+    timestamp_level: int = 0,
+) -> pd.DataFrame:
+    """
+    Drop highly correlated factors (absolute correlation >= threshold) using greedy selection
+    on the last timestamp cross-section.
+    """
+    if threshold <= 0 or threshold >= 1:
+        raise ValueError("threshold must be in (0, 1).")
+    panel = _ensure_panel(panel).copy()
+    cols = [c for c in factor_cols if c in panel.columns]
+    if not cols:
+        return panel
+    last_ts = panel.index.get_level_values(timestamp_level).max()
+    cs = panel.xs(last_ts, level=timestamp_level)
+    if cs.empty:
+        return panel
+    X = cs[cols].astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    corr = X.corr().abs()
+    to_drop: set[str] = set()
+    kept: set[str] = set()
+    for col in corr.columns:
+        if col in to_drop:
+            continue
+        kept.add(col)
+        high_corr = corr.index[(corr[col] >= threshold) & (corr.index != col)].tolist()
+        for hc in high_corr:
+            if hc not in kept:
+                to_drop.add(hc)
+    remaining = [c for c in cols if c not in to_drop]
+    # Drop globally
+    return panel.drop(columns=[c for c in to_drop if c in panel.columns])
+

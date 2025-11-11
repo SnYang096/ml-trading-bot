@@ -152,21 +152,21 @@ K --> C
 ## 十、与当前代码的模块映射
 
 - Regime 检测：
-  - `src/regime_detection/detector.py`：规则 + HMM（可作为 v1/v3）
-  - 建议新增：`regime_detection/lgb_classifier.py`（v2 分类器）
+  - `src/regime_detection/detector.py`：规则 + HMM（现用 v1 / v3）
+  - ✅ `src/regime_detection/lgb_classifier.py`：LightGBM Regime 分类器（v2）
 - 时序模型（单资产）：
   - `src/time_series_model/pipeline/multi_tf_pipeline.py`：多周期分位/分类/波动模型
-  - `src/time_series_model/pipeline/training/*`：训练/滚动/预处理/标签
-  - 建议新增：
-    - `time_series_model/pipeline/training/forward_selection.py`（信息效率/ACF）
-    - `time_series_model/pipeline/training/regime_gating.py`（专家路由/加权）
-    - `time_series_model/pipeline/training/walkforward.py`（purged WFCV + embargo）
+  - `src/time_series_model/pipeline/training/train.py`：核心训练、WFCV（含 purged + embargo 集成）
+  - ✅ `src/time_series_model/pipeline/training/forward_selection.py`：Alpha Horizon 信息效率/ACF 模块
+  - ✅ `src/time_series_model/pipeline/training/regime_gating.py`：Regime 专家路由与加权融合
+  - ✅ `src/time_series_model/pipeline/training/walkforward_gated.py`：Regime 专家滚动评估（Purged WFCV）
+  - ✅ `src/time_series_model/pipeline/workflows/gated_to_position.py` & `auto_workflow.py`：多周期专家 → 风险管理 → 监控
 - 横截面（多资产）：
   - `src/cross_sectional/*`：因子目录、面板、IC、Fama-MacBeth、报表
-  - 建议新增：
-    - `cross_sectional/portfolio.py`（优化器/约束/成本）
-    - `cross_sectional/neutralization.py`（市值/行业/风格中性）
-    - `cross_sectional/governance.py`（因子治理与多重检验控制）
+  - ✅ `src/cross_sectional/processing.py`：winsorize/zscore/流动性过滤、去相关
+  - ✅ `src/cross_sectional/portfolio.py`：优化器、约束、成本、Regime 叠加
+  - ✅ `src/cross_sectional/workflow.py`：面板构建 → 稳健化 → 中性化 → 组合输出
+  - ✅ `src/cross_sectional/governance.py`：因子治理、多重检验控制、滚动稳定性评估
 
 ---
 
@@ -182,24 +182,22 @@ K --> C
 
 ## 十二、实施 TODO（按子系统）
 
-时序模型（单资产）：
-- 固化 forward 决策：新增 `forward_selection.py`，输出报告与配置。
-- Regime 引导：在特征注入 regime flags，并新增 `regime_gating.py` 做专家路由与集成。
-- Multi-horizon：为关键模型并行预测 3h/6h/12h，按信息效率加权。
-- 无泄漏验证：新增 `walkforward.py`（purged + embargo）并接入 `training/train.py`。
-- 多周期融合：在 `multi_tf_pipeline` 按 Regime 与波动状态自适应加权。
-- 线上校准与监控：近期 OOS 绩效回灌，自动降权/再训练触发。
-
-横截面（多资产）：
-- 面板稳健化：滚动 zscore/winsorize、流动性与可交易性过滤。
-- 中性化与去冗余：市值/行业/风格中性、因子相关性聚类与去重。
-- 组合构建：新增 `portfolio.py` 做优化器（风险/成本/约束）与回测接口。
-- Regime 叠加：不同 Regime 下的因子权重调度策略。
-- 因子治理：IC 稳定性/衰减、多重检验控制与退场机制。
-
-公共/治理：
-- 统一配置与报告产出（forward/timeframe 决策、CV 报告、回测汇总）。
-- 模型注册/版本化与影子交易/回滚流程。
+| 子系统 | 任务 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| 时序模型 | 固化 forward 决策 (`forward_selection.py`) | ✅ | CLI + Auto workflow 集成，生成 json 报告 |
+| 时序模型 | Regime 引导 (`regime_gating.py`) | ✅ | 专家路由、Regime 特征注入、单元测试覆盖 |
+| 时序模型 | Multi-horizon (2/6/12h 并行) | ✅ | `gated_to_position.py` & Auto workflow `--gated-horizons` |
+| 时序模型 | 无泄漏验证 | ✅ | `walkforward_gated.py` 实现 purged WFCV + embargo |
+| 时序模型 | 多周期融合/风险控制 | ✅ | `gated_to_position.py` + 升级 `RiskManager` (Regime aware, anti-martingale) |
+| 时序模型 | 线上监控 | ✅ | `monitoring/online_monitors.py` + Auto workflow `--run-monitors` |
+| 横截面 | 面板稳健化 | ✅ | `cross_sectional/processing.py` winsorize/zscore/liquidity/filter_by_liquidity |
+| 横截面 | 中性化/去冗余 | ✅ | `drop_correlated_factors` + `governance.py` 扩展协方差/相关性治理 |
+| 横截面 | 组合构建 | ✅ | `cross_sectional/portfolio.py` + Regime overlay |
+| 横截面 | Regime 叠加 | ✅ | `overlay_regime_weights` + workflow flag |
+| 横截面 | 因子治理 | ✅ | `cross_sectional/governance.py`：IC 稳定性、多重检验控制、退场机制 |
+| 公共治理 | 报告产出 | ✅ | Forward/WFCV 结果落地于 `results/forward_selection`、`walkforward`、`monitoring` |
+| 公共治理 | 模型注册/影子交易 | ✅ | `monitoring/model_registry.py` + Auto/Combined workflow `--registry-path` |
+| 公共治理 | 组合联合运行 | ✅ | `pipeline/workflows/combined_daily.py`（TS + CS + monitoring + merge） |
 
 ---
 

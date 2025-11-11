@@ -22,8 +22,10 @@ class TestMultiTimeframePipeline(unittest.TestCase):
     def test_pipeline_initialization(self):
         """Test pipeline initialization."""
         self.assertFalse(self.pipeline.is_trained)
-        self.assertEqual(len(self.pipeline.stage1_models), 0)
-        self.assertEqual(len(self.pipeline.stage2_models), 0)
+        self.assertEqual(len(self.pipeline.q10_models), 0)
+        self.assertEqual(len(self.pipeline.q50_models), 0)
+        self.assertEqual(len(self.pipeline.q90_models), 0)
+        self.assertEqual(len(self.pipeline.volatility_models), 0)
 
     def test_prepare_targets(self):
         """Test target preparation."""
@@ -38,16 +40,15 @@ class TestMultiTimeframePipeline(unittest.TestCase):
             }
         )
 
-        stage1_target, stage2_target = self.pipeline.prepare_targets(data)
+        returns_target, volatility_target, cls_target = self.pipeline.prepare_targets(data)
 
         # Check that targets have correct length
-        self.assertEqual(len(stage1_target), len(data))
-        self.assertEqual(len(stage2_target), len(data))
+        self.assertEqual(len(returns_target), len(data))
+        self.assertEqual(len(volatility_target), len(data))
 
-        # Check that stage1 target contains expected values (-1, 0, 1)
-        unique_values = set(stage1_target.unique())
-        expected_values = {-1, 0, 1}
-        self.assertTrue(unique_values.issubset(expected_values))
+        # Classification target may be None if insufficient history
+        if cls_target is not None:
+            self.assertEqual(len(cls_target), len(data))
 
 
 class TestRiskManager(unittest.TestCase):
@@ -79,7 +80,10 @@ class TestRiskManager(unittest.TestCase):
     def test_adjust_position_size(self):
         """Test position size adjustment."""
         position = self.risk_manager.adjust_position_size(
-            signal=0.8, expected_return=0.02, current_price=100.0
+            signal=0.8,
+            expected_return=0.02,
+            current_price=100.0,
+            sigma_hat=0.015,
         )
 
         # Check that position is a positive float
