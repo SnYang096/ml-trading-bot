@@ -1,10 +1,6 @@
 {
   "name": "ML Trading Dev Container",
-  "build": {
-    "dockerfile": "Dockerfile",
-    "context": "..",
-    "args": {}
-  },
+  "image": "ml_trading_bot_devcontainer",
   "runArgs": [
     "--gpus", "all",
     "--shm-size=8gb"
@@ -32,56 +28,3 @@
   },
   "postCreateCommand": "pip3 install -e . || true"
 }
-
-{
-  "name": "ML Trading GPU Development",
-  "dockerComposeFile": "../docker-compose.yml",
-  "service": "ml-gpu",
-  "workspaceFolder": "/app",
-  
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-python.debugpy",
-        "ms-toolsai.jupyter",
-        "njpwerner.autodocstring",
-        "visualstudioexptteam.vscodeintellicode"
-      ],
-      "settings": {
-        "python.defaultInterpreterPath": "/usr/bin/python3",
-        "python.linting.enabled": false,
-        "python.formatting.provider": "black",
-        "python.analysis.extraPaths": ["/app/src"],
-        "python.autoComplete.extraPaths": ["/app/src"],
-        "terminal.integrated.defaultProfile.linux": "bash",
-        "editor.formatOnSave": false,
-        "files.watcherExclude": {
-          "**/__pycache__/**": true,
-          "**/node_modules/**": true,
-          "**/.git/**": true
-        }
-      }
-    }
-  },
-  
-  "remoteUser": "root",
-  
-  "postCreateCommand": "pip install -q ipdb ipython",
-  
-  "mounts": [
-    "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached"
-  ],
-  
-  "runArgs": [
-    "--gpus=all",
-    "--shm-size=8gb"
-  ],
-  
-  "remoteEnv": {
-    "PYTHONPATH": "/app/src",
-    "PYTHONUNBUFFERED": "1"
-  }
-}
-
