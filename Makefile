@@ -24,10 +24,10 @@ MODEL_DIR ?= models
 RESULTS_DIR ?= results
 
 SYMBOL ?= BTCUSDT
-# SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT,MATICUSDT
+# SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT
 START_DATE ?= 2024-11-01
-END_DATE ?= 2025-04-30
+END_DATE ?= 2025-10-30
 YEAR ?= 2024
 START_YEAR ?= 2021
 END_YEAR ?= 2025
@@ -95,6 +95,7 @@ endif
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only auto-workflow vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report factor-analysis \
+		timeframe-forward-report \
 	cross-sectional-catalog \
 	cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
 
@@ -276,243 +277,58 @@ factor-analysis:
 		--quantiles $(FACTOR_ANALYSIS_QUANTILES) \
 		$(if $(FACTOR_ANALYSIS_FACTOR_NAME),--factor-name $(FACTOR_ANALYSIS_FACTOR_NAME),)
 
-# ---------------------------------------------------------------------------
-# Cross-sectional feature generation & analysis
-# ---------------------------------------------------------------------------
+timeframe-forward-report:
+	@echo "🧮 Analysing timeframe and forward bar correlations for $(SYMBOLS)..."
+	@mkdir -p $(TF_ANALYSIS_OUTPUT_DIR)
+	SYMBOLS_SPACE="$(shell echo $(SYMBOLS) | tr ',' ' ')" ; \
+	TIMEFRAMES_SPACE="$(shell echo $(TF_ANALYSIS_TIMEFRAMES) | tr ',' ' ')" ; \
+	FORWARD_BARS_SPACE="$(shell echo $(TF_ANALYSIS_FORWARD_BARS) | tr ',' ' ')" ; \
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.analysis.timeframe_forward_correlation \
+		--data-dir /workspace/$(DATA_DIR) \
+		--output-dir /workspace/$(TF_ANALYSIS_OUTPUT_DIR) \
+		--symbols $$SYMBOLS_SPACE \
+		--timeframes $$TIMEFRAMES_SPACE \
+		--forward-bars $$FORWARD_BARS_SPACE \
+		$(if $(TF_ANALYSIS_START),--start $(TF_ANALYSIS_START),) \
+		$(if $(TF_ANALYSIS_END),--end $(TF_ANALYSIS_END),) \
+		--max-lag $(TF_ANALYSIS_MAX_LAG) \
+		--min-samples $(TF_ANALYSIS_MIN_SAMPLES) \
+		--top-k $(TF_ANALYSIS_TOP_K) \
+		--feature-type $(TF_ANALYSIS_FEATURE_TYPE) \
+		$(if $(TF_ANALYSIS_EXTRA_FEATURES),--extra-features $(TF_ANALYSIS_EXTRA_FEATURES),) \
+		$(if $(TF_ANALYSIS_RUN_TAG),--run-tag $(TF_ANALYSIS_RUN_TAG),)
+	@echo "✅ Timeframe correlation report saved under $(TF_ANALYSIS_OUTPUT_DIR)"
+ifneq ($(TF_ANALYSIS_RUN_TAG),)
+	@TF_RUN_DIR="$(TF_ANALYSIS_OUTPUT_DIR)/$(TF_ANALYSIS_RUN_TAG)" ; \
+	if [ ! -f "$$TF_RUN_DIR/timeframe_forward_details.csv" ]; then \
+		echo "❌ Cannot find $$TF_RUN_DIR/timeframe_forward_details.csv -- did timeframe-forward-report succeed?"; \
+		exit 1; \
+	fi
+	@echo "🧾 Building strategy configuration from $(TF_ANALYSIS_RUN_TAG)..."
+	if ! $(DOCKER_RUN_NO_TTY) python3 -m time_series_model.analysis.timeframe_feature_selector \
+		--details-csv "/workspace/$(TF_ANALYSIS_OUTPUT_DIR)/$(TF_ANALYSIS_RUN_TAG)/timeframe_forward_details.csv" \
+		--output-dir "/workspace/$(TF_ANALYSIS_OUTPUT_DIR)/$(TF_ANALYSIS_RUN_TAG)/config" \
+		--pearson-threshold $(TF_CONFIG_PEARSON) \
+		--pvalue-threshold $(TF_CONFIG_PVALUE) \
+		--min-samples $(TF_CONFIG_MIN_SAMPLES) \
+		--top-features-per-symbol $(TF_CONFIG_TOP_PER_SYMBOL) \
+		--top-features-per-group $(TF_CONFIG_TOP_PER_GROUP); then \
+		echo "⚠️ No strategy groups generated (likely thresholds too strict)."; \
+	fi
+	@if [ -d "$(TF_ANALYSIS_OUTPUT_DIR)/$(TF_ANALYSIS_RUN_TAG)/config" ]; then \
+		echo "✅ Strategy configs written to $(TF_ANALYSIS_OUTPUT_DIR)/$(TF_ANALYSIS_RUN_TAG)/config"; \
+	else \
+		echo "ℹ️ Strategy configuration directory not created."; \
+	fi
+endif
 
-CS_BUILD_SYMBOLS ?= $(SYMBOLS)
-CS_BUILD_TIMEFRAME ?= $(FREQ)
-CS_BUILD_HORIZON ?= 12
-CS_BUILD_START ?= 2024-11-01
-CS_BUILD_END ?= 2025-04-30
-CS_BUILD_FEATURE_TYPE ?= baseline
-CS_BUILD_OUTPUT ?= $(RESULTS_DIR)/feature_exports/cs_panel_$(shell echo $(CS_BUILD_SYMBOLS) | tr ' ,' '__' | cut -c1-40)_$(CS_BUILD_TIMEFRAME)_$(CS_BUILD_HORIZON)b_$(CS_BUILD_FEATURE_TYPE)_$(shell echo $(CS_BUILD_START))_$(shell echo $(CS_BUILD_END)).parquet
-CS_BUILD_DROPNA ?= 1
-
-cross-sectional-build-panel:
-	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
-	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
-	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/generate_panel.py \
-		--symbols $$CS_BUILD_SYMBOLS_SPACE \
-		--timeframe $(CS_BUILD_TIMEFRAME) \
-		--horizon $(CS_BUILD_HORIZON) \
-		$(if $(CS_BUILD_START),--start-date $(CS_BUILD_START),) \
-		$(if $(CS_BUILD_END),--end-date $(CS_BUILD_END),) \
-		--feature-type $(CS_BUILD_FEATURE_TYPE) \
-		--output $(CS_BUILD_OUTPUT) \
-		$(if $(filter 0,$(CS_BUILD_DROPNA)),--no-dropna,) \
-		$(if $(DATA_DIR),--data-path $(DATA_DIR),)
-	@echo "✅ Panel saved to $(CS_BUILD_OUTPUT)"
-
-# ---------------------------------------------------------------------------
-# Cross-sectional Fama-MacBeth + Newey-West reporting
-# ---------------------------------------------------------------------------
-
-CS_INPUT ?= $(RESULTS_DIR)/feature_exports/*.parquet
-CS_OUTPUT ?= $(RESULTS_DIR)/cross_sectional/fama_macbeth_report.md
-CS_HORIZON ?= 12
-CS_MAX_LAG ?= 5
-CS_PERIODS_PER_YEAR ?= auto
-CS_WINSOR ?= 3.0
-CS_REPORT_EXTRA ?=
-
-cross-sectional-report:
-	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
-	@mkdir -p $(dir $(CS_OUTPUT))
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_famacbeth_report.py \
-		--input $(CS_INPUT) \
-		--output $(CS_OUTPUT) \
-		--symbols "$(SYMBOLS)" \
-		--horizon $(CS_HORIZON) \
-		--max-lag $(CS_MAX_LAG) \
-		--periods-per-year $(CS_PERIODS_PER_YEAR) \
-		--winsor $(CS_WINSOR) \
-		$(CS_REPORT_EXTRA)
-	@echo "✅ Report generated: $(CS_OUTPUT)"
-
-# ---------------------------------------------------------------------------
-# Cross-sectional training (boosting / Fama-MacBeth)
-# ---------------------------------------------------------------------------
-
-CS_TRAIN_INPUT ?= $(CS_INPUT)
-CS_TRAIN_OUTPUT_DIR ?= $(RESULTS_DIR)/cross_sectional/models
-CS_TRAIN_MODEL ?= boosting
-CS_TRAIN_MODEL_NAME ?= cs_boosting.joblib
-CS_TRAIN_FEATURE_COLS ?=
-CS_TRAIN_FEATURE_FILE ?=
-CS_TRAIN_EXTRA ?=
-CS_TRAIN_PRED_NAME ?= predictions.parquet
-CS_TRAIN_METRICS_NAME ?= metrics.json
-CS_TRAIN_AUTO_SELECT ?= 0
-CS_TRAIN_SELECT_TOPK ?=
-CS_TRAIN_IC_THRESHOLD ?=
-CS_TRAIN_IR_THRESHOLD ?=
-CS_TRAIN_SELECTION_STAT ?= ic
-
-cross-sectional-train:
-	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
-	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/train_cross_sectional_model.py \
-		--input $(CS_TRAIN_INPUT) \
-		--output-dir $(CS_TRAIN_OUTPUT_DIR) \
-		--symbols "$(SYMBOLS)" \
-		--horizon $(CS_HORIZON) \
-		--model $(CS_TRAIN_MODEL) \
-		--winsor $(CS_WINSOR) \
-		--periods-per-year $(CS_PERIODS_PER_YEAR) \
-		--model-name $(CS_TRAIN_MODEL_NAME) \
-		--predictions-name $(CS_TRAIN_PRED_NAME) \
-		--metrics-name $(CS_TRAIN_METRICS_NAME) \
-		$(if $(CS_TRAIN_FEATURE_FILE),--feature-file $(CS_TRAIN_FEATURE_FILE),) \
-		$(if $(filter 1,$(CS_TRAIN_AUTO_SELECT)),--auto-select,) \
-		$(if $(CS_TRAIN_SELECT_TOPK),--select-topk $(CS_TRAIN_SELECT_TOPK),) \
-		$(if $(CS_TRAIN_IC_THRESHOLD),--ic-threshold $(CS_TRAIN_IC_THRESHOLD),) \
-		$(if $(CS_TRAIN_IR_THRESHOLD),--ir-threshold $(CS_TRAIN_IR_THRESHOLD),) \
-		$(if $(CS_TRAIN_SELECTION_STAT),--selection-stat $(CS_TRAIN_SELECTION_STAT),) \
-		$(if $(CS_TRAIN_FEATURE_COLS),--feature-cols "$(CS_TRAIN_FEATURE_COLS)",) \
-		$(CS_TRAIN_EXTRA)
-	@echo "✅ Cross-sectional artefacts saved under $(CS_TRAIN_OUTPUT_DIR)"
-
-# ---------------------------------------------------------------------------
-# Full cross-sectional workflow (panel -> report -> training)
-# ---------------------------------------------------------------------------
-
-cross-sectional-workflow:
-	@echo "🔄 Running end-to-end cross-sectional pipeline..."
-	$(MAKE) cross-sectional-build-panel
-	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
-	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
-
-CS_CATALOG_INPUT ?= $(CS_BUILD_OUTPUT)
-CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
-
-cross-sectional-catalog:
-	@echo "🗂  Exporting factor catalogue from $(CS_CATALOG_INPUT)..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/export_factor_catalog.py \
-		--input $(CS_CATALOG_INPUT) \
-		--output-dir $(CS_CATALOG_OUTPUT)
-	@echo "✅ Factor sets saved to $(CS_CATALOG_OUTPUT)"
-
-CS_SELECT_INPUT ?= $(CS_BUILD_OUTPUT)
-CS_SELECT_OUTPUT ?= results/cross_sectional/selected_factors.txt
-CS_SELECT_OUTPUT_JSON ?= results/cross_sectional/selection_summary.json
-CS_SELECT_TARGET ?=
-CS_SELECT_MIN_ASSETS ?= 4
-CS_SELECT_PER_CATEGORY_TOP ?= 2
-CS_SELECT_GLOBAL_TOP ?= 12
-CS_SELECT_IC_THRESHOLD ?=
-CS_SELECT_IR_THRESHOLD ?=
-CS_SELECT_RANKING ?= ic
-CS_SELECT_INCLUDE ?=
-CS_SELECT_EXTRA ?=
-
-cross-sectional-select:
-	@echo "🧠 Auto-selecting factors from $(CS_SELECT_INPUT)..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/auto_select_factors.py \
-		--input $(CS_SELECT_INPUT) \
-		$(if $(CS_SELECT_TARGET),--target $(CS_SELECT_TARGET),) \
-		--min-assets $(CS_SELECT_MIN_ASSETS) \
-		--per-category-top $(CS_SELECT_PER_CATEGORY_TOP) \
-		--global-top $(CS_SELECT_GLOBAL_TOP) \
-		$(if $(CS_SELECT_IC_THRESHOLD),--ic-threshold $(CS_SELECT_IC_THRESHOLD),) \
-		$(if $(CS_SELECT_IR_THRESHOLD),--ir-threshold $(CS_SELECT_IR_THRESHOLD),) \
-		--ranking-stat $(CS_SELECT_RANKING) \
-		$(if $(CS_SELECT_INCLUDE),--include-categories $(CS_SELECT_INCLUDE),) \
-		--output $(CS_SELECT_OUTPUT) \
-		--output-json $(CS_SELECT_OUTPUT_JSON) \
-		$(CS_SELECT_EXTRA)
-	@echo "✅ Selected factors saved to $(CS_SELECT_OUTPUT)"
-
-CS_SHAP_MODEL ?= $(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)
-CS_SHAP_PANEL ?= $(CS_BUILD_OUTPUT)
-CS_SHAP_FEATURE_FILE ?= $(CS_AUTO_FEATURE_FILE)
-CS_SHAP_TARGET ?=
-CS_SHAP_TOPK ?= 10
-CS_SHAP_OUTPUT ?= results/cross_sectional/shap_reports
-CS_SHAP_MAX_SAMPLES ?= 2000
-CS_SHAP_ADDITIONAL ?=
-
-cross-sectional-shap:
-	@echo "📈 Running SHAP analysis..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_analysis.py \
-		--model $(CS_SHAP_MODEL) \
-		--panel $(CS_SHAP_PANEL) \
-		$(if $(CS_SHAP_FEATURE_FILE),--feature-file $(CS_SHAP_FEATURE_FILE),) \
-		$(if $(CS_SHAP_TARGET),--target $(CS_SHAP_TARGET),) \
-		--topk $(CS_SHAP_TOPK) \
-		--output-dir $(CS_SHAP_OUTPUT) \
-		--max-samples $(CS_SHAP_MAX_SAMPLES) \
-		$(CS_SHAP_ADDITIONAL)
-
-CS_LOGIC_EXPECTATIONS ?=
-CS_LOGIC_OUTPUT ?= results/cross_sectional/shap_logic_report.md
-CS_LOGIC_TOLERANCE ?= 0.0
-CS_LOGIC_EXTRA ?=
-
-cross-sectional-logic-check:
-	@echo "🧐 Validating factor economic logic..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_factor_logic_check.py \
-		--shap-manifest $(CS_SHAP_OUTPUT)/manifest.json \
-		--expectations $(CS_LOGIC_EXPECTATIONS) \
-		--tolerance $(CS_LOGIC_TOLERANCE) \
-		--output $(CS_LOGIC_OUTPUT) \
-		$(CS_LOGIC_EXTRA)
-
-CS_DRIFT_BASELINE ?= results/cross_sectional/shap_baseline.json
-CS_DRIFT_THRESHOLD ?= 0.5
-CS_DRIFT_OUTPUT ?= results/cross_sectional/shap_drift_report.md
-CS_DRIFT_UPDATE ?= 0
-CS_DRIFT_EXTRA ?=
-
-cross-sectional-shap-drift:
-	@echo "📉 Checking SHAP drift..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_drift_monitor.py \
-		--current $(CS_SHAP_OUTPUT)/manifest.json \
-		--baseline $(CS_DRIFT_BASELINE) \
-		--threshold $(CS_DRIFT_THRESHOLD) \
-		--output $(CS_DRIFT_OUTPUT) \
-		$(if $(filter 1,$(CS_DRIFT_UPDATE)),--update-baseline,) \
-		$(CS_DRIFT_EXTRA)
-
-CS_AUTO_PER_CATEGORY_TOP ?= 2
-CS_AUTO_GLOBAL_TOP ?= 12
-CS_AUTO_IC_THRESHOLD ?= 0.01
-CS_AUTO_IR_THRESHOLD ?= 0.5
-CS_AUTO_MIN_ASSETS ?= 4
-CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
-
-cross-sectional-auto:
-	@echo "🤖 Running fully automated cross-sectional pipeline..."
-	$(MAKE) cross-sectional-build-panel
-	$(MAKE) cross-sectional-select \
-		CS_SELECT_INPUT="$(CS_BUILD_OUTPUT)" \
-		CS_SELECT_OUTPUT="$(CS_AUTO_FEATURE_FILE)" \
-		CS_SELECT_OUTPUT_JSON="results/cross_sectional/selection_summary.json" \
-		CS_SELECT_MIN_ASSETS=$(CS_AUTO_MIN_ASSETS) \
-		CS_SELECT_PER_CATEGORY_TOP=$(CS_AUTO_PER_CATEGORY_TOP) \
-		CS_SELECT_GLOBAL_TOP=$(CS_AUTO_GLOBAL_TOP) \
-		CS_SELECT_IC_THRESHOLD=$(CS_AUTO_IC_THRESHOLD) \
-		CS_SELECT_IR_THRESHOLD=$(CS_AUTO_IR_THRESHOLD)
-	$(MAKE) cross-sectional-report \
-		CS_INPUT="$(CS_BUILD_OUTPUT)" \
-		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
-		CS_HORIZON=$(CS_BUILD_HORIZON) \
-		CS_REPORT_EXTRA="--feature-file $(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cross-sectional-train \
-		CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" \
-		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
-		CS_HORIZON=$(CS_BUILD_HORIZON) \
-		CS_PERIODS_PER_YEAR=$(CS_PERIODS_PER_YEAR) \
-		CS_TRAIN_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cross-sectional-shap \
-		CS_SHAP_MODEL="$(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)" \
-		CS_SHAP_PANEL="$(CS_BUILD_OUTPUT)" \
-		CS_SHAP_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cross-sectional-logic-check \
-		CS_LOGIC_EXPECTATIONS="$(CS_LOGIC_EXPECTATIONS)"
-	$(MAKE) cross-sectional-shap-drift \
-		CS_DRIFT_BASELINE="$(CS_DRIFT_BASELINE)"
+TF_CONFIG_DETAILS ?=
+TF_CONFIG_OUTPUT ?= results/timeframe_configs
+TF_CONFIG_PEARSON ?= 0.25
+TF_CONFIG_PVALUE ?= 1e-5
+TF_CONFIG_MIN_SAMPLES ?= 500
+TF_CONFIG_TOP_PER_SYMBOL ?= 5
+TF_CONFIG_TOP_PER_GROUP ?= 10
 
 FORWARD_BARS_TRAIN ?= 5,15,45,288
 
@@ -524,6 +340,22 @@ TRAIN_TOPK_SOURCE ?=
 MODEL_TYPE ?= classification
 DIRECTION_THRESHOLD ?= f1_optimize
 SAFE_MULTI_ASSET ?= 1
+
+# ---------------------------------------------------------------------------
+# Timeframe/forward selection analysis
+# ---------------------------------------------------------------------------
+
+TF_ANALYSIS_TIMEFRAMES ?= 15T,30T,60T,120T,240T
+TF_ANALYSIS_FORWARD_BARS ?= 3,6,12,24
+TF_ANALYSIS_START ?= $(START_DATE)
+TF_ANALYSIS_END ?= $(END_DATE)
+TF_ANALYSIS_MAX_LAG ?= 5
+TF_ANALYSIS_MIN_SAMPLES ?= 500
+TF_ANALYSIS_TOP_K ?= 5
+TF_ANALYSIS_FEATURE_TYPE ?= baseline
+TF_ANALYSIS_EXTRA_FEATURES ?=
+TF_ANALYSIS_RUN_TAG ?=
+TF_ANALYSIS_OUTPUT_DIR ?= results/timeframe_forward
 
 # Auto-tune hyperparameters
 AUTO_TUNE ?= 0
@@ -775,3 +607,241 @@ dim-compare:
 		$(DIM_COMPARE_ARGS)
 
 
+
+# ---------------------------------------------------------------------------
+# Cross-sectional feature generation & analysis
+# ---------------------------------------------------------------------------
+
+CS_BUILD_SYMBOLS ?= $(SYMBOLS)
+CS_BUILD_TIMEFRAME ?= $(FREQ)
+CS_BUILD_HORIZON ?= 12
+CS_BUILD_START ?= 2024-11-01
+CS_BUILD_END ?= 2025-04-30
+CS_BUILD_FEATURE_TYPE ?= baseline
+CS_BUILD_OUTPUT ?= $(RESULTS_DIR)/feature_exports/cs_panel_$(shell echo $(CS_BUILD_SYMBOLS) | tr ' ,' '__' | cut -c1-40)_$(CS_BUILD_TIMEFRAME)_$(CS_BUILD_HORIZON)b_$(CS_BUILD_FEATURE_TYPE)_$(shell echo $(CS_BUILD_START))_$(shell echo $(CS_BUILD_END)).parquet
+CS_BUILD_DROPNA ?= 1
+
+cross-sectional-build-panel:
+	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
+	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
+	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/generate_panel.py \
+		--symbols $$CS_BUILD_SYMBOLS_SPACE \
+		--timeframe $(CS_BUILD_TIMEFRAME) \
+		--horizon $(CS_BUILD_HORIZON) \
+		$(if $(CS_BUILD_START),--start-date $(CS_BUILD_START),) \
+		$(if $(CS_BUILD_END),--end-date $(CS_BUILD_END),) \
+		--feature-type $(CS_BUILD_FEATURE_TYPE) \
+		--output $(CS_BUILD_OUTPUT) \
+		$(if $(filter 0,$(CS_BUILD_DROPNA)),--no-dropna,) \
+		$(if $(DATA_DIR),--data-path $(DATA_DIR),)
+	@echo "✅ Panel saved to $(CS_BUILD_OUTPUT)"
+
+# ---------------------------------------------------------------------------
+# Cross-sectional Fama-MacBeth + Newey-West reporting
+# ---------------------------------------------------------------------------
+
+CS_INPUT ?= $(RESULTS_DIR)/feature_exports/*.parquet
+CS_OUTPUT ?= $(RESULTS_DIR)/cross_sectional/fama_macbeth_report.md
+CS_HORIZON ?= 12
+CS_MAX_LAG ?= 5
+CS_PERIODS_PER_YEAR ?= auto
+CS_WINSOR ?= 3.0
+CS_REPORT_EXTRA ?=
+
+cross-sectional-report:
+	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
+	@mkdir -p $(dir $(CS_OUTPUT))
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_famacbeth_report.py \
+		--input $(CS_INPUT) \
+		--output $(CS_OUTPUT) \
+		--symbols "$(SYMBOLS)" \
+		--horizon $(CS_HORIZON) \
+		--max-lag $(CS_MAX_LAG) \
+		--periods-per-year $(CS_PERIODS_PER_YEAR) \
+		--winsor $(CS_WINSOR) \
+		$(CS_REPORT_EXTRA)
+	@echo "✅ Report generated: $(CS_OUTPUT)"
+
+# ---------------------------------------------------------------------------
+# Cross-sectional training (boosting / Fama-MacBeth)
+# ---------------------------------------------------------------------------
+
+CS_TRAIN_INPUT ?= $(CS_INPUT)
+CS_TRAIN_OUTPUT_DIR ?= $(RESULTS_DIR)/cross_sectional/models
+CS_TRAIN_MODEL ?= boosting
+CS_TRAIN_MODEL_NAME ?= cs_boosting.joblib
+CS_TRAIN_FEATURE_COLS ?=
+CS_TRAIN_FEATURE_FILE ?=
+CS_TRAIN_EXTRA ?=
+CS_TRAIN_PRED_NAME ?= predictions.parquet
+CS_TRAIN_METRICS_NAME ?= metrics.json
+CS_TRAIN_AUTO_SELECT ?= 0
+CS_TRAIN_SELECT_TOPK ?=
+CS_TRAIN_IC_THRESHOLD ?=
+CS_TRAIN_IR_THRESHOLD ?=
+CS_TRAIN_SELECTION_STAT ?= ic
+
+cross-sectional-train:
+	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
+	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/train_cross_sectional_model.py \
+		--input $(CS_TRAIN_INPUT) \
+		--output-dir $(CS_TRAIN_OUTPUT_DIR) \
+		--symbols "$(SYMBOLS)" \
+		--horizon $(CS_HORIZON) \
+		--model $(CS_TRAIN_MODEL) \
+		--winsor $(CS_WINSOR) \
+		--periods-per-year $(CS_PERIODS_PER_YEAR) \
+		--model-name $(CS_TRAIN_MODEL_NAME) \
+		--predictions-name $(CS_TRAIN_PRED_NAME) \
+		--metrics-name $(CS_TRAIN_METRICS_NAME) \
+		$(if $(CS_TRAIN_FEATURE_FILE),--feature-file $(CS_TRAIN_FEATURE_FILE),) \
+		$(if $(filter 1,$(CS_TRAIN_AUTO_SELECT)),--auto-select,) \
+		$(if $(CS_TRAIN_SELECT_TOPK),--select-topk $(CS_TRAIN_SELECT_TOPK),) \
+		$(if $(CS_TRAIN_IC_THRESHOLD),--ic-threshold $(CS_TRAIN_IC_THRESHOLD),) \
+		$(if $(CS_TRAIN_IR_THRESHOLD),--ir-threshold $(CS_TRAIN_IR_THRESHOLD),) \
+		$(if $(CS_TRAIN_SELECTION_STAT),--selection-stat $(CS_TRAIN_SELECTION_STAT),) \
+		$(if $(CS_TRAIN_FEATURE_COLS),--feature-cols "$(CS_TRAIN_FEATURE_COLS)",) \
+		$(CS_TRAIN_EXTRA)
+	@echo "✅ Cross-sectional artefacts saved under $(CS_TRAIN_OUTPUT_DIR)"
+
+# ---------------------------------------------------------------------------
+# Full cross-sectional workflow (panel -> report -> training)
+# ---------------------------------------------------------------------------
+
+cross-sectional-workflow:
+	@echo "🔄 Running end-to-end cross-sectional pipeline..."
+	$(MAKE) cross-sectional-build-panel
+	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+
+CS_CATALOG_INPUT ?= $(CS_BUILD_OUTPUT)
+CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
+
+cross-sectional-catalog:
+	@echo "🗂  Exporting factor catalogue from $(CS_CATALOG_INPUT)..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/export_factor_catalog.py \
+		--input $(CS_CATALOG_INPUT) \
+		--output-dir $(CS_CATALOG_OUTPUT)
+	@echo "✅ Factor sets saved to $(CS_CATALOG_OUTPUT)"
+
+CS_SELECT_INPUT ?= $(CS_BUILD_OUTPUT)
+CS_SELECT_OUTPUT ?= results/cross_sectional/selected_factors.txt
+CS_SELECT_OUTPUT_JSON ?= results/cross_sectional/selection_summary.json
+CS_SELECT_TARGET ?=
+CS_SELECT_MIN_ASSETS ?= 4
+CS_SELECT_PER_CATEGORY_TOP ?= 2
+CS_SELECT_GLOBAL_TOP ?= 12
+CS_SELECT_IC_THRESHOLD ?=
+CS_SELECT_IR_THRESHOLD ?=
+CS_SELECT_RANKING ?= ic
+CS_SELECT_INCLUDE ?=
+CS_SELECT_EXTRA ?=
+
+cross-sectional-select:
+	@echo "🧠 Auto-selecting factors from $(CS_SELECT_INPUT)..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/auto_select_factors.py \
+		--input $(CS_SELECT_INPUT) \
+		$(if $(CS_SELECT_TARGET),--target $(CS_SELECT_TARGET),) \
+		--min-assets $(CS_SELECT_MIN_ASSETS) \
+		--per-category-top $(CS_SELECT_PER_CATEGORY_TOP) \
+		--global-top $(CS_SELECT_GLOBAL_TOP) \
+		$(if $(CS_SELECT_IC_THRESHOLD),--ic-threshold $(CS_SELECT_IC_THRESHOLD),) \
+		$(if $(CS_SELECT_IR_THRESHOLD),--ir-threshold $(CS_SELECT_IR_THRESHOLD),) \
+		--ranking-stat $(CS_SELECT_RANKING) \
+		$(if $(CS_SELECT_INCLUDE),--include-categories $(CS_SELECT_INCLUDE),) \
+		--output $(CS_SELECT_OUTPUT) \
+		--output-json $(CS_SELECT_OUTPUT_JSON) \
+		$(CS_SELECT_EXTRA)
+	@echo "✅ Selected factors saved to $(CS_SELECT_OUTPUT)"
+
+CS_SHAP_MODEL ?= $(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)
+CS_SHAP_PANEL ?= $(CS_BUILD_OUTPUT)
+CS_SHAP_FEATURE_FILE ?= $(CS_AUTO_FEATURE_FILE)
+CS_SHAP_TARGET ?=
+CS_SHAP_TOPK ?= 10
+CS_SHAP_OUTPUT ?= results/cross_sectional/shap_reports
+CS_SHAP_MAX_SAMPLES ?= 2000
+CS_SHAP_ADDITIONAL ?=
+
+cross-sectional-shap:
+	@echo "📈 Running SHAP analysis..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_analysis.py \
+		--model $(CS_SHAP_MODEL) \
+		--panel $(CS_SHAP_PANEL) \
+		$(if $(CS_SHAP_FEATURE_FILE),--feature-file $(CS_SHAP_FEATURE_FILE),) \
+		$(if $(CS_SHAP_TARGET),--target $(CS_SHAP_TARGET),) \
+		--topk $(CS_SHAP_TOPK) \
+		--output-dir $(CS_SHAP_OUTPUT) \
+		--max-samples $(CS_SHAP_MAX_SAMPLES) \
+		$(CS_SHAP_ADDITIONAL)
+
+CS_LOGIC_EXPECTATIONS ?=
+CS_LOGIC_OUTPUT ?= results/cross_sectional/shap_logic_report.md
+CS_LOGIC_TOLERANCE ?= 0.0
+CS_LOGIC_EXTRA ?=
+
+cross-sectional-logic-check:
+	@echo "🧐 Validating factor economic logic..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_factor_logic_check.py \
+		--shap-manifest $(CS_SHAP_OUTPUT)/manifest.json \
+		--expectations $(CS_LOGIC_EXPECTATIONS) \
+		--tolerance $(CS_LOGIC_TOLERANCE) \
+		--output $(CS_LOGIC_OUTPUT) \
+		$(CS_LOGIC_EXTRA)
+
+CS_DRIFT_BASELINE ?= results/cross_sectional/shap_baseline.json
+CS_DRIFT_THRESHOLD ?= 0.5
+CS_DRIFT_OUTPUT ?= results/cross_sectional/shap_drift_report.md
+CS_DRIFT_UPDATE ?= 0
+CS_DRIFT_EXTRA ?=
+
+cross-sectional-shap-drift:
+	@echo "📉 Checking SHAP drift..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_drift_monitor.py \
+		--current $(CS_SHAP_OUTPUT)/manifest.json \
+		--baseline $(CS_DRIFT_BASELINE) \
+		--threshold $(CS_DRIFT_THRESHOLD) \
+		--output $(CS_DRIFT_OUTPUT) \
+		$(if $(filter 1,$(CS_DRIFT_UPDATE)),--update-baseline,) \
+		$(CS_DRIFT_EXTRA)
+
+CS_AUTO_PER_CATEGORY_TOP ?= 2
+CS_AUTO_GLOBAL_TOP ?= 12
+CS_AUTO_IC_THRESHOLD ?= 0.01
+CS_AUTO_IR_THRESHOLD ?= 0.5
+CS_AUTO_MIN_ASSETS ?= 4
+CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
+
+cross-sectional-auto:
+	@echo "🤖 Running fully automated cross-sectional pipeline..."
+	$(MAKE) cross-sectional-build-panel
+	$(MAKE) cross-sectional-select \
+		CS_SELECT_INPUT="$(CS_BUILD_OUTPUT)" \
+		CS_SELECT_OUTPUT="$(CS_AUTO_FEATURE_FILE)" \
+		CS_SELECT_OUTPUT_JSON="results/cross_sectional/selection_summary.json" \
+		CS_SELECT_MIN_ASSETS=$(CS_AUTO_MIN_ASSETS) \
+		CS_SELECT_PER_CATEGORY_TOP=$(CS_AUTO_PER_CATEGORY_TOP) \
+		CS_SELECT_GLOBAL_TOP=$(CS_AUTO_GLOBAL_TOP) \
+		CS_SELECT_IC_THRESHOLD=$(CS_AUTO_IC_THRESHOLD) \
+		CS_SELECT_IR_THRESHOLD=$(CS_AUTO_IR_THRESHOLD)
+	$(MAKE) cross-sectional-report \
+		CS_INPUT="$(CS_BUILD_OUTPUT)" \
+		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
+		CS_HORIZON=$(CS_BUILD_HORIZON) \
+		CS_REPORT_EXTRA="--feature-file $(CS_AUTO_FEATURE_FILE)"
+	$(MAKE) cross-sectional-train \
+		CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" \
+		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
+		CS_HORIZON=$(CS_BUILD_HORIZON) \
+		CS_PERIODS_PER_YEAR=$(CS_PERIODS_PER_YEAR) \
+		CS_TRAIN_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
+	$(MAKE) cross-sectional-shap \
+		CS_SHAP_MODEL="$(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)" \
+		CS_SHAP_PANEL="$(CS_BUILD_OUTPUT)" \
+		CS_SHAP_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
+	$(MAKE) cross-sectional-logic-check \
+		CS_LOGIC_EXPECTATIONS="$(CS_LOGIC_EXPECTATIONS)"
+	$(MAKE) cross-sectional-shap-drift \
+		CS_DRIFT_BASELINE="$(CS_DRIFT_BASELINE)"

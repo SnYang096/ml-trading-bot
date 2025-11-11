@@ -145,6 +145,28 @@ class BaselineFeatureEngineer:
                                                                 raw=True)
 
     @staticmethod
+    def _compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+        """Calculate Wilder-style RSI."""
+        delta = series.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+
+        avg_gain = gain.ewm(alpha=1 / period, adjust=False,
+                            min_periods=period).mean()
+        avg_loss = loss.ewm(alpha=1 / period, adjust=False,
+                            min_periods=period).mean()
+
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        rsi = rsi.fillna(50.0)
+        return rsi.clip(0, 100)
+
+    @staticmethod
+    def _rolling_skew(series: pd.Series, window: int) -> pd.Series:
+        """Rolling skewness using pandas' Series.skew (biased)."""
+        return series.rolling(window=window, min_periods=window).skew()
+
+    @staticmethod
     def _ema(series: pd.Series, span: int) -> pd.Series:
         return series.ewm(span=span, adjust=False).mean()
 
@@ -709,11 +731,44 @@ class BaselineFeatureEngineer:
         data["channel_mid_pct_close"] = (mid / close_safe - 1.0).replace(
             [np.inf, -np.inf], np.nan).fillna(0.0)
 
+        # Price-volume divergence signals
+        if "rsi_14" not in data.columns:
+            data["rsi_14"] = self._compute_rsi(data["close"], period=14)
+
+        recent_high = data["close"].rolling(20, min_periods=5).max().ffill()
+        recent_rsi_high = data["rsi_14"].rolling(20,
+                                                 min_periods=5).max().ffill()
+        tol = 1e-8
+        divergence_mask = (recent_high.notna()
+                           & recent_rsi_high.notna()
+                           & (data["close"] >= (recent_high - tol))
+                           & (data["rsi_14"] < (recent_rsi_high - tol)))
+        data["rsi_divergence"] = divergence_mask.astype(float) * -1.0
+
+        price_vs_past = (data["close"] > data["close"].shift(5)).fillna(False)
+        avg_volume_20 = data["volume"].rolling(20, min_periods=5).mean()
+        low_volume_mask = (data["volume"] < avg_volume_20).fillna(False)
+        volume_div_mask = price_vs_past & low_volume_mask
+        data["volume_divergence"] = volume_div_mask.astype(float) * -1.0
+
         # Compression features
         # ATR percentile (rolling)
         atr_pct = self._rolling_percentile(data["atr"],
                                            window=self.percentile_window)
         data["atr_percentile"] = atr_pct
+
+        # Volatility skew features
+        returns = data["close"].pct_change().fillna(0.0)
+        realized_skew = self._rolling_skew(returns, window=20)
+        data["realized_skew"] = realized_skew.fillna(0.0).clip(
+            -self.feature_clip_bound, self.feature_clip_bound)
+
+        vol5 = returns.rolling(5, min_periods=1).std()
+        vol60 = returns.rolling(60, min_periods=1).std()
+        volatility_ratio = (vol5 / vol60.replace(0, np.nan)).replace(
+            [np.inf, -np.inf], np.nan).fillna(0.0)
+        data["volatility_ratio"] = volatility_ratio.clip(
+            -self.feature_clip_bound, self.feature_clip_bound)
 
         # ATR compression ratio: mean(ATR_hist)/ATR
         atr_mean_hist = data["atr"].rolling(self.percentile_window,
@@ -780,9 +835,13 @@ class BaselineFeatureEngineer:
                     if getattr(idx, "tz", None) is not None:
                         utc_idx = idx.tz_convert("UTC")
                         hour = utc_idx.hour.astype(int)
+                        midnight_delta = (utc_idx - utc_idx.normalize()
+                                          ).total_seconds() / 60.0
                     else:
                         # Assume timestamps are already UTC
                         hour = idx.hour.astype(int)
+                        midnight_delta = (
+                            idx - idx.normalize()).total_seconds() / 60.0
 
                     # Cyclic encoding: sin/cos transformation
                     # This preserves the periodic nature of hours (23 and 0 are close)
@@ -791,11 +850,14 @@ class BaselineFeatureEngineer:
 
                     # Also keep raw hour for reference (optional, can be excluded later)
                     data["Hour_of_Day"] = hour
+                    data["minutes_since_reset"] = (pd.Series(
+                        midnight_delta, index=data.index).fillna(0.0))
 
                 except Exception:
                     data["hour_sin"] = 0.0
                     data["hour_cos"] = 1.0
                     data["Hour_of_Day"] = 0
+                    data["minutes_since_reset"] = 0.0
 
                 # Is_Weekend (Sat/Sun): Binary 0/1, no normalization needed for tree models
                 try:
@@ -869,11 +931,13 @@ class BaselineFeatureEngineer:
                     data["no_trade_5min"] = 0
                     data["no_trade_15min"] = 0
                     data["no_trade_30min"] = 0
+                    data["minutes_since_reset"] = 0.0
             else:
                 # Fallback values if index doesn't have hour/dayofweek
                 data["hour_sin"] = 0.0
                 data["hour_cos"] = 1.0
                 data["Hour_of_Day"] = 0
+                data["minutes_since_reset"] = 0.0
                 data["Is_Weekend"] = 0
                 data["Minutes_Since_Last_Trade"] = 0.0
                 data["no_trade_5min"] = 0
@@ -884,6 +948,7 @@ class BaselineFeatureEngineer:
             data["hour_sin"] = 0.0
             data["hour_cos"] = 1.0
             data["Hour_of_Day"] = 0
+            data["minutes_since_reset"] = 0.0
             data["Is_Weekend"] = 0
             data["Minutes_Since_Last_Trade"] = 0.0
             data["no_trade_5min"] = 0
@@ -910,6 +975,20 @@ class BaselineFeatureEngineer:
             "compression_duration",
             "pre_break_silence",
             "compression_confidence",
+            "rsi_divergence",
+            "volume_divergence",
+            "realized_skew",
+            "volatility_ratio",
+            "hour_sin",
+            "hour_cos",
+            "Hour_of_Day",
+            "Is_Weekend",
+            "minutes_since_reset",
+            "Minutes_Since_Last_Trade",
+            "no_trade_5min",
+            "no_trade_15min",
+            "no_trade_30min",
+            "trade_gap_bin",
         ]
 
         # Clean up and keep OHLCV + features + advanced derived features

@@ -49,6 +49,7 @@ class EnhancedFeatureEngineer:
         self.wavelet = wavelet
         self.wpt_level = wpt_level
         self.hurst_window = hurst_window
+        self.hurst_lags = np.array([5, 10, 20, 40, 80, 160], dtype=int)
         self.feature_shift = feature_shift
         self.feature_clip_bound = float(feature_clip_bound)
         self.enable_diagnostics = enable_diagnostics
@@ -154,6 +155,91 @@ class EnhancedFeatureEngineer:
             print(f"⚠️  EnhancedFeatureEngineer diagnostics ({timeframe}):")
             for msg in messages:
                 print(msg)
+
+    def _get_hurst_lags(self, window: int) -> np.ndarray:
+        usable = self.hurst_lags[self.hurst_lags < max(window // 2, 3)]
+        if usable.size >= 2:
+            return usable
+        upper = max(4, window // 2)
+        if upper <= 2:
+            return np.array([2, 3], dtype=int)
+        generated = np.linspace(2, upper, num=4, dtype=int)
+        generated = np.unique(generated)
+        generated = generated[generated >= 2]
+        if generated.size < 2:
+            generated = np.array([2, upper], dtype=int)
+        return generated
+
+    def _rolling_hurst_fast(
+        self,
+        series: np.ndarray,
+        window: int,
+        lags: np.ndarray,
+        min_valid_ratio: float = 0.8,
+    ) -> np.ndarray:
+        series = np.asarray(series, dtype=float)
+        n = len(series)
+        hurst = np.full(n, np.nan, dtype=float)
+        if window <= 0 or n == 0:
+            return hurst
+
+        lags = lags[(lags >= 2) & (lags < window)]
+        if lags.size < 2:
+            return hurst
+
+        log_lags = np.log(lags)
+
+        for end in range(window, n + 1):
+            window_slice = series[end - window:end]
+            finite_mask = np.isfinite(window_slice)
+            if finite_mask.mean() < min_valid_ratio:
+                hurst[end - 1] = np.nan
+                continue
+            ts = window_slice[finite_mask]
+            if ts.size < 10:
+                hurst[end - 1] = np.nan
+                continue
+
+            rs_values: List[float] = []
+            for lag in lags:
+                max_blocks = ts.size // lag
+                if max_blocks < 2:
+                    rs_values.append(np.nan)
+                    continue
+                blocks = ts[:max_blocks * lag].reshape(max_blocks, lag)
+                blocks = blocks - blocks.mean(axis=1, keepdims=True)
+                cum_dev = np.cumsum(blocks, axis=1)
+                ranges = cum_dev.max(axis=1) - cum_dev.min(axis=1)
+                stdevs = blocks.std(axis=1, ddof=1)
+                valid = stdevs > 1e-8
+                if not np.any(valid):
+                    rs_values.append(np.nan)
+                    continue
+                rs = ranges[valid] / (stdevs[valid] + 1e-8)
+                if rs.size == 0:
+                    rs_values.append(np.nan)
+                    continue
+                rs_values.append(np.mean(rs))
+
+            rs_arr = np.array(rs_values, dtype=float)
+            valid_rs = np.isfinite(rs_arr) & (rs_arr > 0)
+            if valid_rs.sum() < 2:
+                hurst[end - 1] = np.nan
+                continue
+
+            try:
+                slope = np.polyfit(
+                    log_lags[valid_rs],
+                    np.log(rs_arr[valid_rs]),
+                    1,
+                )[0]
+                hurst[end - 1] = np.clip(slope, 0.0, 1.0)
+            except Exception:
+                hurst[end - 1] = np.nan
+
+        if window > 0:
+            hurst[:window - 1] = np.nan
+        return hurst
 
     def calculate_hurst_exponent(self,
                                  ts: np.ndarray,
@@ -360,19 +446,16 @@ class EnhancedFeatureEngineer:
         print(f"      Hurst计算信号源: {list(signal_sources.keys())}")
 
         # 对每个信号源计算Hurst
-        for source_name, source_data in signal_sources.items():
-            # Rolling Hurst exponent
-            hurst_values = []
-            for i in range(len(source_data)):
-                if i < window:
-                    hurst_values.append(0.5)
-                else:
-                    window_data = source_data[i - window:i]
-                    h = self.calculate_hurst_exponent(window_data)
-                    hurst_values.append(h)
+        hurst_lags = self._get_hurst_lags(window)
 
-            # 主Hurst值
-            df[f"{source_name}_hurst"] = hurst_values
+        for source_name, source_data in signal_sources.items():
+            hurst_series = self._rolling_hurst_fast(
+                source_data,
+                window=window,
+                lags=hurst_lags,
+            )
+            hurst_series = np.nan_to_num(hurst_series, nan=0.5)
+            df[f"{source_name}_hurst"] = hurst_series
 
             # Hurst衍生特征
             df[f"{source_name}_hurst_deviation"] = df[
@@ -505,15 +588,40 @@ class EnhancedFeatureEngineer:
                                           posinf=0.0,
                                           neginf=0.0)
 
-                df[f"{source_name}_hilbert_amplitude"] = amplitude[:len(df)]
-                df[f"{source_name}_hilbert_phase"] = phase[:len(df)]
-                df[f"{source_name}_hilbert_frequency"] = frequency[:len(df)]
+                amplitude_series = pd.Series(amplitude[:len(df)], index=df.index)
+                phase_series = pd.Series(phase[:len(df)], index=df.index)
+                frequency_series = pd.Series(frequency[:len(df)],
+                                             index=df.index)
+
+                df[f"{source_name}_hilbert_amplitude"] = amplitude_series.values
+                df[f"{source_name}_hilbert_phase"] = phase_series.values
+                df[f"{source_name}_hilbert_frequency"] = frequency_series.values
+
+                # Phase-based enhancements
+                phase_sin = np.sin(phase_series.values)
+                phase_cos = np.cos(phase_series.values)
+
+                phase_unwrapped = np.unwrap(phase_series.values)
+                phase_unwrapped_series = pd.Series(phase_unwrapped,
+                                                   index=df.index)
+                phase_change = phase_unwrapped_series.diff().fillna(0.0)
+                phase_acceleration = phase_change.diff().fillna(0.0)
+
+                df[f"{source_name}_hilbert_phase_sin"] = phase_sin
+                df[f"{source_name}_hilbert_phase_cos"] = phase_cos
+                df[f"{source_name}_hilbert_phase_change"] = phase_change.values
+                df[f"{source_name}_hilbert_phase_acceleration"] = (
+                    phase_acceleration.values)
 
             except Exception as e:
                 print(f"      Warning: Hilbert for {source_name} failed: {e}")
                 df[f"{source_name}_hilbert_amplitude"] = 0
                 df[f"{source_name}_hilbert_phase"] = 0
                 df[f"{source_name}_hilbert_frequency"] = 0
+                df[f"{source_name}_hilbert_phase_sin"] = 0
+                df[f"{source_name}_hilbert_phase_cos"] = 1
+                df[f"{source_name}_hilbert_phase_change"] = 0
+                df[f"{source_name}_hilbert_phase_acceleration"] = 0
 
         return df
 
