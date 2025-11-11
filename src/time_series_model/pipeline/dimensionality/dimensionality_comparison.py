@@ -1745,7 +1745,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             s = dfX[c]
             if s.isna().mean() < 0.2 and s.std() > 1e-8:
                 keep_all.append(c)
-        df_all = dfX[keep_all].ffill().bfill().fillna(0.0)
+        df_all = dfX[keep_all].fillna(method="ffill").fillna(
+            method="bfill").fillna(0.0)
         X_all = df_all.values
         scaler_all = StandardScaler()
         X_all_scaled = sanitize_features(scaler_all.fit_transform(X_all))
@@ -1788,7 +1789,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             s = df_ic[c]
             if s.isna().mean() < 0.2 and s.std() > 1e-8:
                 keep_ic.append(c)
-        df_ic_clean = df_ic[keep_ic].ffill().bfill().fillna(0.0)
+        df_ic_clean = df_ic[keep_ic].fillna(method="ffill").fillna(
+            method="bfill").fillna(0.0)
 
         # Greedy representative selection by correlation threshold (0.9)
         reps: list[str] = []

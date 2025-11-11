@@ -40,10 +40,6 @@ import pandas as pd
 from time_series_model.pipeline.dimensionality import dimensionality_comparison as dim_compare
 from time_series_model.pipeline.training import rolling as rolling_module
 from time_series_model.pipeline.training import train as train_module
-from time_series_model.pipeline.training import train_regime_gated as gated_train_module
-from time_series_model.pipeline.workflows import gated_to_position as gated_workflow_module
-from time_series_model.monitoring import online_monitors as monitors_module
-from time_series_model.monitoring.model_registry import ModelRegistry
 
 
 def _print_header(msg: str) -> None:
@@ -217,42 +213,6 @@ def parse_args() -> argparse.Namespace:
         help="If drift detected, re-run comparison with recent window (limited by --max-iterations).",
     )
     parser.add_argument("--gpu", action="store_true", default=False)
-    # Optional: gated experts path
-    parser.add_argument(
-        "--use-gated-experts",
-        action="store_true",
-        help="Enable training of Momentum/MeanReversion/Breakout experts and generate positions.",
-    )
-    parser.add_argument(
-        "--run-forward-selection",
-        action="store_true",
-        help="Run forward horizon selection (information efficiency) before training.",
-    )
-    parser.add_argument(
-        "--gated-timeframes",
-        default="15T,60T,240T",
-        help="Comma-separated timeframes for gated experts (e.g., 15T,60T,240T).",
-    )
-    parser.add_argument(
-        "--gated-save-dir",
-        default="results/gated_positions",
-        help="Where to save gated positions outputs.",
-    )
-    parser.add_argument(
-        "--gated-horizons",
-        default="",
-        help="Comma-separated forward horizons for gated multi-horizon fusion, e.g., 2,6,12 (optional).",
-    )
-    parser.add_argument(
-        "--run-monitors",
-        action="store_true",
-        help="Run online monitoring (calibration & drift) after gated positions.",
-    )
-    parser.add_argument(
-        "--registry-path",
-        default="",
-        help="Optional path to JSON registry for logging model artifacts.",
-    )
     return parser.parse_args()
 
 
@@ -260,13 +220,8 @@ def main() -> None:
     args = parse_args()
     Path("results").mkdir(exist_ok=True)
 
-    registry: Optional[ModelRegistry] = None
-    if args.registry_path:
-        registry = ModelRegistry(args.registry_path)
-
     compare_start = args.compare_start
     compare_end = args.compare_end
-    gated_timeframes = args.gated_timeframes
     train_start = args.train_start
     train_end = args.train_end
     rolling_start = args.rolling_start
@@ -277,28 +232,6 @@ def main() -> None:
 
     for iteration in range(1, args.max_iterations + 1):
         _print_header(f"AUTO WORKFLOW ITERATION #{iteration}")
-
-        # ---------------- Optional: Forward selection ----------------
-        if args.run_forward_selection:
-            _print_header("Pre-Stage: Forward Horizon Selection")
-            try:
-                from time_series_model.pipeline.training import forward_selection as fsel
-                fsel_args: List[str] = [
-                    "--data-dir",
-                    args.data_dir,
-                    "--symbol",
-                    args.symbols,
-                    "--timeframes",
-                    gated_timeframes,
-                    "--max-forward",
-                    "48",
-                    "--save-dir",
-                    "results/forward_selection",
-                ]
-                with _argv_context(fsel_args):
-                    fsel.main()
-            except Exception as e:
-                print(f"⚠️ Forward selection failed: {e}")
 
         # ---------------- Stage 1: Dimensionality comparison ----------------
         if not args.skip_compare or (args.auto_recompare and iteration > 1):
@@ -331,15 +264,6 @@ def main() -> None:
             shap_dir = results.get("explainability", {}).get("stage3_shap_dir")
             if shap_dir:
                 print(f"📊 SHAP explainability artifacts: {shap_dir}")
-            if registry and compare_dir:
-                registry.log(
-                    pipeline="dimension_selection",
-                    symbol=args.symbols,
-                    artifact_path=str(compare_dir),
-                    metrics={},
-                    params={"top_k": args.top_k},
-                    notes=f"shap_dir={shap_dir}" if shap_dir else None,
-                )
         elif not top_factors_path:
             raise ValueError("Top factors not provided; cannot skip comparison stage.")
 
@@ -380,97 +304,6 @@ def main() -> None:
             train_args.append("--gpu")
         training_dir = _run_training(train_args)
         print(f"📁 Training results directory: {training_dir or 'N/A'}")
-        if registry and training_dir:
-            registry.log(
-                pipeline="ts_training",
-                symbol=args.symbols,
-                artifact_path=str(training_dir),
-                metrics={},
-                params={
-                    "freq": args.freqs,
-                    "forward_bars_train": args.forward_bars_train,
-                    "cv_folds": args.cv_folds,
-                },
-            )
-
-        # ---------------- Stage 2b: Regime-gated experts (optional) ----------------
-        if args.use_gated_experts:
-            _print_header("Stage 2b: Gated Experts (Momentum@1h, MeanReversion@15m, Breakout@1h/4h)")
-            # Train experts
-            gated_train_args: List[str] = [
-                "--data-dir",
-                args.data_dir,
-                "--symbol",
-                args.symbols,
-                "--feature-type",
-                args.feature_type,
-                "--timeframes",
-                args.gated_timeframes,
-            ]
-            with _argv_context(gated_train_args):
-                gated_train_module.main()
-            # Generate positions with RiskManager
-            gated_positions_args: List[str] = [
-                "--data-dir",
-                args.data_dir,
-                "--symbol",
-                args.symbols,
-                "--timeframes",
-                args.gated_timeframes,
-                "--save-dir",
-                args.gated_save_dir,
-            ]
-            if args.gated_horizons:
-                gated_positions_args.extend(["--multi-horizons", args.gated_horizons])
-            with _argv_context(gated_positions_args):
-                gated_workflow_module.main()
-            print(f"✅ Gated experts trained and positions generated in {args.gated_save_dir}")
-            pos_path = Path(args.gated_save_dir) / args.symbols / "positions.parquet"
-            if registry and pos_path.exists():
-                registry.log(
-                    pipeline="ts_gated_positions",
-                    symbol=args.symbols,
-                    artifact_path=str(pos_path),
-                    metrics={},
-                    params={
-                        "timeframes": args.gated_timeframes,
-                        "horizons": args.gated_horizons or "6",
-                    },
-                )
-            # Online monitoring
-            if args.run_monitors:
-                _print_header("Stage 2c: Online Monitoring (Calibration & Drift)")
-                try:
-                    pos_path = Path(args.gated_save_dir) / args.symbols / "positions.parquet"
-                    if pos_path.exists():
-                        mon_args: List[str] = [
-                            "--data-dir",
-                            args.data_dir,
-                            "--symbol",
-                            args.symbols,
-                            "--positions",
-                            str(pos_path),
-                            "--price-tf",
-                            "60T",
-                            "--forward-bars",
-                            "6",
-                            "--save-dir",
-                            "results/monitoring",
-                        ]
-                        with _argv_context(mon_args):
-                            monitors_module.main()
-                        if registry:
-                            registry.log(
-                                pipeline="ts_monitoring",
-                                symbol=args.symbols,
-                                artifact_path=str(Path("results/monitoring") / args.symbols),
-                                metrics={},
-                                params={},
-                            )
-                    else:
-                        print(f"⚠️ Positions file not found for monitoring: {pos_path}")
-                except Exception as e:
-                    print(f"⚠️ Monitoring failed: {e}")
 
         # ---------------- Stage 3: Rolling ----------------
         _print_header("Stage 3: Rolling Evaluation")
@@ -509,17 +342,6 @@ def main() -> None:
             print("⚠️ Rolling output directory not detected.")
             return
         print(f"📁 Rolling results directory: {rolling_dir}")
-        if registry and rolling_dir:
-            registry.log(
-                pipeline="ts_rolling",
-                symbol=args.symbols,
-                artifact_path=str(rolling_dir),
-                metrics={},
-                params={
-                    "timeframes": args.freqs,
-                    "forward_bars_rolling": args.forward_bars_rolling,
-                },
-            )
 
         summary_path = Path(rolling_dir) / "summary.json"
         drift, issues = _check_drift(summary_path)

@@ -163,13 +163,9 @@ class FactorPanelBuilder:
         filled = panel.copy()
         method = cfg.fill_method
         if method in {"ffill", "bfill"}:
-            def _fill_group(grp: pd.DataFrame) -> pd.DataFrame:
-                ordered = grp.sort_index(level=self.config.timestamp_col)
-                if method == "ffill":
-                    return ordered.ffill()
-                return ordered.bfill()
-
-            filled = filled.groupby(level=self.config.symbol_col).apply(_fill_group)
+            filled = filled.groupby(level=self.config.symbol_col).apply(
+                lambda grp: grp.sort_index(level=self.config.timestamp_col).fillna(method=method)
+            )
             # Groupby adds index level; remove it
             filled.index = filled.index.droplevel(0)
         elif method == "zero":

@@ -110,7 +110,7 @@ class RegimeHMMSmoother:
         if features.isna().all(axis=None):
             raise ValueError("features must contain at least one non-NaN value.")
         filled = features.copy()
-        filled = filled.ffill().bfill()
+        filled = filled.fillna(method="ffill").fillna(method="bfill")
         return filled
 
     @staticmethod
