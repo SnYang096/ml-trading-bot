@@ -394,7 +394,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     prices.index = pd.DatetimeIndex(prices.index)
     if hasattr(prices.index, 'tz') and prices.index.tz is not None:
         prices.index = prices.index.tz_localize(None)
-    
+
     # For intraday data, Alphalens has issues with frequency validation
     # We'll remove freq attribute completely to avoid the error
     # Create a new index without freq
@@ -437,34 +437,43 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     # Monkey-patch Alphalens to avoid frequency validation errors for intraday data
     import alphalens.utils as al_utils
     original_compute_forward_returns = al_utils.compute_forward_returns
-    
-    def patched_compute_forward_returns(factor, prices, periods, filter_zscore=None, cumulative_returns=True):
+
+    def patched_compute_forward_returns(factor,
+                                        prices,
+                                        periods,
+                                        filter_zscore=None,
+                                        cumulative_returns=True):
         """Patched version that skips frequency validation for intraday data"""
         try:
-            return original_compute_forward_returns(factor, prices, periods, filter_zscore, cumulative_returns)
+            return original_compute_forward_returns(factor, prices, periods,
+                                                    filter_zscore,
+                                                    cumulative_returns)
         except (ValueError, OverflowError) as e:
             if "frequency" in str(e).lower() or "overflow" in str(e).lower():
                 # Remove freq from MultiIndex to avoid validation
-                if hasattr(factor.index, 'levels') and len(factor.index.levels) > 0:
+                if hasattr(factor.index, 'levels') and len(
+                        factor.index.levels) > 0:
                     try:
                         # Create new index without freq
                         date_level = factor.index.levels[0]
-                        if hasattr(date_level, 'freq') and date_level.freq is not None:
-                            new_date_level = pd.DatetimeIndex(date_level.values, freq=None)
+                        if hasattr(date_level,
+                                   'freq') and date_level.freq is not None:
+                            new_date_level = pd.DatetimeIndex(
+                                date_level.values, freq=None)
                             new_index = pd.MultiIndex.from_arrays(
-                                [new_date_level, factor.index.levels[1]], 
-                                names=factor.index.names
-                            )
+                                [new_date_level, factor.index.levels[1]],
+                                names=factor.index.names)
                             factor = factor.reindex(new_index)
                     except Exception:
                         pass
                 # Retry
-                return original_compute_forward_returns(factor, prices, periods, filter_zscore, cumulative_returns)
+                return original_compute_forward_returns(
+                    factor, prices, periods, filter_zscore, cumulative_returns)
             raise
-    
+
     # Apply monkey-patch
     al_utils.compute_forward_returns = patched_compute_forward_returns
-    
+
     try:
         factor_data = al.utils.get_clean_factor_and_forward_returns(
             factor=factor,
@@ -473,7 +482,8 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             quantiles=10,  # Use 10 quantiles for factor analysis
             bins=None,
             binning_by_group=False,
-            max_loss=0.99,  # Allow up to 99% loss to avoid dropping too much data
+            max_loss=
+            0.99,  # Allow up to 99% loss to avoid dropping too much data
         )
     except (ValueError, OverflowError, TypeError) as e:
         # Restore original function
