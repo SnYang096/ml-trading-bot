@@ -452,22 +452,36 @@ def compute_correlations(
         target_col = f"future_return_{horizon}"
         df[target_col] = df["log_price"].shift(-horizon) - df["log_price"]
 
-        data = df[list(feature_cols) + [target_col]].dropna()
-        if len(data) < min_samples:
+        # Ensure target column exists and has valid values
+        target_data = df[[target_col]].dropna()
+        if len(target_data) < min_samples:
             continue
 
-        target_values = data[target_col].values
-        if np.isclose(np.std(target_values), 0):
+        target_values_all = df[target_col].values
+        if np.isclose(np.std(target_values_all[~np.isnan(target_values_all)]), 0):
             continue
 
+        # Compute correlation for each feature individually
+        # This allows features with different NaN patterns to use all available data
         for feature in feature_cols:
-            feature_values = data[feature].values
-            if np.isclose(np.std(feature_values), 0):
+            if feature not in df.columns:
+                continue
+            
+            # Get valid pairs for this specific feature-target combination
+            feature_values = df[feature].values
+            valid_mask = ~(np.isnan(feature_values) | np.isnan(target_values_all))
+            
+            if valid_mask.sum() < min_samples:
+                continue
+            
+            feature_valid = feature_values[valid_mask]
+            target_valid = target_values_all[valid_mask]
+            
+            if np.isclose(np.std(feature_valid), 0) or np.isclose(np.std(target_valid), 0):
                 continue
 
-            pearson_corr, pearson_p = pearsonr(feature_values, target_values)
-            spearman_corr, spearman_p = spearmanr(feature_values,
-                                                  target_values)
+            pearson_corr, pearson_p = pearsonr(feature_valid, target_valid)
+            spearman_corr, spearman_p = spearmanr(feature_valid, target_valid)
 
             results.append({
                 "forward_bars": horizon,
@@ -476,7 +490,7 @@ def compute_correlations(
                 "pearson_p": pearson_p,
                 "spearman_corr": spearman_corr,
                 "spearman_p": spearman_p,
-                "samples": len(data),
+                "samples": valid_mask.sum(),
             })
 
     return results

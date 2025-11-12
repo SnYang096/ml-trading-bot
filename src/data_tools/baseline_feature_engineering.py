@@ -757,6 +757,19 @@ class BaselineFeatureEngineer:
                                            window=self.percentile_window)
         data["atr_percentile"] = atr_pct
 
+        # Volatility regime: binary feature indicating high volatility state
+        # This helps the model learn: trust trend signals more in high volatility,
+        # reduce positions in low volatility
+        # Window: 200 bars, threshold: 70th percentile
+        volatility_regime_window = 200
+        volatility_regime_threshold = 0.7
+        atr_quantile_70 = data["atr"].rolling(
+            window=volatility_regime_window, min_periods=1
+        ).quantile(volatility_regime_threshold)
+        data["volatility_regime"] = (
+            data["atr"] > atr_quantile_70
+        ).astype(int).fillna(0)
+
         # Volatility skew features
         returns = data["close"].pct_change().fillna(0.0)
         realized_skew = self._rolling_skew(returns, window=20)

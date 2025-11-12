@@ -7,6 +7,7 @@
 1. feature_engineering.py - 基础 + TA-Lib 特征工程
 2. feature_engineering_enhanced.py - 增强版特征工程（含WPT/订单流等）
 3. dl_sequence_features.py - 深度学习序列特征
+4. alpha_factors/alpha101_feature_engineer.py - WorldQuant Alpha101 因子集
 """
 
 import pandas as pd
@@ -22,6 +23,7 @@ from .feature_engineering_enhanced import EnhancedFeatureEngineer
 from .feature_engineering_talib import TalibFeatureEngineer
 from .dl_sequence_features import add_dl_sequence_features
 from .baseline_feature_engineering import BaselineFeatureEngineer, engineer_baseline_features, get_baseline_feature_columns
+from .alpha_factors.alpha101_feature_engineer import Alpha101FeatureEngineer
 
 
 class ComprehensiveFeatureEngineer:
@@ -37,6 +39,7 @@ class ComprehensiveFeatureEngineer:
     - spectral: 光谱分析特征（频域特征）
     - order_flow: 订单流特征（CVD/订单流不平衡等）
     - dl_sequence: 深度学习序列特征
+    - alpha101: WorldQuant Alpha101 因子集
     - comprehensive: 所有特征合并
     """
 
@@ -68,8 +71,9 @@ class ComprehensiveFeatureEngineer:
                 - 'spectral': 只用光谱分析特征
                 - 'order_flow': 只用订单流特征
                 - 'dl_sequence': 只用深度学习序列特征
+                - 'alpha101': 只用 WorldQuant Alpha101 因子集
                 - 'comprehensive': 所有特征合并
-                - 逗号分隔的组合: 'baseline,default,hurst' 等
+                - 逗号分隔的组合: 'baseline,alpha101,hurst' 等
             scaler_type: 标准化类型 ('standard', 'minmax', 'robust')
             wavelet: 小波类型
             wpt_level: 小波包分解层级
@@ -99,6 +103,7 @@ class ComprehensiveFeatureEngineer:
             self.use_default = True  # default = talib + base_indicators
             self.use_enhanced = True
             self.use_dl_sequence = True
+            self.use_alpha101 = True
             # 如果使用 comprehensive 或 enhanced，默认启用所有子模块
             self.use_hurst = True
             self.use_wavelet = True
@@ -112,7 +117,8 @@ class ComprehensiveFeatureEngineer:
             self.use_default = "default" in feature_list  # default = FeatureEngineer (talib + base_indicators)
             self.use_enhanced = "enhanced" in feature_list
             self.use_dl_sequence = "dl_sequence" in feature_list
-            
+            self.use_alpha101 = "alpha101" in feature_list
+
             # 细粒度 enhanced 子模块控制
             # 如果指定了 enhanced，默认启用所有子模块
             if self.use_enhanced:
@@ -133,6 +139,7 @@ class ComprehensiveFeatureEngineer:
         self.basic_engineer = None  # FeatureEngineer (talib + base_indicators)
         self.enhanced_engineer = None
         self.baseline_engineer = None
+        self.alpha101_engineer: Optional[Alpha101FeatureEngineer] = None
 
         # 默认传统指标：使用 FeatureEngineer (talib + base_indicators)
         if self.use_default or self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow or feature_types == "comprehensive":
@@ -152,6 +159,8 @@ class ComprehensiveFeatureEngineer:
                 percentile_window=baseline_percentile_window,
                 compression_threshold_pct=baseline_compression_threshold_pct,
             )
+        if self.use_alpha101:
+            self.alpha101_engineer = Alpha101FeatureEngineer()
 
         # 特征统计
         self.feature_stats = {}
@@ -177,6 +186,7 @@ class ComprehensiveFeatureEngineer:
 
         baseline_features = 0
         default_features = 0  # TA-Lib + base_indicators
+        alpha101_features = 0
         enhanced_features = 0
         dl_features = 0
 
@@ -205,7 +215,23 @@ class ComprehensiveFeatureEngineer:
             except Exception as e:
                 print(f"     ⚠️  默认传统指标特征失败: {e}")
 
-        # 3. 增强版特征工程 (细粒度控制：Hurst, Wavelet, Hilbert, Spectral, Order Flow)
+        # 3. Alpha101 因子特征
+        if self.use_alpha101:
+            print("  📊 Alpha101 因子特征...")
+            try:
+                if self.alpha101_engineer is None:
+                    self.alpha101_engineer = Alpha101FeatureEngineer()
+                alpha_source = df[["open", "high", "low", "close", "volume"]]
+                alpha_df = self.alpha101_engineer.compute(alpha_source)
+                alpha_df = alpha_df.reindex(df.index)
+                df = df.join(alpha_df, how="left")
+                alpha101_features = len(df.columns) - prev_count
+                prev_count = len(df.columns)
+                print(f"     ✅ Alpha101特征: {alpha101_features} 个")
+            except Exception as e:
+                print(f"     ⚠️  Alpha101特征失败: {e}")
+
+        # 4. 增强版特征工程 (细粒度控制：Hurst, Wavelet, Hilbert, Spectral, Order Flow)
         use_any_enhanced = self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow
         if use_any_enhanced:
             import os, time
@@ -234,31 +260,34 @@ class ComprehensiveFeatureEngineer:
 
                 # Hurst（较快）
                 if self.use_enhanced or self.use_hurst:
-                    df = _run("Hurst", self.enhanced_engineer.add_hurst_features,
-                              df)
-                
+                    df = _run("Hurst",
+                              self.enhanced_engineer.add_hurst_features, df)
+
                 # Wavelet（较重）
                 if self.use_enhanced or self.use_wavelet:
                     if not fast_mode:
                         df = _run(
                             "WaveletPacket",
-                            self.enhanced_engineer.add_wavelet_packet_features, df)
-                
+                            self.enhanced_engineer.add_wavelet_packet_features,
+                            df)
+
                 # Spectral（较重）
                 if self.use_enhanced or self.use_spectral:
                     if not fast_mode:
                         df = _run("Spectral",
-                                  self.enhanced_engineer.add_spectral_features, df)
-                
+                                  self.enhanced_engineer.add_spectral_features,
+                                  df)
+
                 # Hilbert
                 if self.use_enhanced or self.use_hilbert:
                     df = _run("Hilbert",
                               self.enhanced_engineer.add_hilbert_features, df)
-                
+
                 # Order Flow
                 if self.use_enhanced or self.use_order_flow:
                     df = _run("OrderFlow",
-                              self.enhanced_engineer.add_order_flow_features, df)
+                              self.enhanced_engineer.add_order_flow_features,
+                              df)
 
                 enhanced_features = len(df.columns) - prev_count
                 prev_count = len(df.columns)
@@ -279,7 +308,7 @@ class ComprehensiveFeatureEngineer:
             except Exception as e:
                 print(f"     ⚠️  增强版特征失败: {e}")
 
-        # 4. 深度学习序列特征
+        # 5. 深度学习序列特征
         if self.use_dl_sequence:
             print("  📊 深度学习序列特征...")
             try:
@@ -304,7 +333,7 @@ class ComprehensiveFeatureEngineer:
         print(f"  新增特征: {total_new_features} 个")
         print(f"  总特征数: {len(df.columns)} 个")
         use_any_enhanced = self.use_enhanced or self.use_hurst or self.use_wavelet or self.use_hilbert or self.use_spectral or self.use_order_flow
-        if self.use_baseline or self.use_default or use_any_enhanced or self.use_dl_sequence:
+        if self.use_baseline or self.use_default or self.use_alpha101 or use_any_enhanced or self.use_dl_sequence:
             print(f"  特征分布:")
             if self.use_baseline:
                 print(f"    - Baseline特征: {baseline_features} 个")
@@ -312,10 +341,14 @@ class ComprehensiveFeatureEngineer:
                 print(
                     f"    - 默认传统指标特征（TA-Lib + base_indicators）: {default_features} 个"
                 )
+            if self.use_alpha101:
+                print(f"    - Alpha101因子特征: {alpha101_features} 个")
             if use_any_enhanced:
                 print(f"    - 增强版特征: {enhanced_features} 个")
                 if self.use_enhanced:
-                    print(f"      (包含所有子模块: Hurst, Wavelet, Hilbert, Spectral, OrderFlow)")
+                    print(
+                        f"      (包含所有子模块: Hurst, Wavelet, Hilbert, Spectral, OrderFlow)"
+                    )
                 else:
                     active_modules = []
                     if self.use_hurst:
@@ -337,6 +370,7 @@ class ComprehensiveFeatureEngineer:
             "baseline_features": baseline_features,
             "default_features": default_features,  # TA-Lib + base_indicators
             "enhanced_features": enhanced_features,
+            "alpha101_features": alpha101_features,
             "dl_features": dl_features,
             "total_new_features": total_new_features,
             "total_features": len(df.columns),
@@ -345,7 +379,8 @@ class ComprehensiveFeatureEngineer:
                 "wavelet": self.use_wavelet if use_any_enhanced else False,
                 "hilbert": self.use_hilbert if use_any_enhanced else False,
                 "spectral": self.use_spectral if use_any_enhanced else False,
-                "order_flow": self.use_order_flow if use_any_enhanced else False,
+                "order_flow":
+                self.use_order_flow if use_any_enhanced else False,
             } if use_any_enhanced else {},
         }
 
@@ -516,7 +551,7 @@ def create_comprehensive_feature_engineer(
     创建综合特征工程器的便捷函数
 
     Args:
-        feature_types: 特征类型 ('baseline', 'talib', 'enhanced', 'dl_sequence', 'comprehensive', 或逗号分隔的组合)
+        feature_types: 特征类型 ('baseline', 'talib', 'alpha101', 'enhanced', 'dl_sequence', 'comprehensive', 或逗号分隔的组合)
         scaler_type: 标准化类型
         **kwargs: 其他参数
 
@@ -539,7 +574,7 @@ def engineer_features_by_type(
 
     Args:
         df: 输入数据
-        feature_types: 特征类型 ('baseline', 'default', 'enhanced', 'dl_sequence', 'comprehensive'，或逗号分隔的组合)
+        feature_types: 特征类型 ('baseline', 'default', 'alpha101', 'enhanced', 'dl_sequence', 'comprehensive'，或逗号分隔的组合)
         feature_engineer: 特征工程器实例（如果为None，会创建新的）
         fit: 是否拟合
 
