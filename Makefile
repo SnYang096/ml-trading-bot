@@ -26,7 +26,7 @@ RESULTS_DIR ?= results
 SYMBOL ?= BTCUSDT
 # SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT
-START_DATE ?= 2024-11-01
+START_DATE ?= 2020-1-01
 END_DATE ?= 2025-10-30
 YEAR ?= 2024
 START_YEAR ?= 2021
@@ -95,7 +95,7 @@ endif
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only auto-workflow vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report factor-analysis \
-		timeframe-forward-report \
+		timeframe-forward-report feature-indicators \
 	cross-sectional-catalog \
 	cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
 
@@ -578,34 +578,68 @@ nautilus-backtest:
 # ---------------------------------------------------------------------------
 
 DIM_COMPARE_ARGS ?=
-HORIZONS ?= 5,15
+HORIZONS ?= 24
 DIM_COMPARE_FEATURE_TYPE ?= comprehensive
-
-# make dim-compare SYMBOL=BTCUSDT \
-#   START_DATE=2025-05-01 END_DATE=2025-07-31 \
-#   AE_TYPE=vae \
-#   AUTO_ENCODING_GRID=1 \
-#   AE_AUTO_TUNE=1 \
-#   AE_TASK_LOSS=1 \
-#   TASK_WEIGHT=0.1 \
-#   KL_WEIGHT=1e-3 \
-#   TUNE_TRIALS=15
+TIMEFRAME ?= 240T
+FACTOR_COUNTS ?= 120,60,30,15,8
+TIME_WINDOWS ?= 2020-01-01:2025-12-31,2022-01-01:2025-12-31,2024-01-01:2025-12-31
+GRID_SEARCH ?= 1
 
 dim-compare:
 	@echo "🔬 Comparing feature sets (no autoencoder) for $(SYMBOLS) ..."
-	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline"
+	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline TIMEFRAME=5T"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
+	@echo "       Timeframe: $(TIMEFRAME)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	@echo "       Grid search: enabled (default)"
+	@echo "       Factor counts: $(FACTOR_COUNTS)"
+	@echo "       Time windows: $(TIME_WINDOWS)"
+	@echo "       Stability validation: $(if $(ENABLE_STABILITY_VALIDATION),enabled,disabled)"
+	@if [ "$(ENABLE_STABILITY_VALIDATION)" = "1" ] || [ "$(ENABLE_STABILITY_VALIDATION)" = "true" ]; then \
+		echo "       Validation start: $(VALIDATION_START)"; \
+		echo "       Validation years: $(VALIDATION_YEARS)"; \
+	fi
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOLS) \
 		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \
+		--timeframe $(TIMEFRAME) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \
+		$(if $(ENABLE_STABILITY_VALIDATION),--enable-stability-validation) \
+		$(if $(VALIDATION_START),--validation-start $(VALIDATION_START)) \
+		$(if $(VALIDATION_YEARS),--validation-years $(VALIDATION_YEARS)) \
+		$(if $(GRID_SEARCH),--grid-search) \
+		$(if $(FACTOR_COUNTS),--factor-counts $(FACTOR_COUNTS)) \
+		$(if $(TIME_WINDOWS),--time-windows $(TIME_WINDOWS)) \
 		$(DIM_COMPARE_ARGS)
 
+
+# ---------------------------------------------------------------------------
+# Feature Indicators Visualization
+# ---------------------------------------------------------------------------
+
+FEATURE_INDICATORS_OUTPUT ?= results/feature_indicators/$(SYMBOL)_$(TIMEFRAME).html
+FEATURE_INDICATORS_FEATURE_TYPES ?= hurst,hilbert,wavelet,spectral
+
+feature-indicators:
+	@echo "📈 Generating feature indicators visualization for $(SYMBOL)..."
+	@echo "   Timeframe: $(TIMEFRAME)"
+	@echo "   Feature types: $(FEATURE_INDICATORS_FEATURE_TYPES)"
+	@echo "   Output: $(FEATURE_INDICATORS_OUTPUT)"
+	@mkdir -p $(dir $(FEATURE_INDICATORS_OUTPUT))
+	$(DOCKER_RUN_NO_TTY) python3 scripts/visualization/feature_indicator_visualizer.py \
+		--data-path /workspace/data/parquet_data \
+		--symbol $(SYMBOL) \
+		--timeframe $(TIMEFRAME) \
+		--feature-types $(FEATURE_INDICATORS_FEATURE_TYPES) \
+		--feature-type comprehensive \
+		$(if $(START_DATE),--start-date $(START_DATE)) \
+		$(if $(END_DATE),--end-date $(END_DATE)) \
+		--output $(FEATURE_INDICATORS_OUTPUT)
+	@echo "✅ Feature indicators visualization saved to $(FEATURE_INDICATORS_OUTPUT)"
 
 
 # ---------------------------------------------------------------------------

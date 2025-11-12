@@ -61,6 +61,12 @@ class Alpha101FeatureEngineer:
             raise ValueError(f"Missing columns for Alpha101 computation: {sorted(missing)}")
 
         base = df[sorted(required_cols)].astype(float).copy()
+        
+        # Check and handle duplicate index entries
+        if base.index.duplicated().any():
+            # Remove duplicates by keeping first occurrence
+            base = base[~base.index.duplicated(keep='first')]
+        
         base.columns = pd.Index(base.columns, name="field")
 
         data_frames = {
@@ -129,10 +135,36 @@ class Alpha101FeatureEngineer:
         else:
             series = result
             if isinstance(series.index, pd.MultiIndex):
+                # Check for duplicate index entries before unstack
+                if series.index.duplicated().any():
+                    # Remove duplicates by keeping first occurrence
+                    series = series[~series.index.duplicated(keep='first')]
                 if "ticker" in series.index.names:
-                    data = series.unstack("ticker")
+                    try:
+                        data = series.unstack("ticker")
+                    except ValueError as e:
+                        if "duplicate entries" in str(e).lower():
+                            # If still fails, try resetting index and handling differently
+                            series_reset = series.reset_index()
+                            if "ticker" in series_reset.columns:
+                                data = series_reset.set_index([col for col in series_reset.columns if col != "ticker" and col != series_reset.columns[-1]])[series_reset.columns[-1]].to_frame(symbol)
+                            else:
+                                return None
+                        else:
+                            raise
                 else:
-                    data = series.unstack(level=-1)
+                    try:
+                        data = series.unstack(level=-1)
+                    except ValueError as e:
+                        if "duplicate entries" in str(e).lower():
+                            # If still fails, try resetting index and handling differently
+                            series_reset = series.reset_index()
+                            if len(series_reset.columns) > 1:
+                                data = series_reset.set_index(series_reset.columns[0])[series_reset.columns[-1]].to_frame(symbol)
+                            else:
+                                return None
+                        else:
+                            raise
             else:
                 data = series.to_frame(symbol)
         # Skip empty frames to avoid shape mismatch errors

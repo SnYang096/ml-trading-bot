@@ -968,9 +968,10 @@ def main() -> None:
                 "buy_qty",
                 "sell_qty",
                 "trade_count",
-                # Note: We don't exclude "cvd" or "taker_buy_ratio" here because
-                # feature engineering may have created normalized versions (e.g., cumulative_ofi, ofi_*)
-                # get_feature_columns() should handle excluding raw versions
+                "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
+                # Note: taker_buy_ratio may have normalized versions, but raw version should also be excluded
+                # if normalized versions exist (e.g., taker_buy_ratio_spectral_*, taker_buy_ratio_wpt_*)
+                # get_feature_columns() should handle excluding raw versions when normalized exist
             }
             feature_cols = [
                 c for c in feature_cols

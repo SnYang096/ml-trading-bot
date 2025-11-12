@@ -259,11 +259,13 @@ def load_real_market_data(
     end_date: str | None = None,
     horizons: list[int] | None = None,
     feature_type: str = "comprehensive",
+    timeframe: str = "5T",
 ) -> Tuple[np.ndarray, np.ndarray, list, list[int], pd.DataFrame]:
     """Load real market data for one or multiple symbols.
     
     Args:
         symbol: Single symbol or comma-separated symbols (e.g., "ETH-USD" or "ETH-USD,BTC-USD,SOL-USD")
+        timeframe: Timeframe for data resampling (e.g., "5T", "15T", "60T", "240T"). Default: "5T"
     """
     # Support multiple symbols (comma-separated)
     symbol_list = [s.strip() for s in symbol.split(",") if s.strip()]
@@ -287,15 +289,20 @@ def load_real_market_data(
             if df_single is not None and not df_single.empty:
                 # Resample each symbol's data before merging
                 if hasattr(symbol_loader, 'resample_data'):
-                    df_single = symbol_loader.resample_data("5T")
+                    df_single = symbol_loader.resample_data(timeframe)
                 elif isinstance(df_single.index, pd.DatetimeIndex):
                     # Fallback: resample manually
-                    df_single = df_single.resample("5T").agg({
-                        'open': 'first',
-                        'high': 'max',
-                        'low': 'min',
-                        'close': 'last',
-                        'volume': 'sum'
+                    df_single = df_single.resample(timeframe).agg({
+                        'open':
+                        'first',
+                        'high':
+                        'max',
+                        'low':
+                        'min',
+                        'close':
+                        'last',
+                        'volume':
+                        'sum'
                     }).dropna()
                 if df_single is not None and not df_single.empty:
                     all_dfs.append(df_single)
@@ -308,17 +315,30 @@ def load_real_market_data(
 
         # Merge all dataframes (already resampled)
         # For multi-asset training, all assets' data are merged together
-        # All features are normalized (asset-agnostic), so the model can learn
-        # common patterns across different assets
-        df = pd.concat(all_dfs, axis=0).sort_index()
+        # Add symbol identifier for rank-based IC calculation
+        all_dfs_with_symbol = []
+        for sym, df_single in zip(symbol_list, all_dfs):
+            df_with_symbol = df_single.copy()
+            df_with_symbol['_symbol'] = sym  # Add symbol identifier
+            all_dfs_with_symbol.append(df_with_symbol)
+
+        df = pd.concat(all_dfs_with_symbol, axis=0).sort_index()
         if len(symbol_list) > 1:
             print(
                 f"   Merged {len(all_dfs)} asset(s), total {len(df)} samples")
+            print(f"   Added symbol identifier for rank-based IC calculation")
+
+        # Store symbol info before feature engineering (in case it gets dropped)
+        symbol_info = df['_symbol'].copy() if '_symbol' in df.columns else None
 
         comprehensive_engineer = ComprehensiveFeatureEngineer(
             feature_types=feature_type)
         df_features = comprehensive_engineer.engineer_all_features(df,
                                                                    fit=True)
+
+        # Restore symbol info if it was dropped during feature engineering
+        if symbol_info is not None and '_symbol' not in df_features.columns:
+            df_features['_symbol'] = symbol_info.reindex(df_features.index)
 
         # Parse horizons
         if horizons and len(horizons) > 0:
@@ -336,12 +356,22 @@ def load_real_market_data(
         df_features_stored = df_features.copy()
 
         # Build safe feature columns (exclude targets/labels and future info)
+        # Exclude raw OHLC price features - use derived features instead
+        # Exclude raw volume/order flow features - use normalized/derived features instead
         exclude_exact = {
             "timestamp",
             "close",
+            "open",  # Exclude raw OHLC prices - use derived features instead
+            "high",  # Exclude raw OHLC prices - use derived features instead
+            "low",  # Exclude raw OHLC prices - use derived features instead
+            "volume",  # Exclude raw volume - use volume_percentile, volume_anomaly, etc.
+            "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
+            "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
+            "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
             "signal",
             "binary_signal",
             "future_return",
+            "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
         }
         exclude_prefixes = (
             "signal_",
@@ -1257,8 +1287,8 @@ def run_dimensionality_comparison(
     train_start: str | None = None,
     train_end: str | None = None,
     feature_type: str = "comprehensive",
-    top_k: Optional[int] = None,
     shap_analysis: bool = True,
+    timeframe: str = "5T",
 ) -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
@@ -1273,6 +1303,7 @@ def run_dimensionality_comparison(
         start_date=train_start,
         end_date=train_end,
         feature_type=feature_type,
+        timeframe=timeframe,
     )
 
     print(f"✅ Data loaded: {X.shape}, {y.shape}")
@@ -1453,6 +1484,512 @@ def run_dimensionality_comparison(
     return results, model_compressed, autoencoder, results_dir
 
 
+def run_single_experiment_wrapper(args) -> Dict:
+    """Wrapper function to run a single experiment with given args and return result dict."""
+    # We need to run the experiment logic directly
+    # Since the main logic is in the if args.research_ablation block,
+    # we'll create a simplified version that reuses the same code
+    # For now, let's use a workaround: modify sys.argv temporarily
+    import sys
+    original_argv = sys.argv[:]
+
+    try:
+        # Build new argv from args object
+        new_argv = ['dimensionality_comparison.py']
+        if args.data_path:
+            new_argv.extend(['--data-path', args.data_path])
+        if args.symbol:
+            new_argv.extend(['--symbol', args.symbol])
+        if args.feature_type:
+            new_argv.extend(['--feature-type', args.feature_type])
+        if args.timeframe:
+            new_argv.extend(['--timeframe', args.timeframe])
+        if args.train_start:
+            new_argv.extend(['--train-start', args.train_start])
+        if args.train_end:
+            new_argv.extend(['--train-end', args.train_end])
+        # top_k parameter removed, use factor_counts instead
+        if args.horizons:
+            new_argv.extend(['--horizons', args.horizons])
+        if args.binary_signals:
+            new_argv.append('--binary-signals')
+        if args.label_threshold:
+            new_argv.extend(['--label-threshold', str(args.label_threshold)])
+        if args.selection_metric:
+            new_argv.extend(['--selection-metric', args.selection_metric])
+        if args.report_html:
+            new_argv.extend(['--report-html', args.report_html])
+        if args.shap_analysis:
+            new_argv.append('--shap-analysis')
+        if args.enable_autoencoder:
+            new_argv.append('--enable-autoencoder')
+        if args.task:
+            new_argv.extend(['--task', args.task])
+        if args.enable_stability_validation:
+            new_argv.append('--enable-stability-validation')
+        if args.validation_start:
+            new_argv.extend(['--validation-start', args.validation_start])
+        if args.validation_years:
+            new_argv.extend(['--validation-years', str(args.validation_years)])
+
+        # Set new argv
+        sys.argv = new_argv
+
+        # Call main() which will parse the new argv
+        results, model, autoencoder, results_dir = main()
+        return results
+    except Exception as exc:
+        print(f"⚠️ Single experiment failed: {exc}")
+        import traceback
+        traceback.print_exc()
+        raise
+    finally:
+        # Restore original sys.argv
+        sys.argv = original_argv
+
+
+def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
+                                feature_type_slug: str, args) -> None:
+    """Generate a comparison matrix report for grid search results."""
+    from pathlib import Path
+    from time_series_model.pipeline.dimensionality.report_generator import write_html_report
+
+    # Organize results into a matrix
+    # Group by time window, then by factor count
+    matrix_data = {}
+    for result in grid_search_results:
+        params = result.get('grid_search_params', {})
+        tw_key = params.get('time_window', 'Unknown')
+        fc_key = params.get('factor_count', 'Unknown')
+
+        if tw_key not in matrix_data:
+            matrix_data[tw_key] = {}
+        matrix_data[tw_key][fc_key] = result
+
+    # Extract performance metrics
+    # Get primary metric from first result
+    first_result = grid_search_results[0]
+    perf_stage3 = first_result.get('performance',
+                                   {}).get('stage3_representatives', {})
+
+    # Determine task type
+    task_type = first_result.get('task_type', 'classification_multiclass')
+    is_classification = task_type.startswith('classification')
+
+    # Build comparison matrix
+    time_windows = sorted(
+        set(
+            r.get('grid_search_params', {}).get('time_window', '')
+            for r in grid_search_results))
+    factor_counts = sorted(set(
+        r.get('grid_search_params', {}).get('factor_count', '')
+        for r in grid_search_results),
+                           key=lambda x: (x == 'all', x
+                                          if isinstance(x, int) else 999999))
+
+    # Create comparison report
+    report_data = {
+        'timestamp_start': datetime.now().strftime("%Y%m%d_%H%M%S"),
+        'timestamp_end': datetime.now().strftime("%Y%m%d_%H%M%S"),
+        'symbol': args.symbol,
+        'feature_type': args.feature_type,
+        'grid_search_results': grid_search_results,
+        'matrix_data': matrix_data,
+        'time_windows': time_windows,
+        'factor_counts': factor_counts,
+        'task_type': task_type,
+    }
+
+    # Generate HTML report
+    DIM_COMPARE_RESULTS_ROOT = Path("results/dim_compare")
+    grid_search_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_slug}_{feature_type_slug}_grid_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    grid_search_dir.mkdir(parents=True, exist_ok=True)
+
+    report_path = grid_search_dir / f"{symbol_slug}_{feature_type_slug}_grid_search_report.html"
+    generate_grid_search_html_report(report_data, str(report_path))
+
+    print(f"📊 Grid search comparison report saved to: {report_path}")
+
+
+def generate_grid_search_html_report(report_data: Dict,
+                                     html_path: str) -> None:
+    """Generate HTML report for grid search results with enhanced metrics and visualizations."""
+    import os
+    import json
+    from time_series_model.pipeline.dimensionality.report_generator import _format_float
+
+    time_windows = report_data['time_windows']
+    factor_counts = report_data['factor_counts']
+    grid_search_results = report_data['grid_search_results']
+    task_type = report_data['task_type']
+    is_classification = task_type.startswith('classification')
+
+    # Calculate ICIR and robustness metrics for each result
+    enhanced_results = []
+    for result in grid_search_results:
+        perf = result.get('performance', {}).get('stage3_representatives', {})
+        financial = result.get('performance',
+                               {}).get('stage3_representatives_financial', {})
+
+        # Extract metrics
+        if is_classification:
+            win_rate = perf.get('win_rate', 0)
+            sharpe = financial.get('sharpe_ratio', 0) if financial else 0
+            max_dd = financial.get('max_drawdown', 0) if financial else 0
+        else:
+            r2 = perf.get('r2', 0)
+            sharpe = financial.get('sharpe_ratio', 0) if financial else 0
+            max_dd = financial.get('max_drawdown', 0) if financial else 0
+
+        # Calculate ICIR if IC data is available
+        ic_stats = result.get('ic_statistics', {})
+        ic_mean = ic_stats.get('ic_mean', None)
+        ic_std = ic_stats.get('ic_std', None)
+        icir = ic_stats.get('icir', None)
+        if icir is None and ic_mean is not None and ic_std is not None and ic_std > 0:
+            icir = abs(ic_mean) / ic_std
+
+        enhanced_results.append({
+            **result, 'enhanced_metrics': {
+                'icir': icir,
+                'sharpe': sharpe,
+                'max_drawdown': max_dd,
+            }
+        })
+
+    # Build multiple comparison matrices
+    # Matrix 1: Primary metric (Win Rate or R²)
+    matrix_html = "<div class=\"card\"><h3>📊 Grid Search Comparison Matrix - Primary Metric</h3>"
+    matrix_html += "<p>Comparison of different factor counts and time windows</p>"
+
+    # Determine primary metric
+    if is_classification:
+        primary_metric = 'win_rate'
+        metric_display = 'Directional Win Rate'
+    else:
+        primary_metric = 'r2'
+        metric_display = 'R²'
+
+    # Build table header
+    matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
+    matrix_html += "<tr><th>Time Window</th>"
+    for fc in factor_counts:
+        matrix_html += f"<th>Factors: {fc}</th>"
+    matrix_html += "</tr>"
+
+    # Build table rows
+    for tw in time_windows:
+        matrix_html += f"<tr><td><strong>{tw}</strong></td>"
+        for fc in factor_counts:
+            # Find result for this combination
+            result = None
+            for r in enhanced_results:
+                params = r.get('grid_search_params', {})
+                if params.get('time_window') == tw and params.get(
+                        'factor_count') == fc:
+                    result = r
+                    break
+
+            if result:
+                perf = result.get('performance',
+                                  {}).get('stage3_representatives', {})
+                if is_classification:
+                    metric_val = perf.get('win_rate', 0)
+                    cell_content = f"{_format_float(metric_val * 100, 2)}%"
+                else:
+                    metric_val = perf.get('r2', 0)
+                    cell_content = _format_float(metric_val, 4)
+
+                # Add color coding
+                color_class = "good" if metric_val > 0.5 else "warn" if metric_val > 0 else "bad"
+                matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
+            else:
+                matrix_html += "<td>-</td>"
+        matrix_html += "</tr>"
+
+    matrix_html += "</table></div>"
+
+    # Matrix 2: ICIR (if available)
+    icir_matrix_html = ""
+    if any(
+            r.get('enhanced_metrics', {}).get('icir') is not None
+            for r in enhanced_results):
+        icir_matrix_html = "<div class=\"card\"><h3>📈 ICIR (Information Coefficient Information Ratio) Matrix</h3>"
+        icir_matrix_html += "<p>ICIR = |Mean IC| / Std(IC) - Higher is better (indicates stable predictive power)</p>"
+        icir_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
+        icir_matrix_html += "<tr><th>Time Window</th>"
+        for fc in factor_counts:
+            icir_matrix_html += f"<th>Factors: {fc}</th>"
+        icir_matrix_html += "</tr>"
+
+        for tw in time_windows:
+            icir_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
+            for fc in factor_counts:
+                result = None
+                for r in enhanced_results:
+                    params = r.get('grid_search_params', {})
+                    if params.get('time_window') == tw and params.get(
+                            'factor_count') == fc:
+                        result = r
+                        break
+
+                if result:
+                    icir = result.get('enhanced_metrics', {}).get('icir')
+                    if icir is not None:
+                        cell_content = _format_float(icir, 3)
+                        color_class = "good" if icir > 1.0 else "warn" if icir > 0.5 else "bad"
+                        icir_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
+                    else:
+                        icir_matrix_html += "<td>-</td>"
+                else:
+                    icir_matrix_html += "<td>-</td>"
+            icir_matrix_html += "</tr>"
+
+        icir_matrix_html += "</table></div>"
+
+    # Matrix 3: Sharpe Ratio
+    sharpe_matrix_html = "<div class=\"card\"><h3>💰 Sharpe Ratio Matrix</h3>"
+    sharpe_matrix_html += "<p>Risk-adjusted return metric - Higher is better</p>"
+    sharpe_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
+    sharpe_matrix_html += "<tr><th>Time Window</th>"
+    for fc in factor_counts:
+        sharpe_matrix_html += f"<th>Factors: {fc}</th>"
+    sharpe_matrix_html += "</tr>"
+
+    for tw in time_windows:
+        sharpe_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
+        for fc in factor_counts:
+            result = None
+            for r in enhanced_results:
+                params = r.get('grid_search_params', {})
+                if params.get('time_window') == tw and params.get(
+                        'factor_count') == fc:
+                    result = r
+                    break
+
+            if result:
+                sharpe = result.get('enhanced_metrics', {}).get('sharpe', 0)
+                cell_content = _format_float(sharpe, 3)
+                color_class = "good" if sharpe > 1.0 else "warn" if sharpe > 0 else "bad"
+                sharpe_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
+            else:
+                sharpe_matrix_html += "<td>-</td>"
+        sharpe_matrix_html += "</tr>"
+
+    sharpe_matrix_html += "</table></div>"
+
+    # Matrix 4: Robustness Score (ICIR-weighted composite)
+    robustness_matrix_html = "<div class=\"card\"><h3>🛡️ Robustness Score Matrix</h3>"
+    robustness_matrix_html += "<p>Composite score: ICIR × Sharpe / (1 + |Max Drawdown|) - Higher is better</p>"
+    robustness_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
+    robustness_matrix_html += "<tr><th>Time Window</th>"
+    for fc in factor_counts:
+        robustness_matrix_html += f"<th>Factors: {fc}</th>"
+    robustness_matrix_html += "</tr>"
+
+    # Calculate robustness scores
+    robustness_scores = {}
+    for tw in time_windows:
+        robustness_scores[tw] = {}
+        for fc in factor_counts:
+            result = None
+            for r in enhanced_results:
+                params = r.get('grid_search_params', {})
+                if params.get('time_window') == tw and params.get(
+                        'factor_count') == fc:
+                    result = r
+                    break
+
+            if result:
+                metrics = result.get('enhanced_metrics', {})
+                icir = metrics.get('icir', 0) or 0
+                sharpe = metrics.get('sharpe', 0) or 0
+                max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
+
+                # Robustness score: ICIR × Sharpe / (1 + |Max Drawdown|)
+                robustness = (icir * sharpe) / (
+                    1 + max_dd) if icir > 0 and sharpe > 0 else 0
+                robustness_scores[tw][fc] = robustness
+            else:
+                robustness_scores[tw][fc] = None
+
+    for tw in time_windows:
+        robustness_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
+        for fc in factor_counts:
+            score = robustness_scores[tw].get(fc)
+            if score is not None:
+                cell_content = _format_float(score, 3)
+                color_class = "good" if score > 0.5 else "warn" if score > 0 else "bad"
+                robustness_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
+            else:
+                robustness_matrix_html += "<td>-</td>"
+        robustness_matrix_html += "</tr>"
+
+    robustness_matrix_html += "</table></div>"
+
+    # Build detailed results section with enhanced metrics
+    details_html = "<div class=\"card\"><h3>📋 Detailed Results</h3>"
+    for i, result in enumerate(enhanced_results, 1):
+        params = result.get('grid_search_params', {})
+        perf = result.get('performance', {}).get('stage3_representatives', {})
+        financial = result.get('performance',
+                               {}).get('stage3_representatives_financial', {})
+        metrics = result.get('enhanced_metrics', {})
+
+        details_html += f"<h4>Combination {i}: {params.get('time_window')} | Factors: {params.get('factor_count')}</h4>"
+        details_html += "<table class=\"metric-table\">"
+
+        if is_classification:
+            details_html += f"<tr><th>Directional Win Rate</th><td>{_format_float(perf.get('win_rate', 0) * 100, 2)}%</td></tr>"
+            details_html += f"<tr><th>F1 (Macro)</th><td>{_format_float(perf.get('f1_macro', 0), 4)}</td></tr>"
+            details_html += f"<tr><th>Accuracy</th><td>{_format_float(perf.get('accuracy', 0) * 100, 2)}%</td></tr>"
+        else:
+            details_html += f"<tr><th>R²</th><td>{_format_float(perf.get('r2', 0), 4)}</td></tr>"
+            details_html += f"<tr><th>RMSE</th><td>{_format_float(perf.get('rmse', 0), 4)}</td></tr>"
+            details_html += f"<tr><th>MAE</th><td>{_format_float(perf.get('mae', 0), 4)}</td></tr>"
+
+        # Add financial metrics
+        if financial:
+            details_html += f"<tr><th>Sharpe Ratio</th><td>{_format_float(financial.get('sharpe_ratio', 0), 3)}</td></tr>"
+            details_html += f"<tr><th>Max Drawdown</th><td>{_format_float(financial.get('max_drawdown', 0) * 100, 2)}%</td></tr>"
+            details_html += f"<tr><th>Total Return</th><td>{_format_float(financial.get('total_return', 0) * 100, 2)}%</td></tr>"
+
+        # Add ICIR if available
+        if metrics.get('icir') is not None:
+            details_html += f"<tr><th>ICIR</th><td>{_format_float(metrics.get('icir'), 3)}</td></tr>"
+
+        # Add robustness score
+        icir = metrics.get('icir', 0) or 0
+        sharpe = metrics.get('sharpe', 0) or 0
+        max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
+        robustness = (icir *
+                      sharpe) / (1 + max_dd) if icir > 0 and sharpe > 0 else 0
+        details_html += f"<tr><th>Robustness Score</th><td>{_format_float(robustness, 3)}</td></tr>"
+
+        details_html += "</table><br/>"
+
+    details_html += "</div>"
+
+    # Build ICIR trend analysis (Factor Count vs ICIR)
+    icir_trend_html = ""
+    if any(
+            r.get('enhanced_metrics', {}).get('icir') is not None
+            for r in enhanced_results):
+        icir_trend_html = "<div class=\"card\"><h3>📈 ICIR Trend Analysis</h3>"
+        icir_trend_html += "<p>ICIR vs Factor Count for each time window - Look for plateau points</p>"
+        icir_trend_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
+        icir_trend_html += "<tr><th>Factor Count</th>"
+        for tw in time_windows:
+            icir_trend_html += f"<th>{tw}</th>"
+        icir_trend_html += "<th>Mean ICIR</th><th>Std(ICIR)</th></tr>"
+
+        # Calculate mean and std ICIR across time windows for each factor count
+        for fc in factor_counts:
+            icir_values = []
+            icir_trend_html += f"<tr><td><strong>{fc}</strong></td>"
+            for tw in time_windows:
+                result = None
+                for r in enhanced_results:
+                    params = r.get('grid_search_params', {})
+                    if params.get('time_window') == tw and params.get(
+                            'factor_count') == fc:
+                        result = r
+                        break
+
+                if result:
+                    icir = result.get('enhanced_metrics', {}).get('icir')
+                    if icir is not None:
+                        icir_values.append(icir)
+                        icir_trend_html += f"<td>{_format_float(icir, 3)}</td>"
+                    else:
+                        icir_trend_html += "<td>-</td>"
+                else:
+                    icir_trend_html += "<td>-</td>"
+
+            # Mean and std across time windows
+            if icir_values:
+                mean_icir = sum(icir_values) / len(icir_values)
+                std_icir = (sum((x - mean_icir)**2
+                                for x in icir_values) / len(icir_values))**0.5
+                icir_trend_html += f"<td>{_format_float(mean_icir, 3)}</td>"
+                icir_trend_html += f"<td>{_format_float(std_icir, 3)}</td>"
+            else:
+                icir_trend_html += "<td>-</td><td>-</td>"
+            icir_trend_html += "</tr>"
+
+        icir_trend_html += "</table>"
+        icir_trend_html += "<p><strong>💡 Interpretation:</strong> Look for the smallest factor count where ICIR doesn't drop significantly (plateau point). Lower Std(ICIR) indicates better stability across time windows.</p>"
+        icir_trend_html += "</div>"
+
+    # Build full HTML
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Grid Search Comparison Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
+        .card {{ background: #fff; border-radius: 10px; padding: 18px 22px; box-shadow: 0 10px 24px rgba(27,39,53,0.1); margin: 20px 0; }}
+        .metric-table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+        .metric-table th, .metric-table td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
+        .metric-table th {{ background-color: #f8f9fa; font-weight: 600; }}
+        .good {{ color: #167a3d; font-weight: 600; }}
+        .warn {{ color: #b36b00; font-weight: 600; }}
+        .bad {{ color: #c53030; font-weight: 600; }}
+    </style>
+</head>
+<body>
+    <h1>🔍 Grid Search Comparison Report</h1>
+    <div class="card">
+        <h3>Configuration</h3>
+        <p><strong>Symbol:</strong> {report_data.get('symbol', 'N/A')}</p>
+        <p><strong>Feature Type:</strong> {report_data.get('feature_type', 'N/A')}</p>
+        <p><strong>Task Type:</strong> {task_type}</p>
+        <p><strong>Time Windows Tested:</strong> {len(time_windows)}</p>
+        <p><strong>Factor Counts Tested:</strong> {len(factor_counts)}</p>
+        <p><strong>Total Combinations:</strong> {len(grid_search_results)}</p>
+    </div>
+    
+    {matrix_html}
+    {icir_matrix_html}
+    {sharpe_matrix_html}
+    {robustness_matrix_html}
+    {icir_trend_html}
+    {details_html}
+    
+    <div class="card">
+        <h3>💡 Interpretation Guide</h3>
+        <h4>📊 How to Read the Matrices:</h4>
+        <ul>
+            <li><strong>Primary Metric Matrix:</strong> Compare {metric_display} across different factor counts and time windows. Higher values (green) indicate better performance.</li>
+            <li><strong>ICIR Matrix:</strong> ICIR = |Mean IC| / Std(IC). Higher ICIR indicates more stable predictive power. Look for ICIR > 1.0 (green).</li>
+            <li><strong>Sharpe Ratio Matrix:</strong> Risk-adjusted return metric. Higher is better. Look for Sharpe > 1.0 (green).</li>
+            <li><strong>Robustness Score Matrix:</strong> Composite score combining ICIR, Sharpe, and Max Drawdown. This is the most comprehensive metric - higher is better.</li>
+        </ul>
+        <h4>📈 ICIR Trend Analysis:</h4>
+        <ul>
+            <li>Look for the <strong>plateau point</strong>: the smallest factor count where ICIR doesn't drop significantly</li>
+            <li>Lower <strong>Std(ICIR)</strong> across time windows indicates better stability</li>
+            <li>Optimal factor count is often where Mean ICIR is high AND Std(ICIR) is low</li>
+        </ul>
+        <h4>🎯 Selection Strategy:</h4>
+        <ul>
+            <li><strong>Step 1:</strong> Identify factor counts with high Robustness Score (green cells)</li>
+            <li><strong>Step 2:</strong> Check ICIR Trend - find the plateau point</li>
+            <li><strong>Step 3:</strong> Verify consistency across time windows (low Std(ICIR))</li>
+            <li><strong>Step 4:</strong> Choose the smallest factor count that meets all criteria</li>
+        </ul>
+        <p><strong>💡 Key Insight:</strong> The optimal solution is often NOT the one with the highest primary metric, but the one with the best balance of performance and stability (high ICIR, low variance across time windows).</p>
+    </div>
+</body>
+</html>"""
+
+    os.makedirs(os.path.dirname(html_path), exist_ok=True)
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html)
+
+    print(f"📝 Grid search HTML report written to: {html_path}")
+
+
 def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
     parser = argparse.ArgumentParser(
         description=
@@ -1588,13 +2125,6 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         "Run IC filter -> representative selection -> multi-dim AE (60→32→16→8) and report reconstruction vs downstream R2",
     )
     parser.add_argument(
-        "--top-k",
-        type=int,
-        default=None,
-        help=
-        "Optional: number of top factors retained after IC ranking/representative selection",
-    )
-    parser.add_argument(
         "--horizons",
         type=str,
         default="1,5,10,15",
@@ -1649,6 +2179,52 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         help=
         "Feature type: baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive or combos (default: comprehensive)",
     )
+    parser.add_argument(
+        "--timeframe",
+        type=str,
+        default="5T",
+        help=
+        "Timeframe for data resampling (e.g., 5T, 15T, 60T, 240T). Default: 5T",
+    )
+    parser.add_argument(
+        "--enable-stability-validation",
+        action="store_true",
+        help=
+        "Enable stability validation: use recent data for factor selection, validate on longer historical data",
+    )
+    parser.add_argument(
+        "--validation-start",
+        default=None,
+        help=
+        "Start date (YYYY-MM-DD) for stability validation period. If not provided and --enable-stability-validation is set, automatically uses train-start minus 2-3 years",
+    )
+    parser.add_argument(
+        "--validation-years",
+        type=int,
+        default=3,
+        help=
+        "Number of years to look back for stability validation (default: 3). Used when --enable-stability-validation is set and --validation-start is not provided",
+    )
+    parser.add_argument(
+        "--factor-counts",
+        type=str,
+        default=None,
+        help=
+        "Comma-separated list of factor counts to test (e.g., 'all,120,60,30,15,8'). 'all' means use all available features. If not provided, uses --top-k or default 120",
+    )
+    parser.add_argument(
+        "--time-windows",
+        type=str,
+        default=None,
+        help=
+        "Comma-separated list of time windows to test (e.g., '2020-01-01:2025-12-31,2022-01-01:2025-12-31,2024-01-01:2025-12-31'). Format: START:END. If not provided, uses --train-start and --train-end",
+    )
+    parser.add_argument(
+        "--grid-search",
+        action="store_true",
+        help=
+        "Enable grid search mode: test all combinations of factor counts and time windows",
+    )
 
     args = parser.parse_args()
     symbol_slug = _slugify(args.symbol)
@@ -1666,6 +2242,64 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         except Exception as _e:
             raise
 
+    # Parse grid search parameters
+    factor_counts_list = None
+    time_windows_list = None
+
+    # Auto-enable grid search if factor_counts or time_windows are specified
+    if args.factor_counts or args.time_windows:
+        args.grid_search = True
+
+    if args.grid_search or args.factor_counts or args.time_windows:
+        # Parse factor counts
+        if args.factor_counts:
+            factor_counts_raw = [
+                x.strip() for x in args.factor_counts.split(',') if x.strip()
+            ]
+            factor_counts_list = []
+            for fc in factor_counts_raw:
+                if fc.lower() == 'all':
+                    factor_counts_list.append('all')
+                else:
+                    try:
+                        factor_counts_list.append(int(fc))
+                    except ValueError:
+                        print(f"⚠️ Invalid factor count: {fc}, skipping")
+        else:
+            # Default: use 120
+            factor_counts_list = [120]
+
+        # Parse time windows
+        if args.time_windows:
+            time_windows_raw = [
+                x.strip() for x in args.time_windows.split(',') if x.strip()
+            ]
+            time_windows_list = []
+            for tw in time_windows_raw:
+                if ':' in tw:
+                    start, end = tw.split(':', 1)
+                    time_windows_list.append((start.strip(), end.strip()))
+                else:
+                    print(
+                        f"⚠️ Invalid time window format: {tw} (expected START:END), skipping"
+                    )
+        else:
+            # Default: use train_start and train_end
+            if args.train_start and args.train_end:
+                time_windows_list = [(args.train_start, args.train_end)]
+            else:
+                time_windows_list = [(None, None)]
+
+        print(f"\n{'=' * 80}")
+        print("🔍 Grid Search Mode Enabled")
+        print(f"{'=' * 80}")
+        print(f"   Factor counts to test: {factor_counts_list}")
+        print(f"   Time windows to test: {time_windows_list}")
+        print(
+            f"   Total combinations: {len(factor_counts_list) * len(time_windows_list)}"
+        )
+        print(f"{'=' * 80}\n")
+
     # Default behavior: if neither grid nor ablation specified, enable ablation by default
     if not args.encoding_grid and not args.research_ablation:
         args.research_ablation = True
@@ -1680,6 +2314,64 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             ]
         except Exception:
             print(f"⚠️ Invalid --encoding-grid format: {args.encoding_grid}")
+
+    # Grid search mode: run all combinations
+    # Note: If factor_counts_list or time_windows_list is set, grid_search should be enabled
+    if (args.grid_search or factor_counts_list
+            or time_windows_list) and factor_counts_list and time_windows_list:
+        grid_search_results = []
+
+        for time_window_idx, (tw_start,
+                              tw_end) in enumerate(time_windows_list):
+            for factor_count_idx, factor_count in enumerate(
+                    factor_counts_list):
+                print(f"\n{'=' * 80}")
+                print(
+                    f"🔬 Grid Search: Combination {time_window_idx * len(factor_counts_list) + factor_count_idx + 1} / {len(factor_counts_list) * len(time_windows_list)}"
+                )
+                print(f"   Time Window: {tw_start} → {tw_end}")
+                print(f"   Factor Count: {factor_count}")
+                print(f"{'=' * 80}\n")
+
+                # Create a modified args object for this combination
+                import copy
+                args_comb = copy.deepcopy(args)
+                args_comb.train_start = tw_start
+                args_comb.train_end = tw_end
+                args_comb.grid_search = False  # Prevent recursive grid search
+                # Store factor count in a custom attribute for grid search
+                args_comb._grid_search_factor_count = factor_count
+
+                try:
+                    # Run single experiment by calling main() with modified args
+                    # We need to temporarily modify sys.argv or pass args directly
+                    # Since main() uses argparse, we'll create a wrapper
+                    result_dict = run_single_experiment_wrapper(args_comb)
+                    if result_dict:
+                        result_dict['grid_search_params'] = {
+                            'time_window': f"{tw_start} → {tw_end}",
+                            'factor_count': factor_count,
+                            'time_window_start': tw_start,
+                            'time_window_end': tw_end,
+                        }
+                        grid_search_results.append(result_dict)
+                except Exception as exc:
+                    print(f"⚠️ Grid search combination failed: {exc}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+
+        # Generate grid search comparison report
+        if grid_search_results:
+            print(f"\n{'=' * 80}")
+            print("📊 Generating Grid Search Comparison Report")
+            print(f"{'=' * 80}\n")
+            generate_grid_search_report(grid_search_results, symbol_slug,
+                                        feature_type_slug, args)
+        else:
+            print("⚠️ No successful grid search results to report")
+
+        return
 
     if args.research_ablation:
         ablation_start_dt = datetime.now()
@@ -1704,7 +2396,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             args.train_start,
             args.train_end,
             horizons=horizons_list,
-            feature_type=args.feature_type)
+            feature_type=args.feature_type,
+            timeframe=args.timeframe)
 
         # Use loaded horizons or fallback to parsed horizons
         horizons = horizons_loaded if horizons_loaded and len(
@@ -1712,10 +2405,12 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
         original_feature_count = len(
             feature_names)  # Save original count (482)
-        dfX = pd.DataFrame(X_raw, columns=feature_names)
+        dfX = pd.DataFrame(X_raw,
+                           columns=feature_names,
+                           index=df_features_original.index[:len(X_raw)])
 
         # For backward compatibility, use default horizon
-        y_series = pd.Series(y_raw)
+        y_series = pd.Series(y_raw, index=dfX.index[:len(y_raw)])
         # If binary mode: remap labels to 2-class using future_return threshold
         if args.binary_signals:
             try:
@@ -1742,6 +2437,9 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         print(f"\n[Stage 1] All original features: {len(dfX.columns)}")
         keep_all = []
         for c in dfX.columns:
+            # Skip non-numeric columns (like _symbol)
+            if c == '_symbol' or not pd.api.types.is_numeric_dtype(dfX[c]):
+                continue
             s = dfX[c]
             if s.isna().mean() < 0.2 and s.std() > 1e-8:
                 keep_all.append(c)
@@ -1755,24 +2453,252 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         )
 
         # Stage 2: IC (Spearman) ranking - top features by |IC|
-        print(f"\n[Stage 2] IC ranking...")
-        ic_scores = {}
-        for col in df_all.columns:
+        # Use rank-based method for multi-asset scenarios to avoid scale issues
+        print(f"\n[Stage 2] IC ranking (rank-based for multi-asset)...")
+
+        # Check if we have symbol information for rank-based calculation
+        has_symbol_info = '_symbol' in df_features_original.columns
+        is_multi_asset = has_symbol_info and df_features_original[
+            '_symbol'].nunique() > 1
+
+        if is_multi_asset:
+            print(
+                f"   Using rank-based IC calculation across {df_features_original['_symbol'].nunique()} assets"
+            )
+            # Rank-based method: rank within each asset, then compute IC on merged ranks
+            ic_scores = {}
+
+            # Get symbol column aligned with df_all
+            # We need to align symbol info with df_all indices
+            # df_all is created from dfX which comes from X_raw, so we need to trace back
+            # Try to get symbol from df_features_original, aligned by index
             try:
-                ic = spearmanr(df_all[col].values,
-                               y_series.values,
-                               nan_policy="omit")[0]
+                # Align symbol info with df_all indices
+                # df_all index should match dfX index, which should match df_features_original index
+                symbol_series = df_features_original['_symbol'].reindex(
+                    df_all.index)
+                # If reindex fails (different indices), try to match by position
+                if symbol_series.isna().all() and len(
+                        df_features_original) == len(df_all):
+                    symbol_series = pd.Series(
+                        df_features_original['_symbol'].values,
+                        index=df_all.index)
             except Exception:
-                ic = 0.0
-            ic_scores[col] = 0.0 if ic is None or np.isnan(ic) else ic
+                # Fallback: if we can't align, use original method
+                print(
+                    f"   ⚠️ Could not align symbol info, falling back to standard IC calculation"
+                )
+                symbol_series = None
+
+            if symbol_series is not None and not symbol_series.isna().all():
+                for col in df_all.columns:
+                    try:
+                        # Group by symbol and rank within each group
+                        df_ranked = df_all[[col]].copy()
+                        df_ranked['_symbol'] = symbol_series.values
+                        df_ranked['_y'] = y_series.values
+
+                        # Rank within each asset
+                        df_ranked['_feature_rank'] = df_ranked.groupby(
+                            '_symbol')[col].rank(method='average')
+                        df_ranked['_y_rank'] = df_ranked.groupby(
+                            '_symbol')['_y'].rank(method='average')
+
+                        # Compute IC on ranked data (which is already rank-based, so this is consistent)
+                        ic = spearmanr(df_ranked['_feature_rank'].values,
+                                       df_ranked['_y_rank'].values,
+                                       nan_policy="omit")[0]
+                    except Exception as e:
+                        # Fallback to original method if rank-based fails
+                        ic = spearmanr(df_all[col].values,
+                                       y_series.values,
+                                       nan_policy="omit")[0]
+                        if ic is None or np.isnan(ic):
+                            ic = 0.0
+                    ic_scores[col] = 0.0 if ic is None or np.isnan(ic) else ic
+            else:
+                # Fallback to original method if symbol alignment failed
+                print(
+                    f"   ⚠️ Symbol alignment failed, using standard IC calculation"
+                )
+                for col in df_all.columns:
+                    try:
+                        ic = spearmanr(df_all[col].values,
+                                       y_series.values,
+                                       nan_policy="omit")[0]
+                    except Exception:
+                        ic = 0.0
+                    ic_scores[col] = 0.0 if ic is None or np.isnan(ic) else ic
+        else:
+            # Single asset or no symbol info: use original method
+            print(
+                f"   Using standard IC calculation (single asset or no symbol info)"
+            )
+            ic_scores = {}
+            for col in df_all.columns:
+                try:
+                    ic = spearmanr(df_all[col].values,
+                                   y_series.values,
+                                   nan_policy="omit")[0]
+                except Exception:
+                    ic = 0.0
+                ic_scores[col] = 0.0 if ic is None or np.isnan(ic) else ic
         top_sorted = sorted(ic_scores.items(),
                             key=lambda kv: abs(kv[1]),
                             reverse=True)
-        target_top_k = args.top_k or 120
+        # Determine target factor count
+        # In grid search mode, check if factor count was set via _grid_search_factor_count
+        if hasattr(args, '_grid_search_factor_count'
+                   ) and args._grid_search_factor_count is not None:
+            if args._grid_search_factor_count == 'all':
+                target_top_k = len(top_sorted)  # Use all available factors
+            else:
+                target_top_k = int(args._grid_search_factor_count)
+        else:
+            target_top_k = 120  # Default value
         ic_top_k = min(max(target_top_k, 1), len(top_sorted))
         if ic_top_k == 0:
             ic_top_k = min(60, len(top_sorted))
-        top_cols = [c for c, _ in top_sorted[:ic_top_k]]
+
+        # Initial selection by IC
+        top_cols_initial = [c for c, _ in top_sorted[:ic_top_k]]
+
+        # Diversity check and rebalancing
+        def infer_feature_type(feature_name: str) -> str:
+            """Infer feature type from feature name."""
+            name_lower = feature_name.lower()
+            if 'alpha101' in name_lower:
+                return 'alpha101'
+            elif 'hurst' in name_lower:
+                return 'hurst'
+            elif 'wpt' in name_lower or 'wavelet' in name_lower:
+                return 'wavelet'
+            elif 'hilbert' in name_lower:
+                return 'hilbert'
+            elif 'spectral' in name_lower:
+                return 'spectral'
+            elif 'cvd' in name_lower or 'ofi' in name_lower or 'order_flow' in name_lower or 'taker_buy' in name_lower:
+                return 'order_flow'
+            elif 'baseline' in name_lower or 'sr_' in name_lower or 'compressed' in name_lower:
+                return 'baseline'
+            elif 'rsi' in name_lower or 'macd' in name_lower or 'bb_' in name_lower or 'atr' in name_lower or 'ema' in name_lower or 'sma' in name_lower:
+                return 'technical'
+            else:
+                return 'other'
+
+        # Calculate feature type distribution
+        feature_type_counts = {}
+        for col in top_cols_initial:
+            feat_type = infer_feature_type(col)
+            feature_type_counts[feat_type] = feature_type_counts.get(
+                feat_type, 0) + 1
+
+        total_selected = len(top_cols_initial)
+        max_type_ratio = max(feature_type_counts.values()
+                             ) / total_selected if total_selected > 0 else 0
+        diversity_threshold = 0.6  # If any type > 60%, rebalance
+
+        print(
+            f"   Feature type distribution (initial): {dict(sorted(feature_type_counts.items(), key=lambda x: x[1], reverse=True))}"
+        )
+        print(f"   Max type ratio: {max_type_ratio:.2%}")
+
+        # Rebalance if needed
+        if max_type_ratio > diversity_threshold and total_selected > 20:
+            print(
+                f"   ⚠️  Feature type imbalance detected (max ratio: {max_type_ratio:.2%} > {diversity_threshold:.0%})"
+            )
+            print(f"   Rebalancing features to ensure diversity...")
+
+            # Group features by type
+            features_by_type = {}
+            for col, ic_val in top_sorted:
+                feat_type = infer_feature_type(col)
+                if feat_type not in features_by_type:
+                    features_by_type[feat_type] = []
+                features_by_type[feat_type].append((col, ic_val))
+
+            # Calculate target counts per type (ensure minimum representation)
+            # Strategy: allocate based on available features, but cap max per type
+            type_counts_available = {
+                ft: len(features)
+                for ft, features in features_by_type.items()
+            }
+            total_available = sum(type_counts_available.values())
+
+            # Minimum quota per type (if available)
+            min_quota_per_type = max(1, int(target_top_k *
+                                            0.05))  # At least 5% per type
+            max_quota_per_type = int(target_top_k *
+                                     0.4)  # At most 40% per type
+
+            # Allocate quotas
+            type_quotas = {}
+            remaining_quota = target_top_k
+
+            # First pass: allocate minimum quotas
+            for feat_type in features_by_type.keys():
+                available = type_counts_available[feat_type]
+                quota = min(min_quota_per_type, available, remaining_quota)
+                if quota > 0:
+                    type_quotas[feat_type] = quota
+                    remaining_quota -= quota
+
+            # Second pass: allocate remaining quota proportionally (but cap at max)
+            if remaining_quota > 0:
+                for feat_type in sorted(features_by_type.keys(),
+                                        key=lambda x: len(features_by_type[x]),
+                                        reverse=True):
+                    if remaining_quota <= 0:
+                        break
+                    current_quota = type_quotas.get(feat_type, 0)
+                    available = type_counts_available[feat_type]
+                    additional = min(max_quota_per_type - current_quota,
+                                     available - current_quota,
+                                     remaining_quota)
+                    if additional > 0:
+                        type_quotas[feat_type] = current_quota + additional
+                        remaining_quota -= additional
+
+            # Select features based on quotas
+            top_cols = []
+            for feat_type, quota in sorted(type_quotas.items(),
+                                           key=lambda x: x[1],
+                                           reverse=True):
+                if feat_type in features_by_type:
+                    selected = [
+                        col for col, _ in features_by_type[feat_type][:quota]
+                    ]
+                    top_cols.extend(selected)
+                    print(
+                        f"      {feat_type}: {len(selected)}/{quota} features selected"
+                    )
+
+            # If we have less than target, fill with remaining top IC features
+            if len(top_cols) < target_top_k:
+                remaining_features = [(col, ic) for col, ic in top_sorted
+                                      if col not in top_cols]
+                needed = target_top_k - len(top_cols)
+                top_cols.extend(
+                    [col for col, _ in remaining_features[:needed]])
+
+            # Recalculate distribution
+            feature_type_counts_rebalanced = {}
+            for col in top_cols:
+                feat_type = infer_feature_type(col)
+                feature_type_counts_rebalanced[
+                    feat_type] = feature_type_counts_rebalanced.get(
+                        feat_type, 0) + 1
+
+            print(
+                f"   Feature type distribution (rebalanced): {dict(sorted(feature_type_counts_rebalanced.items(), key=lambda x: x[1], reverse=True))}"
+            )
+            print(f"   Total features selected: {len(top_cols)}")
+        else:
+            top_cols = top_cols_initial
+            print(
+                f"   ✅ Feature diversity is balanced (max ratio: {max_type_ratio:.2%} <= {diversity_threshold:.0%})"
+            )
         df_ic = df_all[top_cols].copy()
         X_ic = df_ic.values
         scaler_ic = StandardScaler()
@@ -1780,6 +2706,217 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         print(
             f"[DEBUG] Stage 2: {len(top_cols)} features after IC ranking (target={target_top_k})"
         )
+
+        # Calculate IC statistics for selected factors (for ICIR calculation)
+        selected_ic_values = [
+            ic_scores.get(col, 0.0) for col in top_cols if col in ic_scores
+        ]
+        ic_mean = np.mean([abs(ic) for ic in selected_ic_values
+                           ]) if selected_ic_values else None
+        ic_std = np.std([
+            abs(ic) for ic in selected_ic_values
+        ]) if selected_ic_values and len(selected_ic_values) > 1 else None
+        if ic_mean is not None and ic_std is not None:
+            icir = ic_mean / ic_std if ic_std > 0 else None
+            print(
+                f"   IC Statistics for selected factors: Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}, ICIR={icir:.3f}"
+                if icir else
+                f"   IC Statistics: Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}"
+            )
+
+        # Stability validation (if enabled)
+        stability_validation_results = None
+        if args.enable_stability_validation and args.train_start:
+            print(f"\n{'=' * 80}")
+            print(
+                "🔍 Stability Validation: Validating selected factors on longer historical data"
+            )
+            print(f"{'=' * 80}")
+
+            # Calculate validation period
+            try:
+                train_start_dt = pd.to_datetime(args.train_start)
+                if args.validation_start:
+                    validation_start_dt = pd.to_datetime(args.validation_start)
+                else:
+                    # Auto-calculate: go back validation_years from train_start
+                    validation_start_dt = train_start_dt - pd.DateOffset(
+                        years=args.validation_years)
+
+                validation_start_str = validation_start_dt.strftime("%Y-%m-%d")
+                validation_end_str = args.train_start  # Validate up to training start
+
+                print(
+                    f"   Factor Selection Period: {args.train_start} → {args.train_end}"
+                )
+                print(
+                    f"   Stability Validation Period: {validation_start_str} → {validation_end_str}"
+                )
+                print(
+                    f"   This validates if factors selected on recent data are stable over longer history"
+                )
+
+                # Load validation data
+                X_val_raw, y_val_raw, feature_names_val, _, df_features_val = load_real_market_data(
+                    args.data_path,
+                    args.symbol,
+                    validation_start_str,
+                    validation_end_str,
+                    horizons=horizons_list,
+                    feature_type=args.feature_type,
+                    timeframe=args.timeframe)
+
+                if X_val_raw is not None and len(X_val_raw) > 0:
+                    dfX_val = pd.DataFrame(
+                        X_val_raw,
+                        columns=feature_names_val,
+                        index=df_features_val.index[:len(X_val_raw)])
+                    y_series_val = pd.Series(
+                        y_val_raw, index=dfX_val.index[:len(y_val_raw)])
+
+                    # Calculate IC for selected factors on validation data
+                    print(
+                        f"\n   Calculating IC for {len(top_cols)} selected factors on validation data..."
+                    )
+                    ic_scores_validation = {}
+
+                    # Check if validation data has symbol info for rank-based
+                    has_symbol_val = '_symbol' in df_features_val.columns
+                    is_multi_asset_val = has_symbol_val and df_features_val[
+                        '_symbol'].nunique() > 1
+
+                    for col in top_cols:
+                        if col not in dfX_val.columns:
+                            continue
+                        try:
+                            if is_multi_asset_val:
+                                # Rank-based IC for validation
+                                symbol_series_val = df_features_val[
+                                    '_symbol'].reindex(dfX_val.index)
+                                if symbol_series_val is not None and not symbol_series_val.isna(
+                                ).all():
+                                    df_ranked_val = dfX_val[[col]].copy()
+                                    df_ranked_val[
+                                        '_symbol'] = symbol_series_val.values
+                                    df_ranked_val['_y'] = y_series_val.values
+                                    df_ranked_val[
+                                        '_feature_rank'] = df_ranked_val.groupby(
+                                            '_symbol')[col].rank(
+                                                method='average')
+                                    df_ranked_val[
+                                        '_y_rank'] = df_ranked_val.groupby(
+                                            '_symbol')['_y'].rank(
+                                                method='average')
+                                    ic = spearmanr(
+                                        df_ranked_val['_feature_rank'].values,
+                                        df_ranked_val['_y_rank'].values,
+                                        nan_policy="omit")[0]
+                                else:
+                                    ic = spearmanr(dfX_val[col].values,
+                                                   y_series_val.values,
+                                                   nan_policy="omit")[0]
+                            else:
+                                ic = spearmanr(dfX_val[col].values,
+                                               y_series_val.values,
+                                               nan_policy="omit")[0]
+                        except Exception:
+                            ic = 0.0
+                        ic_scores_validation[
+                            col] = 0.0 if ic is None or np.isnan(ic) else ic
+
+                    # Compare IC between selection period and validation period
+                    ic_comparison = {}
+                    stable_factors = []
+                    unstable_factors = []
+
+                    for col in top_cols:
+                        if col in ic_scores and col in ic_scores_validation:
+                            ic_selection = ic_scores[col]
+                            ic_validation = ic_scores_validation[col]
+                            ic_change = ic_validation - ic_selection
+                            ic_stability = abs(ic_validation) / (
+                                abs(ic_selection) +
+                                1e-8) if abs(ic_selection) > 1e-8 else 0
+
+                            ic_comparison[col] = {
+                                "ic_selection": ic_selection,
+                                "ic_validation": ic_validation,
+                                "ic_change": ic_change,
+                                "stability_ratio": ic_stability,
+                            }
+
+                            # Factor is stable if IC sign is consistent and magnitude is similar
+                            if (ic_selection * ic_validation > 0
+                                    and  # Same sign
+                                    ic_stability > 0.5 and ic_stability
+                                    < 2.0):  # Similar magnitude
+                                stable_factors.append(col)
+                            else:
+                                unstable_factors.append(col)
+
+                    stability_validation_results = {
+                        "validation_period": {
+                            "start": validation_start_str,
+                            "end": validation_end_str,
+                        },
+                        "selection_period": {
+                            "start": args.train_start,
+                            "end": args.train_end,
+                        },
+                        "ic_comparison":
+                        ic_comparison,
+                        "stable_factors":
+                        stable_factors,
+                        "unstable_factors":
+                        unstable_factors,
+                        "stability_rate":
+                        len(stable_factors) / len(top_cols) if top_cols else 0,
+                    }
+
+                    print(f"\n   ✅ Stability Validation Results:")
+                    print(f"      Total factors tested: {len(top_cols)}")
+                    print(
+                        f"      Stable factors: {len(stable_factors)} ({stability_validation_results['stability_rate']:.1%})"
+                    )
+                    print(
+                        f"      Unstable factors: {len(unstable_factors)} ({1 - stability_validation_results['stability_rate']:.1%})"
+                    )
+
+                    if len(stable_factors) > 0:
+                        print(
+                            f"\n   📊 Top 10 Stable Factors (IC consistent across periods):"
+                        )
+                        stable_sorted = sorted(stable_factors,
+                                               key=lambda x: abs(ic_comparison[
+                                                   x]['ic_selection']),
+                                               reverse=True)[:10]
+                        for i, factor in enumerate(stable_sorted, 1):
+                            comp = ic_comparison[factor]
+                            print(
+                                f"      {i}. {factor}: IC={comp['ic_selection']:.4f} → {comp['ic_validation']:.4f} (change: {comp['ic_change']:+.4f})"
+                            )
+
+                    if len(unstable_factors) > 0:
+                        print(
+                            f"\n   ⚠️  Top 5 Unstable Factors (IC changed significantly):"
+                        )
+                        unstable_sorted = sorted(
+                            unstable_factors,
+                            key=lambda x: abs(ic_comparison[x]['ic_change']),
+                            reverse=True)[:5]
+                        for i, factor in enumerate(unstable_sorted, 1):
+                            comp = ic_comparison[factor]
+                            print(
+                                f"      {i}. {factor}: IC={comp['ic_selection']:.4f} → {comp['ic_validation']:.4f} (change: {comp['ic_change']:+.4f})"
+                            )
+                else:
+                    print(
+                        f"   ⚠️  Could not load validation data, skipping stability validation"
+                    )
+            except Exception as exc:
+                print(f"   ⚠️  Stability validation failed: {exc}")
+                import traceback
+                traceback.print_exc()
 
         # Stage 3: Correlation-based representative selection
         print(f"\n[Stage 3] Correlation-based representative selection...")
@@ -1947,7 +3084,21 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 "selection_metric": args.selection_metric,
             },
             "insights": feature_insights_stage3,
+            "ic_statistics": {
+                "ic_mean":
+                float(ic_mean) if ic_mean is not None else None,
+                "ic_std":
+                float(ic_std) if ic_std is not None else None,
+                "icir":
+                float(icir) if ic_mean is not None and ic_std is not None
+                and ic_std > 0 else None,
+            },
         }
+
+        # Add stability validation results if available
+        if stability_validation_results:
+            best_result.setdefault("stability_validation",
+                                   stability_validation_results)
 
         selection_score_stage1 = compute_selection_score(
             perf_all,
@@ -2034,6 +3185,15 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             },
             "insights":
             feature_insights_stage3,
+            "ic_statistics": {
+                "ic_mean":
+                float(ic_mean) if ic_mean is not None else None,
+                "ic_std":
+                float(ic_std) if ic_std is not None else None,
+                "icir":
+                float(icir) if ic_mean is not None and ic_std is not None
+                and ic_std > 0 else None,
+            },
         }
         best_model = model_reps
         best_ae = None
@@ -2688,8 +3848,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     train_start=args.train_start,
                     train_end=args.train_end,
                     feature_type=args.feature_type,
-                    top_k=args.top_k,
                     shap_analysis=args.shap_analysis,
+                    timeframe=args.timeframe,
                 )
                 perf = trial_results.get('performance', {})
                 orig = perf.get('original_features', {})
@@ -2727,13 +3887,11 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             train_start=args.train_start,
             train_end=args.train_end,
             feature_type=args.feature_type,
-            top_k=args.top_k,
             shap_analysis=args.shap_analysis,
+            timeframe=args.timeframe,
         )
 
-    # Record Top-K hint if provided
-    if args.top_k is not None:
-        results.setdefault("training_info", {})["top_k"] = args.top_k
+    # top_k parameter removed, factor count is now determined by factor_counts_list or default 120
 
     # Always write a report into the results directory with symbol, feature_type, and time range
     try:

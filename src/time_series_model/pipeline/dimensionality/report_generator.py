@@ -222,12 +222,132 @@ def _build_confusion_matrix_html(class_metrics: Dict,
     if matrix is None or labels is None:
         return ""
 
-    header = "".join(f"<th>{lbl}</th>" for lbl in labels)
+    # Convert labels to True/False for binary classification (0/1 -> False/True)
+    # For multi-class, keep original labels
+    def format_label(lbl):
+        if isinstance(lbl, (int, float)):
+            if lbl == 0:
+                return "False"
+            elif lbl == 1:
+                return "True"
+        # For multi-class or other labels, convert to string
+        return str(lbl)
+    
+    formatted_labels = [format_label(lbl) for lbl in labels]
+    header = "".join(f"<th>Predicted {lbl}</th>" for lbl in formatted_labels)
     body_rows = []
-    for lbl, row in zip(labels, matrix):
+    for lbl, row in zip(formatted_labels, matrix):
         cells = "".join(f"<td>{int(val)}</td>" for val in row)
-        body_rows.append(f"<tr><th>{lbl}</th>{cells}</tr>")
+        body_rows.append(f"<tr><th>Actual {lbl}</th>{cells}</tr>")
     body_html = "".join(body_rows)
+    
+    # Calculate metrics for interpretation
+    if len(matrix) == 2 and len(matrix[0]) == 2:
+        # Binary classification
+        tn = int(matrix[0][0])  # True Negative
+        fp = int(matrix[0][1])  # False Positive
+        fn = int(matrix[1][0])  # False Negative
+        tp = int(matrix[1][1])  # True Positive
+        
+        total = tn + fp + fn + tp
+        accuracy = (tp + tn) / total if total > 0 else 0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        
+        # Determine interpretation
+        if accuracy >= 0.75:
+            accuracy_interpretation = "优秀"
+            accuracy_color = "good"
+        elif accuracy >= 0.65:
+            accuracy_interpretation = "良好"
+            accuracy_color = "good"
+        else:
+            accuracy_interpretation = "需要改进"
+            accuracy_color = "bad"
+        
+        interpretation = f"""
+        <div class="explanation" style="margin-top: 20px;">
+            <h4>📊 如何阅读混淆矩阵</h4>
+            <p>混淆矩阵展示了模型预测结果与实际标签的对比：</p>
+            <ul>
+                <li><strong>True Negative (TN)</strong>: {tn} - 正确预测为 False（实际 False，预测 False）</li>
+                <li><strong>False Positive (FP)</strong>: {fp} - 错误预测为 True（实际 False，预测 True）- <span style="color: #d62728;">假正例</span></li>
+                <li><strong>False Negative (FN)</strong>: {fn} - 错误预测为 False（实际 True，预测 False）- <span style="color: #d62728;">假负例</span></li>
+                <li><strong>True Positive (TP)</strong>: {tp} - 正确预测为 True（实际 True，预测 True）</li>
+            </ul>
+            
+            <h4>📈 关键指标</h4>
+            <table style="margin: 10px 0;">
+                <tr>
+                    <th>指标</th>
+                    <th>计算公式</th>
+                    <th>数值</th>
+                    <th>含义</th>
+                </tr>
+                <tr>
+                    <td><strong>准确率 (Accuracy)</strong></td>
+                    <td>(TP + TN) / 总数</td>
+                    <td class="{accuracy_color}">{accuracy:.2%}</td>
+                    <td>所有预测中正确的比例</td>
+                </tr>
+                <tr>
+                    <td><strong>精确率 (Precision)</strong></td>
+                    <td>TP / (TP + FP)</td>
+                    <td>{precision:.2%}</td>
+                    <td>预测为 True 中实际为 True 的比例（减少假正例）</td>
+                </tr>
+                <tr>
+                    <td><strong>召回率 (Recall)</strong></td>
+                    <td>TP / (TP + FN)</td>
+                    <td>{recall:.2%}</td>
+                    <td>实际为 True 中被正确预测的比例（减少假负例）</td>
+                </tr>
+                <tr>
+                    <td><strong>特异性 (Specificity)</strong></td>
+                    <td>TN / (TN + FP)</td>
+                    <td>{specificity:.2%}</td>
+                    <td>实际为 False 中被正确预测的比例</td>
+                </tr>
+            </table>
+            
+            <h4>💡 结论</h4>
+            <p>
+                <strong>整体表现：</strong>模型准确率为 <span class="{accuracy_color}">{accuracy:.2%}</span>，表现<span class="{accuracy_color}">{accuracy_interpretation}</span>。
+            </p>
+            <ul>
+                <li>在 {total} 个样本中，模型正确预测了 {tp + tn} 个（{accuracy:.2%}）</li>
+                <li>假正例 (FP): {fp} 个 - 模型错误地将 {fp} 个负样本预测为正样本</li>
+                <li>假负例 (FN): {fn} 个 - 模型错误地将 {fn} 个正样本预测为负样本</li>
+            </ul>
+            <p>
+                <strong>建议：</strong>
+                {"模型表现优秀，可以用于生产环境。" if accuracy >= 0.75 else 
+                 "模型表现良好，可以考虑进一步优化。" if accuracy >= 0.65 else 
+                 "模型需要改进，建议检查特征工程或调整模型参数。"}
+            </p>
+        </div>
+        """
+    else:
+        # Multi-class classification
+        total = sum(sum(row) for row in matrix)
+        correct = sum(matrix[i][i] for i in range(len(matrix)))
+        accuracy = correct / total if total > 0 else 0
+        
+        interpretation = f"""
+        <div class="explanation" style="margin-top: 20px;">
+            <h4>📊 如何阅读混淆矩阵</h4>
+            <p>混淆矩阵展示了模型预测结果与实际标签的对比：</p>
+            <ul>
+                <li>对角线上的数字表示<strong>正确预测</strong>的数量</li>
+                <li>非对角线上的数字表示<strong>错误预测</strong>的数量</li>
+            </ul>
+            
+            <h4>📈 关键指标</h4>
+            <p><strong>准确率 (Accuracy):</strong> {accuracy:.2%} - 在 {total} 个样本中，模型正确预测了 {correct} 个</p>
+        </div>
+        """
+    
     return f"""
     <div class="card">
         <h3>{title}</h3>
@@ -235,6 +355,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
             <tr><th></th>{header}</tr>
             {body_html}
         </table>
+        {interpretation}
     </div>
     """
 
@@ -915,15 +1036,29 @@ def write_html_report(results: Dict, html_path: str) -> None:
     if not has_4_stages:
         compressed_dims = d.get("stage3_representatives")
 
-    conclusion_delta = delta_r2
-    if not has_4_stages:
-        if stage3_vs_2:
-            conclusion_delta = stage3_vs_2.get("delta_r2", conclusion_delta)
-        elif stage2_vs_1:
-            conclusion_delta = stage2_vs_1.get("delta_r2", conclusion_delta)
-    conclusion = ("Dimensionality reduction appears beneficial."
-                  if (conclusion_delta is not None and conclusion_delta > 0)
-                  else "Dimensionality reduction is not beneficial under this run.")
+    # Use feature insights to determine if dimensionality reduction is beneficial
+    # This uses the primary metric (win_rate, f1_macro, accuracy, or r2) based on task type
+    feature_effective = insights.get("effective")
+    feature_delta = insights.get("delta")
+    feature_metric_name = insights.get("metric_name", "r2")
+    
+    # Determine conclusion based on feature effectiveness
+    if feature_effective is True:
+        conclusion = f"Dimensionality reduction appears beneficial. {feature_metric_name} improved by {feature_delta:.4f}."
+    elif feature_effective is False and feature_delta is not None:
+        conclusion = f"Dimensionality reduction shows mixed results. {feature_metric_name} changed by {feature_delta:.4f}."
+    else:
+        # Fallback to r2 delta if feature insights are not available
+        conclusion_delta = delta_r2
+        if not has_4_stages:
+            if stage3_vs_2:
+                conclusion_delta = stage3_vs_2.get("delta_r2", conclusion_delta)
+            elif stage2_vs_1:
+                conclusion_delta = stage2_vs_1.get("delta_r2", conclusion_delta)
+        if conclusion_delta is not None and conclusion_delta > 0:
+            conclusion = f"Dimensionality reduction appears beneficial. R² improved by {conclusion_delta:.4f}."
+        else:
+            conclusion = "Dimensionality reduction is not beneficial under this run. Consider reviewing feature selection or model parameters."
 
     # Extract financial metrics
     stage1_fin = stage1.get("financial_metrics", {})
@@ -1020,6 +1155,108 @@ def write_html_report(results: Dict, html_path: str) -> None:
             "<h3>Insights Summary</h3>"
             f"<ul>{''.join(f'<li>{item}</li>' for item in insight_items)}</ul>"
             "</div>")
+    
+    # Build stability validation section
+    stability_html = ""
+    stability_validation = results.get("stability_validation")
+    if stability_validation:
+        val_period = stability_validation.get("validation_period", {})
+        sel_period = stability_validation.get("selection_period", {})
+        stable_factors = stability_validation.get("stable_factors", [])
+        unstable_factors = stability_validation.get("unstable_factors", [])
+        stability_rate = stability_validation.get("stability_rate", 0)
+        ic_comparison = stability_validation.get("ic_comparison", {})
+        
+        # Build stable factors table
+        stable_rows = ""
+        if stable_factors:
+            stable_sorted = sorted(stable_factors,
+                                 key=lambda x: abs(ic_comparison.get(x, {}).get("ic_selection", 0)),
+                                 reverse=True)[:20]
+            for factor in stable_sorted:
+                comp = ic_comparison.get(factor, {})
+                ic_sel = comp.get("ic_selection", 0)
+                ic_val = comp.get("ic_validation", 0)
+                ic_change = comp.get("ic_change", 0)
+                stable_rows += f"""
+                <tr>
+                    <td>{factor}</td>
+                    <td>{_format_float(ic_sel, 4)}</td>
+                    <td>{_format_float(ic_val, 4)}</td>
+                    <td class="{'good' if abs(ic_change) < 0.05 else 'warn'}">{_format_float(ic_change, 4)}</td>
+                </tr>"""
+        
+        # Build unstable factors table
+        unstable_rows = ""
+        if unstable_factors:
+            unstable_sorted = sorted(unstable_factors,
+                                   key=lambda x: abs(ic_comparison.get(x, {}).get("ic_change", 0)),
+                                   reverse=True)[:10]
+            for factor in unstable_sorted:
+                comp = ic_comparison.get(factor, {})
+                ic_sel = comp.get("ic_selection", 0)
+                ic_val = comp.get("ic_validation", 0)
+                ic_change = comp.get("ic_change", 0)
+                unstable_rows += f"""
+                <tr>
+                    <td>{factor}</td>
+                    <td>{_format_float(ic_sel, 4)}</td>
+                    <td>{_format_float(ic_val, 4)}</td>
+                    <td class="bad">{_format_float(ic_change, 4)}</td>
+                </tr>"""
+        
+        stability_html = f"""
+        <div class="card">
+            <h3>🔍 Factor Stability Validation</h3>
+            <div class="explanation">
+                <h4>📊 验证说明</h4>
+                <p>使用更长的历史数据验证因子选择的稳定性：</p>
+                <ul>
+                    <li><strong>因子选择期</strong>：{sel_period.get('start', 'N/A')} → {sel_period.get('end', 'N/A')}（用于选择因子）</li>
+                    <li><strong>稳定性验证期</strong>：{val_period.get('start', 'N/A')} → {val_period.get('end', 'N/A')}（用于验证因子稳定性）</li>
+                </ul>
+                
+                <h4>📈 稳定性统计</h4>
+                <ul>
+                    <li><strong>稳定因子</strong>：{len(stable_factors)} 个（{stability_rate:.1%}）- IC 符号一致且幅度相似</li>
+                    <li><strong>不稳定因子</strong>：{len(unstable_factors)} 个（{1 - stability_rate:.1%}）- IC 变化较大</li>
+                </ul>
+                
+                <h4>💡 解读</h4>
+                <ul>
+                    <li><strong>稳定因子</strong>：在不同时期表现一致，更可靠，建议优先使用</li>
+                    <li><strong>不稳定因子</strong>：可能只在特定时期有效，需要谨慎使用或定期重新评估</li>
+                    <li><strong>稳定性率 {stability_rate:.1%}</strong>：{"优秀" if stability_rate >= 0.7 else "良好" if stability_rate >= 0.5 else "需要改进"}</li>
+                </ul>
+            </div>
+            
+            {f'''
+            <h4>✅ 稳定因子 Top 20（IC 在不同时期保持一致）</h4>
+            <table class="metric-table">
+                <tr>
+                    <th>Factor</th>
+                    <th>IC (Selection Period)</th>
+                    <th>IC (Validation Period)</th>
+                    <th>IC Change</th>
+                </tr>
+                {stable_rows}
+            </table>
+            ''' if stable_rows else ''}
+            
+            {f'''
+            <h4>⚠️ 不稳定因子 Top 10（IC 变化较大）</h4>
+            <table class="metric-table">
+                <tr>
+                    <th>Factor</th>
+                    <th>IC (Selection Period)</th>
+                    <th>IC (Validation Period)</th>
+                    <th>IC Change</th>
+                </tr>
+                {unstable_rows}
+            </table>
+            ''' if unstable_rows else ''}
+        </div>
+        """
 
     # Build HTML content
     html = _build_html_report_content(
@@ -1057,6 +1294,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
         insights_html=insights_html,
         classification_section=classification_section,
         confusion_html=confusion_html,
+        stability_html=stability_html,
     )
 
     with open(html_path, "w", encoding="utf-8") as f:
@@ -1099,6 +1337,7 @@ def _build_html_report_content(
     insights_html: str = "",
     classification_section: str = "",
     confusion_html: str = "",
+    stability_html: str = "",
 ) -> str:
     """Build HTML content string for the report."""
     # Build conditional 4-stage comparison table
@@ -1274,6 +1513,7 @@ def _build_html_report_content(
 
     training_html = ""
     train_rows = []
+    iteration_values = []
     diag_map = {
         "lightgbm_original_iterations": "Stage 1 · All Features",
         "lightgbm_stage1_iterations": "Stage 1 · All Features",
@@ -1284,9 +1524,55 @@ def _build_html_report_content(
     }
     for key, label in diag_map.items():
         if train_info.get(key) is not None:
+            iter_val = train_info.get(key)
             train_rows.append(
-                f"<tr><td>{label}</td><td>{train_info.get(key)}</td></tr>")
+                f"<tr><td>{label}</td><td>{iter_val}</td></tr>")
+            iteration_values.append((label, iter_val))
     if train_rows:
+        
+        # Generate interpretation
+        interpretation = ""
+        if len(iteration_values) > 1:
+            iterations = [val for _, val in iteration_values]
+            min_iter = min(iterations)
+            max_iter = max(iterations)
+            avg_iter = sum(iterations) / len(iterations)
+            
+            interpretation = f"""
+            <div class="explanation" style="margin-top: 20px;">
+                <h4>📊 如何解读 Best Iteration</h4>
+                <p><strong>Best Iteration</strong> 是 LightGBM 通过早停（Early Stopping）机制找到的最佳迭代次数。</p>
+                
+                <h4>为什么不同阶段的 Best Iteration 不同？</h4>
+                <ul>
+                    <li><strong>特征数量不同</strong>：不同阶段使用的特征数量不同（Stage 1: ~470, Stage 2: ~120, Stage 3: 60-100）</li>
+                    <li><strong>特征质量不同</strong>：Stage 2/3 经过 IC 筛选和相关性去冗余，特征质量更高</li>
+                    <li><strong>模型复杂度不同</strong>：特征越多，模型越复杂，可能需要更多迭代才能收敛</li>
+                    <li><strong>过拟合风险不同</strong>：特征多时容易过拟合，早停会更早触发；特征少时模型更简单，可能需要更多迭代</li>
+                </ul>
+                
+                <h4>📈 当前数据解读</h4>
+                <ul>
+                    <li><strong>迭代次数范围</strong>：{min_iter} - {max_iter} 次</li>
+                    <li><strong>平均迭代次数</strong>：{avg_iter:.1f} 次</li>
+                    <li><strong>差异</strong>：最大差异 {max_iter - min_iter} 次</li>
+                </ul>
+                
+                <h4>💡 结论</h4>
+                <p>
+                    {"迭代次数差异较小（< 10），说明不同阶段的模型收敛速度相近，特征选择效果良好。" if (max_iter - min_iter) < 10 else 
+                     "迭代次数差异较大，可能因为："}
+                </p>
+                <ul>
+                    {"<li>特征数量差异导致模型复杂度不同</li>" if (max_iter - min_iter) >= 10 else ""}
+                    {"<li>特征质量差异影响模型学习速度</li>" if (max_iter - min_iter) >= 10 else ""}
+                    <li>这是正常现象，<strong>Best Iteration 本身不是性能指标</strong>，重要的是模型的最终性能（准确率、F1 等）</li>
+                    <li>如果某个阶段的 Best Iteration 特别高（> 200），可能表示模型难以学习，需要检查特征质量</li>
+                    <li>如果某个阶段的 Best Iteration 特别低（< 50），可能表示模型过早停止，可以尝试增加迭代次数上限</li>
+                </ul>
+            </div>
+            """
+        
         training_html = (
             "<div class=\"card\">"
             "<h3>Training Diagnostics</h3>"
@@ -1294,6 +1580,7 @@ def _build_html_report_content(
             "<tr><th>Model</th><th>Best Iteration</th></tr>"
             f"{''.join(train_rows)}"
             "</table>"
+            f"{interpretation}"
             "</div>"
         )
 
@@ -1357,6 +1644,7 @@ th{{background:#eef2f8;font-weight:600;color:#2b3f64}}
 </div>
 
 {insights_html}
+{stability_html}
 
 {factor_section}
 {shap_html}
