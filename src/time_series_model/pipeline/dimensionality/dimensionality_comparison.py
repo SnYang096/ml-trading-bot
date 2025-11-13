@@ -37,7 +37,14 @@ from data_tools.rolling_data import create_labels_multi_horizon
 from time_series_model.utils.training import train_lightgbm_model
 
 # Import report generator for HTML report writing
-from time_series_model.pipeline.dimensionality.report_generator import write_html_report
+from time_series_model.pipeline.dimensionality.report_generator import (
+    write_html_report,
+    generate_grid_search_html_report,
+    _generate_metric_3d_plot,
+    _generate_icir_3d_plot,
+    _generate_icir_heatmap,
+    _build_analysis_conclusions,
+)
 from time_series_model.pipeline.dimensionality.backtest_evaluator import (
     backtest_classification_model,
     calculate_strategy_returns_from_predictions,
@@ -213,8 +220,14 @@ def load_real_market_data(
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
-        y = df_features[f"signal_{default_horizon}"].dropna(
-        ).values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
+        # NOTE: This function is deprecated - use data_loader.load_real_market_data instead
+        # Convert 3-class signal (0=Hold, 1=Long, 2=Short) to binary (1=Long, 0=Short)
+        signal_3class = df_features[f"signal_{default_horizon}"].dropna()
+        # Filter out Hold (0) samples - align with feature matrix
+        mask_active = signal_3class != 0
+        X = df_features[feature_cols].loc[signal_3class.index].values
+        X = X[mask_active]
+        y = np.where(signal_3class[mask_active] == 1, 1, 0).astype(int)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
@@ -1019,8 +1032,14 @@ def run_dimensionality_comparison(
     return results, model_compressed, autoencoder, results_dir
 
 
-def run_single_experiment_wrapper(args) -> Dict:
-    """Wrapper function to run a single experiment with given args and return result dict."""
+def run_single_experiment_wrapper(args, grid_search_dir: Path = None) -> Dict:
+    """Wrapper function to run a single experiment with given args and return result dict.
+    
+    Args:
+        args: Arguments object for the experiment
+        grid_search_dir: Optional grid search directory. If provided, individual experiment
+                        results will be saved under this directory.
+    """
     # We need to run the experiment logic directly
     # Since the main logic is in the if args.research_ablation block,
     # we'll create a simplified version that reuses the same code
@@ -1072,11 +1091,26 @@ def run_single_experiment_wrapper(args) -> Dict:
         if args.validation_years:
             new_argv.extend(['--validation-years', str(args.validation_years)])
 
+        # Store grid_search_dir in args for use in main()
+        # NOTE: Do NOT add --grid-search flag here, as it would cause main() to enter grid search mode again
+        # Instead, we use an environment variable to mark this as a sub-experiment
+        import os
+        if grid_search_dir is not None:
+            args._grid_search_parent_dir = grid_search_dir
+            # Set environment variable so main() can detect this is a sub-experiment
+            os.environ['_DIM_COMPARE_GRID_SEARCH_SUB_EXP'] = '1'
+            os.environ['_DIM_COMPARE_GRID_SEARCH_DIR'] = str(grid_search_dir)
+
         # Set new argv
         sys.argv = new_argv
 
         # Call main() which will parse the new argv
-        results, model, autoencoder, results_dir = main()
+        try:
+            results, model, autoencoder, results_dir = main()
+        finally:
+            # Clean up environment variables
+            os.environ.pop('_DIM_COMPARE_GRID_SEARCH_SUB_EXP', None)
+            os.environ.pop('_DIM_COMPARE_GRID_SEARCH_DIR', None)
         # Store results_dir in results dict for later file copying
         if results and isinstance(results, dict):
             results['results_dir'] = results_dir
@@ -1091,460 +1125,7 @@ def run_single_experiment_wrapper(args) -> Dict:
         sys.argv = original_argv
 
 
-def _generate_metric_3d_plot(enhanced_results: list,
-                             time_windows: list,
-                             factor_counts: list,
-                             metric_name: str,
-                             metric_label: str,
-                             metric_getter,
-                             color_thresholds: dict = None) -> str:
-    """Generate 3D visualization for any metric across factor counts and time windows.
-    
-    Args:
-        enhanced_results: List of result dictionaries
-        time_windows: List of time window strings
-        factor_counts: List of factor counts
-        metric_name: Name of the metric (e.g., 'icir', 'sharpe', 'robustness')
-        metric_label: Display label for the metric
-        metric_getter: Function to extract metric value from result dict
-        color_thresholds: Dict with 'good', 'warn', 'bad' thresholds
-    """
-    try:
-        import plotly.graph_objects as go
-        import numpy as np
-
-        # Default color thresholds
-        if color_thresholds is None:
-            color_thresholds = {'good': 1.0, 'warn': 0.5, 'bad': 0.0}
-
-        # Prepare data arrays
-        x_data = []
-        y_data = []
-        z_data = []
-        colors = []
-        text_labels = []
-
-        for i, tw in enumerate(time_windows):
-            for fc in sorted(factor_counts,
-                             key=lambda x:
-                             (x == 'all', x
-                              if isinstance(x, int) else 999999)):
-                # Find result for this combination
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    metric_val = metric_getter(result)
-                    # Include 0 values as well (they are valid data points)
-                    # Debug: print first extraction
-                    if len(x_data) == 0 and metric_val is not None:
-                        print(
-                            f"[DEBUG 3D] First data point: tw={tw}, fc={fc}, metric_val={metric_val}"
-                        )
-                    if metric_val is not None:
-                        # X: factor count (numeric)
-                        if isinstance(fc, int):
-                            x_val = fc
-                        else:
-                            max_fc = max([
-                                x for x in factor_counts if isinstance(x, int)
-                            ],
-                                         default=120)
-                            x_val = max_fc * 1.2
-
-                        x_data.append(x_val)
-                        y_data.append(i)  # Time window index
-                        z_data.append(metric_val)
-
-                        # Color based on metric value
-                        if metric_val > color_thresholds['good']:
-                            colors.append('#167a3d')  # Green
-                        elif metric_val > color_thresholds['warn']:
-                            colors.append('#ffc107')  # Yellow
-                        else:
-                            colors.append('#dc3545')  # Red
-
-                        text_labels.append(
-                            f"Time: {tw}<br>Factors: {fc}<br>{metric_label}: {metric_val:.3f}"
-                        )
-
-        if not x_data:
-            return f"""
-            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-                <h4>📊 {metric_label} 3D 可视化</h4>
-                <p>⚠️ 没有可用的数据来生成3D图形。</p>
-            </div>
-            """
-
-        # Create 3D scatter plot
-        fig = go.Figure(
-            data=go.Scatter3d(x=x_data,
-                              y=y_data,
-                              z=z_data,
-                              mode='markers',
-                              marker=dict(size=10,
-                                          color=colors,
-                                          opacity=0.8,
-                                          line=dict(width=1, color='black')),
-                              text=text_labels,
-                              hovertemplate='%{text}<extra></extra>',
-                              name=f'{metric_label} Points'))
-
-        # Add surface plot to show trend
-        if len(x_data) > 0 and len(set(x_data)) > 1 and len(set(y_data)) > 1:
-            # Create grid for surface
-            x_unique = sorted(set(x_data))
-            y_unique = sorted(set(y_data))
-
-            # Create meshgrid
-            X_grid, Y_grid = np.meshgrid(x_unique, y_unique)
-            Z_grid = np.full_like(X_grid, np.nan, dtype=float)
-
-            # Fill Z_grid with metric values
-            for i, tw_idx in enumerate(y_unique):
-                for j, fc_val in enumerate(x_unique):
-                    # Find metric for this combination
-                    for r in enhanced_results:
-                        params = r.get('grid_search_params', {})
-                        tw = time_windows[tw_idx]
-                        # Find matching factor count
-                        fc_match = None
-                        for fc in factor_counts:
-                            if isinstance(fc, int) and fc == fc_val:
-                                fc_match = fc
-                                break
-                            elif fc == 'all' and abs(
-                                    fc_val - max([
-                                        x for x in factor_counts
-                                        if isinstance(x, int)
-                                    ],
-                                                 default=120) * 1.2) < 1:
-                                fc_match = fc
-                                break
-
-                        if params.get('time_window') == tw and params.get(
-                                'factor_count') == fc_match:
-                            metric_val = metric_getter(r)
-                            if metric_val is not None:
-                                Z_grid[i, j] = metric_val
-                            break
-
-            # Add surface plot
-            fig.add_trace(
-                go.Surface(
-                    x=X_grid,
-                    y=Y_grid,
-                    z=Z_grid,
-                    colorscale='RdYlGn',
-                    showscale=True,
-                    opacity=0.6,
-                    name=f'{metric_label} Surface',
-                    hovertemplate=
-                    f'Factor Count: %{{x:.0f}}<br>Time Window: %{{y}}<br>{metric_label}: %{{z:.3f}}<extra></extra>'
-                ))
-
-        # Get factor count labels
-        fc_labels = []
-        for fc in sorted(factor_counts,
-                         key=lambda x: (x == 'all', x
-                                        if isinstance(x, int) else 999999)):
-            if isinstance(fc, int):
-                fc_labels.append(str(fc))
-            else:
-                fc_labels.append('all')
-
-        # Update layout
-        fig.update_layout(
-            title=
-            f'{metric_label} 3D 可视化 - Plateau Point 分析 ({metric_label} 3D Visualization - Plateau Point Analysis)',
-            scene=dict(xaxis_title='因子数量 (Factor Count)',
-                       yaxis_title='时间窗口索引 (Time Window Index)',
-                       zaxis_title=f'{metric_label} 值 ({metric_label} Value)',
-                       xaxis=dict(
-                           tickmode='array',
-                           tickvals=x_unique if 'x_unique' in locals() else [],
-                           ticktext=fc_labels[:len(x_unique)]
-                           if 'x_unique' in locals() else [],
-                       ),
-                       yaxis=dict(
-                           tickmode='array',
-                           tickvals=list(range(len(time_windows))),
-                           ticktext=[
-                               tw.split(' → ')[0] if ' → ' in tw else tw[:15]
-                               for tw in time_windows
-                           ],
-                       ),
-                       zaxis=dict(title=metric_label),
-                       camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))),
-            width=900,
-            height=700,
-            font=dict(size=12),
-        )
-
-        # Convert to HTML - use full HTML to ensure Plotly.js is included
-        plot_html = fig.to_html(include_plotlyjs='cdn',
-                                div_id=f'{metric_name}-3d-plot',
-                                full_html=False)
-
-        # Extract script and div more robustly
-        import re
-        # Match all script tags (may be multiple)
-        script_matches = re.findall(r'<script[^>]*>.*?</script>', plot_html,
-                                    re.DOTALL)
-        script_content = '\n'.join(script_matches) if script_matches else ""
-
-        # Match div with the specific ID
-        div_pattern = rf'<div[^>]*id="{metric_name}-3d-plot"[^>]*>.*?</div>'
-        div_match = re.search(div_pattern, plot_html, re.DOTALL)
-        div_content = div_match.group(
-            0
-        ) if div_match else f'<div id="{metric_name}-3d-plot" class="plotly-graph-div" style="height:700px; width:900px;"></div>'
-
-        # Debug: print if no data
-        if not x_data:
-            print(
-                f"[DEBUG 3D] No data for {metric_label}: x_data length = {len(x_data)}"
-            )
-            print(
-                f"[DEBUG 3D] enhanced_results count: {len(enhanced_results)}")
-            if enhanced_results:
-                print(
-                    f"[DEBUG 3D] First result keys: {list(enhanced_results[0].keys())}"
-                )
-                print(
-                    f"[DEBUG 3D] First result grid_search_params: {enhanced_results[0].get('grid_search_params', {})}"
-                )
-
-        return f"""
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #17a2b8;">
-            <h4>📊 {metric_label} 3D 可视化说明 (3D Visualization Guide):</h4>
-            <ul>
-                <li><strong>X轴（因子数量）：</strong>显示不同的因子数量。数值越大，使用的因子越多。</li>
-                <li><strong>Y轴（时间窗口）：</strong>显示不同的时间窗口索引。每个索引对应一个时间窗口。</li>
-                <li><strong>Z轴（{metric_label}值）：</strong>显示{metric_label}值，越高表示表现越好。</li>
-                <li><strong>颜色含义：</strong>
-                    <ul>
-                        <li><span style="color: #167a3d; font-weight: 600;">绿色点</span>：{metric_label} > {color_thresholds['good']}，表现优秀</li>
-                        <li><span style="color: #ffc107; font-weight: 600;">黄色点</span>：{color_thresholds['warn']} < {metric_label} ≤ {color_thresholds['good']}，表现一般</li>
-                        <li><span style="color: #dc3545; font-weight: 600;">红色点</span>：{metric_label} ≤ {color_thresholds['warn']}，表现较差</li>
-                    </ul>
-                </li>
-                <li><strong>如何识别Plateau Point：</strong>
-                    <ul>
-                        <li>观察3D表面图，寻找{metric_label}值不再显著上升的"平台"区域</li>
-                        <li>Plateau Point通常出现在：{metric_label}值达到较高水平后，即使增加因子数量，{metric_label}也不再明显提升的位置</li>
-                        <li>理想情况下，Plateau Point应该在不同时间窗口（Y轴）上都保持相对稳定的高度（Z轴）</li>
-                        <li>可以通过旋转3D图形（点击并拖动）从不同角度观察，更容易识别平台区域</li>
-                    </ul>
-                </li>
-                <li><strong>分析建议：</strong>
-                    <ul>
-                        <li>寻找Z轴（{metric_label}）值高且在不同Y轴（时间窗口）位置都保持稳定的X轴（因子数量）位置</li>
-                        <li>如果表面图在某个因子数量后变得平坦，该位置就是Plateau Point</li>
-                        <li>选择Plateau Point对应的因子数量，可以在保持高{metric_label}的同时，避免使用过多因子</li>
-                    </ul>
-                </li>
-            </ul>
-        </div>
-        <div class="heatmap-container">
-            {div_content}
-        </div>
-        {script_content}
-        """
-    except ImportError:
-        return f"""
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-            <h4>📊 {metric_label} 3D 可视化</h4>
-            <p>⚠️ Plotly 未安装，无法生成3D图形。请安装: pip install plotly</p>
-        </div>
-        """
-    except Exception as e:
-        return f"""
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-            <h4>📊 {metric_label} 3D 可视化</h4>
-            <p>⚠️ 生成3D图形时出错: {str(e)}</p>
-        </div>
-        """
-
-
-def _generate_icir_3d_plot(enhanced_results: list, time_windows: list,
-                           factor_counts: list) -> str:
-    """Generate 3D visualization of ICIR distribution across factor counts and time windows."""
-
-    def get_icir(result):
-        return result.get('enhanced_metrics', {}).get('icir')
-
-    return _generate_metric_3d_plot(enhanced_results,
-                                    time_windows,
-                                    factor_counts,
-                                    'icir',
-                                    'ICIR',
-                                    get_icir,
-                                    color_thresholds={
-                                        'good': 1.0,
-                                        'warn': 0.5,
-                                        'bad': 0.0
-                                    })
-
-
-def _generate_icir_heatmap(enhanced_results: list, time_windows: list,
-                           factor_counts: list) -> str:
-    """Generate ICIR heatmap visualization using Plotly."""
-    try:
-        import plotly.graph_objects as go
-
-        # Prepare data matrix for heatmap
-        heatmap_data = []
-        factor_count_labels = []
-
-        # Build data matrix: rows = factor counts, columns = time windows
-        for fc in sorted(factor_counts,
-                         key=lambda x: (x == 'all', x
-                                        if isinstance(x, int) else 999999)):
-            row_data = []
-            factor_count_labels.append(str(fc))
-
-            for tw in time_windows:
-                # Find result for this combination
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    icir = result.get('enhanced_metrics', {}).get('icir')
-                    # Use ICIR value if available, otherwise try to get from ic_statistics
-                    if icir is None:
-                        ic_stats = result.get('ic_statistics', {})
-                        ic_mean = ic_stats.get('ic_mean')
-                        ic_std = ic_stats.get('ic_std')
-                        if ic_mean is not None and ic_std is not None and ic_std > 0:
-                            icir = abs(ic_mean) / ic_std
-                    row_data.append(icir if icir is not None else 0)
-                else:
-                    row_data.append(0)
-
-            heatmap_data.append(row_data)
-
-        # Set time window labels (shortened for display)
-        time_window_labels = [
-            tw.split(' → ')[0] if ' → ' in tw else tw[:10]
-            for tw in time_windows
-        ]
-
-        # Create heatmap
-        fig = go.Figure(data=go.Heatmap(
-            z=heatmap_data,
-            x=time_window_labels,
-            y=factor_count_labels,
-            colorscale='RdYlGn',  # Red-Yellow-Green scale
-            colorbar=dict(title="ICIR"),
-            text=[[f"{val:.3f}" if val else "-" for val in row]
-                  for row in heatmap_data],
-            texttemplate='%{text}',
-            textfont={"size": 10},
-            hovertemplate=
-            'Time Window: %{x}<br>Factor Count: %{y}<br>ICIR: %{z:.3f}<extra></extra>',
-        ))
-
-        fig.update_layout(
-            title='ICIR 热力图 (ICIR Heatmap)',
-            xaxis_title='时间窗口 (Time Window)',
-            yaxis_title='因子数量 (Factor Count)',
-            width=800,
-            height=500,
-            font=dict(size=12),
-        )
-
-        # Convert to HTML - use full HTML with CDN for plotly.js
-        heatmap_html_full = fig.to_html(include_plotlyjs='cdn',
-                                        div_id='icir-heatmap',
-                                        full_html=False)
-
-        # Extract script and div from the HTML more robustly
-        import re
-        # Match all script tags (may be multiple)
-        script_matches = re.findall(r'<script[^>]*>.*?</script>',
-                                    heatmap_html_full, re.DOTALL)
-        script_content = '\n'.join(script_matches) if script_matches else ""
-
-        # Match div with the specific ID
-        div_pattern = r'<div[^>]*id="icir-heatmap"[^>]*>.*?</div>'
-        div_match = re.search(div_pattern, heatmap_html_full, re.DOTALL)
-        div_content = div_match.group(
-            0
-        ) if div_match else '<div id="icir-heatmap" class="plotly-graph-div" style="height:500px; width:800px;"></div>'
-
-        # Debug: print if no data
-        if not heatmap_data or all(
-                all(val == 0 for val in row) for row in heatmap_data):
-            print(
-                f"[DEBUG Heatmap] No data or all zeros: heatmap_data = {heatmap_data}"
-            )
-            print(
-                f"[DEBUG Heatmap] enhanced_results count: {len(enhanced_results)}"
-            )
-            if enhanced_results:
-                print(
-                    f"[DEBUG Heatmap] First result enhanced_metrics: {enhanced_results[0].get('enhanced_metrics', {})}"
-                )
-
-        return f"""
-        <div class="card">
-            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
-            <p>可视化不同因子数量和时间窗口的 ICIR 分布。颜色越绿表示 ICIR 越高（预测稳定性越好）。</p>
-            <p>Visualization of ICIR distribution across different factor counts and time windows. Greener colors indicate higher ICIR (better predictive stability).</p>
-            <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #fd7e14;">
-                <h4>📖 如何阅读热力图 (How to Read the Heatmap):</h4>
-                <ul>
-                    <li><strong>颜色含义：</strong>
-                        <ul>
-                            <li><span style="color: #167a3d; font-weight: 600;">深绿色</span>：ICIR很高（> 1.5），表示因子预测能力非常稳定</li>
-                            <li><span style="color: #28a745; font-weight: 600;">浅绿色</span>：ICIR较高（1.0 - 1.5），表示因子预测能力稳定</li>
-                            <li><span style="color: #ffc107; font-weight: 600;">黄色</span>：ICIR中等（0.5 - 1.0），表示因子预测能力一般</li>
-                            <li><span style="color: #dc3545; font-weight: 600;">红色</span>：ICIR较低（< 0.5），表示因子预测能力不稳定</li>
-                        </ul>
-                    </li>
-                    <li><strong>分析要点：</strong>
-                        <ul>
-                            <li>观察颜色分布模式，找出ICIR高的区域（绿色区域）</li>
-                            <li>比较不同因子数量的ICIR分布，识别最优因子数量范围</li>
-                            <li>观察不同时间窗口的ICIR一致性，评估因子的时间稳定性</li>
-                            <li>寻找颜色均匀的区域，表示该因子数量在不同时间窗口都表现稳定</li>
-                        </ul>
-                    </li>
-                    <li><strong>结论：</strong>热力图提供了ICIR分布的直观可视化。理想的组合应该是在多个时间窗口都显示绿色或浅绿色，且颜色分布相对均匀，这表示该因子数量在不同市场环境下都能保持稳定的预测能力。</li>
-                </ul>
-            </div>
-            <div class="heatmap-container">
-                {div_content}
-            </div>
-            {script_content}
-        </div>
-        """
-    except ImportError:
-        # If plotly is not available, return a message
-        return """
-        <div class="card">
-            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
-            <p>⚠️ Plotly 未安装，无法生成热力图。请安装: pip install plotly</p>
-        </div>
-        """
-    except Exception as e:
-        return f"""
-        <div class="card">
-            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
-            <p>⚠️ 生成热力图时出错: {str(e)}</p>
-        </div>
-        """
+# Report generation functions moved to report_generator.py
 
 
 def _find_best_combination_by_robustness(
@@ -1624,6 +1205,7 @@ def _copy_best_combination_files(best_result: Dict,
         params = best_result.get('grid_search_params', {})
         train_start = params.get('time_window_start')
         train_end = params.get('time_window_end')
+        factor_count = params.get('factor_count')
 
         if train_start and train_end:
             # Extract symbol and feature type from grid_search_dir name
@@ -1639,10 +1221,39 @@ def _copy_best_combination_files(best_result: Dict,
                     "-", "")[:8] if train_end else None
 
                 if train_start_date and train_end_date:
-                    # Look for the results directory
-                    potential_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_feature}_{train_start_date}_{train_end_date}"
-                    if potential_dir.exists():
-                        results_dir = str(potential_dir)
+                    # NEW: Look for experiment directory under grid_search_dir first
+                    # Pattern: SYMBOL_FEATURE_START_END_tfTIMEFRAME_hHORIZONS_fcFACTORCOUNT
+                    factor_count_suffix = f"_fc{factor_count}" if factor_count and factor_count != 'all' else ""
+                    experiment_pattern = f"{symbol_feature}_{train_start_date}_{train_end_date}"
+
+                    # Search for matching directories under grid_search_dir
+                    matching_dirs = [
+                        d for d in grid_search_dir.iterdir()
+                        if d.is_dir() and experiment_pattern in d.name
+                        and factor_count_suffix in d.name
+                    ]
+
+                    if matching_dirs:
+                        # Use the first matching directory
+                        results_dir = str(matching_dirs[0])
+                    else:
+                        # Fallback: try without factor_count suffix
+                        matching_dirs_fallback = [
+                            d for d in grid_search_dir.iterdir()
+                            if d.is_dir() and experiment_pattern in d.name
+                        ]
+                        if matching_dirs_fallback:
+                            results_dir = str(matching_dirs_fallback[0])
+                        else:
+                            # Last fallback: try old location (for backward compatibility)
+                            potential_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_feature}_{train_start_date}_{train_end_date}{factor_count_suffix}"
+                            if potential_dir.exists():
+                                results_dir = str(potential_dir)
+                            else:
+                                # Final fallback: try without factor_count suffix
+                                potential_dir_fallback = DIM_COMPARE_RESULTS_ROOT / f"{symbol_feature}_{train_start_date}_{train_end_date}"
+                                if potential_dir_fallback.exists():
+                                    results_dir = str(potential_dir_fallback)
 
     if not results_dir or not Path(results_dir).exists():
         print(
@@ -1724,43 +1335,53 @@ def _copy_best_combination_files(best_result: Dict,
             if classification_metrics else 0,
         },
         "factor_count":
-        data_info.get('stage3_representatives', 0),
+        best_result.get('grid_search_params',
+                        {}).get('factor_count',
+                                data_info.get('stage3_representatives', 0)),
         "ic_statistics":
         best_result.get('ic_statistics', {}),
     }
 
-    # Try to extract feature names from production_results.json if available
-    production_results_file = source_dir / "production_results.json"
-    if production_results_file.exists():
-        try:
-            with open(production_results_file, 'r') as f:
-                prod_results = json.load(f)
-                # Try to get feature names from various locations
-                # First try selected_features (complete list)
-                if 'selected_features' in prod_results:
-                    summary['selected_features'] = prod_results[
-                        'selected_features']
-                # Then try model_info.all_selected_features
-                model_info = prod_results.get('model_info', {})
-                if 'all_selected_features' in model_info:
-                    summary['selected_features'] = model_info[
-                        'all_selected_features']
-                elif 'feature_names' in model_info:
-                    summary['feature_names'] = model_info['feature_names']
-        except Exception as e:
-            print(f"   ⚠️ Failed to read production_results.json: {e}")
+    # Priority 1: Get selected_features directly from best_result (most reliable)
+    selected_features = best_result.get('selected_features')
+    if not selected_features:
+        # Try from model_info
+        model_info = best_result.get('model_info', {})
+        if 'all_selected_features' in model_info:
+            selected_features = model_info['all_selected_features']
 
-    # Also try to get selected features directly from best_result
-    if 'selected_features' not in summary:
-        selected_features = best_result.get('selected_features')
-        if selected_features:
-            summary['selected_features'] = selected_features
-        else:
-            # Try from model_info
-            model_info = best_result.get('model_info', {})
-            if 'all_selected_features' in model_info:
-                summary['selected_features'] = model_info[
-                    'all_selected_features']
+    # Priority 2: If not in best_result, try from production_results.json
+    if not selected_features:
+        production_results_file = source_dir / "production_results.json"
+        if production_results_file.exists():
+            try:
+                with open(production_results_file, 'r') as f:
+                    prod_results = json.load(f)
+                    # Try to get feature names from various locations
+                    # First try selected_features (complete list)
+                    if 'selected_features' in prod_results:
+                        selected_features = prod_results['selected_features']
+                    # Then try model_info.all_selected_features
+                    elif 'model_info' in prod_results:
+                        model_info = prod_results.get('model_info', {})
+                        if 'all_selected_features' in model_info:
+                            selected_features = model_info[
+                                'all_selected_features']
+            except Exception as e:
+                print(f"   ⚠️ Failed to read production_results.json: {e}")
+
+    # Store selected_features in summary
+    if selected_features:
+        summary['selected_features'] = selected_features
+        # Verify factor_count matches actual feature count
+        actual_count = len(selected_features)
+        expected_count = summary.get('factor_count', 0)
+        if expected_count != actual_count:
+            print(
+                f"   ⚠️ Factor count mismatch: expected {expected_count}, got {actual_count} features"
+            )
+            print(f"   Using actual count: {actual_count}")
+            summary['factor_count'] = actual_count
 
     # Save selected features to a separate file for easy access
     if 'selected_features' in summary and summary['selected_features']:
@@ -1791,11 +1412,20 @@ def _copy_best_combination_files(best_result: Dict,
         print(f"\n⚠️ No files were copied. Source directory: {source_dir}")
 
 
-def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
-                                feature_type_slug: str, args) -> str:
+def generate_grid_search_report(grid_search_results: list,
+                                symbol_slug: str,
+                                feature_type_slug: str,
+                                args,
+                                grid_search_dir: Path = None) -> str:
     """Generate a comparison matrix report for grid search results."""
     from pathlib import Path
     from time_series_model.pipeline.dimensionality.report_generator import write_html_report
+
+    # Create grid_search_dir if not provided (for backward compatibility)
+    if grid_search_dir is None:
+        grid_search_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_slug}_{feature_type_slug}_grid_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    grid_search_dir.mkdir(parents=True, exist_ok=True)
 
     # Organize results into a matrix
     # Group by time window, then by factor count
@@ -1843,10 +1473,6 @@ def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
         'task_type': task_type,
     }
 
-    # Generate HTML report
-    grid_search_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_slug}_{feature_type_slug}_grid_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    grid_search_dir.mkdir(parents=True, exist_ok=True)
-
     report_path = grid_search_dir / f"{symbol_slug}_{feature_type_slug}_grid_search_report.html"
     generate_grid_search_html_report(report_data, str(report_path))
 
@@ -1888,920 +1514,8 @@ def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
     return str(report_path)
 
 
-def _build_analysis_conclusions(enhanced_results: list, time_windows: list,
-                                factor_counts: list,
-                                is_classification: bool) -> str:
-    """Build textual analysis conclusions for grid search results."""
-    if not enhanced_results:
-        return "<div class=\"card\"><h3>📊 Analysis Conclusions</h3><p>No results available for analysis.</p></div>"
-
-    # Collect metrics for analysis
-    results_by_fc = {}
-    for result in enhanced_results:
-        params = result.get('grid_search_params', {})
-        fc = params.get('factor_count')
-        if fc not in results_by_fc:
-            results_by_fc[fc] = []
-        results_by_fc[fc].append(result)
-
-    # Find best factor count by robustness score
-    best_fc = None
-    best_robustness = -1
-    for fc, results in results_by_fc.items():
-        robustness_values = []
-        for r in results:
-            metrics = r.get('enhanced_metrics', {})
-            icir = metrics.get('icir', 0) or 0
-            sharpe = metrics.get('sharpe', 0) or 0
-            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-            robustness = (icir * sharpe) / (
-                1 + max_dd) if icir > 0 and sharpe > 0 else 0
-            robustness_values.append(robustness)
-        avg_robustness = sum(robustness_values) / len(
-            robustness_values) if robustness_values else 0
-        if avg_robustness > best_robustness:
-            best_robustness = avg_robustness
-            best_fc = fc
-
-    # Analyze ICIR stability across time windows
-    icir_stability = {}
-    for fc in factor_counts:
-        icir_values = []
-        for result in enhanced_results:
-            params = result.get('grid_search_params', {})
-            if params.get('factor_count') == fc:
-                icir = result.get('enhanced_metrics', {}).get('icir')
-                if icir is not None:
-                    icir_values.append(icir)
-        if icir_values:
-            mean_icir = sum(icir_values) / len(icir_values)
-            std_icir = (sum((x - mean_icir)**2
-                            for x in icir_values) / len(icir_values))**0.5
-            icir_stability[fc] = {'mean': mean_icir, 'std': std_icir}
-
-    # Find most stable factor count (lowest std with high mean)
-    most_stable_fc = None
-    best_stability_score = -1
-    for fc, stats in icir_stability.items():
-        if stats['mean'] > 0.5:  # Only consider factor counts with decent ICIR
-            stability_score = stats['mean'] / (
-                1 + stats['std'])  # Higher mean, lower std is better
-            if stability_score > best_stability_score:
-                best_stability_score = stability_score
-                most_stable_fc = fc
-
-    # Build conclusions HTML
-    conclusions_html = "<div class=\"card\"><h3>📊 分析结论 (Analysis Conclusions)</h3>"
-
-    # Optimal factor count
-    conclusions_html += "<h4>🎯 最优因子数量 (Optimal Factor Count)</h4>"
-    if best_fc is not None:
-        conclusions_html += f"<p>基于稳健性得分（Robustness Score）分析，<strong>{best_fc}个因子</strong>是最优选择。</p>"
-        conclusions_html += f"<p>Based on Robustness Score analysis, <strong>{best_fc} factors</strong> is the optimal choice.</p>"
-        if best_robustness > 0.5:
-            conclusions_html += f"<p>该因子数量的平均稳健性得分为 <strong>{best_robustness:.3f}</strong>，表现优秀（> 0.5）。</p>"
-        else:
-            conclusions_html += f"<p>该因子数量的平均稳健性得分为 <strong>{best_robustness:.3f}</strong>，表现一般（≤ 0.5）。</p>"
-    else:
-        conclusions_html += "<p>无法确定最优因子数量，请检查数据质量。</p>"
-
-    # Factor stability across time windows
-    conclusions_html += "<h4>📈 因子在不同周期的有效性 (Factor Effectiveness Across Time Windows)</h4>"
-    if icir_stability:
-        conclusions_html += "<ul>"
-        for fc in sorted(factor_counts,
-                         key=lambda x: (x == 'all', x
-                                        if isinstance(x, int) else 999999)):
-            if fc in icir_stability:
-                stats = icir_stability[fc]
-                conclusions_html += f"<li><strong>{fc}个因子：</strong>"
-                conclusions_html += f"平均ICIR = {stats['mean']:.3f}，标准差 = {stats['std']:.3f}。"
-                if stats['mean'] > 1.0 and stats['std'] < 0.3:
-                    conclusions_html += "✅ 表现优秀且稳定（高ICIR，低波动）。"
-                elif stats['mean'] > 0.5:
-                    conclusions_html += "⚠️ 表现一般，稳定性有待提升。"
-                else:
-                    conclusions_html += "❌ 表现较差，不推荐使用。"
-                conclusions_html += "</li>"
-        conclusions_html += "</ul>"
-
-    if most_stable_fc is not None and most_stable_fc != best_fc:
-        conclusions_html += f"<p><strong>💡 稳定性建议：</strong>如果优先考虑因子在不同时间窗口的稳定性，建议选择 <strong>{most_stable_fc}个因子</strong>（ICIR均值高且标准差低）。</p>"
-
-    # Multi-period effectiveness
-    conclusions_html += "<h4>🔄 多周期有效性分析 (Multi-Period Effectiveness Analysis)</h4>"
-    if len(time_windows) > 1:
-        conclusions_html += f"<p>本次测试覆盖了 <strong>{len(time_windows)}</strong> 个不同的时间窗口：</p>"
-        conclusions_html += "<ul>"
-        for tw in time_windows:
-            conclusions_html += f"<li>{tw}</li>"
-        conclusions_html += "</ul>"
-        conclusions_html += "<p><strong>关键发现：</strong></p>"
-        conclusions_html += "<ul>"
-        conclusions_html += "<li>如果某个因子数量在所有时间窗口都表现良好（绿色单元格），说明该因子数量具有强的时间稳定性。</li>"
-        conclusions_html += "<li>如果某个因子数量只在部分时间窗口表现良好，说明该因子数量可能对特定市场环境敏感。</li>"
-        conclusions_html += "<li>建议优先选择在所有或大部分时间窗口都表现稳定的因子数量。</li>"
-        conclusions_html += "</ul>"
-    else:
-        conclusions_html += "<p>本次测试仅使用单一时间窗口，无法评估多周期有效性。建议增加更多时间窗口进行测试。</p>"
-
-    # Final recommendations
-    conclusions_html += "<h4>✅ 最终建议 (Final Recommendations)</h4>"
-    conclusions_html += "<ol>"
-    if best_fc is not None:
-        conclusions_html += f"<li><strong>推荐因子数量：{best_fc}个</strong> - 基于稳健性得分分析，这是综合表现最优的选择。</li>"
-    if most_stable_fc is not None and most_stable_fc != best_fc:
-        conclusions_html += f"<li><strong>备选因子数量：{most_stable_fc}个</strong> - 如果更关注时间稳定性，可以考虑此选项。</li>"
-    conclusions_html += "<li><strong>验证建议：</strong>在实际使用前，建议在最新的数据上验证所选因子数量的表现。</li>"
-    conclusions_html += "<li><strong>持续监控：</strong>定期重新评估因子有效性，因为市场环境会发生变化。</li>"
-    conclusions_html += "</ol>"
-
-    conclusions_html += "</div>"
-    return conclusions_html
-
-
-def generate_grid_search_html_report(report_data: Dict,
-                                     html_path: str) -> None:
-    """Generate HTML report for grid search results with enhanced metrics and visualizations."""
-    import os
-    import json
-    from time_series_model.pipeline.dimensionality.report_generator import _format_float
-
-    time_windows = report_data['time_windows']
-    factor_counts = report_data['factor_counts']
-    grid_search_results = report_data['grid_search_results']
-    task_type = report_data['task_type']
-    is_classification = task_type.startswith('classification')
-
-    # Calculate ICIR and robustness metrics for each result
-    enhanced_results = []
-    for result in grid_search_results:
-        perf = result.get('performance', {}).get('stage3_representatives', {})
-        # financial_metrics is stored inside perf_reps, not as a separate field
-        financial = perf.get('financial_metrics', {}) if isinstance(
-            perf, dict) else {}
-        # Also check the separate financial field as fallback
-        if not financial:
-            financial = result.get('performance',
-                                   {}).get('stage3_representatives_financial',
-                                           {})
-
-        # Debug: print structure for first result
-        if len(enhanced_results) == 0:
-            print(f"\n[DEBUG] First result structure:")
-            print(f"  result keys: {list(result.keys())}")
-            print(
-                f"  performance keys: {list(result.get('performance', {}).keys())}"
-            )
-            print(
-                f"  perf keys: {list(perf.keys()) if isinstance(perf, dict) else 'Not a dict'}"
-            )
-            print(
-                f"  financial keys: {list(financial.keys()) if financial else 'Empty'}"
-            )
-            print(f"  financial content: {financial}")
-            if isinstance(perf, dict):
-                print(
-                    f"  perf.get('financial_metrics'): {perf.get('financial_metrics', 'NOT FOUND')}"
-                )
-            print(
-                f"  result.get('performance', {{}}).get('stage3_representatives_financial'): {result.get('performance', {}).get('stage3_representatives_financial', 'NOT FOUND')}"
-            )
-
-        # Extract metrics
-        if is_classification:
-            # win_rate is stored in financial_metrics, not in performance directly
-            win_rate = financial.get('win_rate', 0) if financial else 0
-            # Also check performance for win_rate as fallback
-            if win_rate == 0:
-                win_rate = perf.get('win_rate', 0)
-            # Also check classification_metrics for accuracy as fallback for win_rate
-            if win_rate == 0:
-                classification_metrics = perf.get('classification_metrics',
-                                                  {}) if isinstance(
-                                                      perf, dict) else {}
-                if classification_metrics:
-                    # Use accuracy as a proxy for win_rate if available
-                    accuracy = classification_metrics.get('accuracy', 0)
-                    if accuracy > 0:
-                        win_rate = accuracy
-            sharpe = financial.get('sharpe_ratio', 0) if financial else 0
-            max_dd = financial.get('max_drawdown', 0) if financial else 0
-
-            # Debug: print extracted values for first result
-            if len(enhanced_results) == 0:
-                print(f"  Extracted win_rate: {win_rate}")
-                print(f"  Extracted sharpe: {sharpe}")
-                print(f"  Extracted max_dd: {max_dd}")
-                # Check if perf is empty or None
-                if not perf or (isinstance(perf, dict) and len(perf) == 0):
-                    print(f"  ⚠️ WARNING: perf is empty or None!")
-                if not financial or (isinstance(financial, dict)
-                                     and len(financial) == 0):
-                    print(f"  ⚠️ WARNING: financial is empty or None!")
-        else:
-            r2 = perf.get('r2', 0)
-            sharpe = financial.get('sharpe_ratio', 0) if financial else 0
-            max_dd = financial.get('max_drawdown', 0) if financial else 0
-
-        # Calculate ICIR if IC data is available
-        ic_stats = result.get('ic_statistics', {})
-        ic_mean = ic_stats.get('ic_mean', None)
-        ic_std = ic_stats.get('ic_std', None)
-        icir = ic_stats.get('icir', None)
-        if icir is None and ic_mean is not None and ic_std is not None and ic_std > 0:
-            icir = abs(ic_mean) / ic_std
-
-        # Debug: print IC stats for first result
-        if len(enhanced_results) == 0:
-            print(f"  IC stats: {ic_stats}")
-            print(f"  Calculated ICIR: {icir}")
-            params = result.get('grid_search_params', {})
-            print(f"  Factor count: {params.get('factor_count')}")
-            print(f"  Time window: {params.get('time_window')}")
-
-        enhanced_results.append({
-            **result, 'enhanced_metrics': {
-                'icir': icir,
-                'sharpe': sharpe,
-                'max_drawdown': max_dd,
-            }
-        })
-
-    # Build multiple comparison matrices
-    # Matrix 1: Primary metric (Win Rate or R²)
-    matrix_html = "<div class=\"card\"><h3>📊 Grid Search Comparison Matrix - Primary Metric</h3>"
-    matrix_html += "<p>Comparison of different factor counts and time windows</p>"
-
-    # Determine primary metric
-    if is_classification:
-        primary_metric = 'win_rate'
-        metric_display = 'Directional Win Rate'
-    else:
-        primary_metric = 'r2'
-        metric_display = 'R²'
-
-    # Build table header
-    matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-    matrix_html += "<tr><th>Time Window</th>"
-    for fc in factor_counts:
-        matrix_html += f"<th>Factors: {fc}</th>"
-    matrix_html += "</tr>"
-
-    # Build table rows
-    for tw in time_windows:
-        matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-        for fc in factor_counts:
-            # Find result for this combination
-            result = None
-            for r in enhanced_results:
-                params = r.get('grid_search_params', {})
-                if params.get('time_window') == tw and params.get(
-                        'factor_count') == fc:
-                    result = r
-                    break
-
-            if result:
-                perf = result.get('performance',
-                                  {}).get('stage3_representatives', {})
-                # financial_metrics is stored inside perf_reps
-                financial = perf.get('financial_metrics', {}) if isinstance(
-                    perf, dict) else {}
-                if not financial:
-                    financial = result.get('performance', {}).get(
-                        'stage3_representatives_financial', {})
-                if is_classification:
-                    # win_rate is stored in financial_metrics
-                    metric_val = financial.get('win_rate',
-                                               0) if financial else 0
-                    # Fallback to performance if not in financial
-                    if metric_val == 0:
-                        metric_val = perf.get('win_rate', 0)
-                    # Also check classification_metrics for accuracy as fallback
-                    if metric_val == 0:
-                        classification_metrics = perf.get(
-                            'classification_metrics', {}) if isinstance(
-                                perf, dict) else {}
-                        if classification_metrics:
-                            accuracy = classification_metrics.get(
-                                'accuracy', 0)
-                            if accuracy > 0:
-                                metric_val = accuracy
-                    cell_content = f"{_format_float(metric_val * 100, 2)}%"
-                else:
-                    metric_val = perf.get('r2', 0)
-                    cell_content = _format_float(metric_val, 4)
-
-                # Add color coding
-                color_class = "good" if metric_val > 0.5 else "warn" if metric_val > 0 else "bad"
-                matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-            else:
-                matrix_html += "<td>-</td>"
-        matrix_html += "</tr>"
-
-    matrix_html += "</table>"
-    matrix_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #007bff;">
-        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-        <ul>
-            <li><strong>表格结构：</strong>行表示不同的时间窗口，列表示不同的因子数量。每个单元格显示该组合下的{metric_display}值。</li>
-            <li><strong>颜色编码：</strong>
-                <ul>
-                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：表现优秀（{metric_display} > 0.5）</li>
-                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：表现一般（{metric_display} > 0）</li>
-                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：表现较差（{metric_display} ≤ 0）</li>
-                </ul>
-            </li>
-            <li><strong>分析要点：</strong>
-                <ul>
-                    <li>比较同一时间窗口下不同因子数量的表现，找出最优因子数量</li>
-                    <li>比较同一因子数量下不同时间窗口的表现，评估因子在不同时期的稳定性</li>
-                    <li>关注绿色单元格，这些是表现最好的组合</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>此表格帮助识别在特定时间窗口下，使用多少因子能获得最佳{metric_display}。通常，因子数量不是越多越好，需要找到性能与复杂度的平衡点。</li>
-        </ul>
-    </div>
-    </div>""".format(metric_display=metric_display)
-
-    # Matrix 2: ICIR (if available)
-    icir_matrix_html = ""
-    if any(
-            r.get('enhanced_metrics', {}).get('icir') is not None
-            for r in enhanced_results):
-        icir_matrix_html = "<div class=\"card\"><h3>📈 ICIR (Information Coefficient Information Ratio) Matrix</h3>"
-        icir_matrix_html += "<p>ICIR = |Mean IC| / Std(IC) - Higher is better (indicates stable predictive power)</p>"
-        icir_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-        icir_matrix_html += "<tr><th>Time Window</th>"
-        for fc in factor_counts:
-            icir_matrix_html += f"<th>Factors: {fc}</th>"
-        icir_matrix_html += "</tr>"
-
-        for tw in time_windows:
-            icir_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-            for fc in factor_counts:
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    icir = result.get('enhanced_metrics', {}).get('icir')
-                    if icir is not None:
-                        cell_content = _format_float(icir, 3)
-                        color_class = "good" if icir > 1.0 else "warn" if icir > 0.5 else "bad"
-                        icir_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-                    else:
-                        icir_matrix_html += "<td>-</td>"
-                else:
-                    icir_matrix_html += "<td>-</td>"
-            icir_matrix_html += "</tr>"
-
-        icir_matrix_html += "</table>"
-        icir_matrix_html += """
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #28a745;">
-            <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-            <ul>
-                <li><strong>ICIR定义：</strong>ICIR = |平均IC| / IC标准差，衡量因子的预测稳定性和有效性。ICIR越高，表示因子在不同时期的表现越稳定。</li>
-                <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的ICIR值。</li>
-                <li><strong>颜色编码：</strong>
-                    <ul>
-                        <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：ICIR > 1.0，表示因子具有稳定的预测能力</li>
-                        <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0.5 < ICIR ≤ 1.0，表示因子预测能力一般</li>
-                        <li><span style="color: #c53030; font-weight: 600;">红色</span>：ICIR ≤ 0.5，表示因子预测能力不稳定</li>
-                    </ul>
-                </li>
-                <li><strong>分析要点：</strong>
-                    <ul>
-                        <li>ICIR > 1.0 是理想状态，表示因子的平均预测能力超过其波动性</li>
-                        <li>比较不同因子数量的ICIR，找出在保持高ICIR的前提下，因子数量最少的组合</li>
-                        <li>观察同一因子数量在不同时间窗口的ICIR，评估因子的时间稳定性</li>
-                    </ul>
-                </li>
-                <li><strong>结论：</strong>此表格是选择因子的关键指标。高ICIR意味着因子不仅在历史数据上有效，而且在不同市场环境下都能保持稳定的预测能力。优先选择ICIR > 1.0且在不同时间窗口都表现稳定的因子组合。</li>
-            </ul>
-        </div>
-        </div>"""
-
-    # Matrix 3: Sharpe Ratio
-    sharpe_matrix_html = "<div class=\"card\"><h3>💰 Sharpe Ratio Matrix</h3>"
-    sharpe_matrix_html += "<p>Risk-adjusted return metric - Higher is better</p>"
-    sharpe_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-    sharpe_matrix_html += "<tr><th>Time Window</th>"
-    for fc in factor_counts:
-        sharpe_matrix_html += f"<th>Factors: {fc}</th>"
-    sharpe_matrix_html += "</tr>"
-
-    for tw in time_windows:
-        sharpe_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-        for fc in factor_counts:
-            result = None
-            for r in enhanced_results:
-                params = r.get('grid_search_params', {})
-                if params.get('time_window') == tw and params.get(
-                        'factor_count') == fc:
-                    result = r
-                    break
-
-            if result:
-                sharpe = result.get('enhanced_metrics', {}).get('sharpe', 0)
-                cell_content = _format_float(sharpe, 3)
-                color_class = "good" if sharpe > 1.0 else "warn" if sharpe > 0 else "bad"
-                sharpe_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-            else:
-                sharpe_matrix_html += "<td>-</td>"
-        sharpe_matrix_html += "</tr>"
-
-    sharpe_matrix_html += "</table>"
-    sharpe_matrix_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #ffc107;">
-        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-        <ul>
-            <li><strong>Sharpe Ratio定义：</strong>夏普比率 = (策略收益率 - 无风险收益率) / 收益率标准差，衡量风险调整后的收益表现。Sharpe Ratio越高，表示在承担相同风险的情况下，获得的超额收益越多。</li>
-            <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的Sharpe Ratio值。</li>
-            <li><strong>颜色编码：</strong>
-                <ul>
-                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：Sharpe > 1.0，表示策略表现优秀</li>
-                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0 < Sharpe ≤ 1.0，表示策略表现一般</li>
-                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：Sharpe ≤ 0，表示策略表现不佳</li>
-                </ul>
-            </li>
-            <li><strong>分析要点：</strong>
-                <ul>
-                    <li>Sharpe Ratio > 1.0 通常被认为是可接受的策略表现</li>
-                    <li>Sharpe Ratio > 2.0 表示策略表现优秀</li>
-                    <li>比较不同因子数量和时间窗口的Sharpe Ratio，找出风险调整后收益最高的组合</li>
-                    <li>注意：此指标需要真实的回测数据，如果数据不可用，可能显示为0</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>此表格帮助评估策略的实际交易表现。高Sharpe Ratio意味着策略不仅能产生收益，而且风险控制得当。结合ICIR和Sharpe Ratio，可以全面评估因子的有效性和策略的实用性。</li>
-        </ul>
-    </div>
-    </div>"""
-
-    # Matrix 4: Robustness Score (ICIR-weighted composite)
-    robustness_matrix_html = "<div class=\"card\"><h3>🛡️ Robustness Score Matrix</h3>"
-    robustness_matrix_html += "<p>Composite score: ICIR × Sharpe / (1 + |Max Drawdown|) - Higher is better</p>"
-    robustness_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-    robustness_matrix_html += "<tr><th>Time Window</th>"
-    for fc in factor_counts:
-        robustness_matrix_html += f"<th>Factors: {fc}</th>"
-    robustness_matrix_html += "</tr>"
-
-    # Calculate robustness scores
-    robustness_scores = {}
-    for tw in time_windows:
-        robustness_scores[tw] = {}
-        for fc in factor_counts:
-            result = None
-            for r in enhanced_results:
-                params = r.get('grid_search_params', {})
-                if params.get('time_window') == tw and params.get(
-                        'factor_count') == fc:
-                    result = r
-                    break
-
-            if result:
-                metrics = result.get('enhanced_metrics', {})
-                icir = metrics.get('icir', 0) or 0
-                sharpe = metrics.get('sharpe', 0) or 0
-                max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-
-                # Robustness score: ICIR × Sharpe / (1 + |Max Drawdown|)
-                robustness = (icir * sharpe) / (
-                    1 + max_dd) if icir > 0 and sharpe > 0 else 0
-                robustness_scores[tw][fc] = robustness
-            else:
-                robustness_scores[tw][fc] = None
-
-    for tw in time_windows:
-        robustness_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-        for fc in factor_counts:
-            score = robustness_scores[tw].get(fc)
-            if score is not None:
-                cell_content = _format_float(score, 3)
-                color_class = "good" if score > 0.5 else "warn" if score > 0 else "bad"
-                robustness_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-            else:
-                robustness_matrix_html += "<td>-</td>"
-        robustness_matrix_html += "</tr>"
-
-    robustness_matrix_html += "</table>"
-    robustness_matrix_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #6f42c1;">
-        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-        <ul>
-            <li><strong>Robustness Score定义：</strong>稳健性得分 = ICIR × Sharpe Ratio / (1 + |最大回撤|)，这是一个综合指标，同时考虑了因子的预测稳定性（ICIR）、策略的风险调整收益（Sharpe Ratio）和风险控制（最大回撤）。</li>
-            <li><strong>计算公式说明：</strong>
-                <ul>
-                    <li>ICIR：衡量因子预测的稳定性</li>
-                    <li>Sharpe Ratio：衡量策略的风险调整收益</li>
-                    <li>最大回撤：衡量策略的最大风险</li>
-                    <li>分母 (1 + |最大回撤|)：惩罚高回撤的策略，回撤越大，得分越低</li>
-                </ul>
-            </li>
-            <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的Robustness Score值。</li>
-            <li><strong>颜色编码：</strong>
-                <ul>
-                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：Robustness Score > 0.5，表示综合表现优秀</li>
-                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0 < Robustness Score ≤ 0.5，表示综合表现一般</li>
-                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：Robustness Score ≤ 0，表示综合表现不佳</li>
-                </ul>
-            </li>
-            <li><strong>分析要点：</strong>
-                <ul>
-                    <li>这是最全面的评估指标，综合考虑了预测能力、收益和风险</li>
-                    <li>优先选择Robustness Score最高的组合，因为它平衡了所有关键因素</li>
-                    <li>比较不同因子数量的Robustness Score，找出最优的因子数量</li>
-                    <li>观察不同时间窗口的Robustness Score，评估策略的长期稳定性</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>此表格是选择最优参数组合的最重要参考。高Robustness Score意味着因子组合不仅在预测上有效，而且在实际交易中能产生稳定的风险调整收益。建议优先选择Robustness Score > 0.5且在不同时间窗口都表现稳定的组合。</li>
-        </ul>
-    </div>
-    </div>"""
-
-    # Build detailed results section with enhanced metrics
-    details_html = "<div class=\"card\"><h3>📋 Detailed Results</h3>"
-    for i, result in enumerate(enhanced_results, 1):
-        params = result.get('grid_search_params', {})
-        perf = result.get('performance', {}).get('stage3_representatives', {})
-        # financial_metrics is stored inside perf_reps
-        financial = perf.get('financial_metrics', {}) if isinstance(
-            perf, dict) else {}
-        if not financial:
-            financial = result.get('performance',
-                                   {}).get('stage3_representatives_financial',
-                                           {})
-        metrics = result.get('enhanced_metrics', {})
-
-        details_html += f"<h4>Combination {i}: {params.get('time_window')} | Factors: {params.get('factor_count')}</h4>"
-        details_html += "<table class=\"metric-table\">"
-
-        if is_classification:
-            # win_rate is in financial_metrics, not directly in perf
-            win_rate = financial.get('win_rate', 0) if financial else 0
-            if win_rate == 0:
-                win_rate = perf.get('win_rate', 0)
-            # f1_macro and accuracy are in classification_metrics
-            classification_metrics = perf.get('classification_metrics',
-                                              {}) if isinstance(perf,
-                                                                dict) else {}
-            f1_macro = classification_metrics.get(
-                'f1_macro', 0) if classification_metrics else 0
-            accuracy = classification_metrics.get(
-                'accuracy', 0) if classification_metrics else 0
-
-            details_html += f"<tr><th>Directional Win Rate</th><td>{_format_float(win_rate * 100, 2)}%</td></tr>"
-            details_html += f"<tr><th>F1 (Macro)</th><td>{_format_float(f1_macro, 4)}</td></tr>"
-            details_html += f"<tr><th>Accuracy</th><td>{_format_float(accuracy * 100, 2)}%</td></tr>"
-        else:
-            details_html += f"<tr><th>R²</th><td>{_format_float(perf.get('r2', 0), 4)}</td></tr>"
-            details_html += f"<tr><th>RMSE</th><td>{_format_float(perf.get('rmse', 0), 4)}</td></tr>"
-            details_html += f"<tr><th>MAE</th><td>{_format_float(perf.get('mae', 0), 4)}</td></tr>"
-
-        # Add financial metrics
-        if financial:
-            details_html += f"<tr><th>Sharpe Ratio</th><td>{_format_float(financial.get('sharpe_ratio', 0), 3)}</td></tr>"
-            details_html += f"<tr><th>Max Drawdown</th><td>{_format_float(financial.get('max_drawdown', 0) * 100, 2)}%</td></tr>"
-            details_html += f"<tr><th>Total Return</th><td>{_format_float(financial.get('total_return', 0) * 100, 2)}%</td></tr>"
-
-        # Add ICIR if available
-        if metrics.get('icir') is not None:
-            details_html += f"<tr><th>ICIR</th><td>{_format_float(metrics.get('icir'), 3)}</td></tr>"
-
-        # Add robustness score
-        icir = metrics.get('icir', 0) or 0
-        sharpe = metrics.get('sharpe', 0) or 0
-        max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-        robustness = (icir *
-                      sharpe) / (1 + max_dd) if icir > 0 and sharpe > 0 else 0
-        details_html += f"<tr><th>Robustness Score</th><td>{_format_float(robustness, 3)}</td></tr>"
-
-        details_html += "</table>"
-        details_html += """
-        <div style="margin-top: 15px; padding: 12px; background: #e9ecef; border-radius: 5px; font-size: 0.9em;">
-            <strong>📖 指标说明：</strong>
-            <ul style="margin: 5px 0;">
-                <li><strong>Directional Win Rate / R²：</strong>主要性能指标。分类任务使用胜率，回归任务使用R²。值越高越好。</li>
-                <li><strong>F1 (Macro) / RMSE / MAE：</strong>辅助性能指标。F1用于分类，RMSE/MAE用于回归。F1越高越好，RMSE/MAE越低越好。</li>
-                <li><strong>Sharpe Ratio：</strong>风险调整收益。> 1.0表示表现良好，> 2.0表示表现优秀。</li>
-                <li><strong>Max Drawdown：</strong>最大回撤，衡量策略的最大风险。绝对值越小越好。</li>
-                <li><strong>Total Return：</strong>总收益率。正值表示盈利，负值表示亏损。</li>
-                <li><strong>ICIR：</strong>因子预测稳定性。> 1.0表示因子具有稳定的预测能力。</li>
-                <li><strong>Robustness Score：</strong>综合稳健性得分，综合考虑ICIR、Sharpe和回撤。> 0.5表示综合表现优秀。</li>
-            </ul>
-        </div>
-        <br/>"""
-
-    details_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #dc3545;">
-        <h4>📖 如何阅读详细结果表格 (How to Read Detailed Results):</h4>
-        <ul>
-            <li><strong>表格结构：</strong>每个组合（时间窗口 + 因子数量）都有一个独立的详细结果表格，显示该组合的所有关键指标。</li>
-            <li><strong>性能指标：</strong>
-                <ul>
-                    <li>主要关注<strong>Directional Win Rate</strong>（分类）或<strong>R²</strong>（回归），这是评估模型预测能力的主要指标</li>
-                    <li>辅助指标（F1、Accuracy、RMSE、MAE）提供更全面的性能评估</li>
-                </ul>
-            </li>
-            <li><strong>金融指标：</strong>
-                <ul>
-                    <li><strong>Sharpe Ratio</strong>：评估策略的风险调整收益，是实际交易中最重要的指标之一</li>
-                    <li><strong>Max Drawdown</strong>：评估策略的最大风险，帮助了解最坏情况下的损失</li>
-                    <li><strong>Total Return</strong>：评估策略的总收益表现</li>
-                </ul>
-            </li>
-            <li><strong>因子质量指标：</strong>
-                <ul>
-                    <li><strong>ICIR</strong>：评估因子的预测稳定性，高ICIR表示因子在不同时期都能保持有效</li>
-                    <li><strong>Robustness Score</strong>：综合评估因子组合的稳健性，是最全面的评估指标</li>
-                </ul>
-            </li>
-            <li><strong>分析建议：</strong>
-                <ul>
-                    <li>优先查看Robustness Score，这是最全面的评估指标</li>
-                    <li>结合ICIR和Sharpe Ratio，评估因子的预测能力和实际交易表现</li>
-                    <li>注意Max Drawdown，确保风险在可接受范围内</li>
-                    <li>比较不同组合的详细结果，找出最优参数配置</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>详细结果表格提供了每个参数组合的完整评估。通过对比不同组合的各项指标，可以全面了解每个组合的优势和劣势，从而做出最优的参数选择决策。</li>
-        </ul>
-    </div>
-    </div>"""
-
-    # Build ICIR trend analysis (Factor Count vs ICIR)
-    icir_trend_html = ""
-    if any(
-            r.get('enhanced_metrics', {}).get('icir') is not None
-            for r in enhanced_results):
-        icir_trend_html = "<div class=\"card\"><h3>📈 ICIR Trend Analysis</h3>"
-        icir_trend_html += "<p>ICIR vs Factor Count for each time window - Look for plateau points</p>"
-        icir_trend_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-        icir_trend_html += "<tr><th>Factor Count</th>"
-        for tw in time_windows:
-            icir_trend_html += f"<th>{tw}</th>"
-        icir_trend_html += "<th>Mean ICIR</th><th>Std(ICIR)</th></tr>"
-
-        # Calculate mean and std ICIR across time windows for each factor count
-        for fc in factor_counts:
-            icir_values = []
-            icir_trend_html += f"<tr><td><strong>{fc}</strong></td>"
-            for tw in time_windows:
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    icir = result.get('enhanced_metrics', {}).get('icir')
-                    if icir is not None:
-                        icir_values.append(icir)
-                        icir_trend_html += f"<td>{_format_float(icir, 3)}</td>"
-                    else:
-                        icir_trend_html += "<td>-</td>"
-                else:
-                    icir_trend_html += "<td>-</td>"
-
-            # Mean and std across time windows
-            if icir_values:
-                mean_icir = sum(icir_values) / len(icir_values)
-                std_icir = (sum((x - mean_icir)**2
-                                for x in icir_values) / len(icir_values))**0.5
-                icir_trend_html += f"<td>{_format_float(mean_icir, 3)}</td>"
-                icir_trend_html += f"<td>{_format_float(std_icir, 3)}</td>"
-            else:
-                icir_trend_html += "<td>-</td><td>-</td>"
-            icir_trend_html += "</tr>"
-
-        icir_trend_html += "</table>"
-
-        # Generate multiple 3D visualizations for Plateau Point analysis
-        icir_trend_html += "<h4>🎯 3D Plateau Point 分析 (3D Plateau Point Analysis)</h4>"
-
-        # ICIR 3D plot
-        icir_3d_html = _generate_icir_3d_plot(enhanced_results, time_windows,
-                                              factor_counts)
-        icir_trend_html += icir_3d_html
-
-        # Robustness Score 3D plot
-        def get_robustness(result):
-            metrics = result.get('enhanced_metrics', {})
-            icir = metrics.get('icir', 0) or 0
-            sharpe = metrics.get('sharpe', 0) or 0
-            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-            return (icir * sharpe) / (1 +
-                                      max_dd) if icir > 0 and sharpe > 0 else 0
-
-        robustness_3d_html = _generate_metric_3d_plot(enhanced_results,
-                                                      time_windows,
-                                                      factor_counts,
-                                                      'robustness',
-                                                      'Robustness Score',
-                                                      get_robustness,
-                                                      color_thresholds={
-                                                          'good': 0.5,
-                                                          'warn': 0.2,
-                                                          'bad': 0.0
-                                                      })
-        icir_trend_html += robustness_3d_html
-
-        # Sharpe Ratio 3D plot
-        def get_sharpe(result):
-            # Try to get from enhanced_metrics first
-            sharpe = result.get('enhanced_metrics', {}).get('sharpe')
-            if sharpe is None or sharpe == 0:
-                # Fallback: extract from performance
-                perf = result.get('performance',
-                                  {}).get('stage3_representatives', {})
-                financial = perf.get('financial_metrics', {}) if isinstance(
-                    perf, dict) else {}
-                if not financial:
-                    financial = result.get('performance', {}).get(
-                        'stage3_representatives_financial', {})
-                sharpe = financial.get('sharpe_ratio', 0) if financial else 0
-            return sharpe
-
-        sharpe_3d_html = _generate_metric_3d_plot(enhanced_results,
-                                                  time_windows,
-                                                  factor_counts,
-                                                  'sharpe',
-                                                  'Sharpe Ratio',
-                                                  get_sharpe,
-                                                  color_thresholds={
-                                                      'good': 1.0,
-                                                      'warn': 0.0,
-                                                      'bad': -1.0
-                                                  })
-        icir_trend_html += sharpe_3d_html
-
-        # Primary metric 3D plot (Win Rate or R²)
-        def get_primary_metric(result):
-            perf = result.get('performance', {}).get('stage3_representatives',
-                                                     {})
-            # financial_metrics is stored inside perf_reps
-            financial = perf.get('financial_metrics', {}) if isinstance(
-                perf, dict) else {}
-            if not financial:
-                financial = result.get('performance', {}).get(
-                    'stage3_representatives_financial', {})
-            if is_classification:
-                # win_rate is stored in financial_metrics
-                win_rate = financial.get('win_rate') if financial else None
-                if win_rate is None or win_rate == 0:
-                    win_rate = perf.get('win_rate')
-                return win_rate
-            else:
-                return perf.get('r2')
-
-        primary_metric_label = 'Directional Win Rate' if is_classification else 'R²'
-        primary_3d_html = _generate_metric_3d_plot(
-            enhanced_results,
-            time_windows,
-            factor_counts,
-            'primary',
-            primary_metric_label,
-            get_primary_metric,
-            color_thresholds={
-                'good': 0.5,
-                'warn': 0.0,
-                'bad': -0.5
-            } if is_classification else {
-                'good': 0.5,
-                'warn': 0.0,
-                'bad': -1.0
-            })
-        icir_trend_html += primary_3d_html
-
-        # Add summary section for multiple 3D visualizations
-        icir_trend_html += """
-        <div style="margin-top: 30px; padding: 20px; background: #e7f3ff; border-radius: 5px; border-left: 4px solid #0066cc;">
-            <h4>🎯 多指标Plateau Point综合分析 (Multi-Metric Plateau Point Analysis)</h4>
-            <p><strong>为什么需要多个3D可视化？</strong></p>
-            <ul>
-                <li><strong>ICIR 3D图：</strong>识别因子预测稳定性的Plateau Point。高ICIR表示因子在不同时期都能保持有效预测。</li>
-                <li><strong>Robustness Score 3D图：</strong>识别综合稳健性的Plateau Point。这是最全面的指标，综合考虑了预测能力、收益和风险。</li>
-                <li><strong>Sharpe Ratio 3D图：</strong>识别风险调整收益的Plateau Point。高Sharpe Ratio表示策略在控制风险的同时获得良好收益。</li>
-                <li><strong>Primary Metric 3D图：</strong>识别主要性能指标的Plateau Point。对于分类任务是胜率，对于回归任务是R²。</li>
-            </ul>
-            <p><strong>如何综合使用这些3D图？</strong></p>
-            <ol>
-                <li><strong>第一步：</strong>查看Robustness Score 3D图，找出综合表现最优的因子数量范围（绿色区域且表面平坦的位置）。</li>
-                <li><strong>第二步：</strong>验证ICIR 3D图，确保该因子数量在ICIR上也表现稳定（高ICIR且在不同时间窗口都保持稳定）。</li>
-                <li><strong>第三步：</strong>检查Sharpe Ratio 3D图，确认该因子数量在实际交易中能产生良好的风险调整收益。</li>
-                <li><strong>第四步：</strong>参考Primary Metric 3D图，确保主要性能指标也达到预期水平。</li>
-                <li><strong>第五步：</strong>选择在所有或大部分指标上都显示Plateau Point的因子数量，这表示该数量是最优选择。</li>
-            </ol>
-            <p><strong>💡 关键洞察：</strong>理想的Plateau Point应该在不同指标的不同3D图中都显示为平坦区域，且在不同时间窗口（Y轴）上都保持相对稳定的高度。如果某个因子数量在多个指标的3D图中都显示为Plateau Point，那么它就是最优选择。</p>
-        </div>
-        """
-
-        icir_trend_html += """
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #17a2b8;">
-            <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-            <ul>
-                <li><strong>表格结构：</strong>行表示不同的因子数量，列表示不同的时间窗口。最后两列显示每个因子数量在所有时间窗口上的平均ICIR和标准差。</li>
-                <li><strong>Mean ICIR列：</strong>计算该因子数量在所有时间窗口上的平均ICIR值。平均值越高，表示该因子数量在不同时期的表现越稳定。</li>
-                <li><strong>Std(ICIR)列：</strong>计算该因子数量在所有时间窗口上的ICIR标准差。标准差越小，表示该因子数量在不同时期的表现越一致，稳定性越好。</li>
-                <li><strong>分析要点：</strong>
-                    <ul>
-                        <li><strong>寻找平台点（Plateau Point）：</strong>找出ICIR不再显著下降的最小因子数量。例如，如果120个因子和60个因子的ICIR相近，但30个因子的ICIR明显下降，那么60个因子可能是平台点。</li>
-                        <li><strong>评估稳定性：</strong>比较不同因子数量的Std(ICIR)。Std(ICIR)越小，表示该因子数量在不同时间窗口的表现越一致，越稳定。</li>
-                        <li><strong>平衡性能与复杂度：</strong>在Mean ICIR高且Std(ICIR)低的前提下，选择因子数量最少的组合，以降低模型复杂度并提高可解释性。</li>
-                        <li><strong>结合3D可视化：</strong>使用上方的3D图形可以更直观地识别Plateau Point。在3D图形中，Plateau Point表现为ICIR值达到较高水平后，表面变得平坦的区域。</li>
-                    </ul>
-                </li>
-                <li><strong>结论：</strong>此表格帮助确定最优因子数量。理想的组合是：Mean ICIR高（> 1.0）、Std(ICIR)低（< 0.3），且因子数量尽可能少。这表示该因子数量既能保持高预测能力，又能在不同市场环境下保持稳定，同时避免了过度复杂化。结合3D可视化，可以更准确地识别Plateau Point。</li>
-            </ul>
-        </div>
-        </div>"""
-
-    # Build analysis conclusions
-    analysis_conclusions_html = _build_analysis_conclusions(
-        enhanced_results, time_windows, factor_counts, is_classification)
-
-    # Generate ICIR heatmap
-    heatmap_html = _generate_icir_heatmap(enhanced_results, time_windows,
-                                          factor_counts)
-
-    # Build full HTML
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Grid Search Comparison Report</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
-        .card {{ background: #fff; border-radius: 10px; padding: 18px 22px; box-shadow: 0 10px 24px rgba(27,39,53,0.1); margin: 20px 0; }}
-        .metric-table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
-        .metric-table th, .metric-table td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
-        .metric-table th {{ background-color: #f8f9fa; font-weight: 600; }}
-        .good {{ color: #167a3d; font-weight: 600; }}
-        .warn {{ color: #b36b00; font-weight: 600; }}
-        .bad {{ color: #c53030; font-weight: 600; }}
-        .heatmap-container {{ margin: 20px 0; text-align: center; }}
-    </style>
-</head>
-<body>
-    <h1>🔍 Grid Search Comparison Report</h1>
-    <div class="card">
-        <h3>Configuration</h3>
-        <p><strong>Symbol:</strong> {report_data.get('symbol', 'N/A')}</p>
-        <p><strong>Feature Type:</strong> {report_data.get('feature_type', 'N/A')}</p>
-        <p><strong>Task Type:</strong> {task_type}</p>
-        <p><strong>Time Windows Tested:</strong> {len(time_windows)}</p>
-        <p><strong>Factor Counts Tested:</strong> {len(factor_counts)}</p>
-        <p><strong>Total Combinations:</strong> {len(grid_search_results)}</p>
-    </div>
-    
-    {matrix_html}
-    {icir_matrix_html}
-    {sharpe_matrix_html}
-    {robustness_matrix_html}
-    {icir_trend_html}
-    {heatmap_html}
-    {details_html}
-    
-    {analysis_conclusions_html}
-    
-    <div class="card">
-        <h3>💡 Interpretation Guide</h3>
-        <h4>📊 How to Read the Matrices:</h4>
-        <ul>
-            <li><strong>Primary Metric Matrix:</strong> Compare {metric_display} across different factor counts and time windows. Higher values (green) indicate better performance.</li>
-            <li><strong>ICIR Matrix:</strong> ICIR = |Mean IC| / Std(IC). Higher ICIR indicates more stable predictive power. Look for ICIR > 1.0 (green).</li>
-            <li><strong>Sharpe Ratio Matrix:</strong> Risk-adjusted return metric. Higher is better. Look for Sharpe > 1.0 (green).</li>
-            <li><strong>Robustness Score Matrix:</strong> Composite score combining ICIR, Sharpe, and Max Drawdown. This is the most comprehensive metric - higher is better.</li>
-        </ul>
-        <h4>📈 ICIR Trend Analysis:</h4>
-        <ul>
-            <li>Look for the <strong>plateau point</strong>: the smallest factor count where ICIR doesn't drop significantly</li>
-            <li>Lower <strong>Std(ICIR)</strong> across time windows indicates better stability</li>
-            <li>Optimal factor count is often where Mean ICIR is high AND Std(ICIR) is low</li>
-        </ul>
-        <h4>🎯 Selection Strategy:</h4>
-        <ul>
-            <li><strong>Step 1:</strong> Identify factor counts with high Robustness Score (green cells)</li>
-            <li><strong>Step 2:</strong> Check ICIR Trend - find the plateau point</li>
-            <li><strong>Step 3:</strong> Verify consistency across time windows (low Std(ICIR))</li>
-            <li><strong>Step 4:</strong> Choose the smallest factor count that meets all criteria</li>
-        </ul>
-        <p><strong>💡 Key Insight:</strong> The optimal solution is often NOT the one with the highest primary metric, but the one with the best balance of performance and stability (high ICIR, low variance across time windows).</p>
-    </div>
-</body>
-</html>"""
-
-    os.makedirs(os.path.dirname(html_path), exist_ok=True)
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(html)
-
-    print(f"📝 Grid search HTML report written to: {html_path}")
+# Report generation functions moved to report_generator.py
+# _build_analysis_conclusions and generate_grid_search_html_report are imported from report_generator.py
 
 
 def main() -> Tuple[Dict, any, type(None), str]:
@@ -2983,8 +1697,13 @@ def main() -> Tuple[Dict, any, type(None), str]:
     # Enforce minimal training window (one quarter ~ 90 days)
     if args.train_start and args.train_end:
         try:
-            start_dt_chk = pd.to_datetime(args.train_start)
-            end_dt_chk = pd.to_datetime(args.train_end)
+            # Convert to string first to avoid recursion issues with pandas datetime conversion
+            train_start_str = str(args.train_start) if not isinstance(
+                args.train_start, str) else args.train_start
+            train_end_str = str(args.train_end) if not isinstance(
+                args.train_end, str) else args.train_end
+            start_dt_chk = pd.to_datetime(train_start_str)
+            end_dt_chk = pd.to_datetime(train_end_str)
             if (end_dt_chk - start_dt_chk).days < 90:
                 raise ValueError(
                     f"Training window too short: {args.train_start} → {args.train_end} (< 90 days). Please provide at least one quarter."
@@ -3050,6 +1769,29 @@ def main() -> Tuple[Dict, any, type(None), str]:
         )
         print(f"{'=' * 80}\n")
 
+    # IMPORTANT: Only grid_search mode is supported now
+    # Force grid_search mode if factor_counts or time_windows are provided
+    if args.factor_counts or args.time_windows:
+        args.grid_search = True
+
+    # Check if we're in a grid search sub-experiment (called from run_single_experiment_wrapper)
+    # Check both args attributes and environment variable (since args attributes are lost when main() re-parses argv)
+    import os
+    is_grid_search_sub_experiment = (
+        os.environ.get('_DIM_COMPARE_GRID_SEARCH_SUB_EXP')
+        == '1') or (hasattr(args, '_grid_search_parent_dir')
+                    and args._grid_search_parent_dir is not None) or (
+                        hasattr(args, '_grid_search_factor_count')
+                        and args._grid_search_factor_count is not None)
+
+    # If grid_search is not enabled and we're not in a sub-experiment, raise an error
+    if not is_grid_search_sub_experiment and not args.grid_search and not (
+            args.factor_counts or args.time_windows):
+        raise ValueError(
+            "Grid search mode is required. Please provide --factor-counts and --time-windows, "
+            "or set --grid-search flag. Non-grid-search mode is no longer supported."
+        )
+
     # Default behavior: if ablation not specified, enable ablation by default
     if not args.research_ablation:
         args.research_ablation = True
@@ -3057,9 +1799,20 @@ def main() -> Tuple[Dict, any, type(None), str]:
     # Autoencoder grid removed - no longer used
 
     # Grid search mode: run all combinations
+    # IMPORTANT: Skip grid search logic if we're in a sub-experiment (to prevent infinite recursion)
     # Note: If factor_counts_list or time_windows_list is set, grid_search should be enabled
-    if (args.grid_search or factor_counts_list
-            or time_windows_list) and factor_counts_list and time_windows_list:
+    # IMPORTANT: Only grid_search mode is supported now
+    if (not is_grid_search_sub_experiment
+            and (args.grid_search or factor_counts_list or time_windows_list)
+            and factor_counts_list and time_windows_list):
+        # Create grid_search_dir first (before running individual experiments)
+        grid_search_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_slug}_{feature_type_slug}_grid_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        grid_search_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\n📁 Grid Search Directory: {grid_search_dir}")
+        print(
+            f"   Individual experiment results will be saved under this directory\n"
+        )
+
         grid_search_results = []
 
         for time_window_idx, (tw_start,
@@ -3082,12 +1835,14 @@ def main() -> Tuple[Dict, any, type(None), str]:
                 args_comb.grid_search = False  # Prevent recursive grid search
                 # Store factor count in a custom attribute for grid search
                 args_comb._grid_search_factor_count = factor_count
+                # Store grid_search_dir so individual experiments can use it
+                args_comb._grid_search_parent_dir = grid_search_dir
 
                 try:
                     # Run single experiment by calling main() with modified args
-                    # We need to temporarily modify sys.argv or pass args directly
-                    # Since main() uses argparse, we'll create a wrapper
-                    result_dict = run_single_experiment_wrapper(args_comb)
+                    # Pass grid_search_dir so results are saved under it
+                    result_dict = run_single_experiment_wrapper(
+                        args_comb, grid_search_dir=grid_search_dir)
                     if result_dict:
                         result_dict['grid_search_params'] = {
                             'time_window': f"{tw_start} → {tw_end}",
@@ -3098,15 +1853,14 @@ def main() -> Tuple[Dict, any, type(None), str]:
                         # Ensure results_dir is stored (should already be set by wrapper)
                         if 'results_dir' not in result_dict or not result_dict.get(
                                 'results_dir'):
-                            # Try to reconstruct results_dir path
-                            symbol_slug = _slugify(args.symbol)
-                            feature_type_slug = _slugify(args.feature_type)
+                            # Try to reconstruct results_dir path (now under grid_search_dir)
                             if tw_start and tw_end:
                                 train_start_date = tw_start.replace("-",
                                                                     "")[:8]
                                 train_end_date = tw_end.replace("-", "")[:8]
-                                dir_date_suffix = f"{symbol_slug}_{feature_type_slug}_{train_start_date}_{train_end_date}"
-                                potential_dir = DIM_COMPARE_RESULTS_ROOT / dir_date_suffix
+                                factor_count_suffix = f"_fc{factor_count}" if factor_count != 'all' else ""
+                                experiment_dir_name = f"{symbol_slug}_{feature_type_slug}_{train_start_date}_{train_end_date}_tf{_slugify(args.timeframe)}_h{args.horizons.replace(',', '-')}{factor_count_suffix}"
+                                potential_dir = grid_search_dir / experiment_dir_name
                                 if potential_dir.exists():
                                     result_dict['results_dir'] = str(
                                         potential_dir)
@@ -3123,7 +1877,11 @@ def main() -> Tuple[Dict, any, type(None), str]:
             print("📊 Generating Grid Search Comparison Report")
             print(f"{'=' * 80}\n")
             report_path_str = generate_grid_search_report(
-                grid_search_results, symbol_slug, feature_type_slug, args)
+                grid_search_results,
+                symbol_slug,
+                feature_type_slug,
+                args,
+                grid_search_dir=grid_search_dir)
             # Return a summary result for grid search
             summary_result = {
                 "timestamp_start": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -3158,14 +1916,46 @@ def main() -> Tuple[Dict, any, type(None), str]:
         ablation_start_dt = datetime.now()
         ablation_start_ts = ablation_start_dt.strftime("%Y%m%d_%H%M%S")
         # Format training date range for directory name (if provided)
+        # In grid search mode, include factor_count in directory name to avoid overwriting
+        factor_count_suffix = ""
+        if hasattr(args, '_grid_search_factor_count'
+                   ) and args._grid_search_factor_count is not None:
+            if args._grid_search_factor_count != 'all':
+                factor_count_suffix = f"_fc{args._grid_search_factor_count}"
+
+        # Add timeframe and horizons to directory name
+        timeframe_slug = _slugify(args.timeframe if hasattr(args, 'timeframe')
+                                  and args.timeframe else "5T")
+        horizons_slug = ""
+        if hasattr(args, 'horizons') and args.horizons:
+            # Convert horizons from "1,5,10" to "h1-5-10" format
+            horizons_clean = args.horizons.replace(",", "-").replace(" ", "")
+            horizons_slug = f"_h{horizons_clean}"
+
+        # Check if we're in grid search mode (parent directory provided)
+        grid_search_parent_dir = getattr(args, '_grid_search_parent_dir', None)
+
         if args.train_start and args.train_end:
             train_start_date = args.train_start.replace("-", "")[:8]
             train_end_date = args.train_end.replace("-", "")[:8]
-            ablation_dir_date_suffix = f"{symbol_slug}_{feature_type_slug}_{train_start_date}_{train_end_date}"
+            experiment_dir_name = f"{symbol_slug}_{feature_type_slug}_{train_start_date}_{train_end_date}_tf{timeframe_slug}{horizons_slug}{factor_count_suffix}"
         else:
             train_start_date = None
             train_end_date = None
-            ablation_dir_date_suffix = f"{symbol_slug}_{feature_type_slug}_{ablation_start_ts}"  # Use runtime timestamps with symbol and feature_type
+            experiment_dir_name = f"{symbol_slug}_{feature_type_slug}_{ablation_start_ts}_tf{timeframe_slug}{horizons_slug}{factor_count_suffix}"  # Use runtime timestamps with symbol and feature_type
+
+        # If grid_search_parent_dir is provided, save results under it
+        if grid_search_parent_dir is not None:
+            ablation_dir_date_suffix = str(grid_search_parent_dir /
+                                           experiment_dir_name)
+            print(
+                f"📁 Saving experiment results to: {ablation_dir_date_suffix}")
+        else:
+            # Fallback: save to root (should not happen in grid_search mode)
+            ablation_dir_date_suffix = experiment_dir_name
+            print(
+                f"⚠️  Warning: No grid_search_parent_dir provided, saving to root: {ablation_dir_date_suffix}"
+            )
         # Parse horizons from args
         horizons_list = [int(h.strip()) for h in args.horizons.split(",")
                          ] if args.horizons else [1]
@@ -3242,13 +2032,12 @@ def main() -> Tuple[Dict, any, type(None), str]:
         is_multi_asset = has_symbol_info and df_features_original[
             '_symbol'].nunique() > 1
 
+        ic_scores = {}
         if is_multi_asset:
             print(
                 f"   Using rank-based IC calculation across {df_features_original['_symbol'].nunique()} assets"
             )
             # Rank-based method: rank within each asset, then compute IC on merged ranks
-            ic_scores = {}
-
             # Get symbol column aligned with df_all
             # We need to align symbol info with df_all indices
             # df_all is created from dfX which comes from X_raw, so we need to trace back
@@ -3315,7 +2104,6 @@ def main() -> Tuple[Dict, any, type(None), str]:
             print(
                 f"   Using standard IC calculation (single asset or no symbol info)"
             )
-            ic_scores = {}
             for col in df_all.columns:
                 try:
                     ic = spearmanr(df_all[col].values,
@@ -4185,9 +2973,17 @@ def main() -> Tuple[Dict, any, type(None), str]:
                 pass
             # rebuild dir using training date range if available, otherwise runtime timestamps
             if ablation_dir_date_suffix:
-                DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-                best_dir = str(DIM_COMPARE_RESULTS_ROOT /
-                               ablation_dir_date_suffix)
+                # Check if ablation_dir_date_suffix is already a full path (from grid_search_parent_dir)
+                if os.path.isabs(ablation_dir_date_suffix) or str(
+                        ablation_dir_date_suffix).startswith(
+                            str(DIM_COMPARE_RESULTS_ROOT)):
+                    # Already a full path
+                    best_dir = str(ablation_dir_date_suffix)
+                else:
+                    # Relative path, prepend DIM_COMPARE_RESULTS_ROOT
+                    DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+                    best_dir = str(DIM_COMPARE_RESULTS_ROOT /
+                                   ablation_dir_date_suffix)
             else:
                 # Fallback: use symbol, feature_type, and timestamps
                 DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -4323,17 +3119,17 @@ def main() -> Tuple[Dict, any, type(None), str]:
 
         return best_result, best_model, best_ae, best_dir
 
-    # Autoencoder grid search removed - no longer used
-    # Run dimensionality comparison (no autoencoder parameters)
-    results, model, autoencoder, results_dir = run_dimensionality_comparison(
-        data_path=args.data_path,
-        symbol=args.symbol,
-        train_start=args.train_start,
-        train_end=args.train_end,
-        feature_type=args.feature_type,
-        shap_analysis=args.shap_analysis,
-        timeframe=args.timeframe,
-    )
+        # Autoencoder grid search removed - no longer used
+        # Run dimensionality comparison (no autoencoder parameters)
+        results, model, autoencoder, results_dir = run_dimensionality_comparison(
+            data_path=args.data_path,
+            symbol=args.symbol,
+            train_start=args.train_start,
+            train_end=args.train_end,
+            feature_type=args.feature_type,
+            shap_analysis=args.shap_analysis,
+            timeframe=args.timeframe,
+        )
 
     # top_k parameter removed, factor count is now determined by factor_counts_list or default 120
 

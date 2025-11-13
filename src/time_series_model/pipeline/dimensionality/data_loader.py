@@ -146,12 +146,17 @@ def load_real_market_data(
         except Exception:
             pass
 
-        X = df_features[feature_cols].values
-
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
-        y = df_features[f"signal_{default_horizon}"].dropna(
-        ).values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
+        # Convert 3-class signal (0=Hold, 1=Long, 2=Short) to binary (1=Long, 0=Short)
+        # Remove Hold samples and map Long→1, Short→0
+        signal_3class = df_features[f"signal_{default_horizon}"].dropna()
+        # Filter out Hold (0) samples - align with feature matrix
+        mask_active = signal_3class != 0
+        # Align X and y: filter X to match active signal samples
+        X = df_features[feature_cols].loc[signal_3class.index].values
+        X = X[mask_active]
+        y = np.where(signal_3class[mask_active] == 1, 1, 0).astype(int)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
