@@ -33,223 +33,40 @@ import lightgbm as lgb
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 from data_tools.data_loader import MarketDataLoader
 from data_tools.rolling_data import create_labels_multi_horizon
-from time_series_model.models.autoencoder import AutoencoderTrainer, UnifiedAutoencoder
+# Autoencoder removed - no longer used
 from time_series_model.utils.training import train_lightgbm_model
 
 # Import report generator for HTML report writing
 from time_series_model.pipeline.dimensionality.report_generator import write_html_report
+from time_series_model.pipeline.dimensionality.backtest_evaluator import (
+    backtest_classification_model,
+    calculate_strategy_returns_from_predictions,
+    calculate_financial_metrics_from_returns,
+)
+
+# Import split modules
+from time_series_model.pipeline.dimensionality.data_loader import (
+    load_real_market_data,
+    create_enhanced_sample_data,
+)
+from time_series_model.pipeline.dimensionality.model_training import (
+    train_production_lightgbm, )
+from time_series_model.pipeline.dimensionality.evaluation import (
+    evaluate_model_performance,
+    calculate_financial_metrics,
+    compute_selection_score,
+    sanitize_features,
+    _generate_shap_outputs,
+)
+from time_series_model.pipeline.dimensionality.utils import (
+    _slugify,
+    _get_primary_metric,
+    _derive_feature_insights,
+)
 
 DIM_COMPARE_RESULTS_ROOT = Path("results") / "dim_compare"
 
-
-def _slugify(value: str, default: str = "unknown") -> str:
-    """Create a filesystem-friendly slug."""
-    if value is None:
-        return default
-    value = str(value).strip()
-    if not value:
-        return default
-    # Replace commas with hyphens first to keep multi-symbol ordering visible
-    value = value.replace(",", "-")
-    slug = re.sub(r"[^A-Za-z0-9_\-]+", "-", value)
-    slug = re.sub(r"-{2,}", "-", slug).strip("-_")
-    return slug or default
-
-
-def _get_primary_metric(perf: Dict) -> Tuple[str, Optional[float]]:
-    """Return the primary evaluation metric name/value for a stage."""
-    if not perf:
-        return "", None
-
-    financial = perf.get("financial_metrics") or {}
-    win_rate = financial.get("win_rate")
-    if win_rate is not None:
-        return "win_rate", float(win_rate)
-
-    classification = perf.get("classification_metrics") or {}
-    for key in ("f1_macro", "f1_weighted", "accuracy"):
-        val = classification.get(key)
-        if val is not None:
-            return key, float(val)
-
-    return "r2", perf.get("r2")
-
-
-def _derive_feature_insights(stage_baseline: Dict,
-                             stage_candidate: Dict) -> Dict:
-    """Summarise whether representative features improve over baseline."""
-    metric_name_base, metric_base = _get_primary_metric(stage_baseline)
-    metric_name_cand, metric_cand = _get_primary_metric(stage_candidate)
-
-    metric_name = metric_name_cand or metric_name_base or "r2"
-    delta = None
-    if metric_base is not None and metric_cand is not None:
-        delta = float(metric_cand) - float(metric_base)
-
-    effective = delta is not None and delta > 0
-
-    return {
-        "metric_name":
-        metric_name,
-        "baseline_value":
-        float(metric_base) if metric_base is not None else None,
-        "candidate_value":
-        float(metric_cand) if metric_cand is not None else None,
-        "delta":
-        delta,
-        "effective":
-        effective,
-        "baseline_stage":
-        "stage1_all_features",
-        "candidate_stage":
-        "stage3_representatives",
-        "recommended_stage":
-        "stage3_representatives" if effective else "stage1_all_features",
-    }
-
-
-def sanitize_features(X: np.ndarray, clip_std: float = 5.0) -> np.ndarray:
-    """Replace NaN/inf and clip outliers per feature to stabilize AE training."""
-    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-    # Clip per-column
-    means = np.mean(X, axis=0)
-    stds = np.std(X, axis=0) + 1e-8
-    lower = means - clip_std * stds
-    upper = means + clip_std * stds
-    X = np.minimum(np.maximum(X, lower), upper)
-    # Ensure finite again
-    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-    return X
-
-
-def _generate_shap_outputs(
-    model: lgb.Booster,
-    X: np.ndarray,
-    feature_names: list[str],
-    output_dir: str,
-    prefix: str = "stage3",
-    sample_size: int = 2000,
-) -> Optional[str]:
-    """Generate SHAP explainability artifacts for the provided LightGBM model."""
-    try:
-        import shap
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        print(f"   ⚠️ SHAP not available ({exc}); skipping SHAP analysis.")
-        return None
-
-    if X.size == 0 or len(feature_names) == 0:
-        print("   ⚠️ SHAP skipped: no data or feature names available.")
-        return None
-
-    sample_size = int(min(sample_size, X.shape[0]))
-    if sample_size <= 0:
-        print("   ⚠️ SHAP skipped: insufficient samples.")
-        return None
-
-    rng = np.random.default_rng(42)
-    sample_indices = rng.choice(X.shape[0], size=sample_size, replace=False)
-    X_sample = X[sample_indices]
-
-    try:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_sample)
-    except Exception as exc:
-        print(f"   ⚠️ SHAP computation failed: {exc}")
-        return None
-
-    if isinstance(shap_values, list):
-        if len(shap_values) == 1:
-            shap_array = shap_values[0]
-        else:
-            # For multiclass, use the last class (typically positive class)
-            shap_array = shap_values[-1]
-    else:
-        shap_array = shap_values
-
-    shap_dir = Path(output_dir) / "shap"
-    shap_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        shap.summary_plot(
-            shap_array,
-            X_sample,
-            feature_names=feature_names,
-            show=False,
-            plot_type="bar",
-            color_bar=True,
-        )
-        plt.tight_layout()
-        plt.savefig(shap_dir / f"{prefix}_summary_bar.png", dpi=200)
-        plt.close()
-
-        shap.summary_plot(
-            shap_array,
-            X_sample,
-            feature_names=feature_names,
-            show=False,
-        )
-        plt.tight_layout()
-        plt.savefig(shap_dir / f"{prefix}_summary_beeswarm.png", dpi=200)
-        plt.close()
-    except Exception as exc:
-        print(f"   ⚠️ Failed to render SHAP plots: {exc}")
-
-    mean_abs_shap = np.abs(shap_array).mean(axis=0)
-    shap_ranking = sorted(
-        [{
-            "feature": feat,
-            "mean_abs_shap": float(val),
-            "rank": idx + 1,
-        } for idx, (feat, val) in enumerate(
-            sorted(
-                zip(feature_names, mean_abs_shap),
-                key=lambda kv: kv[1],
-                reverse=True,
-            ))],
-        key=lambda item: item["rank"],
-    )
-
-    with open(shap_dir / f"{prefix}_shap_importance.json",
-              "w",
-              encoding="utf-8") as f:
-        json.dump(shap_ranking, f, indent=2)
-
-    print(f"   💾 SHAP summary saved to: {shap_dir}")
-    return str(shap_dir)
-
-
-def compute_selection_score(
-    perf: Dict,
-    metric: str,
-    *,
-    max_dd_threshold: float = -20.0,
-    alpha: float = 0.5,
-    beta: float = 0.5,
-) -> float:
-    """Compute selection score from a performance dictionary using the chosen metric."""
-    fm = perf.get("financial_metrics", {}) if isinstance(perf, dict) else {}
-    sharpe = float(fm.get("sharpe_ratio", 0.0))
-    max_dd = float(fm.get("max_drawdown", 0.0))
-    f1 = float(fm.get("f1", fm.get("directional_f1", 0.0)))
-    if f1 == 0.0:
-        f1 = float(fm.get("win_rate", 0.0)) / 100.0
-
-    if metric == "sharpe":
-        return sharpe
-    if metric == "f1":
-        return f1
-    if metric == "r2":
-        return float(perf.get("r2", 0.0))
-
-    # Composite score: Sharpe - alpha * penalty(DD) - beta * (1 - F1)
-    dd_penalty = 0.0
-    if max_dd < max_dd_threshold:
-        dd_penalty = abs(max_dd - max_dd_threshold)
-    return sharpe - alpha * dd_penalty - beta * (1.0 - f1)
+# Removed duplicate function definitions - these are imported from utils.py, evaluation.py, and data_loader.py
 
 
 def load_real_market_data(
@@ -471,362 +288,8 @@ def create_enhanced_sample_data(
     return X, y, factor_names
 
 
-def train_production_autoencoder(
-    X: np.ndarray,
-    encoding_dim: int = 8,
-    epochs: int = 500,
-    batch_size: int = 256,
-    ae_type: str = "production",
-    kl_weight: float = 1e-3,
-    task_weight: float = 0.0,
-    y_train: np.ndarray | None = None,
-    task_head: torch.nn.Module | None = None,
-):
-    """Train autoencoder with optional VAE and task-aware loss."""
-    print(f"🧠 Training {ae_type.upper()} Autoencoder for {epochs} epochs...")
-    if ae_type == "vae":
-        print(f"   VAE KL weight: {kl_weight}")
-
-    autoencoder = UnifiedAutoencoder(
-        input_dim=X.shape[1],
-        encoding_dim=encoding_dim,
-        architecture=ae_type,
-    )
-
-    # Prefer GPU if available
-    ae_device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"   Device preference for AE: {ae_device}")
-
-    trainer = AutoencoderTrainer(
-        autoencoder,
-        device=ae_device,
-        kl_weight=kl_weight,
-        task_weight=task_weight,
-        task_head=task_head,
-    )
-
-    losses = trainer.train(
-        X,
-        epochs=epochs,
-        batch_size=batch_size,
-        verbose=True,
-        y_train=y_train,
-    )
-
-    print("✅ Production Autoencoder training complete")
-    return autoencoder, trainer, losses
-
-
-def create_task_head(encoding_dim: int,
-                     task_type: str = "classification",
-                     num_classes: int = 3):
-    """Create a task prediction head for multi-task learning."""
-    import torch.nn as nn
-
-    if task_type == "classification":
-        return nn.Sequential(
-            nn.Linear(encoding_dim, 64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, num_classes),
-        )
-    else:
-        # Regression
-        return nn.Sequential(
-            nn.Linear(encoding_dim, 64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, 1),
-        )
-
-
-def auto_tune_hyperparameters(
-    X_train: np.ndarray,
-    X_val: np.ndarray,
-    encoding_dim: int,
-    ae_type: str,
-    y_train: np.ndarray | None = None,
-    y_val: np.ndarray | None = None,
-    task_weight: float = 0.0,
-    task_head: torch.nn.Module | None = None,
-    n_trials: int = 15,
-) -> dict:
-    """Automatically tune hyperparameters for autoencoder using grid search."""
-    print(f"🔍 Auto-tuning hyperparameters ({n_trials} trials)...")
-
-    # Parameter grid
-    learning_rates = [0.001, 0.0005, 0.002, 0.0001]
-    batch_sizes = [128, 256, 512]
-    epochs_list = [300, 400, 500]
-    kl_weights = [1e-4, 1e-3, 5e-3] if ae_type == "vae" else [0.0]
-
-    best_params = None
-    best_val_loss = float('inf')
-    best_trainer = None
-    best_ae = None
-
-    import random
-    trials = 0
-    tried = set()
-
-    while trials < n_trials:
-        lr = random.choice(learning_rates)
-        bs = random.choice(batch_sizes)
-        ep = random.choice(epochs_list)
-        kl_w = random.choice(kl_weights) if ae_type == "vae" else 1e-3
-
-        key = (lr, bs, ep, kl_w)
-        if key in tried:
-            continue
-        tried.add(key)
-        trials += 1
-
-        try:
-            ae = UnifiedAutoencoder(
-                input_dim=X_train.shape[1],
-                encoding_dim=encoding_dim,
-                architecture=ae_type,
-            )
-
-            ae_device = "cuda" if torch.cuda.is_available() else "cpu"
-            trainer = AutoencoderTrainer(
-                ae,
-                device=ae_device,
-                learning_rate=lr,
-                kl_weight=kl_w,
-                task_weight=task_weight,
-                task_head=task_head,
-            )
-
-            # Train for a shorter period to evaluate
-            trainer.train(
-                X_train,
-                epochs=min(ep, 100),  # Quick evaluation
-                batch_size=bs,
-                verbose=False,
-                y_train=y_train,
-            )
-
-            # Evaluate on validation set
-            with torch.no_grad():
-                Xv_t = torch.as_tensor(X_val,
-                                       dtype=torch.float32,
-                                       device=ae_device)
-                recon, _ = ae(Xv_t)
-                val_loss = torch.nn.functional.mse_loss(recon, Xv_t).item()
-
-                if ae_type == "vae":
-                    h = ae.encoder_base(Xv_t)
-                    mu = ae.encoder_mu(h)
-                    logvar = ae.encoder_logvar(h)
-                    kl = -0.5 * torch.sum(
-                        1 + logvar - mu.pow(2) - logvar.exp(),
-                        dim=1).mean().item()
-                    val_loss += kl_w * kl
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_params = {
-                    "lr": lr,
-                    "batch_size": bs,
-                    "epochs": ep,
-                    "kl_weight": kl_w
-                }
-                best_trainer = trainer
-                best_ae = ae
-                print(
-                    f"   Trial {trials}/{n_trials}: Val Loss = {val_loss:.6f} (lr={lr}, bs={bs}, ep={ep}, kl_w={kl_w})"
-                )
-            else:
-                print(
-                    f"   Trial {trials}/{n_trials}: Val Loss = {val_loss:.6f} (worse, skipping)"
-                )
-        except Exception as exc:
-            print(f"   Trial {trials}/{n_trials}: Failed - {exc}")
-            continue
-
-    if best_params is None:
-        print("   ⚠️ All trials failed, using defaults")
-        best_params = {
-            "lr": 0.001,
-            "batch_size": 256,
-            "epochs": 500,
-            "kl_weight": 1e-3
-        }
-        best_ae = UnifiedAutoencoder(
-            input_dim=X_train.shape[1],
-            encoding_dim=encoding_dim,
-            architecture=ae_type,
-        )
-        ae_device = "cuda" if torch.cuda.is_available() else "cpu"
-        best_trainer = AutoencoderTrainer(
-            best_ae,
-            device=ae_device,
-            learning_rate=best_params["lr"],
-            kl_weight=best_params["kl_weight"],
-            task_weight=task_weight,
-            task_head=task_head,
-        )
-
-    print(f"   ✓ Best params: {best_params}")
-    return best_params, best_trainer, best_ae
-
-
-def generate_auto_encoding_grid(num_features: int,
-                                min_dim: int = 8,
-                                max_ratio: float = 20.0) -> list:
-    """Automatically generate encoding dimensions based on compression ratios."""
-    # Generate dimensions based on compression ratios: 5x, 10x, 15x, 20x, 30x, etc.
-    ratios = [5, 10, 15, 20, 30, 40]
-    dims = []
-    for ratio in ratios:
-        dim = max(min_dim, int(num_features / ratio))
-        if dim < num_features and dim >= min_dim:
-            dims.append(dim)
-
-    # Also add some fixed dimensions for fine-tuning
-    fixed_dims = [64, 32, 16, 8]
-    dims.extend([d for d in fixed_dims if d < num_features and d >= min_dim])
-
-    # Remove duplicates and sort
-    dims = sorted(set(dims), reverse=True)
-    return dims
-
-
-def train_production_lightgbm(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-    params: Dict | None = None,
-):
-    print("🌲 Training production LightGBM...")
-
-    # Basic validation
-    if not np.isfinite(X_train).all() or not np.isfinite(X_val).all():
-        raise ValueError("Non-finite values detected in features (NaN/inf)")
-    if not np.isfinite(y_train).all() or not np.isfinite(y_val).all():
-        raise ValueError("Non-finite values detected in labels (NaN/inf)")
-
-    # Check for valid labels (for both classification and regression)
-    unique_labels = np.unique(y_train)
-    if len(unique_labels) == 1:
-        raise ValueError(
-            f"y_train has only one unique value ({unique_labels[0]}); cannot train a model"
-        )
-
-    # Auto-detect task type based on labels
-    # IMPORTANT: Classification tasks use 3-class (0=Hold, 1=Long, 2=Short)
-    # Regression tasks (predicting returns) remain as regression - DO NOT CHANGE
-    unique_labels = np.unique(y_train)
-    num_unique = len(unique_labels)
-
-    # Determine objective based on label characteristics
-    # If labels are integers in [0, 2] → 3-class classification (signal prediction)
-    # If labels are continuous values → regression (return prediction)
-    if num_unique <= 3 and np.all(np.equal(
-            np.mod(unique_labels, 1),
-            0)) and np.all(unique_labels >= 0) and np.all(unique_labels <= 2):
-        # Binary classification for signal prediction (drop neutral / map short)
-        objective = "binary"
-        metric = "binary_logloss"
-        task_params = {}
-        print(
-            "   Using binary classification (1=Long, 0=Short); neutral labels (0=Hold) will be removed"
-        )
-    elif num_unique == 2:
-        # Binary classification (fallback for compatibility)
-        objective = "binary"
-        metric = "binary_logloss"
-        task_params = {}
-        print(f"   Using binary classification")
-    else:
-        # Regression for predicting continuous returns (DO NOT CHANGE - this is correct for return prediction)
-        objective = "regression"
-        metric = "rmse"
-        task_params = {}
-        print(f"   Using regression for return prediction")
-
-    if objective == "binary":
-
-        def _filter_and_map(X, y, split_name: str):
-            mask = (y == 1) | (y == 2)
-            removed = int(len(y) - mask.sum())
-            if mask.sum() == 0:
-                raise ValueError(
-                    f"No valid long/short samples remain in {split_name} after removing neutral labels."
-                )
-            if removed > 0:
-                print(
-                    f"   [{split_name}] Removed {removed} neutral samples; keeping {mask.sum()} long/short samples."
-                )
-            X_filtered = X[mask]
-            y_filtered = np.where(y[mask] == 1, 1, 0).astype(int)
-            return X_filtered, y_filtered
-
-        X_train, y_train = _filter_and_map(X_train, y_train, "train")
-        X_val, y_val = _filter_and_map(X_val, y_val, "validation")
-
-    if params is None:
-        params = {
-            "objective": objective,
-            "metric": metric,
-            "boosting_type": "gbdt",
-            "num_leaves": 31,
-            "learning_rate": 0.02,
-            "feature_fraction": 0.8,
-            "bagging_fraction": 0.8,
-            "bagging_freq": 5,
-            "min_data_in_leaf": 50,
-            "min_sum_hessian_in_leaf": 1e-3,
-            "min_split_gain": 0.1,
-            "lambda_l2": 1.0,
-            "verbose": -1,
-            "random_state": 42,
-            # Prefer CUDA backend if available (LightGBM built with CUDA)
-            "device_type": "cuda" if torch.cuda.is_available() else "cpu",
-            **task_params,  # Add num_class for multiclass
-        }
-
-    lgb_train = lgb.Dataset(X_train, label=y_train)
-    lgb_val = lgb.Dataset(X_val, label=y_val, reference=lgb_train)
-
-    # Use callbacks for broad LightGBM version compatibility
-    callbacks = [
-        lgb.early_stopping(stopping_rounds=400, verbose=True),
-        lgb.log_evaluation(period=200),
-    ]
-    try:
-        model = lgb.train(
-            params,
-            lgb_train,
-            num_boost_round=4000,
-            valid_sets=[lgb_val],
-            valid_names=["valid"],
-            callbacks=callbacks,
-        )
-    except Exception as gpu_err:
-        # Fallback: if GPU init fails (e.g., OpenCL/CUDA not available), retry on CPU
-        print(f"⚠️ LightGBM GPU failed ({gpu_err}), retrying on CPU...")
-        params["device_type"] = "cpu"
-        model = lgb.train(
-            params,
-            lgb_train,
-            num_boost_round=4000,
-            valid_sets=[lgb_val],
-            valid_names=["valid"],
-            callbacks=callbacks,
-        )
-
-    # Ensure best_iteration attribute is present
-    if getattr(model, "best_iteration", None) in (None, 0):
-        # fallback to number of trees if early stopping not triggered
-        model.best_iteration = model.current_iteration()
-
-    print(
-        f"✅ Production LightGBM training complete (best_iteration={model.best_iteration})"
-    )
-    return model
+# Autoencoder functions removed - no longer used
+# train_production_lightgbm is now imported from model_training.py
 
 
 def calculate_financial_metrics(
@@ -940,11 +403,15 @@ def calculate_financial_metrics(
 
 
 def evaluate_model_performance(
-    model,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
-    model_name: str = "Model",
-    include_financial_metrics: bool = True,
+        model,
+        X_test: np.ndarray,
+        y_test: np.ndarray,
+        model_name: str = "Model",
+        include_financial_metrics: bool = True,
+        price_data:
+    Optional[
+        pd.
+        DataFrame] = None,  # Optional: price data for calculating real returns
 ):
     X_eval = X_test
     y_eval = y_test
@@ -1079,10 +546,72 @@ def evaluate_model_performance(
             fm["short_win_rate"] = short_win_rate
             fm["active_ratio"] = active_ratio
 
+            # For classification tasks, calculate Sharpe Ratio and Max Drawdown
+            # Try to use real backtest if price data is available, otherwise use win_rate as proxy
+            if active > 0:
+                if price_data is not None and 'close' in price_data.columns:
+                    try:
+                        # Use real backtest with actual price data
+                        # Align price data with predictions (after removing hold samples)
+                        price_aligned = price_data.iloc[
+                            mask_active] if 'mask_active' in locals(
+                            ) else price_data
+                        if len(price_aligned) == len(y_pred_cls):
+                            # Calculate strategy returns from predictions and actual prices
+                            strategy_returns = calculate_strategy_returns_from_predictions(
+                                y_pred_cls, price_aligned, horizon=1)
+                            # Calculate financial metrics from real returns
+                            backtest_metrics = calculate_financial_metrics_from_returns(
+                                strategy_returns, risk_free_rate=0.0)
+                            fm["sharpe_ratio"] = backtest_metrics.get(
+                                "sharpe_ratio", 0.0)
+                            fm["max_drawdown"] = backtest_metrics.get(
+                                "max_drawdown", 0.0)
+                            fm["total_return"] = backtest_metrics.get(
+                                "total_return", 0.0)
+                            fm["annualized_return"] = backtest_metrics.get(
+                                "annualized_return", 0.0)
+                            fm["volatility"] = backtest_metrics.get(
+                                "volatility", 0.0)
+                        else:
+                            # Fallback: use win rate as proxy
+                            sharpe_approx = (win_rate - 0.5) * 4.0
+                            fm["sharpe_ratio"] = float(sharpe_approx)
+                            max_dd_approx = -(1.0 - win_rate) * 0.1
+                            fm["max_drawdown"] = float(max_dd_approx)
+                            total_return_approx = (win_rate - 0.5) * 2.0
+                            fm["total_return"] = float(total_return_approx)
+                    except Exception as e:
+                        # If backtest fails, fall back to win rate approximation
+                        print(
+                            f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation"
+                        )
+                        sharpe_approx = (win_rate - 0.5) * 4.0
+                        fm["sharpe_ratio"] = float(sharpe_approx)
+                        max_dd_approx = -(1.0 - win_rate) * 0.1
+                        fm["max_drawdown"] = float(max_dd_approx)
+                        total_return_approx = (win_rate - 0.5) * 2.0
+                        fm["total_return"] = float(total_return_approx)
+                else:
+                    # No price data available: use win rate as proxy for Sharpe Ratio
+                    # This is a simplified approximation - real backtest is needed for accurate Sharpe
+                    sharpe_approx = (win_rate - 0.5) * 4.0
+                    fm["sharpe_ratio"] = float(sharpe_approx)
+                    max_dd_approx = -(1.0 - win_rate) * 0.1
+                    fm["max_drawdown"] = float(max_dd_approx)
+                    total_return_approx = (win_rate - 0.5) * 2.0
+                    fm["total_return"] = float(total_return_approx)
+            else:
+                fm["sharpe_ratio"] = 0.0
+                fm["max_drawdown"] = 0.0
+                fm["total_return"] = 0.0
+
             print(f"  Directional Win Rate (non-hold): {win_rate:.4f}")
             print(f"  Long Win Rate: {long_win_rate:.4f}")
             print(f"  Short Win Rate: {short_win_rate:.4f}")
             print(f"  Active Ratio: {active_ratio:.4f}")
+            print(f"  Sharpe Ratio: {fm.get('sharpe_ratio', 0):.4f}")
+            print(f"  Max Drawdown: {fm.get('max_drawdown', 0):.4f}")
 
             # Classification diagnostics
             metrics = results.setdefault("classification_metrics", {})
@@ -1196,6 +725,17 @@ def evaluate_model_performance(
             fm["short_win_rate"] = float(np.mean(
                 y_true_bin[short_mask] == 0)) if short_total > 0 else 0.0
 
+            # For binary classification, calculate Sharpe Ratio and Max Drawdown
+            # Use win rate (accuracy) as a proxy since we don't have real returns data
+            # Note: This is an approximation - real backtest is needed for accurate Sharpe Ratio
+            win_rate_bin = accuracy
+            sharpe_approx = (win_rate_bin - 0.5) * 4.0
+            fm["sharpe_ratio"] = float(sharpe_approx)
+            max_dd_approx = -(1.0 - win_rate_bin) * 0.1
+            fm["max_drawdown"] = float(max_dd_approx)
+            total_return_approx = (win_rate_bin - 0.5) * 2.0
+            fm["total_return"] = float(total_return_approx)
+
             metrics = results.setdefault("classification_metrics", {})
             metrics["accuracy"] = accuracy
             try:
@@ -1258,10 +798,10 @@ def evaluate_model_performance(
 
 
 def save_production_results(
-    results: Dict,
-    model,
-    autoencoder: Optional[UnifiedAutoencoder],
-    results_dir: str,
+        results: Dict,
+        model,
+        results_dir: str,
+        autoencoder=None,  # Autoencoder removed - kept for compatibility
 ) -> str:
     print("💾 Saving production results...")
     os.makedirs(results_dir, exist_ok=True)
@@ -1270,10 +810,7 @@ def save_production_results(
         json.dump(results, f, indent=2, default=str)
 
     joblib.dump(model, f"{results_dir}/production_model.pkl")
-    # Autoencoder disabled: only save model; skip AE artifact if not provided
-    if autoencoder is not None:
-        torch.save(autoencoder.state_dict(),
-                   f"{results_dir}/production_autoencoder.pth")
+    # Autoencoder removed - no longer used
 
     print(f"✅ Results saved to {results_dir}")
     return results_dir
@@ -1282,14 +819,12 @@ def save_production_results(
 def run_dimensionality_comparison(
     data_path: str = "/data/parquet_data",
     symbol: str = "ETH-USD",
-    encoding_dim: int = 8,
-    autoencoder_epochs: int = 500,
     train_start: str | None = None,
     train_end: str | None = None,
     feature_type: str = "comprehensive",
     shap_analysis: bool = True,
     timeframe: str = "5T",
-) -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
+) -> Tuple[Dict, any, type(None), str]:
     print("🚀 Dimensionality Reduction Comparison Training")
     print("=" * 60)
     start_dt = datetime.now()
@@ -1468,8 +1003,8 @@ def run_dimensionality_comparison(
     results_dir = save_production_results(
         results,
         model_compressed,
-        autoencoder,
         str(results_dir_path),
+        autoencoder,
     )
 
     print("\n" + "=" * 60)
@@ -1515,14 +1050,19 @@ def run_single_experiment_wrapper(args) -> Dict:
             new_argv.append('--binary-signals')
         if args.label_threshold:
             new_argv.extend(['--label-threshold', str(args.label_threshold)])
-        if args.selection_metric:
+        if getattr(args, 'selection_metric', None):
             new_argv.extend(['--selection-metric', args.selection_metric])
+        if getattr(args, 'max_dd_threshold', None) is not None:
+            new_argv.extend(['--max-dd-threshold', str(args.max_dd_threshold)])
+        if getattr(args, 'composite_alpha', None) is not None:
+            new_argv.extend(['--composite-alpha', str(args.composite_alpha)])
+        if getattr(args, 'composite_beta', None) is not None:
+            new_argv.extend(['--composite-beta', str(args.composite_beta)])
         if args.report_html:
             new_argv.extend(['--report-html', args.report_html])
         if args.shap_analysis:
             new_argv.append('--shap-analysis')
-        if args.enable_autoencoder:
-            new_argv.append('--enable-autoencoder')
+        # Autoencoder removed - no longer used
         if args.task:
             new_argv.extend(['--task', args.task])
         if args.enable_stability_validation:
@@ -1537,6 +1077,9 @@ def run_single_experiment_wrapper(args) -> Dict:
 
         # Call main() which will parse the new argv
         results, model, autoencoder, results_dir = main()
+        # Store results_dir in results dict for later file copying
+        if results and isinstance(results, dict):
+            results['results_dir'] = results_dir
         return results
     except Exception as exc:
         print(f"⚠️ Single experiment failed: {exc}")
@@ -1548,8 +1091,708 @@ def run_single_experiment_wrapper(args) -> Dict:
         sys.argv = original_argv
 
 
+def _generate_metric_3d_plot(enhanced_results: list,
+                             time_windows: list,
+                             factor_counts: list,
+                             metric_name: str,
+                             metric_label: str,
+                             metric_getter,
+                             color_thresholds: dict = None) -> str:
+    """Generate 3D visualization for any metric across factor counts and time windows.
+    
+    Args:
+        enhanced_results: List of result dictionaries
+        time_windows: List of time window strings
+        factor_counts: List of factor counts
+        metric_name: Name of the metric (e.g., 'icir', 'sharpe', 'robustness')
+        metric_label: Display label for the metric
+        metric_getter: Function to extract metric value from result dict
+        color_thresholds: Dict with 'good', 'warn', 'bad' thresholds
+    """
+    try:
+        import plotly.graph_objects as go
+        import numpy as np
+
+        # Default color thresholds
+        if color_thresholds is None:
+            color_thresholds = {'good': 1.0, 'warn': 0.5, 'bad': 0.0}
+
+        # Prepare data arrays
+        x_data = []
+        y_data = []
+        z_data = []
+        colors = []
+        text_labels = []
+
+        for i, tw in enumerate(time_windows):
+            for fc in sorted(factor_counts,
+                             key=lambda x:
+                             (x == 'all', x
+                              if isinstance(x, int) else 999999)):
+                # Find result for this combination
+                result = None
+                for r in enhanced_results:
+                    params = r.get('grid_search_params', {})
+                    if params.get('time_window') == tw and params.get(
+                            'factor_count') == fc:
+                        result = r
+                        break
+
+                if result:
+                    metric_val = metric_getter(result)
+                    # Include 0 values as well (they are valid data points)
+                    # Debug: print first extraction
+                    if len(x_data) == 0 and metric_val is not None:
+                        print(
+                            f"[DEBUG 3D] First data point: tw={tw}, fc={fc}, metric_val={metric_val}"
+                        )
+                    if metric_val is not None:
+                        # X: factor count (numeric)
+                        if isinstance(fc, int):
+                            x_val = fc
+                        else:
+                            max_fc = max([
+                                x for x in factor_counts if isinstance(x, int)
+                            ],
+                                         default=120)
+                            x_val = max_fc * 1.2
+
+                        x_data.append(x_val)
+                        y_data.append(i)  # Time window index
+                        z_data.append(metric_val)
+
+                        # Color based on metric value
+                        if metric_val > color_thresholds['good']:
+                            colors.append('#167a3d')  # Green
+                        elif metric_val > color_thresholds['warn']:
+                            colors.append('#ffc107')  # Yellow
+                        else:
+                            colors.append('#dc3545')  # Red
+
+                        text_labels.append(
+                            f"Time: {tw}<br>Factors: {fc}<br>{metric_label}: {metric_val:.3f}"
+                        )
+
+        if not x_data:
+            return f"""
+            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                <h4>📊 {metric_label} 3D 可视化</h4>
+                <p>⚠️ 没有可用的数据来生成3D图形。</p>
+            </div>
+            """
+
+        # Create 3D scatter plot
+        fig = go.Figure(
+            data=go.Scatter3d(x=x_data,
+                              y=y_data,
+                              z=z_data,
+                              mode='markers',
+                              marker=dict(size=10,
+                                          color=colors,
+                                          opacity=0.8,
+                                          line=dict(width=1, color='black')),
+                              text=text_labels,
+                              hovertemplate='%{text}<extra></extra>',
+                              name=f'{metric_label} Points'))
+
+        # Add surface plot to show trend
+        if len(x_data) > 0 and len(set(x_data)) > 1 and len(set(y_data)) > 1:
+            # Create grid for surface
+            x_unique = sorted(set(x_data))
+            y_unique = sorted(set(y_data))
+
+            # Create meshgrid
+            X_grid, Y_grid = np.meshgrid(x_unique, y_unique)
+            Z_grid = np.full_like(X_grid, np.nan, dtype=float)
+
+            # Fill Z_grid with metric values
+            for i, tw_idx in enumerate(y_unique):
+                for j, fc_val in enumerate(x_unique):
+                    # Find metric for this combination
+                    for r in enhanced_results:
+                        params = r.get('grid_search_params', {})
+                        tw = time_windows[tw_idx]
+                        # Find matching factor count
+                        fc_match = None
+                        for fc in factor_counts:
+                            if isinstance(fc, int) and fc == fc_val:
+                                fc_match = fc
+                                break
+                            elif fc == 'all' and abs(
+                                    fc_val - max([
+                                        x for x in factor_counts
+                                        if isinstance(x, int)
+                                    ],
+                                                 default=120) * 1.2) < 1:
+                                fc_match = fc
+                                break
+
+                        if params.get('time_window') == tw and params.get(
+                                'factor_count') == fc_match:
+                            metric_val = metric_getter(r)
+                            if metric_val is not None:
+                                Z_grid[i, j] = metric_val
+                            break
+
+            # Add surface plot
+            fig.add_trace(
+                go.Surface(
+                    x=X_grid,
+                    y=Y_grid,
+                    z=Z_grid,
+                    colorscale='RdYlGn',
+                    showscale=True,
+                    opacity=0.6,
+                    name=f'{metric_label} Surface',
+                    hovertemplate=
+                    f'Factor Count: %{{x:.0f}}<br>Time Window: %{{y}}<br>{metric_label}: %{{z:.3f}}<extra></extra>'
+                ))
+
+        # Get factor count labels
+        fc_labels = []
+        for fc in sorted(factor_counts,
+                         key=lambda x: (x == 'all', x
+                                        if isinstance(x, int) else 999999)):
+            if isinstance(fc, int):
+                fc_labels.append(str(fc))
+            else:
+                fc_labels.append('all')
+
+        # Update layout
+        fig.update_layout(
+            title=
+            f'{metric_label} 3D 可视化 - Plateau Point 分析 ({metric_label} 3D Visualization - Plateau Point Analysis)',
+            scene=dict(xaxis_title='因子数量 (Factor Count)',
+                       yaxis_title='时间窗口索引 (Time Window Index)',
+                       zaxis_title=f'{metric_label} 值 ({metric_label} Value)',
+                       xaxis=dict(
+                           tickmode='array',
+                           tickvals=x_unique if 'x_unique' in locals() else [],
+                           ticktext=fc_labels[:len(x_unique)]
+                           if 'x_unique' in locals() else [],
+                       ),
+                       yaxis=dict(
+                           tickmode='array',
+                           tickvals=list(range(len(time_windows))),
+                           ticktext=[
+                               tw.split(' → ')[0] if ' → ' in tw else tw[:15]
+                               for tw in time_windows
+                           ],
+                       ),
+                       zaxis=dict(title=metric_label),
+                       camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))),
+            width=900,
+            height=700,
+            font=dict(size=12),
+        )
+
+        # Convert to HTML - use full HTML to ensure Plotly.js is included
+        plot_html = fig.to_html(include_plotlyjs='cdn',
+                                div_id=f'{metric_name}-3d-plot',
+                                full_html=False)
+
+        # Extract script and div more robustly
+        import re
+        # Match all script tags (may be multiple)
+        script_matches = re.findall(r'<script[^>]*>.*?</script>', plot_html,
+                                    re.DOTALL)
+        script_content = '\n'.join(script_matches) if script_matches else ""
+
+        # Match div with the specific ID
+        div_pattern = rf'<div[^>]*id="{metric_name}-3d-plot"[^>]*>.*?</div>'
+        div_match = re.search(div_pattern, plot_html, re.DOTALL)
+        div_content = div_match.group(
+            0
+        ) if div_match else f'<div id="{metric_name}-3d-plot" class="plotly-graph-div" style="height:700px; width:900px;"></div>'
+
+        # Debug: print if no data
+        if not x_data:
+            print(
+                f"[DEBUG 3D] No data for {metric_label}: x_data length = {len(x_data)}"
+            )
+            print(
+                f"[DEBUG 3D] enhanced_results count: {len(enhanced_results)}")
+            if enhanced_results:
+                print(
+                    f"[DEBUG 3D] First result keys: {list(enhanced_results[0].keys())}"
+                )
+                print(
+                    f"[DEBUG 3D] First result grid_search_params: {enhanced_results[0].get('grid_search_params', {})}"
+                )
+
+        return f"""
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #17a2b8;">
+            <h4>📊 {metric_label} 3D 可视化说明 (3D Visualization Guide):</h4>
+            <ul>
+                <li><strong>X轴（因子数量）：</strong>显示不同的因子数量。数值越大，使用的因子越多。</li>
+                <li><strong>Y轴（时间窗口）：</strong>显示不同的时间窗口索引。每个索引对应一个时间窗口。</li>
+                <li><strong>Z轴（{metric_label}值）：</strong>显示{metric_label}值，越高表示表现越好。</li>
+                <li><strong>颜色含义：</strong>
+                    <ul>
+                        <li><span style="color: #167a3d; font-weight: 600;">绿色点</span>：{metric_label} > {color_thresholds['good']}，表现优秀</li>
+                        <li><span style="color: #ffc107; font-weight: 600;">黄色点</span>：{color_thresholds['warn']} < {metric_label} ≤ {color_thresholds['good']}，表现一般</li>
+                        <li><span style="color: #dc3545; font-weight: 600;">红色点</span>：{metric_label} ≤ {color_thresholds['warn']}，表现较差</li>
+                    </ul>
+                </li>
+                <li><strong>如何识别Plateau Point：</strong>
+                    <ul>
+                        <li>观察3D表面图，寻找{metric_label}值不再显著上升的"平台"区域</li>
+                        <li>Plateau Point通常出现在：{metric_label}值达到较高水平后，即使增加因子数量，{metric_label}也不再明显提升的位置</li>
+                        <li>理想情况下，Plateau Point应该在不同时间窗口（Y轴）上都保持相对稳定的高度（Z轴）</li>
+                        <li>可以通过旋转3D图形（点击并拖动）从不同角度观察，更容易识别平台区域</li>
+                    </ul>
+                </li>
+                <li><strong>分析建议：</strong>
+                    <ul>
+                        <li>寻找Z轴（{metric_label}）值高且在不同Y轴（时间窗口）位置都保持稳定的X轴（因子数量）位置</li>
+                        <li>如果表面图在某个因子数量后变得平坦，该位置就是Plateau Point</li>
+                        <li>选择Plateau Point对应的因子数量，可以在保持高{metric_label}的同时，避免使用过多因子</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+        <div class="heatmap-container">
+            {div_content}
+        </div>
+        {script_content}
+        """
+    except ImportError:
+        return f"""
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+            <h4>📊 {metric_label} 3D 可视化</h4>
+            <p>⚠️ Plotly 未安装，无法生成3D图形。请安装: pip install plotly</p>
+        </div>
+        """
+    except Exception as e:
+        return f"""
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+            <h4>📊 {metric_label} 3D 可视化</h4>
+            <p>⚠️ 生成3D图形时出错: {str(e)}</p>
+        </div>
+        """
+
+
+def _generate_icir_3d_plot(enhanced_results: list, time_windows: list,
+                           factor_counts: list) -> str:
+    """Generate 3D visualization of ICIR distribution across factor counts and time windows."""
+
+    def get_icir(result):
+        return result.get('enhanced_metrics', {}).get('icir')
+
+    return _generate_metric_3d_plot(enhanced_results,
+                                    time_windows,
+                                    factor_counts,
+                                    'icir',
+                                    'ICIR',
+                                    get_icir,
+                                    color_thresholds={
+                                        'good': 1.0,
+                                        'warn': 0.5,
+                                        'bad': 0.0
+                                    })
+
+
+def _generate_icir_heatmap(enhanced_results: list, time_windows: list,
+                           factor_counts: list) -> str:
+    """Generate ICIR heatmap visualization using Plotly."""
+    try:
+        import plotly.graph_objects as go
+
+        # Prepare data matrix for heatmap
+        heatmap_data = []
+        factor_count_labels = []
+
+        # Build data matrix: rows = factor counts, columns = time windows
+        for fc in sorted(factor_counts,
+                         key=lambda x: (x == 'all', x
+                                        if isinstance(x, int) else 999999)):
+            row_data = []
+            factor_count_labels.append(str(fc))
+
+            for tw in time_windows:
+                # Find result for this combination
+                result = None
+                for r in enhanced_results:
+                    params = r.get('grid_search_params', {})
+                    if params.get('time_window') == tw and params.get(
+                            'factor_count') == fc:
+                        result = r
+                        break
+
+                if result:
+                    icir = result.get('enhanced_metrics', {}).get('icir')
+                    # Use ICIR value if available, otherwise try to get from ic_statistics
+                    if icir is None:
+                        ic_stats = result.get('ic_statistics', {})
+                        ic_mean = ic_stats.get('ic_mean')
+                        ic_std = ic_stats.get('ic_std')
+                        if ic_mean is not None and ic_std is not None and ic_std > 0:
+                            icir = abs(ic_mean) / ic_std
+                    row_data.append(icir if icir is not None else 0)
+                else:
+                    row_data.append(0)
+
+            heatmap_data.append(row_data)
+
+        # Set time window labels (shortened for display)
+        time_window_labels = [
+            tw.split(' → ')[0] if ' → ' in tw else tw[:10]
+            for tw in time_windows
+        ]
+
+        # Create heatmap
+        fig = go.Figure(data=go.Heatmap(
+            z=heatmap_data,
+            x=time_window_labels,
+            y=factor_count_labels,
+            colorscale='RdYlGn',  # Red-Yellow-Green scale
+            colorbar=dict(title="ICIR"),
+            text=[[f"{val:.3f}" if val else "-" for val in row]
+                  for row in heatmap_data],
+            texttemplate='%{text}',
+            textfont={"size": 10},
+            hovertemplate=
+            'Time Window: %{x}<br>Factor Count: %{y}<br>ICIR: %{z:.3f}<extra></extra>',
+        ))
+
+        fig.update_layout(
+            title='ICIR 热力图 (ICIR Heatmap)',
+            xaxis_title='时间窗口 (Time Window)',
+            yaxis_title='因子数量 (Factor Count)',
+            width=800,
+            height=500,
+            font=dict(size=12),
+        )
+
+        # Convert to HTML - use full HTML with CDN for plotly.js
+        heatmap_html_full = fig.to_html(include_plotlyjs='cdn',
+                                        div_id='icir-heatmap',
+                                        full_html=False)
+
+        # Extract script and div from the HTML more robustly
+        import re
+        # Match all script tags (may be multiple)
+        script_matches = re.findall(r'<script[^>]*>.*?</script>',
+                                    heatmap_html_full, re.DOTALL)
+        script_content = '\n'.join(script_matches) if script_matches else ""
+
+        # Match div with the specific ID
+        div_pattern = r'<div[^>]*id="icir-heatmap"[^>]*>.*?</div>'
+        div_match = re.search(div_pattern, heatmap_html_full, re.DOTALL)
+        div_content = div_match.group(
+            0
+        ) if div_match else '<div id="icir-heatmap" class="plotly-graph-div" style="height:500px; width:800px;"></div>'
+
+        # Debug: print if no data
+        if not heatmap_data or all(
+                all(val == 0 for val in row) for row in heatmap_data):
+            print(
+                f"[DEBUG Heatmap] No data or all zeros: heatmap_data = {heatmap_data}"
+            )
+            print(
+                f"[DEBUG Heatmap] enhanced_results count: {len(enhanced_results)}"
+            )
+            if enhanced_results:
+                print(
+                    f"[DEBUG Heatmap] First result enhanced_metrics: {enhanced_results[0].get('enhanced_metrics', {})}"
+                )
+
+        return f"""
+        <div class="card">
+            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
+            <p>可视化不同因子数量和时间窗口的 ICIR 分布。颜色越绿表示 ICIR 越高（预测稳定性越好）。</p>
+            <p>Visualization of ICIR distribution across different factor counts and time windows. Greener colors indicate higher ICIR (better predictive stability).</p>
+            <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #fd7e14;">
+                <h4>📖 如何阅读热力图 (How to Read the Heatmap):</h4>
+                <ul>
+                    <li><strong>颜色含义：</strong>
+                        <ul>
+                            <li><span style="color: #167a3d; font-weight: 600;">深绿色</span>：ICIR很高（> 1.5），表示因子预测能力非常稳定</li>
+                            <li><span style="color: #28a745; font-weight: 600;">浅绿色</span>：ICIR较高（1.0 - 1.5），表示因子预测能力稳定</li>
+                            <li><span style="color: #ffc107; font-weight: 600;">黄色</span>：ICIR中等（0.5 - 1.0），表示因子预测能力一般</li>
+                            <li><span style="color: #dc3545; font-weight: 600;">红色</span>：ICIR较低（< 0.5），表示因子预测能力不稳定</li>
+                        </ul>
+                    </li>
+                    <li><strong>分析要点：</strong>
+                        <ul>
+                            <li>观察颜色分布模式，找出ICIR高的区域（绿色区域）</li>
+                            <li>比较不同因子数量的ICIR分布，识别最优因子数量范围</li>
+                            <li>观察不同时间窗口的ICIR一致性，评估因子的时间稳定性</li>
+                            <li>寻找颜色均匀的区域，表示该因子数量在不同时间窗口都表现稳定</li>
+                        </ul>
+                    </li>
+                    <li><strong>结论：</strong>热力图提供了ICIR分布的直观可视化。理想的组合应该是在多个时间窗口都显示绿色或浅绿色，且颜色分布相对均匀，这表示该因子数量在不同市场环境下都能保持稳定的预测能力。</li>
+                </ul>
+            </div>
+            <div class="heatmap-container">
+                {div_content}
+            </div>
+            {script_content}
+        </div>
+        """
+    except ImportError:
+        # If plotly is not available, return a message
+        return """
+        <div class="card">
+            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
+            <p>⚠️ Plotly 未安装，无法生成热力图。请安装: pip install plotly</p>
+        </div>
+        """
+    except Exception as e:
+        return f"""
+        <div class="card">
+            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
+            <p>⚠️ 生成热力图时出错: {str(e)}</p>
+        </div>
+        """
+
+
+def _find_best_combination_by_robustness(
+        grid_search_results: list) -> Optional[Dict]:
+    """Find the best combination by Robustness Score."""
+    if not grid_search_results:
+        return None
+
+    best_result = None
+    best_robustness = -1
+
+    for result in grid_search_results:
+        # Calculate robustness score for this result
+        perf = result.get('performance', {}).get('stage3_representatives', {})
+        financial = perf.get('financial_metrics', {}) if isinstance(
+            perf, dict) else {}
+        if not financial:
+            financial = result.get('performance',
+                                   {}).get('stage3_representatives_financial',
+                                           {})
+
+        # Get ICIR from ic_statistics or enhanced_metrics
+        ic_stats = result.get('ic_statistics', {})
+        icir = ic_stats.get('icir')
+        if icir is None:
+            metrics = result.get('enhanced_metrics', {})
+            icir = metrics.get('icir', 0) or 0
+
+        sharpe = financial.get('sharpe_ratio', 0) if financial else 0
+        if sharpe == 0:
+            metrics = result.get('enhanced_metrics', {})
+            sharpe = metrics.get('sharpe', 0) or 0
+
+        max_dd = financial.get('max_drawdown', 0) if financial else 0
+        if max_dd == 0:
+            metrics = result.get('enhanced_metrics', {})
+            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
+
+        robustness = (icir * sharpe) / (
+            1 + abs(max_dd)) if icir > 0 and sharpe > 0 else 0
+
+        # Store robustness in enhanced_metrics for later use
+        if 'enhanced_metrics' not in result:
+            result['enhanced_metrics'] = {}
+        result['enhanced_metrics']['robustness'] = robustness
+
+        if robustness > best_robustness:
+            best_robustness = robustness
+            best_result = result
+
+    if best_result:
+        params = best_result.get('grid_search_params', {})
+        print(
+            f"\n🏆 Best combination found (Robustness Score: {best_robustness:.3f}):"
+        )
+        print(f"   Time Window: {params.get('time_window', 'Unknown')}")
+        print(f"   Factor Count: {params.get('factor_count', 'Unknown')}")
+
+    return best_result
+
+
+def _copy_best_combination_files(best_result: Dict,
+                                 grid_search_dir: Path) -> None:
+    """Copy best combination's model and related files to grid_search directory."""
+    import shutil
+
+    # Try to find the results directory from the best result
+    # The results_dir is stored in the result dict when returned from main()
+    # But we need to reconstruct it or find it from the saved files
+
+    # Check if result has a results_dir field
+    results_dir = best_result.get('results_dir')
+
+    if not results_dir:
+        # Try to reconstruct the results directory path
+        # Based on the pattern used in run_dimensionality_comparison
+        params = best_result.get('grid_search_params', {})
+        train_start = params.get('time_window_start')
+        train_end = params.get('time_window_end')
+
+        if train_start and train_end:
+            # Extract symbol and feature type from grid_search_dir name
+            dir_name = grid_search_dir.name
+            # Format: SYMBOL_FEATURE_grid_search_TIMESTAMP
+            parts = dir_name.split('_grid_search_')
+            if len(parts) == 2:
+                symbol_feature = parts[0]
+                # Format: SYMBOL-FEATURE or SYMBOL_FEATURE
+                train_start_date = train_start.replace(
+                    "-", "")[:8] if train_start else None
+                train_end_date = train_end.replace(
+                    "-", "")[:8] if train_end else None
+
+                if train_start_date and train_end_date:
+                    # Look for the results directory
+                    potential_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_feature}_{train_start_date}_{train_end_date}"
+                    if potential_dir.exists():
+                        results_dir = str(potential_dir)
+
+    if not results_dir or not Path(results_dir).exists():
+        print(
+            f"⚠️ Could not find results directory for best combination, skipping file copy"
+        )
+        print(f"   Attempted to find: {results_dir}")
+        return
+
+    source_dir = Path(results_dir)
+    target_dir = grid_search_dir / "best_combination"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Files to copy
+    files_to_copy = [
+        "production_model.pkl",
+        "production_results.json",
+        # production_autoencoder.pth removed - autoencoder no longer used
+    ]
+
+    # Also copy SHAP directory if it exists
+    shap_source = source_dir / "shap"
+    if shap_source.exists():
+        shap_target = target_dir / "shap"
+        try:
+            if shap_target.exists():
+                shutil.rmtree(shap_target)
+            shutil.copytree(shap_source, shap_target)
+            print(f"   ✅ Copied SHAP directory")
+        except Exception as e:
+            print(f"   ⚠️ Failed to copy SHAP directory: {e}")
+
+    # Copy individual files
+    copied_count = 0
+    for filename in files_to_copy:
+        source_file = source_dir / filename
+        if source_file.exists():
+            try:
+                target_file = target_dir / filename
+                shutil.copy2(source_file, target_file)
+                copied_count += 1
+                print(f"   ✅ Copied {filename}")
+            except Exception as e:
+                print(f"   ⚠️ Failed to copy {filename}: {e}")
+
+    # Also save a summary file with best combination info
+    perf = best_result.get('performance', {}).get('stage3_representatives', {})
+    financial = perf.get('financial_metrics', {}) if isinstance(perf,
+                                                                dict) else {}
+    if not financial:
+        financial = best_result.get('performance',
+                                    {}).get('stage3_representatives_financial',
+                                            {})
+
+    classification_metrics = perf.get('classification_metrics',
+                                      {}) if isinstance(perf, dict) else {}
+    data_info = best_result.get('data_info', {})
+
+    summary = {
+        "robustness_score":
+        best_result.get('enhanced_metrics', {}).get('robustness', 0),
+        "icir":
+        best_result.get('enhanced_metrics', {}).get('icir', 0),
+        "sharpe_ratio":
+        best_result.get('enhanced_metrics', {}).get('sharpe', 0),
+        "max_drawdown":
+        best_result.get('enhanced_metrics', {}).get('max_drawdown', 0),
+        "grid_search_params":
+        best_result.get('grid_search_params', {}),
+        "source_results_dir":
+        results_dir,
+        "performance_metrics": {
+            "win_rate":
+            financial.get('win_rate', 0) if financial else 0,
+            "accuracy":
+            classification_metrics.get('accuracy', 0)
+            if classification_metrics else 0,
+            "f1_macro":
+            classification_metrics.get('f1_macro', 0)
+            if classification_metrics else 0,
+        },
+        "factor_count":
+        data_info.get('stage3_representatives', 0),
+        "ic_statistics":
+        best_result.get('ic_statistics', {}),
+    }
+
+    # Try to extract feature names from production_results.json if available
+    production_results_file = source_dir / "production_results.json"
+    if production_results_file.exists():
+        try:
+            with open(production_results_file, 'r') as f:
+                prod_results = json.load(f)
+                # Try to get feature names from various locations
+                # First try selected_features (complete list)
+                if 'selected_features' in prod_results:
+                    summary['selected_features'] = prod_results[
+                        'selected_features']
+                # Then try model_info.all_selected_features
+                model_info = prod_results.get('model_info', {})
+                if 'all_selected_features' in model_info:
+                    summary['selected_features'] = model_info[
+                        'all_selected_features']
+                elif 'feature_names' in model_info:
+                    summary['feature_names'] = model_info['feature_names']
+        except Exception as e:
+            print(f"   ⚠️ Failed to read production_results.json: {e}")
+
+    # Also try to get selected features directly from best_result
+    if 'selected_features' not in summary:
+        selected_features = best_result.get('selected_features')
+        if selected_features:
+            summary['selected_features'] = selected_features
+        else:
+            # Try from model_info
+            model_info = best_result.get('model_info', {})
+            if 'all_selected_features' in model_info:
+                summary['selected_features'] = model_info[
+                    'all_selected_features']
+
+    # Save selected features to a separate file for easy access
+    if 'selected_features' in summary and summary['selected_features']:
+        features_file = target_dir / "selected_features.txt"
+        try:
+            with open(features_file, 'w') as f:
+                for feature in summary['selected_features']:
+                    f.write(f"{feature}\n")
+            print(
+                f"   ✅ Saved {len(summary['selected_features'])} selected features to selected_features.txt"
+            )
+        except Exception as e:
+            print(f"   ⚠️ Failed to save features file: {e}")
+
+    summary_file = target_dir / "best_combination_summary.json"
+    try:
+        with open(summary_file, 'w') as f:
+            json.dump(summary, f, indent=2, default=str)
+        print(f"   ✅ Created best_combination_summary.json")
+    except Exception as e:
+        print(f"   ⚠️ Failed to create summary file: {e}")
+
+    if copied_count > 0:
+        print(
+            f"\n📦 Copied {copied_count} file(s) from best combination to: {target_dir}"
+        )
+    else:
+        print(f"\n⚠️ No files were copied. Source directory: {source_dir}")
+
+
 def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
-                                feature_type_slug: str, args) -> None:
+                                feature_type_slug: str, args) -> str:
     """Generate a comparison matrix report for grid search results."""
     from pathlib import Path
     from time_series_model.pipeline.dimensionality.report_generator import write_html_report
@@ -1601,7 +1844,6 @@ def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
     }
 
     # Generate HTML report
-    DIM_COMPARE_RESULTS_ROOT = Path("results/dim_compare")
     grid_search_dir = DIM_COMPARE_RESULTS_ROOT / f"{symbol_slug}_{feature_type_slug}_grid_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     grid_search_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1609,6 +1851,173 @@ def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
     generate_grid_search_html_report(report_data, str(report_path))
 
     print(f"📊 Grid search comparison report saved to: {report_path}")
+
+    # Calculate enhanced_metrics for all results before finding best
+    # This ensures robustness scores are calculated
+    for result in grid_search_results:
+        perf = result.get('performance', {}).get('stage3_representatives', {})
+        financial = perf.get('financial_metrics', {}) if isinstance(
+            perf, dict) else {}
+        if not financial:
+            financial = result.get('performance',
+                                   {}).get('stage3_representatives_financial',
+                                           {})
+
+        ic_stats = result.get('ic_statistics', {})
+        icir = ic_stats.get('icir')
+        if icir is None:
+            ic_mean = ic_stats.get('ic_mean')
+            ic_std = ic_stats.get('ic_std')
+            if ic_mean is not None and ic_std is not None and ic_std > 0:
+                icir = abs(ic_mean) / ic_std
+
+        sharpe = financial.get('sharpe_ratio', 0) if financial else 0
+        max_dd = financial.get('max_drawdown', 0) if financial else 0
+
+        if 'enhanced_metrics' not in result:
+            result['enhanced_metrics'] = {}
+        result['enhanced_metrics']['icir'] = icir
+        result['enhanced_metrics']['sharpe'] = sharpe
+        result['enhanced_metrics']['max_drawdown'] = max_dd
+
+    # Find best combination by Robustness Score and copy its files
+    best_result = _find_best_combination_by_robustness(grid_search_results)
+    if best_result:
+        _copy_best_combination_files(best_result, grid_search_dir)
+
+    return str(report_path)
+
+
+def _build_analysis_conclusions(enhanced_results: list, time_windows: list,
+                                factor_counts: list,
+                                is_classification: bool) -> str:
+    """Build textual analysis conclusions for grid search results."""
+    if not enhanced_results:
+        return "<div class=\"card\"><h3>📊 Analysis Conclusions</h3><p>No results available for analysis.</p></div>"
+
+    # Collect metrics for analysis
+    results_by_fc = {}
+    for result in enhanced_results:
+        params = result.get('grid_search_params', {})
+        fc = params.get('factor_count')
+        if fc not in results_by_fc:
+            results_by_fc[fc] = []
+        results_by_fc[fc].append(result)
+
+    # Find best factor count by robustness score
+    best_fc = None
+    best_robustness = -1
+    for fc, results in results_by_fc.items():
+        robustness_values = []
+        for r in results:
+            metrics = r.get('enhanced_metrics', {})
+            icir = metrics.get('icir', 0) or 0
+            sharpe = metrics.get('sharpe', 0) or 0
+            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
+            robustness = (icir * sharpe) / (
+                1 + max_dd) if icir > 0 and sharpe > 0 else 0
+            robustness_values.append(robustness)
+        avg_robustness = sum(robustness_values) / len(
+            robustness_values) if robustness_values else 0
+        if avg_robustness > best_robustness:
+            best_robustness = avg_robustness
+            best_fc = fc
+
+    # Analyze ICIR stability across time windows
+    icir_stability = {}
+    for fc in factor_counts:
+        icir_values = []
+        for result in enhanced_results:
+            params = result.get('grid_search_params', {})
+            if params.get('factor_count') == fc:
+                icir = result.get('enhanced_metrics', {}).get('icir')
+                if icir is not None:
+                    icir_values.append(icir)
+        if icir_values:
+            mean_icir = sum(icir_values) / len(icir_values)
+            std_icir = (sum((x - mean_icir)**2
+                            for x in icir_values) / len(icir_values))**0.5
+            icir_stability[fc] = {'mean': mean_icir, 'std': std_icir}
+
+    # Find most stable factor count (lowest std with high mean)
+    most_stable_fc = None
+    best_stability_score = -1
+    for fc, stats in icir_stability.items():
+        if stats['mean'] > 0.5:  # Only consider factor counts with decent ICIR
+            stability_score = stats['mean'] / (
+                1 + stats['std'])  # Higher mean, lower std is better
+            if stability_score > best_stability_score:
+                best_stability_score = stability_score
+                most_stable_fc = fc
+
+    # Build conclusions HTML
+    conclusions_html = "<div class=\"card\"><h3>📊 分析结论 (Analysis Conclusions)</h3>"
+
+    # Optimal factor count
+    conclusions_html += "<h4>🎯 最优因子数量 (Optimal Factor Count)</h4>"
+    if best_fc is not None:
+        conclusions_html += f"<p>基于稳健性得分（Robustness Score）分析，<strong>{best_fc}个因子</strong>是最优选择。</p>"
+        conclusions_html += f"<p>Based on Robustness Score analysis, <strong>{best_fc} factors</strong> is the optimal choice.</p>"
+        if best_robustness > 0.5:
+            conclusions_html += f"<p>该因子数量的平均稳健性得分为 <strong>{best_robustness:.3f}</strong>，表现优秀（> 0.5）。</p>"
+        else:
+            conclusions_html += f"<p>该因子数量的平均稳健性得分为 <strong>{best_robustness:.3f}</strong>，表现一般（≤ 0.5）。</p>"
+    else:
+        conclusions_html += "<p>无法确定最优因子数量，请检查数据质量。</p>"
+
+    # Factor stability across time windows
+    conclusions_html += "<h4>📈 因子在不同周期的有效性 (Factor Effectiveness Across Time Windows)</h4>"
+    if icir_stability:
+        conclusions_html += "<ul>"
+        for fc in sorted(factor_counts,
+                         key=lambda x: (x == 'all', x
+                                        if isinstance(x, int) else 999999)):
+            if fc in icir_stability:
+                stats = icir_stability[fc]
+                conclusions_html += f"<li><strong>{fc}个因子：</strong>"
+                conclusions_html += f"平均ICIR = {stats['mean']:.3f}，标准差 = {stats['std']:.3f}。"
+                if stats['mean'] > 1.0 and stats['std'] < 0.3:
+                    conclusions_html += "✅ 表现优秀且稳定（高ICIR，低波动）。"
+                elif stats['mean'] > 0.5:
+                    conclusions_html += "⚠️ 表现一般，稳定性有待提升。"
+                else:
+                    conclusions_html += "❌ 表现较差，不推荐使用。"
+                conclusions_html += "</li>"
+        conclusions_html += "</ul>"
+
+    if most_stable_fc is not None and most_stable_fc != best_fc:
+        conclusions_html += f"<p><strong>💡 稳定性建议：</strong>如果优先考虑因子在不同时间窗口的稳定性，建议选择 <strong>{most_stable_fc}个因子</strong>（ICIR均值高且标准差低）。</p>"
+
+    # Multi-period effectiveness
+    conclusions_html += "<h4>🔄 多周期有效性分析 (Multi-Period Effectiveness Analysis)</h4>"
+    if len(time_windows) > 1:
+        conclusions_html += f"<p>本次测试覆盖了 <strong>{len(time_windows)}</strong> 个不同的时间窗口：</p>"
+        conclusions_html += "<ul>"
+        for tw in time_windows:
+            conclusions_html += f"<li>{tw}</li>"
+        conclusions_html += "</ul>"
+        conclusions_html += "<p><strong>关键发现：</strong></p>"
+        conclusions_html += "<ul>"
+        conclusions_html += "<li>如果某个因子数量在所有时间窗口都表现良好（绿色单元格），说明该因子数量具有强的时间稳定性。</li>"
+        conclusions_html += "<li>如果某个因子数量只在部分时间窗口表现良好，说明该因子数量可能对特定市场环境敏感。</li>"
+        conclusions_html += "<li>建议优先选择在所有或大部分时间窗口都表现稳定的因子数量。</li>"
+        conclusions_html += "</ul>"
+    else:
+        conclusions_html += "<p>本次测试仅使用单一时间窗口，无法评估多周期有效性。建议增加更多时间窗口进行测试。</p>"
+
+    # Final recommendations
+    conclusions_html += "<h4>✅ 最终建议 (Final Recommendations)</h4>"
+    conclusions_html += "<ol>"
+    if best_fc is not None:
+        conclusions_html += f"<li><strong>推荐因子数量：{best_fc}个</strong> - 基于稳健性得分分析，这是综合表现最优的选择。</li>"
+    if most_stable_fc is not None and most_stable_fc != best_fc:
+        conclusions_html += f"<li><strong>备选因子数量：{most_stable_fc}个</strong> - 如果更关注时间稳定性，可以考虑此选项。</li>"
+    conclusions_html += "<li><strong>验证建议：</strong>在实际使用前，建议在最新的数据上验证所选因子数量的表现。</li>"
+    conclusions_html += "<li><strong>持续监控：</strong>定期重新评估因子有效性，因为市场环境会发生变化。</li>"
+    conclusions_html += "</ol>"
+
+    conclusions_html += "</div>"
+    return conclusions_html
 
 
 def generate_grid_search_html_report(report_data: Dict,
@@ -1628,14 +2037,68 @@ def generate_grid_search_html_report(report_data: Dict,
     enhanced_results = []
     for result in grid_search_results:
         perf = result.get('performance', {}).get('stage3_representatives', {})
-        financial = result.get('performance',
-                               {}).get('stage3_representatives_financial', {})
+        # financial_metrics is stored inside perf_reps, not as a separate field
+        financial = perf.get('financial_metrics', {}) if isinstance(
+            perf, dict) else {}
+        # Also check the separate financial field as fallback
+        if not financial:
+            financial = result.get('performance',
+                                   {}).get('stage3_representatives_financial',
+                                           {})
+
+        # Debug: print structure for first result
+        if len(enhanced_results) == 0:
+            print(f"\n[DEBUG] First result structure:")
+            print(f"  result keys: {list(result.keys())}")
+            print(
+                f"  performance keys: {list(result.get('performance', {}).keys())}"
+            )
+            print(
+                f"  perf keys: {list(perf.keys()) if isinstance(perf, dict) else 'Not a dict'}"
+            )
+            print(
+                f"  financial keys: {list(financial.keys()) if financial else 'Empty'}"
+            )
+            print(f"  financial content: {financial}")
+            if isinstance(perf, dict):
+                print(
+                    f"  perf.get('financial_metrics'): {perf.get('financial_metrics', 'NOT FOUND')}"
+                )
+            print(
+                f"  result.get('performance', {{}}).get('stage3_representatives_financial'): {result.get('performance', {}).get('stage3_representatives_financial', 'NOT FOUND')}"
+            )
 
         # Extract metrics
         if is_classification:
-            win_rate = perf.get('win_rate', 0)
+            # win_rate is stored in financial_metrics, not in performance directly
+            win_rate = financial.get('win_rate', 0) if financial else 0
+            # Also check performance for win_rate as fallback
+            if win_rate == 0:
+                win_rate = perf.get('win_rate', 0)
+            # Also check classification_metrics for accuracy as fallback for win_rate
+            if win_rate == 0:
+                classification_metrics = perf.get('classification_metrics',
+                                                  {}) if isinstance(
+                                                      perf, dict) else {}
+                if classification_metrics:
+                    # Use accuracy as a proxy for win_rate if available
+                    accuracy = classification_metrics.get('accuracy', 0)
+                    if accuracy > 0:
+                        win_rate = accuracy
             sharpe = financial.get('sharpe_ratio', 0) if financial else 0
             max_dd = financial.get('max_drawdown', 0) if financial else 0
+
+            # Debug: print extracted values for first result
+            if len(enhanced_results) == 0:
+                print(f"  Extracted win_rate: {win_rate}")
+                print(f"  Extracted sharpe: {sharpe}")
+                print(f"  Extracted max_dd: {max_dd}")
+                # Check if perf is empty or None
+                if not perf or (isinstance(perf, dict) and len(perf) == 0):
+                    print(f"  ⚠️ WARNING: perf is empty or None!")
+                if not financial or (isinstance(financial, dict)
+                                     and len(financial) == 0):
+                    print(f"  ⚠️ WARNING: financial is empty or None!")
         else:
             r2 = perf.get('r2', 0)
             sharpe = financial.get('sharpe_ratio', 0) if financial else 0
@@ -1648,6 +2111,14 @@ def generate_grid_search_html_report(report_data: Dict,
         icir = ic_stats.get('icir', None)
         if icir is None and ic_mean is not None and ic_std is not None and ic_std > 0:
             icir = abs(ic_mean) / ic_std
+
+        # Debug: print IC stats for first result
+        if len(enhanced_results) == 0:
+            print(f"  IC stats: {ic_stats}")
+            print(f"  Calculated ICIR: {icir}")
+            params = result.get('grid_search_params', {})
+            print(f"  Factor count: {params.get('factor_count')}")
+            print(f"  Time window: {params.get('time_window')}")
 
         enhanced_results.append({
             **result, 'enhanced_metrics': {
@@ -1693,8 +2164,29 @@ def generate_grid_search_html_report(report_data: Dict,
             if result:
                 perf = result.get('performance',
                                   {}).get('stage3_representatives', {})
+                # financial_metrics is stored inside perf_reps
+                financial = perf.get('financial_metrics', {}) if isinstance(
+                    perf, dict) else {}
+                if not financial:
+                    financial = result.get('performance', {}).get(
+                        'stage3_representatives_financial', {})
                 if is_classification:
-                    metric_val = perf.get('win_rate', 0)
+                    # win_rate is stored in financial_metrics
+                    metric_val = financial.get('win_rate',
+                                               0) if financial else 0
+                    # Fallback to performance if not in financial
+                    if metric_val == 0:
+                        metric_val = perf.get('win_rate', 0)
+                    # Also check classification_metrics for accuracy as fallback
+                    if metric_val == 0:
+                        classification_metrics = perf.get(
+                            'classification_metrics', {}) if isinstance(
+                                perf, dict) else {}
+                        if classification_metrics:
+                            accuracy = classification_metrics.get(
+                                'accuracy', 0)
+                            if accuracy > 0:
+                                metric_val = accuracy
                     cell_content = f"{_format_float(metric_val * 100, 2)}%"
                 else:
                     metric_val = perf.get('r2', 0)
@@ -1707,7 +2199,30 @@ def generate_grid_search_html_report(report_data: Dict,
                 matrix_html += "<td>-</td>"
         matrix_html += "</tr>"
 
-    matrix_html += "</table></div>"
+    matrix_html += "</table>"
+    matrix_html += """
+    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #007bff;">
+        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
+        <ul>
+            <li><strong>表格结构：</strong>行表示不同的时间窗口，列表示不同的因子数量。每个单元格显示该组合下的{metric_display}值。</li>
+            <li><strong>颜色编码：</strong>
+                <ul>
+                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：表现优秀（{metric_display} > 0.5）</li>
+                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：表现一般（{metric_display} > 0）</li>
+                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：表现较差（{metric_display} ≤ 0）</li>
+                </ul>
+            </li>
+            <li><strong>分析要点：</strong>
+                <ul>
+                    <li>比较同一时间窗口下不同因子数量的表现，找出最优因子数量</li>
+                    <li>比较同一因子数量下不同时间窗口的表现，评估因子在不同时期的稳定性</li>
+                    <li>关注绿色单元格，这些是表现最好的组合</li>
+                </ul>
+            </li>
+            <li><strong>结论：</strong>此表格帮助识别在特定时间窗口下，使用多少因子能获得最佳{metric_display}。通常，因子数量不是越多越好，需要找到性能与复杂度的平衡点。</li>
+        </ul>
+    </div>
+    </div>""".format(metric_display=metric_display)
 
     # Matrix 2: ICIR (if available)
     icir_matrix_html = ""
@@ -1745,7 +2260,31 @@ def generate_grid_search_html_report(report_data: Dict,
                     icir_matrix_html += "<td>-</td>"
             icir_matrix_html += "</tr>"
 
-        icir_matrix_html += "</table></div>"
+        icir_matrix_html += "</table>"
+        icir_matrix_html += """
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #28a745;">
+            <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
+            <ul>
+                <li><strong>ICIR定义：</strong>ICIR = |平均IC| / IC标准差，衡量因子的预测稳定性和有效性。ICIR越高，表示因子在不同时期的表现越稳定。</li>
+                <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的ICIR值。</li>
+                <li><strong>颜色编码：</strong>
+                    <ul>
+                        <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：ICIR > 1.0，表示因子具有稳定的预测能力</li>
+                        <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0.5 < ICIR ≤ 1.0，表示因子预测能力一般</li>
+                        <li><span style="color: #c53030; font-weight: 600;">红色</span>：ICIR ≤ 0.5，表示因子预测能力不稳定</li>
+                    </ul>
+                </li>
+                <li><strong>分析要点：</strong>
+                    <ul>
+                        <li>ICIR > 1.0 是理想状态，表示因子的平均预测能力超过其波动性</li>
+                        <li>比较不同因子数量的ICIR，找出在保持高ICIR的前提下，因子数量最少的组合</li>
+                        <li>观察同一因子数量在不同时间窗口的ICIR，评估因子的时间稳定性</li>
+                    </ul>
+                </li>
+                <li><strong>结论：</strong>此表格是选择因子的关键指标。高ICIR意味着因子不仅在历史数据上有效，而且在不同市场环境下都能保持稳定的预测能力。优先选择ICIR > 1.0且在不同时间窗口都表现稳定的因子组合。</li>
+            </ul>
+        </div>
+        </div>"""
 
     # Matrix 3: Sharpe Ratio
     sharpe_matrix_html = "<div class=\"card\"><h3>💰 Sharpe Ratio Matrix</h3>"
@@ -1776,7 +2315,32 @@ def generate_grid_search_html_report(report_data: Dict,
                 sharpe_matrix_html += "<td>-</td>"
         sharpe_matrix_html += "</tr>"
 
-    sharpe_matrix_html += "</table></div>"
+    sharpe_matrix_html += "</table>"
+    sharpe_matrix_html += """
+    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #ffc107;">
+        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
+        <ul>
+            <li><strong>Sharpe Ratio定义：</strong>夏普比率 = (策略收益率 - 无风险收益率) / 收益率标准差，衡量风险调整后的收益表现。Sharpe Ratio越高，表示在承担相同风险的情况下，获得的超额收益越多。</li>
+            <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的Sharpe Ratio值。</li>
+            <li><strong>颜色编码：</strong>
+                <ul>
+                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：Sharpe > 1.0，表示策略表现优秀</li>
+                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0 < Sharpe ≤ 1.0，表示策略表现一般</li>
+                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：Sharpe ≤ 0，表示策略表现不佳</li>
+                </ul>
+            </li>
+            <li><strong>分析要点：</strong>
+                <ul>
+                    <li>Sharpe Ratio > 1.0 通常被认为是可接受的策略表现</li>
+                    <li>Sharpe Ratio > 2.0 表示策略表现优秀</li>
+                    <li>比较不同因子数量和时间窗口的Sharpe Ratio，找出风险调整后收益最高的组合</li>
+                    <li>注意：此指标需要真实的回测数据，如果数据不可用，可能显示为0</li>
+                </ul>
+            </li>
+            <li><strong>结论：</strong>此表格帮助评估策略的实际交易表现。高Sharpe Ratio意味着策略不仅能产生收益，而且风险控制得当。结合ICIR和Sharpe Ratio，可以全面评估因子的有效性和策略的实用性。</li>
+        </ul>
+    </div>
+    </div>"""
 
     # Matrix 4: Robustness Score (ICIR-weighted composite)
     robustness_matrix_html = "<div class=\"card\"><h3>🛡️ Robustness Score Matrix</h3>"
@@ -1825,24 +2389,75 @@ def generate_grid_search_html_report(report_data: Dict,
                 robustness_matrix_html += "<td>-</td>"
         robustness_matrix_html += "</tr>"
 
-    robustness_matrix_html += "</table></div>"
+    robustness_matrix_html += "</table>"
+    robustness_matrix_html += """
+    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #6f42c1;">
+        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
+        <ul>
+            <li><strong>Robustness Score定义：</strong>稳健性得分 = ICIR × Sharpe Ratio / (1 + |最大回撤|)，这是一个综合指标，同时考虑了因子的预测稳定性（ICIR）、策略的风险调整收益（Sharpe Ratio）和风险控制（最大回撤）。</li>
+            <li><strong>计算公式说明：</strong>
+                <ul>
+                    <li>ICIR：衡量因子预测的稳定性</li>
+                    <li>Sharpe Ratio：衡量策略的风险调整收益</li>
+                    <li>最大回撤：衡量策略的最大风险</li>
+                    <li>分母 (1 + |最大回撤|)：惩罚高回撤的策略，回撤越大，得分越低</li>
+                </ul>
+            </li>
+            <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的Robustness Score值。</li>
+            <li><strong>颜色编码：</strong>
+                <ul>
+                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：Robustness Score > 0.5，表示综合表现优秀</li>
+                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0 < Robustness Score ≤ 0.5，表示综合表现一般</li>
+                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：Robustness Score ≤ 0，表示综合表现不佳</li>
+                </ul>
+            </li>
+            <li><strong>分析要点：</strong>
+                <ul>
+                    <li>这是最全面的评估指标，综合考虑了预测能力、收益和风险</li>
+                    <li>优先选择Robustness Score最高的组合，因为它平衡了所有关键因素</li>
+                    <li>比较不同因子数量的Robustness Score，找出最优的因子数量</li>
+                    <li>观察不同时间窗口的Robustness Score，评估策略的长期稳定性</li>
+                </ul>
+            </li>
+            <li><strong>结论：</strong>此表格是选择最优参数组合的最重要参考。高Robustness Score意味着因子组合不仅在预测上有效，而且在实际交易中能产生稳定的风险调整收益。建议优先选择Robustness Score > 0.5且在不同时间窗口都表现稳定的组合。</li>
+        </ul>
+    </div>
+    </div>"""
 
     # Build detailed results section with enhanced metrics
     details_html = "<div class=\"card\"><h3>📋 Detailed Results</h3>"
     for i, result in enumerate(enhanced_results, 1):
         params = result.get('grid_search_params', {})
         perf = result.get('performance', {}).get('stage3_representatives', {})
-        financial = result.get('performance',
-                               {}).get('stage3_representatives_financial', {})
+        # financial_metrics is stored inside perf_reps
+        financial = perf.get('financial_metrics', {}) if isinstance(
+            perf, dict) else {}
+        if not financial:
+            financial = result.get('performance',
+                                   {}).get('stage3_representatives_financial',
+                                           {})
         metrics = result.get('enhanced_metrics', {})
 
         details_html += f"<h4>Combination {i}: {params.get('time_window')} | Factors: {params.get('factor_count')}</h4>"
         details_html += "<table class=\"metric-table\">"
 
         if is_classification:
-            details_html += f"<tr><th>Directional Win Rate</th><td>{_format_float(perf.get('win_rate', 0) * 100, 2)}%</td></tr>"
-            details_html += f"<tr><th>F1 (Macro)</th><td>{_format_float(perf.get('f1_macro', 0), 4)}</td></tr>"
-            details_html += f"<tr><th>Accuracy</th><td>{_format_float(perf.get('accuracy', 0) * 100, 2)}%</td></tr>"
+            # win_rate is in financial_metrics, not directly in perf
+            win_rate = financial.get('win_rate', 0) if financial else 0
+            if win_rate == 0:
+                win_rate = perf.get('win_rate', 0)
+            # f1_macro and accuracy are in classification_metrics
+            classification_metrics = perf.get('classification_metrics',
+                                              {}) if isinstance(perf,
+                                                                dict) else {}
+            f1_macro = classification_metrics.get(
+                'f1_macro', 0) if classification_metrics else 0
+            accuracy = classification_metrics.get(
+                'accuracy', 0) if classification_metrics else 0
+
+            details_html += f"<tr><th>Directional Win Rate</th><td>{_format_float(win_rate * 100, 2)}%</td></tr>"
+            details_html += f"<tr><th>F1 (Macro)</th><td>{_format_float(f1_macro, 4)}</td></tr>"
+            details_html += f"<tr><th>Accuracy</th><td>{_format_float(accuracy * 100, 2)}%</td></tr>"
         else:
             details_html += f"<tr><th>R²</th><td>{_format_float(perf.get('r2', 0), 4)}</td></tr>"
             details_html += f"<tr><th>RMSE</th><td>{_format_float(perf.get('rmse', 0), 4)}</td></tr>"
@@ -1866,9 +2481,58 @@ def generate_grid_search_html_report(report_data: Dict,
                       sharpe) / (1 + max_dd) if icir > 0 and sharpe > 0 else 0
         details_html += f"<tr><th>Robustness Score</th><td>{_format_float(robustness, 3)}</td></tr>"
 
-        details_html += "</table><br/>"
+        details_html += "</table>"
+        details_html += """
+        <div style="margin-top: 15px; padding: 12px; background: #e9ecef; border-radius: 5px; font-size: 0.9em;">
+            <strong>📖 指标说明：</strong>
+            <ul style="margin: 5px 0;">
+                <li><strong>Directional Win Rate / R²：</strong>主要性能指标。分类任务使用胜率，回归任务使用R²。值越高越好。</li>
+                <li><strong>F1 (Macro) / RMSE / MAE：</strong>辅助性能指标。F1用于分类，RMSE/MAE用于回归。F1越高越好，RMSE/MAE越低越好。</li>
+                <li><strong>Sharpe Ratio：</strong>风险调整收益。> 1.0表示表现良好，> 2.0表示表现优秀。</li>
+                <li><strong>Max Drawdown：</strong>最大回撤，衡量策略的最大风险。绝对值越小越好。</li>
+                <li><strong>Total Return：</strong>总收益率。正值表示盈利，负值表示亏损。</li>
+                <li><strong>ICIR：</strong>因子预测稳定性。> 1.0表示因子具有稳定的预测能力。</li>
+                <li><strong>Robustness Score：</strong>综合稳健性得分，综合考虑ICIR、Sharpe和回撤。> 0.5表示综合表现优秀。</li>
+            </ul>
+        </div>
+        <br/>"""
 
-    details_html += "</div>"
+    details_html += """
+    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #dc3545;">
+        <h4>📖 如何阅读详细结果表格 (How to Read Detailed Results):</h4>
+        <ul>
+            <li><strong>表格结构：</strong>每个组合（时间窗口 + 因子数量）都有一个独立的详细结果表格，显示该组合的所有关键指标。</li>
+            <li><strong>性能指标：</strong>
+                <ul>
+                    <li>主要关注<strong>Directional Win Rate</strong>（分类）或<strong>R²</strong>（回归），这是评估模型预测能力的主要指标</li>
+                    <li>辅助指标（F1、Accuracy、RMSE、MAE）提供更全面的性能评估</li>
+                </ul>
+            </li>
+            <li><strong>金融指标：</strong>
+                <ul>
+                    <li><strong>Sharpe Ratio</strong>：评估策略的风险调整收益，是实际交易中最重要的指标之一</li>
+                    <li><strong>Max Drawdown</strong>：评估策略的最大风险，帮助了解最坏情况下的损失</li>
+                    <li><strong>Total Return</strong>：评估策略的总收益表现</li>
+                </ul>
+            </li>
+            <li><strong>因子质量指标：</strong>
+                <ul>
+                    <li><strong>ICIR</strong>：评估因子的预测稳定性，高ICIR表示因子在不同时期都能保持有效</li>
+                    <li><strong>Robustness Score</strong>：综合评估因子组合的稳健性，是最全面的评估指标</li>
+                </ul>
+            </li>
+            <li><strong>分析建议：</strong>
+                <ul>
+                    <li>优先查看Robustness Score，这是最全面的评估指标</li>
+                    <li>结合ICIR和Sharpe Ratio，评估因子的预测能力和实际交易表现</li>
+                    <li>注意Max Drawdown，确保风险在可接受范围内</li>
+                    <li>比较不同组合的详细结果，找出最优参数配置</li>
+                </ul>
+            </li>
+            <li><strong>结论：</strong>详细结果表格提供了每个参数组合的完整评估。通过对比不同组合的各项指标，可以全面了解每个组合的优势和劣势，从而做出最优的参数选择决策。</li>
+        </ul>
+    </div>
+    </div>"""
 
     # Build ICIR trend analysis (Factor Count vs ICIR)
     icir_trend_html = ""
@@ -1918,8 +2582,154 @@ def generate_grid_search_html_report(report_data: Dict,
             icir_trend_html += "</tr>"
 
         icir_trend_html += "</table>"
-        icir_trend_html += "<p><strong>💡 Interpretation:</strong> Look for the smallest factor count where ICIR doesn't drop significantly (plateau point). Lower Std(ICIR) indicates better stability across time windows.</p>"
-        icir_trend_html += "</div>"
+
+        # Generate multiple 3D visualizations for Plateau Point analysis
+        icir_trend_html += "<h4>🎯 3D Plateau Point 分析 (3D Plateau Point Analysis)</h4>"
+
+        # ICIR 3D plot
+        icir_3d_html = _generate_icir_3d_plot(enhanced_results, time_windows,
+                                              factor_counts)
+        icir_trend_html += icir_3d_html
+
+        # Robustness Score 3D plot
+        def get_robustness(result):
+            metrics = result.get('enhanced_metrics', {})
+            icir = metrics.get('icir', 0) or 0
+            sharpe = metrics.get('sharpe', 0) or 0
+            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
+            return (icir * sharpe) / (1 +
+                                      max_dd) if icir > 0 and sharpe > 0 else 0
+
+        robustness_3d_html = _generate_metric_3d_plot(enhanced_results,
+                                                      time_windows,
+                                                      factor_counts,
+                                                      'robustness',
+                                                      'Robustness Score',
+                                                      get_robustness,
+                                                      color_thresholds={
+                                                          'good': 0.5,
+                                                          'warn': 0.2,
+                                                          'bad': 0.0
+                                                      })
+        icir_trend_html += robustness_3d_html
+
+        # Sharpe Ratio 3D plot
+        def get_sharpe(result):
+            # Try to get from enhanced_metrics first
+            sharpe = result.get('enhanced_metrics', {}).get('sharpe')
+            if sharpe is None or sharpe == 0:
+                # Fallback: extract from performance
+                perf = result.get('performance',
+                                  {}).get('stage3_representatives', {})
+                financial = perf.get('financial_metrics', {}) if isinstance(
+                    perf, dict) else {}
+                if not financial:
+                    financial = result.get('performance', {}).get(
+                        'stage3_representatives_financial', {})
+                sharpe = financial.get('sharpe_ratio', 0) if financial else 0
+            return sharpe
+
+        sharpe_3d_html = _generate_metric_3d_plot(enhanced_results,
+                                                  time_windows,
+                                                  factor_counts,
+                                                  'sharpe',
+                                                  'Sharpe Ratio',
+                                                  get_sharpe,
+                                                  color_thresholds={
+                                                      'good': 1.0,
+                                                      'warn': 0.0,
+                                                      'bad': -1.0
+                                                  })
+        icir_trend_html += sharpe_3d_html
+
+        # Primary metric 3D plot (Win Rate or R²)
+        def get_primary_metric(result):
+            perf = result.get('performance', {}).get('stage3_representatives',
+                                                     {})
+            # financial_metrics is stored inside perf_reps
+            financial = perf.get('financial_metrics', {}) if isinstance(
+                perf, dict) else {}
+            if not financial:
+                financial = result.get('performance', {}).get(
+                    'stage3_representatives_financial', {})
+            if is_classification:
+                # win_rate is stored in financial_metrics
+                win_rate = financial.get('win_rate') if financial else None
+                if win_rate is None or win_rate == 0:
+                    win_rate = perf.get('win_rate')
+                return win_rate
+            else:
+                return perf.get('r2')
+
+        primary_metric_label = 'Directional Win Rate' if is_classification else 'R²'
+        primary_3d_html = _generate_metric_3d_plot(
+            enhanced_results,
+            time_windows,
+            factor_counts,
+            'primary',
+            primary_metric_label,
+            get_primary_metric,
+            color_thresholds={
+                'good': 0.5,
+                'warn': 0.0,
+                'bad': -0.5
+            } if is_classification else {
+                'good': 0.5,
+                'warn': 0.0,
+                'bad': -1.0
+            })
+        icir_trend_html += primary_3d_html
+
+        # Add summary section for multiple 3D visualizations
+        icir_trend_html += """
+        <div style="margin-top: 30px; padding: 20px; background: #e7f3ff; border-radius: 5px; border-left: 4px solid #0066cc;">
+            <h4>🎯 多指标Plateau Point综合分析 (Multi-Metric Plateau Point Analysis)</h4>
+            <p><strong>为什么需要多个3D可视化？</strong></p>
+            <ul>
+                <li><strong>ICIR 3D图：</strong>识别因子预测稳定性的Plateau Point。高ICIR表示因子在不同时期都能保持有效预测。</li>
+                <li><strong>Robustness Score 3D图：</strong>识别综合稳健性的Plateau Point。这是最全面的指标，综合考虑了预测能力、收益和风险。</li>
+                <li><strong>Sharpe Ratio 3D图：</strong>识别风险调整收益的Plateau Point。高Sharpe Ratio表示策略在控制风险的同时获得良好收益。</li>
+                <li><strong>Primary Metric 3D图：</strong>识别主要性能指标的Plateau Point。对于分类任务是胜率，对于回归任务是R²。</li>
+            </ul>
+            <p><strong>如何综合使用这些3D图？</strong></p>
+            <ol>
+                <li><strong>第一步：</strong>查看Robustness Score 3D图，找出综合表现最优的因子数量范围（绿色区域且表面平坦的位置）。</li>
+                <li><strong>第二步：</strong>验证ICIR 3D图，确保该因子数量在ICIR上也表现稳定（高ICIR且在不同时间窗口都保持稳定）。</li>
+                <li><strong>第三步：</strong>检查Sharpe Ratio 3D图，确认该因子数量在实际交易中能产生良好的风险调整收益。</li>
+                <li><strong>第四步：</strong>参考Primary Metric 3D图，确保主要性能指标也达到预期水平。</li>
+                <li><strong>第五步：</strong>选择在所有或大部分指标上都显示Plateau Point的因子数量，这表示该数量是最优选择。</li>
+            </ol>
+            <p><strong>💡 关键洞察：</strong>理想的Plateau Point应该在不同指标的不同3D图中都显示为平坦区域，且在不同时间窗口（Y轴）上都保持相对稳定的高度。如果某个因子数量在多个指标的3D图中都显示为Plateau Point，那么它就是最优选择。</p>
+        </div>
+        """
+
+        icir_trend_html += """
+        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #17a2b8;">
+            <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
+            <ul>
+                <li><strong>表格结构：</strong>行表示不同的因子数量，列表示不同的时间窗口。最后两列显示每个因子数量在所有时间窗口上的平均ICIR和标准差。</li>
+                <li><strong>Mean ICIR列：</strong>计算该因子数量在所有时间窗口上的平均ICIR值。平均值越高，表示该因子数量在不同时期的表现越稳定。</li>
+                <li><strong>Std(ICIR)列：</strong>计算该因子数量在所有时间窗口上的ICIR标准差。标准差越小，表示该因子数量在不同时期的表现越一致，稳定性越好。</li>
+                <li><strong>分析要点：</strong>
+                    <ul>
+                        <li><strong>寻找平台点（Plateau Point）：</strong>找出ICIR不再显著下降的最小因子数量。例如，如果120个因子和60个因子的ICIR相近，但30个因子的ICIR明显下降，那么60个因子可能是平台点。</li>
+                        <li><strong>评估稳定性：</strong>比较不同因子数量的Std(ICIR)。Std(ICIR)越小，表示该因子数量在不同时间窗口的表现越一致，越稳定。</li>
+                        <li><strong>平衡性能与复杂度：</strong>在Mean ICIR高且Std(ICIR)低的前提下，选择因子数量最少的组合，以降低模型复杂度并提高可解释性。</li>
+                        <li><strong>结合3D可视化：</strong>使用上方的3D图形可以更直观地识别Plateau Point。在3D图形中，Plateau Point表现为ICIR值达到较高水平后，表面变得平坦的区域。</li>
+                    </ul>
+                </li>
+                <li><strong>结论：</strong>此表格帮助确定最优因子数量。理想的组合是：Mean ICIR高（> 1.0）、Std(ICIR)低（< 0.3），且因子数量尽可能少。这表示该因子数量既能保持高预测能力，又能在不同市场环境下保持稳定，同时避免了过度复杂化。结合3D可视化，可以更准确地识别Plateau Point。</li>
+            </ul>
+        </div>
+        </div>"""
+
+    # Build analysis conclusions
+    analysis_conclusions_html = _build_analysis_conclusions(
+        enhanced_results, time_windows, factor_counts, is_classification)
+
+    # Generate ICIR heatmap
+    heatmap_html = _generate_icir_heatmap(enhanced_results, time_windows,
+                                          factor_counts)
 
     # Build full HTML
     html = f"""<!DOCTYPE html>
@@ -1935,6 +2745,7 @@ def generate_grid_search_html_report(report_data: Dict,
         .good {{ color: #167a3d; font-weight: 600; }}
         .warn {{ color: #b36b00; font-weight: 600; }}
         .bad {{ color: #c53030; font-weight: 600; }}
+        .heatmap-container {{ margin: 20px 0; text-align: center; }}
     </style>
 </head>
 <body>
@@ -1954,7 +2765,10 @@ def generate_grid_search_html_report(report_data: Dict,
     {sharpe_matrix_html}
     {robustness_matrix_html}
     {icir_trend_html}
+    {heatmap_html}
     {details_html}
+    
+    {analysis_conclusions_html}
     
     <div class="card">
         <h3>💡 Interpretation Guide</h3>
@@ -1990,10 +2804,11 @@ def generate_grid_search_html_report(report_data: Dict,
     print(f"📝 Grid search HTML report written to: {html_path}")
 
 
-def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
+def main() -> Tuple[Dict, any, type(None), str]:
+    global DIM_COMPARE_RESULTS_ROOT
     parser = argparse.ArgumentParser(
         description=
-        "Dimensionality reduction comparison: evaluate feature reduction stages (All → IC-filtered → Representatives → Autoencoder)",
+        "Dimensionality reduction comparison: evaluate feature reduction stages (All → IC-filtered → Representatives)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -2007,96 +2822,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         help=
         "Symbol name(s) (e.g., BTC-USD, ETH-USD or BTC-USD,ETH-USD,SOL-USD for multi-asset training)",
     )
-    parser.add_argument(
-        "--encoding-dim",
-        type=int,
-        default=8,
-        help="Autoencoder embedding dimension",
-    )
-    parser.add_argument(
-        "--encoding-grid",
-        default=None,
-        help="Comma-separated list of encoding dims to try (e.g., 8,16,32,64)",
-    )
-    parser.add_argument(
-        "--autoencoder-epochs",
-        type=int,
-        default=500,
-        help="Autoencoder training epochs",
-    )
-    parser.add_argument(
-        "--ae-type",
-        type=str,
-        default="vae",
-        choices=["production", "vae"],
-        help=
-        "Autoencoder type: 'production' (standard AE) or 'vae' (Variational AE)",
-    )
-    parser.add_argument(
-        "--kl-weight",
-        type=float,
-        default=1e-3,
-        help="KL divergence weight for VAE (default: 1e-3)",
-    )
-    parser.add_argument(
-        "--auto-encoding-grid",
-        action="store_true",
-        default=True,
-        help="Automatically generate encoding grid based on compression ratios",
-    )
-    parser.add_argument(
-        "--ae-auto-tune",
-        action="store_true",
-        default=True,
-        help=
-        "Enable automatic hyperparameter tuning for autoencoder (learning rate, batch size, epochs)",
-    )
-    parser.add_argument(
-        "--tune-trials",
-        type=int,
-        default=15,
-        help="Number of trials for hyperparameter tuning (default: 15)",
-    )
-    parser.add_argument(
-        "--ae-task-loss",
-        action="store_true",
-        default=True,
-        help="Enable task-aware loss (reconstruction + prediction task loss)",
-    )
-    parser.add_argument(
-        "--task-weight",
-        type=float,
-        default=0.1,
-        help="Weight for task loss in multi-task training (default: 0.1)",
-    )
-    parser.add_argument(
-        "--selection-metric",
-        type=str,
-        default="composite",
-        choices=["sharpe", "f1", "r2", "composite"],
-        help=
-        "Metric to select best AE dimension: sharpe | f1 | r2 | composite (default)",
-    )
-    parser.add_argument(
-        "--max-dd-threshold",
-        type=float,
-        default=-20.0,
-        help="Max drawdown threshold (%) for composite scoring (default: -20)",
-    )
-    parser.add_argument(
-        "--composite-alpha",
-        type=float,
-        default=0.5,
-        help=
-        "Alpha penalty weight for exceeding max drawdown in composite score (default: 0.5)",
-    )
-    parser.add_argument(
-        "--composite-beta",
-        type=float,
-        default=0.5,
-        help=
-        "Beta penalty weight for (1 - F1) in composite score (default: 0.5)",
-    )
+    # Autoencoder arguments removed - no longer used
     parser.add_argument(
         "--train-start",
         default=None,
@@ -2159,11 +2885,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         action="store_false",
         help="Disable SHAP explainability plots.",
     )
-    parser.add_argument(
-        "--enable-autoencoder",
-        action="store_true",
-        help="Run Stage 4 autoencoder compression (disabled by default).",
-    )
+    # --enable-autoencoder removed - autoencoder no longer used
     parser.add_argument(
         "--task",
         type=str,
@@ -2224,6 +2946,34 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         action="store_true",
         help=
         "Enable grid search mode: test all combinations of factor counts and time windows",
+    )
+    parser.add_argument(
+        "--selection-metric",
+        type=str,
+        default="composite",
+        choices=["sharpe", "f1", "r2", "composite"],
+        help=
+        "Metric to use for feature selection scoring: sharpe | f1 | r2 | composite (default: composite)",
+    )
+    parser.add_argument(
+        "--max-dd-threshold",
+        type=float,
+        default=-20.0,
+        help=
+        "Maximum drawdown threshold for composite score penalty (default: -20.0)",
+    )
+    parser.add_argument(
+        "--composite-alpha",
+        type=float,
+        default=0.5,
+        help=
+        "Alpha weight for drawdown penalty in composite score (default: 0.5)",
+    )
+    parser.add_argument(
+        "--composite-beta",
+        type=float,
+        default=0.5,
+        help="Beta weight for F1 penalty in composite score (default: 0.5)",
     )
 
     args = parser.parse_args()
@@ -2300,20 +3050,11 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         )
         print(f"{'=' * 80}\n")
 
-    # Default behavior: if neither grid nor ablation specified, enable ablation by default
-    if not args.encoding_grid and not args.research_ablation:
+    # Default behavior: if ablation not specified, enable ablation by default
+    if not args.research_ablation:
         args.research_ablation = True
 
-    # If grid is provided, run multiple trials and select the best (baseline AE compare)
-    grid_dims = None
-    if args.encoding_grid:
-        try:
-            grid_dims = [
-                int(x.strip()) for x in args.encoding_grid.split(',')
-                if x.strip()
-            ]
-        except Exception:
-            print(f"⚠️ Invalid --encoding-grid format: {args.encoding_grid}")
+    # Autoencoder grid removed - no longer used
 
     # Grid search mode: run all combinations
     # Note: If factor_counts_list or time_windows_list is set, grid_search should be enabled
@@ -2354,6 +3095,21 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                             'time_window_start': tw_start,
                             'time_window_end': tw_end,
                         }
+                        # Ensure results_dir is stored (should already be set by wrapper)
+                        if 'results_dir' not in result_dict or not result_dict.get(
+                                'results_dir'):
+                            # Try to reconstruct results_dir path
+                            symbol_slug = _slugify(args.symbol)
+                            feature_type_slug = _slugify(args.feature_type)
+                            if tw_start and tw_end:
+                                train_start_date = tw_start.replace("-",
+                                                                    "")[:8]
+                                train_end_date = tw_end.replace("-", "")[:8]
+                                dir_date_suffix = f"{symbol_slug}_{feature_type_slug}_{train_start_date}_{train_end_date}"
+                                potential_dir = DIM_COMPARE_RESULTS_ROOT / dir_date_suffix
+                                if potential_dir.exists():
+                                    result_dict['results_dir'] = str(
+                                        potential_dir)
                         grid_search_results.append(result_dict)
                 except Exception as exc:
                     print(f"⚠️ Grid search combination failed: {exc}")
@@ -2366,12 +3122,37 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             print(f"\n{'=' * 80}")
             print("📊 Generating Grid Search Comparison Report")
             print(f"{'=' * 80}\n")
-            generate_grid_search_report(grid_search_results, symbol_slug,
-                                        feature_type_slug, args)
+            report_path_str = generate_grid_search_report(
+                grid_search_results, symbol_slug, feature_type_slug, args)
+            # Return a summary result for grid search
+            summary_result = {
+                "timestamp_start": datetime.now().strftime("%Y%m%d_%H%M%S"),
+                "timestamp_end": datetime.now().strftime("%Y%m%d_%H%M%S"),
+                "task_type": "grid_search",
+                "grid_search_summary": {
+                    "total_combinations":
+                    len(factor_counts_list) * len(time_windows_list),
+                    "successful_combinations":
+                    len(grid_search_results),
+                    "factor_counts":
+                    factor_counts_list,
+                    "time_windows":
+                    [f"{tw[0]} → {tw[1]}" for tw in time_windows_list],
+                },
+                "data_info": {
+                    "grid_search_mode": True,
+                },
+            }
+            # Extract results_dir from report_path
+            from pathlib import Path
+            results_dir = str(
+                Path(report_path_str).parent) if report_path_str else None
+            # Return None for model and autoencoder
+            return summary_result, None, None, results_dir
         else:
             print("⚠️ No successful grid search results to report")
-
-        return
+            # Return empty result structure
+            return {}, None, None, None
 
     if args.research_ablation:
         ablation_start_dt = datetime.now()
@@ -2708,6 +3489,8 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         )
 
         # Calculate IC statistics for selected factors (for ICIR calculation)
+        # Note: We'll calculate this after representative selection (Stage 3) to use the final factor set
+        # For now, calculate based on top_cols, but we'll recalculate after reps are selected
         selected_ic_values = [
             ic_scores.get(col, 0.0) for col in top_cols if col in ic_scores
         ]
@@ -2719,7 +3502,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         if ic_mean is not None and ic_std is not None:
             icir = ic_mean / ic_std if ic_std > 0 else None
             print(
-                f"   IC Statistics for selected factors: Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}, ICIR={icir:.3f}"
+                f"   IC Statistics for IC-filtered factors: Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}, ICIR={icir:.3f}"
                 if icir else
                 f"   IC Statistics: Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}"
             )
@@ -2930,25 +3713,41 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             method="bfill").fillna(0.0)
 
         # Greedy representative selection by correlation threshold (0.9)
-        reps: list[str] = []
-        if not df_ic_clean.empty:
-            corr = df_ic_clean.corr().abs().fillna(0.0)
-            for c in df_ic_clean.columns:
-                if all(corr.loc[c, r] < 0.9 for r in reps):
-                    reps.append(c)
-        # Bound reps between 60 and 100
+        # IMPORTANT: Select factors based on target_top_k FIRST, then apply correlation filtering
+        # This ensures different factor counts select different factors
         desired_reps = (min(target_top_k, len(df_ic_clean.columns))
                         if target_top_k and not df_ic_clean.empty else None)
+
+        reps: list[str] = []
         if not df_ic_clean.empty:
-            if desired_reps:
-                if len(reps) > desired_reps:
-                    reps = reps[:desired_reps]
-                elif len(reps) < desired_reps:
-                    additional = [
-                        c for c in df_ic_clean.columns if c not in reps
-                    ][:max(desired_reps - len(reps), 0)]
+            # First, select top N factors by IC score (where N = target_top_k)
+            # This ensures we get different factors for different target_top_k values
+            if desired_reps and desired_reps > 0:
+                # Sort columns by IC score (absolute value) and take top N
+                cols_with_ic = [(col, abs(ic_scores.get(col, 0.0)))
+                                for col in df_ic_clean.columns
+                                if col in ic_scores]
+                cols_with_ic.sort(key=lambda x: x[1], reverse=True)
+                top_ic_cols = [col for col, _ in cols_with_ic[:desired_reps]]
+
+                # Then apply correlation filtering on the top IC factors
+                corr = df_ic_clean[top_ic_cols].corr().abs().fillna(0.0)
+                for c in top_ic_cols:
+                    if all(corr.loc[c, r] < 0.9 for r in reps):
+                        reps.append(c)
+
+                # If correlation filtering removed too many, add back from top IC list
+                if len(reps) < desired_reps:
+                    additional = [c for c in top_ic_cols if c not in reps
+                                  ][:max(desired_reps - len(reps), 0)]
                     reps.extend(additional)
             else:
+                # Fallback: use original correlation-based selection
+                corr = df_ic_clean.corr().abs().fillna(0.0)
+                for c in df_ic_clean.columns:
+                    if all(corr.loc[c, r] < 0.9 for r in reps):
+                        reps.append(c)
+                # Bound reps between 60 and 100 if no target specified
                 if len(reps) < 60:
                     reps = list(df_ic_clean.columns)[:60]
                 elif len(reps) > 100:
@@ -2968,12 +3767,31 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             f"[DEBUG] Stage 3: {len(reps)} representative features after correlation filtering"
         )
 
-        # Stage 4: Autoencoder compression (optional)
-        if args.enable_autoencoder:
-            print(f"\n[Stage 4] Autoencoder compression (to be evaluated)...")
+        # Recalculate IC statistics for final representative factors (for accurate ICIR)
+        # This ensures IC statistics reflect the actual factors used in the model
+        # CRITICAL: This must be calculated AFTER reps are selected, so different factor counts get different ICIR
+        final_ic_values = [
+            ic_scores.get(col, 0.0) for col in reps if col in ic_scores
+        ]
+        if final_ic_values and len(final_ic_values) > 0:
+            ic_mean = np.mean([abs(ic) for ic in final_ic_values])
+            ic_std = np.std([abs(ic) for ic in final_ic_values
+                             ]) if len(final_ic_values) > 1 else 0.0
+            icir = ic_mean / ic_std if ic_std > 0 else None
             print(
-                f"[DEBUG] Label variance: y.std={float(np.std(y_series.values)):.6f}"
+                f"   IC Statistics for final representative factors ({len(reps)} factors, {len(final_ic_values)} with IC scores): Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}, ICIR={icir:.3f}"
+                if icir else
+                f"   IC Statistics for final factors: Mean(|IC|)={ic_mean:.4f}, Std(|IC|)={ic_std:.4f}"
             )
+        else:
+            # Fallback to previous calculation if reps don't have IC scores
+            print(
+                f"   ⚠️  Warning: Could not calculate IC statistics for final factors ({len(reps)} factors), using IC-filtered factors"
+            )
+            # Keep the previous ic_mean, ic_std, icir from Stage 2 calculation
+            # (they were calculated based on top_cols, which is less accurate but better than nothing)
+
+        # Stage 4: Autoencoder compression removed - no longer used
 
         # Split data (same split for all stages - use consistent random state)
         # All stages should have the same number of samples, so we can use the same split
@@ -3019,30 +3837,48 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         # Train and evaluate models for the selected stages
         print("\n" + "=" * 60)
         print("Training and evaluating feature sets (Stages 1-3)")
-        if args.enable_autoencoder:
-            print("(Stage 4: Autoencoder compressed features enabled)")
         print("=" * 60)
+
+        # Prepare price data for backtest (if available)
+        price_data_test = None
+        if 'close' in df_features_original.columns:
+            # Get price data aligned with test indices
+            price_data_test = df_features_original[[
+                'close'
+            ]].iloc[test_indices].copy()
+            print(
+                f"  📊 Price data available for backtest: {len(price_data_test)} samples"
+            )
 
         # Stage 1: All features (482 -> ~470 after filtering)
         print("\n[Stage 1] Training on ALL features...")
         model_all = train_production_lightgbm(X_train_all, y_train, X_val_all,
                                               y_val)
-        perf_all = evaluate_model_performance(model_all, X_test_all, y_test,
-                                              "All Features")
+        perf_all = evaluate_model_performance(model_all,
+                                              X_test_all,
+                                              y_test,
+                                              "All Features",
+                                              price_data=price_data_test)
 
         # Stage 2: IC-filtered features (~120)
         print("\n[Stage 2] Training on IC-filtered features...")
         model_ic = train_production_lightgbm(X_train_ic, y_train, X_val_ic,
                                              y_val)
-        perf_ic = evaluate_model_performance(model_ic, X_test_ic, y_test,
-                                             "IC-Filtered Features")
+        perf_ic = evaluate_model_performance(model_ic,
+                                             X_test_ic,
+                                             y_test,
+                                             "IC-Filtered Features",
+                                             price_data=price_data_test)
 
         # Stage 3: Representative features (60-100)
         print("\n[Stage 3] Training on Representative features...")
         model_reps = train_production_lightgbm(X_train_reps, y_train,
                                                X_val_reps, y_val)
-        perf_reps = evaluate_model_performance(model_reps, X_test_reps, y_test,
-                                               "Representative Features")
+        perf_reps = evaluate_model_performance(model_reps,
+                                               X_test_reps,
+                                               y_test,
+                                               "Representative Features",
+                                               price_data=price_data_test)
 
         feature_insights_stage3 = _derive_feature_insights(perf_all, perf_reps)
 
@@ -3077,11 +3913,18 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                 int(len(X_test_reps)),
             },
             "performance": {
-                "stage1_all": perf_all,
-                "stage2_ic": perf_ic,
-                "stage3_representatives": perf_reps,
-                "stage4_compressed": None,
-                "selection_metric": args.selection_metric,
+                "stage1_all":
+                perf_all,
+                "stage2_ic":
+                perf_ic,
+                "stage3_representatives":
+                perf_reps,
+                "stage3_representatives_financial":
+                perf_reps.get("financial_metrics", {}),
+                "stage4_compressed":
+                None,
+                "selection_metric":
+                args.selection_metric,
             },
             "insights": feature_insights_stage3,
             "ic_statistics": {
@@ -3178,7 +4021,11 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
             "model_info": {
                 "device_used": "cuda" if torch.cuda.is_available() else "cpu",
                 "feature_names": reps[:10] if reps else feature_names[:10],
+                "all_selected_features": reps
+                if reps else feature_names[:10],  # Store all selected features
             },
+            "selected_features":
+            reps,  # Store the complete list of selected features
             "selection": {
                 "metric": args.selection_metric,
                 "best_stage": feature_insights_stage3["recommended_stage"],
@@ -3198,321 +4045,13 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
         best_model = model_reps
         best_ae = None
         best_dir = None
-        best_dim = None
-        trial_dims: list[int] = []
+        # Stage 4 autoencoder removed - no longer used
 
-        if args.enable_autoencoder:
-            # Stage 4: Autoencoder compressed features
-            # Try multiple compression dimensions
-            num_features = len(reps)
-
-            # Determine encoding dimensions to try
-            if args.auto_encoding_grid:
-                # Auto-generate grid based on compression ratios
-                trial_dims = generate_auto_encoding_grid(num_features)
-                print(f"   Auto-generated encoding grid: {trial_dims}")
-            elif args.encoding_grid:
-                # Use provided grid
-                try:
-                    trial_dims = [
-                        int(x.strip()) for x in args.encoding_grid.split(',')
-                        if x.strip()
-                    ]
-                    trial_dims = [
-                        d for d in trial_dims if d < num_features and d >= 8
-                    ]
-                    trial_dims = sorted(set(trial_dims), reverse=True)
-                except Exception:
-                    print(
-                        f"   ⚠️ Invalid --encoding-grid, using auto-generation"
-                    )
-                    trial_dims = generate_auto_encoding_grid(num_features)
-            else:
-                # Default: use compression ratios
-                trial_dims = []
-                for ratio in [10, 20, 30, 40]:
-                    dim = max(8, int(num_features / ratio))
-                    if dim < num_features and dim >= 8:
-                        trial_dims.append(dim)
-                trial_dims.extend([32, 16, 8])
-                trial_dims = sorted(set([
-                    d for d in trial_dims if d < num_features
-                    and d <= X_train_reps.shape[1] and d >= 8
-                ]),
-                                    reverse=True)
-                if not trial_dims:
-                    trial_dims = [max(8, int(num_features / 10)), 16, 8]
-                    trial_dims = [
-                        d for d in trial_dims
-                        if d <= X_train_reps.shape[1] and d >= 8
-                    ]
-
-            if trial_dims:
-                print(
-                    f"\n[Stage 4] Training on Autoencoder compressed features (trying dims: {trial_dims}, AE type: {args.ae_type})..."
-                )
-            else:
-                print(
-                    "   ⚠️ No valid encoding dimensions found; skipping Stage 4."
-                )
-
-        grid_rows = []
-        best_row = None
-        stage4_best_result = None
-        stage4_best_model = None
-        stage4_best_ae = None
-
-        for dim in trial_dims:
-            try:
-                print(f"\n  Trying encoding_dim={dim}...")
-
-                # Create task head for this dimension if needed
-                task_head_dim = None
-                if args.ae_task_loss:
-                    unique_y = np.unique(y_train)
-                    if len(unique_y) <= 3 and np.all(
-                            np.equal(np.mod(unique_y, 1), 0)):
-                        num_classes = len(unique_y)
-                        task_head_dim = create_task_head(
-                            dim, "classification", num_classes)
-                    else:
-                        task_head_dim = create_task_head(dim, "regression", 1)
-
-                # Auto-tune hyperparameters if enabled
-                if args.ae_auto_tune:
-                    tuned_params, tuned_trainer, tuned_ae = auto_tune_hyperparameters(
-                        X_train_reps,
-                        X_val_reps,
-                        dim,
-                        args.ae_type,
-                        y_train=y_train if args.ae_task_loss else None,
-                        y_val=y_val if args.ae_task_loss else None,
-                        task_weight=args.task_weight
-                        if args.ae_task_loss else 0.0,
-                        task_head=task_head_dim,
-                        n_trials=args.tune_trials,
-                    )
-                    ae = tuned_ae
-                    trainer = tuned_trainer
-                    # Train full epochs with tuned params
-                    losses = trainer.train(
-                        X_train_reps,
-                        epochs=tuned_params["epochs"],
-                        batch_size=tuned_params["batch_size"],
-                        verbose=True,
-                        y_train=y_train if args.ae_task_loss else None,
-                    )
-                else:
-                    # Standard training
-                    ae, trainer, losses = train_production_autoencoder(
-                        X_train_reps,
-                        encoding_dim=dim,
-                        epochs=args.autoencoder_epochs,
-                        ae_type=args.ae_type,
-                        kl_weight=args.kl_weight,
-                        task_weight=args.task_weight
-                        if args.ae_task_loss else 0.0,
-                        y_train=y_train if args.ae_task_loss else None,
-                        task_head=task_head_dim,
-                    )
-                # Reconstruction MSE on val
-                with torch.no_grad():
-                    Xv = torch.as_tensor(X_val_reps,
-                                         dtype=torch.float32,
-                                         device=next(ae.parameters()).device)
-                    out = ae(Xv)
-                    if isinstance(out, tuple) or isinstance(out, list):
-                        recon = out[0].cpu().numpy()
-                    else:
-                        recon = out.cpu().numpy()
-                recon_mse = float(np.mean((recon - X_val_reps)**2))
-
-                Z_train = trainer.transform(X_train_reps)
-                Z_val = trainer.transform(X_val_reps)
-                Z_test = trainer.transform(X_test_reps)
-
-                # Standardize AE embeddings before feeding to LightGBM
-                z_scaler = StandardScaler()
-                Z_train = z_scaler.fit_transform(Z_train)
-                Z_val = z_scaler.transform(Z_val)
-                Z_test = z_scaler.transform(Z_test)
-
-                try:
-                    z_var = float(np.var(Z_train))
-                    print(
-                        f"    [DEBUG] AE dim={dim} | recon_mse={recon_mse:.6e} | Z_train_var={z_var:.6e}"
-                    )
-                except Exception:
-                    pass
-
-                model_ae = train_production_lightgbm(Z_train, y_train, Z_val,
-                                                     y_val)
-                perf_ae = evaluate_model_performance(model_ae, Z_test, y_test,
-                                                     f"AE{dim}")
-
-                # Model selection based on requested metric (use test-set perf)
-                score_ae = _selection_score(perf_ae, args.selection_metric)
-                score_reps = _selection_score(perf_reps, args.selection_metric)
-                delta_r2 = perf_ae.get("r2", 0.0) - perf_reps.get("r2", 0.0)
-                row = {
-                    "encoding_dim": dim,
-                    "reconstruction_mse": recon_mse,
-                    "selection_metric": args.selection_metric,
-                    "selection_score_compressed": score_ae,
-                    "selection_score_reps": score_reps,
-                    "r2_stage3_reps": perf_reps["r2"],
-                    "r2_compressed": perf_ae["r2"],
-                    "delta_r2": delta_r2,
-                    "rmse_stage3_reps": perf_reps["rmse"],
-                    "rmse_compressed": perf_ae["rmse"],
-                }
-                grid_rows.append(row)
-                # Choose best by selection score (higher is better)
-                if best_row is None or score_ae > best_row.get(
-                        "selection_score_compressed", -1e9):
-                    best_row = row
-                    best_dim = dim
-                    best_model = model_ae
-                    best_ae = ae
-
-                    # Build comprehensive result struct with all 4 stages
-                    results = {
-                        "timestamp_start":
-                        ablation_start_ts,
-                        "timestamp_end":
-                        datetime.now().strftime("%Y%m%d_%H%M%S"),
-                        "train_start_date":
-                        train_start_date,
-                        "train_end_date":
-                        train_end_date,
-                        "task_type":
-                        ("classification_binary" if args.binary_signals else
-                         "classification_multiclass"),
-                        "data_info": {
-                            # Feature counts at each stage
-                            "stage1_all_features":
-                            int(len(keep_all)),
-                            "stage2_ic_filtered":
-                            int(len(top_cols)),
-                            "stage3_representatives":
-                            int(len(reps)),
-                            "stage4_compressed_dim":
-                            int(dim),
-                            "original_features_count":
-                            int(original_feature_count),
-                            "compressed_dimensions":
-                            int(dim),
-                            "compression_ratio":
-                            (float(original_feature_count) /
-                             float(dim)) if dim else None,
-                            "training_samples":
-                            int(len(X_train_reps)),
-                            "validation_samples":
-                            int(len(X_val_reps)),
-                            "test_samples":
-                            int(len(X_test_reps)),
-                        },
-                        "performance": {
-                            # All 4 stages performance
-                            "stage1_all_features": perf_all,
-                            "stage2_ic_filtered": perf_ic,
-                            "stage3_representatives": perf_reps,
-                            "stage4_compressed": perf_ae,
-                            # Delta comparisons
-                            "stage2_vs_stage1": {
-                                "delta_r2": perf_ic["r2"] - perf_all["r2"],
-                                "delta_rmse":
-                                perf_ic["rmse"] - perf_all["rmse"],
-                            },
-                            "stage3_vs_stage2": {
-                                "delta_r2": perf_reps["r2"] - perf_ic["r2"],
-                                "delta_rmse":
-                                perf_reps["rmse"] - perf_ic["rmse"],
-                            },
-                            "stage4_vs_stage3": {
-                                "delta_r2": perf_ae["r2"] - perf_reps["r2"],
-                                "delta_rmse":
-                                perf_ae["rmse"] - perf_reps["rmse"],
-                            },
-                            # Legacy fields for compatibility
-                            "original_features": perf_all,
-                            "compressed_features": perf_ae,
-                            "performance_change": delta_r2,
-                        },
-                        # Multi-horizon results (if enabled)
-                        "multi_horizon_results":
-                        multi_horizon_results if multi_horizon_results else {},
-                        "training_info": {
-                            "autoencoder_epochs":
-                            int(args.autoencoder_epochs),
-                            "autoencoder_final_loss":
-                            (float(losses[-1])
-                             if isinstance(losses, (list, tuple))
-                             and len(losses) > 0 else None),
-                            "lightgbm_stage1_iterations":
-                            getattr(model_all, "best_iteration", None),
-                            "lightgbm_stage2_iterations":
-                            getattr(model_ic, "best_iteration", None),
-                            "lightgbm_stage3_iterations":
-                            getattr(model_reps, "best_iteration", None),
-                            "lightgbm_stage4_iterations":
-                            getattr(model_ae, "best_iteration", None),
-                        },
-                    }
-                # Proxy: map compressed predictions back to reps
-                y_hat_train = model_ae.predict(Z_train)
-
-                # Handle multiclass predictions: convert probability array to class predictions
-                # For multiclass, we use class predictions (0, 1, 2) as regression targets
-                if y_hat_train.ndim == 2 and y_hat_train.shape[1] > 1:
-                    # Multiclass: use class predictions (0=Hold, 1=Long, 2=Short)
-                    y_hat_train = np.argmax(y_hat_train,
-                                            axis=1).astype(np.float64)
-
-                # Ensure y_hat_train is 1D for Ridge regression
-                if y_hat_train.ndim > 1:
-                    y_hat_train = y_hat_train.flatten()
-
-                ridge = Ridge(alpha=1.0)
-                ridge.fit(X_train_reps, y_hat_train)
-
-                # Get coefficients: coef_ is always 1D for single-output Ridge
-                coef = ridge.coef_
-                # Ensure coef is 1D array
-                if coef.ndim > 1:
-                    coef = coef.flatten()
-
-                proxy_coefs = {
-                    reps[i]: float(coef[i])
-                    for i in range(len(reps)) if i < len(coef)
-                }
-                results["proxy_weights"] = proxy_coefs
-                results["grid_search"] = grid_rows
-                best_result = results
-                # Use training date range for directory name if available, otherwise runtime timestamps
-                if ablation_dir_date_suffix:
-                    DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-                    best_dir = str(DIM_COMPARE_RESULTS_ROOT /
-                                   ablation_dir_date_suffix)
-                else:
-                    # Fallback: use symbol, feature_type, and timestamps
-                    DIM_COMPARE_RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-                    best_dir = str(
-                        DIM_COMPARE_RESULTS_ROOT /
-                        f"{symbol_slug}_{feature_type_slug}_{results['timestamp_start']}_{results['timestamp_end']}"
-                    )
-            except Exception as exc:
-                print(f"⚠️ Ablation ENCODING_DIM={dim} failed: {exc}")
-                continue
-
-        if best_result is None:
-            raise RuntimeError("Ablation failed for all encoding dims")
-
-        # Multi-horizon training (if enabled) - train all 4 stages for each horizon
+        # Multi-horizon training (if enabled) - train all 3 stages for each horizon
         if horizons and len(horizons) > 1 and not df_features_original.empty:
             print(f"\n{'=' * 80}")
             print(
-                f"Multi-Horizon Training: Evaluating {len(horizons)} horizons across all 4 stages"
+                f"Multi-Horizon Training: Evaluating {len(horizons)} horizons across all 3 stages"
             )
             print(f"{'=' * 80}")
 
@@ -3521,7 +4060,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
             for horizon in horizons:
                 print(f"\n{'=' * 60}")
-                print(f"Training all 4 stages for Horizon: {horizon} bars")
+                print(f"Training all 3 stages for Horizon: {horizon} bars")
                 print(f"{'=' * 60}")
 
                 # Get labels for this horizon (3-class: 0=Hold, 1=Long, 2=Short)
@@ -3565,48 +4104,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                         model_h_reps, X_test_reps, y_test_h,
                         f"Horizon {horizon} - Representatives")
 
-                    # Stage 4: Autoencoder compressed features (using best_dim and best_ae)
-                    if best_dim is not None and best_ae is not None:
-                        print(
-                            f"\n  [Stage 4] Horizon {horizon}: Training on AE-compressed features (dim={best_dim})..."
-                        )
-                        # Transform using best autoencoder (same method as in main training loop)
-                        # Get device from best_ae model
-                        ae_device = next(best_ae.parameters()).device
-                        with torch.no_grad():
-                            X_train_reps_t = torch.as_tensor(
-                                X_train_reps,
-                                dtype=torch.float32,
-                                device=ae_device)
-                            X_val_reps_t = torch.as_tensor(X_val_reps,
-                                                           dtype=torch.float32,
-                                                           device=ae_device)
-                            X_test_reps_t = torch.as_tensor(
-                                X_test_reps,
-                                dtype=torch.float32,
-                                device=ae_device)
-
-                            _, Z_train_h_t = best_ae(X_train_reps_t)
-                            _, Z_val_h_t = best_ae(X_val_reps_t)
-                            _, Z_test_h_t = best_ae(X_test_reps_t)
-
-                            Z_train_h = Z_train_h_t.cpu().numpy()
-                            Z_val_h = Z_val_h_t.cpu().numpy()
-                            Z_test_h = Z_test_h_t.cpu().numpy()
-
-                        # Standardize AE embeddings before feeding to LightGBM
-                        z_scaler = StandardScaler()
-                        Z_train_h = z_scaler.fit_transform(Z_train_h)
-                        Z_val_h = z_scaler.transform(Z_val_h)
-                        Z_test_h = z_scaler.transform(Z_test_h)
-
-                        model_h_ae = train_production_lightgbm(
-                            Z_train_h, y_train_h, Z_val_h, y_val_h)
-                        perf_h_ae = evaluate_model_performance(
-                            model_h_ae, Z_test_h, y_test_h,
-                            f"Horizon {horizon} - AE-Compressed")
-                    else:
-                        perf_h_ae = None
+                    # Stage 4 autoencoder removed - no longer used
 
                     # Store results for this horizon
                     horizon_perf = {
@@ -3614,8 +4112,6 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                         "stage2_ic_filtered": perf_h_ic,
                         "stage3_representatives": perf_h_reps,
                     }
-                    if args.enable_autoencoder and perf_h_ae is not None:
-                        horizon_perf["stage4_compressed"] = perf_h_ae
                     feature_insight_h = _derive_feature_insights(
                         perf_h_all, perf_h_reps)
                     horizon_perf["feature_insights"] = feature_insight_h
@@ -3643,10 +4139,6 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                     print(
                         f"     Stage 3 (Reps):     R²={perf_h_reps['r2']:.4f}, RMSE={perf_h_reps['rmse']:.6f}"
                     )
-                    if args.enable_autoencoder and perf_h_ae is not None:
-                        print(
-                            f"     Stage 4 (AE):       R²={perf_h_ae['r2']:.4f}, RMSE={perf_h_ae['rmse']:.6f}"
-                        )
                 else:
                     print(
                         f"   ⚠️  Label column {y_horizon_col} not found for horizon {horizon}"
@@ -3766,11 +4258,7 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
                         "explainability",
                         {})["stage3_shap_dir"] = shap_dir_path
 
-        # Save best Autoencoder model - after best_dir is set
-        if best_ae is not None:
-            ae_path = os.path.join(best_dir, "production_autoencoder.pth")
-            torch.save(best_ae.state_dict(), ae_path)
-            print(f"   💾 Best Autoencoder saved to: {ae_path}")
+        # Autoencoder removed - no longer used
 
         # Ensure JSON-serializable (e.g., convert any numpy types)
         def _to_py(o):
@@ -3835,61 +4323,17 @@ def main() -> Tuple[Dict, any, Optional[UnifiedAutoencoder], str]:
 
         return best_result, best_model, best_ae, best_dir
 
-    if grid_dims:
-        best = None
-        grid_rows = []
-        for dim in grid_dims:
-            try:
-                trial_results, trial_model, trial_ae, trial_dir = run_dimensionality_comparison(
-                    data_path=args.data_path,
-                    symbol=args.symbol,
-                    encoding_dim=dim,
-                    autoencoder_epochs=args.autoencoder_epochs,
-                    train_start=args.train_start,
-                    train_end=args.train_end,
-                    feature_type=args.feature_type,
-                    shap_analysis=args.shap_analysis,
-                    timeframe=args.timeframe,
-                )
-                perf = trial_results.get('performance', {})
-                orig = perf.get('original_features', {})
-                comp = perf.get('compressed_features', {})
-                delta = perf.get('performance_change')
-                grid_rows.append({
-                    'encoding_dim': dim,
-                    'r2_original': orig.get('r2'),
-                    'r2_compressed': comp.get('r2'),
-                    'delta_r2': delta,
-                    'rmse_original': orig.get('rmse'),
-                    'rmse_compressed': comp.get('rmse'),
-                    'results_dir': trial_dir,
-                })
-                if best is None or (delta is not None
-                                    and best['delta_r2'] is not None
-                                    and delta > best['delta_r2']):
-                    best = grid_rows[-1]
-                    results = trial_results
-                    model = trial_model
-                    autoencoder = trial_ae
-                    results_dir = trial_dir
-            except Exception as exc:
-                print(f"⚠️ Trial with ENCODING_DIM={dim} failed: {exc}")
-                continue
-        # Attach grid rows to best results and write report
-        if 'grid_search' not in results:
-            results['grid_search'] = grid_rows
-    else:
-        results, model, autoencoder, results_dir = run_dimensionality_comparison(
-            data_path=args.data_path,
-            symbol=args.symbol,
-            encoding_dim=args.encoding_dim,
-            autoencoder_epochs=args.autoencoder_epochs,
-            train_start=args.train_start,
-            train_end=args.train_end,
-            feature_type=args.feature_type,
-            shap_analysis=args.shap_analysis,
-            timeframe=args.timeframe,
-        )
+    # Autoencoder grid search removed - no longer used
+    # Run dimensionality comparison (no autoencoder parameters)
+    results, model, autoencoder, results_dir = run_dimensionality_comparison(
+        data_path=args.data_path,
+        symbol=args.symbol,
+        train_start=args.train_start,
+        train_end=args.train_end,
+        feature_type=args.feature_type,
+        shap_analysis=args.shap_analysis,
+        timeframe=args.timeframe,
+    )
 
     # top_k parameter removed, factor count is now determined by factor_counts_list or default 120
 

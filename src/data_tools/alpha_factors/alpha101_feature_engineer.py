@@ -110,6 +110,13 @@ class Alpha101FeatureEngineer:
             feature_df[col_name] = formatted
 
         feature_df = feature_df.replace([np.inf, -np.inf], np.nan)
+        
+        # Fill NaN values: forward fill first, then backward fill for initial NaNs
+        # This handles NaN values caused by rolling windows, shifts, and other time-series operations
+        # Note: NaN values at the beginning are normal for time-series features that require historical windows
+        # We use forward fill to propagate the first valid value backward, then fill remaining NaNs with 0
+        feature_df = feature_df.ffill().bfill().fillna(0.0)
+        
         return feature_df
 
     def _resolve_argument(self, name: str, cache: Dict[str, pd.DataFrame]) -> pd.DataFrame:
