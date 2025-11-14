@@ -45,83 +45,99 @@ class TalibFeatureEngineer:
         else:
             raise ValueError(f"Unknown scaler type: {scaler_type}")
 
-    def add_trend_indicators(self, data: pd.DataFrame) -> pd.DataFrame:
-        """添加趋势类指标."""
+    def add_trend_indicators(self, data: pd.DataFrame, required_features: Optional[set] = None) -> pd.DataFrame:
+        """添加趋势类指标，如果指定了required_features，只计算需要的特征."""
         df = data.copy()
 
         # 简单移动平均线 (SMA)
         for period in [5, 10, 20, 50, 100, 200]:
             col = f"sma_{period}"
             if col not in df.columns:
-                df[col] = talib.SMA(df["close"].values, timeperiod=period)
+                if not required_features or col in required_features:
+                    df[col] = talib.SMA(df["close"].values, timeperiod=period)
 
         # 指数移动平均线 (EMA)
         for period in [5, 10, 20, 50, 100]:
             col = f"ema_{period}"
             if col not in df.columns:
-                df[col] = talib.EMA(df["close"].values, timeperiod=period)
+                if not required_features or col in required_features:
+                    df[col] = talib.EMA(df["close"].values, timeperiod=period)
 
         # 加权移动平均线 (WMA)
         for period in [10, 20, 50]:
             col = f"wma_{period}"
             if col not in df.columns:
-                df[col] = talib.WMA(df["close"].values, timeperiod=period)
+                if not required_features or col in required_features:
+                    df[col] = talib.WMA(df["close"].values, timeperiod=period)
 
         # 三角移动平均线 (TEMA)
         for period in [10, 20, 30]:
             col = f"tema_{period}"
             if col not in df.columns:
-                df[col] = talib.TEMA(df["close"].values, timeperiod=period)
+                if not required_features or col in required_features:
+                    df[col] = talib.TEMA(df["close"].values, timeperiod=period)
 
         # 考夫曼自适应移动平均线 (KAMA)
         for period in [10, 20, 30]:
             col = f"kama_{period}"
             if col not in df.columns:
-                df[col] = talib.KAMA(df["close"].values, timeperiod=period)
+                if not required_features or col in required_features:
+                    df[col] = talib.KAMA(df["close"].values, timeperiod=period)
 
         # 抛物线SAR
         if "sar" not in df.columns:
-            df["sar"] = talib.SAR(df["high"].values, df["low"].values)
+            if not required_features or "sar" in required_features:
+                df["sar"] = talib.SAR(df["high"].values, df["low"].values)
         if "sar_ext" not in df.columns:
-            df["sar_ext"] = talib.SAREXT(df["high"].values, df["low"].values)
+            if not required_features or "sar_ext" in required_features:
+                df["sar_ext"] = talib.SAREXT(df["high"].values, df["low"].values)
 
         # 平均方向指数 (ADX)
         if "adx" not in df.columns:
-            df["adx"] = talib.ADX(df["high"].values,
-                                  df["low"].values,
-                                  df["close"].values,
-                                  timeperiod=14)
+            if not required_features or "adx" in required_features:
+                df["adx"] = talib.ADX(df["high"].values,
+                                      df["low"].values,
+                                      df["close"].values,
+                                      timeperiod=14)
         if "adxr" not in df.columns:
-            df["adxr"] = talib.ADXR(df["high"].values,
-                                    df["low"].values,
-                                    df["close"].values,
-                                    timeperiod=14)
+            if not required_features or "adxr" in required_features:
+                df["adxr"] = talib.ADXR(df["high"].values,
+                                        df["low"].values,
+                                        df["close"].values,
+                                        timeperiod=14)
 
         # 正负方向指标
         if "plus_di" not in df.columns:
-            df["plus_di"] = talib.PLUS_DI(df["high"].values,
-                                          df["low"].values,
-                                          df["close"].values,
-                                          timeperiod=14)
+            if not required_features or "plus_di" in required_features:
+                df["plus_di"] = talib.PLUS_DI(df["high"].values,
+                                              df["low"].values,
+                                              df["close"].values,
+                                              timeperiod=14)
         if "minus_di" not in df.columns:
-            df["minus_di"] = talib.MINUS_DI(df["high"].values,
-                                            df["low"].values,
-                                            df["close"].values,
-                                            timeperiod=14)
+            if not required_features or "minus_di" in required_features:
+                df["minus_di"] = talib.MINUS_DI(df["high"].values,
+                                                df["low"].values,
+                                                df["close"].values,
+                                                timeperiod=14)
 
         # 阿隆指标
-        if "aroon_up" not in df.columns or "aroon_down" not in df.columns:
-            aroon_up, aroon_down = talib.AROON(df["high"].values,
-                                               df["low"].values,
-                                               timeperiod=14)
-            if "aroon_up" not in df.columns:
-                df["aroon_up"] = aroon_up
-            if "aroon_down" not in df.columns:
-                df["aroon_down"] = aroon_down
-        if "aroon_osc" not in df.columns:
-            df["aroon_osc"] = talib.AROONOSC(df["high"].values,
-                                             df["low"].values,
-                                             timeperiod=14)
+        need_aroon = not required_features or any(f in required_features for f in ["aroon_up", "aroon_down", "aroon_osc"])
+        if need_aroon:
+            if "aroon_up" not in df.columns or "aroon_down" not in df.columns:
+                aroon_up, aroon_down = talib.AROON(df["high"].values,
+                                                   df["low"].values,
+                                                   timeperiod=14)
+                if "aroon_up" not in df.columns:
+                    if not required_features or "aroon_up" in required_features:
+                        df["aroon_up"] = aroon_up
+                if "aroon_down" not in df.columns:
+                    if not required_features or "aroon_down" in required_features:
+                        df["aroon_down"] = aroon_down
+            if "aroon_osc" not in df.columns:
+                if not required_features or "aroon_osc" in required_features:
+                    df["aroon_osc"] = talib.AROONOSC(df["high"].values,
+                                                     df["low"].values,
+                                                     timeperiod=14)
 
         return df
 

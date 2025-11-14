@@ -636,8 +636,54 @@ tr:hover{{background:#f0f8ff}}
             optimized_feature_types = args.feature_type
             if args.use_top_factors:
                 try:
-                    with open(args.use_top_factors, 'r',
-                              encoding='utf-8') as _f:
+                    # Try to resolve the path (handle both absolute and relative paths)
+                    top_factors_path = args.use_top_factors
+                    if not os.path.isabs(top_factors_path):
+                        # If relative, try to resolve from current working directory
+                        top_factors_path = os.path.abspath(top_factors_path)
+
+                    if not os.path.exists(top_factors_path):
+                        # Try to find the file in common locations
+                        possible_paths = [
+                            top_factors_path,
+                            os.path.join(os.getcwd(), args.use_top_factors),
+                        ]
+                        # If the path looks like a results directory path, try to find it
+                        if 'results' in args.use_top_factors or 'dim_compare' in args.use_top_factors:
+                            # Try to find the exact path by searching for the directory name
+                            results_base = os.path.join(
+                                os.getcwd(), 'results', 'dim_compare')
+                            if os.path.exists(results_base):
+                                # Extract directory name from the path if possible
+                                path_parts = args.use_top_factors.split('/')
+                                for part in path_parts:
+                                    if 'grid_search' in part or 'dim_compare' in part:
+                                        search_dir = os.path.join(
+                                            results_base, part)
+                                        if os.path.exists(search_dir):
+                                            candidate = os.path.join(
+                                                search_dir, 'best_combination',
+                                                'top_factors.json')
+                                            if os.path.exists(candidate):
+                                                possible_paths.append(
+                                                    candidate)
+
+                        found = False
+                        for path in possible_paths:
+                            if os.path.exists(path):
+                                top_factors_path = path
+                                found = True
+                                print(
+                                    f"   📍 Found top_factors.json at: {top_factors_path}"
+                                )
+                                break
+
+                        if not found:
+                            raise FileNotFoundError(
+                                f"top_factors.json not found at: {args.use_top_factors}\n"
+                                f"   Tried paths: {possible_paths[:2]}")
+
+                    with open(top_factors_path, 'r', encoding='utf-8') as _f:
                         keep = json.load(_f)
                     # Support multiple formats:
                     # 1. top_factors.json format: {"top_factors": [{"name": "..."}, ...]}
@@ -661,25 +707,57 @@ tr:hover{{background:#f0f8ff}}
                             f"   📋 Loaded {len(top_factors_set)} features from top_factors"
                         )
 
-                        # Analyze which feature modules are needed
+                        # Analyze which feature modules are needed from top_factors
                         module_analysis = analyze_feature_modules(
                             top_factors_set)
-                        enabled_modules = [
+                        required_modules = [
                             k.replace('use_', '')
                             for k, v in module_analysis.items() if v
                         ]
+
+                        # Parse user-specified feature_type
+                        user_specified_modules = [
+                            f.strip() for f in args.feature_type.split(",")
+                        ]
+
+                        # Respect user-specified feature_type: only use modules that user explicitly specified
+                        # Intersect required_modules with user_specified_modules
+                        enabled_modules = [
+                            m for m in required_modules
+                            if m in user_specified_modules
+                        ]
+
+                        # Check if any required modules are missing from user specification
+                        missing_modules = [
+                            m for m in required_modules
+                            if m not in user_specified_modules
+                        ]
+                        if missing_modules:
+                            print(
+                                f"   ⚠️ Warning: top_factors requires modules {missing_modules} "
+                                f"but only {user_specified_modules} are specified in feature_type."
+                            )
+                            print(
+                                f"      Features from {missing_modules} will not be computed."
+                            )
+
                         if enabled_modules:
-                            # Build optimized feature_types string
+                            # Use user-specified modules (intersected with required modules)
                             optimized_feature_types = ','.join(enabled_modules)
                             print(
-                                f"   🎯 Optimized feature modules: {optimized_feature_types}"
-                            )
+                                f"   🎯 Using feature modules: {optimized_feature_types} "
+                                f"(from user-specified: {args.feature_type})")
                             print(
                                 f"      (Only computing features from: {', '.join(enabled_modules)})"
                             )
                         else:
+                            # If no intersection, use user-specified feature_type
                             print(
-                                f"   ⚠️ Could not determine feature modules, using original: {args.feature_type}"
+                                f"   ⚠️ No overlap between required modules ({required_modules}) "
+                                f"and user-specified modules ({user_specified_modules})"
+                            )
+                            print(
+                                f"      Using user-specified feature_type: {args.feature_type}"
                             )
                             optimized_feature_types = args.feature_type
                 except Exception as e:
@@ -711,6 +789,26 @@ tr:hover{{background:#f0f8ff}}
                     'datetime'
                 ]
                 original_cols = set(train_df.columns)
+
+                # Check which features from top_factors_set are actually available
+                available_features = set(
+                    train_df.columns).intersection(top_factors_set)
+                missing_features = top_factors_set - available_features
+
+                if missing_features:
+                    print(
+                        f"   ⚠️ Warning: {len(missing_features)} features from top_factors are not available:"
+                    )
+                    print(
+                        f"      Missing: {', '.join(list(missing_features)[:10])}"
+                    )
+                    if len(missing_features) > 10:
+                        print(
+                            f"      ... and {len(missing_features) - 10} more")
+                    print(
+                        f"      This may be because the required feature modules are not enabled in feature_type."
+                    )
+
                 cols_to_keep = [
                     c for c in train_df.columns
                     if c in top_factors_set or c in data_cols
@@ -722,8 +820,8 @@ tr:hover{{background:#f0f8ff}}
                 kept_features = len(
                     [c for c in cols_to_keep if c in top_factors_set])
                 print(
-                    f"   ✂️ Filtered to {kept_features} top factors (removed {removed_count} unused features)"
-                )
+                    f"   ✂️ Filtered to {kept_features}/{len(top_factors_set)} top factors "
+                    f"(removed {removed_count} unused features)")
 
             # Targets
             fb = args.forward_bars
@@ -901,13 +999,29 @@ tr:hover{{background:#f0f8ff}}
                                               > 0).astype(int).values,
                                              index=y_return_train.index)
 
-            train_valid_indices = train_cls_series.index
+            # Ensure indices are aligned between X_train_df and train_cls_series
+            train_valid_indices = train_cls_series.index.intersection(
+                X_train_df.index)
+            if len(train_valid_indices) == 0:
+                raise ValueError(
+                    f"No common indices between X_train_df ({len(X_train_df)} rows) "
+                    f"and train_cls_series ({len(train_cls_series)} rows)")
             X_train_cls = X_train_df.loc[train_valid_indices]
             y_cls_train_filtered = train_cls_series.loc[
                 train_valid_indices].astype(int)
-            groups_filtered = (
-                groups_series.loc[train_valid_indices].to_numpy()
-                if groups_series is not None else None)
+            # Align groups with train_valid_indices
+            groups_filtered = None
+            if groups_series is not None:
+                # Find common indices between groups_series and train_valid_indices
+                common_group_indices = train_valid_indices.intersection(
+                    groups_series.index)
+                if len(common_group_indices) == len(train_valid_indices):
+                    groups_filtered = groups_series.loc[
+                        train_valid_indices].to_numpy()
+                else:
+                    print(
+                        f"   ⚠️ Warning: groups_series indices don't fully match train_valid_indices, ignoring groups"
+                    )
 
             combined_returns = pd.concat([y_return_train, y_return_test])
             # Remove duplicate indices (keep last, which should be from test set)
