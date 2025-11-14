@@ -135,33 +135,32 @@ def _build_classification_metrics_table(
     cand_cls = stage_candidate.get("classification_metrics", {})
 
     def _row(label, base_val, cand_val, is_percent: bool = False):
-        base_fmt = (_format_percent(base_val)
-                    if is_percent else _format_float(base_val))
-        cand_fmt = (_format_percent(cand_val)
-                    if is_percent else _format_float(cand_val))
+        base_fmt = (_format_percent(base_val) if is_percent else
+                    _format_float(base_val))
+        cand_fmt = (_format_percent(cand_val) if is_percent else
+                    _format_float(cand_val))
         if base_val is not None and cand_val is not None:
             delta_val = cand_val - base_val
             delta_fmt = (_format_percent(delta_val)
                          if is_percent else _format_float(delta_val))
         else:
             delta_fmt = "NA"
-        return (
-            f"<tr><td>{label}</td>"
-            f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>")
+        return (f"<tr><td>{label}</td>"
+                f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>")
 
     rows = [
-        _row("Directional Win Rate",
-             base_fin.get("win_rate"),
+        _row("Directional Win Rate", base_fin.get("win_rate"),
              cand_fin.get("win_rate"),
              is_percent=True),
-        _row("Active Ratio",
-             base_fin.get("active_ratio"),
+        _row("Active Ratio", base_fin.get("active_ratio"),
              cand_fin.get("active_ratio"),
              is_percent=True),
-        _row("F1 (Macro)", base_cls.get("f1_macro"), cand_cls.get("f1_macro")),
+        _row("F1 (Macro)", base_cls.get("f1_macro"),
+             cand_cls.get("f1_macro")),
         _row("F1 (Weighted)", base_cls.get("f1_weighted"),
              cand_cls.get("f1_weighted")),
-        _row("Accuracy", base_cls.get("accuracy"), cand_cls.get("accuracy")),
+        _row("Accuracy", base_cls.get("accuracy"),
+             cand_cls.get("accuracy")),
         _row("ROC AUC (Macro)", base_cls.get("roc_auc_macro"),
              cand_cls.get("roc_auc_macro")),
         _row("PR AUC (Macro)", base_cls.get("pr_auc_macro"),
@@ -233,7 +232,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
                 return "True"
         # For multi-class or other labels, convert to string
         return str(lbl)
-
+    
     formatted_labels = [format_label(lbl) for lbl in labels]
     header = "".join(f"<th>Predicted {lbl}</th>" for lbl in formatted_labels)
     body_rows = []
@@ -241,7 +240,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         cells = "".join(f"<td>{int(val)}</td>" for val in row)
         body_rows.append(f"<tr><th>Actual {lbl}</th>{cells}</tr>")
     body_html = "".join(body_rows)
-
+    
     # Calculate metrics for interpretation
     if len(matrix) == 2 and len(matrix[0]) == 2:
         # Binary classification
@@ -249,13 +248,13 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         fp = int(matrix[0][1])  # False Positive
         fn = int(matrix[1][0])  # False Negative
         tp = int(matrix[1][1])  # True Positive
-
+        
         total = tn + fp + fn + tp
         accuracy = (tp + tn) / total if total > 0 else 0
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-
+        
         # Determine interpretation
         if accuracy >= 0.75:
             accuracy_interpretation = "优秀"
@@ -266,7 +265,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         else:
             accuracy_interpretation = "需要改进"
             accuracy_color = "bad"
-
+        
         interpretation = f"""
         <div class="explanation" style="margin-top: 20px;">
             <h4>📊 如何阅读混淆矩阵</h4>
@@ -334,7 +333,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         total = sum(sum(row) for row in matrix)
         correct = sum(matrix[i][i] for i in range(len(matrix)))
         accuracy = correct / total if total > 0 else 0
-
+        
         interpretation = f"""
         <div class="explanation" style="margin-top: 20px;">
             <h4>📊 如何阅读混淆矩阵</h4>
@@ -348,7 +347,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
             <p><strong>准确率 (Accuracy):</strong> {accuracy:.2%} - 在 {total} 个样本中，模型正确预测了 {correct} 个</p>
         </div>
         """
-
+    
     return f"""
     <div class="card">
         <h3>{title}</h3>
@@ -951,9 +950,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
         "stage4_compressed": "Stage 4: Compressed",
     }
     recommended_stage_key = insights.get("recommended_stage")
-    recommended_stage_label = (stage_label_map.get(recommended_stage_key,
-                                                   recommended_stage_key)
-                               if recommended_stage_key else None)
+    recommended_stage_label = (
+        stage_label_map.get(recommended_stage_key, recommended_stage_key)
+        if recommended_stage_key else None)
     if recomm_horizon is not None:
         horizon_badge = ("✅ Effective"
                          if recomm_horizon_effective else "ℹ️ Best Candidate")
@@ -1002,8 +1001,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     shap_importance_preview: list[Dict] = []
     if shap_dir_path and os.path.exists(shap_dir_path):
         artifacts["shap"] = _rel_path(shap_dir_path)
-        shap_importance_path = Path(
-            shap_dir_path) / "stage3_representatives_shap_importance.json"
+        shap_importance_path = Path(shap_dir_path) / "stage3_representatives_shap_importance.json"
         if shap_importance_path.exists():
             try:
                 with open(shap_importance_path, "r", encoding="utf-8") as f:
@@ -1033,7 +1031,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
     has_4_stages = bool(
         stage4
         and (stage4.get("r2") is not None or stage4.get("rmse") is not None)
-        and compressed_dims not in (None, 0, d.get("original_features_count")))
+        and compressed_dims not in (None, 0, d.get("original_features_count"))
+    )
     if not has_4_stages:
         compressed_dims = d.get("stage3_representatives")
 
@@ -1042,7 +1041,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     feature_effective = insights.get("effective")
     feature_delta = insights.get("delta")
     feature_metric_name = insights.get("metric_name", "r2")
-
+    
     # Determine conclusion based on feature effectiveness
     if feature_effective is True:
         conclusion = f"Dimensionality reduction appears beneficial. {feature_metric_name} improved by {feature_delta:.4f}."
@@ -1053,11 +1052,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
         conclusion_delta = delta_r2
         if not has_4_stages:
             if stage3_vs_2:
-                conclusion_delta = stage3_vs_2.get("delta_r2",
-                                                   conclusion_delta)
+                conclusion_delta = stage3_vs_2.get("delta_r2", conclusion_delta)
             elif stage2_vs_1:
-                conclusion_delta = stage2_vs_1.get("delta_r2",
-                                                   conclusion_delta)
+                conclusion_delta = stage2_vs_1.get("delta_r2", conclusion_delta)
         if conclusion_delta is not None and conclusion_delta > 0:
             conclusion = f"Dimensionality reduction appears beneficial. R² improved by {conclusion_delta:.4f}."
         else:
@@ -1135,15 +1132,16 @@ def write_html_report(results: Dict, html_path: str) -> None:
         cand_fmt = _format_metric_for_display(metric_name, candidate_val)
         delta_fmt = _format_metric_delta(metric_name, delta_val)
         insight_items.append(
-            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt}).")
+            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt})."
+        )
 
     if recommended_stage_label:
         insight_items.append(
             f"Recommended feature stage: {recommended_stage_label}.")
 
     if recomm_horizon is not None:
-        horizon_badge = ("✅ Effective horizon" if recomm_horizon_effective else
-                         "ℹ️ Horizon candidate")
+        horizon_badge = ("✅ Effective horizon"
+                         if recomm_horizon_effective else "ℹ️ Horizon candidate")
         horizon_metric_fmt = _format_metric_for_display(
             recomm_horizon_metric_name, recomm_horizon_metric)
         insight_items.append(
@@ -1157,7 +1155,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
             "<h3>Insights Summary</h3>"
             f"<ul>{''.join(f'<li>{item}</li>' for item in insight_items)}</ul>"
             "</div>")
-
+    
     # Build stability validation section
     stability_html = ""
     stability_validation = results.get("stability_validation")
@@ -1168,15 +1166,13 @@ def write_html_report(results: Dict, html_path: str) -> None:
         unstable_factors = stability_validation.get("unstable_factors", [])
         stability_rate = stability_validation.get("stability_rate", 0)
         ic_comparison = stability_validation.get("ic_comparison", {})
-
+        
         # Build stable factors table
         stable_rows = ""
         if stable_factors:
-            stable_sorted = sorted(
-                stable_factors,
-                key=lambda x: abs(
-                    ic_comparison.get(x, {}).get("ic_selection", 0)),
-                reverse=True)[:20]
+            stable_sorted = sorted(stable_factors,
+                                 key=lambda x: abs(ic_comparison.get(x, {}).get("ic_selection", 0)),
+                                 reverse=True)[:20]
             for factor in stable_sorted:
                 comp = ic_comparison.get(factor, {})
                 ic_sel = comp.get("ic_selection", 0)
@@ -1189,15 +1185,13 @@ def write_html_report(results: Dict, html_path: str) -> None:
                     <td>{_format_float(ic_val, 4)}</td>
                     <td class="{'good' if abs(ic_change) < 0.05 else 'warn'}">{_format_float(ic_change, 4)}</td>
                 </tr>"""
-
+        
         # Build unstable factors table
         unstable_rows = ""
         if unstable_factors:
-            unstable_sorted = sorted(
-                unstable_factors,
-                key=lambda x: abs(
-                    ic_comparison.get(x, {}).get("ic_change", 0)),
-                reverse=True)[:10]
+            unstable_sorted = sorted(unstable_factors,
+                                   key=lambda x: abs(ic_comparison.get(x, {}).get("ic_change", 0)),
+                                   reverse=True)[:10]
             for factor in unstable_sorted:
                 comp = ic_comparison.get(factor, {})
                 ic_sel = comp.get("ic_selection", 0)
@@ -1210,7 +1204,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
                     <td>{_format_float(ic_val, 4)}</td>
                     <td class="bad">{_format_float(ic_change, 4)}</td>
                 </tr>"""
-
+        
         stability_html = f"""
         <div class="card">
             <h3>🔍 Factor Stability Validation</h3>
@@ -1406,10 +1400,8 @@ def _build_html_report_content(
                 f'<td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr>'
                 f'</table></div>')
 
-    top_factor_preview = artifacts.get(
-        "top_factors_preview") if artifacts else []
-    rep_factor_preview = artifacts.get(
-        "representatives_preview") if artifacts else []
+    top_factor_preview = artifacts.get("top_factors_preview") if artifacts else []
+    rep_factor_preview = artifacts.get("representatives_preview") if artifacts else []
     shap_link = artifacts.get("shap") if artifacts else None
 
     artifact_lines: list[str] = []
@@ -1464,7 +1456,8 @@ def _build_html_report_content(
             "<ul class=\"pill-list\">"
             f"{''.join(f'<li>{name}</li>' for name in top_factor_preview[:30])}"
             "</ul>"
-            "</div>")
+            "</div>"
+        )
 
     rep_factor_html = ""
     if rep_factor_preview:
@@ -1474,7 +1467,8 @@ def _build_html_report_content(
             "<ul class=\"pill-list\">"
             f"{''.join(f'<li>{name}</li>' for name in rep_factor_preview[:30])}"
             "</ul>"
-            "</div>")
+            "</div>"
+        )
 
     factor_section = ""
     if top_factor_html or rep_factor_html:
@@ -1485,13 +1479,15 @@ def _build_html_report_content(
         shap_rows = "".join(
             f"<tr><td>{item.get('rank')}</td><td>{item.get('feature')}</td><td>{_format_float(item.get('mean_abs_shap'))}</td></tr>"
             for item in shap_importance)
-        shap_html = ("<div class=\"card\">"
-                     "<h3>SHAP Importance (Top Factors)</h3>"
-                     "<table class=\"metric-table\">"
-                     "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
-                     f"{shap_rows}"
-                     "</table>"
-                     "</div>")
+        shap_html = (
+            "<div class=\"card\">"
+            "<h3>SHAP Importance (Top Factors)</h3>"
+            "<table class=\"metric-table\">"
+            "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
+            f"{shap_rows}"
+            "</table>"
+            "</div>"
+        )
 
     regression_section = ""
     if not task_type.startswith("classification") and stage1 and stage3:
@@ -1512,7 +1508,8 @@ def _build_html_report_content(
             "<th>ΔR²</th><th>Stage 3 RMSE</th><th>Compressed RMSE</th></tr>"
             f"{''.join(grid_rows)}"
             "</table>"
-            "</div>")
+            "</div>"
+        )
 
     training_html = ""
     train_rows = []
@@ -1528,10 +1525,11 @@ def _build_html_report_content(
     for key, label in diag_map.items():
         if train_info.get(key) is not None:
             iter_val = train_info.get(key)
-            train_rows.append(f"<tr><td>{label}</td><td>{iter_val}</td></tr>")
+            train_rows.append(
+                f"<tr><td>{label}</td><td>{iter_val}</td></tr>")
             iteration_values.append((label, iter_val))
     if train_rows:
-
+        
         # Generate interpretation
         interpretation = ""
         if len(iteration_values) > 1:
@@ -1539,7 +1537,7 @@ def _build_html_report_content(
             min_iter = min(iterations)
             max_iter = max(iterations)
             avg_iter = sum(iterations) / len(iterations)
-
+            
             interpretation = f"""
             <div class="explanation" style="margin-top: 20px;">
                 <h4>📊 如何解读 Best Iteration</h4>
@@ -1574,15 +1572,17 @@ def _build_html_report_content(
                 </ul>
             </div>
             """
-
-        training_html = ("<div class=\"card\">"
-                         "<h3>Training Diagnostics</h3>"
-                         "<table class=\"metric-table\">"
-                         "<tr><th>Model</th><th>Best Iteration</th></tr>"
-                         f"{''.join(train_rows)}"
-                         "</table>"
-                         f"{interpretation}"
-                         "</div>")
+        
+        training_html = (
+            "<div class=\"card\">"
+            "<h3>Training Diagnostics</h3>"
+            "<table class=\"metric-table\">"
+            "<tr><th>Model</th><th>Best Iteration</th></tr>"
+            f"{''.join(train_rows)}"
+            "</table>"
+            f"{interpretation}"
+            "</div>"
+        )
 
     multi_horizon_html = _build_multi_horizon_table(multi_horizon_results,
                                                     task_type)
@@ -1678,8 +1678,10 @@ def _build_multi_horizon_table(multi_horizon_results: Dict,
             "<th>F1 (Macro)</th><th>ROC AUC</th><th>Directional Win Rate</th></tr>"
         )
     else:
-        header = ("<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
-                  "<th>MAE</th></tr>")
+        header = (
+            "<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
+            "<th>MAE</th></tr>"
+        )
 
     rows = []
     horizon_keys = sorted(
@@ -1711,26 +1713,31 @@ def _build_multi_horizon_table(multi_horizon_results: Dict,
                     f"<td>{_format_metric_for_display('f1_macro', cls_metrics.get('f1_macro'))}</td>"
                     f"<td>{_format_metric_for_display('roc_auc_macro', cls_metrics.get('roc_auc_macro'))}</td>"
                     f"<td>{_format_metric_for_display('win_rate', financial.get('win_rate'))}</td>"
-                    "</tr>")
+                    "</tr>"
+                )
             else:
-                rows.append("<tr>"
-                            f"<td><strong>{horizon_num} bars</strong></td>"
-                            f"<td>{stage_label}</td>"
-                            f"<td>{_format_float(stage_perf.get('r2'))}</td>"
-                            f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
-                            f"<td>{_format_float(stage_perf.get('mae'))}</td>"
-                            "</tr>")
+                rows.append(
+                    "<tr>"
+                    f"<td><strong>{horizon_num} bars</strong></td>"
+                    f"<td>{stage_label}</td>"
+                    f"<td>{_format_float(stage_perf.get('r2'))}</td>"
+                    f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
+                    f"<td>{_format_float(stage_perf.get('mae'))}</td>"
+                    "</tr>"
+                )
 
     if not rows:
         return ""
 
-    return ("<div class=\"card\">"
-            "<h3>📊 Multi-Horizon Comparison</h3>"
-            "<table class=\"metric-table\">"
-            f"{header}"
-            f"{''.join(rows)}"
-            "</table>"
-            "</div>")
+    return (
+        "<div class=\"card\">"
+        "<h3>📊 Multi-Horizon Comparison</h3>"
+        "<table class=\"metric-table\">"
+        f"{header}"
+        f"{''.join(rows)}"
+        "</table>"
+        "</div>"
+    )
 
 
 def create_recommendations_section(results: Dict[str, any]) -> str:
@@ -2486,1316 +2493,6 @@ def _build_rolling_report_html(
 </body>
 </html>"""
     return html
-
-
-# Grid search report generation functions (moved from dimensionality_comparison.py)
-
-
-def _generate_metric_3d_plot(enhanced_results: list,
-                             time_windows: list,
-                             factor_counts: list,
-                             metric_name: str,
-                             metric_label: str,
-                             metric_getter,
-                             color_thresholds: dict = None) -> str:
-    """Generate 3D visualization for any metric across factor counts and time windows.
-    
-    Args:
-        enhanced_results: List of result dictionaries
-        time_windows: List of time window strings
-        factor_counts: List of factor counts
-        metric_name: Name of the metric (e.g., 'icir', 'sharpe', 'robustness')
-        metric_label: Display label for the metric
-        metric_getter: Function to extract metric value from result dict
-        color_thresholds: Dict with 'good', 'warn', 'bad' thresholds
-    """
-    try:
-        import plotly.graph_objects as go
-        import numpy as np
-
-        # Default color thresholds
-        if color_thresholds is None:
-            color_thresholds = {'good': 1.0, 'warn': 0.5, 'bad': 0.0}
-
-        # Prepare data arrays
-        x_data = []
-        y_data = []
-        z_data = []
-        colors = []
-        text_labels = []
-
-        for i, tw in enumerate(time_windows):
-            for fc in sorted(factor_counts,
-                             key=lambda x:
-                             (x == 'all', x
-                              if isinstance(x, int) else 999999)):
-                # Find result for this combination
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    metric_val = metric_getter(result)
-                    # Include 0 values as well (they are valid data points)
-                    # Debug: print first extraction
-                    if len(x_data) == 0 and metric_val is not None:
-                        print(
-                            f"[DEBUG 3D] First data point: tw={tw}, fc={fc}, metric_val={metric_val}"
-                        )
-                    if metric_val is not None:
-                        # X: factor count (numeric)
-                        if isinstance(fc, int):
-                            x_val = fc
-                        else:
-                            max_fc = max([
-                                x for x in factor_counts if isinstance(x, int)
-                            ],
-                                         default=120)
-                            x_val = max_fc * 1.2
-
-                        x_data.append(x_val)
-                        y_data.append(i)  # Time window index
-                        z_data.append(metric_val)
-
-                        # Color based on metric value
-                        if metric_val > color_thresholds['good']:
-                            colors.append('#167a3d')  # Green
-                        elif metric_val > color_thresholds['warn']:
-                            colors.append('#ffc107')  # Yellow
-                        else:
-                            colors.append('#dc3545')  # Red
-
-                        text_labels.append(
-                            f"Time: {tw}<br>Factors: {fc}<br>{metric_label}: {metric_val:.3f}"
-                        )
-
-        if not x_data:
-            return f"""
-            <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-                <h4>📊 {metric_label} 3D 可视化</h4>
-                <p>⚠️ 没有可用的数据来生成3D图形。</p>
-            </div>
-            """
-
-        # Create 3D scatter plot
-        fig = go.Figure(
-            data=go.Scatter3d(x=x_data,
-                              y=y_data,
-                              z=z_data,
-                              mode='markers',
-                              marker=dict(size=10,
-                                          color=colors,
-                                          opacity=0.8,
-                                          line=dict(width=1, color='black')),
-                              text=text_labels,
-                              hovertemplate='%{text}<extra></extra>',
-                              name=f'{metric_label} Points'))
-
-        # Add surface plot to show trend
-        if len(x_data) > 0 and len(set(x_data)) > 1 and len(set(y_data)) > 1:
-            # Create grid for surface
-            x_unique = sorted(set(x_data))
-            y_unique = sorted(set(y_data))
-
-            # Create meshgrid
-            X_grid, Y_grid = np.meshgrid(x_unique, y_unique)
-            Z_grid = np.full_like(X_grid, np.nan, dtype=float)
-
-            # Fill Z_grid with metric values
-            for i, tw_idx in enumerate(y_unique):
-                for j, fc_val in enumerate(x_unique):
-                    # Find metric for this combination
-                    for r in enhanced_results:
-                        params = r.get('grid_search_params', {})
-                        tw = time_windows[tw_idx]
-                        # Find matching factor count
-                        fc_match = None
-                        for fc in factor_counts:
-                            if isinstance(fc, int) and fc == fc_val:
-                                fc_match = fc
-                                break
-                            elif fc == 'all' and abs(
-                                    fc_val - max([
-                                        x for x in factor_counts
-                                        if isinstance(x, int)
-                                    ],
-                                                 default=120) * 1.2) < 1:
-                                fc_match = fc
-                                break
-
-                        if params.get('time_window') == tw and params.get(
-                                'factor_count') == fc_match:
-                            metric_val = metric_getter(r)
-                            if metric_val is not None:
-                                Z_grid[i, j] = metric_val
-                            break
-
-            # Add surface plot
-            fig.add_trace(
-                go.Surface(
-                    x=X_grid,
-                    y=Y_grid,
-                    z=Z_grid,
-                    colorscale='RdYlGn',
-                    showscale=True,
-                    opacity=0.6,
-                    name=f'{metric_label} Surface',
-                    hovertemplate=
-                    f'Factor Count: %{{x:.0f}}<br>Time Window: %{{y}}<br>{metric_label}: %{{z:.3f}}<extra></extra>'
-                ))
-
-        # Get factor count labels
-        fc_labels = []
-        for fc in sorted(factor_counts,
-                         key=lambda x: (x == 'all', x
-                                        if isinstance(x, int) else 999999)):
-            if isinstance(fc, int):
-                fc_labels.append(str(fc))
-            else:
-                fc_labels.append('all')
-
-        # Update layout
-        fig.update_layout(
-            title=
-            f'{metric_label} 3D 可视化 - Plateau Point 分析 ({metric_label} 3D Visualization - Plateau Point Analysis)',
-            scene=dict(xaxis_title='因子数量 (Factor Count)',
-                       yaxis_title='时间窗口索引 (Time Window Index)',
-                       zaxis_title=f'{metric_label} 值 ({metric_label} Value)',
-                       xaxis=dict(
-                           tickmode='array',
-                           tickvals=x_unique if 'x_unique' in locals() else [],
-                           ticktext=fc_labels[:len(x_unique)]
-                           if 'x_unique' in locals() else [],
-                       ),
-                       yaxis=dict(
-                           tickmode='array',
-                           tickvals=list(range(len(time_windows))),
-                           ticktext=[
-                               tw.split(' → ')[0] if ' → ' in tw else tw[:15]
-                               for tw in time_windows
-                           ],
-                       ),
-                       zaxis=dict(title=metric_label),
-                       camera=dict(eye=dict(x=1.5, y=1.5, z=1.2))),
-            width=900,
-            height=700,
-            font=dict(size=12),
-        )
-
-        # Convert to HTML - use full HTML to ensure Plotly.js is included
-        plot_html = fig.to_html(include_plotlyjs='cdn',
-                                div_id=f'{metric_name}-3d-plot',
-                                full_html=False)
-
-        # Extract script and div more robustly
-        import re
-        # Match all script tags (may be multiple)
-        script_matches = re.findall(r'<script[^>]*>.*?</script>', plot_html,
-                                    re.DOTALL)
-        script_content = '\n'.join(script_matches) if script_matches else ""
-
-        # Match div with the specific ID
-        div_pattern = rf'<div[^>]*id="{metric_name}-3d-plot"[^>]*>.*?</div>'
-        div_match = re.search(div_pattern, plot_html, re.DOTALL)
-        div_content = div_match.group(
-            0
-        ) if div_match else f'<div id="{metric_name}-3d-plot" class="plotly-graph-div" style="height:700px; width:900px;"></div>'
-
-        # Debug: print if no data
-        if not x_data:
-            print(
-                f"[DEBUG 3D] No data for {metric_label}: x_data length = {len(x_data)}"
-            )
-            print(
-                f"[DEBUG 3D] enhanced_results count: {len(enhanced_results)}")
-            if enhanced_results:
-                print(
-                    f"[DEBUG 3D] First result keys: {list(enhanced_results[0].keys())}"
-                )
-                print(
-                    f"[DEBUG 3D] First result grid_search_params: {enhanced_results[0].get('grid_search_params', {})}"
-                )
-
-        return f"""
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #17a2b8;">
-            <h4>📊 {metric_label} 3D 可视化说明 (3D Visualization Guide):</h4>
-            <ul>
-                <li><strong>X轴（因子数量）：</strong>显示不同的因子数量。数值越大，使用的因子越多。</li>
-                <li><strong>Y轴（时间窗口）：</strong>显示不同的时间窗口索引。每个索引对应一个时间窗口。</li>
-                <li><strong>Z轴（{metric_label}值）：</strong>显示{metric_label}值，越高表示表现越好。</li>
-                <li><strong>颜色含义：</strong>
-                    <ul>
-                        <li><span style="color: #167a3d; font-weight: 600;">绿色点</span>：{metric_label} > {color_thresholds['good']}，表现优秀</li>
-                        <li><span style="color: #ffc107; font-weight: 600;">黄色点</span>：{color_thresholds['warn']} < {metric_label} ≤ {color_thresholds['good']}，表现一般</li>
-                        <li><span style="color: #dc3545; font-weight: 600;">红色点</span>：{metric_label} ≤ {color_thresholds['warn']}，表现较差</li>
-                    </ul>
-                </li>
-                <li><strong>如何识别Plateau Point：</strong>
-                    <ul>
-                        <li>观察3D表面图，寻找{metric_label}值不再显著上升的"平台"区域</li>
-                        <li>Plateau Point通常出现在：{metric_label}值达到较高水平后，即使增加因子数量，{metric_label}也不再明显提升的位置</li>
-                        <li>理想情况下，Plateau Point应该在不同时间窗口（Y轴）上都保持相对稳定的高度（Z轴）</li>
-                        <li>可以通过旋转3D图形（点击并拖动）从不同角度观察，更容易识别平台区域</li>
-                    </ul>
-                </li>
-                <li><strong>分析建议：</strong>
-                    <ul>
-                        <li>寻找Z轴（{metric_label}）值高且在不同Y轴（时间窗口）位置都保持稳定的X轴（因子数量）位置</li>
-                        <li>如果表面图在某个因子数量后变得平坦，该位置就是Plateau Point</li>
-                        <li>选择Plateau Point对应的因子数量，可以在保持高{metric_label}的同时，避免使用过多因子</li>
-                    </ul>
-                </li>
-            </ul>
-        </div>
-        <div class="heatmap-container">
-            {div_content}
-        </div>
-        {script_content}
-        """
-    except ImportError:
-        return f"""
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-            <h4>📊 {metric_label} 3D 可视化</h4>
-            <p>⚠️ Plotly 未安装，无法生成3D图形。请安装: pip install plotly</p>
-        </div>
-        """
-    except Exception as e:
-        return f"""
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
-            <h4>📊 {metric_label} 3D 可视化</h4>
-            <p>⚠️ 生成3D图形时出错: {str(e)}</p>
-        </div>
-        """
-
-
-def _generate_icir_3d_plot(enhanced_results: list, time_windows: list,
-                           factor_counts: list) -> str:
-    """Generate 3D visualization of ICIR distribution across factor counts and time windows."""
-
-    def get_icir(result):
-        return result.get('enhanced_metrics', {}).get('icir')
-
-    return _generate_metric_3d_plot(enhanced_results,
-                                    time_windows,
-                                    factor_counts,
-                                    'icir',
-                                    'ICIR',
-                                    get_icir,
-                                    color_thresholds={
-                                        'good': 1.0,
-                                        'warn': 0.5,
-                                        'bad': 0.0
-                                    })
-
-
-def _generate_icir_heatmap(enhanced_results: list, time_windows: list,
-                           factor_counts: list) -> str:
-    """Generate ICIR heatmap visualization using Plotly."""
-    try:
-        import plotly.graph_objects as go
-
-        # Prepare data matrix for heatmap
-        heatmap_data = []
-        factor_count_labels = []
-
-        # Build data matrix: rows = factor counts, columns = time windows
-        for fc in sorted(factor_counts,
-                         key=lambda x: (x == 'all', x
-                                        if isinstance(x, int) else 999999)):
-            row_data = []
-            factor_count_labels.append(str(fc))
-
-            for tw in time_windows:
-                # Find result for this combination
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    icir = result.get('enhanced_metrics', {}).get('icir')
-                    # Use ICIR value if available, otherwise try to get from ic_statistics
-                    if icir is None:
-                        ic_stats = result.get('ic_statistics', {})
-                        ic_mean = ic_stats.get('ic_mean')
-                        ic_std = ic_stats.get('ic_std')
-                        if ic_mean is not None and ic_std is not None and ic_std > 0:
-                            icir = abs(ic_mean) / ic_std
-                    row_data.append(icir if icir is not None else 0)
-                else:
-                    row_data.append(0)
-
-            heatmap_data.append(row_data)
-
-        # Set time window labels (shortened for display)
-        time_window_labels = [
-            tw.split(' → ')[0] if ' → ' in tw else tw[:10]
-            for tw in time_windows
-        ]
-
-        # Create heatmap
-        fig = go.Figure(data=go.Heatmap(
-            z=heatmap_data,
-            x=time_window_labels,
-            y=factor_count_labels,
-            colorscale='RdYlGn',  # Red-Yellow-Green scale
-            colorbar=dict(title="ICIR"),
-            text=[[f"{val:.3f}" if val else "-" for val in row]
-                  for row in heatmap_data],
-            texttemplate='%{text}',
-            textfont={"size": 10},
-            hovertemplate=
-            'Time Window: %{x}<br>Factor Count: %{y}<br>ICIR: %{z:.3f}<extra></extra>',
-        ))
-
-        fig.update_layout(
-            title='ICIR 热力图 (ICIR Heatmap)',
-            xaxis_title='时间窗口 (Time Window)',
-            yaxis_title='因子数量 (Factor Count)',
-            width=800,
-            height=500,
-            font=dict(size=12),
-        )
-
-        # Convert to HTML - use full HTML with CDN for plotly.js
-        heatmap_html_full = fig.to_html(include_plotlyjs='cdn',
-                                        div_id='icir-heatmap',
-                                        full_html=False)
-
-        # Extract script and div from the HTML more robustly
-        import re
-        # Match all script tags (may be multiple)
-        script_matches = re.findall(r'<script[^>]*>.*?</script>',
-                                    heatmap_html_full, re.DOTALL)
-        script_content = '\n'.join(script_matches) if script_matches else ""
-
-        # Match div with the specific ID
-        div_pattern = r'<div[^>]*id="icir-heatmap"[^>]*>.*?</div>'
-        div_match = re.search(div_pattern, heatmap_html_full, re.DOTALL)
-        div_content = div_match.group(
-            0
-        ) if div_match else '<div id="icir-heatmap" class="plotly-graph-div" style="height:500px; width:800px;"></div>'
-
-        # Debug: print if no data
-        if not heatmap_data or all(
-                all(val == 0 for val in row) for row in heatmap_data):
-            print(
-                f"[DEBUG Heatmap] No data or all zeros: heatmap_data = {heatmap_data}"
-            )
-            print(
-                f"[DEBUG Heatmap] enhanced_results count: {len(enhanced_results)}"
-            )
-            if enhanced_results:
-                print(
-                    f"[DEBUG Heatmap] First result enhanced_metrics: {enhanced_results[0].get('enhanced_metrics', {})}"
-                )
-
-        return f"""
-        <div class="card">
-            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
-            <p>可视化不同因子数量和时间窗口的 ICIR 分布。颜色越绿表示 ICIR 越高（预测稳定性越好）。</p>
-            <p>Visualization of ICIR distribution across different factor counts and time windows. Greener colors indicate higher ICIR (better predictive stability).</p>
-            <div style="margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #fd7e14;">
-                <h4>📖 如何阅读热力图 (How to Read the Heatmap):</h4>
-                <ul>
-                    <li><strong>颜色含义：</strong>
-                        <ul>
-                            <li><span style="color: #167a3d; font-weight: 600;">深绿色</span>：ICIR很高（> 1.5），表示因子预测能力非常稳定</li>
-                            <li><span style="color: #28a745; font-weight: 600;">浅绿色</span>：ICIR较高（1.0 - 1.5），表示因子预测能力稳定</li>
-                            <li><span style="color: #ffc107; font-weight: 600;">黄色</span>：ICIR中等（0.5 - 1.0），表示因子预测能力一般</li>
-                            <li><span style="color: #dc3545; font-weight: 600;">红色</span>：ICIR较低（< 0.5），表示因子预测能力不稳定</li>
-                        </ul>
-                    </li>
-                    <li><strong>分析要点：</strong>
-                        <ul>
-                            <li>观察颜色分布模式，找出ICIR高的区域（绿色区域）</li>
-                            <li>比较不同因子数量的ICIR分布，识别最优因子数量范围</li>
-                            <li>观察不同时间窗口的ICIR一致性，评估因子的时间稳定性</li>
-                            <li>寻找颜色均匀的区域，表示该因子数量在不同时间窗口都表现稳定</li>
-                        </ul>
-                    </li>
-                    <li><strong>结论：</strong>热力图提供了ICIR分布的直观可视化。理想的组合应该是在多个时间窗口都显示绿色或浅绿色，且颜色分布相对均匀，这表示该因子数量在不同市场环境下都能保持稳定的预测能力。</li>
-                </ul>
-            </div>
-            <div class="heatmap-container">
-                {div_content}
-            </div>
-            {script_content}
-        </div>
-        """
-    except ImportError:
-        # If plotly is not available, return a message
-        return """
-        <div class="card">
-            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
-            <p>⚠️ Plotly 未安装，无法生成热力图。请安装: pip install plotly</p>
-        </div>
-        """
-    except Exception as e:
-        return f"""
-        <div class="card">
-            <h3>🔥 ICIR 热力图 (ICIR Heatmap)</h3>
-            <p>⚠️ 生成热力图时出错: {str(e)}</p>
-        </div>
-        """
-
-
-def _build_analysis_conclusions(enhanced_results: list, time_windows: list,
-                                factor_counts: list,
-                                is_classification: bool) -> str:
-    """Build textual analysis conclusions for grid search results."""
-    if not enhanced_results:
-        return "<div class=\"card\"><h3>📊 Analysis Conclusions</h3><p>No results available for analysis.</p></div>"
-
-    # Collect metrics for analysis
-    results_by_fc = {}
-    for result in enhanced_results:
-        params = result.get('grid_search_params', {})
-        fc = params.get('factor_count')
-        if fc not in results_by_fc:
-            results_by_fc[fc] = []
-        results_by_fc[fc].append(result)
-
-    # Find best factor count by robustness score
-    best_fc = None
-    best_robustness = -1
-    for fc, results in results_by_fc.items():
-        robustness_values = []
-        for r in results:
-            metrics = r.get('enhanced_metrics', {})
-            icir = metrics.get('icir', 0) or 0
-            sharpe = metrics.get('sharpe', 0) or 0
-            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-            robustness = (icir * sharpe) / (
-                1 + max_dd) if icir > 0 and sharpe > 0 else 0
-            robustness_values.append(robustness)
-        avg_robustness = sum(robustness_values) / len(
-            robustness_values) if robustness_values else 0
-        if avg_robustness > best_robustness:
-            best_robustness = avg_robustness
-            best_fc = fc
-
-    # Analyze ICIR stability across time windows
-    icir_stability = {}
-    for fc in factor_counts:
-        icir_values = []
-        for result in enhanced_results:
-            params = result.get('grid_search_params', {})
-            if params.get('factor_count') == fc:
-                icir = result.get('enhanced_metrics', {}).get('icir')
-                if icir is not None:
-                    icir_values.append(icir)
-        if icir_values:
-            mean_icir = sum(icir_values) / len(icir_values)
-            std_icir = (sum((x - mean_icir)**2
-                            for x in icir_values) / len(icir_values))**0.5
-            icir_stability[fc] = {'mean': mean_icir, 'std': std_icir}
-
-    # Find most stable factor count (lowest std with high mean)
-    most_stable_fc = None
-    best_stability_score = -1
-    for fc, stats in icir_stability.items():
-        if stats['mean'] > 0.5:  # Only consider factor counts with decent ICIR
-            stability_score = stats['mean'] / (
-                1 + stats['std'])  # Higher mean, lower std is better
-            if stability_score > best_stability_score:
-                best_stability_score = stability_score
-                most_stable_fc = fc
-
-    # Build conclusions HTML
-    conclusions_html = "<div class=\"card\"><h3>📊 分析结论 (Analysis Conclusions)</h3>"
-
-    # Optimal factor count
-    conclusions_html += "<h4>🎯 最优因子数量 (Optimal Factor Count)</h4>"
-    if best_fc is not None:
-        conclusions_html += f"<p>基于稳健性得分（Robustness Score）分析，<strong>{best_fc}个因子</strong>是最优选择。</p>"
-        conclusions_html += f"<p>Based on Robustness Score analysis, <strong>{best_fc} factors</strong> is the optimal choice.</p>"
-        if best_robustness > 0.5:
-            conclusions_html += f"<p>该因子数量的平均稳健性得分为 <strong>{best_robustness:.3f}</strong>，表现优秀（> 0.5）。</p>"
-        else:
-            conclusions_html += f"<p>该因子数量的平均稳健性得分为 <strong>{best_robustness:.3f}</strong>，表现一般（≤ 0.5）。</p>"
-    else:
-        conclusions_html += "<p>无法确定最优因子数量，请检查数据质量。</p>"
-
-    # Factor stability across time windows
-    conclusions_html += "<h4>📈 因子在不同周期的有效性 (Factor Effectiveness Across Time Windows)</h4>"
-    if icir_stability:
-        conclusions_html += "<ul>"
-        for fc in sorted(factor_counts,
-                         key=lambda x: (x == 'all', x
-                                        if isinstance(x, int) else 999999)):
-            if fc in icir_stability:
-                stats = icir_stability[fc]
-                conclusions_html += f"<li><strong>{fc}个因子：</strong>"
-                conclusions_html += f"平均ICIR = {stats['mean']:.3f}，标准差 = {stats['std']:.3f}。"
-                if stats['mean'] > 1.0 and stats['std'] < 0.3:
-                    conclusions_html += "✅ 表现优秀且稳定（高ICIR，低波动）。"
-                elif stats['mean'] > 0.5:
-                    conclusions_html += "⚠️ 表现一般，稳定性有待提升。"
-                else:
-                    conclusions_html += "❌ 表现较差，不推荐使用。"
-                conclusions_html += "</li>"
-        conclusions_html += "</ul>"
-
-    if most_stable_fc is not None and most_stable_fc != best_fc:
-        conclusions_html += f"<p><strong>💡 稳定性建议：</strong>如果优先考虑因子在不同时间窗口的稳定性，建议选择 <strong>{most_stable_fc}个因子</strong>（ICIR均值高且标准差低）。</p>"
-
-    # Multi-period effectiveness
-    conclusions_html += "<h4>🔄 多周期有效性分析 (Multi-Period Effectiveness Analysis)</h4>"
-    if len(time_windows) > 1:
-        conclusions_html += f"<p>本次测试覆盖了 <strong>{len(time_windows)}</strong> 个不同的时间窗口：</p>"
-        conclusions_html += "<ul>"
-        for tw in time_windows:
-            conclusions_html += f"<li>{tw}</li>"
-        conclusions_html += "</ul>"
-        conclusions_html += "<p><strong>关键发现：</strong></p>"
-        conclusions_html += "<ul>"
-        conclusions_html += "<li>如果某个因子数量在所有时间窗口都表现良好（绿色单元格），说明该因子数量具有强的时间稳定性。</li>"
-        conclusions_html += "<li>如果某个因子数量只在部分时间窗口表现良好，说明该因子数量可能对特定市场环境敏感。</li>"
-        conclusions_html += "<li>建议优先选择在所有或大部分时间窗口都表现稳定的因子数量。</li>"
-        conclusions_html += "</ul>"
-    else:
-        conclusions_html += "<p>本次测试仅使用单一时间窗口，无法评估多周期有效性。建议增加更多时间窗口进行测试。</p>"
-
-    # Final recommendations
-    conclusions_html += "<h4>✅ 最终建议 (Final Recommendations)</h4>"
-    conclusions_html += "<ol>"
-    if best_fc is not None:
-        conclusions_html += f"<li><strong>推荐因子数量：{best_fc}个</strong> - 基于稳健性得分分析，这是综合表现最优的选择。</li>"
-    if most_stable_fc is not None and most_stable_fc != best_fc:
-        conclusions_html += f"<li><strong>备选因子数量：{most_stable_fc}个</strong> - 如果更关注时间稳定性，可以考虑此选项。</li>"
-    conclusions_html += "<li><strong>验证建议：</strong>在实际使用前，建议在最新的数据上验证所选因子数量的表现。</li>"
-    conclusions_html += "<li><strong>持续监控：</strong>定期重新评估因子有效性，因为市场环境会发生变化。</li>"
-    conclusions_html += "</ol>"
-
-    conclusions_html += "</div>"
-    return conclusions_html
-
-
-def generate_grid_search_html_report(report_data: Dict,
-                                     html_path: str) -> None:
-    """Generate HTML report for grid search results with enhanced metrics and visualizations."""
-    import os
-    import json
-
-    time_windows = report_data['time_windows']
-    factor_counts = report_data['factor_counts']
-    grid_search_results = report_data['grid_search_results']
-    task_type = report_data['task_type']
-    is_classification = task_type.startswith('classification')
-
-    # Calculate ICIR and robustness metrics for each result
-    enhanced_results = []
-    for result in grid_search_results:
-        perf = result.get('performance', {}).get('stage3_representatives', {})
-        # financial_metrics is stored inside perf_reps, not as a separate field
-        financial = perf.get('financial_metrics', {}) if isinstance(
-            perf, dict) else {}
-        # Also check the separate financial field as fallback
-        if not financial:
-            financial = result.get('performance',
-                                   {}).get('stage3_representatives_financial',
-                                           {})
-
-        # Extract metrics
-        if is_classification:
-            # win_rate is stored in financial_metrics, not in performance directly
-            win_rate = financial.get('win_rate', 0) if financial else 0
-            # Also check performance for win_rate as fallback
-            if win_rate == 0:
-                win_rate = perf.get('win_rate', 0)
-            # Also check classification_metrics for accuracy as fallback for win_rate
-            if win_rate == 0:
-                classification_metrics = perf.get('classification_metrics',
-                                                  {}) if isinstance(
-                                                      perf, dict) else {}
-                if classification_metrics:
-                    # Use accuracy as a proxy for win_rate if available
-                    accuracy = classification_metrics.get('accuracy', 0)
-                    if accuracy > 0:
-                        win_rate = accuracy
-            sharpe = financial.get('sharpe_ratio', 0) if financial else 0
-            max_dd = financial.get('max_drawdown', 0) if financial else 0
-        else:
-            r2 = perf.get('r2', 0)
-            sharpe = financial.get('sharpe_ratio', 0) if financial else 0
-            max_dd = financial.get('max_drawdown', 0) if financial else 0
-
-        # Calculate ICIR if IC data is available
-        ic_stats = result.get('ic_statistics', {})
-        ic_mean = ic_stats.get('ic_mean', None)
-        ic_std = ic_stats.get('ic_std', None)
-        icir = ic_stats.get('icir', None)
-        if icir is None and ic_mean is not None and ic_std is not None and ic_std > 0:
-            icir = abs(ic_mean) / ic_std
-
-        enhanced_results.append({
-            **result, 'enhanced_metrics': {
-                'icir': icir,
-                'sharpe': sharpe,
-                'max_drawdown': max_dd,
-            }
-        })
-
-    # Build multiple comparison matrices
-    # Matrix 1: Primary metric (Win Rate or R²)
-    matrix_html = "<div class=\"card\"><h3>📊 Grid Search Comparison Matrix - Primary Metric</h3>"
-    matrix_html += "<p>Comparison of different factor counts and time windows</p>"
-
-    # Determine primary metric
-    if is_classification:
-        primary_metric = 'win_rate'
-        metric_display = 'Directional Win Rate'
-    else:
-        primary_metric = 'r2'
-        metric_display = 'R²'
-
-    # Build table header
-    matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-    matrix_html += "<tr><th>Time Window</th>"
-    for fc in factor_counts:
-        matrix_html += f"<th>Factors: {fc}</th>"
-    matrix_html += "</tr>"
-
-    # Build table rows
-    for tw in time_windows:
-        matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-        for fc in factor_counts:
-            # Find result for this combination
-            result = None
-            for r in enhanced_results:
-                params = r.get('grid_search_params', {})
-                if params.get('time_window') == tw and params.get(
-                        'factor_count') == fc:
-                    result = r
-                    break
-
-            if result:
-                perf = result.get('performance',
-                                  {}).get('stage3_representatives', {})
-                # financial_metrics is stored inside perf_reps
-                financial = perf.get('financial_metrics', {}) if isinstance(
-                    perf, dict) else {}
-                if not financial:
-                    financial = result.get('performance', {}).get(
-                        'stage3_representatives_financial', {})
-                if is_classification:
-                    # win_rate is stored in financial_metrics
-                    metric_val = financial.get('win_rate',
-                                               0) if financial else 0
-                    # Fallback to performance if not in financial
-                    if metric_val == 0:
-                        metric_val = perf.get('win_rate', 0)
-                    # Also check classification_metrics for accuracy as fallback
-                    if metric_val == 0:
-                        classification_metrics = perf.get(
-                            'classification_metrics', {}) if isinstance(
-                                perf, dict) else {}
-                        if classification_metrics:
-                            accuracy = classification_metrics.get(
-                                'accuracy', 0)
-                            if accuracy > 0:
-                                metric_val = accuracy
-                    cell_content = f"{_format_float(metric_val * 100, 2)}%"
-                else:
-                    metric_val = perf.get('r2', 0)
-                    cell_content = _format_float(metric_val, 4)
-
-                # Add color coding
-                color_class = "good" if metric_val > 0.5 else "warn" if metric_val > 0 else "bad"
-                matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-            else:
-                matrix_html += "<td>-</td>"
-        matrix_html += "</tr>"
-
-    matrix_html += "</table>"
-    matrix_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #007bff;">
-        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-        <ul>
-            <li><strong>表格结构：</strong>行表示不同的时间窗口，列表示不同的因子数量。每个单元格显示该组合下的{metric_display}值。</li>
-            <li><strong>颜色编码：</strong>
-                <ul>
-                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：表现优秀（{metric_display} > 0.5）</li>
-                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：表现一般（{metric_display} > 0）</li>
-                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：表现较差（{metric_display} ≤ 0）</li>
-                </ul>
-            </li>
-            <li><strong>分析要点：</strong>
-                <ul>
-                    <li>比较同一时间窗口下不同因子数量的表现，找出最优因子数量</li>
-                    <li>比较同一因子数量下不同时间窗口的表现，评估因子在不同时期的稳定性</li>
-                    <li>关注绿色单元格，这些是表现最好的组合</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>此表格帮助识别在特定时间窗口下，使用多少因子能获得最佳{metric_display}。通常，因子数量不是越多越好，需要找到性能与复杂度的平衡点。</li>
-        </ul>
-    </div>
-    </div>""".format(metric_display=metric_display)
-
-    # Matrix 2: ICIR (if available)
-    icir_matrix_html = ""
-    if any(
-            r.get('enhanced_metrics', {}).get('icir') is not None
-            for r in enhanced_results):
-        icir_matrix_html = "<div class=\"card\"><h3>📈 ICIR (Information Coefficient Information Ratio) Matrix</h3>"
-        icir_matrix_html += "<p>ICIR = |Mean IC| / Std(IC) - Higher is better (indicates stable predictive power)</p>"
-        icir_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-        icir_matrix_html += "<tr><th>Time Window</th>"
-        for fc in factor_counts:
-            icir_matrix_html += f"<th>Factors: {fc}</th>"
-        icir_matrix_html += "</tr>"
-
-        for tw in time_windows:
-            icir_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-            for fc in factor_counts:
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    icir = result.get('enhanced_metrics', {}).get('icir')
-                    if icir is not None:
-                        cell_content = _format_float(icir, 3)
-                        color_class = "good" if icir > 1.0 else "warn" if icir > 0.5 else "bad"
-                        icir_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-                    else:
-                        icir_matrix_html += "<td>-</td>"
-                else:
-                    icir_matrix_html += "<td>-</td>"
-            icir_matrix_html += "</tr>"
-
-        icir_matrix_html += "</table>"
-        icir_matrix_html += """
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #28a745;">
-            <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-            <ul>
-                <li><strong>ICIR定义：</strong>ICIR = |平均IC| / IC标准差，衡量因子的预测稳定性和有效性。ICIR越高，表示因子在不同时期的表现越稳定。</li>
-                <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的ICIR值。</li>
-                <li><strong>颜色编码：</strong>
-                    <ul>
-                        <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：ICIR > 1.0，表示因子具有稳定的预测能力</li>
-                        <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0.5 < ICIR ≤ 1.0，表示因子预测能力一般</li>
-                        <li><span style="color: #c53030; font-weight: 600;">红色</span>：ICIR ≤ 0.5，表示因子预测能力不稳定</li>
-                    </ul>
-                </li>
-                <li><strong>分析要点：</strong>
-                    <ul>
-                        <li>ICIR > 1.0 是理想状态，表示因子的平均预测能力超过其波动性</li>
-                        <li>比较不同因子数量的ICIR，找出在保持高ICIR的前提下，因子数量最少的组合</li>
-                        <li>观察同一因子数量在不同时间窗口的ICIR，评估因子的时间稳定性</li>
-                    </ul>
-                </li>
-                <li><strong>结论：</strong>此表格是选择因子的关键指标。高ICIR意味着因子不仅在历史数据上有效，而且在不同市场环境下都能保持稳定的预测能力。优先选择ICIR > 1.0且在不同时间窗口都表现稳定的因子组合。</li>
-            </ul>
-        </div>
-        </div>"""
-
-    # Matrix 3: Sharpe Ratio
-    sharpe_matrix_html = "<div class=\"card\"><h3>💰 Sharpe Ratio Matrix</h3>"
-    sharpe_matrix_html += "<p>Risk-adjusted return metric - Higher is better</p>"
-    sharpe_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-    sharpe_matrix_html += "<tr><th>Time Window</th>"
-    for fc in factor_counts:
-        sharpe_matrix_html += f"<th>Factors: {fc}</th>"
-    sharpe_matrix_html += "</tr>"
-
-    for tw in time_windows:
-        sharpe_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-        for fc in factor_counts:
-            result = None
-            for r in enhanced_results:
-                params = r.get('grid_search_params', {})
-                if params.get('time_window') == tw and params.get(
-                        'factor_count') == fc:
-                    result = r
-                    break
-
-            if result:
-                sharpe = result.get('enhanced_metrics', {}).get('sharpe', 0)
-                cell_content = _format_float(sharpe, 3)
-                color_class = "good" if sharpe > 1.0 else "warn" if sharpe > 0 else "bad"
-                sharpe_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-            else:
-                sharpe_matrix_html += "<td>-</td>"
-        sharpe_matrix_html += "</tr>"
-
-    sharpe_matrix_html += "</table>"
-    sharpe_matrix_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #ffc107;">
-        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-        <ul>
-            <li><strong>Sharpe Ratio定义：</strong>夏普比率 = (策略收益率 - 无风险收益率) / 收益率标准差，衡量风险调整后的收益表现。Sharpe Ratio越高，表示在承担相同风险的情况下，获得的超额收益越多。</li>
-            <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的Sharpe Ratio值。</li>
-            <li><strong>颜色编码：</strong>
-                <ul>
-                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：Sharpe > 1.0，表示策略表现优秀</li>
-                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0 < Sharpe ≤ 1.0，表示策略表现一般</li>
-                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：Sharpe ≤ 0，表示策略表现不佳</li>
-                </ul>
-            </li>
-            <li><strong>分析要点：</strong>
-                <ul>
-                    <li>Sharpe Ratio > 1.0 通常被认为是可接受的策略表现</li>
-                    <li>Sharpe Ratio > 2.0 表示策略表现优秀</li>
-                    <li>比较不同因子数量和时间窗口的Sharpe Ratio，找出风险调整后收益最高的组合</li>
-                    <li>注意：此指标需要真实的回测数据，如果数据不可用，可能显示为0</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>此表格帮助评估策略的实际交易表现。高Sharpe Ratio意味着策略不仅能产生收益，而且风险控制得当。结合ICIR和Sharpe Ratio，可以全面评估因子的有效性和策略的实用性。</li>
-        </ul>
-    </div>
-    </div>"""
-
-    # Matrix 4: Robustness Score (ICIR-weighted composite)
-    robustness_matrix_html = "<div class=\"card\"><h3>🛡️ Robustness Score Matrix</h3>"
-    robustness_matrix_html += "<p>Composite score: ICIR × Sharpe / (1 + |Max Drawdown|) - Higher is better</p>"
-    robustness_matrix_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-    robustness_matrix_html += "<tr><th>Time Window</th>"
-    for fc in factor_counts:
-        robustness_matrix_html += f"<th>Factors: {fc}</th>"
-    robustness_matrix_html += "</tr>"
-
-    # Calculate robustness scores
-    robustness_scores = {}
-    for tw in time_windows:
-        robustness_scores[tw] = {}
-        for fc in factor_counts:
-            result = None
-            for r in enhanced_results:
-                params = r.get('grid_search_params', {})
-                if params.get('time_window') == tw and params.get(
-                        'factor_count') == fc:
-                    result = r
-                    break
-
-            if result:
-                metrics = result.get('enhanced_metrics', {})
-                icir = metrics.get('icir', 0) or 0
-                sharpe = metrics.get('sharpe', 0) or 0
-                max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-
-                # Robustness score: ICIR × Sharpe / (1 + |Max Drawdown|)
-                robustness = (icir * sharpe) / (
-                    1 + max_dd) if icir > 0 and sharpe > 0 else 0
-                robustness_scores[tw][fc] = robustness
-            else:
-                robustness_scores[tw][fc] = None
-
-    for tw in time_windows:
-        robustness_matrix_html += f"<tr><td><strong>{tw}</strong></td>"
-        for fc in factor_counts:
-            score = robustness_scores[tw].get(fc)
-            if score is not None:
-                cell_content = _format_float(score, 3)
-                color_class = "good" if score > 0.5 else "warn" if score > 0 else "bad"
-                robustness_matrix_html += f"<td class=\"{color_class}\">{cell_content}</td>"
-            else:
-                robustness_matrix_html += "<td>-</td>"
-        robustness_matrix_html += "</tr>"
-
-    robustness_matrix_html += "</table>"
-    robustness_matrix_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #6f42c1;">
-        <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-        <ul>
-            <li><strong>Robustness Score定义：</strong>稳健性得分 = ICIR × Sharpe Ratio / (1 + |最大回撤|)，这是一个综合指标，同时考虑了因子的预测稳定性（ICIR）、策略的风险调整收益（Sharpe Ratio）和风险控制（最大回撤）。</li>
-            <li><strong>计算公式说明：</strong>
-                <ul>
-                    <li>ICIR：衡量因子预测的稳定性</li>
-                    <li>Sharpe Ratio：衡量策略的风险调整收益</li>
-                    <li>最大回撤：衡量策略的最大风险</li>
-                    <li>分母 (1 + |最大回撤|)：惩罚高回撤的策略，回撤越大，得分越低</li>
-                </ul>
-            </li>
-            <li><strong>表格结构：</strong>行表示时间窗口，列表示因子数量。每个单元格显示该组合的Robustness Score值。</li>
-            <li><strong>颜色编码：</strong>
-                <ul>
-                    <li><span style="color: #167a3d; font-weight: 600;">绿色</span>：Robustness Score > 0.5，表示综合表现优秀</li>
-                    <li><span style="color: #b36b00; font-weight: 600;">橙色</span>：0 < Robustness Score ≤ 0.5，表示综合表现一般</li>
-                    <li><span style="color: #c53030; font-weight: 600;">红色</span>：Robustness Score ≤ 0，表示综合表现不佳</li>
-                </ul>
-            </li>
-            <li><strong>分析要点：</strong>
-                <ul>
-                    <li>这是最全面的评估指标，综合考虑了预测能力、收益和风险</li>
-                    <li>优先选择Robustness Score最高的组合，因为它平衡了所有关键因素</li>
-                    <li>比较不同因子数量的Robustness Score，找出最优的因子数量</li>
-                    <li>观察不同时间窗口的Robustness Score，评估策略的长期稳定性</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>此表格是选择最优参数组合的最重要参考。高Robustness Score意味着因子组合不仅在预测上有效，而且在实际交易中能产生稳定的风险调整收益。建议优先选择Robustness Score > 0.5且在不同时间窗口都表现稳定的组合。</li>
-        </ul>
-    </div>
-    </div>"""
-
-    # Build detailed results section with enhanced metrics
-    details_html = "<div class=\"card\"><h3>📋 Detailed Results</h3>"
-    for i, result in enumerate(enhanced_results, 1):
-        params = result.get('grid_search_params', {})
-        perf = result.get('performance', {}).get('stage3_representatives', {})
-        # financial_metrics is stored inside perf_reps
-        financial = perf.get('financial_metrics', {}) if isinstance(
-            perf, dict) else {}
-        if not financial:
-            financial = result.get('performance',
-                                   {}).get('stage3_representatives_financial',
-                                           {})
-        metrics = result.get('enhanced_metrics', {})
-
-        details_html += f"<h4>Combination {i}: {params.get('time_window')} | Factors: {params.get('factor_count')}</h4>"
-        details_html += "<table class=\"metric-table\">"
-
-        if is_classification:
-            # win_rate is in financial_metrics, not directly in perf
-            win_rate = financial.get('win_rate', 0) if financial else 0
-            if win_rate == 0:
-                win_rate = perf.get('win_rate', 0)
-            # f1_macro and accuracy are in classification_metrics
-            classification_metrics = perf.get('classification_metrics',
-                                              {}) if isinstance(perf,
-                                                                dict) else {}
-            f1_macro = classification_metrics.get(
-                'f1_macro', 0) if classification_metrics else 0
-            accuracy = classification_metrics.get(
-                'accuracy', 0) if classification_metrics else 0
-
-            details_html += f"<tr><th>Directional Win Rate</th><td>{_format_float(win_rate * 100, 2)}%</td></tr>"
-            details_html += f"<tr><th>F1 (Macro)</th><td>{_format_float(f1_macro, 4)}</td></tr>"
-            details_html += f"<tr><th>Accuracy</th><td>{_format_float(accuracy * 100, 2)}%</td></tr>"
-        else:
-            details_html += f"<tr><th>R²</th><td>{_format_float(perf.get('r2', 0), 4)}</td></tr>"
-            details_html += f"<tr><th>RMSE</th><td>{_format_float(perf.get('rmse', 0), 4)}</td></tr>"
-            details_html += f"<tr><th>MAE</th><td>{_format_float(perf.get('mae', 0), 4)}</td></tr>"
-
-        # Add financial metrics
-        if financial:
-            details_html += f"<tr><th>Sharpe Ratio</th><td>{_format_float(financial.get('sharpe_ratio', 0), 3)}</td></tr>"
-            details_html += f"<tr><th>Max Drawdown</th><td>{_format_float(financial.get('max_drawdown', 0) * 100, 2)}%</td></tr>"
-            details_html += f"<tr><th>Total Return</th><td>{_format_float(financial.get('total_return', 0) * 100, 2)}%</td></tr>"
-
-        # Add ICIR if available
-        if metrics.get('icir') is not None:
-            details_html += f"<tr><th>ICIR</th><td>{_format_float(metrics.get('icir'), 3)}</td></tr>"
-
-        # Add robustness score
-        icir = metrics.get('icir', 0) or 0
-        sharpe = metrics.get('sharpe', 0) or 0
-        max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-        robustness = (icir *
-                      sharpe) / (1 + max_dd) if icir > 0 and sharpe > 0 else 0
-        details_html += f"<tr><th>Robustness Score</th><td>{_format_float(robustness, 3)}</td></tr>"
-
-        details_html += "</table>"
-        details_html += """
-        <div style="margin-top: 15px; padding: 12px; background: #e9ecef; border-radius: 5px; font-size: 0.9em;">
-            <strong>📖 指标说明：</strong>
-            <ul style="margin: 5px 0;">
-                <li><strong>Directional Win Rate / R²：</strong>主要性能指标。分类任务使用胜率，回归任务使用R²。值越高越好。</li>
-                <li><strong>F1 (Macro) / RMSE / MAE：</strong>辅助性能指标。F1用于分类，RMSE/MAE用于回归。F1越高越好，RMSE/MAE越低越好。</li>
-                <li><strong>Sharpe Ratio：</strong>风险调整收益。> 1.0表示表现良好，> 2.0表示表现优秀。</li>
-                <li><strong>Max Drawdown：</strong>最大回撤，衡量策略的最大风险。绝对值越小越好。</li>
-                <li><strong>Total Return：</strong>总收益率。正值表示盈利，负值表示亏损。</li>
-                <li><strong>ICIR：</strong>因子预测稳定性。> 1.0表示因子具有稳定的预测能力。</li>
-                <li><strong>Robustness Score：</strong>综合稳健性得分，综合考虑ICIR、Sharpe和回撤。> 0.5表示综合表现优秀。</li>
-            </ul>
-        </div>
-        <br/>"""
-
-    details_html += """
-    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #dc3545;">
-        <h4>📖 如何阅读详细结果表格 (How to Read Detailed Results):</h4>
-        <ul>
-            <li><strong>表格结构：</strong>每个组合（时间窗口 + 因子数量）都有一个独立的详细结果表格，显示该组合的所有关键指标。</li>
-            <li><strong>性能指标：</strong>
-                <ul>
-                    <li>主要关注<strong>Directional Win Rate</strong>（分类）或<strong>R²</strong>（回归），这是评估模型预测能力的主要指标</li>
-                    <li>辅助指标（F1、Accuracy、RMSE、MAE）提供更全面的性能评估</li>
-                </ul>
-            </li>
-            <li><strong>金融指标：</strong>
-                <ul>
-                    <li><strong>Sharpe Ratio</strong>：评估策略的风险调整收益，是实际交易中最重要的指标之一</li>
-                    <li><strong>Max Drawdown</strong>：评估策略的最大风险，帮助了解最坏情况下的损失</li>
-                    <li><strong>Total Return</strong>：评估策略的总收益表现</li>
-                </ul>
-            </li>
-            <li><strong>因子质量指标：</strong>
-                <ul>
-                    <li><strong>ICIR</strong>：评估因子的预测稳定性，高ICIR表示因子在不同时期都能保持有效</li>
-                    <li><strong>Robustness Score</strong>：综合评估因子组合的稳健性，是最全面的评估指标</li>
-                </ul>
-            </li>
-            <li><strong>分析建议：</strong>
-                <ul>
-                    <li>优先查看Robustness Score，这是最全面的评估指标</li>
-                    <li>结合ICIR和Sharpe Ratio，评估因子的预测能力和实际交易表现</li>
-                    <li>注意Max Drawdown，确保风险在可接受范围内</li>
-                    <li>比较不同组合的详细结果，找出最优参数配置</li>
-                </ul>
-            </li>
-            <li><strong>结论：</strong>详细结果表格提供了每个参数组合的完整评估。通过对比不同组合的各项指标，可以全面了解每个组合的优势和劣势，从而做出最优的参数选择决策。</li>
-        </ul>
-    </div>
-    </div>"""
-
-    # Build ICIR trend analysis (Factor Count vs ICIR)
-    icir_trend_html = ""
-    if any(
-            r.get('enhanced_metrics', {}).get('icir') is not None
-            for r in enhanced_results):
-        icir_trend_html = "<div class=\"card\"><h3>📈 ICIR Trend Analysis</h3>"
-        icir_trend_html += "<p>ICIR vs Factor Count for each time window - Look for plateau points</p>"
-        icir_trend_html += "<table class=\"metric-table\" style=\"width:100%;font-size:0.9em;\">"
-        icir_trend_html += "<tr><th>Factor Count</th>"
-        for tw in time_windows:
-            icir_trend_html += f"<th>{tw}</th>"
-        icir_trend_html += "<th>Mean ICIR</th><th>Std(ICIR)</th></tr>"
-
-        # Calculate mean and std ICIR across time windows for each factor count
-        for fc in factor_counts:
-            icir_values = []
-            icir_trend_html += f"<tr><td><strong>{fc}</strong></td>"
-            for tw in time_windows:
-                result = None
-                for r in enhanced_results:
-                    params = r.get('grid_search_params', {})
-                    if params.get('time_window') == tw and params.get(
-                            'factor_count') == fc:
-                        result = r
-                        break
-
-                if result:
-                    icir = result.get('enhanced_metrics', {}).get('icir')
-                    if icir is not None:
-                        icir_values.append(icir)
-                        icir_trend_html += f"<td>{_format_float(icir, 3)}</td>"
-                    else:
-                        icir_trend_html += "<td>-</td>"
-                else:
-                    icir_trend_html += "<td>-</td>"
-
-            # Mean and std across time windows
-            if icir_values:
-                mean_icir = sum(icir_values) / len(icir_values)
-                std_icir = (sum((x - mean_icir)**2
-                                for x in icir_values) / len(icir_values))**0.5
-                icir_trend_html += f"<td>{_format_float(mean_icir, 3)}</td>"
-                icir_trend_html += f"<td>{_format_float(std_icir, 3)}</td>"
-            else:
-                icir_trend_html += "<td>-</td><td>-</td>"
-            icir_trend_html += "</tr>"
-
-        icir_trend_html += "</table>"
-
-        # Generate multiple 3D visualizations for Plateau Point analysis
-        icir_trend_html += "<h4>🎯 3D Plateau Point 分析 (3D Plateau Point Analysis)</h4>"
-
-        # ICIR 3D plot
-        icir_3d_html = _generate_icir_3d_plot(enhanced_results, time_windows,
-                                              factor_counts)
-        icir_trend_html += icir_3d_html
-
-        # Robustness Score 3D plot
-        def get_robustness(result):
-            metrics = result.get('enhanced_metrics', {})
-            icir = metrics.get('icir', 0) or 0
-            sharpe = metrics.get('sharpe', 0) or 0
-            max_dd = abs(metrics.get('max_drawdown', 0)) or 0.01
-            return (icir * sharpe) / (1 +
-                                      max_dd) if icir > 0 and sharpe > 0 else 0
-
-        robustness_3d_html = _generate_metric_3d_plot(enhanced_results,
-                                                      time_windows,
-                                                      factor_counts,
-                                                      'robustness',
-                                                      'Robustness Score',
-                                                      get_robustness,
-                                                      color_thresholds={
-                                                          'good': 0.5,
-                                                          'warn': 0.2,
-                                                          'bad': 0.0
-                                                      })
-        icir_trend_html += robustness_3d_html
-
-        # Sharpe Ratio 3D plot
-        def get_sharpe(result):
-            # Try to get from enhanced_metrics first
-            sharpe = result.get('enhanced_metrics', {}).get('sharpe')
-            if sharpe is None or sharpe == 0:
-                # Fallback: extract from performance
-                perf = result.get('performance',
-                                  {}).get('stage3_representatives', {})
-                financial = perf.get('financial_metrics', {}) if isinstance(
-                    perf, dict) else {}
-                if not financial:
-                    financial = result.get('performance', {}).get(
-                        'stage3_representatives_financial', {})
-                sharpe = financial.get('sharpe_ratio', 0) if financial else 0
-            return sharpe
-
-        sharpe_3d_html = _generate_metric_3d_plot(enhanced_results,
-                                                  time_windows,
-                                                  factor_counts,
-                                                  'sharpe',
-                                                  'Sharpe Ratio',
-                                                  get_sharpe,
-                                                  color_thresholds={
-                                                      'good': 1.0,
-                                                      'warn': 0.0,
-                                                      'bad': -1.0
-                                                  })
-        icir_trend_html += sharpe_3d_html
-
-        # Primary metric 3D plot (Win Rate or R²)
-        def get_primary_metric(result):
-            perf = result.get('performance', {}).get('stage3_representatives',
-                                                     {})
-            # financial_metrics is stored inside perf_reps
-            financial = perf.get('financial_metrics', {}) if isinstance(
-                perf, dict) else {}
-            if not financial:
-                financial = result.get('performance', {}).get(
-                    'stage3_representatives_financial', {})
-            if is_classification:
-                # win_rate is stored in financial_metrics
-                win_rate = financial.get('win_rate') if financial else None
-                if win_rate is None or win_rate == 0:
-                    win_rate = perf.get('win_rate')
-                return win_rate
-            else:
-                return perf.get('r2')
-
-        primary_metric_label = 'Directional Win Rate' if is_classification else 'R²'
-        primary_3d_html = _generate_metric_3d_plot(
-            enhanced_results,
-            time_windows,
-            factor_counts,
-            'primary',
-            primary_metric_label,
-            get_primary_metric,
-            color_thresholds={
-                'good': 0.5,
-                'warn': 0.0,
-                'bad': -0.5
-            } if is_classification else {
-                'good': 0.5,
-                'warn': 0.0,
-                'bad': -1.0
-            })
-        icir_trend_html += primary_3d_html
-
-        # Add summary section for multiple 3D visualizations
-        icir_trend_html += """
-        <div style="margin-top: 30px; padding: 20px; background: #e7f3ff; border-radius: 5px; border-left: 4px solid #0066cc;">
-            <h4>🎯 多指标Plateau Point综合分析 (Multi-Metric Plateau Point Analysis)</h4>
-            <p><strong>为什么需要多个3D可视化？</strong></p>
-            <ul>
-                <li><strong>ICIR 3D图：</strong>识别因子预测稳定性的Plateau Point。高ICIR表示因子在不同时期都能保持有效预测。</li>
-                <li><strong>Robustness Score 3D图：</strong>识别综合稳健性的Plateau Point。这是最全面的指标，综合考虑了预测能力、收益和风险。</li>
-                <li><strong>Sharpe Ratio 3D图：</strong>识别风险调整收益的Plateau Point。高Sharpe Ratio表示策略在控制风险的同时获得良好收益。</li>
-                <li><strong>Primary Metric 3D图：</strong>识别主要性能指标的Plateau Point。对于分类任务是胜率，对于回归任务是R²。</li>
-            </ul>
-            <p><strong>如何综合使用这些3D图？</strong></p>
-            <ol>
-                <li><strong>第一步：</strong>查看Robustness Score 3D图，找出综合表现最优的因子数量范围（绿色区域且表面平坦的位置）。</li>
-                <li><strong>第二步：</strong>验证ICIR 3D图，确保该因子数量在ICIR上也表现稳定（高ICIR且在不同时间窗口都保持稳定）。</li>
-                <li><strong>第三步：</strong>检查Sharpe Ratio 3D图，确认该因子数量在实际交易中能产生良好的风险调整收益。</li>
-                <li><strong>第四步：</strong>参考Primary Metric 3D图，确保主要性能指标也达到预期水平。</li>
-                <li><strong>第五步：</strong>选择在所有或大部分指标上都显示Plateau Point的因子数量，这表示该数量是最优选择。</li>
-            </ol>
-            <p><strong>💡 关键洞察：</strong>理想的Plateau Point应该在不同指标的不同3D图中都显示为平坦区域，且在不同时间窗口（Y轴）上都保持相对稳定的高度。如果某个因子数量在多个指标的3D图中都显示为Plateau Point，那么它就是最优选择。</p>
-        </div>
-        """
-
-        icir_trend_html += """
-        <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; border-left: 4px solid #17a2b8;">
-            <h4>📖 如何阅读此表格 (How to Read This Table):</h4>
-            <ul>
-                <li><strong>表格结构：</strong>行表示不同的因子数量，列表示不同的时间窗口。最后两列显示每个因子数量在所有时间窗口上的平均ICIR和标准差。</li>
-                <li><strong>Mean ICIR列：</strong>计算该因子数量在所有时间窗口上的平均ICIR值。平均值越高，表示该因子数量在不同时期的表现越稳定。</li>
-                <li><strong>Std(ICIR)列：</strong>计算该因子数量在所有时间窗口上的ICIR标准差。标准差越小，表示该因子数量在不同时期的表现越一致，稳定性越好。</li>
-                <li><strong>分析要点：</strong>
-                    <ul>
-                        <li><strong>寻找平台点（Plateau Point）：</strong>找出ICIR不再显著下降的最小因子数量。例如，如果120个因子和60个因子的ICIR相近，但30个因子的ICIR明显下降，那么60个因子可能是平台点。</li>
-                        <li><strong>评估稳定性：</strong>比较不同因子数量的Std(ICIR)。Std(ICIR)越小，表示该因子数量在不同时间窗口的表现越一致，越稳定。</li>
-                        <li><strong>平衡性能与复杂度：</strong>在Mean ICIR高且Std(ICIR)低的前提下，选择因子数量最少的组合，以降低模型复杂度并提高可解释性。</li>
-                        <li><strong>结合3D可视化：</strong>使用上方的3D图形可以更直观地识别Plateau Point。在3D图形中，Plateau Point表现为ICIR值达到较高水平后，表面变得平坦的区域。</li>
-                    </ul>
-                </li>
-                <li><strong>结论：</strong>此表格帮助确定最优因子数量。理想的组合是：Mean ICIR高（> 1.0）、Std(ICIR)低（< 0.3），且因子数量尽可能少。这表示该因子数量既能保持高预测能力，又能在不同市场环境下保持稳定，同时避免了过度复杂化。结合3D可视化，可以更准确地识别Plateau Point。</li>
-            </ul>
-        </div>
-        </div>"""
-
-    # Build analysis conclusions
-    analysis_conclusions_html = _build_analysis_conclusions(
-        enhanced_results, time_windows, factor_counts, is_classification)
-
-    # Generate ICIR heatmap
-    heatmap_html = _generate_icir_heatmap(enhanced_results, time_windows,
-                                          factor_counts)
-
-    # Build full HTML
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Grid Search Comparison Report</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }}
-        .card {{ background: #fff; border-radius: 10px; padding: 18px 22px; box-shadow: 0 10px 24px rgba(27,39,53,0.1); margin: 20px 0; }}
-        .metric-table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
-        .metric-table th, .metric-table td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
-        .metric-table th {{ background-color: #f8f9fa; font-weight: 600; }}
-        .good {{ color: #167a3d; font-weight: 600; }}
-        .warn {{ color: #b36b00; font-weight: 600; }}
-        .bad {{ color: #c53030; font-weight: 600; }}
-        .heatmap-container {{ margin: 20px 0; text-align: center; }}
-    </style>
-</head>
-<body>
-    <h1>🔍 Grid Search Comparison Report</h1>
-    <div class="card">
-        <h3>Configuration</h3>
-        <p><strong>Symbol:</strong> {report_data.get('symbol', 'N/A')}</p>
-        <p><strong>Feature Type:</strong> {report_data.get('feature_type', 'N/A')}</p>
-        <p><strong>Task Type:</strong> {task_type}</p>
-        <p><strong>Time Windows Tested:</strong> {len(time_windows)}</p>
-        <p><strong>Factor Counts Tested:</strong> {len(factor_counts)}</p>
-        <p><strong>Total Combinations:</strong> {len(grid_search_results)}</p>
-    </div>
-    
-    {matrix_html}
-    {icir_matrix_html}
-    {sharpe_matrix_html}
-    {robustness_matrix_html}
-    {icir_trend_html}
-    {heatmap_html}
-    {details_html}
-    
-    {analysis_conclusions_html}
-    
-    <div class="card">
-        <p>Generated by ML Trading Bot Rolling Training System</p>
-    </div>
-</body>
-</html>"""
-
-    # Write HTML to file
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(html)
-    print(f"✅ Grid search HTML report saved to: {html_path}")
 
 
 def main() -> str:

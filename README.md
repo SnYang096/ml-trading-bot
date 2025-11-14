@@ -262,8 +262,47 @@ Run `make help` to see all available commands and their usage.
 开发者 A：用 VS Code 打开项目 → 自动进入 Dev Container → 运行 make train → 直接在容器内高效训练。
 开发者 B：用 Vim/命令行 → 先确保镜像存在 → 运行 make train → Makefile 自动拉起容器完成任务。
 
-make rolling \
-  SYMBOLS=BTCUSDT,ETHUSDT \
-  ROLLING_USE_TOP_FACTORS=results/dim_compare/BTCUSDT-ETHUSDT_comprehensive_grid_search_20251113_121713 \
-  ROLLING_START=2024-11-01 \
-  ROLLING_END=2025-04-30
+# TODOs
+make train
+如需进一步提升，可考虑：
+集成 SHAP 解释性
+支持动态滚动训练窗口
+添加模型版本管理和预测缓存
+整体而言，代码质量高，结构清晰，工程实践成熟。
+
+make rolling-multi SYMBOLS="BTCUSDT,ETHUSDT" FREQS="15T,60T,240T" FBS="5" INITIAL_TRAIN_MONTHS=3 MIN_TRAIN_MONTHS=3 ROLLING_START=2021-01 ROLLING_END=2025-10 ROLLING_FEATURE_TYPE=comprehansive
+
+make cross-sectional-select \
+  CS_INPUT="results/feature_exports/cs_panel_BTCUSDT_15T_12b_comprehensive_2024-11-01_2025-04-30.parquet" \
+  CS_SELECT_MIN_ASSETS=8 \
+  CS_SELECT_PER_CATEGORY_TOP=2 \
+  CS_SELECT_GLOBAL_TOP=12 \
+  CS_SELECT_IC_THRESHOLD=0.01 \
+  CS_SELECT_IR_THRESHOLD=0.5
+
+make cross-sectional-auto \
+  CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
+  CS_BUILD_TIMEFRAME=15T \
+  CS_BUILD_HORIZON=12 \
+  CS_PERIODS_PER_YEAR=auto \
+  CS_AUTO_PER_CATEGORY_TOP=2 \
+  CS_AUTO_GLOBAL_TOP=12 \
+  CS_AUTO_IC_THRESHOLD=0.01 \
+  CS_AUTO_IR_THRESHOLD=0.5
+
+make cross-sectional-auto \
+  CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
+  CS_BUILD_TIMEFRAME=15T \
+  CS_BUILD_HORIZON=12 \
+  CS_BUILD_START=2024-11-01 \
+  CS_BUILD_END=2025-04-30 \
+  CS_PERIODS_PER_YEAR=auto \
+  CS_AUTO_PER_CATEGORY_TOP=2 \
+  CS_AUTO_GLOBAL_TOP=12 \
+  CS_AUTO_IC_THRESHOLD=0.01 \
+  CS_AUTO_IR_THRESHOLD=0.5 \
+  CS_LOGIC_EXPECTATIONS="configs/factor_expectations.json" \
+  CS_DRIFT_BASELINE="results/cross_sectional/shap_baseline.json"
+
+
+make auto-workflow SYMBOLS="BTCUSDT" START_DATE=2025-01-01 END_DATE=2025-06-30 ROLLING_START=2025-01 ROLLING_END=2025-06 AUTO_FEATURE_TYPE=comprehensive AUTO_FREQS=15T AUTO_FORWARD_BARS_TRAIN=5 AUTO_FORWARD_BARS_ROLLING=5 AUTO_MODEL_TYPE=classification AUTO_OOS_MONTHS=1 AUTO_GPU=1 AUTO_MAX_ITER=1 AUTO_TOP_K=120 AUTO_SHAP=1

@@ -27,7 +27,7 @@ from time_series_model.pipeline.dimensionality.backtest_evaluator import (
 
 
 def sanitize_features(X: np.ndarray, clip_std: float = 5.0) -> np.ndarray:
-    """Replace NaN/inf and clip outliers per feature to stabilize model training."""
+    """Replace NaN/inf and clip outliers per feature to stabilize AE training."""
     X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
     # Clip per-column
     means = np.mean(X, axis=0)
@@ -156,8 +156,7 @@ def compute_selection_score(
     if f1 == 0.0:
         # Fallback to classification metrics
         cls_metrics = perf.get("classification_metrics", {})
-        f1 = float(
-            cls_metrics.get("f1_macro", cls_metrics.get("f1_weighted", 0.0)))
+        f1 = float(cls_metrics.get("f1_macro", cls_metrics.get("f1_weighted", 0.0)))
 
     if metric == "sharpe":
         return sharpe
@@ -220,9 +219,8 @@ def calculate_financial_metrics(
         if returns_std > 1e-8:
             # Annualized Sharpe: (mean_return - risk_free) / std_return * sqrt(252)
             daily_rf = risk_free_rate / 252.0
-            mean_return = np.mean(strategy_returns)
-            sharpe_ratio = ((mean_return - daily_rf) / returns_std *
-                            np.sqrt(252.0))
+            sharpe_ratio = (np.mean(strategy_returns) -
+                            daily_rf) / returns_std * np.sqrt(252.0)
             metrics["sharpe_ratio"] = float(sharpe_ratio)
         else:
             metrics["sharpe_ratio"] = 0.0
@@ -240,8 +238,8 @@ def calculate_financial_metrics(
         # 5. Win rate
         winning_trades = (strategy_returns > 0).sum()
         total_trades = len(strategy_returns)
-        metrics["win_rate"] = (float(winning_trades / total_trades)
-                               if total_trades > 0 else 0.0)
+        metrics["win_rate"] = float(winning_trades /
+                                    total_trades) if total_trades > 0 else 0.0
 
         # 6. Average win/loss ratio
         wins = strategy_returns[strategy_returns > 0]
@@ -280,22 +278,29 @@ def calculate_financial_metrics(
 
 
 def evaluate_model_performance(
-        model,
-        X_test: np.ndarray,
-        y_test: np.ndarray,
-        model_name: str = "Model",
-        include_financial_metrics: bool = True,
-        price_data:
-    Optional[
-        pd.
-        DataFrame] = None,  # Optional: price data for calculating real returns
+    model,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    model_name: str = "Model",
+    include_financial_metrics: bool = True,
+    price_data: Optional[pd.DataFrame] = None,  # Optional: price data for calculating real returns
 ):
     """Evaluate model performance with comprehensive metrics."""
     X_eval = X_test
     y_eval = y_test
 
-    # NOTE: data_loader.py now generates binary labels (1=Long, 0=Short) directly
-    # No need to filter neutral labels anymore
+    # Remove neutral (0 = hold) labels for classification metrics if present
+    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
+        unique_targets = np.unique(y_eval)
+        if np.any(unique_targets == 0) and np.all(
+                np.isin(unique_targets, [0, 1, 2])):
+            mask_active = y_eval != 0
+            if mask_active.sum() == 0:
+                raise ValueError(
+                    "No active samples remain after removing neutral labels in evaluation set."
+                )
+            X_eval = X_eval[mask_active]
+            y_eval = y_eval[mask_active]
 
     predictions = model.predict(X_eval)
 
@@ -316,13 +321,15 @@ def evaluate_model_performance(
         probabilities = None
 
     # Identify binary classification
-    # NOTE: data_loader.py now generates binary labels (1=Long, 0=Short) directly
     is_binary_classification = False
     if not is_multiclass and y_eval.ndim == 1 and np.issubdtype(
             y_eval.dtype, np.integer):
         unique_eval = np.unique(y_eval)
-        if np.all(np.isin(unique_eval, [0, 1])):
-            # Binary classification (1=Long, 0=Short)
+        if np.all(np.isin(unique_eval, [0, 1, 2])):
+            # Map to binary labels (1=Long, 0=Short)
+            y_eval_binary = np.where(y_eval == 1, 1, 0).astype(int)
+            is_binary_classification = True
+        elif np.all(np.isin(unique_eval, [0, 1])):
             y_eval_binary = y_eval.astype(int)
             is_binary_classification = True
         else:
@@ -383,8 +390,9 @@ def evaluate_model_performance(
             active_ratio = float(active / total) if total > 0 else 0.0
 
             if active > 0:
-                correct_non_hold = (((y_pred_cls == 1) & (y_true_cls == 1))
-                                    | ((y_pred_cls == 2) & (y_true_cls == 2)))
+                correct_non_hold = ((y_pred_cls == 1) &
+                                    (y_true_cls == 1)) | ((y_pred_cls == 2) &
+                                                          (y_true_cls == 2))
                 win_rate = float(np.sum(correct_non_hold) / active)
             else:
                 win_rate = 0.0
@@ -417,25 +425,22 @@ def evaluate_model_performance(
                 if price_data is not None and 'close' in price_data.columns:
                     try:
                         # Use real backtest with actual price data
-                        # NOTE: data_loader.py now generates binary labels directly, no need to filter
-                        price_aligned = price_data
+                        # Align price data with predictions (after removing hold samples)
+                        price_aligned = price_data.iloc[mask_active] if 'mask_active' in locals() else price_data
                         if len(price_aligned) == len(y_pred_cls):
                             # Calculate strategy returns from predictions and actual prices
                             strategy_returns = calculate_strategy_returns_from_predictions(
-                                y_pred_cls, price_aligned, horizon=1)
+                                y_pred_cls, price_aligned, horizon=1
+                            )
                             # Calculate financial metrics from real returns
                             backtest_metrics = calculate_financial_metrics_from_returns(
-                                strategy_returns, risk_free_rate=0.0)
-                            fm["sharpe_ratio"] = backtest_metrics.get(
-                                "sharpe_ratio", 0.0)
-                            fm["max_drawdown"] = backtest_metrics.get(
-                                "max_drawdown", 0.0)
-                            fm["total_return"] = backtest_metrics.get(
-                                "total_return", 0.0)
-                            fm["annualized_return"] = backtest_metrics.get(
-                                "annualized_return", 0.0)
-                            fm["volatility"] = backtest_metrics.get(
-                                "volatility", 0.0)
+                                strategy_returns, risk_free_rate=0.0
+                            )
+                            fm["sharpe_ratio"] = backtest_metrics.get("sharpe_ratio", 0.0)
+                            fm["max_drawdown"] = backtest_metrics.get("max_drawdown", 0.0)
+                            fm["total_return"] = backtest_metrics.get("total_return", 0.0)
+                            fm["annualized_return"] = backtest_metrics.get("annualized_return", 0.0)
+                            fm["volatility"] = backtest_metrics.get("volatility", 0.0)
                         else:
                             # Fallback: use win rate as proxy
                             sharpe_approx = (win_rate - 0.5) * 4.0
@@ -446,9 +451,7 @@ def evaluate_model_performance(
                             fm["total_return"] = float(total_return_approx)
                     except Exception as e:
                         # If backtest fails, fall back to win rate approximation
-                        print(
-                            f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation"
-                        )
+                        print(f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation")
                         sharpe_approx = (win_rate - 0.5) * 4.0
                         fm["sharpe_ratio"] = float(sharpe_approx)
                         max_dd_approx = -(1.0 - win_rate) * 0.1
@@ -587,7 +590,7 @@ def evaluate_model_performance(
                 y_true_bin[long_mask] == 1)) if long_total > 0 else 0.0
             fm["short_win_rate"] = float(np.mean(
                 y_true_bin[short_mask] == 0)) if short_total > 0 else 0.0
-
+            
             # For binary classification, calculate Sharpe Ratio and Max Drawdown
             # Use win rate (accuracy) as a proxy since we don't have real returns data
             # Note: This is an approximation - real backtest is needed for accurate Sharpe Ratio
@@ -658,3 +661,4 @@ def evaluate_model_performance(
             )
 
     return results
+

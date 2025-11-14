@@ -7,7 +7,6 @@ import os
 import json
 import argparse
 from datetime import datetime
-from pathlib import Path
 from typing import List, Dict, Optional
 
 import pandas as pd
@@ -41,123 +40,6 @@ from time_series_model.utils.training import (
     print_backtest_results,
     evaluate_signal_performance,
 )
-
-
-def load_top_factors(path: str) -> Optional[List[str]]:
-    """Load top factors from various formats.
-    
-    Supports:
-    1. JSON file: list or dict with 'features'/'selected_features' key
-    2. TXT file: one feature per line
-    3. Directory: auto-finds best_combination/selected_features.txt or best_combination_summary.json
-    
-    Args:
-        path: Path to file or directory
-        
-    Returns:
-        List of feature names, or None if loading failed
-    """
-    if not path:
-        return None
-
-    path_obj = Path(path)
-
-    # If it's a directory, try to find dim-compare output files
-    if path_obj.is_dir():
-        # Try best_combination/selected_features.txt
-        txt_path = path_obj / "best_combination" / "selected_features.txt"
-        if txt_path.exists():
-            path_obj = txt_path
-        else:
-            # Try best_combination/best_combination_summary.json
-            json_path = path_obj / "best_combination" / "best_combination_summary.json"
-            if json_path.exists():
-                path_obj = json_path
-            else:
-                # Try selected_features.txt in root
-                txt_path = path_obj / "selected_features.txt"
-                if txt_path.exists():
-                    path_obj = txt_path
-                else:
-                    # Try best_combination_summary.json in root
-                    json_path = path_obj / "best_combination_summary.json"
-                    if json_path.exists():
-                        path_obj = json_path
-                    else:
-                        print(
-                            f"   ⚠️  Could not find selected_features.txt or best_combination_summary.json in {path}"
-                        )
-                        return None
-
-    # Load based on file extension
-    try:
-        if path_obj.suffix.lower() == '.txt':
-            # TXT file: one feature per line
-            with open(path_obj, 'r', encoding='utf-8') as f:
-                features = [line.strip() for line in f if line.strip()]
-            print(f"   ✅ Loaded {len(features)} features from {path_obj}")
-            return features
-        elif path_obj.suffix.lower() == '.json':
-            # JSON file
-            with open(path_obj, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            # Try different keys
-            if isinstance(data, list):
-                features = data
-            elif isinstance(data, dict):
-                # Try 'selected_features' first (dim-compare format)
-                if 'selected_features' in data:
-                    features = data['selected_features']
-                # Then try 'features'
-                elif 'features' in data:
-                    features = data['features']
-                else:
-                    print(
-                        f"   ⚠️  JSON file does not contain 'features' or 'selected_features' key"
-                    )
-                    return None
-            else:
-                print(f"   ⚠️  JSON file format not recognized")
-                return None
-
-            if isinstance(features, list):
-                print(f"   ✅ Loaded {len(features)} features from {path_obj}")
-                return features
-            else:
-                print(f"   ⚠️  Features data is not a list")
-                return None
-        else:
-            # Try as JSON first, then TXT
-            try:
-                with open(path_obj, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                if isinstance(data, list):
-                    features = data
-                elif isinstance(data, dict):
-                    if 'selected_features' in data:
-                        features = data['selected_features']
-                    elif 'features' in data:
-                        features = data['features']
-                    else:
-                        raise ValueError("No features key found")
-                else:
-                    raise ValueError("Invalid format")
-                print(
-                    f"   ✅ Loaded {len(features)} features from {path_obj} (as JSON)"
-                )
-                return features
-            except (json.JSONDecodeError, ValueError):
-                # Try as TXT
-                with open(path_obj, 'r', encoding='utf-8') as f:
-                    features = [line.strip() for line in f if line.strip()]
-                print(
-                    f"   ✅ Loaded {len(features)} features from {path_obj} (as TXT)"
-                )
-                return features
-    except Exception as exc:
-        print(f"   ⚠️  Failed to load top factors from {path_obj}: {exc}")
-        return None
 
 
 def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
@@ -284,15 +166,10 @@ def main() -> None:
         help=
         "Threshold method for directional prediction (zero|median|f1_optimize)",
     )
-    parser.add_argument(
-        "--use-top-factors",
-        type=str,
-        default=None,
-        help="Path to selected features file. Supports: "
-        "1) JSON file (list or dict with 'features'/'selected_features' key), "
-        "2) TXT file (one feature per line), "
-        "3) dim-compare output directory (auto-finds best_combination/selected_features.txt or best_combination_summary.json)"
-    )
+    parser.add_argument("--use-top-factors",
+                        type=str,
+                        default=None,
+                        help="Optional JSON of selected features to keep")
     parser.add_argument("--topk",
                         type=int,
                         default=0,
@@ -704,22 +581,17 @@ tr:hover{{background:#f0f8ff}}
 
             # Optional top-factors
             if args.use_top_factors:
-                keep = load_top_factors(args.use_top_factors)
-                if keep:
-                    s = set(keep)
-                    original_count = len(feat_cols)
-                    feat_cols = [c for c in feat_cols if c in s]
-                    print(
-                        f"   📋 Filtered features: {original_count} → {len(feat_cols)} (using top factors from {args.use_top_factors})"
-                    )
-                    if len(feat_cols) == 0:
-                        print(
-                            f"   ⚠️  Warning: No features matched after filtering! Check feature names in top factors file."
-                        )
-                else:
-                    print(
-                        f"   ⚠️  Failed to load top factors from {args.use_top_factors}, using all features"
-                    )
+                try:
+                    with open(args.use_top_factors, 'r',
+                              encoding='utf-8') as _f:
+                        keep = json.load(_f)
+                    if isinstance(keep, dict) and 'features' in keep:
+                        keep = keep['features']
+                    if isinstance(keep, list):
+                        s = set(keep)
+                        feat_cols = [c for c in feat_cols if c in s]
+                except Exception:
+                    pass
 
             # Optional Top-K
             if args.topk and args.topk > 0 and len(feat_cols) > args.topk:
