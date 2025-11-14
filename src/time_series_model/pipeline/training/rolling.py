@@ -1363,6 +1363,10 @@ tr:hover{{background:#f0f8ff}}
             )
 
             # Persist model artifacts
+            # Create a subdirectory for this test month to organize files by date
+            month_dir = os.path.join(combo_dir, test_file['month_str'])
+            os.makedirs(month_dir, exist_ok=True)
+
             base = f"fb{fb}_tf{freq}_{test_file['month_str']}"
             artifact_paths: Dict[str, str] = {}
 
@@ -1378,7 +1382,7 @@ tr:hover{{background:#f0f8ff}}
                 cls_pipeline.preprocessor = RobustWinsorizer.from_params(
                     classification_preprocess_params, forward_bars=fb)
             cls_pipeline_path = os.path.join(
-                combo_dir, f"classification_pipeline_{base}.pkl")
+                month_dir, f"classification_pipeline_{base}.pkl")
             cls_pipeline.save(cls_pipeline_path)
             artifact_paths["classification_pipeline"] = cls_pipeline_path
 
@@ -1394,7 +1398,7 @@ tr:hover{{background:#f0f8ff}}
             if return_preprocess_params:
                 return_pipeline.preprocessor = RobustWinsorizer.from_params(
                     return_preprocess_params, forward_bars=fb)
-            return_pipeline_path = os.path.join(combo_dir,
+            return_pipeline_path = os.path.join(month_dir,
                                                 f"return_pipeline_{base}.pkl")
             return_pipeline.save(return_pipeline_path)
             artifact_paths["return_pipeline"] = return_pipeline_path
@@ -1407,14 +1411,14 @@ tr:hover{{background:#f0f8ff}}
                 use_gpu=args.gpu,
             )
             vol_pipeline.model = model_vol.model
-            vol_pipeline_path = os.path.join(combo_dir,
+            vol_pipeline_path = os.path.join(month_dir,
                                              f"vol_pipeline_{base}.pkl")
             vol_pipeline.save(vol_pipeline_path)
             artifact_paths["vol_pipeline"] = vol_pipeline_path
 
             feature_engineer_obj = (baseline_engineer if args.feature_type
                                     == "baseline" else comp_engineer)
-            scaler_path = os.path.join(combo_dir, f"scalers_{base}.pkl")
+            scaler_path = os.path.join(month_dir, f"scalers_{base}.pkl")
             if feature_engineer_obj is not None and hasattr(
                     feature_engineer_obj, "save_scalers"):
                 try:
@@ -1423,7 +1427,7 @@ tr:hover{{background:#f0f8ff}}
                 except Exception as exc:
                     print(f"   ⚠️ Failed to save scalers: {exc}")
 
-            features_path = os.path.join(combo_dir, f"features_{base}.txt")
+            features_path = os.path.join(month_dir, f"features_{base}.txt")
             try:
                 with open(features_path, "w") as f:
                     f.write("\n".join(feat_cols))
@@ -1433,7 +1437,7 @@ tr:hover{{background:#f0f8ff}}
 
             trades = bt_results.get("trades", [])
             if trades:
-                trades_path = os.path.join(combo_dir, f"trades_{base}.json")
+                trades_path = os.path.join(month_dir, f"trades_{base}.json")
                 try:
                     serialized_trades = []
                     for trade in trades:
@@ -1454,13 +1458,13 @@ tr:hover{{background:#f0f8ff}}
                 **artifact_paths
             })
 
-            # Save raw LightGBM models for reference
+            # Save raw LightGBM models for reference (also in month directory)
             model_cls.model.save_model(
-                os.path.join(combo_dir, f"model_direction_{base}.txt"))
+                os.path.join(month_dir, f"model_direction_{base}.txt"))
             model_return.model.save_model(
-                os.path.join(combo_dir, f"model_return_{base}.txt"))
+                os.path.join(month_dir, f"model_return_{base}.txt"))
             model_vol.model.save_model(
-                os.path.join(combo_dir, f"model_volatility_{base}.txt"))
+                os.path.join(month_dir, f"model_volatility_{base}.txt"))
 
         # Save summary/report
         results_df = pd.DataFrame(all_results)
@@ -1581,6 +1585,71 @@ tr:hover{{background:#f0f8ff}}
             importance_accumulators)
         with open(os.path.join(combo_dir, "summary.json"), "w") as f:
             json.dump(summary, f, indent=2)
+
+        # Create symbolic links to the latest models for easy access
+        if all_results:
+            # Find the latest test month (most recent)
+            latest_result = max(all_results,
+                                key=lambda x: x.get("test_month", ""))
+            latest_month = latest_result.get("test_month")
+            if latest_month:
+                latest_artifacts = latest_result.get("artifacts", {})
+                latest_month_dir = os.path.join(combo_dir, latest_month)
+
+                # Create a "latest" directory with symbolic links
+                latest_dir = os.path.join(combo_dir, "latest")
+                os.makedirs(latest_dir, exist_ok=True)
+
+                # Create symbolic links for each artifact type
+                for artifact_type, artifact_path in latest_artifacts.items():
+                    if artifact_path and os.path.exists(artifact_path):
+                        link_name = os.path.join(latest_dir,
+                                                 f"{artifact_type}.pkl")
+                        # Remove existing link if it exists
+                        if os.path.exists(link_name) or os.path.islink(
+                                link_name):
+                            os.remove(link_name)
+                        # Create relative path for the symlink
+                        rel_path = os.path.relpath(artifact_path, latest_dir)
+                        os.symlink(rel_path, link_name)
+
+                # Also create a README in latest directory explaining what it is
+                readme_path = os.path.join(latest_dir, "README.txt")
+                with open(readme_path, "w") as f:
+                    f.write(f"Latest Models Directory\n")
+                    f.write(f"======================\n\n")
+                    f.write(
+                        f"This directory contains symbolic links to the latest models.\n"
+                    )
+                    f.write(f"Latest test month: {latest_month}\n\n")
+                    f.write(f"Available models:\n")
+                    for artifact_type in latest_artifacts.keys():
+                        f.write(f"  - {artifact_type}.pkl\n")
+                    f.write(
+                        f"\nTo use the latest models, reference files in this directory.\n"
+                    )
+                    f.write(
+                        f"Example: {os.path.join('latest', 'classification_pipeline.pkl')}\n"
+                    )
+
+                print(
+                    f"   📌 Created symbolic links to latest models in: {latest_dir}"
+                )
+                print(f"      Latest test month: {latest_month}")
+
+                # Add latest model info to summary
+                summary["latest_models"] = {
+                    "test_month": latest_month,
+                    "directory": latest_dir,
+                    "artifacts": {
+                        k: os.path.join("latest", f"{k}.pkl")
+                        for k in latest_artifacts.keys()
+                    }
+                }
+                # Update summary.json with latest model info
+                with open(os.path.join(combo_dir, "summary.json"), "w") as f:
+                    json.dump(summary, f, indent=2)
+
         try:
             from time_series_model.pipeline.dimensionality.report_generator import write_rolling_report
             from time_series_model.pipeline.training.generate_summary_report import generate_summary_report
