@@ -42,6 +42,104 @@ from time_series_model.utils.training import (
 )
 
 
+def analyze_feature_modules(feature_names: set) -> dict:
+    """
+    分析特征名称，判断它们属于哪些特征模块。
+    
+    Returns:
+        dict with keys: use_baseline, use_default, use_alpha101, 
+                       use_hurst, use_wavelet, use_hilbert, use_spectral, use_order_flow
+    """
+    result = {
+        'use_baseline': False,
+        'use_default': False,
+        'use_alpha101': False,
+        'use_hurst': False,
+        'use_wavelet': False,
+        'use_hilbert': False,
+        'use_spectral': False,
+        'use_order_flow': False,
+    }
+
+    # Baseline features: signal_*, sr_*, compressed_*
+    baseline_patterns = ['signal_', 'sr_', 'compressed_']
+    if any(
+            any(f.startswith(p) for p in baseline_patterns)
+            for f in feature_names):
+        result['use_baseline'] = True
+
+    # Default features: TA-Lib indicators (rsi, macd, bollinger, atr, ema, sma, cdl_*, etc.)
+    default_patterns = [
+        'rsi', 'macd', 'bb_', 'bollinger', 'atr', 'ema_', 'sma_', 'cdl_',
+        'adx', 'cci', 'mfi', 'stoch', 'williams', 'roc', 'mom', 'ppo', 'trix',
+        'ultosc', 'aroon', 'obv', 'ad', 'adosc'
+    ]
+    if any(
+            any(p in f.lower() for p in default_patterns)
+            for f in feature_names):
+        result['use_default'] = True
+
+    # Alpha101 features: alpha_*
+    if any(f.startswith('alpha_') for f in feature_names):
+        result['use_alpha101'] = True
+
+    # Enhanced features patterns
+    hurst_patterns = ['hurst', 'hurst_']
+    if any(any(p in f.lower() for p in hurst_patterns) for f in feature_names):
+        result['use_hurst'] = True
+
+    wavelet_patterns = ['wpt_', 'wavelet', 'wpt_']
+    if any(
+            any(p in f.lower() for p in wavelet_patterns)
+            for f in feature_names):
+        result['use_wavelet'] = True
+
+    hilbert_patterns = ['hilbert_', 'instantaneous_', 'phase_', 'frequency_']
+    if any(
+            any(p in f.lower() for p in hilbert_patterns)
+            for f in feature_names):
+        result['use_hilbert'] = True
+
+    spectral_patterns = ['spectral_', 'fft_', 'psd_', 'power_']
+    if any(
+            any(p in f.lower() for p in spectral_patterns)
+            for f in feature_names):
+        result['use_spectral'] = True
+
+    order_flow_patterns = [
+        'cvd', 'ofi', 'order_flow', 'taker_buy', 'taker_sell', 'bid_', 'ask_',
+        'imbalance', 'pressure'
+    ]
+    if any(
+            any(p in f.lower() for p in order_flow_patterns)
+            for f in feature_names):
+        result['use_order_flow'] = True
+
+    # Enhanced features that don't match specific patterns but are likely enhanced
+    # (e.g., slope_consistency_score, internal_price_density, pre_break_silence,
+    #  rsi_divergence, volume_divergence)
+    enhanced_keywords = [
+        'divergence', 'consistency', 'density', 'silence', 'break'
+    ]
+    if any(
+            any(kw in f.lower() for kw in enhanced_keywords)
+            for f in feature_names):
+        # If we have enhanced keywords but no specific module match, enable all enhanced modules
+        # to be safe (they might be in any of them)
+        if not any([
+                result['use_hurst'], result['use_wavelet'],
+                result['use_hilbert'], result['use_spectral'],
+                result['use_order_flow']
+        ]):
+            result['use_hurst'] = True
+            result['use_wavelet'] = True
+            result['use_hilbert'] = True
+            result['use_spectral'] = True
+            result['use_order_flow'] = True
+
+    return result
+
+
 def find_all_available_files(data_dir: str, symbols: str) -> List[Dict]:
     """Find all available files for one or multiple symbols.
     
@@ -533,9 +631,64 @@ tr:hover{{background:#f0f8ff}}
                 print("   ⚠️  No test data, skip")
                 continue
 
+            # Load top_factors early if specified (to intelligently select feature modules)
+            top_factors_set = None
+            optimized_feature_types = args.feature_type
+            if args.use_top_factors:
+                try:
+                    with open(args.use_top_factors, 'r',
+                              encoding='utf-8') as _f:
+                        keep = json.load(_f)
+                    # Support multiple formats:
+                    # 1. top_factors.json format: {"top_factors": [{"name": "..."}, ...]}
+                    # 2. Old format: {"features": [...]}
+                    # 3. Direct list: [...]
+                    if isinstance(keep, dict):
+                        if 'top_factors' in keep:
+                            # Extract names from top_factors array
+                            top_factors_list = keep['top_factors']
+                            if isinstance(top_factors_list, list):
+                                keep = [
+                                    item['name'] if isinstance(item, dict)
+                                    and 'name' in item else item
+                                    for item in top_factors_list
+                                ]
+                        elif 'features' in keep:
+                            keep = keep['features']
+                    if isinstance(keep, list):
+                        top_factors_set = set(keep)
+                        print(
+                            f"   📋 Loaded {len(top_factors_set)} features from top_factors"
+                        )
+
+                        # Analyze which feature modules are needed
+                        module_analysis = analyze_feature_modules(
+                            top_factors_set)
+                        enabled_modules = [
+                            k.replace('use_', '')
+                            for k, v in module_analysis.items() if v
+                        ]
+                        if enabled_modules:
+                            # Build optimized feature_types string
+                            optimized_feature_types = ','.join(enabled_modules)
+                            print(
+                                f"   🎯 Optimized feature modules: {optimized_feature_types}"
+                            )
+                            print(
+                                f"      (Only computing features from: {', '.join(enabled_modules)})"
+                            )
+                        else:
+                            print(
+                                f"   ⚠️ Could not determine feature modules, using original: {args.feature_type}"
+                            )
+                            optimized_feature_types = args.feature_type
+                except Exception as e:
+                    print(f"   ⚠️ Failed to load top_factors: {e}")
+
             # Features
             print("   🧪 Engineering features (fit on train, apply to test)...")
-            if args.feature_type == "baseline":
+            if optimized_feature_types == "baseline" or (
+                    args.feature_type == "baseline" and not top_factors_set):
                 train_df, baseline_engineer = engineer_baseline_features(
                     train_df, baseline_engineer, fit=True)
                 test_df, _ = engineer_baseline_features(test_df,
@@ -543,11 +696,34 @@ tr:hover{{background:#f0f8ff}}
                                                         fit=False)
             else:
                 comp_engineer = comp_engineer or ComprehensiveFeatureEngineer(
-                    feature_types=args.feature_type)
-                train_df = comp_engineer.engineer_all_features(train_df,
-                                                               fit=True)
-                test_df = comp_engineer.engineer_all_features(test_df,
-                                                              fit=False)
+                    feature_types=optimized_feature_types)
+                train_df = comp_engineer.engineer_all_features(
+                    train_df, fit=True, required_features=top_factors_set)
+                test_df = comp_engineer.engineer_all_features(
+                    test_df, fit=False, required_features=top_factors_set)
+
+            # Filter features early if top_factors is specified (before adding targets)
+            if top_factors_set is not None:
+                # Keep only columns that are in top_factors_set, plus non-feature columns (like 'close', 'open', etc.)
+                # Identify feature columns vs data columns
+                data_cols = [
+                    'open', 'high', 'low', 'close', 'volume', 'timestamp',
+                    'datetime'
+                ]
+                original_cols = set(train_df.columns)
+                cols_to_keep = [
+                    c for c in train_df.columns
+                    if c in top_factors_set or c in data_cols
+                    or not pd.api.types.is_numeric_dtype(train_df[c])
+                ]
+                train_df = train_df[cols_to_keep]
+                test_df = test_df[cols_to_keep]
+                removed_count = len(original_cols) - len(cols_to_keep)
+                kept_features = len(
+                    [c for c in cols_to_keep if c in top_factors_set])
+                print(
+                    f"   ✂️ Filtered to {kept_features} top factors (removed {removed_count} unused features)"
+                )
 
             # Targets
             fb = args.forward_bars
@@ -579,19 +755,9 @@ tr:hover{{background:#f0f8ff}}
                 if pd.api.types.is_numeric_dtype(train_labeled[c])
             ]
 
-            # Optional top-factors
-            if args.use_top_factors:
-                try:
-                    with open(args.use_top_factors, 'r',
-                              encoding='utf-8') as _f:
-                        keep = json.load(_f)
-                    if isinstance(keep, dict) and 'features' in keep:
-                        keep = keep['features']
-                    if isinstance(keep, list):
-                        s = set(keep)
-                        feat_cols = [c for c in feat_cols if c in s]
-                except Exception:
-                    pass
+            # If top_factors was already applied earlier, filter feat_cols to match
+            if top_factors_set is not None:
+                feat_cols = [c for c in feat_cols if c in top_factors_set]
 
             # Optional Top-K
             if args.topk and args.topk > 0 and len(feat_cols) > args.topk:
@@ -744,6 +910,10 @@ tr:hover{{background:#f0f8ff}}
                 if groups_series is not None else None)
 
             combined_returns = pd.concat([y_return_train, y_return_test])
+            # Remove duplicate indices (keep last, which should be from test set)
+            if combined_returns.index.duplicated().any():
+                combined_returns = combined_returns[~combined_returns.index.
+                                                    duplicated(keep='last')]
             combined_cls_series, _, _, _ = rolling_quantile_classification_labels(
                 combined_returns, **quantile_kwargs)
             if combined_cls_series.nunique() < 2:
@@ -751,6 +921,10 @@ tr:hover{{background:#f0f8ff}}
                                               > 0).astype(int).values,
                                              index=y_return_test.index)
             else:
+                # Handle duplicate indices in combined_cls_series before reindexing
+                if combined_cls_series.index.duplicated().any():
+                    combined_cls_series = combined_cls_series[
+                        ~combined_cls_series.index.duplicated(keep='last')]
                 y_cls_test_quant = combined_cls_series.reindex(
                     y_return_test.index)
 

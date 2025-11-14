@@ -6,7 +6,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 
 try:
     import talib
@@ -379,7 +379,7 @@ COMMON_DERIVED_COLUMNS = {
 }
 
 
-def add_common_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+def add_common_derived_features(df: pd.DataFrame, required_features: Optional[set] = None) -> pd.DataFrame:
     """Attach commonly used derived features built on top of basic indicators."""
 
     if df.empty:
@@ -389,18 +389,23 @@ def add_common_derived_features(df: pd.DataFrame) -> pd.DataFrame:
 
     close = result["close"]
 
-    if "returns" not in result.columns:
-        result["returns"] = close.pct_change()
+    # 只在需要时计算特征
+    if not required_features or "returns" in required_features:
+        if "returns" not in result.columns:
+            result["returns"] = close.pct_change()
 
-    if "log_returns" not in result.columns:
-        shifted = close.shift(1).replace(0, np.nan)
-        result["log_returns"] = np.log(close.replace(0, np.nan) / shifted)
+    if not required_features or "log_returns" in required_features:
+        if "log_returns" not in result.columns:
+            shifted = close.shift(1).replace(0, np.nan)
+            result["log_returns"] = np.log(close.replace(0, np.nan) / shifted)
 
-    if "price_change" not in result.columns:
-        result["price_change"] = close.diff()
+    if not required_features or "price_change" in required_features:
+        if "price_change" not in result.columns:
+            result["price_change"] = close.diff()
 
-    if "volatility" not in result.columns:
-        result["volatility"] = _maybe_talib_std(result["returns"], 20)
+    if not required_features or "volatility" in required_features:
+        if "volatility" not in result.columns:
+            result["volatility"] = _maybe_talib_std(result["returns"], 20)
 
     if "bb_position" not in result.columns and {"bb_upper", "bb_lower"
                                                 }.issubset(result.columns):

@@ -671,10 +671,12 @@ class BaselineFeatureEngineer:
 
         return df
 
-    def engineer_features(self,
-                          df: pd.DataFrame,
-                          *,
-                          fit: bool = True) -> pd.DataFrame:
+    def engineer_features(
+            self,
+            df: pd.DataFrame,
+            *,
+            fit: bool = True,
+            required_features: Optional[set] = None) -> pd.DataFrame:
         if not {"open", "high", "low", "close", "volume"}.issubset(df.columns):
             raise ValueError(
                 "DataFrame must contain open, high, low, close, volume columns"
@@ -764,11 +766,10 @@ class BaselineFeatureEngineer:
         volatility_regime_window = 200
         volatility_regime_threshold = 0.7
         atr_quantile_70 = data["atr"].rolling(
-            window=volatility_regime_window, min_periods=1
-        ).quantile(volatility_regime_threshold)
-        data["volatility_regime"] = (
-            data["atr"] > atr_quantile_70
-        ).astype(int).fillna(0)
+            window=volatility_regime_window,
+            min_periods=1).quantile(volatility_regime_threshold)
+        data["volatility_regime"] = (data["atr"]
+                                     > atr_quantile_70).astype(int).fillna(0)
 
         # Volatility skew features
         returns = data["close"].pct_change().fillna(0.0)
@@ -1019,6 +1020,20 @@ class BaselineFeatureEngineer:
         keep_cols = [c for c in keep_cols if c in data.columns]
         data = data[keep_cols]
 
+        # 如果指定了required_features，只保留需要的特征
+        if required_features is not None:
+            data_cols = {
+                'open', 'high', 'low', 'close', 'volume', 'timestamp',
+                'datetime'
+            }
+            # 保留数据列和需要的特征列
+            cols_to_keep = [
+                c for c in data.columns
+                if c in data_cols or c in required_features
+                or not pd.api.types.is_numeric_dtype(data[c])
+            ]
+            data = data[cols_to_keep]
+
         if self.enable_diagnostics:
             diag_cols = [c for c in all_feature_cols if c in data.columns]
             self._run_diagnostics(data, diag_cols)
@@ -1066,13 +1081,17 @@ class BaselineFeatureEngineer:
 
 
 def engineer_baseline_features(
-        df: pd.DataFrame,
-        engineer: Optional[BaselineFeatureEngineer] = None,
-        *,
-        fit: bool = True) -> Tuple[pd.DataFrame, BaselineFeatureEngineer]:
+    df: pd.DataFrame,
+    engineer: Optional[BaselineFeatureEngineer] = None,
+    *,
+    fit: bool = True,
+    required_features: Optional[set] = None
+) -> Tuple[pd.DataFrame, BaselineFeatureEngineer]:
     if engineer is None:
         engineer = BaselineFeatureEngineer()
-    out = engineer.engineer_features(df, fit=fit)
+    out = engineer.engineer_features(df,
+                                     fit=fit,
+                                     required_features=required_features)
     return out, engineer
 
 

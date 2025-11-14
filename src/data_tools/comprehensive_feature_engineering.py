@@ -168,7 +168,8 @@ class ComprehensiveFeatureEngineer:
 
     def engineer_all_features(self,
                               data: pd.DataFrame,
-                              fit: bool = True) -> pd.DataFrame:
+                              fit: bool = True,
+                              required_features: Optional[set] = None) -> pd.DataFrame:
         """
         使用可选的特征工程模块生成特征
 
@@ -178,11 +179,20 @@ class ComprehensiveFeatureEngineer:
         - enhanced: 增强版特征（WPT/Hurst/Hilbert/光谱/订单流）
         - dl_sequence: 深度学习序列特征
         - comprehensive: 所有特征合并
+        
+        Args:
+            required_features: 如果指定，只保留这些特征（立即过滤，减少内存占用）
         """
-        print(f"🚀 开始特征工程 (feature_types: {self.feature_types})...")
+        if required_features:
+            print(f"🚀 开始特征工程 (feature_types: {self.feature_types}, 仅生成 {len(required_features)} 个指定特征)...")
+        else:
+            print(f"🚀 开始特征工程 (feature_types: {self.feature_types})...")
         df = data.copy()
         initial_features = len(df.columns)
         prev_count = initial_features
+        
+        # 数据列（必须保留）
+        data_cols = {'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'}
 
         baseline_features = 0
         default_features = 0  # TA-Lib + base_indicators
@@ -190,15 +200,37 @@ class ComprehensiveFeatureEngineer:
         enhanced_features = 0
         dl_features = 0
 
+        # 辅助函数：过滤特征
+        def _filter_features(df_in: pd.DataFrame, module_name: str) -> pd.DataFrame:
+            """在每个模块生成后立即过滤，只保留需要的特征"""
+            if required_features is None:
+                return df_in
+            # 保留数据列和需要的特征列
+            cols_to_keep = [
+                c for c in df_in.columns
+                if c in data_cols or c in required_features or not pd.api.types.is_numeric_dtype(df_in[c])
+            ]
+            filtered = df_in[cols_to_keep]
+            kept_count = len([c for c in cols_to_keep if c in required_features])
+            if kept_count < len(df_in.columns) - len(data_cols):
+                print(f"     ✂️ {module_name}: 保留 {kept_count} 个需要的特征，移除 {len(df_in.columns) - len(cols_to_keep)} 个不需要的特征")
+            return filtered
+
         # 1. 基线特征工程
         if self.use_baseline:
             print("  📊 Baseline特征工程...")
             try:
                 df, self.baseline_engineer = engineer_baseline_features(
-                    df, self.baseline_engineer, fit=fit)
+                    df, self.baseline_engineer, fit=fit, required_features=required_features)
                 baseline_features = len(df.columns) - prev_count
-                prev_count = len(df.columns)
-                print(f"     ✅ Baseline特征: {baseline_features} 个")
+                # 如果已经通过 required_features 过滤，就不需要再次过滤
+                if required_features:
+                    kept_count = len([c for c in df.columns if c in required_features])
+                    print(f"     ✅ Baseline特征: {kept_count} 个需要的特征已计算")
+                else:
+                    df = _filter_features(df, "Baseline")
+                    prev_count = len(df.columns)
+                    print(f"     ✅ Baseline特征: {baseline_features} 个生成，{len([c for c in df.columns if c in (required_features or set())])} 个保留")
             except Exception as e:
                 print(f"     ⚠️  Baseline特征失败: {e}")
 
@@ -208,10 +240,17 @@ class ComprehensiveFeatureEngineer:
             try:
                 if self.basic_engineer is None:
                     self.basic_engineer = FeatureEngineer()
-                df = self.basic_engineer.add_technical_indicators(df)
+                # 传递 required_features，只计算需要的特征
+                df = self.basic_engineer.add_technical_indicators(df, required_features)
                 default_features = len(df.columns) - prev_count
-                prev_count = len(df.columns)
-                print(f"     ✅ 默认传统指标特征: {default_features} 个")
+                # 如果已经通过 required_features 过滤，就不需要再次过滤
+                if required_features:
+                    kept_count = len([c for c in df.columns if c in required_features])
+                    print(f"     ✅ 默认传统指标特征: {kept_count} 个需要的特征已计算")
+                else:
+                    df = _filter_features(df, "Default")
+                    prev_count = len(df.columns)
+                    print(f"     ✅ 默认传统指标特征: {default_features} 个生成，{len([c for c in df.columns if c in (required_features or set())])} 个保留")
             except Exception as e:
                 print(f"     ⚠️  默认传统指标特征失败: {e}")
 
@@ -222,12 +261,18 @@ class ComprehensiveFeatureEngineer:
                 if self.alpha101_engineer is None:
                     self.alpha101_engineer = Alpha101FeatureEngineer()
                 alpha_source = df[["open", "high", "low", "close", "volume"]]
-                alpha_df = self.alpha101_engineer.compute(alpha_source)
+                alpha_df = self.alpha101_engineer.compute(alpha_source, required_features=required_features)
                 alpha_df = alpha_df.reindex(df.index)
                 df = df.join(alpha_df, how="left")
                 alpha101_features = len(df.columns) - prev_count
-                prev_count = len(df.columns)
-                print(f"     ✅ Alpha101特征: {alpha101_features} 个")
+                # 如果已经通过 required_features 过滤，就不需要再次过滤
+                if required_features:
+                    kept_count = len([c for c in df.columns if c in required_features])
+                    print(f"     ✅ Alpha101特征: {kept_count} 个需要的特征已计算")
+                else:
+                    df = _filter_features(df, "Alpha101")
+                    prev_count = len(df.columns)
+                    print(f"     ✅ Alpha101特征: {alpha101_features} 个生成，{len([c for c in df.columns if c in (required_features or set())])} 个保留")
             except Exception as e:
                 print(f"     ⚠️  Alpha101特征失败: {e}")
 
@@ -248,46 +293,96 @@ class ComprehensiveFeatureEngineer:
                 fast_mode = os.getenv("ENHANCED_FAST",
                                       "0").lower() in ("1", "true", "yes")
 
-                def _run(step_name, fn, df_in):
+                def _run(step_name, fn, df_in, module_required_features=None):
                     t0 = time.time()
                     print(f"     ▶️ {step_name} 开始...")
-                    out = fn(df_in)
+                    # 如果指定了required_features，尝试只计算需要的特征
+                    # 注意：enhanced模块的方法可能还不支持required_features参数
+                    # 所以先计算所有特征，然后立即过滤
+                    try:
+                        # 尝试传递required_features（如果方法支持）
+                        if module_required_features is not None and hasattr(fn, '__code__'):
+                            # 检查方法是否接受required_features参数
+                            import inspect
+                            sig = inspect.signature(fn)
+                            if 'required_features' in sig.parameters:
+                                out = fn(df_in, required_features=module_required_features)
+                            else:
+                                out = fn(df_in)
+                                # 立即过滤
+                                if module_required_features:
+                                    data_cols = {'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'}
+                                    cols_to_keep = [
+                                        c for c in out.columns
+                                        if c in data_cols or c in module_required_features or not pd.api.types.is_numeric_dtype(out[c])
+                                    ]
+                                    out = out[cols_to_keep]
+                        else:
+                            out = fn(df_in)
+                            # 如果没有传递module_required_features，使用全局required_features过滤
+                            if required_features:
+                                out = _filter_features(out, step_name)
+                    except TypeError:
+                        # 如果方法不支持required_features参数，使用默认方式
+                        out = fn(df_in)
+                        if required_features:
+                            out = _filter_features(out, step_name)
                     dt = time.time() - t0
+                    kept_count = len([c for c in out.columns if c in (required_features or set())])
                     print(
-                        f"     ⏱ {step_name} 完成，用时 {dt:.2f}s，新列数 {len(out.columns) - len(df_in.columns)}"
+                        f"     ⏱ {step_name} 完成，用时 {dt:.2f}s，保留 {kept_count} 个需要的特征"
                     )
                     return out
 
+                # 为每个模块提取需要的特征
+                hurst_features = None
+                wavelet_features = None
+                hilbert_features = None
+                spectral_features = None
+                order_flow_features = None
+                
+                if required_features:
+                    hurst_features = {f for f in required_features if f.startswith('hurst_') or 'hurst' in f.lower()}
+                    wavelet_features = {f for f in required_features if f.startswith('wpt_') or 'wavelet' in f.lower()}
+                    hilbert_features = {f for f in required_features if f.startswith('hilbert_') or 'hilbert' in f.lower() or 'phase_' in f or 'frequency_' in f}
+                    spectral_features = {f for f in required_features if f.startswith('spectral_') or 'fft_' in f or 'psd_' in f}
+                    order_flow_features = {f for f in required_features if 'cvd' in f.lower() or 'ofi' in f.lower() or 'order_flow' in f.lower() or 'taker_buy' in f.lower()}
+
                 # Hurst（较快）
                 if self.use_enhanced or self.use_hurst:
-                    df = _run("Hurst",
-                              self.enhanced_engineer.add_hurst_features, df)
+                    if not required_features or hurst_features:
+                        df = _run("Hurst",
+                                  self.enhanced_engineer.add_hurst_features, df, hurst_features)
 
                 # Wavelet（较重）
                 if self.use_enhanced or self.use_wavelet:
                     if not fast_mode:
-                        df = _run(
-                            "WaveletPacket",
-                            self.enhanced_engineer.add_wavelet_packet_features,
-                            df)
+                        if not required_features or wavelet_features:
+                            df = _run(
+                                "WaveletPacket",
+                                self.enhanced_engineer.add_wavelet_packet_features,
+                                df, wavelet_features)
 
                 # Spectral（较重）
                 if self.use_enhanced or self.use_spectral:
                     if not fast_mode:
-                        df = _run("Spectral",
-                                  self.enhanced_engineer.add_spectral_features,
-                                  df)
+                        if not required_features or spectral_features:
+                            df = _run("Spectral",
+                                      self.enhanced_engineer.add_spectral_features,
+                                      df, spectral_features)
 
                 # Hilbert
                 if self.use_enhanced or self.use_hilbert:
-                    df = _run("Hilbert",
-                              self.enhanced_engineer.add_hilbert_features, df)
+                    if not required_features or hilbert_features:
+                        df = _run("Hilbert",
+                                  self.enhanced_engineer.add_hilbert_features, df, hilbert_features)
 
                 # Order Flow
                 if self.use_enhanced or self.use_order_flow:
-                    df = _run("OrderFlow",
-                              self.enhanced_engineer.add_order_flow_features,
-                              df)
+                    if not required_features or order_flow_features:
+                        df = _run("OrderFlow",
+                                  self.enhanced_engineer.add_order_flow_features,
+                                  df, order_flow_features)
 
                 enhanced_features = len(df.columns) - prev_count
                 prev_count = len(df.columns)
