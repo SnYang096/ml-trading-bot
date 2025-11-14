@@ -2187,6 +2187,11 @@ def _build_rolling_report_html(
               or (", ".join(config.get("symbols", [])) if isinstance(
                   config.get("symbols"), list) else config.get("symbols"))
               or "N/A")
+    # Ensure symbol is a string and properly formatted
+    if not isinstance(symbol, str):
+        symbol = str(symbol) if symbol else "N/A"
+    # Clean up symbol string (remove any special characters that might cause issues)
+    symbol = symbol.strip()
     total_periods = summary.get(f"total_{report_type}s_tested",
                                 len(results_df))
     avg_return = summary.get("avg_return", 0)
@@ -2324,11 +2329,16 @@ def _build_rolling_report_html(
     feature_importance_section = _build_rolling_feature_importance_section(
         summary)
 
+    # Ensure symbol is properly formatted for HTML
+    import html as html_module
+    symbol_display = html_module.escape(
+        str(symbol)) if symbol and symbol != "N/A" else "N/A"
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{report_title}: {symbol}</title>
+    <title>{report_title}: {symbol_display}</title>
     <style>
         body {{
             font-family: Arial, sans-serif;
@@ -2396,12 +2406,12 @@ def _build_rolling_report_html(
 </head>
 <body>
     <div class="container">
-        <h1>📊 {report_title}: {symbol}</h1>
+        <h1>📊 {report_title}: {symbol_display}</h1>
         
         <div class="info-box">
             <h3>📋 Summary</h3>
             <table>
-                <tr><th>Symbol</th><td>{symbol}</td></tr>
+                <tr><th>Symbol</th><td>{symbol_display}</td></tr>
                 <tr><th>Report Type</th><td>{report_type.capitalize()} Rolling Training</td></tr>
                 <tr><th>Training Period</th><td>{time_range_str}</td></tr>
                 <tr><th>Total Periods Tested</th><td>{total_periods}</td></tr>
