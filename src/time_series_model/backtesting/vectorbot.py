@@ -61,9 +61,30 @@ class VectorBotBacktest:
         self.load_model()
 
     def load_model(self) -> None:
-        """Load the trained model."""
-        print(f"Loading trained model from {self.model_path}...")
-
+        """Load the trained model.
+        
+        Supports two formats:
+        1. Legacy format: pickle file with strategy, data_loader, etc. (from make train)
+        2. Rolling format: directory with QuantTradingModel pipelines (from make rolling)
+        """
+        print(f"Loading model from {self.model_path}...")
+        
+        # Check if it's a directory (rolling training format)
+        if os.path.isdir(self.model_path):
+            # Try to load from latest directory or the directory itself
+            latest_dir = os.path.join(self.model_path, "latest")
+            if os.path.exists(latest_dir):
+                model_dir = latest_dir
+                print(f"   Found 'latest' directory, using models from: {model_dir}")
+            else:
+                model_dir = self.model_path
+                print(f"   Loading models from directory: {model_dir}")
+            
+            # Load rolling training models
+            self._load_rolling_models(model_dir)
+            return
+        
+        # Legacy format: single pickle file
         with open(self.model_path, "rb") as f:
             model_data = pickle.load(f)
 
@@ -74,8 +95,102 @@ class VectorBotBacktest:
         self.metrics = model_data["metrics"]
 
         print("✅ Model loaded successfully")
-        print(f"   Training date: {model_data['training_date']}")
-        print(f"   Data info: {model_data['data_info']}")
+        print(f"   Training date: {model_data.get('training_date', 'N/A')}")
+        print(f"   Data info: {model_data.get('data_info', 'N/A')}")
+    
+    def _load_rolling_models(self, model_dir: str) -> None:
+        """Load models from rolling training directory."""
+        from time_series_model.models.quant_trading_model import QuantTradingModel
+        
+        # Load classification pipeline
+        cls_path = os.path.join(model_dir, "classification_pipeline.pkl")
+        if not os.path.exists(cls_path):
+            raise FileNotFoundError(
+                f"Classification pipeline not found: {cls_path}\n"
+                f"Expected files in {model_dir}:\n"
+                f"  - classification_pipeline.pkl\n"
+                f"  - return_pipeline.pkl\n"
+                f"  - vol_pipeline.pkl\n"
+                f"  - scalers.pkl (optional)"
+            )
+        
+        print(f"   Loading classification pipeline: {cls_path}")
+        self.cls_pipeline = QuantTradingModel.load(cls_path)
+        
+        print(f"   Loading return pipeline: {os.path.join(model_dir, 'return_pipeline.pkl')}")
+        self.return_pipeline = QuantTradingModel.load(os.path.join(model_dir, "return_pipeline.pkl"))
+        
+        print(f"   Loading volatility pipeline: {os.path.join(model_dir, 'vol_pipeline.pkl')}")
+        self.vol_pipeline = QuantTradingModel.load(os.path.join(model_dir, "vol_pipeline.pkl"))
+        
+        # Load scalers if available
+        scaler_path = os.path.join(model_dir, "scalers.pkl")
+        if os.path.exists(scaler_path):
+            print(f"   Loading scalers: {scaler_path}")
+            import joblib
+            self.scalers = joblib.load(scaler_path)
+        else:
+            self.scalers = None
+        
+        # Load features list if available
+        # Try .txt first (most common format, or symlink to .txt)
+        features_txt = os.path.join(model_dir, "features.txt")
+        features_pkl = os.path.join(model_dir, "features.pkl")
+        
+        # Check if features.pkl is actually a symlink to .txt file
+        if os.path.exists(features_pkl) and os.path.islink(features_pkl):
+            link_target = os.readlink(features_pkl)
+            # Resolve relative path
+            if not os.path.isabs(link_target):
+                link_target = os.path.join(model_dir, link_target)
+            # If it points to a .txt file, read it as text
+            if link_target.endswith('.txt') and os.path.exists(link_target):
+                try:
+                    with open(link_target, 'r') as f:
+                        self.feature_cols = [line.strip() for line in f if line.strip()]
+                    print(f"   Loaded {len(self.feature_cols)} features from {link_target}")
+                except Exception as e:
+                    print(f"   ⚠️ Failed to load features from symlink: {e}")
+                    self.feature_cols = self.cls_pipeline.feature_cols or []
+            else:
+                # Try to load as pickle
+                try:
+                    import joblib
+                    self.feature_cols = joblib.load(features_pkl)
+                    print(f"   Loaded {len(self.feature_cols)} features from features.pkl")
+                except Exception as e:
+                    print(f"   ⚠️ Failed to load features.pkl: {e}")
+                    self.feature_cols = self.cls_pipeline.feature_cols or []
+        elif os.path.exists(features_txt):
+            try:
+                with open(features_txt, 'r') as f:
+                    self.feature_cols = [line.strip() for line in f if line.strip()]
+                print(f"   Loaded {len(self.feature_cols)} features from features.txt")
+            except Exception as e:
+                print(f"   ⚠️ Failed to load features.txt: {e}")
+                self.feature_cols = self.cls_pipeline.feature_cols or []
+        elif os.path.exists(features_pkl):
+            try:
+                import joblib
+                self.feature_cols = joblib.load(features_pkl)
+                print(f"   Loaded {len(self.feature_cols)} features from features.pkl")
+            except Exception as e:
+                print(f"   ⚠️ Failed to load features.pkl: {e}")
+                self.feature_cols = self.cls_pipeline.feature_cols or []
+        else:
+            # Use feature_cols from pipeline
+            self.feature_cols = self.cls_pipeline.feature_cols or []
+        
+        if not self.feature_cols:
+            print("   ⚠️ Warning: No feature columns found, will extract from model metadata")
+        
+        # Mark as rolling format
+        self.is_rolling_format = True
+        self.model_dir = model_dir
+        
+        print("✅ Rolling models loaded successfully")
+        print(f"   Feature count: {len(self.feature_cols)}")
+        print(f"   Forward bars: {self.cls_pipeline.forward_bars}")
 
     def calculate_position_size(self, signal_strength: float,
                                 current_price: float) -> float:
@@ -227,7 +342,12 @@ class VectorBotBacktest:
         print("🚀 Starting VectorBot Backtest")
         print("=" * 50)
 
-        # Get 5T data for backtesting
+        # Handle rolling format vs legacy format
+        if hasattr(self, 'is_rolling_format') and self.is_rolling_format:
+            self._run_rolling_backtest(start_date, end_date, output_dir)
+            return
+
+        # Legacy format: Get 5T data for backtesting
         data_5t = self.engineered_data["5T"]
 
         # Filter by date range if specified
@@ -564,6 +684,54 @@ class VectorBotBacktest:
         print(f"   Max Drawdown: {self.max_drawdown * 100:.2f}%")
         print(f"   Final Equity: {final_equity:.2f}")
 
+    def _run_rolling_backtest(self,
+                              start_date: str | None = None,
+                              end_date: str | None = None,
+                              output_dir: str | None = None) -> None:
+        """Run backtest using rolling training models.
+        
+        This requires:
+        1. Data files to be available in data/parquet_data
+        2. Feature engineering to be performed (using the same feature engineering as training)
+        """
+        print("🔄 Running backtest with rolling training models")
+        print("⚠️  Note: Rolling format backtest requires data loading and feature engineering")
+        print("    This is a simplified implementation. For full backtest analysis,")
+        print("    please use the monthly_results.csv from rolling training.")
+        
+        # For now, provide a helpful message
+        print("\n💡 Rolling training already includes backtest results!")
+        print(f"   Check: {os.path.dirname(os.path.dirname(self.model_dir))}/monthly_results.csv")
+        print(f"   Or view HTML report: {os.path.dirname(os.path.dirname(self.model_dir))}/monthly_rolling_report.html")
+        print("\n   To use vectorbot with rolling models, you need to:")
+        print("   1. Load data files from data/parquet_data")
+        print("   2. Perform feature engineering (same as training)")
+        print("   3. Use the loaded pipelines for prediction")
+        print("   4. Generate trading signals and execute backtest")
+        print("\n   This full implementation is planned for future development.")
+        
+        # Set empty results for now
+        self.trades = []
+        self.results = {
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "win_rate": 0.0,
+            "total_pnl": 0.0,
+            "total_return": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "profit_factor": 0.0,
+            "sharpe_ratio": 0.0,
+            "max_drawdown": 0.0,
+            "final_equity": self.initial_capital,
+            "initial_capital": self.initial_capital,
+        }
+        
+        # Save results (even if empty) to show the structure
+        if output_dir:
+            self.save_results(output_dir, start_date=start_date, end_date=end_date)
+
     def save_results(self,
                      output_dir: str | None,
                      *,
@@ -643,9 +811,15 @@ def main(argv: List[str] | None = None) -> None:
         print("❌ No model path provided. Use --model or set MODEL_PATH env.")
         return
 
+    # Handle Docker path mapping: if path starts with /home/yin/trading/ml_trading_bot, map to /workspace
+    if model_path.startswith("/home/yin/trading/ml_trading_bot"):
+        model_path = model_path.replace("/home/yin/trading/ml_trading_bot", "/workspace", 1)
+        print(f"   📍 Mapped model path to Docker: {model_path}")
+
     if not os.path.exists(model_path):
         print(f"❌ Model not found: {model_path}")
         print("Please run `make train` first to produce the model bundle (.pkl)")
+        print("   Or use `make rolling` to produce rolling training models")
         return
 
     print(f"Symbol: {args.symbol}")

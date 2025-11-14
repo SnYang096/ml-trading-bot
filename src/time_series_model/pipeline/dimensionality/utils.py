@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
+import pandas as pd
 
 
 def _slugify(value: str, default: str = "unknown") -> str:
@@ -62,3 +65,59 @@ def _derive_feature_insights(stage_baseline: Dict,
         "candidate_stage": "stage3_representatives",
         "recommended_stage": "stage3_representatives" if effective else "stage1_all_features",
     }
+
+
+def load_top_factors_list(path: str) -> List[str]:
+    """Load top factors from JSON file.
+    
+    Args:
+        path: Path to top_factors.json file
+        
+    Returns:
+        List of feature names
+    """
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    if isinstance(data, dict):
+        if 'top_factors' in data:
+            top_factors_list = data['top_factors']
+            if isinstance(top_factors_list, list):
+                return [
+                    item.get('name', item) if isinstance(item, dict) else item
+                    for item in top_factors_list
+                ]
+        elif 'features' in data:
+            return data['features'] if isinstance(data['features'], list) else []
+    elif isinstance(data, list):
+        return data
+    
+    return []
+
+
+def filter_engineered_by_topk(engineered_data: Dict[str, pd.DataFrame], top_list: List[str]) -> Dict[str, pd.DataFrame]:
+    """Filter engineered data to only include top-k features.
+    
+    Args:
+        engineered_data: Dictionary of {timeframe: DataFrame} with engineered features
+        top_list: List of feature names to keep
+        
+    Returns:
+        Filtered dictionary with only top-k features
+    """
+    if not top_list:
+        return engineered_data
+    
+    top_set = set(top_list)
+    result = {}
+    
+    for key, df in engineered_data.items():
+        # Keep only columns in top_list plus data columns
+        data_cols = {'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'}
+        cols_to_keep = [
+            c for c in df.columns
+            if c in top_set or c in data_cols or not pd.api.types.is_numeric_dtype(df[c])
+        ]
+        result[key] = df[cols_to_keep]
+    
+    return result
