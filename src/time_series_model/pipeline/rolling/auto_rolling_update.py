@@ -34,7 +34,6 @@ from time_series_model.pipeline.dimensionality.utils import (
     load_top_factors_list,
     filter_engineered_by_topk,
 )
-from time_series_model.models.autoencoder import UnifiedAutoencoder
 from time_series_model.pipeline.training.classification_model_trainer import ClassificationModelTrainer
 from time_series_model.pipeline.training.label_utils import (
     log_return_magnitude,
@@ -200,20 +199,6 @@ def main() -> None:
         "Path to top_factors JSON (from dim-compare). If provided, filters engineered features to this Top-K list.",
     )
     parser.add_argument(
-        "--use-autoencoder",
-        type=str,
-        default=None,
-        help=
-        "Path to a trained autoencoder .pth (UnifiedAutoencoder). If provided, engineered features will be transformed to compressed embeddings before training.",
-    )
-    parser.add_argument(
-        "--encoding-dim",
-        type=int,
-        default=None,
-        help=
-        "Encoding dimension of the provided autoencoder (required with --use-autoencoder)",
-    )
-    parser.add_argument(
         "--forward-bars",
         type=int,
         default=3,
@@ -237,10 +222,6 @@ def main() -> None:
     print(f"   Forward Bars (Horizon): {args.forward_bars}")
     if args.use_top_factors:
         print(f"   Top Factors: {args.use_top_factors}")
-    if args.use_autoencoder:
-        print(
-            f"   Autoencoder: {args.use_autoencoder} (dim={args.encoding_dim})"
-        )
 
     # Find all available files
     print(f"\n🔍 Finding all available data files...")
@@ -433,55 +414,6 @@ def main() -> None:
                     )
             except Exception as exc:  # noqa: BLE001
                 print(f"   ⚠️ Failed to apply Top-K filter: {exc}")
-
-        # Optionally compress features using a provided autoencoder
-        if args.use_autoencoder:
-            if not args.encoding_dim:
-                print(
-                    "   ❌ --encoding-dim is required when --use-autoencoder is provided"
-                )
-                continue
-            try:
-                import torch
-                feature_cols = get_feature_columns(train_df)
-                input_dim = len(feature_cols)
-                encoding_dim = int(args.encoding_dim)
-                autoencoder = UnifiedAutoencoder(
-                    input_dim,
-                    encoding_dim,
-                    architecture="production",
-                )
-                state = torch.load(args.use_autoencoder, map_location="cpu")
-                autoencoder.load_state_dict(state)
-                autoencoder.eval()
-
-                def _transform_df(df: pd.DataFrame,
-                                  feature_cols: list) -> pd.DataFrame:
-                    X = df[feature_cols].values
-                    with torch.no_grad():
-                        X_tensor = torch.as_tensor(X, dtype=torch.float32)
-                        _, Z = autoencoder(X_tensor)
-                        z_np = Z.numpy()
-                    cols = [
-                        f"compressed_feature_{i}" for i in range(z_np.shape[1])
-                    ]
-                    df_transformed = df.drop(columns=feature_cols)
-                    df_compressed = pd.DataFrame(z_np,
-                                                 index=df.index,
-                                                 columns=cols)
-                    return pd.concat([df_transformed, df_compressed], axis=1)
-
-                print(
-                    f"   🔄 Applying autoencoder compression ({input_dim} → {encoding_dim})..."
-                )
-                train_df = _transform_df(train_df, feature_cols)
-                test_df = _transform_df(test_df, feature_cols)
-                print(
-                    f"   ✓ Applied autoencoder compression: {len(get_feature_columns(train_df))} compressed features"
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(f"   ❌ Failed to apply autoencoder compression: {exc}")
-                continue
 
         # Label construction following doc-aligned targets
         print(f"\n4. Creating labels (forward_bars={args.forward_bars})...")

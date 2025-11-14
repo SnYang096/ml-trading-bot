@@ -278,20 +278,6 @@ def main() -> None:
         default=None,
         help=
         "Ranking CSV(feature,score) or JSON list; fallback to Spearman |IC|")
-    parser.add_argument(
-        "--use-autoencoder",
-        type=str,
-        default=None,
-        help=
-        "Path to a trained autoencoder .pth (UnifiedAutoencoder). If provided, engineered features will be transformed to compressed embeddings before training."
-    )
-    parser.add_argument(
-        "--encoding-dim",
-        type=int,
-        default=None,
-        help=
-        "Encoding dimension of the provided autoencoder (required with --use-autoencoder)"
-    )
     parser.add_argument("--gpu", action="store_true", default=True)
     args = parser.parse_args()
 
@@ -317,17 +303,6 @@ def main() -> None:
     print(f"📊 Rolling training with symbol(s): {symbols_str}")
     if len(symbol_list) > 1:
         print(f"   Multi-asset training: {len(symbol_list)} assets")
-
-    # Validate autoencoder arguments
-    if args.use_autoencoder and not args.encoding_dim:
-        print(
-            "❌ --encoding-dim is required when --use-autoencoder is provided")
-        return
-
-    if args.use_autoencoder:
-        print(
-            f"   Autoencoder: {args.use_autoencoder} (dim={args.encoding_dim})"
-        )
 
     files = find_all_available_files(args.data_dir, args.symbol)
 
@@ -899,69 +874,9 @@ tr:hover{{background:#f0f8ff}}
                         ranked = feat_cols
                 feat_cols = ranked[:args.topk]
 
-            # Optional Autoencoder compression
-            if args.use_autoencoder:
-                try:
-                    import torch
-                    from time_series_model.models.autoencoder import UnifiedAutoencoder
-
-                    print(
-                        f"   🔄 Applying autoencoder compression ({len(feat_cols)} → {args.encoding_dim})..."
-                    )
-
-                    # Prepare features for autoencoder
-                    X_train_raw = train_labeled[feat_cols].values
-                    X_test_raw = test_labeled[feat_cols].values
-
-                    # Standardize features (required for autoencoder)
-                    scaler_ae = StandardScaler()
-                    X_train_scaled = scaler_ae.fit_transform(X_train_raw)
-                    X_test_scaled = scaler_ae.transform(X_test_raw)
-
-                    # Load autoencoder
-                    input_dim = len(feat_cols)
-                    encoding_dim = int(args.encoding_dim)
-                    autoencoder = UnifiedAutoencoder(
-                        input_dim,
-                        encoding_dim,
-                        architecture="production",
-                    )
-                    state = torch.load(args.use_autoencoder,
-                                       map_location="cpu")
-                    autoencoder.load_state_dict(state)
-                    autoencoder.eval()
-
-                    # Transform features
-                    with torch.no_grad():
-                        X_train_tensor = torch.as_tensor(X_train_scaled,
-                                                         dtype=torch.float32)
-                        X_test_tensor = torch.as_tensor(X_test_scaled,
-                                                        dtype=torch.float32)
-                        _, Z_train = autoencoder(X_train_tensor)
-                        _, Z_test = autoencoder(X_test_tensor)
-                        X_train = Z_train.numpy()
-                        X_test = Z_test.numpy()
-
-                    # Update feature columns for compressed features
-                    feat_cols = [
-                        f"compressed_feature_{i}" for i in range(encoding_dim)
-                    ]
-
-                    print(
-                        f"   ✓ Applied autoencoder compression: {len(feat_cols)} compressed features"
-                    )
-                except Exception as exc:
-                    print(
-                        f"   ⚠️ Failed to apply autoencoder compression: {exc}"
-                    )
-                    print("   Falling back to original features")
-                    # Fall back to original features
-                    X_train = train_labeled[feat_cols].values
-                    X_test = test_labeled[feat_cols].values
-            else:
-                # Use original features
-                X_train = train_labeled[feat_cols].values
-                X_test = test_labeled[feat_cols].values
+            # Use original features
+            X_train = train_labeled[feat_cols].values
+            X_test = test_labeled[feat_cols].values
 
             X_train_df = pd.DataFrame(X_train,
                                       index=train_labeled.index,
