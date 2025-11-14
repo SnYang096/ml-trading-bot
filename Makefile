@@ -413,32 +413,10 @@ ROLLING_TOPK_SOURCE ?=
 ROLLING_USE_AUTOENCODER ?=
 ROLLING_ENCODING_DIM ?=
 
-AUTO_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
-AUTO_COMPARE_START ?= $(START_DATE)
-AUTO_COMPARE_END ?= $(END_DATE)
-AUTO_TRAIN_START ?= $(START_DATE)
-AUTO_TRAIN_END ?= $(END_DATE)
-AUTO_ROLLING_START ?= $(ROLLING_START)
-AUTO_ROLLING_END ?= $(ROLLING_END)
-AUTO_FREQS ?= $(FREQS)
-AUTO_FORWARD_BARS_TRAIN ?= $(FORWARD_BARS_TRAIN)
-AUTO_FORWARD_BARS_ROLLING ?= $(FORWARD_BARS)
-AUTO_MAX_ITER ?= 1
-AUTO_RETRY_MONTHS ?= 6
-AUTO_SKIP_COMPARE ?= 0
-AUTO_AUTO_RECOMPARE ?= 1
-AUTO_TOP_FACTORS ?=
-AUTO_GPU ?= 1
-AUTO_MODEL_TYPE ?= $(MODEL_TYPE)
-AUTO_TOP_K ?= 120
-AUTO_SHAP ?= 0
 
 rolling:
 	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@if [ -n "$(ROLLING_USE_AUTOENCODER)" ]; then \
-		echo "       Autoencoder: $(ROLLING_USE_AUTOENCODER) (dim=$(ROLLING_ENCODING_DIM))"; \
-	fi
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.rolling \
 		--data-dir /workspace/$(DATA_DIR) \
 		--symbol $(SYMBOLS) \
@@ -455,97 +433,9 @@ rolling:
 		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
 		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
 		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
-		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
-		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
 		--direction-threshold $(DIRECTION_THRESHOLD) \
 		--gpu
 
-rolling-multi:
-	@echo "🔄 Rolling training (multi-config) for $(SYMBOLS) tfs=$(FREQS) fbs=$(FBS)"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@if [ -n "$(ROLLING_USE_AUTOENCODER)" ]; then \
-		echo "       Autoencoder: $(ROLLING_USE_AUTOENCODER) (dim=$(ROLLING_ENCODING_DIM))"; \
-	fi
-	@if [ "$(INSIDE_CONTAINER)" = "yes" ]; then \
-		FB_LIST=$(FBS) python3 -m time_series_model.pipeline.training.rolling \
-		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		$(if $(ROLLING_START),--start $(ROLLING_START),) \
-		$(if $(ROLLING_END),--end $(ROLLING_END),) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		$(foreach tf,$(subst ,, $(FREQS)),--freq $(tf)) \
-		--cv-folds $(CV_FOLDS) \
-		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
-		--feature-type $(ROLLING_FEATURE_TYPE) \
-		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
-		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
-		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
-		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
-		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		--gpu; \
-	else \
-		docker run --rm \
-			--runtime=nvidia \
-			-e NVIDIA_VISIBLE_DEVICES=all \
-			-e CUDA_VISIBLE_DEVICES=0 \
-			-e PYTHONPATH=/workspace/src \
-			-e PYTHONUNBUFFERED=1 \
-			-e FB_LIST=$(FBS) \
-			-v $(PWD):/workspace \
-			-v $(PWD)/data/parquet_data:/workspace/data/parquet_data \
-			-w /workspace \
-			--shm-size=8gb \
-			$(DOCKER_IMAGE) python3 -m time_series_model.pipeline.training.rolling \
-		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		$(if $(ROLLING_START),--start $(ROLLING_START),) \
-		$(if $(ROLLING_END),--end $(ROLLING_END),) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		$(foreach tf,$(subst ,, $(FREQS)),--freq $(tf)) \
-		--cv-folds $(CV_FOLDS) \
-		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
-		--feature-type $(ROLLING_FEATURE_TYPE) \
-		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
-		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
-		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
-		$(if $(ROLLING_USE_AUTOENCODER),--use-autoencoder $(ROLLING_USE_AUTOENCODER),) \
-		$(if $(ROLLING_ENCODING_DIM),--encoding-dim $(ROLLING_ENCODING_DIM),) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		--gpu; \
-	fi
-
-auto-workflow:
-	@echo "🤖 Running automated compare → train → rolling workflow for $(SYMBOLS)"
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.workflows.auto_workflow \
-		--data-dir /workspace/$(DATA_DIR) \
-		--symbols "$(SYMBOLS)" \
-		--feature-type $(AUTO_FEATURE_TYPE) \
-		--top-k $(AUTO_TOP_K) \
-		$(if $(AUTO_COMPARE_START),--compare-start $(AUTO_COMPARE_START),) \
-		$(if $(AUTO_COMPARE_END),--compare-end $(AUTO_COMPARE_END),) \
-		$(if $(AUTO_TRAIN_START),--train-start $(AUTO_TRAIN_START),) \
-		$(if $(AUTO_TRAIN_END),--train-end $(AUTO_TRAIN_END),) \
-		$(if $(AUTO_ROLLING_START),--rolling-start $(AUTO_ROLLING_START),) \
-		$(if $(AUTO_ROLLING_END),--rolling-end $(AUTO_ROLLING_END),) \
-		--freqs "$(AUTO_FREQS)" \
-		--forward-bars-train "$(AUTO_FORWARD_BARS_TRAIN)" \
-		--forward-bars-rolling "$(AUTO_FORWARD_BARS_ROLLING)" \
-		--cv-folds $(CV_FOLDS) \
-		--oos-months $(OOS_MONTHS) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		--model-type $(AUTO_MODEL_TYPE) \
-		--max-iterations $(AUTO_MAX_ITER) \
-		--retry-train-months $(AUTO_RETRY_MONTHS) \
-		$(if $(filter 1,$(AUTO_SKIP_COMPARE)),--skip-compare,) \
-		$(if $(AUTO_TOP_FACTORS),--top-factors $(AUTO_TOP_FACTORS),) \
-		$(if $(filter 1,$(AUTO_AUTO_RECOMPARE)),--auto-recompare,) \
-		$(if $(filter 1,$(AUTO_SHAP)),--shap-analysis,) \
-		$(if $(filter 1,$(AUTO_GPU)),--gpu,)
 
 BACKTEST_START ?=$(START_DATE)
 BACKTEST_END ?=$(END_DATE)
@@ -579,11 +469,12 @@ nautilus-backtest:
 
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 5
-DIM_COMPARE_FEATURE_TYPE ?= comprehensive
-TIMEFRAME ?= 240T
+DIM_COMPARE_FEATURE_TYPE ?= baseline,default
+TIMEFRAME ?= 60T
 # FACTOR_COUNTS ?= 120,110,100,90,80,70,60,50,40,30,20,10,8,6,4
-FACTOR_COUNTS ?= 60,40,20,10,5
-TIME_WINDOWS ?= 2020-01-01:2021-12-31,2022-01-01:2023-12-31,2023-01-01:2024-12-31,2025-01-01:2025-10-31
+FACTOR_COUNTS ?= 10,5
+# TIME_WINDOWS ?= 2020-01-01:2021-12-31,2022-01-01:2023-12-31,2023-01-01:2024-12-31,2025-01-01:2025-10-31
+TIME_WINDOWS ?= 2025-01-01:2025-10-31
 
 # TIME_WINDOWS ?= 2020-01-01:2020-12-31,2021-01-01:2021-12-31,2022-01-01:2022-12-31,2023-01-01:2023-12-31,2024-01-01:2024-12-31,2025-01-01:2025-10-31
 GRID_SEARCH ?= 1

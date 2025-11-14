@@ -34,7 +34,7 @@ def train_production_lightgbm(
         )
 
     # Auto-detect task type based on labels
-    # IMPORTANT: Classification tasks use 3-class (0=Hold, 1=Long, 2=Short)
+    # IMPORTANT: Classification tasks use binary (0=Short, 1=Long)
     # Regression tasks (predicting returns) remain as regression - DO NOT CHANGE
     unique_labels = np.unique(y_train)
     num_unique = len(unique_labels)
@@ -195,7 +195,7 @@ def train_production_autoencoder(
 
 def create_task_head(encoding_dim: int,
                      task_type: str = "classification",
-                     num_classes: int = 3):
+                     num_classes: int = 2):
     """Create a task prediction head for multi-task learning."""
     import torch.nn as nn
 
@@ -367,4 +367,3 @@ def generate_auto_encoding_grid(num_features: int,
     # Remove duplicates and sort
     dims = sorted(set(dims), reverse=True)
     return dims
-

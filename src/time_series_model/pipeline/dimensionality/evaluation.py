@@ -83,7 +83,7 @@ def _generate_shap_outputs(
         if len(shap_values) == 1:
             shap_array = shap_values[0]
         else:
-            # For multiclass, use the last class (typically positive class)
+            # For binary classification, use the positive class
             shap_array = shap_values[-1]
     else:
         shap_array = shap_values
@@ -156,7 +156,8 @@ def compute_selection_score(
     if f1 == 0.0:
         # Fallback to classification metrics
         cls_metrics = perf.get("classification_metrics", {})
-        f1 = float(cls_metrics.get("f1_macro", cls_metrics.get("f1_weighted", 0.0)))
+        f1 = float(
+            cls_metrics.get("f1_macro", cls_metrics.get("f1_weighted", 0.0)))
 
     if metric == "sharpe":
         return sharpe
@@ -278,58 +279,42 @@ def calculate_financial_metrics(
 
 
 def evaluate_model_performance(
-    model,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
-    model_name: str = "Model",
-    include_financial_metrics: bool = True,
-    price_data: Optional[pd.DataFrame] = None,  # Optional: price data for calculating real returns
+        model,
+        X_test: np.ndarray,
+        y_test: np.ndarray,
+        model_name: str = "Model",
+        include_financial_metrics: bool = True,
+        price_data:
+    Optional[
+        pd.
+        DataFrame] = None,  # Optional: price data for calculating real returns
 ):
     """Evaluate model performance with comprehensive metrics."""
     X_eval = X_test
     y_eval = y_test
 
-    # Remove neutral (0 = hold) labels for classification metrics if present
-    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
-        unique_targets = np.unique(y_eval)
-        if np.any(unique_targets == 0) and np.all(
-                np.isin(unique_targets, [0, 1, 2])):
-            mask_active = y_eval != 0
-            if mask_active.sum() == 0:
-                raise ValueError(
-                    "No active samples remain after removing neutral labels in evaluation set."
-                )
-            X_eval = X_eval[mask_active]
-            y_eval = y_eval[mask_active]
-
     predictions = model.predict(X_eval)
 
-    # Handle multiclass predictions: LightGBM returns probability array for multiclass
-    # Shape: (n_samples, n_classes) for multiclass, (n_samples,) for binary/regression
-    is_multiclass = predictions.ndim == 2 and predictions.shape[1] > 1
-    if is_multiclass:
-        # Multiclass: convert probability array to class predictions
+    # Binary classification: LightGBM returns probability array for binary classification
+    # Shape: (n_samples, 2) for binary classification, (n_samples,) for regression
+    is_binary = predictions.ndim == 2 and predictions.shape[1] == 2
+    if is_binary:
+        # Binary: convert probability array to class predictions
         predictions_class = np.argmax(predictions, axis=1)
-        # For metrics, use class predictions
         predictions_for_metrics = predictions_class
         predictions_to_store = predictions_class
         probabilities = predictions
     else:
-        # Binary or regression: use predictions as-is
+        # Regression: use predictions as-is
         predictions_for_metrics = predictions
         predictions_to_store = predictions
         probabilities = None
 
-    # Identify binary classification
+    # Binary classification labels
     is_binary_classification = False
-    if not is_multiclass and y_eval.ndim == 1 and np.issubdtype(
-            y_eval.dtype, np.integer):
+    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
         unique_eval = np.unique(y_eval)
-        if np.all(np.isin(unique_eval, [0, 1, 2])):
-            # Map to binary labels (1=Long, 0=Short)
-            y_eval_binary = np.where(y_eval == 1, 1, 0).astype(int)
-            is_binary_classification = True
-        elif np.all(np.isin(unique_eval, [0, 1])):
+        if np.all(np.isin(unique_eval, [0, 1])):
             y_eval_binary = y_eval.astype(int)
             is_binary_classification = True
         else:
@@ -350,7 +335,7 @@ def evaluate_model_performance(
         predictions_for_metrics = predictions_class
         predictions_to_store = predictions_class
 
-    # Basic numeric metrics (note: for multiclass these are not very meaningful)
+    # Basic numeric metrics
     mse = mean_squared_error(
         y_eval if not is_binary_classification else y_eval_binary,
         predictions_for_metrics)
@@ -358,7 +343,7 @@ def evaluate_model_performance(
     mae = mean_absolute_error(
         y_eval if not is_binary_classification else y_eval_binary,
         predictions_for_metrics)
-    # For multiclass, R² may not be meaningful, but we'll calculate it anyway
+    # Calculate R² for regression metrics
     target_for_r2 = (y_eval if not is_binary_classification else y_eval_binary)
     r2 = r2_score(target_for_r2, predictions_for_metrics) if len(
         np.unique(target_for_r2)) > 1 else 0.0
@@ -378,26 +363,16 @@ def evaluate_model_performance(
 
     # Add financial or directional metrics
     if include_financial_metrics:
-        if is_multiclass:
-            # Compute directional win rate among non-hold predictions (1=Long, 2=Short)
+        if is_binary_classification:
+            # Binary classification: compute win rate (0=Short, 1=Long)
             y_pred_cls = predictions_class.astype(int)
-            y_true_cls = y_eval.astype(int)
-            non_hold_mask = y_pred_cls != 0
+            y_true_cls = y_eval_binary.astype(int)
+
+            # Calculate win rate (accuracy for binary classification)
+            win_rate = float(np.mean(y_pred_cls == y_true_cls))
+
+            # Long predictions win rate
             long_mask = y_pred_cls == 1
-            short_mask = y_pred_cls == 2
-            active = int(np.sum(non_hold_mask))
-            total = int(len(y_pred_cls))
-            active_ratio = float(active / total) if total > 0 else 0.0
-
-            if active > 0:
-                correct_non_hold = ((y_pred_cls == 1) &
-                                    (y_true_cls == 1)) | ((y_pred_cls == 2) &
-                                                          (y_true_cls == 2))
-                win_rate = float(np.sum(correct_non_hold) / active)
-            else:
-                win_rate = 0.0
-
-            # Long-only win rate
             long_total = int(np.sum(long_mask))
             if long_total > 0:
                 long_correct = np.sum((y_pred_cls == 1) & (y_true_cls == 1))
@@ -405,10 +380,11 @@ def evaluate_model_performance(
             else:
                 long_win_rate = 0.0
 
-            # Short-only win rate
+            # Short predictions win rate
+            short_mask = y_pred_cls == 0
             short_total = int(np.sum(short_mask))
             if short_total > 0:
-                short_correct = np.sum((y_pred_cls == 2) & (y_true_cls == 2))
+                short_correct = np.sum((y_pred_cls == 0) & (y_true_cls == 0))
                 short_win_rate = float(short_correct / short_total)
             else:
                 short_win_rate = 0.0
@@ -417,50 +393,42 @@ def evaluate_model_performance(
             fm["win_rate"] = win_rate
             fm["long_win_rate"] = long_win_rate
             fm["short_win_rate"] = short_win_rate
-            fm["active_ratio"] = active_ratio
 
             # For classification tasks, calculate Sharpe Ratio and Max Drawdown
             # Try to use real backtest if price data is available, otherwise use win_rate as proxy
-            if active > 0:
-                if price_data is not None and 'close' in price_data.columns:
-                    try:
-                        # Use real backtest with actual price data
-                        # Align price data with predictions (after removing hold samples)
-                        price_aligned = price_data.iloc[mask_active] if 'mask_active' in locals() else price_data
-                        if len(price_aligned) == len(y_pred_cls):
-                            # Calculate strategy returns from predictions and actual prices
-                            strategy_returns = calculate_strategy_returns_from_predictions(
-                                y_pred_cls, price_aligned, horizon=1
-                            )
-                            # Calculate financial metrics from real returns
-                            backtest_metrics = calculate_financial_metrics_from_returns(
-                                strategy_returns, risk_free_rate=0.0
-                            )
-                            fm["sharpe_ratio"] = backtest_metrics.get("sharpe_ratio", 0.0)
-                            fm["max_drawdown"] = backtest_metrics.get("max_drawdown", 0.0)
-                            fm["total_return"] = backtest_metrics.get("total_return", 0.0)
-                            fm["annualized_return"] = backtest_metrics.get("annualized_return", 0.0)
-                            fm["volatility"] = backtest_metrics.get("volatility", 0.0)
-                        else:
-                            # Fallback: use win rate as proxy
-                            sharpe_approx = (win_rate - 0.5) * 4.0
-                            fm["sharpe_ratio"] = float(sharpe_approx)
-                            max_dd_approx = -(1.0 - win_rate) * 0.1
-                            fm["max_drawdown"] = float(max_dd_approx)
-                            total_return_approx = (win_rate - 0.5) * 2.0
-                            fm["total_return"] = float(total_return_approx)
-                    except Exception as e:
-                        # If backtest fails, fall back to win rate approximation
-                        print(f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation")
+            if price_data is not None and 'close' in price_data.columns:
+                try:
+                    # Use real backtest with actual price data
+                    if len(price_data) == len(y_pred_cls):
+                        # Calculate strategy returns from predictions and actual prices
+                        strategy_returns = calculate_strategy_returns_from_predictions(
+                            y_pred_cls, price_data, horizon=1)
+                        # Calculate financial metrics from real returns
+                        backtest_metrics = calculate_financial_metrics_from_returns(
+                            strategy_returns, risk_free_rate=0.0)
+                        fm["sharpe_ratio"] = backtest_metrics.get(
+                            "sharpe_ratio", 0.0)
+                        fm["max_drawdown"] = backtest_metrics.get(
+                            "max_drawdown", 0.0)
+                        fm["total_return"] = backtest_metrics.get(
+                            "total_return", 0.0)
+                        fm["annualized_return"] = backtest_metrics.get(
+                            "annualized_return", 0.0)
+                        fm["volatility"] = backtest_metrics.get(
+                            "volatility", 0.0)
+                    else:
+                        # Fallback: use win rate as proxy
                         sharpe_approx = (win_rate - 0.5) * 4.0
                         fm["sharpe_ratio"] = float(sharpe_approx)
                         max_dd_approx = -(1.0 - win_rate) * 0.1
                         fm["max_drawdown"] = float(max_dd_approx)
                         total_return_approx = (win_rate - 0.5) * 2.0
                         fm["total_return"] = float(total_return_approx)
-                else:
-                    # No price data available: use win rate as proxy for Sharpe Ratio
-                    # This is a simplified approximation - real backtest is needed for accurate Sharpe
+                except Exception as e:
+                    # If backtest fails, fall back to win rate approximation
+                    print(
+                        f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation"
+                    )
                     sharpe_approx = (win_rate - 0.5) * 4.0
                     fm["sharpe_ratio"] = float(sharpe_approx)
                     max_dd_approx = -(1.0 - win_rate) * 0.1
@@ -468,14 +436,17 @@ def evaluate_model_performance(
                     total_return_approx = (win_rate - 0.5) * 2.0
                     fm["total_return"] = float(total_return_approx)
             else:
-                fm["sharpe_ratio"] = 0.0
-                fm["max_drawdown"] = 0.0
-                fm["total_return"] = 0.0
+                # No price data available: use win rate as proxy for Sharpe Ratio
+                sharpe_approx = (win_rate - 0.5) * 4.0
+                fm["sharpe_ratio"] = float(sharpe_approx)
+                max_dd_approx = -(1.0 - win_rate) * 0.1
+                fm["max_drawdown"] = float(max_dd_approx)
+                total_return_approx = (win_rate - 0.5) * 2.0
+                fm["total_return"] = float(total_return_approx)
 
-            print(f"  Directional Win Rate (non-hold): {win_rate:.4f}")
+            print(f"  Win Rate: {win_rate:.4f}")
             print(f"  Long Win Rate: {long_win_rate:.4f}")
             print(f"  Short Win Rate: {short_win_rate:.4f}")
-            print(f"  Active Ratio: {active_ratio:.4f}")
             print(f"  Sharpe Ratio: {fm.get('sharpe_ratio', 0):.4f}")
             print(f"  Max Drawdown: {fm.get('max_drawdown', 0):.4f}")
 
@@ -494,62 +465,35 @@ def evaluate_model_performance(
             except Exception:
                 metrics["f1_weighted"] = None
 
-            active_mask_true = y_true_cls != 0
-            active_mask_pred = y_pred_cls != 0
-            active_mask = active_mask_true | active_mask_pred
-            if np.any(active_mask):
+            # Binary classification: probabilities shape is (n_samples, 2)
+            if probabilities is not None and probabilities.shape[1] == 2:
                 try:
-                    metrics["f1_active_macro"] = float(
-                        f1_score(
-                            y_true_cls[active_mask],
-                            y_pred_cls[active_mask],
-                            average="macro",
+                    # Binary classification: use positive class probabilities
+                    metrics["roc_auc_macro"] = float(
+                        roc_auc_score(
+                            y_true_cls,
+                            probabilities[:,
+                                          1],  # Use positive class probabilities
                         ))
                 except Exception:
-                    metrics["f1_active_macro"] = None
+                    metrics["roc_auc_macro"] = None
+                try:
+                    metrics["pr_auc_macro"] = float(
+                        average_precision_score(
+                            y_true_cls,
+                            probabilities[:,
+                                          1],  # Use positive class probabilities
+                        ))
+                except Exception:
+                    metrics["pr_auc_macro"] = None
             else:
-                metrics["f1_active_macro"] = None
-
-            class_labels = list(range(probabilities.shape[1]))
-            y_true_onehot = label_binarize(y_true_cls, classes=class_labels)
-            if y_true_onehot.shape[1] != probabilities.shape[1]:
-                # Align shapes by padding if necessary
-                diff = probabilities.shape[1] - y_true_onehot.shape[1]
-                if diff > 0:
-                    y_true_onehot = np.hstack([
-                        y_true_onehot,
-                        np.zeros((y_true_onehot.shape[0], diff))
-                    ])
-
-            if y_true_onehot.shape[1] == 1:
-                # Binary case after binarize -> single column
-                y_true_onehot = np.hstack((1 - y_true_onehot, y_true_onehot))
-
-            try:
-                metrics["roc_auc_macro"] = float(
-                    roc_auc_score(
-                        y_true_cls,
-                        probabilities,
-                        multi_class="ovr",
-                        average="macro",
-                    ))
-            except Exception:
                 metrics["roc_auc_macro"] = None
-            try:
-                metrics["pr_auc_macro"] = float(
-                    average_precision_score(
-                        y_true_onehot,
-                        probabilities,
-                        average="macro",
-                    ))
-            except Exception:
                 metrics["pr_auc_macro"] = None
+
             try:
-                cm = confusion_matrix(y_true_cls,
-                                      y_pred_cls,
-                                      labels=class_labels)
+                cm = confusion_matrix(y_true_cls, y_pred_cls, labels=[0, 1])
                 metrics["confusion_matrix"] = cm.tolist()
-                metrics["labels"] = [int(c) for c in class_labels]
+                metrics["labels"] = [0, 1]
             except Exception:
                 metrics["confusion_matrix"] = None
                 metrics["labels"] = None
@@ -573,77 +517,6 @@ def evaluate_model_performance(
             if metrics["roc_auc_macro"] is not None:
                 print(f"  ROC AUC (macro): {metrics['roc_auc_macro']:.4f}")
             if metrics["pr_auc_macro"] is not None:
-                print(f"  PR AUC (macro): {metrics['pr_auc_macro']:.4f}")
-        elif is_binary_classification:
-            y_true_bin = y_eval_binary
-            y_pred_bin = predictions_for_metrics.astype(int)
-            fm = results.setdefault("financial_metrics", {})
-            accuracy = float(np.mean(y_pred_bin == y_true_bin))
-            fm["win_rate"] = accuracy
-            fm["active_ratio"] = 1.0
-
-            long_mask = y_pred_bin == 1
-            short_mask = y_pred_bin == 0
-            long_total = int(np.sum(long_mask))
-            short_total = int(np.sum(short_mask))
-            fm["long_win_rate"] = float(np.mean(
-                y_true_bin[long_mask] == 1)) if long_total > 0 else 0.0
-            fm["short_win_rate"] = float(np.mean(
-                y_true_bin[short_mask] == 0)) if short_total > 0 else 0.0
-            
-            # For binary classification, calculate Sharpe Ratio and Max Drawdown
-            # Use win rate (accuracy) as a proxy since we don't have real returns data
-            # Note: This is an approximation - real backtest is needed for accurate Sharpe Ratio
-            win_rate_bin = accuracy
-            sharpe_approx = (win_rate_bin - 0.5) * 4.0
-            fm["sharpe_ratio"] = float(sharpe_approx)
-            max_dd_approx = -(1.0 - win_rate_bin) * 0.1
-            fm["max_drawdown"] = float(max_dd_approx)
-            total_return_approx = (win_rate_bin - 0.5) * 2.0
-            fm["total_return"] = float(total_return_approx)
-
-            metrics = results.setdefault("classification_metrics", {})
-            metrics["accuracy"] = accuracy
-            try:
-                metrics["f1_macro"] = float(
-                    f1_score(y_true_bin, y_pred_bin, average="macro"))
-            except Exception:
-                metrics["f1_macro"] = None
-            try:
-                metrics["f1_weighted"] = float(
-                    f1_score(y_true_bin, y_pred_bin, average="weighted"))
-            except Exception:
-                metrics["f1_weighted"] = None
-            try:
-                metrics["roc_auc_macro"] = float(
-                    roc_auc_score(y_true_bin, probabilities))
-            except Exception:
-                metrics["roc_auc_macro"] = None
-            try:
-                metrics["pr_auc_macro"] = float(
-                    average_precision_score(y_true_bin, probabilities))
-            except Exception:
-                metrics["pr_auc_macro"] = None
-            try:
-                cm = confusion_matrix(y_true_bin, y_pred_bin, labels=[0, 1])
-                metrics["confusion_matrix"] = cm.tolist()
-                metrics["labels"] = [0, 1]
-            except Exception:
-                metrics["confusion_matrix"] = None
-                metrics["labels"] = None
-            try:
-                metrics["classification_report"] = classification_report(
-                    y_true_bin, y_pred_bin, output_dict=True, zero_division=0)
-            except Exception:
-                metrics["classification_report"] = None
-            metrics["support"] = int(len(y_true_bin))
-
-            print(f"  Accuracy: {accuracy:.4f}")
-            if metrics.get("f1_macro") is not None:
-                print(f"  F1 (macro): {metrics['f1_macro']:.4f}")
-            if metrics.get("roc_auc_macro") is not None:
-                print(f"  ROC AUC: {metrics['roc_auc_macro']:.4f}")
-            if metrics.get("pr_auc_macro") is not None:
                 print(f"  PR AUC: {metrics['pr_auc_macro']:.4f}")
         else:
             # Regression/binary: compute financial metrics using returns-like predictions
@@ -661,4 +534,3 @@ def evaluate_model_performance(
             )
 
     return results
-

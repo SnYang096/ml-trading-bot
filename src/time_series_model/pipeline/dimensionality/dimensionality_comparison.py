@@ -185,13 +185,11 @@ def load_real_market_data(
             "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
             "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
             "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
-            "signal",
             "binary_signal",
             "future_return",
             "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
         }
         exclude_prefixes = (
-            "signal_",
             "binary_signal_",
             "future_return_",
         )
@@ -213,8 +211,8 @@ def load_real_market_data(
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
-        y = df_features[f"signal_{default_horizon}"].dropna(
-        ).values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
+        y = df_features[f"binary_signal_{default_horizon}"].dropna(
+        ).values  # Use binary signal (0=Short, 1=Long)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
@@ -416,47 +414,28 @@ def evaluate_model_performance(
     X_eval = X_test
     y_eval = y_test
 
-    # Remove neutral (0 = hold) labels for classification metrics if present
-    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
-        unique_targets = np.unique(y_eval)
-        if np.any(unique_targets == 0) and np.all(
-                np.isin(unique_targets, [0, 1, 2])):
-            mask_active = y_eval != 0
-            if mask_active.sum() == 0:
-                raise ValueError(
-                    "No active samples remain after removing neutral labels in evaluation set."
-                )
-            X_eval = X_eval[mask_active]
-            y_eval = y_eval[mask_active]
-
     predictions = model.predict(X_eval)
 
-    # Handle multiclass predictions: LightGBM returns probability array for multiclass
-    # Shape: (n_samples, n_classes) for multiclass, (n_samples,) for binary/regression
-    is_multiclass = predictions.ndim == 2 and predictions.shape[1] > 1
-    if is_multiclass:
-        # Multiclass: convert probability array to class predictions
+    # Binary classification: LightGBM returns probability array for binary classification
+    # Shape: (n_samples, 2) for binary classification, (n_samples,) for regression
+    is_binary = predictions.ndim == 2 and predictions.shape[1] == 2
+    if is_binary:
+        # Binary: convert probability array to class predictions
         predictions_class = np.argmax(predictions, axis=1)
-        # For metrics, use class predictions
         predictions_for_metrics = predictions_class
         predictions_to_store = predictions_class
         probabilities = predictions
     else:
-        # Binary or regression: use predictions as-is
+        # Regression: use predictions as-is
         predictions_for_metrics = predictions
         predictions_to_store = predictions
         probabilities = None
 
-    # Identify binary classification
+    # Binary classification labels
     is_binary_classification = False
-    if not is_multiclass and y_eval.ndim == 1 and np.issubdtype(
-            y_eval.dtype, np.integer):
+    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
         unique_eval = np.unique(y_eval)
-        if np.all(np.isin(unique_eval, [0, 1, 2])):
-            # Map to binary labels (1=Long, 0=Short)
-            y_eval_binary = np.where(y_eval == 1, 1, 0).astype(int)
-            is_binary_classification = True
-        elif np.all(np.isin(unique_eval, [0, 1])):
+        if np.all(np.isin(unique_eval, [0, 1])):
             y_eval_binary = y_eval.astype(int)
             is_binary_classification = True
         else:
@@ -477,7 +456,7 @@ def evaluate_model_performance(
         predictions_for_metrics = predictions_class
         predictions_to_store = predictions_class
 
-    # Basic numeric metrics (note: for multiclass these are not very meaningful)
+    # Basic numeric metrics
     mse = mean_squared_error(
         y_eval if not is_binary_classification else y_eval_binary,
         predictions_for_metrics)
@@ -485,7 +464,7 @@ def evaluate_model_performance(
     mae = mean_absolute_error(
         y_eval if not is_binary_classification else y_eval_binary,
         predictions_for_metrics)
-    # For multiclass, R² may not be meaningful, but we'll calculate it anyway
+    # Calculate R² for regression metrics
     target_for_r2 = (y_eval if not is_binary_classification else y_eval_binary)
     r2 = r2_score(target_for_r2, predictions_for_metrics) if len(
         np.unique(target_for_r2)) > 1 else 0.0
@@ -505,26 +484,16 @@ def evaluate_model_performance(
 
     # Add financial or directional metrics
     if include_financial_metrics:
-        if is_multiclass:
-            # Compute directional win rate among non-hold predictions (1=Long, 2=Short)
+        if is_binary_classification:
+            # Binary classification: compute win rate (0=Short, 1=Long)
             y_pred_cls = predictions_class.astype(int)
-            y_true_cls = y_eval.astype(int)
-            non_hold_mask = y_pred_cls != 0
+            y_true_cls = y_eval_binary.astype(int)
+
+            # Calculate win rate (accuracy for binary classification)
+            win_rate = float(np.mean(y_pred_cls == y_true_cls))
+
+            # Long predictions win rate
             long_mask = y_pred_cls == 1
-            short_mask = y_pred_cls == 2
-            active = int(np.sum(non_hold_mask))
-            total = int(len(y_pred_cls))
-            active_ratio = float(active / total) if total > 0 else 0.0
-
-            if active > 0:
-                correct_non_hold = ((y_pred_cls == 1) &
-                                    (y_true_cls == 1)) | ((y_pred_cls == 2) &
-                                                          (y_true_cls == 2))
-                win_rate = float(np.sum(correct_non_hold) / active)
-            else:
-                win_rate = 0.0
-
-            # Long-only win rate
             long_total = int(np.sum(long_mask))
             if long_total > 0:
                 long_correct = np.sum((y_pred_cls == 1) & (y_true_cls == 1))
@@ -532,10 +501,11 @@ def evaluate_model_performance(
             else:
                 long_win_rate = 0.0
 
-            # Short-only win rate
+            # Short predictions win rate
+            short_mask = y_pred_cls == 0
             short_total = int(np.sum(short_mask))
             if short_total > 0:
-                short_correct = np.sum((y_pred_cls == 2) & (y_true_cls == 2))
+                short_correct = np.sum((y_pred_cls == 0) & (y_true_cls == 0))
                 short_win_rate = float(short_correct / short_total)
             else:
                 short_win_rate = 0.0
@@ -544,57 +514,42 @@ def evaluate_model_performance(
             fm["win_rate"] = win_rate
             fm["long_win_rate"] = long_win_rate
             fm["short_win_rate"] = short_win_rate
-            fm["active_ratio"] = active_ratio
 
             # For classification tasks, calculate Sharpe Ratio and Max Drawdown
             # Try to use real backtest if price data is available, otherwise use win_rate as proxy
-            if active > 0:
-                if price_data is not None and 'close' in price_data.columns:
-                    try:
-                        # Use real backtest with actual price data
-                        # Align price data with predictions (after removing hold samples)
-                        price_aligned = price_data.iloc[
-                            mask_active] if 'mask_active' in locals(
-                            ) else price_data
-                        if len(price_aligned) == len(y_pred_cls):
-                            # Calculate strategy returns from predictions and actual prices
-                            strategy_returns = calculate_strategy_returns_from_predictions(
-                                y_pred_cls, price_aligned, horizon=1)
-                            # Calculate financial metrics from real returns
-                            backtest_metrics = calculate_financial_metrics_from_returns(
-                                strategy_returns, risk_free_rate=0.0)
-                            fm["sharpe_ratio"] = backtest_metrics.get(
-                                "sharpe_ratio", 0.0)
-                            fm["max_drawdown"] = backtest_metrics.get(
-                                "max_drawdown", 0.0)
-                            fm["total_return"] = backtest_metrics.get(
-                                "total_return", 0.0)
-                            fm["annualized_return"] = backtest_metrics.get(
-                                "annualized_return", 0.0)
-                            fm["volatility"] = backtest_metrics.get(
-                                "volatility", 0.0)
-                        else:
-                            # Fallback: use win rate as proxy
-                            sharpe_approx = (win_rate - 0.5) * 4.0
-                            fm["sharpe_ratio"] = float(sharpe_approx)
-                            max_dd_approx = -(1.0 - win_rate) * 0.1
-                            fm["max_drawdown"] = float(max_dd_approx)
-                            total_return_approx = (win_rate - 0.5) * 2.0
-                            fm["total_return"] = float(total_return_approx)
-                    except Exception as e:
-                        # If backtest fails, fall back to win rate approximation
-                        print(
-                            f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation"
-                        )
+            if price_data is not None and 'close' in price_data.columns:
+                try:
+                    # Use real backtest with actual price data
+                    if len(price_data) == len(y_pred_cls):
+                        # Calculate strategy returns from predictions and actual prices
+                        strategy_returns = calculate_strategy_returns_from_predictions(
+                            y_pred_cls, price_data, horizon=1)
+                        # Calculate financial metrics from real returns
+                        backtest_metrics = calculate_financial_metrics_from_returns(
+                            strategy_returns, risk_free_rate=0.0)
+                        fm["sharpe_ratio"] = backtest_metrics.get(
+                            "sharpe_ratio", 0.0)
+                        fm["max_drawdown"] = backtest_metrics.get(
+                            "max_drawdown", 0.0)
+                        fm["total_return"] = backtest_metrics.get(
+                            "total_return", 0.0)
+                        fm["annualized_return"] = backtest_metrics.get(
+                            "annualized_return", 0.0)
+                        fm["volatility"] = backtest_metrics.get(
+                            "volatility", 0.0)
+                    else:
+                        # Fallback: use win rate as proxy
                         sharpe_approx = (win_rate - 0.5) * 4.0
                         fm["sharpe_ratio"] = float(sharpe_approx)
                         max_dd_approx = -(1.0 - win_rate) * 0.1
                         fm["max_drawdown"] = float(max_dd_approx)
                         total_return_approx = (win_rate - 0.5) * 2.0
                         fm["total_return"] = float(total_return_approx)
-                else:
-                    # No price data available: use win rate as proxy for Sharpe Ratio
-                    # This is a simplified approximation - real backtest is needed for accurate Sharpe
+                except Exception as e:
+                    # If backtest fails, fall back to win rate approximation
+                    print(
+                        f"  ⚠️  Backtest calculation failed: {e}, using win_rate approximation"
+                    )
                     sharpe_approx = (win_rate - 0.5) * 4.0
                     fm["sharpe_ratio"] = float(sharpe_approx)
                     max_dd_approx = -(1.0 - win_rate) * 0.1
@@ -602,14 +557,17 @@ def evaluate_model_performance(
                     total_return_approx = (win_rate - 0.5) * 2.0
                     fm["total_return"] = float(total_return_approx)
             else:
-                fm["sharpe_ratio"] = 0.0
-                fm["max_drawdown"] = 0.0
-                fm["total_return"] = 0.0
+                # No price data available: use win rate as proxy for Sharpe Ratio
+                sharpe_approx = (win_rate - 0.5) * 4.0
+                fm["sharpe_ratio"] = float(sharpe_approx)
+                max_dd_approx = -(1.0 - win_rate) * 0.1
+                fm["max_drawdown"] = float(max_dd_approx)
+                total_return_approx = (win_rate - 0.5) * 2.0
+                fm["total_return"] = float(total_return_approx)
 
-            print(f"  Directional Win Rate (non-hold): {win_rate:.4f}")
+            print(f"  Win Rate: {win_rate:.4f}")
             print(f"  Long Win Rate: {long_win_rate:.4f}")
             print(f"  Short Win Rate: {short_win_rate:.4f}")
-            print(f"  Active Ratio: {active_ratio:.4f}")
             print(f"  Sharpe Ratio: {fm.get('sharpe_ratio', 0):.4f}")
             print(f"  Max Drawdown: {fm.get('max_drawdown', 0):.4f}")
 
@@ -628,62 +586,53 @@ def evaluate_model_performance(
             except Exception:
                 metrics["f1_weighted"] = None
 
-            active_mask_true = y_true_cls != 0
-            active_mask_pred = y_pred_cls != 0
-            active_mask = active_mask_true | active_mask_pred
-            if np.any(active_mask):
+            # Binary classification: probabilities shape is (n_samples, 2) or (n_samples,)
+            # For ROC AUC, we need the positive class probabilities
+            # Use original predictions if it's 2D (model output), otherwise use probabilities
+            probabilities_for_roc = None
+            if predictions.ndim == 2 and predictions.shape[1] == 2:
+                # Original predictions are 2D: use positive class probabilities
+                probabilities_for_roc = predictions[:, 1]
+            elif probabilities is not None:
+                if hasattr(probabilities, 'ndim'):
+                    if probabilities.ndim == 2 and probabilities.shape[1] == 2:
+                        # 2D array: use positive class probabilities
+                        probabilities_for_roc = probabilities[:, 1]
+                    elif probabilities.ndim == 1:
+                        # 1D array: use as-is (already positive class probabilities)
+                        probabilities_for_roc = probabilities
+                    elif probabilities.ndim == 0:
+                        # Scalar: convert to array
+                        probabilities_for_roc = np.array([probabilities])
+
+            if probabilities_for_roc is not None:
+                y_true_onehot = label_binarize(y_true_cls, classes=[0, 1])
+
                 try:
-                    metrics["f1_active_macro"] = float(
-                        f1_score(
-                            y_true_cls[active_mask],
-                            y_pred_cls[active_mask],
-                            average="macro",
+                    # Binary classification: use positive class probabilities
+                    metrics["roc_auc_macro"] = float(
+                        roc_auc_score(
+                            y_true_cls,
+                            probabilities_for_roc,
                         ))
                 except Exception:
-                    metrics["f1_active_macro"] = None
+                    metrics["roc_auc_macro"] = None
+                try:
+                    metrics["pr_auc_macro"] = float(
+                        average_precision_score(
+                            y_true_cls,
+                            probabilities_for_roc,
+                        ))
+                except Exception:
+                    metrics["pr_auc_macro"] = None
             else:
-                metrics["f1_active_macro"] = None
-
-            class_labels = list(range(probabilities.shape[1]))
-            y_true_onehot = label_binarize(y_true_cls, classes=class_labels)
-            if y_true_onehot.shape[1] != probabilities.shape[1]:
-                # Align shapes by padding if necessary
-                diff = probabilities.shape[1] - y_true_onehot.shape[1]
-                if diff > 0:
-                    y_true_onehot = np.hstack([
-                        y_true_onehot,
-                        np.zeros((y_true_onehot.shape[0], diff))
-                    ])
-
-            if y_true_onehot.shape[1] == 1:
-                # Binary case after binarize -> single column
-                y_true_onehot = np.hstack((1 - y_true_onehot, y_true_onehot))
-
-            try:
-                metrics["roc_auc_macro"] = float(
-                    roc_auc_score(
-                        y_true_cls,
-                        probabilities,
-                        multi_class="ovr",
-                        average="macro",
-                    ))
-            except Exception:
                 metrics["roc_auc_macro"] = None
-            try:
-                metrics["pr_auc_macro"] = float(
-                    average_precision_score(
-                        y_true_onehot,
-                        probabilities,
-                        average="macro",
-                    ))
-            except Exception:
                 metrics["pr_auc_macro"] = None
+
             try:
-                cm = confusion_matrix(y_true_cls,
-                                      y_pred_cls,
-                                      labels=class_labels)
+                cm = confusion_matrix(y_true_cls, y_pred_cls, labels=[0, 1])
                 metrics["confusion_matrix"] = cm.tolist()
-                metrics["labels"] = [int(c) for c in class_labels]
+                metrics["labels"] = [0, 1]
             except Exception:
                 metrics["confusion_matrix"] = None
                 metrics["labels"] = None
@@ -705,79 +654,8 @@ def evaluate_model_performance(
             if metrics["f1_macro"] is not None:
                 print(f"  F1 (macro): {metrics['f1_macro']:.4f}")
             if metrics["roc_auc_macro"] is not None:
-                print(f"  ROC AUC (macro): {metrics['roc_auc_macro']:.4f}")
-            if metrics["pr_auc_macro"] is not None:
-                print(f"  PR AUC (macro): {metrics['pr_auc_macro']:.4f}")
-        elif is_binary_classification:
-            y_true_bin = y_eval_binary
-            y_pred_bin = predictions_for_metrics.astype(int)
-            fm = results.setdefault("financial_metrics", {})
-            accuracy = float(np.mean(y_pred_bin == y_true_bin))
-            fm["win_rate"] = accuracy
-            fm["active_ratio"] = 1.0
-
-            long_mask = y_pred_bin == 1
-            short_mask = y_pred_bin == 0
-            long_total = int(np.sum(long_mask))
-            short_total = int(np.sum(short_mask))
-            fm["long_win_rate"] = float(np.mean(
-                y_true_bin[long_mask] == 1)) if long_total > 0 else 0.0
-            fm["short_win_rate"] = float(np.mean(
-                y_true_bin[short_mask] == 0)) if short_total > 0 else 0.0
-
-            # For binary classification, calculate Sharpe Ratio and Max Drawdown
-            # Use win rate (accuracy) as a proxy since we don't have real returns data
-            # Note: This is an approximation - real backtest is needed for accurate Sharpe Ratio
-            win_rate_bin = accuracy
-            sharpe_approx = (win_rate_bin - 0.5) * 4.0
-            fm["sharpe_ratio"] = float(sharpe_approx)
-            max_dd_approx = -(1.0 - win_rate_bin) * 0.1
-            fm["max_drawdown"] = float(max_dd_approx)
-            total_return_approx = (win_rate_bin - 0.5) * 2.0
-            fm["total_return"] = float(total_return_approx)
-
-            metrics = results.setdefault("classification_metrics", {})
-            metrics["accuracy"] = accuracy
-            try:
-                metrics["f1_macro"] = float(
-                    f1_score(y_true_bin, y_pred_bin, average="macro"))
-            except Exception:
-                metrics["f1_macro"] = None
-            try:
-                metrics["f1_weighted"] = float(
-                    f1_score(y_true_bin, y_pred_bin, average="weighted"))
-            except Exception:
-                metrics["f1_weighted"] = None
-            try:
-                metrics["roc_auc_macro"] = float(
-                    roc_auc_score(y_true_bin, probabilities))
-            except Exception:
-                metrics["roc_auc_macro"] = None
-            try:
-                metrics["pr_auc_macro"] = float(
-                    average_precision_score(y_true_bin, probabilities))
-            except Exception:
-                metrics["pr_auc_macro"] = None
-            try:
-                cm = confusion_matrix(y_true_bin, y_pred_bin, labels=[0, 1])
-                metrics["confusion_matrix"] = cm.tolist()
-                metrics["labels"] = [0, 1]
-            except Exception:
-                metrics["confusion_matrix"] = None
-                metrics["labels"] = None
-            try:
-                metrics["classification_report"] = classification_report(
-                    y_true_bin, y_pred_bin, output_dict=True, zero_division=0)
-            except Exception:
-                metrics["classification_report"] = None
-            metrics["support"] = int(len(y_true_bin))
-
-            print(f"  Accuracy: {accuracy:.4f}")
-            if metrics.get("f1_macro") is not None:
-                print(f"  F1 (macro): {metrics['f1_macro']:.4f}")
-            if metrics.get("roc_auc_macro") is not None:
                 print(f"  ROC AUC: {metrics['roc_auc_macro']:.4f}")
-            if metrics.get("pr_auc_macro") is not None:
+            if metrics["pr_auc_macro"] is not None:
                 print(f"  PR AUC: {metrics['pr_auc_macro']:.4f}")
         else:
             # Regression/binary: compute financial metrics using returns-like predictions
@@ -798,10 +676,9 @@ def evaluate_model_performance(
 
 
 def save_production_results(
-        results: Dict,
-        model,
-        results_dir: str,
-        autoencoder=None,  # Autoencoder removed - kept for compatibility
+    results: Dict,
+    model,
+    results_dir: str,
 ) -> str:
     print("💾 Saving production results...")
     os.makedirs(results_dir, exist_ok=True)
@@ -810,7 +687,6 @@ def save_production_results(
         json.dump(results, f, indent=2, default=str)
 
     joblib.dump(model, f"{results_dir}/production_model.pkl")
-    # Autoencoder removed - no longer used
 
     print(f"✅ Results saved to {results_dir}")
     return results_dir
@@ -876,8 +752,7 @@ def run_dimensionality_comparison(
         f"✅ Data split: Train {X_train.shape}, Val {X_val.shape}, Test {X_test.shape}"
     )
 
-    # Autoencoder disabled: use original features as "compressed" placeholders
-    autoencoder = None
+    # Use original features (autoencoder removed)
     X_train_emb = X_train
     X_val_emb = X_val
     X_test_emb = X_test
@@ -941,7 +816,6 @@ def run_dimensionality_comparison(
         dir_date_suffix = f"{symbol_slug}_{feature_slug}_{timestamp_start}_{timestamp_end}"
 
     stage3_feature_count = len(feature_names)
-    ae_enabled = autoencoder is not None
 
     results = {
         "timestamp_start": timestamp_start,
@@ -953,10 +827,8 @@ def run_dimensionality_comparison(
             "original_features_count":
             X.shape[1],
             "compressed_dimensions":
-            results_compressed.get("feature_count", X.shape[1])
-            if ae_enabled else len(feature_names),
+            len(feature_names),
             "compression_ratio":
-            compression_ratio if ae_enabled else
             ((X.shape[1] / len(feature_names)) if len(feature_names) else 1.0),
             "training_samples":
             len(X_train),
@@ -966,9 +838,6 @@ def run_dimensionality_comparison(
             len(X_test),
         },
         "training_info": {
-            # Autoencoder disabled
-            "autoencoder_epochs": 0,
-            "autoencoder_final_loss": None,
             "lightgbm_original_iterations": model_original.best_iteration,
             "lightgbm_compressed_iterations": model_compressed.best_iteration,
         },
@@ -1004,7 +873,6 @@ def run_dimensionality_comparison(
         results,
         model_compressed,
         str(results_dir_path),
-        autoencoder,
     )
 
     print("\n" + "=" * 60)
@@ -1016,7 +884,7 @@ def run_dimensionality_comparison(
     )
     print(f"💾 Results saved to: {results_dir}")
 
-    return results, model_compressed, autoencoder, results_dir
+    return results, model_compressed, results_dir
 
 
 def run_single_experiment_wrapper(args) -> Dict:
@@ -1076,7 +944,7 @@ def run_single_experiment_wrapper(args) -> Dict:
         sys.argv = new_argv
 
         # Call main() which will parse the new argv
-        results, model, autoencoder, results_dir = main()
+        results, model, results_dir = main()
         # Store results_dir in results dict for later file copying
         if results and isinstance(results, dict):
             results['results_dir'] = results_dir
@@ -1762,18 +1630,110 @@ def _copy_best_combination_files(best_result: Dict,
                 summary['selected_features'] = model_info[
                     'all_selected_features']
 
-    # Save selected features to a separate file for easy access
+    # Generate top_factors.json for compatibility with train/rolling commands
+    # Limit features to factor_count from grid_search_params
     if 'selected_features' in summary and summary['selected_features']:
-        features_file = target_dir / "selected_features.txt"
+        # Get target factor count from grid_search_params
+        target_factor_count = None
+        if 'grid_search_params' in summary:
+            target_factor_count = summary['grid_search_params'].get(
+                'factor_count')
+
+        selected_features = summary['selected_features']
+
+        # If we have a target factor_count, try to limit features using SHAP importance
+        if target_factor_count and isinstance(target_factor_count,
+                                              int) and target_factor_count > 0:
+            # Try to load SHAP importance to get top features
+            # Check both target_dir (copied) and source_dir (original)
+            shap_importance_file = None
+            if (target_dir / "shap" /
+                    "stage3_representatives_shap_importance.json").exists():
+                shap_importance_file = target_dir / "shap" / "stage3_representatives_shap_importance.json"
+            elif source_dir and (
+                    Path(source_dir) / "shap" /
+                    "stage3_representatives_shap_importance.json").exists():
+                shap_importance_file = Path(
+                    source_dir
+                ) / "shap" / "stage3_representatives_shap_importance.json"
+
+            if shap_importance_file and shap_importance_file.exists():
+                try:
+                    with open(shap_importance_file, 'r',
+                              encoding='utf-8') as f:
+                        shap_importance = json.load(f)
+                    # Extract top features by SHAP importance
+                    top_features_by_shap = [
+                        item['feature']
+                        for item in shap_importance[:target_factor_count]
+                    ]
+                    # Filter to only include features that exist in selected_features
+                    top_features = [
+                        f for f in top_features_by_shap
+                        if f in selected_features
+                    ]
+                    # If we don't have enough from SHAP, fill with remaining features
+                    if len(top_features) < target_factor_count:
+                        remaining = [
+                            f for f in selected_features
+                            if f not in top_features
+                        ]
+                        top_features.extend(remaining[:target_factor_count -
+                                                      len(top_features)])
+                    selected_features = top_features[:target_factor_count]
+                    print(
+                        f"   📊 Limited to top {target_factor_count} features based on SHAP importance"
+                    )
+                except Exception as e:
+                    print(
+                        f"   ⚠️ Failed to load SHAP importance, using all features: {e}"
+                    )
+                    # Fallback: just take first N features
+                    if len(selected_features) > target_factor_count:
+                        selected_features = selected_features[:
+                                                              target_factor_count]
+                        print(
+                            f"   📊 Limited to first {target_factor_count} features"
+                        )
+            else:
+                # No SHAP file, just take first N features
+                if len(selected_features) > target_factor_count:
+                    selected_features = selected_features[:target_factor_count]
+                    print(
+                        f"   📊 Limited to first {target_factor_count} features (no SHAP file found)"
+                    )
+
+        top_factors_file = target_dir / "top_factors.json"
         try:
-            with open(features_file, 'w') as f:
-                for feature in summary['selected_features']:
-                    f.write(f"{feature}\n")
+            top_factors_data = {
+                "top_factors": [{
+                    "name": factor
+                } for factor in selected_features],
+                "count": len(selected_features),
+                "source": "grid_search",
+                "stage":
+                "Stage 3: Representative features (from grid search best combination)",
+                "effective": True,
+            }
+            # Add grid_search_params and metrics if available
+            if 'grid_search_params' in summary:
+                top_factors_data["grid_search_params"] = summary[
+                    'grid_search_params']
+            if 'robustness_score' in summary:
+                top_factors_data["robustness_score"] = summary[
+                    'robustness_score']
+            if 'icir' in summary:
+                top_factors_data["icir"] = summary['icir']
+            if 'sharpe_ratio' in summary:
+                top_factors_data["sharpe_ratio"] = summary['sharpe_ratio']
+
+            with open(top_factors_file, 'w', encoding='utf-8') as f:
+                json.dump(top_factors_data, f, indent=2, ensure_ascii=False)
             print(
-                f"   ✅ Saved {len(summary['selected_features'])} selected features to selected_features.txt"
+                f"   ✅ Generated top_factors.json with {len(selected_features)} features for compatibility with train/rolling commands"
             )
         except Exception as e:
-            print(f"   ⚠️ Failed to save features file: {e}")
+            print(f"   ⚠️ Failed to generate top_factors.json: {e}")
 
     summary_file = target_dir / "best_combination_summary.json"
     try:
@@ -1816,7 +1776,7 @@ def generate_grid_search_report(grid_search_results: list, symbol_slug: str,
                                    {}).get('stage3_representatives', {})
 
     # Determine task type
-    task_type = first_result.get('task_type', 'classification_multiclass')
+    task_type = first_result.get('task_type', 'classification_binary')
     is_classification = task_type.startswith('classification')
 
     # Build comparison matrix
@@ -2804,7 +2764,7 @@ def generate_grid_search_html_report(report_data: Dict,
     print(f"📝 Grid search HTML report written to: {html_path}")
 
 
-def main() -> Tuple[Dict, any, type(None), str]:
+def main() -> Tuple[Dict, any, str]:
     global DIM_COMPARE_RESULTS_ROOT
     parser = argparse.ArgumentParser(
         description=
@@ -2860,9 +2820,9 @@ def main() -> Tuple[Dict, any, type(None), str]:
     parser.add_argument(
         "--binary-signals",
         action="store_true",
-        default=False,
+        default=True,  # Default to binary classification (2-class)
         help=
-        "Use binary labels (1=Long, 0=Short) without Hold. Threshold controlled by --label-threshold",
+        "Use binary labels (1=Long, 0=Short). Default: True. Threshold controlled by --label-threshold",
     )
     parser.add_argument(
         "--label-threshold",
@@ -3147,12 +3107,12 @@ def main() -> Tuple[Dict, any, type(None), str]:
             from pathlib import Path
             results_dir = str(
                 Path(report_path_str).parent) if report_path_str else None
-            # Return None for model and autoencoder
-            return summary_result, None, None, results_dir
+            # Return None for model (no autoencoder anymore)
+            return summary_result, None, results_dir
         else:
             print("⚠️ No successful grid search results to report")
             # Return empty result structure
-            return {}, None, None, None
+            return {}, None, None
 
     if args.research_ablation:
         ablation_start_dt = datetime.now()
@@ -3191,9 +3151,11 @@ def main() -> Tuple[Dict, any, type(None), str]:
                            index=df_features_original.index[:len(X_raw)])
 
         # For backward compatibility, use default horizon
+        # Always use binary signals (0=Short, 1=Long)
         y_series = pd.Series(y_raw, index=dfX.index[:len(y_raw)])
-        # If binary mode: remap labels to 2-class using future_return threshold
-        if args.binary_signals:
+        # Remap labels to 2-class using future_return threshold (default: always use binary)
+        use_binary = getattr(args, 'binary_signals', True)  # Default to True
+        if use_binary:
             try:
                 # Use first horizon's future return if available
                 default_h = horizons[0] if horizons else 1
@@ -3884,7 +3846,6 @@ def main() -> Tuple[Dict, any, type(None), str]:
 
         # Default best result to Stage 3 (representative features)
         best_model = model_reps
-        best_ae = None
         best_result = {
             "timestamp_start": ablation_start_ts,
             "timestamp_end": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -3969,14 +3930,10 @@ def main() -> Tuple[Dict, any, type(None), str]:
                                     float(len(reps)) if reps else None)
 
         best_result = {
-            "timestamp_start":
-            ablation_start_ts,
-            "train_start_date":
-            train_start_date,
-            "train_end_date":
-            train_end_date,
-            "task_type": ("classification_binary" if args.binary_signals else
-                          "classification_multiclass"),
+            "timestamp_start": ablation_start_ts,
+            "train_start_date": train_start_date,
+            "train_end_date": train_end_date,
+            "task_type": "classification_binary",
             "data_info": {
                 "stage1_all_features": int(len(keep_all)),
                 "stage2_ic_filtered": int(len(top_cols)),
@@ -4007,10 +3964,6 @@ def main() -> Tuple[Dict, any, type(None), str]:
                 },
             },
             "training_info": {
-                "autoencoder_epochs":
-                0,
-                "autoencoder_final_loss":
-                None,
                 "lightgbm_stage1_iterations":
                 getattr(model_all, "best_iteration", None),
                 "lightgbm_stage2_iterations":
@@ -4030,8 +3983,7 @@ def main() -> Tuple[Dict, any, type(None), str]:
                 "metric": args.selection_metric,
                 "best_stage": feature_insights_stage3["recommended_stage"],
             },
-            "insights":
-            feature_insights_stage3,
+            "insights": feature_insights_stage3,
             "ic_statistics": {
                 "ic_mean":
                 float(ic_mean) if ic_mean is not None else None,
@@ -4043,7 +3995,6 @@ def main() -> Tuple[Dict, any, type(None), str]:
             },
         }
         best_model = model_reps
-        best_ae = None
         best_dir = None
         # Stage 4 autoencoder removed - no longer used
 
@@ -4063,8 +4014,8 @@ def main() -> Tuple[Dict, any, type(None), str]:
                 print(f"Training all 3 stages for Horizon: {horizon} bars")
                 print(f"{'=' * 60}")
 
-                # Get labels for this horizon (3-class: 0=Hold, 1=Long, 2=Short)
-                y_horizon_col = f"signal_{horizon}"
+                # Get labels for this horizon (binary: 0=Short, 1=Long)
+                y_horizon_col = f"binary_signal_{horizon}"
                 if y_horizon_col in df_multi_labels.columns:
                     y_horizon = df_multi_labels[y_horizon_col].values
                     y_horizon = y_horizon[:len(X_raw)]
@@ -4321,11 +4272,10 @@ def main() -> Tuple[Dict, any, type(None), str]:
             except Exception as _exc:
                 print(f"⚠️ Failed to export model: {_exc}")
 
-        return best_result, best_model, best_ae, best_dir
+        return best_result, best_model, best_dir
 
-    # Autoencoder grid search removed - no longer used
-    # Run dimensionality comparison (no autoencoder parameters)
-    results, model, autoencoder, results_dir = run_dimensionality_comparison(
+    # Run dimensionality comparison
+    results, model, results_dir = run_dimensionality_comparison(
         data_path=args.data_path,
         symbol=args.symbol,
         train_start=args.train_start,
@@ -4397,12 +4347,12 @@ def main() -> Tuple[Dict, any, type(None), str]:
                 print(f"💾 Exported best model to: {args.export_model}")
         except Exception as _exc:
             print(f"⚠️ Failed to export model: {_exc}")
-    return results, model, autoencoder, results_dir
+    return results, model, results_dir
 
 
 if __name__ == "__main__":
     try:
-        results, model, autoencoder, results_dir = main()
+        results, model, results_dir = main()
         print("\n✅ Production training completed successfully!")
         cr = results.get('data_info', {}).get(
             'compression_dim', None) or results.get('data_info', {}).get(

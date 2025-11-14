@@ -135,32 +135,33 @@ def _build_classification_metrics_table(
     cand_cls = stage_candidate.get("classification_metrics", {})
 
     def _row(label, base_val, cand_val, is_percent: bool = False):
-        base_fmt = (_format_percent(base_val) if is_percent else
-                    _format_float(base_val))
-        cand_fmt = (_format_percent(cand_val) if is_percent else
-                    _format_float(cand_val))
+        base_fmt = (_format_percent(base_val)
+                    if is_percent else _format_float(base_val))
+        cand_fmt = (_format_percent(cand_val)
+                    if is_percent else _format_float(cand_val))
         if base_val is not None and cand_val is not None:
             delta_val = cand_val - base_val
             delta_fmt = (_format_percent(delta_val)
                          if is_percent else _format_float(delta_val))
         else:
             delta_fmt = "NA"
-        return (f"<tr><td>{label}</td>"
-                f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>")
+        return (
+            f"<tr><td>{label}</td>"
+            f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>")
 
     rows = [
-        _row("Directional Win Rate", base_fin.get("win_rate"),
+        _row("Directional Win Rate",
+             base_fin.get("win_rate"),
              cand_fin.get("win_rate"),
              is_percent=True),
-        _row("Active Ratio", base_fin.get("active_ratio"),
+        _row("Active Ratio",
+             base_fin.get("active_ratio"),
              cand_fin.get("active_ratio"),
              is_percent=True),
-        _row("F1 (Macro)", base_cls.get("f1_macro"),
-             cand_cls.get("f1_macro")),
+        _row("F1 (Macro)", base_cls.get("f1_macro"), cand_cls.get("f1_macro")),
         _row("F1 (Weighted)", base_cls.get("f1_weighted"),
              cand_cls.get("f1_weighted")),
-        _row("Accuracy", base_cls.get("accuracy"),
-             cand_cls.get("accuracy")),
+        _row("Accuracy", base_cls.get("accuracy"), cand_cls.get("accuracy")),
         _row("ROC AUC (Macro)", base_cls.get("roc_auc_macro"),
              cand_cls.get("roc_auc_macro")),
         _row("PR AUC (Macro)", base_cls.get("pr_auc_macro"),
@@ -232,7 +233,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
                 return "True"
         # For multi-class or other labels, convert to string
         return str(lbl)
-    
+
     formatted_labels = [format_label(lbl) for lbl in labels]
     header = "".join(f"<th>Predicted {lbl}</th>" for lbl in formatted_labels)
     body_rows = []
@@ -240,7 +241,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         cells = "".join(f"<td>{int(val)}</td>" for val in row)
         body_rows.append(f"<tr><th>Actual {lbl}</th>{cells}</tr>")
     body_html = "".join(body_rows)
-    
+
     # Calculate metrics for interpretation
     if len(matrix) == 2 and len(matrix[0]) == 2:
         # Binary classification
@@ -248,13 +249,13 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         fp = int(matrix[0][1])  # False Positive
         fn = int(matrix[1][0])  # False Negative
         tp = int(matrix[1][1])  # True Positive
-        
+
         total = tn + fp + fn + tp
         accuracy = (tp + tn) / total if total > 0 else 0
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-        
+
         # Determine interpretation
         if accuracy >= 0.75:
             accuracy_interpretation = "优秀"
@@ -265,7 +266,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         else:
             accuracy_interpretation = "需要改进"
             accuracy_color = "bad"
-        
+
         interpretation = f"""
         <div class="explanation" style="margin-top: 20px;">
             <h4>📊 如何阅读混淆矩阵</h4>
@@ -333,7 +334,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
         total = sum(sum(row) for row in matrix)
         correct = sum(matrix[i][i] for i in range(len(matrix)))
         accuracy = correct / total if total > 0 else 0
-        
+
         interpretation = f"""
         <div class="explanation" style="margin-top: 20px;">
             <h4>📊 如何阅读混淆矩阵</h4>
@@ -347,7 +348,7 @@ def _build_confusion_matrix_html(class_metrics: Dict,
             <p><strong>准确率 (Accuracy):</strong> {accuracy:.2%} - 在 {total} 个样本中，模型正确预测了 {correct} 个</p>
         </div>
         """
-    
+
     return f"""
     <div class="card">
         <h3>{title}</h3>
@@ -925,7 +926,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     p = results.get("performance", {})
     train_info = results.get("training_info", {})
     multi_horizon_results = results.get("multi_horizon_results", {})
-    task_type = results.get("task_type", "classification_multiclass")
+    task_type = results.get("task_type", "classification_binary")
     selection_metric = results.get(
         "selection_metric",
         results.get("selection", {}).get("metric", "composite"))
@@ -950,9 +951,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
         "stage4_compressed": "Stage 4: Compressed",
     }
     recommended_stage_key = insights.get("recommended_stage")
-    recommended_stage_label = (
-        stage_label_map.get(recommended_stage_key, recommended_stage_key)
-        if recommended_stage_key else None)
+    recommended_stage_label = (stage_label_map.get(recommended_stage_key,
+                                                   recommended_stage_key)
+                               if recommended_stage_key else None)
     if recomm_horizon is not None:
         horizon_badge = ("✅ Effective"
                          if recomm_horizon_effective else "ℹ️ Best Candidate")
@@ -1001,7 +1002,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
     shap_importance_preview: list[Dict] = []
     if shap_dir_path and os.path.exists(shap_dir_path):
         artifacts["shap"] = _rel_path(shap_dir_path)
-        shap_importance_path = Path(shap_dir_path) / "stage3_representatives_shap_importance.json"
+        shap_importance_path = Path(
+            shap_dir_path) / "stage3_representatives_shap_importance.json"
         if shap_importance_path.exists():
             try:
                 with open(shap_importance_path, "r", encoding="utf-8") as f:
@@ -1031,8 +1033,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     has_4_stages = bool(
         stage4
         and (stage4.get("r2") is not None or stage4.get("rmse") is not None)
-        and compressed_dims not in (None, 0, d.get("original_features_count"))
-    )
+        and compressed_dims not in (None, 0, d.get("original_features_count")))
     if not has_4_stages:
         compressed_dims = d.get("stage3_representatives")
 
@@ -1041,7 +1042,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
     feature_effective = insights.get("effective")
     feature_delta = insights.get("delta")
     feature_metric_name = insights.get("metric_name", "r2")
-    
+
     # Determine conclusion based on feature effectiveness
     if feature_effective is True:
         conclusion = f"Dimensionality reduction appears beneficial. {feature_metric_name} improved by {feature_delta:.4f}."
@@ -1052,9 +1053,11 @@ def write_html_report(results: Dict, html_path: str) -> None:
         conclusion_delta = delta_r2
         if not has_4_stages:
             if stage3_vs_2:
-                conclusion_delta = stage3_vs_2.get("delta_r2", conclusion_delta)
+                conclusion_delta = stage3_vs_2.get("delta_r2",
+                                                   conclusion_delta)
             elif stage2_vs_1:
-                conclusion_delta = stage2_vs_1.get("delta_r2", conclusion_delta)
+                conclusion_delta = stage2_vs_1.get("delta_r2",
+                                                   conclusion_delta)
         if conclusion_delta is not None and conclusion_delta > 0:
             conclusion = f"Dimensionality reduction appears beneficial. R² improved by {conclusion_delta:.4f}."
         else:
@@ -1132,16 +1135,15 @@ def write_html_report(results: Dict, html_path: str) -> None:
         cand_fmt = _format_metric_for_display(metric_name, candidate_val)
         delta_fmt = _format_metric_delta(metric_name, delta_val)
         insight_items.append(
-            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt})."
-        )
+            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt}).")
 
     if recommended_stage_label:
         insight_items.append(
             f"Recommended feature stage: {recommended_stage_label}.")
 
     if recomm_horizon is not None:
-        horizon_badge = ("✅ Effective horizon"
-                         if recomm_horizon_effective else "ℹ️ Horizon candidate")
+        horizon_badge = ("✅ Effective horizon" if recomm_horizon_effective else
+                         "ℹ️ Horizon candidate")
         horizon_metric_fmt = _format_metric_for_display(
             recomm_horizon_metric_name, recomm_horizon_metric)
         insight_items.append(
@@ -1155,7 +1157,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
             "<h3>Insights Summary</h3>"
             f"<ul>{''.join(f'<li>{item}</li>' for item in insight_items)}</ul>"
             "</div>")
-    
+
     # Build stability validation section
     stability_html = ""
     stability_validation = results.get("stability_validation")
@@ -1166,13 +1168,15 @@ def write_html_report(results: Dict, html_path: str) -> None:
         unstable_factors = stability_validation.get("unstable_factors", [])
         stability_rate = stability_validation.get("stability_rate", 0)
         ic_comparison = stability_validation.get("ic_comparison", {})
-        
+
         # Build stable factors table
         stable_rows = ""
         if stable_factors:
-            stable_sorted = sorted(stable_factors,
-                                 key=lambda x: abs(ic_comparison.get(x, {}).get("ic_selection", 0)),
-                                 reverse=True)[:20]
+            stable_sorted = sorted(
+                stable_factors,
+                key=lambda x: abs(
+                    ic_comparison.get(x, {}).get("ic_selection", 0)),
+                reverse=True)[:20]
             for factor in stable_sorted:
                 comp = ic_comparison.get(factor, {})
                 ic_sel = comp.get("ic_selection", 0)
@@ -1185,13 +1189,15 @@ def write_html_report(results: Dict, html_path: str) -> None:
                     <td>{_format_float(ic_val, 4)}</td>
                     <td class="{'good' if abs(ic_change) < 0.05 else 'warn'}">{_format_float(ic_change, 4)}</td>
                 </tr>"""
-        
+
         # Build unstable factors table
         unstable_rows = ""
         if unstable_factors:
-            unstable_sorted = sorted(unstable_factors,
-                                   key=lambda x: abs(ic_comparison.get(x, {}).get("ic_change", 0)),
-                                   reverse=True)[:10]
+            unstable_sorted = sorted(
+                unstable_factors,
+                key=lambda x: abs(
+                    ic_comparison.get(x, {}).get("ic_change", 0)),
+                reverse=True)[:10]
             for factor in unstable_sorted:
                 comp = ic_comparison.get(factor, {})
                 ic_sel = comp.get("ic_selection", 0)
@@ -1204,7 +1210,7 @@ def write_html_report(results: Dict, html_path: str) -> None:
                     <td>{_format_float(ic_val, 4)}</td>
                     <td class="bad">{_format_float(ic_change, 4)}</td>
                 </tr>"""
-        
+
         stability_html = f"""
         <div class="card">
             <h3>🔍 Factor Stability Validation</h3>
@@ -1325,7 +1331,7 @@ def _build_html_report_content(
     stage3_vs_2: Dict,
     stage4_vs_3: Dict,
     multi_horizon_results: Dict = None,
-    task_type: str = "classification_multiclass",
+    task_type: str = "classification_binary",
     selection_metric: str | None = None,
     label_threshold: float | None = None,
     artifacts: Dict | None = None,
@@ -1400,8 +1406,10 @@ def _build_html_report_content(
                 f'<td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr>'
                 f'</table></div>')
 
-    top_factor_preview = artifacts.get("top_factors_preview") if artifacts else []
-    rep_factor_preview = artifacts.get("representatives_preview") if artifacts else []
+    top_factor_preview = artifacts.get(
+        "top_factors_preview") if artifacts else []
+    rep_factor_preview = artifacts.get(
+        "representatives_preview") if artifacts else []
     shap_link = artifacts.get("shap") if artifacts else None
 
     artifact_lines: list[str] = []
@@ -1456,8 +1464,7 @@ def _build_html_report_content(
             "<ul class=\"pill-list\">"
             f"{''.join(f'<li>{name}</li>' for name in top_factor_preview[:30])}"
             "</ul>"
-            "</div>"
-        )
+            "</div>")
 
     rep_factor_html = ""
     if rep_factor_preview:
@@ -1467,8 +1474,7 @@ def _build_html_report_content(
             "<ul class=\"pill-list\">"
             f"{''.join(f'<li>{name}</li>' for name in rep_factor_preview[:30])}"
             "</ul>"
-            "</div>"
-        )
+            "</div>")
 
     factor_section = ""
     if top_factor_html or rep_factor_html:
@@ -1479,15 +1485,13 @@ def _build_html_report_content(
         shap_rows = "".join(
             f"<tr><td>{item.get('rank')}</td><td>{item.get('feature')}</td><td>{_format_float(item.get('mean_abs_shap'))}</td></tr>"
             for item in shap_importance)
-        shap_html = (
-            "<div class=\"card\">"
-            "<h3>SHAP Importance (Top Factors)</h3>"
-            "<table class=\"metric-table\">"
-            "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
-            f"{shap_rows}"
-            "</table>"
-            "</div>"
-        )
+        shap_html = ("<div class=\"card\">"
+                     "<h3>SHAP Importance (Top Factors)</h3>"
+                     "<table class=\"metric-table\">"
+                     "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
+                     f"{shap_rows}"
+                     "</table>"
+                     "</div>")
 
     regression_section = ""
     if not task_type.startswith("classification") and stage1 and stage3:
@@ -1508,8 +1512,7 @@ def _build_html_report_content(
             "<th>ΔR²</th><th>Stage 3 RMSE</th><th>Compressed RMSE</th></tr>"
             f"{''.join(grid_rows)}"
             "</table>"
-            "</div>"
-        )
+            "</div>")
 
     training_html = ""
     train_rows = []
@@ -1525,11 +1528,10 @@ def _build_html_report_content(
     for key, label in diag_map.items():
         if train_info.get(key) is not None:
             iter_val = train_info.get(key)
-            train_rows.append(
-                f"<tr><td>{label}</td><td>{iter_val}</td></tr>")
+            train_rows.append(f"<tr><td>{label}</td><td>{iter_val}</td></tr>")
             iteration_values.append((label, iter_val))
     if train_rows:
-        
+
         # Generate interpretation
         interpretation = ""
         if len(iteration_values) > 1:
@@ -1537,7 +1539,7 @@ def _build_html_report_content(
             min_iter = min(iterations)
             max_iter = max(iterations)
             avg_iter = sum(iterations) / len(iterations)
-            
+
             interpretation = f"""
             <div class="explanation" style="margin-top: 20px;">
                 <h4>📊 如何解读 Best Iteration</h4>
@@ -1572,17 +1574,15 @@ def _build_html_report_content(
                 </ul>
             </div>
             """
-        
-        training_html = (
-            "<div class=\"card\">"
-            "<h3>Training Diagnostics</h3>"
-            "<table class=\"metric-table\">"
-            "<tr><th>Model</th><th>Best Iteration</th></tr>"
-            f"{''.join(train_rows)}"
-            "</table>"
-            f"{interpretation}"
-            "</div>"
-        )
+
+        training_html = ("<div class=\"card\">"
+                         "<h3>Training Diagnostics</h3>"
+                         "<table class=\"metric-table\">"
+                         "<tr><th>Model</th><th>Best Iteration</th></tr>"
+                         f"{''.join(train_rows)}"
+                         "</table>"
+                         f"{interpretation}"
+                         "</div>")
 
     multi_horizon_html = _build_multi_horizon_table(multi_horizon_results,
                                                     task_type)
@@ -1678,10 +1678,8 @@ def _build_multi_horizon_table(multi_horizon_results: Dict,
             "<th>F1 (Macro)</th><th>ROC AUC</th><th>Directional Win Rate</th></tr>"
         )
     else:
-        header = (
-            "<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
-            "<th>MAE</th></tr>"
-        )
+        header = ("<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
+                  "<th>MAE</th></tr>")
 
     rows = []
     horizon_keys = sorted(
@@ -1713,31 +1711,26 @@ def _build_multi_horizon_table(multi_horizon_results: Dict,
                     f"<td>{_format_metric_for_display('f1_macro', cls_metrics.get('f1_macro'))}</td>"
                     f"<td>{_format_metric_for_display('roc_auc_macro', cls_metrics.get('roc_auc_macro'))}</td>"
                     f"<td>{_format_metric_for_display('win_rate', financial.get('win_rate'))}</td>"
-                    "</tr>"
-                )
+                    "</tr>")
             else:
-                rows.append(
-                    "<tr>"
-                    f"<td><strong>{horizon_num} bars</strong></td>"
-                    f"<td>{stage_label}</td>"
-                    f"<td>{_format_float(stage_perf.get('r2'))}</td>"
-                    f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
-                    f"<td>{_format_float(stage_perf.get('mae'))}</td>"
-                    "</tr>"
-                )
+                rows.append("<tr>"
+                            f"<td><strong>{horizon_num} bars</strong></td>"
+                            f"<td>{stage_label}</td>"
+                            f"<td>{_format_float(stage_perf.get('r2'))}</td>"
+                            f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
+                            f"<td>{_format_float(stage_perf.get('mae'))}</td>"
+                            "</tr>")
 
     if not rows:
         return ""
 
-    return (
-        "<div class=\"card\">"
-        "<h3>📊 Multi-Horizon Comparison</h3>"
-        "<table class=\"metric-table\">"
-        f"{header}"
-        f"{''.join(rows)}"
-        "</table>"
-        "</div>"
-    )
+    return ("<div class=\"card\">"
+            "<h3>📊 Multi-Horizon Comparison</h3>"
+            "<table class=\"metric-table\">"
+            f"{header}"
+            f"{''.join(rows)}"
+            "</table>"
+            "</div>")
 
 
 def create_recommendations_section(results: Dict[str, any]) -> str:

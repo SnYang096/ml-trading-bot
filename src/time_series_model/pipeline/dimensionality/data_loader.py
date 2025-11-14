@@ -150,8 +150,8 @@ def load_real_market_data(
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
-        y = df_features[f"signal_{default_horizon}"].dropna(
-        ).values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
+        y = df_features[f"binary_signal_{default_horizon}"].dropna(
+        ).values  # Use binary signal (0=Short, 1=Long)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
