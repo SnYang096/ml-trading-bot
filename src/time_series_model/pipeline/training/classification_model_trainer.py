@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Tuple, Optional, Any, Callable
 import numpy as np
 import pandas as pd
-from time_series_model.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMTrainer
 from time_series_model.pipeline.training.base_model_trainer import BaseModelTrainer
 from .label_utils import (
     log_return_magnitude,
@@ -182,7 +182,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         # Train classification model (direction prediction) with filtered data
         logger.info("Training classification model (binary: up/down)...")
-        model_classification = LightGBMModel(model_type="classification",
+        model_classification = LightGBMTrainer(model_type="classification",
                                              use_gpu=self.use_gpu)
 
         classification_metrics, classification_preprocess_params = model_classification.train(
@@ -198,7 +198,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
         # Train return regression model (magnitude prediction)
         logger.info(
             "Training return regression model (for magnitude prediction)...")
-        model_return = LightGBMModel(model_type="regression",
+        model_return = LightGBMTrainer(model_type="regression",
                                      use_gpu=self.use_gpu)
         y_return_log_mag = log_return_magnitude(y_return)
         return_metrics, return_preprocess_params = model_return.train(
@@ -219,7 +219,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         # Train volatility model (risk prediction)
         logger.info("Training volatility model (for risk prediction)...")
-        model_vol = LightGBMModel(model_type="regression",
+        model_vol = LightGBMTrainer(model_type="regression",
                                   use_gpu=self.use_gpu)
         vol_metrics, vol_preprocess_params = model_vol.train(
             X_df,

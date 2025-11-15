@@ -1502,17 +1502,8 @@ def _build_html_report_content(
             "Stage 3: Representatives",
         )
 
+    # Autoencoder grid search removed - no longer used
     grid_html = ""
-    if grid_rows:
-        grid_html = (
-            "<div class=\"card\">"
-            "<h3>Autoencoder Grid Search</h3>"
-            "<table class=\"metric-table\">"
-            "<tr><th>Encoding Dim</th><th>Stage 3 R²</th><th>Compressed R²</th>"
-            "<th>ΔR²</th><th>Stage 3 RMSE</th><th>Compressed RMSE</th></tr>"
-            f"{''.join(grid_rows)}"
-            "</table>"
-            "</div>")
 
     training_html = ""
     train_rows = []
@@ -1523,7 +1514,6 @@ def _build_html_report_content(
         "lightgbm_stage2_iterations": "Stage 2 · IC-Filtered",
         "lightgbm_stage3_iterations": "Stage 3 · Representatives",
         "lightgbm_compressed_iterations": "Stage 3 · Representatives",
-        "lightgbm_stage4_iterations": "Stage 4 · Autoencoder",
     }
     for key, label in diag_map.items():
         if train_info.get(key) is not None:

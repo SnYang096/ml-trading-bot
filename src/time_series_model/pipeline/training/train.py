@@ -29,8 +29,8 @@ from data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )
-from time_series_model.models.lightgbm_model import LightGBMModel
-from time_series_model.models.quant_trading_model import QuantTradingModel
+from time_series_model.models.lightgbm_model import LightGBMTrainer
+from time_series_model.models.quant_trading_model import TradingModelPipeline
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
 from time_series_model.pipeline.training.quantile_model_trainer import QuantileModelTrainer
 from time_series_model.pipeline.training.classification_model_trainer import ClassificationModelTrainer
@@ -176,7 +176,7 @@ def _compute_direction_threshold(y_score: np.ndarray,
 
 
 def _extract_feature_importance_df(
-        model: Optional[LightGBMModel],
+        model: Optional[LightGBMTrainer],
         feature_cols: Optional[List[str]]) -> Optional[pd.DataFrame]:
     """Return top gain-based feature importance for a trained LightGBM model."""
     if not model or not hasattr(model, "model") or model.model is None:
@@ -1131,7 +1131,7 @@ def main() -> None:
                               index=train_df.index)
 
             # ✅ Feature cleaning moved to CV loop (prevents lookahead bias)
-            # Feature cleaning is now done in LightGBMModel.train() within each CV fold
+            # Feature cleaning is now done in LightGBMTrainer.train() within each CV fold
             # All statistics (median, mad) computed ONLY from training data per fold
             # Reference: docs/极端值：确保 Q50 loss ≤ Q10Q90 loss.md
             print(
@@ -2487,10 +2487,10 @@ def main() -> None:
                     Returns:
                         Trained model and metrics
                     """
-                    from time_series_model.models.lightgbm_model import LightGBMModel
+                    from time_series_model.models.lightgbm_model import LightGBMTrainer
 
                     # Strategy 1: Original training
-                    model_q50_retrain = LightGBMModel(
+                    model_q50_retrain = LightGBMTrainer(
                         model_type="quantile",
                         quantile_alpha=0.5,
                         params=q50_params_retrain,
@@ -2533,7 +2533,7 @@ def main() -> None:
                                 base_params.get("bagging_fraction", 1.0) +
                                 (i - 1) * 0.05)
 
-                            model = LightGBMModel(model_type="quantile",
+                            model = LightGBMTrainer(model_type="quantile",
                                                   quantile_alpha=0.5,
                                                   params=perturbed_params,
                                                   use_gpu=args.gpu)
@@ -2846,7 +2846,7 @@ def main() -> None:
                 print("=" * 70 + "\n")
 
             # volatility: regression model for volatility prediction
-            model_vol = LightGBMModel(model_type="regression",
+            model_vol = LightGBMTrainer(model_type="regression",
                                       use_gpu=args.gpu)
             vol_metrics, vol_preprocess_params = model_vol.train(
                 X_df, y_vol, n_splits=n_splits, use_time_series_cv=use_cv)
@@ -3897,7 +3897,7 @@ def main() -> None:
             # 保存分类模型 Pipeline
             if args.model_type == "classification":
                 if classification_preprocess_params:
-                    classification_pipeline = QuantTradingModel(
+                    classification_pipeline = TradingModelPipeline(
                         model_type="classification",
                         forward_bars=fb,
                         feature_cols=feature_cols,
@@ -3915,7 +3915,7 @@ def main() -> None:
 
                 # 保存 Return Regression 模型 Pipeline
                 if return_preprocess_params:
-                    return_pipeline = QuantTradingModel(
+                    return_pipeline = TradingModelPipeline(
                         model_type="regression",
                         forward_bars=fb,
                         feature_cols=feature_cols,
@@ -3933,7 +3933,7 @@ def main() -> None:
                     )
                 else:
                     # Return regression model without preprocessing
-                    return_pipeline = QuantTradingModel(
+                    return_pipeline = TradingModelPipeline(
                         model_type="regression",
                         forward_bars=fb,
                         feature_cols=feature_cols,
@@ -3950,7 +3950,7 @@ def main() -> None:
 
             # 保存 Q50 模型 Pipeline
             if q50_preprocess_params:
-                q50_pipeline = QuantTradingModel(
+                q50_pipeline = TradingModelPipeline(
                     model_type="quantile",
                     quantile_alpha=0.5,
                     forward_bars=fb,
@@ -3968,7 +3968,7 @@ def main() -> None:
 
             # 保存 Q10 模型 Pipeline
             if q10_preprocess_params:
-                q10_pipeline = QuantTradingModel(
+                q10_pipeline = TradingModelPipeline(
                     model_type="quantile",
                     quantile_alpha=0.1,
                     forward_bars=fb,
@@ -3986,7 +3986,7 @@ def main() -> None:
 
             # 保存 Q90 模型 Pipeline
             if q90_preprocess_params:
-                q90_pipeline = QuantTradingModel(
+                q90_pipeline = TradingModelPipeline(
                     model_type="quantile",
                     quantile_alpha=0.9,
                     forward_bars=fb,
@@ -4003,7 +4003,7 @@ def main() -> None:
                 )
 
             # 保存 Volatility 模型 Pipeline（不需要预处理参数）
-            vol_pipeline = QuantTradingModel(
+            vol_pipeline = TradingModelPipeline(
                 model_type="regression",
                 forward_bars=fb,
                 feature_cols=feature_cols,

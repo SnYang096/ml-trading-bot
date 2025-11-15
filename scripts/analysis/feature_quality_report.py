@@ -9,7 +9,40 @@ from typing import Dict, Iterable, Tuple
 import numpy as np
 import pandas as pd
 
-from time_series_model.models.train_model import prepare_ohlcv_dataframe
+def prepare_ohlcv_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize pre-aggregated OHLCV datasets for downstream processing."""
+    df = df.copy()
+
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df.set_index("timestamp", inplace=True)
+    elif "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"])
+        df.set_index("time", inplace=True)
+    elif not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError(
+            "No timestamp column found in OHLCV data. Expected 'timestamp' or a datetime index."
+        )
+
+    df.index = pd.to_datetime(df.index)
+    df.sort_index(inplace=True)
+
+    required = {"open", "high", "low", "close", "volume"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError("OHLCV dataset missing required columns: " +
+                         ", ".join(sorted(missing)))
+
+    for column in required:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    df = df.dropna(subset=list(required))
+
+    # Drop redundant timestamp column if parquet stored it both as index and column
+    if "timestamp" in df.columns and df.index.equals(df["timestamp"]):
+        df = df.drop(columns=["timestamp"])
+
+    return df
 from data_tools.feature_engineering import FeatureEngineer
 from data_tools.feature_engineering_enhanced import (
     EnhancedFeatureEngineer, )

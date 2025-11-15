@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from time_series_model.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMTrainer
 from time_series_model.config.settings import TIMEFRAMES
 from time_series_model.pipeline.training.label_utils import (
     log_return_magnitude,
@@ -24,12 +24,12 @@ class MultiTimeframePipeline:
         """
         # Four models per timeframe: q10, q50, q90, volatility (for quantile mode)
         # Or: classification, return regression, volatility (for classification mode)
-        self.q10_models: Dict[str, LightGBMModel] = {}  # timeframe -> model
-        self.q50_models: Dict[str, LightGBMModel] = {}  # timeframe -> model
-        self.q90_models: Dict[str, LightGBMModel] = {}  # timeframe -> model
-        self.classification_models: Dict[str, LightGBMModel] = {}  # timeframe -> model (for classification mode)
-        self.return_models: Dict[str, LightGBMModel] = {}  # timeframe -> model (for return regression in classification mode)
-        self.volatility_models: Dict[str, LightGBMModel] = {}  # timeframe -> model
+        self.q10_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
+        self.q50_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
+        self.q90_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
+        self.classification_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model (for classification mode)
+        self.return_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model (for return regression in classification mode)
+        self.volatility_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
         self.is_trained = False
         self.forward_bars = forward_bars
         self.model_type = model_type
@@ -110,7 +110,7 @@ class MultiTimeframePipeline:
             returns_target, _, _ = self.prepare_targets(data)
 
             # Create and train quantile regression model
-            model = LightGBMModel(model_type="quantile", quantile_alpha=quantile_alpha)
+            model = LightGBMTrainer(model_type="quantile", quantile_alpha=quantile_alpha)
             model_metrics = model.train(X, returns_target)
 
             # Store model and metrics
@@ -146,7 +146,7 @@ class MultiTimeframePipeline:
             _, volatility_target, _ = self.prepare_targets(data)
 
             # Create and train regression model for volatility
-            model = LightGBMModel(model_type="regression")
+            model = LightGBMTrainer(model_type="regression")
             model_metrics = model.train(X, volatility_target)
 
             # Store model and metrics
@@ -188,7 +188,7 @@ class MultiTimeframePipeline:
             X_cls = X.loc[classification_target.index]
 
             # Create and train classification model
-            model = LightGBMModel(model_type="classification")
+            model = LightGBMTrainer(model_type="classification")
             model_metrics = model.train(X_cls, classification_target)
 
             # Store model and metrics
@@ -225,7 +225,7 @@ class MultiTimeframePipeline:
             log_mag = log_return_magnitude(future_returns)
 
             # Create and train return regression model
-            model = LightGBMModel(model_type="regression")
+            model = LightGBMTrainer(model_type="regression")
             model_metrics = model.train(X, log_mag)
 
             # Store model and metrics

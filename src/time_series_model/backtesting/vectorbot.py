@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-# Only rolling format (QuantTradingModel) is supported
+# Only rolling format (TradingModelPipeline) is supported
 
 # ============================================================================
 # Unified Backtest Functions
@@ -341,7 +341,7 @@ class VectorBotBacktest:
     def load_model(self) -> None:
         """Load the trained model.
         
-        Only supports rolling format: directory with QuantTradingModel pipelines (from make rolling).
+        Only supports rolling format: directory with TradingModelPipeline pipelines (from make rolling).
         Legacy format (pickle file) is no longer supported.
         """
         print(f"Loading model from {self.model_path}...")
@@ -368,7 +368,7 @@ class VectorBotBacktest:
 
     def _load_rolling_models(self, model_dir: str) -> None:
         """Load models from rolling training directory."""
-        from time_series_model.models.quant_trading_model import QuantTradingModel
+        from time_series_model.models.quant_trading_model import TradingModelPipeline
 
         # Load classification pipeline
         cls_path = os.path.join(model_dir, "classification_pipeline.pkl")
@@ -382,18 +382,18 @@ class VectorBotBacktest:
                 f"  - scalers.pkl (optional)")
 
         print(f"   Loading classification pipeline: {cls_path}")
-        self.cls_pipeline = QuantTradingModel.load(cls_path)
+        self.cls_pipeline = TradingModelPipeline.load(cls_path)
 
         print(
             f"   Loading return pipeline: {os.path.join(model_dir, 'return_pipeline.pkl')}"
         )
-        self.return_pipeline = QuantTradingModel.load(
+        self.return_pipeline = TradingModelPipeline.load(
             os.path.join(model_dir, "return_pipeline.pkl"))
 
         print(
             f"   Loading volatility pipeline: {os.path.join(model_dir, 'vol_pipeline.pkl')}"
         )
-        self.vol_pipeline = QuantTradingModel.load(
+        self.vol_pipeline = TradingModelPipeline.load(
             os.path.join(model_dir, "vol_pipeline.pkl"))
 
         # Load scalers if available
@@ -677,7 +677,7 @@ class VectorBotBacktest:
         if not hasattr(self,
                        'is_rolling_format') or not self.is_rolling_format:
             raise ValueError(
-                "Only rolling format (QuantTradingModel) is supported. "
+                "Only rolling format (TradingModelPipeline) is supported. "
                 "Legacy format (MLTradingStrategy) is no longer supported.")
 
         self._run_rolling_backtest(start_date, end_date, output_dir)

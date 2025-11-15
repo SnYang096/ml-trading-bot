@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict
 from time_series_model.strategies.base_strategy_handler import BaseStrategyHandler
-from time_series_model.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMTrainer
 from time_series_model.pipeline.training.label_utils import invert_log_return_magnitude
 
 
@@ -165,7 +165,7 @@ class ClassificationStrategyHandler(BaseStrategyHandler):
             _, _, classification_target = self.pipeline.prepare_targets(data)
 
             # Create and optimize model
-            model = LightGBMModel(model_type="classification")
+            model = LightGBMTrainer(model_type="classification")
             best_params[
                 f"classification_{timeframe}"] = model.optimize_hyperparameters(
                     X, classification_target, n_trials=n_trials // 2)

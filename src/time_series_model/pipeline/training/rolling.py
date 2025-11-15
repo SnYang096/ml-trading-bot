@@ -21,8 +21,8 @@ from data_tools.comprehensive_feature_engineering import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )
-from time_series_model.models.lightgbm_model import LightGBMModel
-from time_series_model.models.quant_trading_model import QuantTradingModel
+from time_series_model.models.lightgbm_model import LightGBMTrainer
+from time_series_model.models.quant_trading_model import TradingModelPipeline
 from time_series_model.pipeline.training.classification_model_trainer import ClassificationModelTrainer
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
 from .label_utils import (
@@ -545,7 +545,7 @@ tr:hover{{background:#f0f8ff}}
                 store[feat] = store.get(feat, 0.0) + val
 
         def _extract_importance(
-                model: LightGBMModel,
+                model: LightGBMTrainer,
                 feature_names: List[str]) -> Optional[pd.DataFrame]:
             if not model or not hasattr(model, "model") or model.model is None:
                 return None
@@ -1004,7 +1004,7 @@ tr:hover{{background:#f0f8ff}}
                 fallback_cv = (args.cv_folds if
                                (args.cv_on_rolling and args.cv_folds
                                 and args.cv_folds > 1) else 0)
-                model_cls = LightGBMModel(model_type="classification",
+                model_cls = LightGBMTrainer(model_type="classification",
                                           use_gpu=args.gpu)
                 _ = model_cls.train(X_train_cls,
                                     y_cls_train_filtered,
@@ -1012,7 +1012,7 @@ tr:hover{{background:#f0f8ff}}
                                     use_time_series_cv=bool(fallback_cv),
                                     groups=groups_filtered)
 
-                model_return = LightGBMModel(model_type="regression",
+                model_return = LightGBMTrainer(model_type="regression",
                                              use_gpu=args.gpu)
                 _ = model_return.train(X_train_df,
                                        log_return_magnitude(y_return_train),
@@ -1020,7 +1020,7 @@ tr:hover{{background:#f0f8ff}}
                                        use_time_series_cv=bool(fallback_cv))
                 return_preprocess_params = {"target_transform": "log1p_abs"}
 
-                model_vol = LightGBMModel(model_type="regression",
+                model_vol = LightGBMTrainer(model_type="regression",
                                           use_gpu=args.gpu)
                 _ = model_vol.train(X_train_df,
                                     y_vol_train,
@@ -1036,7 +1036,7 @@ tr:hover{{background:#f0f8ff}}
                 print(
                     "   ⚠️ Classification model unavailable after trainer run; using fallback LightGBM training."
                 )
-                model_cls = LightGBMModel(model_type="classification",
+                model_cls = LightGBMTrainer(model_type="classification",
                                           use_gpu=args.gpu)
                 _ = model_cls.train(X_train_cls,
                                     y_cls_train_filtered,
@@ -1050,7 +1050,7 @@ tr:hover{{background:#f0f8ff}}
                 print(
                     "   ⚠️ Return model unavailable after trainer run; using fallback LightGBM training."
                 )
-                model_return = LightGBMModel(model_type="regression",
+                model_return = LightGBMTrainer(model_type="regression",
                                              use_gpu=args.gpu)
                 _ = model_return.train(X_train_df,
                                        log_return_magnitude(y_return_train),
@@ -1063,7 +1063,7 @@ tr:hover{{background:#f0f8ff}}
                 print(
                     "   ⚠️ Volatility model unavailable after trainer run; using fallback LightGBM training."
                 )
-                model_vol = LightGBMModel(model_type="regression",
+                model_vol = LightGBMTrainer(model_type="regression",
                                           use_gpu=args.gpu)
                 _ = model_vol.train(X_train_df,
                                     y_vol_train,
@@ -1071,7 +1071,7 @@ tr:hover{{background:#f0f8ff}}
                                     use_time_series_cv=bool(fallback_cv))
                 vol_preprocess_params = None
 
-            # Guard against edge cases where LightGBMModel preserves booster but flag remains unset
+            # Guard against edge cases where LightGBMTrainer preserves booster but flag remains unset
             for mdl in (model_cls, model_return, model_vol):
                 if mdl is not None and getattr(mdl, "model", None) is not None:
                     mdl.is_trained = True
@@ -1285,7 +1285,7 @@ tr:hover{{background:#f0f8ff}}
             base = f"fb{fb}_tf{freq}_{test_file['month_str']}"
             artifact_paths: Dict[str, str] = {}
 
-            cls_pipeline = QuantTradingModel(
+            cls_pipeline = TradingModelPipeline(
                 model_type="classification",
                 forward_bars=fb,
                 feature_cols=feat_cols,
@@ -1301,7 +1301,7 @@ tr:hover{{background:#f0f8ff}}
             cls_pipeline.save(cls_pipeline_path)
             artifact_paths["classification_pipeline"] = cls_pipeline_path
 
-            return_pipeline = QuantTradingModel(
+            return_pipeline = TradingModelPipeline(
                 model_type="regression",
                 forward_bars=fb,
                 feature_cols=feat_cols,
@@ -1318,7 +1318,7 @@ tr:hover{{background:#f0f8ff}}
             return_pipeline.save(return_pipeline_path)
             artifact_paths["return_pipeline"] = return_pipeline_path
 
-            vol_pipeline = QuantTradingModel(
+            vol_pipeline = TradingModelPipeline(
                 model_type="regression",
                 forward_bars=fb,
                 feature_cols=feat_cols,
@@ -1575,12 +1575,12 @@ tr:hover{{background:#f0f8ff}}
                     f.write("Usage Example\n")
                     f.write("=============\n\n")
                     f.write("```python\n")
-                    f.write("from time_series_model.models.quant_trading_model import QuantTradingModel\n")
+                    f.write("from time_series_model.models.quant_trading_model import TradingModelPipeline\n")
                     f.write("import joblib\n\n")
                     f.write("# Load models\n")
-                    f.write("cls_model = QuantTradingModel.load('classification_pipeline.pkl')\n")
-                    f.write("return_model = QuantTradingModel.load('return_pipeline.pkl')\n")
-                    f.write("vol_model = QuantTradingModel.load('vol_pipeline.pkl')\n\n")
+                    f.write("cls_model = TradingModelPipeline.load('classification_pipeline.pkl')\n")
+                    f.write("return_model = TradingModelPipeline.load('return_pipeline.pkl')\n")
+                    f.write("vol_model = TradingModelPipeline.load('vol_pipeline.pkl')\n\n")
                     f.write("# Load feature list\n")
                     f.write("feature_cols = joblib.load('features.pkl')\n\n")
                     f.write("# Load scalers\n")

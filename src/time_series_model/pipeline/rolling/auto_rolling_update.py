@@ -42,7 +42,7 @@ from time_series_model.pipeline.training.label_utils import (
 )
 from time_series_model.strategies.classification_strategy_handler import ClassificationStrategyHandler
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
-from time_series_model.models.quant_trading_model import QuantTradingModel
+from time_series_model.models.quant_trading_model import TradingModelPipeline
 from time_series_model.backtesting.vectorbot import (
     print_backtest_results,
     evaluate_signal_performance,
@@ -606,7 +606,7 @@ def main() -> None:
         models_dir = os.path.join(results_dir, "models")
         os.makedirs(models_dir, exist_ok=True)
 
-        cls_pipeline = QuantTradingModel(
+        cls_pipeline = TradingModelPipeline(
             model_type="classification",
             forward_bars=args.forward_bars,
             feature_cols=feature_cols,
@@ -621,7 +621,7 @@ def main() -> None:
         cls_path = os.path.join(models_dir, f"classification_pipeline_{test_file['month_str']}.pkl")
         cls_pipeline.save(cls_path)
 
-        return_pipeline = QuantTradingModel(
+        return_pipeline = TradingModelPipeline(
             model_type="regression",
             forward_bars=args.forward_bars,
             feature_cols=feature_cols,
@@ -637,7 +637,7 @@ def main() -> None:
         ret_path = os.path.join(models_dir, f"return_pipeline_{test_file['month_str']}.pkl")
         return_pipeline.save(ret_path)
 
-        vol_pipeline = QuantTradingModel(
+        vol_pipeline = TradingModelPipeline(
             model_type="regression",
             forward_bars=args.forward_bars,
             feature_cols=feature_cols,

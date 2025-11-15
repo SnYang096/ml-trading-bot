@@ -3,7 +3,7 @@
 from typing import Dict, Tuple, Optional, Any, Callable
 import numpy as np
 import pandas as pd
-from time_series_model.models.lightgbm_model import LightGBMModel
+from time_series_model.models.lightgbm_model import LightGBMTrainer
 from time_series_model.pipeline.training.base_model_trainer import BaseModelTrainer
 
 
@@ -41,7 +41,7 @@ class QuantileModelTrainer(BaseModelTrainer):
 
         # Stage 1: Train Q50 model
         print(f"   Stage 1: Training Q50 model (primary point estimate)...")
-        model_q50 = LightGBMModel(
+        model_q50 = LightGBMTrainer(
             model_type="quantile",
             quantile_alpha=0.5,
             params=q50_params,
@@ -103,7 +103,7 @@ class QuantileModelTrainer(BaseModelTrainer):
             q10_q90_weights_full = q10_q90_weights
 
         # Stage 2: Train Q10 and Q90
-        model_q10 = LightGBMModel(model_type="quantile", quantile_alpha=0.1, use_gpu=self.use_gpu)
+        model_q10 = LightGBMTrainer(model_type="quantile", quantile_alpha=0.1, use_gpu=self.use_gpu)
         q10_metrics, q10_preprocess_params = model_q10.train(
             X_df,
             y_return,
@@ -115,7 +115,7 @@ class QuantileModelTrainer(BaseModelTrainer):
             feature_winsorize_k=feature_winsorize_k,
         )
 
-        model_q90 = LightGBMModel(model_type="quantile", quantile_alpha=0.9, use_gpu=self.use_gpu)
+        model_q90 = LightGBMTrainer(model_type="quantile", quantile_alpha=0.9, use_gpu=self.use_gpu)
         q90_metrics, q90_preprocess_params = model_q90.train(
             X_df,
             y_return,
@@ -129,7 +129,7 @@ class QuantileModelTrainer(BaseModelTrainer):
 
         # Train volatility model
         print(f"   Training volatility model...")
-        model_vol = LightGBMModel(model_type="regression", use_gpu=self.use_gpu)
+        model_vol = LightGBMTrainer(model_type="regression", use_gpu=self.use_gpu)
         vol_metrics, vol_preprocess_params = model_vol.train(
             X_df,
             y_vol,
