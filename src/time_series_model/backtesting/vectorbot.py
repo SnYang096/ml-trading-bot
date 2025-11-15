@@ -7,12 +7,300 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 # Only rolling format (QuantTradingModel) is supported
+
+# ============================================================================
+# Unified Backtest Functions
+# ============================================================================
+# All backtest-related functions are centralized here for consistency
+
+
+def evaluate_signal_performance(
+    signals_df: pd.DataFrame,
+    future_returns: pd.Series,
+    initial_capital: float = 100000.0,
+) -> Dict[str, Any]:
+    """
+    Evaluate risk-adjusted signals by simulating cumulative equity.
+    
+    This is a simplified backtest that uses signal_strength directly as position size.
+    For more advanced backtesting with risk management, use VectorBotBacktest class.
+    
+    Args:
+        signals_df: DataFrame with 'signal_strength' column
+        future_returns: Series of future returns (aligned with signals_df index)
+        initial_capital: Starting capital
+        
+    Returns:
+        Dictionary with backtest metrics
+    """
+    df = signals_df.join(future_returns.rename("future_return"),
+                         how="inner").dropna(subset=["future_return"])
+
+    if df.empty:
+        return {
+            "total_trades": 0,
+            "total_return": 0.0,
+            "win_rate": 0.0,
+            "profit_factor": 0.0,
+            "max_drawdown": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "final_equity": initial_capital,
+            "equity_curve": [],
+        }
+
+    df = df.copy()
+    df["position"] = np.clip(df["signal_strength"], -1.0, 1.0)
+    df["period_return"] = df["position"] * df["future_return"]
+
+    equity_curve = (1.0 + df["period_return"]).cumprod() * initial_capital
+    total_return = float(equity_curve.iloc[-1] / initial_capital - 1.0)
+
+    trade_mask = df["position"].abs() > 1e-8
+    total_trades = int(trade_mask.sum())
+
+    if total_trades > 0:
+        win_rate = float(
+            (df.loc[trade_mask, "period_return"] > 0).mean() * 100.0)
+    else:
+        win_rate = 0.0
+
+    positives = df.loc[df["period_return"] > 0, "period_return"]
+    negatives = df.loc[df["period_return"] < 0, "period_return"]
+
+    if not negatives.empty and not positives.empty:
+        profit_factor = float(positives.sum() / abs(negatives.sum()))
+    elif negatives.empty and not positives.empty:
+        profit_factor = float("inf")
+    else:
+        profit_factor = 1.0
+
+    avg_win = float(positives.mean() * 100.0) if not positives.empty else 0.0
+    avg_loss = float(negatives.mean() * 100.0) if not negatives.empty else 0.0
+
+    drawdown = equity_curve / equity_curve.cummax() - 1.0
+    max_drawdown = float(drawdown.min() * 100.0)
+
+    return {
+        "total_trades":
+        total_trades,
+        "total_return":
+        total_return * 100.0,
+        "win_rate":
+        win_rate,
+        "profit_factor":
+        profit_factor,
+        "max_drawdown":
+        max_drawdown,
+        "avg_win":
+        avg_win,
+        "avg_loss":
+        avg_loss,
+        "final_equity":
+        float(equity_curve.iloc[-1]),
+        "equity_curve": [{
+            "timestamp": idx,
+            "equity": float(val)
+        } for idx, val in equity_curve.items()],
+    }
+
+
+def print_backtest_results(results: Dict[str, Any],
+                           label: str = "Results") -> None:
+    """Print backtest results in a formatted way."""
+    print(f"\n📊 {label}")
+    print(f"   Trades: {results['total_trades']}")
+    print(f"   Return: {results['total_return']:+.2f}%")
+    print(f"   Win Rate: {results['win_rate']:.1f}%")
+    print(f"   Avg Win: ${results['avg_win']:,.2f}")
+    print(f"   Avg Loss: ${results['avg_loss']:,.2f}")
+    print(f"   Profit Factor: {results['profit_factor']:.2f}")
+    print(f"   Max Drawdown: {results['max_drawdown']:.2f}%")
+    print(f"   Final Equity: ${results['final_equity']:,.0f}")
+
+
+def calculate_strategy_returns_from_predictions(
+    predictions: np.ndarray,
+    price_data: pd.DataFrame,
+    horizon: int = 1,
+) -> np.ndarray:
+    """
+    Calculate strategy returns based on classification predictions and actual price movements.
+    
+    Args:
+        predictions: Model predictions (0=Hold, 1=Long, 2=Short)
+        price_data: DataFrame with 'close' column containing price data
+        horizon: Forward horizon for calculating returns (default: 1)
+    
+    Returns:
+        Array of strategy returns
+    """
+    if 'close' not in price_data.columns:
+        raise ValueError("price_data must contain 'close' column")
+
+    if len(predictions) != len(price_data):
+        raise ValueError(
+            f"predictions length ({len(predictions)}) must match price_data length ({len(price_data)})"
+        )
+
+    close_prices = price_data['close'].values
+
+    # Calculate forward returns: (price[t+horizon] / price[t] - 1)
+    forward_returns = np.zeros(len(close_prices))
+    for i in range(len(close_prices) - horizon):
+        if close_prices[i] > 0:
+            forward_returns[i] = (close_prices[i + horizon] /
+                                  close_prices[i]) - 1.0
+
+    # Calculate strategy returns based on predictions
+    strategy_returns = np.zeros(len(predictions))
+
+    # Long positions (prediction = 1): use forward return
+    long_mask = predictions == 1
+    strategy_returns[long_mask] = forward_returns[long_mask]
+
+    # Short positions (prediction = 2): use negative forward return
+    short_mask = predictions == 2
+    strategy_returns[short_mask] = -forward_returns[short_mask]
+
+    # Hold positions (prediction = 0): return = 0
+    # (already initialized to 0)
+
+    return strategy_returns
+
+
+def calculate_financial_metrics_from_returns(
+    strategy_returns: np.ndarray,
+    risk_free_rate: float = 0.0,
+) -> Dict[str, float]:
+    """
+    Calculate financial metrics from strategy returns.
+    
+    Args:
+        strategy_returns: Array of strategy returns
+        risk_free_rate: Risk-free rate (annualized, default 0)
+    
+    Returns:
+        Dictionary of financial metrics
+    """
+    metrics = {}
+
+    if len(strategy_returns) == 0:
+        return {
+            "sharpe_ratio": 0.0,
+            "max_drawdown": 0.0,
+            "total_return": 0.0,
+            "annualized_return": 0.0,
+            "volatility": 0.0,
+            "win_rate": 0.0,
+        }
+
+    # 1. Total return (cumulative)
+    total_return = float(np.sum(strategy_returns))
+    metrics["total_return"] = total_return
+
+    # 2. Annualized return (assuming daily data)
+    n_periods = len(strategy_returns)
+    if n_periods > 0:
+        # Simple annualization: multiply by ~252 trading days
+        annualized_return = total_return * (
+            252.0 / n_periods) if n_periods < 252 else total_return
+        metrics["annualized_return"] = annualized_return
+    else:
+        metrics["annualized_return"] = 0.0
+
+    # 3. Sharpe ratio
+    returns_std = np.std(strategy_returns)
+    if returns_std > 1e-8:
+        # Annualized Sharpe: (mean_return - risk_free) / std_return * sqrt(252)
+        daily_rf = risk_free_rate / 252.0
+        sharpe_ratio = (np.mean(strategy_returns) -
+                        daily_rf) / returns_std * np.sqrt(252.0)
+        metrics["sharpe_ratio"] = float(sharpe_ratio)
+    else:
+        metrics["sharpe_ratio"] = 0.0
+
+    # 4. Maximum drawdown
+    cumulative_returns = np.cumsum(strategy_returns)
+    running_max = np.maximum.accumulate(cumulative_returns)
+    drawdown = cumulative_returns - running_max
+    max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+    metrics["max_drawdown"] = max_drawdown
+    metrics["max_drawdown_pct"] = max_drawdown / (
+        1.0 + abs(running_max[-1])) if len(
+            running_max) > 0 and running_max[-1] != 0 else 0.0
+
+    # 5. Win rate
+    winning_trades = (strategy_returns > 0).sum()
+    total_trades = len(strategy_returns[strategy_returns !=
+                                        0])  # Only count non-hold positions
+    metrics["win_rate"] = float(winning_trades /
+                                total_trades) if total_trades > 0 else 0.0
+
+    # 6. Volatility (annualized)
+    volatility = np.std(strategy_returns) * np.sqrt(252.0)
+    metrics["volatility"] = float(volatility)
+
+    return metrics
+
+
+def backtest_classification_model(
+    model,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    price_data: pd.DataFrame,
+    horizon: int = 1,
+    risk_free_rate: float = 0.0,
+) -> Dict[str, float]:
+    """
+    Run backtest for classification model and return financial metrics.
+    
+    Args:
+        model: Trained classification model
+        X_test: Test feature matrix
+        y_test: Test labels (for alignment, not used in backtest)
+        price_data: DataFrame with 'close' column containing price data
+        horizon: Forward horizon for calculating returns (default: 1)
+        risk_free_rate: Risk-free rate (annualized, default 0)
+    
+    Returns:
+        Dictionary of financial metrics
+    """
+    # Get predictions
+    predictions = model.predict(X_test)
+
+    # Handle multiclass predictions
+    if predictions.ndim == 2 and predictions.shape[1] > 1:
+        # Multiclass: convert probability array to class predictions
+        predictions = np.argmax(predictions, axis=1)
+
+    # Align price data with predictions
+    if len(predictions) != len(price_data):
+        # If lengths don't match, take the minimum
+        min_len = min(len(predictions), len(price_data))
+        predictions = predictions[:min_len]
+        price_data = price_data.iloc[:min_len]
+
+    # Calculate strategy returns
+    strategy_returns = calculate_strategy_returns_from_predictions(
+        predictions, price_data, horizon=horizon)
+
+    # Calculate financial metrics
+    metrics = calculate_financial_metrics_from_returns(
+        strategy_returns, risk_free_rate=risk_free_rate)
+
+    return metrics
+
+
+# ============================================================================
+# VectorBotBacktest Class
+# ============================================================================
 
 
 class VectorBotBacktest:
@@ -1484,6 +1772,17 @@ class VectorBotBacktest:
         # Write HTML file
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
+
+
+# Export all backtest functions for backward compatibility
+__all__ = [
+    "VectorBotBacktest",
+    "evaluate_signal_performance",
+    "print_backtest_results",
+    "calculate_strategy_returns_from_predictions",
+    "calculate_financial_metrics_from_returns",
+    "backtest_classification_model",
+]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

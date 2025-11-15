@@ -25,35 +25,56 @@ def train_lightgbm_model(
 ) -> lgb.Booster:
     """Train a LightGBM model with optional validation support.
     
-    Automatically detects whether to use binary, multiclass, or regression based on y_train:
-    - If unique values <= 2: binary classification
-    - If unique values > 2 and all integers: multiclass classification
-    - Otherwise: regression
+    Automatically detects whether to use binary classification or regression based on y_train:
+    - If labels are integers in [0, 2] (3-class: 0=Hold, 1=Long, 2=Short): 
+      Filters neutral labels (0=Hold) and converts to binary (1=Long, 0=Short)
+    - If labels are already binary (0/1): uses binary classification
+    - Otherwise: regression (for continuous return prediction)
+    
+    Note: Classification always uses binary (1=Long, 0=Short), neutral labels are filtered globally.
     """
 
     # Auto-detect task type based on labels
-    # IMPORTANT: Classification tasks use 3-class (0=Hold, 1=Long, 2=Short)
-    # Regression tasks (predicting returns) remain as regression - DO NOT CHANGE
     unique_labels = np.unique(y_train)
     num_unique = len(unique_labels)
 
-    # Determine objective based on label characteristics
-    # If labels are integers in [0, 2] → 3-class classification (signal prediction)
-    # If labels are continuous values → regression (return prediction)
-    if num_unique <= 3 and np.all(np.equal(
-            np.mod(unique_labels, 1),
-            0)) and np.all(unique_labels >= 0) and np.all(unique_labels <= 2):
-        # 3-class classification for signal prediction (0=Hold, 1=Long, 2=Short)
-        objective = "multiclass"
-        metric = "multi_logloss"
-        task_params = {"num_class": 3}
+    # Check if labels are 3-class format (0=Hold, 1=Long, 2=Short)
+    is_3class = (num_unique <= 3
+                 and np.all(np.equal(np.mod(unique_labels, 1), 0))
+                 and np.all(unique_labels >= 0) and np.all(unique_labels <= 2))
+
+    # Filter neutral labels (0=Hold) and convert to binary (1=Long, 0=Short)
+    if is_3class:
+        # Filter out neutral labels (0=Hold), keep only Long (1) and Short (2)
+        train_mask = (y_train == 1) | (y_train == 2)
+        if train_mask.sum() == 0:
+            raise ValueError(
+                "No valid long/short samples in training set after removing neutral labels."
+            )
+        X_train = X_train[train_mask]
+        y_train = np.where(y_train[train_mask] == 1, 1, 0).astype(int)
+
+        # Also filter validation set if provided
+        if X_val is not None and y_val is not None:
+            val_mask = (y_val == 1) | (y_val == 2)
+            if val_mask.sum() == 0:
+                raise ValueError(
+                    "No valid long/short samples in validation set after removing neutral labels."
+                )
+            X_val = X_val[val_mask]
+            y_val = np.where(y_val[val_mask] == 1, 1, 0).astype(int)
+
+        # Use binary classification
+        objective = "binary"
+        metric = "binary_logloss"
+        task_params = {}
     elif num_unique == 2:
-        # Binary classification (fallback for compatibility)
+        # Already binary classification
         objective = "binary"
         metric = "binary_logloss"
         task_params = {}
     else:
-        # Regression for predicting continuous returns (DO NOT CHANGE - this is correct for return prediction)
+        # Regression for predicting continuous returns
         objective = "regression"
         metric = "rmse"
         task_params = {}
@@ -139,92 +160,6 @@ def train_lightgbm_model(
     return model
 
 
-def evaluate_signal_performance(
-    signals_df: pd.DataFrame,
-    future_returns: pd.Series,
-    initial_capital: float = 100000.0,
-) -> Dict[str, Any]:
-    """Evaluate risk-adjusted signals by simulating cumulative equity."""
-
-    df = signals_df.join(future_returns.rename("future_return"), how="inner").dropna(
-        subset=["future_return"]
-    )
-
-    if df.empty:
-        return {
-            "total_trades": 0,
-            "total_return": 0.0,
-            "win_rate": 0.0,
-            "profit_factor": 0.0,
-            "max_drawdown": 0.0,
-            "avg_win": 0.0,
-            "avg_loss": 0.0,
-            "final_equity": initial_capital,
-            "equity_curve": [],
-        }
-
-    df = df.copy()
-    df["position"] = np.clip(df["signal_strength"], -1.0, 1.0)
-    df["period_return"] = df["position"] * df["future_return"]
-
-    equity_curve = (1.0 + df["period_return"]).cumprod() * initial_capital
-    total_return = float(equity_curve.iloc[-1] / initial_capital - 1.0)
-
-    trade_mask = df["position"].abs() > 1e-8
-    total_trades = int(trade_mask.sum())
-
-    if total_trades > 0:
-        win_rate = float((df.loc[trade_mask, "period_return"] > 0).mean() * 100.0)
-    else:
-        win_rate = 0.0
-
-    positives = df.loc[df["period_return"] > 0, "period_return"]
-    negatives = df.loc[df["period_return"] < 0, "period_return"]
-
-    if not negatives.empty and not positives.empty:
-        profit_factor = float(positives.sum() / abs(negatives.sum()))
-    elif negatives.empty and not positives.empty:
-        profit_factor = float("inf")
-    else:
-        profit_factor = 1.0
-
-    avg_win = float(positives.mean() * 100.0) if not positives.empty else 0.0
-    avg_loss = float(negatives.mean() * 100.0) if not negatives.empty else 0.0
-
-    drawdown = equity_curve / equity_curve.cummax() - 1.0
-    max_drawdown = float(drawdown.min() * 100.0)
-
-    return {
-        "total_trades": total_trades,
-        "total_return": total_return * 100.0,
-        "win_rate": win_rate,
-        "profit_factor": profit_factor,
-        "max_drawdown": max_drawdown,
-        "avg_win": avg_win,
-        "avg_loss": avg_loss,
-        "final_equity": float(equity_curve.iloc[-1]),
-        "equity_curve": [
-            {"timestamp": idx, "equity": float(val)}
-            for idx, val in equity_curve.items()
-        ],
-    }
-
-
-def print_backtest_results(results: Dict[str, Any],
-                           label: str = "Results") -> None:
-    print(f"\n📊 {label}")
-    print(f"   Trades: {results['total_trades']}")
-    print(f"   Return: {results['total_return']:+.2f}%")
-    print(f"   Win Rate: {results['win_rate']:.1f}%")
-    print(f"   Avg Win: ${results['avg_win']:,.2f}")
-    print(f"   Avg Loss: ${results['avg_loss']:,.2f}")
-    print(f"   Profit Factor: {results['profit_factor']:.2f}")
-    print(f"   Max Drawdown: {results['max_drawdown']:.2f}%")
-    print(f"   Final Equity: ${results['final_equity']:,.0f}")
-
-
 __all__ = [
     "train_lightgbm_model",
-    "evaluate_signal_performance",
-    "print_backtest_results",
 ]

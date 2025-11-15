@@ -38,7 +38,7 @@ from time_series_model.utils.training import train_lightgbm_model
 
 # Import report generator for HTML report writing
 from time_series_model.pipeline.dimensionality.report_generator import write_html_report
-from time_series_model.pipeline.dimensionality.backtest_evaluator import (
+from time_series_model.backtesting.vectorbot import (
     backtest_classification_model,
     calculate_strategy_returns_from_predictions,
     calculate_financial_metrics_from_returns,

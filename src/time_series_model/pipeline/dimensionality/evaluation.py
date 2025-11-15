@@ -20,7 +20,7 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import label_binarize
 
-from time_series_model.pipeline.dimensionality.backtest_evaluator import (
+from time_series_model.backtesting.vectorbot import (
     calculate_strategy_returns_from_predictions,
     calculate_financial_metrics_from_returns,
 )

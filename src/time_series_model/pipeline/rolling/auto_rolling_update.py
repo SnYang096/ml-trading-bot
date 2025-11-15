@@ -43,7 +43,7 @@ from time_series_model.pipeline.training.label_utils import (
 from time_series_model.strategies.classification_strategy_handler import ClassificationStrategyHandler
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
 from time_series_model.models.quant_trading_model import QuantTradingModel
-from time_series_model.utils.training import (
+from time_series_model.backtesting.vectorbot import (
     print_backtest_results,
     evaluate_signal_performance,
 )

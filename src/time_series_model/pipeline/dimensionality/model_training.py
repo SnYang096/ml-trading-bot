@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Dict, Optional
 import numpy as np
 import torch
-import lightgbm as lgb
 
 from time_series_model.models.autoencoder import AutoencoderTrainer, UnifiedAutoencoder
+from time_series_model.utils.training import train_lightgbm_model
 
 
 def train_production_lightgbm(
@@ -17,7 +17,15 @@ def train_production_lightgbm(
     y_val: np.ndarray,
     params: Dict | None = None,
 ):
-    """Train production LightGBM model with automatic task detection."""
+    """
+    Train production LightGBM model with automatic task detection.
+    
+    This function wraps train_lightgbm_model with production-specific defaults:
+    - Uses production hyperparameters (lower learning rate, more rounds)
+    - Requires validation set (not optional)
+    
+    Note: Neutral label filtering (0=Hold) is handled automatically by train_lightgbm_model.
+    """
     print("🌲 Training production LightGBM...")
 
     # Basic validation
@@ -26,115 +34,53 @@ def train_production_lightgbm(
     if not np.isfinite(y_train).all() or not np.isfinite(y_val).all():
         raise ValueError("Non-finite values detected in labels (NaN/inf)")
 
-    # Check for valid labels (for both classification and regression)
+    # Check for valid labels
     unique_labels = np.unique(y_train)
     if len(unique_labels) == 1:
         raise ValueError(
             f"y_train has only one unique value ({unique_labels[0]}); cannot train a model"
         )
 
-    # Auto-detect task type based on labels
-    # IMPORTANT: Classification tasks use binary (0=Short, 1=Long)
-    # Regression tasks (predicting returns) remain as regression - DO NOT CHANGE
-    unique_labels = np.unique(y_train)
-    num_unique = len(unique_labels)
+    # Production defaults (override user params if provided)
+    production_params = {
+        "boosting_type": "gbdt",
+        "num_leaves": 31,
+        "learning_rate": 0.02,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "min_data_in_leaf": 50,
+        "min_sum_hessian_in_leaf": 1e-3,
+        "min_split_gain": 0.1,
+        "lambda_l2": 1.0,
+        "verbose": -1,
+        "random_state": 42,
+    }
 
-    # Determine objective based on label characteristics
-    # If labels are integers in [0, 2] → 3-class classification (signal prediction)
-    # If labels are continuous values → regression (return prediction)
-    if num_unique <= 3 and np.all(np.equal(
-            np.mod(unique_labels, 1),
-            0)) and np.all(unique_labels >= 0) and np.all(unique_labels <= 2):
-        # Binary classification for signal prediction (drop neutral / map short)
-        objective = "binary"
-        metric = "binary_logloss"
-        task_params = {}
-        print(
-            "   Using binary classification (1=Long, 0=Short); neutral labels (0=Hold) will be removed"
-        )
-    elif num_unique == 2:
-        # Binary classification (fallback for compatibility)
-        objective = "binary"
-        metric = "binary_logloss"
-        task_params = {}
-        print(f"   Using binary classification")
+    # Map device_type to device (for compatibility with train_lightgbm_model)
+    if torch.cuda.is_available():
+        production_params["device"] = "cuda"
+        production_params["gpu_platform_id"] = 0
+        production_params["gpu_device_id"] = 0
     else:
-        # Regression for predicting continuous returns (DO NOT CHANGE - this is correct for return prediction)
-        objective = "regression"
-        metric = "rmse"
-        task_params = {}
-        print(f"   Using regression for return prediction")
+        production_params["device"] = "cpu"
 
-    if objective == "binary":
+    # Merge with user-provided params
+    if params:
+        production_params.update(params)
 
-        def _filter_and_map(X, y, split_name: str):
-            mask = (y == 1) | (y == 2)
-            removed = int(len(y) - mask.sum())
-            if mask.sum() == 0:
-                raise ValueError(
-                    f"No valid long/short samples remain in {split_name} after removing neutral labels."
-                )
-            if removed > 0:
-                print(
-                    f"   [{split_name}] Removed {removed} neutral samples; keeping {mask.sum()} long/short samples."
-                )
-            X_filtered = X[mask]
-            y_filtered = np.where(y[mask] == 1, 1, 0).astype(int)
-            return X_filtered, y_filtered
-
-        X_train, y_train = _filter_and_map(X_train, y_train, "train")
-        X_val, y_val = _filter_and_map(X_val, y_val, "validation")
-
-    if params is None:
-        params = {
-            "objective": objective,
-            "metric": metric,
-            "boosting_type": "gbdt",
-            "num_leaves": 31,
-            "learning_rate": 0.02,
-            "feature_fraction": 0.8,
-            "bagging_fraction": 0.8,
-            "bagging_freq": 5,
-            "min_data_in_leaf": 50,
-            "min_sum_hessian_in_leaf": 1e-3,
-            "min_split_gain": 0.1,
-            "lambda_l2": 1.0,
-            "verbose": -1,
-            "random_state": 42,
-            # Prefer CUDA backend if available (LightGBM built with CUDA)
-            "device_type": "cuda" if torch.cuda.is_available() else "cpu",
-            **task_params,  # Add num_class for multiclass
-        }
-
-    lgb_train = lgb.Dataset(X_train, label=y_train)
-    lgb_val = lgb.Dataset(X_val, label=y_val, reference=lgb_train)
-
-    # Use callbacks for broad LightGBM version compatibility
-    callbacks = [
-        lgb.early_stopping(stopping_rounds=400, verbose=True),
-        lgb.log_evaluation(period=200),
-    ]
-    try:
-        model = lgb.train(
-            params,
-            lgb_train,
-            num_boost_round=4000,
-            valid_sets=[lgb_val],
-            valid_names=["valid"],
-            callbacks=callbacks,
-        )
-    except Exception as gpu_err:
-        # Fallback: if GPU init fails (e.g., OpenCL/CUDA not available), retry on CPU
-        print(f"⚠️ LightGBM GPU failed ({gpu_err}), retrying on CPU...")
-        params["device_type"] = "cpu"
-        model = lgb.train(
-            params,
-            lgb_train,
-            num_boost_round=4000,
-            valid_sets=[lgb_val],
-            valid_names=["valid"],
-            callbacks=callbacks,
-        )
+    # Use train_lightgbm_model with production defaults
+    model = train_lightgbm_model(
+        X_train,
+        y_train,
+        use_gpu=torch.cuda.is_available(),
+        num_boost_round=4000,
+        params=production_params,
+        X_val=X_val,
+        y_val=y_val,
+        early_stopping_rounds=400,
+        eval_period=200,
+    )
 
     # Ensure best_iteration attribute is present
     if getattr(model, "best_iteration", None) in (None, 0):

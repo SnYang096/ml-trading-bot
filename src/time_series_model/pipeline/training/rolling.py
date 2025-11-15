@@ -36,7 +36,7 @@ from sklearn.metrics import (mean_squared_error, mean_absolute_error, r2_score,
                              roc_auc_score, average_precision_score)
 from sklearn.preprocessing import StandardScaler
 from time_series_model.pipeline.training.train import _compute_direction_threshold
-from time_series_model.utils.training import (
+from time_series_model.backtesting.vectorbot import (
     print_backtest_results,
     evaluate_signal_performance,
 )
