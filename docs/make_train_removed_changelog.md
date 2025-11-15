@@ -100,17 +100,14 @@ make rolling SYMBOLS=BTCUSDT \
 1. **rolling.py**:
    - 导入 `_compute_direction_threshold` ✅ 保留
 
-2. **auto_workflow.py**:
-   - 导入 `train_module` ⚠️ 需要检查是否仍在使用
-
-3. **其他脚本**:
+2. **其他脚本**:
    - `tune_q50_params.py` - 使用工具函数 ✅ 保留
    - `safe_multi_asset_preprocessing.py` - 使用工具函数 ✅ 保留
 
 ### 建议
 
-- 如果 `auto_workflow.py` 仍在使用 `train_module`，需要迁移到 `rolling_module`
 - 其他工具函数可以保留，因为它们被多个模块使用
+- `auto_workflow.py` 已删除（因为整个研发上线流程需要人工分析，无法完全自动化）
 
 ---
 
@@ -136,7 +133,7 @@ make rolling SYMBOLS=BTCUSDT \
 - [x] 文档已更新
 - [x] 工具函数保留
 - [x] `vectorbot.py` 仍支持 legacy 格式
-- [ ] 检查 `auto_workflow.py` 是否需要更新
+- [x] `auto_workflow.py` 已删除（无法完全自动化）
 - [ ] 检查是否有 CI/CD 流程需要更新
 
 ---

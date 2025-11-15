@@ -156,18 +156,25 @@ make auto-rolling-update SYMBOL=BTCUSDT \
   --forward-bars 5
 ```
 
-### 示例 3: 使用 auto-workflow（自动化流程）
+### 示例 3: 手动执行完整流程
 
 ```bash
-# 自动执行：dim-compare → train → rolling
-make auto-workflow SYMBOLS=BTCUSDT \
-  START_DATE=2024-01-01 END_DATE=2024-12-31 \
-  ROLLING_START=2024-01 ROLLING_END=2024-12 \
-  AUTO_FEATURE_TYPE=comprehensive \
-  AUTO_FREQS=60T \
-  AUTO_FORWARD_BARS_TRAIN=5 \
-  AUTO_FORWARD_BARS_ROLLING=5
+# 步骤 1: 运行 dim-compare
+make dim-compare SYMBOLS=BTCUSDT \
+  DIM_COMPARE_START=2024-01-01 DIM_COMPARE_END=2024-12-31 \
+  DIM_COMPARE_FEATURE_TYPE=comprehensive \
+  DIM_COMPARE_FREQ=60T
+
+# 步骤 2: 使用 dim-compare 结果运行 rolling
+make rolling SYMBOLS=BTCUSDT \
+  ROLLING_USE_TOP_FACTORS=results/dim_compare/.../top_factors.json \
+  ROLLING_FEATURE_TYPE=comprehensive \
+  ROLLING_FREQ=60T \
+  ROLLING_FBS=5 \
+  ROLLING_START=2024-01 ROLLING_END=2024-12
 ```
+
+**注意**: `auto-workflow` 已删除，因为整个研发上线流程（timeframe、feature binning、features挑选）都需要人工分析，无法完全自动化。
 
 ## 检查清单
 

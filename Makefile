@@ -93,7 +93,7 @@ endif
 
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only auto-workflow vectorbot-backtest \
+	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
 		dim-compare nautilus-backtest feature-report factor-analysis \
 		timeframe-forward-report feature-indicators \
 	cross-sectional-catalog \
