@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pickle
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -13,16 +12,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-# Import to make class available for pickle when loading legacy bundles
-from time_series_model.models.train_model import MultiTimeframeComprehensiveEngineer  # noqa: F401
-from time_series_model.strategies.ml_strategy import MLTradingStrategy
-
-
-class MultiTimeframeEnhancedEngineer(MultiTimeframeComprehensiveEngineer
-                                     ):  # pragma: no cover - pickle shim
-    """Legacy shim for bundles serialized with older engineer name."""
-
-    pass
+# Only rolling format (QuantTradingModel) is supported
 
 
 class VectorBotBacktest:
@@ -63,42 +53,30 @@ class VectorBotBacktest:
     def load_model(self) -> None:
         """Load the trained model.
         
-        Supports two formats:
-        1. Legacy format: pickle file with strategy, data_loader, etc. (from make train)
-        2. Rolling format: directory with QuantTradingModel pipelines (from make rolling)
+        Only supports rolling format: directory with QuantTradingModel pipelines (from make rolling).
+        Legacy format (pickle file) is no longer supported.
         """
         print(f"Loading model from {self.model_path}...")
 
-        # Check if it's a directory (rolling training format)
-        if os.path.isdir(self.model_path):
-            # Try to load from latest directory or the directory itself
-            latest_dir = os.path.join(self.model_path, "latest")
-            if os.path.exists(latest_dir):
-                model_dir = latest_dir
-                print(
-                    f"   Found 'latest' directory, using models from: {model_dir}"
-                )
-            else:
-                model_dir = self.model_path
-                print(f"   Loading models from directory: {model_dir}")
+        # Only support directory format (rolling training format)
+        if not os.path.isdir(self.model_path):
+            raise ValueError(
+                f"Model path must be a directory (rolling format). "
+                f"Legacy format (pickle file) is no longer supported. "
+                f"Got: {self.model_path}")
 
-            # Load rolling training models
-            self._load_rolling_models(model_dir)
-            return
+        # Try to load from latest directory or the directory itself
+        latest_dir = os.path.join(self.model_path, "latest")
+        if os.path.exists(latest_dir):
+            model_dir = latest_dir
+            print(
+                f"   Found 'latest' directory, using models from: {model_dir}")
+        else:
+            model_dir = self.model_path
+            print(f"   Loading models from directory: {model_dir}")
 
-        # Legacy format: single pickle file
-        with open(self.model_path, "rb") as f:
-            model_data = pickle.load(f)
-
-        self.strategy: MLTradingStrategy = model_data["strategy"]
-        self.data_loader = model_data["data_loader"]
-        self.feature_engineer = model_data["feature_engineer"]
-        self.engineered_data = model_data["engineered_data"]
-        self.metrics = model_data["metrics"]
-
-        print("✅ Model loaded successfully")
-        print(f"   Training date: {model_data.get('training_date', 'N/A')}")
-        print(f"   Data info: {model_data.get('data_info', 'N/A')}")
+        # Load rolling training models
+        self._load_rolling_models(model_dir)
 
     def _load_rolling_models(self, model_dir: str) -> None:
         """Load models from rolling training directory."""
@@ -407,279 +385,14 @@ class VectorBotBacktest:
         print("🚀 Starting VectorBot Backtest")
         print("=" * 50)
 
-        # Handle rolling format vs legacy format
-        if hasattr(self, 'is_rolling_format') and self.is_rolling_format:
-            self._run_rolling_backtest(start_date, end_date, output_dir)
-            return
+        # Only support rolling format
+        if not hasattr(self,
+                       'is_rolling_format') or not self.is_rolling_format:
+            raise ValueError(
+                "Only rolling format (QuantTradingModel) is supported. "
+                "Legacy format (MLTradingStrategy) is no longer supported.")
 
-        # Legacy format: Get 5T data for backtesting
-        data_5t = self.engineered_data["5T"]
-
-        # Filter by date range if specified
-        if start_date:
-            data_5t = data_5t[data_5t.index >= start_date]
-        if end_date:
-            data_5t = data_5t[data_5t.index <= end_date]
-
-        if data_5t.empty:
-            print("❌ No data available for the specified range")
-            return
-
-        print(f"Backtesting on {len(data_5t)} bars")
-        print(f"Date range: {data_5t.index[0]} to {data_5t.index[-1]}")
-
-        # Prepare features for prediction
-        feature_columns = [
-            col for col in data_5t.columns
-            if col not in ["open", "high", "low", "close", "volume"]
-        ]
-        X_5t = data_5t[feature_columns]
-        X_5t_clean = X_5t.dropna()
-
-        if X_5t_clean.empty:
-            print("❌ No valid data for prediction")
-            return
-
-        print(f"Using {len(X_5t_clean)} clean data points for prediction")
-
-        # Check if new 4-model architecture is available
-        self.has_new_models = (hasattr(self.strategy.pipeline, "q50_models")
-                               and "5T" in self.strategy.pipeline.q50_models)
-
-        def _ensure_1d(preds):
-            arr = np.asarray(preds)
-            if arr.ndim == 0:
-                arr = arr.reshape(1)
-            return arr.ravel()
-
-        if self.has_new_models:
-            # Use new 4-model architecture (q10, q50, q90, volatility)
-            print(
-                "Using new 4-model architecture (q10, q50, q90, volatility)..."
-            )
-
-            # Get predictions from all four models
-            q10_pred = _ensure_1d(
-                self.strategy.pipeline.q10_models["5T"].predict(X_5t_clean))
-            q50_pred = _ensure_1d(
-                self.strategy.pipeline.q50_models["5T"].predict(X_5t_clean))
-            q90_pred = _ensure_1d(
-                self.strategy.pipeline.q90_models["5T"].predict(X_5t_clean))
-            vol_pred = _ensure_1d(
-                self.strategy.pipeline.volatility_models["5T"].predict(
-                    X_5t_clean))
-
-            # Create signals DataFrame
-            signals = pd.DataFrame({
-                "timestamp":
-                X_5t_clean.index,
-                "q10":
-                q10_pred,
-                "q50":
-                q50_pred,
-                "q90":
-                q90_pred,
-                "vol":
-                vol_pred,
-                "close":
-                data_5t["close"].loc[X_5t_clean.index],
-            })
-
-            # Calculate derived metrics
-            signals["interval_width"] = signals["q90"] - signals["q10"]
-            signals["confidence"] = np.abs(
-                signals["q50"]) / (signals["interval_width"] + 1e-8)
-            signals["signal_strength"] = signals["q50"] / (signals["vol"] +
-                                                           1e-8)
-
-            # Generate signals using new decision logic
-            # Default thresholds (can be overridden)
-            signal_strength_threshold = getattr(self.strategy,
-                                                "signal_strength_threshold",
-                                                1.0)
-            confidence_threshold = getattr(self.strategy,
-                                           "confidence_threshold", 0.3)
-
-            signals["discrete_signal"] = 0
-            # Long signal: positive q50, high signal strength, high confidence
-            long_mask = ((signals["q50"] > 0) & (signals["signal_strength"]
-                                                 > signal_strength_threshold) &
-                         (signals["confidence"] > confidence_threshold))
-            signals.loc[long_mask, "discrete_signal"] = 1
-
-            # Short signal: negative q50, high signal strength (absolute), high confidence
-            short_mask = ((signals["q50"] < 0) & (np.abs(
-                signals["signal_strength"]) > signal_strength_threshold)
-                          & (signals["confidence"] > confidence_threshold))
-            signals.loc[short_mask, "discrete_signal"] = -1
-
-            # Use absolute signal strength for position sizing
-            signals["signal_strength"] = np.abs(signals["signal_strength"])
-
-        else:
-            # Fallback to old stage1/stage2 architecture for backward compatibility
-            print(
-                "⚠️  New 4-model architecture not found, using old stage1/stage2 models..."
-            )
-            if not (hasattr(self.strategy.pipeline, "stage1_models")
-                    and "5T" in self.strategy.pipeline.stage1_models):
-                print("❌ No valid models found in pipeline")
-                return
-
-            stage1_model = self.strategy.pipeline.stage1_models["5T"]
-            stage2_model = self.strategy.pipeline.stage2_models["5T"]
-
-            stage1_raw = np.asarray(stage1_model.predict(X_5t_clean))
-            stage2_preds = _ensure_1d(stage2_model.predict(X_5t_clean))
-
-            if stage1_raw.ndim == 2 and stage1_raw.shape[1] >= 2:
-                # Multiclass probs: 0=Hold, 1=Long, 2=Short (legacy convention)
-                long_prob = stage1_raw[:, 1]
-                short_prob = (stage1_raw[:, 2] if stage1_raw.shape[1] >= 3 else
-                              np.clip(1.0 - long_prob, 0.0, 1.0))
-                stage1_scalar = long_prob
-            else:
-                # Binary prob (compat)
-                stage1_scalar = _ensure_1d(stage1_raw)
-                long_prob = stage1_scalar
-                short_prob = 1.0 - long_prob
-
-            # Create signals DataFrame
-            signals = pd.DataFrame({
-                "timestamp":
-                X_5t_clean.index,
-                "stage1_pred":
-                stage1_scalar,
-                "stage1_long_prob":
-                long_prob,
-                "stage1_short_prob":
-                short_prob,
-                "stage2_pred":
-                stage2_preds,
-                "close":
-                data_5t["close"].loc[X_5t_clean.index],
-            })
-
-            # Convert to discrete signals using probability dominance
-            signals["discrete_signal"] = 0
-            long_mask = (signals["stage1_long_prob"] > 0.55) & (
-                signals["stage1_long_prob"] > signals["stage1_short_prob"])
-            short_mask = (signals["stage1_short_prob"] > 0.55) & (
-                signals["stage1_short_prob"] > signals["stage1_long_prob"])
-            signals.loc[long_mask, "discrete_signal"] = 1
-            signals.loc[short_mask, "discrete_signal"] = -1
-
-            # Calculate signal strength from class probability spread
-            signals["signal_strength"] = np.abs(
-                signals["stage1_long_prob"] -
-                signals["stage1_short_prob"]) / 2.0
-
-        print("\n📊 Signal Statistics:")
-        print(f"   Total signals: {len(signals)}")
-        print(
-            f"   Long signals: {len(signals[signals['discrete_signal'] == 1])}"
-        )
-        print(
-            f"   Short signals: {len(signals[signals['discrete_signal'] == -1])}"
-        )
-        print(
-            f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}"
-        )
-
-        # Show model architecture info
-        if self.has_new_models:
-            print("   Model architecture: 4-model (q10, q50, q90, volatility)")
-            if "q50" in signals.columns:
-                print(f"   Avg Q50 prediction: {signals['q50'].mean():.6f}")
-                print(
-                    f"   Avg signal strength: {signals['signal_strength'].mean():.4f}"
-                )
-                print(f"   Avg confidence: {signals['confidence'].mean():.4f}")
-        else:
-            print("   Model architecture: 2-model (stage1, stage2)")
-
-        # Run backtest
-        print("\n🔄 Running backtest...")
-
-        for i, (timestamp, row) in enumerate(signals.iterrows()):
-            current_price = row["close"]
-            signal = row["discrete_signal"]
-            signal_strength = row["signal_strength"]
-
-            # Update existing positions
-            self.update_positions(current_price, timestamp)
-
-            # Check for new signals
-            # Use different thresholds based on model architecture
-            if self.has_new_models:
-                # For new 4-model architecture, signal_strength and confidence are already filtered
-                min_signal_strength = 0.01  # Lower threshold for absolute signal strength
-            else:
-                # For old stage1/stage2 architecture, use original threshold
-                min_signal_strength = 0.1
-
-            if signal != 0 and signal_strength > min_signal_strength:
-                # Check if we can open new position
-                active_positions = len(
-                    [p for p in self.positions if p["status"] == "active"])
-
-                if active_positions < self.max_positions:
-                    # Calculate position size
-                    position_size = self.calculate_position_size(
-                        signal_strength, current_price)
-
-                    if position_size > 0:
-                        side = "long" if signal == 1 else "short"
-                        self.open_position(
-                            side,
-                            position_size,
-                            current_price,
-                            timestamp,
-                            signal_strength,
-                        )
-
-            # Update equity curve
-            total_pnl = sum([
-                p["current_pnl"] for p in self.positions
-                if p["status"] == "active"
-            ])
-            current_equity = self.capital + total_pnl
-            self.equity_curve.append({
-                "timestamp": timestamp,
-                "equity": current_equity,
-                "capital": self.capital,
-                "open_pnl": total_pnl,
-            })
-
-            # Update drawdown
-            if current_equity > self.peak_equity:
-                self.peak_equity = current_equity
-
-            drawdown = (self.peak_equity - current_equity) / self.peak_equity
-            if drawdown > self.max_drawdown:
-                self.max_drawdown = drawdown
-
-            # Progress update
-            if i % 50 == 0:
-                print(
-                    f"   Processed {i+1}/{len(signals)} bars, Equity: {current_equity:.2f}"
-                )
-
-        # Close any remaining positions
-        for position in self.positions:
-            if position["status"] == "active":
-                last_price = signals["close"].iloc[-1]
-                last_timestamp = signals.index[-1]
-                self.close_position(position, last_price, last_timestamp,
-                                    "end_of_data")
-
-        # Calculate final results
-        self.calculate_results()
-
-        # Save results
-        self.save_results(output_dir, start_date=start_date, end_date=end_date)
-
-        print("\n🎉 Backtest completed successfully!")
+        self._run_rolling_backtest(start_date, end_date, output_dir)
 
     def calculate_results(self) -> None:
         """Calculate backtest results."""
@@ -745,18 +458,6 @@ class VectorBotBacktest:
             "final_equity": final_equity,
             "initial_capital": self.initial_capital,
         }
-
-        print("\n📈 Backtest Results:")
-        print(f"   Total Trades: {total_trades}")
-        print(f"   Win Rate: {win_rate:.2f}%")
-        print(f"   Total P&L: {total_pnl:.2f}")
-        print(f"   Total Return: {total_return:.2f}%")
-        print(f"   Average Win: {avg_win:.2f}")
-        print(f"   Average Loss: {avg_loss:.2f}")
-        print(f"   Profit Factor: {profit_factor:.2f}")
-        print(f"   Sharpe Ratio: {sharpe_ratio:.2f}")
-        print(f"   Max Drawdown: {self.max_drawdown * 100:.2f}%")
-        print(f"   Final Equity: {final_equity:.2f}")
 
     def _run_rolling_backtest(self,
                               start_date: str | None = None,
