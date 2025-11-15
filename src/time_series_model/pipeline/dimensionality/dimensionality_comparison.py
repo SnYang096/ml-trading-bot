@@ -185,11 +185,13 @@ def load_real_market_data(
             "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
             "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
             "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
+            "signal",  # Single-horizon label (legacy, e.g., signal)
             "binary_signal",
             "future_return",
             "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
         }
         exclude_prefixes = (
+            "signal_",  # Multi-horizon labels (e.g., signal_15)
             "binary_signal_",
             "future_return_",
         )
@@ -1640,6 +1642,18 @@ def _copy_best_combination_files(best_result: Dict,
                 'factor_count')
 
         selected_features = summary['selected_features']
+        
+        # Filter out label columns (signal_*, binary_signal_*, future_return_*)
+        # These are labels, not features, and should not be in top_factors.json
+        label_prefixes = ('signal_', 'binary_signal_', 'future_return_')
+        label_exact = {'signal', 'binary_signal', 'future_return'}
+        selected_features = [
+            f for f in selected_features
+            if f not in label_exact and not any(f.startswith(prefix) for prefix in label_prefixes)
+        ]
+        if len(selected_features) < len(summary['selected_features']):
+            filtered_count = len(summary['selected_features']) - len(selected_features)
+            print(f"   🧹 Filtered out {filtered_count} label column(s) from top_factors (e.g., signal_*, binary_signal_*, future_return_*)")
 
         # If we have a target factor_count, try to limit features using SHAP importance
         if target_factor_count and isinstance(target_factor_count,

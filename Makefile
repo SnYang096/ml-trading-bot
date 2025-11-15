@@ -216,6 +216,17 @@ builder-shell:
 # Factor analysis using Alphalens （跑不起来）
 # ---------------------------------------------------------------------------
 
+
+TF_CONFIG_PEARSON ?= 0.25
+TF_CONFIG_PVALUE ?= 1e-5
+TF_CONFIG_MIN_SAMPLES ?= 500
+TF_CONFIG_TOP_PER_SYMBOL ?= 5
+TF_CONFIG_TOP_PER_GROUP ?= 10
+
+TRAIN_FEATURE_TYPE ?= baseline
+DIRECTION_THRESHOLD ?= f1_optimize
+
+
 FACTOR_ANALYSIS_OUTPUT_DIR ?= results/factor_analysis
 FACTOR_ANALYSIS_PERIODS ?= 24
 FACTOR_ANALYSIS_QUANTILES ?= 10
@@ -291,120 +302,14 @@ ifneq ($(TF_ANALYSIS_RUN_TAG),)
 	fi
 endif
 
-TF_CONFIG_DETAILS ?=
-TF_CONFIG_OUTPUT ?= results/timeframe_configs
-TF_CONFIG_PEARSON ?= 0.25
-TF_CONFIG_PVALUE ?= 1e-5
-TF_CONFIG_MIN_SAMPLES ?= 500
-TF_CONFIG_TOP_PER_SYMBOL ?= 5
-TF_CONFIG_TOP_PER_GROUP ?= 10
-
-FORWARD_BARS_TRAIN ?= 5,15,45,288
-
-TRAIN_USE_TOP_FACTORS ?=
-TRAIN_FEATURE_TYPE ?= baseline
-TRAIN_TOPK ?=
-TRAIN_TOPK_SOURCE ?=
-# Model type: classification (default) or quantile
-MODEL_TYPE ?= classification
-DIRECTION_THRESHOLD ?= f1_optimize
-SAFE_MULTI_ASSET ?= 1
-
-# ---------------------------------------------------------------------------
-# Timeframe/forward selection analysis
-# ---------------------------------------------------------------------------
-
-TF_ANALYSIS_TIMEFRAMES ?= 15T,30T,60T,120T,240T
-TF_ANALYSIS_FORWARD_BARS ?= 3,6,12,24
-TF_ANALYSIS_START ?= $(START_DATE)
-TF_ANALYSIS_END ?= $(END_DATE)
-TF_ANALYSIS_MAX_LAG ?= 5
-TF_ANALYSIS_MIN_SAMPLES ?= 500
-TF_ANALYSIS_TOP_K ?= 5
-TF_ANALYSIS_FEATURE_TYPE ?= baseline
-TF_ANALYSIS_EXTRA_FEATURES ?=
-TF_ANALYSIS_RUN_TAG ?=
-TF_ANALYSIS_OUTPUT_DIR ?= results/timeframe_forward
-
-# Auto-tune hyperparameters
-AUTO_TUNE ?= 0
-TUNE_TRIALS ?= 20
-PARAMS_FILE ?=
-
-# train target removed - use 'make rolling' instead
-# Rolling training is the recommended approach as it provides better evaluation
-# through expanding window training and multiple model checkpoints.
-# For single-month training, use: make rolling ROLLING_START=YYYY-MM ROLLING_END=YYYY-MM INITIAL_TRAIN_MONTHS=1
-
-
-FORWARD_BARS ?= 3
-
-ROLLING_FREQ ?= $(FREQ)
-ROLLING_FBS ?= $(FORWARD_BARS)
-DIRECTION_THRESHOLD ?= f1_optimize
-ROLLING_OUTPUT ?=
-ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
-ROLLING_USE_TOP_FACTORS ?=
-ROLLING_TOPK ?=
-ROLLING_TOPK_SOURCE ?=
-
-
-rolling:
-	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.rolling \
-		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		$(if $(ROLLING_START),--start $(ROLLING_START),) \
-		$(if $(ROLLING_END),--end $(ROLLING_END),) \
-		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
-		--min-train-months $(MIN_TRAIN_MONTHS) \
-		--freq $(ROLLING_FREQ) \
-		--forward-bars $(ROLLING_FBS) \
-		--cv-folds $(CV_FOLDS) \
-		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
-		$(if $(ROLLING_OUTPUT),--output $(ROLLING_OUTPUT),) \
-		--feature-type $(ROLLING_FEATURE_TYPE) \
-		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
-		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
-		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		--gpu
-
-
-BACKTEST_START ?=$(START_DATE)
-BACKTEST_END ?=$(END_DATE)
-BACKTEST_SYMBOL ?=$(SYMBOL)
-BACKTEST_MODEL ?=$(MODEL_PATH)
-vectorbot-backtest:
-	@echo "🤖 Running VectorBot backtest with model=$(BACKTEST_MODEL) symbol=$(BACKTEST_SYMBOL) range=$(BACKTEST_START)→$(BACKTEST_END) ..."
-	$(DOCKER_RUN_NO_TTY) bash -c "python3 -m time_series_model.backtesting.vectorbot \
-		$(if $(BACKTEST_MODEL),--model '$(BACKTEST_MODEL)') \
-		$(if $(BACKTEST_SYMBOL),--symbol '$(BACKTEST_SYMBOL)') \
-		$(if $(BACKTEST_START),--start '$(BACKTEST_START)') \
-		$(if $(BACKTEST_END),--end '$(BACKTEST_END)')"
-
-nautilus-backtest:
-	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
-	PYTHONPATH=src $(PYTHON) -m time_series_model.backtesting.nautilus_dim \
-		--data-dir $(DATA_DIR) \
-		--results-dir $(RESULTS_DIR)/$(NAUTILUS_RESULTS_DIR) \
-		--symbols $(SYMBOLS) \
-		--timeframe 5T \
-		--start $(START_DATE) --end $(END_DATE) \
-		--output-dir $(RESULTS_DIR)/nautilus_backtests
-
-
-
-
 # ---------------------------------------------------------------------------
 # Dimensionality: production-style comparison (original vs compressed)
 # ---------------------------------------------------------------------------
 
 DIM_COMPARE_ARGS ?=
-HORIZONS ?= 5
+HORIZONS ?= 15
 DIM_COMPARE_FEATURE_TYPE ?= baseline,default
-TIMEFRAME ?= 60T
+TIMEFRAME ?= 240T
 # FACTOR_COUNTS ?= 120,110,100,90,80,70,60,50,40,30,20,10,8,6,4
 FACTOR_COUNTS ?= 10,5
 # TIME_WINDOWS ?= 2020-01-01:2021-12-31,2022-01-01:2023-12-31,2023-01-01:2024-12-31,2025-01-01:2025-10-31
@@ -468,6 +373,88 @@ feature-indicators:
 		$(if $(END_DATE),--end-date $(END_DATE)) \
 		--output $(FEATURE_INDICATORS_OUTPUT)
 	@echo "✅ Feature indicators visualization saved to $(FEATURE_INDICATORS_OUTPUT)"
+
+
+
+# ---------------------------------------------------------------------------
+# Timeframe/forward selection analysis
+# ---------------------------------------------------------------------------
+
+TF_ANALYSIS_TIMEFRAMES ?= 15T,30T,60T,120T,240T
+TF_ANALYSIS_FORWARD_BARS ?= 3,6,12,24
+TF_ANALYSIS_START ?= $(START_DATE)
+TF_ANALYSIS_END ?= $(END_DATE)
+TF_ANALYSIS_MAX_LAG ?= 5
+TF_ANALYSIS_MIN_SAMPLES ?= 500
+TF_ANALYSIS_TOP_K ?= 5
+TF_ANALYSIS_FEATURE_TYPE ?= baseline
+TF_ANALYSIS_EXTRA_FEATURES ?=
+TF_ANALYSIS_RUN_TAG ?=
+TF_ANALYSIS_OUTPUT_DIR ?= results/timeframe_forward
+
+# Auto-tune hyperparameters
+AUTO_TUNE ?= 0
+TUNE_TRIALS ?= 20
+PARAMS_FILE ?=
+
+
+FORWARD_BARS ?= 3
+
+ROLLING_FREQ ?= $(FREQ)
+ROLLING_FBS ?= $(FORWARD_BARS)
+DIRECTION_THRESHOLD ?= f1_optimize
+ROLLING_OUTPUT ?=
+ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
+ROLLING_USE_TOP_FACTORS ?=
+ROLLING_TOPK ?=
+ROLLING_TOPK_SOURCE ?=
+
+
+rolling:
+	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
+	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.rolling \
+		--data-dir /workspace/$(DATA_DIR) \
+		--symbol $(SYMBOLS) \
+		$(if $(ROLLING_START),--start $(ROLLING_START),) \
+		$(if $(ROLLING_END),--end $(ROLLING_END),) \
+		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
+		--min-train-months $(MIN_TRAIN_MONTHS) \
+		--freq $(ROLLING_FREQ) \
+		--forward-bars $(ROLLING_FBS) \
+		--cv-folds $(CV_FOLDS) \
+		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
+		$(if $(ROLLING_OUTPUT),--output $(ROLLING_OUTPUT),) \
+		--feature-type $(ROLLING_FEATURE_TYPE) \
+		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
+		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
+		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
+		--direction-threshold $(DIRECTION_THRESHOLD) \
+		--gpu
+
+
+BACKTEST_START ?=$(START_DATE)
+BACKTEST_END ?=$(END_DATE)
+BACKTEST_SYMBOL ?=$(SYMBOL)
+BACKTEST_MODEL ?=$(MODEL_PATH)
+vectorbot-backtest:
+	@echo "🤖 Running VectorBot backtest with model=$(BACKTEST_MODEL) symbol=$(BACKTEST_SYMBOL) range=$(BACKTEST_START)→$(BACKTEST_END) ..."
+	$(DOCKER_RUN_NO_TTY) bash -c "python3 -m time_series_model.backtesting.vectorbot \
+		$(if $(BACKTEST_MODEL),--model '$(BACKTEST_MODEL)') \
+		$(if $(BACKTEST_SYMBOL),--symbol '$(BACKTEST_SYMBOL)') \
+		$(if $(BACKTEST_START),--start '$(BACKTEST_START)') \
+		$(if $(BACKTEST_END),--end '$(BACKTEST_END)')"
+
+nautilus-backtest:
+	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
+	PYTHONPATH=src $(PYTHON) -m time_series_model.backtesting.nautilus_dim \
+		--data-dir $(DATA_DIR) \
+		--results-dir $(RESULTS_DIR)/$(NAUTILUS_RESULTS_DIR) \
+		--symbols $(SYMBOLS) \
+		--timeframe 5T \
+		--start $(START_DATE) --end $(END_DATE) \
+		--output-dir $(RESULTS_DIR)/nautilus_backtests
+
 
 
 # ---------------------------------------------------------------------------

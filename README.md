@@ -308,7 +308,7 @@ make cross-sectional-auto \
 
 
 
-make rolling ROLLING_USE_TOP_FACTORS=/home/yin/trading/ml_trading_bot/results/dim_compare/BTCUSDT-ETHUSDT_baseline-default_grid_search_20251114_115834/best_combination/top_factors.json \
+make rolling ROLLING_USE_TOP_FACTORS=results/dim_compare/BTCUSDT-ETHUSDT_baseline-default_grid_search_20251115_161745/best_combination/top_factors.json \
   ROLLING_FEATURE_TYPE=baseline,default \
   ROLLING_FREQ=240T \
   ROLLING_FBS=24

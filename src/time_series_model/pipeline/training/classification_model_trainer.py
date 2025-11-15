@@ -173,10 +173,20 @@ class ClassificationModelTrainer(BaseModelTrainer):
         if groups is not None:
             # Ensure groups length matches X_df length
             if len(groups) != len(X_df):
-                raise ValueError(
-                    f"groups length ({len(groups)}) does not match X_df length ({len(X_df)})"
+                logger.warning(
+                    f"groups length ({len(groups)}) does not match X_df length ({len(X_df)}). "
+                    f"Groups will be filtered to match valid_mask length ({len(valid_mask)})."
                 )
-            groups_filtered = groups[valid_mask]
+                # Try to align groups with X_df by index if possible
+                if hasattr(X_df, 'index') and len(groups) == len(valid_mask):
+                    # If groups length matches valid_mask, use it directly
+                    groups_filtered = groups[valid_mask] if isinstance(valid_mask, np.ndarray) else groups
+                else:
+                    # Otherwise, create groups based on filtered data
+                    groups_filtered = None
+                    logger.warning("Cannot align groups, proceeding without groups for CV")
+            else:
+                groups_filtered = groups[valid_mask] if isinstance(valid_mask, np.ndarray) else groups
         else:
             groups_filtered = None
 
@@ -201,16 +211,32 @@ class ClassificationModelTrainer(BaseModelTrainer):
         model_return = LightGBMTrainer(model_type="regression",
                                      use_gpu=self.use_gpu)
         y_return_log_mag = log_return_magnitude(y_return)
-        return_metrics, return_preprocess_params = model_return.train(
-            X_df,
-            y_return_log_mag,
-            n_splits=cv_splits,
-            use_time_series_cv=True,
-            groups=groups,
-            auto_tune_params=self.auto_tune_return,
-            tune_trials=self.tune_trials if self.auto_tune_return else None,
-            feature_winsorize_k=feature_winsorize_k,
-        )
+        try:
+            return_metrics, return_preprocess_params = model_return.train(
+                X_df,
+                y_return_log_mag,
+                n_splits=cv_splits,
+                use_time_series_cv=True,
+                groups=groups,
+                auto_tune_params=self.auto_tune_return,
+                tune_trials=self.tune_trials if self.auto_tune_return else None,
+                feature_winsorize_k=feature_winsorize_k,
+            )
+            # Verify model was trained successfully
+            if not getattr(model_return, "is_trained", False):
+                logger.warning(
+                    "Return model training completed but is_trained flag is False. "
+                    "This may indicate a training issue."
+                )
+        except Exception as e:
+            logger.error(
+                f"Return model training failed: {e}. "
+                f"Model will be marked as untrained."
+            )
+            # Ensure is_trained is False if training failed
+            model_return.is_trained = False
+            return_metrics = {}
+            return_preprocess_params = None
         return_metrics = return_metrics or {}
         return_metrics["target_space"] = "log_magnitude"
 
@@ -221,16 +247,32 @@ class ClassificationModelTrainer(BaseModelTrainer):
         logger.info("Training volatility model (for risk prediction)...")
         model_vol = LightGBMTrainer(model_type="regression",
                                   use_gpu=self.use_gpu)
-        vol_metrics, vol_preprocess_params = model_vol.train(
-            X_df,
-            y_vol,
-            n_splits=cv_splits,
-            use_time_series_cv=True,
-            groups=groups,
-            auto_tune_params=self.auto_tune_vol,
-            tune_trials=self.tune_trials if self.auto_tune_vol else None,
-            feature_winsorize_k=feature_winsorize_k,
-        )
+        try:
+            vol_metrics, vol_preprocess_params = model_vol.train(
+                X_df,
+                y_vol,
+                n_splits=cv_splits,
+                use_time_series_cv=True,
+                groups=groups,
+                auto_tune_params=self.auto_tune_vol,
+                tune_trials=self.tune_trials if self.auto_tune_vol else None,
+                feature_winsorize_k=feature_winsorize_k,
+            )
+            # Verify model was trained successfully
+            if not getattr(model_vol, "is_trained", False):
+                logger.warning(
+                    "Volatility model training completed but is_trained flag is False. "
+                    "This may indicate a training issue."
+                )
+        except Exception as e:
+            logger.error(
+                f"Volatility model training failed: {e}. "
+                f"Model will be marked as untrained."
+            )
+            # Ensure is_trained is False if training failed
+            model_vol.is_trained = False
+            vol_metrics = {}
+            vol_preprocess_params = None
 
         models_dict = {
             "classification": model_classification,

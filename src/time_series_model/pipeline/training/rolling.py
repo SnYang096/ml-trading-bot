@@ -61,10 +61,11 @@ def analyze_feature_modules(feature_names: set) -> dict:
         'use_order_flow': False,
     }
 
-    # Baseline features: signal_*, sr_*, compressed_*
+    # Baseline features: signal_*, sr_*, compressed_*, slope_consistency_score
     baseline_patterns = ['signal_', 'sr_', 'compressed_']
+    baseline_exact = ['slope_consistency_score']  # Baseline feature that doesn't match patterns
     if any(
-            any(f.startswith(p) for p in baseline_patterns)
+            any(f.startswith(p) for p in baseline_patterns) or f in baseline_exact
             for f in feature_names):
         result['use_baseline'] = True
 
@@ -116,14 +117,20 @@ def analyze_feature_modules(feature_names: set) -> dict:
         result['use_order_flow'] = True
 
     # Enhanced features that don't match specific patterns but are likely enhanced
-    # (e.g., slope_consistency_score, internal_price_density, pre_break_silence,
-    #  rsi_divergence, volume_divergence)
+    # Note: slope_consistency_score is actually a baseline feature, not enhanced
+    # (e.g., internal_price_density, pre_break_silence, rsi_divergence, volume_divergence)
     enhanced_keywords = [
-        'divergence', 'consistency', 'density', 'silence', 'break'
+        'divergence', 'density', 'silence', 'break'
     ]
-    if any(
-            any(kw in f.lower() for kw in enhanced_keywords)
-            for f in feature_names):
+    # Exclude baseline features that contain "consistency" but are not enhanced
+    baseline_consistency_features = ['slope_consistency_score']
+    # Check for enhanced keywords, but exclude baseline features
+    enhanced_features = [
+        f for f in feature_names
+        if any(kw in f.lower() for kw in enhanced_keywords)
+        and f not in baseline_consistency_features
+    ]
+    if enhanced_features:
         # If we have enhanced keywords but no specific module match, enable all enhanced modules
         # to be safe (they might be in any of them)
         if not any([
@@ -678,6 +685,21 @@ tr:hover{{background:#f0f8ff}}
                             keep = keep['features']
                     if isinstance(keep, list):
                         top_factors_set = set(keep)
+                        
+                        # Filter out label columns (signal_*, binary_signal_*, future_return_*)
+                        # These are labels, not features, and should not be used as features
+                        label_prefixes = ('signal_', 'binary_signal_', 'future_return_')
+                        label_exact = {'signal', 'binary_signal', 'future_return'}
+                        filtered_labels = [
+                            f for f in top_factors_set
+                            if f in label_exact or any(f.startswith(prefix) for prefix in label_prefixes)
+                        ]
+                        if filtered_labels:
+                            top_factors_set = top_factors_set - set(filtered_labels)
+                            print(f"   🧹 Filtered out {len(filtered_labels)} label column(s) from top_factors: {', '.join(filtered_labels[:5])}")
+                            if len(filtered_labels) > 5:
+                                print(f"      ... and {len(filtered_labels) - 5} more")
+                        
                         print(
                             f"   📋 Loaded {len(top_factors_set)} features from top_factors"
                         )
