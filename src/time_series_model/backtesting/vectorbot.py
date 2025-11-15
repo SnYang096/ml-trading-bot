@@ -18,8 +18,8 @@ from time_series_model.models.train_model import MultiTimeframeComprehensiveEngi
 from time_series_model.strategies.ml_strategy import MLTradingStrategy
 
 
-class MultiTimeframeEnhancedEngineer(
-        MultiTimeframeComprehensiveEngineer):  # pragma: no cover - pickle shim
+class MultiTimeframeEnhancedEngineer(MultiTimeframeComprehensiveEngineer
+                                     ):  # pragma: no cover - pickle shim
     """Legacy shim for bundles serialized with older engineer name."""
 
     pass
@@ -68,22 +68,24 @@ class VectorBotBacktest:
         2. Rolling format: directory with QuantTradingModel pipelines (from make rolling)
         """
         print(f"Loading model from {self.model_path}...")
-        
+
         # Check if it's a directory (rolling training format)
         if os.path.isdir(self.model_path):
             # Try to load from latest directory or the directory itself
             latest_dir = os.path.join(self.model_path, "latest")
             if os.path.exists(latest_dir):
                 model_dir = latest_dir
-                print(f"   Found 'latest' directory, using models from: {model_dir}")
+                print(
+                    f"   Found 'latest' directory, using models from: {model_dir}"
+                )
             else:
                 model_dir = self.model_path
                 print(f"   Loading models from directory: {model_dir}")
-            
+
             # Load rolling training models
             self._load_rolling_models(model_dir)
             return
-        
+
         # Legacy format: single pickle file
         with open(self.model_path, "rb") as f:
             model_data = pickle.load(f)
@@ -97,11 +99,11 @@ class VectorBotBacktest:
         print("✅ Model loaded successfully")
         print(f"   Training date: {model_data.get('training_date', 'N/A')}")
         print(f"   Data info: {model_data.get('data_info', 'N/A')}")
-    
+
     def _load_rolling_models(self, model_dir: str) -> None:
         """Load models from rolling training directory."""
         from time_series_model.models.quant_trading_model import QuantTradingModel
-        
+
         # Load classification pipeline
         cls_path = os.path.join(model_dir, "classification_pipeline.pkl")
         if not os.path.exists(cls_path):
@@ -111,18 +113,23 @@ class VectorBotBacktest:
                 f"  - classification_pipeline.pkl\n"
                 f"  - return_pipeline.pkl\n"
                 f"  - vol_pipeline.pkl\n"
-                f"  - scalers.pkl (optional)"
-            )
-        
+                f"  - scalers.pkl (optional)")
+
         print(f"   Loading classification pipeline: {cls_path}")
         self.cls_pipeline = QuantTradingModel.load(cls_path)
-        
-        print(f"   Loading return pipeline: {os.path.join(model_dir, 'return_pipeline.pkl')}")
-        self.return_pipeline = QuantTradingModel.load(os.path.join(model_dir, "return_pipeline.pkl"))
-        
-        print(f"   Loading volatility pipeline: {os.path.join(model_dir, 'vol_pipeline.pkl')}")
-        self.vol_pipeline = QuantTradingModel.load(os.path.join(model_dir, "vol_pipeline.pkl"))
-        
+
+        print(
+            f"   Loading return pipeline: {os.path.join(model_dir, 'return_pipeline.pkl')}"
+        )
+        self.return_pipeline = QuantTradingModel.load(
+            os.path.join(model_dir, "return_pipeline.pkl"))
+
+        print(
+            f"   Loading volatility pipeline: {os.path.join(model_dir, 'vol_pipeline.pkl')}"
+        )
+        self.vol_pipeline = QuantTradingModel.load(
+            os.path.join(model_dir, "vol_pipeline.pkl"))
+
         # Load scalers if available
         scaler_path = os.path.join(model_dir, "scalers.pkl")
         if os.path.exists(scaler_path):
@@ -131,12 +138,15 @@ class VectorBotBacktest:
             self.scalers = joblib.load(scaler_path)
         else:
             self.scalers = None
-        
+
         # Load features list if available
         # Try .txt first (most common format, or symlink to .txt)
         features_txt = os.path.join(model_dir, "features.txt")
         features_pkl = os.path.join(model_dir, "features.pkl")
-        
+
+        # Load base feature list
+        feature_cols_loaded = False
+
         # Check if features.pkl is actually a symlink to .txt file
         if os.path.exists(features_pkl) and os.path.islink(features_pkl):
             link_target = os.readlink(features_pkl)
@@ -147,47 +157,73 @@ class VectorBotBacktest:
             if link_target.endswith('.txt') and os.path.exists(link_target):
                 try:
                     with open(link_target, 'r') as f:
-                        self.feature_cols = [line.strip() for line in f if line.strip()]
-                    print(f"   Loaded {len(self.feature_cols)} features from {link_target}")
+                        self.feature_cols = [
+                            line.strip() for line in f if line.strip()
+                        ]
+                    print(
+                        f"   Loaded {len(self.feature_cols)} features from {link_target}"
+                    )
+                    feature_cols_loaded = True
                 except Exception as e:
                     print(f"   ⚠️ Failed to load features from symlink: {e}")
-                    self.feature_cols = self.cls_pipeline.feature_cols or []
             else:
                 # Try to load as pickle
                 try:
                     import joblib
                     self.feature_cols = joblib.load(features_pkl)
-                    print(f"   Loaded {len(self.feature_cols)} features from features.pkl")
+                    if isinstance(self.feature_cols, (list, tuple)):
+                        self.feature_cols = list(self.feature_cols)
+                    print(
+                        f"   Loaded {len(self.feature_cols)} features from features.pkl"
+                    )
+                    feature_cols_loaded = True
                 except Exception as e:
                     print(f"   ⚠️ Failed to load features.pkl: {e}")
-                    self.feature_cols = self.cls_pipeline.feature_cols or []
-        elif os.path.exists(features_txt):
+
+        if not feature_cols_loaded and os.path.exists(features_txt):
             try:
                 with open(features_txt, 'r') as f:
-                    self.feature_cols = [line.strip() for line in f if line.strip()]
-                print(f"   Loaded {len(self.feature_cols)} features from features.txt")
+                    self.feature_cols = [
+                        line.strip() for line in f if line.strip()
+                    ]
+                print(
+                    f"   Loaded {len(self.feature_cols)} features from features.txt"
+                )
+                feature_cols_loaded = True
             except Exception as e:
                 print(f"   ⚠️ Failed to load features.txt: {e}")
-                self.feature_cols = self.cls_pipeline.feature_cols or []
-        elif os.path.exists(features_pkl):
+
+        if not feature_cols_loaded and os.path.exists(features_pkl):
             try:
                 import joblib
                 self.feature_cols = joblib.load(features_pkl)
-                print(f"   Loaded {len(self.feature_cols)} features from features.pkl")
+                if isinstance(self.feature_cols, (list, tuple)):
+                    self.feature_cols = list(self.feature_cols)
+                print(
+                    f"   Loaded {len(self.feature_cols)} features from features.pkl"
+                )
+                feature_cols_loaded = True
             except Exception as e:
                 print(f"   ⚠️ Failed to load features.pkl: {e}")
-                self.feature_cols = self.cls_pipeline.feature_cols or []
-        else:
-            # Use feature_cols from pipeline
+                print(f"      Error details: {type(e).__name__}: {e}")
+
+        # Fallback to pipeline feature_cols
+        if not feature_cols_loaded:
             self.feature_cols = self.cls_pipeline.feature_cols or []
-        
+            if self.feature_cols:
+                print(
+                    f"   Using {len(self.feature_cols)} features from pipeline metadata"
+                )
+
         if not self.feature_cols:
-            print("   ⚠️ Warning: No feature columns found, will extract from model metadata")
-        
+            print(
+                "   ⚠️ Warning: No feature columns found, will extract from model metadata"
+            )
+
         # Mark as rolling format
         self.is_rolling_format = True
         self.model_dir = model_dir
-        
+
         print("✅ Rolling models loaded successfully")
         print(f"   Feature count: {len(self.feature_cols)}")
         print(f"   Forward bars: {self.cls_pipeline.forward_bars}")
@@ -225,6 +261,10 @@ class VectorBotBacktest:
     def update_positions(self, current_price: float,
                          timestamp: pd.Timestamp) -> None:
         """Update all active positions with current price."""
+        # Ensure timestamp is pd.Timestamp
+        if not isinstance(timestamp, pd.Timestamp):
+            timestamp = pd.Timestamp(timestamp)
+
         for position in self.positions:
             if position["status"] != "active":
                 continue
@@ -241,35 +281,48 @@ class VectorBotBacktest:
             position["current_price"] = current_price
             position["timestamp"] = timestamp
 
-            # Check stop loss
-            if position["side"] == "long":
-                stop_price = position["entry_price"] * (1 - self.stop_loss_pct)
-                if current_price <= stop_price:
-                    self.close_position(position, current_price, timestamp,
-                                        "stop_loss")
-                    continue
-            else:  # short
-                stop_price = position["entry_price"] * (1 + self.stop_loss_pct)
-                if current_price >= stop_price:
-                    self.close_position(position, current_price, timestamp,
-                                        "stop_loss")
-                    continue
+            # Only check stop loss/take profit if enough time has passed
+            # This prevents immediate exits within the same bar
+            entry_time = position["entry_time"]
+            if not isinstance(entry_time, pd.Timestamp):
+                entry_time = pd.Timestamp(entry_time)
 
-            # Check take profit
-            if position["side"] == "long":
-                take_profit_price = position["entry_price"] * (
-                    1 + self.take_profit_pct)
-                if current_price >= take_profit_price:
-                    self.close_position(position, current_price, timestamp,
-                                        "take_profit")
-                    continue
-            else:  # short
-                take_profit_price = position["entry_price"] * (
-                    1 - self.take_profit_pct)
-                if current_price <= take_profit_price:
-                    self.close_position(position, current_price, timestamp,
-                                        "take_profit")
-                    continue
+            time_diff_minutes = (timestamp - entry_time).total_seconds() / 60
+            min_hold_time_minutes = 5.0  # Minimum 1 bar (5 minutes for 5T data)
+
+            # Only check stop loss/take profit after minimum hold time
+            if time_diff_minutes >= min_hold_time_minutes:
+                # Check stop loss
+                if position["side"] == "long":
+                    stop_price = position["entry_price"] * (1 -
+                                                            self.stop_loss_pct)
+                    if current_price <= stop_price:
+                        self.close_position(position, current_price, timestamp,
+                                            "stop_loss")
+                        continue
+                else:  # short
+                    stop_price = position["entry_price"] * (1 +
+                                                            self.stop_loss_pct)
+                    if current_price >= stop_price:
+                        self.close_position(position, current_price, timestamp,
+                                            "stop_loss")
+                        continue
+
+                # Check take profit
+                if position["side"] == "long":
+                    take_profit_price = position["entry_price"] * (
+                        1 + self.take_profit_pct)
+                    if current_price >= take_profit_price:
+                        self.close_position(position, current_price, timestamp,
+                                            "take_profit")
+                        continue
+                else:  # short
+                    take_profit_price = position["entry_price"] * (
+                        1 - self.take_profit_pct)
+                    if current_price <= take_profit_price:
+                        self.close_position(position, current_price, timestamp,
+                                            "take_profit")
+                        continue
 
     def close_position(self, position: Dict, exit_price: float,
                        timestamp: pd.Timestamp, reason: str) -> None:
@@ -284,9 +337,17 @@ class VectorBotBacktest:
         self.capital += pnl
 
         # Record trade
+        # Ensure timestamps are pd.Timestamp for duration calculation
+        entry_time = position["entry_time"]
+        exit_time = timestamp
+        if not isinstance(entry_time, pd.Timestamp):
+            entry_time = pd.Timestamp(entry_time)
+        if not isinstance(exit_time, pd.Timestamp):
+            exit_time = pd.Timestamp(exit_time)
+
         trade = {
-            "entry_time": position["entry_time"],
-            "exit_time": timestamp,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
             "side": position["side"],
             "entry_price": position["entry_price"],
             "exit_price": exit_price,
@@ -295,8 +356,8 @@ class VectorBotBacktest:
             "return_pct":
             pnl / (position["entry_price"] * position["size"]) * 100,
             "reason": reason,
-            "duration": (timestamp - position["entry_time"]).total_seconds() /
-            60,  # minutes
+            "duration":
+            (exit_time - entry_time).total_seconds() / 60,  # minutes
         }
 
         self.trades.append(trade)
@@ -319,6 +380,10 @@ class VectorBotBacktest:
         signal_strength: float,
     ) -> None:
         """Open a new position."""
+        # Ensure timestamp is pd.Timestamp
+        if not isinstance(timestamp, pd.Timestamp):
+            timestamp = pd.Timestamp(timestamp)
+
         position = {
             "id": len(self.positions),
             "side": side,
@@ -378,9 +443,8 @@ class VectorBotBacktest:
         print(f"Using {len(X_5t_clean)} clean data points for prediction")
 
         # Check if new 4-model architecture is available
-        self.has_new_models = (
-            hasattr(self.strategy.pipeline, "q50_models") and
-            "5T" in self.strategy.pipeline.q50_models)
+        self.has_new_models = (hasattr(self.strategy.pipeline, "q50_models")
+                               and "5T" in self.strategy.pipeline.q50_models)
 
         def _ensure_1d(preds):
             arr = np.asarray(preds)
@@ -390,7 +454,9 @@ class VectorBotBacktest:
 
         if self.has_new_models:
             # Use new 4-model architecture (q10, q50, q90, volatility)
-            print("Using new 4-model architecture (q10, q50, q90, volatility)...")
+            print(
+                "Using new 4-model architecture (q10, q50, q90, volatility)..."
+            )
 
             # Get predictions from all four models
             q10_pred = _ensure_1d(
@@ -405,20 +471,26 @@ class VectorBotBacktest:
 
             # Create signals DataFrame
             signals = pd.DataFrame({
-                "timestamp": X_5t_clean.index,
-                "q10": q10_pred,
-                "q50": q50_pred,
-                "q90": q90_pred,
-                "vol": vol_pred,
-                "close": data_5t["close"].loc[X_5t_clean.index],
+                "timestamp":
+                X_5t_clean.index,
+                "q10":
+                q10_pred,
+                "q50":
+                q50_pred,
+                "q90":
+                q90_pred,
+                "vol":
+                vol_pred,
+                "close":
+                data_5t["close"].loc[X_5t_clean.index],
             })
 
             # Calculate derived metrics
             signals["interval_width"] = signals["q90"] - signals["q10"]
-            signals["confidence"] = np.abs(signals["q50"]) / (
-                signals["interval_width"] + 1e-8)
-            signals["signal_strength"] = signals["q50"] / (
-                signals["vol"] + 1e-8)
+            signals["confidence"] = np.abs(
+                signals["q50"]) / (signals["interval_width"] + 1e-8)
+            signals["signal_strength"] = signals["q50"] / (signals["vol"] +
+                                                           1e-8)
 
             # Generate signals using new decision logic
             # Default thresholds (can be overridden)
@@ -430,17 +502,15 @@ class VectorBotBacktest:
 
             signals["discrete_signal"] = 0
             # Long signal: positive q50, high signal strength, high confidence
-            long_mask = (
-                (signals["q50"] > 0) &
-                (signals["signal_strength"] > signal_strength_threshold) &
-                (signals["confidence"] > confidence_threshold))
+            long_mask = ((signals["q50"] > 0) & (signals["signal_strength"]
+                                                 > signal_strength_threshold) &
+                         (signals["confidence"] > confidence_threshold))
             signals.loc[long_mask, "discrete_signal"] = 1
 
             # Short signal: negative q50, high signal strength (absolute), high confidence
-            short_mask = (
-                (signals["q50"] < 0) &
-                (np.abs(signals["signal_strength"]) > signal_strength_threshold)
-                & (signals["confidence"] > confidence_threshold))
+            short_mask = ((signals["q50"] < 0) & (np.abs(
+                signals["signal_strength"]) > signal_strength_threshold)
+                          & (signals["confidence"] > confidence_threshold))
             signals.loc[short_mask, "discrete_signal"] = -1
 
             # Use absolute signal strength for position sizing
@@ -465,10 +535,8 @@ class VectorBotBacktest:
             if stage1_raw.ndim == 2 and stage1_raw.shape[1] >= 2:
                 # Multiclass probs: 0=Hold, 1=Long, 2=Short (legacy convention)
                 long_prob = stage1_raw[:, 1]
-                short_prob = (
-                    stage1_raw[:, 2]
-                    if stage1_raw.shape[1] >= 3 else np.clip(1.0 - long_prob, 0.0, 1.0)
-                )
+                short_prob = (stage1_raw[:, 2] if stage1_raw.shape[1] >= 3 else
+                              np.clip(1.0 - long_prob, 0.0, 1.0))
                 stage1_scalar = long_prob
             else:
                 # Binary prob (compat)
@@ -478,12 +546,18 @@ class VectorBotBacktest:
 
             # Create signals DataFrame
             signals = pd.DataFrame({
-                "timestamp": X_5t_clean.index,
-                "stage1_pred": stage1_scalar,
-                "stage1_long_prob": long_prob,
-                "stage1_short_prob": short_prob,
-                "stage2_pred": stage2_preds,
-                "close": data_5t["close"].loc[X_5t_clean.index],
+                "timestamp":
+                X_5t_clean.index,
+                "stage1_pred":
+                stage1_scalar,
+                "stage1_long_prob":
+                long_prob,
+                "stage1_short_prob":
+                short_prob,
+                "stage2_pred":
+                stage2_preds,
+                "close":
+                data_5t["close"].loc[X_5t_clean.index],
             })
 
             # Convert to discrete signals using probability dominance
@@ -497,29 +571,30 @@ class VectorBotBacktest:
 
             # Calculate signal strength from class probability spread
             signals["signal_strength"] = np.abs(
-                signals["stage1_long_prob"] - signals["stage1_short_prob"]) / 2.0
+                signals["stage1_long_prob"] -
+                signals["stage1_short_prob"]) / 2.0
 
         print("\n📊 Signal Statistics:")
         print(f"   Total signals: {len(signals)}")
         print(
-            f"   Long signals: {len(signals[signals['discrete_signal'] == 1])}")
+            f"   Long signals: {len(signals[signals['discrete_signal'] == 1])}"
+        )
         print(
             f"   Short signals: {len(signals[signals['discrete_signal'] == -1])}"
         )
         print(
-            f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}")
+            f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}"
+        )
 
         # Show model architecture info
         if self.has_new_models:
             print("   Model architecture: 4-model (q10, q50, q90, volatility)")
             if "q50" in signals.columns:
-                print(
-                    f"   Avg Q50 prediction: {signals['q50'].mean():.6f}")
+                print(f"   Avg Q50 prediction: {signals['q50'].mean():.6f}")
                 print(
                     f"   Avg signal strength: {signals['signal_strength'].mean():.4f}"
                 )
-                print(
-                    f"   Avg confidence: {signals['confidence'].mean():.4f}")
+                print(f"   Avg confidence: {signals['confidence'].mean():.4f}")
         else:
             print("   Model architecture: 2-model (stage1, stage2)")
 
@@ -580,8 +655,7 @@ class VectorBotBacktest:
             if current_equity > self.peak_equity:
                 self.peak_equity = current_equity
 
-            drawdown = (
-                self.peak_equity - current_equity) / self.peak_equity
+            drawdown = (self.peak_equity - current_equity) / self.peak_equity
             if drawdown > self.max_drawdown:
                 self.max_drawdown = drawdown
 
@@ -695,47 +769,681 @@ class VectorBotBacktest:
         2. Feature engineering to be performed (using the same feature engineering as training)
         """
         print("🔄 Running backtest with rolling training models")
-        print("⚠️  Note: Rolling format backtest requires data loading and feature engineering")
-        print("    This is a simplified implementation. For full backtest analysis,")
-        print("    please use the monthly_results.csv from rolling training.")
-        
-        # For now, provide a helpful message
-        print("\n💡 Rolling training already includes backtest results!")
-        print(f"   Check: {os.path.dirname(os.path.dirname(self.model_dir))}/monthly_results.csv")
-        print(f"   Or view HTML report: {os.path.dirname(os.path.dirname(self.model_dir))}/monthly_rolling_report.html")
-        print("\n   To use vectorbot with rolling models, you need to:")
-        print("   1. Load data files from data/parquet_data")
-        print("   2. Perform feature engineering (same as training)")
-        print("   3. Use the loaded pipelines for prediction")
-        print("   4. Generate trading signals and execute backtest")
-        print("\n   This full implementation is planned for future development.")
-        
-        # Set empty results for now
-        self.trades = []
-        self.results = {
-            "total_trades": 0,
-            "winning_trades": 0,
-            "losing_trades": 0,
-            "win_rate": 0.0,
-            "total_pnl": 0.0,
-            "total_return": 0.0,
-            "avg_win": 0.0,
-            "avg_loss": 0.0,
-            "profit_factor": 0.0,
-            "sharpe_ratio": 0.0,
-            "max_drawdown": 0.0,
-            "final_equity": self.initial_capital,
-            "initial_capital": self.initial_capital,
-        }
-        
-        # Save results (even if empty) to show the structure
-        if output_dir:
-            self.save_results(output_dir, start_date=start_date, end_date=end_date)
+        print("=" * 50)
 
-    def save_results(self,
-                     output_dir: str | None,
-                     *,
-                     start_date: str | None,
+        # Get configuration from model
+        timeframe = getattr(self.cls_pipeline, 'timeframe', '5T')
+        forward_bars = getattr(self.cls_pipeline, 'forward_bars', 3)
+
+        print(f"   Timeframe: {timeframe}")
+        print(f"   Forward bars: {forward_bars}")
+        print(f"   Feature columns: {len(self.feature_cols)}")
+
+        # Determine data directory (try multiple locations)
+        data_dirs = [
+            "data/parquet_data",
+            "/workspace/data/parquet_data",
+            os.path.join(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(self.model_dir))), "data",
+                "parquet_data"),
+        ]
+        data_dir = None
+        for dd in data_dirs:
+            if os.path.exists(dd):
+                data_dir = dd
+                break
+
+        if not data_dir:
+            print("❌ Cannot find data directory. Tried:")
+            for dd in data_dirs:
+                print(f"   - {dd}")
+            print("\n💡 Rolling training already includes backtest results!")
+            print(
+                f"   Check: {os.path.dirname(os.path.dirname(self.model_dir))}/monthly_results.csv"
+            )
+            print(
+                f"   Or view HTML report: {os.path.dirname(os.path.dirname(self.model_dir))}/monthly_rolling_report.html"
+            )
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        print(f"   Data directory: {data_dir}")
+
+        # Find data files for the symbol
+        from time_series_model.pipeline.training.rolling import find_all_available_files
+        all_files = find_all_available_files(data_dir, self.symbol)
+
+        if not all_files:
+            print(f"❌ No data files found for {self.symbol} in {data_dir}")
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        # Filter files by date range
+        if start_date:
+            start_ts = pd.Timestamp(start_date)
+            all_files = [f for f in all_files if f["timestamp"] >= start_ts]
+        if end_date:
+            end_ts = pd.Timestamp(end_date)
+            all_files = [f for f in all_files if f["timestamp"] <= end_ts]
+
+        if not all_files:
+            print(
+                f"❌ No data files in date range {start_date or 'start'} to {end_date or 'end'}"
+            )
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        print(f"   Found {len(all_files)} data files")
+        print(
+            f"   Date range: {all_files[0]['month_str']} to {all_files[-1]['month_str']}"
+        )
+
+        # Load and process all data files
+        print("\n📊 Loading and processing data...")
+        from data_tools.rolling_data import load_and_process_file
+        from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+
+        data_parts = []
+        for file_info in all_files:
+            print(f"   Loading {file_info['month_str']}...")
+            df = load_and_process_file(file_info["path"], freq=timeframe)
+            if df is not None and len(df) > 0:
+                data_parts.append(df)
+
+        if not data_parts:
+            print("❌ No data loaded")
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        # Combine all data
+        data_df = pd.concat(data_parts, axis=0).sort_index()
+        print(f"   Loaded {len(data_df):,} bars")
+
+        # Filter by date range if specified
+        if start_date:
+            data_df = data_df[data_df.index >= start_date]
+        if end_date:
+            data_df = data_df[data_df.index <= end_date]
+
+        if data_df.empty:
+            print("❌ No data in specified date range")
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        print(f"   Filtered to {len(data_df):,} bars in date range")
+        print(f"   Date range: {data_df.index[0]} to {data_df.index[-1]}")
+
+        # Feature engineering
+        print("\n🔧 Engineering features...")
+        try:
+            # Determine feature type from model metadata or use comprehensive
+            feature_type = getattr(self.cls_pipeline, 'feature_type',
+                                   'comprehensive')
+            feature_engineer = ComprehensiveFeatureEngineer(
+                feature_types=feature_type)
+
+            # Use feature_cols as required_features to only generate needed features
+            # This is much more efficient than generating all features and then filtering
+            required_features = None
+            if self.feature_cols:
+                required_features = set(self.feature_cols)
+                print(
+                    f"   🎯 Only generating {len(required_features)} required features (from features.pkl)"
+                )
+                print(
+                    f"      This is more efficient than generating all features and filtering"
+                )
+
+            # Prepare data for feature engineering
+            # Handle timestamp column conflict: if 'timestamp' already exists as a column,
+            # we need to handle it before reset_index()
+            data_df_work = data_df.copy()
+
+            # Check if 'timestamp' column already exists
+            has_timestamp_col = 'timestamp' in data_df_work.columns
+
+            # If index name is 'timestamp' and column 'timestamp' exists, rename the column first
+            if has_timestamp_col and data_df_work.index.name == 'timestamp':
+                # Rename the existing column to avoid conflict
+                data_df_work = data_df_work.rename(
+                    columns={'timestamp': 'timestamp_orig'})
+
+            # Reset index (this will create 'timestamp' column from index if index name is 'timestamp')
+            data_df_reset = data_df_work.reset_index()
+
+            # Ensure we have a 'timestamp' column for feature engineering
+            if 'timestamp' not in data_df_reset.columns:
+                if has_timestamp_col and 'timestamp_orig' in data_df_reset.columns:
+                    # Use the original timestamp column
+                    data_df_reset['timestamp'] = data_df_reset[
+                        'timestamp_orig']
+                    data_df_reset = data_df_reset.drop(
+                        columns=['timestamp_orig'])
+                elif isinstance(data_df.index, pd.DatetimeIndex):
+                    # Use index as timestamp
+                    data_df_reset['timestamp'] = data_df.index
+                else:
+                    # Try to find a datetime column
+                    datetime_cols = [
+                        col for col in data_df_reset.columns
+                        if pd.api.types.is_datetime64_any_dtype(
+                            data_df_reset[col])
+                    ]
+                    if datetime_cols:
+                        data_df_reset['timestamp'] = data_df_reset[
+                            datetime_cols[0]]
+                    else:
+                        # Fallback: use index
+                        data_df_reset['timestamp'] = data_df.index
+
+            # Ensure timestamp is datetime type
+            if 'timestamp' in data_df_reset.columns:
+                data_df_reset['timestamp'] = pd.to_datetime(
+                    data_df_reset['timestamp'])
+
+            engineered_df = feature_engineer.engineer_all_features(
+                data_df_reset, fit=False, required_features=required_features)
+
+            # Set timestamp back as index
+            if 'timestamp' in engineered_df.columns:
+                engineered_df = engineered_df.set_index(
+                    'timestamp').sort_index()
+            else:
+                # Fallback: use original index
+                engineered_df = engineered_df.set_index(
+                    data_df.index[:len(engineered_df)]).sort_index()
+
+            print(f"   Generated {len(engineered_df.columns)} features")
+        except Exception as e:
+            print(f"❌ Feature engineering failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        # Filter to available features
+        available_features = [
+            f for f in self.feature_cols if f in engineered_df.columns
+        ]
+        missing_features = set(self.feature_cols) - set(available_features)
+
+        if missing_features:
+            print(
+                f"   ⚠️  {len(missing_features)} features missing from data (will use available {len(available_features)})"
+            )
+            if len(missing_features) <= 10:
+                print(
+                    f"      Missing: {', '.join(list(missing_features)[:10])}")
+
+        if not available_features:
+            print("❌ No matching features found between model and data")
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        # Prepare features for prediction
+        feature_df = engineered_df[available_features].copy()
+
+        # Ensure we have 'close' price for backtesting
+        if 'close' not in engineered_df.columns and 'close' in data_df.columns:
+            feature_df['close'] = data_df['close']
+        elif 'close' in engineered_df.columns:
+            feature_df['close'] = engineered_df['close']
+
+        # Drop rows with NaN features
+        feature_df_clean = feature_df.dropna(subset=available_features)
+
+        if feature_df_clean.empty:
+            print("❌ No valid data after cleaning")
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        print(f"   Using {len(available_features)} features")
+        print(f"   Clean data points: {len(feature_df_clean):,}")
+
+        # Get predictions
+        print("\n🤖 Generating predictions...")
+        try:
+            X = feature_df_clean[available_features].values
+
+            # Get classification predictions (probabilities)
+            cls_pred = self.cls_pipeline.predict_proba(X)
+            if cls_pred.ndim == 2:
+                if cls_pred.shape[1] >= 2:
+                    long_prob = cls_pred[:, 1] if cls_pred.shape[
+                        1] > 1 else cls_pred[:, 0]
+                    short_prob = cls_pred[:, 2] if cls_pred.shape[1] > 2 else (
+                        1.0 - long_prob)
+                else:
+                    long_prob = cls_pred[:, 0]
+                    short_prob = 1.0 - long_prob
+            else:
+                long_prob = cls_pred
+                short_prob = 1.0 - long_prob
+
+            # Get return predictions
+            return_pred = self.return_pipeline.predict(X)
+            if return_pred.ndim > 1:
+                return_pred = return_pred.ravel()
+
+            # Get volatility predictions
+            vol_pred = self.vol_pipeline.predict(X)
+            if vol_pred.ndim > 1:
+                vol_pred = vol_pred.ravel()
+
+            print(f"   Generated predictions for {len(X):,} samples")
+        except Exception as e:
+            print(f"❌ Prediction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Set empty results
+            self.trades = []
+            self.results = {
+                "total_trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "total_return": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "profit_factor": 0.0,
+                "sharpe_ratio": 0.0,
+                "max_drawdown": 0.0,
+                "final_equity": self.initial_capital,
+                "initial_capital": self.initial_capital,
+            }
+            if output_dir:
+                self.save_results(output_dir,
+                                  start_date=start_date,
+                                  end_date=end_date)
+            return
+
+        # Create signals DataFrame
+        # Ensure we use DatetimeIndex for proper timestamp handling
+        if isinstance(feature_df_clean.index, pd.DatetimeIndex):
+            # Use index directly as DatetimeIndex
+            signals = pd.DataFrame(
+                {
+                    "long_prob": long_prob,
+                    "short_prob": short_prob,
+                    "return_pred": return_pred,
+                    "vol_pred": vol_pred,
+                    "close": feature_df_clean["close"].values,
+                },
+                index=feature_df_clean.index.copy())
+        else:
+            # Try to convert index to DatetimeIndex
+            try:
+                datetime_index = pd.to_datetime(feature_df_clean.index)
+                signals = pd.DataFrame(
+                    {
+                        "long_prob": long_prob,
+                        "short_prob": short_prob,
+                        "return_pred": return_pred,
+                        "vol_pred": vol_pred,
+                        "close": feature_df_clean["close"].values,
+                    },
+                    index=datetime_index)
+            except Exception:
+                # Fallback: create timestamp column and set as index
+                signals = pd.DataFrame({
+                    "timestamp":
+                    pd.to_datetime(feature_df_clean.index),
+                    "long_prob":
+                    long_prob,
+                    "short_prob":
+                    short_prob,
+                    "return_pred":
+                    return_pred,
+                    "vol_pred":
+                    vol_pred,
+                    "close":
+                    feature_df_clean["close"].values,
+                })
+                signals = signals.set_index("timestamp")
+
+        # Ensure index is DatetimeIndex
+        if not isinstance(signals.index, pd.DatetimeIndex):
+            try:
+                signals.index = pd.to_datetime(signals.index)
+            except Exception as e:
+                print(
+                    f"   ⚠️  Warning: Could not convert signals index to DatetimeIndex: {e}"
+                )
+
+        # Generate discrete signals
+        signals["discrete_signal"] = 0
+        long_mask = (signals["long_prob"] > 0.55) & (signals["long_prob"]
+                                                     > signals["short_prob"])
+        short_mask = (signals["short_prob"] > 0.55) & (signals["short_prob"]
+                                                       > signals["long_prob"])
+        signals.loc[long_mask, "discrete_signal"] = 1
+        signals.loc[short_mask, "discrete_signal"] = -1
+
+        # Calculate signal strength
+        signals["signal_strength"] = np.abs(signals["long_prob"] -
+                                            signals["short_prob"])
+
+        print(f"\n📊 Signal Statistics:")
+        print(f"   Total signals: {len(signals)}")
+        print(
+            f"   Long signals: {len(signals[signals['discrete_signal'] == 1])}"
+        )
+        print(
+            f"   Short signals: {len(signals[signals['discrete_signal'] == -1])}"
+        )
+        print(
+            f"   Hold signals: {len(signals[signals['discrete_signal'] == 0])}"
+        )
+
+        # Debug: Show probability distributions
+        print(f"\n📈 Probability Statistics:")
+        print(
+            f"   Long prob - min: {signals['long_prob'].min():.3f}, max: {signals['long_prob'].max():.3f}, mean: {signals['long_prob'].mean():.3f}"
+        )
+        print(
+            f"   Short prob - min: {signals['short_prob'].min():.3f}, max: {signals['short_prob'].max():.3f}, mean: {signals['short_prob'].mean():.3f}"
+        )
+        print(
+            f"   Signal strength - min: {signals['signal_strength'].min():.3f}, max: {signals['signal_strength'].max():.3f}, mean: {signals['signal_strength'].mean():.3f}"
+        )
+
+        # Count signals that pass different thresholds
+        min_signal_strength = 0.1
+        signals_above_threshold = len(
+            signals[(signals['discrete_signal'] != 0)
+                    & (signals['signal_strength'] > min_signal_strength)])
+        print(
+            f"   Signals with strength > {min_signal_strength}: {signals_above_threshold}"
+        )
+
+        # Run backtest
+        print("\n🔄 Running backtest...")
+        signals_attempted = 0
+        signals_rejected = 0
+        for i, (timestamp, row) in enumerate(signals.iterrows()):
+            # Ensure timestamp is pd.Timestamp
+            if not isinstance(timestamp, pd.Timestamp):
+                # Try to convert - handle various formats
+                try:
+                    if isinstance(timestamp, (int, float)):
+                        # Might be Unix timestamp in nanoseconds
+                        if timestamp > 1e12:  # Nanoseconds
+                            timestamp = pd.Timestamp(timestamp, unit='ns')
+                        elif timestamp > 1e9:  # Seconds
+                            timestamp = pd.Timestamp(timestamp, unit='s')
+                        else:
+                            timestamp = pd.Timestamp(timestamp)
+                    else:
+                        timestamp = pd.Timestamp(timestamp)
+                except Exception as e:
+                    print(
+                        f"   ⚠️  Warning: Failed to convert timestamp {timestamp}: {e}"
+                    )
+                    # Fallback: use row index or current time
+                    if 'timestamp' in row:
+                        timestamp = pd.to_datetime(row['timestamp'])
+                    else:
+                        timestamp = pd.Timestamp.now()
+
+            current_price = row["close"]
+            signal = row["discrete_signal"]
+            signal_strength = row["signal_strength"]
+
+            # Update existing positions
+            self.update_positions(current_price, timestamp)
+
+            # Check for new signals
+            min_signal_strength = 0.1
+            if signal != 0 and signal_strength > min_signal_strength:
+                signals_attempted += 1
+                active_positions = len(
+                    [p for p in self.positions if p["status"] == "active"])
+
+                if active_positions < self.max_positions:
+                    position_size = self.calculate_position_size(
+                        signal_strength, current_price)
+
+                    if position_size > 0:
+                        side = "long" if signal == 1 else "short"
+                        self.open_position(side, position_size, current_price,
+                                           timestamp, signal_strength)
+                    else:
+                        signals_rejected += 1
+                        if signals_rejected <= 5:  # Print first few rejections
+                            print(
+                                f"   ⚠️  Rejected signal at {timestamp}: position_size={position_size:.4f}, signal_strength={signal_strength:.3f}, active_positions={active_positions}"
+                            )
+                else:
+                    signals_rejected += 1
+                    if signals_rejected <= 5:
+                        print(
+                            f"   ⚠️  Rejected signal at {timestamp}: max positions reached ({active_positions})"
+                        )
+            elif signal != 0:
+                signals_rejected += 1
+                if signals_rejected <= 5:
+                    print(
+                        f"   ⚠️  Rejected signal at {timestamp}: signal_strength={signal_strength:.3f} <= {min_signal_strength}"
+                    )
+
+            # Update equity curve
+            total_pnl = sum([
+                p["current_pnl"] for p in self.positions
+                if p["status"] == "active"
+            ])
+            current_equity = self.capital + total_pnl
+            self.equity_curve.append({
+                "timestamp": timestamp,
+                "equity": current_equity,
+                "capital": self.capital,
+                "open_pnl": total_pnl,
+            })
+
+            # Update drawdown
+            if current_equity > self.peak_equity:
+                self.peak_equity = current_equity
+
+            drawdown = (self.peak_equity - current_equity) / self.peak_equity
+            if drawdown > self.max_drawdown:
+                self.max_drawdown = drawdown
+
+            # Progress update
+            if i % 100 == 0:
+                print(
+                    f"   Processed {i+1}/{len(signals)} bars, Equity: {current_equity:.2f}, "
+                    f"Attempted: {signals_attempted}, Rejected: {signals_rejected}, Open positions: {len([p for p in self.positions if p['status'] == 'active'])}"
+                )
+
+        # Final summary
+        print(f"\n📊 Backtest Summary:")
+        print(f"   Signals attempted: {signals_attempted}")
+        print(f"   Signals rejected: {signals_rejected}")
+        print(
+            f"   Total positions opened: {len([p for p in self.positions if p['status'] != 'active'])}"
+        )
+
+        # Close any remaining positions
+        for position in self.positions:
+            if position["status"] == "active":
+                last_price = signals["close"].iloc[-1]
+                last_timestamp = signals.index[-1]
+                self.close_position(position, last_price, last_timestamp,
+                                    "end_of_data")
+
+        # Calculate final results
+        self.calculate_results()
+
+        # Save results
+        if output_dir:
+            self.save_results(output_dir,
+                              start_date=start_date,
+                              end_date=end_date)
+
+        print("\n🎉 Rolling backtest completed successfully!")
+
+    def save_results(self, output_dir: str | None, *, start_date: str | None,
                      end_date: str | None) -> None:
         """Save backtest results."""
         base_dir = Path(output_dir or "results/vectorbot_backtests")
@@ -748,6 +1456,7 @@ class VectorBotBacktest:
         trades_path = run_dir / "vectorbot_trades.csv"
         equity_path = run_dir / "vectorbot_equity_curve.csv"
         results_path = run_dir / "vectorbot_results.json"
+        report_path = run_dir / "vectorbot_report.html"
 
         # Save trades
         trades_df = pd.DataFrame(self.trades)
@@ -761,10 +1470,319 @@ class VectorBotBacktest:
         with open(results_path, "w") as f:
             json.dump(self.results, f, indent=2)
 
+        # Generate HTML report
+        self._generate_html_report(trades_df, equity_df, report_path,
+                                   start_date, end_date)
+
         print("\n💾 Results saved:")
         print(f"   - {trades_path}")
         print(f"   - {equity_path}")
         print(f"   - {results_path}")
+        print(f"   - {report_path}")
+
+    def _generate_html_report(self, trades_df: pd.DataFrame,
+                              equity_df: pd.DataFrame, output_path: Path,
+                              start_date: str | None,
+                              end_date: str | None) -> None:
+        """Generate HTML report with visualizations."""
+        try:
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+            has_plotly = True
+        except ImportError:
+            has_plotly = False
+
+        # Convert timestamps if needed
+        if not trades_df.empty and 'entry_time' in trades_df.columns:
+            trades_df = trades_df.copy()
+            trades_df['entry_time'] = pd.to_datetime(trades_df['entry_time'])
+            trades_df['exit_time'] = pd.to_datetime(trades_df['exit_time'])
+
+        if not equity_df.empty and 'timestamp' in equity_df.columns:
+            equity_df = equity_df.copy()
+            equity_df['timestamp'] = pd.to_datetime(equity_df['timestamp'])
+
+        # Prepare data for charts
+        if has_plotly and not equity_df.empty:
+            # Create interactive charts with Plotly
+            fig = make_subplots(rows=2,
+                                cols=2,
+                                subplot_titles=('Equity Curve', 'Drawdown',
+                                                'P&L Distribution',
+                                                'Monthly Returns'),
+                                specs=[[{
+                                    "secondary_y": False
+                                }, {
+                                    "secondary_y": False
+                                }],
+                                       [{
+                                           "secondary_y": False
+                                       }, {
+                                           "secondary_y": False
+                                       }]])
+
+            # Equity curve
+            fig.add_trace(go.Scatter(x=equity_df['timestamp'],
+                                     y=equity_df['equity'],
+                                     mode='lines',
+                                     name='Equity',
+                                     line=dict(color='#3498db', width=2)),
+                          row=1,
+                          col=1)
+            fig.add_hline(y=self.initial_capital,
+                          line_dash="dash",
+                          line_color="red",
+                          annotation_text="Initial Capital",
+                          row=1,
+                          col=1)
+
+            # Drawdown
+            peak = equity_df['equity'].expanding().max()
+            drawdown = (equity_df['equity'] - peak) / peak * 100
+            fig.add_trace(go.Scatter(x=equity_df['timestamp'],
+                                     y=drawdown,
+                                     mode='lines',
+                                     fill='tozeroy',
+                                     name='Drawdown',
+                                     line=dict(color='#e74c3c', width=1),
+                                     fillcolor='rgba(231, 76, 60, 0.3)'),
+                          row=1,
+                          col=2)
+
+            # P&L Distribution
+            if not trades_df.empty and 'pnl' in trades_df.columns:
+                fig.add_trace(go.Histogram(x=trades_df['pnl'],
+                                           nbinsx=20,
+                                           name='P&L Distribution',
+                                           marker_color='#27ae60'),
+                              row=2,
+                              col=1)
+
+                # Monthly returns
+                trades_df['month'] = trades_df['entry_time'].dt.to_period(
+                    'M').astype(str)
+                monthly_pnl = trades_df.groupby(
+                    'month')['pnl'].sum().reset_index()
+                fig.add_trace(go.Bar(x=monthly_pnl['month'],
+                                     y=monthly_pnl['pnl'],
+                                     name='Monthly P&L',
+                                     marker_color=[
+                                         '#27ae60' if x > 0 else '#e74c3c'
+                                         for x in monthly_pnl['pnl']
+                                     ]),
+                              row=2,
+                              col=2)
+
+            fig.update_layout(
+                height=800,
+                showlegend=False,
+                title_text=f"VectorBot Backtest Report - {self.symbol}",
+                title_x=0.5)
+            fig.update_xaxes(title_text="Date", row=1, col=1)
+            fig.update_xaxes(title_text="Date", row=1, col=2)
+            fig.update_xaxes(title_text="P&L ($)", row=2, col=1)
+            fig.update_xaxes(title_text="Month", row=2, col=2)
+            fig.update_yaxes(title_text="Equity ($)", row=1, col=1)
+            fig.update_yaxes(title_text="Drawdown (%)", row=1, col=2)
+            fig.update_yaxes(title_text="Frequency", row=2, col=1)
+            fig.update_yaxes(title_text="P&L ($)", row=2, col=2)
+
+            charts_html = fig.to_html(include_plotlyjs='cdn',
+                                      div_id="backtest-charts")
+        else:
+            # Fallback: simple HTML without charts
+            charts_html = "<p>📊 Charts require plotly. Install with: pip install plotly</p>"
+
+        # Prepare summary metrics
+        results = self.results
+        metrics_html = f"""
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-label">Total Trades</div>
+                <div class="metric-value">{results.get('total_trades', 0)}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Win Rate</div>
+                <div class="metric-value {'positive' if results.get('win_rate', 0) > 50 else 'negative'}">
+                    {results.get('win_rate', 0):.2f}%
+                </div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Total Return</div>
+                <div class="metric-value {'positive' if results.get('total_return', 0) > 0 else 'negative'}">
+                    {results.get('total_return', 0):.2f}%
+                </div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Total P&L</div>
+                <div class="metric-value {'positive' if results.get('total_pnl', 0) > 0 else 'negative'}">
+                    ${results.get('total_pnl', 0):.2f}
+                </div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Sharpe Ratio</div>
+                <div class="metric-value">{results.get('sharpe_ratio', 0):.2f}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Profit Factor</div>
+                <div class="metric-value">{results.get('profit_factor', 0):.2f}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Max Drawdown</div>
+                <div class="metric-value negative">{results.get('max_drawdown', 0):.2f}%</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Final Equity</div>
+                <div class="metric-value">${results.get('final_equity', 0):.2f}</div>
+            </div>
+        </div>
+        """
+
+        # Prepare trades table
+        if not trades_df.empty:
+            trades_table = trades_df.to_html(classes='trades-table',
+                                             table_id='trades-table',
+                                             index=False,
+                                             escape=False)
+        else:
+            trades_table = "<p>No trades executed during this backtest period.</p>"
+
+        # Generate full HTML
+        html_content = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VectorBot Backtest Report - {self.symbol}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+            line-height: 1.6;
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 30px;
+        }}
+        h1 {{
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }}
+        h2 {{
+            color: #34495e;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-left: 4px solid #3498db;
+            padding-left: 10px;
+        }}
+        .info {{
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }}
+        .info p {{
+            margin: 5px 0;
+        }}
+        .metrics {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }}
+        .metric {{
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }}
+        .metric-label {{
+            font-size: 14px;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }}
+        .metric-value {{
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }}
+        .metric-value.positive {{
+            color: #27ae60;
+        }}
+        .metric-value.negative {{
+            color: #e74c3c;
+        }}
+        .trades-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }}
+        .trades-table th {{
+            background-color: #3498db;
+            color: white;
+            padding: 12px;
+            text-align: left;
+        }}
+        .trades-table td {{
+            padding: 10px;
+            border-bottom: 1px solid #ecf0f1;
+        }}
+        .trades-table tr:hover {{
+            background-color: #f8f9fa;
+        }}
+        .timestamp {{
+            color: #7f8c8d;
+            font-size: 14px;
+            text-align: right;
+            margin-top: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 VectorBot Backtest Report</h1>
+        
+        <div class="info">
+            <p><strong>Symbol:</strong> {self.symbol}</p>
+            <p><strong>Start Date:</strong> {start_date or 'N/A'}</p>
+            <p><strong>End Date:</strong> {end_date or 'N/A'}</p>
+            <p><strong>Initial Capital:</strong> ${self.initial_capital:,.2f}</p>
+        </div>
+
+        <h2>📊 Performance Metrics</h2>
+        {metrics_html}
+
+        <h2>📈 Charts</h2>
+        {charts_html}
+
+        <h2>📋 Trade Details</h2>
+        {trades_table}
+
+        <div class="timestamp">
+            Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}
+        </div>
+    </div>
+</body>
+</html>
+        """
+
+        # Write HTML file
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -813,12 +1831,14 @@ def main(argv: List[str] | None = None) -> None:
 
     # Handle Docker path mapping: if path starts with /home/yin/trading/ml_trading_bot, map to /workspace
     if model_path.startswith("/home/yin/trading/ml_trading_bot"):
-        model_path = model_path.replace("/home/yin/trading/ml_trading_bot", "/workspace", 1)
+        model_path = model_path.replace("/home/yin/trading/ml_trading_bot",
+                                        "/workspace", 1)
         print(f"   📍 Mapped model path to Docker: {model_path}")
 
     if not os.path.exists(model_path):
         print(f"❌ Model not found: {model_path}")
-        print("Please run `make train` first to produce the model bundle (.pkl)")
+        print(
+            "Please run `make train` first to produce the model bundle (.pkl)")
         print("   Or use `make rolling` to produce rolling training models")
         return
 
@@ -839,4 +1859,3 @@ def main(argv: List[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -311,5 +311,8 @@ make auto-workflow SYMBOLS="BTCUSDT" START_DATE=2025-01-01 END_DATE=2025-06-30 R
 
 make rolling ROLLING_USE_TOP_FACTORS=/home/yin/trading/ml_trading_bot/results/dim_compare/BTCUSDT-ETHUSDT_baseline-default_grid_search_20251114_115834/best_combination/top_factors.json \
   ROLLING_FEATURE_TYPE=baseline,default \
-  ROLLING_FREQ=60T \
-  ROLLING_FBS=5
+  ROLLING_FREQ=240T \
+  ROLLING_FBS=24
+
+
+make vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_011750/latest
