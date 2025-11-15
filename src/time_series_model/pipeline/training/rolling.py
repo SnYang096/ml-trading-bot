@@ -63,9 +63,11 @@ def analyze_feature_modules(feature_names: set) -> dict:
 
     # Baseline features: signal_*, sr_*, compressed_*, slope_consistency_score
     baseline_patterns = ['signal_', 'sr_', 'compressed_']
-    baseline_exact = ['slope_consistency_score']  # Baseline feature that doesn't match patterns
+    baseline_exact = ['slope_consistency_score'
+                      ]  # Baseline feature that doesn't match patterns
     if any(
-            any(f.startswith(p) for p in baseline_patterns) or f in baseline_exact
+            any(f.startswith(p)
+                for p in baseline_patterns) or f in baseline_exact
             for f in feature_names):
         result['use_baseline'] = True
 
@@ -119,9 +121,7 @@ def analyze_feature_modules(feature_names: set) -> dict:
     # Enhanced features that don't match specific patterns but are likely enhanced
     # Note: slope_consistency_score is actually a baseline feature, not enhanced
     # (e.g., internal_price_density, pre_break_silence, rsi_divergence, volume_divergence)
-    enhanced_keywords = [
-        'divergence', 'density', 'silence', 'break'
-    ]
+    enhanced_keywords = ['divergence', 'density', 'silence', 'break']
     # Exclude baseline features that contain "consistency" but are not enhanced
     baseline_consistency_features = ['slope_consistency_score']
     # Check for enhanced keywords, but exclude baseline features
@@ -685,21 +685,31 @@ tr:hover{{background:#f0f8ff}}
                             keep = keep['features']
                     if isinstance(keep, list):
                         top_factors_set = set(keep)
-                        
+
                         # Filter out label columns (signal_*, binary_signal_*, future_return_*)
                         # These are labels, not features, and should not be used as features
-                        label_prefixes = ('signal_', 'binary_signal_', 'future_return_')
-                        label_exact = {'signal', 'binary_signal', 'future_return'}
+                        label_prefixes = ('signal_', 'binary_signal_',
+                                          'future_return_')
+                        label_exact = {
+                            'signal', 'binary_signal', 'future_return'
+                        }
                         filtered_labels = [
                             f for f in top_factors_set
-                            if f in label_exact or any(f.startswith(prefix) for prefix in label_prefixes)
+                            if f in label_exact or any(
+                                f.startswith(prefix)
+                                for prefix in label_prefixes)
                         ]
                         if filtered_labels:
-                            top_factors_set = top_factors_set - set(filtered_labels)
-                            print(f"   🧹 Filtered out {len(filtered_labels)} label column(s) from top_factors: {', '.join(filtered_labels[:5])}")
+                            top_factors_set = top_factors_set - set(
+                                filtered_labels)
+                            print(
+                                f"   🧹 Filtered out {len(filtered_labels)} label column(s) from top_factors: {', '.join(filtered_labels[:5])}"
+                            )
                             if len(filtered_labels) > 5:
-                                print(f"      ... and {len(filtered_labels) - 5} more")
-                        
+                                print(
+                                    f"      ... and {len(filtered_labels) - 5} more"
+                                )
+
                         print(
                             f"   📋 Loaded {len(top_factors_set)} features from top_factors"
                         )
@@ -990,110 +1000,60 @@ tr:hover{{background:#f0f8ff}}
                 args.cv_folds if (args.cv_on_rolling and args.cv_folds
                                   and args.cv_folds > 0) else 2,
             )
-            try:
-                models_dict, metrics_dict, preprocess_params_dict = classification_trainer.train_models(
-                    X_df=X_train_df,
-                    y_return=y_return_train,
-                    y_vol=y_vol_train,
-                    train_df=train_labeled,
-                    n_splits=trainer_splits,
-                    groups=groups,
-                    preprocess_fn=None,
-                    preprocess_kwargs={},
-                    feature_winsorize_k=4.0,
-                )
-                model_cls = models_dict.get("classification")
-                model_return = models_dict.get("return")
-                model_vol = models_dict.get("vol")
-                classification_preprocess_params = preprocess_params_dict.get(
-                    "classification")
-                return_preprocess_params = preprocess_params_dict.get("return")
-                vol_preprocess_params = preprocess_params_dict.get("vol")
-                classification_metrics_cv = metrics_dict.get(
-                    "classification", {})
-                if classification_metrics_cv:
-                    cv_acc = classification_metrics_cv.get("accuracy")
-                    cv_f1 = classification_metrics_cv.get("f1")
-                    cv_auc = classification_metrics_cv.get("auc")
-                    if all(val is not None for val in [cv_acc, cv_f1, cv_auc]):
-                        print(
-                            f"   CV metrics → Accuracy: {cv_acc:.3f} | F1: {cv_f1:.3f} | AUC: {cv_auc:.3f}"
-                        )
-            except Exception as exc:
-                print(
-                    f"   ⚠️ Classification trainer fallback: {exc}. Reverting to direct LightGBM training."
-                )
-                fallback_cv = (args.cv_folds if
-                               (args.cv_on_rolling and args.cv_folds
-                                and args.cv_folds > 1) else 0)
-                model_cls = LightGBMTrainer(model_type="classification",
-                                          use_gpu=args.gpu)
-                _ = model_cls.train(X_train_cls,
-                                    y_cls_train_filtered,
-                                    n_splits=fallback_cv,
-                                    use_time_series_cv=bool(fallback_cv),
-                                    groups=groups_filtered)
+            # Train models using ClassificationModelTrainer
+            models_dict, metrics_dict, preprocess_params_dict = classification_trainer.train_models(
+                X_df=X_train_df,
+                y_return=y_return_train,
+                y_vol=y_vol_train,
+                train_df=train_labeled,
+                n_splits=trainer_splits,
+                groups=groups,
+                preprocess_fn=None,
+                preprocess_kwargs={},
+                feature_winsorize_k=4.0,
+            )
+            model_cls = models_dict.get("classification")
+            model_return = models_dict.get("return")
+            model_vol = models_dict.get("vol")
+            classification_preprocess_params = preprocess_params_dict.get(
+                "classification")
+            return_preprocess_params = preprocess_params_dict.get("return")
+            vol_preprocess_params = preprocess_params_dict.get("vol")
+            classification_metrics_cv = metrics_dict.get("classification", {})
+            if classification_metrics_cv:
+                cv_acc = classification_metrics_cv.get("accuracy")
+                cv_f1 = classification_metrics_cv.get("f1")
+                cv_auc = classification_metrics_cv.get("auc")
+                if all(val is not None for val in [cv_acc, cv_f1, cv_auc]):
+                    print(
+                        f"   CV metrics → Accuracy: {cv_acc:.3f} | F1: {cv_f1:.3f} | AUC: {cv_auc:.3f}"
+                    )
 
-                model_return = LightGBMTrainer(model_type="regression",
-                                             use_gpu=args.gpu)
-                _ = model_return.train(X_train_df,
-                                       log_return_magnitude(y_return_train),
-                                       n_splits=fallback_cv,
-                                       use_time_series_cv=bool(fallback_cv))
-                return_preprocess_params = {"target_transform": "log1p_abs"}
-
-                model_vol = LightGBMTrainer(model_type="regression",
-                                          use_gpu=args.gpu)
-                _ = model_vol.train(X_train_df,
-                                    y_vol_train,
-                                    n_splits=fallback_cv,
-                                    use_time_series_cv=bool(fallback_cv))
-
-            # Ensure models are trained even if trainer returned placeholders
-            fallback_cv = (args.cv_folds if
-                           (args.cv_on_rolling and args.cv_folds
-                            and args.cv_folds > 1) else 0)
+            # Validate that all models were trained successfully
             if model_cls is None or not getattr(model_cls, "is_trained",
                                                 False):
-                print(
-                    "   ⚠️ Classification model unavailable after trainer run; using fallback LightGBM training."
+                raise RuntimeError(
+                    "Classification model training failed. "
+                    f"Model is None: {model_cls is None}, "
+                    f"is_trained: {getattr(model_cls, 'is_trained', False) if model_cls else 'N/A'}"
                 )
-                model_cls = LightGBMTrainer(model_type="classification",
-                                          use_gpu=args.gpu)
-                _ = model_cls.train(X_train_cls,
-                                    y_cls_train_filtered,
-                                    n_splits=fallback_cv,
-                                    use_time_series_cv=bool(fallback_cv),
-                                    groups=groups_filtered)
-                classification_preprocess_params = None
-
             if model_return is None or not getattr(model_return, "is_trained",
                                                    False):
-                print(
-                    "   ⚠️ Return model unavailable after trainer run; using fallback LightGBM training."
+                raise RuntimeError(
+                    "Return model training failed. "
+                    f"Model is None: {model_return is None}, "
+                    f"is_trained: {getattr(model_return, 'is_trained', False) if model_return else 'N/A'}"
                 )
-                model_return = LightGBMTrainer(model_type="regression",
-                                             use_gpu=args.gpu)
-                _ = model_return.train(X_train_df,
-                                       log_return_magnitude(y_return_train),
-                                       n_splits=fallback_cv,
-                                       use_time_series_cv=bool(fallback_cv))
-                return_preprocess_params = {"target_transform": "log1p_abs"}
-
             if model_vol is None or not getattr(model_vol, "is_trained",
                                                 False):
-                print(
-                    "   ⚠️ Volatility model unavailable after trainer run; using fallback LightGBM training."
+                raise RuntimeError(
+                    "Volatility model training failed. "
+                    f"Model is None: {model_vol is None}, "
+                    f"is_trained: {getattr(model_vol, 'is_trained', False) if model_vol else 'N/A'}"
                 )
-                model_vol = LightGBMTrainer(model_type="regression",
-                                          use_gpu=args.gpu)
-                _ = model_vol.train(X_train_df,
-                                    y_vol_train,
-                                    n_splits=fallback_cv,
-                                    use_time_series_cv=bool(fallback_cv))
-                vol_preprocess_params = None
 
             # Guard against edge cases where LightGBMTrainer preserves booster but flag remains unset
+            # This is a safety check, not a fallback - it only ensures the flag is correct
             for mdl in (model_cls, model_return, model_vol):
                 if mdl is not None and getattr(mdl, "model", None) is not None:
                     mdl.is_trained = True
@@ -1555,7 +1515,9 @@ tr:hover{{background:#f0f8ff}}
                 with open(readme_path, "w") as f:
                     f.write("Latest Models Directory\n")
                     f.write("======================\n\n")
-                    f.write("This directory contains symbolic links to the latest models.\n")
+                    f.write(
+                        "This directory contains symbolic links to the latest models.\n"
+                    )
                     f.write(f"Latest test month: {latest_month}\n\n")
                     f.write("Available models:\n")
                     for artifact_type in latest_artifacts.keys():
@@ -1563,27 +1525,54 @@ tr:hover{{background:#f0f8ff}}
                     f.write("\n")
                     f.write("Model Files Explanation\n")
                     f.write("=======================\n\n")
-                    f.write("1. classification_pipeline.pkl - Classification Model\n")
+                    f.write(
+                        "1. classification_pipeline.pkl - Classification Model\n"
+                    )
                     f.write("   Purpose: Predicts price direction (up/down)\n")
-                    f.write("   Output: Probabilities [P(down), P(up)] or [P(down), P(up), P(hold)]\n")
-                    f.write("   Usage: Determines trading direction (long/short)\n\n")
-                    f.write("2. return_pipeline.pkl - Return Regression Model\n")
+                    f.write(
+                        "   Output: Probabilities [P(down), P(up)] or [P(down), P(up), P(hold)]\n"
+                    )
+                    f.write(
+                        "   Usage: Determines trading direction (long/short)\n\n"
+                    )
+                    f.write(
+                        "2. return_pipeline.pkl - Return Regression Model\n")
                     f.write("   Purpose: Predicts future return magnitude\n")
-                    f.write("   Output: Log-magnitude of future returns (needs conversion)\n")
-                    f.write("   Usage: Calculates signal strength = return_pred / vol_pred\n\n")
-                    f.write("3. vol_pipeline.pkl - Volatility Regression Model\n")
-                    f.write("   Purpose: Predicts future volatility (risk indicator)\n")
+                    f.write(
+                        "   Output: Log-magnitude of future returns (needs conversion)\n"
+                    )
+                    f.write(
+                        "   Usage: Calculates signal strength = return_pred / vol_pred\n\n"
+                    )
+                    f.write(
+                        "3. vol_pipeline.pkl - Volatility Regression Model\n")
+                    f.write(
+                        "   Purpose: Predicts future volatility (risk indicator)\n"
+                    )
                     f.write("   Output: Future volatility prediction\n")
-                    f.write("   Usage: Risk adjustment and position sizing\n\n")
+                    f.write(
+                        "   Usage: Risk adjustment and position sizing\n\n")
                     f.write("4. scalers.pkl - Feature Scalers\n")
-                    f.write("   Purpose: Saves normalization parameters from feature engineering\n")
-                    f.write("   Content: Feature statistics, enhanced scalers, baseline scalers\n")
-                    f.write("   ⚠️  IMPORTANT: Must use training-time scalers for prediction!\n\n")
+                    f.write(
+                        "   Purpose: Saves normalization parameters from feature engineering\n"
+                    )
+                    f.write(
+                        "   Content: Feature statistics, enhanced scalers, baseline scalers\n"
+                    )
+                    f.write(
+                        "   ⚠️  IMPORTANT: Must use training-time scalers for prediction!\n\n"
+                    )
                     f.write("5. features.pkl - Feature List\n")
-                    f.write("   Purpose: Saves list of feature column names used by models\n")
+                    f.write(
+                        "   Purpose: Saves list of feature column names used by models\n"
+                    )
                     f.write("   Format: Python list (pickle format)\n")
-                    f.write("   ⚠️  IMPORTANT: Prediction must use exact same features!\n")
-                    f.write("   Note: If features.pkl exists, top_factors filtering is not needed.\n\n")
+                    f.write(
+                        "   ⚠️  IMPORTANT: Prediction must use exact same features!\n"
+                    )
+                    f.write(
+                        "   Note: If features.pkl exists, top_factors filtering is not needed.\n\n"
+                    )
                     f.write("Three-Model Architecture\n")
                     f.write("========================\n\n")
                     f.write("Rolling training uses a three-model system:\n")
@@ -1591,34 +1580,56 @@ tr:hover{{background:#f0f8ff}}
                     f.write("  - Return: Magnitude (how much)\n")
                     f.write("  - Volatility: Risk (uncertainty)\n\n")
                     f.write("Signal Generation:\n")
-                    f.write("  - Direction: classification probability > 0.55 → long/short\n")
+                    f.write(
+                        "  - Direction: classification probability > 0.55 → long/short\n"
+                    )
                     f.write("  - Strength: |return_pred| / vol_pred\n")
                     f.write("  - Confidence: |return_pred| / (q90 - q10)\n\n")
                     f.write("Usage Example\n")
                     f.write("=============\n\n")
                     f.write("```python\n")
-                    f.write("from time_series_model.models.quant_trading_model import TradingModelPipeline\n")
+                    f.write(
+                        "from time_series_model.models.quant_trading_model import TradingModelPipeline\n"
+                    )
                     f.write("import joblib\n\n")
                     f.write("# Load models\n")
-                    f.write("cls_model = TradingModelPipeline.load('classification_pipeline.pkl')\n")
-                    f.write("return_model = TradingModelPipeline.load('return_pipeline.pkl')\n")
-                    f.write("vol_model = TradingModelPipeline.load('vol_pipeline.pkl')\n\n")
+                    f.write(
+                        "cls_model = TradingModelPipeline.load('classification_pipeline.pkl')\n"
+                    )
+                    f.write(
+                        "return_model = TradingModelPipeline.load('return_pipeline.pkl')\n"
+                    )
+                    f.write(
+                        "vol_model = TradingModelPipeline.load('vol_pipeline.pkl')\n\n"
+                    )
                     f.write("# Load feature list\n")
                     f.write("feature_cols = joblib.load('features.pkl')\n\n")
                     f.write("# Load scalers\n")
-                    f.write("from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer\n")
-                    f.write("engineer = ComprehensiveFeatureEngineer(feature_types='comprehensive')\n")
+                    f.write(
+                        "from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer\n"
+                    )
+                    f.write(
+                        "engineer = ComprehensiveFeatureEngineer(feature_types='comprehensive')\n"
+                    )
                     f.write("engineer.load_scalers('scalers.pkl')\n\n")
-                    f.write("# Feature engineering (use fit=False with loaded scalers)\n")
-                    f.write("engineered_data = engineer.engineer_all_features(new_data, fit=False)\n")
+                    f.write(
+                        "# Feature engineering (use fit=False with loaded scalers)\n"
+                    )
+                    f.write(
+                        "engineered_data = engineer.engineer_all_features(new_data, fit=False)\n"
+                    )
                     f.write("X = engineered_data[feature_cols]\n\n")
                     f.write("# Predictions\n")
                     f.write("cls_pred = cls_model.predict_proba(X)\n")
                     f.write("return_pred = return_model.predict(X)\n")
                     f.write("vol_pred = vol_model.predict(X)\n")
                     f.write("```\n\n")
-                    f.write("To use the latest models, reference files in this directory.\n")
-                    f.write(f"Example: {os.path.join('latest', 'classification_pipeline.pkl')}\n")
+                    f.write(
+                        "To use the latest models, reference files in this directory.\n"
+                    )
+                    f.write(
+                        f"Example: {os.path.join('latest', 'classification_pipeline.pkl')}\n"
+                    )
 
                 print(
                     f"   📌 Created symbolic links to latest models in: {latest_dir}"
