@@ -119,12 +119,8 @@ help:
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  Core Workflow (Recommended):"
-	@echo "    make train              # Train classification model (default: binary + return regression + volatility)"
-	@echo "    make train-quantile     # Train quantile regression model (q10, q50, q90 + volatility)"
-	@echo "    make train-quantile PARAMS_FILE=results/params/q50_params_*.json  # Use pre-trained parameters"
-	@echo "    make train-quantile AUTO_TUNE=1 TUNE_TRIALS=20  # Auto-tune hyperparameters"
+	@echo "    make rolling            # Rolling training (recommended for production)"
 	@echo "    make tune-q50-params    # Pre-train Q50 parameter search (for quantile models)"
-	@echo "    make rolling            # Rolling training to latest data (main workflow)"
 	@echo ""
 	@echo "  Data commands:"
 	@echo "    make data-download     # Download Binance data"
@@ -143,7 +139,7 @@ help:
 	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo ""
 	@echo ""
-	@echo "Override defaults, e.g. \"make train SYMBOLS=\"BTCUSDT ETHUSDT\" START_DATE=2024-10-01 END_DATE=2024-12-31\""
+	@echo "Override defaults, e.g. \"make rolling SYMBOLS=\"BTCUSDT ETHUSDT\" ROLLING_START=2024-10 ROLLING_END=2024-12\""
 	@echo ""
 	@echo "Note: Training commands run in Docker. Make sure Docker image is built: make docker-build"
 
@@ -362,42 +358,10 @@ AUTO_TUNE ?= 0
 TUNE_TRIALS ?= 20
 PARAMS_FILE ?=
 
-train:
-	@echo "🚀 Training classification model (default) for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make train SYMBOLS=BTCUSDT,ETHUSDT START_DATE=2024-11-01 END_DATE=2025-04-01"
-	@echo "       Model Type: $(MODEL_TYPE) (classification: binary + return regression + volatility)"
-	@echo "       Forward Bars: $(FORWARD_BARS_TRAIN) bars ahead for prediction"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@if [ "$(SAFE_MULTI_ASSET)" = "1" ]; then \
-		echo "       🔒 Safe Multi-Asset: Enabled (each symbol processed independently)"; \
-	fi
-	@if [ -n "$(PARAMS_FILE)" ]; then \
-		echo "       📂 Using pre-trained parameters from: $(PARAMS_FILE)"; \
-	fi
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train \
-		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
-		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
-        --data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		--freq $(FREQS) \
-        --forward-bars $(FORWARD_BARS_TRAIN) \
-		--cv-folds $(CV_FOLDS) \
-		--feature-type $(TRAIN_FEATURE_TYPE) \
-		$(if $(TRAIN_USE_TOP_FACTORS),--use-top-factors $(TRAIN_USE_TOP_FACTORS),) \
-		$(if $(TRAIN_TOPK),--topk $(TRAIN_TOPK),) \
-		$(if $(TRAIN_TOPK_SOURCE),--topk-source $(TRAIN_TOPK_SOURCE),) \
-		$(if $(filter 1,$(SAFE_MULTI_ASSET)),--safe-multi-asset,) \
-		$(if $(filter 1,$(AUTO_TUNE)),--auto-tune-params,) \
-		$(if $(TUNE_TRIALS),--tune-trials $(TUNE_TRIALS),) \
-		$(if $(PARAMS_FILE),--params-file /workspace/$(PARAMS_FILE),) \
-		--model-type $(MODEL_TYPE) \
-		--oos-months $(OOS_MONTHS) \
-		$(if $(OOS_START),--oos-start $(OOS_START),) \
-		$(if $(OOS_END),--oos-end $(OOS_END),) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		--disable-target-winsorize \
-  	--disable-feature-winsorize \
-        --gpu
+# train target removed - use 'make rolling' instead
+# Rolling training is the recommended approach as it provides better evaluation
+# through expanding window training and multiple model checkpoints.
+# For single-month training, use: make rolling ROLLING_START=YYYY-MM ROLLING_END=YYYY-MM INITIAL_TRAIN_MONTHS=1
 
 
 FORWARD_BARS ?= 3

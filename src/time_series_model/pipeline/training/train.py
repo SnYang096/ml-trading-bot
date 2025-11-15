@@ -403,8 +403,21 @@ def _collect_files(data: List[str],
 
 
 def main() -> None:
+    """
+    DEPRECATED: This training script is deprecated.
+    Use 'make rolling' instead for rolling training, which provides better evaluation
+    through expanding window training and multiple model checkpoints.
+    
+    This script is kept for backward compatibility and utility functions only.
+    """
+    import warnings
+    warnings.warn(
+        "train.py main() is deprecated. Use 'make rolling' instead for production training.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     parser = argparse.ArgumentParser(
-        description="Regression training (returns + uncertainty + volatility)")
+        description="DEPRECATED: Regression training (returns + uncertainty + volatility). Use 'make rolling' instead.")
     parser.add_argument("--data",
                         type=str,
                         action="append",

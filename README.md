@@ -73,23 +73,23 @@ Train a single model using the optimal configuration:
 ```bash
 DIM_DIR=results/production_dimensionality_20250501_20250731
 
-make train SYMBOL=BTCUSDT \
-  START_DATE=2025-01-01 END_DATE=2025-07-31 \
-  USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json \
-  USE_AUTOENCODER=$(DIM_DIR)/production_autoencoder.pth \
-  ENCODING_DIM=32
+# DEPRECATED: make train has been removed. Use make rolling instead.
+# For single-month training, use:
+make rolling SYMBOLS=BTCUSDT \
+  ROLLING_START=2025-07 ROLLING_END=2025-07 \
+  INITIAL_TRAIN_MONTHS=1 \
+  ROLLING_USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json
 ```
 
-**Note**: This step is **optional** and can be **skipped**. 
-- `make train`: Trains **one** model for a single time period (used for one-time evaluation or deployment)
-- `make auto-rolling-update`: **Already includes training** - trains **multiple** models (one per month), evaluates model stability over time
-- Both commands train models independently - they do **not** share models
+**Note**: `make train` has been **removed**. Use `make rolling` instead.
+- `make rolling`: Trains **multiple** models (one per month) using expanding window, evaluates model stability over time
+- For single-month training, use: `make rolling ROLLING_START=YYYY-MM ROLLING_END=YYYY-MM INITIAL_TRAIN_MONTHS=1`
+- Rolling training provides better evaluation through multiple model checkpoints
 
 **Output**:
-- `models/trained_model_*.pkl` - Production model
-- `models/trained_model_*_scalers.pkl` - Feature scalers
-- `models/trained_model_*_info.json` - Model metadata
-- `models/trained_model_*_info_report.html` - HTML report
+- `results/rolling_*/latest/classification_pipeline.pkl` - Production models
+- `results/rolling_*/monthly_results.csv` - Monthly performance metrics
+- `results/rolling_*/monthly_rolling_report.html` - HTML report
 
 #### Step 3: Rolling Update (Main Workflow)
 
@@ -106,7 +106,7 @@ make auto-rolling-update SYMBOL=BTCUSDT \
   ENCODING_DIM=32
 ```
 
-**Note**: `make train` and `make auto-rolling-update` train **independent** models. The model from `make train` is **not** used by `auto-rolling-update`.
+**Note**: `make rolling` is the recommended approach for all training scenarios, providing better evaluation through expanding window training.
 
 **Output**:
 - `results/auto_rolling_*/monthly_results.csv` - All months' detailed results

@@ -1,27 +1,28 @@
 # 训练脚本（Training）
 
-该目录现在仅包含生产级的训练入口：
+## ⚠️ 重要变更
 
-- `train_model.py` — 使用综合特征工程 + LightGBM 的生产流水线。脚本会保存训练好的策略、特征工程器、指标信息，并生成模型说明 JSON。
+**`make train` 已被移除**，统一使用 `make rolling` 进行训练。
+
+**原因**：
+- 滚动训练提供更好的评估（通过扩展窗口训练和多个模型检查点）
+- 可以观察模型在不同时间段的性能变化
+- 更接近真实交易场景
 
 ## 使用方式
 
 ```bash
-# 推荐通过 Makefile 调度（会自动设置 PYTHONPATH）
-make train SYMBOL=BTCUSDT START_DATE=2025-05-01 END_DATE=2025-05-31
+# 推荐：使用 make rolling 进行滚动训练
+make rolling SYMBOLS=BTCUSDT \
+  ROLLING_START=2024-01 ROLLING_END=2024-12 \
+  INITIAL_TRAIN_MONTHS=6 \
+  ROLLING_FEATURE_TYPE=comprehensive
 
-# 或者手动执行，指定标的、时间范围和数据目录
-PYTHONPATH=src python scripts/training/train_model.py \
-    --symbol BTCUSDT \
-    --start-date 2025-05-01 \
-    --end-date 2025-05-31 \
-    --data-dir data/parquet_data \
-    --output-dir models \
-    --model-name trained_model
-
-# 同时训练多个标的
-make train SYMBOLS="BTCUSDT ETHUSDT" START_DATE=2024-01-01 END_DATE=2024-12-31 OVERWRITE=1
+# 单个月训练（相当于原来的 make train）
+make rolling SYMBOLS=BTCUSDT \
+  ROLLING_START=2024-11 ROLLING_END=2024-11 \
+  INITIAL_TRAIN_MONTHS=1
 ```
 
-> 提示：可以使用 `--train-data file1.parquet file2.parquet` 明确指定文件；如需强制覆盖已有模型，添加 `--overwrite` 或 `OVERWRITE=1 make train`。脚本仍支持 `.zip` / `.csv` 文件并自动解压。训练完成后模型存放在 `models/` 目录，供 `scripts/backtesting/` 中的回测 / 实盘脚本复用。
+> 提示：训练完成后模型存放在 `results/rolling_*/latest/` 目录，供 `scripts/backtesting/` 中的回测脚本使用。
 
