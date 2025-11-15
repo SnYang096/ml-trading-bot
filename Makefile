@@ -46,7 +46,7 @@ OVERWRITE_FLAG := $(if $(filter 1 true yes,$(OVERWRITE)),--overwrite,)
 # ---------------------------------------------------------------------------
 # Training configuration (simple names) + backward-compatible BASELINE_* aliases
 # ---------------------------------------------------------------------------
-FREQ ?= 15T
+FREQ ?= 240T
 FREQS ?= 15T,60T,240T
 CV_FOLDS ?= 5
 OOS_MONTHS ?= 4
@@ -94,7 +94,7 @@ endif
 .PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
-		dim-compare nautilus-backtest feature-report factor-analysis \
+		dim-compare nautilus-backtest factor-analysis \
 		timeframe-forward-report feature-indicators \
 	cross-sectional-catalog \
 	cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
@@ -128,7 +128,6 @@ help:
 	@echo "    make data-pipeline     # Download then convert"
 	@echo ""
 	@echo "  Other commands:"
-	@echo "    make feature-report    # Generate feature IC/IR HTML report"
 	@echo "    make factor-analysis   # Factor effectiveness analysis using Alphalens (IC, quantile backtest, decay)"
 	@echo "    make cross-sectional-build-panel  # Generate multi-asset factor panels for CS modelling"
 	@echo "    make cross-sectional-report  # Fama-MacBeth + Newey-West + IC/IR markdown report"
@@ -214,53 +213,27 @@ builder-shell:
 	DOCKER_IMAGE=$(BUILDER_IMAGE) $(DOCKER_RUN) bash
 
 # ---------------------------------------------------------------------------
-# Feature diagnostics
-# ---------------------------------------------------------------------------
-
-FEATURE_REPORT_INPUT ?= data/parquet_data/BTCUSDT_2024-10.parquet
-FEATURE_REPORT_OUTPUT ?= reports/feature_report.html
-FEATURE_REPORT_START ?=
-FEATURE_REPORT_END ?=
-FEATURE_REPORT_HORIZON ?= 1
-FEATURE_REPORT_ARGS ?=
-# Example:
-#   make feature-report FEATURE_REPORT_INPUT=data/parquet_data/ETH-USD_2024-10.parquet \
-#                       FEATURE_REPORT_OUTPUT=reports/eth_report.html \
-#                       FEATURE_REPORT_START=2024-10-01 FEATURE_REPORT_END=2024-12-31 \
-#                       FEATURE_REPORT_HORIZON=3 \
-#                       FEATURE_REPORT_ARGS="--no-enhanced --no-dl"
-
-feature-report:
-	@echo "📊 Generating feature IC report (Docker) ..."
-	@mkdir -p $(dir $(FEATURE_REPORT_OUTPUT))
-	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/feature_quality_report.py \
-		--input $(FEATURE_REPORT_INPUT) \
-		--output $(FEATURE_REPORT_OUTPUT) \
-		--future-horizon $(FEATURE_REPORT_HORIZON) \
-		$(if $(FEATURE_REPORT_START),--start-date $(FEATURE_REPORT_START)) \
-		$(if $(FEATURE_REPORT_END),--end-date $(FEATURE_REPORT_END)) \
-		$(FEATURE_REPORT_ARGS)
-
-# ---------------------------------------------------------------------------
 # Factor analysis using Alphalens （跑不起来）
 # ---------------------------------------------------------------------------
 
 FACTOR_ANALYSIS_OUTPUT_DIR ?= results/factor_analysis
-FACTOR_ANALYSIS_PERIODS ?= 1,4,24
+FACTOR_ANALYSIS_PERIODS ?= 24
 FACTOR_ANALYSIS_QUANTILES ?= 10
 FACTOR_ANALYSIS_FACTOR_NAME ?=
 FACTOR_ANALYSIS_FEATURE_TYPE ?= baseline
 
 factor-analysis:
 	@echo "📊 Factor effectiveness analysis using Alphalens for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make factor-analysis SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31"
+	@echo "Example: make factor-analysis SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FREQ=15T"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset analysis)"
+	@echo "       Timeframe: $(FREQ) (override with FREQ=5T,15T,60T,240T, etc.)"
 	@echo "       Feature Type: $(FACTOR_ANALYSIS_FEATURE_TYPE)"
 	@echo "       Periods: $(FACTOR_ANALYSIS_PERIODS) bars (e.g., 1,4,24 for 15min, 1h, 6h prediction)"
 	@echo "       Quantiles: $(FACTOR_ANALYSIS_QUANTILES) (for Top vs Bottom analysis)"
 	@if [ -n "$(FACTOR_ANALYSIS_FACTOR_NAME)" ]; then \
 		echo "       Factor Name: $(FACTOR_ANALYSIS_FACTOR_NAME)"; \
 	fi
+	@echo "       Note: Alphalens frequency warnings are expected for intraday data (workaround applied)"
 	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/factor_analysis_alphalens.py \
 		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
 		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \

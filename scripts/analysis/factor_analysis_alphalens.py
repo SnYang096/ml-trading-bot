@@ -359,9 +359,33 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     # Parse frequency - but don't set it on MultiIndex for intraday data
     # Alphalens has issues with intraday frequencies, so we'll let it infer
     freq_offset = None
+    is_intraday = False
     if freq_str:
         try:
             freq_offset = to_offset(freq_str)
+            # Detect if this is intraday data (less than 1 day)
+            # Common intraday patterns: 5T, 15T, 60T, 240T, etc.
+            # Simple heuristic: if it contains 'T' (minutes) or 'H' (hours), it's likely intraday
+            # Also check if the timedelta is less than 1 day
+            freq_lower = freq_str.upper()
+            if 'T' in freq_lower or 'H' in freq_lower:
+                # Try to parse and compare with 1 day
+                try:
+                    test_timedelta = pd.Timedelta(freq_str)
+                    one_day = pd.Timedelta(days=1)
+                    is_intraday = test_timedelta < one_day
+                except Exception:
+                    # If parsing fails, assume intraday if it has 'T' or 'H'
+                    is_intraday = True
+            else:
+                # For other formats (like 'D' for daily), check timedelta
+                try:
+                    test_timedelta = pd.Timedelta(freq_str)
+                    one_day = pd.Timedelta(days=1)
+                    is_intraday = test_timedelta < one_day
+                except Exception:
+                    # Default to False if we can't determine
+                    is_intraday = False
         except (TypeError, ValueError):
             print(
                 f"      ⚠️  Could not parse freq '{freq_str}' into pandas offset; defaulting to inference"
@@ -433,281 +457,786 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             f"Not enough data: {len(prices)} rows, need at least {max_period + 10} for period {max_period}"
         )
 
-    # Try to prepare data - if it fails due to frequency, we'll use a workaround
-    # Monkey-patch Alphalens to avoid frequency validation errors for intraday data
-    import alphalens.utils as al_utils
-    original_compute_forward_returns = al_utils.compute_forward_returns
+    # For intraday data, Alphalens has known issues with frequency validation
+    # Use custom workaround directly instead of trying Alphalens first
+    if is_intraday:
+        print(
+            f"      ℹ️  Using custom forward returns calculation for intraday data (freq={freq_str})"
+        )
+        # Skip Alphalens attempt and go directly to workaround
+        use_workaround = True
+    else:
+        # For daily or longer frequencies, try Alphalens first
+        use_workaround = False
+        # Try to prepare data - if it fails due to frequency, we'll use a workaround
+        # Monkey-patch Alphalens to avoid frequency validation errors
+        import alphalens.utils as al_utils
+        original_compute_forward_returns = al_utils.compute_forward_returns
 
-    def patched_compute_forward_returns(factor,
-                                        prices,
-                                        periods,
-                                        filter_zscore=None,
-                                        cumulative_returns=True):
-        """Patched version that skips frequency validation for intraday data"""
-        try:
-            return original_compute_forward_returns(factor, prices, periods,
-                                                    filter_zscore,
-                                                    cumulative_returns)
-        except (ValueError, OverflowError) as e:
-            if "frequency" in str(e).lower() or "overflow" in str(e).lower():
-                # Remove freq from MultiIndex to avoid validation
-                if hasattr(factor.index, 'levels') and len(
-                        factor.index.levels) > 0:
-                    try:
-                        # Create new index without freq
-                        date_level = factor.index.levels[0]
-                        if hasattr(date_level,
-                                   'freq') and date_level.freq is not None:
-                            new_date_level = pd.DatetimeIndex(
-                                date_level.values, freq=None)
-                            new_index = pd.MultiIndex.from_arrays(
-                                [new_date_level, factor.index.levels[1]],
-                                names=factor.index.names)
-                            factor = factor.reindex(new_index)
-                    except Exception:
-                        pass
-                # Retry
+        def patched_compute_forward_returns(factor,
+                                            prices,
+                                            periods,
+                                            filter_zscore=None,
+                                            cumulative_returns=True):
+            """Patched version that skips frequency validation for intraday data"""
+            try:
                 return original_compute_forward_returns(
                     factor, prices, periods, filter_zscore, cumulative_returns)
-            raise
+            except (ValueError, OverflowError) as e:
+                if "frequency" in str(e).lower() or "overflow" in str(
+                        e).lower():
+                    # Remove freq from MultiIndex to avoid validation
+                    if hasattr(factor.index, 'levels') and len(
+                            factor.index.levels) > 0:
+                        try:
+                            # Create new index without freq
+                            date_level = factor.index.levels[0]
+                            if hasattr(date_level,
+                                       'freq') and date_level.freq is not None:
+                                new_date_level = pd.DatetimeIndex(
+                                    date_level.values, freq=None)
+                                new_index = pd.MultiIndex.from_arrays(
+                                    [new_date_level, factor.index.levels[1]],
+                                    names=factor.index.names)
+                                factor = factor.reindex(new_index)
+                        except Exception:
+                            pass
+                    # Retry
+                    return original_compute_forward_returns(
+                        factor, prices, periods, filter_zscore,
+                        cumulative_returns)
+                raise
 
-    # Apply monkey-patch
-    al_utils.compute_forward_returns = patched_compute_forward_returns
+        # Apply monkey-patch
+        al_utils.compute_forward_returns = patched_compute_forward_returns
 
-    try:
-        factor_data = al.utils.get_clean_factor_and_forward_returns(
-            factor=factor,
-            prices=prices,
-            periods=periods,
-            quantiles=10,  # Use 10 quantiles for factor analysis
-            bins=None,
-            binning_by_group=False,
-            max_loss=
-            0.99,  # Allow up to 99% loss to avoid dropping too much data
-        )
-    except (ValueError, OverflowError, TypeError) as e:
-        # Restore original function
-        al_utils.compute_forward_returns = original_compute_forward_returns
-        error_str = str(e).lower()
-        if "frequency" in error_str or "overflow" in error_str or "cannot cast" in error_str:
-            # Workaround: Create a custom forward returns calculation
-            # that doesn't rely on Alphalens' frequency handling
+        try:
+            factor_data = al.utils.get_clean_factor_and_forward_returns(
+                factor=factor,
+                prices=prices,
+                periods=periods,
+                quantiles=10,  # Use 10 quantiles for factor analysis
+                bins=None,
+                binning_by_group=False,
+                max_loss=
+                0.99,  # Allow up to 99% loss to avoid dropping too much data
+            )
+            use_workaround = False  # Success, no need for workaround
+        except (ValueError, OverflowError, TypeError) as e:
+            # Restore original function
+            al_utils.compute_forward_returns = original_compute_forward_returns
+            error_str = str(e).lower()
+            if "frequency" in error_str or "overflow" in error_str or "cannot cast" in error_str:
+                use_workaround = True
+                print(
+                    f"      ℹ️  Using custom forward returns calculation (Alphalens frequency issue detected)"
+                )
+            else:
+                raise
+
+    if use_workaround:
+        # Manually compute forward returns without frequency validation
+        from alphalens.utils import quantize_factor
+
+        # quantize_factor expects a DataFrame with 'factor' column, not a Series
+        # Convert factor Series to DataFrame
+        # Ensure the index is properly structured as MultiIndex [date, asset]
+        factor_df = factor.to_frame(name='factor')
+
+        # Verify and fix index structure if needed
+        if not isinstance(factor_df.index, pd.MultiIndex):
+            raise ValueError(
+                f"factor_df must have MultiIndex, got {type(factor_df.index)}")
+        if len(factor_df.index.names) != 2:
+            raise ValueError(
+                f"factor_df index must have 2 levels, got {len(factor_df.index.names)}: {factor_df.index.names}"
+            )
+        # Ensure index names are correct
+        if factor_df.index.names != ['date', 'asset']:
+            factor_df.index.names = ['date', 'asset']
+
+        # Check if factor has enough variation to be useful
+        factor_values = factor_df['factor'].dropna()
+        if len(factor_values) == 0:
+            raise ValueError("Factor has no valid values")
+
+        unique_ratio = factor_values.nunique() / len(factor_values)
+        if unique_ratio < 0.001:  # Less than 0.1% unique values (very strict)
+            # For factors with extremely low uniqueness, skip detailed analysis
+            # but still allow basic statistics
             print(
-                f"      ⚠️  Alphalens frequency issue detected, using workaround..."
+                f"      ⚠️  Warning: Factor has very few unique values ({unique_ratio:.2%} unique)"
+            )
+            print(
+                f"         This factor may have limited predictive power, but will attempt basic analysis"
+            )
+            # Don't raise error, just continue with warning
+        elif unique_ratio < 0.01:  # Less than 1% unique values
+            print(
+                f"      ℹ️  Note: Factor has relatively few unique values ({unique_ratio:.2%} unique)"
+            )
+            print(
+                f"         This is normal for some factors (e.g., time-based factors), continuing analysis..."
             )
 
-            # Manually compute forward returns without frequency validation
-            from alphalens.utils import quantize_factor
+        # Quantize factor first (check alphalens version for correct parameters)
+        # If factor has too many duplicate values, try fewer quantiles or use bins
+        quantized_factor = None
+        last_error = None
 
-            # quantize_factor expects a DataFrame with 'factor' column, not a Series
-            # Convert factor Series to DataFrame
-            factor_df = factor.to_frame(name='factor')
+        # Strategy 1: Try with fewer quantiles (5 instead of 10)
+        strategies = [
+            # (quantiles, bins, description)
+            (5, None, "5 quantiles"),
+            (3, None, "3 quantiles"),
+            (None, 5, "5 bins"),
+            (None, 3, "3 bins"),
+        ]
 
-            # Check if factor has enough variation to be useful
-            factor_values = factor_df['factor'].dropna()
-            if len(factor_values) == 0:
-                raise ValueError("Factor has no valid values")
-
-            unique_ratio = factor_values.nunique() / len(factor_values)
-            if unique_ratio < 0.01:  # Less than 1% unique values
-                raise ValueError(
-                    f"Factor has too many duplicate values ({unique_ratio:.2%} unique). "
-                    "This factor likely has no predictive power.")
-
-            # Quantize factor first (check alphalens version for correct parameters)
-            # If factor has too many duplicate values, try fewer quantiles or use bins
-            quantized_factor = None
-            last_error = None
-
-            # Strategy 1: Try with fewer quantiles (5 instead of 10)
-            strategies = [
-                # (quantiles, bins, description)
-                (5, None, "5 quantiles"),
-                (3, None, "3 quantiles"),
-                (None, 5, "5 bins"),
-                (None, 3, "3 bins"),
-            ]
-
-            for quantiles_val, bins_val, desc in strategies:
+        for quantiles_val, bins_val, desc in strategies:
+            try:
+                print(f"      Trying {desc}...")
+                # Try with all parameters first
                 try:
-                    print(f"      Trying {desc}...")
-                    # Try with all parameters first
+                    quantized_factor = quantize_factor(
+                        factor_df,
+                        quantiles=quantiles_val,
+                        bins=bins_val,
+                        binning_by_group=False,
+                        max_loss=0.99,
+                    )
+                    print(f"      ✅ Success with {desc}")
+                    break
+                except TypeError:
+                    # Try without binning_by_group
                     try:
                         quantized_factor = quantize_factor(
                             factor_df,
                             quantiles=quantiles_val,
                             bins=bins_val,
-                            binning_by_group=False,
                             max_loss=0.99,
                         )
-                        print(f"      ✅ Success with {desc}")
+                        print(
+                            f"      ✅ Success with {desc} (no binning_by_group)"
+                        )
                         break
                     except TypeError:
-                        # Try without binning_by_group
-                        try:
-                            quantized_factor = quantize_factor(
-                                factor_df,
-                                quantiles=quantiles_val,
-                                bins=bins_val,
-                                max_loss=0.99,
-                            )
-                            print(
-                                f"      ✅ Success with {desc} (no binning_by_group)"
-                            )
-                            break
-                        except TypeError:
-                            # Try with minimal parameters
-                            quantized_factor = quantize_factor(
-                                factor_df,
-                                quantiles=quantiles_val,
-                                bins=bins_val,
-                            )
-                            print(
-                                f"      ✅ Success with {desc} (minimal params)"
-                            )
-                            break
-                except (ValueError, TypeError) as e:
-                    last_error = e
-                    error_str = str(e).lower()
-                    if "bin edges" in error_str or "duplicate" in error_str:
-                        # Continue to next strategy
-                        continue
-                    elif isinstance(e, TypeError):
-                        # Parameter error, continue
-                        continue
-                    else:
-                        # Unexpected error
-                        raise
-
-            if quantized_factor is None:
-                raise ValueError(
-                    f"Could not quantize factor after trying all strategies. "
-                    f"Last error: {last_error}. "
-                    f"Factor may have too many duplicate values or insufficient variation."
-                )
-
-            # Manually compute forward returns for each period
-            forward_returns_dict = {}
-            for period in periods:
-                # Calculate forward returns manually: (future_price / current_price) - 1
-                # Shift prices forward by period, then calculate return
-                future_prices = prices.shift(-period)
-                forward_ret = (future_prices / prices) - 1
-                forward_returns_dict[period] = forward_ret
-
-            # Combine into MultiIndex DataFrame
-            forward_returns_list = []
-            for period, fwd_ret in forward_returns_dict.items():
-                fwd_ret_stacked = fwd_ret.stack()
-                fwd_ret_stacked.index.names = ['date', 'asset']
-                fwd_ret_stacked.name = period
-                forward_returns_list.append(fwd_ret_stacked)
-
-            forward_returns = pd.concat(forward_returns_list, axis=1)
-            # Alphalens expects forward returns columns to be strings (or integers that can be converted)
-            # Convert periods to strings to match Alphalens expectations
-            forward_returns.columns = [str(p) for p in periods]
-
-            # quantize_factor returns a DataFrame with 'factor_quantile' column (or Series)
-            # Alphalens expects 'factor_quantile' column, not 'factor'
-            if isinstance(quantized_factor, pd.Series):
-                # If Series, convert to DataFrame with correct column name
-                quantized_factor_df = quantized_factor.to_frame(
-                    name='factor_quantile')
-            elif isinstance(quantized_factor, pd.DataFrame):
-                # Check if it has 'factor_quantile' column
-                if 'factor_quantile' in quantized_factor.columns:
-                    quantized_factor_df = quantized_factor[['factor_quantile']]
-                elif 'factor' in quantized_factor.columns:
-                    # Rename 'factor' to 'factor_quantile'
-                    quantized_factor_df = quantized_factor[[
-                        'factor'
-                    ]].rename(columns={'factor': 'factor_quantile'})
+                        # Try with minimal parameters
+                        quantized_factor = quantize_factor(
+                            factor_df,
+                            quantiles=quantiles_val,
+                            bins=bins_val,
+                        )
+                        print(f"      ✅ Success with {desc} (minimal params)")
+                        break
+            except (ValueError, TypeError) as e:
+                last_error = e
+                error_str = str(e).lower()
+                if "bin edges" in error_str or "duplicate" in error_str:
+                    # Continue to next strategy
+                    continue
+                elif isinstance(e, TypeError):
+                    # Parameter error, continue
+                    continue
                 else:
-                    # Take first column and rename
-                    quantized_factor_df = quantized_factor.iloc[:, [0]].copy()
-                    quantized_factor_df.columns = ['factor_quantile']
+                    # Unexpected error
+                    raise
+
+        if quantized_factor is None:
+            raise ValueError(
+                f"Could not quantize factor after trying all strategies. "
+                f"Last error: {last_error}. "
+                f"Factor may have too many duplicate values or insufficient variation."
+            )
+
+        # Manually compute forward returns for each period
+        forward_returns_dict = {}
+        for period in periods:
+            # Calculate forward returns manually: (future_price / current_price) - 1
+            # Shift prices forward by period, then calculate return
+            future_prices = prices.shift(-period)
+            forward_ret = (future_prices / prices) - 1
+            forward_returns_dict[period] = forward_ret
+
+        # Combine into MultiIndex DataFrame
+        forward_returns_list = []
+        for period, fwd_ret in forward_returns_dict.items():
+            fwd_ret_stacked = fwd_ret.stack()
+            # Ensure the stacked index has exactly 2 levels: [date, asset]
+            if isinstance(fwd_ret_stacked.index, pd.MultiIndex):
+                if len(fwd_ret_stacked.index.names) != 2:
+                    # Reconstruct MultiIndex if it has wrong structure
+                    dates = fwd_ret_stacked.index.get_level_values(0)
+                    assets = fwd_ret_stacked.index.get_level_values(
+                        -1)  # Get last level as asset
+                    fwd_ret_stacked.index = pd.MultiIndex.from_arrays(
+                        [dates, assets], names=['date', 'asset'])
+                else:
+                    fwd_ret_stacked.index.names = ['date', 'asset']
             else:
                 raise ValueError(
-                    f"Unexpected quantized_factor type: {type(quantized_factor)}"
+                    f"Stacked forward returns should have MultiIndex, got {type(fwd_ret_stacked.index)}"
                 )
+            fwd_ret_stacked.name = period
+            forward_returns_list.append(fwd_ret_stacked)
 
-            # Align factor and forward returns on MultiIndex
-            # Both should have [date, asset] MultiIndex
-            common_index = quantized_factor_df.index.intersection(
-                forward_returns.index)
-            if len(common_index) == 0:
-                raise ValueError(
-                    "No common index between factor and forward returns. "
-                    f"Factor index: {len(quantized_factor_df.index)}, "
-                    f"Forward returns index: {len(forward_returns.index)}")
+        forward_returns = pd.concat(forward_returns_list, axis=1)
+        # Alphalens expects forward returns columns to be strings (or integers that can be converted)
+        # Convert periods to strings to match Alphalens expectations
+        forward_returns.columns = [str(p) for p in periods]
 
-            factor_aligned = quantized_factor_df.loc[common_index]
-            forward_aligned = forward_returns.loc[common_index]
+        # Ensure forward_returns has correct MultiIndex structure
+        if not isinstance(forward_returns.index, pd.MultiIndex):
+            raise ValueError(
+                f"forward_returns must have MultiIndex, got {type(forward_returns.index)}"
+            )
+        if len(forward_returns.index.names) != 2:
+            raise ValueError(
+                f"forward_returns index must have 2 levels, got {len(forward_returns.index.names)}"
+            )
+        forward_returns.index.names = ['date', 'asset']
 
-            # Combine into final DataFrame
-            # Alphalens expects both 'factor' (original values) and 'factor_quantile' columns
-            # We need to add the original factor values back
-            factor_aligned_with_original = factor_aligned.copy()
+        # quantize_factor returns a DataFrame with 'factor_quantile' column (or Series)
+        # Alphalens expects 'factor_quantile' column, not 'factor'
+        # IMPORTANT: quantize_factor may return a different index structure
+        # We need to ensure it matches the original factor index
+        if isinstance(quantized_factor, pd.Series):
+            # If Series, convert to DataFrame with correct column name
+            quantized_factor_df = quantized_factor.to_frame(
+                name='factor_quantile')
+        elif isinstance(quantized_factor, pd.DataFrame):
+            # Check if it has 'factor_quantile' column
+            if 'factor_quantile' in quantized_factor.columns:
+                quantized_factor_df = quantized_factor[['factor_quantile']]
+            elif 'factor' in quantized_factor.columns:
+                # Rename 'factor' to 'factor_quantile'
+                quantized_factor_df = quantized_factor[[
+                    'factor'
+                ]].rename(columns={'factor': 'factor_quantile'})
+            else:
+                # Take first column and rename
+                quantized_factor_df = quantized_factor.iloc[:, [0]].copy()
+                quantized_factor_df.columns = ['factor_quantile']
+        else:
+            raise ValueError(
+                f"Unexpected quantized_factor type: {type(quantized_factor)}")
 
-            # Get original factor values for the common index
-            original_factor_series = factor.loc[common_index]
-
-            # Ensure common_index is a proper MultiIndex with correct names
-            if not isinstance(common_index, pd.MultiIndex):
-                raise ValueError(
-                    f"common_index should be MultiIndex, got {type(common_index)}"
-                )
-
+        # CRITICAL: Ensure quantized_factor_df has the same MultiIndex structure as factor
+        # quantize_factor should preserve the index, but we need to verify and fix if needed
+        if not isinstance(quantized_factor_df.index, pd.MultiIndex):
+            # If it's not a MultiIndex, this is unexpected - try to reconstruct from factor_df
+            print(
+                f"      ⚠️  quantize_factor returned non-MultiIndex, reconstructing from factor index"
+            )
+            quantized_factor_df = quantized_factor_df.reindex(factor_df.index)
+        elif len(quantized_factor_df.index.names) != 2:
+            # If it has wrong number of levels, this is a problem
+            print(
+                f"      ⚠️  quantize_factor returned {len(quantized_factor_df.index.names)} levels, expected 2. Reindexing..."
+            )
+            # Try to extract the first two levels if there are more
+            if len(quantized_factor_df.index.names) > 2:
+                # Take first level as date, last level as asset
+                dates = quantized_factor_df.index.get_level_values(0)
+                assets = quantized_factor_df.index.get_level_values(-1)
+                new_index = pd.MultiIndex.from_arrays([dates, assets],
+                                                      names=['date', 'asset'])
+                quantized_factor_df.index = new_index
+            else:
+                # Reindex from factor_df
+                quantized_factor_df = quantized_factor_df.reindex(
+                    factor_df.index)
+        else:
             # Ensure index names are correct
-            if common_index.names != ['date', 'asset']:
-                common_index.names = ['date', 'asset']
+            quantized_factor_df.index.names = ['date', 'asset']
 
-            # Create DataFrame with proper MultiIndex structure
-            # Alphalens expects: 'factor' (original), 'factor_quantile', and period columns
-            factor_data_dict = {
-                'factor': original_factor_series.values,
-                'factor_quantile': factor_aligned['factor_quantile'].values
-            }
+        # Align with factor_df index to ensure exact match
+        # Only keep rows that exist in both
+        common_idx = quantized_factor_df.index.intersection(factor_df.index)
+        if len(common_idx) == 0:
+            raise ValueError(
+                "No common index between quantized_factor and original factor after processing"
+            )
+        quantized_factor_df = quantized_factor_df.loc[common_idx]
 
-            # Add forward returns columns (ensure they're strings)
-            for period_col in forward_aligned.columns:
-                factor_data_dict[str(
-                    period_col)] = forward_aligned[period_col].values
+        # Align factor and forward returns on MultiIndex
+        # Both should have [date, asset] MultiIndex with exactly 2 levels
+        # Get common index, ensuring both have proper 2-level MultiIndex
+        common_dates = quantized_factor_df.index.get_level_values(
+            'date').intersection(
+                forward_returns.index.get_level_values('date'))
+        common_assets = quantized_factor_df.index.get_level_values(
+            'asset').intersection(
+                forward_returns.index.get_level_values('asset'))
 
-            # Create DataFrame with proper MultiIndex
-            # Ensure the index is clean and properly formatted
-            factor_data = pd.DataFrame(factor_data_dict, index=common_index)
+        # Create proper MultiIndex from common dates and assets
+        # Use only combinations that exist in both
+        factor_index_set = set(quantized_factor_df.index)
+        forward_index_set = set(forward_returns.index)
+        common_index_set = factor_index_set & forward_index_set
 
-            # Ensure index is properly formatted
+        if len(common_index_set) == 0:
+            raise ValueError(
+                "No common index between factor and forward returns. "
+                f"Factor index: {len(quantized_factor_df.index)}, "
+                f"Forward returns index: {len(forward_returns.index)}")
+
+        # Create MultiIndex from common tuples, ensuring proper structure
+        common_tuples = list(common_index_set)
+        # Verify all tuples have exactly 2 elements (date, asset)
+        if any(len(t) != 2 for t in common_tuples):
+            # Filter out invalid tuples
+            common_tuples = [t for t in common_tuples if len(t) == 2]
+
+        # Reconstruct MultiIndex properly
+        dates_list = [t[0] for t in common_tuples]
+        assets_list = [t[1] for t in common_tuples]
+        common_index = pd.MultiIndex.from_arrays([dates_list, assets_list],
+                                                 names=['date', 'asset'])
+        common_index = common_index.sort_values()
+
+        factor_aligned = quantized_factor_df.loc[common_index]
+        forward_aligned = forward_returns.loc[common_index]
+
+        # Combine into final DataFrame
+        # Alphalens expects both 'factor' (original values) and 'factor_quantile' columns
+        # We need to add the original factor values back
+        factor_aligned_with_original = factor_aligned.copy()
+
+        # Get original factor values for the common index
+        # CRITICAL: Ensure factor has proper 2-level MultiIndex before indexing
+        if not isinstance(factor.index, pd.MultiIndex):
+            raise ValueError(
+                f"factor must have MultiIndex, got {type(factor.index)}")
+        if len(factor.index.names) != 2:
+            raise ValueError(
+                f"factor index must have 2 levels, got {len(factor.index.names)}: {factor.index.names}"
+            )
+
+        # Ensure factor index names are correct
+        if factor.index.names != ['date', 'asset']:
+            factor.index.names = ['date', 'asset']
+
+        # Extract original factor values, ensuring alignment
+        try:
+            original_factor_series = factor.loc[common_index]
+        except KeyError:
+            # If direct indexing fails, try reindexing
+            original_factor_series = factor.reindex(common_index)
+
+        # CRITICAL: Verify original_factor_series has correct index structure
+        if not isinstance(original_factor_series.index, pd.MultiIndex):
+            raise ValueError(
+                f"original_factor_series must have MultiIndex, got {type(original_factor_series.index)}"
+            )
+        if len(original_factor_series.index.names) != 2:
+            raise ValueError(
+                f"original_factor_series index must have 2 levels, got {len(original_factor_series.index.names)}"
+            )
+
+        # Ensure the index matches common_index exactly
+        if not original_factor_series.index.equals(common_index):
+            # Reindex to match common_index exactly
+            original_factor_series = original_factor_series.reindex(
+                common_index)
+
+        # Ensure common_index is a proper MultiIndex with correct names
+        if not isinstance(common_index, pd.MultiIndex):
+            raise ValueError(
+                f"common_index should be MultiIndex, got {type(common_index)}")
+        if len(common_index.names) != 2:
+            raise ValueError(
+                f"common_index must have 2 levels, got {len(common_index.names)}"
+            )
+
+        # Ensure index names are correct
+        if common_index.names != ['date', 'asset']:
+            common_index.names = ['date', 'asset']
+
+        # Create DataFrame with proper MultiIndex structure
+        # Alphalens expects: 'factor' (original), 'factor_quantile', and period columns
+        # CRITICAL: Use .values to avoid any index alignment issues
+        factor_data_dict = {
+            'factor': original_factor_series.values,
+            'factor_quantile': factor_aligned['factor_quantile'].values
+        }
+
+        # Add forward returns columns (ensure they're strings)
+        for period_col in forward_aligned.columns:
+            factor_data_dict[str(
+                period_col)] = forward_aligned[period_col].values
+
+        # Create DataFrame with proper MultiIndex
+        # CRITICAL: Reconstruct the index to ensure it's clean and has exactly 2 levels
+        # Extract dates and assets from common_index to create a fresh MultiIndex
+        dates_clean = common_index.get_level_values('date')
+        assets_clean = common_index.get_level_values('asset')
+
+        # Ensure dates are Timestamps (not tuples or other structures)
+        if not isinstance(dates_clean, pd.DatetimeIndex):
+            dates_clean = pd.to_datetime(dates_clean)
+
+        # Create a fresh, clean MultiIndex
+        clean_index = pd.MultiIndex.from_arrays([dates_clean, assets_clean],
+                                                names=['date', 'asset'])
+
+        # Create DataFrame with the clean index
+        factor_data = pd.DataFrame(factor_data_dict, index=clean_index)
+
+        # Final verification: Ensure index is properly formatted with exactly 2 levels
+        if not isinstance(factor_data.index, pd.MultiIndex):
+            raise ValueError(
+                f"factor_data must have MultiIndex, got {type(factor_data.index)}"
+            )
+        if len(factor_data.index.names) != 2:
+            raise ValueError(
+                f"factor_data index must have 2 levels, got {len(factor_data.index.names)}: {factor_data.index.names}"
+            )
+        factor_data.index.names = ['date', 'asset']
+
+        # Verify all index tuples have exactly 2 elements
+        sample_tuples = list(factor_data.index[:10])
+        if any(len(t) != 2 for t in sample_tuples):
+            # This is a critical error - we need to fix the index structure
+            print(f"      ⚠️  Found invalid index tuples: {sample_tuples[:5]}")
+            # Try to reconstruct the index from level values
+            dates_fixed = factor_data.index.get_level_values(0)
+            assets_fixed = factor_data.index.get_level_values(
+                -1)  # Get last level
+            # Ensure dates are proper Timestamps
+            if not isinstance(dates_fixed, pd.DatetimeIndex):
+                dates_fixed = pd.to_datetime(dates_fixed)
+            factor_data.index = pd.MultiIndex.from_arrays(
+                [dates_fixed, assets_fixed], names=['date', 'asset'])
+            # Verify again
+            sample_tuples = list(factor_data.index[:10])
+            if any(len(t) != 2 for t in sample_tuples):
+                raise ValueError(
+                    f"Failed to fix index structure. Tuples still have wrong length: {sample_tuples[:5]}"
+                )
+
+        # Remove any rows with NaN
+        factor_data = factor_data.dropna()
+
+        if len(factor_data) == 0:
+            raise ValueError("No valid data after alignment")
+
+        # Verify structure - Alphalens expects both 'factor' and 'factor_quantile' columns
+        if 'factor_quantile' not in factor_data.columns:
+            raise ValueError(
+                "'factor_quantile' column missing from final factor_data. "
+                f"Available columns: {list(factor_data.columns)}")
+        if 'factor' not in factor_data.columns:
+            raise ValueError("'factor' column missing from final factor_data. "
+                             f"Available columns: {list(factor_data.columns)}")
+
+        # Final validation: Ensure index structure is correct before returning
+        # Check that all index tuples are proper (date, asset) pairs
+        if not isinstance(factor_data.index, pd.MultiIndex):
+            raise ValueError(
+                f"factor_data.index must be MultiIndex, got {type(factor_data.index)}"
+            )
+        if len(factor_data.index.names) != 2:
+            raise ValueError(
+                f"factor_data.index must have 2 levels, got {len(factor_data.index.names)}"
+            )
+        if factor_data.index.names != ['date', 'asset']:
             factor_data.index.names = ['date', 'asset']
 
-            # Remove any rows with NaN
-            factor_data = factor_data.dropna()
+        # Verify level 0 (date) is DatetimeIndex
+        date_level = factor_data.index.get_level_values(0)
+        if not isinstance(date_level, pd.DatetimeIndex):
+            # Try to convert
+            dates_converted = pd.to_datetime(date_level)
+            assets_level = factor_data.index.get_level_values(1)
+            factor_data.index = pd.MultiIndex.from_arrays(
+                [dates_converted, assets_level], names=['date', 'asset'])
 
-            if len(factor_data) == 0:
-                raise ValueError("No valid data after alignment")
-
-            # Verify structure - Alphalens expects both 'factor' and 'factor_quantile' columns
-            if 'factor_quantile' not in factor_data.columns:
-                raise ValueError(
-                    "'factor_quantile' column missing from final factor_data. "
-                    f"Available columns: {list(factor_data.columns)}")
-            if 'factor' not in factor_data.columns:
-                raise ValueError(
-                    "'factor' column missing from final factor_data. "
-                    f"Available columns: {list(factor_data.columns)}")
-
-            # Debug: Print index structure
-            print(f"      Factor data index type: {type(factor_data.index)}")
-            print(f"      Factor data index names: {factor_data.index.names}")
+        # Debug: Print index structure
+        print(f"      Factor data index type: {type(factor_data.index)}")
+        print(f"      Factor data index names: {factor_data.index.names}")
+        print(
+            f"      Factor data index levels: {len(factor_data.index.levels)}")
+        sample_idx = factor_data.index[:3] if len(factor_data) > 0 else 'empty'
+        print(f"      Factor data index sample: {sample_idx}")
+        # Verify sample tuples
+        if len(factor_data) > 0:
+            sample_tuples_check = [tuple(idx) for idx in factor_data.index[:3]]
             print(
-                f"      Factor data index sample: {factor_data.index[:3] if len(factor_data) > 0 else 'empty'}"
+                f"      Factor data index tuples (first 3): {sample_tuples_check}"
             )
-        else:
-            raise
+            if any(len(t) != 2 for t in sample_tuples_check):
+                raise ValueError(
+                    f"Index tuples must have 2 elements, found: {sample_tuples_check}"
+                )
 
     return factor_data
+
+
+def _fix_factor_data_index(factor_data: pd.DataFrame) -> pd.DataFrame:
+    """Fix factor_data index if it has wrong structure (e.g., 3 levels instead of 2)."""
+    if not isinstance(factor_data.index, pd.MultiIndex):
+        return factor_data
+
+    # Check if index has wrong number of levels
+    if factor_data.index.nlevels != 2:
+        print(
+            f"      ⚠️  WARNING: factor_data has {factor_data.index.nlevels} levels, expected 2"
+        )
+        print(
+            f"         Attempting to fix by extracting first and last levels..."
+        )
+
+        # Extract first level (date) and last level (asset)
+        dates = factor_data.index.get_level_values(0)
+        assets = factor_data.index.get_level_values(-1)
+
+        # Ensure dates are Timestamps
+        if not isinstance(dates, pd.DatetimeIndex):
+            dates = pd.to_datetime(dates)
+
+        # Create new clean MultiIndex
+        new_index = pd.MultiIndex.from_arrays([dates, assets],
+                                              names=['date', 'asset'])
+        factor_data = factor_data.copy()
+        factor_data.index = new_index
+
+        print(
+            f"      ✅ Fixed index structure: now has {factor_data.index.nlevels} levels"
+        )
+
+    # Verify all tuples have exactly 2 elements
+    sample_tuples = [tuple(idx) for idx in factor_data.index[:10]]
+    if any(len(t) != 2 for t in sample_tuples):
+        print(f"      ⚠️  WARNING: Some index tuples have wrong length")
+        # Reconstruct index from level values
+        dates = factor_data.index.get_level_values(0)
+        assets = factor_data.index.get_level_values(-1)
+        if not isinstance(dates, pd.DatetimeIndex):
+            dates = pd.to_datetime(dates)
+        new_index = pd.MultiIndex.from_arrays([dates, assets],
+                                              names=['date', 'asset'])
+        factor_data = factor_data.copy()
+        factor_data.index = new_index
+        print(f"      ✅ Reconstructed index from level values")
+
+    return factor_data
+
+
+def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
+                               output_dir: str) -> None:
+    """Compute and print basic statistics manually when Alphalens fails."""
+    print(f"\n      📊 Manual Statistics for {factor_name}:")
+    print("      " + "=" * 60)
+
+    # Basic factor statistics
+    if 'factor' in factor_data.columns:
+        factor_values = factor_data['factor'].dropna()
+        print(f"      Factor Statistics:")
+        print(f"        Count: {len(factor_values)}")
+        print(f"        Mean: {factor_values.mean():.6f}")
+        print(f"        Std: {factor_values.std():.6f}")
+        print(f"        Min: {factor_values.min():.6f}")
+        print(f"        Max: {factor_values.max():.6f}")
+        print(
+            f"        Unique values: {factor_values.nunique()} ({factor_values.nunique()/len(factor_values)*100:.2f}%)"
+        )
+
+    # Quantile statistics
+    if 'factor_quantile' in factor_data.columns:
+        quantile_counts = factor_data['factor_quantile'].value_counts(
+        ).sort_index()
+        print(f"\n      Quantile Distribution:")
+        for q, count in quantile_counts.items():
+            pct = count / len(factor_data) * 100
+            print(f"        Quantile {q}: {count} ({pct:.2f}%)")
+
+    # Forward returns statistics
+    forward_cols = [
+        col for col in factor_data.columns
+        if col not in ['factor', 'factor_quantile']
+    ]
+
+    # DEBUG: Check forward columns
+    if not forward_cols:
+        print(
+            f"      ⚠️  WARNING: No forward return columns found in factor_data"
+        )
+        print(f"         Available columns: {list(factor_data.columns)}")
+        print(f"         This means IC/IR cannot be calculated")
+
+    if forward_cols:
+        print(f"\n      Forward Returns Statistics:")
+        for col in forward_cols:
+            returns = factor_data[col].dropna()
+            if len(returns) > 0:
+                print(f"        Period {col}:")
+                print(f"          Mean: {returns.mean():.6f}")
+                print(f"          Std: {returns.std():.6f}")
+                print(f"          Min: {returns.min():.6f}")
+                print(f"          Max: {returns.max():.6f}")
+
+    # Simple IC calculation (Spearman correlation) and IR
+    ic_results = {}
+    if 'factor' in factor_data.columns and forward_cols:
+        print(
+            f"\n      🔍 DEBUG: Calculating IC/IR for {len(forward_cols)} periods..."
+        )
+        print(
+            f"\n      Information Coefficient (IC) and Information Ratio (IR):"
+        )
+        print(
+            f"        {'Period':<10} {'IC':<12} {'IC Mean':<12} {'IC Std':<12} {'IR':<12}"
+        )
+        print(f"        {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*12}")
+
+        for col in forward_cols:
+            try:
+                # Calculate rank correlation between factor and forward returns
+                factor_vals = factor_data['factor'].dropna()
+                returns_vals = factor_data[col].dropna()
+                common_idx = factor_vals.index.intersection(returns_vals.index)
+                if len(common_idx) > 10:
+                    factor_common = factor_data.loc[common_idx, 'factor']
+                    returns_common = factor_data.loc[common_idx, col]
+
+                    # Calculate IC (Spearman correlation)
+                    ic = factor_common.corr(returns_common, method='spearman')
+
+                    # Calculate IC over time (rolling IC for IR calculation)
+                    # Group by date to get IC per period
+                    ic_by_date = []
+                    for date in factor_data.index.get_level_values(
+                            'date').unique():
+                        date_mask = factor_data.index.get_level_values(
+                            'date') == date
+                        date_data = factor_data.loc[date_mask]
+                        if len(date_data) > 5:  # Need enough data points
+                            try:
+                                date_ic = date_data['factor'].corr(
+                                    date_data[col], method='spearman')
+                                if not np.isnan(date_ic):
+                                    ic_by_date.append(date_ic)
+                            except Exception:
+                                pass
+
+                    # Calculate IR (mean IC / std IC)
+                    if len(ic_by_date) > 1:
+                        ic_mean = np.mean(ic_by_date)
+                        ic_std = np.std(ic_by_date)
+                        ir = ic_mean / ic_std if ic_std > 0 else np.nan
+                    else:
+                        ic_mean = ic
+                        ic_std = np.nan
+                        ir = np.nan
+
+                    ic_results[col] = {
+                        'IC': ic,
+                        'IC_Mean': ic_mean,
+                        'IC_Std': ic_std,
+                        'IR': ir
+                    }
+
+                    print(
+                        f"        {col:<10} {ic:>12.6f} {ic_mean:>12.6f} {ic_std:>12.6f} {ir:>12.6f}"
+                    )
+            except Exception as e:
+                print(f"        Period {col}: Error calculating IC/IR: {e}")
+                import traceback
+                traceback.print_exc()
+                ic_results[col] = {
+                    'IC': np.nan,
+                    'IC_Mean': np.nan,
+                    'IC_Std': np.nan,
+                    'IR': np.nan
+                }
+
+    # DEBUG: Check if IC results were calculated
+    if not ic_results:
+        print(f"      ⚠️  WARNING: No IC/IR results calculated")
+        print(f"         This may be because:")
+        print(f"         1. No forward return columns found")
+        print(f"         2. IC calculation failed for all periods")
+        print(f"         3. Insufficient data for correlation calculation")
+    else:
+        print(f"      ✅ Calculated IC/IR for {len(ic_results)} periods")
+
+    # Quantile return analysis
+    if 'factor_quantile' in factor_data.columns and forward_cols:
+        print(f"\n      Quantile Return Analysis:")
+        for col in forward_cols:
+            try:
+                quantile_returns = factor_data.groupby(
+                    'factor_quantile')[col].agg(['mean', 'std', 'count'])
+                print(f"        Period {col}:")
+                for q in quantile_returns.index:
+                    mean_ret = quantile_returns.loc[q, 'mean']
+                    std_ret = quantile_returns.loc[q, 'std']
+                    count = quantile_returns.loc[q, 'count']
+                    print(
+                        f"          Q{q}: Mean={mean_ret:.6f}, Std={std_ret:.6f}, N={count}"
+                    )
+            except Exception as e:
+                print(f"        Period {col}: Error in quantile analysis: {e}")
+
+    print("      " + "=" * 60)
+
+    # Save to text file
+    try:
+        factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
+        stats_path = os.path.join(output_dir,
+                                  f"{factor_safe_name}_statistics.txt")
+        with open(stats_path, 'w') as f:
+            f.write(f"Statistics for {factor_name}\n")
+            f.write("=" * 60 + "\n\n")
+            if 'factor' in factor_data.columns:
+                factor_values = factor_data['factor'].dropna()
+                f.write(f"Factor Statistics:\n")
+                f.write(f"  Count: {len(factor_values)}\n")
+                f.write(f"  Mean: {factor_values.mean():.6f}\n")
+                f.write(f"  Std: {factor_values.std():.6f}\n")
+                f.write(f"  Min: {factor_values.min():.6f}\n")
+                f.write(f"  Max: {factor_values.max():.6f}\n\n")
+
+            # IC/IR Statistics
+            if ic_results:
+                f.write(
+                    f"Information Coefficient (IC) and Information Ratio (IR):\n"
+                )
+                f.write(
+                    f"  {'Period':<10} {'IC':<12} {'IC Mean':<12} {'IC Std':<12} {'IR':<12}\n"
+                )
+                f.write(f"  {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*12}\n")
+                for col, stats in ic_results.items():
+                    ic_val = stats.get('IC', np.nan)
+                    ic_mean = stats.get('IC_Mean', np.nan)
+                    ic_std = stats.get('IC_Std', np.nan)
+                    ir_val = stats.get('IR', np.nan)
+                    f.write(
+                        f"  {col:<10} {ic_val:>12.6f} {ic_mean:>12.6f} {ic_std:>12.6f} {ir_val:>12.6f}\n"
+                    )
+                f.write("\n")
+
+            if 'factor_quantile' in factor_data.columns and forward_cols:
+                for col in forward_cols:
+                    try:
+                        quantile_returns = factor_data.groupby(
+                            'factor_quantile')[col].agg(
+                                ['mean', 'std', 'count'])
+                        f.write(f"Period {col} Quantile Returns:\n")
+                        for q in quantile_returns.index:
+                            mean_ret = quantile_returns.loc[q, 'mean']
+                            std_ret = quantile_returns.loc[q, 'std']
+                            count = quantile_returns.loc[q, 'count']
+                            f.write(
+                                f"  Q{q}: Mean={mean_ret:.6f}, Std={std_ret:.6f}, N={count}\n"
+                            )
+                        f.write("\n")
+                    except Exception:
+                        pass
+        print(f"      ✅ Statistics saved to: {stats_path}")
+    except Exception as e:
+        print(f"      ⚠️  Error saving statistics file: {e}")
 
 
 def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
@@ -742,6 +1271,20 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         generated_any = False
 
         try:
+            # DEBUG: Check data structure before calling Alphalens
+            print(f"      🔍 DEBUG: Before create_returns_tear_sheet:")
+            print(f"        factor_data.index type: {type(factor_data.index)}")
+            print(
+                f"        factor_data.index.nlevels: {factor_data.index.nlevels}"
+            )
+            if isinstance(factor_data.index, pd.MultiIndex):
+                print(
+                    f"        factor_data.index.levels: {len(factor_data.index.levels)}"
+                )
+                print(
+                    f"        First index tuple: {factor_data.index[0]} (length: {len(factor_data.index[0])})"
+                )
+
             al.tears.create_returns_tear_sheet(
                 factor_data,
                 long_short=True,
@@ -751,8 +1294,25 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             generated_any = True
         except Exception as ret_e:
             print(f"      ⚠️  create_returns_tear_sheet error: {ret_e}")
+            import traceback
+            print(f"      🔍 DEBUG: Full traceback:")
+            traceback.print_exc()
 
         try:
+            # DEBUG: Check data structure before calling Alphalens
+            print(f"      🔍 DEBUG: Before create_information_tear_sheet:")
+            print(f"        factor_data.index type: {type(factor_data.index)}")
+            print(
+                f"        factor_data.index.nlevels: {factor_data.index.nlevels}"
+            )
+            if isinstance(factor_data.index, pd.MultiIndex):
+                print(
+                    f"        factor_data.index.levels: {len(factor_data.index.levels)}"
+                )
+                print(
+                    f"        First index tuple: {factor_data.index[0]} (length: {len(factor_data.index[0])})"
+                )
+
             al.tears.create_information_tear_sheet(
                 factor_data,
                 group_neutral=False,
@@ -761,6 +1321,35 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             generated_any = True
         except Exception as info_e:
             print(f"      ⚠️  create_information_tear_sheet error: {info_e}")
+            import traceback
+            print(f"      🔍 DEBUG: Full traceback:")
+            traceback.print_exc()
+
+            # Try to diagnose the issue
+            if "Cannot convert input" in str(info_e) and "tuple" in str(
+                    info_e):
+                print(
+                    f"      🔍 DIAGNOSIS: Alphalens is receiving tuples with wrong structure"
+                )
+                print(
+                    f"        This suggests the MultiIndex has more than 2 levels or is nested"
+                )
+                print(f"        Checking factor_data structure...")
+                if isinstance(factor_data.index, pd.MultiIndex):
+                    print(
+                        f"        Index has {factor_data.index.nlevels} levels"
+                    )
+                    print(
+                        f"        Index has {len(factor_data.index.levels)} level arrays"
+                    )
+                    for i, level in enumerate(factor_data.index.levels):
+                        print(
+                            f"          Level {i}: {type(level)}, length={len(level)}"
+                        )
+                        if len(level) > 0:
+                            print(
+                                f"            First value: {level[0]} (type: {type(level[0])})"
+                            )
 
         try:
             al.tears.create_turnover_tear_sheet(
@@ -770,7 +1359,10 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         except ValueError as turn_e:
             if "No objects to concatenate" in str(turn_e):
                 print(
-                    "      ⚠️  Turnover tear sheet skipped (no data to concatenate)"
+                    "      ⚠️  Turnover tear sheet skipped (insufficient factor variation across time periods)"
+                )
+                print(
+                    "         This is normal for factors with low temporal variation or limited data range"
                 )
             else:
                 print(f"      ⚠️  create_turnover_tear_sheet error: {turn_e}")
@@ -801,6 +1393,41 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
 
     print(f"      Factor data shape: {factor_data.shape}")
 
+    # CRITICAL: Fix index structure before passing to Alphalens
+    factor_data = _fix_factor_data_index(factor_data)
+
+    # DEBUG: Detailed index inspection before passing to Alphalens
+    print(f"\n      🔍 DEBUG: Factor data structure inspection:")
+    print(f"        Index type: {type(factor_data.index)}")
+    print(f"        Index names: {factor_data.index.names}")
+    print(f"        Index nlevels: {factor_data.index.nlevels}")
+    if isinstance(factor_data.index, pd.MultiIndex):
+        print(f"        Index levels: {len(factor_data.index.levels)}")
+        for i, level in enumerate(factor_data.index.levels):
+            print(
+                f"          Level {i} ({factor_data.index.names[i]}): type={type(level)}, length={len(level)}"
+            )
+            if i == 0 and len(level) > 0:
+                print(f"            Sample values: {level[:3]}")
+            elif i == 1 and len(level) > 0:
+                print(f"            Sample values: {level[:3]}")
+
+    # Check first few index tuples
+    sample_indices = list(factor_data.index[:5])
+    print(f"        Sample index tuples (first 5):")
+    for idx in sample_indices:
+        print(
+            f"          {idx} (type: {type(idx)}, length: {len(idx) if isinstance(idx, tuple) else 'N/A'})"
+        )
+        if isinstance(idx, tuple) and len(idx) != 2:
+            print(
+                f"            ⚠️  WARNING: Tuple has {len(idx)} elements, expected 2!"
+            )
+
+    print(f"        Columns: {list(factor_data.columns)}")
+    print(f"        Data types:\n{factor_data.dtypes}")
+    print(f"")
+
     # Create full tear sheet (this will display plots)
     try:
         fallback_needed = False
@@ -813,7 +1440,10 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         except ValueError as full_e:
             if "No objects to concatenate" in str(full_e):
                 print(
-                    "      ⚠️  Full tear sheet turnover step failed (no objects to concatenate)."
+                    "      ⚠️  Full tear sheet turnover step failed (insufficient factor variation)."
+                )
+                print(
+                    "         Falling back to partial tear sheets (returns/information only)"
                 )
                 fallback_needed = True
             else:
@@ -834,6 +1464,15 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             )
         else:
             print(f"      ⚠️  No figures were saved for {factor_name}")
+            # If no figures were saved, at least compute and print basic statistics
+            print(f"      ℹ️  Computing basic statistics as fallback...")
+            try:
+                _compute_manual_statistics(factor_data, factor_name,
+                                           output_dir)
+            except Exception as stats_e:
+                print(
+                    f"      ⚠️  Error computing fallback statistics: {stats_e}"
+                )
 
         # Also compute and save IC statistics
         try:
@@ -847,8 +1486,28 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
                                        f"{factor_safe_name}_ic_summary.csv")
             ic_summary.to_csv(ic_csv_path)
             print(f"      ✅ IC summary saved to: {ic_csv_path}")
+
+            # Print IC statistics to console
+            print(
+                f"\n      📈 Information Coefficient (IC) Statistics for {factor_name}:"
+            )
+            print("      " + "=" * 60)
+            if isinstance(ic_summary, pd.DataFrame):
+                print(ic_summary.to_string())
+            else:
+                print(f"      Mean IC: {ic_summary}")
+            print("      " + "=" * 60)
         except Exception as ic_e:
             print(f"      ⚠️  Error computing/saving IC statistics: {ic_e}")
+            # Try manual IC calculation as fallback
+            try:
+                print(f"      🔄 Attempting manual IC calculation...")
+                _compute_manual_statistics(factor_data, factor_name,
+                                           output_dir)
+            except Exception as manual_e:
+                print(
+                    f"      ⚠️  Manual statistics calculation also failed: {manual_e}"
+                )
 
         print(f"   ✅ Tear sheet generated for {factor_name}")
 
@@ -949,6 +1608,20 @@ def main() -> None:
             analyze_factor(factor_data, factor_name, output_dir,
                            args.quantiles)
 
+        except ValueError as e:
+            # For ValueError (like too many duplicates), print warning but continue
+            error_msg = str(e)
+            if "too many duplicate values" in error_msg.lower(
+            ) or "no predictive power" in error_msg.lower():
+                print(f"      ⚠️  Skipping {factor_name}: {error_msg}")
+                print(
+                    f"         This factor has insufficient variation for meaningful analysis"
+                )
+            else:
+                print(f"      ⚠️  Error analyzing {factor_name}: {e}")
+                import traceback
+                traceback.print_exc()
+            continue
         except Exception as e:
             print(f"      ⚠️  Error analyzing {factor_name}: {e}")
             import traceback
