@@ -194,6 +194,9 @@ class ComprehensiveFeatureEngineer:
         initial_features = len(df.columns)
         prev_count = initial_features
 
+        # 打印初始特征列表（用于调试）
+        print(f"   📋 初始特征 ({initial_features} 个): {list(df.columns)}")
+
         # 数据列（必须保留）
         data_cols = {
             'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'
@@ -242,20 +245,22 @@ class ComprehensiveFeatureEngineer:
                         [c for c in df.columns if c in required_features])
                     print(f"     ✅ Baseline特征: {kept_count} 个需要的特征已计算")
                 else:
+                    # 在过滤前保存新增的列名（用于统计本次生成的特征）
+                    new_columns_before_filter = set(df.columns[prev_count:])
                     df = _filter_features(df, "Baseline")
-                    prev_count = len(df.columns)
-                    # 当 required_features 为 None 时，所有生成的特征都被保留
-                    # 计算实际保留的特征数量（排除数据列）
+                    # 计算本次生成的特征中保留了多少（只统计新增的特征列）
                     data_cols = {
                         'open', 'high', 'low', 'close', 'volume', 'timestamp',
                         'datetime'
                     }
-                    kept_features = len([
-                        c for c in df.columns if c not in data_cols
+                    kept_new_features = len([
+                        c for c in new_columns_before_filter
+                        if c in df.columns and c not in data_cols
                         and pd.api.types.is_numeric_dtype(df[c])
                     ])
+                    prev_count = len(df.columns)
                     print(
-                        f"     ✅ Baseline特征: {baseline_features} 个生成，{kept_features} 个保留"
+                        f"     ✅ Baseline特征: {baseline_features} 个生成，{kept_new_features} 个保留"
                     )
             except Exception as e:
                 print(f"     ⚠️  Baseline特征失败: {e}")
@@ -276,20 +281,22 @@ class ComprehensiveFeatureEngineer:
                         [c for c in df.columns if c in required_features])
                     print(f"     ✅ 默认传统指标特征: {kept_count} 个需要的特征已计算")
                 else:
+                    # 在过滤前保存新增的列名（用于统计本次生成的特征）
+                    new_columns_before_filter = set(df.columns[prev_count:])
                     df = _filter_features(df, "Default")
-                    prev_count = len(df.columns)
-                    # 当 required_features 为 None 时，所有生成的特征都被保留
-                    # 计算实际保留的特征数量（排除数据列）
+                    # 计算本次生成的特征中保留了多少（只统计新增的特征列）
                     data_cols = {
                         'open', 'high', 'low', 'close', 'volume', 'timestamp',
                         'datetime'
                     }
-                    kept_features = len([
-                        c for c in df.columns if c not in data_cols
+                    kept_new_features = len([
+                        c for c in new_columns_before_filter
+                        if c in df.columns and c not in data_cols
                         and pd.api.types.is_numeric_dtype(df[c])
                     ])
+                    prev_count = len(df.columns)
                     print(
-                        f"     ✅ 默认传统指标特征: {default_features} 个生成，{kept_features} 个保留"
+                        f"     ✅ 默认传统指标特征: {default_features} 个生成，{kept_new_features} 个保留"
                     )
             except Exception as e:
                 print(f"     ⚠️  默认传统指标特征失败: {e}")
@@ -312,20 +319,22 @@ class ComprehensiveFeatureEngineer:
                         [c for c in df.columns if c in required_features])
                     print(f"     ✅ Alpha101特征: {kept_count} 个需要的特征已计算")
                 else:
+                    # 在过滤前保存新增的列名（用于统计本次生成的特征）
+                    new_columns_before_filter = set(df.columns[prev_count:])
                     df = _filter_features(df, "Alpha101")
-                    prev_count = len(df.columns)
-                    # 当 required_features 为 None 时，所有生成的特征都被保留
-                    # 计算实际保留的特征数量（排除数据列）
+                    # 计算本次生成的特征中保留了多少（只统计新增的特征列）
                     data_cols = {
                         'open', 'high', 'low', 'close', 'volume', 'timestamp',
                         'datetime'
                     }
-                    kept_features = len([
-                        c for c in df.columns if c not in data_cols
+                    kept_new_features = len([
+                        c for c in new_columns_before_filter
+                        if c in df.columns and c not in data_cols
                         and pd.api.types.is_numeric_dtype(df[c])
                     ])
+                    prev_count = len(df.columns)
                     print(
-                        f"     ✅ Alpha101特征: {alpha101_features} 个生成，{kept_features} 个保留"
+                        f"     ✅ Alpha101特征: {alpha101_features} 个生成，{kept_new_features} 个保留"
                     )
             except Exception as e:
                 print(f"     ⚠️  Alpha101特征失败: {e}")
