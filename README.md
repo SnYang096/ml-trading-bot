@@ -314,4 +314,4 @@ make rolling ROLLING_USE_TOP_FACTORS=results/dim_compare/BTCUSDT-ETHUSDT_baselin
   ROLLING_FBS=24
 
 
-make vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_011750/latest
+make vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_164429/latest

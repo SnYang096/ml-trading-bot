@@ -166,10 +166,11 @@ class ComprehensiveFeatureEngineer:
         self.feature_stats = {}
         self.total_features = 0
 
-    def engineer_all_features(self,
-                              data: pd.DataFrame,
-                              fit: bool = True,
-                              required_features: Optional[set] = None) -> pd.DataFrame:
+    def engineer_all_features(
+            self,
+            data: pd.DataFrame,
+            fit: bool = True,
+            required_features: Optional[set] = None) -> pd.DataFrame:
         """
         使用可选的特征工程模块生成特征
 
@@ -184,15 +185,19 @@ class ComprehensiveFeatureEngineer:
             required_features: 如果指定，只保留这些特征（立即过滤，减少内存占用）
         """
         if required_features:
-            print(f"🚀 开始特征工程 (feature_types: {self.feature_types}, 仅生成 {len(required_features)} 个指定特征)...")
+            print(
+                f"🚀 开始特征工程 (feature_types: {self.feature_types}, 仅生成 {len(required_features)} 个指定特征)..."
+            )
         else:
             print(f"🚀 开始特征工程 (feature_types: {self.feature_types})...")
         df = data.copy()
         initial_features = len(df.columns)
         prev_count = initial_features
-        
+
         # 数据列（必须保留）
-        data_cols = {'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'}
+        data_cols = {
+            'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'
+        }
 
         baseline_features = 0
         default_features = 0  # TA-Lib + base_indicators
@@ -201,19 +206,24 @@ class ComprehensiveFeatureEngineer:
         dl_features = 0
 
         # 辅助函数：过滤特征
-        def _filter_features(df_in: pd.DataFrame, module_name: str) -> pd.DataFrame:
+        def _filter_features(df_in: pd.DataFrame,
+                             module_name: str) -> pd.DataFrame:
             """在每个模块生成后立即过滤，只保留需要的特征"""
             if required_features is None:
                 return df_in
             # 保留数据列和需要的特征列
             cols_to_keep = [
                 c for c in df_in.columns
-                if c in data_cols or c in required_features or not pd.api.types.is_numeric_dtype(df_in[c])
+                if c in data_cols or c in required_features
+                or not pd.api.types.is_numeric_dtype(df_in[c])
             ]
             filtered = df_in[cols_to_keep]
-            kept_count = len([c for c in cols_to_keep if c in required_features])
+            kept_count = len(
+                [c for c in cols_to_keep if c in required_features])
             if kept_count < len(df_in.columns) - len(data_cols):
-                print(f"     ✂️ {module_name}: 保留 {kept_count} 个需要的特征，移除 {len(df_in.columns) - len(cols_to_keep)} 个不需要的特征")
+                print(
+                    f"     ✂️ {module_name}: 保留 {kept_count} 个需要的特征，移除 {len(df_in.columns) - len(cols_to_keep)} 个不需要的特征"
+                )
             return filtered
 
         # 1. 基线特征工程
@@ -221,16 +231,32 @@ class ComprehensiveFeatureEngineer:
             print("  📊 Baseline特征工程...")
             try:
                 df, self.baseline_engineer = engineer_baseline_features(
-                    df, self.baseline_engineer, fit=fit, required_features=required_features)
+                    df,
+                    self.baseline_engineer,
+                    fit=fit,
+                    required_features=required_features)
                 baseline_features = len(df.columns) - prev_count
                 # 如果已经通过 required_features 过滤，就不需要再次过滤
                 if required_features:
-                    kept_count = len([c for c in df.columns if c in required_features])
+                    kept_count = len(
+                        [c for c in df.columns if c in required_features])
                     print(f"     ✅ Baseline特征: {kept_count} 个需要的特征已计算")
                 else:
                     df = _filter_features(df, "Baseline")
                     prev_count = len(df.columns)
-                    print(f"     ✅ Baseline特征: {baseline_features} 个生成，{len([c for c in df.columns if c in (required_features or set())])} 个保留")
+                    # 当 required_features 为 None 时，所有生成的特征都被保留
+                    # 计算实际保留的特征数量（排除数据列）
+                    data_cols = {
+                        'open', 'high', 'low', 'close', 'volume', 'timestamp',
+                        'datetime'
+                    }
+                    kept_features = len([
+                        c for c in df.columns if c not in data_cols
+                        and pd.api.types.is_numeric_dtype(df[c])
+                    ])
+                    print(
+                        f"     ✅ Baseline特征: {baseline_features} 个生成，{kept_features} 个保留"
+                    )
             except Exception as e:
                 print(f"     ⚠️  Baseline特征失败: {e}")
 
@@ -241,16 +267,30 @@ class ComprehensiveFeatureEngineer:
                 if self.basic_engineer is None:
                     self.basic_engineer = FeatureEngineer()
                 # 传递 required_features，只计算需要的特征
-                df = self.basic_engineer.add_technical_indicators(df, required_features)
+                df = self.basic_engineer.add_technical_indicators(
+                    df, required_features)
                 default_features = len(df.columns) - prev_count
                 # 如果已经通过 required_features 过滤，就不需要再次过滤
                 if required_features:
-                    kept_count = len([c for c in df.columns if c in required_features])
+                    kept_count = len(
+                        [c for c in df.columns if c in required_features])
                     print(f"     ✅ 默认传统指标特征: {kept_count} 个需要的特征已计算")
                 else:
                     df = _filter_features(df, "Default")
                     prev_count = len(df.columns)
-                    print(f"     ✅ 默认传统指标特征: {default_features} 个生成，{len([c for c in df.columns if c in (required_features or set())])} 个保留")
+                    # 当 required_features 为 None 时，所有生成的特征都被保留
+                    # 计算实际保留的特征数量（排除数据列）
+                    data_cols = {
+                        'open', 'high', 'low', 'close', 'volume', 'timestamp',
+                        'datetime'
+                    }
+                    kept_features = len([
+                        c for c in df.columns if c not in data_cols
+                        and pd.api.types.is_numeric_dtype(df[c])
+                    ])
+                    print(
+                        f"     ✅ 默认传统指标特征: {default_features} 个生成，{kept_features} 个保留"
+                    )
             except Exception as e:
                 print(f"     ⚠️  默认传统指标特征失败: {e}")
 
@@ -261,18 +301,32 @@ class ComprehensiveFeatureEngineer:
                 if self.alpha101_engineer is None:
                     self.alpha101_engineer = Alpha101FeatureEngineer()
                 alpha_source = df[["open", "high", "low", "close", "volume"]]
-                alpha_df = self.alpha101_engineer.compute(alpha_source, required_features=required_features)
+                alpha_df = self.alpha101_engineer.compute(
+                    alpha_source, required_features=required_features)
                 alpha_df = alpha_df.reindex(df.index)
                 df = df.join(alpha_df, how="left")
                 alpha101_features = len(df.columns) - prev_count
                 # 如果已经通过 required_features 过滤，就不需要再次过滤
                 if required_features:
-                    kept_count = len([c for c in df.columns if c in required_features])
+                    kept_count = len(
+                        [c for c in df.columns if c in required_features])
                     print(f"     ✅ Alpha101特征: {kept_count} 个需要的特征已计算")
                 else:
                     df = _filter_features(df, "Alpha101")
                     prev_count = len(df.columns)
-                    print(f"     ✅ Alpha101特征: {alpha101_features} 个生成，{len([c for c in df.columns if c in (required_features or set())])} 个保留")
+                    # 当 required_features 为 None 时，所有生成的特征都被保留
+                    # 计算实际保留的特征数量（排除数据列）
+                    data_cols = {
+                        'open', 'high', 'low', 'close', 'volume', 'timestamp',
+                        'datetime'
+                    }
+                    kept_features = len([
+                        c for c in df.columns if c not in data_cols
+                        and pd.api.types.is_numeric_dtype(df[c])
+                    ])
+                    print(
+                        f"     ✅ Alpha101特征: {alpha101_features} 个生成，{kept_features} 个保留"
+                    )
             except Exception as e:
                 print(f"     ⚠️  Alpha101特征失败: {e}")
 
@@ -301,20 +355,28 @@ class ComprehensiveFeatureEngineer:
                     # 所以先计算所有特征，然后立即过滤
                     try:
                         # 尝试传递required_features（如果方法支持）
-                        if module_required_features is not None and hasattr(fn, '__code__'):
+                        if module_required_features is not None and hasattr(
+                                fn, '__code__'):
                             # 检查方法是否接受required_features参数
                             import inspect
                             sig = inspect.signature(fn)
                             if 'required_features' in sig.parameters:
-                                out = fn(df_in, required_features=module_required_features)
+                                out = fn(
+                                    df_in,
+                                    required_features=module_required_features)
                             else:
                                 out = fn(df_in)
                                 # 立即过滤
                                 if module_required_features:
-                                    data_cols = {'open', 'high', 'low', 'close', 'volume', 'timestamp', 'datetime'}
+                                    data_cols = {
+                                        'open', 'high', 'low', 'close',
+                                        'volume', 'timestamp', 'datetime'
+                                    }
                                     cols_to_keep = [
                                         c for c in out.columns
-                                        if c in data_cols or c in module_required_features or not pd.api.types.is_numeric_dtype(out[c])
+                                        if c in data_cols or c in
+                                        module_required_features or not pd.api.
+                                        types.is_numeric_dtype(out[c])
                                     ]
                                     out = out[cols_to_keep]
                         else:
@@ -328,10 +390,26 @@ class ComprehensiveFeatureEngineer:
                         if required_features:
                             out = _filter_features(out, step_name)
                     dt = time.time() - t0
-                    kept_count = len([c for c in out.columns if c in (required_features or set())])
-                    print(
-                        f"     ⏱ {step_name} 完成，用时 {dt:.2f}s，保留 {kept_count} 个需要的特征"
-                    )
+                    # 计算实际保留的特征数量
+                    if required_features:
+                        kept_count = len(
+                            [c for c in out.columns if c in required_features])
+                        print(
+                            f"     ⏱ {step_name} 完成，用时 {dt:.2f}s，保留 {kept_count} 个需要的特征"
+                        )
+                    else:
+                        # 当 required_features 为 None 时，所有生成的特征都被保留
+                        data_cols = {
+                            'open', 'high', 'low', 'close', 'volume',
+                            'timestamp', 'datetime'
+                        }
+                        kept_count = len([
+                            c for c in out.columns if c not in data_cols
+                            and pd.api.types.is_numeric_dtype(out[c])
+                        ])
+                        print(
+                            f"     ⏱ {step_name} 完成，用时 {dt:.2f}s，保留 {kept_count} 个特征"
+                        )
                     return out
 
                 # 为每个模块提取需要的特征
@@ -340,49 +418,75 @@ class ComprehensiveFeatureEngineer:
                 hilbert_features = None
                 spectral_features = None
                 order_flow_features = None
-                
+
                 if required_features:
-                    hurst_features = {f for f in required_features if f.startswith('hurst_') or 'hurst' in f.lower()}
-                    wavelet_features = {f for f in required_features if f.startswith('wpt_') or 'wavelet' in f.lower()}
-                    hilbert_features = {f for f in required_features if f.startswith('hilbert_') or 'hilbert' in f.lower() or 'phase_' in f or 'frequency_' in f}
-                    spectral_features = {f for f in required_features if f.startswith('spectral_') or 'fft_' in f or 'psd_' in f}
-                    order_flow_features = {f for f in required_features if 'cvd' in f.lower() or 'ofi' in f.lower() or 'order_flow' in f.lower() or 'taker_buy' in f.lower()}
+                    hurst_features = {
+                        f
+                        for f in required_features
+                        if f.startswith('hurst_') or 'hurst' in f.lower()
+                    }
+                    wavelet_features = {
+                        f
+                        for f in required_features
+                        if f.startswith('wpt_') or 'wavelet' in f.lower()
+                    }
+                    hilbert_features = {
+                        f
+                        for f in required_features
+                        if f.startswith('hilbert_') or 'hilbert' in f.lower()
+                        or 'phase_' in f or 'frequency_' in f
+                    }
+                    spectral_features = {
+                        f
+                        for f in required_features if f.startswith('spectral_')
+                        or 'fft_' in f or 'psd_' in f
+                    }
+                    order_flow_features = {
+                        f
+                        for f in required_features
+                        if 'cvd' in f.lower() or 'ofi' in f.lower() or
+                        'order_flow' in f.lower() or 'taker_buy' in f.lower()
+                    }
 
                 # Hurst（较快）
                 if self.use_enhanced or self.use_hurst:
                     if not required_features or hurst_features:
                         df = _run("Hurst",
-                                  self.enhanced_engineer.add_hurst_features, df, hurst_features)
+                                  self.enhanced_engineer.add_hurst_features,
+                                  df, hurst_features)
 
                 # Wavelet（较重）
                 if self.use_enhanced or self.use_wavelet:
                     if not fast_mode:
                         if not required_features or wavelet_features:
                             df = _run(
-                                "WaveletPacket",
-                                self.enhanced_engineer.add_wavelet_packet_features,
-                                df, wavelet_features)
+                                "WaveletPacket", self.enhanced_engineer.
+                                add_wavelet_packet_features, df,
+                                wavelet_features)
 
                 # Spectral（较重）
                 if self.use_enhanced or self.use_spectral:
                     if not fast_mode:
                         if not required_features or spectral_features:
-                            df = _run("Spectral",
-                                      self.enhanced_engineer.add_spectral_features,
-                                      df, spectral_features)
+                            df = _run(
+                                "Spectral",
+                                self.enhanced_engineer.add_spectral_features,
+                                df, spectral_features)
 
                 # Hilbert
                 if self.use_enhanced or self.use_hilbert:
                     if not required_features or hilbert_features:
                         df = _run("Hilbert",
-                                  self.enhanced_engineer.add_hilbert_features, df, hilbert_features)
+                                  self.enhanced_engineer.add_hilbert_features,
+                                  df, hilbert_features)
 
                 # Order Flow
                 if self.use_enhanced or self.use_order_flow:
                     if not required_features or order_flow_features:
-                        df = _run("OrderFlow",
-                                  self.enhanced_engineer.add_order_flow_features,
-                                  df, order_flow_features)
+                        df = _run(
+                            "OrderFlow",
+                            self.enhanced_engineer.add_order_flow_features, df,
+                            order_flow_features)
 
                 enhanced_features = len(df.columns) - prev_count
                 prev_count = len(df.columns)
