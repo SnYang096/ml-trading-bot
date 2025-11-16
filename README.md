@@ -316,4 +316,4 @@ make rolling ROLLING_USE_TOP_FACTORS=results/dim_compare/BTCUSDT-ETHUSDT_baselin
 
 make vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_164429/latest
 
-make factor-test FACTOR_TEST_FACTORS="price_to_zz_high_pct" FACTOR_TEST_SYMBOL=BTCUSDT,ETHUSDT FACTOR_TEST_FEATURE_TYPE=baseline
+make factor-test FACTOR_TEST_FACTORS="price_to_zz_high_pct,price_to_poc_pct" FACTOR_TEST_SYMBOL=BTCUSDT,ETHUSDT FACTOR_TEST_FEATURE_TYPE=baseline

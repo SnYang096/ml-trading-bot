@@ -166,6 +166,10 @@ def test_factors(
 ) -> Dict:
     """测试指定的因子"""
 
+    # 处理逗号分隔的因子列表（如果传入的是单个字符串）
+    if len(factors) == 1 and ',' in factors[0]:
+        factors = [f.strip() for f in factors[0].split(',')]
+
     print("=" * 80)
     print("单个因子测试工具")
     print("=" * 80)
@@ -766,10 +770,13 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="测试单个或多个因子")
-    parser.add_argument("--factors",
-                        nargs="+",
-                        required=True,
-                        help="要测试的因子名称列表，例如: rsi_7 zigzag_normalized")
+    parser.add_argument(
+        "--factors",
+        nargs="+",
+        required=True,
+        help=
+        "要测试的因子名称列表，支持空格或逗号分隔，例如: rsi_7 zigzag_normalized 或 price_to_zz_high_pct,price_to_poc_pct"
+    )
     parser.add_argument("--data-path",
                         type=str,
                         default="/data/parquet_data",
