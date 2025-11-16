@@ -22,7 +22,7 @@ from .feature_engineering import FeatureEngineer
 from .feature_engineering_enhanced import EnhancedFeatureEngineer
 from .feature_engineering_talib import TalibFeatureEngineer
 from .dl_sequence_features import add_dl_sequence_features
-from .baseline_feature_engineering import BaselineFeatureEngineer, engineer_baseline_features, get_baseline_feature_columns
+from .baseline_features import BaselineFeatureEngineer, engineer_baseline_features, get_baseline_feature_columns
 from .alpha_factors.alpha101_feature_engineer import Alpha101FeatureEngineer
 
 

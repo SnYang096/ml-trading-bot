@@ -7,7 +7,7 @@
 import pandas as pd
 from typing import Dict, Optional
 
-from .base_indicators import add_common_derived_features
+from .baseline_features import add_common_derived_features
 from .feature_engineering_talib import TalibFeatureEngineer
 
 

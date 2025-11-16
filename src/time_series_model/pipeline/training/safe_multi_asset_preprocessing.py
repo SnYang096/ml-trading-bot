@@ -16,7 +16,7 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
-from data_tools.baseline_feature_engineering import engineer_baseline_features
+from data_tools.baseline_features import engineer_baseline_features
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 from .label_utils import rolling_rms_volatility
 

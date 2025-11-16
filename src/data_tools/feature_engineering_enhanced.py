@@ -14,7 +14,7 @@ from scipy import signal
 from scipy.signal import hilbert
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
-from .base_indicators import add_common_derived_features
+from .baseline_features import add_common_derived_features
 
 try:
     import talib
@@ -588,7 +588,8 @@ class EnhancedFeatureEngineer:
                                           posinf=0.0,
                                           neginf=0.0)
 
-                amplitude_series = pd.Series(amplitude[:len(df)], index=df.index)
+                amplitude_series = pd.Series(amplitude[:len(df)],
+                                             index=df.index)
                 phase_series = pd.Series(phase[:len(df)], index=df.index)
                 frequency_series = pd.Series(frequency[:len(df)],
                                              index=df.index)
