@@ -66,6 +66,9 @@ from time_series_model.pipeline.dimensionality.utils import (
 
 DIM_COMPARE_RESULTS_ROOT = Path("results") / "dim_compare"
 
+# Global variable to pass factor_count through grid search wrapper
+_current_grid_search_factor_count = None
+
 # Removed duplicate function definitions - these are imported from utils.py, evaluation.py, and data_loader.py
 
 
@@ -346,14 +349,19 @@ def calculate_financial_metrics(
             metrics["sharpe_ratio"] = 0.0
 
         # 4. Maximum drawdown
-        cumulative_returns = np.cumsum(strategy_returns)
-        running_max = np.maximum.accumulate(cumulative_returns)
-        drawdown = cumulative_returns - running_max
-        max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
-        metrics["max_drawdown"] = max_drawdown
-        metrics["max_drawdown_pct"] = max_drawdown / (
-            1.0 + abs(running_max[-1])) if len(
-                running_max) > 0 and running_max[-1] != 0 else 0.0
+        # Convert returns to cumulative equity (starting from 1.0)
+        cumulative_equity = np.cumprod(1.0 + strategy_returns)
+        running_max = np.maximum.accumulate(cumulative_equity)
+        drawdown = (cumulative_equity - running_max) / running_max
+        max_drawdown_pct = float(
+            np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        # Also store absolute drawdown for backward compatibility
+        max_drawdown_abs = float(
+            np.min(cumulative_equity -
+                   running_max)) if len(drawdown) > 0 else 0.0
+        metrics["max_drawdown"] = max_drawdown_pct  # Store as percentage
+        metrics["max_drawdown_abs"] = max_drawdown_abs  # Store absolute value
+        metrics["max_drawdown_pct"] = max_drawdown_pct
 
         # 5. Win rate
         winning_trades = (strategy_returns > 0).sum()
@@ -376,9 +384,9 @@ def calculate_financial_metrics(
         metrics["volatility"] = float(volatility)
 
         # 8. Calmar ratio (return / max_drawdown)
-        if abs(max_drawdown) > 1e-8:
+        if abs(max_drawdown_pct) > 1e-8:
             metrics["calmar_ratio"] = float(annualized_return /
-                                            abs(max_drawdown))
+                                            abs(max_drawdown_pct))
         else:
             metrics["calmar_ratio"] = 0.0
 
@@ -946,7 +954,19 @@ def run_single_experiment_wrapper(args) -> Dict:
         sys.argv = new_argv
 
         # Call main() which will parse the new argv
+        # But first, we need to preserve _grid_search_factor_count
+        # We'll use a global variable to pass it through
+        global _current_grid_search_factor_count
+        _current_grid_search_factor_count = getattr(
+            args, '_grid_search_factor_count', None)
+
         results, model, results_dir = main()
+
+        # Restore the attribute to args if it was set
+        if hasattr(args, '_grid_search_factor_count'):
+            # The args object will be used later, so we restore it
+            pass
+
         # Store results_dir in results dict for later file copying
         if results and isinstance(results, dict):
             results['results_dir'] = results_dir
@@ -1642,18 +1662,21 @@ def _copy_best_combination_files(best_result: Dict,
                 'factor_count')
 
         selected_features = summary['selected_features']
-        
+
         # Filter out label columns (signal_*, binary_signal_*, future_return_*)
         # These are labels, not features, and should not be in top_factors.json
         label_prefixes = ('signal_', 'binary_signal_', 'future_return_')
         label_exact = {'signal', 'binary_signal', 'future_return'}
         selected_features = [
-            f for f in selected_features
-            if f not in label_exact and not any(f.startswith(prefix) for prefix in label_prefixes)
+            f for f in selected_features if f not in label_exact and not any(
+                f.startswith(prefix) for prefix in label_prefixes)
         ]
         if len(selected_features) < len(summary['selected_features']):
-            filtered_count = len(summary['selected_features']) - len(selected_features)
-            print(f"   🧹 Filtered out {filtered_count} label column(s) from top_factors (e.g., signal_*, binary_signal_*, future_return_*)")
+            filtered_count = len(
+                summary['selected_features']) - len(selected_features)
+            print(
+                f"   🧹 Filtered out {filtered_count} label column(s) from top_factors (e.g., signal_*, binary_signal_*, future_return_*)"
+            )
 
         # If we have a target factor_count, try to limit features using SHAP importance
         if target_factor_count and isinstance(target_factor_count,
@@ -3305,17 +3328,37 @@ def main() -> Tuple[Dict, any, str]:
                             reverse=True)
         # Determine target factor count
         # In grid search mode, check if factor count was set via _grid_search_factor_count
+        # or via global variable (for grid search wrapper)
+        target_factor_count = None
         if hasattr(args, '_grid_search_factor_count'
                    ) and args._grid_search_factor_count is not None:
-            if args._grid_search_factor_count == 'all':
+            target_factor_count = args._grid_search_factor_count
+        else:
+            # Check global variable set by run_single_experiment_wrapper
+            global _current_grid_search_factor_count
+            if '_current_grid_search_factor_count' in globals(
+            ) and _current_grid_search_factor_count is not None:
+                target_factor_count = _current_grid_search_factor_count
+
+        if target_factor_count is not None:
+            if target_factor_count == 'all':
                 target_top_k = len(top_sorted)  # Use all available factors
             else:
-                target_top_k = int(args._grid_search_factor_count)
+                target_top_k = int(target_factor_count)
+            print(
+                f"   🎯 Grid search: Using {target_top_k} factors (requested: {target_factor_count})"
+            )
         else:
             target_top_k = 120  # Default value
+            print(f"   📊 Using default factor count: {target_top_k}")
+
         ic_top_k = min(max(target_top_k, 1), len(top_sorted))
         if ic_top_k == 0:
             ic_top_k = min(60, len(top_sorted))
+
+        print(
+            f"   ✅ Selected top {ic_top_k} features by IC (from {len(top_sorted)} total)"
+        )
 
         # Initial selection by IC
         top_cols_initial = [c for c, _ in top_sorted[:ic_top_k]]

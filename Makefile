@@ -371,7 +371,7 @@ endif
 
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 24
-DIM_COMPARE_FEATURE_TYPE ?= comprehensive
+DIM_COMPARE_FEATURE_TYPE ?= baseline
 TIMEFRAME ?= 240T
 # FACTOR_COUNTS ?= 120,110,100,90,80,70,60,50,40,30,20,10,8,6,4
 FACTOR_COUNTS ?= 20,10,5
@@ -382,7 +382,7 @@ TIME_WINDOWS ?= 2025-01-01:2025-10-31
 GRID_SEARCH ?= 1
 
 dim-compare:
-	@echo "🔬 Comparing feature sets (no autoencoder) for $(SYMBOLS) ..."
+	@echo "🔬 Comparing feature sets for $(SYMBOLS) ..."
 	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline TIMEFRAME=5T"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"

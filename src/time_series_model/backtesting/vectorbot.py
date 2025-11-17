@@ -161,16 +161,23 @@ def calculate_strategy_returns_from_predictions(
     # Calculate strategy returns based on predictions
     strategy_returns = np.zeros(len(predictions))
 
-    # Long positions (prediction = 1): use forward return
-    long_mask = predictions == 1
-    strategy_returns[long_mask] = forward_returns[long_mask]
-
-    # Short positions (prediction = 2): use negative forward return
-    short_mask = predictions == 2
-    strategy_returns[short_mask] = -forward_returns[short_mask]
-
-    # Hold positions (prediction = 0): return = 0
-    # (already initialized to 0)
+    # Determine if this is binary classification (0/1) or multiclass (0/1/2)
+    unique_preds = np.unique(predictions)
+    is_binary = len(unique_preds) <= 2 and np.all(np.isin(unique_preds, [0, 1]))
+    
+    if is_binary:
+        # Binary classification: 0 = Short, 1 = Long
+        long_mask = predictions == 1
+        short_mask = predictions == 0
+        strategy_returns[long_mask] = forward_returns[long_mask]
+        strategy_returns[short_mask] = -forward_returns[short_mask]
+    else:
+        # Multiclass: 0 = Hold, 1 = Long, 2 = Short
+        long_mask = predictions == 1
+        short_mask = predictions == 2
+        strategy_returns[long_mask] = forward_returns[long_mask]
+        strategy_returns[short_mask] = -forward_returns[short_mask]
+        # Hold positions (prediction = 0): return = 0 (already initialized to 0)
 
     return strategy_returns
 
@@ -227,14 +234,16 @@ def calculate_financial_metrics_from_returns(
         metrics["sharpe_ratio"] = 0.0
 
     # 4. Maximum drawdown
-    cumulative_returns = np.cumsum(strategy_returns)
-    running_max = np.maximum.accumulate(cumulative_returns)
-    drawdown = cumulative_returns - running_max
-    max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
-    metrics["max_drawdown"] = max_drawdown
-    metrics["max_drawdown_pct"] = max_drawdown / (
-        1.0 + abs(running_max[-1])) if len(
-            running_max) > 0 and running_max[-1] != 0 else 0.0
+    # Convert returns to cumulative equity (starting from 1.0)
+    cumulative_equity = np.cumprod(1.0 + strategy_returns)
+    running_max = np.maximum.accumulate(cumulative_equity)
+    drawdown = (cumulative_equity - running_max) / running_max
+    max_drawdown_pct = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+    # Also store absolute drawdown for backward compatibility
+    max_drawdown_abs = float(np.min(cumulative_equity - running_max)) if len(drawdown) > 0 else 0.0
+    metrics["max_drawdown"] = max_drawdown_pct  # Store as percentage
+    metrics["max_drawdown_abs"] = max_drawdown_abs  # Store absolute value
+    metrics["max_drawdown_pct"] = max_drawdown_pct
 
     # 5. Win rate
     winning_trades = (strategy_returns > 0).sum()

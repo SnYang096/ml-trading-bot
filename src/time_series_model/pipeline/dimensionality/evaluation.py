@@ -227,14 +227,16 @@ def calculate_financial_metrics(
             metrics["sharpe_ratio"] = 0.0
 
         # 4. Maximum drawdown
-        cumulative_returns = np.cumsum(strategy_returns)
-        running_max = np.maximum.accumulate(cumulative_returns)
-        drawdown = cumulative_returns - running_max
-        max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
-        metrics["max_drawdown"] = max_drawdown
-        metrics["max_drawdown_pct"] = max_drawdown / (
-            1.0 + abs(running_max[-1])) if len(
-                running_max) > 0 and running_max[-1] != 0 else 0.0
+        # Convert returns to cumulative equity (starting from 1.0)
+        cumulative_equity = np.cumprod(1.0 + strategy_returns)
+        running_max = np.maximum.accumulate(cumulative_equity)
+        drawdown = (cumulative_equity - running_max) / running_max
+        max_drawdown_pct = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        # Also store absolute drawdown for backward compatibility
+        max_drawdown_abs = float(np.min(cumulative_equity - running_max)) if len(drawdown) > 0 else 0.0
+        metrics["max_drawdown"] = max_drawdown_pct  # Store as percentage
+        metrics["max_drawdown_abs"] = max_drawdown_abs  # Store absolute value
+        metrics["max_drawdown_pct"] = max_drawdown_pct
 
         # 5. Win rate
         winning_trades = (strategy_returns > 0).sum()
