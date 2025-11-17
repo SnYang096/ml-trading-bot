@@ -280,7 +280,7 @@ factor-compute:
 # ---------------------------------------------------------------------------
 
 
-TF_CONFIG_PEARSON ?= 0.25
+TF_CONFIG_PEARSON ?= 0.03
 TF_CONFIG_PVALUE ?= 1e-5
 TF_CONFIG_MIN_SAMPLES ?= 500
 TF_CONFIG_TOP_PER_SYMBOL ?= 5

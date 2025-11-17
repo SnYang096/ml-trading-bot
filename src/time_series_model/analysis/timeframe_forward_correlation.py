@@ -143,8 +143,10 @@ def parse_args() -> AnalysisConfig:
     parser.add_argument(
         "--pearson-threshold",
         type=float,
-        default=0.25,
-        help="Absolute correlation threshold for highlighting strong signals.",
+        default=0.03,
+        help="Absolute correlation threshold for highlighting strong signals. "
+             "For cryptocurrency hourly data, |IC| >= 0.03 is considered effective. "
+             "See docs/时序模型/特征：ic的阈值.md for details.",
     )
     parser.add_argument(
         "--feature-type",
@@ -736,8 +738,8 @@ def write_html_report(
         "<li>下方卡片列出该品种最优的两个组合及 Top10 特征，绿色表示 |Pearson| 达到阈值。</li>",
         "<li>表格中的 p-value 越小，说明相关性越不可能由噪声造成（通常 &lt;1e-3 即较可靠）。</li>",
         "<li>末尾的 Cross-symbol 段落会列出在多个品种中重复出现的核心特征，适合做多资产共振信号。</li>",
-        f"<li>当前默认阈值 |Pearson| = |Spearman| = {abs_threshold}。可在 make 参数 <code>TF_CONFIG_PEARSON</code> 中自定义阈值，报告会自动刷新标记。</li>",
-        "<li>绿色组合卡片表示该 timeframe-forward 的最佳特征 |Pearson| ≥ 阈值；表格中红色数字说明该特征当前相关性低于阈值，需谨慎使用。</li>",
+        f"<li>当前默认阈值 |Pearson| = |Spearman| = {abs_threshold}（适用于加密货币小时级数据，参考 docs/时序模型/特征：ic的阈值.md）。可在 make 参数 <code>TF_CONFIG_PEARSON</code> 中自定义阈值，报告会自动刷新标记。</li>",
+        "<li>绿色组合卡片表示该 timeframe-forward 的最佳特征 |Pearson| ≥ 阈值；表格中红色数字说明该特征当前相关性低于阈值，需谨慎使用。对于加密货币，|IC| ≥ 0.03 且 p < 0.01 即可认为是有效信号。</li>",
         "<li><strong>Pearson</strong> 衡量线性相关性；<strong>p-value</strong> 是线性相关显著性的统计检验；<strong>Spearman</strong> 衡量排序/单调相关性，可识别非线性但单调的关系。</li>",
         "</ul>",
         "</div>",
