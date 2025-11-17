@@ -212,6 +212,69 @@ builder-shell:
 	@echo "🔧 Opening interactive shell in $(BUILDER_IMAGE) ..."
 	DOCKER_IMAGE=$(BUILDER_IMAGE) $(DOCKER_RUN) bash
 
+
+
+
+# ---------------------------------------------------------------------------
+# Factor Management: Test and compute specific factors
+# ---------------------------------------------------------------------------
+
+FACTOR_TEST_FACTORS ?=
+FACTOR_TEST_SYMBOL ?= BTCUSDT
+FACTOR_TEST_START_DATE ?= 2024-01-01
+FACTOR_TEST_END_DATE ?= 2025-9-30
+FACTOR_TEST_FEATURE_TYPE ?= comprehensive
+FACTOR_TEST_TIMEFRAME ?= 240T
+FACTOR_TEST_OUTPUT_DIR ?=
+
+factor-test:
+	@if [ -z "$(FACTOR_TEST_FACTORS)" ]; then \
+		echo "❌ 错误: 必须指定 FACTOR_TEST_FACTORS"; \
+		echo "用法: make factor-test FACTOR_TEST_FACTORS='rsi_7 zigzag_normalized' FACTOR_TEST_SYMBOL=BTCUSDT"; \
+		exit 1; \
+	fi
+	@echo "🧪 测试因子: $(FACTOR_TEST_FACTORS)"
+	@echo "   交易对: $(FACTOR_TEST_SYMBOL)"
+	@echo "   时间范围: $(FACTOR_TEST_START_DATE) 到 $(FACTOR_TEST_END_DATE)"
+	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/test_single_factor.py \
+		--factors $(FACTOR_TEST_FACTORS) \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(FACTOR_TEST_SYMBOL) \
+		--start-date $(FACTOR_TEST_START_DATE) \
+		--end-date $(FACTOR_TEST_END_DATE) \
+		--feature-type $(FACTOR_TEST_FEATURE_TYPE) \
+		--timeframe $(FACTOR_TEST_TIMEFRAME) \
+		$(if $(FACTOR_TEST_OUTPUT_DIR),--output-dir /workspace/$(FACTOR_TEST_OUTPUT_DIR),)
+
+FACTOR_COMPUTE_FACTORS ?=
+FACTOR_COMPUTE_INPUT ?=
+FACTOR_COMPUTE_DATA_PATH ?= $(DATA_DIR)
+FACTOR_COMPUTE_SYMBOL ?=
+FACTOR_COMPUTE_START_DATE ?=
+FACTOR_COMPUTE_END_DATE ?=
+FACTOR_COMPUTE_OUTPUT ?= results/factors/computed_factors.csv
+FACTOR_COMPUTE_FEATURE_TYPE ?= comprehensive
+FACTOR_COMPUTE_FORMAT ?= csv
+
+factor-compute:
+	@if [ -z "$(FACTOR_COMPUTE_FACTORS)" ]; then \
+		echo "❌ 错误: 必须指定 FACTOR_COMPUTE_FACTORS"; \
+		echo "用法: make factor-compute FACTOR_COMPUTE_FACTORS='rsi_7 macd' FACTOR_COMPUTE_INPUT=data/btcusdt.parquet FACTOR_COMPUTE_OUTPUT=factors/rsi_macd.csv"; \
+		exit 1; \
+	fi
+	@echo "🔧 计算因子: $(FACTOR_COMPUTE_FACTORS)"
+	@echo "   输出: $(FACTOR_COMPUTE_OUTPUT)"
+	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/compute_specific_factors.py \
+		--factors $(FACTOR_COMPUTE_FACTORS) \
+		$(if $(FACTOR_COMPUTE_INPUT),--input /workspace/$(FACTOR_COMPUTE_INPUT),) \
+		$(if $(FACTOR_COMPUTE_SYMBOL),--data-path /workspace/$(FACTOR_COMPUTE_DATA_PATH),) \
+		$(if $(FACTOR_COMPUTE_SYMBOL),--symbol $(FACTOR_COMPUTE_SYMBOL),) \
+		$(if $(FACTOR_COMPUTE_START_DATE),--start-date $(FACTOR_COMPUTE_START_DATE),) \
+		$(if $(FACTOR_COMPUTE_END_DATE),--end-date $(FACTOR_COMPUTE_END_DATE),) \
+		--output /workspace/$(FACTOR_COMPUTE_OUTPUT) \
+		--feature-type $(FACTOR_COMPUTE_FEATURE_TYPE) \
+		--format $(FACTOR_COMPUTE_FORMAT)
+
 # ---------------------------------------------------------------------------
 # Factor analysis using Alphalens （跑不起来）
 # ---------------------------------------------------------------------------
@@ -662,66 +725,6 @@ CS_AUTO_IC_THRESHOLD ?= 0.01
 CS_AUTO_IR_THRESHOLD ?= 0.5
 CS_AUTO_MIN_ASSETS ?= 4
 CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
-
-# ---------------------------------------------------------------------------
-# Factor Management: Test and compute specific factors
-# ---------------------------------------------------------------------------
-
-FACTOR_TEST_FACTORS ?=
-FACTOR_TEST_SYMBOL ?= BTCUSDT
-FACTOR_TEST_START_DATE ?= 2024-01-01
-FACTOR_TEST_END_DATE ?= 2025-9-30
-FACTOR_TEST_FEATURE_TYPE ?= comprehensive
-FACTOR_TEST_TIMEFRAME ?= 240T
-FACTOR_TEST_OUTPUT_DIR ?=
-
-factor-test:
-	@if [ -z "$(FACTOR_TEST_FACTORS)" ]; then \
-		echo "❌ 错误: 必须指定 FACTOR_TEST_FACTORS"; \
-		echo "用法: make factor-test FACTOR_TEST_FACTORS='rsi_7 zigzag_normalized' FACTOR_TEST_SYMBOL=BTCUSDT"; \
-		exit 1; \
-	fi
-	@echo "🧪 测试因子: $(FACTOR_TEST_FACTORS)"
-	@echo "   交易对: $(FACTOR_TEST_SYMBOL)"
-	@echo "   时间范围: $(FACTOR_TEST_START_DATE) 到 $(FACTOR_TEST_END_DATE)"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/test_single_factor.py \
-		--factors $(FACTOR_TEST_FACTORS) \
-		--data-path /workspace/$(DATA_DIR) \
-		--symbol $(FACTOR_TEST_SYMBOL) \
-		--start-date $(FACTOR_TEST_START_DATE) \
-		--end-date $(FACTOR_TEST_END_DATE) \
-		--feature-type $(FACTOR_TEST_FEATURE_TYPE) \
-		--timeframe $(FACTOR_TEST_TIMEFRAME) \
-		$(if $(FACTOR_TEST_OUTPUT_DIR),--output-dir /workspace/$(FACTOR_TEST_OUTPUT_DIR),)
-
-FACTOR_COMPUTE_FACTORS ?=
-FACTOR_COMPUTE_INPUT ?=
-FACTOR_COMPUTE_DATA_PATH ?= $(DATA_DIR)
-FACTOR_COMPUTE_SYMBOL ?=
-FACTOR_COMPUTE_START_DATE ?=
-FACTOR_COMPUTE_END_DATE ?=
-FACTOR_COMPUTE_OUTPUT ?= results/factors/computed_factors.csv
-FACTOR_COMPUTE_FEATURE_TYPE ?= comprehensive
-FACTOR_COMPUTE_FORMAT ?= csv
-
-factor-compute:
-	@if [ -z "$(FACTOR_COMPUTE_FACTORS)" ]; then \
-		echo "❌ 错误: 必须指定 FACTOR_COMPUTE_FACTORS"; \
-		echo "用法: make factor-compute FACTOR_COMPUTE_FACTORS='rsi_7 macd' FACTOR_COMPUTE_INPUT=data/btcusdt.parquet FACTOR_COMPUTE_OUTPUT=factors/rsi_macd.csv"; \
-		exit 1; \
-	fi
-	@echo "🔧 计算因子: $(FACTOR_COMPUTE_FACTORS)"
-	@echo "   输出: $(FACTOR_COMPUTE_OUTPUT)"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/compute_specific_factors.py \
-		--factors $(FACTOR_COMPUTE_FACTORS) \
-		$(if $(FACTOR_COMPUTE_INPUT),--input /workspace/$(FACTOR_COMPUTE_INPUT),) \
-		$(if $(FACTOR_COMPUTE_SYMBOL),--data-path /workspace/$(FACTOR_COMPUTE_DATA_PATH),) \
-		$(if $(FACTOR_COMPUTE_SYMBOL),--symbol $(FACTOR_COMPUTE_SYMBOL),) \
-		$(if $(FACTOR_COMPUTE_START_DATE),--start-date $(FACTOR_COMPUTE_START_DATE),) \
-		$(if $(FACTOR_COMPUTE_END_DATE),--end-date $(FACTOR_COMPUTE_END_DATE),) \
-		--output /workspace/$(FACTOR_COMPUTE_OUTPUT) \
-		--feature-type $(FACTOR_COMPUTE_FEATURE_TYPE) \
-		--format $(FACTOR_COMPUTE_FORMAT)
 
 cross-sectional-auto:
 	@echo "🤖 Running fully automated cross-sectional pipeline..."

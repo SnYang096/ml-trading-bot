@@ -14,7 +14,7 @@ from scipy import signal
 from scipy.signal import hilbert
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
-from .baseline_features import add_common_derived_features
+from .baseline_features import BaselineFeatureEngineer
 
 try:
     import talib
@@ -1474,7 +1474,7 @@ class EnhancedFeatureEngineer:
 
     def add_basic_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Ensure baseline indicators and shared derived features are present."""
-        return add_common_derived_features(data)
+        return BaselineFeatureEngineer.add_common_derived_features(data)
 
     def _ensure_orderflow_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """

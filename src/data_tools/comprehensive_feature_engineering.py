@@ -622,12 +622,13 @@ class ComprehensiveFeatureEngineer:
             "bb_upper",
             "bb_lower",
             "bb_middle",
-            "bb_width",  # 使用 bb_width_normalized
+            # bb_width 现在已经是归一化的（除以 bb_middle 或 close），所以保留
             "hl",  # 中间变量
             "up_vol",
             "down_vol",  # 中间变量
         }
         # 原始价格量纲的指标前缀（未标准化），统一剔除
+        # 注意：只排除原始值（如 sma_5），保留归一化版本（如 sma_5_pct_close）
         raw_prefixes = (
             "sma_",
             "ema_",
@@ -636,6 +637,13 @@ class ComprehensiveFeatureEngineer:
             "kama_",  # 均线族（价格量纲）
             "volume_sma_",  # 量均线（未标准化）
             "atr_",  # 原始ATR（未归一化），保留natr和atr_normalized
+        )
+        # 归一化版本的后缀（这些应该保留）
+        normalized_suffixes = (
+            "_pct_close",
+            "_ratio",
+            "_normalized",
+            "_percentile",
         )
         # MACD 原始量纲（价格差异），为稳妥剔除原始MACD系
         raw_exact = {
@@ -657,9 +665,13 @@ class ComprehensiveFeatureEngineer:
                 if not any(
                         col.startswith(pattern)
                         for pattern in exclude_patterns):
-                    # 过滤原始未归一化前缀
+                    # 过滤原始未归一化前缀（但保留归一化版本）
                     if any(col.startswith(p) for p in raw_prefixes):
-                        continue
+                        # 检查是否是归一化版本（有归一化后缀）
+                        if not any(
+                                col.endswith(suffix)
+                                for suffix in normalized_suffixes):
+                            continue
                     # 排除未归一化的小波特征（wpt_*_energy, wpt_*_mean, wpt_*_std）
                     # 但保留归一化的小波特征（wpt_*_energy_ratio, wpt_shannon_entropy 等）
                     if "wpt_" in col and any(
@@ -707,14 +719,12 @@ class ComprehensiveFeatureEngineer:
         # 保存基线标准化器
         if self.baseline_engineer is not None:
             baseline_scalers_data = {
-                "fitted_atr_quantiles":
-                self.baseline_engineer._fitted_atr_quantiles,
-                "fitted_vol_quantiles":
-                self.baseline_engineer._fitted_vol_quantiles,
-                "percentile_window":
-                self.baseline_engineer.percentile_window,
+                "percentile_window": self.baseline_engineer.percentile_window,
                 "compression_threshold_pct":
                 self.baseline_engineer.compression_threshold_pct,
+                "vwap_window": self.baseline_engineer.vwap_window,
+                "feature_clip_bound":
+                self.baseline_engineer.feature_clip_bound,
             }
             scalers_data["baseline_scalers"] = baseline_scalers_data
 
@@ -737,14 +747,15 @@ class ComprehensiveFeatureEngineer:
         # 加载基线标准化器
         if self.baseline_engineer is not None and "baseline_scalers" in scalers_data:
             baseline_scalers = scalers_data.get("baseline_scalers", {})
-            self.baseline_engineer._fitted_atr_quantiles = baseline_scalers.get(
-                "fitted_atr_quantiles", None)
-            self.baseline_engineer._fitted_vol_quantiles = baseline_scalers.get(
-                "fitted_vol_quantiles", None)
+            # 向后兼容：如果存在旧的 quantiles 字段，忽略它们
             self.baseline_engineer.percentile_window = baseline_scalers.get(
                 "percentile_window", 288)
             self.baseline_engineer.compression_threshold_pct = baseline_scalers.get(
                 "compression_threshold_pct", 0.2)
+            self.baseline_engineer.vwap_window = baseline_scalers.get(
+                "vwap_window", 160)
+            self.baseline_engineer.feature_clip_bound = baseline_scalers.get(
+                "feature_clip_bound", 10.0)
 
         self.feature_stats = scalers_data.get("feature_stats", {})
 

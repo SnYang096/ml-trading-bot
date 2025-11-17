@@ -89,8 +89,7 @@ compute_hal(high, low, window=20)  # 新增
 
 ```python
 add_zigzag_dimensionless_features(df, required_features=None)
-add_poc_dimensionless_features(df, required_features=None, poc_window=20)
-add_hal_dimensionless_features(df, required_features=None, hal_window=20)
+add_poc_hal_dimensionless_features(df, required_features=None, poc_window=160)
 add_swing_dimensionless_features(df, required_features=None, swing_win_short=20, swing_win_long=60)
 add_price_volume_relative_features(df, required_features=None)
 ```
@@ -119,8 +118,7 @@ add_common_derived_features(df, required_features=None)  # 优化依赖关系
 from data_tools.baseline_features import (
     BaselineFeatureEngineer,
     add_zigzag_dimensionless_features,
-    add_poc_dimensionless_features,
-    add_hal_dimensionless_features,
+    add_poc_hal_dimensionless_features,
     add_swing_dimensionless_features,
     add_price_volume_relative_features,
 )
@@ -131,8 +129,7 @@ df_features = engineer.engineer_features(df)
 
 # 方式2: 单独添加特定特征
 df = add_zigzag_dimensionless_features(df, required_features={"price_to_zz_high_pct"})
-df = add_poc_dimensionless_features(df, required_features={"price_to_poc_pct"})
-df = add_hal_dimensionless_features(df, required_features={"hal_bandwidth_pct"})
+df = add_poc_hal_dimensionless_features(df, required_features={"price_to_poc_pct", "hal_bandwidth_pct"})
 df = add_swing_dimensionless_features(df, required_features={"swing_amplitude_pct"})
 df = add_price_volume_relative_features(df, required_features={"ret_1h", "vol_zscore"})
 ```
