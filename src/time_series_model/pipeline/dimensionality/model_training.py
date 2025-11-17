@@ -346,6 +346,28 @@ def train_production_lightgbm(
         # Multiclass: convert probability array to class predictions
         y_pred_train = np.argmax(y_pred_train_raw, axis=1)
         y_pred_val = np.argmax(y_pred_val_raw, axis=1)
+        
+        # CRITICAL: Verify all 3 classes are present in predictions
+        train_unique = np.unique(y_pred_train)
+        val_unique = np.unique(y_pred_val)
+        print(f"   [DEBUG] Prediction class distribution:")
+        print(f"      Train: {dict(zip(*np.unique(y_pred_train, return_counts=True)))}")
+        print(f"      Val: {dict(zip(*np.unique(y_pred_val, return_counts=True)))}")
+        
+        # Check if all expected classes are present
+        expected_classes = set(range(num_classes))
+        train_classes = set(train_unique)
+        val_classes = set(val_unique)
+        
+        if train_classes != expected_classes:
+            print(f"   ⚠️  WARNING: Train predictions missing classes!")
+            print(f"      Expected: {expected_classes}, Got: {train_classes}")
+            print(f"      Missing: {expected_classes - train_classes}")
+        if val_classes != expected_classes:
+            print(f"   ⚠️  WARNING: Val predictions missing classes!")
+            print(f"      Expected: {expected_classes}, Got: {val_classes}")
+            print(f"      Missing: {expected_classes - val_classes}")
+        
         # For statistics, use probability of predicted class
         y_pred_train_proba = np.max(y_pred_train_raw, axis=1)
         y_pred_val_proba = np.max(y_pred_val_raw, axis=1)

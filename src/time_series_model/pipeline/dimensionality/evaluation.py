@@ -160,13 +160,28 @@ def _generate_shap_outputs(
                 print(f"   ⚠️ SHAP computation failed: {exc}")
                 return None
 
+            # Handle SHAP values for different task types
+            # For multiclass, SHAP returns a list of arrays (one per class)
+            # For binary, SHAP returns a list of 2 arrays or a single array
+            # For regression, SHAP returns a single array
             if isinstance(shap_values, list):
                 if len(shap_values) == 1:
+                    # Single array (regression or binary with single output)
                     shap_array = shap_values[0]
+                elif len(shap_values) == 2:
+                    # Binary classification: use the positive class (class 1)
+                    shap_array = shap_values[1]
+                elif len(shap_values) >= 3:
+                    # Multiclass: compute mean absolute SHAP across all classes
+                    # This gives overall feature importance across all classes
+                    # Alternative: use the most important class or weighted average
+                    shap_array = np.mean([np.abs(sv) for sv in shap_values], axis=0)
+                    print(f"   📊 Multiclass SHAP: Using mean absolute SHAP across {len(shap_values)} classes")
                 else:
-                    # For binary classification, use the positive class
+                    # Fallback: use the last array
                     shap_array = shap_values[-1]
             else:
+                # Single array (regression or binary)
                 shap_array = shap_values
 
             # Verify SHAP values are indeed all zeros
@@ -195,13 +210,28 @@ def _generate_shap_outputs(
                 print(f"   ⚠️ SHAP computation failed: {exc}")
                 return None
 
+            # Handle SHAP values for different task types
+            # For multiclass, SHAP returns a list of arrays (one per class)
+            # For binary, SHAP returns a list of 2 arrays or a single array
+            # For regression, SHAP returns a single array
             if isinstance(shap_values, list):
                 if len(shap_values) == 1:
+                    # Single array (regression or binary with single output)
                     shap_array = shap_values[0]
+                elif len(shap_values) == 2:
+                    # Binary classification: use the positive class (class 1)
+                    shap_array = shap_values[1]
+                elif len(shap_values) >= 3:
+                    # Multiclass: compute mean absolute SHAP across all classes
+                    # This gives overall feature importance across all classes
+                    # Alternative: use the most important class or weighted average
+                    shap_array = np.mean([np.abs(sv) for sv in shap_values], axis=0)
+                    print(f"   📊 Multiclass SHAP: Using mean absolute SHAP across {len(shap_values)} classes")
                 else:
-                    # For binary classification, use the positive class
+                    # Fallback: use the last array
                     shap_array = shap_values[-1]
             else:
+                # Single array (regression or binary)
                 shap_array = shap_values
     except Exception as exc:
         print(f"   ⚠️ SHAP computation failed: {exc}")

@@ -173,16 +173,50 @@ def load_real_market_data(
         print(
             f"   Creating multi-horizon labels for horizons: {horizons_list}")
 
-        # rank_window will be auto-calculated based on horizon (horizon * 20, min 100)
-        # This ensures the ranking window is proportional to the prediction horizon
-        # For example: horizon=1 → rank_window=100, horizon=5 → rank_window=100, horizon=10 → rank_window=200
+        # Calculate optimal rank_window based on timeframe and horizon
+        # Reference: docs/时序模型/lightbgm shap=0.md
+        # For 240T (4h) + horizon=24: recommended rank_window=72 (12 days, 10-17 days optimal)
+        # Rule: rank_window should cover 10-17 days for 240T timeframe
+        default_horizon = horizons_list[0] if horizons_list else 24
+
+        # Detect timeframe from data frequency (if available)
+        # Default to 240T (4h) if cannot detect
+        timeframe_minutes = 240  # Default: 240T (4h)
+        if len(df_features) > 1:
+            time_diff = (df_features.index[1] -
+                         df_features.index[0]).total_seconds() / 60
+            if 230 <= time_diff <= 250:  # ~240 minutes (4h)
+                timeframe_minutes = 240
+            elif 55 <= time_diff <= 65:  # ~60 minutes (1h)
+                timeframe_minutes = 60
+            elif 4 <= time_diff <= 6:  # ~5 minutes
+                timeframe_minutes = 5
+            elif 14 <= time_diff <= 16:  # ~15 minutes
+                timeframe_minutes = 15
+
+        # Calculate rank_window: target 10-17 days for 240T
+        # For 240T: 72 bars = 12 days (optimal)
+        # Formula: rank_window = (target_days * 24 * 60) / timeframe_minutes
+        # For 240T: (12 * 24 * 60) / 240 = 72
+        target_days = 12  # Optimal: 12 days (within 10-17 day range)
+        calculated_rank_window = int(
+            (target_days * 24 * 60) / timeframe_minutes)
+        calculated_rank_window = max(calculated_rank_window,
+                                     30)  # At least 30 bars
+        calculated_rank_window = min(
+            calculated_rank_window, 180)  # At most 180 bars (30 days for 240T)
+
+        print(
+            f"   📊 Calculated rank_window: {calculated_rank_window} bars "
+            f"(target: {target_days} days for {timeframe_minutes}T timeframe, "
+            f"≈ {calculated_rank_window * timeframe_minutes / 24 / 60:.1f} days)"
+        )
 
         df_features = create_labels_multi_horizon(
             df_features,
             horizons=horizons_list,
             use_rank_percentile=True,  # RECOMMENDED: Use rolling rank percentile
-            rank_window=
-            None,  # Auto-calculate based on horizon (horizon * 20, min 100)
+            rank_window=calculated_rank_window,  # Use calculated optimal window
             top_percentile=0.7,  # Top 30% = Long
             bottom_percentile=0.3,  # Bottom 30% = Short
             use_risk_adjusted=False,  # Disabled when using rank percentile
@@ -255,7 +289,9 @@ def load_real_market_data(
         except Exception:
             pass
 
-        X = df_features[feature_cols].values
+        # CRITICAL: Do NOT convert to values yet - we need index for alignment
+        # Keep as DataFrame to preserve index alignment with labels
+        X_df = df_features[feature_cols].copy()
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
@@ -313,11 +349,44 @@ def load_real_market_data(
                 f"   ✅ Sample size check passed: {valid_samples} >= {MIN_SAMPLES_REQUIRED}"
             )
 
-        y = y_series.dropna().values  # Use binary signal (0=Short, 1=Long)
+        y = y_series.dropna(
+        ).values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
 
-        min_len = min(len(X), len(y))
-        X = X[:min_len]
-        y = y[:min_len]
+        # CRITICAL: Ensure X and y are aligned by index (not just length)
+        # This prevents time misalignment issues
+        valid_indices = y_series.dropna().index
+        if len(valid_indices) > 0:
+            # Align X with y using the same indices
+            X_aligned = X_df.loc[valid_indices].values
+            y_aligned = y_series.loc[valid_indices].values
+
+            # Verify alignment
+            if len(X_aligned) != len(y_aligned):
+                raise ValueError(
+                    f"Alignment error: X_aligned length ({len(X_aligned)}) != y_aligned length ({len(y_aligned)})"
+                )
+
+            X = X_aligned
+            y = y_aligned
+
+            # Diagnostic: Check time alignment
+            print(f"   🔍 Time alignment check:")
+            print(f"      X shape: {X.shape}, y shape: {y.shape}")
+            print(
+                f"      y label distribution: {dict(zip(*np.unique(y, return_counts=True)))}"
+            )
+            if len(valid_indices) > 0:
+                print(f"      First valid index: {valid_indices[0]}")
+                print(f"      Last valid index: {valid_indices[-1]}")
+        else:
+            # Fallback: use length-based alignment (less safe)
+            X = X_df.values
+            min_len = min(len(X), len(y))
+            X = X[:min_len]
+            y = y[:min_len]
+            print(
+                f"   ⚠️  WARNING: Using length-based alignment (no index alignment available)"
+            )
 
         # Final sample size check
         if len(y) < MIN_SAMPLES_REQUIRED:
@@ -343,7 +412,19 @@ def load_real_market_data(
         print(f"⚠️ Error loading real data: {exc}")
         print("📊 Generating sample data...")
         X, y, feature_cols = create_enhanced_sample_data()
-        return X, y, feature_cols, [1], pd.DataFrame()
+        # Convert regression values to 3-class classification labels
+        # Use quantiles to create balanced labels: top 30% = Long (2), bottom 30% = Short (1), middle 40% = Hold (0)
+        y_sorted = np.sort(y)
+        top_threshold = np.percentile(y_sorted, 70)  # Top 30%
+        bottom_threshold = np.percentile(y_sorted, 30)  # Bottom 30%
+        y_class = np.zeros_like(y, dtype=int)
+        y_class[y >= top_threshold] = 2  # Long
+        y_class[y <= bottom_threshold] = 1  # Short
+        # Hold (0) is already set by default
+        print(
+            f"   📊 Sample data labels: {dict(zip(*np.unique(y_class, return_counts=True)))}"
+        )
+        return X, y_class, feature_cols, [1], pd.DataFrame()
 
 
 def create_enhanced_sample_data(
@@ -3377,12 +3458,24 @@ def main() -> Tuple[Dict, any, str]:
         # Use loaded horizons or fallback to parsed horizons
         horizons = horizons_loaded if horizons_loaded and len(
             horizons_loaded) > 0 else horizons_list
+        horizons_list = horizons  # Ensure horizons_list is available for pipeline validation
 
         original_feature_count = len(
             feature_names)  # Save original count (482)
-        dfX = pd.DataFrame(X_raw,
-                           columns=feature_names,
-                           index=df_features_original.index[:len(X_raw)])
+
+        # Create index for DataFrame
+        # If df_features_original is empty (sample data), create a default index
+        if df_features_original.empty or len(df_features_original.index) == 0:
+            # Use default integer index for sample data
+            df_index = pd.RangeIndex(start=0, stop=len(X_raw))
+        else:
+            # Use original index, but ensure it matches X_raw length
+            df_index = df_features_original.index[:len(X_raw)]
+            if len(df_index) != len(X_raw):
+                # If index length doesn't match, create default index
+                df_index = pd.RangeIndex(start=0, stop=len(X_raw))
+
+        dfX = pd.DataFrame(X_raw, columns=feature_names, index=df_index)
 
         # Convert all columns to numeric (handle object/string types)
         # This is necessary because some features may be stored as object type
@@ -3404,7 +3497,41 @@ def main() -> Tuple[Dict, any, str]:
 
         # For backward compatibility, use default horizon
         # Always use binary signals (0=Short, 1=Long)
-        y_series = pd.Series(y_raw, index=dfX.index[:len(y_raw)])
+        # Convert y_raw to Series, ensuring it's integer classification labels [0, 1, 2]
+        # Check if y_raw contains float values (regression) or integer labels (classification)
+        y_raw_array = np.asarray(y_raw)
+        unique_values = np.unique(y_raw_array[~np.isnan(y_raw_array)])
+
+        # If y_raw contains float values (not in [0, 1, 2]), convert to classification labels
+        if len(unique_values) > 0 and not np.all(
+                np.isin(unique_values, [0, 1, 2])):
+            # This is likely regression data (e.g., from sample data generation)
+            # Convert to 3-class classification using quantiles
+            print(
+                f"   ⚠️  Converting regression values to 3-class labels (found {len(unique_values)} unique values)"
+            )
+            y_sorted = np.sort(y_raw_array[~np.isnan(y_raw_array)])
+            if len(y_sorted) > 0:
+                top_threshold = np.percentile(y_sorted,
+                                              70)  # Top 30% = Long (2)
+                bottom_threshold = np.percentile(y_sorted,
+                                                 30)  # Bottom 30% = Short (1)
+                y_class = np.zeros_like(y_raw_array, dtype=int)
+                y_class[y_raw_array >= top_threshold] = 2  # Long
+                y_class[y_raw_array <= bottom_threshold] = 1  # Short
+                # Hold (0) is already set by default
+                y_raw = y_class
+                print(
+                    f"   📊 Converted labels: {dict(zip(*np.unique(y_class, return_counts=True)))}"
+                )
+            else:
+                # Fallback: use binary classification
+                y_raw = (y_raw_array > 0).astype(int)
+                print(
+                    f"   ⚠️  Fallback to binary classification (no valid values for quantile conversion)"
+                )
+
+        y_series = pd.Series(y_raw, index=dfX.index[:len(y_raw)], dtype=int)
 
         # CRITICAL: Check sample size before any cleaning
         initial_samples = len(y_series)
@@ -3488,11 +3615,22 @@ def main() -> Tuple[Dict, any, str]:
         for c in dfX.columns:
             # Handle _symbol as categorical feature (not numeric)
             if c == '_symbol':
-                # Check if _symbol has valid values
+                # Check if _symbol has valid values AND multiple unique values
+                # Only useful for multi-asset training (when there are multiple symbols)
                 if dfX[c].notna().sum() > 0:
-                    categorical_features.append(c)
-                    keep_all.append(c)  # Include _symbol in features
-                    print(f"   ✅ Including '{c}' as categorical feature")
+                    unique_symbols = dfX[c].nunique()
+                    if unique_symbols > 1:
+                        categorical_features.append(c)
+                        keep_all.append(c)  # Include _symbol in features
+                        print(
+                            f"   ✅ Including '{c}' as categorical feature ({unique_symbols} unique values)"
+                        )
+                    else:
+                        # Exclude constant _symbol (only one unique value - not useful for single-asset training)
+                        excluded_non_numeric.append(c)
+                        print(
+                            f"   ⚠️  Excluding '{c}' (constant: only {unique_symbols} unique value - not useful for single-asset training)"
+                        )
                 else:
                     excluded_non_numeric.append(c)
                 continue
@@ -4245,41 +4383,206 @@ def main() -> Tuple[Dict, any, str]:
         X_reps = df_reps.values
 
         # Pipeline validation: Inject synthetic strong signal BEFORE scaling
-        # This ensures the signal survives standardization
+        # Reference: docs/时序模型/lightbgm shap=0.md
+        # Improved: Match real label generation logic (including neutral zone filtering)
+        # This ensures the synthetic test accurately reflects the real pipeline behavior
         signal_injected_feature_idx = None
+        synthetic_labels_info = None
         if getattr(args, 'validate_pipeline', False) and len(reps) > 0:
             first_rep_feature_name = reps[0]
             if first_rep_feature_name in df_reps.columns:
                 signal_injected_feature_idx = list(
                     df_reps.columns).index(first_rep_feature_name)
-                # Align y with df_reps index
-                y_aligned = y_series.reindex(df_reps.index).fillna(0).values
-                min_len = min(len(df_reps), len(y_aligned))
-                y_aligned = y_aligned[:min_len]
 
-                # Convert labels to numeric for signal injection
-                # For 3-class: 0=Hold, 1=Long, 2=Short
-                # Map to: Hold=0, Long=+1, Short=-1 (so Long/Short have opposite signals)
-                # For AUC: y_binary = (y > 0) means Long+Short vs Hold
-                # So signal should be: Long=+1, Short=-1, Hold=0
-                y_numeric = y_aligned.copy()
-                unique_labels = np.unique(y_numeric)
-                if len(unique_labels) == 3 and np.all(
-                        np.isin(unique_labels, [0, 1, 2])):
-                    # Multiclass: map 0->0 (Hold), 1->+1 (Long), 2->-1 (Short)
-                    # This creates a signal where Long has positive signal, Short has negative signal
-                    y_numeric = np.where(y_numeric == 1, 1,
-                                         np.where(y_numeric == 2, -1, 0))
-                elif len(unique_labels) == 2:
-                    # Binary: map to -1 and 1 for stronger signal
-                    y_numeric = np.where(y_numeric == 0, -1, 1)
+                # Step 1: Create synthetic future_return based on first feature
+                # This simulates the real label generation process
+                print(f"\n{'='*80}")
+                print(
+                    "🔍 Pipeline Validation: Creating synthetic signal matching real label generation"
+                )
+                print(f"{'='*80}")
 
-                # Inject STRONG signal: 3.0x multiplier with minimal noise (0.05 std)
-                signal_strength = 3.0
-                noise_std = 0.05
-                X_reps[:min_len,
-                       signal_injected_feature_idx] = y_numeric * signal_strength + np.random.RandomState(
-                           42).randn(min_len) * noise_std
+                # Get the first feature as base signal
+                first_feature_values = df_reps[first_rep_feature_name].values
+                n_samples = len(first_feature_values)
+
+                # Create synthetic future_return: use first feature + noise
+                # This simulates a strong predictive signal
+                np.random.seed(42)
+                synthetic_future_return = first_feature_values + np.random.randn(
+                    n_samples) * 0.1
+
+                # Step 2: Use REAL label generation function to create labels (including neutral zone filtering)
+                # This ensures the synthetic test matches the real pipeline behavior
+                from data_tools.rolling_data import create_labels_multi_horizon
+
+                # Create a temporary DataFrame with synthetic data
+                synthetic_df = pd.DataFrame(
+                    {
+                        'close': np.ones(
+                            n_samples
+                        ),  # Dummy close prices (not used for rank percentile)
+                    },
+                    index=df_reps.index)
+
+                # Add synthetic future_return
+                default_horizon = horizons_list[0] if horizons_list else 24
+                synthetic_df[
+                    f'future_return_{default_horizon}'] = synthetic_future_return
+
+                # Detect timeframe from data frequency
+                timeframe_minutes = 240  # Default: 240T (4h)
+                if len(df_reps) > 1:
+                    time_diff = (df_reps.index[1] -
+                                 df_reps.index[0]).total_seconds() / 60
+                    if 230 <= time_diff <= 250:
+                        timeframe_minutes = 240
+                    elif 55 <= time_diff <= 65:
+                        timeframe_minutes = 60
+                    elif 4 <= time_diff <= 6:
+                        timeframe_minutes = 5
+                    elif 14 <= time_diff <= 16:
+                        timeframe_minutes = 15
+
+                # Calculate rank_window (same as real label generation)
+                target_days = 12
+                calculated_rank_window = int(
+                    (target_days * 24 * 60) / timeframe_minutes)
+                calculated_rank_window = max(calculated_rank_window, 30)
+                calculated_rank_window = min(calculated_rank_window, 180)
+
+                # Generate synthetic labels using REAL function (includes neutral zone filtering)
+                synthetic_df = create_labels_multi_horizon(
+                    synthetic_df,
+                    horizons=[default_horizon],
+                    use_rank_percentile=True,
+                    rank_window=calculated_rank_window,
+                    top_percentile=0.7,  # Top 30% = Long
+                    bottom_percentile=0.3,  # Bottom 30% = Short
+                    use_risk_adjusted=False,
+                    use_quantile_threshold=False,
+                )
+
+                # Extract synthetic labels
+                synthetic_signal_col = f"signal_{default_horizon}"
+                if synthetic_signal_col in synthetic_df.columns:
+                    synthetic_labels = synthetic_df[
+                        synthetic_signal_col].reindex(
+                            df_reps.index).fillna(0).values
+                    valid_mask = synthetic_df[synthetic_signal_col].reindex(
+                        df_reps.index).notna().values
+                    valid_samples = valid_mask.sum()
+                    total_samples = len(valid_mask)
+
+                    synthetic_labels_info = {
+                        'total_samples':
+                        total_samples,
+                        'valid_samples':
+                        valid_samples,
+                        'valid_ratio':
+                        valid_samples /
+                        total_samples if total_samples > 0 else 0.0,
+                        'label_distribution':
+                        dict(
+                            zip(*np.unique(synthetic_labels[valid_mask],
+                                           return_counts=True)))
+                        if valid_samples > 0 else {},
+                    }
+
+                    print(
+                        f"   📊 Synthetic label generation (matching real pipeline):"
+                    )
+                    print(f"      Total samples: {total_samples}")
+                    print(
+                        f"      Valid samples (after neutral zone filtering): {valid_samples} ({synthetic_labels_info['valid_ratio']:.1%})"
+                    )
+                    if synthetic_labels_info['label_distribution']:
+                        print(
+                            f"      Label distribution: {synthetic_labels_info['label_distribution']}"
+                        )
+
+                    # Check if we have enough valid samples
+                    if valid_samples < 1000:
+                        print(
+                            f"      ⚠️  WARNING: Only {valid_samples} valid samples (minimum recommended: 1000)"
+                        )
+                        print(
+                            f"      → This may indicate rank_window is too large or data period too short"
+                        )
+                    else:
+                        print(
+                            f"      ✅ Valid samples check passed: {valid_samples} >= 1000"
+                        )
+
+                    # Use synthetic labels for signal injection (only valid samples)
+                    y_numeric = synthetic_labels.copy()
+                    min_len = min(len(df_reps), len(y_numeric))
+                    y_numeric = y_numeric[:min_len]
+
+                    # Convert labels to numeric for signal injection
+                    # For 3-class: 0=Hold, 1=Long, 2=Short
+                    # Map to: Hold=0, Long=+1, Short=-1 (so Long/Short have opposite signals)
+                    unique_labels = np.unique(
+                        y_numeric[y_numeric != 0])  # Exclude Hold (0)
+                    if len(unique_labels) >= 2 and np.any(
+                            np.isin(unique_labels, [1, 2])):
+                        # Multiclass: map 0->0 (Hold), 1->+1 (Long), 2->-1 (Short)
+                        y_numeric = np.where(y_numeric == 1, 1,
+                                             np.where(y_numeric == 2, -1, 0))
+                    elif len(unique_labels) == 1:
+                        # Only one non-zero class, map to -1 and 1
+                        if unique_labels[0] == 1:
+                            y_numeric = np.where(y_numeric == 1, 1, 0)
+                        else:
+                            y_numeric = np.where(y_numeric == 2, -1, 0)
+                    else:
+                        # Fallback: use original labels
+                        y_numeric = np.where(y_numeric == 1, 1,
+                                             np.where(y_numeric == 2, -1, 0))
+
+                    # Inject STRONG signal: 3.0x multiplier with minimal noise (0.05 std)
+                    signal_strength = 3.0
+                    noise_std = 0.05
+                    np.random.seed(42)
+                    X_reps[:min_len,
+                           signal_injected_feature_idx] = y_numeric * signal_strength + np.random.randn(
+                               min_len) * noise_std
+
+                    print(
+                        f"   ✅ Synthetic signal injected into '{first_rep_feature_name}'"
+                    )
+                    print(
+                        f"      Signal formula: feature = synthetic_label * {signal_strength} + noise (std={noise_std})"
+                    )
+                    print(
+                        f"      Signal strength: {signal_strength}x label + noise (std={noise_std})"
+                    )
+                    print(
+                        f"      Expected: Model MUST learn this feature (importance > 0.1, AUC > 0.7)"
+                    )
+                else:
+                    print(
+                        f"   ⚠️  Warning: Could not generate synthetic labels, using original labels"
+                    )
+                    # Fallback to original method
+                    y_aligned = y_series.reindex(
+                        df_reps.index).fillna(0).values
+                    min_len = min(len(df_reps), len(y_aligned))
+                    y_aligned = y_aligned[:min_len]
+                    y_numeric = y_aligned.copy()
+                    unique_labels = np.unique(y_numeric)
+                    if len(unique_labels) == 3 and np.all(
+                            np.isin(unique_labels, [0, 1, 2])):
+                        y_numeric = np.where(y_numeric == 1, 1,
+                                             np.where(y_numeric == 2, -1, 0))
+                    elif len(unique_labels) == 2:
+                        y_numeric = np.where(y_numeric == 0, -1, 1)
+                    signal_strength = 3.0
+                    noise_std = 0.05
+                    np.random.seed(42)
+                    X_reps[:min_len,
+                           signal_injected_feature_idx] = y_numeric * signal_strength + np.random.randn(
+                               min_len) * noise_std
 
         scaler_reps = StandardScaler()
         X_reps_scaled = sanitize_features(scaler_reps.fit_transform(X_reps))
@@ -4809,6 +5112,8 @@ def main() -> Tuple[Dict, any, str]:
                             0.1,
                             "validation_checks":
                             validation_checks,
+                            "synthetic_labels_info":
+                            synthetic_labels_info,  # Include synthetic label generation info (matches real pipeline)
                             "message":
                             "Model learned the synthetic signal (all checks passed)"
                             if validation_passed else
@@ -4819,6 +5124,8 @@ def main() -> Tuple[Dict, any, str]:
                                 "check_model_params": True,
                                 "check_feature_filtering": True,
                                 "check_first_feature_in_data": True,
+                                "check_label_generation":
+                                True,  # Added: check label generation (neutral zone filtering)
                             } if not validation_passed else None,
                         }
             except Exception as e:

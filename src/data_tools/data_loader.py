@@ -193,8 +193,11 @@ class MarketDataLoader:
         if self.raw_data is None:
             raise ValueError("Raw data is None. Call load_data() first.")
 
-        # Replace deprecated 'T' with 'min'
-        timeframe = timeframe.replace("T", "min")
+        # Convert timeframe format: pandas resample accepts 'T' (minutes) directly
+        # Keep 'T' format as pandas prefers it (e.g., '5T', '15T', '240T')
+        # Only convert if it's in 'min' format to 'T'
+        if timeframe.endswith("min") and not timeframe.endswith("T"):
+            timeframe = timeframe.replace("min", "T")
 
         # Using separate operations for each column to avoid type issues
         resampled_open = self.raw_data["open"].resample(timeframe).first()

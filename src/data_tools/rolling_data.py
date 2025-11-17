@@ -362,38 +362,56 @@ def create_labels_multi_horizon(
             #          future_return rank in rolling window < 30th percentile → Short
 
             # Calculate rank_window based on horizon if not provided
-            # Rule: rank_window = horizon * multiplier (default: 20x), minimum 100 bars
-            # This ensures the ranking window is proportional to the prediction horizon
+            # Reference: docs/时序模型/lightbgm shap=0.md
+            # For 240T (4h) + horizon=24: recommended rank_window=72 (12 days)
+            # Rule: Use a multiplier that adapts to timeframe
+            # - For longer timeframes (240T+), use smaller multiplier (3x horizon)
+            # - For shorter timeframes (5T-60T), use larger multiplier (20x horizon)
+            # This ensures the ranking window covers 10-17 days for 240T, which is optimal
             current_rank_window = rank_window
             if current_rank_window is None:
-                current_rank_window = max(
-                    horizon * 20, 100)  # 20x horizon, but at least 100 bars
+                # Default multiplier: 3x horizon for longer timeframes (240T+)
+                # This gives ~12 days for 240T + horizon=24 (72 bars * 4h = 12 days)
+                # For shorter timeframes, this will be adjusted by the caller if needed
+                multiplier = 3  # Conservative: 3x horizon for 240T (4h bars)
+                current_rank_window = max(horizon * multiplier, 30)  # At least 30 bars
                 print(
-                    f"   📊 Auto-calculated rank_window for horizon={horizon}: {current_rank_window} (horizon * 20, min=100)"
+                    f"   📊 Auto-calculated rank_window for horizon={horizon}: {current_rank_window} (horizon * {multiplier}, min=30)"
+                )
+                print(
+                    f"   💡 For 240T (4h bars): {current_rank_window} bars = {current_rank_window * 4 / 24:.1f} days"
                 )
 
             # Calculate rolling rank percentile (using trailing window to avoid lookahead bias)
-            # Shift by 1 to avoid using current value in its own ranking
-            shifted_return = df[future_return_col].shift(1)
-
-            # Calculate rank percentile in rolling window
-            # Use pandas rolling().rank(pct=True) for efficient calculation
+            # CRITICAL: Do NOT shift(1) here - it causes time misalignment!
+            # The future_return already uses shift(-horizon), so it's correctly aligned:
+            #   - Row t: features at time t, future_return from t to t+horizon
+            # To avoid lookahead bias in ranking, we use rolling().rank() which naturally
+            # uses only past values (excluding current) when calculating rank percentile
             rank_pct_col = f"rank_percentile_{horizon}"
             # Use more lenient min_periods to reduce NaN samples
             # Original: max(10, current_rank_window // 10) - too strict
             # New: max(5, current_rank_window // 20) - allows more samples while maintaining quality
-            min_periods = max(5, current_rank_window // 20)  # At least 5% of window (more lenient)
+            min_periods = max(5, current_rank_window //
+                              20)  # At least 5% of window (more lenient)
 
-            # More efficient: use pandas rolling rank
-            # For each position, calculate rank percentile of current value within trailing window
-            rank_pct_series = shifted_return.rolling(
+            # Calculate rank percentile: for each position, calculate rank of current value
+            # within the trailing window (past values only, excluding current)
+            # Use shift(1) INSIDE the rolling calculation to exclude current value from ranking
+            # This ensures: row t uses past data (t-window to t-1) to rank the value at t
+            shifted_for_ranking = df[future_return_col].shift(
+                1)  # Shift for ranking only
+            rank_pct_series = shifted_for_ranking.rolling(
                 window=current_rank_window, min_periods=min_periods).apply(
                     lambda x: pd.Series(x).rank(pct=True, method='first').iloc[
                         -1]
                     if len(x) > 0 and not pd.isna(x.iloc[-1]) else np.nan,
                     raw=False)
 
-            df[rank_pct_col] = rank_pct_series
+            # CRITICAL: Shift back to align with original future_return timing
+            # Now rank_pct_series[t] corresponds to the rank percentile of future_return[t]
+            # calculated using past data (t-window to t-1)
+            df[rank_pct_col] = rank_pct_series.shift(-1)
 
             # Create 3-class signal using rank percentile
             signal_col = f"signal_{horizon}"

@@ -112,16 +112,47 @@ def load_real_market_data(
         print(
             f"   Creating multi-horizon labels for horizons: {horizons_list}")
 
-        # rank_window will be auto-calculated based on horizon (horizon * 20, min 100)
-        # This ensures the ranking window is proportional to the prediction horizon
-        # For example: horizon=1 → rank_window=100, horizon=5 → rank_window=100, horizon=10 → rank_window=200
+        # Calculate optimal rank_window based on timeframe and horizon
+        # Reference: docs/时序模型/lightbgm shap=0.md
+        # For 240T (4h) + horizon=24: recommended rank_window=72 (12 days, 10-17 days optimal)
+        # Rule: rank_window should cover 10-17 days for 240T timeframe
+        # For other timeframes, scale proportionally
+        default_horizon = horizons_list[0] if horizons_list else 24
+        
+        # Detect timeframe from data frequency (if available)
+        # Default to 240T (4h) if cannot detect
+        timeframe_minutes = 240  # Default: 240T (4h)
+        if len(df_features) > 1:
+            time_diff = (df_features.index[1] - df_features.index[0]).total_seconds() / 60
+            if 230 <= time_diff <= 250:  # ~240 minutes (4h)
+                timeframe_minutes = 240
+            elif 55 <= time_diff <= 65:  # ~60 minutes (1h)
+                timeframe_minutes = 60
+            elif 4 <= time_diff <= 6:  # ~5 minutes
+                timeframe_minutes = 5
+            elif 14 <= time_diff <= 16:  # ~15 minutes
+                timeframe_minutes = 15
+        
+        # Calculate rank_window: target 10-17 days for 240T
+        # For 240T: 72 bars = 12 days (optimal)
+        # Formula: rank_window = (target_days * 24 * 60) / timeframe_minutes
+        # For 240T: (12 * 24 * 60) / 240 = 72
+        target_days = 12  # Optimal: 12 days (within 10-17 day range)
+        calculated_rank_window = int((target_days * 24 * 60) / timeframe_minutes)
+        calculated_rank_window = max(calculated_rank_window, 30)  # At least 30 bars
+        calculated_rank_window = min(calculated_rank_window, 180)  # At most 180 bars (30 days for 240T)
+        
+        print(
+            f"   📊 Calculated rank_window: {calculated_rank_window} bars "
+            f"(target: {target_days} days for {timeframe_minutes}T timeframe, "
+            f"≈ {calculated_rank_window * timeframe_minutes / 24 / 60:.1f} days)"
+        )
 
         df_features = create_labels_multi_horizon(
             df_features,
             horizons=horizons_list,
             use_rank_percentile=True,  # RECOMMENDED: Use rolling rank percentile
-            rank_window=
-            None,  # Auto-calculate based on horizon (horizon * 20, min 100)
+            rank_window=calculated_rank_window,  # Use calculated optimal window
             top_percentile=0.7,  # Top 30% = Long
             bottom_percentile=0.3,  # Bottom 30% = Short
             use_risk_adjusted=False,  # Disabled when using rank percentile
@@ -177,7 +208,9 @@ def load_real_market_data(
         except Exception:
             pass
 
-        X = df_features[feature_cols].values
+        # CRITICAL: Do NOT convert to values yet - we need index for alignment
+        # Keep as DataFrame to preserve index alignment with labels
+        X_df = df_features[feature_cols].copy()
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
@@ -225,11 +258,39 @@ def load_real_market_data(
                 f"   ✅ Sample size check passed: {valid_samples} >= {MIN_SAMPLES_REQUIRED}"
             )
 
-        y = y_series.dropna().values  # Use binary signal (0=Short, 1=Long)
+        y = y_series.dropna().values  # Use 3-class signal (0=Hold, 1=Long, 2=Short)
 
-        min_len = min(len(X), len(y))
-        X = X[:min_len]
-        y = y[:min_len]
+        # CRITICAL: Ensure X and y are aligned by index (not just length)
+        # This prevents time misalignment issues
+        valid_indices = y_series.dropna().index
+        if len(valid_indices) > 0:
+            # Align X with y using the same indices
+            X_aligned = X_df.loc[valid_indices].values
+            y_aligned = y_series.loc[valid_indices].values
+            
+            # Verify alignment
+            if len(X_aligned) != len(y_aligned):
+                raise ValueError(
+                    f"Alignment error: X_aligned length ({len(X_aligned)}) != y_aligned length ({len(y_aligned)})"
+                )
+            
+            X = X_aligned
+            y = y_aligned
+            
+            # Diagnostic: Check time alignment
+            print(f"   🔍 Time alignment check:")
+            print(f"      X shape: {X.shape}, y shape: {y.shape}")
+            print(f"      y label distribution: {dict(zip(*np.unique(y, return_counts=True)))}")
+            if len(valid_indices) > 0:
+                print(f"      First valid index: {valid_indices[0]}")
+                print(f"      Last valid index: {valid_indices[-1]}")
+        else:
+            # Fallback: use length-based alignment (less safe)
+            X = X_df.values
+            min_len = min(len(X), len(y))
+            X = X[:min_len]
+            y = y[:min_len]
+            print(f"   ⚠️  WARNING: Using length-based alignment (no index alignment available)")
 
         # Final sample size check
         if len(y) < MIN_SAMPLES_REQUIRED:
