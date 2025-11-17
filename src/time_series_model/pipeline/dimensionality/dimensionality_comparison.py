@@ -33,6 +33,7 @@ import lightgbm as lgb
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 from data_tools.data_loader import MarketDataLoader
 from data_tools.rolling_data import create_labels_multi_horizon
+from data_tools.baseline_features import get_baseline_feature_columns
 # Autoencoder removed - no longer used
 from time_series_model.utils.training import train_lightgbm_model
 
@@ -176,33 +177,59 @@ def load_real_market_data(
         df_features_stored = df_features.copy()
 
         # Build safe feature columns (exclude targets/labels and future info)
-        # Exclude raw OHLC price features - use derived features instead
-        # Exclude raw volume/order flow features - use normalized/derived features instead
-        exclude_exact = {
-            "timestamp",
-            "close",
-            "open",  # Exclude raw OHLC prices - use derived features instead
-            "high",  # Exclude raw OHLC prices - use derived features instead
-            "low",  # Exclude raw OHLC prices - use derived features instead
-            "volume",  # Exclude raw volume - use volume_percentile, volume_anomaly, etc.
-            "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
-            "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
-            "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
-            "signal",  # Single-horizon label (legacy, e.g., signal)
-            "binary_signal",
-            "future_return",
-            "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
-        }
-        exclude_prefixes = (
-            "signal_",  # Multi-horizon labels (e.g., signal_15)
-            "binary_signal_",
-            "future_return_",
-        )
-        feature_cols = [
-            col for col in df_features.columns
-            if (col not in exclude_exact) and (not any(
-                col.startswith(pfx) for pfx in exclude_prefixes))
-        ]
+        # For baseline features, use get_baseline_feature_columns to properly exclude raw values
+        if feature_type == "baseline":
+            # Use the proper baseline feature filter that excludes raw values like atr, vwap, etc.
+            print(
+                f"   📊 df_features columns before filtering: {len(df_features.columns)}"
+            )
+            feature_cols = get_baseline_feature_columns(df_features)
+            print(
+                f"   ✅ Using get_baseline_feature_columns: {len(feature_cols)} features after filtering"
+            )
+            if len(feature_cols) == 0:
+                print(
+                    f"   ⚠️  WARNING: get_baseline_feature_columns returned 0 features!"
+                )
+                print(
+                    f"   Available columns in df_features: {list(df_features.columns)[:30]}..."
+                )
+                print(
+                    f"   This may indicate that all features were excluded. Check get_baseline_feature_columns logic."
+                )
+                raise ValueError(
+                    f"get_baseline_feature_columns returned 0 features. "
+                    f"Total columns in df_features: {len(df_features.columns)}. "
+                    f"Please check get_baseline_feature_columns logic.")
+        else:
+            # For other feature types, use manual exclusion
+            # Exclude raw OHLC price features - use derived features instead
+            # Exclude raw volume/order flow features - use normalized/derived features instead
+            exclude_exact = {
+                "timestamp",
+                "close",
+                "open",  # Exclude raw OHLC prices - use derived features instead
+                "high",  # Exclude raw OHLC prices - use derived features instead
+                "low",  # Exclude raw OHLC prices - use derived features instead
+                "volume",  # Exclude raw volume - use volume_percentile, volume_anomaly, etc.
+                "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
+                "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
+                "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
+                "signal",  # Single-horizon label (legacy, e.g., signal)
+                "binary_signal",
+                "future_return",
+                "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
+            }
+            exclude_prefixes = (
+                "signal_",  # Multi-horizon labels (e.g., signal_15)
+                "binary_signal_",
+                "future_return_",
+            )
+            feature_cols = [
+                col for col in df_features.columns
+                if (col not in exclude_exact) and (not any(
+                    col.startswith(pfx) for pfx in exclude_prefixes))
+            ]
 
         # Debug: engineered feature summary
         try:
@@ -3187,6 +3214,24 @@ def main() -> Tuple[Dict, any, str]:
                            columns=feature_names,
                            index=df_features_original.index[:len(X_raw)])
 
+        # Convert all columns to numeric (handle object/string types)
+        # This is necessary because some features may be stored as object type
+        # due to NaN values or data loading issues
+        for c in dfX.columns:
+            if c != '_symbol':  # Skip symbol column
+                dfX[c] = pd.to_numeric(dfX[c], errors='coerce')
+
+        # Check for data leakage: features that might contain future information
+        leakage_keywords = ['future_return', 'binary_signal', 'signal_']
+        potential_leakage = [
+            c for c in dfX.columns if any(kw in c for kw in leakage_keywords)
+        ]
+        if potential_leakage:
+            print(
+                f"   ⚠️  WARNING: Potential data leakage detected! Features: {potential_leakage}"
+            )
+            print(f"   These features should be excluded from training!")
+
         # For backward compatibility, use default horizon
         # Always use binary signals (0=Short, 1=Long)
         y_series = pd.Series(y_raw, index=dfX.index[:len(y_raw)])
@@ -3200,14 +3245,33 @@ def main() -> Tuple[Dict, any, str]:
                 if fr_col in df_features_original.columns:
                     fr = df_features_original[fr_col].values
                 else:
-                    # Fallback: compute from close
-                    close = df_features_original["close"].values
-                    fr = np.roll(close, -default_h) / close - 1.0
+                    # Fallback: compute from close using pandas shift (NOT np.roll to avoid data leakage)
+                    # np.roll would cause circular shift and data leakage
+                    close_series = pd.Series(
+                        df_features_original["close"].values)
+                    fr = (close_series.shift(-default_h) / close_series -
+                          1.0).values
+                    # Set NaN values (at the end) to 0 to avoid issues
+                    fr = np.nan_to_num(fr, nan=0.0)
                 thr = float(args.label_threshold)
                 y_series = pd.Series((fr > thr).astype(int))
                 print(
                     f"[Label] Using binary signals (thr={thr}), positives={y_series.mean():.4f}"
                 )
+                # Check for suspicious label distribution
+                unique_labels, counts = np.unique(y_series.values,
+                                                  return_counts=True)
+                print(
+                    f"[Label] Label distribution: {dict(zip(unique_labels, counts))}"
+                )
+                if len(unique_labels) == 1:
+                    print(
+                        f"   ⚠️  WARNING: All labels are the same ({unique_labels[0]})! This will cause perfect fit."
+                    )
+                elif min(counts) / len(y_series) < 0.01:
+                    print(
+                        f"   ⚠️  WARNING: Extreme label imbalance! One class has only {min(counts)} samples ({min(counts)/len(y_series)*100:.2f}%)"
+                    )
             except Exception as exc:
                 print(
                     f"⚠️ Binary label remap failed, keep original labels: {exc}"
@@ -3216,18 +3280,109 @@ def main() -> Tuple[Dict, any, str]:
         # Stage 1: All original features (482) - missing/stability filter only
         print(f"\n[Stage 1] All original features: {len(dfX.columns)}")
         keep_all = []
+        excluded_missing = []
+        excluded_std = []
+        excluded_non_numeric = []
+
         for c in dfX.columns:
             # Skip non-numeric columns (like _symbol)
             if c == '_symbol' or not pd.api.types.is_numeric_dtype(dfX[c]):
+                excluded_non_numeric.append(c)
                 continue
             s = dfX[c]
-            if s.isna().mean() < 0.2 and s.std() > 1e-8:
+            missing_ratio = s.isna().mean()
+            std_val = s.std()
+            if missing_ratio < 0.2 and std_val > 1e-8:
                 keep_all.append(c)
+            else:
+                # Track why each feature was excluded
+                if missing_ratio >= 0.2:
+                    excluded_missing.append((c, missing_ratio))
+                if std_val <= 1e-8:
+                    excluded_std.append((c, std_val))
+
+        # Print summary of exclusions
+        if excluded_missing:
+            print(
+                f"   ⚠️  {len(excluded_missing)} features excluded due to high missing ratio (>=20%):"
+            )
+            for c, ratio in excluded_missing[:10]:  # Show first 10
+                print(f"      - {c}: {ratio:.2%} missing")
+            if len(excluded_missing) > 10:
+                print(f"      ... and {len(excluded_missing) - 10} more")
+
+        if excluded_std:
+            print(
+                f"   ⚠️  {len(excluded_std)} features excluded due to low variance (std <= 1e-8):"
+            )
+            for c, std_val in excluded_std[:10]:  # Show first 10
+                print(f"      - {c}: std={std_val:.2e}")
+            if len(excluded_std) > 10:
+                print(f"      ... and {len(excluded_std) - 10} more")
+
+        if excluded_non_numeric:
+            print(
+                f"   ℹ️  {len(excluded_non_numeric)} non-numeric columns skipped: {excluded_non_numeric}"
+            )
+
+        if len(keep_all) == 0:
+            error_msg = (
+                f"❌ No features passed Stage 1 filtering!\n"
+                f"   Total features: {len(dfX.columns)}\n"
+                f"   Excluded due to missing ratio >= 20%: {len(excluded_missing)}\n"
+                f"   Excluded due to low variance (std <= 1e-8): {len(excluded_std)}\n"
+                f"   Non-numeric columns: {len(excluded_non_numeric)}\n"
+                f"   All features were filtered out.\n"
+                f"\n"
+                f"This may indicate:\n"
+                f"  1. All features have >20% missing values\n"
+                f"  2. All features have zero variance (std <= 1e-8)\n"
+                f"  3. Feature engineering produced invalid features\n"
+                f"\n"
+                f"Please check:\n"
+                f"  - Feature engineering output\n"
+                f"  - Data quality (missing values, variance)\n"
+                f"  - Consider relaxing filter thresholds")
+            raise ValueError(error_msg)
+
         df_all = dfX[keep_all].fillna(method="ffill").fillna(
             method="bfill").fillna(0.0)
         X_all = df_all.values
+
+        # Check for constant features before scaling
+        constant_features = []
+        for i in range(X_all.shape[1]):
+            if np.std(X_all[:, i]) < 1e-10:
+                constant_features.append(keep_all[i] if i <
+                                         len(keep_all) else f"feature_{i}")
+        if constant_features:
+            print(
+                f"   ⚠️  WARNING: Found {len(constant_features)} constant features before scaling: {constant_features[:5]}"
+            )
+
         scaler_all = StandardScaler()
-        X_all_scaled = sanitize_features(scaler_all.fit_transform(X_all))
+        X_all_scaled_raw = scaler_all.fit_transform(X_all)
+
+        # Check for NaN/Inf after scaling
+        nan_count = np.isnan(X_all_scaled_raw).sum()
+        inf_count = np.isinf(X_all_scaled_raw).sum()
+        if nan_count > 0 or inf_count > 0:
+            print(
+                f"   ⚠️  WARNING: Found {nan_count} NaN and {inf_count} Inf values after scaling!"
+            )
+
+        X_all_scaled = sanitize_features(X_all_scaled_raw)
+
+        # Check for constant features after sanitization
+        constant_features_after = []
+        for i in range(X_all_scaled.shape[1]):
+            if np.std(X_all_scaled[:, i]) < 1e-10:
+                constant_features_after.append(
+                    keep_all[i] if i < len(keep_all) else f"feature_{i}")
+        if constant_features_after:
+            print(
+                f"   ⚠️  WARNING: Found {len(constant_features_after)} constant features after sanitization: {constant_features_after[:5]}"
+            )
         print(
             f"[DEBUG] Stage 1: {len(keep_all)} features after missing/stability filter"
         )
@@ -3843,6 +3998,98 @@ def main() -> Tuple[Dict, any, str]:
         X_train_reps = X_reps_scaled[train_indices]
         X_val_reps = X_reps_scaled[val_indices]
         X_test_reps = X_reps_scaled[test_indices]
+
+        # Diagnostic: Check label distribution and feature-label correlation
+        print(f"\n[DEBUG] Data split diagnostics:")
+        print(
+            f"   Train: {len(y_train)} samples, labels: {dict(zip(*np.unique(y_train, return_counts=True)))}"
+        )
+        print(
+            f"   Val: {len(y_val)} samples, labels: {dict(zip(*np.unique(y_val, return_counts=True)))}"
+        )
+        print(
+            f"   Test: {len(y_test)} samples, labels: {dict(zip(*np.unique(y_test, return_counts=True)))}"
+        )
+
+        # Check if any feature perfectly predicts the label
+        from scipy.stats import pointbiserialr
+        perfect_predictors = []
+        for i in range(min(20,
+                           X_train_all.shape[1])):  # Check first 20 features
+            try:
+                corr, pval = pointbiserialr(X_train_all[:, i], y_train)
+                if abs(corr) > 0.99:  # Near-perfect correlation
+                    feat_name = keep_all[i] if i < len(
+                        keep_all) else f"feature_{i}"
+                    perfect_predictors.append((feat_name, corr, pval))
+            except:
+                pass
+
+        if perfect_predictors:
+            print(
+                f"   ⚠️  WARNING: Found {len(perfect_predictors)} features with near-perfect correlation (>0.99) with labels!"
+            )
+            for feat_name, corr, pval in perfect_predictors[:5]:
+                print(f"      - {feat_name}: corr={corr:.4f}, p={pval:.2e}")
+
+        # Check if train and val labels are identical (would cause perfect fit)
+        if len(y_train) == len(y_val) and np.array_equal(y_train, y_val):
+            print(
+                f"   ⚠️  WARNING: Train and validation labels are identical! This will cause perfect fit."
+            )
+
+        # Check if train and val features are identical
+        if X_train_all.shape == X_val_all.shape and np.allclose(
+                X_train_all, X_val_all, rtol=1e-10):
+            print(
+                f"   ⚠️  WARNING: Train and validation features are identical! This will cause perfect fit."
+            )
+
+        # Check feature statistics
+        print(f"\n[DEBUG] Feature statistics (first 5 features):")
+        for i in range(min(5, X_train_all.shape[1])):
+            feat_name = keep_all[i] if i < len(keep_all) else f"feature_{i}"
+            feat_train = X_train_all[:, i]
+            feat_val = X_val_all[:, i]
+            print(f"   {feat_name}:")
+            print(
+                f"      Train: mean={feat_train.mean():.4f}, std={feat_train.std():.4f}, min={feat_train.min():.4f}, max={feat_train.max():.4f}"
+            )
+            print(
+                f"      Val: mean={feat_val.mean():.4f}, std={feat_val.std():.4f}, min={feat_val.min():.4f}, max={feat_val.max():.4f}"
+            )
+            # Check for constant features
+            if feat_train.std() < 1e-10:
+                print(
+                    f"      ⚠️  WARNING: Feature '{feat_name}' is constant in training set (std={feat_train.std():.2e})!"
+                )
+            if feat_val.std() < 1e-10:
+                print(
+                    f"      ⚠️  WARNING: Feature '{feat_name}' is constant in validation set (std={feat_val.std():.2e})!"
+                )
+
+        # Check if labels can be perfectly predicted by a simple rule
+        # Try to find if any single feature or combination can perfectly separate classes
+        print(f"\n[DEBUG] Checking for perfect separability:")
+        for i in range(min(10,
+                           X_train_all.shape[1])):  # Check first 10 features
+            feat_train = X_train_all[:, i]
+            # Check if feature values perfectly separate classes
+            feat_0 = feat_train[y_train == 0]
+            feat_1 = feat_train[y_train == 1]
+            if len(feat_0) > 0 and len(feat_1) > 0:
+                max_0 = feat_0.max()
+                min_1 = feat_1.min()
+                if max_0 < min_1 - 1e-10:  # Perfect separation
+                    feat_name = keep_all[i] if i < len(
+                        keep_all) else f"feature_{i}"
+                    print(
+                        f"   ⚠️  WARNING: Feature '{feat_name}' perfectly separates classes!"
+                    )
+                    print(
+                        f"      Class 0: max={max_0:.4f}, Class 1: min={min_1:.4f}"
+                    )
+                    break
 
         # Multi-horizon training (if enabled) - will be done after all 4 stages
         multi_horizon_results = {}

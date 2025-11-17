@@ -371,8 +371,7 @@ endif
 
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 24
-DIM_COMPARE_FEATURE_TYPE ?= baseline
-TIMEFRAME ?= 240T
+DIM_COMPARE_FEATURE_TYPE ?= baseline,default
 # FACTOR_COUNTS ?= 120,110,100,90,80,70,60,50,40,30,20,10,8,6,4
 FACTOR_COUNTS ?= 20,10,5
 # TIME_WINDOWS ?= 2020-01-01:2021-12-31,2022-01-01:2023-12-31,2023-01-01:2024-12-31,2025-01-01:2025-10-31
@@ -381,12 +380,14 @@ TIME_WINDOWS ?= 2025-01-01:2025-10-31
 # TIME_WINDOWS ?= 2020-01-01:2020-12-31,2021-01-01:2021-12-31,2022-01-01:2022-12-31,2023-01-01:2023-12-31,2024-01-01:2024-12-31,2025-01-01:2025-10-31
 GRID_SEARCH ?= 1
 
+DIM_COMPARE_TIMEFRAME ?= 240T
+
 dim-compare:
 	@echo "🔬 Comparing feature sets for $(SYMBOLS) ..."
-	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline TIMEFRAME=5T"
+	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline DIM_COMPARE_TIMEFRAME=5T"
 	@echo "       Multi-horizon training enabled: $(HORIZONS)"
 	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
-	@echo "       Timeframe: $(TIMEFRAME)"
+	@echo "       DIM_COMPARE_TIMEFRAME: $(DIM_COMPARE_TIMEFRAME)"
 	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
 	@echo "       Grid search: enabled (default)"
 	@echo "       Factor counts: $(FACTOR_COUNTS)"
@@ -400,7 +401,7 @@ dim-compare:
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOLS) \
 		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \
-		--timeframe $(TIMEFRAME) \
+		$(if $(DIM_COMPARE_TIMEFRAME),--timeframe $(DIM_COMPARE_TIMEFRAME)) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \

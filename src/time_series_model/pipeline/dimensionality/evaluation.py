@@ -72,21 +72,118 @@ def _generate_shap_outputs(
     sample_indices = rng.choice(X.shape[0], size=sample_size, replace=False)
     X_sample = X[sample_indices]
 
+    # Check if model predictions are constant (would cause SHAP=0)
+    model_info = {}
+    is_constant_output = False
+    
     try:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_sample)
+        predictions_sample = model.predict(X_sample)
+        pred_std = np.std(predictions_sample)
+        pred_mean = np.mean(predictions_sample)
+        pred_min = np.min(predictions_sample)
+        pred_max = np.max(predictions_sample)
+        
+        # Get model training info if available
+        best_iteration = getattr(model, "best_iteration", None)
+        current_iteration = getattr(model, "current_iteration", lambda: None)()
+        if best_iteration is None and current_iteration is not None:
+            best_iteration = current_iteration
+        
+        model_info = {
+            "prediction_mean": float(pred_mean),
+            "prediction_std": float(pred_std),
+            "prediction_min": float(pred_min),
+            "prediction_max": float(pred_max),
+            "best_iteration": int(best_iteration) if best_iteration is not None else None,
+            "sample_size": int(sample_size),
+        }
+        
+        if pred_std < 1e-10:
+            is_constant_output = True
+            print(f"\n   {'='*70}")
+            print(f"   ⚠️  CRITICAL WARNING: Model predictions are constant!")
+            print(f"   {'='*70}")
+            print(f"   Prediction statistics:")
+            print(f"      Mean: {pred_mean:.6f}")
+            print(f"      Std:  {pred_std:.2e} (should be > 0.01)")
+            print(f"      Min:  {pred_min:.6f}")
+            print(f"      Max:  {pred_max:.6f}")
+            print(f"   Model training info:")
+            print(f"      Best iteration: {best_iteration}")
+            print(f"   ")
+            print(f"   This means the model outputs the same value for all inputs.")
+            print(f"   SHAP values will be 0 because there's no variation to explain.")
+            print(f"   ")
+            print(f"   Possible causes:")
+            print(f"   1. ❌ Model only predicts one class (e.g., always predicts 1.0)")
+            print(f"      → Check model training logs for 'best_iteration=1'")
+            print(f"   2. ❌ Model didn't train properly (early stop at iteration 1)")
+            print(f"      → Check training loss/validation loss curves")
+            print(f"   3. ❌ Features don't contain enough information to distinguish classes")
+            print(f"      → Check feature-label correlation (should be > 0.1)")
+            print(f"   4. ❌ Class imbalance too severe")
+            print(f"      → Check label distribution (should be roughly balanced)")
+            print(f"   ")
+            print(f"   Diagnostic steps:")
+            print(f"   - Check model training logs for warnings")
+            print(f"   - Verify feature quality (feature-label correlation)")
+            print(f"   - Check label distribution (should have both classes)")
+            print(f"   - Review model parameters (min_data_in_leaf, learning_rate, etc.)")
+            print(f"   {'='*70}\n")
+            
+            # Still generate SHAP values but mark them as invalid
+            # This allows the pipeline to continue while documenting the issue
+            try:
+                explainer = shap.TreeExplainer(model)
+                shap_values = explainer.shap_values(X_sample)
+            except Exception as exc:
+                print(f"   ⚠️ SHAP computation failed: {exc}")
+                return None
+            
+            if isinstance(shap_values, list):
+                if len(shap_values) == 1:
+                    shap_array = shap_values[0]
+                else:
+                    # For binary classification, use the positive class
+                    shap_array = shap_values[-1]
+            else:
+                shap_array = shap_values
+            
+            # Verify SHAP values are indeed all zeros
+            shap_std = np.std(shap_array)
+            shap_mean = np.mean(np.abs(shap_array))
+            if shap_std < 1e-10:
+                print(f"   ⚠️  Confirmed: All SHAP values are zero!")
+                print(f"      SHAP std: {shap_std:.2e}")
+                print(f"      Mean absolute SHAP: {shap_mean:.2e}")
+                print(f"      This confirms the model output is constant and cannot be explained.")
+                model_info["shap_all_zero"] = True
+                model_info["shap_std"] = float(shap_std)
+                model_info["shap_mean_abs"] = float(shap_mean)
+            else:
+                model_info["shap_all_zero"] = False
+                model_info["shap_std"] = float(shap_std)
+                model_info["shap_mean_abs"] = float(shap_mean)
+        else:
+            # Normal case: predictions have variation
+            try:
+                explainer = shap.TreeExplainer(model)
+                shap_values = explainer.shap_values(X_sample)
+            except Exception as exc:
+                print(f"   ⚠️ SHAP computation failed: {exc}")
+                return None
+
+            if isinstance(shap_values, list):
+                if len(shap_values) == 1:
+                    shap_array = shap_values[0]
+                else:
+                    # For binary classification, use the positive class
+                    shap_array = shap_values[-1]
+            else:
+                shap_array = shap_values
     except Exception as exc:
         print(f"   ⚠️ SHAP computation failed: {exc}")
         return None
-
-    if isinstance(shap_values, list):
-        if len(shap_values) == 1:
-            shap_array = shap_values[0]
-        else:
-            # For binary classification, use the positive class
-            shap_array = shap_values[-1]
-    else:
-        shap_array = shap_values
 
     shap_dir = Path(output_dir) / "shap"
     shap_dir.mkdir(parents=True, exist_ok=True)
@@ -117,26 +214,85 @@ def _generate_shap_outputs(
         print(f"   ⚠️ Failed to render SHAP plots: {exc}")
 
     mean_abs_shap = np.abs(shap_array).mean(axis=0)
-    shap_ranking = sorted(
-        [{
-            "feature": feat,
-            "mean_abs_shap": float(val),
-            "rank": idx + 1,
-        } for idx, (feat, val) in enumerate(
-            sorted(
-                zip(feature_names, mean_abs_shap),
-                key=lambda kv: kv[1],
-                reverse=True,
-            ))],
-        key=lambda item: item["rank"],
-    )
+    
+    # Check if all SHAP values are zero
+    all_shap_zero = np.all(mean_abs_shap < 1e-10) or is_constant_output
+    
+    if all_shap_zero:
+        print(f"   ⚠️  WARNING: All SHAP values are zero!")
+        print(f"      This indicates the model output is constant and cannot be explained.")
+        print(f"      SHAP importance ranking will be meaningless.")
+        
+        # Create enhanced ranking with diagnostic info
+        shap_ranking = sorted(
+            [{
+                "feature": feat,
+                "mean_abs_shap": float(val),
+                "rank": idx + 1,
+                "warning": "Model output is constant - SHAP values are invalid",
+                "diagnostic": {
+                    "reason": "Model predictions are constant (all outputs identical)",
+                    "impact": "SHAP values cannot be computed meaningfully",
+                    "recommendation": "Fix model training issue before interpreting SHAP values"
+                }
+            } for idx, (feat, val) in enumerate(
+                sorted(
+                    zip(feature_names, mean_abs_shap),
+                    key=lambda kv: kv[1],
+                    reverse=True,
+                ))],
+            key=lambda item: item["rank"],
+        )
+        
+        # Add metadata at the top level
+        shap_metadata = {
+            "status": "invalid",
+            "reason": "model_output_constant",
+            "model_info": model_info,
+            "warning": "All SHAP values are zero because model output is constant. This indicates a model training problem.",
+            "features": shap_ranking
+        }
+    else:
+        shap_ranking = sorted(
+            [{
+                "feature": feat,
+                "mean_abs_shap": float(val),
+                "rank": idx + 1,
+            } for idx, (feat, val) in enumerate(
+                sorted(
+                    zip(feature_names, mean_abs_shap),
+                    key=lambda kv: kv[1],
+                    reverse=True,
+                ))],
+            key=lambda item: item["rank"],
+        )
+        
+        # Add metadata for valid SHAP values
+        shap_metadata = {
+            "status": "valid",
+            "model_info": model_info,
+            "features": shap_ranking
+        }
 
+    # Save both formats: legacy (features only) and enhanced (with metadata)
     with open(shap_dir / f"{prefix}_shap_importance.json",
               "w",
               encoding="utf-8") as f:
         json.dump(shap_ranking, f, indent=2)
+    
+    # Save enhanced version with metadata
+    with open(shap_dir / f"{prefix}_shap_importance_enhanced.json",
+              "w",
+              encoding="utf-8") as f:
+        json.dump(shap_metadata, f, indent=2)
 
-    print(f"   💾 SHAP summary saved to: {shap_dir}")
+    if all_shap_zero:
+        print(f"   💾 SHAP summary saved to: {shap_dir}")
+        print(f"      ⚠️  Note: SHAP values are invalid (model output constant)")
+        print(f"      → Check {prefix}_shap_importance_enhanced.json for diagnostic info")
+    else:
+        print(f"   💾 SHAP summary saved to: {shap_dir}")
+    
     return str(shap_dir)
 
 

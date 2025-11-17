@@ -66,12 +66,15 @@ def train_lightgbm_model(
 
         # Use binary classification
         objective = "binary"
-        metric = "binary_logloss"
+        # Use AUC metric for imbalanced data (more robust than binary_logloss)
+        # Can monitor multiple metrics: ["auc", "binary_logloss"]
+        metric = ["auc", "binary_logloss"]  # Monitor both AUC and logloss
         task_params = {}
     elif num_unique == 2:
         # Already binary classification
         objective = "binary"
-        metric = "binary_logloss"
+        # Use AUC metric for imbalanced data (more robust than binary_logloss)
+        metric = ["auc", "binary_logloss"]  # Monitor both AUC and logloss
         task_params = {}
     else:
         # Regression for predicting continuous returns

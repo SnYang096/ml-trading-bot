@@ -1234,12 +1234,51 @@ class BaselineFeatureEngineer:
             *,
             fit: bool = True,
             required_features: Optional[set] = None) -> pd.DataFrame:
-        """工程特征（合并后的版本，包含所有新特征）"""
+        """工程特征（合并后的版本，包含所有新特征）
+        
+        对于多资产数据，rolling 操作会按 symbol 分组进行，避免跨资产数据泄露。
+        """
         if not {"open", "high", "low", "close", "volume"}.issubset(df.columns):
             raise ValueError(
                 "DataFrame must contain open, high, low, close, volume columns"
             )
 
+        # Check if this is multi-asset data (has _symbol or symbol column)
+        has_symbol_col = "_symbol" in df.columns or "symbol" in df.columns
+        symbol_col = "_symbol" if "_symbol" in df.columns else (
+            "symbol" if "symbol" in df.columns else None)
+        is_multi_asset = has_symbol_col and df[symbol_col].nunique(
+        ) > 1 if symbol_col else False
+
+        if is_multi_asset:
+            # Multi-asset: process each symbol separately to avoid cross-asset leakage
+            print(
+                f"   🔒 Multi-asset detected ({df[symbol_col].nunique()} symbols): processing each symbol separately"
+            )
+            processed_groups = []
+            for symbol in df[symbol_col].unique():
+                symbol_mask = df[symbol_col] == symbol
+                symbol_df = df[symbol_mask].copy()
+                # Process this symbol's data
+                symbol_processed = self._engineer_features_single_asset(
+                    symbol_df, fit=fit, required_features=required_features)
+                processed_groups.append(symbol_processed)
+            # Combine all symbols
+            data = pd.concat(processed_groups, axis=0).sort_index()
+        else:
+            # Single asset: process directly
+            data = self._engineer_features_single_asset(
+                df.copy(), fit=fit, required_features=required_features)
+
+        return data
+
+    def _engineer_features_single_asset(
+            self,
+            df: pd.DataFrame,
+            *,
+            fit: bool = True,
+            required_features: Optional[set] = None) -> pd.DataFrame:
+        """工程特征（单资产版本，内部方法）"""
         data = df.copy()
 
         # Core ATR（按需计算）

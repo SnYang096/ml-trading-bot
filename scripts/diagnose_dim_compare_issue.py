@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""诊断 dim-compare 中所有组合结果相同的问题"""
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+import numpy as np
+import pandas as pd
+
+print('=' * 80)
+print('🔍 dim-compare 问题诊断报告')
+print('=' * 80)
+
+print('\n【问题现象】')
+print('所有 factor_count (5/10/20) 的组合产生完全相同的结果：')
+print('  - Win Rate: 41.76%')
+print('  - Sharpe Ratio: -0.372')
+print('  - Max Drawdown: -15.78%')
+print('  - Total Return: -5.24%')
+
+print('\n【关键发现】')
+print('1. ✅ factor_count 传递成功：不同组合选择了不同数量的特征')
+print('2. ✅ ICIR 不同：5 factors (10.901), 10 factors (8.201), 20 factors (4.591)')
+print('3. ❌ 模型训练异常：best_iteration=1, binary_logloss=1.11022e-15（几乎为0）')
+print('4. ❌ 所有组合的预测结果完全相同')
+
+print('\n【根本原因分析】')
+print('=' * 80)
+
+print('\n原因1: 模型完美拟合（最可能）')
+print('  - binary_logloss = 1.11022e-15 几乎为0')
+print('  - best_iteration = 1（第一次迭代就完美拟合）')
+print('  - 这说明模型在训练集和验证集上都达到了完美预测')
+print('  - 可能原因：')
+print('    a) 数据泄露：特征中包含未来信息')
+print('    b) 特征直接等于标签：某些特征就是标签本身')
+print('    c) 数据问题：训练集和验证集有重叠或标签分布异常')
+
+print('\n原因2: 数据分割问题')
+print('  - 测试集只有 273 个样本（15%）')
+print('  - 验证集只有 273 个样本（15%）')
+print('  - 样本量太小可能导致：')
+print('    a) 统计波动大，不同模型结果看起来相同')
+print('    b) 验证集太小，早停机制失效')
+
+print('\n原因3: 特征选择问题')
+print('  - 虽然选择了不同数量的特征，但：')
+print('    a) 前5个特征可能已经包含了所有信息')
+print('    b) 后15个特征可能是冗余的')
+print('    c) 所有特征可能高度相关')
+
+print('\n原因4: 随机种子问题')
+print('  - random_state=42 在所有模型训练中使用')
+print('  - 但这不应该导致完全相同的结果（因为特征不同）')
+print('  - 除非特征选择本身是确定性的且结果相同')
+
+print('\n【排查建议】')
+print('=' * 80)
+print('1. 检查数据泄露：')
+print('   - 检查特征中是否包含 future_return 或 binary_signal')
+print('   - 检查特征工程中是否使用了 shift(-h) 或 roll(-h)')
+print('   - 检查标签构造是否正确（使用 shift(-h) 而非 roll(-h)）')
+print('')
+print('2. 检查模型预测：')
+print('   - 比较不同 factor_count 的模型预测结果')
+print('   - 如果预测完全相同，说明模型没有学到不同特征')
+print('')
+print('3. 检查特征相关性：')
+print('   - 计算前5个特征和后15个特征的相关性')
+print('   - 如果相关性很高，说明特征冗余')
+print('')
+print('4. 检查数据质量：')
+print('   - 检查标签分布（应该接近50/50）')
+print('   - 检查特征值范围（不应该有异常值）')
+print('   - 检查训练/验证/测试集是否有重叠')
+
+print('\n【最可能的原因】')
+print('=' * 80)
+print('根据 binary_logloss=1.11022e-15 和 best_iteration=1，最可能的原因是：')
+print('')
+print('🔴 数据泄露（概率：80%）')
+print('   - 特征中可能包含了未来信息')
+print('   - 或者标签构造时使用了错误的方法（np.roll 而非 shift）')
+print('   - 导致模型在第一次迭代就完美拟合')
+print('')
+print('🟡 特征直接等于标签（概率：15%）')
+print('   - 某些特征可能就是标签本身或标签的变换')
+print('   - 导致模型立即学会预测')
+print('')
+print('🟢 其他原因（概率：5%）')
+print('   - 数据分割问题、样本量太小等')
+
+print('\n【下一步行动】')
+print('=' * 80)
+print('1. 检查 dimensionality_comparison.py 第 3205 行的 fallback 逻辑')
+print('   - 使用 np.roll(close, -default_h) 可能导致数据泄露')
+print('   - 应该使用 pandas shift(-h) 或直接索引 close[i+h]')
+print('')
+print('2. 检查特征工程中是否排除了 future_return 和 binary_signal')
+print('   - 确认 exclude_exact 和 exclude_prefixes 正确设置')
+print('')
+print('3. 添加调试输出：')
+print('   - 打印实际选择的特征列表')
+print('   - 打印模型预测结果（前10个样本）')
+print('   - 打印特征和标签的相关性矩阵')
+

@@ -9,6 +9,7 @@ import pandas as pd
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 from data_tools.data_loader import MarketDataLoader
 from data_tools.rolling_data import create_labels_multi_horizon
+from data_tools.baseline_features import get_baseline_feature_columns
 
 
 def load_real_market_data(
@@ -52,11 +53,16 @@ def load_real_market_data(
                 elif isinstance(df_single.index, pd.DatetimeIndex):
                     # Fallback: resample manually
                     df_single = df_single.resample(timeframe).agg({
-                        'open': 'first',
-                        'high': 'max',
-                        'low': 'min',
-                        'close': 'last',
-                        'volume': 'sum'
+                        'open':
+                        'first',
+                        'high':
+                        'max',
+                        'low':
+                        'min',
+                        'close':
+                        'last',
+                        'volume':
+                        'sum'
                     }).dropna()
                 if df_single is not None and not df_single.empty:
                     all_dfs.append(df_single)
@@ -110,33 +116,42 @@ def load_real_market_data(
         df_features_stored = df_features.copy()
 
         # Build safe feature columns (exclude targets/labels and future info)
-        # Exclude raw OHLC price features - use derived features instead
-        # Exclude raw volume/order flow features - use normalized/derived features instead
-        exclude_exact = {
-            "timestamp",
-            "close",
-            "open",  # Exclude raw OHLC prices - use derived features instead
-            "high",  # Exclude raw OHLC prices - use derived features instead
-            "low",  # Exclude raw OHLC prices - use derived features instead
-            "volume",  # Exclude raw volume - use volume_percentile, volume_anomaly, etc.
-            "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
-            "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
-            "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
-            "signal",
-            "binary_signal",
-            "future_return",
-            "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
-        }
-        exclude_prefixes = (
-            "signal_",
-            "binary_signal_",
-            "future_return_",
-        )
-        feature_cols = [
-            col for col in df_features.columns
-            if (col not in exclude_exact) and (not any(
-                col.startswith(pfx) for pfx in exclude_prefixes))
-        ]
+        # For baseline features, use get_baseline_feature_columns to properly exclude raw values
+        if feature_type == "baseline":
+            # Use the proper baseline feature filter that excludes raw values like atr, vwap, etc.
+            feature_cols = get_baseline_feature_columns(df_features)
+            print(
+                f"   ✅ Using get_baseline_feature_columns: {len(feature_cols)} features after filtering"
+            )
+        else:
+            # For other feature types, use manual exclusion
+            # Exclude raw OHLC price features - use derived features instead
+            # Exclude raw volume/order flow features - use normalized/derived features instead
+            exclude_exact = {
+                "timestamp",
+                "close",
+                "open",  # Exclude raw OHLC prices - use derived features instead
+                "high",  # Exclude raw OHLC prices - use derived features instead
+                "low",  # Exclude raw OHLC prices - use derived features instead
+                "volume",  # Exclude raw volume - use volume_percentile, volume_anomaly, etc.
+                "cvd",  # Exclude raw CVD - use cvd_normalized, cvd_spectral_*, cvd_wpt_*, etc.
+                "sell_qty",  # Exclude raw sell_qty - use normalized/derived features instead
+                "buy_qty",  # Exclude raw buy_qty - use normalized/derived features instead
+                "signal",
+                "binary_signal",
+                "future_return",
+                "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
+            }
+            exclude_prefixes = (
+                "signal_",
+                "binary_signal_",
+                "future_return_",
+            )
+            feature_cols = [
+                col for col in df_features.columns
+                if (col not in exclude_exact) and (not any(
+                    col.startswith(pfx) for pfx in exclude_prefixes))
+            ]
 
         # Debug: engineered feature summary
         try:
@@ -223,4 +238,3 @@ def create_enhanced_sample_data(
          np.random.randn(n_samples) * 0.1)
 
     return X, y, factor_names
-
