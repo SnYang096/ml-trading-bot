@@ -32,7 +32,7 @@ class FeatureEngineer:
         # 2) 衍生指标（会确保基础指标完备，并填补常用派生列）
         # 如果指定了required_features，只添加需要的衍生特征
         enriched = BaselineFeatureEngineer.add_common_derived_features(
-            talib_df, required_features)
+            talib_df, required_features, rolling_zscore_windows=[50, 288, 500])
 
         return enriched
 

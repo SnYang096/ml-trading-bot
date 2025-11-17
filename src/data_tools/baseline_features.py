@@ -27,23 +27,38 @@ import talib
 class BaselineFeatureEngineer:
     """Baseline SR and compression features (合并后的版本)"""
 
-    def __init__(self,
-                 percentile_window: int = 288,
-                 compression_threshold_pct: float = 0.2,
-                 feature_shift: int = 0,
-                 feature_clip_bound: float = 10.0,
-                 vwap_window: int = 160,
-                 enable_diagnostics: bool = False) -> None:
+    def __init__(
+        self,
+        percentile_window: int = 288,
+        compression_threshold_pct: float = 0.2,
+        feature_shift: int = 0,
+        feature_clip_bound: float = 10.0,
+        vwap_window: int = 160,
+        rolling_zscore_windows: List[
+            int] = None,  # NEW: Multiple windows for rolling z-score (Feature Stacking)
+        enable_diagnostics: bool = False
+    ) -> None:
         self.percentile_window = percentile_window
         self.compression_threshold_pct = compression_threshold_pct
         self.feature_shift = feature_shift
         self.feature_clip_bound = float(feature_clip_bound)
         self.vwap_window = vwap_window
+        # Default windows: [50 (short-term), 288 (24h), 500 (long-term)]
+        # For 5-minute K-line: 50≈4h, 288=24h, 500≈2 days
+        if rolling_zscore_windows is None:
+            self.rolling_zscore_windows = [50, 288, 500]
+        else:
+            self.rolling_zscore_windows = rolling_zscore_windows
         self.enable_diagnostics = enable_diagnostics
         self.diagnostic_report: Dict[str, Dict[str, float]] = {}
 
         if self.feature_clip_bound <= 0:
             raise ValueError("feature_clip_bound must be positive")
+        if not self.rolling_zscore_windows or not all(
+                w > 0 for w in self.rolling_zscore_windows):
+            raise ValueError(
+                "rolling_zscore_windows must be a non-empty list of positive integers"
+            )
 
     # ========================================================================
     # 基础指标计算静态方法
@@ -784,7 +799,8 @@ class BaselineFeatureEngineer:
     @staticmethod
     def add_common_derived_features(
             df: pd.DataFrame,
-            required_features: Optional[set] = None) -> pd.DataFrame:
+            required_features: Optional[set] = None,
+            rolling_zscore_windows: List[int] = None) -> pd.DataFrame:
         """
         添加常用衍生特征（优化版：支持按需计算，不强制计算所有基础指标）
         """
@@ -877,7 +893,7 @@ class BaselineFeatureEngineer:
                                               close_safe).replace(
                                                   [np.inf, -np.inf], np.nan)
 
-        # 归一化特征
+        # 归一化特征（价格归一化，保留用于向后兼容）
         # 注意：RSI 本身就是 0~100 的标准范围，不需要归一化
         if not required_features or "macd_normalized" in required_features:
             if "macd_normalized" not in result.columns and "macd" in result.columns:
@@ -890,6 +906,97 @@ class BaselineFeatureEngineer:
                 result["atr_normalized"] = (result["atr"] /
                                             close.replace(0, np.nan)).replace(
                                                 [np.inf, -np.inf], np.nan)
+
+        # ========== 滚动 Z-score 特征（推荐：比价格归一化更优）==========
+        # 使用多个滚动窗口标准化（Feature Stacking），让模型学习不同时间尺度的信息
+        # 默认窗口：[50 (短期), 288 (24h), 500 (长期)]
+        # 对于 5 分钟 K 线：50≈4h, 288=24h, 500≈2天
+        if rolling_zscore_windows is None:
+            rolling_zscore_windows = [50, 288, 500]
+
+        # Helper function to generate z-score features for multiple windows
+        def add_multi_window_zscore(base_col: str, feature_prefix: str,
+                                    windows: List[int],
+                                    required_features: Optional[set]) -> None:
+            """为某个基础指标生成多个窗口的 z-score 特征"""
+            if base_col not in result.columns:
+                return
+
+            for window in windows:
+                zscore_col = f"{feature_prefix}_zscore_w{window}"
+                # Check if this specific feature is required
+                if required_features is not None:
+                    # Check if any zscore variant is requested or this specific one
+                    if not any(f"{feature_prefix}_zscore" in f
+                               for f in required_features):
+                        continue
+                    if zscore_col not in required_features and not any(
+                            f.startswith(f"{feature_prefix}_zscore")
+                            and f.endswith(f"_w{window}")
+                            for f in required_features):
+                        # If specific windows are requested, only generate those
+                        if any(f"{feature_prefix}_zscore_w" in f
+                               for f in required_features):
+                            continue
+
+                if zscore_col not in result.columns:
+                    result[
+                        zscore_col] = BaselineFeatureEngineer._rolling_zscore(
+                            result[base_col], window=window)
+
+        # 1. RSI 滚动 Z-score（虽然 RSI 本身是 0-100，但 Z-score 能突出极端值）
+        # 生成多个窗口：rsi_zscore_w50, rsi_zscore_w288, rsi_zscore_w500
+        if required_features is None or any(
+                "rsi_zscore" in f for f in required_features or [""]):
+            add_multi_window_zscore("rsi", "rsi", rolling_zscore_windows,
+                                    required_features)
+
+        # 2. MACD 滚动 Z-score（MACD 绝对值随价格变化，Z-score 标准化更优）
+        if required_features is None or any(
+                "macd_zscore" in f for f in required_features or [""]):
+            add_multi_window_zscore("macd", "macd", rolling_zscore_windows,
+                                    required_features)
+
+        # 3. MACD Histogram 滚动 Z-score（波动更大，Z-score 能突出极端动量变化）
+        if required_features is None or any(
+                "macd_histogram_zscore" in f
+                for f in required_features or [""]):
+            add_multi_window_zscore("macd_histogram", "macd_histogram",
+                                    rolling_zscore_windows, required_features)
+
+        # 4. Momentum 滚动 Z-score（不同资产的 ROC 量级差异巨大，Z-score 必须）
+        for period in [5, 10, 20]:
+            momentum_col = f"momentum_{period}"
+            if required_features is None or any(
+                    f"momentum_{period}_zscore" in f
+                    for f in required_features or [""]):
+                add_multi_window_zscore(momentum_col, f"momentum_{period}",
+                                        rolling_zscore_windows,
+                                        required_features)
+
+        # 5. ATR 滚动 Z-score（ATR 绝对值与价格成正比，Z-score 可判断波动率异常）
+        if required_features is None or any(
+                "atr_zscore" in f for f in required_features or [""]):
+            add_multi_window_zscore("atr", "atr", rolling_zscore_windows,
+                                    required_features)
+
+        # 6. Volume 滚动 Z-score（交易量绝对值与流动性相关，Z-score 捕捉相对变化）
+        if required_features is None or any(
+                "volume_zscore" in f for f in required_features or [""]):
+            add_multi_window_zscore("volume", "volume", rolling_zscore_windows,
+                                    required_features)
+
+        # 7. BB Width 滚动 Z-score（布林带宽度反映波动性，Z-score 标准化）
+        if required_features is None or any(
+                "bb_width_zscore" in f for f in required_features or [""]):
+            add_multi_window_zscore("bb_width", "bb_width",
+                                    rolling_zscore_windows, required_features)
+
+        # 8. Volatility 滚动 Z-score（波动率指标的 Z-score）
+        if required_features is None or any(
+                "volatility_zscore" in f for f in required_features or [""]):
+            add_multi_window_zscore("volatility", "volatility",
+                                    rolling_zscore_windows, required_features)
 
         # Momentum features
         for period in [5, 10, 20]:
@@ -982,6 +1089,37 @@ class BaselineFeatureEngineer:
 
         return series.rolling(window=window, min_periods=1).apply(_rank,
                                                                   raw=True)
+
+    @staticmethod
+    def _rolling_zscore(series: pd.Series,
+                        window: int,
+                        min_periods: int = None) -> pd.Series:
+        """
+        计算滚动 Z-score（标准化）
+        
+        Args:
+            series: 输入序列
+            window: 滚动窗口大小
+            min_periods: 最小周期数（默认：window // 10，至少 10）
+        
+        Returns:
+            滚动 Z-score 序列
+        """
+        if min_periods is None:
+            min_periods = max(10, window // 10)
+
+        rolling_mean = series.rolling(window=window,
+                                      min_periods=min_periods).mean()
+        rolling_std = series.rolling(window=window,
+                                     min_periods=min_periods).std()
+
+        # 计算 Z-score: (x - mean) / std
+        zscore = (series - rolling_mean) / rolling_std.replace(0, np.nan)
+
+        # 处理 inf 和 NaN：将 inf 替换为 NaN，然后保留 NaN（不填充，让下游处理）
+        zscore = zscore.replace([np.inf, -np.inf], np.nan)
+
+        return zscore
 
     @staticmethod
     def _trend_r2(prices: pd.Series,
@@ -1565,6 +1703,12 @@ class BaselineFeatureEngineer:
             data = BaselineFeatureEngineer.add_price_volume_relative_features(
                 data, required_features)
 
+        # 常用衍生特征（包括多个窗口的滚动 Z-score）
+        data = BaselineFeatureEngineer.add_common_derived_features(
+            data,
+            required_features,
+            rolling_zscore_windows=self.rolling_zscore_windows)
+
         # 如果指定了required_features，只保留需要的特征
         if required_features is not None:
             data_cols = {
@@ -1597,6 +1741,7 @@ class BaselineFeatureEngineer:
             "compression_threshold_pct": self.compression_threshold_pct,
             "vwap_window": self.vwap_window,
             "feature_clip_bound": self.feature_clip_bound,
+            "rolling_zscore_windows": self.rolling_zscore_windows,
         }
         with open(path, "wb") as f:
             pickle.dump(scalers_data, f)
@@ -1613,6 +1758,17 @@ class BaselineFeatureEngineer:
             "compression_threshold_pct", 0.2)
         self.vwap_window = scalers_data.get("vwap_window", 160)
         self.feature_clip_bound = scalers_data.get("feature_clip_bound", 10.0)
+        # Backward compatibility: support both old single window and new multiple windows
+        if "rolling_zscore_windows" in scalers_data:
+            self.rolling_zscore_windows = scalers_data[
+                "rolling_zscore_windows"]
+        elif "rolling_zscore_window" in scalers_data:
+            # Migrate from old single window to new multiple windows
+            old_window = scalers_data["rolling_zscore_window"]
+            self.rolling_zscore_windows = [50, old_window,
+                                           500]  # Add short and long term
+        else:
+            self.rolling_zscore_windows = [50, 288, 500]  # Default
         print(f"✅ Baseline scalers loaded from: {path}")
 
 
@@ -1660,6 +1816,8 @@ def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
         "signal",
         "binary_signal",
         "future_return",
+        # Note: _symbol is now included as a categorical feature (not excluded)
+        # This allows the model to learn both shared patterns and asset-specific behavior
         # 排除原始布林带值（有量纲），保留归一化的 bb_position 和 bb_width
         "bb_upper",
         "bb_lower",

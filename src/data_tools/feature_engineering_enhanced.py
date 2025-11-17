@@ -1474,7 +1474,7 @@ class EnhancedFeatureEngineer:
 
     def add_basic_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Ensure baseline indicators and shared derived features are present."""
-        return BaselineFeatureEngineer.add_common_derived_features(data)
+        return BaselineFeatureEngineer.add_common_derived_features(data, rolling_zscore_windows=[50, 288, 500])
 
     def _ensure_orderflow_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """

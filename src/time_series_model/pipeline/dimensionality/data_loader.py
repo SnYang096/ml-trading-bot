@@ -107,10 +107,26 @@ def load_real_market_data(
             horizons_list = [1]
 
         # Create multi-horizon labels
+        # Use rolling rank percentile (RECOMMENDED) to avoid absolute thresholds
+        # This adapts to market conditions and prevents label imbalance in low-volatility periods
         print(
             f"   Creating multi-horizon labels for horizons: {horizons_list}")
-        df_features = create_labels_multi_horizon(df_features,
-                                                  horizons=horizons_list)
+
+        # rank_window will be auto-calculated based on horizon (horizon * 20, min 100)
+        # This ensures the ranking window is proportional to the prediction horizon
+        # For example: horizon=1 → rank_window=100, horizon=5 → rank_window=100, horizon=10 → rank_window=200
+
+        df_features = create_labels_multi_horizon(
+            df_features,
+            horizons=horizons_list,
+            use_rank_percentile=True,  # RECOMMENDED: Use rolling rank percentile
+            rank_window=
+            None,  # Auto-calculate based on horizon (horizon * 20, min 100)
+            top_percentile=0.7,  # Top 30% = Long
+            bottom_percentile=0.3,  # Bottom 30% = Short
+            use_risk_adjusted=False,  # Disabled when using rank percentile
+            use_quantile_threshold=False,  # Disabled when using rank percentile
+        )
 
         # Store original df_features for multi-horizon label creation
         df_features_stored = df_features.copy()
@@ -165,12 +181,53 @@ def load_real_market_data(
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
-        y = df_features[f"binary_signal_{default_horizon}"].dropna(
-        ).values  # Use binary signal (0=Short, 1=Long)
+
+        # CRITICAL: Use forward fill for labels instead of dropna to prevent sample depletion
+        # Reference: Prevent over-cleaning that causes sample depletion
+        # Only drop NaN at the very end (where future_return cannot be computed)
+        # Use 3-class signal (0=Hold, 1=Long, 2=Short) instead of binary
+        y_series = df_features[f"signal_{default_horizon}"].copy()
+
+        # Check sample size before and after cleaning
+        initial_samples = len(y_series)
+        valid_samples = y_series.notna().sum()
+        print(
+            f"   📊 Label cleaning: {initial_samples} total samples, {valid_samples} valid samples ({valid_samples/initial_samples*100:.1f}%)"
+        )
+
+        # For labels, we need to drop NaN (can't predict without labels)
+        # But check if we're losing too many samples
+        MIN_SAMPLES_REQUIRED = 10000
+        if valid_samples < MIN_SAMPLES_REQUIRED:
+            print(
+                f"   ⚠️  WARNING: Only {valid_samples} valid samples after label cleaning (minimum: {MIN_SAMPLES_REQUIRED})"
+            )
+            print(f"      This may indicate:")
+            print(f"      1. Too many NaN labels (check label generation)")
+            print(f"      2. Data period too short")
+            print(f"      3. Horizon too long (future_return not available)")
+            print(
+                f"      → Consider using shorter horizons or checking data quality"
+            )
+        else:
+            print(
+                f"   ✅ Sample size check passed: {valid_samples} >= {MIN_SAMPLES_REQUIRED}"
+            )
+
+        y = y_series.dropna().values  # Use binary signal (0=Short, 1=Long)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
         y = y[:min_len]
+
+        # Final sample size check
+        if len(y) < MIN_SAMPLES_REQUIRED:
+            print(
+                f"   ⚠️  WARNING: Final sample size {len(y)} < {MIN_SAMPLES_REQUIRED}"
+            )
+            print(
+                f"      Model training may be unreliable with insufficient samples"
+            )
 
         print(f"✅ Real data loaded: {X.shape}, {y.shape}")
         print(

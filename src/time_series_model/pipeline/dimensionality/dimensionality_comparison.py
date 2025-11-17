@@ -168,10 +168,25 @@ def load_real_market_data(
             horizons_list = [1]
 
         # Create multi-horizon labels
+        # Use rolling rank percentile (RECOMMENDED) to avoid absolute thresholds
+        # This adapts to market conditions and prevents label imbalance in low-volatility periods
         print(
             f"   Creating multi-horizon labels for horizons: {horizons_list}")
-        df_features = create_labels_multi_horizon(df_features,
-                                                  horizons=horizons_list)
+
+        # rank_window will be auto-calculated based on horizon (horizon * 20, min 100)
+        # This ensures the ranking window is proportional to the prediction horizon
+        # For example: horizon=1 → rank_window=100, horizon=5 → rank_window=100, horizon=10 → rank_window=200
+
+        df_features = create_labels_multi_horizon(
+            df_features,
+            horizons=horizons_list,
+            use_rank_percentile=True,  # RECOMMENDED: Use rolling rank percentile
+            rank_window=
+            None,  # Auto-calculate based on horizon (horizon * 20, min 100)
+            top_percentile=0.7,  # Top 30% = Long
+            bottom_percentile=0.3,  # Bottom 30% = Short
+            use_risk_adjusted=False,  # Disabled when using rank percentile
+        )
 
         # Store original df_features for multi-horizon label creation
         df_features_stored = df_features.copy()
@@ -218,7 +233,8 @@ def load_real_market_data(
                 "signal",  # Single-horizon label (legacy, e.g., signal)
                 "binary_signal",
                 "future_return",
-                "_symbol",  # Exclude symbol identifier (used for rank-based IC only)
+                # Note: _symbol is now included as a categorical feature (not excluded)
+                # This allows the model to learn both shared patterns and asset-specific behavior
             }
             exclude_prefixes = (
                 "signal_",  # Multi-horizon labels (e.g., signal_15)
@@ -243,12 +259,49 @@ def load_real_market_data(
 
         # Use first horizon for backward compatibility
         default_horizon = horizons_list[0]
-        y = df_features[f"binary_signal_{default_horizon}"].dropna(
-        ).values  # Use binary signal (0=Short, 1=Long)
+
+        # CRITICAL: Check sample size before cleaning labels
+        # Use 3-class signal (0=Hold, 1=Long, 2=Short) instead of binary
+        y_series = df_features[f"signal_{default_horizon}"].copy()
+        initial_samples = len(y_series)
+        valid_samples = y_series.notna().sum()
+        print(
+            f"   📊 Label cleaning: {initial_samples} total samples, {valid_samples} valid samples ({valid_samples/initial_samples*100:.1f}%)"
+        )
+
+        # For labels, we need to drop NaN (can't predict without labels)
+        # But check if we're losing too many samples
+        MIN_SAMPLES_REQUIRED = 10000
+        if valid_samples < MIN_SAMPLES_REQUIRED:
+            print(
+                f"   ⚠️  WARNING: Only {valid_samples} valid samples after label cleaning (minimum: {MIN_SAMPLES_REQUIRED})"
+            )
+            print(f"      This may indicate:")
+            print(f"      1. Too many NaN labels (check label generation)")
+            print(f"      2. Data period too short")
+            print(f"      3. Horizon too long (future_return not available)")
+            print(
+                f"      → Consider using shorter horizons or checking data quality"
+            )
+        else:
+            print(
+                f"   ✅ Sample size check passed: {valid_samples} >= {MIN_SAMPLES_REQUIRED}"
+            )
+
+        y = y_series.dropna().values  # Use binary signal (0=Short, 1=Long)
 
         min_len = min(len(X), len(y))
         X = X[:min_len]
         y = y[:min_len]
+
+        # Final sample size check
+        if len(y) < MIN_SAMPLES_REQUIRED:
+            print(
+                f"   ⚠️  WARNING: Final sample size {len(y)} < {MIN_SAMPLES_REQUIRED}"
+            )
+            print(
+                f"      Model training may be unreliable with insufficient samples"
+            )
 
         print(f"✅ Real data loaded: {X.shape}, {y.shape}")
         print(
@@ -453,34 +506,45 @@ def evaluate_model_performance(
 
     predictions = model.predict(X_eval)
 
-    # Binary classification: LightGBM returns probability array for binary classification
-    # Shape: (n_samples, 2) for binary classification, (n_samples,) for regression
+    # Detect task type based on predictions shape and labels
+    # LightGBM multiclass: (n_samples, num_classes) for num_classes > 2
+    # LightGBM binary: (n_samples, 2) or (n_samples,)
+    # LightGBM regression: (n_samples,)
+    is_multiclass = predictions.ndim == 2 and predictions.shape[1] > 2
     is_binary = predictions.ndim == 2 and predictions.shape[1] == 2
-    if is_binary:
-        # Binary: convert probability array to class predictions
-        predictions_class = np.argmax(predictions, axis=1)
-        predictions_for_metrics = predictions_class
-        predictions_to_store = predictions_class
-        probabilities = predictions
-    else:
-        # Regression: use predictions as-is
-        predictions_for_metrics = predictions
-        predictions_to_store = predictions
-        probabilities = None
-
-    # Binary classification labels
+    is_regression = predictions.ndim == 1 or (predictions.ndim == 2 and predictions.shape[1] == 1)
+    
+    # Detect label type
     is_binary_classification = False
+    is_multiclass_classification = False
     if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
         unique_eval = np.unique(y_eval)
         if np.all(np.isin(unique_eval, [0, 1])):
             y_eval_binary = y_eval.astype(int)
             is_binary_classification = True
+        elif len(unique_eval) > 2 and np.all(np.isin(unique_eval, [0, 1, 2])):
+            # Multiclass: 0=Hold, 1=Long, 2=Short
+            is_multiclass_classification = True
         else:
             y_eval_binary = None
     else:
         y_eval_binary = None
 
-    if is_binary_classification:
+    # Handle predictions based on task type
+    if is_multiclass:
+        # Multiclass: convert probability array to class predictions
+        predictions_class = np.argmax(predictions, axis=1)
+        predictions_for_metrics = predictions_class
+        predictions_to_store = predictions_class
+        probabilities = predictions
+    elif is_binary:
+        # Binary: convert probability array to class predictions
+        predictions_class = np.argmax(predictions, axis=1)
+        predictions_for_metrics = predictions_class
+        predictions_to_store = predictions_class
+        probabilities = predictions
+    elif is_binary_classification:
+        # Binary classification with 1D predictions (legacy)
         if predictions.ndim == 1:
             probabilities = predictions
         elif predictions.ndim == 2 and predictions.shape[1] == 1:
@@ -492,19 +556,29 @@ def evaluate_model_performance(
         predictions_class = (probabilities >= 0.5).astype(int)
         predictions_for_metrics = predictions_class
         predictions_to_store = predictions_class
+    else:
+        # Regression: use predictions as-is
+        predictions_for_metrics = predictions.flatten() if predictions.ndim > 1 else predictions
+        predictions_to_store = predictions_for_metrics
+        probabilities = None
 
     # Basic numeric metrics
-    mse = mean_squared_error(
-        y_eval if not is_binary_classification else y_eval_binary,
-        predictions_for_metrics)
+    # For classification tasks, use class predictions; for regression, use raw predictions
+    if is_multiclass_classification or is_binary_classification:
+        target_for_metrics = y_eval  # Use original labels (already class indices)
+    else:
+        target_for_metrics = y_eval
+    
+    # Ensure predictions_for_metrics is 1D for metrics calculation
+    if predictions_for_metrics.ndim > 1:
+        predictions_for_metrics = predictions_for_metrics.flatten()
+    
+    mse = mean_squared_error(target_for_metrics, predictions_for_metrics)
     rmse = np.sqrt(mse)
-    mae = mean_absolute_error(
-        y_eval if not is_binary_classification else y_eval_binary,
-        predictions_for_metrics)
+    mae = mean_absolute_error(target_for_metrics, predictions_for_metrics)
     # Calculate R² for regression metrics
-    target_for_r2 = (y_eval if not is_binary_classification else y_eval_binary)
-    r2 = r2_score(target_for_r2, predictions_for_metrics) if len(
-        np.unique(target_for_r2)) > 1 else 0.0
+    r2 = r2_score(target_for_metrics, predictions_for_metrics) if len(
+        np.unique(target_for_metrics)) > 1 else 0.0
 
     print(f"📊 {model_name} Performance:")
     print(f"  R²: {r2:.4f}")
@@ -521,7 +595,63 @@ def evaluate_model_performance(
 
     # Add financial or directional metrics
     if include_financial_metrics:
-        if is_binary_classification:
+        if is_multiclass_classification:
+            # Multiclass classification: compute win rate (0=Hold, 1=Long, 2=Short)
+            y_pred_cls = predictions_class.astype(int)
+            y_true_cls = y_eval.astype(int)
+
+            # Calculate overall accuracy
+            win_rate = float(np.mean(y_pred_cls == y_true_cls))
+
+            # Long predictions win rate (predicted Long and actually Long)
+            long_mask = y_pred_cls == 1
+            long_total = int(np.sum(long_mask))
+            if long_total > 0:
+                long_correct = np.sum((y_pred_cls == 1) & (y_true_cls == 1))
+                long_win_rate = float(long_correct / long_total)
+            else:
+                long_win_rate = 0.0
+
+            # Short predictions win rate (predicted Short and actually Short)
+            short_mask = y_pred_cls == 2
+            short_total = int(np.sum(short_mask))
+            if short_total > 0:
+                short_correct = np.sum((y_pred_cls == 2) & (y_true_cls == 2))
+                short_win_rate = float(short_correct / short_total)
+            else:
+                short_win_rate = 0.0
+            
+            # Hold predictions (for completeness)
+            hold_mask = y_pred_cls == 0
+            hold_total = int(np.sum(hold_mask))
+            if hold_total > 0:
+                hold_correct = np.sum((y_pred_cls == 0) & (y_true_cls == 0))
+                hold_win_rate = float(hold_correct / hold_total)
+            else:
+                hold_win_rate = 0.0
+
+            fm = results.setdefault("financial_metrics", {})
+            fm["win_rate"] = win_rate
+            fm["long_win_rate"] = long_win_rate
+            fm["short_win_rate"] = short_win_rate
+            fm["hold_win_rate"] = hold_win_rate
+
+            # For classification tasks, calculate Sharpe Ratio and Max Drawdown
+            # Try to use real backtest if price data is available, otherwise use win_rate as proxy
+            if price_data is not None and 'close' in price_data.columns:
+                try:
+                    # Use real backtest with actual price data
+                    if len(price_data) == len(y_pred_cls):
+                        # Use functions imported at top of file
+                        # calculate_strategy_returns_from_predictions already supports multiclass (0=Hold, 1=Long, 2=Short)
+                        strategy_returns = calculate_strategy_returns_from_predictions(
+                            y_pred_cls, price_data, horizon=1)
+                        financial_metrics = calculate_financial_metrics_from_returns(
+                            strategy_returns)
+                        fm.update(financial_metrics)
+                except Exception as e:
+                    print(f"⚠️  Warning: Failed to calculate financial metrics: {e}")
+        elif is_binary_classification:
             # Binary classification: compute win rate (0=Short, 1=Long)
             y_pred_cls = predictions_class.astype(int)
             y_true_cls = y_eval_binary.astype(int)
@@ -3235,9 +3365,19 @@ def main() -> Tuple[Dict, any, str]:
         # For backward compatibility, use default horizon
         # Always use binary signals (0=Short, 1=Long)
         y_series = pd.Series(y_raw, index=dfX.index[:len(y_raw)])
-        # Remap labels to 2-class using future_return threshold (default: always use binary)
-        use_binary = getattr(args, 'binary_signals', True)  # Default to True
-        if use_binary:
+
+        # CRITICAL: Check sample size before any cleaning
+        initial_samples = len(y_series)
+        valid_samples = y_series.notna().sum()
+        print(f"\n   📊 Label Sample Size Check (before cleaning):")
+        print(f"      Total samples: {initial_samples}")
+        print(
+            f"      Valid (non-NaN) samples: {valid_samples} ({valid_samples/initial_samples*100:.1f}%)"
+        )
+        # Use 3-class signal (0=Hold, 1=Long, 2=Short) - no remapping needed
+        # Keep y_series as is (already 3-class from signal_{horizon})
+        use_binary = False  # Always use 3-class now
+        if False:  # Disabled: no longer remapping to binary
             try:
                 # Use first horizon's future return if available
                 default_h = horizons[0] if horizons else 1
@@ -3277,6 +3417,25 @@ def main() -> Tuple[Dict, any, str]:
                     f"⚠️ Binary label remap failed, keep original labels: {exc}"
                 )
 
+        # CRITICAL: Check sample size after label processing
+        final_valid_samples = y_series.notna().sum()
+        MIN_SAMPLES_REQUIRED = 10000
+        if final_valid_samples < MIN_SAMPLES_REQUIRED:
+            print(
+                f"\n   🚨 CRITICAL WARNING: Only {final_valid_samples} valid samples after label processing (minimum: {MIN_SAMPLES_REQUIRED})"
+            )
+            print(f"      This may indicate:")
+            print(f"      1. Too many NaN labels (check label generation)")
+            print(f"      2. Data period too short")
+            print(f"      3. Horizon too long (future_return not available)")
+            print(
+                f"      → Consider using shorter horizons or checking data quality"
+            )
+        else:
+            print(
+                f"   ✅ Label sample size check passed: {final_valid_samples} >= {MIN_SAMPLES_REQUIRED}"
+            )
+
         # Stage 1: All original features (482) - missing/stability filter only
         print(f"\n[Stage 1] All original features: {len(dfX.columns)}")
         keep_all = []
@@ -3284,11 +3443,26 @@ def main() -> Tuple[Dict, any, str]:
         excluded_std = []
         excluded_non_numeric = []
 
+        # Handle categorical features (like _symbol) separately
+        categorical_features = []
         for c in dfX.columns:
-            # Skip non-numeric columns (like _symbol)
-            if c == '_symbol' or not pd.api.types.is_numeric_dtype(dfX[c]):
+            # Handle _symbol as categorical feature (not numeric)
+            if c == '_symbol':
+                # Check if _symbol has valid values
+                if dfX[c].notna().sum() > 0:
+                    categorical_features.append(c)
+                    keep_all.append(c)  # Include _symbol in features
+                    print(f"   ✅ Including '{c}' as categorical feature")
+                else:
+                    excluded_non_numeric.append(c)
+                continue
+
+            # Skip other non-numeric columns
+            if not pd.api.types.is_numeric_dtype(dfX[c]):
                 excluded_non_numeric.append(c)
                 continue
+
+            # Process numeric features
             s = dfX[c]
             missing_ratio = s.isna().mean()
             std_val = s.std()
@@ -3345,23 +3519,113 @@ def main() -> Tuple[Dict, any, str]:
                 f"  - Consider relaxing filter thresholds")
             raise ValueError(error_msg)
 
-        df_all = dfX[keep_all].fillna(method="ffill").fillna(
+        # Separate categorical and numeric features
+        # Categorical features should not be standardized
+        numeric_features = [
+            c for c in keep_all if c not in categorical_features
+        ]
+        cat_features_in_keep = [
+            c for c in categorical_features if c in keep_all
+        ]
+
+        # Prepare numeric features (standardize)
+        # CRITICAL: Use forward fill (ffill) for key features instead of dropping rows
+        # This prevents sample depletion from over-cleaning
+        # Strategy: ffill -> bfill -> fillna(0.0) to preserve maximum samples
+        initial_numeric_samples = len(dfX)
+        df_numeric = dfX[numeric_features].fillna(method="ffill").fillna(
             method="bfill").fillna(0.0)
+
+        # Check sample retention after filling
+        final_numeric_samples = len(df_numeric)
+        if final_numeric_samples < initial_numeric_samples:
+            print(
+                f"   ⚠️  WARNING: Lost {initial_numeric_samples - final_numeric_samples} samples during numeric feature filling"
+            )
+        else:
+            print(
+                f"   ✅ Numeric feature filling preserved all {final_numeric_samples} samples (using ffill/bfill/fillna)"
+            )
+
+        # Verify minimum sample requirement
+        MIN_SAMPLES_REQUIRED = 10000
+        if final_numeric_samples < MIN_SAMPLES_REQUIRED:
+            print(
+                f"   🚨 CRITICAL WARNING: Only {final_numeric_samples} samples after feature cleaning (minimum: {MIN_SAMPLES_REQUIRED})"
+            )
+            print(
+                f"      Model training may be unreliable with insufficient samples"
+            )
+            print(f"      → Consider:")
+            print(f"         1. Using longer data period")
+            print(f"         2. Relaxing feature filtering thresholds")
+            print(f"         3. Using more aggressive filling strategies")
+        else:
+            print(
+                f"   ✅ Sample size check passed: {final_numeric_samples} >= {MIN_SAMPLES_REQUIRED}"
+            )
+
+        # Prepare categorical features (encode as integers, don't standardize)
+        df_categorical = None
+        if cat_features_in_keep:
+            from sklearn.preprocessing import LabelEncoder
+            df_categorical = dfX[cat_features_in_keep].copy()
+            # Encode categorical features as integers (LightGBM can handle both string and int)
+            for cat_col in cat_features_in_keep:
+                le = LabelEncoder()
+                # Fill NaN with a special value before encoding
+                df_categorical[cat_col] = df_categorical[cat_col].fillna(
+                    "UNKNOWN")
+                df_categorical[cat_col] = le.fit_transform(
+                    df_categorical[cat_col].astype(str))
+                print(
+                    f"   ✅ Encoded categorical feature '{cat_col}': {len(le.classes_)} unique values"
+                )
+
+        # Combine numeric and categorical features
+        if df_categorical is not None and len(cat_features_in_keep) > 0:
+            df_all = pd.concat([df_numeric, df_categorical], axis=1)
+            # Reorder columns to match keep_all order
+            df_all = df_all[keep_all]
+        else:
+            df_all = df_numeric
+
         X_all = df_all.values
 
-        # Check for constant features before scaling
+        # Check for constant features before scaling (only numeric features)
         constant_features = []
-        for i in range(X_all.shape[1]):
-            if np.std(X_all[:, i]) < 1e-10:
-                constant_features.append(keep_all[i] if i <
-                                         len(keep_all) else f"feature_{i}")
+        for i, feat_name in enumerate(keep_all):
+            if feat_name in numeric_features:
+                if np.std(X_all[:, i]) < 1e-10:
+                    constant_features.append(feat_name)
         if constant_features:
             print(
                 f"   ⚠️  WARNING: Found {len(constant_features)} constant features before scaling: {constant_features[:5]}"
             )
 
+        # Standardize only numeric features (not categorical)
         scaler_all = StandardScaler()
-        X_all_scaled_raw = scaler_all.fit_transform(X_all)
+        if len(numeric_features) > 0:
+            X_numeric_scaled = scaler_all.fit_transform(df_numeric.values)
+            # Combine scaled numeric features with categorical features
+            if df_categorical is not None and len(cat_features_in_keep) > 0:
+                X_categorical = df_categorical.values
+                # Reconstruct X_all_scaled with proper column order
+                X_all_scaled_raw = np.zeros_like(X_all)
+                numeric_idx = 0
+                cat_idx = 0
+                for i, feat_name in enumerate(keep_all):
+                    if feat_name in numeric_features:
+                        X_all_scaled_raw[:, i] = X_numeric_scaled[:,
+                                                                  numeric_idx]
+                        numeric_idx += 1
+                    elif feat_name in cat_features_in_keep:
+                        X_all_scaled_raw[:, i] = X_categorical[:, cat_idx]
+                        cat_idx += 1
+            else:
+                X_all_scaled_raw = X_numeric_scaled
+        else:
+            X_all_scaled_raw = X_all
 
         # Check for NaN/Inf after scaling
         nan_count = np.isnan(X_all_scaled_raw).sum()
@@ -3984,6 +4248,17 @@ def main() -> Tuple[Dict, any, str]:
         y_val = y_all[val_indices]
         y_test = y_all[test_indices]
 
+        # Prepare categorical feature information for training
+        # Find categorical feature names in the final feature list (reps)
+        categorical_feature_names = [
+            c for c in reps if c in categorical_features
+        ] if 'categorical_features' in locals(
+        ) and categorical_features else None
+        if categorical_feature_names:
+            print(
+                f"   ✅ Categorical features in final model: {categorical_feature_names}"
+            )
+
         # Stage 1: All features
         X_train_all = X_all_scaled[train_indices]
         X_val_all = X_all_scaled[val_indices]
@@ -4118,8 +4393,18 @@ def main() -> Tuple[Dict, any, str]:
 
         # Stage 1: All features (482 -> ~470 after filtering)
         print("\n[Stage 1] Training on ALL features...")
-        model_all = train_production_lightgbm(X_train_all, y_train, X_val_all,
-                                              y_val)
+        categorical_feature_names_all = [
+            c for c in keep_all if c in categorical_features
+        ] if 'categorical_features' in locals(
+        ) and categorical_features else None
+        model_all = train_production_lightgbm(
+            X_train_all,
+            y_train,
+            X_val_all,
+            y_val,
+            feature_names=keep_all,
+            categorical_features=categorical_feature_names_all,
+        )
         perf_all = evaluate_model_performance(model_all,
                                               X_test_all,
                                               y_test,
@@ -4310,16 +4595,28 @@ def main() -> Tuple[Dict, any, str]:
             )
             print(f"{'=' * 80}")
 
-            df_multi_labels = create_labels_multi_horizon(df_features_original,
-                                                          horizons=horizons)
+            # rank_window will be auto-calculated based on horizon (horizon * 20, min 100)
+            # This ensures the ranking window is proportional to the prediction horizon
+
+            df_multi_labels = create_labels_multi_horizon(
+                df_features_original,
+                horizons=horizons,
+                use_rank_percentile=
+                True,  # RECOMMENDED: Use rolling rank percentile
+                rank_window=
+                None,  # Auto-calculate based on horizon (horizon * 20, min 100)
+                top_percentile=0.7,  # Top 30% = Long
+                bottom_percentile=0.3,  # Bottom 30% = Short
+                use_risk_adjusted=False,  # Disabled when using rank percentile
+            )
 
             for horizon in horizons:
                 print(f"\n{'=' * 60}")
                 print(f"Training all 3 stages for Horizon: {horizon} bars")
                 print(f"{'=' * 60}")
 
-                # Get labels for this horizon (binary: 0=Short, 1=Long)
-                y_horizon_col = f"binary_signal_{horizon}"
+                # Get labels for this horizon (3-class: 0=Hold, 1=Long, 2=Short)
+                y_horizon_col = f"signal_{horizon}"
                 if y_horizon_col in df_multi_labels.columns:
                     y_horizon = df_multi_labels[y_horizon_col].values
                     y_horizon = y_horizon[:len(X_raw)]
@@ -4343,8 +4640,20 @@ def main() -> Tuple[Dict, any, str]:
                     print(
                         f"\n  [Stage 2] Horizon {horizon}: Training on IC-filtered features..."
                     )
+                    categorical_feature_names_ic_h = [
+                        c for c in top_cols if c in categorical_features
+                    ] if 'categorical_features' in locals(
+                    ) and categorical_features and 'top_cols' in locals(
+                    ) else None
                     model_h_ic = train_production_lightgbm(
-                        X_train_ic, y_train_h, X_val_ic, y_val_h)
+                        X_train_ic,
+                        y_train_h,
+                        X_val_ic,
+                        y_val_h,
+                        feature_names=top_cols
+                        if 'top_cols' in locals() else None,
+                        categorical_features=categorical_feature_names_ic_h,
+                    )
                     perf_h_ic = evaluate_model_performance(
                         model_h_ic, X_test_ic, y_test_h,
                         f"Horizon {horizon} - IC-Filtered")
@@ -4353,8 +4662,18 @@ def main() -> Tuple[Dict, any, str]:
                     print(
                         f"\n  [Stage 3] Horizon {horizon}: Training on Representative features..."
                     )
+                    categorical_feature_names_reps_h = [
+                        c for c in reps if c in categorical_features
+                    ] if 'categorical_features' in locals(
+                    ) and categorical_features and 'reps' in locals() else None
                     model_h_reps = train_production_lightgbm(
-                        X_train_reps, y_train_h, X_val_reps, y_val_h)
+                        X_train_reps,
+                        y_train_h,
+                        X_val_reps,
+                        y_val_h,
+                        feature_names=reps if 'reps' in locals() else None,
+                        categorical_features=categorical_feature_names_reps_h,
+                    )
                     perf_h_reps = evaluate_model_performance(
                         model_h_reps, X_test_reps, y_test_h,
                         f"Horizon {horizon} - Representatives")

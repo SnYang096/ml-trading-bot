@@ -22,6 +22,7 @@ def train_lightgbm_model(
     early_stopping_rounds: int | None = None,
     eval_period: int | None = 50,
     categorical_feature: Any | None = None,
+    feature_names: list | None = None,
 ) -> lgb.Booster:
     """Train a LightGBM model with optional validation support.
     
@@ -106,10 +107,32 @@ def train_lightgbm_model(
             "gpu_device_id": 0,
         })
 
+    # Prepare categorical feature specification
+    cat_feature_indices = None
+    if categorical_feature is not None:
+        if isinstance(categorical_feature, (list, tuple)):
+            if feature_names:
+                # Map feature names to indices
+                cat_feature_indices = [
+                    i for i, name in enumerate(feature_names)
+                    if name in categorical_feature
+                ]
+            else:
+                # If no feature names, assume categorical_feature is already indices
+                cat_feature_indices = list(categorical_feature)
+        elif isinstance(categorical_feature, (int, str)):
+            # Single feature
+            if feature_names:
+                if categorical_feature in feature_names:
+                    cat_feature_indices = [feature_names.index(categorical_feature)]
+            else:
+                cat_feature_indices = [categorical_feature]
+    
     train_data = lgb.Dataset(
         X_train,
         label=y_train,
-        categorical_feature=categorical_feature,
+        feature_name=feature_names if feature_names else None,
+        categorical_feature=cat_feature_indices if cat_feature_indices else None,
         free_raw_data=False,
     )
 
@@ -121,7 +144,8 @@ def train_lightgbm_model(
             X_val,
             label=y_val,
             reference=train_data,
-            categorical_feature=categorical_feature,
+            feature_name=feature_names if feature_names else None,
+            categorical_feature=cat_feature_indices if cat_feature_indices else None,
             free_raw_data=False,
         )
         valid_sets.append(val_data)
@@ -157,6 +181,7 @@ def train_lightgbm_model(
                 early_stopping_rounds=early_stopping_rounds,
                 eval_period=eval_period,
                 categorical_feature=categorical_feature,
+                feature_names=feature_names,
             )
         raise
 

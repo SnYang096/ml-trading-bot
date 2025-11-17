@@ -453,20 +453,31 @@ def evaluate_model_performance(
 
     predictions = model.predict(X_eval)
 
-    # Binary classification: LightGBM returns probability array for binary classification
-    # Shape: (n_samples, 2) for binary classification, (n_samples,) for regression
-    is_binary = predictions.ndim == 2 and predictions.shape[1] == 2
-    if is_binary:
-        # Binary: convert probability array to class predictions
+    # Handle multiclass predictions: LightGBM returns class indices for multiclass
+    # Shape: (n_samples, num_classes) for probability predictions, (n_samples,) for class predictions
+    # For multiclass (3-class), convert probability array to class predictions if needed
+    if predictions.ndim == 2 and predictions.shape[1] > 1:
+        # Probability array: convert to class predictions
         predictions_class = np.argmax(predictions, axis=1)
-        predictions_for_metrics = predictions_class
-        predictions_to_store = predictions_class
         probabilities = predictions
     else:
-        # Regression: use predictions as-is
-        predictions_for_metrics = predictions
-        predictions_to_store = predictions
+        # Already class predictions (1D array)
+        predictions_class = predictions
         probabilities = None
+    
+    # Determine if binary or multiclass based on unique values in predictions
+    unique_preds = np.unique(predictions_class)
+    is_binary = len(unique_preds) == 2 and all(p in [0, 1] for p in unique_preds)
+    is_multiclass = len(unique_preds) > 2
+    
+    if is_binary or is_multiclass:
+        # Classification: use class predictions
+        predictions_for_metrics = predictions_class
+        predictions_to_store = predictions_class
+    else:
+        # Regression: use predictions as-is
+        predictions_for_metrics = predictions_class
+        predictions_to_store = predictions_class
 
     # Binary classification labels
     is_binary_classification = False
