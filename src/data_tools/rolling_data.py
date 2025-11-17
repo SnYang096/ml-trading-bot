@@ -379,8 +379,10 @@ def create_labels_multi_horizon(
             # Calculate rank percentile in rolling window
             # Use pandas rolling().rank(pct=True) for efficient calculation
             rank_pct_col = f"rank_percentile_{horizon}"
-            min_periods = max(10, current_rank_window //
-                              10)  # At least 10% of window
+            # Use more lenient min_periods to reduce NaN samples
+            # Original: max(10, current_rank_window // 10) - too strict
+            # New: max(5, current_rank_window // 20) - allows more samples while maintaining quality
+            min_periods = max(5, current_rank_window // 20)  # At least 5% of window (more lenient)
 
             # More efficient: use pandas rolling rank
             # For each position, calculate rank percentile of current value within trailing window

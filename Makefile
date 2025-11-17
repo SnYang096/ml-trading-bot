@@ -371,9 +371,9 @@ endif
 
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 24
-DIM_COMPARE_FEATURE_TYPE ?= baseline,default
+DIM_COMPARE_FEATURE_TYPE ?= baseline
 # FACTOR_COUNTS ?= 120,110,100,90,80,70,60,50,40,30,20,10,8,6,4
-FACTOR_COUNTS ?= 50,20,10
+FACTOR_COUNTS ?= 50,40
 # TIME_WINDOWS ?= 2020-01-01:2021-12-31,2022-01-01:2023-12-31,2023-01-01:2024-12-31,2025-01-01:2025-10-31
 TIME_WINDOWS ?= 2024-01-01:2025-10-31
 
@@ -381,6 +381,8 @@ TIME_WINDOWS ?= 2024-01-01:2025-10-31
 GRID_SEARCH ?= 1
 
 DIM_COMPARE_TIMEFRAME ?= 240T
+# 测试管道的 Bug： 您的特征计算、标签生成、数据对齐过程中有隐藏的错误？
+DIM_COMPARE_VALIDATE_PIPELINE ?= false
 
 dim-compare:
 	@echo "🔬 Comparing feature sets for $(SYMBOLS) ..."
@@ -392,6 +394,11 @@ dim-compare:
 	@echo "       Grid search: enabled (default)"
 	@echo "       Factor counts: $(FACTOR_COUNTS)"
 	@echo "       Time windows: $(TIME_WINDOWS)"
+	@if [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "1" ] || [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "true" ]; then \
+		echo "       Pipeline validation: enabled"; \
+	else \
+		echo "       Pipeline validation: disabled"; \
+	fi
 	@echo "       Stability validation: $(if $(ENABLE_STABILITY_VALIDATION),enabled,disabled)"
 	@if [ "$(ENABLE_STABILITY_VALIDATION)" = "1" ] || [ "$(ENABLE_STABILITY_VALIDATION)" = "true" ]; then \
 		echo "       Validation start: $(VALIDATION_START)"; \
@@ -405,6 +412,7 @@ dim-compare:
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
 		$(if $(HORIZONS),--horizons $(HORIZONS)) \
+		$(if $(filter true 1,$(DIM_COMPARE_VALIDATE_PIPELINE)),--validate-pipeline) \
 		$(if $(ENABLE_STABILITY_VALIDATION),--enable-stability-validation) \
 		$(if $(VALIDATION_START),--validation-start $(VALIDATION_START)) \
 		$(if $(VALIDATION_YEARS),--validation-years $(VALIDATION_YEARS)) \

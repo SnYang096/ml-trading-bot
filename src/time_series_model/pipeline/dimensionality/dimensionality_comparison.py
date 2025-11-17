@@ -271,18 +271,43 @@ def load_real_market_data(
 
         # For labels, we need to drop NaN (can't predict without labels)
         # But check if we're losing too many samples
+        # Use adaptive threshold: require at least 5000 samples, but prefer 10000+
         MIN_SAMPLES_REQUIRED = 10000
+        MIN_SAMPLES_WARNING = 5000  # Lower threshold for warning only
         if valid_samples < MIN_SAMPLES_REQUIRED:
-            print(
-                f"   ⚠️  WARNING: Only {valid_samples} valid samples after label cleaning (minimum: {MIN_SAMPLES_REQUIRED})"
-            )
+            if valid_samples < MIN_SAMPLES_WARNING:
+                print(
+                    f"   🚨 CRITICAL WARNING: Only {valid_samples} valid samples after label cleaning (minimum recommended: {MIN_SAMPLES_REQUIRED}, absolute minimum: {MIN_SAMPLES_WARNING})"
+                )
+            else:
+                print(
+                    f"   ⚠️  WARNING: Only {valid_samples} valid samples after label cleaning (minimum recommended: {MIN_SAMPLES_REQUIRED})"
+                )
             print(f"      This may indicate:")
-            print(f"      1. Too many NaN labels (check label generation)")
-            print(f"      2. Data period too short")
-            print(f"      3. Horizon too long (future_return not available)")
             print(
-                f"      → Consider using shorter horizons or checking data quality"
+                f"      1. Too many NaN labels (check label generation - rank_window may be too large)"
             )
+            print(
+                f"      2. Data period too short (consider using longer date range)"
+            )
+            print(
+                f"      3. Horizon too long (future_return not available - consider shorter horizons)"
+            )
+            print(f"      4. Multiple horizons causing cumulative NaN loss")
+            print(f"      → Suggestions:")
+            print(
+                f"         - Use shorter horizons (e.g., [1, 5, 10] instead of [24])"
+            )
+            print(
+                f"         - Extend data period (use more months/years of data)"
+            )
+            print(
+                f"         - Check label generation: rank_window={horizons_list[0]*20 if horizons_list else 'N/A'} may be too large"
+            )
+            if valid_samples < MIN_SAMPLES_WARNING:
+                print(
+                    f"      🚨 Model training may be unreliable with only {valid_samples} samples!"
+                )
         else:
             print(
                 f"   ✅ Sample size check passed: {valid_samples} >= {MIN_SAMPLES_REQUIRED}"
@@ -512,8 +537,9 @@ def evaluate_model_performance(
     # LightGBM regression: (n_samples,)
     is_multiclass = predictions.ndim == 2 and predictions.shape[1] > 2
     is_binary = predictions.ndim == 2 and predictions.shape[1] == 2
-    is_regression = predictions.ndim == 1 or (predictions.ndim == 2 and predictions.shape[1] == 1)
-    
+    is_regression = predictions.ndim == 1 or (predictions.ndim == 2
+                                              and predictions.shape[1] == 1)
+
     # Detect label type
     is_binary_classification = False
     is_multiclass_classification = False
@@ -558,7 +584,8 @@ def evaluate_model_performance(
         predictions_to_store = predictions_class
     else:
         # Regression: use predictions as-is
-        predictions_for_metrics = predictions.flatten() if predictions.ndim > 1 else predictions
+        predictions_for_metrics = predictions.flatten(
+        ) if predictions.ndim > 1 else predictions
         predictions_to_store = predictions_for_metrics
         probabilities = None
 
@@ -568,11 +595,11 @@ def evaluate_model_performance(
         target_for_metrics = y_eval  # Use original labels (already class indices)
     else:
         target_for_metrics = y_eval
-    
+
     # Ensure predictions_for_metrics is 1D for metrics calculation
     if predictions_for_metrics.ndim > 1:
         predictions_for_metrics = predictions_for_metrics.flatten()
-    
+
     mse = mean_squared_error(target_for_metrics, predictions_for_metrics)
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(target_for_metrics, predictions_for_metrics)
@@ -620,7 +647,7 @@ def evaluate_model_performance(
                 short_win_rate = float(short_correct / short_total)
             else:
                 short_win_rate = 0.0
-            
+
             # Hold predictions (for completeness)
             hold_mask = y_pred_cls == 0
             hold_total = int(np.sum(hold_mask))
@@ -650,7 +677,9 @@ def evaluate_model_performance(
                             strategy_returns)
                         fm.update(financial_metrics)
                 except Exception as e:
-                    print(f"⚠️  Warning: Failed to calculate financial metrics: {e}")
+                    print(
+                        f"⚠️  Warning: Failed to calculate financial metrics: {e}"
+                    )
         elif is_binary_classification:
             # Binary classification: compute win rate (0=Short, 1=Long)
             y_pred_cls = predictions_class.astype(int)
@@ -1106,6 +1135,8 @@ def run_single_experiment_wrapper(args) -> Dict:
             new_argv.extend(['--validation-start', args.validation_start])
         if args.validation_years:
             new_argv.extend(['--validation-years', str(args.validation_years)])
+        if getattr(args, 'validate_pipeline', False):
+            new_argv.append('--validate-pipeline')
 
         # Set new argv
         sys.argv = new_argv
@@ -3039,6 +3070,15 @@ def main() -> Tuple[Dict, any, str]:
         action="store_false",
         help="Disable SHAP explainability plots.",
     )
+    parser.add_argument(
+        "--validate-pipeline",
+        dest="validate_pipeline",
+        action="store_true",
+        default=False,
+        help=
+        "Validate pipeline with synthetic data containing known signals before using real data. "
+        "This injects a strong signal into the first feature to verify the model can learn.",
+    )
     # --enable-autoencoder removed - autoencoder no longer used
     parser.add_argument(
         "--task",
@@ -3581,6 +3621,10 @@ def main() -> Tuple[Dict, any, str]:
                 print(
                     f"   ✅ Encoded categorical feature '{cat_col}': {len(le.classes_)} unique values"
                 )
+
+        # Pipeline validation: Signal injection moved to AFTER reps are determined
+        # This ensures the signal is injected into a feature that will actually be used in training
+        # See signal injection code after Stage 3 feature selection (around line 4377)
 
         # Combine numeric and categorical features
         if df_categorical is not None and len(cat_features_in_keep) > 0:
@@ -4199,6 +4243,44 @@ def main() -> Tuple[Dict, any, str]:
         df_reps = (df_ic_clean[reps] if set(reps).issubset(df_ic_clean.columns)
                    else df_all[reps].fillna(0.0))
         X_reps = df_reps.values
+
+        # Pipeline validation: Inject synthetic strong signal BEFORE scaling
+        # This ensures the signal survives standardization
+        signal_injected_feature_idx = None
+        if getattr(args, 'validate_pipeline', False) and len(reps) > 0:
+            first_rep_feature_name = reps[0]
+            if first_rep_feature_name in df_reps.columns:
+                signal_injected_feature_idx = list(
+                    df_reps.columns).index(first_rep_feature_name)
+                # Align y with df_reps index
+                y_aligned = y_series.reindex(df_reps.index).fillna(0).values
+                min_len = min(len(df_reps), len(y_aligned))
+                y_aligned = y_aligned[:min_len]
+
+                # Convert labels to numeric for signal injection
+                # For 3-class: 0=Hold, 1=Long, 2=Short
+                # Map to: Hold=0, Long=+1, Short=-1 (so Long/Short have opposite signals)
+                # For AUC: y_binary = (y > 0) means Long+Short vs Hold
+                # So signal should be: Long=+1, Short=-1, Hold=0
+                y_numeric = y_aligned.copy()
+                unique_labels = np.unique(y_numeric)
+                if len(unique_labels) == 3 and np.all(
+                        np.isin(unique_labels, [0, 1, 2])):
+                    # Multiclass: map 0->0 (Hold), 1->+1 (Long), 2->-1 (Short)
+                    # This creates a signal where Long has positive signal, Short has negative signal
+                    y_numeric = np.where(y_numeric == 1, 1,
+                                         np.where(y_numeric == 2, -1, 0))
+                elif len(unique_labels) == 2:
+                    # Binary: map to -1 and 1 for stronger signal
+                    y_numeric = np.where(y_numeric == 0, -1, 1)
+
+                # Inject STRONG signal: 3.0x multiplier with minimal noise (0.05 std)
+                signal_strength = 3.0
+                noise_std = 0.05
+                X_reps[:min_len,
+                       signal_injected_feature_idx] = y_numeric * signal_strength + np.random.RandomState(
+                           42).randn(min_len) * noise_std
+
         scaler_reps = StandardScaler()
         X_reps_scaled = sanitize_features(scaler_reps.fit_transform(X_reps))
         print(
@@ -4273,6 +4355,25 @@ def main() -> Tuple[Dict, any, str]:
         X_train_reps = X_reps_scaled[train_indices]
         X_val_reps = X_reps_scaled[val_indices]
         X_test_reps = X_reps_scaled[test_indices]
+
+        # Pipeline validation: Signal injection message (signal was injected before scaling, see line ~4273)
+        if getattr(args, 'validate_pipeline', False) and len(
+                reps) > 0 and signal_injected_feature_idx is not None:
+            print(f"\n{'='*80}")
+            print(
+                "🔍 Pipeline Validation: Synthetic signal injected BEFORE scaling"
+            )
+            print(f"{'='*80}")
+            first_rep_feature_name = reps[0]
+            print(
+                f"   ✅ Synthetic signal injected into '{first_rep_feature_name}' (index {signal_injected_feature_idx} in reps)"
+            )
+            print(f"   Signal formula: feature = y * 3.0 + noise (std=0.05)")
+            print(f"   Signal strength: 3.0x label + noise (std=0.05)")
+            print(
+                f"   Expected: Model MUST learn this feature (importance > 0.1, AUC > 0.7)"
+            )
+            print(f"   If importance < 0.1 or AUC < 0.7 → Pipeline has a bug!")
 
         # Diagnostic: Check label distribution and feature-label correlation
         print(f"\n[DEBUG] Data split diagnostics:")
@@ -4423,8 +4524,313 @@ def main() -> Tuple[Dict, any, str]:
 
         # Stage 3: Representative features (60-100)
         print("\n[Stage 3] Training on Representative features...")
-        model_reps = train_production_lightgbm(X_train_reps, y_train,
-                                               X_val_reps, y_val)
+        categorical_feature_names_reps = [
+            c for c in reps if c in categorical_features
+        ] if 'categorical_features' in locals(
+        ) and categorical_features else None
+        model_reps = train_production_lightgbm(
+            X_train_reps,
+            y_train,
+            X_val_reps,
+            y_val,
+            feature_names=reps,
+            categorical_features=categorical_feature_names_reps,
+        )
+
+        # Pipeline validation: Enhanced check if model learned the synthetic signal
+        # Multiple validation checks: importance, AUC, prediction variance, training status
+        pipeline_validation_result = None
+        if getattr(args, 'validate_pipeline', False) and len(reps) > 0:
+            try:
+                import lightgbm as lgb
+
+                # Get feature importance from LightGBM booster
+                # train_lightgbm_model returns a LightGBM Booster object directly
+                if isinstance(model_reps, lgb.Booster):
+                    importances = model_reps.feature_importance(
+                        importance_type='gain')
+                    # Get model predictions for validation
+                    predictions = model_reps.predict(X_train_reps)
+                    # Get best iteration to check if model actually trained
+                    best_iteration = model_reps.best_iteration if hasattr(
+                        model_reps, 'best_iteration') else None
+                elif hasattr(model_reps, 'feature_importance'):
+                    importances = model_reps.feature_importance(
+                        importance_type='gain')
+                    predictions = model_reps.predict(X_train_reps) if hasattr(
+                        model_reps, 'predict') else None
+                    best_iteration = getattr(model_reps, 'best_iteration',
+                                             None)
+                elif hasattr(model_reps, 'model') and hasattr(
+                        model_reps.model, 'feature_importance'):
+                    importances = model_reps.model.feature_importance(
+                        importance_type='gain')
+                    predictions = model_reps.model.predict(
+                        X_train_reps) if hasattr(model_reps.model,
+                                                 'predict') else None
+                    best_iteration = getattr(model_reps.model,
+                                             'best_iteration', None)
+                else:
+                    # Try direct access
+                    importances = model_reps.feature_importance(
+                        importance_type='gain')
+                    predictions = model_reps.predict(X_train_reps) if hasattr(
+                        model_reps, 'predict') else None
+                    best_iteration = getattr(model_reps, 'best_iteration',
+                                             None)
+
+                # Normalize importances to sum to 1
+                if len(importances) > 0:
+                    importances_normalized = importances / (importances.sum() +
+                                                            1e-10)
+
+                    # Find the first feature (should be the injected signal)
+                    first_feature_idx = 0
+                    if first_feature_idx < len(importances_normalized):
+                        first_feature_importance = importances_normalized[
+                            first_feature_idx]
+                        first_feature_name = reps[
+                            first_feature_idx] if first_feature_idx < len(
+                                reps) else f"feature_{first_feature_idx}"
+
+                        # Enhanced validation checks
+                        validation_checks = {}
+                        validation_passed = True
+
+                        # Check 1: Feature importance
+                        importance_passed = first_feature_importance > 0.1
+                        validation_checks["feature_importance"] = {
+                            "value": float(first_feature_importance),
+                            "threshold": 0.1,
+                            "passed": importance_passed,
+                        }
+                        if not importance_passed:
+                            validation_passed = False
+
+                        # Check 2: Prediction variance (model output should vary)
+                        if predictions is not None:
+                            if predictions.ndim == 2 and predictions.shape[
+                                    1] > 1:
+                                # Multiclass: use probability of positive class
+                                pred_for_var = predictions[:, 1] if predictions.shape[
+                                    1] > 1 else predictions[:, 0]
+                            else:
+                                pred_for_var = predictions.flatten()
+
+                            pred_std = float(np.std(pred_for_var))
+                            pred_mean = float(np.mean(pred_for_var))
+                            pred_min = float(np.min(pred_for_var))
+                            pred_max = float(np.max(pred_for_var))
+
+                            variance_passed = pred_std > 1e-5
+                            validation_checks["prediction_variance"] = {
+                                "std": pred_std,
+                                "mean": pred_mean,
+                                "min": pred_min,
+                                "max": pred_max,
+                                "threshold": 1e-5,
+                                "passed": variance_passed,
+                            }
+                            if not variance_passed:
+                                validation_passed = False
+
+                            # Check 3: AUC (for binary/multiclass classification)
+                            # Signal injection: Hold=0, Long=+3, Short=-3
+                            # Best AUC calculation: Long vs Short (exclude Hold) because they have opposite strong signals
+                            try:
+                                if predictions.ndim == 2 and predictions.shape[
+                                        1] > 1:
+                                    # Multiclass: use probability of Long class (class 1)
+                                    # For 3-class: Long (1) vs Short (2), exclude Hold (0)
+                                    if predictions.shape[1] >= 3:
+                                        y_pred_proba = predictions[:,
+                                                                   1]  # Probability of Long class
+                                    else:
+                                        y_pred_proba = predictions[:, 1] if predictions.shape[
+                                            1] > 1 else predictions[:, 0]
+                                else:
+                                    y_pred_proba = predictions.flatten()
+
+                                # For multiclass labels (0, 1, 2), convert to binary for AUC
+                                # Use Long (1) vs Short (2), exclude Hold (0)
+                                # This matches signal injection: Long=+3 (high signal), Short=-3 (low signal)
+                                y_binary_mask = (y_train == 1) | (
+                                    y_train == 2)  # Only Long and Short
+                                if y_binary_mask.sum() > 0:
+                                    y_binary = (
+                                        y_train[y_binary_mask] == 1).astype(
+                                            int)  # Long=1, Short=0
+                                    y_pred_proba_filtered = y_pred_proba[
+                                        y_binary_mask]
+
+                                    if len(np.unique(y_binary)) > 1 and len(
+                                            np.unique(
+                                                y_pred_proba_filtered)) > 1:
+                                        auc = float(
+                                            roc_auc_score(
+                                                y_binary,
+                                                y_pred_proba_filtered))
+                                        auc_passed = auc > 0.7
+                                        validation_checks["auc"] = {
+                                            "value":
+                                            auc,
+                                            "threshold":
+                                            0.7,
+                                            "passed":
+                                            auc_passed,
+                                            "note":
+                                            "Long vs Short (Hold excluded)",
+                                        }
+                                        if not auc_passed:
+                                            validation_passed = False
+                                    else:
+                                        validation_checks["auc"] = {
+                                            "value": None,
+                                            "reason":
+                                            "Insufficient label diversity for AUC calculation (Long vs Short)",
+                                            "passed": None,
+                                        }
+                                else:
+                                    validation_checks["auc"] = {
+                                        "value": None,
+                                        "reason":
+                                        "No Long or Short samples found",
+                                        "passed": None,
+                                    }
+                            except Exception as e:
+                                validation_checks["auc"] = {
+                                    "value": None,
+                                    "error": str(e),
+                                    "passed": None,
+                                }
+                        else:
+                            validation_checks["prediction_variance"] = {
+                                "error":
+                                "Could not get predictions from model",
+                                "passed": False,
+                            }
+                            validation_passed = False
+
+                        # Check 4: Model training status
+                        if best_iteration is not None:
+                            training_passed = best_iteration > 1
+                            validation_checks["model_training"] = {
+                                "best_iteration": int(best_iteration),
+                                "threshold": 1,
+                                "passed": training_passed,
+                            }
+                            if not training_passed:
+                                validation_passed = False
+                        else:
+                            validation_checks["model_training"] = {
+                                "best_iteration": None,
+                                "reason": "Could not determine best_iteration",
+                                "passed": None,
+                            }
+
+                        # Print comprehensive validation results
+                        print(f"\n   {'='*60}")
+                        print(f"   🔍 Pipeline Validation Result (Enhanced):")
+                        print(f"   {'='*60}")
+                        print(
+                            f"      First feature '{first_feature_name}' importance: {first_feature_importance:.4f}"
+                        )
+
+                        if 'prediction_variance' in validation_checks:
+                            var_check = validation_checks[
+                                'prediction_variance']
+                            if 'std' in var_check:
+                                print(
+                                    f"      Prediction std: {var_check['std']:.6f} (min={var_check['min']:.4f}, max={var_check['max']:.4f})"
+                                )
+
+                        if 'auc' in validation_checks and validation_checks[
+                                'auc'].get('value') is not None:
+                            print(
+                                f"      AUC: {validation_checks['auc']['value']:.4f}"
+                            )
+
+                        if 'model_training' in validation_checks and validation_checks[
+                                'model_training'].get(
+                                    'best_iteration') is not None:
+                            print(
+                                f"      Best iteration: {validation_checks['model_training']['best_iteration']}"
+                            )
+
+                        if validation_passed:
+                            print(
+                                f"      ✅ PASS: Model learned the synthetic signal (all checks passed)"
+                            )
+                            print(f"      → Pipeline is working correctly!")
+                        else:
+                            print(
+                                f"      ❌ FAIL: Model did NOT learn the synthetic signal (one or more checks failed)"
+                            )
+                            print(
+                                f"      → Pipeline has a bug! Failed checks:")
+                            for check_name, check_result in validation_checks.items(
+                            ):
+                                if check_result.get('passed') is False:
+                                    print(
+                                        f"         - {check_name}: {check_result}"
+                                    )
+                            print(f"      Diagnostic steps:")
+                            print(
+                                f"         1. Check feature scaling/normalization (may destroy signal)"
+                            )
+                            print(
+                                f"         2. Check data alignment (X vs y indices)"
+                            )
+                            print(
+                                f"         3. Check model training parameters (learning_rate, num_iterations)"
+                            )
+                            print(
+                                f"         4. Check feature filtering logic (first feature may be excluded)"
+                            )
+                            print(
+                                f"         5. Check if first feature is actually in training data"
+                            )
+                            print(
+                                f"      ⚠️  This indicates a serious pipeline issue!"
+                            )
+                        print(f"   {'='*60}\n")
+
+                        # Save comprehensive validation result
+                        pipeline_validation_result = {
+                            "enabled":
+                            True,
+                            "status":
+                            "PASS" if validation_passed else "FAIL",
+                            "first_feature_name":
+                            first_feature_name,
+                            "first_feature_importance":
+                            float(first_feature_importance),
+                            "threshold":
+                            0.1,
+                            "validation_checks":
+                            validation_checks,
+                            "message":
+                            "Model learned the synthetic signal (all checks passed)"
+                            if validation_passed else
+                            "Model did NOT learn the synthetic signal (one or more checks failed)",
+                            "diagnostics": {
+                                "check_feature_scaling": True,
+                                "check_data_alignment": True,
+                                "check_model_params": True,
+                                "check_feature_filtering": True,
+                                "check_first_feature_in_data": True,
+                            } if not validation_passed else None,
+                        }
+            except Exception as e:
+                print(f"   ⚠️  Warning: Could not validate pipeline: {e}")
+                import traceback
+                traceback.print_exc()
+                pipeline_validation_result = {
+                    "enabled": True,
+                    "status": "ERROR",
+                    "error": str(e),
+                }
+
         perf_reps = evaluate_model_performance(model_reps,
                                                X_test_reps,
                                                y_test,
@@ -4492,6 +4898,10 @@ def main() -> Tuple[Dict, any, str]:
         if stability_validation_results:
             best_result.setdefault("stability_validation",
                                    stability_validation_results)
+
+        # Add pipeline validation results if available
+        if pipeline_validation_result:
+            best_result["pipeline_validation"] = pipeline_validation_result
 
         selection_score_stage1 = compute_selection_score(
             perf_all,
@@ -4583,6 +4993,15 @@ def main() -> Tuple[Dict, any, str]:
                 and ic_std > 0 else None,
             },
         }
+
+        # Add pipeline validation results if available (after best_result is created)
+        if pipeline_validation_result:
+            best_result["pipeline_validation"] = pipeline_validation_result
+
+        # Add stability validation results if available
+        if stability_validation_results:
+            best_result["stability_validation"] = stability_validation_results
+
         best_model = model_reps
         best_dir = None
         # Stage 4 autoencoder removed - no longer used
@@ -4674,6 +5093,322 @@ def main() -> Tuple[Dict, any, str]:
                         feature_names=reps if 'reps' in locals() else None,
                         categorical_features=categorical_feature_names_reps_h,
                     )
+
+                    # Pipeline validation: Enhanced check if model learned the synthetic signal
+                    # Multiple validation checks: importance, AUC, prediction variance, training status
+                    pipeline_validation_result_h = None
+                    if getattr(args, 'validate_pipeline',
+                               False) and len(reps) > 0:
+                        try:
+                            import lightgbm as lgb
+
+                            # Get feature importance from LightGBM booster
+                            if isinstance(model_h_reps, lgb.Booster):
+                                importances = model_h_reps.feature_importance(
+                                    importance_type='gain')
+                                predictions = model_h_reps.predict(
+                                    X_train_reps)
+                                best_iteration = model_h_reps.best_iteration if hasattr(
+                                    model_h_reps, 'best_iteration') else None
+                            elif hasattr(model_h_reps, 'feature_importance'):
+                                importances = model_h_reps.feature_importance(
+                                    importance_type='gain')
+                                predictions = model_h_reps.predict(
+                                    X_train_reps) if hasattr(
+                                        model_h_reps, 'predict') else None
+                                best_iteration = getattr(
+                                    model_h_reps, 'best_iteration', None)
+                            elif hasattr(model_h_reps, 'model') and hasattr(
+                                    model_h_reps.model, 'feature_importance'):
+                                importances = model_h_reps.model.feature_importance(
+                                    importance_type='gain')
+                                predictions = model_h_reps.model.predict(
+                                    X_train_reps) if hasattr(
+                                        model_h_reps.model,
+                                        'predict') else None
+                                best_iteration = getattr(
+                                    model_h_reps.model, 'best_iteration', None)
+                            else:
+                                importances = model_h_reps.feature_importance(
+                                    importance_type='gain')
+                                predictions = model_h_reps.predict(
+                                    X_train_reps) if hasattr(
+                                        model_h_reps, 'predict') else None
+                                best_iteration = getattr(
+                                    model_h_reps, 'best_iteration', None)
+
+                            # Normalize importances to sum to 1
+                            if len(importances) > 0:
+                                importances_normalized = importances / (
+                                    importances.sum() + 1e-10)
+
+                                # Find the first feature (should be the injected signal)
+                                first_feature_idx = 0
+                                if first_feature_idx < len(
+                                        importances_normalized):
+                                    first_feature_importance = importances_normalized[
+                                        first_feature_idx]
+                                    first_feature_name = reps[
+                                        first_feature_idx] if first_feature_idx < len(
+                                            reps
+                                        ) else f"feature_{first_feature_idx}"
+
+                                    # Enhanced validation checks
+                                    validation_checks_h = {}
+                                    validation_passed_h = True
+
+                                    # Check 1: Feature importance
+                                    importance_passed_h = first_feature_importance > 0.1
+                                    validation_checks_h[
+                                        "feature_importance"] = {
+                                            "value":
+                                            float(first_feature_importance),
+                                            "threshold": 0.1,
+                                            "passed": importance_passed_h,
+                                        }
+                                    if not importance_passed_h:
+                                        validation_passed_h = False
+
+                                    # Check 2: Prediction variance
+                                    if predictions is not None:
+                                        if predictions.ndim == 2 and predictions.shape[
+                                                1] > 1:
+                                            pred_for_var = predictions[:, 1] if predictions.shape[
+                                                1] > 1 else predictions[:, 0]
+                                        else:
+                                            pred_for_var = predictions.flatten(
+                                            )
+
+                                        pred_std = float(np.std(pred_for_var))
+                                        pred_mean = float(
+                                            np.mean(pred_for_var))
+                                        pred_min = float(np.min(pred_for_var))
+                                        pred_max = float(np.max(pred_for_var))
+
+                                        variance_passed_h = pred_std > 1e-5
+                                        validation_checks_h[
+                                            "prediction_variance"] = {
+                                                "std": pred_std,
+                                                "mean": pred_mean,
+                                                "min": pred_min,
+                                                "max": pred_max,
+                                                "threshold": 1e-5,
+                                                "passed": variance_passed_h,
+                                            }
+                                        if not variance_passed_h:
+                                            validation_passed_h = False
+
+                                        # Check 3: AUC
+                                        # Signal injection: Hold=0, Long=+3, Short=-3
+                                        # Best AUC calculation: Long vs Short (exclude Hold) because they have opposite strong signals
+                                        try:
+                                            if predictions.ndim == 2 and predictions.shape[
+                                                    1] > 1:
+                                                # Multiclass: use probability of Long class (class 1)
+                                                # For 3-class: Long (1) vs Short (2), exclude Hold (0)
+                                                if predictions.shape[1] >= 3:
+                                                    y_pred_proba = predictions[:,
+                                                                               1]  # Probability of Long class
+                                                else:
+                                                    y_pred_proba = predictions[:, 1] if predictions.shape[
+                                                        1] > 1 else predictions[:,
+                                                                                0]
+                                            else:
+                                                y_pred_proba = predictions.flatten(
+                                                )
+
+                                            # Use Long (1) vs Short (2), exclude Hold (0)
+                                            # This matches signal injection: Long=+3 (high signal), Short=-3 (low signal)
+                                            y_binary_mask_h = (
+                                                y_train_h == 1) | (
+                                                    y_train_h == 2
+                                                )  # Only Long and Short
+                                            if y_binary_mask_h.sum() > 0:
+                                                y_binary_h = (
+                                                    y_train_h[y_binary_mask_h]
+                                                    == 1).astype(
+                                                        int)  # Long=1, Short=0
+                                                y_pred_proba_filtered_h = y_pred_proba[
+                                                    y_binary_mask_h]
+
+                                                if len(
+                                                        np.unique(y_binary_h)
+                                                ) > 1 and len(
+                                                        np.unique(
+                                                            y_pred_proba_filtered_h
+                                                        )) > 1:
+                                                    auc = float(
+                                                        roc_auc_score(
+                                                            y_binary_h,
+                                                            y_pred_proba_filtered_h
+                                                        ))
+                                                    auc_passed_h = auc > 0.7
+                                                    validation_checks_h["auc"] = {
+                                                        "value":
+                                                        auc,
+                                                        "threshold":
+                                                        0.7,
+                                                        "passed":
+                                                        auc_passed_h,
+                                                        "note":
+                                                        "Long vs Short (Hold excluded)",
+                                                    }
+                                                    if not auc_passed_h:
+                                                        validation_passed_h = False
+                                                else:
+                                                    validation_checks_h["auc"] = {
+                                                        "value": None,
+                                                        "reason":
+                                                        "Insufficient label diversity for AUC calculation (Long vs Short)",
+                                                        "passed": None,
+                                                    }
+                                            else:
+                                                validation_checks_h["auc"] = {
+                                                    "value": None,
+                                                    "reason":
+                                                    "No Long or Short samples found",
+                                                    "passed": None,
+                                                }
+                                        except Exception as e:
+                                            validation_checks_h["auc"] = {
+                                                "value": None,
+                                                "error": str(e),
+                                                "passed": None,
+                                            }
+                                    else:
+                                        validation_checks_h[
+                                            "prediction_variance"] = {
+                                                "error":
+                                                "Could not get predictions from model",
+                                                "passed": False,
+                                            }
+                                        validation_passed_h = False
+
+                                    # Check 4: Model training status
+                                    if best_iteration is not None:
+                                        training_passed_h = best_iteration > 1
+                                        validation_checks_h[
+                                            "model_training"] = {
+                                                "best_iteration":
+                                                int(best_iteration),
+                                                "threshold": 1,
+                                                "passed": training_passed_h,
+                                            }
+                                        if not training_passed_h:
+                                            validation_passed_h = False
+                                    else:
+                                        validation_checks_h["model_training"] = {
+                                            "best_iteration": None,
+                                            "reason":
+                                            "Could not determine best_iteration",
+                                            "passed": None,
+                                        }
+
+                                    # Print comprehensive validation results
+                                    print(f"\n   {'='*60}")
+                                    print(
+                                        f"   🔍 Pipeline Validation Result (Horizon {horizon}, Enhanced):"
+                                    )
+                                    print(f"   {'='*60}")
+                                    print(
+                                        f"      First feature '{first_feature_name}' importance: {first_feature_importance:.4f}"
+                                    )
+
+                                    if 'prediction_variance' in validation_checks_h:
+                                        var_check = validation_checks_h[
+                                            'prediction_variance']
+                                        if 'std' in var_check:
+                                            print(
+                                                f"      Prediction std: {var_check['std']:.6f} (min={var_check['min']:.4f}, max={var_check['max']:.4f})"
+                                            )
+
+                                    if 'auc' in validation_checks_h and validation_checks_h[
+                                            'auc'].get('value') is not None:
+                                        print(
+                                            f"      AUC: {validation_checks_h['auc']['value']:.4f}"
+                                        )
+
+                                    if 'model_training' in validation_checks_h and validation_checks_h[
+                                            'model_training'].get(
+                                                'best_iteration') is not None:
+                                        print(
+                                            f"      Best iteration: {validation_checks_h['model_training']['best_iteration']}"
+                                        )
+
+                                    if validation_passed_h:
+                                        print(
+                                            f"      ✅ PASS: Model learned the synthetic signal (all checks passed)"
+                                        )
+                                        print(
+                                            f"      → Pipeline is working correctly!"
+                                        )
+                                    else:
+                                        print(
+                                            f"      ❌ FAIL: Model did NOT learn the synthetic signal (one or more checks failed)"
+                                        )
+                                        print(
+                                            f"      → Pipeline has a bug! Failed checks:"
+                                        )
+                                        for check_name, check_result in validation_checks_h.items(
+                                        ):
+                                            if check_result.get(
+                                                    'passed') is False:
+                                                print(
+                                                    f"         - {check_name}: {check_result}"
+                                                )
+                                        print(f"      Diagnostic steps:")
+                                        print(
+                                            f"         1. Check feature scaling/normalization (may destroy signal)"
+                                        )
+                                        print(
+                                            f"         2. Check data alignment (X vs y indices)"
+                                        )
+                                        print(
+                                            f"         3. Check model training parameters (learning_rate, num_iterations)"
+                                        )
+                                        print(
+                                            f"         4. Check feature filtering logic (first feature may be excluded)"
+                                        )
+                                        print(
+                                            f"         5. Check if first feature is actually in training data"
+                                        )
+                                        print(
+                                            f"      ⚠️  This indicates a serious pipeline issue!"
+                                        )
+                                    print(f"   {'='*60}\n")
+
+                                    # Save comprehensive validation result for this horizon
+                                    pipeline_validation_result_h = {
+                                        "horizon":
+                                        int(horizon),
+                                        "status":
+                                        "PASS"
+                                        if validation_passed_h else "FAIL",
+                                        "first_feature_name":
+                                        first_feature_name,
+                                        "first_feature_importance":
+                                        float(first_feature_importance),
+                                        "threshold":
+                                        0.1,
+                                        "validation_checks":
+                                        validation_checks_h,
+                                        "message":
+                                        "Model learned the synthetic signal (all checks passed)"
+                                        if validation_passed_h else
+                                        "Model did NOT learn the synthetic signal (one or more checks failed)",
+                                    }
+                        except Exception as e:
+                            print(
+                                f"   ⚠️  Warning: Could not validate pipeline: {e}"
+                            )
+                            import traceback
+                            traceback.print_exc()
+                            pipeline_validation_result_h = {
+                                "horizon": int(horizon),
+                                "status": "ERROR",
+                                "error": str(e),
+                            }
+
                     perf_h_reps = evaluate_model_performance(
                         model_h_reps, X_test_reps, y_test_h,
                         f"Horizon {horizon} - Representatives")
@@ -4686,6 +5421,10 @@ def main() -> Tuple[Dict, any, str]:
                         "stage2_ic_filtered": perf_h_ic,
                         "stage3_representatives": perf_h_reps,
                     }
+                    # Add pipeline validation result if available
+                    if pipeline_validation_result_h:
+                        horizon_perf[
+                            "pipeline_validation"] = pipeline_validation_result_h
                     feature_insight_h = _derive_feature_insights(
                         perf_h_all, perf_h_reps)
                     horizon_perf["feature_insights"] = feature_insight_h

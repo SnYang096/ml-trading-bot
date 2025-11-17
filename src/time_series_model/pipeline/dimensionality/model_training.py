@@ -127,6 +127,12 @@ def train_production_lightgbm(
             print(
                 f"   ⚠️  WARNING: Very weak feature-label correlation! Features may not be informative."
             )
+            print(f"      Possible causes:")
+            print(f"      1. Sample size too small ({len(y_train)} samples) - correlation estimates unreliable")
+            print(f"      2. Features need better engineering (try adding more derived features)")
+            print(f"      3. Label generation may have issues (check label distribution)")
+            print(f"      4. Non-linear relationships (tree models can still learn these)")
+            print(f"      → Note: Weak linear correlation doesn't mean features are useless for tree models")
 
     # Check feature distribution overlap between classes
     print(f"\n   [DEBUG] Feature distribution overlap (first 5 features):")

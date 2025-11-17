@@ -197,18 +197,29 @@ def load_real_market_data(
 
         # For labels, we need to drop NaN (can't predict without labels)
         # But check if we're losing too many samples
+        # Use adaptive threshold: require at least 5000 samples, but prefer 10000+
         MIN_SAMPLES_REQUIRED = 10000
+        MIN_SAMPLES_WARNING = 5000  # Lower threshold for warning only
         if valid_samples < MIN_SAMPLES_REQUIRED:
-            print(
-                f"   ⚠️  WARNING: Only {valid_samples} valid samples after label cleaning (minimum: {MIN_SAMPLES_REQUIRED})"
-            )
+            if valid_samples < MIN_SAMPLES_WARNING:
+                print(
+                    f"   🚨 CRITICAL WARNING: Only {valid_samples} valid samples after label cleaning (minimum recommended: {MIN_SAMPLES_REQUIRED}, absolute minimum: {MIN_SAMPLES_WARNING})"
+                )
+            else:
+                print(
+                    f"   ⚠️  WARNING: Only {valid_samples} valid samples after label cleaning (minimum recommended: {MIN_SAMPLES_REQUIRED})"
+                )
             print(f"      This may indicate:")
-            print(f"      1. Too many NaN labels (check label generation)")
-            print(f"      2. Data period too short")
-            print(f"      3. Horizon too long (future_return not available)")
+            print(f"      1. Too many NaN labels (check label generation - rank_window may be too large)")
+            print(f"      2. Data period too short (consider using longer date range)")
+            print(f"      3. Horizon too long (future_return not available - consider shorter horizons)")
+            print(f"      4. Multiple horizons causing cumulative NaN loss")
             print(
-                f"      → Consider using shorter horizons or checking data quality"
-            )
+                f"      → Suggestions:")
+            print(f"         - Use shorter horizons (e.g., [1, 5, 10] instead of [24])")
+            print(f"         - Extend data period (use more months/years of data)")
+            if valid_samples < MIN_SAMPLES_WARNING:
+                print(f"      🚨 Model training may be unreliable with only {valid_samples} samples!")
         else:
             print(
                 f"   ✅ Sample size check passed: {valid_samples} >= {MIN_SAMPLES_REQUIRED}"
