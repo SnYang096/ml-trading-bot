@@ -23,68 +23,98 @@ def train_lightgbm_model(
     eval_period: int | None = 50,
     categorical_feature: Any | None = None,
     feature_names: list | None = None,
+    preserve_multiclass: bool = False,
+    task_type: str | None = None,
 ) -> lgb.Booster:
     """Train a LightGBM model with optional validation support.
 
-    Automatically detects whether to use binary classification or regression based on y_train:
-    - If labels are integers in [0, 2] (3-class: 0=Hold, 1=Long, 2=Short):
-      Filters neutral labels (0=Hold) and converts to binary (1=Long, 0=Short)
-    - If labels are already binary (0/1): uses binary classification
-    - Otherwise: regression (for continuous return prediction)
+    Args:
+        preserve_multiclass: If True, preserve 3-class labels (0=Hold, 1=Long, 2=Short) instead of converting to binary.
+                             If False (default), filters Hold and converts to binary (1=Long, 0=Short).
+        task_type: Explicit task type: "multiclass", "binary", or "regression".
+                   If None, auto-detects from labels.
 
-    Note: Classification always uses binary (1=Long, 0=Short), neutral labels are filtered globally.
+    Task types:
+    - "multiclass": 3-class classification (0=Hold, 1=Long, 2=Short)
+    - "binary": Binary classification (0/1)
+    - "regression": Continuous prediction (returns, volatility, etc.)
     """
 
-    # Auto-detect task type based on labels
-    unique_labels = np.unique(y_train)
-    num_unique = len(unique_labels)
+    # Determine task type
+    if task_type is None:
+        # Auto-detect task type based on labels
+        unique_labels = np.unique(y_train)
+        num_unique = len(unique_labels)
 
-    # Check if labels are 3-class format (0=Hold, 1=Long, 2=Short)
-    is_3class = (
-        num_unique <= 3
-        and np.all(np.equal(np.mod(unique_labels, 1), 0))
-        and np.all(unique_labels >= 0)
-        and np.all(unique_labels <= 2)
-    )
+        # Check if labels are 3-class format (0=Hold, 1=Long, 2=Short)
+        is_3class = (
+            num_unique <= 3
+            and np.all(np.equal(np.mod(unique_labels, 1), 0))
+            and np.all(unique_labels >= 0)
+            and np.all(unique_labels <= 2)
+        )
 
-    # Filter neutral labels (0=Hold) and convert to binary (1=Long, 0=Short)
-    if is_3class:
-        # Filter out neutral labels (0=Hold), keep only Long (1) and Short (2)
-        train_mask = (y_train == 1) | (y_train == 2)
-        if train_mask.sum() == 0:
-            raise ValueError(
-                "No valid long/short samples in training set after removing neutral labels."
-            )
-        X_train = X_train[train_mask]
-        y_train = np.where(y_train[train_mask] == 1, 1, 0).astype(int)
-
-        # Also filter validation set if provided
-        if X_val is not None and y_val is not None:
-            val_mask = (y_val == 1) | (y_val == 2)
-            if val_mask.sum() == 0:
+        if is_3class and preserve_multiclass:
+            # Use true multiclass (3-class: Hold, Long, Short)
+            task_type = "multiclass"
+            num_classes = len(unique_labels)
+            objective = "multiclass"
+            metric = "multi_logloss"
+            task_params = {"num_class": num_classes}
+        elif is_3class and not preserve_multiclass:
+            # Filter neutral labels (0=Hold) and convert to binary (1=Long, 0=Short)
+            train_mask = (y_train == 1) | (y_train == 2)
+            if train_mask.sum() == 0:
                 raise ValueError(
-                    "No valid long/short samples in validation set after removing neutral labels."
+                    "No valid long/short samples in training set after removing neutral labels."
                 )
-            X_val = X_val[val_mask]
-            y_val = np.where(y_val[val_mask] == 1, 1, 0).astype(int)
+            X_train = X_train[train_mask]
+            y_train = np.where(y_train[train_mask] == 1, 1, 0).astype(int)
 
-        # Use binary classification
-        objective = "binary"
-        # Use AUC metric for imbalanced data (more robust than binary_logloss)
-        # Can monitor multiple metrics: ["auc", "binary_logloss"]
-        metric = ["auc", "binary_logloss"]  # Monitor both AUC and logloss
-        task_params = {}
-    elif num_unique == 2:
-        # Already binary classification
-        objective = "binary"
-        # Use AUC metric for imbalanced data (more robust than binary_logloss)
-        metric = ["auc", "binary_logloss"]  # Monitor both AUC and logloss
-        task_params = {}
+            # Also filter validation set if provided
+            if X_val is not None and y_val is not None:
+                val_mask = (y_val == 1) | (y_val == 2)
+                if val_mask.sum() == 0:
+                    raise ValueError(
+                        "No valid long/short samples in validation set after removing neutral labels."
+                    )
+                X_val = X_val[val_mask]
+                y_val = np.where(y_val[val_mask] == 1, 1, 0).astype(int)
+
+            task_type = "binary"
+            objective = "binary"
+            metric = ["auc", "binary_logloss"]
+            task_params = {}
+        elif num_unique == 2:
+            task_type = "binary"
+            objective = "binary"
+            metric = ["auc", "binary_logloss"]
+            task_params = {}
+        else:
+            task_type = "regression"
+            objective = "regression"
+            metric = "rmse"
+            task_params = {}
     else:
-        # Regression for predicting continuous returns
-        objective = "regression"
-        metric = "rmse"
-        task_params = {}
+        # Use explicit task_type
+        if task_type == "multiclass":
+            unique_labels = np.unique(y_train)
+            num_classes = len(unique_labels)
+            objective = "multiclass"
+            metric = "multi_logloss"
+            task_params = {"num_class": num_classes}
+        elif task_type == "binary":
+            objective = "binary"
+            metric = ["auc", "binary_logloss"]
+            task_params = {}
+        elif task_type == "regression":
+            objective = "regression"
+            metric = "rmse"
+            task_params = {}
+        else:
+            raise ValueError(
+                f"Unknown task_type: {task_type}. Must be 'multiclass', 'binary', or 'regression'"
+            )
 
     default_params = {
         "objective": objective,

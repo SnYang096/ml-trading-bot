@@ -371,19 +371,88 @@ def train_production_lightgbm(
     X_val_clean = X_val[val_valid_mask]
     y_val_clean = y_val_np[val_valid_mask]
 
-    model = train_lightgbm_model(
-        X_train_clean,
-        y_train_clean,
-        use_gpu=torch.cuda.is_available(),
-        num_boost_round=4000,
-        params=production_params,
-        X_val=X_val_clean,
-        y_val=y_val_clean,
-        early_stopping_rounds=400,
-        eval_period=200,
-        feature_names=feature_names,
-        categorical_feature=categorical_features,
-    )
+    # For multiclass (num_classes > 2), use LightGBM directly to preserve all 3 classes
+    # train_lightgbm_model automatically converts 3-class to 2-class, which we don't want for pipeline validation
+    if num_classes > 2:
+        import lightgbm as lgb
+
+        # Convert class_weight to sample_weight for multiclass (LightGBM doesn't support class_weight directly)
+        sample_weight_train = None
+        sample_weight_val = None
+        if class_weight is not None and len(class_weight) > 0:
+            # Create sample weights based on class weights
+            sample_weight_train = np.array(
+                [class_weight.get(int(label), 1.0) for label in y_train_clean]
+            )
+            sample_weight_val = np.array(
+                [class_weight.get(int(label), 1.0) for label in y_val_clean]
+            )
+            print(f"   [DEBUG] Using sample weights for multiclass training:")
+            print(
+                f"      Train weight range: [{sample_weight_train.min():.4f}, {sample_weight_train.max():.4f}]"
+            )
+            print(
+                f"      Val weight range: [{sample_weight_val.min():.4f}, {sample_weight_val.max():.4f}]"
+            )
+
+        # Prepare categorical feature indices
+        cat_feature_indices = None
+        if categorical_features and feature_names:
+            cat_feature_indices = [
+                i
+                for i, name in enumerate(feature_names)
+                if name in categorical_features
+            ]
+            if cat_feature_indices:
+                print(f"   [DEBUG] Categorical feature indices: {cat_feature_indices}")
+
+        # Create LightGBM datasets
+        train_data = lgb.Dataset(
+            X_train_clean,
+            label=y_train_clean.astype(int),
+            weight=sample_weight_train,
+            categorical_feature=cat_feature_indices,
+            free_raw_data=False,
+        )
+        val_data = lgb.Dataset(
+            X_val_clean,
+            label=y_val_clean.astype(int),
+            weight=sample_weight_val,
+            categorical_feature=cat_feature_indices,
+            reference=train_data,
+            free_raw_data=False,
+        )
+
+        # Train with multiclass objective
+        model = lgb.train(
+            production_params,
+            train_data,
+            num_boost_round=4000,
+            valid_sets=[train_data, val_data],
+            valid_names=["train", "val"],
+            callbacks=[
+                lgb.early_stopping(stopping_rounds=400, verbose=False),
+                lgb.log_evaluation(period=200, show_stdv=False),
+            ],
+        )
+        print(
+            f"   ✅ Multiclass LightGBM training complete (best_iteration={model.best_iteration})"
+        )
+    else:
+        # Binary classification: use train_lightgbm_model (it handles binary correctly)
+        model = train_lightgbm_model(
+            X_train_clean,
+            y_train_clean,
+            use_gpu=torch.cuda.is_available(),
+            num_boost_round=4000,
+            params=production_params,
+            X_val=X_val_clean,
+            y_val=y_val_clean,
+            early_stopping_rounds=400,
+            eval_period=200,
+            feature_names=feature_names,
+            categorical_feature=categorical_features,
+        )
 
     # Ensure best_iteration attribute is present
     if getattr(model, "best_iteration", None) in (None, 0):
@@ -413,7 +482,7 @@ def train_production_lightgbm(
         y_pred_train = np.argmax(y_pred_train_raw, axis=1)
         y_pred_val = np.argmax(y_pred_val_raw, axis=1)
 
-        # CRITICAL: Verify all 3 classes are present in predictions
+        # CRITICAL: Verify all expected classes are present in predictions
         train_unique = np.unique(y_pred_train)
         val_unique = np.unique(y_pred_val)
         print(f"   [DEBUG] Prediction class distribution:")
@@ -426,13 +495,31 @@ def train_production_lightgbm(
         val_classes = set(val_unique)
 
         if train_classes != expected_classes:
+            missing_train = expected_classes - train_classes
             print(f"   ⚠️  WARNING: Train predictions missing classes!")
             print(f"      Expected: {expected_classes}, Got: {train_classes}")
-            print(f"      Missing: {expected_classes - train_classes}")
+            print(f"      Missing: {missing_train}")
+            print(f"      Possible causes:")
+            print(f"        1. Missing class has too few samples in training data")
+            print(
+                f"        2. Model failed to learn the missing class (check class weights)"
+            )
+            print(
+                f"        3. Class imbalance too severe (model biased toward majority classes)"
+            )
+            if len(missing_train) == 1 and 2 in missing_train:
+                print(
+                    f"      Note: Missing class 2 (Short) is common if Short samples are rare"
+                )
         if val_classes != expected_classes:
+            missing_val = expected_classes - val_classes
             print(f"   ⚠️  WARNING: Val predictions missing classes!")
             print(f"      Expected: {expected_classes}, Got: {val_classes}")
-            print(f"      Missing: {expected_classes - val_classes}")
+            print(f"      Missing: {missing_val}")
+            if len(missing_val) == 1 and 2 in missing_val:
+                print(
+                    f"      Note: Missing class 2 (Short) is common if Short samples are rare"
+                )
 
         # For statistics, use probability of predicted class
         y_pred_train_proba = np.max(y_pred_train_raw, axis=1)

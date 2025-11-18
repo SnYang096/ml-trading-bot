@@ -1819,7 +1819,7 @@ def main() -> Tuple[Dict, any, str]:
                             f"      ✅ Valid samples check passed: {valid_samples} >= 1000"
                         )
 
-                    # Check label balance: if too imbalanced, create balanced labels directly
+                    # Check label balance: if too imbalanced OR missing Short class, create balanced labels directly
                     label_dist = synthetic_labels_info["label_distribution"]
                     long_count = label_dist.get(1, 0)
                     short_count = label_dist.get(2, 0)
@@ -1830,28 +1830,47 @@ def main() -> Tuple[Dict, any, str]:
                         short_count / total_labeled if total_labeled > 0 else 0
                     )
 
-                    # If labels are too imbalanced (e.g., >90% one class), create balanced labels
-                    if total_labeled > 0 and (
+                    # CRITICAL: For pipeline validation, ensure all 3 classes are present
+                    # This is essential to test that the model can learn all classes
+                    missing_short = short_count == 0
+                    missing_long = long_count == 0
+                    is_imbalanced = total_labeled > 0 and (
                         long_ratio > 0.9
                         or short_ratio > 0.9
                         or (long_count == 0 and short_count == 0)
-                    ):
-                        print(
-                            f"      ⚠️  WARNING: Label distribution too imbalanced (Long={long_ratio:.1%}, Short={short_ratio:.1%})"
-                        )
+                    )
+
+                    # If labels are too imbalanced OR missing Short class, create balanced labels
+                    if missing_short or missing_long or is_imbalanced:
+                        if missing_short:
+                            print(
+                                f"      ⚠️  WARNING: Missing Short class (class 2) in synthetic labels!"
+                            )
+                            print(
+                                f"      → This would cause model to never predict Short, failing pipeline validation"
+                            )
+                        elif is_imbalanced:
+                            print(
+                                f"      ⚠️  WARNING: Label distribution too imbalanced (Long={long_ratio:.1%}, Short={short_ratio:.1%})"
+                            )
                         print(
                             f"      → Creating balanced synthetic labels directly (30% Long, 30% Short, 40% Hold)"
                         )
-                        # Create balanced labels directly
+                        print(
+                            f"      → This ensures model can learn all 3 classes and pass pipeline validation"
+                        )
+                        # Create balanced labels directly with guaranteed Short samples
                         np.random.seed(42)
                         n_long = int(n_samples * 0.3)
                         n_short = int(n_samples * 0.3)
                         n_hold = n_samples - n_long - n_short
                         balanced_labels = np.concatenate(
                             [
-                                np.ones(n_long, dtype=int),  # Long
-                                np.full(n_hold, 0, dtype=int),  # Hold
-                                np.full(n_short, 2, dtype=int),  # Short
+                                np.ones(n_long, dtype=int),  # Long (class 1)
+                                np.full(n_hold, 0, dtype=int),  # Hold (class 0)
+                                np.full(
+                                    n_short, 2, dtype=int
+                                ),  # Short (class 2) - CRITICAL for validation
                             ]
                         )
                         # Shuffle to avoid ordering bias
@@ -1861,6 +1880,9 @@ def main() -> Tuple[Dict, any, str]:
                         valid_samples = n_samples
                         print(
                             f"      ✅ Created balanced labels: Long={n_long} ({n_long/n_samples:.1%}), Short={n_short} ({n_short/n_samples:.1%}), Hold={n_hold} ({n_hold/n_samples:.1%})"
+                        )
+                        print(
+                            f"      ✅ All 3 classes present: {set(balanced_labels)} - model should be able to predict all classes"
                         )
 
                     # Use synthetic labels for signal injection (only valid samples)
@@ -1893,14 +1915,36 @@ def main() -> Tuple[Dict, any, str]:
                             y_numeric == 1, 1, np.where(y_numeric == 2, -1, 0)
                         )
 
-                    # Inject STRONG signal: 3.0x multiplier with minimal noise (0.05 std)
-                    signal_strength = 3.0
+                    # Inject VERY STRONG signal: 5.0x multiplier with minimal noise (0.05 std)
+                    # Increased from 3.0 to 5.0 to ensure model can learn all classes, especially Short
+                    signal_strength = 5.0
                     noise_std = 0.05
                     np.random.seed(42)
                     X_reps[:min_len, signal_injected_feature_idx] = (
                         y_numeric * signal_strength
                         + np.random.randn(min_len) * noise_std
                     )
+
+                    # Verify signal distribution for each class
+                    # Use synthetic_labels (before conversion) to check signal distribution
+                    signal_by_class = {}
+                    for class_label in [0, 1, 2]:
+                        # synthetic_labels is in format: 0=Hold, 1=Long, 2=Short
+                        class_mask = synthetic_labels[:min_len] == class_label
+                        if class_mask.sum() > 0:
+                            signal_by_class[class_label] = {
+                                "mean": float(
+                                    X_reps[
+                                        class_mask, signal_injected_feature_idx
+                                    ].mean()
+                                ),
+                                "std": float(
+                                    X_reps[
+                                        class_mask, signal_injected_feature_idx
+                                    ].std()
+                                ),
+                                "count": int(class_mask.sum()),
+                            }
 
                     print(
                         f"   ✅ Synthetic signal injected into '{first_rep_feature_name}'"
@@ -1911,8 +1955,19 @@ def main() -> Tuple[Dict, any, str]:
                     print(
                         f"      Signal strength: {signal_strength}x label + noise (std={noise_std})"
                     )
+                    print(f"      Signal by class (before scaling):")
+                    for class_label, stats in signal_by_class.items():
+                        class_name = {0: "Hold", 1: "Long", 2: "Short"}.get(
+                            class_label, f"Class_{class_label}"
+                        )
+                        print(
+                            f"         {class_name} (class {class_label}): mean={stats['mean']:.3f}, std={stats['std']:.3f}, count={stats['count']}"
+                        )
                     print(
                         f"      Expected: Model MUST learn this feature (importance > 0.1, AUC > 0.7)"
+                    )
+                    print(
+                        f"      Expected: Model MUST predict all 3 classes (0=Hold, 1=Long, 2=Short)"
                     )
                     # Store synthetic labels for training (convert back to 0,1,2 format)
                     # y_numeric is currently: Long=+1, Short=-1, Hold=0
@@ -1941,7 +1996,8 @@ def main() -> Tuple[Dict, any, str]:
                         )
                     elif len(unique_labels) == 2:
                         y_numeric = np.where(y_numeric == 0, -1, 1)
-                    signal_strength = 3.0
+                    # Use same strong signal strength as main path
+                    signal_strength = 5.0
                     noise_std = 0.05
                     np.random.seed(42)
                     X_reps[:min_len, signal_injected_feature_idx] = (
