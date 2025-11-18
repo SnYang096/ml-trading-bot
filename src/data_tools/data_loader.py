@@ -23,10 +23,12 @@ class MarketDataLoader:
         self.data_path = data_path
         self.raw_data: Optional[pd.DataFrame] = None
 
-    def load_data(self,
-                  symbol: Optional[str] = None,
-                  start_date: Optional[str] = None,
-                  end_date: Optional[str] = None) -> pd.DataFrame:
+    def load_data(
+        self,
+        symbol: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
         """
         Load raw market data.
 
@@ -60,37 +62,35 @@ class MarketDataLoader:
 
                 # Try aggregate trade schema -> resample to OHLCV
                 if {"transact_time", "price", "quantity"}.issubset(df.columns):
-                    df["timestamp"] = pd.to_datetime(df["transact_time"],
-                                                     unit="ms")
+                    df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms")
                     df.set_index("timestamp", inplace=True)
                     df["price"] = pd.to_numeric(df["price"], errors="coerce")
-                    df["quantity"] = pd.to_numeric(df["quantity"],
-                                                   errors="coerce")
-                    raw_ohlc = df.groupby(pd.Grouper(freq="1s")).agg({
-                        "price":
-                        "ohlc",
-                        "quantity":
-                        "sum"
-                    })
-                    raw_ohlc.columns = [
-                        "open", "high", "low", "close", "volume"
-                    ]
+                    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+                    raw_ohlc = df.groupby(pd.Grouper(freq="1s")).agg(
+                        {"price": "ohlc", "quantity": "sum"}
+                    )
+                    raw_ohlc.columns = ["open", "high", "low", "close", "volume"]
                     return raw_ohlc
 
                 # Try OHLCV parquet/csv with timestamp column
                 if "timestamp" in df.columns and {
-                        "open", "high", "low", "close", "volume"
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
                 }.issubset(df.columns):
-                    df["timestamp"] = pd.to_datetime(df["timestamp"],
-                                                     errors="coerce")
-                    df = df.dropna(subset=["timestamp"]).set_index(
-                        "timestamp").sort_index()
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+                    df = (
+                        df.dropna(subset=["timestamp"])
+                        .set_index("timestamp")
+                        .sort_index()
+                    )
                     # Preserve auxiliary columns (e.g., order-flow)
                     return df
 
                 # Try already indexed by timestamp
-                if {"open", "high", "low", "close",
-                        "volume"}.issubset(df.columns):
+                if {"open", "high", "low", "close", "volume"}.issubset(df.columns):
                     # Preserve auxiliary columns
                     return df
 
@@ -100,9 +100,7 @@ class MarketDataLoader:
             if path.is_dir():
                 # Collect candidate files
                 exts = (".parquet", ".csv")
-                candidates = [
-                    p for p in path.rglob("*") if p.suffix.lower() in exts
-                ]
+                candidates = [p for p in path.rglob("*") if p.suffix.lower() in exts]
                 if symbol:
                     sym_tokens = _symbol_tokens(symbol)
 
@@ -113,7 +111,8 @@ class MarketDataLoader:
                     candidates = [p for p in candidates if _match(p.name)]
                 if not candidates:
                     raise FileNotFoundError(
-                        f"No data files found under directory: {path}")
+                        f"No data files found under directory: {path}"
+                    )
                 for file_path in sorted(candidates):
                     try:
                         frames.append(_read_and_standardize_frame(file_path))
@@ -122,7 +121,8 @@ class MarketDataLoader:
                         continue
                 if not frames:
                     raise FileNotFoundError(
-                        f"No readable OHLCV/agg-trade files in {path}")
+                        f"No readable OHLCV/agg-trade files in {path}"
+                    )
                 df_all = pd.concat(frames).sort_index()
                 # Deduplicate on index if overlapping months
                 df_all = df_all[~df_all.index.duplicated(keep="last")]
@@ -137,15 +137,20 @@ class MarketDataLoader:
                 idx = self.raw_data.index
                 if not isinstance(idx, pd.DatetimeIndex):
                     self.raw_data = self.raw_data.copy()
-                    self.raw_data.index = pd.to_datetime(self.raw_data.index,
-                                                         errors="coerce")
-                start_ts = pd.to_datetime(
-                    start_date) if start_date else self.raw_data.index.min()
-                end_ts = pd.to_datetime(
-                    end_date) if end_date else self.raw_data.index.max()
+                    self.raw_data.index = pd.to_datetime(
+                        self.raw_data.index, errors="coerce"
+                    )
+                start_ts = (
+                    pd.to_datetime(start_date)
+                    if start_date
+                    else self.raw_data.index.min()
+                )
+                end_ts = (
+                    pd.to_datetime(end_date) if end_date else self.raw_data.index.max()
+                )
                 self.raw_data = self.raw_data.loc[
-                    (self.raw_data.index >= start_ts)
-                    & (self.raw_data.index <= end_ts)]
+                    (self.raw_data.index >= start_ts) & (self.raw_data.index <= end_ts)
+                ]
 
             print(f"Loaded {len(self.raw_data)} bars")
         else:
@@ -155,23 +160,18 @@ class MarketDataLoader:
             prices = 100 + np.cumsum(np.random.randn(10000) * 0.1)
             volume = np.random.randint(1000, 10000, size=10000)
 
-            self.raw_data = pd.DataFrame({
-                "timestamp":
-                dates,
-                "open":
-                prices,
-                "high":
-                prices + np.abs(np.random.randn(10000) * 0.05),
-                "low":
-                prices - np.abs(np.random.randn(10000) * 0.05),
-                "close":
-                prices + np.random.randn(10000) * 0.02,
-                "volume":
-                volume,
-            })
+            self.raw_data = pd.DataFrame(
+                {
+                    "timestamp": dates,
+                    "open": prices,
+                    "high": prices + np.abs(np.random.randn(10000) * 0.05),
+                    "low": prices - np.abs(np.random.randn(10000) * 0.05),
+                    "close": prices + np.random.randn(10000) * 0.02,
+                    "volume": volume,
+                }
+            )
 
-            self.raw_data["timestamp"] = pd.to_datetime(
-                self.raw_data["timestamp"])
+            self.raw_data["timestamp"] = pd.to_datetime(self.raw_data["timestamp"])
             self.raw_data.set_index("timestamp", inplace=True)
 
         return self.raw_data
@@ -195,9 +195,17 @@ class MarketDataLoader:
 
         # Convert timeframe format: pandas resample accepts 'T' (minutes) directly
         # Keep 'T' format as pandas prefers it (e.g., '5T', '15T', '240T')
-        # Only convert if it's in 'min' format to 'T'
-        if timeframe.endswith("min") and not timeframe.endswith("T"):
+        # Handle different input formats:
+        # 1. Pure number (e.g., "15") -> "15T" (15 minutes)
+        # 2. "min" format (e.g., "15min") -> "15T"
+        # 3. Already in "T" format (e.g., "15T") -> keep as is
+        if timeframe.isdigit():
+            # Pure number: assume minutes
+            timeframe = f"{timeframe}T"
+        elif timeframe.endswith("min") and not timeframe.endswith("T"):
+            # "min" format: convert to "T"
             timeframe = timeframe.replace("min", "T")
+        # If already ends with "T", keep as is
 
         # Using separate operations for each column to avoid type issues
         resampled_open = self.raw_data["open"].resample(timeframe).first()
@@ -220,15 +228,14 @@ class MarketDataLoader:
             "volume": resampled_volume,
         }
         if have_buy:
-            data_dict["buy_qty"] = self.raw_data["buy_qty"].resample(
-                timeframe).sum()
+            data_dict["buy_qty"] = self.raw_data["buy_qty"].resample(timeframe).sum()
         if have_sell:
-            data_dict["sell_qty"] = self.raw_data["sell_qty"].resample(
-                timeframe).sum()
+            data_dict["sell_qty"] = self.raw_data["sell_qty"].resample(timeframe).sum()
         if have_ratio:
             # ratio is averaged over the window
             data_dict["taker_buy_ratio"] = (
-                self.raw_data["taker_buy_ratio"].resample(timeframe).mean())
+                self.raw_data["taker_buy_ratio"].resample(timeframe).mean()
+            )
         if have_cvd:
             # cvd is cumulative; use last value in window
             data_dict["cvd"] = self.raw_data["cvd"].resample(timeframe).last()

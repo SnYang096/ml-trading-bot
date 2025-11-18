@@ -91,7 +91,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 endif
 
 
-.PHONY: help clean format lint dev-install docker-build docker-install builder-shell \
+.PHONY: help clean format lint dev-install install-hooks docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
 		dim-compare nautilus-backtest factor-analysis \
@@ -104,6 +104,7 @@ help:
 	@echo "===================="
 	@echo "Local development commands (run on host):"
 	@echo "  make dev-install          # Install project in editable mode"
+	@echo "  make install-hooks        # Install Git pre-commit hooks (run make format & lint before commit)"
 	@echo "  make format               # Format code with black"
 	@echo "  make lint                 # Lint code with flake8"
 	@echo ""
@@ -157,6 +158,10 @@ lint:
 
 dev-install:
 	$(PIP) install -e .
+
+install-hooks:
+	@echo "📦 Installing Git hooks..."
+	@bash scripts/install-git-hooks.sh
 
 docker-build:
 	@echo "🔨 Building Docker image $(DOCKER_IMAGE)..."
@@ -366,59 +371,63 @@ ifneq ($(TF_ANALYSIS_RUN_TAG),)
 endif
 
 # ---------------------------------------------------------------------------
-# Dimensionality: production-style comparison (original vs compressed)
+# Dimensionality: Three-stage feature selection (before vs after reduction)
 # ---------------------------------------------------------------------------
 
 DIM_COMPARE_ARGS ?=
-HORIZONS ?= 5
-DIM_COMPARE_FEATURE_TYPE ?= baseline,hilbert
-# FACTOR_COUNTS ?= 120,110,100,90,80,70,60,50,40,30,20,10,8,6,4
-FACTOR_COUNTS ?= 50,40
-# TIME_WINDOWS ?= 2020-01-01:2021-12-31,2022-01-01:2023-12-31,2023-01-01:2024-12-31,2025-01-01:2025-10-31
-TIME_WINDOWS ?= 2024-01-01:2025-10-31
-
-# TIME_WINDOWS ?= 2020-01-01:2020-12-31,2021-01-01:2021-12-31,2022-01-01:2022-12-31,2023-01-01:2023-12-31,2024-01-01:2024-12-31,2025-01-01:2025-10-31
-GRID_SEARCH ?= 1
-
-DIM_COMPARE_TIMEFRAME ?= 15
-# 测试管道的 Bug： 您的特征计算、标签生成、数据对齐过程中有隐藏的错误？
-DIM_COMPARE_VALIDATE_PIPELINE ?= false
+HORIZONS ?= 24
+DIM_COMPARE_FEATURE_TYPE ?= baseline
+DIM_COMPARE_TIMEFRAME ?= 60T
+DIM_COMPARE_VALIDATE_PIPELINE ?= true
+DIM_COMPARE_REPORT_HTML ?=
+DIM_COMPARE_EXPORT_MODEL ?=
 
 dim-compare:
-	@echo "🔬 Comparing feature sets for $(SYMBOLS) ..."
-	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=baseline DIM_COMPARE_TIMEFRAME=5T"
-	@echo "       Multi-horizon training enabled: $(HORIZONS)"
-	@echo "       Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
-	@echo "       DIM_COMPARE_TIMEFRAME: $(DIM_COMPARE_TIMEFRAME)"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@echo "       Grid search: enabled (default)"
-	@echo "       Factor counts: $(FACTOR_COUNTS)"
-	@echo "       Time windows: $(TIME_WINDOWS)"
-	@if [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "1" ] || [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "true" ]; then \
-		echo "       Pipeline validation: enabled"; \
-	else \
-		echo "       Pipeline validation: disabled"; \
+	@echo "🔬 Dimensionality Reduction Comparison for $(SYMBOLS) ..."
+	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=comprehensive DIM_COMPARE_TIMEFRAME=5T"
+	@echo "       This runs three-stage feature selection:"
+	@echo "         Stage 1: Missing/stability filter (removes >20%% missing or low variance)"
+	@echo "         Stage 2: IC ranking (selects top features by Information Coefficient)"
+	@echo "         Stage 3: Correlation-based representative selection (removes redundant features)"
+	@echo ""
+	@echo "       Configuration:"
+	@echo "         Multi-horizon training: $(HORIZONS)"
+	@echo "         Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
+	@echo "         Timeframe: $(DIM_COMPARE_TIMEFRAME)"
+	@echo "         Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
+	@if [ "$(START_DATE)" != "" ]; then \
+		echo "         Training period: $(START_DATE) → $(END_DATE)"; \
 	fi
-	@echo "       Stability validation: $(if $(ENABLE_STABILITY_VALIDATION),enabled,disabled)"
+	@if [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "1" ] || [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "true" ]; then \
+		echo "         Pipeline validation: enabled (synthetic signal injection)"; \
+	else \
+		echo "         Pipeline validation: disabled"; \
+	fi
+	@echo "         Stability validation: $(if $(ENABLE_STABILITY_VALIDATION),enabled,disabled)"
 	@if [ "$(ENABLE_STABILITY_VALIDATION)" = "1" ] || [ "$(ENABLE_STABILITY_VALIDATION)" = "true" ]; then \
-		echo "       Validation start: $(VALIDATION_START)"; \
-		echo "       Validation years: $(VALIDATION_YEARS)"; \
+		echo "         Validation start: $(VALIDATION_START)"; \
+		echo "         Validation years: $(VALIDATION_YEARS)"; \
+	fi
+	@if [ "$(DIM_COMPARE_REPORT_HTML)" != "" ]; then \
+		echo "         HTML report: $(DIM_COMPARE_REPORT_HTML)"; \
+	fi
+	@if [ "$(DIM_COMPARE_EXPORT_MODEL)" != "" ]; then \
+		echo "         Export model: $(DIM_COMPARE_EXPORT_MODEL)"; \
 	fi
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.dimensionality.dimensionality_comparison \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOLS) \
 		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \
-		$(if $(DIM_COMPARE_TIMEFRAME),--timeframe $(DIM_COMPARE_TIMEFRAME)) \
+		--timeframe $(DIM_COMPARE_TIMEFRAME) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE)) \
-		$(if $(HORIZONS),--horizons $(HORIZONS)) \
+		--horizons $(HORIZONS) \
 		$(if $(filter true 1,$(DIM_COMPARE_VALIDATE_PIPELINE)),--validate-pipeline) \
 		$(if $(ENABLE_STABILITY_VALIDATION),--enable-stability-validation) \
 		$(if $(VALIDATION_START),--validation-start $(VALIDATION_START)) \
 		$(if $(VALIDATION_YEARS),--validation-years $(VALIDATION_YEARS)) \
-		$(if $(GRID_SEARCH),--grid-search) \
-		$(if $(FACTOR_COUNTS),--factor-counts $(FACTOR_COUNTS)) \
-		$(if $(TIME_WINDOWS),--time-windows $(TIME_WINDOWS)) \
+		$(if $(DIM_COMPARE_REPORT_HTML),--report-html /workspace/$(DIM_COMPARE_REPORT_HTML)) \
+		$(if $(DIM_COMPARE_EXPORT_MODEL),--export-model /workspace/$(DIM_COMPARE_EXPORT_MODEL)) \
 		$(DIM_COMPARE_ARGS)
 
 

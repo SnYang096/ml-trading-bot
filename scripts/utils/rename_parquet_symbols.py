@@ -60,8 +60,7 @@ def normalise_symbol(symbol: str) -> str:
     return cleaned
 
 
-def rename_files(input_dir: Path,
-                 dry_run: bool = False) -> list[tuple[Path, Path]]:
+def rename_files(input_dir: Path, dry_run: bool = False) -> list[tuple[Path, Path]]:
     renamed: list[tuple[Path, Path]] = []
     for file_path in input_dir.glob("*.parquet"):
         legacy_symbol, date_part = infer_symbol(file_path.stem)
@@ -79,9 +78,7 @@ def rename_files(input_dir: Path,
             # Already renamed
             continue
 
-        print(
-            f"{'[DRY]' if dry_run else 'RENAME'} {file_path.name} -> {new_name}"
-        )
+        print(f"{'[DRY]' if dry_run else 'RENAME'} {file_path.name} -> {new_name}")
         if not dry_run:
             file_path.rename(target_path)
         renamed.append((file_path, target_path))
@@ -89,15 +86,16 @@ def rename_files(input_dir: Path,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Rename legacy parquet symbol naming.")
-    parser.add_argument("--input-dir",
-                        type=str,
-                        default="data/parquet_data",
-                        help="Directory containing parquet files.")
-    parser.add_argument("--dry-run",
-                        action="store_true",
-                        help="Show changes without renaming files.")
+    parser = argparse.ArgumentParser(description="Rename legacy parquet symbol naming.")
+    parser.add_argument(
+        "--input-dir",
+        type=str,
+        default="data/parquet_data",
+        help="Directory containing parquet files.",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show changes without renaming files."
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir).expanduser().resolve()

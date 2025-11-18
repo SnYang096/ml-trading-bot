@@ -42,8 +42,9 @@ class DriftDetector:
             return False, {"reason": "insufficient_history"}
 
         latest = pd.Series(self.importance_history[-1])
-        historical = pd.DataFrame(self.importance_history[-self.window_size -
-                                                          1:-1]).mean()
+        historical = pd.DataFrame(
+            self.importance_history[-self.window_size - 1 : -1]
+        ).mean()
 
         common_features = set(latest.index) & set(historical.index)
         if len(common_features) < self.min_common_features:
@@ -64,8 +65,7 @@ class DriftDetector:
         top5_historical = set(historical_aligned.nlargest(5).index)
         overlap = len(top5_current & top5_historical)
 
-        importance_change = float(
-            np.mean(np.abs(latest_values - historical_values)))
+        importance_change = float(np.mean(np.abs(latest_values - historical_values)))
 
         diagnostics: Dict[str, Any] = {
             "js_divergence": float(js_div),
@@ -75,9 +75,11 @@ class DriftDetector:
             "historical_top5": list(top5_historical),
         }
 
-        triggered = (js_div > self.js_threshold
-                     or overlap < self.overlap_threshold
-                     or importance_change > 0.1)
+        triggered = (
+            js_div > self.js_threshold
+            or overlap < self.overlap_threshold
+            or importance_change > 0.1
+        )
 
         diagnostics["triggered"] = triggered
         return triggered, diagnostics

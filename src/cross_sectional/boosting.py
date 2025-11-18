@@ -23,7 +23,11 @@ class BoostingEvalResult:
         return {
             "ic_mean": float(ic.mean()) if not ic.empty else np.nan,
             "ic_std": float(ic.std(ddof=0)) if not ic.empty else np.nan,
-            "ic_t": float(ic.mean() / (ic.std(ddof=0) / np.sqrt(len(ic)))) if ic.std(ddof=0) > 0 else np.nan,
+            "ic_t": (
+                float(ic.mean() / (ic.std(ddof=0) / np.sqrt(len(ic))))
+                if ic.std(ddof=0) > 0
+                else np.nan
+            ),
             "rank_ic_mean": float(rank_ic.mean()) if not rank_ic.empty else np.nan,
             "rank_ic_std": float(rank_ic.std(ddof=0)) if not rank_ic.empty else np.nan,
         }
@@ -66,7 +70,9 @@ class CrossSectionalBoostingModel:
         panel = self._ensure_panel(panel)
         features = [c for c in feature_cols if c in panel.columns]
         if not features:
-            raise ValueError("CrossSectionalBoostingModel.fit: no valid feature columns found.")
+            raise ValueError(
+                "CrossSectionalBoostingModel.fit: no valid feature columns found."
+            )
         if target_col not in panel.columns:
             raise ValueError(f"Target column '{target_col}' is missing from panel.")
 
@@ -125,7 +131,9 @@ class CrossSectionalBoostingModel:
 
         grouped = aligned.groupby(level=self.timestamp_level)
         ic = grouped.apply(lambda x: x[target_col].corr(x["prediction"]))
-        rank_ic = grouped.apply(lambda x: x[target_col].corr(x["prediction"], method="spearman"))
+        rank_ic = grouped.apply(
+            lambda x: x[target_col].corr(x["prediction"], method="spearman")
+        )
         mse = grouped.apply(lambda x: np.mean((x[target_col] - x["prediction"]) ** 2))
 
         return BoostingEvalResult(
@@ -154,4 +162,3 @@ class CrossSectionalBoostingModel:
                 "Construct it with FactorPanelBuilder first."
             )
         return panel
-

@@ -72,11 +72,9 @@ class BaseModelTrainer(ABC):
     ) -> Optional[np.ndarray]:
         """Prepare groups array for multi-asset training."""
         groups = None
-        if "symbol" in train_df.columns and len(
-                train_df["symbol"].unique()) > 1:
+        if "symbol" in train_df.columns and len(train_df["symbol"].unique()) > 1:
             symbol_to_group = {
-                symbol: idx
-                for idx, symbol in enumerate(train_df["symbol"].unique())
+                symbol: idx for idx, symbol in enumerate(train_df["symbol"].unique())
             }
             if not y_return.index.isin(train_df.index).all():
                 y_return = y_return.loc[y_return.index.isin(train_df.index)]
@@ -86,6 +84,5 @@ class BaseModelTrainer(ABC):
                 X_df = X_df.loc[common_idx]
                 y_return = y_return.loc[common_idx]
 
-            groups = train_df.loc[y_return.index,
-                                  "symbol"].map(symbol_to_group).values
+            groups = train_df.loc[y_return.index, "symbol"].map(symbol_to_group).values
         return groups

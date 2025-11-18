@@ -22,11 +22,11 @@ DEFAULT_LGBM_PARAMS = {
 }
 
 # GPU acceleration parameters
-# 注意: 
+# 注意:
 # - "cpu" = CPU 模式（推荐，稳定且快速）
 # - "gpu" = OpenCL（需要 OpenCL 设备，容器中不可用）
 # - "cuda" = NVIDIA CUDA（当前 LightGBM 版本不支持，会崩溃）
-# 
+#
 # 推荐：USE_GPU = False (CPU 模式)
 # PyTorch 仍然可以使用 GPU 进行深度学习特征提取
 USE_GPU = False  # 使用 CPU 模式（推荐，稳定且性能足够）

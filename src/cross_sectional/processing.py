@@ -169,4 +169,3 @@ def neutralize_against(
         return group
 
     return panel.groupby(level=timestamp_level, group_keys=False).apply(_neutralize)
-

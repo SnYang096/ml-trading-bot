@@ -61,4 +61,3 @@ class BaseStrategyHandler(ABC):
             Dictionary of best parameters for each model
         """
         pass
-

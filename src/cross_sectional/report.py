@@ -103,7 +103,9 @@ def _df_to_markdown(df: pd.DataFrame, float_cols: Optional[list[str]] = None) ->
     if float_cols:
         for col in float_cols:
             if col in fmt_df.columns:
-                fmt_df[col] = fmt_df[col].map(lambda x: f"{x:.4f}" if pd.notna(x) else "NaN")
+                fmt_df[col] = fmt_df[col].map(
+                    lambda x: f"{x:.4f}" if pd.notna(x) else "NaN"
+                )
     return fmt_df.to_markdown(index=False)
 
 
@@ -111,4 +113,3 @@ def write_report(path: str | Path, markdown: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(markdown, encoding="utf-8")
-

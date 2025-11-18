@@ -138,7 +138,9 @@ def detect_target(panel: pd.DataFrame, explicit: Optional[str]) -> str:
         return explicit
     candidates = [c for c in panel.columns if c.startswith("future_return")]
     if not candidates:
-        raise ValueError("Unable to detect target column; please specify with --target.")
+        raise ValueError(
+            "Unable to detect target column; please specify with --target."
+        )
     return candidates[0]
 
 
@@ -199,7 +201,9 @@ def aggregate_selection(
         ir_threshold=ir_threshold,
         ranking_stat=ranking_stat,
     )
-    summary = metrics.loc[final_selected].to_dict(orient="index") if final_selected else {}
+    summary = (
+        metrics.loc[final_selected].to_dict(orient="index") if final_selected else {}
+    )
     return {"selected": final_selected, "metrics": summary}
 
 
@@ -266,7 +270,9 @@ def main() -> None:
     )
     final_factors = aggregate["selected"]
     if not final_factors:
-        raise RuntimeError("Global selection removed all factors; try relaxing thresholds.")
+        raise RuntimeError(
+            "Global selection removed all factors; try relaxing thresholds."
+        )
 
     print(f"✅ Final factor list ({len(final_factors)}): {final_factors}")
     out_path = Path(args.output)
@@ -304,4 +310,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

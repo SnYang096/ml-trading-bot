@@ -17,7 +17,7 @@ class MultiTimeframePipeline:
 
     def __init__(self, forward_bars: int = 1, model_type: str = "quantile"):
         """Initialize the multi-timeframe pipeline.
-        
+
         Args:
             forward_bars: Number of bars ahead for label prediction (default: 1)
             model_type: Model type - "quantile" (default), "classification", or "regression"
@@ -27,8 +27,12 @@ class MultiTimeframePipeline:
         self.q10_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
         self.q50_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
         self.q90_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
-        self.classification_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model (for classification mode)
-        self.return_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model (for return regression in classification mode)
+        self.classification_models: Dict[str, LightGBMTrainer] = (
+            {}
+        )  # timeframe -> model (for classification mode)
+        self.return_models: Dict[str, LightGBMTrainer] = (
+            {}
+        )  # timeframe -> model (for return regression in classification mode)
         self.volatility_models: Dict[str, LightGBMTrainer] = {}  # timeframe -> model
         self.is_trained = False
         self.forward_bars = forward_bars
@@ -101,7 +105,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             # Prepare features
             feature_columns = [
-                col for col in data.columns
+                col
+                for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -110,7 +115,9 @@ class MultiTimeframePipeline:
             returns_target, _, _ = self.prepare_targets(data)
 
             # Create and train quantile regression model
-            model = LightGBMTrainer(model_type="quantile", quantile_alpha=quantile_alpha)
+            model = LightGBMTrainer(
+                model_type="quantile", quantile_alpha=quantile_alpha
+            )
             model_metrics = model.train(X, returns_target)
 
             # Store model and metrics
@@ -137,7 +144,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             # Prepare features
             feature_columns = [
-                col for col in data.columns
+                col
+                for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -173,7 +181,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             # Prepare features
             feature_columns = [
-                col for col in data.columns
+                col
+                for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -215,7 +224,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             # Prepare features
             feature_columns = [
-                col for col in data.columns
+                col
+                for col in data.columns
                 if col not in ["open", "high", "low", "close", "volume"]
             ]
             X = data[feature_columns]
@@ -297,7 +307,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             if timeframe in self.q10_models:
                 feature_columns = [
-                    col for col in data.columns
+                    col
+                    for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
@@ -316,7 +327,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             if timeframe in self.q50_models:
                 feature_columns = [
-                    col for col in data.columns
+                    col
+                    for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
@@ -335,7 +347,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             if timeframe in self.q90_models:
                 feature_columns = [
-                    col for col in data.columns
+                    col
+                    for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
@@ -354,7 +367,8 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             if timeframe in self.volatility_models:
                 feature_columns = [
-                    col for col in data.columns
+                    col
+                    for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
@@ -373,11 +387,14 @@ class MultiTimeframePipeline:
         for timeframe, data in engineered_data.items():
             if timeframe in self.classification_models:
                 feature_columns = [
-                    col for col in data.columns
+                    col
+                    for col in data.columns
                     if col not in ["open", "high", "low", "close", "volume"]
                 ]
                 X = data[feature_columns]
-                pred = self.classification_models[timeframe].predict(X)  # Returns probabilities [0, 1]
+                pred = self.classification_models[timeframe].predict(
+                    X
+                )  # Returns probabilities [0, 1]
                 predictions[timeframe] = pred
         return predictions
 

@@ -2,16 +2,18 @@ import numpy as np
 import pandas as pd
 from ta.trend import WMAIndicator
 
+
 def rank(df):
     """Return the cross-sectional percentile rank
 
-     Args:
-         :param df: tickers in columns, sorted dates in rows.
+    Args:
+        :param df: tickers in columns, sorted dates in rows.
 
-     Returns:
-         pd.DataFrame: the ranked values
-     """
+    Returns:
+        pd.DataFrame: the ranked values
+    """
     return df.rank(axis=1, pct=True)
+
 
 def scale(df):
     """
@@ -22,14 +24,18 @@ def scale(df):
     """
     return df.div(df.abs().sum(axis=1), axis=0)
 
+
 def log(df):
     return np.log1p(df)
+
 
 def sign(df):
     return np.sign(df)
 
+
 def power(df, exp):
     return df.pow(exp)
+
 
 def ts_lag(df: pd.DataFrame, t: int = 1) -> pd.DataFrame:
     """Return the lagged values t periods ago.
@@ -43,6 +49,7 @@ def ts_lag(df: pd.DataFrame, t: int = 1) -> pd.DataFrame:
     """
     return df.shift(t)
 
+
 def ts_delta(df, period=1):
     """
     Wrapper function to estimate difference.
@@ -51,6 +58,7 @@ def ts_delta(df, period=1):
     :return: a pandas DataFrame with today’s value minus the value 'period' days ago.
     """
     return df.diff(period)
+
 
 def ts_sum(df: pd.DataFrame, window: int = 10) -> pd.DataFrame:
     """Computes the rolling ts_sum for the given window size.
@@ -64,6 +72,7 @@ def ts_sum(df: pd.DataFrame, window: int = 10) -> pd.DataFrame:
     """
     return df.rolling(window).sum()
 
+
 def ts_mean(df, window=10):
     """Computes the rolling mean for the given window size.
 
@@ -76,6 +85,7 @@ def ts_mean(df, window=10):
     """
     return df.rolling(window).mean()
 
+
 def ts_weighted_mean(df, period=10):
     """
     Linear weighted moving average implementation.
@@ -85,6 +95,7 @@ def ts_weighted_mean(df, period=10):
     """
     return df.apply(lambda x: WMAIndicator(x, window=period, fillna=True).wma())
 
+
 def ts_std(df, window=10):
     """
     Wrapper function to estimate rolling standard deviation.
@@ -92,9 +103,8 @@ def ts_std(df, window=10):
     :param window: the rolling window.
     :return: a pandas DataFrame with the time-series min over the past 'window' days.
     """
-    return (df
-            .rolling(window)
-            .std())
+    return df.rolling(window).std()
+
 
 def ts_rank(df, window=10):
     """
@@ -103,9 +113,8 @@ def ts_rank(df, window=10):
     :param window: the rolling window.
     :return: a pandas DataFrame with the time-series rank over the past window days.
     """
-    return (df
-            .rolling(window)
-            .apply(lambda x: x.rank().iloc[-1]))
+    return df.rolling(window).apply(lambda x: x.rank().iloc[-1])
+
 
 def ts_product(df, window=10):
     """
@@ -114,9 +123,8 @@ def ts_product(df, window=10):
     :param window: the rolling window.
     :return: a pandas DataFrame with the time-series ts_product over the past 'window' days.
     """
-    return (df
-            .rolling(window)
-            .apply(np.prod))
+    return df.rolling(window).apply(np.prod)
+
 
 def ts_min(df, window=10):
     """
@@ -127,6 +135,7 @@ def ts_min(df, window=10):
     """
     return df.rolling(window).min()
 
+
 def ts_max(df, window=10):
     """
     Wrapper function to estimate rolling min.
@@ -135,6 +144,7 @@ def ts_max(df, window=10):
     :return: a pandas DataFrame with the time-series max over the past 'window' days.
     """
     return df.rolling(window).max()
+
 
 def ts_argmax(df, window=10):
     """
@@ -145,6 +155,7 @@ def ts_argmax(df, window=10):
     """
     return df.rolling(window).apply(np.argmax).add(1)
 
+
 def ts_argmin(df, window=10):
     """
     Wrapper function to estimate which day ts_min(df, window) occurred on
@@ -152,9 +163,8 @@ def ts_argmin(df, window=10):
     :param window: the rolling window.
     :return: well.. that :)
     """
-    return (df.rolling(window)
-            .apply(np.argmin)
-            .add(1))
+    return df.rolling(window).apply(np.argmin).add(1)
+
 
 def ts_corr(x, y, window=10):
     """
@@ -164,6 +174,7 @@ def ts_corr(x, y, window=10):
     :return: a pandas DataFrame with the time-series min over the past 'window' days.
     """
     return x.rolling(window).corr(y)
+
 
 def ts_cov(x, y, window=10):
     """

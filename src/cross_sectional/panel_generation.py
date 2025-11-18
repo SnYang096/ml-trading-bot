@@ -56,7 +56,9 @@ class PanelGenerationConfig:
             raise ValueError("feature_type must be 'baseline' or 'comprehensive'.")
 
 
-def generate_cross_sectional_panel(config: PanelGenerationConfig) -> Tuple[pd.DataFrame, str]:
+def generate_cross_sectional_panel(
+    config: PanelGenerationConfig,
+) -> Tuple[pd.DataFrame, str]:
     """
     Build a cross-sectional feature panel suitable for downstream modelling.
 
@@ -111,8 +113,12 @@ def generate_cross_sectional_panel(config: PanelGenerationConfig) -> Tuple[pd.Da
             features = features.drop(columns=["timestamp"])
         if target_col not in features.columns:
             if "close" not in features.columns:
-                raise ValueError(f"{symbol}: 'close' column missing; cannot compute forward return.")
-            features[target_col] = features["close"].shift(-config.horizon) / features["close"] - 1.0
+                raise ValueError(
+                    f"{symbol}: 'close' column missing; cannot compute forward return."
+                )
+            features[target_col] = (
+                features["close"].shift(-config.horizon) / features["close"] - 1.0
+            )
 
         if config.dropna:
             features = features.dropna(subset=[target_col])
@@ -164,7 +170,9 @@ def _load_symbol_data(
     # Fallback to MarketDataLoader (expects pre-aggregated OHLCV directory or single file)
     try:
         loader = MarketDataLoader(data_path=loader_path)
-        df_raw = loader.load_data(symbol=symbol, start_date=loader_start, end_date=loader_end)
+        df_raw = loader.load_data(
+            symbol=symbol, start_date=loader_start, end_date=loader_end
+        )
         if df_raw is None or df_raw.empty:
             return None
         df_resampled = loader.resample_data(timeframe)
@@ -284,4 +292,3 @@ def _to_utc_timestamp(value: Optional[str]) -> Optional[pd.Timestamp]:
     else:
         ts = ts.tz_convert("UTC")
     return ts
-

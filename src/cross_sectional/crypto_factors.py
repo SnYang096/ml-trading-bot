@@ -52,14 +52,14 @@ def add_crypto_cross_sectional_factors(
     df = panel.copy()
 
     # Ensure timestamp level is position 0 for groupby convenience
-    time_level = df.index.names.index(
-        "timestamp") if "timestamp" in df.index.names else 0
+    time_level = (
+        df.index.names.index("timestamp") if "timestamp" in df.index.names else 0
+    )
     symbol_level = 1 if time_level == 0 else 0
 
     if "close" in df.columns:
         _add_relative_returns(df, time_level, symbol_level, cfg.return_windows)
-        _add_relative_volatility(df, time_level, symbol_level,
-                                 cfg.volatility_windows)
+        _add_relative_volatility(df, time_level, symbol_level, cfg.volatility_windows)
         _add_dominance_metrics(df, time_level, symbol_level)
 
     if cfg.include_volume and "volume" in df.columns:
@@ -98,8 +98,7 @@ def _add_relative_returns(
             returns - mean_cs,
             std_cs.replace(0, np.nan),
         ).fillna(0.0)
-        df[f"{name_base}_rank"] = returns.groupby(level=time_level).rank(
-            pct=True)
+        df[f"{name_base}_rank"] = returns.groupby(level=time_level).rank(pct=True)
 
 
 def _add_relative_volatility(
@@ -114,7 +113,9 @@ def _add_relative_volatility(
         if window <= 1:
             continue
         if multi_asset:
-            log_returns = close.groupby(level=symbol_level).apply(lambda s: np.log(s).diff())
+            log_returns = close.groupby(level=symbol_level).apply(
+                lambda s: np.log(s).diff()
+            )
             if isinstance(log_returns.index, pd.MultiIndex):
                 log_returns = log_returns.droplevel(0)
             vol = log_returns.groupby(level=symbol_level).apply(
@@ -123,7 +124,11 @@ def _add_relative_volatility(
             if isinstance(vol.index, pd.MultiIndex):
                 vol = vol.droplevel(0)
         else:
-            symbol_series = close.droplevel(symbol_level) if symbol_level < close.index.nlevels else close
+            symbol_series = (
+                close.droplevel(symbol_level)
+                if symbol_level < close.index.nlevels
+                else close
+            )
             log_returns = np.log(symbol_series).diff()
             vol = log_returns.rolling(window=window, min_periods=window // 2).std()
         vol_mean_cs = vol.groupby(level=time_level).transform("mean")
@@ -144,17 +149,16 @@ def _add_dominance_metrics(
 ) -> None:
     # Log return dominance vs strongest asset in cross-section
     close = df["close"].astype(float)
-    log_return = close.groupby(
-        level=symbol_level).apply(lambda s: np.log(s).diff())
+    log_return = close.groupby(level=symbol_level).apply(lambda s: np.log(s).diff())
     if isinstance(log_return.index, pd.MultiIndex):
         log_return = log_return.droplevel(0)
     max_ret = log_return.groupby(level=time_level).transform("max")
     min_ret = log_return.groupby(level=time_level).transform("min")
     range_ret = (max_ret - min_ret).replace(0, np.nan)
-    df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = (log_return -
-                                                     min_ret) / range_ret
-    df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = df[
-        f"{CRYPTO_FACTOR_PREFIX}return_dominance"].clip(0.0, 1.0).fillna(0.0)
+    df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = (log_return - min_ret) / range_ret
+    df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"] = (
+        df[f"{CRYPTO_FACTOR_PREFIX}return_dominance"].clip(0.0, 1.0).fillna(0.0)
+    )
 
 
 def _add_volume_share(
@@ -167,8 +171,9 @@ def _add_volume_share(
     denom = total_vol.where(total_vol.abs() > clip_share, np.nan)
     share = np.divide(vol, denom).fillna(0.0)
     df[f"{CRYPTO_FACTOR_PREFIX}volume_share"] = share
-    df[f"{CRYPTO_FACTOR_PREFIX}volume_rank"] = vol.groupby(
-        level=time_level).rank(pct=True)
+    df[f"{CRYPTO_FACTOR_PREFIX}volume_rank"] = vol.groupby(level=time_level).rank(
+        pct=True
+    )
 
 
 def _add_turnover_ratio(
@@ -178,15 +183,20 @@ def _add_turnover_ratio(
     clip_share: float,
 ) -> None:
     turnover = df["close"].astype(float) * df["volume"].astype(float)
-    trailing = (turnover.groupby(level=symbol_level).rolling(
-        window=48, min_periods=12).mean().droplevel(0))
+    trailing = (
+        turnover.groupby(level=symbol_level)
+        .rolling(window=48, min_periods=12)
+        .mean()
+        .droplevel(0)
+    )
     ratio = np.divide(
         turnover,
         trailing.where(trailing.abs() > clip_share, np.nan),
     ).fillna(0.0)
     df[f"{CRYPTO_FACTOR_PREFIX}turnover_ratio"] = ratio
     df[f"{CRYPTO_FACTOR_PREFIX}turnover_rank"] = turnover.groupby(
-        level=time_level).rank(pct=True)
+        level=time_level
+    ).rank(pct=True)
 
 
 def _add_orderflow_spreads(
@@ -199,12 +209,13 @@ def _add_orderflow_spreads(
         mean_cs = ratio.groupby(level=time_level).transform("mean")
         df[f"{CRYPTO_FACTOR_PREFIX}taker_buy_spread"] = ratio - mean_cs
         df[f"{CRYPTO_FACTOR_PREFIX}taker_buy_rank"] = ratio.groupby(
-            level=time_level).rank(pct=True)
+            level=time_level
+        ).rank(pct=True)
     if "cvd" in df.columns:
         cvd = df["cvd"].astype(float)
         cvd_change = cvd.groupby(level=symbol_level).diff()
         cvd_mean = cvd_change.groupby(level=time_level).transform("mean")
-        df[f"{CRYPTO_FACTOR_PREFIX}cvd_spread"] = (cvd_change -
-                                                   cvd_mean).fillna(0.0)
-        df[f"{CRYPTO_FACTOR_PREFIX}cvd_rank"] = cvd_change.groupby(
-            level=time_level).rank(pct=True).fillna(0.0)
+        df[f"{CRYPTO_FACTOR_PREFIX}cvd_spread"] = (cvd_change - cvd_mean).fillna(0.0)
+        df[f"{CRYPTO_FACTOR_PREFIX}cvd_rank"] = (
+            cvd_change.groupby(level=time_level).rank(pct=True).fillna(0.0)
+        )

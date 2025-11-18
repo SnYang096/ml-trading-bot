@@ -49,7 +49,8 @@ def _require_nautilus() -> None:
     if BacktestEngine is None or ParquetDataCatalog is None or BacktestConfig is None:
         raise RuntimeError(
             "nautilus-trader is not installed or failed to import. "
-            f"Original error: {_NAUTILUS_ERR}")
+            f"Original error: {_NAUTILUS_ERR}"
+        )
 
 
 @dataclass
@@ -112,15 +113,12 @@ class DimReductionStrategy(Strategy):
         df = self._bars_to_df(buf)
         fe = self.fe_map[symbol]
         try:
-            eng = fe.engineer_all_features(df,
-                                           fit=(len(buf) == self.warmup_bars))
+            eng = fe.engineer_all_features(df, fit=(len(buf) == self.warmup_bars))
         except Exception as exc:
             self.log.warning(f"Feature engineering failed for {symbol}: {exc}")
             return
 
-        feature_cols = [
-            col for col in eng.columns if col not in ["timestamp", "close"]
-        ]
+        feature_cols = [col for col in eng.columns if col not in ["timestamp", "close"]]
         if not feature_cols:
             return
         X_all = eng[feature_cols].values.astype(np.float32)
@@ -187,10 +185,8 @@ class DimReductionStrategy(Strategy):
         }
         df = pd.DataFrame(data).set_index("timestamp")
         up = (df["close"].diff() > 0).astype(float)
-        df["taker_buy_ratio"] = up.rolling(20,
-                                           min_periods=5).mean().fillna(0.5)
-        signed_vol = np.sign(
-            df["close"].diff().fillna(0.0)) * df["volume"].fillna(0.0)
+        df["taker_buy_ratio"] = up.rolling(20, min_periods=5).mean().fillna(0.5)
+        signed_vol = np.sign(df["close"].diff().fillna(0.0)) * df["volume"].fillna(0.0)
         df["cvd"] = signed_vol.cumsum()
         df["cvd_change_1"] = signed_vol
         df["cvd_change_5"] = signed_vol.rolling(5, min_periods=1).sum()
@@ -199,9 +195,11 @@ class DimReductionStrategy(Strategy):
         df["cvd_medium"] = signed_vol.rolling(60, min_periods=1).sum()
         df["cvd_long"] = signed_vol.rolling(288, min_periods=1).sum()
         total_vol = df["volume"].rolling(20, min_periods=1).sum()
-        df["cvd_normalized"] = (df["cvd_short"] /
-                                total_vol.replace(0, np.nan)).replace(
-                                    [np.inf, -np.inf], np.nan).fillna(0.0)
+        df["cvd_normalized"] = (
+            (df["cvd_short"] / total_vol.replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
         return df
 
     def _compute_atr(self, df: pd.DataFrame, period: int = 14) -> float:
@@ -220,13 +218,12 @@ class DimReductionStrategy(Strategy):
 
 class PortfolioAllocator:
 
-    def __init__(self,
-                 target_weights: Dict[str, float],
-                 max_risk_per_trade: float = 0.005):
+    def __init__(
+        self, target_weights: Dict[str, float], max_risk_per_trade: float = 0.005
+    ):
         w_sum = sum(max(0.0, v) for v in target_weights.values())
         self.weights = {
-            k: (v / w_sum if w_sum > 0 else 0.0)
-            for k, v in target_weights.items()
+            k: (v / w_sum if w_sum > 0 else 0.0) for k, v in target_weights.items()
         }
         self.max_risk = max_risk_per_trade
 
@@ -256,28 +253,25 @@ class TradeManager:
         self.max_layers = max_layers
         self.pyramid_step_r = pyramid_step_r
 
-    def initial_slices(self, entry: float, atr: float,
-                       qty: float) -> List[PositionSlice]:
+    def initial_slices(
+        self, entry: float, atr: float, qty: float
+    ) -> List[PositionSlice]:
         r_dollar = atr
         sl = entry - self.atr_mult_sl * atr
         part_sizes = [qty * a for a in self.tp_alloc]
         tp1 = entry + self.tp1_r * r_dollar
         tp2 = entry + self.tp2_r * r_dollar
         return [
-            PositionSlice(entry_price=entry,
-                          size=part_sizes[0],
-                          stop_price=sl,
-                          tp1=tp1),
-            PositionSlice(entry_price=entry,
-                          size=part_sizes[1],
-                          stop_price=sl,
-                          tp2=tp2),
-            PositionSlice(entry_price=entry, size=part_sizes[2],
-                          stop_price=sl),
+            PositionSlice(
+                entry_price=entry, size=part_sizes[0], stop_price=sl, tp1=tp1
+            ),
+            PositionSlice(
+                entry_price=entry, size=part_sizes[1], stop_price=sl, tp2=tp2
+            ),
+            PositionSlice(entry_price=entry, size=part_sizes[2], stop_price=sl),
         ]
 
-    def update_trailing(self, slice_: PositionSlice, price: float,
-                        atr: float) -> None:
+    def update_trailing(self, slice_: PositionSlice, price: float, atr: float) -> None:
         trail = price - self.atr_mult_trail * atr
         if trail > slice_.stop_price:
             slice_.stop_price = trail
@@ -297,8 +291,7 @@ def build_engine(args) -> BacktestEngine:
     engine.add_data_provider(catalog)
     allocator = PortfolioAllocator(
         target_weights={
-            symbol: weight
-            for symbol, weight in zip(args.symbols, _weights_for(args))
+            symbol: weight for symbol, weight in zip(args.symbols, _weights_for(args))
         },
         max_risk_per_trade=args.max_risk,
     )
@@ -308,8 +301,9 @@ def build_engine(args) -> BacktestEngine:
         tp1_r=args.tp1_r,
         tp2_r=args.tp2_r,
         tp_alloc=[
-            args.tp1_alloc, args.tp2_alloc,
-            1.0 - args.tp1_alloc - args.tp2_alloc
+            args.tp1_alloc,
+            args.tp2_alloc,
+            1.0 - args.tp1_alloc - args.tp2_alloc,
         ],
         enable_pyramiding=args.enable_pyramiding,
         max_layers=args.max_layers,
@@ -369,19 +363,22 @@ def export_run_artifacts(args, engine: BacktestEngine, run_dir: Path) -> None:
                 exported.append(str(target))
     except Exception as exc:  # pragma: no cover
         (run_dir / "export_warn.log").write_text(
-            f"Failed to copy engine logs: {exc}", encoding="utf-8")
+            f"Failed to copy engine logs: {exc}", encoding="utf-8"
+        )
 
     try:
         portfolio = getattr(engine, "portfolio", None)
         if portfolio is not None and hasattr(portfolio, "to_dict"):
             portfolio_path = run_dir / "portfolio_snapshot.json"
             with portfolio_path.open("w", encoding="utf-8") as handle:
-                json.dump(portfolio.to_dict(), handle,
-                          indent=2)  # type: ignore[func-returns-value]
+                json.dump(
+                    portfolio.to_dict(), handle, indent=2
+                )  # type: ignore[func-returns-value]
             exported.append(str(portfolio_path))
     except Exception as exc:  # pragma: no cover
         (run_dir / "export_warn.log").write_text(
-            f"Failed to serialize portfolio snapshot: {exc}", encoding="utf-8")
+            f"Failed to serialize portfolio snapshot: {exc}", encoding="utf-8"
+        )
 
     summary = run_dir / "README.txt"
     summary.write_text(
@@ -395,77 +392,80 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Nautilus backtest with LightGBM dimensionality strategy",
     )
-    parser.add_argument("--data-dir",
-                        required=True,
-                        help="Parquet data directory (catalog root)")
-    parser.add_argument("--results-dir",
-                        required=True,
-                        help="Directory containing production_model.pkl")
-    parser.add_argument("--symbols",
-                        nargs="+",
-                        default=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-                        help="Symbols to backtest")
-    parser.add_argument("--timeframe",
-                        default="5T",
-                        help="Bar timeframe key used for feature engineering")
-    parser.add_argument("--start",
-                        default=None,
-                        help="Start date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--data-dir", required=True, help="Parquet data directory (catalog root)"
+    )
+    parser.add_argument(
+        "--results-dir", required=True, help="Directory containing production_model.pkl"
+    )
+    parser.add_argument(
+        "--symbols",
+        nargs="+",
+        default=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+        help="Symbols to backtest",
+    )
+    parser.add_argument(
+        "--timeframe",
+        default="5T",
+        help="Bar timeframe key used for feature engineering",
+    )
+    parser.add_argument("--start", default=None, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", default=None, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--warmup",
-                        type=int,
-                        default=600,
-                        help="Number of bars for feature warmup fit")
+    parser.add_argument(
+        "--warmup", type=int, default=600, help="Number of bars for feature warmup fit"
+    )
     parser.add_argument(
         "--max-risk",
         type=float,
         default=0.005,
-        help="Per-symbol max risk per trade (fraction of equity)")
-    parser.add_argument("--atr-sl",
-                        type=float,
-                        default=1.5,
-                        help="Initial stop distance in ATR multiples")
-    parser.add_argument("--atr-trail",
-                        type=float,
-                        default=3.0,
-                        help="Trailing stop ATR multiple for runner")
-    parser.add_argument("--tp1-r",
-                        type=float,
-                        default=2.0,
-                        help="Take profit 1 in R multiples")
-    parser.add_argument("--tp2-r",
-                        type=float,
-                        default=3.0,
-                        help="Take profit 2 in R multiples")
-    parser.add_argument("--tp1-alloc",
-                        type=float,
-                        default=0.33,
-                        help="Fraction of position for TP1")
-    parser.add_argument("--tp2-alloc",
-                        type=float,
-                        default=0.33,
-                        help="Fraction of position for TP2")
-    parser.add_argument("--enable-pyramiding",
-                        action="store_true",
-                        help="Enable pyramiding after entry")
-    parser.add_argument("--max-layers",
-                        type=int,
-                        default=0,
-                        help="Max additional layers when pyramiding enabled")
-    parser.add_argument("--pyramid-step-r",
-                        type=float,
-                        default=1.5,
-                        help="Add layer every N*R in favor")
+        help="Per-symbol max risk per trade (fraction of equity)",
+    )
+    parser.add_argument(
+        "--atr-sl",
+        type=float,
+        default=1.5,
+        help="Initial stop distance in ATR multiples",
+    )
+    parser.add_argument(
+        "--atr-trail",
+        type=float,
+        default=3.0,
+        help="Trailing stop ATR multiple for runner",
+    )
+    parser.add_argument(
+        "--tp1-r", type=float, default=2.0, help="Take profit 1 in R multiples"
+    )
+    parser.add_argument(
+        "--tp2-r", type=float, default=3.0, help="Take profit 2 in R multiples"
+    )
+    parser.add_argument(
+        "--tp1-alloc", type=float, default=0.33, help="Fraction of position for TP1"
+    )
+    parser.add_argument(
+        "--tp2-alloc", type=float, default=0.33, help="Fraction of position for TP2"
+    )
+    parser.add_argument(
+        "--enable-pyramiding", action="store_true", help="Enable pyramiding after entry"
+    )
+    parser.add_argument(
+        "--max-layers",
+        type=int,
+        default=0,
+        help="Max additional layers when pyramiding enabled",
+    )
+    parser.add_argument(
+        "--pyramid-step-r", type=float, default=1.5, help="Add layer every N*R in favor"
+    )
     parser.add_argument(
         "--weights",
         nargs="*",
         type=float,
-        help="Optional explicit portfolio weights aligned to --symbols")
+        help="Optional explicit portfolio weights aligned to --symbols",
+    )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default=os.environ.get("NAUTILUS_RESULTS_DIR",
-                               "results/nautilus_backtests"),
+        default=os.environ.get("NAUTILUS_RESULTS_DIR", "results/nautilus_backtests"),
         help="Directory to store backtest artifacts",
     )
     return parser
@@ -487,7 +487,8 @@ def run_backtest(args) -> Path:
     end_tag = (args.end or "end").replace("-", "")
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(args.output_dir) / (
-        f"{symbol_tag}_{args.timeframe}_{start_tag}_{end_tag}_{timestamp}")
+        f"{symbol_tag}_{args.timeframe}_{start_tag}_{end_tag}_{timestamp}"
+    )
 
     export_run_artifacts(args, engine, run_dir)
     print(f"✅ Nautilus backtest artifacts saved to {run_dir}")

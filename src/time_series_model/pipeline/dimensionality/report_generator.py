@@ -16,8 +16,7 @@ import pandas as pd
 def _format_float(val, digits: int = 4) -> str:
     """Format float value for HTML report display."""
     try:
-        if val is None or (isinstance(val, float) and
-                           (np.isnan(val) or np.isinf(val))):
+        if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
             return "NA"
         return f"{val:.{digits}f}"
     except Exception:
@@ -26,17 +25,17 @@ def _format_float(val, digits: int = 4) -> str:
 
 def _get_oos_period_html(oos_metrics: Dict, oos_months: int) -> str:
     """Generate HTML row for OOS test period."""
-    oos_period = oos_metrics.get('oos_period', {})
-    start = oos_period.get('start', 'N/A')
-    end = oos_period.get('end', 'N/A')
-    start_str = start.split('T')[0] if start and start != 'N/A' else 'N/A'
-    end_str = end.split('T')[0] if end and end != 'N/A' else 'N/A'
+    oos_period = oos_metrics.get("oos_period", {})
+    start = oos_period.get("start", "N/A")
+    end = oos_period.get("end", "N/A")
+    start_str = start.split("T")[0] if start and start != "N/A" else "N/A"
+    end_str = end.split("T")[0] if end and end != "N/A" else "N/A"
     return f"<tr><th>OOS Test Period</th><td>{start_str} to {end_str} ({oos_months} months)</td></tr>"
 
 
 def _build_feature_importance_table(info: Dict) -> str:
     """Build feature importance table HTML."""
-    feature_importance = info.get('feature_importance', [])
+    feature_importance = info.get("feature_importance", [])
     if not feature_importance:
         return ""
 
@@ -45,15 +44,17 @@ def _build_feature_importance_table(info: Dict) -> str:
 
     rows = []
     for feat in top_features:
-        feat_name = feat.get('feature', 'N/A')
-        importance_gain = _format_float(feat.get('importance_gain', 0), 2)
-        importance_split = feat.get('importance_split', 0)
-        rows.append(f"""
+        feat_name = feat.get("feature", "N/A")
+        importance_gain = _format_float(feat.get("importance_gain", 0), 2)
+        importance_split = feat.get("importance_split", 0)
+        rows.append(
+            f"""
             <tr>
                 <td>{feat_name}</td>
                 <td>{importance_gain}</td>
                 <td>{importance_split:,}</td>
-            </tr>""")
+            </tr>"""
+        )
 
     return f"""
         <h2>Feature Importance (Top 20)</h2>
@@ -135,37 +136,44 @@ def _build_classification_metrics_table(
     cand_cls = stage_candidate.get("classification_metrics", {})
 
     def _row(label, base_val, cand_val, is_percent: bool = False):
-        base_fmt = (_format_percent(base_val)
-                    if is_percent else _format_float(base_val))
-        cand_fmt = (_format_percent(cand_val)
-                    if is_percent else _format_float(cand_val))
+        base_fmt = _format_percent(base_val) if is_percent else _format_float(base_val)
+        cand_fmt = _format_percent(cand_val) if is_percent else _format_float(cand_val)
         if base_val is not None and cand_val is not None:
             delta_val = cand_val - base_val
-            delta_fmt = (_format_percent(delta_val)
-                         if is_percent else _format_float(delta_val))
+            delta_fmt = (
+                _format_percent(delta_val) if is_percent else _format_float(delta_val)
+            )
         else:
             delta_fmt = "NA"
         return (
             f"<tr><td>{label}</td>"
-            f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>")
+            f"<td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>"
+        )
 
     rows = [
-        _row("Directional Win Rate",
-             base_fin.get("win_rate"),
-             cand_fin.get("win_rate"),
-             is_percent=True),
-        _row("Active Ratio",
-             base_fin.get("active_ratio"),
-             cand_fin.get("active_ratio"),
-             is_percent=True),
+        _row(
+            "Directional Win Rate",
+            base_fin.get("win_rate"),
+            cand_fin.get("win_rate"),
+            is_percent=True,
+        ),
+        _row(
+            "Active Ratio",
+            base_fin.get("active_ratio"),
+            cand_fin.get("active_ratio"),
+            is_percent=True,
+        ),
         _row("F1 (Macro)", base_cls.get("f1_macro"), cand_cls.get("f1_macro")),
-        _row("F1 (Weighted)", base_cls.get("f1_weighted"),
-             cand_cls.get("f1_weighted")),
+        _row("F1 (Weighted)", base_cls.get("f1_weighted"), cand_cls.get("f1_weighted")),
         _row("Accuracy", base_cls.get("accuracy"), cand_cls.get("accuracy")),
-        _row("ROC AUC (Macro)", base_cls.get("roc_auc_macro"),
-             cand_cls.get("roc_auc_macro")),
-        _row("PR AUC (Macro)", base_cls.get("pr_auc_macro"),
-             cand_cls.get("pr_auc_macro")),
+        _row(
+            "ROC AUC (Macro)",
+            base_cls.get("roc_auc_macro"),
+            cand_cls.get("roc_auc_macro"),
+        ),
+        _row(
+            "PR AUC (Macro)", base_cls.get("pr_auc_macro"), cand_cls.get("pr_auc_macro")
+        ),
     ]
 
     rows_html = "".join(rows)
@@ -194,8 +202,11 @@ def _build_regression_metrics_table(
             continue
         base_fmt = _format_float(base_val)
         cand_fmt = _format_float(cand_val)
-        delta_fmt = ("NA" if base_val is None or cand_val is None else
-                     _format_float(cand_val - base_val))
+        delta_fmt = (
+            "NA"
+            if base_val is None or cand_val is None
+            else _format_float(cand_val - base_val)
+        )
         rows.append(
             f"<tr><td>{metric.upper()}</td><td>{base_fmt}</td><td>{cand_fmt}</td><td>{delta_fmt}</td></tr>"
         )
@@ -214,8 +225,9 @@ def _build_regression_metrics_table(
     """
 
 
-def _build_confusion_matrix_html(class_metrics: Dict,
-                                 title: str = "Confusion Matrix") -> str:
+def _build_confusion_matrix_html(
+    class_metrics: Dict, title: str = "Confusion Matrix"
+) -> str:
     if not class_metrics:
         return ""
     matrix = class_metrics.get("confusion_matrix")
@@ -404,17 +416,17 @@ def _build_rolling_feature_importance_section(summary: Dict) -> str:
         for rank, item in enumerate(data, start=1):
             feat = item.get("feature", "N/A")
             importance = _format_float(item.get("importance", 0.0), 6)
-            rows.append(
-                f"<tr><td>{rank}</td><td>{feat}</td><td>{importance}</td></tr>"
-            )
+            rows.append(f"<tr><td>{rank}</td><td>{feat}</td><td>{importance}</td></tr>")
         if rows:
-            sections.append(f"""
+            sections.append(
+                f"""
             <h3>{label}</h3>
             <table>
                 <tr><th>Rank</th><th>Feature</th><th>Importance (Gain)</th></tr>
                 {''.join(rows)}
             </table>
-            """)
+            """
+            )
 
     if not sections:
         return ""
@@ -433,17 +445,17 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
     if not oos_metrics or oos_months <= 0:
         return ""
 
-    stage1 = oos_metrics.get('stage1', {})
-    stage1_acc = _format_float(stage1.get('accuracy'), 4)
-    stage1_precision = _format_float(stage1.get('precision'), 4)
-    stage1_recall = _format_float(stage1.get('recall'), 4)
-    stage1_f1 = _format_float(stage1.get('f1'), 4)
-    stage1_auc = _format_float(stage1.get('auc'), 4)
-    stage1_pr_auc = _format_float(stage1.get('pr_auc'), 4)
-    stage1_samples = stage1.get('samples', 0)
+    stage1 = oos_metrics.get("stage1", {})
+    stage1_acc = _format_float(stage1.get("accuracy"), 4)
+    stage1_precision = _format_float(stage1.get("precision"), 4)
+    stage1_recall = _format_float(stage1.get("recall"), 4)
+    stage1_f1 = _format_float(stage1.get("f1"), 4)
+    stage1_auc = _format_float(stage1.get("auc"), 4)
+    stage1_pr_auc = _format_float(stage1.get("pr_auc"), 4)
+    stage1_samples = stage1.get("samples", 0)
 
     # Confusion matrix
-    cm = stage1.get('confusion_matrix', [])
+    cm = stage1.get("confusion_matrix", [])
     cm_html = ""
     if cm and len(cm) == 2 and len(cm[0]) == 2:
         tn, fp = cm[0]
@@ -471,13 +483,13 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
             <strong>FN (False Negative):</strong> {fn}, <strong>TP (True Positive):</strong> {tp}</p>"""
 
     # Best threshold
-    best_threshold = _format_float(stage1.get('best_threshold'), 3)
-    best_threshold_f1 = _format_float(stage1.get('best_threshold_f1'), 4)
+    best_threshold = _format_float(stage1.get("best_threshold"), 3)
+    best_threshold_f1 = _format_float(stage1.get("best_threshold_f1"), 4)
 
     # Quality check
-    quality_check = stage1.get('quality_check', {})
-    quality_check_passed = quality_check.get('passed', True)
-    quality_issues = quality_check.get('issues', [])
+    quality_check = stage1.get("quality_check", {})
+    quality_check_passed = quality_check.get("passed", True)
+    quality_issues = quality_check.get("issues", [])
     quality_check_html = ""
     if quality_issues or not quality_check_passed:
         if quality_check_passed:
@@ -485,17 +497,16 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
         else:
             quality_check_html = '<div style="background-color: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0;"><strong>❌ Model Quality Check: FAILED</strong><ul>'
             for issue in quality_issues:
-                quality_check_html += f'<li>{issue}</li>'
-            quality_check_html += '</ul></div>'
+                quality_check_html += f"<li>{issue}</li>"
+            quality_check_html += "</ul></div>"
     elif quality_check_passed:
         quality_check_html = '<div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 20px 0;"><strong>✅ Model Quality Check: PASSED</strong></div>'
 
     stage2_rows = ""
-    if oos_metrics.get('stage2'):
-        stage2_rmse = _format_float(
-            oos_metrics.get('stage2', {}).get('rmse'), 6)
-        stage2_mse = _format_float(oos_metrics.get('stage2', {}).get('mse'), 8)
-        stage2_samples = oos_metrics.get('stage2', {}).get('samples', 0)
+    if oos_metrics.get("stage2"):
+        stage2_rmse = _format_float(oos_metrics.get("stage2", {}).get("rmse"), 6)
+        stage2_mse = _format_float(oos_metrics.get("stage2", {}).get("mse"), 8)
+        stage2_samples = oos_metrics.get("stage2", {}).get("samples", 0)
         stage2_rows = f"""
             <h3>Stage2: Regression Metrics</h3>
             <table>
@@ -586,8 +597,7 @@ def _build_oos_table(oos_metrics: Dict, oos_months: int) -> str:
 def _format_price(val) -> str:
     """Format price value with thousands separator."""
     try:
-        if val is None or (isinstance(val, float) and
-                           (np.isnan(val) or np.isinf(val))):
+        if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
             return "NA"
         return f"{val:,.2f}"
     except Exception:
@@ -678,9 +688,7 @@ def collect_all_results() -> Dict[str, any]:
     print(
         f"✅ Collected {len(results['production_training_results'])} production training results"
     )
-    print(
-        f"✅ Collected {len(results['integration_results'])} integration results"
-    )
+    print(f"✅ Collected {len(results['integration_results'])} integration results")
 
     return results
 
@@ -696,15 +704,15 @@ def calculate_summary_statistics(results: Dict[str, any]) -> Dict[str, any]:
 
     if results["feature_engineering_results"]:
         total_features = sum(
-            r.get("total_features", 0)
-            for r in results["feature_engineering_results"])
+            r.get("total_features", 0) for r in results["feature_engineering_results"]
+        )
         filtered_features = sum(
             r.get("filtered_features", 0)
-            for r in results["feature_engineering_results"])
+            for r in results["feature_engineering_results"]
+        )
         stats["total_features_processed"] = total_features
         if total_features > 0 and filtered_features > 0:
-            stats[
-                "average_compression_ratio"] = total_features / filtered_features
+            stats["average_compression_ratio"] = total_features / filtered_features
 
     if results["production_training_results"]:
         performance_changes = []
@@ -715,13 +723,16 @@ def calculate_summary_statistics(results: Dict[str, any]) -> Dict[str, any]:
 
         if performance_changes:
             stats["average_performance_improvement"] = float(
-                np.mean(performance_changes))
+                np.mean(performance_changes)
+            )
             stats["best_performing_method"] = "LightGBM"
 
-    stats["total_experiments"] = (len(results["feature_engineering_results"]) +
-                                  len(results["rolling_training_results"]) +
-                                  len(results["production_training_results"]) +
-                                  len(results["integration_results"]))
+    stats["total_experiments"] = (
+        len(results["feature_engineering_results"])
+        + len(results["rolling_training_results"])
+        + len(results["production_training_results"])
+        + len(results["integration_results"])
+    )
 
     return stats
 
@@ -840,7 +851,9 @@ def create_feature_engineering_section(results: Dict[str, any]) -> str:
 
 def create_rolling_training_section(results: Dict[str, any]) -> str:
     if not results["rolling_training_results"]:
-        return "<h2>🚀 Rolling Training</h2><p>No rolling training results available.</p>"
+        return (
+            "<h2>🚀 Rolling Training</h2><p>No rolling training results available.</p>"
+        )
 
     html = "<h2>🚀 Rolling Training Results</h2>"
     for result in results["rolling_training_results"]:
@@ -899,7 +912,7 @@ def create_integration_section(results: Dict[str, any]) -> str:
 
 def write_html_report(results: Dict, html_path: str) -> None:
     """Write HTML report for a single dimensionality reduction experiment.
-    
+
     This generates a detailed report showing:
     - 4-stage comparison (All Features → IC-Filtered → Representatives → Compressed)
     - Performance metrics (R², RMSE, MAE)
@@ -917,7 +930,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
         date_range_str = (
             f"Training Data: {train_start_date[:4]}-{train_start_date[4:6]}-"
             f"{train_start_date[6:8]} to {train_end_date[:4]}-{train_end_date[4:6]}-"
-            f"{train_end_date[6:8]}")
+            f"{train_end_date[6:8]}"
+        )
         runtime_str = f"Run Time: {ts_start} to {ts_end}"
     else:
         date_range_str = f"Start: {ts_start}  |  End: {ts_end}"
@@ -928,8 +942,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
     multi_horizon_results = results.get("multi_horizon_results", {})
     task_type = results.get("task_type", "classification_binary")
     selection_metric = results.get(
-        "selection_metric",
-        results.get("selection", {}).get("metric", "composite"))
+        "selection_metric", results.get("selection", {}).get("metric", "composite")
+    )
     label_threshold = results.get("label_threshold", None)
     insights = results.get("insights", {})
     feature_effective = insights.get("effective")
@@ -942,7 +956,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
     recomm_horizon = insights.get("recommended_horizon")
     recomm_horizon_metric = insights.get("recommended_horizon_metric")
     recomm_horizon_metric_name = insights.get(
-        "recommended_horizon_metric_name", "metric")
+        "recommended_horizon_metric_name", "metric"
+    )
     recomm_horizon_effective = insights.get("recommended_horizon_effective")
     stage_label_map = {
         "stage1_all_features": "Stage 1: All Features",
@@ -951,19 +966,24 @@ def write_html_report(results: Dict, html_path: str) -> None:
         "stage4_compressed": "Stage 4: Compressed",
     }
     recommended_stage_key = insights.get("recommended_stage")
-    recommended_stage_label = (stage_label_map.get(recommended_stage_key,
-                                                   recommended_stage_key)
-                               if recommended_stage_key else None)
+    recommended_stage_label = (
+        stage_label_map.get(recommended_stage_key, recommended_stage_key)
+        if recommended_stage_key
+        else None
+    )
     if recomm_horizon is not None:
-        horizon_badge = ("✅ Effective"
-                         if recomm_horizon_effective else "ℹ️ Best Candidate")
+        horizon_badge = (
+            "✅ Effective" if recomm_horizon_effective else "ℹ️ Best Candidate"
+        )
         horizon_metric_fmt = _format_metric_for_display(
-            recomm_horizon_metric_name, recomm_horizon_metric)
+            recomm_horizon_metric_name, recomm_horizon_metric
+        )
         recommended_horizon_row = (
             "<tr><th>Recommended Forward Horizon</th>"
             f"<td>{int(recomm_horizon)} bars "
             f"({recomm_horizon_metric_name}: {horizon_metric_fmt}) "
-            f"{horizon_badge}</td></tr>")
+            f"{horizon_badge}</td></tr>"
+        )
     else:
         recommended_horizon_row = ""
     html_dir = os.path.dirname(os.path.abspath(html_path))
@@ -977,33 +997,36 @@ def write_html_report(results: Dict, html_path: str) -> None:
             return target
 
     artifacts: Dict[str, any] = {}
-    top_factors_path = d.get("top_factors_path") or results.get(
-        "top_factors_path")
+    top_factors_path = d.get("top_factors_path") or results.get("top_factors_path")
     representatives_path = d.get("representatives_path") or results.get(
-        "representatives_path")
-    shap_dir_path = (results.get("explainability", {}).get("stage3_shap_dir")
-                     or results.get("selection", {}).get(
-                         "explainability", {}).get("stage3_shap_dir"))
+        "representatives_path"
+    )
+    shap_dir_path = results.get("explainability", {}).get(
+        "stage3_shap_dir"
+    ) or results.get("selection", {}).get("explainability", {}).get("stage3_shap_dir")
 
     if top_factors_path and os.path.exists(top_factors_path):
         artifacts["top_factors"] = _rel_path(top_factors_path)
         artifacts["top_factors_preview"] = _load_factor_preview(
-            top_factors_path, "top_factors")
+            top_factors_path, "top_factors"
+        )
     else:
         artifacts["top_factors_preview"] = []
 
     if representatives_path and os.path.exists(representatives_path):
         artifacts["representatives"] = _rel_path(representatives_path)
         artifacts["representatives_preview"] = _load_factor_preview(
-            representatives_path, "representative_factors")
+            representatives_path, "representative_factors"
+        )
     else:
         artifacts["representatives_preview"] = []
 
     shap_importance_preview: list[Dict] = []
     if shap_dir_path and os.path.exists(shap_dir_path):
         artifacts["shap"] = _rel_path(shap_dir_path)
-        shap_importance_path = Path(
-            shap_dir_path) / "stage3_representatives_shap_importance.json"
+        shap_importance_path = (
+            Path(shap_dir_path) / "stage3_representatives_shap_importance.json"
+        )
         if shap_importance_path.exists():
             try:
                 with open(shap_importance_path, "r", encoding="utf-8") as f:
@@ -1033,7 +1056,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
     has_4_stages = bool(
         stage4
         and (stage4.get("r2") is not None or stage4.get("rmse") is not None)
-        and compressed_dims not in (None, 0, d.get("original_features_count")))
+        and compressed_dims not in (None, 0, d.get("original_features_count"))
+    )
     if not has_4_stages:
         compressed_dims = d.get("stage3_representatives")
 
@@ -1053,11 +1077,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
         conclusion_delta = delta_r2
         if not has_4_stages:
             if stage3_vs_2:
-                conclusion_delta = stage3_vs_2.get("delta_r2",
-                                                   conclusion_delta)
+                conclusion_delta = stage3_vs_2.get("delta_r2", conclusion_delta)
             elif stage2_vs_1:
-                conclusion_delta = stage2_vs_1.get("delta_r2",
-                                                   conclusion_delta)
+                conclusion_delta = stage2_vs_1.get("delta_r2", conclusion_delta)
         if conclusion_delta is not None and conclusion_delta > 0:
             conclusion = f"Dimensionality reduction appears beneficial. R² improved by {conclusion_delta:.4f}."
         else:
@@ -1081,7 +1103,8 @@ def write_html_report(results: Dict, html_path: str) -> None:
                 f"<td>{_format_float(row.get('delta_r2'))}</td>"
                 f"<td>{_format_float(row.get('rmse_stage3_reps') or row.get('rmse_original'))}</td>"
                 f"<td>{_format_float(row.get('rmse_compressed'))}</td>"
-                "</tr>")
+                "</tr>"
+            )
 
     classification_section = ""
     confusion_html = ""
@@ -1099,14 +1122,13 @@ def write_html_report(results: Dict, html_path: str) -> None:
 
     insight_items: list[str] = []
     if feature_effective is True:
-        insight_items.append(
-            "✅ Representative features outperformed the baseline.")
+        insight_items.append("✅ Representative features outperformed the baseline.")
     elif feature_effective is False:
-        insight_items.append(
-            "⚠️ Representative features did not beat the baseline.")
+        insight_items.append("⚠️ Representative features did not beat the baseline.")
     else:
         insight_items.append(
-            "ℹ️ Feature effectiveness could not be conclusively determined.")
+            "ℹ️ Feature effectiveness could not be conclusively determined."
+        )
 
     metric_name = insights.get("metric_name")
     metric_display_map = {
@@ -1124,8 +1146,11 @@ def write_html_report(results: Dict, html_path: str) -> None:
     }
     metric_display = metric_display_map.get(
         metric_name,
-        metric_name.replace("_", " ").title()
-        if isinstance(metric_name, str) else "Metric",
+        (
+            metric_name.replace("_", " ").title()
+            if isinstance(metric_name, str)
+            else "Metric"
+        ),
     )
     baseline_val = insights.get("baseline_value")
     candidate_val = insights.get("candidate_value")
@@ -1135,17 +1160,21 @@ def write_html_report(results: Dict, html_path: str) -> None:
         cand_fmt = _format_metric_for_display(metric_name, candidate_val)
         delta_fmt = _format_metric_delta(metric_name, delta_val)
         insight_items.append(
-            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt}).")
+            f"{metric_display}: {base_fmt} → {cand_fmt} (Δ {delta_fmt})."
+        )
 
     if recommended_stage_label:
-        insight_items.append(
-            f"Recommended feature stage: {recommended_stage_label}.")
+        insight_items.append(f"Recommended feature stage: {recommended_stage_label}.")
 
     if recomm_horizon is not None:
-        horizon_badge = ("✅ Effective horizon" if recomm_horizon_effective else
-                         "ℹ️ Horizon candidate")
+        horizon_badge = (
+            "✅ Effective horizon"
+            if recomm_horizon_effective
+            else "ℹ️ Horizon candidate"
+        )
         horizon_metric_fmt = _format_metric_for_display(
-            recomm_horizon_metric_name, recomm_horizon_metric)
+            recomm_horizon_metric_name, recomm_horizon_metric
+        )
         insight_items.append(
             f"{horizon_badge}: {int(recomm_horizon)} bars ({recomm_horizon_metric_name}: {horizon_metric_fmt})."
         )
@@ -1153,10 +1182,11 @@ def write_html_report(results: Dict, html_path: str) -> None:
     insights_html = ""
     if insight_items:
         insights_html = (
-            "<div class=\"card\">"
+            '<div class="card">'
             "<h3>Insights Summary</h3>"
             f"<ul>{''.join(f'<li>{item}</li>' for item in insight_items)}</ul>"
-            "</div>")
+            "</div>"
+        )
 
     # Build stability validation section
     stability_html = ""
@@ -1174,9 +1204,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
         if stable_factors:
             stable_sorted = sorted(
                 stable_factors,
-                key=lambda x: abs(
-                    ic_comparison.get(x, {}).get("ic_selection", 0)),
-                reverse=True)[:20]
+                key=lambda x: abs(ic_comparison.get(x, {}).get("ic_selection", 0)),
+                reverse=True,
+            )[:20]
             for factor in stable_sorted:
                 comp = ic_comparison.get(factor, {})
                 ic_sel = comp.get("ic_selection", 0)
@@ -1195,9 +1225,9 @@ def write_html_report(results: Dict, html_path: str) -> None:
         if unstable_factors:
             unstable_sorted = sorted(
                 unstable_factors,
-                key=lambda x: abs(
-                    ic_comparison.get(x, {}).get("ic_change", 0)),
-                reverse=True)[:10]
+                key=lambda x: abs(ic_comparison.get(x, {}).get("ic_change", 0)),
+                reverse=True,
+            )[:10]
             for factor in unstable_sorted:
                 comp = ic_comparison.get(factor, {})
                 ic_sel = comp.get("ic_selection", 0)
@@ -1352,7 +1382,7 @@ def _build_html_report_content(
         if task_type.startswith("classification"):
             stage_comparison_table = (
                 f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
-                f'<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>'
+                f"<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>"
                 f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
                 f'<td>{_format_float(stage1_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage1_fin.get("active_ratio",0)*100,2)}%</td></tr>'
                 f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
@@ -1361,11 +1391,12 @@ def _build_html_report_content(
                 f'<td>{_format_float(stage3_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage3_fin.get("active_ratio",0)*100,2)}%</td></tr>'
                 f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
                 f'<td>{_format_float(stage4_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage4_fin.get("active_ratio",0)*100,2)}%</td></tr>'
-                f'</table></div>')
+                f"</table></div>"
+            )
         else:
             stage_comparison_table = (
                 f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
-                f'<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>'
+                f"<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>"
                 f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
                 f'<td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td>'
                 f'<td>{_format_float(stage1.get("mae"))}</td><td>-</td></tr>'
@@ -1378,23 +1409,25 @@ def _build_html_report_content(
                 f'<tr><td>Stage 4: Compressed</td><td>{d.get("compressed_dimensions", "-")}</td>'
                 f'<td>{_format_float(stage4.get("r2"))}</td><td>{_format_float(stage4.get("rmse"))}</td>'
                 f'<td>{_format_float(stage4.get("mae"))}</td><td>{_format_float(stage4_vs_3.get("delta_r2"))}</td></tr>'
-                f'</table></div>')
+                f"</table></div>"
+            )
     else:
         if task_type.startswith("classification"):
             stage_comparison_table = (
                 f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
-                f'<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>'
+                f"<tr><th>Stage</th><th>Features</th><th>Directional Win Rate</th><th>Active Ratio</th></tr>"
                 f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
                 f'<td>{_format_float(stage1_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage1_fin.get("active_ratio",0)*100,2)}%</td></tr>'
                 f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td>'
                 f'<td>{_format_float(stage2_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage2_fin.get("active_ratio",0)*100,2)}%</td></tr>'
                 f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
                 f'<td>{_format_float(stage3_fin.get("win_rate",0)*100,2)}%</td><td>{_format_float(stage3_fin.get("active_ratio",0)*100,2)}%</td></tr>'
-                f'</table></div>')
+                f"</table></div>"
+            )
         else:
             stage_comparison_table = (
                 f'<div class="card"><h3>Stage Comparison (Test Set)</h3><table class="metric-table">'
-                f'<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>'
+                f"<tr><th>Stage</th><th>Features</th><th>R²</th><th>RMSE</th><th>MAE</th><th>vs Previous (ΔR²)</th></tr>"
                 f'<tr><td>Stage 1: All Features</td><td>{d.get("stage1_all_features", "-")}</td>'
                 f'<td>{_format_float(stage1.get("r2"))}</td><td>{_format_float(stage1.get("rmse"))}</td>'
                 f'<td>{_format_float(stage1.get("mae"))}</td><td>-</td></tr>'
@@ -1404,12 +1437,11 @@ def _build_html_report_content(
                 f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td>'
                 f'<td>{_format_float(stage3.get("r2"))}</td><td>{_format_float(stage3.get("rmse"))}</td>'
                 f'<td>{_format_float(stage3.get("mae"))}</td><td>{_format_float(stage3_vs_2.get("delta_r2"))}</td></tr>'
-                f'</table></div>')
+                f"</table></div>"
+            )
 
-    top_factor_preview = artifacts.get(
-        "top_factors_preview") if artifacts else []
-    rep_factor_preview = artifacts.get(
-        "representatives_preview") if artifacts else []
+    top_factor_preview = artifacts.get("top_factors_preview") if artifacts else []
+    rep_factor_preview = artifacts.get("representatives_preview") if artifacts else []
     shap_link = artifacts.get("shap") if artifacts else None
 
     artifact_lines: list[str] = []
@@ -1421,9 +1453,7 @@ def _build_html_report_content(
     if artifacts is not None:
         top_link = artifacts.get("top_factors")
         if top_link:
-            line = (
-                f'Top Factors: <a href="{top_link}">{os.path.basename(top_link)}</a>'
-            )
+            line = f'Top Factors: <a href="{top_link}">{os.path.basename(top_link)}</a>'
             if effective_badge_text:
                 line = f"{line} ({effective_badge_text})"
             artifact_lines.append(line)
@@ -1434,9 +1464,7 @@ def _build_html_report_content(
 
         rep_link = artifacts.get("representatives")
         if rep_link:
-            line = (
-                f'Representatives: <a href="{rep_link}">{os.path.basename(rep_link)}</a>'
-            )
+            line = f'Representatives: <a href="{rep_link}">{os.path.basename(rep_link)}</a>'
             if effective_badge_text:
                 line = f"{line} ({effective_badge_text})"
             artifact_lines.append(line)
@@ -1459,39 +1487,46 @@ def _build_html_report_content(
     top_factor_html = ""
     if top_factor_preview:
         top_factor_html = (
-            "<div class=\"card\">"
+            '<div class="card">'
             "<h3>Top Factors (IC Ranking)</h3>"
-            "<ul class=\"pill-list\">"
+            '<ul class="pill-list">'
             f"{''.join(f'<li>{name}</li>' for name in top_factor_preview[:30])}"
             "</ul>"
-            "</div>")
+            "</div>"
+        )
 
     rep_factor_html = ""
     if rep_factor_preview:
         rep_factor_html = (
-            "<div class=\"card\">"
+            '<div class="card">'
             "<h3>Representative Feature Set</h3>"
-            "<ul class=\"pill-list\">"
+            '<ul class="pill-list">'
             f"{''.join(f'<li>{name}</li>' for name in rep_factor_preview[:30])}"
             "</ul>"
-            "</div>")
+            "</div>"
+        )
 
     factor_section = ""
     if top_factor_html or rep_factor_html:
-        factor_section = f'<div class="grid-two">{top_factor_html}{rep_factor_html}</div>'
+        factor_section = (
+            f'<div class="grid-two">{top_factor_html}{rep_factor_html}</div>'
+        )
 
     shap_html = ""
     if shap_importance:
         shap_rows = "".join(
             f"<tr><td>{item.get('rank')}</td><td>{item.get('feature')}</td><td>{_format_float(item.get('mean_abs_shap'))}</td></tr>"
-            for item in shap_importance)
-        shap_html = ("<div class=\"card\">"
-                     "<h3>SHAP Importance (Top Factors)</h3>"
-                     "<table class=\"metric-table\">"
-                     "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
-                     f"{shap_rows}"
-                     "</table>"
-                     "</div>")
+            for item in shap_importance
+        )
+        shap_html = (
+            '<div class="card">'
+            "<h3>SHAP Importance (Top Factors)</h3>"
+            '<table class="metric-table">'
+            "<tr><th>#</th><th>Feature</th><th>Mean |SHAP|</th></tr>"
+            f"{shap_rows}"
+            "</table>"
+            "</div>"
+        )
 
     regression_section = ""
     if not task_type.startswith("classification") and stage1 and stage3:
@@ -1565,17 +1600,18 @@ def _build_html_report_content(
             </div>
             """
 
-        training_html = ("<div class=\"card\">"
-                         "<h3>Training Diagnostics</h3>"
-                         "<table class=\"metric-table\">"
-                         "<tr><th>Model</th><th>Best Iteration</th></tr>"
-                         f"{''.join(train_rows)}"
-                         "</table>"
-                         f"{interpretation}"
-                         "</div>")
+        training_html = (
+            '<div class="card">'
+            "<h3>Training Diagnostics</h3>"
+            '<table class="metric-table">'
+            "<tr><th>Model</th><th>Best Iteration</th></tr>"
+            f"{''.join(train_rows)}"
+            "</table>"
+            f"{interpretation}"
+            "</div>"
+        )
 
-    multi_horizon_html = _build_multi_horizon_table(multi_horizon_results,
-                                                    task_type)
+    multi_horizon_html = _build_multi_horizon_table(multi_horizon_results, task_type)
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"/><title>Dimensionality Reduction Comparison</title>
@@ -1614,10 +1650,10 @@ th{{background:#eef2f8;font-weight:600;color:#2b3f64}}
 <tr><td>Stage 1: All Features</td><td>{d.get('stage1_all_features', d.get('original_features_count','-'))}</td><td>All original features after missing/stability filter</td></tr>
 {f'<tr><td>Stage 2: IC-Filtered</td><td>{d.get("stage2_ic_filtered", "-")}</td><td>Top features by |IC| (Spearman correlation)</td></tr>' if d.get('stage2_ic_filtered') else ''}
 {f'<tr><td>Stage 3: Representatives</td><td>{d.get("stage3_representatives", "-")}</td><td>Correlation-filtered representative features (60-100)</td></tr>' if d.get('stage3_representatives') else ''}
-{f'<tr><td>Stage 4: Compressed</td><td>{compressed_dims}</td><td>Compressed feature dimensions</td></tr>' if has_4_stages else ''}
+{f'<tr><td>Stage 4: Compressed</td><td>{compressed_dims}</td><td>Compressed feature dimensions</td></tr>' if has_4_stages and compressed_dims is not None else ''}
 <tr><th colspan="3">Summary</th></tr>
-<tr><td>Final Compression Ratio</td><td colspan="2">{_format_float(d.get('compression_ratio'),2)}x ({d.get('original_features_count','-')} → {compressed_dims if has_4_stages else d.get('stage3_representatives','-')})</td></tr>
-<tr><td>Samples (train/val/test)</td><td colspan="2">{d.get('training_samples','-')} / {d.get('validation_samples','-')} / {d.get('test_samples','-')}</td></tr>
+<tr><td>Final Compression Ratio</td><td colspan="2">{_format_float(d.get('compression_ratio'), 2)}x ({d.get('original_features_count', '-')} → {(compressed_dims if has_4_stages and compressed_dims is not None else d.get('stage3_representatives', '-'))})</td></tr>
+<tr><td>Samples (train/val/test)</td><td colspan="2">{d.get('training_samples', '-')} / {d.get('validation_samples', '-')} / {d.get('test_samples', '-')}</td></tr>
 </table>
 
 <div class="card">
@@ -1625,7 +1661,7 @@ th{{background:#eef2f8;font-weight:600;color:#2b3f64}}
 <table class="metric-table">
 <tr><th>Task Type</th><td>{task_type}</td></tr>
 <tr><th>Selection Metric</th><td>{selection_metric or '-'}</td></tr>
-{f'<tr><th>Label Threshold</th><td>{_format_float(label_threshold,6)}</td></tr>' if label_threshold is not None else ''}
+{f'<tr><th>Label Threshold</th><td>{_format_float(label_threshold, 6)}</td></tr>' if label_threshold is not None else ''}
 <tr><th>Feature Effectiveness</th><td>{feature_effective_display or 'Unknown'}</td></tr>
 {f'<tr><th>Recommended Stage</th><td>{recommended_stage_label}</td></tr>' if recommended_stage_label else ''}
 {recommended_horizon_row}
@@ -1656,8 +1692,7 @@ th{{background:#eef2f8;font-weight:600;color:#2b3f64}}
     return html
 
 
-def _build_multi_horizon_table(multi_horizon_results: Dict,
-                               task_type: str) -> str:
+def _build_multi_horizon_table(multi_horizon_results: Dict, task_type: str) -> str:
     """Build multi-horizon comparison table."""
     if not multi_horizon_results:
         return ""
@@ -1668,13 +1703,16 @@ def _build_multi_horizon_table(multi_horizon_results: Dict,
             "<th>F1 (Macro)</th><th>ROC AUC</th><th>Directional Win Rate</th></tr>"
         )
     else:
-        header = ("<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
-                  "<th>MAE</th></tr>")
+        header = (
+            "<tr><th>Horizon</th><th>Stage</th><th>R²</th><th>RMSE</th>"
+            "<th>MAE</th></tr>"
+        )
 
     rows = []
     horizon_keys = sorted(
         [k for k in multi_horizon_results.keys() if k.startswith("horizon_")],
-        key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0)
+        key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0,
+    )
 
     stage_map = [
         ("Stage 1: All Features", "stage1_all_features"),
@@ -1701,26 +1739,31 @@ def _build_multi_horizon_table(multi_horizon_results: Dict,
                     f"<td>{_format_metric_for_display('f1_macro', cls_metrics.get('f1_macro'))}</td>"
                     f"<td>{_format_metric_for_display('roc_auc_macro', cls_metrics.get('roc_auc_macro'))}</td>"
                     f"<td>{_format_metric_for_display('win_rate', financial.get('win_rate'))}</td>"
-                    "</tr>")
+                    "</tr>"
+                )
             else:
-                rows.append("<tr>"
-                            f"<td><strong>{horizon_num} bars</strong></td>"
-                            f"<td>{stage_label}</td>"
-                            f"<td>{_format_float(stage_perf.get('r2'))}</td>"
-                            f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
-                            f"<td>{_format_float(stage_perf.get('mae'))}</td>"
-                            "</tr>")
+                rows.append(
+                    "<tr>"
+                    f"<td><strong>{horizon_num} bars</strong></td>"
+                    f"<td>{stage_label}</td>"
+                    f"<td>{_format_float(stage_perf.get('r2'))}</td>"
+                    f"<td>{_format_float(stage_perf.get('rmse'))}</td>"
+                    f"<td>{_format_float(stage_perf.get('mae'))}</td>"
+                    "</tr>"
+                )
 
     if not rows:
         return ""
 
-    return ("<div class=\"card\">"
-            "<h3>📊 Multi-Horizon Comparison</h3>"
-            "<table class=\"metric-table\">"
-            f"{header}"
-            f"{''.join(rows)}"
-            "</table>"
-            "</div>")
+    return (
+        '<div class="card">'
+        "<h3>📊 Multi-Horizon Comparison</h3>"
+        '<table class="metric-table">'
+        f"{header}"
+        f"{''.join(rows)}"
+        "</table>"
+        "</div>"
+    )
 
 
 def create_recommendations_section(results: Dict[str, any]) -> str:
@@ -1749,11 +1792,11 @@ def create_recommendations_section(results: Dict[str, any]) -> str:
 
 def write_training_report(info_path: str, html_path: str | None = None) -> str:
     """Generate HTML report from training model info JSON.
-    
+
     Args:
         info_path: Path to the training model info JSON file
         html_path: Optional path for HTML output. If None, uses info_path with .html extension
-    
+
     Returns:
         Path to the generated HTML report
     """
@@ -1787,6 +1830,7 @@ def write_training_report(info_path: str, html_path: str | None = None) -> str:
     # Auto-open report in browser
     try:
         import webbrowser
+
         abs_path = os.path.abspath(html_path)
         file_url = f"file://{abs_path}"
         webbrowser.open(file_url)
@@ -1833,17 +1877,20 @@ def _build_training_report_html(info: Dict) -> str:
             "<h2>PR / ROC Curves</h2>"
             '<div style="display:flex; gap:20px; flex-wrap: wrap;">'
             f'{"".join(items)}'
-            "</div>")
+            "</div>"
+        )
     data_files = info.get("data_files", [])
 
     # Format date range
     if isinstance(actual_start, str) and isinstance(actual_end, str):
         try:
             from datetime import datetime
-            start_dt = datetime.fromisoformat(
-                actual_start.replace('Z', '+00:00'))
-            end_dt = datetime.fromisoformat(actual_end.replace('Z', '+00:00'))
-            date_range_str = f"{start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
+
+            start_dt = datetime.fromisoformat(actual_start.replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(actual_end.replace("Z", "+00:00"))
+            date_range_str = (
+                f"{start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
+            )
         except Exception:
             date_range_str = f"{actual_start} to {actual_end}"
     else:
@@ -1854,8 +1901,9 @@ def _build_training_report_html(info: Dict) -> str:
     stage2_metrics = metrics.get("stage2", {})
 
     timeframe_rows = []
-    for tf in sorted(timeframes.keys(),
-                     key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0):
+    for tf in sorted(
+        timeframes.keys(), key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0
+    ):
         bars = timeframes.get(tf, 0)
         stage1 = stage1_metrics.get(tf, {})
         stage2 = stage2_metrics.get(tf, {})
@@ -1867,7 +1915,8 @@ def _build_training_report_html(info: Dict) -> str:
 
         # Build row with conditional stage2 columns
         if stage2_metrics:
-            timeframe_rows.append(f"""
+            timeframe_rows.append(
+                f"""
         <tr>
             <td>{tf}</td>
             <td>{bars:,}</td>
@@ -1875,44 +1924,53 @@ def _build_training_report_html(info: Dict) -> str:
             <td>{_format_float(stage1_std, 4) if stage1_std is not None else 'N/A'}</td>
             <td>{_format_float(stage2_rmse, 6) if stage2_rmse is not None else 'N/A'}</td>
             <td>{_format_float(stage2_mse, 8) if stage2_mse is not None else 'N/A'}</td>
-        </tr>""")
+        </tr>"""
+            )
         else:
-            timeframe_rows.append(f"""
+            timeframe_rows.append(
+                f"""
         <tr>
             <td>{tf}</td>
             <td>{bars:,}</td>
             <td>{_format_float(stage1_acc, 4) if stage1_acc is not None else 'N/A'}</td>
             <td>{_format_float(stage1_std, 4) if stage1_std is not None else 'N/A'}</td>
-        </tr>""")
+        </tr>"""
+            )
 
     # Build fold details table for stage1
     stage1_fold_details = []
-    for tf in sorted(stage1_metrics.keys(),
-                     key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0):
+    for tf in sorted(
+        stage1_metrics.keys(), key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0
+    ):
         stage1_tf = stage1_metrics.get(tf, {})
         folds = stage1_tf.get("fold_details", [])
         for fold in folds:
-            stage1_fold_details.append(f"""
+            stage1_fold_details.append(
+                f"""
             <tr>
                 <td>{tf}</td>
                 <td>{fold.get('fold', 'N/A')}</td>
                 <td>{_format_float(fold.get('accuracy'), 4)}</td>
-            </tr>""")
+            </tr>"""
+            )
 
     # Build fold details table for stage2
     stage2_fold_details = []
-    for tf in sorted(stage2_metrics.keys(),
-                     key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0):
+    for tf in sorted(
+        stage2_metrics.keys(), key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0
+    ):
         stage2_tf = stage2_metrics.get(tf, {})
         folds = stage2_tf.get("fold_details", [])
         for fold in folds:
-            stage2_fold_details.append(f"""
+            stage2_fold_details.append(
+                f"""
             <tr>
                 <td>{tf}</td>
                 <td>{fold.get('fold', 'N/A')}</td>
                 <td>{_format_float(fold.get('rmse'), 6)}</td>
                 <td>{_format_float(fold.get('mse'), 8)}</td>
-            </tr>""")
+            </tr>"""
+            )
 
     # Build stage2 explanation and table outside f-string to avoid nesting
     stage2_explanation = ""
@@ -1925,7 +1983,8 @@ def _build_training_report_html(info: Dict) -> str:
 
     stage2_table = ""
     if stage2_fold_details:
-        stage2_table = """
+        stage2_table = (
+            """
         <h2>Stage2: Regression Metrics (Per Fold)</h2>
         <table>
             <tr>
@@ -1934,9 +1993,12 @@ def _build_training_report_html(info: Dict) -> str:
                 <th>RMSE</th>
                 <th>MSE</th>
             </tr>
-            """ + "".join(stage2_fold_details) + """
+            """
+            + "".join(stage2_fold_details)
+            + """
         </table>
         """
+        )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2114,13 +2176,13 @@ def write_rolling_report(
     report_type: str = "monthly",
 ) -> str:
     """Generate HTML report for rolling training (monthly or quarterly).
-    
+
     Args:
         results_dir: Directory containing rolling training results
         summary_path: Path to summary.json (if None, auto-detect)
         results_csv_path: Path to results CSV (if None, auto-detect)
         report_type: "monthly" or "quarterly"
-    
+
     Returns:
         Path to the generated HTML report
     """
@@ -2173,38 +2235,48 @@ def _build_rolling_report_html(
 
     # Extract summary info
     config = summary.get("configuration", {})
-    symbol = (summary.get("symbol") or config.get("symbol")
-              or (", ".join(config.get("symbols", [])) if isinstance(
-                  config.get("symbols"), list) else config.get("symbols"))
-              or "N/A")
+    symbol = (
+        summary.get("symbol")
+        or config.get("symbol")
+        or (
+            ", ".join(config.get("symbols", []))
+            if isinstance(config.get("symbols"), list)
+            else config.get("symbols")
+        )
+        or "N/A"
+    )
     # Ensure symbol is a string and properly formatted
     if not isinstance(symbol, str):
         symbol = str(symbol) if symbol else "N/A"
     # Clean up symbol string (remove any special characters that might cause issues)
     symbol = symbol.strip()
-    total_periods = summary.get(f"total_{report_type}s_tested",
-                                len(results_df))
+    total_periods = summary.get(f"total_{report_type}s_tested", len(results_df))
     avg_return = summary.get("avg_return", 0)
     avg_win_rate = summary.get("avg_win_rate", 0)
     avg_profit_factor = summary.get("avg_profit_factor", 0)
     avg_max_drawdown = summary.get("avg_max_drawdown", 0)
     total_trades = summary.get("total_trades", 0)
-    feature_engineering = summary.get("feature_engineering",
-                                      "EnhancedFeatureEngineer")
+    feature_engineering = summary.get("feature_engineering", "EnhancedFeatureEngineer")
     # Training time range (prefer training dates over creation time)
     train_start_date = summary.get("train_start_date") or summary.get(
-        "configuration", {}).get("start")
+        "configuration", {}
+    ).get("start")
     test_end_date = summary.get("test_end_date") or summary.get(
-        "configuration", {}).get("end")
-    time_range_str = f"{train_start_date} to {test_end_date}" if (
-        train_start_date and test_end_date) else "N/A"
+        "configuration", {}
+    ).get("end")
+    time_range_str = (
+        f"{train_start_date} to {test_end_date}"
+        if (train_start_date and test_end_date)
+        else "N/A"
+    )
 
     # Build period results table
     period_rows = []
     if not results_df.empty:
         for _, row in results_df.iterrows():
             period = row.get(period_col, "N/A")
-            period_rows.append(f"""
+            period_rows.append(
+                f"""
             <tr>
                 <td>{period}</td>
                 <td>{int(row.get('total_trades', 0))}</td>
@@ -2215,28 +2287,34 @@ def _build_rolling_report_html(
                 <td>{int(row.get('train_samples', 0)):,}</td>
                 <td>{int(row.get('test_samples', 0)):,}</td>
                 <td>{int(row.get('num_features', 0))}</td>
-            </tr>""")
+            </tr>"""
+            )
 
     # Build statistics table
     stats_rows = []
     if not results_df.empty:
         for col in [
-                'total_trades', 'total_return', 'win_rate', 'profit_factor',
-                'max_drawdown'
+            "total_trades",
+            "total_return",
+            "win_rate",
+            "profit_factor",
+            "max_drawdown",
         ]:
             if col in results_df.columns:
                 mean_val = results_df[col].mean()
                 std_val = results_df[col].std()
                 min_val = results_df[col].min()
                 max_val = results_df[col].max()
-                stats_rows.append(f"""
+                stats_rows.append(
+                    f"""
                 <tr>
                     <td>{col.replace('_', ' ').title()}</td>
                     <td>{_format_float(mean_val, 2)}</td>
                     <td>{_format_float(std_val, 2)}</td>
                     <td>{_format_float(min_val, 2)}</td>
                     <td>{_format_float(max_val, 2)}</td>
-                </tr>""")
+                </tr>"""
+                )
 
     long_term_section = ""
     if not results_df.empty:
@@ -2270,12 +2348,15 @@ def _build_rolling_report_html(
             "1) Accuracy/F1/AUC/PR-AUC ≥ 0.50 保证分类器具备基础识别能力；"
             "2) Precision/Recall ≥ 0.50 代表模型既能控制误开仓也能抓住行情；"
             "3) |IC| ≥ 0.05 表示信号与收益相关性显著；"
-            "4) Return R² ≥ 0 说明收益回归模型至少不会反向预测（若 R² < 0，回归模型会削弱信号，可视为不可用）。")
+            "4) Return R² ≥ 0 说明收益回归模型至少不会反向预测（若 R² < 0，回归模型会削弱信号，可视为不可用）。"
+        )
         if failing_periods:
-            issue_rows = "".join([
-                f"<li><strong>{period}</strong>: " + "; ".join(issues) +
-                "</li>" for period, issues in failing_periods
-            ])
+            issue_rows = "".join(
+                [
+                    f"<li><strong>{period}</strong>: " + "; ".join(issues) + "</li>"
+                    for period, issues in failing_periods
+                ]
+            )
             long_term_section = f"""
         <div class="explanation" style="background-color:#ffebee;border-left-color:#e53935;">
             <h3>📉 长期有效性结论</h3>
@@ -2295,8 +2376,7 @@ def _build_rolling_report_html(
     # Optional CV metrics table if present
     cv_section = ""
     if not results_df.empty and "cv_logloss_mean" in results_df.columns:
-        cv_mean_overall = _format_float(results_df["cv_logloss_mean"].mean(),
-                                        6)
+        cv_mean_overall = _format_float(results_df["cv_logloss_mean"].mean(), 6)
         cv_std_overall = _format_float(results_df["cv_logloss_std"].mean(), 6)
         cv_section = f"""
         <h2>🧪 Cross-Validation (Training Window)</h2>
@@ -2316,13 +2396,14 @@ def _build_rolling_report_html(
         </ul>
     </div>
     """
-    feature_importance_section = _build_rolling_feature_importance_section(
-        summary)
+    feature_importance_section = _build_rolling_feature_importance_section(summary)
 
     # Ensure symbol is properly formatted for HTML
     import html as html_module
-    symbol_display = html_module.escape(
-        str(symbol)) if symbol and symbol != "N/A" else "N/A"
+
+    symbol_display = (
+        html_module.escape(str(symbol)) if symbol and symbol != "N/A" else "N/A"
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">

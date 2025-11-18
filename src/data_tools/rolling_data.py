@@ -48,8 +48,7 @@ def _infer_default_parquet_dir(zip_path: str) -> str:
 def _infer_parquet_name(zip_basename: str) -> str:
     upper_name = zip_basename.upper()
     symbol_match = re.search(r"([A-Z]+USDT)", upper_name)
-    symbol = symbol_match.group(1) if symbol_match else zip_basename.replace(
-        ".zip", "")
+    symbol = symbol_match.group(1) if symbol_match else zip_basename.replace(".zip", "")
 
     date_match = re.search(r"(\d{4})-(\d{2})", zip_basename)
     if date_match:
@@ -61,10 +60,8 @@ def _infer_parquet_name(zip_basename: str) -> str:
 
 
 def load_and_process_file(
-        zip_path: str,
-        *,
-        freq: str = "5T",
-        parquet_dir: str | None = None) -> Optional[pd.DataFrame]:
+    zip_path: str, *, freq: str = "5T", parquet_dir: str | None = None
+) -> Optional[pd.DataFrame]:
     """Load a single aggregate-trade file (parquet preferred, fallback to zip)."""
 
     path = os.path.abspath(zip_path)
@@ -82,8 +79,7 @@ def load_and_process_file(
         parquet_path = os.path.join(parquet_dir, parquet_name)
 
         if os.path.exists(parquet_path):
-            print(
-                f"   📊 Loading from parquet: {os.path.basename(parquet_path)}")
+            print(f"   📊 Loading from parquet: {os.path.basename(parquet_path)}")
             return load_parquet_file(parquet_path)
 
     print(f"   📦 Loading from zip: {os.path.basename(zip_path)}")
@@ -103,8 +99,7 @@ def load_and_process_file(
 
         if "transact_time" in df.columns or "timestamp" in df.columns:
             if "transact_time" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["transact_time"],
-                                                 unit="ms")
+                df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms")
             else:
                 df["timestamp"] = pd.to_datetime(df["timestamp"])
         else:
@@ -128,11 +123,9 @@ def load_and_process_file(
         df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
         df = df.dropna(subset=["price", "quantity"])
 
-        ohlc = df.groupby(pd.Grouper(freq=freq)).agg({
-            "price": ["first", "max", "min", "last"],
-            "quantity":
-            "sum"
-        })
+        ohlc = df.groupby(pd.Grouper(freq=freq)).agg(
+            {"price": ["first", "max", "min", "last"], "quantity": "sum"}
+        )
         ohlc.columns = ["open", "high", "low", "close", "volume"]
         ohlc = ohlc.dropna().ffill()
 
@@ -146,20 +139,18 @@ def load_and_process_file(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def add_order_flow_features(zip_path: str,
-                            ohlcv_df: pd.DataFrame,
-                            parquet_dir: str | None = None) -> pd.DataFrame:
+def add_order_flow_features(
+    zip_path: str, ohlcv_df: pd.DataFrame, parquet_dir: str | None = None
+) -> pd.DataFrame:
     """Add order-flow derived features (CVD, taker buy ratio, etc.)."""
 
     parquet_dir = parquet_dir or _infer_default_parquet_dir(zip_path)
-    temp_dir = os.path.join(os.path.dirname(zip_path),
-                            f"temp_of_{os.getpid()}")
+    temp_dir = os.path.join(os.path.dirname(zip_path), f"temp_of_{os.getpid()}")
     os.makedirs(temp_dir, exist_ok=True)
 
     try:
         if not os.path.exists(zip_path):
-            print(
-                "   ℹ️  Zip file not found for order flow features, skipping")
+            print("   ℹ️  Zip file not found for order flow features, skipping")
             return ohlcv_df
 
         with zipfile.ZipFile(zip_path, "r") as archive:
@@ -179,8 +170,7 @@ def add_order_flow_features(zip_path: str,
         agg = agg.dropna(subset=["price", "quantity"])
 
         if "is_buyer_maker" in agg.columns:
-            agg["taker_buy"] = (
-                ~agg["is_buyer_maker"].astype(bool)).astype(int)
+            agg["taker_buy"] = (~agg["is_buyer_maker"].astype(bool)).astype(int)
         else:
             agg["taker_buy"] = 0
 
@@ -189,49 +179,51 @@ def add_order_flow_features(zip_path: str,
         agg = agg.set_index("timestamp")
 
         freq = pd.infer_freq(ohlcv_df.index[:10]) or "5T"
-        per_interval = agg.groupby(pd.Grouper(freq=freq)).agg({
-            "buy_qty": "sum",
-            "sell_qty": "sum"
-        })
+        per_interval = agg.groupby(pd.Grouper(freq=freq)).agg(
+            {"buy_qty": "sum", "sell_qty": "sum"}
+        )
 
         per_interval["taker_buy_ratio"] = per_interval["buy_qty"] / (
-            per_interval["buy_qty"] + per_interval["sell_qty"]).replace(
-                0, np.nan)
-        per_interval["taker_buy_ratio"] = per_interval[
-            "taker_buy_ratio"].fillna(0.5)
+            per_interval["buy_qty"] + per_interval["sell_qty"]
+        ).replace(0, np.nan)
+        per_interval["taker_buy_ratio"] = per_interval["taker_buy_ratio"].fillna(0.5)
 
         delta = per_interval["buy_qty"] - per_interval["sell_qty"]
-        per_interval["cvd_short"] = delta.rolling(window=20,
-                                                  min_periods=1).sum()
-        per_interval["cvd_medium"] = delta.rolling(window=60,
-                                                   min_periods=1).sum()
-        per_interval["cvd_long"] = delta.rolling(window=288,
-                                                 min_periods=1).sum()
+        per_interval["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
+        per_interval["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
+        per_interval["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
         per_interval["cvd_change_1"] = delta
         per_interval["cvd_change_5"] = delta.rolling(window=5).sum()
         per_interval["cvd_change_20"] = delta.rolling(window=20).sum()
 
         total_volume = per_interval["buy_qty"] + per_interval["sell_qty"]
         per_interval["cvd_normalized"] = (
-            delta / total_volume.replace(0, np.nan)).fillna(0)
+            delta / total_volume.replace(0, np.nan)
+        ).fillna(0)
         per_interval["cvd"] = delta.cumsum()
 
-        result = (ohlcv_df.join(
-            per_interval[[
-                "buy_qty",
-                "sell_qty",
-                "taker_buy_ratio",
-                "cvd",
-                "cvd_short",
-                "cvd_medium",
-                "cvd_long",
-                "cvd_change_1",
-                "cvd_change_5",
-                "cvd_change_20",
-                "cvd_normalized",
-            ]],
-            how="left",
-        ).ffill().fillna(0))
+        result = (
+            ohlcv_df.join(
+                per_interval[
+                    [
+                        "buy_qty",
+                        "sell_qty",
+                        "taker_buy_ratio",
+                        "cvd",
+                        "cvd_short",
+                        "cvd_medium",
+                        "cvd_long",
+                        "cvd_change_1",
+                        "cvd_change_5",
+                        "cvd_change_20",
+                        "cvd_normalized",
+                    ]
+                ],
+                how="left",
+            )
+            .ffill()
+            .fillna(0)
+        )
 
         return result
 
@@ -252,26 +244,24 @@ def engineer_features(
     """Engineer features using the reusable ComprehensiveFeatureEngineer."""
 
     if feature_engineer is None:
-        feature_engineer = ComprehensiveFeatureEngineer(scaler_type="standard",
-                                                        wavelet="db4",
-                                                        wpt_level=3,
-                                                        hurst_window=100)
+        feature_engineer = ComprehensiveFeatureEngineer(
+            scaler_type="standard", wavelet="db4", wpt_level=3, hurst_window=100
+        )
 
     engineered_data = feature_engineer.engineer_features(df, fit=fit)
     return engineered_data, feature_engineer
 
 
-def create_labels(df: pd.DataFrame,
-                  *,
-                  forward_bars: int = 3,
-                  threshold: float = 0.005) -> pd.DataFrame:
+def create_labels(
+    df: pd.DataFrame, *, forward_bars: int = 3, threshold: float = 0.005
+) -> pd.DataFrame:
     """Create future-return based classification labels (3-class: 0=Hold, 1=Long, 2=Short).
 
     Args:
         df: DataFrame with OHLCV data
         forward_bars: Number of bars ahead for prediction
         threshold: Threshold for signal classification
-    
+
     Returns:
         DataFrame with 'signal' column containing 3-class labels:
         - 0: Hold (future_return between -threshold and threshold)
@@ -305,20 +295,18 @@ def create_labels_multi_horizon(
     lower_quantile: float = 0.4,
     upper_quantile: float = 0.6,
     quantile_min_periods: int = 200,
-    use_rank_percentile:
-    bool = True,  # NEW: Use rolling rank percentile (recommended)
-    rank_window: int
-    | None = None,  # If None, calculated as horizon * 20 (min 100)
+    use_rank_percentile: bool = True,  # NEW: Use rolling rank percentile (recommended)
+    rank_window: int | None = None,  # If None, calculated as horizon * 20 (min 100)
     top_percentile: float = 0.7,  # Top 30% = Long
-    bottom_percentile: float = 0.3
+    bottom_percentile: float = 0.3,
 ) -> pd.DataFrame:  # Bottom 30% = Short
     """Create future-return based labels for multiple horizons (3-class: 0=Hold, 1=Long, 2=Short).
-    
+
     Improved version that addresses the issue of fixed threshold in low-volatility periods:
     - Option 0 (RECOMMENDED): Use rolling rank percentile (future_return rank in rolling window)
     - Option 1: Use risk-adjusted returns (Sharpe-like: return / volatility)
     - Option 2: Use rolling quantile thresholds (adaptive to market conditions)
-    
+
     Args:
         df: DataFrame with OHLCV data
         horizons: List of forward bars to look ahead (e.g., [1, 5, 10, 15])
@@ -334,7 +322,7 @@ def create_labels_multi_horizon(
         rank_window: Window size for rolling rank calculation. If None, will be calculated as horizon * multiplier (default: 20x horizon, min 100)
         top_percentile: Top percentile threshold for Long signal (e.g., 0.7 = top 30%)
         bottom_percentile: Bottom percentile threshold for Short signal (e.g., 0.3 = bottom 30%)
-    
+
     Returns:
         DataFrame with multiple label columns for each horizon:
         - signal_{horizon}: 3-class labels (0=Hold, 1=Long, 2=Short)
@@ -392,21 +380,27 @@ def create_labels_multi_horizon(
             # Use more lenient min_periods to reduce NaN samples
             # Original: max(10, current_rank_window // 10) - too strict
             # New: max(5, current_rank_window // 20) - allows more samples while maintaining quality
-            min_periods = max(5, current_rank_window //
-                              20)  # At least 5% of window (more lenient)
+            min_periods = max(
+                5, current_rank_window // 20
+            )  # At least 5% of window (more lenient)
 
             # Calculate rank percentile: for each position, calculate rank of current value
             # within the trailing window (past values only, excluding current)
             # Use shift(1) INSIDE the rolling calculation to exclude current value from ranking
             # This ensures: row t uses past data (t-window to t-1) to rank the value at t
             shifted_for_ranking = df[future_return_col].shift(
-                1)  # Shift for ranking only
+                1
+            )  # Shift for ranking only
             rank_pct_series = shifted_for_ranking.rolling(
-                window=current_rank_window, min_periods=min_periods).apply(
-                    lambda x: pd.Series(x).rank(pct=True, method='first').iloc[
-                        -1]
-                    if len(x) > 0 and not pd.isna(x.iloc[-1]) else np.nan,
-                    raw=False)
+                window=current_rank_window, min_periods=min_periods
+            ).apply(
+                lambda x: (
+                    pd.Series(x).rank(pct=True, method="first").iloc[-1]
+                    if len(x) > 0 and not pd.isna(x.iloc[-1])
+                    else np.nan
+                ),
+                raw=False,
+            )
 
             # CRITICAL: Shift back to align with original future_return timing
             # Now rank_pct_series[t] corresponds to the rank percentile of future_return[t]
@@ -421,8 +415,7 @@ def create_labels_multi_horizon(
             df.loc[df[rank_pct_col] > top_percentile, signal_col] = 1  # Long
 
             # Short: rank percentile < bottom_percentile (e.g., bottom 30% = rank < 30th percentile)
-            df.loc[df[rank_pct_col] < bottom_percentile,
-                   signal_col] = 2  # Short
+            df.loc[df[rank_pct_col] < bottom_percentile, signal_col] = 2  # Short
 
             # Invalid samples (NaN in rank percentile) remain as 0 (Hold)
             valid_mask = df[rank_pct_col].notna()
@@ -431,8 +424,10 @@ def create_labels_multi_horizon(
                 f"   ✅ Horizon {horizon}: Using rolling rank percentile "
                 f"(window={current_rank_window}, top={top_percentile:.0%}, bottom={bottom_percentile:.0%})"
             )
-            print(f"      Valid samples: {valid_mask.sum()}/{len(valid_mask)} "
-                  f"({valid_mask.sum()/len(valid_mask)*100:.1f}%)")
+            print(
+                f"      Valid samples: {valid_mask.sum()}/{len(valid_mask)} "
+                f"({valid_mask.sum()/len(valid_mask)*100:.1f}%)"
+            )
 
             # Check label distribution to prevent constant prediction
             signal_dist = df[signal_col].value_counts().to_dict()
@@ -467,33 +462,37 @@ def create_labels_multi_horizon(
         elif use_quantile_threshold:
             # Method 2: Use rolling quantile thresholds (adaptive to market conditions)
             # This avoids the problem of fixed threshold in low-volatility periods
-            from time_series_model.pipeline.training.label_utils import rolling_quantile_classification_labels
+            from time_series_model.pipeline.training.label_utils import (
+                rolling_quantile_classification_labels,
+            )
 
             # Use shifted returns to avoid lookahead bias
             y_return = df[future_return_col]
-            y_quantile_labels, valid_mask, upper_threshold, lower_threshold = rolling_quantile_classification_labels(
-                y_return,
-                window=quantile_window,
-                lower_quantile=lower_quantile,
-                upper_quantile=upper_quantile,
-                min_periods=quantile_min_periods,
+            y_quantile_labels, valid_mask, upper_threshold, lower_threshold = (
+                rolling_quantile_classification_labels(
+                    y_return,
+                    window=quantile_window,
+                    lower_quantile=lower_quantile,
+                    upper_quantile=upper_quantile,
+                    min_periods=quantile_min_periods,
+                )
             )
 
             # Create 3-class signal: 1=Long, 0=Hold, 2=Short
             signal_col = f"signal_{horizon}"
             df[signal_col] = 0  # Hold by default
-            df.loc[valid_mask & (y_quantile_labels == 1),
-                   signal_col] = 1  # Long
-            df.loc[valid_mask & (y_quantile_labels == 0),
-                   signal_col] = 2  # Short
+            df.loc[valid_mask & (y_quantile_labels == 1), signal_col] = 1  # Long
+            df.loc[valid_mask & (y_quantile_labels == 0), signal_col] = 2  # Short
             # Invalid samples (NaN in quantile labels) remain as 0 (Hold)
 
             print(
                 f"   ✅ Horizon {horizon}: Using rolling quantile thresholds "
                 f"(window={quantile_window}, q_low={lower_quantile}, q_high={upper_quantile})"
             )
-            print(f"      Valid samples: {valid_mask.sum()}/{len(valid_mask)} "
-                  f"({valid_mask.sum()/len(valid_mask)*100:.1f}%)")
+            print(
+                f"      Valid samples: {valid_mask.sum()}/{len(valid_mask)} "
+                f"({valid_mask.sum()/len(valid_mask)*100:.1f}%)"
+            )
 
             # Check label distribution to prevent constant prediction
             signal_dist = df[signal_col].value_counts().to_dict()
@@ -511,9 +510,7 @@ def create_labels_multi_horizon(
                     print(
                         f"      ⚠️  WARNING: Extreme label imbalance! Long rate={long_rate:.2%} (should be 1%-99%)"
                     )
-                    print(
-                        f"         → This is unexpected for quantile-based labels"
-                    )
+                    print(f"         → This is unexpected for quantile-based labels")
                     print(
                         f"         → Check quantile thresholds (lower_quantile={lower_quantile}, upper_quantile={upper_quantile})"
                     )
@@ -523,12 +520,15 @@ def create_labels_multi_horizon(
             # Calculate rolling volatility (using trailing window to avoid lookahead bias)
             # Use abs(return) as volatility proxy for simplicity
             vol_col = f"volatility_{horizon}"
-            df[vol_col] = df[future_return_col].abs().rolling(
-                window=vol_window, min_periods=max(3, vol_window // 2)).std()
+            df[vol_col] = (
+                df[future_return_col]
+                .abs()
+                .rolling(window=vol_window, min_periods=max(3, vol_window // 2))
+                .std()
+            )
 
             # Fill NaN with a small value to avoid division by zero
-            df[vol_col] = df[vol_col].fillna(
-                df[future_return_col].abs().mean() + 1e-8)
+            df[vol_col] = df[vol_col].fillna(df[future_return_col].abs().mean() + 1e-8)
 
             # Calculate risk-adjusted return (Sharpe-like)
             risk_adjusted_col = f"risk_adjusted_return_{horizon}"
@@ -540,13 +540,17 @@ def create_labels_multi_horizon(
             df.loc[df[risk_adjusted_col] > threshold, signal_col] = 1  # Long
             df.loc[df[risk_adjusted_col] < -threshold, signal_col] = 2  # Short
 
-            print(f"   ✅ Horizon {horizon}: Using risk-adjusted returns "
-                  f"(threshold={threshold}, vol_window={vol_window})")
-            print(f"      Risk-adjusted return stats: "
-                  f"mean={df[risk_adjusted_col].mean():.4f}, "
-                  f"std={df[risk_adjusted_col].std():.4f}, "
-                  f"min={df[risk_adjusted_col].min():.4f}, "
-                  f"max={df[risk_adjusted_col].max():.4f}")
+            print(
+                f"   ✅ Horizon {horizon}: Using risk-adjusted returns "
+                f"(threshold={threshold}, vol_window={vol_window})"
+            )
+            print(
+                f"      Risk-adjusted return stats: "
+                f"mean={df[risk_adjusted_col].mean():.4f}, "
+                f"std={df[risk_adjusted_col].std():.4f}, "
+                f"min={df[risk_adjusted_col].min():.4f}, "
+                f"max={df[risk_adjusted_col].max():.4f}"
+            )
 
             # Check label distribution to prevent constant prediction
             signal_dist = df[signal_col].value_counts().to_dict()
@@ -564,9 +568,7 @@ def create_labels_multi_horizon(
                     print(
                         f"      ⚠️  WARNING: Extreme label imbalance! Long rate={long_rate:.2%} (should be 1%-99%)"
                     )
-                    print(
-                        f"         → Model may degenerate to constant prediction"
-                    )
+                    print(f"         → Model may degenerate to constant prediction")
                     print(
                         f"         → Consider using quantile-based thresholds (use_quantile_threshold=True)"
                     )
@@ -585,7 +587,8 @@ def create_labels_multi_horizon(
 
             print(
                 f"   ⚠️  Horizon {horizon}: Using fixed threshold ({threshold}) - "
-                f"may have issues in low-volatility periods")
+                f"may have issues in low-volatility periods"
+            )
 
         # Keep backward compatibility: binary_signal for legacy code
         binary_signal_col = f"binary_signal_{horizon}"
@@ -654,10 +657,15 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
     }
 
     # Also exclude multi-horizon label columns (e.g., signal_1, binary_signal_5, future_return_10)
-    exclude_cols.update([
-        col for col in df.columns if col.startswith("signal_")
-        or col.startswith("binary_signal_") or col.startswith("future_return_")
-    ])
+    exclude_cols.update(
+        [
+            col
+            for col in df.columns
+            if col.startswith("signal_")
+            or col.startswith("binary_signal_")
+            or col.startswith("future_return_")
+        ]
+    )
 
     return [col for col in df.columns if col not in exclude_cols]
 

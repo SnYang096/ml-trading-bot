@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 class ClassificationModelTrainer(BaseModelTrainer):
     """
     Trainer for classification models with return regression and volatility prediction.
-    
+
     This trainer implements a three-model system:
     1. Classification model: Predicts direction (up/down)
     2. Return regression model: Predicts return magnitude
     3. Volatility model: Predicts future volatility
-    
+
     This architecture enables risk-adjusted signal scoring:
     score = p_up * expected_return / expected_volatility
     """
@@ -46,7 +46,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
     ):
         """
         Initialize the classification model trainer.
-        
+
         Args:
             use_gpu: Enable GPU acceleration
             auto_tune_params: Auto-tune hyperparameters for classification model
@@ -66,8 +66,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
             auto_tune_return: Auto-tune hyperparameters for return regression model
             auto_tune_vol: Auto-tune hyperparameters for volatility model
         """
-        super().__init__("classification", use_gpu, auto_tune_params,
-                         tune_trials)
+        super().__init__("classification", use_gpu, auto_tune_params, tune_trials)
         self.classification_threshold = classification_threshold
         self.use_symmetric_threshold = use_symmetric_threshold
         self.use_vol_adjusted_threshold = use_vol_adjusted_threshold
@@ -95,7 +94,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """
         Train classification, return regression, and volatility models.
-        
+
         Args:
             X_df: Feature matrix
             y_return: Future return target (used for classification and regression)
@@ -106,15 +105,14 @@ class ClassificationModelTrainer(BaseModelTrainer):
             preprocess_fn: Optional preprocessing function (not used, kept for compatibility)
             preprocess_kwargs: Optional preprocessing kwargs (not used, kept for compatibility)
             q50_params: Optional Q50 parameters (not used for classification, kept for compatibility)
-        
+
         Returns:
             Tuple of (models_dict, metrics_dict, preprocess_params_dict)
-            
+
         Raises:
             ValueError: If target series contain NaN values or classification target has only one class
         """
-        logger.info(
-            "Training strategy: Classification model with return regression")
+        logger.info("Training strategy: Classification model with return regression")
 
         # Validate inputs
         self._validate_targets(y_return, y_vol)
@@ -124,7 +122,8 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         # Create classification labels with symmetric threshold and neutral zone filtering
         y_classification, valid_mask = self._create_classification_labels(
-            y_return, y_vol)
+            y_return, y_vol
+        )
 
         # Log filtering statistics
         n_total = len(y_return)
@@ -165,8 +164,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 f"valid_mask length ({len(valid_mask)}) does not match X_df length ({len(X_df)})"
             )
 
-        X_df_filtered = X_df.loc[valid_mask] if hasattr(
-            X_df.index, 'is_monotonic') else X_df[valid_mask]
+        X_df_filtered = (
+            X_df.loc[valid_mask]
+            if hasattr(X_df.index, "is_monotonic")
+            else X_df[valid_mask]
+        )
         y_classification_filtered = y_classification
 
         # Filter groups to match filtered data
@@ -178,38 +180,48 @@ class ClassificationModelTrainer(BaseModelTrainer):
                     f"Groups will be filtered to match valid_mask length ({len(valid_mask)})."
                 )
                 # Try to align groups with X_df by index if possible
-                if hasattr(X_df, 'index') and len(groups) == len(valid_mask):
+                if hasattr(X_df, "index") and len(groups) == len(valid_mask):
                     # If groups length matches valid_mask, use it directly
-                    groups_filtered = groups[valid_mask] if isinstance(valid_mask, np.ndarray) else groups
+                    groups_filtered = (
+                        groups[valid_mask]
+                        if isinstance(valid_mask, np.ndarray)
+                        else groups
+                    )
                 else:
                     # Otherwise, create groups based on filtered data
                     groups_filtered = None
-                    logger.warning("Cannot align groups, proceeding without groups for CV")
+                    logger.warning(
+                        "Cannot align groups, proceeding without groups for CV"
+                    )
             else:
-                groups_filtered = groups[valid_mask] if isinstance(valid_mask, np.ndarray) else groups
+                groups_filtered = (
+                    groups[valid_mask] if isinstance(valid_mask, np.ndarray) else groups
+                )
         else:
             groups_filtered = None
 
         # Train classification model (direction prediction) with filtered data
         logger.info("Training classification model (binary: up/down)...")
-        model_classification = LightGBMTrainer(model_type="classification",
-                                             use_gpu=self.use_gpu)
+        model_classification = LightGBMTrainer(
+            model_type="classification", use_gpu=self.use_gpu
+        )
 
-        classification_metrics, classification_preprocess_params = model_classification.train(
-            X_df_filtered,
-            y_classification_filtered,
-            n_splits=cv_splits,
-            use_time_series_cv=True,
-            groups=groups_filtered,
-            auto_tune_params=self.auto_tune_params,
-            tune_trials=self.tune_trials,
-            feature_winsorize_k=feature_winsorize_k)
+        classification_metrics, classification_preprocess_params = (
+            model_classification.train(
+                X_df_filtered,
+                y_classification_filtered,
+                n_splits=cv_splits,
+                use_time_series_cv=True,
+                groups=groups_filtered,
+                auto_tune_params=self.auto_tune_params,
+                tune_trials=self.tune_trials,
+                feature_winsorize_k=feature_winsorize_k,
+            )
+        )
 
         # Train return regression model (magnitude prediction)
-        logger.info(
-            "Training return regression model (for magnitude prediction)...")
-        model_return = LightGBMTrainer(model_type="regression",
-                                     use_gpu=self.use_gpu)
+        logger.info("Training return regression model (for magnitude prediction)...")
+        model_return = LightGBMTrainer(model_type="regression", use_gpu=self.use_gpu)
         y_return_log_mag = log_return_magnitude(y_return)
         try:
             return_metrics, return_preprocess_params = model_return.train(
@@ -245,8 +257,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         # Train volatility model (risk prediction)
         logger.info("Training volatility model (for risk prediction)...")
-        model_vol = LightGBMTrainer(model_type="regression",
-                                  use_gpu=self.use_gpu)
+        model_vol = LightGBMTrainer(model_type="regression", use_gpu=self.use_gpu)
         try:
             vol_metrics, vol_preprocess_params = model_vol.train(
                 X_df,
@@ -298,23 +309,25 @@ class ClassificationModelTrainer(BaseModelTrainer):
     def _validate_targets(self, y_return: pd.Series, y_vol: pd.Series) -> None:
         """
         Validate target series for training.
-        
+
         Args:
             y_return: Future return target
             y_vol: Future volatility target
-            
+
         Raises:
             ValueError: If targets contain NaN values or have invalid data
         """
         if y_return.isna().any():
             raise ValueError(
                 f"y_return contains {y_return.isna().sum()} NaN values. "
-                "Please clean the data before training.")
+                "Please clean the data before training."
+            )
 
         if y_vol.isna().any():
             raise ValueError(
                 f"y_vol contains {y_vol.isna().sum()} NaN values. "
-                "Please clean the data before training.")
+                "Please clean the data before training."
+            )
 
         if len(y_return) == 0:
             raise ValueError("y_return is empty")
@@ -323,52 +336,58 @@ class ClassificationModelTrainer(BaseModelTrainer):
             raise ValueError("y_vol is empty")
 
         if not y_return.index.equals(y_vol.index):
-            raise ValueError("y_return and y_vol must have the same index. "
-                             f"y_return index length: {len(y_return)}, "
-                             f"y_vol index length: {len(y_vol)}")
+            raise ValueError(
+                "y_return and y_vol must have the same index. "
+                f"y_return index length: {len(y_return)}, "
+                f"y_vol index length: {len(y_vol)}"
+            )
 
     def _create_classification_labels(
-            self, y_return: pd.Series,
-            y_vol: pd.Series) -> Tuple[pd.Series, np.ndarray]:
+        self, y_return: pd.Series, y_vol: pd.Series
+    ) -> Tuple[pd.Series, np.ndarray]:
         """
         Create symmetric binary classification labels with neutral zone filtering.
-        
+
         This method addresses the label asymmetry problem in bidirectional trading:
         - Original: y_return > threshold → 1, else → 0 (asymmetric)
-        - Improved: y_return > +threshold → 1, y_return < -threshold → 0, 
+        - Improved: y_return > +threshold → 1, y_return < -threshold → 0,
                     |y_return| <= threshold → filtered (neutral)
-        
+
         Supports two modes:
         1. Fixed symmetric threshold: ±threshold
         2. Volatility-adjusted threshold: ±k * y_vol (dynamic per sample)
-        
+
         Args:
             y_return: Future return target
             y_vol: Future volatility target (used for dynamic threshold)
-        
+
         Returns:
             Tuple of (y_classification, valid_mask)
             - y_classification: Binary labels (1=up, 0=down) for valid samples only
             - valid_mask: Boolean array indicating which samples are valid (not neutral)
         """
         if self.use_quantile_labels:
-            y_quantile_labels, valid_mask_array, upper, lower = rolling_quantile_classification_labels(
-                y_return,
-                window=self.quantile_window,
-                lower_quantile=self.quantile_lower,
-                upper_quantile=self.quantile_upper,
-                min_periods=self.quantile_min_periods,
+            y_quantile_labels, valid_mask_array, upper, lower = (
+                rolling_quantile_classification_labels(
+                    y_return,
+                    window=self.quantile_window,
+                    lower_quantile=self.quantile_lower,
+                    upper_quantile=self.quantile_upper,
+                    min_periods=self.quantile_min_periods,
+                )
             )
 
             if y_quantile_labels.nunique() < 2:
                 logger.warning(
                     "Rolling quantile labelling produced fewer than two classes; "
-                    "falling back to threshold-based labelling.")
+                    "falling back to threshold-based labelling."
+                )
             else:
                 logger.info(
                     "Using rolling quantile thresholds for classification labels "
                     f"(window={self.quantile_window}, q_low={self.quantile_lower}, "
-                    f"q_high={self.quantile_upper}).")
+                    f"q_high={self.quantile_upper})."
+                )
                 return y_quantile_labels, valid_mask_array
 
         if self.use_vol_adjusted_threshold:
@@ -401,13 +420,13 @@ class ClassificationModelTrainer(BaseModelTrainer):
             threshold = self.classification_threshold
 
             up_mask = y_return > threshold
-            down_mask = pd.Series(
-                False, index=y_return.index)  # No explicit down mask
+            down_mask = pd.Series(False, index=y_return.index)  # No explicit down mask
             valid_mask = up_mask | (y_return <= threshold)  # All samples valid
 
             logger.info(
                 f"Using single threshold {threshold} (asymmetric mode): "
-                f"up={up_mask.sum()}, down={(~up_mask).sum()}")
+                f"up={up_mask.sum()}, down={(~up_mask).sum()}"
+            )
 
         # Create binary labels: 1 for up, 0 for down (only for valid samples)
         # Ensure valid_mask is a numpy array for indexing

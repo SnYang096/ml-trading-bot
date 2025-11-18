@@ -25,13 +25,13 @@ def train_lightgbm_model(
     feature_names: list | None = None,
 ) -> lgb.Booster:
     """Train a LightGBM model with optional validation support.
-    
+
     Automatically detects whether to use binary classification or regression based on y_train:
-    - If labels are integers in [0, 2] (3-class: 0=Hold, 1=Long, 2=Short): 
+    - If labels are integers in [0, 2] (3-class: 0=Hold, 1=Long, 2=Short):
       Filters neutral labels (0=Hold) and converts to binary (1=Long, 0=Short)
     - If labels are already binary (0/1): uses binary classification
     - Otherwise: regression (for continuous return prediction)
-    
+
     Note: Classification always uses binary (1=Long, 0=Short), neutral labels are filtered globally.
     """
 
@@ -40,9 +40,12 @@ def train_lightgbm_model(
     num_unique = len(unique_labels)
 
     # Check if labels are 3-class format (0=Hold, 1=Long, 2=Short)
-    is_3class = (num_unique <= 3
-                 and np.all(np.equal(np.mod(unique_labels, 1), 0))
-                 and np.all(unique_labels >= 0) and np.all(unique_labels <= 2))
+    is_3class = (
+        num_unique <= 3
+        and np.all(np.equal(np.mod(unique_labels, 1), 0))
+        and np.all(unique_labels >= 0)
+        and np.all(unique_labels <= 2)
+    )
 
     # Filter neutral labels (0=Hold) and convert to binary (1=Long, 0=Short)
     if is_3class:
@@ -101,11 +104,13 @@ def train_lightgbm_model(
         default_params.update(params)
 
     if use_gpu:
-        default_params.update({
-            "device": "cuda",
-            "gpu_platform_id": 0,
-            "gpu_device_id": 0,
-        })
+        default_params.update(
+            {
+                "device": "cuda",
+                "gpu_platform_id": 0,
+                "gpu_device_id": 0,
+            }
+        )
 
     # Prepare categorical feature specification
     cat_feature_indices = None
@@ -114,7 +119,8 @@ def train_lightgbm_model(
             if feature_names:
                 # Map feature names to indices
                 cat_feature_indices = [
-                    i for i, name in enumerate(feature_names)
+                    i
+                    for i, name in enumerate(feature_names)
                     if name in categorical_feature
                 ]
             else:
@@ -127,7 +133,7 @@ def train_lightgbm_model(
                     cat_feature_indices = [feature_names.index(categorical_feature)]
             else:
                 cat_feature_indices = [categorical_feature]
-    
+
     train_data = lgb.Dataset(
         X_train,
         label=y_train,

@@ -24,8 +24,7 @@ def get_feature_names_from_training_data():
     # Load 2024 Q4 data (same as training)
     train_files = []
     for month in [10, 11, 12]:
-        file_path = os.path.join(data_dir,
-                                 f"BTCUSDT-aggTrades-2024-{month:02d}.zip")
+        file_path = os.path.join(data_dir, f"BTCUSDT-aggTrades-2024-{month:02d}.zip")
         if os.path.exists(file_path):
             train_files.append(file_path)
 
@@ -88,11 +87,13 @@ def load_model_and_get_importance_with_names(model_path, feature_names):
             actual_names.append(model_name)
 
     # Create DataFrame
-    df = pd.DataFrame({
-        "feature": actual_names,
-        "model_feature": model_feature_names,
-        "importance": importance,
-    }).sort_values("importance", ascending=False)
+    df = pd.DataFrame(
+        {
+            "feature": actual_names,
+            "model_feature": model_feature_names,
+            "importance": importance,
+        }
+    ).sort_values("importance", ascending=False)
 
     return df
 
@@ -120,7 +121,8 @@ def main():
             print(f"\n📊 Processing 2025-{month}...")
             try:
                 importance_df = load_model_and_get_importance_with_names(
-                    model_path, feature_names)
+                    model_path, feature_names
+                )
                 all_importance[f"2025-{month}"] = importance_df
 
                 print(f"   ✓ {len(importance_df)} features processed")
@@ -152,30 +154,33 @@ def main():
                     importances.append(feature_row["importance"].iloc[0])
 
             if importances:
-                avg_importance.append({
-                    "feature": feature,
-                    "avg_importance": np.mean(importances),
-                    "std_importance": np.std(importances),
-                    "months_count": len(importances),
-                })
+                avg_importance.append(
+                    {
+                        "feature": feature,
+                        "avg_importance": np.mean(importances),
+                        "std_importance": np.std(importances),
+                        "months_count": len(importances),
+                    }
+                )
 
         # Sort by average importance
-        avg_df = pd.DataFrame(avg_importance).sort_values("avg_importance",
-                                                          ascending=False)
+        avg_df = pd.DataFrame(avg_importance).sort_values(
+            "avg_importance", ascending=False
+        )
 
         # Save results
         output_dir = "results/monthly_rolling_2025"
         os.makedirs(output_dir, exist_ok=True)
 
         # Save average importance with names
-        avg_path = os.path.join(output_dir,
-                                "feature_importance_with_names.csv")
+        avg_path = os.path.join(output_dir, "feature_importance_with_names.csv")
         avg_df.to_csv(avg_path, index=False)
         print(f"   💾 Average importance with names saved: {avg_path}")
 
         # Save monthly importance with names
         monthly_path = os.path.join(
-            output_dir, "feature_importance_monthly_with_names.csv")
+            output_dir, "feature_importance_monthly_with_names.csv"
+        )
         monthly_data = []
         for month, df in all_importance.items():
             df_copy = df.copy()
@@ -200,44 +205,48 @@ def main():
         categories = {
             "WPT": [f for f in avg_df["feature"] if "wpt" in f.lower()],
             "Hurst": [f for f in avg_df["feature"] if "hurst" in f.lower()],
-            "Hilbert":
-            [f for f in avg_df["feature"] if "hilbert" in f.lower()],
-            "Spectral":
-            [f for f in avg_df["feature"] if "spectral" in f.lower()],
+            "Hilbert": [f for f in avg_df["feature"] if "hilbert" in f.lower()],
+            "Spectral": [f for f in avg_df["feature"] if "spectral" in f.lower()],
             "OrderFlow": [
-                f for f in avg_df["feature"]
+                f
+                for f in avg_df["feature"]
                 if any(x in f.lower() for x in ["cvd", "taker", "buy", "sell"])
             ],
             "Technical": [
-                f for f in avg_df["feature"]
-                if any(x in f.lower() for x in
-                       ["rsi", "macd", "bb", "ema", "sma", "atr", "stoch"])
+                f
+                for f in avg_df["feature"]
+                if any(
+                    x in f.lower()
+                    for x in ["rsi", "macd", "bb", "ema", "sma", "atr", "stoch"]
+                )
             ],
             "Volume": [f for f in avg_df["feature"] if "volume" in f.lower()],
             "Price": [
-                f for f in avg_df["feature"] if any(
-                    x in f.lower() for x in ["close", "open", "high", "low"])
+                f
+                for f in avg_df["feature"]
+                if any(x in f.lower() for x in ["close", "open", "high", "low"])
             ],
             "Derived": [
-                f for f in avg_df["feature"]
-                if any(x in f.lower()
-                       for x in ["hl", "hc", "lc", "tr", "return", "change"])
+                f
+                for f in avg_df["feature"]
+                if any(
+                    x in f.lower() for x in ["hl", "hc", "lc", "tr", "return", "change"]
+                )
             ],
         }
 
         for category, features in categories.items():
             if features:
-                category_importance = avg_df[avg_df["feature"].isin(
-                    features)]["avg_importance"].sum()
+                category_importance = avg_df[avg_df["feature"].isin(features)][
+                    "avg_importance"
+                ].sum()
                 print(
                     f"   {category:<12}: {len(features):>3} features, {category_importance:>8.2f} total importance"
                 )
                 # Show top 3 features in each category
                 top_features = avg_df[avg_df["feature"].isin(features)].head(3)
                 for _, feat in top_features.iterrows():
-                    print(
-                        f"     - {feat['feature']}: {feat['avg_importance']:.2f}"
-                    )
+                    print(f"     - {feat['feature']}: {feat['avg_importance']:.2f}")
 
         print(f"\n✅ Feature importance analysis with names complete!")
 

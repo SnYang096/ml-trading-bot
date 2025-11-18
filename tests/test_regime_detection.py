@@ -78,5 +78,3 @@ def test_hmm_smoothing_reduces_switching(sample_data: pd.DataFrame) -> None:
 
     row_sums = result.label_probabilities.sum(axis=1).dropna()
     assert np.allclose(row_sums.values, 1.0, atol=1e-6)
-
-

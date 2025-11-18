@@ -29,21 +29,21 @@ def prepare_data():
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
     df["is_buyer_maker"] = df.get("is_buyer_maker", False)
-    ps = df.groupby(pd.Grouper(freq="1s")).agg({
-        "price": ["first", "max", "min", "last"],
-        "quantity":
-        "sum",
-        "is_buyer_maker":
-        "mean",
-    })
+    ps = df.groupby(pd.Grouper(freq="1s")).agg(
+        {
+            "price": ["first", "max", "min", "last"],
+            "quantity": "sum",
+            "is_buyer_maker": "mean",
+        }
+    )
     ps.columns = ["open", "high", "low", "close", "volume", "is_buyer_maker"]
     ps = ps.dropna().ffill()
     ps["taker_buy"] = (~ps["is_buyer_maker"].round().astype(bool)).astype(int)
     ps["buy_qty"] = ps["taker_buy"] * ps["volume"]
     ps["sell_qty"] = (1 - ps["taker_buy"]) * ps["volume"]
     ps["taker_buy_ratio"] = (
-        ps["buy_qty"] /
-        (ps["buy_qty"] + ps["sell_qty"]).replace(0, np.nan)).fillna(0.5)
+        ps["buy_qty"] / (ps["buy_qty"] + ps["sell_qty"]).replace(0, np.nan)
+    ).fillna(0.5)
     ps["cvd"] = (ps["buy_qty"] - ps["sell_qty"]).cumsum()
     mdl = MarketDataLoader()
     mdl.raw_data = ps
@@ -63,11 +63,7 @@ def run_once(strat, fe, mtf, timeframe, params):
     import os, sys
 
     code = open("scripts/oos_june.py", "r").read()
-    ns = {
-        "__file__": os.path.abspath("scripts/oos_june.py"),
-        "os": os,
-        "sys": sys
-    }
+    ns = {"__file__": os.path.abspath("scripts/oos_june.py"), "os": os, "sys": sys}
     exec(compile(code, "scripts/oos_june.py", "exec"), ns, ns)
     run_bt = ns["run_bt"]
     return run_bt(
@@ -120,8 +116,7 @@ def main():
     study5 = optuna.create_study(direction="maximize")
     study5.optimize(lambda t: objective(t, "5T", mtf, strat, fe), n_trials=20)
     study15 = optuna.create_study(direction="maximize")
-    study15.optimize(lambda t: objective(t, "15T", mtf, strat, fe),
-                     n_trials=20)
+    study15.optimize(lambda t: objective(t, "15T", mtf, strat, fe), n_trials=20)
     best = {"5T": study5.best_trial.params, "15T": study15.best_trial.params}
     with open(os.path.join(OUT_DIR, "optuna_best_params.json"), "w") as f:
         json.dump(best, f, indent=2)

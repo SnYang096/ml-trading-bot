@@ -44,7 +44,8 @@ class FeatureEvaluator:
             raise ValueError("Empty dataset provided for evaluation")
 
         X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=self.validation_ratio, random_state=42)
+            X, y, test_size=self.validation_ratio, random_state=42
+        )
 
         objective = "regression" if self.task_type == "regression" else "binary"
         metric = "l2" if objective == "regression" else "binary_logloss"

@@ -191,7 +191,9 @@ def main() -> None:
         raise ValueError("No data available after applying symbol filters.")
 
     if isinstance(filtered_df.index, pd.MultiIndex):
-        cols_to_drop = [col for col in ["timestamp", "symbol"] if col in filtered_df.columns]
+        cols_to_drop = [
+            col for col in ["timestamp", "symbol"] if col in filtered_df.columns
+        ]
         if cols_to_drop:
             filtered_df = filtered_df.drop(columns=cols_to_drop)
         filtered_df = filtered_df.reset_index()
@@ -222,7 +224,9 @@ def main() -> None:
             )
         feature_cols = [c for c in feature_cols if c in available]
         if not feature_cols:
-            raise ValueError("No valid features remaining after filtering against dataframe columns.")
+            raise ValueError(
+                "No valid features remaining after filtering against dataframe columns."
+            )
 
     symbol_count = filtered_df["symbol"].nunique()
     min_assets_required = 3
@@ -244,13 +248,17 @@ def main() -> None:
         crypto_cols = [
             col
             for col in panel.columns
-            if col.startswith("cs_crypto_") and col not in factor_cols and col != target_col
+            if col.startswith("cs_crypto_")
+            and col not in factor_cols
+            and col != target_col
         ]
         factor_cols.extend(crypto_cols)
     print(f"📦 Factor count after augmentation: {len(factor_cols)}")
 
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
-    periods_per_year = resolve_periods_per_year(args.periods_per_year, processed_panel.index)
+    periods_per_year = resolve_periods_per_year(
+        args.periods_per_year, processed_panel.index
+    )
     print(
         f"📊 Panel ready: {processed_panel.shape[0]} observations, "
         f"{len(factor_cols)} factors, periods_per_year={periods_per_year:.2f}"
@@ -264,9 +272,13 @@ def main() -> None:
         or args.ir_threshold is not None
     ):
         print("🔍 Running factor selection (IC / IR scoring)...")
-        selection_metrics = compute_cross_sectional_ic(processed_panel, factor_cols, target_col)
+        selection_metrics = compute_cross_sectional_ic(
+            processed_panel, factor_cols, target_col
+        )
         if selection_metrics.empty:
-            print("   ⚠️  Unable to compute IC/IR metrics; retaining original factor set.")
+            print(
+                "   ⚠️  Unable to compute IC/IR metrics; retaining original factor set."
+            )
         else:
             factor_cols = apply_factor_selection(
                 selection_metrics,
@@ -277,10 +289,14 @@ def main() -> None:
                 ranking_stat=args.selection_stat,
             )
             if not factor_cols:
-                print("   ⚠️  Selection filters removed all factors; reverting to original list.")
+                print(
+                    "   ⚠️  Selection filters removed all factors; reverting to original list."
+                )
                 factor_cols = list(selection_metrics.index)
             else:
-                print(f"   ✅ Selected {len(factor_cols)} factors after applying IC/IR criteria.")
+                print(
+                    f"   ✅ Selected {len(factor_cols)} factors after applying IC/IR criteria."
+                )
                 preview = (
                     selection_metrics.loc[factor_cols]
                     .sort_values(by="ic_mean", ascending=False)
@@ -295,7 +311,9 @@ def main() -> None:
         model = CrossSectionalBoostingModel()
         model.fit(processed_panel, factor_cols=factor_cols, target_col=target_col)
         predictions = model.predict(processed_panel)
-        eval_result = model.evaluate(processed_panel, predictions=predictions, target_col=target_col)
+        eval_result = model.evaluate(
+            processed_panel, predictions=predictions, target_col=target_col
+        )
 
         save_predictions(predictions, output_dir / args.predictions_name)
         save_metrics(
@@ -327,7 +345,9 @@ def main() -> None:
 
     elif args.model == "fama_macbeth":
         reg = CrossSectionalRegressor(add_intercept=True, min_assets=3)
-        result = reg.fit(processed_panel, factor_cols=factor_cols, target_col=target_col)
+        result = reg.fit(
+            processed_panel, factor_cols=factor_cols, target_col=target_col
+        )
         metrics = {
             "factor_summary": result.factor_summary(periods_per_year).to_dict(),
             "ic_summary": result.ic_summary(periods_per_year).to_dict(),
@@ -338,7 +358,9 @@ def main() -> None:
         }
         if selection_metrics is not None and not selection_metrics.empty:
             metrics["selection_metrics"] = selection_metrics.to_dict(orient="index")
-        (output_dir / args.metrics_name).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        (output_dir / args.metrics_name).write_text(
+            json.dumps(metrics, indent=2), encoding="utf-8"
+        )
 
         if args.save_markdown:
             context = FactorPanelBuilder.describe_panel(processed_panel)
@@ -349,11 +371,14 @@ def main() -> None:
                     max_lag=5,
                     periods_per_year=periods_per_year,
                     preprocessing=_describe_preprocessing(args.winsor, args.zscore),
-                    symbols=args.symbols or ", ".join(sorted(filtered_df["symbol"].unique())),
+                    symbols=args.symbols
+                    or ", ".join(sorted(filtered_df["symbol"].unique())),
                     horizon=args.horizon,
                     observations=int(context.get("num_observations", 0)),
                     timestamps=int(context.get("num_timestamps", 0)),
-                    assets_per_timestamp=float(context.get("mean_assets_per_timestamp", 0.0)),
+                    assets_per_timestamp=float(
+                        context.get("mean_assets_per_timestamp", 0.0)
+                    ),
                 ),
             )
             write_report(output_dir / "fama_macbeth_report.md", report)
@@ -373,6 +398,7 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
+
 
 def collect_inputs(patterns: Sequence[str]) -> List[str]:
     files: List[str] = []
@@ -409,7 +435,9 @@ def load_frames(paths: Sequence[str]) -> pd.DataFrame:
     if not frames:
         raise ValueError("All input frames are empty.")
     combined = pd.concat(frames, axis=0, ignore_index=True)
-    combined["timestamp"] = pd.to_datetime(combined["timestamp"], utc=True, errors="coerce")
+    combined["timestamp"] = pd.to_datetime(
+        combined["timestamp"], utc=True, errors="coerce"
+    )
     combined = combined.dropna(subset=["timestamp", "symbol"])
     combined = combined.sort_values(["timestamp", "symbol"])
     combined = combined.set_index(["timestamp", "symbol"])
@@ -421,7 +449,9 @@ def load_frames(paths: Sequence[str]) -> pd.DataFrame:
 def filter_symbols(df: pd.DataFrame, symbols: Optional[str]) -> pd.DataFrame:
     if not symbols:
         return df
-    symbol_list = [s.strip().upper() for s in symbols.replace(" ", ",").split(",") if s.strip()]
+    symbol_list = [
+        s.strip().upper() for s in symbols.replace(" ", ",").split(",") if s.strip()
+    ]
     if isinstance(df.index, pd.MultiIndex) and "symbol" in df.index.names:
         mask = df.index.get_level_values("symbol").str.upper().isin(symbol_list)
         return df[mask].copy()
@@ -468,7 +498,16 @@ def build_panel(
     if feature_cols:
         return panel, list(feature_cols)
 
-    exclude_cols = {target_col, "open", "high", "low", "close", "volume", "timestamp", "symbol"}
+    exclude_cols = {
+        target_col,
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "timestamp",
+        "symbol",
+    }
     numeric_cols = [
         col
         for col in panel.columns
@@ -615,4 +654,3 @@ def _infer_symbol_from_path(path: str) -> str:
 
 if __name__ == "__main__":
     main()
-

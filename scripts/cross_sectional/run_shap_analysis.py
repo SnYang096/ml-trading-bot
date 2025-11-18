@@ -133,7 +133,9 @@ def load_features(panel: pd.DataFrame, feature_file: Optional[str]) -> List[str]
         ]
         features = [f for f in features if f in panel.columns]
         if not features:
-            raise ValueError("Feature file did not contain any columns present in panel.")
+            raise ValueError(
+                "Feature file did not contain any columns present in panel."
+            )
         return features
 
     exclude = {
@@ -245,7 +247,9 @@ def main() -> None:
         interaction_values = explainer.shap_interaction_values(X)
         mean_interactions = np.abs(interaction_values).mean(axis=0)
         np.fill_diagonal(mean_interactions, 0.0)
-        top_pair_idx = np.unravel_index(np.argmax(mean_interactions), mean_interactions.shape)
+        top_pair_idx = np.unravel_index(
+            np.argmax(mean_interactions), mean_interactions.shape
+        )
         interaction_pair = (features[top_pair_idx[0]], features[top_pair_idx[1]])
         shap.dependence_plot(
             interaction_pair[0],
@@ -280,4 +284,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

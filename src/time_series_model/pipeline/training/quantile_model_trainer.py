@@ -45,7 +45,7 @@ class QuantileModelTrainer(BaseModelTrainer):
             model_type="quantile",
             quantile_alpha=0.5,
             params=q50_params,
-            use_gpu=self.use_gpu
+            use_gpu=self.use_gpu,
         )
 
         use_auto_tune = self.auto_tune_params
@@ -65,8 +65,11 @@ class QuantileModelTrainer(BaseModelTrainer):
         # Get Q50 predictions to calculate residuals for Q10/Q90 training
         n_pred_subset = min(50000, len(X_df))
         X_pred_subset = X_df.iloc[:n_pred_subset]
-        y_pred_subset = y_return.iloc[:n_pred_subset] if isinstance(
-            y_return, pd.Series) else y_return[:n_pred_subset]
+        y_pred_subset = (
+            y_return.iloc[:n_pred_subset]
+            if isinstance(y_return, pd.Series)
+            else y_return[:n_pred_subset]
+        )
         q50_pred_initial = model_q50.model.predict(X_pred_subset.values)
         q50_residuals = y_pred_subset.values - q50_pred_initial
 
@@ -75,16 +78,20 @@ class QuantileModelTrainer(BaseModelTrainer):
         if residual_median > 0:
             delta_scale = 1.0
             q10_q90_weights = 1.0 / (
-                1.0 + (np.abs(q50_residuals) /
-                      (delta_scale * residual_median + 1e-8)))
+                1.0 + (np.abs(q50_residuals) / (delta_scale * residual_median + 1e-8))
+            )
             q10_q90_weights = q10_q90_weights / np.mean(q10_q90_weights)
         else:
             q10_q90_weights = None
 
         print(f"   Stage 2: Training Q10/Q90 models (guided by Q50 residuals)...")
         if q10_q90_weights is not None:
-            print(f"      Using residual-based weights (median abs residual: {residual_median:.6f})")
-            print(f"      Weight range: [{np.min(q10_q90_weights):.4f}, {np.max(q10_q90_weights):.4f}]")
+            print(
+                f"      Using residual-based weights (median abs residual: {residual_median:.6f})"
+            )
+            print(
+                f"      Weight range: [{np.min(q10_q90_weights):.4f}, {np.max(q10_q90_weights):.4f}]"
+            )
 
         # Extend weights to full dataset if needed
         if q10_q90_weights is not None and len(q10_q90_weights) < len(X_df):
@@ -94,34 +101,48 @@ class QuantileModelTrainer(BaseModelTrainer):
             if residual_median_full > 0:
                 delta_scale = 1.0
                 q10_q90_weights_full = 1.0 / (
-                    1.0 + (np.abs(q50_residuals_full) /
-                          (delta_scale * residual_median_full + 1e-8)))
-                q10_q90_weights_full = q10_q90_weights_full / np.mean(q10_q90_weights_full)
+                    1.0
+                    + (
+                        np.abs(q50_residuals_full)
+                        / (delta_scale * residual_median_full + 1e-8)
+                    )
+                )
+                q10_q90_weights_full = q10_q90_weights_full / np.mean(
+                    q10_q90_weights_full
+                )
             else:
                 q10_q90_weights_full = None
         else:
             q10_q90_weights_full = q10_q90_weights
 
         # Stage 2: Train Q10 and Q90
-        model_q10 = LightGBMTrainer(model_type="quantile", quantile_alpha=0.1, use_gpu=self.use_gpu)
+        model_q10 = LightGBMTrainer(
+            model_type="quantile", quantile_alpha=0.1, use_gpu=self.use_gpu
+        )
         q10_metrics, q10_preprocess_params = model_q10.train(
             X_df,
             y_return,
             n_splits=max(2, n_splits),
             use_time_series_cv=True,
-            sample_weight=q10_q90_weights_full if q10_q90_weights_full is not None else None,
+            sample_weight=(
+                q10_q90_weights_full if q10_q90_weights_full is not None else None
+            ),
             preprocess_fn=preprocess_fn,
             preprocess_kwargs=preprocess_kwargs or {},
             feature_winsorize_k=feature_winsorize_k,
         )
 
-        model_q90 = LightGBMTrainer(model_type="quantile", quantile_alpha=0.9, use_gpu=self.use_gpu)
+        model_q90 = LightGBMTrainer(
+            model_type="quantile", quantile_alpha=0.9, use_gpu=self.use_gpu
+        )
         q90_metrics, q90_preprocess_params = model_q90.train(
             X_df,
             y_return,
             n_splits=max(2, n_splits),
             use_time_series_cv=True,
-            sample_weight=q10_q90_weights_full if q10_q90_weights_full is not None else None,
+            sample_weight=(
+                q10_q90_weights_full if q10_q90_weights_full is not None else None
+            ),
             preprocess_fn=preprocess_fn,
             preprocess_kwargs=preprocess_kwargs or {},
             feature_winsorize_k=feature_winsorize_k,
@@ -161,4 +182,3 @@ class QuantileModelTrainer(BaseModelTrainer):
         }
 
         return models_dict, metrics_dict, preprocess_params_dict
-

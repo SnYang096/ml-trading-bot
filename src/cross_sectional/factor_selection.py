@@ -43,9 +43,7 @@ def compute_cross_sectional_ic(
     subset = panel[available_cols].dropna(subset=[target_col])
 
     if subset.empty:
-        return pd.DataFrame(
-            columns=["ic_mean", "ic_std", "ic_ir", "ic_count"]
-        )
+        return pd.DataFrame(columns=["ic_mean", "ic_std", "ic_ir", "ic_count"])
 
     grouped = list(subset.groupby(level=timestamp_level))
     results: List[Dict[str, float]] = []
@@ -59,9 +57,8 @@ def compute_cross_sectional_ic(
             if factor not in group.columns:
                 continue
             series = group[[factor, target_col]].dropna()
-            if (
-                len(series) < min_assets
-                or series[factor].nunique() < min(3, min_assets)
+            if len(series) < min_assets or series[factor].nunique() < min(
+                3, min_assets
             ):
                 continue
 
@@ -87,9 +84,7 @@ def compute_cross_sectional_ic(
         )
 
     if not results:
-        return pd.DataFrame(
-            columns=["ic_mean", "ic_std", "ic_ir", "ic_count"]
-        )
+        return pd.DataFrame(columns=["ic_mean", "ic_std", "ic_ir", "ic_count"])
 
     metrics = pd.DataFrame(results).set_index("factor")
     metrics.sort_values(by="ic_mean", ascending=False, inplace=True)
@@ -117,9 +112,14 @@ def apply_factor_selection(
         selected = selected[selected["ic_ir"].abs() >= float(ir_threshold)]
 
     if select_topk and select_topk > 0:
-        key = "ic_ir" if ranking_stat == "ir" and "ic_ir" in selected.columns else "ic_mean"
+        key = (
+            "ic_ir"
+            if ranking_stat == "ir" and "ic_ir" in selected.columns
+            else "ic_mean"
+        )
         selected = selected.sort_values(by=key, ascending=False).head(select_topk)
 
-    selected_factors = [factor for factor in selected.index if factor in original_factors]
+    selected_factors = [
+        factor for factor in selected.index if factor in original_factors
+    ]
     return selected_factors
-

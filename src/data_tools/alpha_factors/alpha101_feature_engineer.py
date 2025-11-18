@@ -3,6 +3,7 @@
 Vendored base formulas from https://raw.githubusercontent.com/lansetaowa/alpha101-crypto/main/alpha_functions.py
 and adapted for single-asset usage.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -34,8 +35,8 @@ class Alpha101FeatureEngineer:
     def __post_init__(self) -> None:
         func_dict: Dict[str, Callable] = {
             name: getattr(alpha101_raw, name)
-            for name in dir(alpha101_raw) if name.startswith("alpha")
-            and callable(getattr(alpha101_raw, name))
+            for name in dir(alpha101_raw)
+            if name.startswith("alpha") and callable(getattr(alpha101_raw, name))
         }
         if self.exclude_neutralized:
             func_dict = {
@@ -46,8 +47,7 @@ class Alpha101FeatureEngineer:
         if self.included_alphas is not None:
             selection = set(self.included_alphas)
             func_dict = {
-                name: func
-                for name, func in func_dict.items() if name in selection
+                name: func for name, func in func_dict.items() if name in selection
             }
         self._alpha_funcs = dict(sorted(func_dict.items()))
 
@@ -57,22 +57,25 @@ class Alpha101FeatureEngineer:
         neutral_args = {"industry", "sector", "subindustry", "IndClass", "cap"}
         return any(name in neutral_args for name in params)
 
-    def compute(self,
-                df: pd.DataFrame,
-                symbol: str = "asset",
-                required_features: Optional[set] = None) -> pd.DataFrame:
+    def compute(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "asset",
+        required_features: Optional[set] = None,
+    ) -> pd.DataFrame:
         required_cols = {"open", "high", "low", "close", "volume"}
         missing = required_cols - set(df.columns)
         if missing:
             raise ValueError(
-                f"Missing columns for Alpha101 computation: {sorted(missing)}")
+                f"Missing columns for Alpha101 computation: {sorted(missing)}"
+            )
 
         base = df[sorted(required_cols)].astype(float).copy()
 
         # Check and handle duplicate index entries
         if base.index.duplicated().any():
             # Remove duplicates by keeping first occurrence
-            base = base[~base.index.duplicated(keep='first')]
+            base = base[~base.index.duplicated(keep="first")]
 
         base.columns = pd.Index(base.columns, name="field")
 
@@ -85,8 +88,9 @@ class Alpha101FeatureEngineer:
         }
 
         # Derived inputs
-        data_frames["r"] = data_frames["c"].pct_change().replace(
-            [-np.inf, np.inf], np.nan).fillna(0.0)
+        data_frames["r"] = (
+            data_frames["c"].pct_change().replace([-np.inf, np.inf], np.nan).fillna(0.0)
+        )
         data_frames["vwap"] = self._compute_vwap(base, symbol)
         data_frames["adv20"] = ts_mean(data_frames["v"], 20)
         data_frames["adv40"] = ts_mean(data_frames["v"], 40)
@@ -105,19 +109,24 @@ class Alpha101FeatureEngineer:
             needed_alphas = []
             for name in self._alpha_funcs.keys():
                 # alpha函数名格式：alpha001, alpha002等
-                alpha_num = name[5:] if name.startswith(
-                    'alpha') else name  # 提取数字部分
-                alpha_col_name = f"alpha101_{alpha_num.zfill(3)}"  # 格式化为 alpha101_001
+                alpha_num = (
+                    name[5:] if name.startswith("alpha") else name
+                )  # 提取数字部分
+                alpha_col_name = (
+                    f"alpha101_{alpha_num.zfill(3)}"  # 格式化为 alpha101_001
+                )
                 # 检查是否有匹配的特征
-                if any(f == alpha_col_name
-                       or f.startswith(f"alpha101_{alpha_num}")
-                       or f.startswith(f"alpha_{alpha_num}") or f == name
-                       for f in required_features):
+                if any(
+                    f == alpha_col_name
+                    or f.startswith(f"alpha101_{alpha_num}")
+                    or f.startswith(f"alpha_{alpha_num}")
+                    or f == name
+                    for f in required_features
+                ):
                     needed_alphas.append(name)
             if needed_alphas:
                 alpha_funcs_to_compute = {
-                    name: self._alpha_funcs[name]
-                    for name in needed_alphas
+                    name: self._alpha_funcs[name] for name in needed_alphas
                 }
             else:
                 # 如果没有匹配的alpha特征，返回空DataFrame
@@ -155,8 +164,9 @@ class Alpha101FeatureEngineer:
 
         return feature_df
 
-    def _resolve_argument(self, name: str,
-                          cache: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    def _resolve_argument(
+        self, name: str, cache: Dict[str, pd.DataFrame]
+    ) -> pd.DataFrame:
         if name in cache:
             return cache[name]
         if name.startswith("adv"):
@@ -182,7 +192,7 @@ class Alpha101FeatureEngineer:
                 # Check for duplicate index entries before unstack
                 if series.index.duplicated().any():
                     # Remove duplicates by keeping first occurrence
-                    series = series[~series.index.duplicated(keep='first')]
+                    series = series[~series.index.duplicated(keep="first")]
                 if "ticker" in series.index.names:
                     try:
                         data = series.unstack("ticker")
@@ -191,11 +201,14 @@ class Alpha101FeatureEngineer:
                             # If still fails, try resetting index and handling differently
                             series_reset = series.reset_index()
                             if "ticker" in series_reset.columns:
-                                data = series_reset.set_index([
-                                    col for col in series_reset.columns
-                                    if col != "ticker"
-                                    and col != series_reset.columns[-1]
-                                ])[series_reset.columns[-1]].to_frame(symbol)
+                                data = series_reset.set_index(
+                                    [
+                                        col
+                                        for col in series_reset.columns
+                                        if col != "ticker"
+                                        and col != series_reset.columns[-1]
+                                    ]
+                                )[series_reset.columns[-1]].to_frame(symbol)
                             else:
                                 return None
                         else:
@@ -208,9 +221,9 @@ class Alpha101FeatureEngineer:
                             # If still fails, try resetting index and handling differently
                             series_reset = series.reset_index()
                             if len(series_reset.columns) > 1:
-                                data = series_reset.set_index(
-                                    series_reset.columns[0]
-                                )[series_reset.columns[-1]].to_frame(symbol)
+                                data = series_reset.set_index(series_reset.columns[0])[
+                                    series_reset.columns[-1]
+                                ].to_frame(symbol)
                             else:
                                 return None
                         else:
@@ -252,8 +265,9 @@ class Alpha101FeatureEngineer:
         price = (base["high"] + base["low"] + base["close"]) / 3.0
         volume = base["volume"].replace(0, np.nan)
         cumulative = (price * volume).cumsum()
-        vwap_series = cumulative.div(
-            volume.cumsum()).fillna(method="ffill").fillna(price)
+        vwap_series = (
+            cumulative.div(volume.cumsum()).fillna(method="ffill").fillna(price)
+        )
         df = vwap_series.to_frame(symbol)
         df.columns.name = "ticker"
         return df

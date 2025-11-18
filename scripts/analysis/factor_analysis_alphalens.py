@@ -20,8 +20,7 @@ from pandas.tseries.frequencies import to_offset
 try:
     import alphalens as al
 except ImportError:
-    raise ImportError(
-        "Alphalens is required. Install with: pip install alphalens")
+    raise ImportError("Alphalens is required. Install with: pip install alphalens")
 
 from data_tools.rolling_data import load_parquet_file
 from data_tools.baseline_features import (
@@ -36,63 +35,60 @@ from data_tools.comprehensive_feature_engineering import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Factor effectiveness analysis using Alphalens")
-    parser.add_argument("--data-dir",
-                        type=str,
-                        default=None,
-                        help="Directory containing parquet files")
+        description="Factor effectiveness analysis using Alphalens"
+    )
+    parser.add_argument(
+        "--data-dir", type=str, default=None, help="Directory containing parquet files"
+    )
     parser.add_argument(
         "--symbol",
         type=str,
         default="BTCUSDT",
-        help=
-        "Symbol(s) metadata. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset analysis"
+        help="Symbol(s) metadata. Can be comma-separated (e.g., BTCUSDT,ETHUSDT,SOLUSDT) for multi-asset analysis",
     )
-    parser.add_argument("--freq",
-                        type=str,
-                        default="5T",
-                        help="Bar timeframe (e.g., 5T, 15T)")
-    parser.add_argument("--start",
-                        type=str,
-                        default=None,
-                        help="Start YYYY-MM (inclusive)")
-    parser.add_argument("--end",
-                        type=str,
-                        default=None,
-                        help="End YYYY-MM (inclusive)")
+    parser.add_argument(
+        "--freq", type=str, default="5T", help="Bar timeframe (e.g., 5T, 15T)"
+    )
+    parser.add_argument(
+        "--start", type=str, default=None, help="Start YYYY-MM (inclusive)"
+    )
+    parser.add_argument("--end", type=str, default=None, help="End YYYY-MM (inclusive)")
     parser.add_argument(
         "--feature-type",
         type=str,
         default="baseline",
-        help=
-        "baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive"
+        help="baseline/default/enhanced/hurst/wavelet/hilbert/spectral/order_flow/dl_sequence/comprehensive",
     )
-    parser.add_argument("--output-dir",
-                        type=str,
-                        default="results/factor_analysis",
-                        help="Output directory for Alphalens tear sheets")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="results/factor_analysis",
+        help="Output directory for Alphalens tear sheets",
+    )
     parser.add_argument(
         "--periods",
         type=str,
         default="1,4,24",
-        help=
-        "Forward return periods in bars (e.g., 1,4,24 for 15min, 1h, 6h prediction)"
+        help="Forward return periods in bars (e.g., 1,4,24 for 15min, 1h, 6h prediction)",
     )
     parser.add_argument(
         "--quantiles",
         type=int,
         default=10,
-        help="Number of quantiles for quantile analysis (default: 10)")
+        help="Number of quantiles for quantile analysis (default: 10)",
+    )
     parser.add_argument(
         "--factor-name",
         type=str,
         default=None,
-        help="Specific factor name to analyze (if None, analyzes all factors)")
+        help="Specific factor name to analyze (if None, analyzes all factors)",
+    )
     return parser.parse_args()
 
 
-def _collect_files(data_dir: Optional[str], start: Optional[str],
-                   end: Optional[str], symbols: str) -> List[str]:
+def _collect_files(
+    data_dir: Optional[str], start: Optional[str], end: Optional[str], symbols: str
+) -> List[str]:
     """Collect parquet files matching criteria."""
     if not data_dir or not os.path.exists(data_dir):
         return []
@@ -135,8 +131,7 @@ def _collect_files(data_dir: Optional[str], start: Optional[str],
                             parts = file_str.split("_")
                             if len(parts) >= 2:
                                 date_part = parts[-1].replace(".parquet", "")
-                                if "-" in date_part and len(
-                                        date_part) == 7:  # YYYY-MM
+                                if "-" in date_part and len(date_part) == 7:  # YYYY-MM
                                     file_date = date_part
 
                         # Try pattern: SYMBOL-aggTrades-YYYY-MM.parquet
@@ -167,8 +162,9 @@ def _collect_files(data_dir: Optional[str], start: Optional[str],
     return sorted(list(set(files)))
 
 
-def load_and_prepare_data(files: List[str], freq: str,
-                          feature_type: str) -> Tuple[pd.DataFrame, List[str]]:
+def load_and_prepare_data(
+    files: List[str], freq: str, feature_type: str
+) -> Tuple[pd.DataFrame, List[str]]:
     """Load and prepare data with features."""
     frames: List[pd.DataFrame] = []
 
@@ -184,13 +180,19 @@ def load_and_prepare_data(files: List[str], freq: str,
         if df is not None and len(df) > 0:
             # Resample if needed
             if freq:
-                df = df.resample(freq).agg({
-                    "open": "first",
-                    "high": "max",
-                    "low": "min",
-                    "close": "last",
-                    "volume": "sum",
-                }).dropna()
+                df = (
+                    df.resample(freq)
+                    .agg(
+                        {
+                            "open": "first",
+                            "high": "max",
+                            "low": "min",
+                            "close": "last",
+                            "volume": "sum",
+                        }
+                    )
+                    .dropna()
+                )
 
             # Add symbol column if multi-asset
             if "symbol" not in df.columns:
@@ -249,7 +251,8 @@ def load_and_prepare_data(files: List[str], freq: str,
             try:
                 # Try direct reindexing first
                 combined_eng["symbol"] = preserved_symbol.reindex(
-                    combined_eng.index, method="ffill").bfill()
+                    combined_eng.index, method="ffill"
+                ).bfill()
             except Exception:
                 # Fallback approach: merge on timestamp
                 try:
@@ -260,15 +263,15 @@ def load_and_prepare_data(files: List[str], freq: str,
                     combined_eng = tmp.merge(
                         sym_df.drop_duplicates(subset=["timestamp"]),
                         on="timestamp",
-                        how="left").set_index("timestamp")
+                        how="left",
+                    ).set_index("timestamp")
                 except Exception:
                     # Last resort: fill with UNKNOWN
                     combined_eng["symbol"] = "UNKNOWN"
         else:
             # If symbol column already exists but might have NaN values, fill them
             if combined_eng["symbol"].isna().any():
-                combined_eng["symbol"] = combined_eng["symbol"].fillna(
-                    "UNKNOWN")
+                combined_eng["symbol"] = combined_eng["symbol"].fillna("UNKNOWN")
     else:
         # If no symbol was preserved, add a default one
         if "symbol" not in combined_eng.columns:
@@ -285,9 +288,9 @@ def load_and_prepare_data(files: List[str], freq: str,
     return combined_eng, feature_cols
 
 
-def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
-                           periods: List[int],
-                           freq_str: Optional[str]) -> pd.DataFrame:
+def prepare_alphalens_data(
+    df: pd.DataFrame, factor_col: str, periods: List[int], freq_str: Optional[str]
+) -> pd.DataFrame:
     """Prepare data for Alphalens: multi-index [symbol, timestamp]."""
     # Ensure we have symbol column
     if "symbol" not in df.columns:
@@ -296,13 +299,12 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     # Work directly with the DataFrame to avoid timezone issues
     # Extract factor and prices before any index manipulation
     if factor_col not in df.columns:
-        raise ValueError(
-            f"Factor column '{factor_col}' not found in DataFrame")
+        raise ValueError(f"Factor column '{factor_col}' not found in DataFrame")
 
     # Rename columns to match Alphalens expectations
     df_renamed = df.rename(columns={"symbol": "asset"})
     # Ensure index name is 'date' for Alphalens compatibility
-    df_renamed.index.name = 'date'
+    df_renamed.index.name = "date"
 
     # Get factor and prices series with original index
     factor_series = df_renamed[factor_col].copy()
@@ -315,7 +317,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     # Ensure date is datetime and timezone-naive for Alphalens compatibility
     dates = pd.to_datetime(dates)
     # Remove timezone information if present for Alphalens compatibility
-    if hasattr(dates, 'tz') and dates.tz is not None:
+    if hasattr(dates, "tz") and dates.tz is not None:
         dates = dates.tz_localize(None)
     # Drop explicit frequency metadata to keep Alphalens from forcing a
     # CustomBusinessDay calendar on intraday timestamps
@@ -330,8 +332,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
 
     # Check if we have any valid data
     if not valid_mask.any():
-        raise ValueError(
-            "No valid data points found after removing NaN/inf values")
+        raise ValueError("No valid data points found after removing NaN/inf values")
 
     # Align all series to have the same valid entries
     factor_values = factor_series[valid_mask]
@@ -342,7 +343,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     # Create MultiIndex with correct names for Alphalens
     # Alphalens expects 'date' as first level and 'asset' as second level
     date_index = pd.DatetimeIndex(dates_values)
-    if hasattr(date_index, 'tz') and date_index.tz is not None:
+    if hasattr(date_index, "tz") and date_index.tz is not None:
         date_index = date_index.tz_localize(None)
     try:
         date_index.freq = None  # type: ignore[attr-defined]
@@ -353,8 +354,9 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
     asset_index = pd.Index(assets_values)
 
     # Create MultiIndex with correct names: 'date' first, then 'asset'
-    multi_index = pd.MultiIndex.from_arrays([date_index, asset_index],
-                                            names=['date', 'asset'])
+    multi_index = pd.MultiIndex.from_arrays(
+        [date_index, asset_index], names=["date", "asset"]
+    )
 
     # Parse frequency - but don't set it on MultiIndex for intraday data
     # Alphalens has issues with intraday frequencies, so we'll let it infer
@@ -368,7 +370,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             # Simple heuristic: if it contains 'T' (minutes) or 'H' (hours), it's likely intraday
             # Also check if the timedelta is less than 1 day
             freq_lower = freq_str.upper()
-            if 'T' in freq_lower or 'H' in freq_lower:
+            if "T" in freq_lower or "H" in freq_lower:
                 # Try to parse and compare with 1 day
                 try:
                     test_timedelta = pd.Timedelta(freq_str)
@@ -393,30 +395,29 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
 
     # Create factor Series with the new MultiIndex
     # Don't set freq on MultiIndex for intraday data - Alphalens will handle it
-    factor = pd.Series(factor_values.values,
-                       index=multi_index,
-                       name=factor_col)
+    factor = pd.Series(factor_values.values, index=multi_index, name=factor_col)
 
     # Create a DataFrame for prices with the proper MultiIndex structure
     # Alphalens expects prices to be a DataFrame with assets as columns and dates as index
-    prices_df_pivot = pd.DataFrame({
-        'date_col': dates_values,  # Use a different name to avoid ambiguity
-        'asset': assets_values,
-        'close': prices_values
-    })
+    prices_df_pivot = pd.DataFrame(
+        {
+            "date_col": dates_values,  # Use a different name to avoid ambiguity
+            "asset": assets_values,
+            "close": prices_values,
+        }
+    )
 
     # Pivot the DataFrame to have assets as columns (as Alphalens expects)
-    prices = prices_df_pivot.pivot_table(values='close',
-                                         index='date_col',
-                                         columns='asset',
-                                         aggfunc='first')
+    prices = prices_df_pivot.pivot_table(
+        values="close", index="date_col", columns="asset", aggfunc="first"
+    )
 
     # Rename the index to 'date' after pivot
-    prices.index.name = 'date'
+    prices.index.name = "date"
 
     # Ensure the index is timezone-naive DatetimeIndex
     prices.index = pd.DatetimeIndex(prices.index)
-    if hasattr(prices.index, 'tz') and prices.index.tz is not None:
+    if hasattr(prices.index, "tz") and prices.index.tz is not None:
         prices.index = prices.index.tz_localize(None)
 
     # For intraday data, Alphalens has issues with frequency validation
@@ -429,13 +430,13 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
 
     # Align factor and prices to have common assets
     common_assets = sorted(
-        set(factor.index.get_level_values("asset")) & set(prices.columns))
+        set(factor.index.get_level_values("asset")) & set(prices.columns)
+    )
     if not common_assets:
         raise ValueError("No common assets between factor and prices")
 
     prices = prices[common_assets]
-    factor = factor.loc[factor.index.get_level_values("asset").isin(
-        common_assets)]
+    factor = factor.loc[factor.index.get_level_values("asset").isin(common_assets)]
 
     # Check if factor has enough unique values
     if factor.nunique() < 5:
@@ -471,40 +472,42 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # Try to prepare data - if it fails due to frequency, we'll use a workaround
         # Monkey-patch Alphalens to avoid frequency validation errors
         import alphalens.utils as al_utils
+
         original_compute_forward_returns = al_utils.compute_forward_returns
 
-        def patched_compute_forward_returns(factor,
-                                            prices,
-                                            periods,
-                                            filter_zscore=None,
-                                            cumulative_returns=True):
+        def patched_compute_forward_returns(
+            factor, prices, periods, filter_zscore=None, cumulative_returns=True
+        ):
             """Patched version that skips frequency validation for intraday data"""
             try:
                 return original_compute_forward_returns(
-                    factor, prices, periods, filter_zscore, cumulative_returns)
+                    factor, prices, periods, filter_zscore, cumulative_returns
+                )
             except (ValueError, OverflowError) as e:
-                if "frequency" in str(e).lower() or "overflow" in str(
-                        e).lower():
+                if "frequency" in str(e).lower() or "overflow" in str(e).lower():
                     # Remove freq from MultiIndex to avoid validation
-                    if hasattr(factor.index, 'levels') and len(
-                            factor.index.levels) > 0:
+                    if hasattr(factor.index, "levels") and len(factor.index.levels) > 0:
                         try:
                             # Create new index without freq
                             date_level = factor.index.levels[0]
-                            if hasattr(date_level,
-                                       'freq') and date_level.freq is not None:
+                            if (
+                                hasattr(date_level, "freq")
+                                and date_level.freq is not None
+                            ):
                                 new_date_level = pd.DatetimeIndex(
-                                    date_level.values, freq=None)
+                                    date_level.values, freq=None
+                                )
                                 new_index = pd.MultiIndex.from_arrays(
                                     [new_date_level, factor.index.levels[1]],
-                                    names=factor.index.names)
+                                    names=factor.index.names,
+                                )
                                 factor = factor.reindex(new_index)
                         except Exception:
                             pass
                     # Retry
                     return original_compute_forward_returns(
-                        factor, prices, periods, filter_zscore,
-                        cumulative_returns)
+                        factor, prices, periods, filter_zscore, cumulative_returns
+                    )
                 raise
 
         # Apply monkey-patch
@@ -518,15 +521,18 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
                 quantiles=10,  # Use 10 quantiles for factor analysis
                 bins=None,
                 binning_by_group=False,
-                max_loss=
-                0.99,  # Allow up to 99% loss to avoid dropping too much data
+                max_loss=0.99,  # Allow up to 99% loss to avoid dropping too much data
             )
             use_workaround = False  # Success, no need for workaround
         except (ValueError, OverflowError, TypeError) as e:
             # Restore original function
             al_utils.compute_forward_returns = original_compute_forward_returns
             error_str = str(e).lower()
-            if "frequency" in error_str or "overflow" in error_str or "cannot cast" in error_str:
+            if (
+                "frequency" in error_str
+                or "overflow" in error_str
+                or "cannot cast" in error_str
+            ):
                 use_workaround = True
                 print(
                     f"      ℹ️  Using custom forward returns calculation (Alphalens frequency issue detected)"
@@ -541,22 +547,23 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # quantize_factor expects a DataFrame with 'factor' column, not a Series
         # Convert factor Series to DataFrame
         # Ensure the index is properly structured as MultiIndex [date, asset]
-        factor_df = factor.to_frame(name='factor')
+        factor_df = factor.to_frame(name="factor")
 
         # Verify and fix index structure if needed
         if not isinstance(factor_df.index, pd.MultiIndex):
             raise ValueError(
-                f"factor_df must have MultiIndex, got {type(factor_df.index)}")
+                f"factor_df must have MultiIndex, got {type(factor_df.index)}"
+            )
         if len(factor_df.index.names) != 2:
             raise ValueError(
                 f"factor_df index must have 2 levels, got {len(factor_df.index.names)}: {factor_df.index.names}"
             )
         # Ensure index names are correct
-        if factor_df.index.names != ['date', 'asset']:
-            factor_df.index.names = ['date', 'asset']
+        if factor_df.index.names != ["date", "asset"]:
+            factor_df.index.names = ["date", "asset"]
 
         # Check if factor has enough variation to be useful
-        factor_values = factor_df['factor'].dropna()
+        factor_values = factor_df["factor"].dropna()
         if len(factor_values) == 0:
             raise ValueError("Factor has no valid values")
 
@@ -616,9 +623,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
                             bins=bins_val,
                             max_loss=0.99,
                         )
-                        print(
-                            f"      ✅ Success with {desc} (no binning_by_group)"
-                        )
+                        print(f"      ✅ Success with {desc} (no binning_by_group)")
                         break
                     except TypeError:
                         # Try with minimal parameters
@@ -668,11 +673,13 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
                     # Reconstruct MultiIndex if it has wrong structure
                     dates = fwd_ret_stacked.index.get_level_values(0)
                     assets = fwd_ret_stacked.index.get_level_values(
-                        -1)  # Get last level as asset
+                        -1
+                    )  # Get last level as asset
                     fwd_ret_stacked.index = pd.MultiIndex.from_arrays(
-                        [dates, assets], names=['date', 'asset'])
+                        [dates, assets], names=["date", "asset"]
+                    )
                 else:
-                    fwd_ret_stacked.index.names = ['date', 'asset']
+                    fwd_ret_stacked.index.names = ["date", "asset"]
             else:
                 raise ValueError(
                     f"Stacked forward returns should have MultiIndex, got {type(fwd_ret_stacked.index)}"
@@ -694,7 +701,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             raise ValueError(
                 f"forward_returns index must have 2 levels, got {len(forward_returns.index.names)}"
             )
-        forward_returns.index.names = ['date', 'asset']
+        forward_returns.index.names = ["date", "asset"]
 
         # quantize_factor returns a DataFrame with 'factor_quantile' column (or Series)
         # Alphalens expects 'factor_quantile' column, not 'factor'
@@ -702,24 +709,24 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # We need to ensure it matches the original factor index
         if isinstance(quantized_factor, pd.Series):
             # If Series, convert to DataFrame with correct column name
-            quantized_factor_df = quantized_factor.to_frame(
-                name='factor_quantile')
+            quantized_factor_df = quantized_factor.to_frame(name="factor_quantile")
         elif isinstance(quantized_factor, pd.DataFrame):
             # Check if it has 'factor_quantile' column
-            if 'factor_quantile' in quantized_factor.columns:
-                quantized_factor_df = quantized_factor[['factor_quantile']]
-            elif 'factor' in quantized_factor.columns:
+            if "factor_quantile" in quantized_factor.columns:
+                quantized_factor_df = quantized_factor[["factor_quantile"]]
+            elif "factor" in quantized_factor.columns:
                 # Rename 'factor' to 'factor_quantile'
-                quantized_factor_df = quantized_factor[[
-                    'factor'
-                ]].rename(columns={'factor': 'factor_quantile'})
+                quantized_factor_df = quantized_factor[["factor"]].rename(
+                    columns={"factor": "factor_quantile"}
+                )
             else:
                 # Take first column and rename
                 quantized_factor_df = quantized_factor.iloc[:, [0]].copy()
-                quantized_factor_df.columns = ['factor_quantile']
+                quantized_factor_df.columns = ["factor_quantile"]
         else:
             raise ValueError(
-                f"Unexpected quantized_factor type: {type(quantized_factor)}")
+                f"Unexpected quantized_factor type: {type(quantized_factor)}"
+            )
 
         # CRITICAL: Ensure quantized_factor_df has the same MultiIndex structure as factor
         # quantize_factor should preserve the index, but we need to verify and fix if needed
@@ -739,16 +746,16 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
                 # Take first level as date, last level as asset
                 dates = quantized_factor_df.index.get_level_values(0)
                 assets = quantized_factor_df.index.get_level_values(-1)
-                new_index = pd.MultiIndex.from_arrays([dates, assets],
-                                                      names=['date', 'asset'])
+                new_index = pd.MultiIndex.from_arrays(
+                    [dates, assets], names=["date", "asset"]
+                )
                 quantized_factor_df.index = new_index
             else:
                 # Reindex from factor_df
-                quantized_factor_df = quantized_factor_df.reindex(
-                    factor_df.index)
+                quantized_factor_df = quantized_factor_df.reindex(factor_df.index)
         else:
             # Ensure index names are correct
-            quantized_factor_df.index.names = ['date', 'asset']
+            quantized_factor_df.index.names = ["date", "asset"]
 
         # Align with factor_df index to ensure exact match
         # Only keep rows that exist in both
@@ -762,12 +769,12 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # Align factor and forward returns on MultiIndex
         # Both should have [date, asset] MultiIndex with exactly 2 levels
         # Get common index, ensuring both have proper 2-level MultiIndex
-        common_dates = quantized_factor_df.index.get_level_values(
-            'date').intersection(
-                forward_returns.index.get_level_values('date'))
+        common_dates = quantized_factor_df.index.get_level_values("date").intersection(
+            forward_returns.index.get_level_values("date")
+        )
         common_assets = quantized_factor_df.index.get_level_values(
-            'asset').intersection(
-                forward_returns.index.get_level_values('asset'))
+            "asset"
+        ).intersection(forward_returns.index.get_level_values("asset"))
 
         # Create proper MultiIndex from common dates and assets
         # Use only combinations that exist in both
@@ -779,7 +786,8 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             raise ValueError(
                 "No common index between factor and forward returns. "
                 f"Factor index: {len(quantized_factor_df.index)}, "
-                f"Forward returns index: {len(forward_returns.index)}")
+                f"Forward returns index: {len(forward_returns.index)}"
+            )
 
         # Create MultiIndex from common tuples, ensuring proper structure
         common_tuples = list(common_index_set)
@@ -791,8 +799,9 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # Reconstruct MultiIndex properly
         dates_list = [t[0] for t in common_tuples]
         assets_list = [t[1] for t in common_tuples]
-        common_index = pd.MultiIndex.from_arrays([dates_list, assets_list],
-                                                 names=['date', 'asset'])
+        common_index = pd.MultiIndex.from_arrays(
+            [dates_list, assets_list], names=["date", "asset"]
+        )
         common_index = common_index.sort_values()
 
         factor_aligned = quantized_factor_df.loc[common_index]
@@ -806,16 +815,15 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # Get original factor values for the common index
         # CRITICAL: Ensure factor has proper 2-level MultiIndex before indexing
         if not isinstance(factor.index, pd.MultiIndex):
-            raise ValueError(
-                f"factor must have MultiIndex, got {type(factor.index)}")
+            raise ValueError(f"factor must have MultiIndex, got {type(factor.index)}")
         if len(factor.index.names) != 2:
             raise ValueError(
                 f"factor index must have 2 levels, got {len(factor.index.names)}: {factor.index.names}"
             )
 
         # Ensure factor index names are correct
-        if factor.index.names != ['date', 'asset']:
-            factor.index.names = ['date', 'asset']
+        if factor.index.names != ["date", "asset"]:
+            factor.index.names = ["date", "asset"]
 
         # Extract original factor values, ensuring alignment
         try:
@@ -837,48 +845,48 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
         # Ensure the index matches common_index exactly
         if not original_factor_series.index.equals(common_index):
             # Reindex to match common_index exactly
-            original_factor_series = original_factor_series.reindex(
-                common_index)
+            original_factor_series = original_factor_series.reindex(common_index)
 
         # Ensure common_index is a proper MultiIndex with correct names
         if not isinstance(common_index, pd.MultiIndex):
             raise ValueError(
-                f"common_index should be MultiIndex, got {type(common_index)}")
+                f"common_index should be MultiIndex, got {type(common_index)}"
+            )
         if len(common_index.names) != 2:
             raise ValueError(
                 f"common_index must have 2 levels, got {len(common_index.names)}"
             )
 
         # Ensure index names are correct
-        if common_index.names != ['date', 'asset']:
-            common_index.names = ['date', 'asset']
+        if common_index.names != ["date", "asset"]:
+            common_index.names = ["date", "asset"]
 
         # Create DataFrame with proper MultiIndex structure
         # Alphalens expects: 'factor' (original), 'factor_quantile', and period columns
         # CRITICAL: Use .values to avoid any index alignment issues
         factor_data_dict = {
-            'factor': original_factor_series.values,
-            'factor_quantile': factor_aligned['factor_quantile'].values
+            "factor": original_factor_series.values,
+            "factor_quantile": factor_aligned["factor_quantile"].values,
         }
 
         # Add forward returns columns (ensure they're strings)
         for period_col in forward_aligned.columns:
-            factor_data_dict[str(
-                period_col)] = forward_aligned[period_col].values
+            factor_data_dict[str(period_col)] = forward_aligned[period_col].values
 
         # Create DataFrame with proper MultiIndex
         # CRITICAL: Reconstruct the index to ensure it's clean and has exactly 2 levels
         # Extract dates and assets from common_index to create a fresh MultiIndex
-        dates_clean = common_index.get_level_values('date')
-        assets_clean = common_index.get_level_values('asset')
+        dates_clean = common_index.get_level_values("date")
+        assets_clean = common_index.get_level_values("asset")
 
         # Ensure dates are Timestamps (not tuples or other structures)
         if not isinstance(dates_clean, pd.DatetimeIndex):
             dates_clean = pd.to_datetime(dates_clean)
 
         # Create a fresh, clean MultiIndex
-        clean_index = pd.MultiIndex.from_arrays([dates_clean, assets_clean],
-                                                names=['date', 'asset'])
+        clean_index = pd.MultiIndex.from_arrays(
+            [dates_clean, assets_clean], names=["date", "asset"]
+        )
 
         # Create DataFrame with the clean index
         factor_data = pd.DataFrame(factor_data_dict, index=clean_index)
@@ -892,7 +900,7 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             raise ValueError(
                 f"factor_data index must have 2 levels, got {len(factor_data.index.names)}: {factor_data.index.names}"
             )
-        factor_data.index.names = ['date', 'asset']
+        factor_data.index.names = ["date", "asset"]
 
         # Verify all index tuples have exactly 2 elements
         sample_tuples = list(factor_data.index[:10])
@@ -901,13 +909,13 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             print(f"      ⚠️  Found invalid index tuples: {sample_tuples[:5]}")
             # Try to reconstruct the index from level values
             dates_fixed = factor_data.index.get_level_values(0)
-            assets_fixed = factor_data.index.get_level_values(
-                -1)  # Get last level
+            assets_fixed = factor_data.index.get_level_values(-1)  # Get last level
             # Ensure dates are proper Timestamps
             if not isinstance(dates_fixed, pd.DatetimeIndex):
                 dates_fixed = pd.to_datetime(dates_fixed)
             factor_data.index = pd.MultiIndex.from_arrays(
-                [dates_fixed, assets_fixed], names=['date', 'asset'])
+                [dates_fixed, assets_fixed], names=["date", "asset"]
+            )
             # Verify again
             sample_tuples = list(factor_data.index[:10])
             if any(len(t) != 2 for t in sample_tuples):
@@ -922,13 +930,16 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             raise ValueError("No valid data after alignment")
 
         # Verify structure - Alphalens expects both 'factor' and 'factor_quantile' columns
-        if 'factor_quantile' not in factor_data.columns:
+        if "factor_quantile" not in factor_data.columns:
             raise ValueError(
                 "'factor_quantile' column missing from final factor_data. "
-                f"Available columns: {list(factor_data.columns)}")
-        if 'factor' not in factor_data.columns:
-            raise ValueError("'factor' column missing from final factor_data. "
-                             f"Available columns: {list(factor_data.columns)}")
+                f"Available columns: {list(factor_data.columns)}"
+            )
+        if "factor" not in factor_data.columns:
+            raise ValueError(
+                "'factor' column missing from final factor_data. "
+                f"Available columns: {list(factor_data.columns)}"
+            )
 
         # Final validation: Ensure index structure is correct before returning
         # Check that all index tuples are proper (date, asset) pairs
@@ -940,8 +951,8 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             raise ValueError(
                 f"factor_data.index must have 2 levels, got {len(factor_data.index.names)}"
             )
-        if factor_data.index.names != ['date', 'asset']:
-            factor_data.index.names = ['date', 'asset']
+        if factor_data.index.names != ["date", "asset"]:
+            factor_data.index.names = ["date", "asset"]
 
         # Verify level 0 (date) is DatetimeIndex
         date_level = factor_data.index.get_level_values(0)
@@ -950,21 +961,19 @@ def prepare_alphalens_data(df: pd.DataFrame, factor_col: str,
             dates_converted = pd.to_datetime(date_level)
             assets_level = factor_data.index.get_level_values(1)
             factor_data.index = pd.MultiIndex.from_arrays(
-                [dates_converted, assets_level], names=['date', 'asset'])
+                [dates_converted, assets_level], names=["date", "asset"]
+            )
 
         # Debug: Print index structure
         print(f"      Factor data index type: {type(factor_data.index)}")
         print(f"      Factor data index names: {factor_data.index.names}")
-        print(
-            f"      Factor data index levels: {len(factor_data.index.levels)}")
-        sample_idx = factor_data.index[:3] if len(factor_data) > 0 else 'empty'
+        print(f"      Factor data index levels: {len(factor_data.index.levels)}")
+        sample_idx = factor_data.index[:3] if len(factor_data) > 0 else "empty"
         print(f"      Factor data index sample: {sample_idx}")
         # Verify sample tuples
         if len(factor_data) > 0:
             sample_tuples_check = [tuple(idx) for idx in factor_data.index[:3]]
-            print(
-                f"      Factor data index tuples (first 3): {sample_tuples_check}"
-            )
+            print(f"      Factor data index tuples (first 3): {sample_tuples_check}")
             if any(len(t) != 2 for t in sample_tuples_check):
                 raise ValueError(
                     f"Index tuples must have 2 elements, found: {sample_tuples_check}"
@@ -983,9 +992,7 @@ def _fix_factor_data_index(factor_data: pd.DataFrame) -> pd.DataFrame:
         print(
             f"      ⚠️  WARNING: factor_data has {factor_data.index.nlevels} levels, expected 2"
         )
-        print(
-            f"         Attempting to fix by extracting first and last levels..."
-        )
+        print(f"         Attempting to fix by extracting first and last levels...")
 
         # Extract first level (date) and last level (asset)
         dates = factor_data.index.get_level_values(0)
@@ -996,8 +1003,7 @@ def _fix_factor_data_index(factor_data: pd.DataFrame) -> pd.DataFrame:
             dates = pd.to_datetime(dates)
 
         # Create new clean MultiIndex
-        new_index = pd.MultiIndex.from_arrays([dates, assets],
-                                              names=['date', 'asset'])
+        new_index = pd.MultiIndex.from_arrays([dates, assets], names=["date", "asset"])
         factor_data = factor_data.copy()
         factor_data.index = new_index
 
@@ -1014,8 +1020,7 @@ def _fix_factor_data_index(factor_data: pd.DataFrame) -> pd.DataFrame:
         assets = factor_data.index.get_level_values(-1)
         if not isinstance(dates, pd.DatetimeIndex):
             dates = pd.to_datetime(dates)
-        new_index = pd.MultiIndex.from_arrays([dates, assets],
-                                              names=['date', 'asset'])
+        new_index = pd.MultiIndex.from_arrays([dates, assets], names=["date", "asset"])
         factor_data = factor_data.copy()
         factor_data.index = new_index
         print(f"      ✅ Reconstructed index from level values")
@@ -1023,15 +1028,16 @@ def _fix_factor_data_index(factor_data: pd.DataFrame) -> pd.DataFrame:
     return factor_data
 
 
-def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
-                               output_dir: str) -> None:
+def _compute_manual_statistics(
+    factor_data: pd.DataFrame, factor_name: str, output_dir: str
+) -> None:
     """Compute and print basic statistics manually when Alphalens fails."""
     print(f"\n      📊 Manual Statistics for {factor_name}:")
     print("      " + "=" * 60)
 
     # Basic factor statistics
-    if 'factor' in factor_data.columns:
-        factor_values = factor_data['factor'].dropna()
+    if "factor" in factor_data.columns:
+        factor_values = factor_data["factor"].dropna()
         print(f"      Factor Statistics:")
         print(f"        Count: {len(factor_values)}")
         print(f"        Mean: {factor_values.mean():.6f}")
@@ -1043,9 +1049,8 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
         )
 
     # Quantile statistics
-    if 'factor_quantile' in factor_data.columns:
-        quantile_counts = factor_data['factor_quantile'].value_counts(
-        ).sort_index()
+    if "factor_quantile" in factor_data.columns:
+        quantile_counts = factor_data["factor_quantile"].value_counts().sort_index()
         print(f"\n      Quantile Distribution:")
         for q, count in quantile_counts.items():
             pct = count / len(factor_data) * 100
@@ -1053,15 +1058,12 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
 
     # Forward returns statistics
     forward_cols = [
-        col for col in factor_data.columns
-        if col not in ['factor', 'factor_quantile']
+        col for col in factor_data.columns if col not in ["factor", "factor_quantile"]
     ]
 
     # DEBUG: Check forward columns
     if not forward_cols:
-        print(
-            f"      ⚠️  WARNING: No forward return columns found in factor_data"
-        )
+        print(f"      ⚠️  WARNING: No forward return columns found in factor_data")
         print(f"         Available columns: {list(factor_data.columns)}")
         print(f"         This means IC/IR cannot be calculated")
 
@@ -1078,13 +1080,9 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
 
     # Simple IC calculation (Spearman correlation) and IR
     ic_results = {}
-    if 'factor' in factor_data.columns and forward_cols:
-        print(
-            f"\n      🔍 DEBUG: Calculating IC/IR for {len(forward_cols)} periods..."
-        )
-        print(
-            f"\n      Information Coefficient (IC) and Information Ratio (IR):"
-        )
+    if "factor" in factor_data.columns and forward_cols:
+        print(f"\n      🔍 DEBUG: Calculating IC/IR for {len(forward_cols)} periods...")
+        print(f"\n      Information Coefficient (IC) and Information Ratio (IR):")
         print(
             f"        {'Period':<10} {'IC':<12} {'IC Mean':<12} {'IC Std':<12} {'IR':<12}"
         )
@@ -1093,28 +1091,27 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
         for col in forward_cols:
             try:
                 # Calculate rank correlation between factor and forward returns
-                factor_vals = factor_data['factor'].dropna()
+                factor_vals = factor_data["factor"].dropna()
                 returns_vals = factor_data[col].dropna()
                 common_idx = factor_vals.index.intersection(returns_vals.index)
                 if len(common_idx) > 10:
-                    factor_common = factor_data.loc[common_idx, 'factor']
+                    factor_common = factor_data.loc[common_idx, "factor"]
                     returns_common = factor_data.loc[common_idx, col]
 
                     # Calculate IC (Spearman correlation)
-                    ic = factor_common.corr(returns_common, method='spearman')
+                    ic = factor_common.corr(returns_common, method="spearman")
 
                     # Calculate IC over time (rolling IC for IR calculation)
                     # Group by date to get IC per period
                     ic_by_date = []
-                    for date in factor_data.index.get_level_values(
-                            'date').unique():
-                        date_mask = factor_data.index.get_level_values(
-                            'date') == date
+                    for date in factor_data.index.get_level_values("date").unique():
+                        date_mask = factor_data.index.get_level_values("date") == date
                         date_data = factor_data.loc[date_mask]
                         if len(date_data) > 5:  # Need enough data points
                             try:
-                                date_ic = date_data['factor'].corr(
-                                    date_data[col], method='spearman')
+                                date_ic = date_data["factor"].corr(
+                                    date_data[col], method="spearman"
+                                )
                                 if not np.isnan(date_ic):
                                     ic_by_date.append(date_ic)
                             except Exception:
@@ -1131,10 +1128,10 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
                         ir = np.nan
 
                     ic_results[col] = {
-                        'IC': ic,
-                        'IC_Mean': ic_mean,
-                        'IC_Std': ic_std,
-                        'IR': ir
+                        "IC": ic,
+                        "IC_Mean": ic_mean,
+                        "IC_Std": ic_std,
+                        "IR": ir,
                     }
 
                     print(
@@ -1143,12 +1140,13 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
             except Exception as e:
                 print(f"        Period {col}: Error calculating IC/IR: {e}")
                 import traceback
+
                 traceback.print_exc()
                 ic_results[col] = {
-                    'IC': np.nan,
-                    'IC_Mean': np.nan,
-                    'IC_Std': np.nan,
-                    'IR': np.nan
+                    "IC": np.nan,
+                    "IC_Mean": np.nan,
+                    "IC_Std": np.nan,
+                    "IR": np.nan,
                 }
 
     # DEBUG: Check if IC results were calculated
@@ -1162,17 +1160,18 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
         print(f"      ✅ Calculated IC/IR for {len(ic_results)} periods")
 
     # Quantile return analysis
-    if 'factor_quantile' in factor_data.columns and forward_cols:
+    if "factor_quantile" in factor_data.columns and forward_cols:
         print(f"\n      Quantile Return Analysis:")
         for col in forward_cols:
             try:
-                quantile_returns = factor_data.groupby(
-                    'factor_quantile')[col].agg(['mean', 'std', 'count'])
+                quantile_returns = factor_data.groupby("factor_quantile")[col].agg(
+                    ["mean", "std", "count"]
+                )
                 print(f"        Period {col}:")
                 for q in quantile_returns.index:
-                    mean_ret = quantile_returns.loc[q, 'mean']
-                    std_ret = quantile_returns.loc[q, 'std']
-                    count = quantile_returns.loc[q, 'count']
+                    mean_ret = quantile_returns.loc[q, "mean"]
+                    std_ret = quantile_returns.loc[q, "std"]
+                    count = quantile_returns.loc[q, "count"]
                     print(
                         f"          Q{q}: Mean={mean_ret:.6f}, Std={std_ret:.6f}, N={count}"
                     )
@@ -1184,13 +1183,12 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
     # Save to text file
     try:
         factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
-        stats_path = os.path.join(output_dir,
-                                  f"{factor_safe_name}_statistics.txt")
-        with open(stats_path, 'w') as f:
+        stats_path = os.path.join(output_dir, f"{factor_safe_name}_statistics.txt")
+        with open(stats_path, "w") as f:
             f.write(f"Statistics for {factor_name}\n")
             f.write("=" * 60 + "\n\n")
-            if 'factor' in factor_data.columns:
-                factor_values = factor_data['factor'].dropna()
+            if "factor" in factor_data.columns:
+                factor_values = factor_data["factor"].dropna()
                 f.write(f"Factor Statistics:\n")
                 f.write(f"  Count: {len(factor_values)}\n")
                 f.write(f"  Mean: {factor_values.mean():.6f}\n")
@@ -1200,34 +1198,32 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
 
             # IC/IR Statistics
             if ic_results:
-                f.write(
-                    f"Information Coefficient (IC) and Information Ratio (IR):\n"
-                )
+                f.write(f"Information Coefficient (IC) and Information Ratio (IR):\n")
                 f.write(
                     f"  {'Period':<10} {'IC':<12} {'IC Mean':<12} {'IC Std':<12} {'IR':<12}\n"
                 )
                 f.write(f"  {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*12}\n")
                 for col, stats in ic_results.items():
-                    ic_val = stats.get('IC', np.nan)
-                    ic_mean = stats.get('IC_Mean', np.nan)
-                    ic_std = stats.get('IC_Std', np.nan)
-                    ir_val = stats.get('IR', np.nan)
+                    ic_val = stats.get("IC", np.nan)
+                    ic_mean = stats.get("IC_Mean", np.nan)
+                    ic_std = stats.get("IC_Std", np.nan)
+                    ir_val = stats.get("IR", np.nan)
                     f.write(
                         f"  {col:<10} {ic_val:>12.6f} {ic_mean:>12.6f} {ic_std:>12.6f} {ir_val:>12.6f}\n"
                     )
                 f.write("\n")
 
-            if 'factor_quantile' in factor_data.columns and forward_cols:
+            if "factor_quantile" in factor_data.columns and forward_cols:
                 for col in forward_cols:
                     try:
-                        quantile_returns = factor_data.groupby(
-                            'factor_quantile')[col].agg(
-                                ['mean', 'std', 'count'])
+                        quantile_returns = factor_data.groupby("factor_quantile")[
+                            col
+                        ].agg(["mean", "std", "count"])
                         f.write(f"Period {col} Quantile Returns:\n")
                         for q in quantile_returns.index:
-                            mean_ret = quantile_returns.loc[q, 'mean']
-                            std_ret = quantile_returns.loc[q, 'std']
-                            count = quantile_returns.loc[q, 'count']
+                            mean_ret = quantile_returns.loc[q, "mean"]
+                            std_ret = quantile_returns.loc[q, "std"]
+                            count = quantile_returns.loc[q, "count"]
                             f.write(
                                 f"  Q{q}: Mean={mean_ret:.6f}, Std={std_ret:.6f}, N={count}\n"
                             )
@@ -1239,10 +1235,12 @@ def _compute_manual_statistics(factor_data: pd.DataFrame, factor_name: str,
         print(f"      ⚠️  Error saving statistics file: {e}")
 
 
-def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
-                   output_dir: str, quantiles: int):
+def analyze_factor(
+    factor_data: pd.DataFrame, factor_name: str, output_dir: str, quantiles: int
+):
     """Run Alphalens analysis and generate tear sheet."""
     import matplotlib
+
     matplotlib.use("Agg")  # Use non-interactive backend
     import matplotlib.pyplot as plt
 
@@ -1251,13 +1249,9 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
         for idx, fig_num in enumerate(sorted(plt.get_fignums())):
             fig = plt.figure(fig_num)
-            fig_path = os.path.join(output_dir,
-                                    f"{factor_safe_name}_fig_{idx}.png")
+            fig_path = os.path.join(output_dir, f"{factor_safe_name}_fig_{idx}.png")
             try:
-                fig.savefig(fig_path,
-                            dpi=150,
-                            bbox_inches="tight",
-                            facecolor="white")
+                fig.savefig(fig_path, dpi=150, bbox_inches="tight", facecolor="white")
                 saved_paths.append(fig_path)
                 print(f"      ✅ Figure {idx} saved to: {fig_path}")
             except Exception as fig_e:
@@ -1265,18 +1259,14 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         return saved_paths
 
     def _generate_partial_tears() -> List[str]:
-        print(
-            "      ℹ️  Falling back to partial tear sheets (returns/information)..."
-        )
+        print("      ℹ️  Falling back to partial tear sheets (returns/information)...")
         generated_any = False
 
         try:
             # DEBUG: Check data structure before calling Alphalens
             print(f"      🔍 DEBUG: Before create_returns_tear_sheet:")
             print(f"        factor_data.index type: {type(factor_data.index)}")
-            print(
-                f"        factor_data.index.nlevels: {factor_data.index.nlevels}"
-            )
+            print(f"        factor_data.index.nlevels: {factor_data.index.nlevels}")
             if isinstance(factor_data.index, pd.MultiIndex):
                 print(
                     f"        factor_data.index.levels: {len(factor_data.index.levels)}"
@@ -1295,6 +1285,7 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         except Exception as ret_e:
             print(f"      ⚠️  create_returns_tear_sheet error: {ret_e}")
             import traceback
+
             print(f"      🔍 DEBUG: Full traceback:")
             traceback.print_exc()
 
@@ -1302,9 +1293,7 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             # DEBUG: Check data structure before calling Alphalens
             print(f"      🔍 DEBUG: Before create_information_tear_sheet:")
             print(f"        factor_data.index type: {type(factor_data.index)}")
-            print(
-                f"        factor_data.index.nlevels: {factor_data.index.nlevels}"
-            )
+            print(f"        factor_data.index.nlevels: {factor_data.index.nlevels}")
             if isinstance(factor_data.index, pd.MultiIndex):
                 print(
                     f"        factor_data.index.levels: {len(factor_data.index.levels)}"
@@ -1322,12 +1311,12 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
         except Exception as info_e:
             print(f"      ⚠️  create_information_tear_sheet error: {info_e}")
             import traceback
+
             print(f"      🔍 DEBUG: Full traceback:")
             traceback.print_exc()
 
             # Try to diagnose the issue
-            if "Cannot convert input" in str(info_e) and "tuple" in str(
-                    info_e):
+            if "Cannot convert input" in str(info_e) and "tuple" in str(info_e):
                 print(
                     f"      🔍 DIAGNOSIS: Alphalens is receiving tuples with wrong structure"
                 )
@@ -1336,9 +1325,7 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
                 )
                 print(f"        Checking factor_data structure...")
                 if isinstance(factor_data.index, pd.MultiIndex):
-                    print(
-                        f"        Index has {factor_data.index.nlevels} levels"
-                    )
+                    print(f"        Index has {factor_data.index.nlevels} levels")
                     print(
                         f"        Index has {len(factor_data.index.levels)} level arrays"
                     )
@@ -1420,9 +1407,7 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             f"          {idx} (type: {type(idx)}, length: {len(idx) if isinstance(idx, tuple) else 'N/A'})"
         )
         if isinstance(idx, tuple) and len(idx) != 2:
-            print(
-                f"            ⚠️  WARNING: Tuple has {len(idx)} elements, expected 2!"
-            )
+            print(f"            ⚠️  WARNING: Tuple has {len(idx)} elements, expected 2!")
 
     print(f"        Columns: {list(factor_data.columns)}")
     print(f"        Data types:\n{factor_data.dtypes}")
@@ -1467,23 +1452,18 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             # If no figures were saved, at least compute and print basic statistics
             print(f"      ℹ️  Computing basic statistics as fallback...")
             try:
-                _compute_manual_statistics(factor_data, factor_name,
-                                           output_dir)
+                _compute_manual_statistics(factor_data, factor_name, output_dir)
             except Exception as stats_e:
-                print(
-                    f"      ⚠️  Error computing fallback statistics: {stats_e}"
-                )
+                print(f"      ⚠️  Error computing fallback statistics: {stats_e}")
 
         # Also compute and save IC statistics
         try:
             ic = al.performance.factor_information_coefficient(factor_data)
-            ic_summary = al.performance.mean_information_coefficient(
-                factor_data)
+            ic_summary = al.performance.mean_information_coefficient(factor_data)
 
             # Save IC summary to CSV
             factor_safe_name = factor_name.replace("/", "_").replace(" ", "_")
-            ic_csv_path = os.path.join(output_dir,
-                                       f"{factor_safe_name}_ic_summary.csv")
+            ic_csv_path = os.path.join(output_dir, f"{factor_safe_name}_ic_summary.csv")
             ic_summary.to_csv(ic_csv_path)
             print(f"      ✅ IC summary saved to: {ic_csv_path}")
 
@@ -1502,23 +1482,20 @@ def analyze_factor(factor_data: pd.DataFrame, factor_name: str,
             # Try manual IC calculation as fallback
             try:
                 print(f"      🔄 Attempting manual IC calculation...")
-                _compute_manual_statistics(factor_data, factor_name,
-                                           output_dir)
+                _compute_manual_statistics(factor_data, factor_name, output_dir)
             except Exception as manual_e:
-                print(
-                    f"      ⚠️  Manual statistics calculation also failed: {manual_e}"
-                )
+                print(f"      ⚠️  Manual statistics calculation also failed: {manual_e}")
 
         print(f"   ✅ Tear sheet generated for {factor_name}")
 
     except Exception as e:
         print(f"      ⚠️  Error generating tear sheet: {e}")
-        print(
-            f"      factor_data shape: {getattr(factor_data, 'shape', 'N/A')}")
+        print(f"      factor_data shape: {getattr(factor_data, 'shape', 'N/A')}")
         print(
             f"      factor_data index names: {getattr(getattr(factor_data, 'index', None), 'names', 'N/A')}"
         )
         import traceback
+
         traceback.print_exc()
         plt.close("all")
 
@@ -1540,8 +1517,7 @@ def main() -> None:
     print(f"   📁 Found {len(files)} data files")
 
     # Load and prepare data
-    df, feature_cols = load_and_prepare_data(files, args.freq,
-                                             args.feature_type)
+    df, feature_cols = load_and_prepare_data(files, args.freq, args.feature_type)
 
     # Filter by date if specified
     if args.start:
@@ -1555,9 +1531,10 @@ def main() -> None:
     print(f"   📅 Date range: {df.index.min()} to {df.index.max()}")
 
     # Get all numeric columns from DataFrame (excluding metadata columns)
-    exclude_cols = {'symbol', 'timestamp', 'date', 'asset'}
+    exclude_cols = {"symbol", "timestamp", "date", "asset"}
     all_numeric_cols = [
-        col for col in df.columns
+        col
+        for col in df.columns
         if col not in exclude_cols and pd.api.types.is_numeric_dtype(df[col])
     ]
 
@@ -1572,27 +1549,26 @@ def main() -> None:
                 return
         else:
             print(f"   ⚠️  Factor '{args.factor_name}' not found in DataFrame")
-            print(
-                f"      Available factors (first 20): {all_numeric_cols[:20]}..."
-            )
+            print(f"      Available factors (first 20): {all_numeric_cols[:20]}...")
             print(f"      Total numeric columns: {len(all_numeric_cols)}")
             return
     else:
         # Analyze all features (or a subset for performance)
-        factors_to_analyze = feature_cols[:
-                                          20] if feature_cols else all_numeric_cols[:
-                                                                                    20]
+        factors_to_analyze = (
+            feature_cols[:20] if feature_cols else all_numeric_cols[:20]
+        )
         print(
             f"   📊 Analyzing {len(factors_to_analyze)} factors (limited to first 20)"
         )
 
     # Create output directory with timestamp
     from datetime import datetime
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     symbol_tag = args.symbol.replace(",", "_")
     output_dir = os.path.join(
         args.output_dir,
-        f"{timestamp}_{symbol_tag}_{args.feature_type}_{args.start or 'all'}_{args.end or 'all'}"
+        f"{timestamp}_{symbol_tag}_{args.feature_type}_{args.start or 'all'}_{args.end or 'all'}",
     )
 
     # Analyze each factor
@@ -1601,18 +1577,18 @@ def main() -> None:
             print(f"\n   🔍 Analyzing factor: {factor_name}")
 
             # Prepare Alphalens data
-            factor_data = prepare_alphalens_data(df, factor_name, periods,
-                                                 args.freq)
+            factor_data = prepare_alphalens_data(df, factor_name, periods, args.freq)
 
             # Run analysis
-            analyze_factor(factor_data, factor_name, output_dir,
-                           args.quantiles)
+            analyze_factor(factor_data, factor_name, output_dir, args.quantiles)
 
         except ValueError as e:
             # For ValueError (like too many duplicates), print warning but continue
             error_msg = str(e)
-            if "too many duplicate values" in error_msg.lower(
-            ) or "no predictive power" in error_msg.lower():
+            if (
+                "too many duplicate values" in error_msg.lower()
+                or "no predictive power" in error_msg.lower()
+            ):
                 print(f"      ⚠️  Skipping {factor_name}: {error_msg}")
                 print(
                     f"         This factor has insufficient variation for meaningful analysis"
@@ -1620,11 +1596,13 @@ def main() -> None:
             else:
                 print(f"      ⚠️  Error analyzing {factor_name}: {e}")
                 import traceback
+
                 traceback.print_exc()
             continue
         except Exception as e:
             print(f"      ⚠️  Error analyzing {factor_name}: {e}")
             import traceback
+
             traceback.print_exc()
             continue
 

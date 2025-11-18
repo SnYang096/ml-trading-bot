@@ -205,7 +205,9 @@ class CrossSectionalRegressor:
         intercept_records: List[Tuple[pd.Timestamp, float]] = []
         residual_records: List[pd.Series] = []
         r2_records: List[Tuple[pd.Timestamp, float]] = []
-        ic_records: Dict[str, List[Tuple[pd.Timestamp, float]]] = {f: [] for f in factors}
+        ic_records: Dict[str, List[Tuple[pd.Timestamp, float]]] = {
+            f: [] for f in factors
+        }
         valid_timestamps: List[pd.Timestamp] = []
 
         for ts in timestamps:
@@ -214,7 +216,9 @@ class CrossSectionalRegressor:
             cross_section = cross_section.replace([np.inf, -np.inf], np.nan).dropna(
                 subset=[target_col] + factors, how="any"
             )
-            if len(cross_section) < max(self.min_assets, len(factors) + int(self.add_intercept)):
+            if len(cross_section) < max(
+                self.min_assets, len(factors) + int(self.add_intercept)
+            ):
                 continue
 
             X = cross_section[factors].values.astype(float)
@@ -243,9 +247,13 @@ class CrossSectionalRegressor:
             sst = float(np.sum((y - y.mean()) ** 2))
             r_squared = 1.0 - sse / sst if sst > 0 else np.nan
 
-            factor_returns_records.append(pd.Series(factor_returns, index=factors, name=ts))
+            factor_returns_records.append(
+                pd.Series(factor_returns, index=factors, name=ts)
+            )
             intercept_records.append((ts, intercept))
-            residual_records.append(pd.Series(resid, index=cross_section.index, name=ts))
+            residual_records.append(
+                pd.Series(resid, index=cross_section.index, name=ts)
+            )
             r2_records.append((ts, r_squared))
             valid_timestamps.append(ts)
 
@@ -335,4 +343,3 @@ def _newey_west_se(values: np.ndarray, max_lag: int = 5) -> float:
         var += 2.0 * weight * cov
 
     return np.sqrt(var / T)
-

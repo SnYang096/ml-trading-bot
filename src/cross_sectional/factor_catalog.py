@@ -140,4 +140,3 @@ def format_summary(categories: Mapping[str, Iterable[str]]) -> str:
         size = len(list(cols))
         lines.append(f"  - {name}: {size}")
     return "\n".join(lines)
-

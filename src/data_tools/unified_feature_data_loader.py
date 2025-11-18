@@ -31,20 +31,21 @@ class UnifiedDataLoader:
         start_date: str = "2024-01-01",
         end_date: str = "2025-12-31",
         return_dataframe: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray, list] | Tuple[np.ndarray, np.ndarray,
-                                                     list, pd.DataFrame]:
+    ) -> (
+        Tuple[np.ndarray, np.ndarray, list]
+        | Tuple[np.ndarray, np.ndarray, list, pd.DataFrame]
+    ):
         try:
             print(f"📊 Loading real market data for {symbol}...")
 
             loader = MarketDataLoader(self.data_path)
-            df = loader.load_data(symbol=symbol,
-                                  start_date=start_date,
-                                  end_date=end_date)
+            df = loader.load_data(
+                symbol=symbol, start_date=start_date, end_date=end_date
+            )
 
             if df is None or df.empty:
                 print("⚠️ No real data found, generating sample data...")
-                return self._generate_sample_data(
-                    return_dataframe=return_dataframe)
+                return self._generate_sample_data(return_dataframe=return_dataframe)
 
             df = loader.resample_data("5T")
             # Preserve timestamps as a column for downstream date filtering
@@ -52,16 +53,14 @@ class UnifiedDataLoader:
             df["timestamp"] = df.index
 
             self.feature_engineer = ComprehensiveFeatureEngineer()
-            df_features = self.feature_engineer.engineer_all_features(df,
-                                                                      fit=True)
+            df_features = self.feature_engineer.engineer_all_features(df, fit=True)
             # Ensure timestamp survives after feature engineering
             if "timestamp" not in df_features.columns and "timestamp" in df.columns:
                 df_features = df_features.copy()
                 df_features["timestamp"] = df["timestamp"].values
 
             feature_cols = [
-                col for col in df_features.columns
-                if col not in ["timestamp", "close"]
+                col for col in df_features.columns if col not in ["timestamp", "close"]
             ]
 
             X = df_features[feature_cols].values
@@ -85,19 +84,18 @@ class UnifiedDataLoader:
         except Exception as exc:  # noqa: BLE001
             print(f"⚠️ Error loading real data: {exc}")
             print("📊 Generating sample data...")
-            return self._generate_sample_data(
-                return_dataframe=return_dataframe)
+            return self._generate_sample_data(return_dataframe=return_dataframe)
 
     def _generate_sample_data(
         self,
         n_samples: int = 10000,
         n_factors: int = 100,
         return_dataframe: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray, list] | Tuple[np.ndarray, np.ndarray,
-                                                     list, pd.DataFrame, str]:
-        print(
-            f"📊 Generating sample data: {n_samples} samples, {n_factors} features"
-        )
+    ) -> (
+        Tuple[np.ndarray, np.ndarray, list]
+        | Tuple[np.ndarray, np.ndarray, list, pd.DataFrame, str]
+    ):
+        print(f"📊 Generating sample data: {n_samples} samples, {n_factors} features")
 
         if not return_dataframe:
             return create_sample_data(
@@ -129,22 +127,10 @@ class UnifiedDataLoader:
         year: int = 2024,
     ) -> Dict[str, Tuple[np.ndarray, np.ndarray, list]]:
         quarters = {
-            f"{year}_Q1": {
-                "start": f"{year}-01-01",
-                "end": f"{year}-03-31"
-            },
-            f"{year}_Q2": {
-                "start": f"{year}-04-01",
-                "end": f"{year}-06-30"
-            },
-            f"{year}_Q3": {
-                "start": f"{year}-07-01",
-                "end": f"{year}-09-30"
-            },
-            f"{year}_Q4": {
-                "start": f"{year}-10-01",
-                "end": f"{year}-12-31"
-            },
+            f"{year}_Q1": {"start": f"{year}-01-01", "end": f"{year}-03-31"},
+            f"{year}_Q2": {"start": f"{year}-04-01", "end": f"{year}-06-30"},
+            f"{year}_Q3": {"start": f"{year}-07-01", "end": f"{year}-09-30"},
+            f"{year}_Q4": {"start": f"{year}-10-01", "end": f"{year}-12-31"},
         }
 
         quarterly_data: Dict[str, Tuple[np.ndarray, np.ndarray, list]] = {}
@@ -175,11 +161,11 @@ class UnifiedDataLoader:
         X_train = X[:train_size]
         y_train = y[:train_size]
 
-        X_val = X[train_size:train_size + val_size]
-        y_val = y[train_size:train_size + val_size]
+        X_val = X[train_size : train_size + val_size]
+        y_val = y[train_size : train_size + val_size]
 
-        X_test = X[train_size + val_size:]
-        y_test = y[train_size + val_size:]
+        X_test = X[train_size + val_size :]
+        y_test = y[train_size + val_size :]
 
         return {
             "train": (X_train, y_train),

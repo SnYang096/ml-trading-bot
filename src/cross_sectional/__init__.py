@@ -52,4 +52,3 @@ __all__ = [
     "compute_cross_sectional_ic",
     "apply_factor_selection",
 ]
-

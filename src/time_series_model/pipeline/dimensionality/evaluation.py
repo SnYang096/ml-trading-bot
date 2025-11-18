@@ -90,18 +90,14 @@ def _generate_shap_outputs(
             best_iteration = current_iteration
 
         model_info = {
-            "prediction_mean":
-            float(pred_mean),
-            "prediction_std":
-            float(pred_std),
-            "prediction_min":
-            float(pred_min),
-            "prediction_max":
-            float(pred_max),
-            "best_iteration":
-            int(best_iteration) if best_iteration is not None else None,
-            "sample_size":
-            int(sample_size),
+            "prediction_mean": float(pred_mean),
+            "prediction_std": float(pred_std),
+            "prediction_min": float(pred_min),
+            "prediction_max": float(pred_max),
+            "best_iteration": (
+                int(best_iteration) if best_iteration is not None else None
+            ),
+            "sample_size": int(sample_size),
         }
 
         if pred_std < 1e-10:
@@ -117,30 +113,20 @@ def _generate_shap_outputs(
             print(f"   Model training info:")
             print(f"      Best iteration: {best_iteration}")
             print(f"   ")
-            print(
-                f"   This means the model outputs the same value for all inputs."
-            )
-            print(
-                f"   SHAP values will be 0 because there's no variation to explain."
-            )
+            print(f"   This means the model outputs the same value for all inputs.")
+            print(f"   SHAP values will be 0 because there's no variation to explain.")
             print(f"   ")
             print(f"   Possible causes:")
-            print(
-                f"   1. ❌ Model only predicts one class (e.g., always predicts 1.0)"
-            )
+            print(f"   1. ❌ Model only predicts one class (e.g., always predicts 1.0)")
             print(f"      → Check model training logs for 'best_iteration=1'")
-            print(
-                f"   2. ❌ Model didn't train properly (early stop at iteration 1)"
-            )
+            print(f"   2. ❌ Model didn't train properly (early stop at iteration 1)")
             print(f"      → Check training loss/validation loss curves")
             print(
                 f"   3. ❌ Features don't contain enough information to distinguish classes"
             )
             print(f"      → Check feature-label correlation (should be > 0.1)")
             print(f"   4. ❌ Class imbalance too severe")
-            print(
-                f"      → Check label distribution (should be roughly balanced)"
-            )
+            print(f"      → Check label distribution (should be roughly balanced)")
             print(f"   ")
             print(f"   Diagnostic steps:")
             print(f"   - Check model training logs for warnings")
@@ -176,7 +162,9 @@ def _generate_shap_outputs(
                     # This gives overall feature importance across all classes
                     # Alternative: use the most important class or weighted average
                     shap_array = np.mean([np.abs(sv) for sv in shap_values], axis=0)
-                    print(f"   📊 Multiclass SHAP: Using mean absolute SHAP across {len(shap_values)} classes")
+                    print(
+                        f"   📊 Multiclass SHAP: Using mean absolute SHAP across {len(shap_values)} classes"
+                    )
                 else:
                     # Fallback: use the last array
                     shap_array = shap_values[-1]
@@ -226,7 +214,9 @@ def _generate_shap_outputs(
                     # This gives overall feature importance across all classes
                     # Alternative: use the most important class or weighted average
                     shap_array = np.mean([np.abs(sv) for sv in shap_values], axis=0)
-                    print(f"   📊 Multiclass SHAP: Using mean absolute SHAP across {len(shap_values)} classes")
+                    print(
+                        f"   📊 Multiclass SHAP: Using mean absolute SHAP across {len(shap_values)} classes"
+                    )
                 else:
                     # Fallback: use the last array
                     shap_array = shap_values[-1]
@@ -279,26 +269,26 @@ def _generate_shap_outputs(
 
         # Create enhanced ranking with diagnostic info
         shap_ranking = sorted(
-            [{
-                "feature": feat,
-                "mean_abs_shap": float(val),
-                "rank": idx + 1,
-                "warning":
-                "Model output is constant - SHAP values are invalid",
-                "diagnostic": {
-                    "reason":
-                    "Model predictions are constant (all outputs identical)",
-                    "impact":
-                    "SHAP values cannot be computed meaningfully",
-                    "recommendation":
-                    "Fix model training issue before interpreting SHAP values"
+            [
+                {
+                    "feature": feat,
+                    "mean_abs_shap": float(val),
+                    "rank": idx + 1,
+                    "warning": "Model output is constant - SHAP values are invalid",
+                    "diagnostic": {
+                        "reason": "Model predictions are constant (all outputs identical)",
+                        "impact": "SHAP values cannot be computed meaningfully",
+                        "recommendation": "Fix model training issue before interpreting SHAP values",
+                    },
                 }
-            } for idx, (feat, val) in enumerate(
-                sorted(
-                    zip(feature_names, mean_abs_shap),
-                    key=lambda kv: kv[1],
-                    reverse=True,
-                ))],
+                for idx, (feat, val) in enumerate(
+                    sorted(
+                        zip(feature_names, mean_abs_shap),
+                        key=lambda kv: kv[1],
+                        reverse=True,
+                    )
+                )
+            ],
             key=lambda item: item["rank"],
         )
 
@@ -307,22 +297,25 @@ def _generate_shap_outputs(
             "status": "invalid",
             "reason": "model_output_constant",
             "model_info": model_info,
-            "warning":
-            "All SHAP values are zero because model output is constant. This indicates a model training problem.",
-            "features": shap_ranking
+            "warning": "All SHAP values are zero because model output is constant. This indicates a model training problem.",
+            "features": shap_ranking,
         }
     else:
         shap_ranking = sorted(
-            [{
-                "feature": feat,
-                "mean_abs_shap": float(val),
-                "rank": idx + 1,
-            } for idx, (feat, val) in enumerate(
-                sorted(
-                    zip(feature_names, mean_abs_shap),
-                    key=lambda kv: kv[1],
-                    reverse=True,
-                ))],
+            [
+                {
+                    "feature": feat,
+                    "mean_abs_shap": float(val),
+                    "rank": idx + 1,
+                }
+                for idx, (feat, val) in enumerate(
+                    sorted(
+                        zip(feature_names, mean_abs_shap),
+                        key=lambda kv: kv[1],
+                        reverse=True,
+                    )
+                )
+            ],
             key=lambda item: item["rank"],
         )
 
@@ -330,25 +323,22 @@ def _generate_shap_outputs(
         shap_metadata = {
             "status": "valid",
             "model_info": model_info,
-            "features": shap_ranking
+            "features": shap_ranking,
         }
 
     # Save both formats: legacy (features only) and enhanced (with metadata)
-    with open(shap_dir / f"{prefix}_shap_importance.json",
-              "w",
-              encoding="utf-8") as f:
+    with open(shap_dir / f"{prefix}_shap_importance.json", "w", encoding="utf-8") as f:
         json.dump(shap_ranking, f, indent=2)
 
     # Save enhanced version with metadata
-    with open(shap_dir / f"{prefix}_shap_importance_enhanced.json",
-              "w",
-              encoding="utf-8") as f:
+    with open(
+        shap_dir / f"{prefix}_shap_importance_enhanced.json", "w", encoding="utf-8"
+    ) as f:
         json.dump(shap_metadata, f, indent=2)
 
     if all_shap_zero:
         print(f"   💾 SHAP summary saved to: {shap_dir}")
-        print(
-            f"      ⚠️  Note: SHAP values are invalid (model output constant)")
+        print(f"      ⚠️  Note: SHAP values are invalid (model output constant)")
         print(
             f"      → Check {prefix}_shap_importance_enhanced.json for diagnostic info"
         )
@@ -374,8 +364,7 @@ def compute_selection_score(
     if f1 == 0.0:
         # Fallback to classification metrics
         cls_metrics = perf.get("classification_metrics", {})
-        f1 = float(
-            cls_metrics.get("f1_macro", cls_metrics.get("f1_weighted", 0.0)))
+        f1 = float(cls_metrics.get("f1_macro", cls_metrics.get("f1_weighted", 0.0)))
 
     if metric == "sharpe":
         return sharpe
@@ -398,12 +387,12 @@ def calculate_financial_metrics(
 ) -> Dict[str, float]:
     """
     Calculate financial metrics for trading strategy evaluation.
-    
+
     Args:
         y_true: True returns
         y_pred: Predicted returns
         risk_free_rate: Risk-free rate (annualized, default 0)
-    
+
     Returns:
         Dictionary of financial metrics
     """
@@ -427,8 +416,9 @@ def calculate_financial_metrics(
         n_periods = len(strategy_returns)
         if n_periods > 0:
             # Simple annualization: multiply by ~252 trading days
-            annualized_return = total_return * (
-                252.0 / n_periods) if n_periods < 252 else total_return
+            annualized_return = (
+                total_return * (252.0 / n_periods) if n_periods < 252 else total_return
+            )
             metrics["annualized_return"] = annualized_return
         else:
             metrics["annualized_return"] = 0.0
@@ -438,8 +428,9 @@ def calculate_financial_metrics(
         if returns_std > 1e-8:
             # Annualized Sharpe: (mean_return - risk_free) / std_return * sqrt(252)
             daily_rf = risk_free_rate / 252.0
-            sharpe_ratio = (np.mean(strategy_returns) -
-                            daily_rf) / returns_std * np.sqrt(252.0)
+            sharpe_ratio = (
+                (np.mean(strategy_returns) - daily_rf) / returns_std * np.sqrt(252.0)
+            )
             metrics["sharpe_ratio"] = float(sharpe_ratio)
         else:
             metrics["sharpe_ratio"] = 0.0
@@ -449,12 +440,11 @@ def calculate_financial_metrics(
         cumulative_equity = np.cumprod(1.0 + strategy_returns)
         running_max = np.maximum.accumulate(cumulative_equity)
         drawdown = (cumulative_equity - running_max) / running_max
-        max_drawdown_pct = float(
-            np.min(drawdown)) if len(drawdown) > 0 else 0.0
+        max_drawdown_pct = float(np.min(drawdown)) if len(drawdown) > 0 else 0.0
         # Also store absolute drawdown for backward compatibility
-        max_drawdown_abs = float(
-            np.min(cumulative_equity -
-                   running_max)) if len(drawdown) > 0 else 0.0
+        max_drawdown_abs = (
+            float(np.min(cumulative_equity - running_max)) if len(drawdown) > 0 else 0.0
+        )
         metrics["max_drawdown"] = max_drawdown_pct  # Store as percentage
         metrics["max_drawdown_abs"] = max_drawdown_abs  # Store absolute value
         metrics["max_drawdown_pct"] = max_drawdown_pct
@@ -462,8 +452,9 @@ def calculate_financial_metrics(
         # 5. Win rate
         winning_trades = (strategy_returns > 0).sum()
         total_trades = len(strategy_returns)
-        metrics["win_rate"] = float(winning_trades /
-                                    total_trades) if total_trades > 0 else 0.0
+        metrics["win_rate"] = (
+            float(winning_trades / total_trades) if total_trades > 0 else 0.0
+        )
 
         # 6. Average win/loss ratio
         wins = strategy_returns[strategy_returns > 0]
@@ -472,17 +463,15 @@ def calculate_financial_metrics(
         avg_loss = float(np.abs(np.mean(losses))) if len(losses) > 0 else 0.0
         metrics["avg_win"] = avg_win
         metrics["avg_loss"] = avg_loss
-        metrics[
-            "win_loss_ratio"] = avg_win / avg_loss if avg_loss > 1e-8 else 0.0
+        metrics["win_loss_ratio"] = avg_win / avg_loss if avg_loss > 1e-8 else 0.0
 
         # 7. Volatility (annualized)
         volatility = np.std(strategy_returns) * np.sqrt(252.0)
         metrics["volatility"] = float(volatility)
 
         # 8. Calmar ratio (return / max_drawdown)
-        if abs(max_drawdown) > 1e-8:
-            metrics["calmar_ratio"] = float(annualized_return /
-                                            abs(max_drawdown))
+        if abs(max_drawdown_pct) > 1e-8:
+            metrics["calmar_ratio"] = float(annualized_return / abs(max_drawdown_pct))
         else:
             metrics["calmar_ratio"] = 0.0
 
@@ -502,15 +491,14 @@ def calculate_financial_metrics(
 
 
 def evaluate_model_performance(
-        model,
-        X_test: np.ndarray,
-        y_test: np.ndarray,
-        model_name: str = "Model",
-        include_financial_metrics: bool = True,
-        price_data:
-    Optional[
-        pd.
-        DataFrame] = None,  # Optional: price data for calculating real returns
+    model,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    model_name: str = "Model",
+    include_financial_metrics: bool = True,
+    price_data: Optional[
+        pd.DataFrame
+    ] = None,  # Optional: price data for calculating real returns
 ):
     """Evaluate model performance with comprehensive metrics."""
     X_eval = X_test
@@ -532,8 +520,7 @@ def evaluate_model_performance(
 
     # Determine if binary or multiclass based on unique values in predictions
     unique_preds = np.unique(predictions_class)
-    is_binary = len(unique_preds) == 2 and all(p in [0, 1]
-                                               for p in unique_preds)
+    is_binary = len(unique_preds) == 2 and all(p in [0, 1] for p in unique_preds)
     is_multiclass = len(unique_preds) > 2
 
     if is_binary or is_multiclass:
@@ -546,12 +533,33 @@ def evaluate_model_performance(
         predictions_to_store = predictions_class
 
     # Binary classification labels
+    # Convert to numpy array first to handle pandas Int64 type
+    import pandas as pd
+
+    try:
+        if hasattr(y_eval, "to_numpy"):
+            y_eval_np = y_eval.to_numpy(dtype=float, na_value=np.nan)
+        else:
+            y_eval_np = np.asarray(y_eval, dtype=float)
+    except (ValueError, TypeError):
+        # Fallback: convert to Series first, then to numpy
+        y_eval_series = (
+            pd.Series(y_eval) if not isinstance(y_eval, pd.Series) else y_eval
+        )
+        y_eval_np = y_eval_series.to_numpy(dtype=float, na_value=np.nan)
+    # Filter NaN before checking
+    y_eval_valid = y_eval_np[~np.isnan(y_eval_np)]
+
     is_binary_classification = False
-    if y_eval.ndim == 1 and np.issubdtype(y_eval.dtype, np.integer):
-        unique_eval = np.unique(y_eval)
-        if np.all(np.isin(unique_eval, [0, 1])):
-            y_eval_binary = y_eval.astype(int)
-            is_binary_classification = True
+    if y_eval_np.ndim == 1:
+        # Check if values are integers (after filtering NaN)
+        if len(y_eval_valid) > 0:
+            unique_eval = np.unique(y_eval_valid)
+            if len(unique_eval) <= 2 and np.all(np.isin(unique_eval, [0, 1])):
+                y_eval_binary = y_eval_np.astype(int)
+                is_binary_classification = True
+            else:
+                y_eval_binary = None
         else:
             y_eval_binary = None
     else:
@@ -573,15 +581,20 @@ def evaluate_model_performance(
     # Basic numeric metrics
     mse = mean_squared_error(
         y_eval if not is_binary_classification else y_eval_binary,
-        predictions_for_metrics)
+        predictions_for_metrics,
+    )
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(
         y_eval if not is_binary_classification else y_eval_binary,
-        predictions_for_metrics)
+        predictions_for_metrics,
+    )
     # Calculate R² for regression metrics
-    target_for_r2 = (y_eval if not is_binary_classification else y_eval_binary)
-    r2 = r2_score(target_for_r2, predictions_for_metrics) if len(
-        np.unique(target_for_r2)) > 1 else 0.0
+    target_for_r2 = y_eval if not is_binary_classification else y_eval_binary
+    r2 = (
+        r2_score(target_for_r2, predictions_for_metrics)
+        if len(np.unique(target_for_r2)) > 1
+        else 0.0
+    )
 
     print(f"📊 {model_name} Performance:")
     print(f"  R²: {r2:.4f}")
@@ -631,26 +644,25 @@ def evaluate_model_performance(
 
             # For classification tasks, calculate Sharpe Ratio and Max Drawdown
             # Try to use real backtest if price data is available, otherwise use win_rate as proxy
-            if price_data is not None and 'close' in price_data.columns:
+            if price_data is not None and "close" in price_data.columns:
                 try:
                     # Use real backtest with actual price data
                     if len(price_data) == len(y_pred_cls):
                         # Calculate strategy returns from predictions and actual prices
                         strategy_returns = calculate_strategy_returns_from_predictions(
-                            y_pred_cls, price_data, horizon=1)
+                            y_pred_cls, price_data, horizon=1
+                        )
                         # Calculate financial metrics from real returns
                         backtest_metrics = calculate_financial_metrics_from_returns(
-                            strategy_returns, risk_free_rate=0.0)
-                        fm["sharpe_ratio"] = backtest_metrics.get(
-                            "sharpe_ratio", 0.0)
-                        fm["max_drawdown"] = backtest_metrics.get(
-                            "max_drawdown", 0.0)
-                        fm["total_return"] = backtest_metrics.get(
-                            "total_return", 0.0)
+                            strategy_returns, risk_free_rate=0.0
+                        )
+                        fm["sharpe_ratio"] = backtest_metrics.get("sharpe_ratio", 0.0)
+                        fm["max_drawdown"] = backtest_metrics.get("max_drawdown", 0.0)
+                        fm["total_return"] = backtest_metrics.get("total_return", 0.0)
                         fm["annualized_return"] = backtest_metrics.get(
-                            "annualized_return", 0.0)
-                        fm["volatility"] = backtest_metrics.get(
-                            "volatility", 0.0)
+                            "annualized_return", 0.0
+                        )
+                        fm["volatility"] = backtest_metrics.get("volatility", 0.0)
                     else:
                         # Fallback: use win rate as proxy
                         sharpe_approx = (win_rate - 0.5) * 4.0
@@ -691,34 +703,40 @@ def evaluate_model_performance(
             metrics["accuracy"] = accuracy
             try:
                 metrics["f1_macro"] = float(
-                    f1_score(y_true_cls, y_pred_cls, average="macro"))
+                    f1_score(y_true_cls, y_pred_cls, average="macro")
+                )
             except Exception:
                 metrics["f1_macro"] = None
             try:
                 metrics["f1_weighted"] = float(
-                    f1_score(y_true_cls, y_pred_cls, average="weighted"))
+                    f1_score(y_true_cls, y_pred_cls, average="weighted")
+                )
             except Exception:
                 metrics["f1_weighted"] = None
 
             # Binary classification: probabilities shape is (n_samples, 2)
-            if probabilities is not None and probabilities.shape[1] == 2:
+            if (
+                probabilities is not None
+                and probabilities.ndim == 2
+                and probabilities.shape[1] == 2
+            ):
                 try:
                     # Binary classification: use positive class probabilities
                     metrics["roc_auc_macro"] = float(
                         roc_auc_score(
                             y_true_cls,
-                            probabilities[:,
-                                          1],  # Use positive class probabilities
-                        ))
+                            probabilities[:, 1],  # Use positive class probabilities
+                        )
+                    )
                 except Exception:
                     metrics["roc_auc_macro"] = None
                 try:
                     metrics["pr_auc_macro"] = float(
                         average_precision_score(
                             y_true_cls,
-                            probabilities[:,
-                                          1],  # Use positive class probabilities
-                        ))
+                            probabilities[:, 1],  # Use positive class probabilities
+                        )
+                    )
                 except Exception:
                     metrics["pr_auc_macro"] = None
             else:
@@ -756,16 +774,11 @@ def evaluate_model_performance(
         else:
             # Regression/binary: compute financial metrics using returns-like predictions
             financial_metrics = calculate_financial_metrics(
-                y_eval, predictions_for_metrics)
+                y_eval, predictions_for_metrics
+            )
             results["financial_metrics"] = financial_metrics
-            print(
-                f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}"
-            )
-            print(
-                f"  Total Return: {financial_metrics.get('total_return', 0):.4f}"
-            )
-            print(
-                f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}"
-            )
+            print(f"  Sharpe Ratio: {financial_metrics.get('sharpe_ratio', 0):.4f}")
+            print(f"  Total Return: {financial_metrics.get('total_return', 0):.4f}")
+            print(f"  Max Drawdown: {financial_metrics.get('max_drawdown', 0):.4f}")
 
     return results

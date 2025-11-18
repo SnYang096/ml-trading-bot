@@ -13,10 +13,9 @@ import pandas as pd
 import numpy as np
 
 
-def collect_training_results(
-        results_dir: str = "results/training") -> pd.DataFrame:
+def collect_training_results(results_dir: str = "results/training") -> pd.DataFrame:
     """Collect training results from timestamped directories.
-    
+
     Supports both new format (timestamped directories) and old format (fb*_tf* subdirectories).
     """
     results_path = Path(results_dir)
@@ -30,9 +29,12 @@ def collect_training_results(
     # Legacy format: results/training/ with fb*_tf* subdirectories
 
     # First, check if results_path itself is a timestamped directory
-    is_timestamped_dir = (results_path.name[0].isdigit() if results_path.name else False) and len(
-        results_path.name) >= 15 and "_" in results_path.name[:15]
-    
+    is_timestamped_dir = (
+        (results_path.name[0].isdigit() if results_path.name else False)
+        and len(results_path.name) >= 15
+        and "_" in results_path.name[:15]
+    )
+
     # First, try to find timestamped directories (new format)
     timestamped_dirs = []
     legacy_found = False
@@ -45,8 +47,11 @@ def collect_training_results(
         for item in results_path.iterdir():
             if item.is_dir():
                 # Check if it's a timestamped directory (format: YYYYMMDD_HHMMSS_*)
-                if item.name[0].isdigit() and len(
-                        item.name) >= 15 and "_" in item.name[:15]:
+                if (
+                    item.name[0].isdigit()
+                    and len(item.name) >= 15
+                    and "_" in item.name[:15]
+                ):
                     timestamped_dirs.append(item)
                 # Check for legacy format (fb*_tf*)
                 elif item.name.startswith("fb"):
@@ -121,8 +126,9 @@ def collect_training_results(
     return pd.DataFrame(all_results)
 
 
-def generate_summary_report(results_dir: str = "results/training",
-                            output_path: Optional[str] = None) -> str:
+def generate_summary_report(
+    results_dir: str = "results/training", output_path: Optional[str] = None
+) -> str:
     df = collect_training_results(results_dir)
     if df.empty:
         print("No training results found.")
@@ -133,12 +139,14 @@ def generate_summary_report(results_dir: str = "results/training",
         df = df.sort_values(["timeframe", "forward_bars"])  # type: ignore
 
     # Extract common info from first row for filename and title
-    first_row = df.iloc[0].to_dict() if hasattr(
-        df.iloc[0], "to_dict") else dict(df.iloc[0])
+    first_row = (
+        df.iloc[0].to_dict() if hasattr(df.iloc[0], "to_dict") else dict(df.iloc[0])
+    )
     symbol_raw = first_row.get("symbol", "UNKNOWN")
     # Format symbol for filename: replace comma with underscore for multi-asset (e.g., "BTCUSDT,ETHUSDT,SOLUSDT" -> "BTCUSDT_ETHUSDT_SOLUSDT")
-    symbol = symbol_raw.replace(",", "_") if isinstance(
-        symbol_raw, str) else str(symbol_raw)
+    symbol = (
+        symbol_raw.replace(",", "_") if isinstance(symbol_raw, str) else str(symbol_raw)
+    )
     feature_type = first_row.get("feature_type", "unknown")
 
     # Extract time ranges
@@ -175,17 +183,22 @@ def generate_summary_report(results_dir: str = "results/training",
 
     train_start_str = _format_date_for_filename(train_start)
     train_end_str = _format_date_for_filename(train_end)
-    actual_start_str = _format_date_for_filename(
-        actual_start) if actual_start else train_start_str
-    actual_end_str = _format_date_for_filename(
-        actual_end) if actual_end else train_end_str
+    actual_start_str = (
+        _format_date_for_filename(actual_start) if actual_start else train_start_str
+    )
+    actual_end_str = (
+        _format_date_for_filename(actual_end) if actual_end else train_end_str
+    )
 
     # Generate filename
     if output_path is None:
         # Generate summary report in the same directory as training results
         # If results_dir is a timestamped directory, use it directly
         # Otherwise, find the most recent timestamped directory from the collected data
-        if os.path.basename(results_dir).startswith("20") and "_" in os.path.basename(results_dir)[:15]:
+        if (
+            os.path.basename(results_dir).startswith("20")
+            and "_" in os.path.basename(results_dir)[:15]
+        ):
             # results_dir is already a timestamped directory
             filename = "summary_report.html"
             output_path = os.path.join(results_dir, filename)
@@ -195,9 +208,14 @@ def generate_summary_report(results_dir: str = "results/training",
             results_path = Path(results_dir)
             timestamped_dirs = []
             for item in results_path.iterdir():
-                if item.is_dir() and item.name[0].isdigit() and len(item.name) >= 15 and "_" in item.name[:15]:
+                if (
+                    item.is_dir()
+                    and item.name[0].isdigit()
+                    and len(item.name) >= 15
+                    and "_" in item.name[:15]
+                ):
                     timestamped_dirs.append(item)
-            
+
             if timestamped_dirs:
                 # Sort by timestamp (newest first)
                 timestamped_dirs.sort(key=lambda x: x.name, reverse=True)
@@ -210,9 +228,14 @@ def generate_summary_report(results_dir: str = "results/training",
                 filename_parts = [symbol, feature_type]
                 if train_start_str and train_end_str:
                     filename_parts.append(f"{train_start_str}_{train_end_str}")
-                if actual_start_str and actual_end_str and (
+                if (
+                    actual_start_str
+                    and actual_end_str
+                    and (
                         actual_start_str != train_start_str
-                        or actual_end_str != train_end_str):
+                        or actual_end_str != train_end_str
+                    )
+                ):
                     filename_parts.append(f"oos_{actual_start_str}_{actual_end_str}")
                 filename = "_".join(filename_parts) + "_summary_report.html"
                 output_path = os.path.join(results_dir, filename)
@@ -231,9 +254,11 @@ def generate_summary_report(results_dir: str = "results/training",
             feature_types_str = str(feature_types[0])
         elif len(feature_types) > 0:
             # Multiple feature types: use first row's feature_type (most recent training)
-            feature_types_str = str(
-                feature_type) if feature_type != "unknown" else str(
-                    feature_types[0])
+            feature_types_str = (
+                str(feature_type)
+                if feature_type != "unknown"
+                else str(feature_types[0])
+            )
         else:
             feature_types_str = "unknown"
     else:
@@ -262,13 +287,14 @@ def generate_summary_report(results_dir: str = "results/training",
 
     train_start_display = _format_date_for_display(train_start)
     train_end_display = _format_date_for_display(train_end)
-    actual_start_display = _format_date_for_display(
-        actual_start) if actual_start else train_start_display
-    actual_end_display = _format_date_for_display(
-        actual_end) if actual_end else train_end_display
+    actual_start_display = (
+        _format_date_for_display(actual_start) if actual_start else train_start_display
+    )
+    actual_end_display = (
+        _format_date_for_display(actual_end) if actual_end else train_end_display
+    )
     # Use explicit OOS time range if available, otherwise fallback to actual_start/actual_end
-    oos_start_display = _format_date_for_display(
-        oos_start) if oos_start else None
+    oos_start_display = _format_date_for_display(oos_start) if oos_start else None
     oos_end_display = _format_date_for_display(oos_end) if oos_end else None
 
     # Generate OOS info HTML if needed
@@ -276,29 +302,37 @@ def generate_summary_report(results_dir: str = "results/training",
     if oos_start_display and oos_end_display:
         # Use explicit OOS time range
         has_oos = True
-        oos_info_html = f'<li><strong>测试期 (OOS):</strong> {oos_start_display} 至 {oos_end_display}</li>'
-    elif actual_start_display and actual_end_display and (
+        oos_info_html = f"<li><strong>测试期 (OOS):</strong> {oos_start_display} 至 {oos_end_display}</li>"
+    elif (
+        actual_start_display
+        and actual_end_display
+        and (
             actual_start_display != train_start_display
-            or actual_end_display != train_end_display):
+            or actual_end_display != train_end_display
+        )
+    ):
         # Fallback: use actual_start/actual_end if different from train period
         has_oos = True
-        oos_info_html = f'<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>'
+        oos_info_html = f"<li><strong>测试期 (OOS):</strong> {actual_start_display} 至 {actual_end_display}</li>"
     else:
         has_oos = False
-        oos_info_html = ''
+        oos_info_html = ""
 
     # Build title with symbol and time ranges
     # Use original symbol for display (with commas if multi-asset)
-    symbol_display = symbol_raw if 'symbol_raw' in locals(
-    ) else symbol.replace("_", ",")
+    symbol_display = (
+        symbol_raw if "symbol_raw" in locals() else symbol.replace("_", ",")
+    )
     title_parts = [f"Training Summary Report - {symbol_display}"]
     if feature_types_str != "unknown":
         title_parts.append(f"Features: {feature_types_str}")
     if train_start_str and train_end_str:
         title_parts.append(f"Train: {train_start_str} to {train_end_str}")
-    if actual_start_str and actual_end_str and (
-            actual_start_str != train_start_str
-            or actual_end_str != train_end_str):
+    if (
+        actual_start_str
+        and actual_end_str
+        and (actual_start_str != train_start_str or actual_end_str != train_end_str)
+    ):
         title_parts.append(f"Test: {actual_start_str} to {actual_end_str}")
     report_title = " | ".join(title_parts)
 
@@ -309,27 +343,31 @@ def generate_summary_report(results_dir: str = "results/training",
         unique_timeframes = set(df["timeframe"].dropna().unique())
     if "forward_bars" in df.columns:
         unique_forward_bars = set(df["forward_bars"].dropna().unique())
-    
+
     # Collect all issues and feature importance across all configurations
     all_issues = []
     all_feature_importance: dict[str, dict[str, list[float]]] = {}
-    
+
     # Helper functions for generating sections
     def _generate_issues_section(issues_list):
         if not issues_list:
-            return ''
-        issues_html = '\n'.join([f'<li style="color:red;font-weight:bold;">{issue}</li>' for issue in issues_list])
-        return f'''
+            return ""
+        issues_html = "\n".join(
+            [
+                f'<li style="color:red;font-weight:bold;">{issue}</li>'
+                for issue in issues_list
+            ]
+        )
+        return f"""
 <h2>⚠️ 异常信号汇总 (Issues Summary)</h2>
 <div style="background-color:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:20px 0;border-radius:4px;">
 <p><strong>发现的问题:</strong></p>
 <ul style="margin:10px 0;padding-left:20px;">
 {issues_html}
 </ul>
-</div>'''
-    
-    def _accumulate_feature_importance(category: str,
-                                       records: Optional[list]) -> None:
+</div>"""
+
+    def _accumulate_feature_importance(category: str, records: Optional[list]) -> None:
         if not records:
             return
         cat_dict = all_feature_importance.setdefault(category, {})
@@ -347,9 +385,10 @@ def generate_summary_report(results_dir: str = "results/training",
             cat_dict.setdefault(feat_name, []).append(importance_val)
 
     def _generate_feature_importance_section(
-            feat_imp_dict: dict[str, dict[str, list[float]]]) -> str:
+        feat_imp_dict: dict[str, dict[str, list[float]]],
+    ) -> str:
         if not feat_imp_dict:
-            return ''
+            return ""
 
         label_map = {
             "classification": "Directional Classification",
@@ -364,7 +403,8 @@ def generate_summary_report(results_dir: str = "results/training",
             sorted_features = sorted(
                 feats.items(),
                 key=lambda x: np.mean(x[1]) if x[1] else 0.0,
-                reverse=True)[:20]
+                reverse=True,
+            )[:20]
             if not sorted_features:
                 continue
             rows = []
@@ -378,23 +418,25 @@ def generate_summary_report(results_dir: str = "results/training",
                     f'<td style="padding:8px;">{std_val:.2f}</td></tr>'
                 )
             if rows:
-                sections.append(f'''
+                sections.append(
+                    f"""
 <h3 style="margin-top:20px;">{label_map.get(category, category.title())}</h3>
 <table style="width:100%;margin:10px 0;font-size:0.9em;">
 <tr><th style="background:#3498db;color:#fff;padding:10px;">排名</th><th style="background:#3498db;color:#fff;padding:10px;">特征名称</th><th style="background:#3498db;color:#fff;padding:10px;">平均重要性</th><th style="background:#3498db;color:#fff;padding:10px;">标准差</th></tr>
 {''.join(rows)}
-</table>''')
+</table>"""
+                )
 
         if not sections:
-            return ''
+            return ""
 
-        return f'''
+        return f"""
 <h2>📊 特征重要性汇总 (Feature Importance Summary)</h2>
 <div style="background-color:#e8f4f8;border-left:4px solid #3498db;padding:15px;margin:20px 0;border-radius:4px;">
 <p><strong>说明:</strong> 以下为所有配置的特征重要性统计，按类别（方向/收益/波动）展示 Top 20 特征。</p>
 {''.join(sections)}
-</div>'''
-    
+</div>"""
+
     # Build rows
     rows = []
     # Store per-symbol metrics for each configuration
@@ -408,31 +450,56 @@ def generate_summary_report(results_dir: str = "results/training",
         symbol_row = row_dict.get("symbol", "N/A")
         config_dir = row_dict.get("config_dir", "N/A")
         metrics = row_dict.get("metrics", {}) or {}
-        model_type = row_dict.get("model_type", "quantile")  # Default to quantile for backward compatibility
-        
+        model_type = row_dict.get(
+            "model_type", "quantile"
+        )  # Default to quantile for backward compatibility
+
         # Extract per-symbol metrics from oos_metrics if available
         oos_metrics = row_dict.get("oos_metrics", {}) or {}
-        per_symbol_metrics = oos_metrics.get("per_symbol", {}) if isinstance(oos_metrics, dict) else {}
-        
+        per_symbol_metrics = (
+            oos_metrics.get("per_symbol", {}) if isinstance(oos_metrics, dict) else {}
+        )
+
         # Extract metrics based on model type
         if model_type == "classification":
             # Classification model: extract metrics from classification, return, and volatility models
-            classification_metrics = metrics.get("classification", {}) if isinstance(metrics, dict) else {}
-            classification_tf = classification_metrics.get(timeframe, {}) if isinstance(classification_metrics, dict) else {}
-            
-            return_metrics = metrics.get("return", {}) if isinstance(metrics, dict) else {}
-            return_tf = return_metrics.get(timeframe, {}) if isinstance(return_metrics, dict) else {}
-            
-            volatility_metrics = metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
-            vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(volatility_metrics, dict) else {}
+            classification_metrics = (
+                metrics.get("classification", {}) if isinstance(metrics, dict) else {}
+            )
+            classification_tf = (
+                classification_metrics.get(timeframe, {})
+                if isinstance(classification_metrics, dict)
+                else {}
+            )
+
+            return_metrics = (
+                metrics.get("return", {}) if isinstance(metrics, dict) else {}
+            )
+            return_tf = (
+                return_metrics.get(timeframe, {})
+                if isinstance(return_metrics, dict)
+                else {}
+            )
+
+            volatility_metrics = (
+                metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
+            )
+            vol_tf = (
+                volatility_metrics.get(timeframe, {})
+                if isinstance(volatility_metrics, dict)
+                else {}
+            )
 
             _accumulate_feature_importance(
-                "classification", classification_tf.get("feature_importance"))
+                "classification", classification_tf.get("feature_importance")
+            )
             _accumulate_feature_importance(
-                "return", return_tf.get("feature_importance"))
+                "return", return_tf.get("feature_importance")
+            )
             _accumulate_feature_importance(
-                "volatility", vol_tf.get("feature_importance"))
-            
+                "volatility", vol_tf.get("feature_importance")
+            )
+
             # Classification model metrics (classification task, not regression)
             classification_cv_accuracy = classification_tf.get("cv_accuracy")
             classification_cv_precision = classification_tf.get("cv_precision")
@@ -440,27 +507,32 @@ def generate_summary_report(results_dir: str = "results/training",
             classification_cv_f1 = classification_tf.get("cv_f1")
             classification_cv_auc = classification_tf.get("cv_auc")
             classification_cv_pr_auc = classification_tf.get("cv_pr_auc")
-            
+
             # Return regression model metrics
             return_cv_rmse = return_tf.get("cv_rmse")
             return_cv_mse = return_tf.get("cv_mse")
             return_cv_r2 = return_tf.get("cv_r2")
-            
+
             # Volatility model metrics
             vol_cv_rmse = vol_tf.get("cv_rmse")
             vol_cv_mse = vol_tf.get("cv_mse")
-            
+
             # Use volatility RMSE/MSE for main table (backward compatibility)
             cv_rmse = vol_cv_rmse
             cv_mse = vol_cv_mse
         else:
             # Quantile model: use existing logic
-            volatility_metrics = metrics.get("volatility", {}) if isinstance(
-                metrics, dict) else {}
-            vol_tf = volatility_metrics.get(timeframe, {}) if isinstance(
-                volatility_metrics, dict) else {}
+            volatility_metrics = (
+                metrics.get("volatility", {}) if isinstance(metrics, dict) else {}
+            )
+            vol_tf = (
+                volatility_metrics.get(timeframe, {})
+                if isinstance(volatility_metrics, dict)
+                else {}
+            )
             _accumulate_feature_importance(
-                "volatility", vol_tf.get("feature_importance"))
+                "volatility", vol_tf.get("feature_importance")
+            )
             cv_rmse = vol_tf.get("cv_rmse")
             cv_mse = vol_tf.get("cv_mse")
             # Set classification/return metrics to None for quantile model
@@ -476,31 +548,32 @@ def generate_summary_report(results_dir: str = "results/training",
             vol_cv_rmse = cv_rmse
             vol_cv_mse = cv_mse
         # Quantile loss metrics: q10, q50 (stage2), q90
-        q10_metrics = metrics.get("q10", {}) if isinstance(metrics,
-                                                           dict) else {}
-        q10_tf = q10_metrics.get(timeframe, {}) if isinstance(
-            q10_metrics, dict) else {}
+        q10_metrics = metrics.get("q10", {}) if isinstance(metrics, dict) else {}
+        q10_tf = q10_metrics.get(timeframe, {}) if isinstance(q10_metrics, dict) else {}
         cv_quantile_loss_0_1 = q10_tf.get("cv_quantile_loss")
-        stage2_metrics = metrics.get("stage2", {}) if isinstance(
-            metrics, dict) else {}
-        q50_tf = stage2_metrics.get(timeframe, {}) if isinstance(
-            stage2_metrics, dict) else {}
+        stage2_metrics = metrics.get("stage2", {}) if isinstance(metrics, dict) else {}
+        q50_tf = (
+            stage2_metrics.get(timeframe, {})
+            if isinstance(stage2_metrics, dict)
+            else {}
+        )
         cv_quantile_loss_0_5 = q50_tf.get("cv_quantile_loss")
-        q90_metrics = metrics.get("q90", {}) if isinstance(metrics,
-                                                           dict) else {}
-        q90_tf = q90_metrics.get(timeframe, {}) if isinstance(
-            q90_metrics, dict) else {}
+        q90_metrics = metrics.get("q90", {}) if isinstance(metrics, dict) else {}
+        q90_tf = q90_metrics.get(timeframe, {}) if isinstance(q90_metrics, dict) else {}
         cv_quantile_loss_0_9 = q90_tf.get("cv_quantile_loss")
         # Fallback 1: derive from volatility fold_details if missing
         if (cv_rmse is None or cv_mse is None) and isinstance(
-                vol_tf.get("fold_details"), list):
+            vol_tf.get("fold_details"), list
+        ):
             try:
                 rmses = [
-                    fd.get("rmse") for fd in vol_tf["fold_details"]
+                    fd.get("rmse")
+                    for fd in vol_tf["fold_details"]
                     if isinstance(fd, dict) and fd.get("rmse") is not None
                 ]
                 mses = [
-                    fd.get("mse") for fd in vol_tf["fold_details"]
+                    fd.get("mse")
+                    for fd in vol_tf["fold_details"]
                     if isinstance(fd, dict) and fd.get("mse") is not None
                 ]
                 if cv_rmse is None and rmses:
@@ -510,19 +583,25 @@ def generate_summary_report(results_dir: str = "results/training",
             except Exception:
                 pass
         # Fallback 2: derive from stage2 fold_details if still missing (quantile model may have rmse)
-        if (cv_rmse is None or cv_mse is None):
-            stage2_metrics = metrics.get("stage2", {}) if isinstance(
-                metrics, dict) else {}
-            tf_m = stage2_metrics.get(timeframe, {}) if isinstance(
-                stage2_metrics, dict) else {}
+        if cv_rmse is None or cv_mse is None:
+            stage2_metrics = (
+                metrics.get("stage2", {}) if isinstance(metrics, dict) else {}
+            )
+            tf_m = (
+                stage2_metrics.get(timeframe, {})
+                if isinstance(stage2_metrics, dict)
+                else {}
+            )
             if isinstance(tf_m.get("fold_details"), list):
                 try:
                     rmses = [
-                        fd.get("rmse") for fd in tf_m["fold_details"]
+                        fd.get("rmse")
+                        for fd in tf_m["fold_details"]
                         if isinstance(fd, dict) and fd.get("rmse") is not None
                     ]
                     mses = [
-                        fd.get("mse") for fd in tf_m["fold_details"]
+                        fd.get("mse")
+                        for fd in tf_m["fold_details"]
                         if isinstance(fd, dict) and fd.get("mse") is not None
                     ]
                     if cv_rmse is None and rmses:
@@ -532,17 +611,26 @@ def generate_summary_report(results_dir: str = "results/training",
                 except Exception:
                     pass
         # Extract directional metrics (derived from q50 regression)
-        directional_cv_metrics = metrics.get(
-            "directional_cv", {}) if isinstance(metrics, dict) else {}
-        directional_cv_tf = directional_cv_metrics.get(
-            timeframe, {}) if isinstance(directional_cv_metrics, dict) else {}
+        directional_cv_metrics = (
+            metrics.get("directional_cv", {}) if isinstance(metrics, dict) else {}
+        )
+        directional_cv_tf = (
+            directional_cv_metrics.get(timeframe, {})
+            if isinstance(directional_cv_metrics, dict)
+            else {}
+        )
         # Fallback to directional_train if directional_cv not available
         if not directional_cv_tf:
-            directional_train_metrics = metrics.get(
-                "directional_train", {}) if isinstance(metrics, dict) else {}
-            directional_cv_tf = directional_train_metrics.get(
-                timeframe, {}) if isinstance(directional_train_metrics,
-                                             dict) else {}
+            directional_train_metrics = (
+                metrics.get("directional_train", {})
+                if isinstance(metrics, dict)
+                else {}
+            )
+            directional_cv_tf = (
+                directional_train_metrics.get(timeframe, {})
+                if isinstance(directional_train_metrics, dict)
+                else {}
+            )
 
         f1 = directional_cv_tf.get("f1")
         acc = directional_cv_tf.get("accuracy")
@@ -553,14 +641,14 @@ def generate_summary_report(results_dir: str = "results/training",
 
         # Extract feature type and training bars
         feature_type = row_dict.get("feature_type", "N/A")
-        train_bars = row_dict.get("train_bars") or row_dict.get(
-            "total_bars", 0)
+        train_bars = row_dict.get("train_bars") or row_dict.get("total_bars", 0)
 
         # Extract model usability information
         model_usability = row_dict.get("model_usability", {}) or {}
         model_usable = model_usability.get(
-            "usable", True)  # Default to True if not found
-        
+            "usable", True
+        )  # Default to True if not found
+
         # Extract issues from OOS metrics
         oos_issues = []
         if oos_metrics and isinstance(oos_metrics, dict):
@@ -571,24 +659,37 @@ def generate_summary_report(results_dir: str = "results/training",
                 oos_auc = directional_oos.get("auc")
                 oos_ic_spearman = directional_oos.get("ic_spearman")
                 if oos_acc is not None and oos_acc < 0.5:
-                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS准确率 {oos_acc*100:.2f}% < 50%")
+                    oos_issues.append(
+                        f"{timeframe}/fb{forward_bars}: OOS准确率 {oos_acc*100:.2f}% < 50%"
+                    )
                 if oos_f1 is not None and oos_f1 < 0.5:
-                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS F1 {oos_f1*100:.2f}% < 50%")
+                    oos_issues.append(
+                        f"{timeframe}/fb{forward_bars}: OOS F1 {oos_f1*100:.2f}% < 50%"
+                    )
                 if oos_auc is not None and oos_auc < 0.5:
-                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS AUC {oos_auc*100:.2f}% < 50%")
+                    oos_issues.append(
+                        f"{timeframe}/fb{forward_bars}: OOS AUC {oos_auc*100:.2f}% < 50%"
+                    )
                 if oos_ic_spearman is not None and abs(oos_ic_spearman) < 0.05:
-                    oos_issues.append(f"{timeframe}/fb{forward_bars}: OOS IC (Spearman) {oos_ic_spearman:.4f} < 0.05")
-        
+                    oos_issues.append(
+                        f"{timeframe}/fb{forward_bars}: OOS IC (Spearman) {oos_ic_spearman:.4f} < 0.05"
+                    )
+
         # Collect issues for summary
         if oos_issues:
             all_issues.extend(oos_issues)
-        
+
         # Extract feature importance
-        directional_cv_metrics = metrics.get("directional_cv", {}) if isinstance(metrics, dict) else {}
-        directional_cv_tf = directional_cv_metrics.get(timeframe, {}) if isinstance(directional_cv_metrics, dict) else {}
+        directional_cv_metrics = (
+            metrics.get("directional_cv", {}) if isinstance(metrics, dict) else {}
+        )
+        directional_cv_tf = (
+            directional_cv_metrics.get(timeframe, {})
+            if isinstance(directional_cv_metrics, dict)
+            else {}
+        )
         feature_importance_list = directional_cv_tf.get("feature_importance")
-        _accumulate_feature_importance("classification",
-                                       feature_importance_list)
+        _accumulate_feature_importance("classification", feature_importance_list)
 
         # Helper functions
         def _format_metric(val, fmt=".4f"):
@@ -599,11 +700,9 @@ def generate_summary_report(results_dir: str = "results/training",
             except:
                 return str(val)
 
-        def _metric_cell(val,
-                         *,
-                         fmt=".4f",
-                         warn_func=None,
-                         default_style="padding:4px;"):
+        def _metric_cell(
+            val, *, fmt=".4f", warn_func=None, default_style="padding:4px;"
+        ):
             text = _format_metric(val, fmt)
             if val is None or warn_func is None:
                 return f'<td style="{default_style}">{text}</td>'
@@ -612,8 +711,10 @@ def generate_summary_report(results_dir: str = "results/training",
             except Exception:
                 warn = False
             if warn:
-                return (f'<td style="{default_style} color:#721c24; '
-                        f'font-weight:bold;">{text}</td>')
+                return (
+                    f'<td style="{default_style} color:#721c24; '
+                    f'font-weight:bold;">{text}</td>'
+                )
             return f'<td style="{default_style}">{text}</td>'
 
         def _quality_color(val, threshold_good, threshold_excellent=None):
@@ -630,20 +731,18 @@ def generate_summary_report(results_dir: str = "results/training",
         # Quality assessment: combine directional metrics AND model usability
         f1_color = _quality_color(f1, 0.3, 0.5)
         auc_color = _quality_color(auc, 0.6, 0.7) if auc is not None else ""
-        pr_auc_color = _quality_color(pr_auc, 0.4,
-                                      0.6) if pr_auc is not None else ""
+        pr_auc_color = _quality_color(pr_auc, 0.4, 0.6) if pr_auc is not None else ""
 
         # F1 = 0 或 None 应该标记为不可用（F1 = 0 表示模型完全没有预测能力）
         # 阈值: F1 > 0.3 为良好，F1 > 0.5 为优秀
         # ⚠️ CRITICAL: F1=0 时即使 AUC 很高也应标记为不可用（F1=0 意味着模型无法预测"涨"）
         f1_valid = f1 is not None and f1 > 0.0
         # Quality check: F1>0 且 F1>=0.3 或 AUC>=0.6
-        quality_passed = (f1_valid and f1 >= 0.3) or (auc is not None
-                                                      and auc >= 0.6)
+        quality_passed = (f1_valid and f1 >= 0.3) or (auc is not None and auc >= 0.6)
         # ⚠️ But if F1=0, quality should fail regardless of AUC (F1=0 means no "up" predictions)
         if f1 == 0.0:
             quality_passed = False
-        
+
         # ⚠️ CRITICAL: Check OOS metrics - if OOS performance is poor, mark as unusable
         # OOS metrics are more important than CV metrics for model usability
         oos_quality_passed = True
@@ -654,7 +753,7 @@ def generate_summary_report(results_dir: str = "results/training",
                 oos_f1 = directional_oos.get("f1")
                 oos_auc = directional_oos.get("auc")
                 oos_ic_spearman = directional_oos.get("ic_spearman")
-                
+
                 # OOS准确率 < 50% → 不可用（模型在样本外表现比随机猜测还差）
                 if oos_acc is not None and oos_acc < 0.5:
                     oos_quality_passed = False
@@ -667,31 +766,43 @@ def generate_summary_report(results_dir: str = "results/training",
                 # OOS IC (Spearman) < 0.05 → 不可用（预测与真实收益相关性太低）
                 if oos_ic_spearman is not None and abs(oos_ic_spearman) < 0.05:
                     oos_quality_passed = False
-        
+
         # Quality must pass BOTH:
         # 1. CV directional metrics AND model usability
         # 2. OOS metrics (if available)
         quality_passed = quality_passed and model_usable and oos_quality_passed
         quality_badge = (
             '<span style="background-color:#d4edda; color:#155724; padding:2px 6px; border-radius:4px;">✅ 可用</span>'
-            if quality_passed else
-            '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ 不可用</span>'
+            if quality_passed
+            else '<span style="background-color:#f8d7da; color:#721c24; padding:2px 6px; border-radius:4px;">❌ 不可用</span>'
         )
 
         cv_rmse_color = _quality_color(cv_rmse, None, None) if cv_rmse else ""
 
         # Add row styling for unusable models
-        row_style = ' style="background-color:#ffe6e6;"' if not model_usable else ''
+        row_style = ' style="background-color:#ffe6e6;"' if not model_usable else ""
 
         # Extract OOS metrics for classification model
         oos_classification_metrics = None
         oos_return_metrics = None
         oos_volatility_metrics = None
         if model_type == "classification" and oos_metrics:
-            oos_classification_metrics = oos_metrics.get("directional_oos", {}) if isinstance(oos_metrics, dict) else {}
-            oos_return_metrics = oos_metrics.get("regression_return", {}) if isinstance(oos_metrics, dict) else {}
-            oos_volatility_metrics = oos_metrics.get("regression_volatility", {}) if isinstance(oos_metrics, dict) else {}
-        
+            oos_classification_metrics = (
+                oos_metrics.get("directional_oos", {})
+                if isinstance(oos_metrics, dict)
+                else {}
+            )
+            oos_return_metrics = (
+                oos_metrics.get("regression_return", {})
+                if isinstance(oos_metrics, dict)
+                else {}
+            )
+            oos_volatility_metrics = (
+                oos_metrics.get("regression_volatility", {})
+                if isinstance(oos_metrics, dict)
+                else {}
+            )
+
         # Build row based on model type
         if model_type == "classification":
             # Classification model: show separate metrics for three models in sub-tables
@@ -700,22 +811,22 @@ def generate_summary_report(results_dir: str = "results/training",
                 '<tr style="background-color:#e8f4f8;"><th style="padding:4px; text-align:left;">模型</th><th style="padding:4px;">指标</th><th style="padding:4px;">CV值</th></tr>',
                 '<tr><td rowspan="5" style="padding:4px; vertical-align:top; font-weight:bold;">分类模型</td>'
                 '<td style="padding:4px;">Accuracy</td>'
-                f'{_metric_cell(classification_cv_accuracy, warn_func=lambda v: v < 0.5)}</tr>',
+                f"{_metric_cell(classification_cv_accuracy, warn_func=lambda v: v < 0.5)}</tr>",
                 '<tr><td style="padding:4px;">Precision</td>'
-                f'{_metric_cell(classification_cv_precision, warn_func=lambda v: v < 0.3)}</tr>',
+                f"{_metric_cell(classification_cv_precision, warn_func=lambda v: v < 0.3)}</tr>",
                 '<tr><td style="padding:4px;">Recall</td>'
-                f'{_metric_cell(classification_cv_recall, warn_func=lambda v: v < 0.3)}</tr>',
+                f"{_metric_cell(classification_cv_recall, warn_func=lambda v: v < 0.3)}</tr>",
                 '<tr><td style="padding:4px;">F1</td>'
-                f'{_metric_cell(classification_cv_f1, warn_func=lambda v: v < 0.3)}</tr>',
+                f"{_metric_cell(classification_cv_f1, warn_func=lambda v: v < 0.3)}</tr>",
                 '<tr><td style="padding:4px;">AUC</td>'
-                f'{_metric_cell(classification_cv_auc, warn_func=lambda v: v < 0.6)}</tr>',
+                f"{_metric_cell(classification_cv_auc, warn_func=lambda v: v < 0.6)}</tr>",
                 '<tr><td rowspan="3" style="padding:4px; vertical-align:top; font-weight:bold;">收益回归</td>'
                 '<td style="padding:4px;">RMSE</td>'
                 f'{_metric_cell(return_cv_rmse, fmt=".6f")}</tr>',
                 '<tr><td style="padding:4px;">MSE</td>'
                 f'{_metric_cell(return_cv_mse, fmt=".8f")}</tr>',
                 '<tr><td style="padding:4px;">R²</td>'
-                f'{_metric_cell(return_cv_r2)}</tr>',
+                f"{_metric_cell(return_cv_r2)}</tr>",
                 '<tr><td rowspan="2" style="padding:4px; vertical-align:top; font-weight:bold;">波动率模型</td>'
                 '<td style="padding:4px;">RMSE</td>'
                 f'{_metric_cell(vol_cv_rmse, fmt=".6f")}</tr>',
@@ -725,12 +836,16 @@ def generate_summary_report(results_dir: str = "results/training",
             cv_subtable = (
                 '<table style="width:100%; margin:5px 0; border-collapse:collapse; font-size:0.85em;">'
                 f'{"".join(cv_rows)}'
-                '</table>'
+                "</table>"
             )
-            
+
             # OOS metrics sub-table (if available)
             oos_subtable = ""
-            if oos_classification_metrics or oos_return_metrics or oos_volatility_metrics:
+            if (
+                oos_classification_metrics
+                or oos_return_metrics
+                or oos_volatility_metrics
+            ):
                 oos_rows = []
                 if oos_classification_metrics:
                     oos_acc = oos_classification_metrics.get("accuracy")
@@ -739,33 +854,47 @@ def generate_summary_report(results_dir: str = "results/training",
                     oos_ic_spearman = oos_classification_metrics.get("ic_spearman")
                     if oos_acc is not None:
                         oos_rows.append(
-                            "<tr><td rowspan=\"4\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">分类模型</td>"
-                            "<td style=\"padding:4px;\">Accuracy</td>"
-                            f"{_metric_cell(oos_acc, warn_func=lambda v: v < 0.5)}</tr>")
+                            '<tr><td rowspan="4" style="padding:4px; vertical-align:top; font-weight:bold;">分类模型</td>'
+                            '<td style="padding:4px;">Accuracy</td>'
+                            f"{_metric_cell(oos_acc, warn_func=lambda v: v < 0.5)}</tr>"
+                        )
                         oos_rows.append(
-                            "<tr><td style=\"padding:4px;\">F1</td>"
-                            f"{_metric_cell(oos_f1, warn_func=lambda v: v is not None and v < 0.5)}</tr>")
+                            '<tr><td style="padding:4px;">F1</td>'
+                            f"{_metric_cell(oos_f1, warn_func=lambda v: v is not None and v < 0.5)}</tr>"
+                        )
                         oos_rows.append(
-                            "<tr><td style=\"padding:4px;\">AUC</td>"
-                            f"{_metric_cell(oos_auc, warn_func=lambda v: v < 0.5)}</tr>")
+                            '<tr><td style="padding:4px;">AUC</td>'
+                            f"{_metric_cell(oos_auc, warn_func=lambda v: v < 0.5)}</tr>"
+                        )
                         oos_rows.append(
-                            "<tr><td style=\"padding:4px;\">IC (Spearman)</td>"
-                            f"{_metric_cell(oos_ic_spearman, warn_func=lambda v: abs(v) < 0.05)}</tr>")
+                            '<tr><td style="padding:4px;">IC (Spearman)</td>'
+                            f"{_metric_cell(oos_ic_spearman, warn_func=lambda v: abs(v) < 0.05)}</tr>"
+                        )
                 if oos_return_metrics:
                     oos_return_rmse = oos_return_metrics.get("rmse")
                     oos_return_mae = oos_return_metrics.get("mae")
                     oos_return_r2 = oos_return_metrics.get("r2")
                     if oos_return_rmse is not None:
-                        oos_rows.append(f"<tr><td rowspan=\"3\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">收益回归</td><td style=\"padding:4px;\">RMSE</td><td style=\"padding:4px;\">{_format_metric(oos_return_rmse, '.6f')}</td></tr>")
-                        oos_rows.append(f"<tr><td style=\"padding:4px;\">MAE</td><td style=\"padding:4px;\">{_format_metric(oos_return_mae, '.6f')}</td></tr>")
-                        oos_rows.append(f"<tr><td style=\"padding:4px;\">R²</td><td style=\"padding:4px;\">{_format_metric(oos_return_r2)}</td></tr>")
+                        oos_rows.append(
+                            f"<tr><td rowspan=\"3\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">收益回归</td><td style=\"padding:4px;\">RMSE</td><td style=\"padding:4px;\">{_format_metric(oos_return_rmse, '.6f')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td style=\"padding:4px;\">MAE</td><td style=\"padding:4px;\">{_format_metric(oos_return_mae, '.6f')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f'<tr><td style="padding:4px;">R²</td><td style="padding:4px;">{_format_metric(oos_return_r2)}</td></tr>'
+                        )
                 if oos_volatility_metrics:
                     oos_vol_rmse = oos_volatility_metrics.get("rmse")
                     oos_vol_mae = oos_volatility_metrics.get("mae")
                     if oos_vol_rmse is not None:
-                        oos_rows.append(f"<tr><td rowspan=\"2\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">波动率模型</td><td style=\"padding:4px;\">RMSE</td><td style=\"padding:4px;\">{_format_metric(oos_vol_rmse, '.6f')}</td></tr>")
-                        oos_rows.append(f"<tr><td style=\"padding:4px;\">MAE</td><td style=\"padding:4px;\">{_format_metric(oos_vol_mae, '.6f')}</td></tr>")
-                
+                        oos_rows.append(
+                            f"<tr><td rowspan=\"2\" style=\"padding:4px; vertical-align:top; font-weight:bold;\">波动率模型</td><td style=\"padding:4px;\">RMSE</td><td style=\"padding:4px;\">{_format_metric(oos_vol_rmse, '.6f')}</td></tr>"
+                        )
+                        oos_rows.append(
+                            f"<tr><td style=\"padding:4px;\">MAE</td><td style=\"padding:4px;\">{_format_metric(oos_vol_mae, '.6f')}</td></tr>"
+                        )
+
                 if oos_rows:
                     oos_subtable = f"""
                     <details style="margin-top:5px;">
@@ -775,9 +904,11 @@ def generate_summary_report(results_dir: str = "results/training",
                     {''.join(oos_rows)}
                     </table>
                     </details>"""
-            
-            model_metrics_html = f"<div style=\"max-width:400px;\">{cv_subtable}{oos_subtable}</div>"
-            
+
+            model_metrics_html = (
+                f'<div style="max-width:400px;">{cv_subtable}{oos_subtable}</div>'
+            )
+
             rows.append(
                 f"<tr{row_style}><td>{symbol_row}</td><td>{timeframe}</td><td>{forward_bars}</td>"
                 f"<td>{train_bars:,}</td>"
@@ -790,7 +921,8 @@ def generate_summary_report(results_dir: str = "results/training",
                 f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
                 f"<td>{feature_type}</td>"
                 f"<td>{quality_badge}</td>"
-                f"<td>{config_dir}</td></tr>")
+                f"<td>{config_dir}</td></tr>"
+            )
         else:
             # Quantile model: use existing format (CV RMSE and CV MSE in separate columns)
             rows.append(
@@ -806,8 +938,9 @@ def generate_summary_report(results_dir: str = "results/training",
                 f"<td{pr_auc_color}>{_format_metric(pr_auc)}</td>"
                 f"<td>{feature_type}</td>"
                 f"<td>{quality_badge}</td>"
-                f"<td>{config_dir}</td></tr>")
-        
+                f"<td>{config_dir}</td></tr>"
+            )
+
         # Build per-symbol metrics section if available
         if per_symbol_metrics and isinstance(per_symbol_metrics, dict):
             symbol_rows_html = []
@@ -823,11 +956,19 @@ def generate_summary_report(results_dir: str = "results/training",
                     symbol_ic_pearson = symbol_metrics.get("ic_pearson")
                     symbol_sharpe_like = symbol_metrics.get("sharpe_like")
                     symbol_samples = symbol_metrics.get("samples", 0)
-                    
+
                     # Color coding for per-symbol metrics
-                    symbol_f1_color = _quality_color(symbol_f1, 0.3, 0.5) if symbol_f1 is not None else ""
-                    symbol_ic_color = _quality_color(symbol_ic_spearman, 0.05, 0.1) if symbol_ic_spearman is not None else ""
-                    
+                    symbol_f1_color = (
+                        _quality_color(symbol_f1, 0.3, 0.5)
+                        if symbol_f1 is not None
+                        else ""
+                    )
+                    symbol_ic_color = (
+                        _quality_color(symbol_ic_spearman, 0.05, 0.1)
+                        if symbol_ic_spearman is not None
+                        else ""
+                    )
+
                     symbol_rows_html.append(
                         f"<tr>"
                         f"<td><strong>{symbol_name}</strong></td>"
@@ -843,16 +984,18 @@ def generate_summary_report(results_dir: str = "results/training",
                         f"<td>{symbol_samples:,}</td>"
                         f"</tr>"
                     )
-            
+
             if symbol_rows_html:
                 config_key = f"{timeframe}_fb{forward_bars}_{config_dir}"
-                per_symbol_sections.append({
-                    "config_key": config_key,
-                    "timeframe": timeframe,
-                    "forward_bars": forward_bars,
-                    "config_dir": config_dir,
-                    "rows": symbol_rows_html
-                })
+                per_symbol_sections.append(
+                    {
+                        "config_key": config_key,
+                        "timeframe": timeframe,
+                        "forward_bars": forward_bars,
+                        "config_dir": config_dir,
+                        "rows": symbol_rows_html,
+                    }
+                )
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>{report_title}</title>
@@ -1010,17 +1153,19 @@ tr:hover{{background-color:#e8f4f8}}
         print(f"  Feature types: {feature_types_str}")
     if train_start_str and train_end_str:
         print(f"  Training period: {train_start_str} to {train_end_str}")
-    if actual_start_str and actual_end_str and (
-            actual_start_str != train_start_str
-            or actual_end_str != train_end_str):
+    if (
+        actual_start_str
+        and actual_end_str
+        and (actual_start_str != train_start_str or actual_end_str != train_end_str)
+    ):
         print(f"  Test period: {actual_start_str} to {actual_end_str}")
     return output_path
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(
-        description="Generate training summary report")
+
+    parser = argparse.ArgumentParser(description="Generate training summary report")
     parser.add_argument("--results-dir", type=str, default="results/training")
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()

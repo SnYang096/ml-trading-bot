@@ -9,7 +9,12 @@ This repository hosts the production-ready components for the factor research, d
    ```bash
    pip install -e .[dev]
    ```
-3. Verify the install by running the help target:
+3. Install Git pre-commit hooks (optional but recommended):
+   ```bash
+   make install-hooks
+   ```
+   This will automatically run `make format` and `make lint` before each commit to ensure code quality.
+4. Verify the install by running the help target:
    ```bash
    make help
    ```

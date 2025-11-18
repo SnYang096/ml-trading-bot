@@ -32,15 +32,19 @@ import seaborn as sns
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.data_tools.comprehensive_feature_engineering import (
+    ComprehensiveFeatureEngineer,
+)
 from src.data_tools.data_loader import MarketDataLoader
 from src.data_tools.rolling_data import create_labels_multi_horizon
 
 
-def calculate_factor_ic(df: pd.DataFrame,
-                        factor_name: str,
-                        target_col: str = "future_return_1",
-                        method: str = "spearman") -> Dict:
+def calculate_factor_ic(
+    df: pd.DataFrame,
+    factor_name: str,
+    target_col: str = "future_return_1",
+    method: str = "spearman",
+) -> Dict:
     """计算单个因子的 IC 值"""
     if factor_name not in df.columns:
         return {"error": f"Factor {factor_name} not found"}
@@ -49,22 +53,20 @@ def calculate_factor_ic(df: pd.DataFrame,
         return {"error": f"Target {target_col} not found"}
 
     # 对齐数据
-    aligned = pd.DataFrame({
-        "factor": df[factor_name],
-        "target": df[target_col]
-    }).dropna()
+    aligned = pd.DataFrame(
+        {"factor": df[factor_name], "target": df[target_col]}
+    ).dropna()
 
     if len(aligned) < 10:
         return {"error": "Insufficient samples", "sample_count": len(aligned)}
 
     # 计算 IC
     if method == "spearman":
-        ic, p_value = spearmanr(aligned["factor"].values,
-                                aligned["target"].values,
-                                nan_policy="omit")
+        ic, p_value = spearmanr(
+            aligned["factor"].values, aligned["target"].values, nan_policy="omit"
+        )
     else:  # pearson
-        ic, p_value = pearsonr(aligned["factor"].values,
-                               aligned["target"].values)
+        ic, p_value = pearsonr(aligned["factor"].values, aligned["target"].values)
 
     # 计算统计信息
     factor_values = aligned["factor"].values
@@ -95,14 +97,17 @@ def calculate_factor_ic(df: pd.DataFrame,
         window = min(100, len(aligned) // 10)
         rolling_ic = []
         for i in range(0, len(aligned) - window, window):
-            window_data = aligned.iloc[i:i + window]
+            window_data = aligned.iloc[i : i + window]
             if method == "spearman":
-                ic_window, _ = spearmanr(window_data["factor"].values,
-                                         window_data["target"].values,
-                                         nan_policy="omit")
+                ic_window, _ = spearmanr(
+                    window_data["factor"].values,
+                    window_data["target"].values,
+                    nan_policy="omit",
+                )
             else:
-                ic_window, _ = pearsonr(window_data["factor"].values,
-                                        window_data["target"].values)
+                ic_window, _ = pearsonr(
+                    window_data["factor"].values, window_data["target"].values
+                )
             if not np.isnan(ic_window):
                 rolling_ic.append(ic_window)
 
@@ -110,8 +115,7 @@ def calculate_factor_ic(df: pd.DataFrame,
             result["rolling_ic_stats"] = {
                 "mean": float(np.mean(rolling_ic)),
                 "std": float(np.std(rolling_ic)),
-                "ir": float(np.mean(rolling_ic) /
-                            (np.std(rolling_ic) + 1e-8)),  # IC IR
+                "ir": float(np.mean(rolling_ic) / (np.std(rolling_ic) + 1e-8)),  # IC IR
             }
 
     return result
@@ -130,26 +134,22 @@ def analyze_factor_distribution(df: pd.DataFrame, factor_name: str) -> Dict:
     # 计算分位数
     quantiles = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]
     quantile_values = {
-        f"q{int(q*100)}": float(factor_values.quantile(q))
-        for q in quantiles
+        f"q{int(q*100)}": float(factor_values.quantile(q)) for q in quantiles
     }
 
     # 检查异常值
     q1 = factor_values.quantile(0.25)
     q3 = factor_values.quantile(0.75)
     iqr = q3 - q1
-    outliers = factor_values[(factor_values < q1 - 3 * iqr) |
-                             (factor_values > q3 + 3 * iqr)]
+    outliers = factor_values[
+        (factor_values < q1 - 3 * iqr) | (factor_values > q3 + 3 * iqr)
+    ]
 
     return {
-        "quantiles":
-        quantile_values,
-        "outlier_count":
-        len(outliers),
-        "outlier_ratio":
-        len(outliers) / len(factor_values),
-        "is_normalized":
-        abs(factor_values.mean()) < 1.0 and factor_values.std() < 10.0,
+        "quantiles": quantile_values,
+        "outlier_count": len(outliers),
+        "outlier_ratio": len(outliers) / len(factor_values),
+        "is_normalized": abs(factor_values.mean()) < 1.0 and factor_values.std() < 10.0,
     }
 
 
@@ -167,8 +167,8 @@ def test_factors(
     """测试指定的因子"""
 
     # 处理逗号分隔的因子列表（如果传入的是单个字符串）
-    if len(factors) == 1 and ',' in factors[0]:
-        factors = [f.strip() for f in factors[0].split(',')]
+    if len(factors) == 1 and "," in factors[0]:
+        factors = [f.strip() for f in factors[0].split(",")]
 
     print("=" * 80)
     print("单个因子测试工具")
@@ -221,7 +221,8 @@ def test_factors(
         engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
         factors_set = set(factors)
         df_features = engineer.engineer_all_features(
-            df, fit=True, required_features=factors_set)
+            df, fit=True, required_features=factors_set
+        )
         print(f"   ✅ 特征工程完成，生成了 {len(df_features.columns)} 个特征")
     except Exception as e:
         return {"error": f"Failed to engineer features: {e}"}
@@ -229,8 +230,7 @@ def test_factors(
     # 3. 创建标签
     print("\n3. 创建标签...")
     try:
-        df_features = create_labels_multi_horizon(df_features,
-                                                  horizons=horizons)
+        df_features = create_labels_multi_horizon(df_features, horizons=horizons)
         print(f"   ✅ 标签创建完成")
     except Exception as e:
         return {"error": f"Failed to create labels: {e}"}
@@ -263,10 +263,9 @@ def test_factors(
         for horizon in horizons:
             target_col = f"future_return_{horizon}"
             if target_col in df_features.columns:
-                ic_result = calculate_factor_ic(df_features,
-                                                factor,
-                                                target_col,
-                                                method="spearman")
+                ic_result = calculate_factor_ic(
+                    df_features, factor, target_col, method="spearman"
+                )
                 if "error" not in ic_result:
                     ic_results[f"horizon_{horizon}"] = ic_result
                     print(
@@ -297,7 +296,7 @@ def test_factors(
             "feature_type": feature_type,
             "timeframe": timeframe,
             "horizons": horizons,
-        }
+        },
     }
 
     # 保存结果
@@ -342,8 +341,7 @@ def test_factors(
                                 f"    IC IR: {ic_data['rolling_ic_stats']['ir']:.6f}\n"
                             )
 
-                if "distribution" in result and "error" not in result[
-                        "distribution"]:
+                if "distribution" in result and "error" not in result["distribution"]:
                     f.write("\n分布分析:\n")
                     dist = result["distribution"]
                     f.write(f"  是否归一化: {dist.get('is_normalized', False)}\n")
@@ -561,9 +559,9 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
 """
 
     # 为每个因子生成详细报告
-    for factor_name, result in summary['results'].items():
-        ic_analysis = result.get('ic_analysis', {})
-        distribution = result.get('distribution', {})
+    for factor_name, result in summary["results"].items():
+        ic_analysis = result.get("ic_analysis", {})
+        distribution = result.get("distribution", {})
 
         html_content += f"""
         <div class="factor-section">
@@ -596,13 +594,13 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
         ic_ir_values = []
 
         for horizon_key, ic_data in sorted(ic_analysis.items()):
-            horizon = horizon_key.replace('horizon_', '')
+            horizon = horizon_key.replace("horizon_", "")
             horizons.append(f"H{horizon}")
-            ic = ic_data.get('ic', 0)
-            ic_abs = ic_data.get('ic_abs', 0)
-            ic_ir = ic_data.get('rolling_ic_stats', {}).get('ir', 0)
-            p_value = ic_data.get('p_value', 1)
-            sample_count = ic_data.get('sample_count', 0)
+            ic = ic_data.get("ic", 0)
+            ic_abs = ic_data.get("ic_abs", 0)
+            ic_ir = ic_data.get("rolling_ic_stats", {}).get("ir", 0)
+            p_value = ic_data.get("p_value", 1)
+            sample_count = ic_data.get("sample_count", 0)
 
             ic_values.append(ic)
             ic_abs_values.append(ic_abs)
@@ -637,9 +635,9 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
 """
 
         # 分布分析
-        quantiles = distribution.get('quantiles', {})
-        is_normalized = distribution.get('is_normalized', False)
-        outlier_ratio = distribution.get('outlier_ratio', 0)
+        quantiles = distribution.get("quantiles", {})
+        is_normalized = distribution.get("is_normalized", False)
+        outlier_ratio = distribution.get("outlier_ratio", 0)
 
         html_content += f"""
                 <div class="metric-card">
@@ -669,8 +667,11 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
                         <div>Q75: {:.4f}</div>
                     </div>
                 </div>
-""".format(quantiles.get('q25', 0), quantiles.get('q50', 0),
-            quantiles.get('q75', 0))
+""".format(
+                quantiles.get("q25", 0),
+                quantiles.get("q50", 0),
+                quantiles.get("q75", 0),
+            )
 
         html_content += """
             </div>
@@ -678,15 +679,12 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
 """
 
         # 添加图表脚本
-        chart_id = factor_name.replace('.',
-                                       '_').replace('-',
-                                                    '_').replace(' ', '_')
+        chart_id = factor_name.replace(".", "_").replace("-", "_").replace(" ", "_")
         horizons_json = json.dumps(horizons)
         ic_values_json = json.dumps(ic_values)
         ic_abs_values_json = json.dumps(ic_abs_values)
         ic_ir_values_json = json.dumps(ic_ir_values)
-        factor_name_escaped = factor_name.replace("'",
-                                                  "\\'").replace('"', '\\"')
+        factor_name_escaped = factor_name.replace("'", "\\'").replace('"', '\\"')
 
         html_content += f"""
         <script>
@@ -764,7 +762,7 @@ def generate_html_report(summary: Dict, output_path: Path) -> None:
 </html>
 """
 
-    with open(output_path, 'w', encoding='utf-8') as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
 
@@ -774,39 +772,32 @@ def main():
         "--factors",
         nargs="+",
         required=True,
-        help=
-        "要测试的因子名称列表，支持空格或逗号分隔，例如: rsi_7 zigzag_normalized 或 price_to_zz_high_pct,price_to_poc_pct"
+        help="要测试的因子名称列表，支持空格或逗号分隔，例如: rsi_7 zigzag_normalized 或 price_to_zz_high_pct,price_to_poc_pct",
     )
-    parser.add_argument("--data-path",
-                        type=str,
-                        default="/data/parquet_data",
-                        help="数据路径")
-    parser.add_argument("--symbol",
-                        type=str,
-                        required=True,
-                        help="交易对符号，例如: BTCUSDT")
-    parser.add_argument("--start-date",
-                        type=str,
-                        required=True,
-                        help="开始日期，格式: YYYY-MM-DD")
-    parser.add_argument("--end-date",
-                        type=str,
-                        required=True,
-                        help="结束日期，格式: YYYY-MM-DD")
+    parser.add_argument(
+        "--data-path", type=str, default="/data/parquet_data", help="数据路径"
+    )
+    parser.add_argument(
+        "--symbol", type=str, required=True, help="交易对符号，例如: BTCUSDT"
+    )
+    parser.add_argument(
+        "--start-date", type=str, required=True, help="开始日期，格式: YYYY-MM-DD"
+    )
+    parser.add_argument(
+        "--end-date", type=str, required=True, help="结束日期，格式: YYYY-MM-DD"
+    )
     parser.add_argument(
         "--feature-type",
         type=str,
         default="comprehensive",
-        help="特征类型: baseline, default, enhanced, comprehensive")
-    parser.add_argument("--timeframe",
-                        type=str,
-                        default="5T",
-                        help="时间框架，例如: 5T, 15T, 1H")
-    parser.add_argument("--horizons",
-                        type=int,
-                        nargs="+",
-                        default=[1, 5, 10, 15],
-                        help="预测周期列表")
+        help="特征类型: baseline, default, enhanced, comprehensive",
+    )
+    parser.add_argument(
+        "--timeframe", type=str, default="5T", help="时间框架，例如: 5T, 15T, 1H"
+    )
+    parser.add_argument(
+        "--horizons", type=int, nargs="+", default=[1, 5, 10, 15], help="预测周期列表"
+    )
     parser.add_argument("--output-dir", type=str, help="输出目录（可选）")
 
     args = parser.parse_args()

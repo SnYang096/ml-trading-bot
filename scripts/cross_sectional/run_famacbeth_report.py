@@ -122,7 +122,9 @@ def collect_inputs(patterns: Sequence[str]) -> List[str]:
         files.extend(expanded)
     unique = sorted({os.path.abspath(f) for f in files})
     if not unique:
-        raise FileNotFoundError(f"No input files match the provided patterns: {patterns}")
+        raise FileNotFoundError(
+            f"No input files match the provided patterns: {patterns}"
+        )
     return unique
 
 
@@ -152,7 +154,9 @@ def load_frames(paths: Sequence[str]) -> pd.DataFrame:
     if not frames:
         raise ValueError("All input frames are empty.")
     combined = pd.concat(frames, axis=0, ignore_index=True)
-    combined["timestamp"] = pd.to_datetime(combined["timestamp"], utc=True, errors="coerce")
+    combined["timestamp"] = pd.to_datetime(
+        combined["timestamp"], utc=True, errors="coerce"
+    )
     combined = combined.dropna(subset=["timestamp", "symbol"])
     combined = combined.sort_values(["timestamp", "symbol"])
     combined = combined.set_index(["timestamp", "symbol"])
@@ -173,7 +177,9 @@ def _infer_symbol_from_path(path: str) -> str:
 def filter_symbols(df: pd.DataFrame, symbols: Optional[str]) -> pd.DataFrame:
     if not symbols:
         return df
-    symbol_list = [s.strip().upper() for s in symbols.replace(" ", ",").split(",") if s.strip()]
+    symbol_list = [
+        s.strip().upper() for s in symbols.replace(" ", ",").split(",") if s.strip()
+    ]
     if isinstance(df.index, pd.MultiIndex) and "symbol" in df.index.names:
         mask = df.index.get_level_values("symbol").str.upper().isin(symbol_list)
         filtered = df[mask].copy()
@@ -192,8 +198,8 @@ def ensure_future_return_column(
     if price_col not in df.columns:
         raise ValueError(f"{price_col} column missing; cannot compute forward returns.")
     df_sorted = df.sort_values(["symbol", "timestamp"]).copy()
-    df_sorted[col_name] = (
-        df_sorted.groupby("symbol")[price_col].apply(lambda x: x.shift(-horizon) / x - 1.0)
+    df_sorted[col_name] = df_sorted.groupby("symbol")[price_col].apply(
+        lambda x: x.shift(-horizon) / x - 1.0
     )
     return df_sorted, col_name
 
@@ -245,7 +251,9 @@ def main() -> None:
         raise ValueError("No data available after symbol filtering.")
 
     if isinstance(filtered_df.index, pd.MultiIndex):
-        cols_to_drop = [col for col in ["timestamp", "symbol"] if col in filtered_df.columns]
+        cols_to_drop = [
+            col for col in ["timestamp", "symbol"] if col in filtered_df.columns
+        ]
         if cols_to_drop:
             filtered_df = filtered_df.drop(columns=cols_to_drop)
         filtered_df = filtered_df.reset_index()
@@ -275,7 +283,9 @@ def main() -> None:
             )
         feature_cols = [c for c in feature_cols if c in available]
         if not feature_cols:
-            raise ValueError("No valid features remaining after filtering against dataframe columns.")
+            raise ValueError(
+                "No valid features remaining after filtering against dataframe columns."
+            )
 
     symbol_count = filtered_df["symbol"].nunique()
     min_assets_required = 3
@@ -298,13 +308,17 @@ def main() -> None:
         print("   🔧 Adding crypto-specific factors...")
         panel = add_crypto_cross_sectional_factors(panel)
         crypto_cols = [
-            col for col in panel.columns if col.startswith("cs_crypto_") and col != target_col
+            col
+            for col in panel.columns
+            if col.startswith("cs_crypto_") and col != target_col
         ]
         factor_cols = list(dict.fromkeys(factor_cols + crypto_cols))
         print(f"   📦 Factor count after crypto enrichment: {len(factor_cols)}")
 
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
-    periods_per_year = resolve_periods_per_year(args.periods_per_year, processed_panel.index)
+    periods_per_year = resolve_periods_per_year(
+        args.periods_per_year, processed_panel.index
+    )
     print(
         f"   📊 Panel ready: {processed_panel.shape[0]} observations, "
         f"{len(factor_cols)} factors, periods_per_year={periods_per_year:.2f}"
@@ -381,4 +395,3 @@ def resolve_periods_per_year(arg_value: str, index: pd.Index) -> float:
 
 if __name__ == "__main__":
     main()
-

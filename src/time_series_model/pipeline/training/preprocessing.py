@@ -6,21 +6,25 @@ All statistics are computed ONLY on training data to prevent lookahead bias.
 import numpy as np
 import pandas as pd
 from typing import Tuple, Dict, Optional, NamedTuple
+
 try:
     import statsmodels.api as sm
+
     HAS_STATSMODELS = True
 except ImportError:
     HAS_STATSMODELS = False
     import warnings
-    warnings.warn("statsmodels not available, using fallback AR(1) estimation",
-                  UserWarning)
+
+    warnings.warn(
+        "statsmodels not available, using fallback AR(1) estimation", UserWarning
+    )
 
 
 class RobustWinsorizer:
     """
     Robust Winsorizer for deployment use.
     Uses saved preprocessing parameters to apply consistent preprocessing in production.
-    
+
     Example:
         # During training (saved to training_info.json)
         preprocess_params = {
@@ -28,24 +32,26 @@ class RobustWinsorizer:
             "ar1": {"ar1_phi": 0.15},
             "secondary": {"median": 0.0, "sigma": 0.001, "clip_threshold": 0.003}
         }
-        
+
         # During deployment
         winsorizer = RobustWinsorizer.from_params(preprocess_params)
         y_cleaned = winsorizer.transform(y_new)
     """
 
-    def __init__(self,
-                 median: float,
-                 sigma: float,
-                 k: float = 3.5,
-                 ar1_phi: float = 0.0,
-                 secondary_median: float = 0.0,
-                 secondary_sigma: float = 0.0,
-                 secondary_clip_threshold: float = 0.0,
-                 forward_bars: int = 1):
+    def __init__(
+        self,
+        median: float,
+        sigma: float,
+        k: float = 3.5,
+        ar1_phi: float = 0.0,
+        secondary_median: float = 0.0,
+        secondary_sigma: float = 0.0,
+        secondary_clip_threshold: float = 0.0,
+        forward_bars: int = 1,
+    ):
         """
         Initialize RobustWinsorizer with preprocessing parameters.
-        
+
         Args:
             median: Median from training data (Step 1: Winsorize)
             sigma: Sigma from training data (Step 1: Winsorize)
@@ -74,16 +80,16 @@ class RobustWinsorizer:
         self.secondary_upper = self.secondary_median + self.secondary_clip_threshold
 
     @classmethod
-    def from_params(cls,
-                    preprocess_params: Dict,
-                    forward_bars: int = 1) -> 'RobustWinsorizer':
+    def from_params(
+        cls, preprocess_params: Dict, forward_bars: int = 1
+    ) -> "RobustWinsorizer":
         """
         Create RobustWinsorizer from saved preprocessing parameters.
-        
+
         Args:
             preprocess_params: Dictionary with keys 'winsorize', 'ar1', 'secondary'
             forward_bars: Number of forward bars
-        
+
         Returns:
             RobustWinsorizer instance
         """
@@ -102,20 +108,22 @@ class RobustWinsorizer:
             forward_bars=forward_bars,
         )
 
-    def transform(self,
-                  y: pd.Series,
-                  current_returns: Optional[pd.Series] = None,
-                  apply_ar1: bool = True,
-                  apply_secondary: bool = True) -> pd.Series:
+    def transform(
+        self,
+        y: pd.Series,
+        current_returns: Optional[pd.Series] = None,
+        apply_ar1: bool = True,
+        apply_secondary: bool = True,
+    ) -> pd.Series:
         """
         Apply preprocessing to new data using saved parameters.
-        
+
         Args:
             y: Target variable (raw future_return)
             current_returns: Current period log returns (required if apply_ar1=True)
             apply_ar1: Whether to apply AR(1) residual transformation
             apply_secondary: Whether to apply secondary cleaning
-        
+
         Returns:
             Preprocessed target variable
         """
@@ -131,22 +139,26 @@ class RobustWinsorizer:
                 # Try to align by index
                 try:
                     current_returns_aligned = current_returns.reindex(
-                        y.index, fill_value=0.0).values
+                        y.index, fill_value=0.0
+                    ).values
                 except ValueError:
                     # Duplicate indices - use positional alignment
-                    current_returns_aligned = current_returns.values[:len(y)]
+                    current_returns_aligned = current_returns.values[: len(y)]
                     if len(current_returns_aligned) < len(y):
-                        current_returns_aligned = np.concatenate([
-                            current_returns_aligned,
-                            np.zeros(len(y) - len(current_returns_aligned))
-                        ])
+                        current_returns_aligned = np.concatenate(
+                            [
+                                current_returns_aligned,
+                                np.zeros(len(y) - len(current_returns_aligned)),
+                            ]
+                        )
 
             # Calculate AR(1) prediction
             if self.forward_bars == 1:
                 ar1_pred = self.ar1_phi * current_returns_aligned
             else:
                 phi_power_fb = np.clip(
-                    np.power(self.ar1_phi, self.forward_bars), -10.0, 10.0)
+                    np.power(self.ar1_phi, self.forward_bars), -10.0, 10.0
+                )
                 ar1_pred = phi_power_fb * current_returns_aligned
 
             # Convert to log returns and apply AR(1) residual
@@ -166,14 +178,14 @@ class RobustWinsorizer:
                 fallback = np.nanmedian(y_cleaned_finite)
             else:
                 fallback = 0.0
-            y_cleaned = pd.Series(np.where(np.isfinite(y_cleaned.values),
-                                           y_cleaned.values, fallback),
-                                  index=y.index)
+            y_cleaned = pd.Series(
+                np.where(np.isfinite(y_cleaned.values), y_cleaned.values, fallback),
+                index=y.index,
+            )
 
         # Step 2b: Secondary cleaning
         if apply_secondary and self.secondary_clip_threshold > 0:
-            y_cleaned = y_cleaned.clip(self.secondary_lower,
-                                       self.secondary_upper)
+            y_cleaned = y_cleaned.clip(self.secondary_lower, self.secondary_upper)
 
         return y_cleaned
 
@@ -186,28 +198,31 @@ def robust_winsorize_train_test(
 ) -> Tuple[pd.Series, pd.Series, Dict]:
     """
     Apply robust Winsorize to training and test data using ONLY training statistics.
-    
+
     Args:
         y_train: Training target variable
         y_test: Test target variable
         k: Winsorize threshold (default: 3.5)
         dynamic_threshold: Optional Series with dynamic k values (must be aligned with y_train/y_test)
-    
+
     Returns:
         Tuple of (y_train_cleaned, y_test_cleaned, stats_dict)
         stats_dict contains: median, mad, sigma, lower_bound, upper_bound
     """
     # Short-circuit: disable winsorization when k <= 0
     if k is None or k <= 0:
-        return y_train.copy(), y_test.copy(), {
-            "median":
-            float(np.nanmedian(y_train.values)) if len(y_train) else 0.0,
-            "mad": 0.0,
-            "sigma": 0.0,
-            "k": k,
-            "n_clipped_train": 0,
-            "n_clipped_test": 0,
-        }
+        return (
+            y_train.copy(),
+            y_test.copy(),
+            {
+                "median": float(np.nanmedian(y_train.values)) if len(y_train) else 0.0,
+                "mad": 0.0,
+                "sigma": 0.0,
+                "k": k,
+                "n_clipped_train": 0,
+                "n_clipped_test": 0,
+            },
+        )
 
     # Calculate statistics ONLY from training data
     # Performance optimization: use numpy for faster computation
@@ -222,8 +237,9 @@ def robust_winsorize_train_test(
             # Ultimate fallback: use a small fraction of the range
             y_train_finite = y_train_values[np.isfinite(y_train_values)]
             if len(y_train_finite) > 1:
-                sigma_train = (np.nanmax(y_train_finite) -
-                               np.nanmin(y_train_finite)) / 6.0
+                sigma_train = (
+                    np.nanmax(y_train_finite) - np.nanmin(y_train_finite)
+                ) / 6.0
             else:
                 sigma_train = 1.0
     else:
@@ -235,20 +251,23 @@ def robust_winsorize_train_test(
         if len(dynamic_threshold) < required_length:
             raise ValueError(
                 f"dynamic_threshold length ({len(dynamic_threshold)}) must be >= "
-                f"len(y_train) + len(y_test) ({required_length})")
+                f"len(y_train) + len(y_test) ({required_length})"
+            )
 
         # Smooth dynamic threshold to prevent abrupt changes (regime shift handling)
         dynamic_threshold = dynamic_threshold.ewm(span=20, adjust=False).mean()
 
     # Determine threshold (fixed or dynamic)
-    if dynamic_threshold is not None and len(
-            dynamic_threshold) >= len(y_train) + len(y_test):
+    if dynamic_threshold is not None and len(dynamic_threshold) >= len(y_train) + len(
+        y_test
+    ):
         # Use dynamic threshold (for volatility regime-based cleaning)
-        k_train = dynamic_threshold.iloc[:len(y_train)]
-        k_test = dynamic_threshold.iloc[len(y_train):len(y_train) +
-                                        len(y_test)] if len(
-                                            y_test) > 0 else pd.Series(
-                                                [k], index=y_test.index)
+        k_train = dynamic_threshold.iloc[: len(y_train)]
+        k_test = (
+            dynamic_threshold.iloc[len(y_train) : len(y_train) + len(y_test)]
+            if len(y_test) > 0
+            else pd.Series([k], index=y_test.index)
+        )
 
         # Calculate bounds for each sample
         lower_bounds_train = median_train - k_train * sigma_train
@@ -290,7 +309,7 @@ def ar1_residual_train_test(
 ) -> Tuple[pd.Series, pd.Series, Dict]:
     """
     Apply AR(1) residual transformation using ONLY training statistics.
-    
+
     Args:
         y_train: Training target variable (future_return, already cleaned)
         y_test: Test target variable (future_return, already cleaned)
@@ -298,7 +317,7 @@ def ar1_residual_train_test(
         current_returns_test: Current period log returns for test data
         forward_bars: Number of forward bars
         accurate_forward: If True, use phi^fb for forward_bars > 1 (more accurate)
-    
+
     Returns:
         Tuple of (y_train_residual, y_test_residual, ar1_stats_dict)
     """
@@ -325,8 +344,9 @@ def ar1_residual_train_test(
                         # OLS: r_{t+1} = alpha + phi * r_t + epsilon
                         X = sm.add_constant(r_t_clean)
                         model = sm.OLS(r_t1_clean, X).fit()
-                        ar1_phi_train = model.params[1] if len(
-                            model.params) > 1 else 0.0
+                        ar1_phi_train = (
+                            model.params[1] if len(model.params) > 1 else 0.0
+                        )
                         # Clamp to reasonable range [-0.95, 0.95] for robustness
                         # Prevents extreme values that could amplify residuals
                         ar1_phi_train = np.clip(ar1_phi_train, -0.95, 0.95)
@@ -344,8 +364,7 @@ def ar1_residual_train_test(
                 if len(r_t) > 1 and len(r_t1) > 1:
                     mask = np.isfinite(r_t) & np.isfinite(r_t1)
                     if mask.sum() > 1:
-                        ar1_phi_train = np.corrcoef(r_t[mask], r_t1[mask])[0,
-                                                                           1]
+                        ar1_phi_train = np.corrcoef(r_t[mask], r_t1[mask])[0, 1]
                     else:
                         ar1_phi_train = 0.0
                 else:
@@ -367,8 +386,9 @@ def ar1_residual_train_test(
     # Otherwise, use positional indexing to align
 
     # Check if indices are already aligned (same length and order)
-    if len(current_returns_train) == len(y_train) and len(
-            current_returns_test) == len(y_test):
+    if len(current_returns_train) == len(y_train) and len(current_returns_test) == len(
+        y_test
+    ):
         # Use values directly - they should be aligned by position
         # This works because current_returns_train and y_train come from the same CV split
         current_returns_train_values = current_returns_train.values
@@ -378,9 +398,11 @@ def ar1_residual_train_test(
         try:
             if y_train.index.is_unique and y_test.index.is_unique:
                 current_returns_train_aligned = current_returns_train.reindex(
-                    y_train.index, fill_value=0.0)
+                    y_train.index, fill_value=0.0
+                )
                 current_returns_test_aligned = current_returns_test.reindex(
-                    y_test.index, fill_value=0.0)
+                    y_test.index, fill_value=0.0
+                )
                 current_returns_train_values = current_returns_train_aligned.values
                 current_returns_test_values = current_returns_test_aligned.values
             else:
@@ -388,53 +410,55 @@ def ar1_residual_train_test(
                 # Assume current_returns_train and y_train are already aligned by position
                 # (which should be the case if they come from the same CV split)
                 if len(current_returns_train) >= len(y_train):
-                    current_returns_train_values = current_returns_train.iloc[:len(
-                        y_train)].values
+                    current_returns_train_values = current_returns_train.iloc[
+                        : len(y_train)
+                    ].values
                 else:
                     # Pad with zeros if needed
                     pad_length = len(y_train) - len(current_returns_train)
                     current_returns_train_values = np.concatenate(
-                        [current_returns_train.values,
-                         np.zeros(pad_length)])
+                        [current_returns_train.values, np.zeros(pad_length)]
+                    )
 
                 if len(current_returns_test) >= len(y_test):
-                    current_returns_test_values = current_returns_test.iloc[:len(
-                        y_test)].values
+                    current_returns_test_values = current_returns_test.iloc[
+                        : len(y_test)
+                    ].values
                 else:
                     # Pad with zeros if needed
                     pad_length = len(y_test) - len(current_returns_test)
                     current_returns_test_values = np.concatenate(
-                        [current_returns_test.values,
-                         np.zeros(pad_length)])
+                        [current_returns_test.values, np.zeros(pad_length)]
+                    )
         except (ValueError, IndexError):
             # Fallback: use positional alignment assuming same order
             # This should work if current_returns and y come from the same data split
-            current_returns_train_values = current_returns_train.values[:len(
-                y_train)]
-            current_returns_test_values = current_returns_test.values[:len(
-                y_test)]
+            current_returns_train_values = current_returns_train.values[: len(y_train)]
+            current_returns_test_values = current_returns_test.values[: len(y_test)]
 
             # Ensure lengths match exactly
             if len(current_returns_train_values) < len(y_train):
                 pad_length = len(y_train) - len(current_returns_train_values)
                 current_returns_train_values = np.concatenate(
-                    [current_returns_train_values,
-                     np.zeros(pad_length)])
+                    [current_returns_train_values, np.zeros(pad_length)]
+                )
             if len(current_returns_test_values) < len(y_test):
                 pad_length = len(y_test) - len(current_returns_test_values)
                 current_returns_test_values = np.concatenate(
-                    [current_returns_test_values,
-                     np.zeros(pad_length)])
+                    [current_returns_test_values, np.zeros(pad_length)]
+                )
 
     # 🔒 CRITICAL: Winsorize current_returns to prevent extreme AR(1) predictions
     # If current_returns has extreme values (e.g., price gaps, data errors),
     # AR(1) prediction can be huge, leading to extreme residuals after exp()
     # Clip current_returns to reasonable range (e.g., ±0.5 log return = ±65% price change)
     max_log_return = 0.5  # Maximum reasonable log return (65% price change)
-    current_returns_train_values = np.clip(current_returns_train_values,
-                                           -max_log_return, max_log_return)
-    current_returns_test_values = np.clip(current_returns_test_values,
-                                          -max_log_return, max_log_return)
+    current_returns_train_values = np.clip(
+        current_returns_train_values, -max_log_return, max_log_return
+    )
+    current_returns_test_values = np.clip(
+        current_returns_test_values, -max_log_return, max_log_return
+    )
 
     # Calculate AR(1) prediction for training set
     # Improved: Use accurate forward prediction for fb > 1
@@ -472,12 +496,10 @@ def ar1_residual_train_test(
     y_test_values = y_test.values
 
     # Smooth transition: avoid hard clipping at -0.9999
-    y_train_safe = np.where(y_train_values < -1 + eps, -1 + eps,
-                            y_train_values)
+    y_train_safe = np.where(y_train_values < -1 + eps, -1 + eps, y_train_values)
     y_test_safe = np.where(y_test_values < -1 + eps, -1 + eps, y_test_values)
 
-    y_train_log = np.log1p(
-        y_train_safe)  # log1p is more accurate for small values
+    y_train_log = np.log1p(y_train_safe)  # log1p is more accurate for small values
     y_test_log = np.log1p(y_test_safe)
 
     # Calculate residual: future_return_log - AR(1) prediction
@@ -490,10 +512,12 @@ def ar1_residual_train_test(
     # Clip residual_log to reasonable range (e.g., ±2.0 log return = ±640% simple return)
     # This prevents numerical overflow and extreme predictions
     max_residual_log = 2.0  # Maximum reasonable residual in log space
-    y_train_residual_log = np.clip(y_train_residual_log, -max_residual_log,
-                                   max_residual_log)
-    y_test_residual_log = np.clip(y_test_residual_log, -max_residual_log,
-                                  max_residual_log)
+    y_train_residual_log = np.clip(
+        y_train_residual_log, -max_residual_log, max_residual_log
+    )
+    y_test_residual_log = np.clip(
+        y_test_residual_log, -max_residual_log, max_residual_log
+    )
 
     # Convert back to simple returns: exp(residual_log) - 1
     y_train_residual = np.exp(y_train_residual_log) - 1
@@ -509,20 +533,15 @@ def ar1_residual_train_test(
     y_test_residual_values = y_test_residual.values
 
     # Find finite values for fallback
-    y_train_finite = y_train_residual_values[np.isfinite(
-        y_train_residual_values)]
+    y_train_finite = y_train_residual_values[np.isfinite(y_train_residual_values)]
     y_test_finite = y_test_residual_values[np.isfinite(y_test_residual_values)]
 
-    train_fallback = np.nanmedian(y_train_finite) if len(
-        y_train_finite) > 0 else 0.0
-    test_fallback = np.nanmedian(y_test_finite) if len(
-        y_test_finite) > 0 else 0.0
+    train_fallback = np.nanmedian(y_train_finite) if len(y_train_finite) > 0 else 0.0
+    test_fallback = np.nanmedian(y_test_finite) if len(y_test_finite) > 0 else 0.0
 
     # Replace non-finite values
-    y_train_residual_values[~np.isfinite(y_train_residual_values
-                                         )] = train_fallback
-    y_test_residual_values[~np.isfinite(y_test_residual_values
-                                        )] = test_fallback
+    y_train_residual_values[~np.isfinite(y_train_residual_values)] = train_fallback
+    y_test_residual_values[~np.isfinite(y_test_residual_values)] = test_fallback
 
     y_train_residual = pd.Series(y_train_residual_values, index=y_train.index)
     y_test_residual = pd.Series(y_test_residual_values, index=y_test.index)
@@ -559,27 +578,30 @@ def secondary_clean_train_test(
 ) -> Tuple[pd.Series, pd.Series, Dict]:
     """
     Secondary cleaning after AR(1) processing, using ONLY training statistics.
-    
+
     Args:
         y_train: Training target variable (after AR(1))
         y_test: Test target variable (after AR(1))
         k: Winsorize threshold (default: 3.5)
         use_symmetric_quantile: Control percentile-based clipping (see preprocess_target_cv)
         smooth_clip: If True, use weighted average of MAD and percentile thresholds instead of min
-    
+
     Returns:
         Tuple of (y_train_cleaned, y_test_cleaned, stats_dict)
     """
     if k is None or k <= 0:
-        return y_train.copy(), y_test.copy(), {
-            "median":
-            float(np.nanmedian(y_train.values)) if len(y_train) else 0.0,
-            "mad": 0.0,
-            "sigma": 0.0,
-            "clip_threshold": np.inf,
-            "n_clipped_train": 0,
-            "n_clipped_test": 0,
-        }
+        return (
+            y_train.copy(),
+            y_test.copy(),
+            {
+                "median": float(np.nanmedian(y_train.values)) if len(y_train) else 0.0,
+                "mad": 0.0,
+                "sigma": 0.0,
+                "clip_threshold": np.inf,
+                "n_clipped_train": 0,
+                "n_clipped_test": 0,
+            },
+        )
 
     # Calculate statistics ONLY from training data
     # Performance optimization: use numpy for faster computation
@@ -595,8 +617,9 @@ def secondary_clean_train_test(
         if np.isnan(sigma_train) or sigma_train == 0:
             y_train_finite = y_train_values[np.isfinite(y_train_values)]
             if len(y_train_finite) > 1:
-                sigma_train = (np.nanmax(y_train_finite) -
-                               np.nanmin(y_train_finite)) / 6.0
+                sigma_train = (
+                    np.nanmax(y_train_finite) - np.nanmin(y_train_finite)
+                ) / 6.0
             else:
                 sigma_train = 1.0
     else:
@@ -611,8 +634,9 @@ def secondary_clean_train_test(
     elif use_symmetric_quantile is False:
         # Legacy approach: use (0.01, 0.99)
         p01_train, p99_train = np.nanpercentile(y_train_values, [1.0, 99.0])
-        percentile_clip_high = abs(p99_train) if abs(p99_train) > abs(
-            p01_train) else abs(p01_train)
+        percentile_clip_high = (
+            abs(p99_train) if abs(p99_train) > abs(p01_train) else abs(p01_train)
+        )
     else:
         # Disable percentile-based clipping
         percentile_clip_high = np.nan
@@ -627,7 +651,8 @@ def secondary_clean_train_test(
         # When vol_ratio > 1 (high vol): mad_weight -> 0.0 (more percentile)
         mad_weight = 0.5 + 0.5 * np.tanh(2 * (1 - vol_ratio))
         final_clip = mad_weight * clip_threshold_mad + (1 - mad_weight) * (
-            percentile_clip_high * 1.5)
+            percentile_clip_high * 1.5
+        )
     else:
         # When percentile information is unavailable/disabled, rely on MAD only
         final_clip = clip_threshold_mad
@@ -654,32 +679,39 @@ def secondary_clean_train_test(
 # Structured return type for preprocessing statistics
 class TargetPreprocessStats(NamedTuple):
     """Structured statistics for target preprocessing pipeline."""
+
     winsorize: Dict
     ar1: Dict
     secondary: Dict
 
     def summary(self) -> pd.DataFrame:
         """Generate a summary DataFrame of preprocessing statistics."""
-        return pd.DataFrame({
-            'Stage': ['Winsorize', 'AR(1)', 'Secondary'],
-            'Clipped_train': [
-                self.winsorize.get('n_clipped_train', 0), None,
-                self.secondary.get('n_clipped_train', 0)
-            ],
-            'Clipped_test': [
-                self.winsorize.get('n_clipped_test', 0), None,
-                self.secondary.get('n_clipped_test', 0)
-            ],
-            'AR1_phi': [None, self.ar1.get('ar1_phi', 0.0), None],
-            'MAD': [
-                self.winsorize.get('mad', 0.0), None,
-                self.secondary.get('mad', 0.0)
-            ],
-            'Sigma': [
-                self.winsorize.get('sigma', 0.0), None,
-                self.secondary.get('sigma', 0.0)
-            ],
-        })
+        return pd.DataFrame(
+            {
+                "Stage": ["Winsorize", "AR(1)", "Secondary"],
+                "Clipped_train": [
+                    self.winsorize.get("n_clipped_train", 0),
+                    None,
+                    self.secondary.get("n_clipped_train", 0),
+                ],
+                "Clipped_test": [
+                    self.winsorize.get("n_clipped_test", 0),
+                    None,
+                    self.secondary.get("n_clipped_test", 0),
+                ],
+                "AR1_phi": [None, self.ar1.get("ar1_phi", 0.0), None],
+                "MAD": [
+                    self.winsorize.get("mad", 0.0),
+                    None,
+                    self.secondary.get("mad", 0.0),
+                ],
+                "Sigma": [
+                    self.winsorize.get("sigma", 0.0),
+                    None,
+                    self.secondary.get("sigma", 0.0),
+                ],
+            }
+        )
 
 
 def preprocess_target_cv(
@@ -699,7 +731,7 @@ def preprocess_target_cv(
     """
     Complete preprocessing pipeline for target variable in CV fold.
     All statistics computed ONLY from training data.
-    
+
     Args:
         y_train: Training target variable (raw future_return)
         y_test: Test target variable (raw future_return)
@@ -716,7 +748,7 @@ def preprocess_target_cv(
             - False: use legacy quantiles (0.01, 0.99).
         smooth_clip: If True, blend MAD and percentile thresholds (if available)
         verbose: If True, print detailed preprocessing statistics
-    
+
     Returns:
         Tuple of (y_train_final, y_test_final, preprocessing_stats)
         preprocessing_stats is a TargetPreprocessStats NamedTuple
@@ -729,7 +761,8 @@ def preprocess_target_cv(
 
     # Step 1: Robust Winsorize (using training statistics)
     y_train_step1, y_test_step1, stats_step1 = robust_winsorize_train_test(
-        y_train, y_test, k=k_winsorize, dynamic_threshold=dynamic_threshold)
+        y_train, y_test, k=k_winsorize, dynamic_threshold=dynamic_threshold
+    )
     if verbose:
         print(
             f"  [Step 1: Winsorize] Clipped: train={stats_step1['n_clipped_train']}, "
@@ -742,24 +775,29 @@ def preprocess_target_cv(
     if clipped_ratio_step1 > 0.05:
         print(
             f"  ⚠️  Warning: Step 1 clipped {clipped_ratio_step1:,.2%} of training samples (>5%). "
-            "Consider relaxing Winsorize parameters.")
+            "Consider relaxing Winsorize parameters."
+        )
     # Check distribution shift (mean / std change greater than 10%)
-    orig_mean_step1 = float(np.nanmean(
-        y_train.values)) if len(y_train) else 0.0
-    clipped_mean_step1 = float(np.nanmean(
-        y_train_step1.values)) if len(y_train_step1) else 0.0
-    orig_std_step1 = float(np.nanstd(y_train.values,
-                                     ddof=1)) if len(y_train) > 1 else 0.0
-    clipped_std_step1 = float(np.nanstd(
-        y_train_step1.values, ddof=1)) if len(y_train_step1) > 1 else 0.0
+    orig_mean_step1 = float(np.nanmean(y_train.values)) if len(y_train) else 0.0
+    clipped_mean_step1 = (
+        float(np.nanmean(y_train_step1.values)) if len(y_train_step1) else 0.0
+    )
+    orig_std_step1 = (
+        float(np.nanstd(y_train.values, ddof=1)) if len(y_train) > 1 else 0.0
+    )
+    clipped_std_step1 = (
+        float(np.nanstd(y_train_step1.values, ddof=1))
+        if len(y_train_step1) > 1
+        else 0.0
+    )
     mean_shift = abs(clipped_mean_step1 - orig_mean_step1)
     std_shift = abs(clipped_std_step1 - orig_std_step1)
     if orig_std_step1 > 0 and std_shift / (orig_std_step1 + 1e-9) > 0.2:
         print(
             f"  ⚠️  Warning: Step 1 changed std by {std_shift / (orig_std_step1 + 1e-9):.1%}. "
-            "Large variance shifts may indicate over-trimming.")
-    if abs(orig_mean_step1) > 1e-9 and mean_shift / (abs(orig_mean_step1) +
-                                                     1e-9) > 0.2:
+            "Large variance shifts may indicate over-trimming."
+        )
+    if abs(orig_mean_step1) > 1e-9 and mean_shift / (abs(orig_mean_step1) + 1e-9) > 0.2:
         print(
             f"  ⚠️  Warning: Step 1 changed mean by {mean_shift / (abs(orig_mean_step1) + 1e-9):.1%}."
         )
@@ -771,15 +809,20 @@ def preprocess_target_cv(
         current_returns_train,
         current_returns_test,
         forward_bars,
-        accurate_forward=accurate_forward)
+        accurate_forward=accurate_forward,
+    )
     if verbose:
-        autocorr_after = stats_ar1.get('ar1_autocorr_after', None)
-        reduction = stats_ar1.get('autocorr_reduction', None)
+        autocorr_after = stats_ar1.get("ar1_autocorr_after", None)
+        reduction = stats_ar1.get("autocorr_reduction", None)
         reduction_str = f", reduction={reduction:.4f}" if reduction is not None else ""
-        ar1_phi = stats_ar1.get('ar1_phi', 0.0)
-        autocorr_after_str = f"{autocorr_after:.4f}" if autocorr_after is not None else 'N/A'
-        print(f"  [Step 2: AR(1)] phi={ar1_phi:.4f}, "
-              f"autocorr_after={autocorr_after_str}{reduction_str}")
+        ar1_phi = stats_ar1.get("ar1_phi", 0.0)
+        autocorr_after_str = (
+            f"{autocorr_after:.4f}" if autocorr_after is not None else "N/A"
+        )
+        print(
+            f"  [Step 2: AR(1)] phi={ar1_phi:.4f}, "
+            f"autocorr_after={autocorr_after_str}{reduction_str}"
+        )
 
     # Step 2b: Secondary cleaning (using training statistics)
     y_train_final, y_test_final, stats_step2b = secondary_clean_train_test(
@@ -787,11 +830,15 @@ def preprocess_target_cv(
         y_test_step2,
         k=k_secondary,
         use_symmetric_quantile=use_symmetric_quantile,
-        smooth_clip=smooth_clip)
+        smooth_clip=smooth_clip,
+    )
     if verbose:
-        clip_threshold = stats_step2b.get('clip_threshold', 'N/A')
-        clip_threshold_str = f"{clip_threshold:.6f}" if isinstance(
-            clip_threshold, (int, float)) else str(clip_threshold)
+        clip_threshold = stats_step2b.get("clip_threshold", "N/A")
+        clip_threshold_str = (
+            f"{clip_threshold:.6f}"
+            if isinstance(clip_threshold, (int, float))
+            else str(clip_threshold)
+        )
         print(
             f"  [Step 2b: Secondary] Clipped: train={stats_step2b['n_clipped_train']}, "
             f"test={stats_step2b['n_clipped_test']}, clip_threshold={clip_threshold_str}"
@@ -803,21 +850,28 @@ def preprocess_target_cv(
     if clipped_ratio_step2b > 0.05:
         print(
             f"  ⚠️  Warning: Step 2b clipped {clipped_ratio_step2b:,.2%} of training samples (>5%). "
-            "Consider adjusting secondary cleaning thresholds.")
+            "Consider adjusting secondary cleaning thresholds."
+        )
 
     orig_mean_final = clipped_mean_step1
-    final_mean = float(np.nanmean(
-        y_train_final.values)) if len(y_train_final) else 0.0
+    final_mean = float(np.nanmean(y_train_final.values)) if len(y_train_final) else 0.0
     orig_std_final = clipped_std_step1
-    final_std = float(np.nanstd(y_train_final.values,
-                                ddof=1)) if len(y_train_final) > 1 else 0.0
-    if orig_std_final > 0 and abs(final_std - orig_std_final) / (
-            orig_std_final + 1e-9) > 0.2:
+    final_std = (
+        float(np.nanstd(y_train_final.values, ddof=1))
+        if len(y_train_final) > 1
+        else 0.0
+    )
+    if (
+        orig_std_final > 0
+        and abs(final_std - orig_std_final) / (orig_std_final + 1e-9) > 0.2
+    ):
         print(
             f"  ⚠️  Warning: Secondary cleaning changed std by {abs(final_std - orig_std_final) / (orig_std_final + 1e-9):.1%}."
         )
-    if abs(orig_mean_final) > 1e-9 and abs(final_mean - orig_mean_final) / (
-            abs(orig_mean_final) + 1e-9) > 0.2:
+    if (
+        abs(orig_mean_final) > 1e-9
+        and abs(final_mean - orig_mean_final) / (abs(orig_mean_final) + 1e-9) > 0.2
+    ):
         print(
             f"  ⚠️  Warning: Secondary cleaning changed mean by {abs(final_mean - orig_mean_final) / (abs(orig_mean_final) + 1e-9):.1%}."
         )
@@ -826,14 +880,16 @@ def preprocess_target_cv(
     # This is critical for production deployment
     if not np.all(np.isfinite(y_train_final.values)):
         n_inf_train = np.sum(~np.isfinite(y_train_final.values))
-        y_train_final_finite = y_train_final.values[np.isfinite(
-            y_train_final.values)]
-        train_fallback = np.nanmedian(y_train_final_finite) if len(
-            y_train_final_finite) > 0 else 0.0
-        y_train_final = pd.Series(np.where(np.isfinite(y_train_final.values),
-                                           y_train_final.values,
-                                           train_fallback),
-                                  index=y_train_final.index)
+        y_train_final_finite = y_train_final.values[np.isfinite(y_train_final.values)]
+        train_fallback = (
+            np.nanmedian(y_train_final_finite) if len(y_train_final_finite) > 0 else 0.0
+        )
+        y_train_final = pd.Series(
+            np.where(
+                np.isfinite(y_train_final.values), y_train_final.values, train_fallback
+            ),
+            index=y_train_final.index,
+        )
         if verbose and n_inf_train > 0:
             print(
                 f"  ⚠️  Warning: Replaced {n_inf_train} non-finite values in y_train_final"
@@ -841,22 +897,25 @@ def preprocess_target_cv(
 
     if not np.all(np.isfinite(y_test_final.values)):
         n_inf_test = np.sum(~np.isfinite(y_test_final.values))
-        y_test_final_finite = y_test_final.values[np.isfinite(
-            y_test_final.values)]
-        test_fallback = np.nanmedian(y_test_final_finite) if len(
-            y_test_final_finite) > 0 else 0.0
-        y_test_final = pd.Series(np.where(np.isfinite(y_test_final.values),
-                                          y_test_final.values, test_fallback),
-                                 index=y_test_final.index)
+        y_test_final_finite = y_test_final.values[np.isfinite(y_test_final.values)]
+        test_fallback = (
+            np.nanmedian(y_test_final_finite) if len(y_test_final_finite) > 0 else 0.0
+        )
+        y_test_final = pd.Series(
+            np.where(
+                np.isfinite(y_test_final.values), y_test_final.values, test_fallback
+            ),
+            index=y_test_final.index,
+        )
         if verbose and n_inf_test > 0:
             print(
                 f"  ⚠️  Warning: Replaced {n_inf_test} non-finite values in y_test_final"
             )
 
     # Return structured statistics
-    preprocessing_stats = TargetPreprocessStats(winsorize=stats_step1,
-                                                ar1=stats_ar1,
-                                                secondary=stats_step2b)
+    preprocessing_stats = TargetPreprocessStats(
+        winsorize=stats_step1, ar1=stats_ar1, secondary=stats_step2b
+    )
 
     return y_train_final, y_test_final, preprocessing_stats
 
@@ -868,12 +927,12 @@ def clean_features_train_test(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict]:
     """
     Apply robust Winsorize to features using ONLY training statistics.
-    
+
     Args:
         X_train: Training feature matrix
         X_test: Test feature matrix
         k: Winsorize threshold (default: 4.0, more conservative than y)
-    
+
     Returns:
         Tuple of (X_train_cleaned, X_test_cleaned, stats_dict)
     """
@@ -892,10 +951,8 @@ def clean_features_train_test(
     for col in X_train.columns:
         if X_train[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
             # Replace infinities with NaN first
-            train_series = X_train_cleaned[col].replace([np.inf, -np.inf],
-                                                        np.nan)
-            test_series = X_test_cleaned[col].replace([np.inf, -np.inf],
-                                                      np.nan)
+            train_series = X_train_cleaned[col].replace([np.inf, -np.inf], np.nan)
+            test_series = X_test_cleaned[col].replace([np.inf, -np.inf], np.nan)
 
             # Compute statistics using training data only
             median_train = train_series.median()

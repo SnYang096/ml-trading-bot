@@ -89,8 +89,8 @@ def _normalise_timeframe(timeframe: str) -> str:
 
 def parse_args() -> AnalysisConfig:
     parser = argparse.ArgumentParser(
-        description=
-        "Select optimal timeframe and forward bars via correlation analysis.")
+        description="Select optimal timeframe and forward bars via correlation analysis."
+    )
     parser.add_argument(
         "--data-dir",
         type=Path,
@@ -145,8 +145,8 @@ def parse_args() -> AnalysisConfig:
         type=float,
         default=0.03,
         help="Absolute correlation threshold for highlighting strong signals. "
-             "For cryptocurrency hourly data, |IC| >= 0.03 is considered effective. "
-             "See docs/时序模型/特征：ic的阈值.md for details.",
+        "For cryptocurrency hourly data, |IC| >= 0.03 is considered effective. "
+        "See docs/时序模型/特征：ic的阈值.md for details.",
     )
     parser.add_argument(
         "--feature-type",
@@ -167,15 +167,13 @@ def parse_args() -> AnalysisConfig:
         "--markdown-report",
         type=Path,
         default=None,
-        help=
-        "Optional path for markdown report. Defaults to <output-dir>/timeframe_forward_report.md if not provided.",
+        help="Optional path for markdown report. Defaults to <output-dir>/timeframe_forward_report.md if not provided.",
     )
     parser.add_argument(
         "--html-report",
         type=Path,
         default=None,
-        help=
-        "Path for the HTML report (defaults to <output-dir>/timeframe_forward_report.html).",
+        help="Path for the HTML report (defaults to <output-dir>/timeframe_forward_report.html).",
     )
     parser.add_argument(
         "--top-k",
@@ -193,8 +191,10 @@ def parse_args() -> AnalysisConfig:
         "--extra-features",
         nargs="+",
         default=[],
-        help=("Optional additional feature names to include. "
-              f"Supported: {', '.join(sorted(SUPPORTED_EXTRA_FEATURES))}."),
+        help=(
+            "Optional additional feature names to include. "
+            f"Supported: {', '.join(sorted(SUPPORTED_EXTRA_FEATURES))}."
+        ),
     )
 
     args = parser.parse_args()
@@ -229,9 +229,7 @@ def _validate_extra_features(extra_features: Sequence[str]) -> List[str]:
     validated: List[str] = []
     for feat in extra_features:
         if feat not in SUPPORTED_EXTRA_FEATURES:
-            print(
-                f"[WARN] Unsupported extra feature '{feat}' requested; skipping."
-            )
+            print(f"[WARN] Unsupported extra feature '{feat}' requested; skipping.")
             continue
         validated.append(feat)
     return validated
@@ -252,7 +250,8 @@ def load_symbol_dataframe(
     files = discover_symbol_files(data_dir, symbol)
     if not files:
         raise FileNotFoundError(
-            f"No parquet files found for symbol {symbol} in {data_dir}")
+            f"No parquet files found for symbol {symbol} in {data_dir}"
+        )
 
     frames = []
     for file_path in files:
@@ -273,7 +272,8 @@ def load_symbol_dataframe(
 
     if data.empty:
         raise ValueError(
-            f"Filtered data for {symbol} is empty after applying date range.")
+            f"Filtered data for {symbol} is empty after applying date range."
+        )
 
     return data
 
@@ -314,8 +314,8 @@ def _compute_atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
 
 
 def _apply_additional_features(
-        df: pd.DataFrame,
-        feature_names: Sequence[str]) -> Tuple[pd.DataFrame, List[str]]:
+    df: pd.DataFrame, feature_names: Sequence[str]
+) -> Tuple[pd.DataFrame, List[str]]:
     feature_columns: List[str] = []
 
     for name in feature_names:
@@ -369,9 +369,7 @@ def _apply_additional_features(
             else:
                 df[name] = stoch_k_smoothed.rolling(window=3).mean()
         else:
-            print(
-                f"[WARN] Unsupported extra feature '{name}' requested; skipping."
-            )
+            print(f"[WARN] Unsupported extra feature '{name}' requested; skipping.")
             continue
 
         feature_columns.append(name)
@@ -413,19 +411,21 @@ def enrich_features(
             feature_columns.append(diff_col)
 
     cvd_change_cols = [
-        c for c in
-        ["cvd_change_1", "cvd_change_5", "cvd_change_20", "cvd_normalized"]
+        c
+        for c in ["cvd_change_1", "cvd_change_5", "cvd_change_20", "cvd_normalized"]
         if c in work.columns
     ]
     feature_columns.extend(cvd_change_cols)
 
-    feature_columns.extend([
-        "return_vol_3",
-        "return_vol_12",
-        "volume_pct_change",
-        "volume_zscore_20",
-        "taker_buy_ratio_level",
-    ])
+    feature_columns.extend(
+        [
+            "return_vol_3",
+            "return_vol_12",
+            "volume_pct_change",
+            "volume_zscore_20",
+            "taker_buy_ratio_level",
+        ]
+    )
 
     if extra_features:
         work, extra_cols = _apply_additional_features(work, extra_features)
@@ -468,32 +468,36 @@ def compute_correlations(
         for feature in feature_cols:
             if feature not in df.columns:
                 continue
-            
+
             # Get valid pairs for this specific feature-target combination
             feature_values = df[feature].values
             valid_mask = ~(np.isnan(feature_values) | np.isnan(target_values_all))
-            
+
             if valid_mask.sum() < min_samples:
                 continue
-            
+
             feature_valid = feature_values[valid_mask]
             target_valid = target_values_all[valid_mask]
-            
-            if np.isclose(np.std(feature_valid), 0) or np.isclose(np.std(target_valid), 0):
+
+            if np.isclose(np.std(feature_valid), 0) or np.isclose(
+                np.std(target_valid), 0
+            ):
                 continue
 
             pearson_corr, pearson_p = pearsonr(feature_valid, target_valid)
             spearman_corr, spearman_p = spearmanr(feature_valid, target_valid)
 
-            results.append({
-                "forward_bars": horizon,
-                "feature": feature,
-                "pearson_corr": pearson_corr,
-                "pearson_p": pearson_p,
-                "spearman_corr": spearman_corr,
-                "spearman_p": spearman_p,
-                "samples": valid_mask.sum(),
-            })
+            results.append(
+                {
+                    "forward_bars": horizon,
+                    "feature": feature,
+                    "pearson_corr": pearson_corr,
+                    "pearson_p": pearson_p,
+                    "spearman_corr": spearman_corr,
+                    "spearman_p": spearman_p,
+                    "samples": valid_mask.sum(),
+                }
+            )
 
     return results
 
@@ -506,8 +510,7 @@ def summarise_results(details: pd.DataFrame) -> pd.DataFrame:
     details["abs_pearson"] = details["pearson_corr"].abs()
     details["abs_spearman"] = details["spearman_corr"].abs()
 
-    grouped = details.groupby(["symbol", "timeframe", "forward_bars"],
-                              as_index=False)
+    grouped = details.groupby(["symbol", "timeframe", "forward_bars"], as_index=False)
     summary = grouped.agg(
         mean_abs_pearson=("abs_pearson", "mean"),
         median_abs_pearson=("abs_pearson", "median"),
@@ -516,12 +519,22 @@ def summarise_results(details: pd.DataFrame) -> pd.DataFrame:
         feature_count=("feature", "nunique"),
     )
 
-    idx = details.groupby(["symbol", "timeframe",
-                           "forward_bars"])["abs_pearson"].idxmax()
-    best_rows = details.loc[idx, [
-        "symbol", "timeframe", "forward_bars", "feature", "pearson_corr",
-        "pearson_p", "spearman_corr", "spearman_p"
-    ]]
+    idx = details.groupby(["symbol", "timeframe", "forward_bars"])[
+        "abs_pearson"
+    ].idxmax()
+    best_rows = details.loc[
+        idx,
+        [
+            "symbol",
+            "timeframe",
+            "forward_bars",
+            "feature",
+            "pearson_corr",
+            "pearson_p",
+            "spearman_corr",
+            "spearman_p",
+        ],
+    ]
     best_rows = best_rows.rename(
         columns={
             "feature": "best_feature",
@@ -529,20 +542,22 @@ def summarise_results(details: pd.DataFrame) -> pd.DataFrame:
             "pearson_p": "best_pearson_p",
             "spearman_corr": "best_spearman_corr",
             "spearman_p": "best_spearman_p",
-        })
+        }
+    )
 
-    summary = summary.merge(best_rows,
-                            on=["symbol", "timeframe", "forward_bars"],
-                            how="left")
+    summary = summary.merge(
+        best_rows, on=["symbol", "timeframe", "forward_bars"], how="left"
+    )
     summary["max_abs_pearson"] = summary["best_pearson_corr"].abs()
-    summary = summary.sort_values(["symbol", "max_abs_pearson"],
-                                  ascending=[True, False])
+    summary = summary.sort_values(
+        ["symbol", "max_abs_pearson"], ascending=[True, False]
+    )
     return summary
 
 
-def dataframe_to_markdown(df: pd.DataFrame,
-                          index: bool = False,
-                          floatfmt: str = ".4f") -> str:
+def dataframe_to_markdown(
+    df: pd.DataFrame, index: bool = False, floatfmt: str = ".4f"
+) -> str:
     try:
         return df.to_markdown(index=index, floatfmt=floatfmt)
     except ImportError:
@@ -570,8 +585,7 @@ def write_markdown_report(
         report.write("## Parameters\n\n")
         report.write(f"- Data directory: `{config.data_dir}`\n")
         report.write(f"- Symbols: {', '.join(config.symbols)}\n")
-        report.write(
-            f"- Timeframes evaluated: {', '.join(config.timeframes)}\n")
+        report.write(f"- Timeframes evaluated: {', '.join(config.timeframes)}\n")
         report.write(
             f"- Forward horizons (bars): {', '.join(map(str, config.forward_bars))}\n"
         )
@@ -579,14 +593,14 @@ def write_markdown_report(
         report.write(f"- Max lag features: {config.max_lag}\n")
         report.write(f"- Min samples per test: {config.min_samples}\n")
         if config.extra_features:
-            report.write(
-                f"- Extra features: {', '.join(config.extra_features)}\n")
+            report.write(f"- Extra features: {', '.join(config.extra_features)}\n")
         else:
             report.write("- Extra features: none (baseline set)\n")
         if config.start or config.end:
             report.write(
                 f"- Date range: {config.start.date() if config.start else 'Start'} → "
-                f"{config.end.date() if config.end else 'Latest'}\n")
+                f"{config.end.date() if config.end else 'Latest'}\n"
+            )
         report.write("\n")
         report.write(
             f"**Threshold note:** default absolute correlation threshold is {config.pearson_threshold} "
@@ -615,15 +629,14 @@ def write_markdown_report(
                 "samples",
             ]
             top_rows = top_rows[display_cols]
-            report.write(
-                dataframe_to_markdown(top_rows, index=False, floatfmt=".4f"))
+            report.write(dataframe_to_markdown(top_rows, index=False, floatfmt=".4f"))
             report.write("\n\n")
 
             report.write("Top detailed correlations:\n\n")
             symbol_details = details[details["symbol"] == symbol].copy()
             symbol_details = symbol_details.sort_values(
-                "pearson_corr", key=lambda s: s.abs(),
-                ascending=False).head(10)
+                "pearson_corr", key=lambda s: s.abs(), ascending=False
+            ).head(10)
             detail_cols = [
                 "timeframe",
                 "forward_bars",
@@ -633,9 +646,10 @@ def write_markdown_report(
                 "samples",
             ]
             report.write(
-                dataframe_to_markdown(symbol_details[detail_cols],
-                                      index=False,
-                                      floatfmt=".4f"))
+                dataframe_to_markdown(
+                    symbol_details[detail_cols], index=False, floatfmt=".4f"
+                )
+            )
             report.write("\n\n")
 
         report.write("## Notes\n\n")
@@ -650,18 +664,18 @@ def write_markdown_report(
         )
 
 
-def dataframe_to_markdown(df: pd.DataFrame,
-                          index: bool = False,
-                          floatfmt: str = ".4f") -> str:
+def dataframe_to_markdown(
+    df: pd.DataFrame, index: bool = False, floatfmt: str = ".4f"
+) -> str:
     try:
         return df.to_markdown(index=index, floatfmt=floatfmt)
     except ImportError:
-        float_formatter = lambda x: f"{x:{floatfmt}}" if isinstance(
-            x, (int, float, np.floating)) else str(x)
+        float_formatter = lambda x: (
+            f"{x:{floatfmt}}" if isinstance(x, (int, float, np.floating)) else str(x)
+        )
         formatted = df.to_string(
-            index=index,
-            formatters={col: float_formatter
-                        for col in df.columns})
+            index=index, formatters={col: float_formatter for col in df.columns}
+        )
         return f"```\n{formatted}\n```"
 
 
@@ -832,7 +846,9 @@ def write_html_report(
                 f"<div>{ic_label}</div>"
                 "</div>"
             )
-            html_parts.append(f"<div style='margin-bottom:0.6rem;color:#555;'>{metrics}</div>")
+            html_parts.append(
+                f"<div style='margin-bottom:0.6rem;color:#555;'>{metrics}</div>"
+            )
 
             if not top_features.empty:
                 html_parts.append(
@@ -861,7 +877,9 @@ def write_html_report(
                     shared_feature_map[feature_name].add(symbol)
                 html_parts.append("</tbody></table>")
             else:
-                html_parts.append("<p>No sufficient feature correlations for this combination.</p>")
+                html_parts.append(
+                    "<p>No sufficient feature correlations for this combination.</p>"
+                )
 
             html_parts.append("</div>")  # combo-card
 
@@ -882,9 +900,7 @@ def write_html_report(
         )
         for feature, symbols in duplicate_features:
             symbol_list = ", ".join(symbols)
-            html_parts.append(
-                f"<tr><td>{feature}</td><td>{symbol_list}</td></tr>"
-            )
+            html_parts.append(f"<tr><td>{feature}</td><td>{symbol_list}</td></tr>")
         html_parts.append("</tbody></table>")
     else:
         html_parts.append(
@@ -905,16 +921,15 @@ def main() -> None:
     all_details: List[pd.DataFrame] = []
 
     for symbol in config.symbols:
-        raw_df = load_symbol_dataframe(config.data_dir, symbol, config.start,
-                                       config.end)
+        raw_df = load_symbol_dataframe(
+            config.data_dir, symbol, config.start, config.end
+        )
 
         for timeframe in tqdm(config.timeframes, desc=f"{symbol} timeframes"):
             try:
                 tf_df = resample_timeframe(raw_df, timeframe)
             except Exception as exc:
-                print(
-                    f"[WARN] Failed to resample {symbol} at {timeframe}: {exc}"
-                )
+                print(f"[WARN] Failed to resample {symbol} at {timeframe}: {exc}")
                 continue
 
             if tf_df.empty:
@@ -922,7 +937,8 @@ def main() -> None:
 
             try:
                 engineer = ComprehensiveFeatureEngineer(
-                    feature_types=config.feature_type)
+                    feature_types=config.feature_type
+                )
                 tf_reset = tf_df.reset_index()
                 timestamps = pd.to_datetime(tf_reset["timestamp"], utc=False)
                 if "symbol" not in tf_reset.columns:
@@ -937,12 +953,17 @@ def main() -> None:
             engineered_df = engineered_df.copy()
             engineered_df["timestamp"] = timestamps.values
             engineered_df["timestamp"] = pd.to_datetime(
-                engineered_df["timestamp"], utc=False)
-            engineered_df = engineered_df.drop_duplicates(
-                subset=["timestamp"]).set_index("timestamp").sort_index()
+                engineered_df["timestamp"], utc=False
+            )
+            engineered_df = (
+                engineered_df.drop_duplicates(subset=["timestamp"])
+                .set_index("timestamp")
+                .sort_index()
+            )
 
             base_feature_cols = get_feature_columns_by_type(
-                engineered_df, config.feature_type)
+                engineered_df, config.feature_type
+            )
             base_feature_cols = [
                 col for col in base_feature_cols if col not in tf_df.columns
             ]
@@ -960,23 +981,23 @@ def main() -> None:
                 continue
 
             enriched_df, manual_features = enrich_features(
-                aligned_df, config.max_lag, config.extra_features)
+                aligned_df, config.max_lag, config.extra_features
+            )
 
             feature_cols = [
                 col for col in base_feature_cols if col in enriched_df.columns
             ]
             feature_cols.extend(manual_features)
             feature_cols = [
-                col for col in dict.fromkeys(feature_cols)
-                if col in enriched_df.columns
+                col for col in dict.fromkeys(feature_cols) if col in enriched_df.columns
             ]
 
             if not feature_cols:
                 continue
 
-            corr_results = compute_correlations(enriched_df, feature_cols,
-                                                config.forward_bars,
-                                                config.min_samples)
+            corr_results = compute_correlations(
+                enriched_df, feature_cols, config.forward_bars, config.min_samples
+            )
             if not corr_results:
                 continue
 
@@ -999,11 +1020,18 @@ def main() -> None:
     summary_path = run_dir / "timeframe_forward_summary.csv"
     summary_df.to_csv(summary_path, index=False)
 
-    markdown_path = (config.markdown_report if config.markdown_report
-                     is not None else run_dir / "timeframe_forward_report.md")
+    markdown_path = (
+        config.markdown_report
+        if config.markdown_report is not None
+        else run_dir / "timeframe_forward_report.md"
+    )
     write_markdown_report(markdown_path, config, summary_df, details_df)
 
-    html_path = config.html_report if config.html_report else run_dir / "timeframe_forward_report.html"
+    html_path = (
+        config.html_report
+        if config.html_report
+        else run_dir / "timeframe_forward_report.html"
+    )
     write_html_report(html_path, config, summary_df, details_df)
 
     print(f"Saved detailed metrics to {details_path}")

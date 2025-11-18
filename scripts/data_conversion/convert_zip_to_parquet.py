@@ -17,8 +17,9 @@ import argparse
 import re
 
 # 设置日志
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -94,21 +95,21 @@ class DataConverter:
 
                 # 如果第一行是数字，说明没有header
                 if first_line.strip().split(",")[0].replace(".", "").isdigit():
-                    logger.info(
-                        "No header detected, using default column names")
-                    read_params.update({
-                        "header":
-                        None,
-                        "names": [
-                            "agg_trade_id",
-                            "price",
-                            "quantity",
-                            "first_trade_id",
-                            "last_trade_id",
-                            "transact_time",
-                            "is_buyer_maker",
-                        ],
-                    })
+                    logger.info("No header detected, using default column names")
+                    read_params.update(
+                        {
+                            "header": None,
+                            "names": [
+                                "agg_trade_id",
+                                "price",
+                                "quantity",
+                                "first_trade_id",
+                                "last_trade_id",
+                                "transact_time",
+                                "is_buyer_maker",
+                            ],
+                        }
+                    )
 
                 try:
                     with zip_ref.open(csv_file) as csv_handle:
@@ -140,7 +141,8 @@ class DataConverter:
 
                 # 生成输出文件名
                 output_file = self._generate_output_filename(
-                    zip_file, normalized_symbol)
+                    zip_file, normalized_symbol
+                )
 
                 # 保存为parquet
                 df_ohlc.to_parquet(output_file, compression="snappy")
@@ -148,8 +150,9 @@ class DataConverter:
 
                 # 备份原始文件
                 if self.backup_dir:
-                    backup_file = os.path.join(self.backup_dir,
-                                               os.path.basename(zip_file))
+                    backup_file = os.path.join(
+                        self.backup_dir, os.path.basename(zip_file)
+                    )
                     shutil.copy2(zip_file, backup_file)
                     logger.info(f"Backed up to: {backup_file}")
 
@@ -172,8 +175,7 @@ class DataConverter:
             # 检查必要的列
             required_cols = ["transact_time", "price", "quantity"]
             if not all(col in df.columns for col in required_cols):
-                logger.warning(
-                    f"Missing required columns in {df.columns.tolist()}")
+                logger.warning(f"Missing required columns in {df.columns.tolist()}")
                 return None
 
             # 转换时间戳
@@ -201,11 +203,11 @@ class DataConverter:
             df_indexed = df.set_index("timestamp")
 
             # 重采样为5分钟K线
-            df_ohlc = (df_indexed.resample("5min").agg({
-                "close": ["first", "max", "min", "last"],
-                "volume":
-                "sum"
-            }).dropna())
+            df_ohlc = (
+                df_indexed.resample("5min")
+                .agg({"close": ["first", "max", "min", "last"], "volume": "sum"})
+                .dropna()
+            )
 
             # 展平列名
             df_ohlc.columns = ["open", "high", "low", "close", "volume"]
@@ -221,59 +223,59 @@ class DataConverter:
             if "is_buyer_maker" in df_indexed.columns:
                 # 分类买卖方
                 df_indexed["taker_buy"] = (
-                    ~df_indexed["is_buyer_maker"].astype(bool)).astype(int)
-                df_indexed["buy_qty"] = np.where(df_indexed["taker_buy"] == 1,
-                                                 df_indexed["volume"], 0.0)
-                df_indexed["sell_qty"] = np.where(df_indexed["taker_buy"] == 1,
-                                                  0.0, df_indexed["volume"])
+                    ~df_indexed["is_buyer_maker"].astype(bool)
+                ).astype(int)
+                df_indexed["buy_qty"] = np.where(
+                    df_indexed["taker_buy"] == 1, df_indexed["volume"], 0.0
+                )
+                df_indexed["sell_qty"] = np.where(
+                    df_indexed["taker_buy"] == 1, 0.0, df_indexed["volume"]
+                )
 
                 # 重采样订单流
-                order_flow = df_indexed.resample("5min").agg({
-                    "buy_qty": "sum",
-                    "sell_qty": "sum"
-                })
+                order_flow = df_indexed.resample("5min").agg(
+                    {"buy_qty": "sum", "sell_qty": "sum"}
+                )
 
                 # 计算 taker_buy_ratio
                 order_flow["taker_buy_ratio"] = order_flow["buy_qty"] / (
-                    order_flow["buy_qty"] + order_flow["sell_qty"]).replace(
-                        0, np.nan)
-                order_flow["taker_buy_ratio"] = order_flow[
-                    "taker_buy_ratio"].fillna(0.5)
+                    order_flow["buy_qty"] + order_flow["sell_qty"]
+                ).replace(0, np.nan)
+                order_flow["taker_buy_ratio"] = order_flow["taker_buy_ratio"].fillna(
+                    0.5
+                )
 
                 # 计算 CVD 特征
                 delta = order_flow["buy_qty"] - order_flow["sell_qty"]
-                order_flow["cvd_short"] = delta.rolling(window=20,
-                                                        min_periods=1).sum()
-                order_flow["cvd_medium"] = delta.rolling(window=60,
-                                                         min_periods=1).sum()
-                order_flow["cvd_long"] = delta.rolling(window=288,
-                                                       min_periods=1).sum()
+                order_flow["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
+                order_flow["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
+                order_flow["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
                 order_flow["cvd_change_1"] = delta
                 order_flow["cvd_change_5"] = delta.rolling(window=5).sum()
                 order_flow["cvd_change_20"] = delta.rolling(window=20).sum()
 
                 # CVD 归一化
                 total_volume = order_flow["buy_qty"] + order_flow["sell_qty"]
-                order_flow["cvd_normalized"] = delta / total_volume.replace(
-                    0, np.nan)
-                order_flow["cvd_normalized"] = order_flow[
-                    "cvd_normalized"].fillna(0)
+                order_flow["cvd_normalized"] = delta / total_volume.replace(0, np.nan)
+                order_flow["cvd_normalized"] = order_flow["cvd_normalized"].fillna(0)
                 order_flow["cvd"] = delta.cumsum()
 
                 # 合并到 OHLC 数据
-                order_flow_subset = order_flow[[
-                    "buy_qty",
-                    "sell_qty",
-                    "taker_buy_ratio",
-                    "cvd",
-                    "cvd_short",
-                    "cvd_medium",
-                    "cvd_long",
-                    "cvd_change_1",
-                    "cvd_change_5",
-                    "cvd_change_20",
-                    "cvd_normalized",
-                ]]
+                order_flow_subset = order_flow[
+                    [
+                        "buy_qty",
+                        "sell_qty",
+                        "taker_buy_ratio",
+                        "cvd",
+                        "cvd_short",
+                        "cvd_medium",
+                        "cvd_long",
+                        "cvd_change_1",
+                        "cvd_change_5",
+                        "cvd_change_20",
+                        "cvd_normalized",
+                    ]
+                ]
                 df_ohlc = df_ohlc.join(order_flow_subset, how="left")
                 df_ohlc = df_ohlc.ffill().fillna(0)
 
@@ -368,8 +370,8 @@ class DataConverter:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
-        description=
-        "Convert Binance ZIP aggTrades to Parquet (5min OHLC + orderflow)")
+        description="Convert Binance ZIP aggTrades to Parquet (5min OHLC + orderflow)"
+    )
     parser.add_argument(
         "--input-dir",
         default=None,
@@ -396,13 +398,10 @@ def main():
     print("🚀 Converting ZIP files to Parquet format...")
 
     # 配置路径（使用绝对路径，指向仓库根目录）
-    base_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", ".."))
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     input_dir = args.input_dir or os.path.join(base_dir, "data", "agg_data")
-    output_dir = args.output_dir or os.path.join(base_dir, "data",
-                                                 "parquet_data")
-    backup_dir = args.backup_dir or os.path.join(base_dir, "data",
-                                                 "backup_zip")
+    output_dir = args.output_dir or os.path.join(base_dir, "data", "parquet_data")
+    backup_dir = args.backup_dir or os.path.join(base_dir, "data", "backup_zip")
 
     print(f"📂 Base directory: {base_dir}")
     print(f"📂 Input directory: {input_dir}")
@@ -437,8 +436,7 @@ def main():
             )
 
         if len(results["converted_files"]) > 5:
-            print(
-                f"   ... and {len(results['converted_files']) - 5} more files")
+            print(f"   ... and {len(results['converted_files']) - 5} more files")
 
     if results["failed_files"]:
         print(f"\n❌ Failed files:")
@@ -451,16 +449,14 @@ def main():
     # 清理zip文件（可非交互）
     if results["converted_files"]:
         if args.cleanup == "yes":
-            cleaned_count = converter.cleanup_zip_files(
-                results["converted_files"])
+            cleaned_count = converter.cleanup_zip_files(results["converted_files"])
             print(f"✅ Cleaned up {cleaned_count} zip files")
         else:
             response = input(
                 f"\n🗑️  Clean up {len(results['converted_files'])} converted zip files? (y/N): "
             )
             if response.lower() == "y":
-                cleaned_count = converter.cleanup_zip_files(
-                    results["converted_files"])
+                cleaned_count = converter.cleanup_zip_files(results["converted_files"])
                 print(f"✅ Cleaned up {cleaned_count} zip files")
 
     print(f"\n🎉 Data conversion complete!")

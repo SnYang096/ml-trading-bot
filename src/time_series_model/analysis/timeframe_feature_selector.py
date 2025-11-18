@@ -218,7 +218,11 @@ def group_by_timeframe(top_df: pd.DataFrame, config: SelectorConfig) -> List[Dic
         groups.append(group_entry)
 
     groups.sort(
-        key=lambda g: (g["timeframe"], g["forward_bars"], -g["metrics"]["mean_abs_pearson"])
+        key=lambda g: (
+            g["timeframe"],
+            g["forward_bars"],
+            -g["metrics"]["mean_abs_pearson"],
+        )
     )
     return groups
 
@@ -230,14 +234,14 @@ def render_yaml(groups: List[Dict], min_abs: float) -> str:
         lines.append(f"  - name: \"{group['name']}\"")
         lines.append(f"    timeframe: \"{group['timeframe']}\"")
         lines.append(f"    forward_bars: {group['forward_bars']}")
-        symbols = ", ".join(f"\"{sym}\"" for sym in group["symbols"])
+        symbols = ", ".join(f'"{sym}"' for sym in group["symbols"])
         lines.append(f"    symbols: [{symbols}]")
-        shared = ", ".join(f"\"{feat}\"" for feat in group["shared_features"])
+        shared = ", ".join(f'"{feat}"' for feat in group["shared_features"])
         lines.append(f"    shared_features: [{shared}]")
         lines.append("    features_by_symbol:")
         for symbol in sorted(group["features_by_symbol"].keys()):
             feats = group["features_by_symbol"][symbol]
-            feats_str = ", ".join(f"\"{feat}\"" for feat in feats)
+            feats_str = ", ".join(f'"{feat}"' for feat in feats)
             lines.append(f"      {symbol}: [{feats_str}]")
         metrics = group["metrics"]
         lines.append(f"    label_expr: \"{group['label_expression']}\"")
@@ -277,7 +281,9 @@ def write_summary_markdown(
             )
             md.write(f"- Symbols: {', '.join(group['symbols'])}\n")
             shared = ", ".join(group["shared_features"])
-            md.write(f"- Shared features (top {len(group['shared_features'])}): {shared}\n")
+            md.write(
+                f"- Shared features (top {len(group['shared_features'])}): {shared}\n"
+            )
             metrics = group["metrics"]
             md.write(
                 f"- mean |ρ|: {metrics['mean_abs_pearson']:.4f}, "
@@ -291,9 +297,15 @@ def write_summary_markdown(
             md.write("\n")
 
         md.write("## Next Steps\n\n")
-        md.write("- Train separate models per group to avoid feature leakage across regimes.\n")
-        md.write("- Use the generated YAML as a training manifest to align data loaders.\n")
-        md.write("- Monitor group-wise IC/IR; pause a group if its metrics degrade materially.\n")
+        md.write(
+            "- Train separate models per group to avoid feature leakage across regimes.\n"
+        )
+        md.write(
+            "- Use the generated YAML as a training manifest to align data loaders.\n"
+        )
+        md.write(
+            "- Monitor group-wise IC/IR; pause a group if its metrics degrade materially.\n"
+        )
 
 
 def main() -> None:
@@ -321,5 +333,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

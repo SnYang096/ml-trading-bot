@@ -12,7 +12,8 @@ from data_tools.data_loader import MarketDataLoader
 
 
 def analyze_prediction_distribution(
-    model_path: str = "trained_model_wavelet_may_2025.pkl", ):
+    model_path: str = "trained_model_wavelet_may_2025.pkl",
+):
     """分析预测分布，检查是否有问题."""
 
     print("=" * 80)
@@ -80,8 +81,7 @@ def analyze_prediction_distribution(
             )
 
 
-def analyze_feature_importance(
-        model_path: str = "trained_model_wavelet_may_2025.pkl"):
+def analyze_feature_importance(model_path: str = "trained_model_wavelet_may_2025.pkl"):
     """分析特征重要性."""
 
     print("\n" + "=" * 80)
@@ -106,21 +106,18 @@ def analyze_feature_importance(
 
         # 获取特征名
         feature_columns = [
-            col for col in data.columns
+            col
+            for col in data.columns
             if col not in ["open", "high", "low", "close", "volume"]
         ]
 
         # 获取重要性
-        importances = stage1_model.model.feature_importance(
-            importance_type="gain")
+        importances = stage1_model.model.feature_importance(importance_type="gain")
 
         # 创建DataFrame
-        feature_importance_df = pd.DataFrame({
-            "feature":
-            feature_columns[:len(importances)],
-            "importance":
-            importances
-        }).sort_values("importance", ascending=False)
+        feature_importance_df = pd.DataFrame(
+            {"feature": feature_columns[: len(importances)], "importance": importances}
+        ).sort_values("importance", ascending=False)
 
         print(f"\nTop 20 最重要特征:")
         for idx, row in feature_importance_df.head(20).iterrows():
@@ -137,7 +134,8 @@ def analyze_feature_importance(
 
 
 def calculate_holding_time_stats(
-    oos_results_file: str = "oos_test_results_with_timeseries_cv.json", ):
+    oos_results_file: str = "oos_test_results_with_timeseries_cv.json",
+):
     """计算平均持仓时间."""
 
     print("\n" + "=" * 80)
@@ -176,8 +174,7 @@ def generate_comprehensive_report():
 
     report = []
     report.append("# 🔍 ML交易系统综合诊断报告\n")
-    report.append(
-        f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    report.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     report.append("=" * 80 + "\n")
 
     # 1. 胜率分析
@@ -194,14 +191,19 @@ def generate_comprehensive_report():
 
     long_mask = y_stage1 == 1
     long_returns = y_stage2[long_mask]
-    baseline_winrate = ((long_returns > 0).sum() / len(long_returns) *
-                        100 if len(long_returns) > 0 else 0)
+    baseline_winrate = (
+        (long_returns > 0).sum() / len(long_returns) * 100
+        if len(long_returns) > 0
+        else 0
+    )
 
     report.append(f"### 基准胜率（完美预测）\n")
     report.append(f"- 训练数据中Long信号总数: {(y_stage1 == 1).sum()}\n")
     report.append(f"- 其中实际上涨: {(long_returns > 0).sum()}\n")
     report.append(f"- **基准胜率: {baseline_winrate:.2f}%**\n")
-    report.append(f"\n💡 如果模型能完美预测所有应该做多的时机，理论最高胜率就是 {baseline_winrate:.2f}%\n")
+    report.append(
+        f"\n💡 如果模型能完美预测所有应该做多的时机，理论最高胜率就是 {baseline_winrate:.2f}%\n"
+    )
 
     # OOS胜率
     with open("oos_test_results_with_timeseries_cv.json", "r") as f:

@@ -3,6 +3,7 @@
 Vendored and adapted from the alpha101-crypto project:
 https://raw.githubusercontent.com/lansetaowa/alpha101-crypto/main/alpha_utils.py
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -107,31 +108,29 @@ def ts_weighted_mean(df: pd.DataFrame, window: float = 10) -> pd.DataFrame:
 
     def _wma(x: np.ndarray) -> float:
         if len(x) < window:
-            w = weights[-len(x):]
+            w = weights[-len(x) :]
         else:
             w = weights
-        return float(np.dot(x, w[-len(x):]) / w[-len(x):].sum())
+        return float(np.dot(x, w[-len(x) :]) / w[-len(x) :].sum())
 
     return df.rolling(window, min_periods=1).apply(_wma, raw=True)
 
 
 def ts_product(df: pd.DataFrame, window: float = 10) -> pd.DataFrame:
-    return _ensure_dataframe(df).rolling(_sanitize_window(window), min_periods=1).apply(np.prod)
+    return (
+        _ensure_dataframe(df)
+        .rolling(_sanitize_window(window), min_periods=1)
+        .apply(np.prod)
+    )
 
 
 def ts_corr(x: pd.DataFrame, y: pd.DataFrame, window: float = 10) -> pd.DataFrame:
     window = _sanitize_window(window)
     return (
-        _ensure_dataframe(x)
-        .rolling(window, min_periods=1)
-        .corr(_ensure_dataframe(y))
+        _ensure_dataframe(x).rolling(window, min_periods=1).corr(_ensure_dataframe(y))
     )
 
 
 def ts_cov(x: pd.DataFrame, y: pd.DataFrame, window: float = 10) -> pd.DataFrame:
     window = _sanitize_window(window)
-    return (
-        _ensure_dataframe(x)
-        .rolling(window, min_periods=1)
-        .cov(_ensure_dataframe(y))
-    )
+    return _ensure_dataframe(x).rolling(window, min_periods=1).cov(_ensure_dataframe(y))

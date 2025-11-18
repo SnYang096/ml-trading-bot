@@ -46,7 +46,9 @@ class PanelConfig:
             self.target_col,
         }
         return [
-            col for col in df_cols if col not in exclude and not col.startswith("future_return")
+            col
+            for col in df_cols
+            if col not in exclude and not col.startswith("future_return")
         ]
 
 
@@ -92,9 +94,13 @@ class FactorPanelBuilder:
         """Build a panel from a dataframe already containing symbol + timestamp."""
         if self.config.timestamp_col not in df.columns:
             if isinstance(df.index, pd.DatetimeIndex):
-                df = df.reset_index().rename(columns={"index": self.config.timestamp_col})
+                df = df.reset_index().rename(
+                    columns={"index": self.config.timestamp_col}
+                )
             else:
-                raise ValueError(f"Dataframe must include '{self.config.timestamp_col}'.")
+                raise ValueError(
+                    f"Dataframe must include '{self.config.timestamp_col}'."
+                )
         if self.config.symbol_col not in df.columns:
             raise ValueError(f"Dataframe must include '{self.config.symbol_col}'.")
         return self._finalize_panel(df.copy())
@@ -107,7 +113,9 @@ class FactorPanelBuilder:
         df = df.copy()
 
         # Ensure timestamp column type
-        df[cfg.timestamp_col] = pd.to_datetime(df[cfg.timestamp_col], utc=True, errors="coerce")
+        df[cfg.timestamp_col] = pd.to_datetime(
+            df[cfg.timestamp_col], utc=True, errors="coerce"
+        )
         if df[cfg.timestamp_col].isna().any():
             raise ValueError("NaT values detected in timestamp column after coercion.")
 
@@ -164,7 +172,9 @@ class FactorPanelBuilder:
         method = cfg.fill_method
         if method in {"ffill", "bfill"}:
             filled = filled.groupby(level=self.config.symbol_col).apply(
-                lambda grp: grp.sort_index(level=self.config.timestamp_col).fillna(method=method)
+                lambda grp: grp.sort_index(level=self.config.timestamp_col).fillna(
+                    method=method
+                )
             )
             # Groupby adds index level; remove it
             filled.index = filled.index.droplevel(0)
@@ -176,7 +186,9 @@ class FactorPanelBuilder:
             raise ValueError(f"Unsupported fill method: {method}")
         return filled
 
-    def _filter_by_min_assets(self, panel: pd.DataFrame, min_assets: int) -> pd.DataFrame:
+    def _filter_by_min_assets(
+        self, panel: pd.DataFrame, min_assets: int
+    ) -> pd.DataFrame:
         if min_assets <= 1:
             return panel
         counts = panel.groupby(level=self.config.timestamp_col).size()
@@ -222,4 +234,3 @@ class FactorPanelBuilder:
                 len(panel) / max(1, timestamps.nunique())
             ),
         }
-

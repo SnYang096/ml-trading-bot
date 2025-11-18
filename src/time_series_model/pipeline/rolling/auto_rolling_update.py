@@ -34,13 +34,17 @@ from time_series_model.pipeline.dimensionality.utils import (
     load_top_factors_list,
     filter_engineered_by_topk,
 )
-from time_series_model.pipeline.training.classification_model_trainer import ClassificationModelTrainer
+from time_series_model.pipeline.training.classification_model_trainer import (
+    ClassificationModelTrainer,
+)
 from time_series_model.pipeline.training.label_utils import (
     log_return_magnitude,
     rolling_rms_volatility,
     rolling_quantile_classification_labels,
 )
-from time_series_model.strategies.classification_strategy_handler import ClassificationStrategyHandler
+from time_series_model.strategies.classification_strategy_handler import (
+    ClassificationStrategyHandler,
+)
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
 from time_series_model.models.quant_trading_model import TradingModelPipeline
 from time_series_model.backtesting.vectorbot import (
@@ -65,11 +69,9 @@ class _SingleTimeframePipeline:
         self.volatility_models = {timeframe: vol_model}
 
 
-
-
 def find_all_available_files(data_dir: str, symbol: str) -> List[Dict]:
     """Find all available monthly data files for a symbol across all years.
-    
+
     Returns sorted list of files from earliest to latest.
     """
     files = []
@@ -103,6 +105,7 @@ def find_all_available_files(data_dir: str, symbol: str) -> List[Dict]:
 
             # Pattern extraction
             import re
+
             date_patterns = [
                 rf"{re.escape(symbol)}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
                 rf"{re.escape(file_symbol)}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
@@ -121,13 +124,15 @@ def find_all_available_files(data_dir: str, symbol: str) -> List[Dict]:
                     year = int(match.group("year"))
                     month = int(match.group("month"))
 
-                    files.append({
-                        "path": str(file_path),
-                        "year": year,
-                        "month": month,
-                        "month_str": f"{year}-{month:02d}",
-                        "timestamp": pd.Timestamp(year, month, 1),
-                    })
+                    files.append(
+                        {
+                            "path": str(file_path),
+                            "year": year,
+                            "month": month,
+                            "month_str": f"{year}-{month:02d}",
+                            "timestamp": pd.Timestamp(year, month, 1),
+                        }
+                    )
                 except (ValueError, KeyError):
                     continue
 
@@ -139,8 +144,7 @@ def find_all_available_files(data_dir: str, symbol: str) -> List[Dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=
-        "Auto Rolling Update: Train and update models up to latest available data"
+        description="Auto Rolling Update: Train and update models up to latest available data"
     )
     parser.add_argument(
         "--data-dir",
@@ -170,8 +174,7 @@ def main() -> None:
         "--output",
         type=str,
         default=None,
-        help=
-        "Output directory name (default: auto_rolling_{symbol}_{timestamp})",
+        help="Output directory name (default: auto_rolling_{symbol}_{timestamp})",
     )
     parser.add_argument(
         "--gpu",
@@ -195,15 +198,13 @@ def main() -> None:
         "--use-top-factors",
         type=str,
         default=None,
-        help=
-        "Path to top_factors JSON (from dim-compare). If provided, filters engineered features to this Top-K list.",
+        help="Path to top_factors JSON (from dim-compare). If provided, filters engineered features to this Top-K list.",
     )
     parser.add_argument(
         "--forward-bars",
         type=int,
         default=3,
-        help=
-        "Number of bars ahead for label prediction (default: 3). Use 1, 5, 10, or 15 for different horizons.",
+        help="Number of bars ahead for label prediction (default: 3). Use 1, 5, 10, or 15 for different horizons.",
     )
 
     args = parser.parse_args()
@@ -272,12 +273,10 @@ def main() -> None:
 
         if last_idx is not None and last_idx < len(all_files) - 1:
             # Start from next month after last trained
-            all_files = all_files[last_idx + 1:]
+            all_files = all_files[last_idx + 1 :]
             print(f"   Continuing with {len(all_files)} remaining months")
         else:
-            print(
-                f"   ✅ Already up to date (last trained: {last_trained_month})"
-            )
+            print(f"   ✅ Already up to date (last trained: {last_trained_month})")
             return
     else:
         # Load existing results if available
@@ -341,8 +340,7 @@ def main() -> None:
         train_data = []
         for file_info in train_files:
             print(f"   Loading {file_info['month_str']}")
-            df = load_and_process_file(file_info["path"])\
-
+            df = load_and_process_file(file_info["path"])
             if df is not None and len(df) > 0:
                 if args.add_order_flow:
                     df = add_order_flow_features(file_info["path"], df)
@@ -357,8 +355,7 @@ def main() -> None:
 
         # Load test data
         print(f"\n2. Loading test data...")
-        test_df = load_and_process_file(test_file["path"])\
-
+        test_df = load_and_process_file(test_file["path"])
         if test_df is None or len(test_df) == 0:
             print("❌ No test data!")
             continue
@@ -370,9 +367,9 @@ def main() -> None:
 
         # Engineer features
         print(f"\n3. Engineering features...")
-        train_df, feature_engineer = engineer_features(train_df,
-                                                       feature_engineer,
-                                                       fit=True)
+        train_df, feature_engineer = engineer_features(
+            train_df, feature_engineer, fit=True
+        )
         test_df, _ = engineer_features(test_df, feature_engineer, fit=False)
         print(
             f"   ✓ Features engineered: {len(get_feature_columns(train_df))} features"
@@ -383,30 +380,26 @@ def main() -> None:
             try:
                 top_list = load_top_factors_list(args.use_top_factors)
                 if not top_list:
-                    print(
-                        "   ⚠️ Top factors list is empty; skipping filtering")
+                    print("   ⚠️ Top factors list is empty; skipping filtering")
                 else:
-                    print(
-                        f"   🔎 Applying Top-K filter with {len(top_list)} factors"
-                    )
+                    print(f"   🔎 Applying Top-K filter with {len(top_list)} factors")
                     feature_cols = get_feature_columns(train_df)
                     # Convert to dict format for filter function
                     engineered_data = {
                         "train": train_df[feature_cols],
-                        "test": test_df[feature_cols]
+                        "test": test_df[feature_cols],
                     }
-                    filtered_data = filter_engineered_by_topk(
-                        engineered_data, top_list)
+                    filtered_data = filter_engineered_by_topk(engineered_data, top_list)
                     train_df_filtered = train_df.copy()
-                    train_df_filtered = train_df_filtered.drop(
-                        columns=feature_cols)
+                    train_df_filtered = train_df_filtered.drop(columns=feature_cols)
                     train_df_filtered = pd.concat(
-                        [train_df_filtered, filtered_data["train"]], axis=1)
+                        [train_df_filtered, filtered_data["train"]], axis=1
+                    )
                     test_df_filtered = test_df.copy()
-                    test_df_filtered = test_df_filtered.drop(
-                        columns=feature_cols)
+                    test_df_filtered = test_df_filtered.drop(columns=feature_cols)
                     test_df_filtered = pd.concat(
-                        [test_df_filtered, filtered_data["test"]], axis=1)
+                        [test_df_filtered, filtered_data["test"]], axis=1
+                    )
                     train_df = train_df_filtered
                     test_df = test_df_filtered
                     print(
@@ -421,7 +414,9 @@ def main() -> None:
 
         def _apply_labeling(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
-            df["future_return"] = df["close"].shift(-args.forward_bars) / df["close"] - 1
+            df["future_return"] = (
+                df["close"].shift(-args.forward_bars) / df["close"] - 1
+            )
             df["future_volatility"] = rolling_rms_volatility(
                 df["future_return"],
                 window=vol_window,
@@ -478,7 +473,9 @@ def main() -> None:
         vol_preprocess_params = preprocess_params_dict.get("vol")
 
         if model_cls is None or model_return is None or model_vol is None:
-            print("❌ Failed to train classification/return/volatility models; skipping month.")
+            print(
+                "❌ Failed to train classification/return/volatility models; skipping month."
+            )
             continue
 
         print("   ✓ Models trained successfully")
@@ -503,7 +500,9 @@ def main() -> None:
             classification_threshold=0.5,
         )
         test_slice = test_df.loc[X_test_df.index]
-        signals_df = strategy_handler.generate_signals(X_test_df, test_slice, timeframe="default")
+        signals_df = strategy_handler.generate_signals(
+            X_test_df, test_slice, timeframe="default"
+        )
 
         # Performance evaluation
         performance = evaluate_signal_performance(
@@ -535,7 +534,9 @@ def main() -> None:
         y_pred_log = return_log_pred[mask_mag]
         y_true_log = np.log1p(y_true_mag_valid)
         if len(y_true_mag_valid) > 0:
-            ret_rmse = float(np.sqrt(np.mean((y_true_mag_valid - y_pred_mag_valid) ** 2)))
+            ret_rmse = float(
+                np.sqrt(np.mean((y_true_mag_valid - y_pred_mag_valid) ** 2))
+            )
             ret_mae = float(np.mean(np.abs(y_true_mag_valid - y_pred_mag_valid)))
             ret_r2 = float(
                 1
@@ -567,36 +568,40 @@ def main() -> None:
         else:
             vol_rmse = vol_mae = vol_r2 = 0.0
 
-        performance.update({
-            "symbol": args.symbol,
-            "timeframe": f"fb{args.forward_bars}",
-            "forward_bars": args.forward_bars,
-            "test_month": test_file["month_str"],
-            "train_months": len(train_files),
-            "train_samples": int(len(X_train_df)),
-            "test_samples": int(len(X_test_df)),
-            "num_features": len(feature_cols),
-            "train_start": train_files[0]["month_str"],
-            "train_end": train_files[-1]["month_str"],
-            "feature_type": args.feature_type,
-            "cls_accuracy": cls_accuracy,
-            "cls_precision": float(precision),
-            "cls_recall": float(recall),
-            "cls_f1": float(f1),
-            "cls_auc": cls_auc,
-            "cls_pr_auc": cls_pr_auc,
-            "avg_signal_strength": float(np.mean(np.abs(signals_df["signal_strength"]))),
-            "test_rmse_return": ret_rmse,
-            "test_mae_return": ret_mae,
-            "test_r2_return": ret_r2,
-            "test_rmse_return_log": ret_rmse_log,
-            "test_mae_return_log": ret_mae_log,
-            "test_r2_return_log": ret_r2_log,
-            "test_rmse_vol": vol_rmse,
-            "test_mae_vol": vol_mae,
-            "test_r2_vol": vol_r2,
-            "metrics": metrics_dict,
-        })
+        performance.update(
+            {
+                "symbol": args.symbol,
+                "timeframe": f"fb{args.forward_bars}",
+                "forward_bars": args.forward_bars,
+                "test_month": test_file["month_str"],
+                "train_months": len(train_files),
+                "train_samples": int(len(X_train_df)),
+                "test_samples": int(len(X_test_df)),
+                "num_features": len(feature_cols),
+                "train_start": train_files[0]["month_str"],
+                "train_end": train_files[-1]["month_str"],
+                "feature_type": args.feature_type,
+                "cls_accuracy": cls_accuracy,
+                "cls_precision": float(precision),
+                "cls_recall": float(recall),
+                "cls_f1": float(f1),
+                "cls_auc": cls_auc,
+                "cls_pr_auc": cls_pr_auc,
+                "avg_signal_strength": float(
+                    np.mean(np.abs(signals_df["signal_strength"]))
+                ),
+                "test_rmse_return": ret_rmse,
+                "test_mae_return": ret_mae,
+                "test_r2_return": ret_r2,
+                "test_rmse_return_log": ret_rmse_log,
+                "test_mae_return_log": ret_mae_log,
+                "test_r2_return_log": ret_r2_log,
+                "test_rmse_vol": vol_rmse,
+                "test_mae_vol": vol_mae,
+                "test_r2_vol": vol_r2,
+                "metrics": metrics_dict,
+            }
+        )
 
         all_results.append(performance)
 
@@ -618,7 +623,9 @@ def main() -> None:
             cls_pipeline.preprocessor = RobustWinsorizer.from_params(
                 classification_preprocess_params, forward_bars=args.forward_bars
             )
-        cls_path = os.path.join(models_dir, f"classification_pipeline_{test_file['month_str']}.pkl")
+        cls_path = os.path.join(
+            models_dir, f"classification_pipeline_{test_file['month_str']}.pkl"
+        )
         cls_pipeline.save(cls_path)
 
         return_pipeline = TradingModelPipeline(
@@ -634,7 +641,9 @@ def main() -> None:
             return_pipeline.preprocessor = RobustWinsorizer.from_params(
                 return_preprocess_params, forward_bars=args.forward_bars
             )
-        ret_path = os.path.join(models_dir, f"return_pipeline_{test_file['month_str']}.pkl")
+        ret_path = os.path.join(
+            models_dir, f"return_pipeline_{test_file['month_str']}.pkl"
+        )
         return_pipeline.save(ret_path)
 
         vol_pipeline = TradingModelPipeline(
@@ -649,7 +658,9 @@ def main() -> None:
             vol_pipeline.preprocessor = RobustWinsorizer.from_params(
                 vol_preprocess_params, forward_bars=args.forward_bars
             )
-        vol_path = os.path.join(models_dir, f"vol_pipeline_{test_file['month_str']}.pkl")
+        vol_path = os.path.join(
+            models_dir, f"vol_pipeline_{test_file['month_str']}.pkl"
+        )
         vol_pipeline.save(vol_path)
         print(f"\n   💾 Pipelines saved under {models_dir}")
 
@@ -672,16 +683,20 @@ def main() -> None:
     )
     print("-" * 80)
     for _, row in results_df.iterrows():
-        print(f"{row['test_month']:<12} {row['total_trades']:<8} "
-              f"{row['total_return']:>8.2f}% {row['win_rate']:>6.1f}% "
-              f"{row['profit_factor']:>6.2f} {row['max_drawdown']:>8.2f}%")
+        print(
+            f"{row['test_month']:<12} {row['total_trades']:<8} "
+            f"{row['total_return']:>8.2f}% {row['win_rate']:>6.1f}% "
+            f"{row['profit_factor']:>6.2f} {row['max_drawdown']:>8.2f}%"
+        )
 
     print("-" * 80)
-    print(f"{'AVERAGE':<12} {results_df['total_trades'].mean():<8.1f} "
-          f"{results_df['total_return'].mean():>8.2f}% "
-          f"{results_df['win_rate'].mean():>6.1f}% "
-          f"{results_df['profit_factor'].mean():>6.2f} "
-          f"{results_df['max_drawdown'].mean():>8.2f}%")
+    print(
+        f"{'AVERAGE':<12} {results_df['total_trades'].mean():<8.1f} "
+        f"{results_df['total_return'].mean():>8.2f}% "
+        f"{results_df['win_rate'].mean():>6.1f}% "
+        f"{results_df['profit_factor'].mean():>6.2f} "
+        f"{results_df['max_drawdown'].mean():>8.2f}%"
+    )
 
     # Save summary
     summary = {
@@ -689,8 +704,7 @@ def main() -> None:
         "total_months_tested": len(results_df),
         "earliest_month": all_files[0]["month_str"] if all_files else "N/A",
         "latest_month": all_files[-1]["month_str"] if all_files else "N/A",
-        "last_trained_month":
-        all_files[-1]["month_str"] if all_files else "N/A",
+        "last_trained_month": all_files[-1]["month_str"] if all_files else "N/A",
         "avg_return": float(results_df["total_return"].mean()),
         "avg_win_rate": float(results_df["win_rate"].mean()),
         "avg_profit_factor": float(results_df["profit_factor"].mean()),
@@ -708,11 +722,16 @@ def main() -> None:
     print(f"\n💾 Results saved to: {results_dir}/")
     print(f"   - monthly_results.csv")
     print(f"   - summary.json")
-    print(f"   - classification_pipeline_*.pkl / return_pipeline_*.pkl / vol_pipeline_*.pkl")
+    print(
+        f"   - classification_pipeline_*.pkl / return_pipeline_*.pkl / vol_pipeline_*.pkl"
+    )
 
     # Generate HTML report
     try:
-        from time_series_model.pipeline.dimensionality.report_generator import write_rolling_report
+        from time_series_model.pipeline.dimensionality.report_generator import (
+            write_rolling_report,
+        )
+
         report_path = write_rolling_report(
             results_dir,
             summary_path=summary_path,
