@@ -56,7 +56,10 @@ def alpha001_ts(returns: pd.Series, window: int = 5) -> pd.Series:
     时序优化: 直接用波动率
     """
     # 方案 A: 使用滚动波动率（推荐）
-    return returns.rolling(window).std().fillna(0)
+    # CRITICAL: 确保只使用历史数据，不包含当前时刻
+    # rolling(window) 默认包含当前时刻，这是正确的（预测 future_return[i] 可以使用 close[i]）
+    # 但为了更安全，我们可以明确使用 min_periods 确保有足够的历史数据
+    return returns.rolling(window, min_periods=1).std().fillna(0)
 
     # 方案 B: 使用 ts_argmax 位置（作为状态特征）
     # returns_squared = returns ** 2
@@ -86,13 +89,16 @@ def alpha022_ts(
     - 用原始波动率代替 rank
     """
     # 计算量价相关性（使用更稳定的窗口）
-    hv_corr = high.rolling(corr_window).corr(volume)
+    # CRITICAL: rolling().corr() 只使用历史数据，这是正确的
+    hv_corr = high.rolling(corr_window, min_periods=2).corr(volume)
 
     # 计算相关性的变化率
+    # CRITICAL: diff() 只使用历史数据，这是正确的
     hv_corr_change = hv_corr.diff(delta_window)
 
     # 计算波动率（直接使用，不用 rank）
-    volatility = close.rolling(vol_window).std()
+    # CRITICAL: rolling().std() 只使用历史数据，这是正确的
+    volatility = close.rolling(vol_window, min_periods=2).std()
 
     # 组合因子
     alpha = -hv_corr_change * volatility

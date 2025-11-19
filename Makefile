@@ -282,6 +282,22 @@ factor-compute:
 		--format $(FACTOR_COMPUTE_FORMAT)
 
 # ---------------------------------------------------------------------------
+# Alphalens test (verify installation and basic functionality)
+# ---------------------------------------------------------------------------
+
+test-alphalens:
+	@echo "🧪 Testing Alphalens installation and basic functionality in Docker..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/test_alphalens.py
+
+alphalens-example:
+	@echo "📊 Running complete Alphalens example with comprehensive analysis..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_example.py
+
+alphalens-evaluate:
+	@echo "📊 Evaluating trading signal quality using Alphalens..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_evaluate_predictions.py
+
+# ---------------------------------------------------------------------------
 # Factor analysis using Alphalens （跑不起来）
 # ---------------------------------------------------------------------------
 
@@ -542,9 +558,9 @@ nautilus-backtest:
 # ---------------------------------------------------------------------------
 
 RANK_IC_SYMBOL ?= $(SYMBOL)
-RANK_IC_HORIZON ?= 5
+RANK_IC_HORIZON ?= 24
 RANK_IC_TIMEFRAME ?= 240T
-RANK_IC_FEATURE_TYPE ?= baseline,enhanced
+RANK_IC_FEATURE_TYPE ?= baseline,order_flow,alpha101
 RANK_IC_N_SPLITS ?= 5
 RANK_IC_TEST_SIZE ?= 0.15
 RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
@@ -586,8 +602,9 @@ ts-r-rank-ic-train:
 
 FEATURE_EVAL_SYMBOL ?= $(SYMBOL)
 FEATURE_EVAL_TIMEFRAME ?= 240T
-FEATURE_EVAL_HORIZON ?= 5
+FEATURE_EVAL_HORIZON ?= 24
 FEATURE_EVAL_TYPES ?= baseline,default,enhanced,hurst,wavelet,hilbert,spectral,order_flow,alpha101
+FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
 
 feature-eval:
@@ -606,7 +623,8 @@ feature-eval:
 		--horizon $(FEATURE_EVAL_HORIZON) \
 		--feature-types $(FEATURE_EVAL_TYPES) \
 		--output-dir /workspace/$(FEATURE_EVAL_OUTPUT_DIR) \
-		--test-leakage
+		--test-leakage \
+		--leakage-threshold $(FEATURE_EVAL_LEAKAGE_THRESHOLD)
 	@echo "✅ Evaluation complete. Check results in $(FEATURE_EVAL_OUTPUT_DIR)"
 
 

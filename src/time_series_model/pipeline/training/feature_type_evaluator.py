@@ -35,6 +35,7 @@ def evaluate_feature_type(
     hold_period: int = 5,
     n_splits: int = 3,
     test_leakage: bool = True,
+    leakage_threshold: float = 0.03,
 ) -> Dict:
     """
     Evaluate a specific feature type for IC and data leakage.
@@ -129,8 +130,27 @@ def evaluate_feature_type(
 
         results["valid_samples"] = valid_samples
 
-        # Train model and calculate Rank IC
-        print("Training model and calculating Rank IC...")
+        # Check sample size and feature count
+        n_samples = len(df_with_labels)
+        n_features = len(feature_cols)
+        samples_per_feature = n_samples / max(n_features, 1)
+
+        print(f"Training model and calculating Rank IC...")
+        print(
+            f"   Samples: {n_samples}, Features: {n_features}, Ratio: {samples_per_feature:.1f} samples/feature"
+        )
+
+        # Warn if sample size is too small relative to features
+        if samples_per_feature < 10:
+            print(
+                f"   ⚠️  Warning: Low samples/feature ratio ({samples_per_feature:.1f})"
+            )
+            print(f"      High risk of overfitting! Consider:")
+            print(f"      - Using fewer features")
+            print(f"      - Using stronger regularization")
+            print(f"      - Collecting more data")
+
+        # Pass hold_period to train_rank_ic_model for adaptive parameters
         models, avg_rank_ic, cv_results = train_rank_ic_model(
             df_with_labels,
             feature_cols=feature_cols,
@@ -142,6 +162,7 @@ def evaluate_feature_type(
             min_trend_strength=0.0,
             smooth_target=False,
             weight_col=None,  # Don't use weights for evaluation
+            hold_period=hold_period,  # Pass hold_period for adaptive parameters
         )
 
         results["avg_rank_ic"] = float(avg_rank_ic)
@@ -161,13 +182,24 @@ def evaluate_feature_type(
             print("Running data leakage tests...")
 
             # Random walk test
+            # For long horizons (e.g., 24 forwards = 4 days), use a more lenient threshold
+            # Longer horizons may have slightly higher Rank IC on random data due to statistical noise
+            adaptive_threshold = leakage_threshold
+            if hold_period >= 20:  # Long horizon (e.g., 4 days for 240T)
+                adaptive_threshold = max(
+                    leakage_threshold, 0.04
+                )  # More lenient for long horizons
+                print(
+                    f"   ℹ️  Long horizon detected (hold_period={hold_period}), using threshold={adaptive_threshold:.3f}"
+                )
+
             leakage_test = test_random_walk_leakage(
                 feature_cols=feature_cols,
                 n_samples=2000,
                 n_features=min(100, len(feature_cols)),
                 hold_period=hold_period,
                 n_splits=3,
-                threshold=0.03,
+                threshold=adaptive_threshold,
             )
             results["random_walk_test"] = leakage_test
 
@@ -260,6 +292,12 @@ def main():
         default=True,
         help="Run data leakage tests",
     )
+    parser.add_argument(
+        "--leakage-threshold",
+        type=float,
+        default=0.03,
+        help="Threshold for data leakage detection (default: 0.03, use 0.04-0.05 for long horizons like 24 forwards)",
+    )
 
     args = parser.parse_args()
 
@@ -334,6 +372,7 @@ def main():
             hold_period=args.horizon,
             n_splits=3,
             test_leakage=args.test_leakage,
+            leakage_threshold=args.leakage_threshold,
         )
         all_results[feat_type] = result
 

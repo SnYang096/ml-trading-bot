@@ -292,6 +292,7 @@ def train_rank_ic_model(
     smooth_target: bool = False,
     smooth_method: str = "moving_average",
     smooth_window: int = 3,
+    hold_period: Optional[int] = None,
 ) -> Tuple[List[lgb.Booster], float, pd.DataFrame]:
     """
     Train Rank IC-optimized model with time series cross-validation.
@@ -318,6 +319,7 @@ def train_rank_ic_model(
         smooth_target: Whether to smooth target variable
         smooth_method: Smoothing method ("moving_average", "ewm", or "quantile")
         smooth_window: Window size for smoothing
+        hold_period: Optional holding period for adaptive anti-overfitting parameters
 
     Returns:
         Tuple of (models, avg_rank_ic, results_df):
@@ -353,6 +355,50 @@ def train_rank_ic_model(
             df, weight_col or "trend_strength", min_trend_strength
         )
 
+    # Adaptive parameters based on sample size and feature count
+    # For small samples + long horizon, use stronger regularization to prevent overfitting
+    n_samples = len(df)
+    n_features = len(feature_cols)
+    samples_per_feature = n_samples / max(n_features, 1)
+
+    # Determine if we need anti-overfitting measures
+    # Get hold_period from parameter or default
+    if hold_period is None:
+        hold_period = 5  # Default
+
+    is_small_sample = n_samples < 3000
+    is_long_horizon = hold_period >= 20
+    is_high_dim = samples_per_feature < 10  # Less than 10 samples per feature
+
+    # Feature selection for high-dimensional cases
+    if is_high_dim and n_features > 50:
+        print(
+            f"   ⚠️  High-dimensional case detected ({n_features} features, {samples_per_feature:.1f} samples/feature)"
+        )
+        print(
+            f"      Applying feature selection to reduce to top {min(50, int(n_samples / 20))} features"
+        )
+        # Select top features based on correlation with target
+        feature_importance_scores = []
+        for col in feature_cols:
+            try:
+                corr = abs(df[col].corr(df[target_col]))
+                if not np.isnan(corr):
+                    feature_importance_scores.append((col, corr))
+            except:
+                pass
+
+        # Sort by correlation and keep top features
+        feature_importance_scores.sort(key=lambda x: x[1], reverse=True)
+        max_features = min(50, int(n_samples / 20), len(feature_importance_scores))
+        selected_features = [f[0] for f in feature_importance_scores[:max_features]]
+        feature_cols = selected_features
+        n_features = len(feature_cols)
+        samples_per_feature = n_samples / max(n_features, 1)
+        print(
+            f"      Selected {n_features} features (samples/feature: {samples_per_feature:.1f})"
+        )
+
     X = df[feature_cols].values
     y = df[target_col].values
     y_true_return = df["future_return"].values
@@ -369,18 +415,44 @@ def train_rank_ic_model(
     ic_scores = []
     fold_results = []
 
-    default_params = {
-        "objective": "regression",
-        "metric": "rmse",
-        "boosting_type": "gbdt",
-        "num_leaves": 31,
-        "learning_rate": 0.05,
-        "feature_fraction": 0.9,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 5,
-        "verbose": -1,
-        "force_col_wise": True,
-    }
+    if is_small_sample or is_long_horizon or is_high_dim:
+        print(
+            f"   ⚠️  Small sample ({n_samples}) + long horizon detected, using anti-overfitting parameters"
+        )
+        print(f"      Samples per feature: {samples_per_feature:.1f}")
+        # Stronger regularization for small samples
+        default_params = {
+            "objective": "regression",
+            "metric": "rmse",
+            "boosting_type": "gbdt",
+            "num_leaves": min(
+                15, max(7, int(n_samples / 100))
+            ),  # Adaptive: smaller for small samples
+            "learning_rate": 0.02,  # Lower learning rate
+            "feature_fraction": 0.7,  # More aggressive feature sampling
+            "bagging_fraction": 0.7,  # More aggressive bagging
+            "bagging_freq": 3,
+            "min_data_in_leaf": max(20, int(n_samples / 50)),  # More samples per leaf
+            "min_gain_to_split": 0.1,  # Higher threshold to split
+            "lambda_l1": 0.1,  # L1 regularization
+            "lambda_l2": 0.1,  # L2 regularization
+            "max_depth": 5,  # Limit tree depth
+            "verbose": -1,
+            "force_col_wise": True,
+        }
+    else:
+        default_params = {
+            "objective": "regression",
+            "metric": "rmse",
+            "boosting_type": "gbdt",
+            "num_leaves": 31,
+            "learning_rate": 0.05,
+            "feature_fraction": 0.9,
+            "bagging_fraction": 0.8,
+            "bagging_freq": 5,
+            "verbose": -1,
+            "force_col_wise": True,
+        }
 
     if lgbm_params:
         default_params.update(lgbm_params)
@@ -427,16 +499,29 @@ def train_rank_ic_model(
             free_raw_data=False,
         )
 
+        # Adaptive early stopping based on sample size
+        # For small samples, use more aggressive early stopping
+        if is_small_sample or is_long_horizon or is_high_dim:
+            stopping_rounds = max(
+                20, min(50, int(len(X_train) / 20))
+            )  # Adaptive stopping
+            num_boost_round = max(
+                100, min(300, int(len(X_train) / 5))
+            )  # Limit iterations
+        else:
+            stopping_rounds = 50
+            num_boost_round = 500
+
         # Train model
         model = lgb.train(
             default_params,
             train_data,
-            num_boost_round=500,
+            num_boost_round=num_boost_round,
             valid_sets=[train_data, val_data],
             valid_names=["train", "val"],
             callbacks=[
-                lgb.early_stopping(stopping_rounds=50, verbose=False),
-                lgb.log_evaluation(period=100, show_stdv=False),
+                lgb.early_stopping(stopping_rounds=stopping_rounds, verbose=False),
+                lgb.log_evaluation(period=0),
             ],
         )
 

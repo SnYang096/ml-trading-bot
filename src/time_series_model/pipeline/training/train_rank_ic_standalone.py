@@ -367,6 +367,7 @@ def main():
         filter_high_confidence=args.filter_high_confidence,
         min_trend_strength=args.min_trend_strength,
         smooth_target=args.smooth_target,
+        hold_period=args.horizon,  # Pass horizon for adaptive anti-overfitting parameters
     )
 
     print(f"\n✅ TSCV Training Complete")
