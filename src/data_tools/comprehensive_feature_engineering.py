@@ -117,6 +117,11 @@ class ComprehensiveFeatureEngineer:
         else:
             feature_list = [f.strip() for f in feature_types.split(",")]
 
+            # Map 'technical' to 'default' for backward compatibility
+            if "technical" in feature_list:
+                feature_list.append("default")
+                feature_list = list(set(feature_list))  # Remove duplicates
+
             self.use_baseline = "baseline" in feature_list
             self.use_default = (
                 "default" in feature_list

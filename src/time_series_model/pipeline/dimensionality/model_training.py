@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from time_series_model.utils.training import train_lightgbm_model
+from time_series_model.pipeline.training.rank_ic_utils import compute_rank_ic
 
 
 def train_production_lightgbm(
@@ -17,6 +18,8 @@ def train_production_lightgbm(
     params: Dict | None = None,
     feature_names: list | None = None,
     categorical_features: list | None = None,
+    y_train_true_return: Optional[np.ndarray] = None,
+    y_val_true_return: Optional[np.ndarray] = None,
 ):
     """
     Train production LightGBM model with automatic task detection.
@@ -719,6 +722,59 @@ def train_production_lightgbm(
             print(f"   ⚠️  WARNING: Near-perfect training accuracy ({train_acc:.6f})!")
         if val_acc > 0.9999:
             print(f"   ⚠️  WARNING: Near-perfect validation accuracy ({val_acc:.6f})!")
+
+    # Rank IC evaluation (if true returns are provided)
+    if y_train_true_return is not None and y_val_true_return is not None:
+        # For regression models, compute Rank IC using raw predictions
+        # For classification models, use probability predictions
+        if num_classes > 2:
+            # Multiclass: use probability of class 1 (Long) for Rank IC
+            pred_train_for_ic = (
+                y_pred_train_raw[:, 1]
+                if y_pred_train_raw.ndim == 2
+                else y_pred_train_proba
+            )
+            pred_val_for_ic = (
+                y_pred_val_raw[:, 1] if y_pred_val_raw.ndim == 2 else y_pred_val_proba
+            )
+        else:
+            # Binary: use positive class probability
+            pred_train_for_ic = y_pred_train_proba
+            pred_val_for_ic = y_pred_val_proba
+
+        # Compute Rank IC
+        rank_ic_train = compute_rank_ic(pred_train_for_ic, y_train_true_return)
+        rank_ic_val = compute_rank_ic(pred_val_for_ic, y_val_true_return)
+
+        print(f"\n   📊 Rank IC (Spearman correlation):")
+        print(f"      Train: {rank_ic_train:.4f}")
+        print(f"      Val:   {rank_ic_val:.4f}")
+
+        # Rank IC interpretation
+        if rank_ic_val > 0.03:
+            print(
+                f"      ✅ Excellent Rank IC! (>0.03 indicates strong predictive power)"
+            )
+        elif rank_ic_val > 0.02:
+            print(f"      ✅ Good Rank IC (>0.02 indicates moderate predictive power)")
+        elif rank_ic_val > 0.01:
+            print(
+                f"      ⚠️  Weak Rank IC (>0.01 but <0.02, may need feature improvement)"
+            )
+        else:
+            print(
+                f"      ⚠️  Very weak Rank IC (<0.01, model may not be learning useful patterns)"
+            )
+            print(
+                f"      💡 Consider: feature engineering, label quality, or model architecture"
+            )
+    else:
+        rank_ic_train = None
+        rank_ic_val = None
+        print(f"\n   💡 Rank IC not computed (true returns not provided)")
+        print(
+            f"      To enable Rank IC evaluation, pass y_train_true_return and y_val_true_return"
+        )
 
     print(
         f"✅ Production LightGBM training complete (best_iteration={model.best_iteration})"

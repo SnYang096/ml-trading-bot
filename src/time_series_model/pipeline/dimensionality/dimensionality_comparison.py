@@ -276,6 +276,35 @@ def run_dimensionality_comparison(
     y_val = y_scaled[val_indices]
     y_test = y_scaled[test_indices]
 
+    # Extract future_return for Rank IC evaluation (if available)
+    # This allows us to compute Rank IC even with classification models
+    future_return_train = None
+    future_return_val = None
+    future_return_test = None
+
+    # Try to get future_return from df_features_full (returned from load_real_market_data)
+    if not df_features_full.empty:
+        default_horizon = (
+            horizons_loaded[0] if horizons_loaded and len(horizons_loaded) > 0 else 1
+        )
+        future_return_col = f"future_return_{default_horizon}"
+
+        if future_return_col in df_features_full.columns:
+            try:
+                # Align indices: df_features_full should have same length as X_scaled
+                if len(df_features_full) == len(y_scaled):
+                    future_return_all = df_features_full[future_return_col].values
+                    future_return_train = future_return_all[train_indices]
+                    future_return_val = future_return_all[val_indices]
+                    future_return_test = future_return_all[test_indices]
+                    print(f"   ✅ Found {future_return_col} for Rank IC evaluation")
+                else:
+                    print(
+                        f"   ⚠️  Length mismatch: df_features_full ({len(df_features_full)}) vs y_scaled ({len(y_scaled)})"
+                    )
+            except Exception as e:
+                print(f"   ⚠️  Could not extract future_return for Rank IC: {e}")
+
     print(
         f"\n✅ Data split: Train {X_train_all.shape}, Val {X_val_all.shape}, Test {X_test_all.shape}"
     )
@@ -293,6 +322,8 @@ def run_dimensionality_comparison(
         X_val_all,
         y_val,
         feature_names=keep_all,
+        y_train_true_return=future_return_train,
+        y_val_true_return=future_return_val,
     )
     perf_all = evaluate_model_performance(
         model_all,
@@ -309,6 +340,8 @@ def run_dimensionality_comparison(
         X_val_reps,
         y_val,
         feature_names=reps,
+        y_train_true_return=future_return_train,
+        y_val_true_return=future_return_val,
     )
     perf_reps = evaluate_model_performance(
         model_reps,
