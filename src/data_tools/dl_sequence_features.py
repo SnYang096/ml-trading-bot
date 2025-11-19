@@ -253,11 +253,9 @@ class DeepLearningSequenceExtractor:
         backend: Literal["mamba", "flash_attention", "transformer", "auto"] = "auto",
         seq_length: int = 120,
         d_model: int = 64,
-        use_fp16: bool = True,
+        use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
         device: Optional[str] = None,
-        normalization_method: Literal[
-            "global", "rolling", "ema", "adaptive"
-        ] = "adaptive",
+        normalization_method: Literal["ema"] = "ema",  # 仅支持 EMA（因果安全）
     ):
         """
         Args:
@@ -297,13 +295,13 @@ class DeepLearningSequenceExtractor:
         self.ema_var = None
         self.alpha = 0.01  # EMA smoothing parameter
 
-        print(f"\n🔷 DeepLearningSequenceExtractor")
+        print(f"\n🔷 DeepLearningSequenceExtractor (LEAK-FREE MODE)")
         print(f"   Backend: {self.backend}")
         print(f"   Device: {self.device}")
         print(f"   Sequence length: {seq_length}")
         print(f"   Output dimension: {d_model}")
         print(f"   FP16: {use_fp16}")
-        print(f"   Normalization: {normalization_method}")
+        print(f"   Normalization: causal EMA (α={self.alpha})")
 
     def _create_model(self, input_dim: int):
         """Create the appropriate model based on backend."""
@@ -343,106 +341,55 @@ class DeepLearningSequenceExtractor:
         return model
 
     def _prepare_sequences(self, df: pd.DataFrame, columns: List[str]) -> np.ndarray:
-        """Prepare sliding window sequences with improved normalization."""
+        """
+        Prepare sliding window sequences with STRICTLY CAUSAL EMA normalization.
+
+        【关键修复】：使用严格因果的 EMA 归一化，杜绝数据泄漏。
+        - 不使用全局统计量
+        - EMA 每次 transform 调用时从头开始
+        - 确保每个时间点 t 的特征只基于 [0, t] 的数据
+        """
         data = df[columns].values.astype(np.float32)
+        n = len(data)
 
-        # Apply different normalization strategies
-        if self.normalization_method == "global":
-            # Global normalization (original method)
-            if self.scaler_mean is None:
-                self.scaler_mean = np.mean(data, axis=0, keepdims=True)
-                self.scaler_std = np.std(data, axis=0, keepdims=True) + 1e-8
-                print(f"   ✓ Fitted global scaler on {len(data)} samples")
+        if n < self.seq_length:
+            raise ValueError(f"Data too short ({n}) for seq_length={self.seq_length}")
 
-            normalized_data = (data - self.scaler_mean) / self.scaler_std
+        # 初始化 EMA（仅用前 seq_length 个点，确保因果性）
+        init_data = data[: self.seq_length]
+        ema_mean = np.mean(init_data, axis=0, keepdims=True)
+        ema_var = np.var(init_data, axis=0, keepdims=True)
 
-        elif self.normalization_method == "rolling":
-            # Rolling window normalization
-            normalized_data = np.zeros_like(data)
-
-            for i in range(len(data) - self.seq_length + 1):
-                window_data = data[i : i + self.seq_length]
-                window_mean = np.mean(window_data, axis=0, keepdims=True)
-                window_std = np.std(window_data, axis=0, keepdims=True) + 1e-8
-
-                normalized_data[i : i + self.seq_length] = (
-                    window_data - window_mean
-                ) / window_std
-
-            print(f"   ✓ Applied rolling window normalization")
-
-        elif self.normalization_method == "ema":
-            # Exponential moving average normalization
-            normalized_data = np.zeros_like(data)
-
-            if self.ema_mean is None:
-                self.ema_mean = np.mean(data[: self.seq_length], axis=0, keepdims=True)
-                self.ema_var = np.var(data[: self.seq_length], axis=0, keepdims=True)
-                print(f"   ✓ Initialized EMA normalization")
-
-            for i in range(len(data)):
-                # Update EMA statistics
-                self.ema_mean = (
-                    self.alpha * data[i : i + 1] + (1 - self.alpha) * self.ema_mean
-                )
-                self.ema_var = (
-                    self.alpha * (data[i : i + 1] - self.ema_mean) ** 2
-                    + (1 - self.alpha) * self.ema_var
-                )
-                ema_std = np.sqrt(self.ema_var) + 1e-8
-
-                # Normalize
-                normalized_data[i] = (data[i] - self.ema_mean) / ema_std
-
-            print(f"   ✓ Applied EMA normalization")
-
-        elif self.normalization_method == "adaptive":
-            # Adaptive normalization: combine global and rolling window
-            if self.scaler_mean is None:
-                self.scaler_mean = np.mean(data, axis=0, keepdims=True)
-                self.scaler_std = np.std(data, axis=0, keepdims=True) + 1e-8
-                print(f"   ✓ Fitted adaptive scaler on {len(data)} samples")
-
-            normalized_data = np.zeros_like(data)
-
-            for i in range(len(data) - self.seq_length + 1):
-                window_data = data[i : i + self.seq_length]
-                window_mean = np.mean(window_data, axis=0, keepdims=True)
-                window_std = np.std(window_data, axis=0, keepdims=True) + 1e-8
-
-                # Calculate weights for global and local statistics
-                global_weight = 0.3  # Global statistics weight
-                local_weight = 0.7  # Local statistics weight
-
-                combined_mean = (
-                    global_weight * self.scaler_mean + local_weight * window_mean
-                )
-                combined_std = (
-                    global_weight * self.scaler_std + local_weight * window_std
-                )
-
-                normalized_data[i : i + self.seq_length] = (
-                    window_data - combined_mean
-                ) / combined_std
-
-            print(f"   ✓ Applied adaptive normalization")
-
-        # Create sliding windows
-        num_samples = len(normalized_data) - self.seq_length + 1
-        if num_samples <= 0:
-            raise ValueError(
-                f"Data too short ({len(data)}) for seq_length={self.seq_length}"
-            )
-
+        normalized_data = np.zeros_like(data)
         sequences = []
-        for i in range(num_samples):
-            seq = normalized_data[i : i + self.seq_length]
-            sequences.append(seq)
+
+        # 逐点处理，确保严格因果性
+        for t in range(n):
+            x = data[t : t + 1]  # 当前时刻数据 shape: (1, d)
+
+            # 更新 EMA（仅使用历史信息，完全因果）
+            ema_mean = self.alpha * x + (1 - self.alpha) * ema_mean
+            ema_var = self.alpha * (x - ema_mean) ** 2 + (1 - self.alpha) * ema_var
+            ema_std = np.sqrt(ema_var) + 1e-8
+
+            # 归一化当前点
+            normalized_data[t] = (x - ema_mean) / ema_std
+
+            # 当有足够的历史时，构建窗口 [t-seq_len+1, t]
+            if t >= self.seq_length - 1:
+                start_idx = t - self.seq_length + 1
+                seq = normalized_data[start_idx : t + 1]  # shape: (seq_len, d)
+                sequences.append(seq)
 
         return np.array(sequences, dtype=np.float32)
 
     def fit(self, df: pd.DataFrame, feature_columns: Optional[List[str]] = None):
-        """Initialize model and fit scaler."""
+        """
+        Initialize model. Does NOT access data to prevent leakage.
+
+        【关键修复】：fit() 不再接触数据，只初始化模型结构。
+        所有归一化统计量在 transform() 时从头计算，确保因果性。
+        """
         if feature_columns is None:
             feature_columns = ["open", "high", "low", "close", "volume"]
 
@@ -453,25 +400,37 @@ class DeepLearningSequenceExtractor:
         self.feature_columns = feature_columns
         input_dim = len(feature_columns)
 
-        # Create model
+        # Create model (only structure, no data access)
         self.model = self._create_model(input_dim)
 
-        # Fit scaler
-        _ = self._prepare_sequences(df, feature_columns)
+        # Reset normalization state (will be computed fresh in each transform)
+        self.scaler_mean = None
+        self.scaler_std = None
+        self.ema_mean = None
+        self.ema_var = None
 
         self.is_fitted = True
-        print(f"   ✓ Model initialized: {input_dim} input -> {self.d_model} output")
+        print(
+            f"   ✓ Model initialized (leak-free): {input_dim} input -> {self.d_model} output"
+        )
 
         return self
 
     def transform(self, df: pd.DataFrame, batch_size: int = 64) -> np.ndarray:
-        """Extract sequence features."""
+        """
+        Extract sequence features with NO DATA LEAKAGE.
+
+        【关键修复】：每次 transform 调用时，EMA 从头开始计算，确保完全因果。
+        """
         if not self.is_fitted:
             raise RuntimeError("Must call fit() before transform()")
 
-        # Prepare sequences
+        # Prepare sequences (EMA reset internally per call, ensuring causality)
         sequences = self._prepare_sequences(df, self.feature_columns)
         num_samples = len(sequences)
+
+        if num_samples == 0:
+            raise ValueError("No valid sequences generated")
 
         # Extract features in batches
         all_features = []
@@ -497,7 +456,7 @@ class DeepLearningSequenceExtractor:
         # Concatenate all batches
         dl_features = np.vstack(all_features)
 
-        print(f"   ✓ Extracted {len(dl_features)} sequence features")
+        print(f"   ✓ Extracted {len(dl_features)} leak-free sequence features")
 
         return dl_features
 
@@ -562,8 +521,8 @@ def add_dl_sequence_features(
     seq_length: int = 120,
     d_model: int = 64,
     feature_columns: Optional[List[str]] = None,
-    use_fp16: bool = True,
-    normalization_method: str = "adaptive",
+    use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
+    normalization_method: str = "ema",  # 强制使用 EMA（因果安全）
 ) -> pd.DataFrame:
     """Convenience function to add DL sequence features.
 
@@ -583,14 +542,14 @@ def add_dl_sequence_features(
         print("⚠️  PyTorch not available, skipping DL features")
         return df
 
-    print(f"\n🔷 Extracting Deep Learning Sequence Features...")
+    print(f"\n🔷 Extracting Leak-Free Deep Learning Sequence Features...")
 
     extractor = DeepLearningSequenceExtractor(
         backend=backend,
         seq_length=seq_length,
         d_model=d_model,
         use_fp16=use_fp16,
-        normalization_method=normalization_method,
+        normalization_method="ema",  # 强制使用 EMA（因果安全）
     )
 
     df_with_features = extractor.add_to_dataframe(df, feature_columns)

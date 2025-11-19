@@ -25,7 +25,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -123,7 +123,9 @@ def load_data(
     timeframe: str = "15T",
     feature_type: str = "comprehensive",
     top_factors: Optional[str] = None,
-) -> pd.DataFrame:
+    engineer: Optional[ComprehensiveFeatureEngineer] = None,
+    fit: bool = True,
+) -> Tuple[pd.DataFrame, List[str], Optional[ComprehensiveFeatureEngineer]]:
     """Load and prepare market data with features."""
     print(f"📊 Loading data for {symbol}...")
 
@@ -218,12 +220,23 @@ def load_data(
                 print(f"      - {name}")
             if len(missing) > 10:
                 print(f"      ... and {len(missing) - 10} more")
+        # For minimal pipeline, engineer is None (no state to save)
+        return_engineer = None
     else:
-        print(f"🔧 Engineering features ({feature_type})...")
-        engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
-        df_features = engineer.engineer_all_features(
-            df, fit=True, required_features=None
-        )
+        if engineer is None:
+            print(f"🔧 Engineering features ({feature_type})...")
+            engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
+            df_features = engineer.engineer_all_features(
+                df, fit=fit, required_features=None
+            )
+        else:
+            print(
+                f"🔧 Transforming features using pre-fitted engineer ({feature_type})..."
+            )
+            df_features = engineer.engineer_all_features(
+                df, fit=False, required_features=None
+            )
+        return_engineer = engineer
 
     # Keep close price for label preparation
     if "close" not in df_features.columns and "close" in df.columns:
@@ -279,7 +292,7 @@ def load_data(
 
     df_features = df_features[keep_cols].copy()
 
-    return df_features, feature_cols
+    return df_features, feature_cols, return_engineer
 
 
 def split_train_test(
@@ -431,16 +444,196 @@ def main():
     print(f"OOS Test Size: {args.test_size:.1%}")
     print("=" * 60)
 
-    # Load data
-    df_features, feature_cols = load_data(
-        args.data_path,
-        args.symbol,
-        args.train_start,
-        args.train_end,
-        args.timeframe,
-        args.feature_type,
-        args.top_factors,
+    # Load raw data first (without feature engineering to prevent leakage)
+    print("📊 Loading raw data...")
+    loader = MarketDataLoader(args.data_path)
+    symbol_list = [s.strip() for s in args.symbol.split(",") if s.strip()]
+    all_dfs = []
+
+    for sym in symbol_list:
+        df_single = loader.load_data(
+            symbol=sym, start_date=args.train_start, end_date=args.train_end
+        )
+        if df_single is not None and not df_single.empty:
+            if isinstance(df_single.index, pd.DatetimeIndex):
+                agg_dict = {
+                    "open": "first",
+                    "high": "max",
+                    "low": "min",
+                    "close": "last",
+                    "volume": "sum",
+                }
+                order_flow_cols = [
+                    "cvd",
+                    "taker_buy_ratio",
+                    "cvd_short",
+                    "cvd_medium",
+                    "cvd_long",
+                    "cvd_change_1",
+                    "cvd_change_5",
+                    "cvd_change_20",
+                    "cvd_normalized",
+                    "buy_qty",
+                    "sell_qty",
+                    "delta",
+                ]
+                for col in order_flow_cols:
+                    if col in df_single.columns:
+                        agg_dict[col] = "last"
+                for col in df_single.columns:
+                    if col not in agg_dict and pd.api.types.is_numeric_dtype(
+                        df_single[col]
+                    ):
+                        agg_dict[col] = "last"
+                df_single = df_single.resample(args.timeframe).agg(agg_dict).dropna()
+            if df_single is not None and not df_single.empty:
+                df_single["_symbol"] = sym
+                all_dfs.append(df_single)
+
+    if not all_dfs:
+        raise ValueError(f"No data found for symbol(s): {args.symbol}")
+
+    df_raw = pd.concat(all_dfs, axis=0).sort_index()
+    print(f"   ✅ Loaded {len(df_raw)} raw samples from {len(symbol_list)} asset(s)")
+
+    # Split raw data FIRST (before feature engineering to prevent leakage)
+    print("\n✂️  Splitting raw data (before feature engineering to prevent leakage)...")
+    df_raw_train, df_raw_test = split_train_test(df_raw, test_size=args.test_size)
+    print(
+        f"   📊 Train: {len(df_raw_train)} samples ({len(df_raw_train)/len(df_raw)*100:.1f}%)"
     )
+    print(
+        f"   📊 Test:  {len(df_raw_test)} samples ({len(df_raw_test)/len(df_raw)*100:.1f}%)"
+    )
+
+    # Load top factors if specified
+    selected_features = None
+    if args.top_factors:
+        print(f"📋 Loading top factors from {args.top_factors}...")
+        try:
+            top_factors_list = load_top_factors_list(args.top_factors)
+            selected_features = set(top_factors_list)
+            print(
+                f"   ✅ Loaded {len(selected_features)} features from top_factors.json"
+            )
+        except Exception as e:
+            print(f"   ⚠️  Failed to load top factors: {e}")
+
+    # Feature engineering: fit on train, transform on test
+    print(
+        "\n🔧 Engineering features (fit on train, transform on test to prevent leakage)..."
+    )
+
+    # Fit on training set
+    engineer = ComprehensiveFeatureEngineer(feature_types=args.feature_type)
+    df_train_features = engineer.engineer_all_features(
+        df_raw_train, fit=True, required_features=selected_features
+    )
+    print(
+        f"   ✅ Fitted features on training set: {len(df_train_features.columns)} columns"
+    )
+    print(
+        f"   📊 Training set columns after feature engineering: {list(df_train_features.columns)[:40]}"
+    )
+
+    # Check which selected features were actually generated
+    if selected_features:
+        generated_set = set(df_train_features.columns)
+        matched = selected_features & generated_set
+        missing = selected_features - generated_set
+        print(
+            f"   📊 Feature matching: {len(matched)}/{len(selected_features)} selected features found"
+        )
+        if len(missing) > 0:
+            print(
+                f"   ⚠️  Missing {len(missing)} features (first 10): {list(missing)[:10]}"
+            )
+
+    # Transform on test set (using fitted engineer from train)
+    print("   🔄 Transforming test set features using fitted engineer...")
+    df_test_features = engineer.engineer_all_features(
+        df_raw_test, fit=False, required_features=selected_features
+    )
+    print(
+        f"   ✅ Transformed features on test set: {len(df_test_features.columns)} columns"
+    )
+
+    # Get feature columns (same logic as before)
+    exclude_exact = {
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "volume",
+        "signal",
+        "binary_signal",
+        "future_return",
+    }
+    exclude_prefixes = ("signal_", "binary_signal_", "future_return_")
+    all_potential_features = [
+        col
+        for col in df_train_features.columns
+        if (col not in exclude_exact)
+        and (not any(col.startswith(pfx) for pfx in exclude_prefixes))
+        and col != "_symbol"
+    ]
+
+    print(
+        f"   📊 Found {len(all_potential_features)} potential features in training set"
+    )
+    print(f"   📊 Training set columns: {list(df_train_features.columns)[:30]}")
+
+    if selected_features is not None:
+        print(f"   📊 Selected features from top_factors: {len(selected_features)}")
+        print(f"   📊 First 10 selected: {list(selected_features)[:10]}")
+
+        # Match selected features with actual generated features
+        feature_cols = [
+            col for col in all_potential_features if col in selected_features
+        ]
+
+        if len(feature_cols) < len(selected_features):
+            missing = selected_features - set(feature_cols)
+            print(
+                f"   ⚠️  Warning: {len(missing)} selected features not found in generated features:"
+            )
+            for feat in list(missing)[:20]:
+                print(f"      - {feat}")
+            if len(missing) > 20:
+                print(f"      ... and {len(missing) - 20} more")
+
+            # Show what was actually generated
+            print(f"   📊 Actually generated features (first 30):")
+            for i, feat in enumerate(all_potential_features[:30]):
+                print(f"      {i+1}. {feat}")
+    else:
+        feature_cols = all_potential_features
+
+    print(f"   ✅ Final feature columns: {len(feature_cols)}")
+    if len(feature_cols) > 0:
+        print(f"   📊 First 10 final features: {feature_cols[:10]}")
+
+    # Merge train and test
+    df_features = pd.concat([df_train_features, df_test_features]).sort_index()
+
+    # Verify feature columns exist after merge
+    available_feature_cols = [col for col in feature_cols if col in df_features.columns]
+    if len(available_feature_cols) != len(feature_cols):
+        missing = set(feature_cols) - set(available_feature_cols)
+        print(f"   ⚠️  Warning: {len(missing)} feature columns missing after merge:")
+        for col in list(missing)[:10]:
+            print(f"      - {col}")
+        feature_cols = available_feature_cols
+
+    if len(feature_cols) == 0:
+        raise ValueError(
+            f"No valid feature columns after merge! "
+            f"Train columns: {len(df_train_features.columns)}, "
+            f"Test columns: {len(df_test_features.columns)}, "
+            f"Available: {list(df_features.columns)[:30]}..."
+        )
+
+    print(f"   ✅ Feature engineering complete: {len(feature_cols)} features")
 
     # Prepare Rank IC labels
     print("\n📝 Preparing Rank IC labels...")
@@ -459,6 +652,25 @@ def main():
         lookback_window=60,
         ensure_volatility=True,
     )
+
+    # Verify feature columns still exist after label preparation
+    available_feature_cols_after = [
+        col for col in feature_cols if col in df_with_labels.columns
+    ]
+    if len(available_feature_cols_after) != len(feature_cols):
+        missing = set(feature_cols) - set(available_feature_cols_after)
+        print(
+            f"   ⚠️  Warning: {len(missing)} feature columns missing after label preparation:"
+        )
+        for col in list(missing)[:10]:
+            print(f"      - {col}")
+        feature_cols = available_feature_cols_after
+
+    if len(feature_cols) == 0:
+        raise ValueError(
+            f"No valid feature columns after label preparation! "
+            f"Available columns: {list(df_with_labels.columns)[:30]}..."
+        )
 
     print(
         f"   ✅ Labels prepared: {df_with_labels['volatility_normalized_target'].notna().sum()} valid samples"
@@ -492,8 +704,8 @@ def main():
             },
         )
 
-    # Split train/test
-    print("\n✂️  Splitting data...")
+    # Split train/test (now on labeled data)
+    print("\n✂️  Splitting labeled data...")
     df_train, df_test = split_train_test(df_with_labels, test_size=args.test_size)
 
     # Train with TSCV

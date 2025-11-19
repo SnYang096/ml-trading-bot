@@ -148,6 +148,7 @@ class ComprehensiveFeatureEngineer:
 
         # 初始化特征工程器（按需）
         self.basic_engineer = None  # FeatureEngineer (talib + base_indicators)
+        self.dl_sequence_extractor = None  # DeepLearningSequenceExtractor (保存状态)
         self.enhanced_engineer = None
         self.baseline_engineer = None
         self.alpha101_engineer: Optional[Alpha101FeatureEngineer] = None
@@ -264,6 +265,7 @@ class ComprehensiveFeatureEngineer:
             if required_features is None:
                 return df_in
             # 保留数据列和需要的特征列
+            cols_before = len(df_in.columns)
             cols_to_keep = [
                 c
                 for c in df_in.columns
@@ -273,10 +275,41 @@ class ComprehensiveFeatureEngineer:
             ]
             filtered = df_in[cols_to_keep]
             kept_count = len([c for c in cols_to_keep if c in required_features])
-            if kept_count < len(df_in.columns) - len(data_cols):
+            removed_count = cols_before - len(cols_to_keep)
+
+            # Diagnostic: Check if required features were removed
+            required_before = [c for c in df_in.columns if c in required_features]
+            required_after = [c for c in filtered.columns if c in required_features]
+            if len(required_after) < len(required_before):
+                removed_required = set(required_before) - set(required_after)
                 print(
-                    f"     ✂️ {module_name}: 保留 {kept_count} 个需要的特征，移除 {len(df_in.columns) - len(cols_to_keep)} 个不需要的特征"
+                    f"     ⚠️  ERROR: {module_name} removed {len(removed_required)} REQUIRED features!"
                 )
+                print(
+                    f"        Removed required features: {list(removed_required)[:10]}"
+                )
+                # This should never happen - return original dataframe
+                return df_in
+
+            if removed_count > 0:
+                print(
+                    f"     ✂️ {module_name}: 保留 {kept_count} 个需要的特征，移除 {removed_count} 个不需要的特征"
+                )
+                print(
+                    f"        Before: {cols_before} columns, After: {len(cols_to_keep)} columns"
+                )
+                # Show some removed features
+                removed_cols = set(df_in.columns) - set(cols_to_keep)
+                removed_features = [
+                    c
+                    for c in removed_cols
+                    if c not in data_cols
+                    and pd.api.types.is_numeric_dtype(
+                        df_in.get(c, pd.Series(dtype=float))
+                    )
+                ]
+                if removed_features:
+                    print(f"        Example removed features: {removed_features[:10]}")
             return filtered
 
         # 1. 基线特征工程
@@ -346,12 +379,32 @@ class ComprehensiveFeatureEngineer:
                 if self.basic_engineer is None:
                     self.basic_engineer = FeatureEngineer()
                 # 传递 required_features，只计算需要的特征
+                df_before = df.copy()
                 df = self.basic_engineer.add_technical_indicators(df, required_features)
                 default_features = len(df.columns) - prev_count
-                # 如果已经通过 required_features 过滤，就不需要再次过滤
+
+                # Always apply _filter_features when required_features is specified
+                # This ensures we only keep the features we actually need
                 if required_features:
+                    # Store columns before filter
+                    cols_after_add = len(df.columns)
+                    # Apply filter to remove unwanted features
+                    df = _filter_features(df, "Default")
                     kept_count = len([c for c in df.columns if c in required_features])
                     print(f"     ✅ 默认传统指标特征: {kept_count} 个需要的特征已计算")
+                    print(
+                        f"     📊 Columns: before={len(df_before.columns)}, after add_technical_indicators={cols_after_add}, after filter={len(df.columns)}"
+                    )
+                    # Show some example generated features
+                    new_cols = set(df.columns) - set(df_before.columns)
+                    if new_cols:
+                        print(f"     📊 Example new features: {list(new_cols)[:10]}")
+                    # Check if features match required_features
+                    matched_features = [c for c in new_cols if c in required_features]
+                    if matched_features:
+                        print(
+                            f"     ✅ Matched required features: {len(matched_features)} (examples: {matched_features[:5]})"
+                        )
                 else:
                     # 在过滤前保存新增的列名（用于统计本次生成的特征）
                     new_columns_before_filter = set(df.columns[prev_count:])
@@ -588,23 +641,42 @@ class ComprehensiveFeatureEngineer:
                                         "cvd_change_20",
                                         "cvd_normalized",
                                     }
+                                    # IMPORTANT: Keep ALL required_features, not just module_required_features
+                                    # This preserves features from previous steps
                                     cols_to_keep = [
                                         c
                                         for c in out.columns
                                         if c in data_cols
-                                        or c in module_required_features
+                                        or c
+                                        in required_features  # Keep all required features from all steps
                                         or not pd.api.types.is_numeric_dtype(out[c])
                                     ]
                                     out = out[cols_to_keep]
                         else:
                             out = fn(df_in)
                             # 如果没有传递module_required_features，使用全局required_features过滤
+                            # BUT: Only filter NEW features, not existing ones!
                             if required_features:
-                                out = _filter_features(out, step_name)
+                                # Only filter if this step generated new features
+                                # Keep all existing columns from df_in
+                                existing_cols = set(df_in.columns)
+                                new_cols = set(out.columns) - existing_cols
+                                if new_cols:
+                                    # Filter only new columns, keep existing ones
+                                    cols_to_keep = list(existing_cols) + [
+                                        c
+                                        for c in new_cols
+                                        if c in required_features
+                                        or c
+                                        not in required_features  # Keep all new cols for now, filter later
+                                    ]
+                                    # Actually, apply filter to entire dataframe but preserve existing required features
+                                    out = _filter_features(out, step_name)
                     except TypeError:
                         # 如果方法不支持required_features参数，使用默认方式
                         out = fn(df_in)
                         if required_features:
+                            # Apply filter but preserve existing required features
                             out = _filter_features(out, step_name)
                     dt = time.time() - t0
                     # 计算实际保留的特征数量
@@ -767,20 +839,65 @@ class ComprehensiveFeatureEngineer:
 
         # 5. 深度学习序列特征
         if self.use_dl_sequence:
-            print("  📊 深度学习序列特征...")
-            try:
-                df = add_dl_sequence_features(
-                    df,
-                    backend=self.dl_backend,
-                    seq_length=self.dl_seq_length,
-                    d_model=self.dl_d_model,
-                    use_fp16=self.use_fp16,
+            # Check if any dl_seq features are requested
+            has_dl_seq_request = False
+            if required_features is not None:
+                has_dl_seq_request = any(
+                    feat.startswith("dl_seq") for feat in required_features
                 )
-                dl_features = len(df.columns) - prev_count
-                prev_count = len(df.columns)
-                print(f"     ✅ 深度学习特征: {dl_features} 个")
-            except Exception as e:
-                print(f"     ⚠️  深度学习特征失败: {e}")
+            else:
+                # If no required_features specified, generate all (comprehensive mode)
+                has_dl_seq_request = True
+
+            if has_dl_seq_request:
+                print("  📊 深度学习序列特征...")
+                try:
+                    # 如果 fit=True，创建新的 extractor；如果 fit=False，使用已保存的 extractor
+                    if fit:
+                        # Create new extractor and fit
+                        from .dl_sequence_features import DeepLearningSequenceExtractor
+
+                        self.dl_sequence_extractor = DeepLearningSequenceExtractor(
+                            backend=self.dl_backend,
+                            seq_length=self.dl_seq_length,
+                            d_model=self.dl_d_model,
+                            use_fp16=self.use_fp16,
+                            normalization_method="ema",  # 强制使用 EMA（因果安全，已修复泄露）
+                        )
+                        # Fit: 只初始化模型，不接触数据
+                        self.dl_sequence_extractor.fit(df)
+                        # Transform: 提取特征（EMA 从头计算，完全因果）
+                        df = self.dl_sequence_extractor.add_to_dataframe(df)
+                    else:
+                        # Use saved extractor (transform only)
+                        if self.dl_sequence_extractor is None:
+                            raise RuntimeError(
+                                "dl_sequence_extractor not fitted. Call engineer_all_features with fit=True first."
+                            )
+                        # Transform: 提取特征（EMA 从头计算，完全因果）
+                        df = self.dl_sequence_extractor.add_to_dataframe(df)
+
+                    # If required_features specified, filter to only requested dl_seq features
+                    if required_features is not None:
+                        dl_seq_cols = [
+                            col for col in df.columns if col.startswith("dl_seq")
+                        ]
+                        cols_to_remove = [
+                            col for col in dl_seq_cols if col not in required_features
+                        ]
+                        if cols_to_remove:
+                            df = df.drop(columns=cols_to_remove)
+                            print(
+                                f"     ✂️  Filtered to {len(dl_seq_cols) - len(cols_to_remove)} requested dl_seq features"
+                            )
+
+                    dl_features = len(df.columns) - prev_count
+                    prev_count = len(df.columns)
+                    print(f"     ✅ 深度学习特征: {dl_features} 个")
+                except Exception as e:
+                    print(f"     ⚠️  深度学习特征失败: {e}")
+            else:
+                print("  📊 深度学习序列特征... (跳过，未在 required_features 中)")
 
         total_new_features = len(df.columns) - initial_features
         self.total_features = total_new_features
@@ -789,6 +906,72 @@ class ComprehensiveFeatureEngineer:
         print(f"  原始特征: {initial_features} 个")
         print(f"  新增特征: {total_new_features} 个")
         print(f"  总特征数: {len(df.columns)} 个")
+
+        # Diagnostic: Show feature columns if required_features specified
+        if required_features is not None:
+            feature_cols_in_df = [c for c in df.columns if c in required_features]
+            print(
+                f"  📊 Required features found in DataFrame: {len(feature_cols_in_df)}/{len(required_features)}"
+            )
+            if len(feature_cols_in_df) < len(required_features):
+                missing_in_df = required_features - set(feature_cols_in_df)
+                print(
+                    f"  ⚠️  Missing {len(missing_in_df)} required features in final DataFrame (first 10):"
+                )
+                for feat in list(missing_in_df)[:10]:
+                    print(f"      - {feat}")
+            print(
+                f"  📊 All columns in final DataFrame ({len(df.columns)}): {list(df.columns)[:40]}"
+            )
+
+            # Final check: Apply _filter_features if features are missing
+            if len(feature_cols_in_df) == 0 and len(df.columns) > initial_features:
+                print(
+                    f"  ⚠️  WARNING: No required features found but {len(df.columns) - initial_features} new features were generated!"
+                )
+                print(
+                    f"      This suggests features were generated but then removed. Checking..."
+                )
+                # Check if _filter_features would help
+                filtered_df = _filter_features(df, "FinalCheck")
+                filtered_feature_cols = [
+                    c for c in filtered_df.columns if c in required_features
+                ]
+                print(
+                    f"      Before final filter: {len(df.columns)} columns, {len(feature_cols_in_df)} required features"
+                )
+                print(
+                    f"      After final filter: {len(filtered_df.columns)} columns, {len(filtered_feature_cols)} required features"
+                )
+                if len(filtered_feature_cols) > len(feature_cols_in_df):
+                    print(
+                        f"      ✅ Applying final filter recovered {len(filtered_feature_cols)} required features!"
+                    )
+                    # Return filtered dataframe
+                    df = filtered_df
+                else:
+                    print(
+                        f"      ❌ Final filter did not help. Features may not have been generated correctly."
+                    )
+                    print(f"      📊 Debug: df.columns = {list(df.columns)[:40]}")
+                    print(
+                        f"      📊 Debug: required_features (first 20) = {list(required_features)[:20]}"
+                    )
+                    # Check if there's a mismatch
+                    all_generated = set(df.columns) - data_cols
+                    required_set = set(required_features)
+                    overlap = all_generated & required_set
+                    print(
+                        f"      📊 Debug: Overlap between generated and required: {len(overlap)} features"
+                    )
+                    if len(overlap) > 0:
+                        print(
+                            f"      📊 Debug: Overlapping features: {list(overlap)[:10]}"
+                        )
+                    else:
+                        print(
+                            f"      ⚠️  No overlap! This suggests feature names don't match."
+                        )
         use_any_enhanced = (
             self.use_enhanced
             or self.use_hurst

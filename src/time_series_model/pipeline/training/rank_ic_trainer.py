@@ -395,9 +395,32 @@ def train_rank_ic_model(
     # Prepare data
     # Diagnostic: Check NaN counts before dropping
     target_cols = [target_col, "future_return", "return_quantile"]
+
+    # Validate feature columns exist in dataframe
+    missing_feature_cols = [col for col in feature_cols if col not in df.columns]
+    if missing_feature_cols:
+        print(
+            f"   ⚠️  Warning: {len(missing_feature_cols)} feature columns not found in dataframe:"
+        )
+        for col in missing_feature_cols[:10]:
+            print(f"      - {col}")
+        if len(missing_feature_cols) > 10:
+            print(f"      ... and {len(missing_feature_cols) - 10} more")
+        # Remove missing columns from feature list
+        feature_cols = [col for col in feature_cols if col in df.columns]
+        print(f"   ✅ Using {len(feature_cols)} available feature columns")
+
+    if len(feature_cols) == 0:
+        raise ValueError(
+            f"No valid feature columns found! "
+            f"Requested {len(feature_cols)} features, but none exist in dataframe. "
+            f"Available columns: {list(df.columns)[:30]}..."
+        )
+
     required_cols = feature_cols + target_cols
     print(f"   📊 Data preparation diagnostics:")
     print(f"      Initial samples: {len(df)}")
+    print(f"      Feature columns: {len(feature_cols)}")
 
     # Check target columns first (these are critical)
     missing_target_cols = [col for col in target_cols if col not in df.columns]
@@ -480,6 +503,17 @@ def train_rank_ic_model(
     n_features = len(feature_cols)
     samples_per_feature = n_samples / max(n_features, 1)
 
+    # Diagnostic: Print feature count
+    print(f"   📊 Feature count: {n_features} features, {n_samples} samples")
+    if n_features == 0:
+        raise ValueError(
+            f"Zero features available! "
+            f"Feature columns list: {feature_cols[:20] if feature_cols else 'EMPTY'}..."
+        )
+    if n_features == 1:
+        print(f"   ⚠️  WARNING: Only 1 feature available! This may indicate a problem.")
+        print(f"      Feature: {feature_cols[0] if feature_cols else 'N/A'}")
+
     # Determine if we need anti-overfitting measures
     # Get hold_period from parameter or default
     if hold_period is None:
@@ -518,9 +552,36 @@ def train_rank_ic_model(
             f"      Selected {n_features} features (samples/feature: {samples_per_feature:.1f})"
         )
 
+    # Validate feature columns before creating X
+    available_feature_cols = [col for col in feature_cols if col in df.columns]
+    if len(available_feature_cols) != len(feature_cols):
+        missing = set(feature_cols) - set(available_feature_cols)
+        print(
+            f"   ⚠️  Warning: {len(missing)} feature columns missing after data preparation:"
+        )
+        for col in list(missing)[:10]:
+            print(f"      - {col}")
+        feature_cols = available_feature_cols
+
+    if len(feature_cols) == 0:
+        raise ValueError(
+            f"No valid feature columns available! "
+            f"DataFrame has {len(df.columns)} columns: {list(df.columns)[:30]}..."
+        )
+
+    print(f"   ✅ Using {len(feature_cols)} feature columns for training")
+
     X = df[feature_cols].values
     y = df[target_col].values
     y_true_return = df["future_return"].values
+
+    # Validate X shape
+    if X.shape[1] == 0:
+        raise ValueError(
+            f"Feature matrix X has 0 features! "
+            f"Feature columns: {feature_cols[:10]}..."
+        )
+    print(f"   ✅ Feature matrix shape: {X.shape} (samples, features)")
     tradable = (
         df[tradable_col].values
         if tradable_col in df.columns
