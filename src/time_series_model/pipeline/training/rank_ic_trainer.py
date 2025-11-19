@@ -286,6 +286,7 @@ def train_rank_ic_model(
     weight_col: Optional[str] = "trend_strength",
     date_col: Optional[str] = None,
     n_splits: int = 5,
+    tscv_gap: int = 0,
     lgbm_params: Optional[Dict] = None,
     use_gpu: bool = True,
     filter_high_confidence: bool = False,
@@ -416,6 +417,11 @@ def train_rank_ic_model(
     ic_scores = []
     fold_results = []
 
+    if tscv_gap > 0:
+        print(
+            f"   ℹ️  Applying TSCV gap of {tscv_gap} samples between train/validation folds"
+        )
+
     if is_small_sample or is_long_horizon or is_high_dim:
         print(
             f"   ⚠️  Small sample ({n_samples}) + long horizon detected, using anti-overfitting parameters"
@@ -468,6 +474,13 @@ def train_rank_ic_model(
         )
 
     for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+        if tscv_gap > 0:
+            if len(train_idx) <= tscv_gap:
+                print(
+                    f"   ⚠️  Fold {fold+1}: Not enough training samples after applying gap ({len(train_idx)} <= gap {tscv_gap}), skipping fold"
+                )
+                continue
+            train_idx = train_idx[:-tscv_gap]
         # Time alignment check: ensure validation set is after training set
         if date_col and date_col in df.columns:
             train_end_date = df.loc[train_idx, date_col].max()

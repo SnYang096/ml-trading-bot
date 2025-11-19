@@ -426,9 +426,11 @@ class EnhancedFeatureEngineer:
         required_cols = ["cvd", "taker_buy_ratio"]
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
-            raise ValueError(
-                f"缺少订单流数据列: {missing}。这是数据错误，请检查上游数据准备流程。"
+            # Instead of raising error, skip order flow features and print warning
+            print(
+                f"     ⚠️  跳过订单流特征: 缺少数据列 {missing}。如果不需要订单流特征，可以忽略此警告。"
             )
+            return df  # Return original dataframe without order flow features
 
         # 定义需要计算Hurst的信号源
         signal_sources = {

@@ -25,12 +25,15 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
 
 from data_tools.data_loader import MarketDataLoader
+from data_tools.alpha_factors.alpha101_timeseries_adapted import (
+    compute_adapted_alpha101_factors,
+)
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
 from time_series_model.pipeline.dimensionality.utils import load_top_factors_list
 from time_series_model.pipeline.training.rank_ic_trainer import (
@@ -43,6 +46,73 @@ from time_series_model.pipeline.training.rank_ic_utils import compute_rank_ic
 from time_series_model.pipeline.training.data_leakage_detector import (
     detect_data_leakage,
 )
+
+
+MINIMAL_SAFE_FEATURES: Set[str] = {
+    "sma_5",
+    "sma_10",
+    "sma_20",
+    "ema_20",
+    "sma_ratio_5_20",
+    "sma_ratio_10_20",
+}
+
+
+def _safe_sma(series: pd.Series, window: int) -> pd.Series:
+    return series.rolling(window, min_periods=window).mean().shift(1)
+
+
+def _safe_ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False).mean().shift(1)
+
+
+def build_minimal_safe_features(
+    df: pd.DataFrame, selected_features: Set[str]
+) -> Tuple[pd.DataFrame, Set[str]]:
+    """Build strictly causal features for the minimal safe set."""
+
+    df_features = pd.DataFrame(index=df.index)
+
+    if "sma_5" in selected_features:
+        df_features["sma_5"] = _safe_sma(df["close"], 5)
+    if "sma_10" in selected_features:
+        df_features["sma_10"] = _safe_sma(df["close"], 10)
+    if "sma_20" in selected_features:
+        df_features["sma_20"] = _safe_sma(df["close"], 20)
+    if "ema_20" in selected_features:
+        df_features["ema_20"] = _safe_ema(df["close"], 20)
+
+    if "sma_ratio_5_20" in selected_features:
+        sma5 = df_features.get("sma_5", _safe_sma(df["close"], 5))
+        sma20 = df_features.get("sma_20", _safe_sma(df["close"], 20))
+        df_features["sma_ratio_5_20"] = sma5 / sma20.replace(0, np.nan)
+
+    if "sma_ratio_10_20" in selected_features:
+        sma10 = df_features.get("sma_10", _safe_sma(df["close"], 10))
+        sma20 = df_features.get("sma_20", _safe_sma(df["close"], 20))
+        df_features["sma_ratio_10_20"] = sma10 / sma20.replace(0, np.nan)
+
+    alpha_needed = {f for f in selected_features if f.startswith("alpha101_")}
+    if alpha_needed:
+        alpha_source = df[["open", "high", "low", "close", "volume"]]
+        alpha_df = compute_adapted_alpha101_factors(
+            alpha_source,
+            use_ts_rank=True,
+            alpha001_window=5,
+            alpha022_corr_window=10,
+            alpha022_delta_window=5,
+            alpha022_vol_window=20,
+            alpha043_vol_rank_window=20,
+            alpha043_mom_rank_window=8,
+            alpha043_adv_window=20,
+            alpha043_mom_period=7,
+        ).reindex(df.index)
+        alpha_columns = [c for c in alpha_needed if c in alpha_df.columns]
+        df_features = df_features.join(alpha_df[alpha_columns], how="left")
+
+    available = set(df_features.columns) & selected_features
+    df_features = df_features.loc[:, sorted(available)]
+    return df_features, available
 
 
 def load_data(
@@ -120,26 +190,40 @@ def load_data(
     print(f"   ✅ Loaded {len(df)} samples from {len(symbol_list)} asset(s)")
 
     # Load top factors if specified
-    required_features = None
+    selected_features = None
     if top_factors:
         print(f"📋 Loading top factors from {top_factors}...")
         try:
             top_factors_list = load_top_factors_list(top_factors)
-            required_features = set(top_factors_list)
+            selected_features = set(top_factors_list)
             print(
-                f"   ✅ Loaded {len(required_features)} features from top_factors.json"
+                f"   ✅ Loaded {len(selected_features)} features from top_factors.json"
             )
             print(f"   📊 Will only generate these features (others will be skipped)")
         except Exception as e:
             print(f"   ⚠️  Failed to load top factors: {e}")
             print(f"   ⚠️  Will generate all features for {feature_type}")
 
-    # Feature engineering
-    print(f"🔧 Engineering features ({feature_type})...")
-    engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
-    df_features = engineer.engineer_all_features(
-        df, fit=True, required_features=required_features
+    use_minimal_pipeline = bool(
+        selected_features and selected_features.issubset(MINIMAL_SAFE_FEATURES)
     )
+
+    if use_minimal_pipeline:
+        print("🧪 Using minimal safe feature builder (alpha101 + simple MAs only)...")
+        df_features, available = build_minimal_safe_features(df, selected_features)
+        if len(available) < len(selected_features):
+            missing = sorted(selected_features - available)
+            print(f"   ⚠️ Missing {len(missing)} requested features:")
+            for name in missing[:10]:
+                print(f"      - {name}")
+            if len(missing) > 10:
+                print(f"      ... and {len(missing) - 10} more")
+    else:
+        print(f"🔧 Engineering features ({feature_type})...")
+        engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
+        df_features = engineer.engineer_all_features(
+            df, fit=True, required_features=None
+        )
 
     # Keep close price for label preparation
     if "close" not in df_features.columns and "close" in df.columns:
@@ -167,16 +251,16 @@ def load_data(
         and col != "_symbol"  # Keep _symbol but don't include in features
     ]
 
-    # If required_features is specified, only keep those features
-    if required_features is not None:
+    # If selected_features is specified, only keep those features
+    if selected_features is not None:
         feature_cols = [
-            col for col in all_potential_features if col in required_features
+            col for col in all_potential_features if col in selected_features
         ]
         print(
             f"   ✅ Generated {len(all_potential_features)} features, filtered to {len(feature_cols)} features from top_factors.json"
         )
-        if len(feature_cols) < len(required_features):
-            missing = required_features - set(feature_cols)
+        if len(feature_cols) < len(selected_features):
+            missing = selected_features - set(feature_cols)
             print(
                 f"   ⚠️  Warning: {len(missing)} features from top_factors.json were not generated:"
             )
@@ -276,6 +360,12 @@ def main():
         type=float,
         default=0.15,
         help="OOS test set size (fraction)",
+    )
+    parser.add_argument(
+        "--tscv-gap",
+        type=int,
+        default=0,
+        help="Gap (in samples) between training and validation folds to reduce leakage",
     )
     parser.add_argument(
         "--output-dir",
@@ -409,6 +499,7 @@ def main():
         target_col="volatility_normalized_target",
         date_col=date_col,
         n_splits=args.n_splits,
+        tscv_gap=args.tscv_gap,
         use_gpu=False,  # Set to True if GPU available
         filter_high_confidence=args.filter_high_confidence,
         min_trend_strength=args.min_trend_strength,

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr, pearsonr
+from sklearn.model_selection import TimeSeriesSplit
 
 from time_series_model.pipeline.training.rank_ic_trainer import (
     prepare_rank_ic_labels,
@@ -81,6 +82,105 @@ def generate_random_walk_data(
     return df
 
 
+def _simple_series_random_walk_test(
+    n_samples: int = 1500,
+    n_features: int = 20,
+    hold_period: int = 5,
+    n_splits: int = 5,
+    seed: Optional[int] = 7,
+    threshold: float = 0.03,
+) -> Dict:
+    """
+    Minimal random walk leakage test using pure pandas/numpy pipeline.
+
+    The goal is to eliminate any complex feature engineering, label post-processing,
+    or model training side effects. We:
+        1. Generate a random walk price series.
+        2. Compute future_return via direct shift.
+        3. Generate fully independent random features.
+        4. Fit a simple OLS model per TSCV fold (no LightGBM, no weights).
+        5. Measure Rank IC on validation folds only.
+    """
+
+    print("\n" + "-" * 60)
+    print("🧪 Simple Random Walk Baseline Test")
+    print("-" * 60)
+
+    rng = np.random.default_rng(seed)
+    returns = rng.normal(0.0, 0.01, size=n_samples + hold_period)
+    close = 100 * np.cumprod(1 + returns)
+    df = pd.DataFrame({"close": close})
+
+    for i in range(n_features):
+        df[f"baseline_feature_{i}"] = rng.normal(0.0, 1.0, size=len(df))
+
+    df["future_return"] = df["close"].pct_change(hold_period).shift(-hold_period)
+    df = df.iloc[:-hold_period].copy()
+    df = df.dropna(subset=["future_return"])
+
+    feature_cols = [c for c in df.columns if c.startswith("baseline_feature_")]
+    if len(df) < 200 or len(feature_cols) == 0:
+        return {
+            "test": "random_walk_simple",
+            "status": "insufficient_data",
+            "message": "Not enough samples or features for baseline test",
+        }
+
+    X = df[feature_cols].to_numpy()
+    y = df["future_return"].to_numpy()
+
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    ic_scores = []
+    for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
+        X_train, y_train = X[train_idx], y[train_idx]
+        X_val, y_val = X[val_idx], y[val_idx]
+
+        if len(np.unique(y_train)) < 2:
+            print(f"   ⚠️  Fold {fold}: insufficient variation in y, skipping")
+            continue
+
+        try:
+            coef, *_ = np.linalg.lstsq(X_train, y_train, rcond=None)
+        except np.linalg.LinAlgError:
+            coef = np.linalg.pinv(X_train) @ y_train
+
+        preds = X_val @ coef
+        ic = compute_rank_ic(preds, y_val)
+        ic_scores.append(ic if not np.isnan(ic) else 0.0)
+        print(f"   Fold {fold}: Rank IC = {ic:.4f}")
+
+    if not ic_scores:
+        return {
+            "test": "random_walk_simple",
+            "status": "insufficient_folds",
+            "message": "All folds skipped due to insufficient variation",
+        }
+
+    avg_ic = float(np.mean(ic_scores))
+    std_ic = float(np.std(ic_scores))
+    has_leakage = abs(avg_ic) > threshold
+
+    print(
+        f"\n   Avg Rank IC: {avg_ic:.4f} (std={std_ic:.4f}, threshold={threshold:.4f})"
+    )
+    if has_leakage:
+        print("   ⚠️  Baseline test indicates potential leakage")
+    else:
+        print("   ✅ Baseline test shows no obvious leakage")
+
+    return {
+        "test": "random_walk_simple",
+        "status": "completed",
+        "avg_rank_ic": avg_ic,
+        "std_rank_ic": std_ic,
+        "n_samples": len(df),
+        "n_features": len(feature_cols),
+        "n_splits": n_splits,
+        "threshold": threshold,
+        "has_leakage": has_leakage,
+    }
+
+
 def test_random_walk_leakage(
     feature_cols: List[str],
     n_samples: int = 1000,
@@ -89,6 +189,7 @@ def test_random_walk_leakage(
     n_splits: int = 5,
     seed: Optional[int] = 42,
     threshold: float = 0.03,  # Stricter threshold: 0.03 instead of 0.05
+    mode: str = "full",
 ) -> Dict:
     """
     Test for data leakage using random walk data.
@@ -107,6 +208,16 @@ def test_random_walk_leakage(
     Returns:
         Dictionary with test results
     """
+    if mode == "simple":
+        return _simple_series_random_walk_test(
+            n_samples=n_samples,
+            n_features=n_features,
+            hold_period=hold_period,
+            n_splits=n_splits,
+            seed=seed,
+            threshold=threshold,
+        )
+
     print("\n" + "=" * 60)
     print("🔍 Data Leakage Test: Random Walk")
     print("=" * 60)

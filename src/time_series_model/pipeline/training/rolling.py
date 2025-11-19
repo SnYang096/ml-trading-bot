@@ -29,6 +29,7 @@ from time_series_model.pipeline.training.classification_model_trainer import (
 )
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer
 from .label_utils import (
+    future_volatility_label,
     log_return_magnitude,
     invert_log_return_magnitude,
     rolling_quantile_classification_labels,
@@ -911,12 +912,11 @@ tr:hover{{background:#f0f8ff}}
             def _add_targets(df: pd.DataFrame) -> pd.DataFrame:
                 out = df.copy()
                 out["future_return"] = out["close"].shift(-fb) / out["close"] - 1
-                # Volatility proxy: trailing rolling RMS on future returns (no lookahead beyond target horizon)
-                vol_window = max(5, fb)
-                out["future_volatility"] = rolling_rms_volatility(
-                    out["future_return"],
-                    window=vol_window,
-                    min_periods=min(3, vol_window),
+                # ✅ Compute future volatility label: RMS of future single-period returns
+                out["future_volatility"] = future_volatility_label(
+                    out["close"],
+                    horizon=fb,
+                    min_periods=max(3, fb // 2),
                 )
                 return out.dropna()
 

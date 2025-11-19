@@ -616,6 +616,7 @@ RANK_IC_MIN_TREND_STRENGTH ?= 1.0
 RANK_IC_SMOOTH_TARGET ?= 0
 RANK_IC_CHECK_LEAKAGE ?= 0
 RANK_IC_TOP_FACTORS ?=
+RANK_IC_TSCV_GAP ?= 0
 
 ts-r-rank-ic-train:
 	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
@@ -626,6 +627,7 @@ ts-r-rank-ic-train:
 	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS),$(RANK_IC_TOP_FACTORS),Not specified - will generate all features)"
 	@echo "   TSCV Folds: $(RANK_IC_N_SPLITS)"
 	@echo "   OOS Test Size: $(RANK_IC_TEST_SIZE)"
+	@echo "   TSCV Gap: $(RANK_IC_TSCV_GAP)"
 	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
 		--data-path /workspace/$(DATA_DIR) \
@@ -637,6 +639,7 @@ ts-r-rank-ic-train:
 		--feature-type $(RANK_IC_FEATURE_TYPE) \
 		--n-splits $(RANK_IC_N_SPLITS) \
 		--test-size $(RANK_IC_TEST_SIZE) \
+		--tscv-gap $(RANK_IC_TSCV_GAP) \
 		--output-dir /workspace/$(RANK_IC_OUTPUT_DIR) \
 		$(if $(filter 1 true yes,$(RANK_IC_FILTER_HIGH_CONF)),--filter-high-confidence,) \
 		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \

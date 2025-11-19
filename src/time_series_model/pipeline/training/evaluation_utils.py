@@ -519,8 +519,10 @@ def ensure_volatility_feature(
         )
         return df
 
-    # Compute rolling volatility
-    from time_series_model.pipeline.training.label_utils import rolling_rms_volatility
+    # Compute rolling volatility (historical, for use as feature)
+    from time_series_model.pipeline.training.label_utils import (
+        historical_rolling_volatility,
+    )
 
     if asset_col and asset_col in df.columns:
         # Multi-asset: compute volatility per asset
@@ -529,7 +531,7 @@ def ensure_volatility_feature(
             mask = df[asset_col] == symbol
             symbol_data = df.loc[mask, price_col].sort_index()
             returns = symbol_data.pct_change()
-            vol_series = rolling_rms_volatility(
+            vol_series = historical_rolling_volatility(
                 returns, window=window, min_periods=window // 2
             )
             vol_list.append(vol_series)
@@ -541,7 +543,7 @@ def ensure_volatility_feature(
     else:
         # Single asset
         returns = df[price_col].pct_change()
-        df[volatility_col] = rolling_rms_volatility(
+        df[volatility_col] = historical_rolling_volatility(
             returns, window=window, min_periods=window // 2
         )
 

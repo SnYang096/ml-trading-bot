@@ -39,7 +39,7 @@ from time_series_model.pipeline.training.quantile_model_trainer import (
 from time_series_model.pipeline.training.classification_model_trainer import (
     ClassificationModelTrainer,
 )
-from .label_utils import rolling_rms_volatility
+from .label_utils import rolling_rms_volatility, future_volatility_label
 import joblib
 
 
@@ -892,14 +892,14 @@ def main() -> None:
             # 🔒 CRITICAL FIX: Cannot use rolling std for future_volatility as it introduces future information
             # future_volatility[t] = std(future_return[t:t+window]) requires future_return[t+1], ..., future_return[t+window-1]
             # But these values correspond to future returns (e.g., future_return[t+1] needs close[t+1+fb]), introducing future information
-            # ✅ Correct approach: Use abs(future_return) or future_return^2 as volatility proxy
+            # ✅ Correct approach: Compute future volatility label from future single-period returns
+            # This computes vol[t] = RMS(r_{t+1}, ..., r_{t+horizon}) as the label
             # Note: If using safe_multi_asset preprocessing, labels are already calculated
             if not (args.safe_multi_asset and "future_volatility" in feat_df.columns):
-                vol_window = max(5, fb)
-                feat_df["future_volatility"] = rolling_rms_volatility(
-                    feat_df["future_return"],
-                    window=vol_window,
-                    min_periods=min(3, vol_window),
+                feat_df["future_volatility"] = future_volatility_label(
+                    feat_df["close"],
+                    horizon=fb,
+                    min_periods=max(3, fb // 2),
                 )
                 # Only drop rows where targets are NaN; allow feature NaNs (handled later)
                 feat_df = feat_df.dropna(

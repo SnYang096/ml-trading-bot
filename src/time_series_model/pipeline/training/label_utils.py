@@ -32,13 +32,27 @@ def invert_log_return_magnitude(values: np.ndarray | pd.Series) -> np.ndarray:
     return np.expm1(arr)
 
 
-def rolling_rms_volatility(
+def historical_rolling_volatility(
     y_return: pd.Series,
     window: int = 60,
     min_periods: int = 60,
 ) -> pd.Series:
     """
-    Compute a simple rolling RMS proxy for volatility (uses trailing returns only).
+    Compute historical rolling RMS volatility (for use as a FEATURE).
+
+    This function computes trailing volatility over the past window periods.
+    At time t, it returns: RMS(r_{t-window+1}, r_{t-window+2}, ..., r_t)
+
+    ✅ This is safe to use as a FEATURE because it only uses historical data.
+    For future volatility LABELS, use `future_volatility_label()` instead.
+
+    Args:
+        y_return: Historical return series (e.g., from price.pct_change())
+        window: Rolling window size
+        min_periods: Minimum periods required for calculation
+
+    Returns:
+        Historical rolling RMS volatility series (suitable for features)
     """
 
     def _rms(x: np.ndarray) -> float:
@@ -47,9 +61,79 @@ def rolling_rms_volatility(
     rms = y_return.rolling(window=window, min_periods=min_periods).apply(_rms, raw=True)
     # Fallback to |r| when insufficient history is available
     rms = rms.fillna(np.abs(y_return))
-    # Return Series with name (but don't use rename to avoid issues in groupby)
-    rms.name = "future_volatility"
+    rms.name = "rolling_vol"
     return rms
+
+
+# Backward compatibility alias
+def rolling_rms_volatility(
+    y_return: pd.Series,
+    window: int = 60,
+    min_periods: int = 60,
+) -> pd.Series:
+    """
+    Deprecated alias for historical_rolling_volatility().
+
+    Use historical_rolling_volatility() for clarity.
+    """
+    return historical_rolling_volatility(y_return, window, min_periods)
+
+
+def future_volatility_label(
+    price_series: pd.Series,
+    horizon: int = 24,
+    min_periods: Optional[int] = None,
+) -> pd.Series:
+    """
+    Compute future volatility label: RMS of future single-period returns.
+
+    This function computes the realized volatility over the future H periods
+    as a supervision target. At time t, the label is:
+        vol[t] = RMS(r_{t+1}, r_{t+2}, ..., r_{t+H})
+    where r_{t+i} = (price[t+i] - price[t+i-1]) / price[t+i-1]
+
+    ⚠️  This uses future information, which is correct for LABELS but would
+    cause leakage if used as a FEATURE.
+
+    Args:
+        price_series: Price series (e.g., 'close')
+        horizon: Number of future periods to compute volatility over
+        min_periods: Minimum periods required (default: horizon)
+
+    Returns:
+        Future volatility label series (aligned to current time index)
+    """
+    if min_periods is None:
+        min_periods = horizon
+
+    # Compute single-period returns
+    returns = price_series.pct_change().dropna()
+
+    # Compute future volatility: RMS of returns over [t+1, t+horizon]
+    # Since pandas rolling doesn't support "future windows", we compute manually
+    future_vol = pd.Series(
+        index=price_series.index, dtype=float, name="future_volatility"
+    )
+
+    for i in range(len(price_series)):
+        # Get future returns: [i+1, i+horizon]
+        start_idx = i + 1
+        end_idx = min(i + horizon + 1, len(returns))
+
+        if end_idx - start_idx < min_periods:
+            future_vol.iloc[i] = np.nan
+            continue
+
+        # Extract future returns and compute RMS
+        future_rets = returns.iloc[start_idx:end_idx].values
+        if len(future_rets) >= min_periods:
+            future_vol.iloc[i] = np.sqrt(np.mean(np.square(future_rets)))
+        else:
+            future_vol.iloc[i] = np.nan
+
+    # Set name for clarity
+    future_vol.name = "future_volatility"
+    return future_vol
 
 
 def rolling_quantile_classification_labels(

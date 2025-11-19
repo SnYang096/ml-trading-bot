@@ -40,6 +40,7 @@ from time_series_model.pipeline.training.classification_model_trainer import (
 from time_series_model.pipeline.training.label_utils import (
     log_return_magnitude,
     rolling_rms_volatility,
+    future_volatility_label,
     rolling_quantile_classification_labels,
 )
 from time_series_model.strategies.classification_strategy_handler import (
@@ -417,10 +418,11 @@ def main() -> None:
             df["future_return"] = (
                 df["close"].shift(-args.forward_bars) / df["close"] - 1
             )
-            df["future_volatility"] = rolling_rms_volatility(
-                df["future_return"],
-                window=vol_window,
-                min_periods=min(3, vol_window),
+            # ✅ Compute future volatility label: RMS of future single-period returns
+            df["future_volatility"] = future_volatility_label(
+                df["close"],
+                horizon=args.forward_bars,
+                min_periods=max(3, args.forward_bars // 2),
             )
             return df.dropna(subset=["future_return", "future_volatility"])
 

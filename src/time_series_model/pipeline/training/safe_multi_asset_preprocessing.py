@@ -18,7 +18,7 @@ from pathlib import Path
 
 from data_tools.baseline_features import engineer_baseline_features
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
-from .label_utils import rolling_rms_volatility
+from .label_utils import rolling_rms_volatility, future_volatility_label
 
 
 def safe_multi_asset_preprocessing(
@@ -623,12 +623,11 @@ def safe_multi_asset_preprocessing(
                 symbol_feat_df.index, fill_value=np.nan
             )
 
-        # future_volatility（基于 future_return 的滚动 RMS）
-        vol_window = max(5, forward_bars)
-        symbol_feat_df["future_volatility"] = rolling_rms_volatility(
-            symbol_feat_df["future_return"],
-            window=vol_window,
-            min_periods=min(3, vol_window),
+        # ✅ Compute future volatility label: RMS of future single-period returns
+        symbol_feat_df["future_volatility"] = future_volatility_label(
+            symbol_feat_df["close"],
+            horizon=forward_bars,
+            min_periods=max(3, forward_bars // 2),
         )
 
         # 🔒 CRITICAL: 确保 symbol 列存在且值正确

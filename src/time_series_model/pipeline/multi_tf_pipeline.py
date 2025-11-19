@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple, Optional
 from time_series_model.models.lightgbm_model import LightGBMTrainer
 from time_series_model.config.settings import TIMEFRAMES
 from time_series_model.pipeline.training.label_utils import (
+    future_volatility_label,
     log_return_magnitude,
     rolling_rms_volatility,
     rolling_quantile_classification_labels,
@@ -54,12 +55,11 @@ class MultiTimeframePipeline:
         # Calculate future returns
         future_returns = data["close"].shift(-self.forward_bars) / data["close"] - 1
 
-        # Volatility proxy: rolling RMS of future returns (trailing window to avoid leakage)
-        window = max(self.forward_bars, 5)
-        future_volatility = rolling_rms_volatility(
-            future_returns,
-            window=window,
-            min_periods=min(3, window),
+        # ✅ Compute future volatility label: RMS of future single-period returns
+        future_volatility = future_volatility_label(
+            data["close"],
+            horizon=self.forward_bars,
+            min_periods=max(3, self.forward_bars // 2),
         )
 
         classification_target = None

@@ -227,7 +227,30 @@ class ComprehensiveFeatureEngineer:
         print(f"   📋 初始特征 ({initial_features} 个): {list(df.columns)}")
 
         # 数据列（必须保留）
-        data_cols = {"open", "high", "low", "close", "volume", "timestamp", "datetime"}
+        data_cols = {
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "timestamp",
+            "datetime",
+            "symbol",
+            "_symbol",
+            "trade_count",
+            "buy_qty",
+            "sell_qty",
+            "delta",
+            "taker_buy_ratio",
+            "cvd",
+            "cvd_short",
+            "cvd_medium",
+            "cvd_long",
+            "cvd_change_1",
+            "cvd_change_5",
+            "cvd_change_20",
+            "cvd_normalized",
+        }
 
         baseline_features = 0
         default_features = 0  # TA-Lib + base_indicators
@@ -284,6 +307,21 @@ class ComprehensiveFeatureEngineer:
                         "volume",
                         "timestamp",
                         "datetime",
+                        "symbol",
+                        "_symbol",
+                        "trade_count",
+                        "buy_qty",
+                        "sell_qty",
+                        "delta",
+                        "taker_buy_ratio",
+                        "cvd",
+                        "cvd_short",
+                        "cvd_medium",
+                        "cvd_long",
+                        "cvd_change_1",
+                        "cvd_change_5",
+                        "cvd_change_20",
+                        "cvd_normalized",
                     }
                     kept_new_features = len(
                         [
@@ -327,6 +365,21 @@ class ComprehensiveFeatureEngineer:
                         "volume",
                         "timestamp",
                         "datetime",
+                        "symbol",
+                        "_symbol",
+                        "trade_count",
+                        "buy_qty",
+                        "sell_qty",
+                        "delta",
+                        "taker_buy_ratio",
+                        "cvd",
+                        "cvd_short",
+                        "cvd_medium",
+                        "cvd_long",
+                        "cvd_change_1",
+                        "cvd_change_5",
+                        "cvd_change_20",
+                        "cvd_normalized",
                     }
                     kept_new_features = len(
                         [
@@ -409,6 +462,21 @@ class ComprehensiveFeatureEngineer:
                         "volume",
                         "timestamp",
                         "datetime",
+                        "symbol",
+                        "_symbol",
+                        "trade_count",
+                        "buy_qty",
+                        "sell_qty",
+                        "delta",
+                        "taker_buy_ratio",
+                        "cvd",
+                        "cvd_short",
+                        "cvd_medium",
+                        "cvd_long",
+                        "cvd_change_1",
+                        "cvd_change_5",
+                        "cvd_change_20",
+                        "cvd_normalized",
                     }
                     kept_new_features = len(
                         [
@@ -427,6 +495,25 @@ class ComprehensiveFeatureEngineer:
                 print(f"     ⚠️  Alpha101特征失败: {e}")
 
         # 4. 增强版特征工程 (细粒度控制：Hurst, Wavelet, Hilbert, Spectral, Order Flow)
+        if required_features:
+            essential_base_cols = {
+                "cvd",
+                "taker_buy_ratio",
+                "cvd_short",
+                "cvd_medium",
+                "cvd_long",
+                "cvd_change_1",
+                "cvd_change_5",
+                "cvd_change_20",
+                "cvd_normalized",
+                "buy_qty",
+                "sell_qty",
+                "delta",
+            }
+            for col in essential_base_cols:
+                if col in data.columns and col not in df.columns:
+                    df[col] = data[col]
+
         use_any_enhanced = (
             self.use_enhanced
             or self.use_hurst
@@ -485,6 +572,21 @@ class ComprehensiveFeatureEngineer:
                                         "volume",
                                         "timestamp",
                                         "datetime",
+                                        "symbol",
+                                        "_symbol",
+                                        "trade_count",
+                                        "buy_qty",
+                                        "sell_qty",
+                                        "delta",
+                                        "taker_buy_ratio",
+                                        "cvd",
+                                        "cvd_short",
+                                        "cvd_medium",
+                                        "cvd_long",
+                                        "cvd_change_1",
+                                        "cvd_change_5",
+                                        "cvd_change_20",
+                                        "cvd_normalized",
                                     }
                                     cols_to_keep = [
                                         c
@@ -523,6 +625,21 @@ class ComprehensiveFeatureEngineer:
                             "volume",
                             "timestamp",
                             "datetime",
+                            "symbol",
+                            "_symbol",
+                            "trade_count",
+                            "buy_qty",
+                            "sell_qty",
+                            "delta",
+                            "taker_buy_ratio",
+                            "cvd",
+                            "cvd_short",
+                            "cvd_medium",
+                            "cvd_long",
+                            "cvd_change_1",
+                            "cvd_change_5",
+                            "cvd_change_20",
+                            "cvd_normalized",
                         }
                         kept_count = len(
                             [
