@@ -110,6 +110,7 @@ def compute_confidence_statistics(
     risk_free_rate: float = 0.0,
     fee_rate: float = 0.001,
     price_col: Optional[pd.Series] = None,
+    predictions: Optional[pd.Series] = None,
 ) -> Dict:
     """
     Compute confidence-based trading statistics with proper equity curve construction.
@@ -173,6 +174,117 @@ def compute_confidence_statistics(
             else 0.0
         ),
     }
+
+    # Check direction accuracy (sign consistency between predictions and true returns)
+    # This is critical: IC measures ranking, but trading needs correct direction
+    # IMPORTANT: Use period_returns (single-period) for direction accuracy to match actual trading
+    direction_stats = {}
+    if predictions is not None:
+        # Align predictions with common index
+        pred_aligned = (
+            predictions.loc[common_index].sort_index()
+            if predictions is not None
+            else None
+        )
+
+        if pred_aligned is not None:
+            # Compute period_returns for direction accuracy (to match actual trading)
+            # This should use the same period_returns as the equity curve calculation
+            period_returns_for_direction = None
+            if price_col is not None:
+                price_aligned = price_col.loc[common_index].sort_index()
+                if isinstance(price_aligned, pd.DataFrame):
+                    price_aligned = price_aligned.iloc[:, 0]
+                period_returns_for_direction = price_aligned.pct_change().fillna(0)
+                if isinstance(period_returns_for_direction, pd.DataFrame):
+                    period_returns_for_direction = period_returns_for_direction.iloc[
+                        :, 0
+                    ]
+                period_returns_for_direction = period_returns_for_direction.reindex(
+                    common_index
+                ).fillna(0)
+            else:
+                # Fallback to returns_aligned if price_col not available
+                period_returns_for_direction = returns_aligned.copy()
+                if period_returns_for_direction.abs().max() > 0.5:
+                    period_returns_for_direction = period_returns_for_direction / 5.0
+                period_returns_for_direction = period_returns_for_direction.reindex(
+                    common_index
+                ).fillna(0)
+
+            if period_returns_for_direction is not None:
+                valid_direction_mask = (
+                    pred_aligned.notna()
+                    & period_returns_for_direction.notna()
+                    & high_conf_mask
+                )
+                if valid_direction_mask.sum() > 0:
+                    pred_sign = np.sign(pred_aligned.loc[valid_direction_mask])
+                    # Use period_returns (single-period) for direction accuracy, not multi-period returns
+                    true_sign = np.sign(
+                        period_returns_for_direction.loc[valid_direction_mask]
+                    )
+
+                    # Direction accuracy: same sign = correct direction
+                    direction_accuracy = (pred_sign == true_sign).mean()
+                    direction_stats["direction_accuracy"] = float(direction_accuracy)
+                    direction_stats["n_samples"] = int(valid_direction_mask.sum())
+
+                    # Check if predictions and returns are positively correlated
+                    # If correlation is negative, signals might need to be inverted
+                    pred_values = pred_aligned.loc[valid_direction_mask].values
+                    true_values = period_returns_for_direction.loc[
+                        valid_direction_mask
+                    ].values
+                    if len(pred_values) > 10:
+                        from scipy.stats import pearsonr
+
+                        pearson_corr, _ = pearsonr(pred_values, true_values)
+                        direction_stats["pearson_correlation"] = float(pearson_corr)
+
+                        # Check sign consistency for high-confidence signals
+                        long_signals = high_conf_signals == 1
+                        short_signals = high_conf_signals == -1
+
+                        if long_signals.sum() > 0:
+                            long_mask = valid_direction_mask & long_signals
+                            if long_mask.sum() > 0:
+                                long_direction_acc = (
+                                    np.sign(pred_aligned.loc[long_mask])
+                                    == np.sign(
+                                        period_returns_for_direction.loc[long_mask]
+                                    )
+                                ).mean()
+                                long_avg_return = period_returns_for_direction.loc[
+                                    long_mask
+                                ].mean()
+                                direction_stats["long_direction_accuracy"] = float(
+                                    long_direction_acc
+                                )
+                                direction_stats["long_avg_return"] = float(
+                                    long_avg_return
+                                )
+
+                        if short_signals.sum() > 0:
+                            short_mask = valid_direction_mask & short_signals
+                            if short_mask.sum() > 0:
+                                short_direction_acc = (
+                                    np.sign(pred_aligned.loc[short_mask])
+                                    == np.sign(
+                                        period_returns_for_direction.loc[short_mask]
+                                    )
+                                ).mean()
+                                short_avg_return = period_returns_for_direction.loc[
+                                    short_mask
+                                ].mean()
+                                direction_stats["short_direction_accuracy"] = float(
+                                    short_direction_acc
+                                )
+                                direction_stats["short_avg_return"] = float(
+                                    short_avg_return
+                                )
+
+    stats["direction_analysis"] = direction_stats
 
     # Build continuous equity curve for high-confidence signals
     if high_conf_mask.sum() > 0:
@@ -505,5 +617,32 @@ def print_evaluation_summary(
         print(
             f"   Short Win Rate: {hct['win_rate_short']:.1%}, Avg Return: {hct['avg_return_short']:.4f}"
         )
+
+        # Print direction accuracy analysis if available
+        if (
+            "direction_analysis" in confidence_stats
+            and confidence_stats["direction_analysis"]
+        ):
+            dir_stats = confidence_stats["direction_analysis"]
+            print(f"\n🔍 Direction Accuracy Analysis:")
+            if "direction_accuracy" in dir_stats:
+                print(
+                    f"   Overall Direction Accuracy: {dir_stats['direction_accuracy']:.1%} (n={dir_stats.get('n_samples', 0)})"
+                )
+            if "pearson_correlation" in dir_stats:
+                corr = dir_stats["pearson_correlation"]
+                print(f"   Pearson Correlation (pred vs true): {corr:.4f}")
+                if corr < 0:
+                    print(
+                        f"   ⚠️  WARNING: Negative correlation! Signals may need to be inverted."
+                    )
+            if "long_direction_accuracy" in dir_stats:
+                print(
+                    f"   Long Direction Accuracy: {dir_stats['long_direction_accuracy']:.1%}, Avg Return: {dir_stats.get('long_avg_return', 0):.6f}"
+                )
+            if "short_direction_accuracy" in dir_stats:
+                print(
+                    f"   Short Direction Accuracy: {dir_stats['short_direction_accuracy']:.1%}, Avg Return: {dir_stats.get('short_avg_return', 0):.6f}"
+                )
 
     print("\n" + "=" * 60)

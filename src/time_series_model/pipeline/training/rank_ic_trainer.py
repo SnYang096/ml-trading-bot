@@ -228,6 +228,7 @@ def evaluate_model_performance(
             df[confidence_col],
             confidence_threshold=confidence_threshold,
             price_col=price_series,
+            predictions=df["pred"] if "pred" in df.columns else None,
         )
         results["confidence_statistics"] = confidence_stats
 

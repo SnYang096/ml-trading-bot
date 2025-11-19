@@ -557,43 +557,6 @@ nautilus-backtest:
 # Rank IC Regression Training (Standalone)
 # ---------------------------------------------------------------------------
 
-RANK_IC_SYMBOL ?= $(SYMBOL)
-RANK_IC_HORIZON ?= 24
-RANK_IC_TIMEFRAME ?= 240T
-RANK_IC_FEATURE_TYPE ?= baseline,order_flow,alpha101
-RANK_IC_N_SPLITS ?= 5
-RANK_IC_TEST_SIZE ?= 0.15
-RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
-RANK_IC_FILTER_HIGH_CONF ?= 0
-RANK_IC_MIN_TREND_STRENGTH ?= 1.0
-RANK_IC_SMOOTH_TARGET ?= 0
-RANK_IC_CHECK_LEAKAGE ?= 0
-
-ts-r-rank-ic-train:
-	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
-	@echo "   Symbol: $(RANK_IC_SYMBOL)"
-	@echo "   Horizon: $(RANK_IC_HORIZON)"
-	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
-	@echo "   Feature Type: $(RANK_IC_FEATURE_TYPE)"
-	@echo "   TSCV Folds: $(RANK_IC_N_SPLITS)"
-	@echo "   OOS Test Size: $(RANK_IC_TEST_SIZE)"
-	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
-		--data-path /workspace/$(DATA_DIR) \
-		--symbol $(RANK_IC_SYMBOL) \
-		$(if $(START_DATE),--train-start $(START_DATE),) \
-		$(if $(END_DATE),--train-end $(END_DATE),) \
-		--horizon $(RANK_IC_HORIZON) \
-		--timeframe $(RANK_IC_TIMEFRAME) \
-		--feature-type $(RANK_IC_FEATURE_TYPE) \
-		--n-splits $(RANK_IC_N_SPLITS) \
-		--test-size $(RANK_IC_TEST_SIZE) \
-		--output-dir /workspace/$(RANK_IC_OUTPUT_DIR) \
-		$(if $(filter 1 true yes,$(RANK_IC_FILTER_HIGH_CONF)),--filter-high-confidence,) \
-		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
-		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
-		$(if $(filter 1 true yes,$(RANK_IC_CHECK_LEAKAGE)),--check-leakage,)
-	@echo "✅ Training complete. Check results in $(RANK_IC_OUTPUT_DIR)"
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +571,10 @@ FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
 FEATURE_EVAL_START_DATE ?=2023-01-01
 FEATURE_EVAL_END_DATE ?=2025-01-01
+FEATURE_EVAL_TOP_FACTORS_COUNT ?=50
+FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD ?= 0.02
+FEATURE_EVAL_TRAIN_ONLY ?= 1
+FEATURE_EVAL_TEST_SIZE ?= 0.15
 
 feature-eval:
 	@echo "🔍 Feature Type Evaluation (IC + Leakage Detection)..."
@@ -617,6 +584,8 @@ feature-eval:
 	@echo "   Feature Types: $(FEATURE_EVAL_TYPES)"
 	@echo "   Start Date: $(if $(FEATURE_EVAL_START_DATE),$(FEATURE_EVAL_START_DATE),Not specified - will load all available data)"
 	@echo "   End Date: $(if $(FEATURE_EVAL_END_DATE),$(FEATURE_EVAL_END_DATE),Not specified)"
+	@echo "   Train Only: $(if $(filter 1 true yes,$(FEATURE_EVAL_TRAIN_ONLY)),Yes (test_size=$(FEATURE_EVAL_TEST_SIZE)),No - using all data)"
+	@echo "   Top Factors: $(if $(FEATURE_EVAL_TOP_FACTORS_COUNT),Top $(FEATURE_EVAL_TOP_FACTORS_COUNT) features,IC threshold >= $(FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD))"
 	@echo "   Output: $(FEATURE_EVAL_OUTPUT_DIR)"
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.feature_type_evaluator \
 		--data-path /workspace/$(DATA_DIR) \
@@ -628,8 +597,54 @@ feature-eval:
 		--feature-types $(FEATURE_EVAL_TYPES) \
 		--output-dir /workspace/$(FEATURE_EVAL_OUTPUT_DIR) \
 		--test-leakage \
-		--leakage-threshold $(FEATURE_EVAL_LEAKAGE_THRESHOLD)
+		--leakage-threshold $(FEATURE_EVAL_LEAKAGE_THRESHOLD) \
+		$(if $(FEATURE_EVAL_TOP_FACTORS_COUNT),--top-factors-count $(FEATURE_EVAL_TOP_FACTORS_COUNT),--top-factors-ic-threshold $(FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD)) \
+		$(if $(filter 1 true yes,$(FEATURE_EVAL_TRAIN_ONLY)),--train-only --test-size $(FEATURE_EVAL_TEST_SIZE),)
 	@echo "✅ Evaluation complete. Check results in $(FEATURE_EVAL_OUTPUT_DIR)"
+	@echo "📄 top_factors.json generated for ts-r-rank-ic-train"
+
+
+RANK_IC_SYMBOL ?= $(SYMBOL)
+RANK_IC_HORIZON ?= 24
+RANK_IC_TIMEFRAME ?= 240T
+RANK_IC_FEATURE_TYPE ?= comprehensive
+RANK_IC_N_SPLITS ?= 5
+RANK_IC_TEST_SIZE ?= 0.15
+RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
+RANK_IC_FILTER_HIGH_CONF ?= 0
+RANK_IC_MIN_TREND_STRENGTH ?= 1.0
+RANK_IC_SMOOTH_TARGET ?= 0
+RANK_IC_CHECK_LEAKAGE ?= 0
+RANK_IC_TOP_FACTORS ?=
+
+ts-r-rank-ic-train:
+	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
+	@echo "   Symbol: $(RANK_IC_SYMBOL)"
+	@echo "   Horizon: $(RANK_IC_HORIZON)"
+	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
+	@echo "   Feature Type: $(RANK_IC_FEATURE_TYPE)"
+	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS),$(RANK_IC_TOP_FACTORS),Not specified - will generate all features)"
+	@echo "   TSCV Folds: $(RANK_IC_N_SPLITS)"
+	@echo "   OOS Test Size: $(RANK_IC_TEST_SIZE)"
+	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(RANK_IC_SYMBOL) \
+		$(if $(FEATURE_EVAL_START_DATE),--train-start $(FEATURE_EVAL_START_DATE),) \
+		$(if $(FEATURE_EVAL_END_DATE),--train-end $(FEATURE_EVAL_END_DATE),) \
+		--horizon $(RANK_IC_HORIZON) \
+		--timeframe $(RANK_IC_TIMEFRAME) \
+		--feature-type $(RANK_IC_FEATURE_TYPE) \
+		--n-splits $(RANK_IC_N_SPLITS) \
+		--test-size $(RANK_IC_TEST_SIZE) \
+		--output-dir /workspace/$(RANK_IC_OUTPUT_DIR) \
+		$(if $(filter 1 true yes,$(RANK_IC_FILTER_HIGH_CONF)),--filter-high-confidence,) \
+		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
+		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
+		$(if $(filter 1 true yes,$(RANK_IC_CHECK_LEAKAGE)),--check-leakage,) \
+		$(if $(RANK_IC_TOP_FACTORS),--top-factors /workspace/$(RANK_IC_TOP_FACTORS),)
+	@echo "✅ Training complete. Check results in $(RANK_IC_OUTPUT_DIR)"
+
 
 
 # ---------------------------------------------------------------------------

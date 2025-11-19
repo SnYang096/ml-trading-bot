@@ -36,6 +36,8 @@ def evaluate_feature_type(
     n_splits: int = 3,
     test_leakage: bool = True,
     leakage_threshold: float = 0.03,
+    train_only: bool = False,
+    test_size: float = 0.15,
 ) -> Dict:
     """
     Evaluate a specific feature type for IC and data leakage.
@@ -101,6 +103,23 @@ def evaluate_feature_type(
         # Keep close price for label preparation
         if "close" not in df_features.columns and "close" in df.columns:
             df_features["close"] = df["close"]
+
+        # Split data if train_only mode (to avoid feature selection bias)
+        if train_only:
+            print(f"✂️  Splitting data (train_only mode, test_size={test_size})...")
+            # Sort by date if index is DatetimeIndex
+            if isinstance(df_features.index, pd.DatetimeIndex):
+                df_features = df_features.sort_index()
+
+            n_total = len(df_features)
+            split_idx = int(n_total * (1 - test_size))
+            df_features = df_features.iloc[:split_idx].copy()  # Only use training set
+            print(
+                f"   📊 Using {len(df_features)} samples ({len(df_features)/n_total:.1%}) for feature selection"
+            )
+            print(
+                f"   📊 Excluding {n_total - len(df_features)} samples ({1 - len(df_features)/n_total:.1%}) from feature selection"
+            )
 
         # Prepare labels
         print("Preparing labels...")
@@ -201,12 +220,18 @@ def evaluate_feature_type(
                 )
 
                 if not np.isnan(ic):
+                    # Handle p-value: if it's very small, clamp to minimum displayable value
+                    p_val = float(p_value) if not np.isnan(p_value) else 1.0
+                    # Clamp very small p-values to avoid display issues
+                    if p_val < 1e-10:
+                        p_val = 1e-10  # Minimum displayable p-value
+
                     feature_ics.append(
                         {
                             "feature": col,
                             "ic": float(ic),
                             "abs_ic": abs(float(ic)),
-                            "p_value": float(p_value) if not np.isnan(p_value) else 1.0,
+                            "p_value": p_val,
                         }
                     )
             except Exception as e:
@@ -222,8 +247,14 @@ def evaluate_feature_type(
         print(f"\n   📈 Top 20 features by |Rank IC|:")
         for i, feat_ic in enumerate(feature_ics[:20], 1):
             ic_sign = "+" if feat_ic["ic"] >= 0 else "-"
+            # Format p-value: use scientific notation for very small values
+            p_val = feat_ic["p_value"]
+            if p_val < 0.0001:
+                p_str = f"{p_val:.2e}"
+            else:
+                p_str = f"{p_val:.4f}"
             print(
-                f"      {i:2d}. {feat_ic['feature']:40s} | IC: {ic_sign}{feat_ic['abs_ic']:.4f} (p={feat_ic['p_value']:.4f})"
+                f"      {i:2d}. {feat_ic['feature']:40s} | IC: {ic_sign}{feat_ic['abs_ic']:.4f} (p={p_str})"
             )
 
         if len(feature_ics) > 20:
@@ -350,6 +381,30 @@ def main():
         default=0.03,
         help="Threshold for data leakage detection (default: 0.03, use 0.04-0.05 for long horizons like 24 forwards)",
     )
+    parser.add_argument(
+        "--top-factors-count",
+        type=int,
+        default=None,
+        help="Number of top factors to include in top_factors.json (default: None, use IC threshold instead)",
+    )
+    parser.add_argument(
+        "--top-factors-ic-threshold",
+        type=float,
+        default=0.02,
+        help="Minimum |IC| threshold for including factors in top_factors.json (default: 0.02)",
+    )
+    parser.add_argument(
+        "--train-only",
+        action="store_true",
+        default=False,
+        help="Only use training set for feature selection (to avoid selection bias). Will split data using --test-size before feature evaluation.",
+    )
+    parser.add_argument(
+        "--test-size",
+        type=float,
+        default=0.15,
+        help="Test set size for train-only mode (default: 0.15, should match ts-r-rank-ic-train's test_size)",
+    )
 
     args = parser.parse_args()
 
@@ -461,6 +516,8 @@ def main():
             n_splits=3,
             test_leakage=args.test_leakage,
             leakage_threshold=args.leakage_threshold,
+            train_only=args.train_only,
+            test_size=args.test_size,
         )
         all_results[feat_type] = result
 
@@ -526,15 +583,20 @@ def main():
         print("📊 All Features Ranked by |Rank IC| (for feature selection)")
         print("=" * 60)
         print(f"Total features: {len(all_feature_ics)}")
-        print("\nTop 50 features:")
-        for i, feat_ic in enumerate(all_feature_ics[:50], 1):
-            ic_sign = "+" if feat_ic["ic"] >= 0 else "-"
-            print(
-                f"{i:3d}. {feat_ic['feature']:50s} | IC: {ic_sign}{feat_ic['abs_ic']:.4f} (p={feat_ic['p_value']:.4f})"
-            )
 
-        if len(all_feature_ics) > 50:
-            print(f"\n... and {len(all_feature_ics) - 50} more features")
+        # Print all features (not just top 50)
+        print(f"\nAll {len(all_feature_ics)} features:")
+        for i, feat_ic in enumerate(all_feature_ics, 1):
+            ic_sign = "+" if feat_ic["ic"] >= 0 else "-"
+            # Format p-value: use scientific notation for very small values
+            p_val = feat_ic["p_value"]
+            if p_val < 0.0001:
+                p_str = f"{p_val:.2e}"
+            else:
+                p_str = f"{p_val:.4f}"
+            print(
+                f"{i:4d}. {feat_ic['feature']:50s} | IC: {ic_sign}{feat_ic['abs_ic']:.4f} (p={p_str})"
+            )
 
         # Save feature IC ranking to file
         output_dir = Path(args.output_dir)
@@ -555,6 +617,132 @@ def main():
         json.dump(all_results, f, indent=2, default=str)
 
     print(f"\n💾 Results saved to {results_file}")
+
+    # Generate top_factors.json for ts-r-rank-ic-train compatibility
+    if all_feature_ics:
+        print("\n📝 Generating top_factors.json for ts-r-rank-ic-train...")
+        top_factors_file = output_dir / "top_factors.json"
+        try:
+            # Filter features: exclude label columns and _symbol
+            label_prefixes = ("signal_", "binary_signal_", "future_return_")
+            label_exact = {"signal", "binary_signal", "future_return", "_symbol"}
+
+            # Select top features based on IC
+            # First, collect features with deduplication (keep the one with highest IC)
+            feature_dict = {}  # feature_name -> best_feat_ic
+            for feat_ic in all_feature_ics:
+                feat_name = feat_ic["feature_name"]
+                # Skip label columns
+                if feat_name in label_exact or any(
+                    feat_name.startswith(prefix) for prefix in label_prefixes
+                ):
+                    continue
+
+                # Keep the feature with highest abs_ic if duplicate
+                if feat_name not in feature_dict:
+                    feature_dict[feat_name] = feat_ic
+                elif feat_ic["abs_ic"] > feature_dict[feat_name]["abs_ic"]:
+                    feature_dict[feat_name] = feat_ic
+
+            # Convert to sorted list
+            deduplicated_features = sorted(
+                feature_dict.values(), key=lambda x: x["abs_ic"], reverse=True
+            )
+
+            # Select based on criteria
+            if args.top_factors_count is not None:
+                # Use top N features
+                selected_features = [
+                    feat_ic["feature_name"]
+                    for feat_ic in deduplicated_features[: args.top_factors_count]
+                ]
+            else:
+                # Use IC threshold
+                selected_features = [
+                    feat_ic["feature_name"]
+                    for feat_ic in deduplicated_features
+                    if feat_ic["abs_ic"] >= args.top_factors_ic_threshold
+                ]
+
+            # Calculate statistics
+            if selected_features:
+                avg_ic = np.mean(
+                    [
+                        feat_ic["abs_ic"]
+                        for feat_ic in all_feature_ics
+                        if feat_ic["feature_name"] in selected_features
+                    ]
+                )
+                max_ic = max(
+                    [
+                        feat_ic["abs_ic"]
+                        for feat_ic in all_feature_ics
+                        if feat_ic["feature_name"] in selected_features
+                    ]
+                )
+            else:
+                avg_ic = 0.0
+                max_ic = 0.0
+
+            top_factors_data = {
+                "top_factors": [{"name": factor} for factor in selected_features],
+                "count": len(selected_features),
+                "source": "feature_evaluation",
+                "stage": "Feature IC ranking",
+                "effective": True,
+                "selection_criteria": {
+                    "method": "top_n" if args.top_factors_count else "ic_threshold",
+                    "top_n": args.top_factors_count,
+                    "ic_threshold": args.top_factors_ic_threshold,
+                },
+                "performance": {
+                    "avg_abs_ic": float(avg_ic),
+                    "max_abs_ic": float(max_ic),
+                    "total_features_evaluated": len(all_feature_ics),
+                },
+            }
+
+            with open(top_factors_file, "w", encoding="utf-8") as f:
+                json.dump(top_factors_data, f, indent=2, ensure_ascii=False)
+
+            print(
+                f"   ✅ Generated top_factors.json with {len(selected_features)} features"
+            )
+            print(f"   📄 File location: {top_factors_file}")
+            print(f"   📊 Avg |IC|: {avg_ic:.4f}, Max |IC|: {max_ic:.4f}")
+
+            # Print all selected features
+            print(
+                f"\n   📋 Selected {len(selected_features)} features for top_factors.json:"
+            )
+            for i, feat_name in enumerate(selected_features, 1):
+                # Find the IC value for this feature
+                feat_ic_info = next(
+                    (
+                        f
+                        for f in deduplicated_features
+                        if f["feature_name"] == feat_name
+                    ),
+                    None,
+                )
+                if feat_ic_info:
+                    ic_sign = "+" if feat_ic_info["ic"] >= 0 else "-"
+                    p_val = feat_ic_info["p_value"]
+                    if p_val < 0.0001:
+                        p_str = f"{p_val:.2e}"
+                    else:
+                        p_str = f"{p_val:.4f}"
+                    print(
+                        f"      {i:3d}. {feat_name:50s} | IC: {ic_sign}{feat_ic_info['abs_ic']:.4f} (p={p_str})"
+                    )
+                else:
+                    print(f"      {i:3d}. {feat_name}")
+        except Exception as e:
+            print(f"   ⚠️  Failed to generate top_factors.json: {e}")
+            import traceback
+
+            traceback.print_exc()
+
     print("=" * 60)
 
 

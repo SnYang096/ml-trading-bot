@@ -32,6 +32,7 @@ import pandas as pd
 
 from data_tools.data_loader import MarketDataLoader
 from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from time_series_model.pipeline.dimensionality.utils import load_top_factors_list
 from time_series_model.pipeline.training.rank_ic_trainer import (
     prepare_rank_ic_labels,
     train_rank_ic_model,
@@ -51,6 +52,7 @@ def load_data(
     end_date: Optional[str] = None,
     timeframe: str = "15T",
     feature_type: str = "comprehensive",
+    top_factors: Optional[str] = None,
 ) -> pd.DataFrame:
     """Load and prepare market data with features."""
     print(f"📊 Loading data for {symbol}...")
@@ -117,10 +119,27 @@ def load_data(
     df = pd.concat(all_dfs, axis=0).sort_index()
     print(f"   ✅ Loaded {len(df)} samples from {len(symbol_list)} asset(s)")
 
+    # Load top factors if specified
+    required_features = None
+    if top_factors:
+        print(f"📋 Loading top factors from {top_factors}...")
+        try:
+            top_factors_list = load_top_factors_list(top_factors)
+            required_features = set(top_factors_list)
+            print(
+                f"   ✅ Loaded {len(required_features)} features from top_factors.json"
+            )
+            print(f"   📊 Will only generate these features (others will be skipped)")
+        except Exception as e:
+            print(f"   ⚠️  Failed to load top factors: {e}")
+            print(f"   ⚠️  Will generate all features for {feature_type}")
+
     # Feature engineering
     print(f"🔧 Engineering features ({feature_type})...")
     engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
-    df_features = engineer.engineer_all_features(df, fit=True)
+    df_features = engineer.engineer_all_features(
+        df, fit=True, required_features=required_features
+    )
 
     # Keep close price for label preparation
     if "close" not in df_features.columns and "close" in df.columns:
@@ -139,7 +158,8 @@ def load_data(
     }
     exclude_prefixes = ("signal_", "binary_signal_", "future_return_")
 
-    feature_cols = [
+    # First, get all potential feature columns
+    all_potential_features = [
         col
         for col in df_features.columns
         if (col not in exclude_exact)
@@ -147,7 +167,26 @@ def load_data(
         and col != "_symbol"  # Keep _symbol but don't include in features
     ]
 
-    print(f"   ✅ Generated {len(feature_cols)} features")
+    # If required_features is specified, only keep those features
+    if required_features is not None:
+        feature_cols = [
+            col for col in all_potential_features if col in required_features
+        ]
+        print(
+            f"   ✅ Generated {len(all_potential_features)} features, filtered to {len(feature_cols)} features from top_factors.json"
+        )
+        if len(feature_cols) < len(required_features):
+            missing = required_features - set(feature_cols)
+            print(
+                f"   ⚠️  Warning: {len(missing)} features from top_factors.json were not generated:"
+            )
+            for feat in list(missing)[:10]:  # Show first 10 missing
+                print(f"      - {feat}")
+            if len(missing) > 10:
+                print(f"      ... and {len(missing) - 10} more")
+    else:
+        feature_cols = all_potential_features
+        print(f"   ✅ Generated {len(feature_cols)} features")
 
     # Keep symbol column and close for multi-asset support and label prep
     keep_cols = [*feature_cols, "close"]
@@ -266,6 +305,12 @@ def main():
         help="Run data leakage detection tests",
     )
     parser.add_argument(
+        "--top-factors",
+        type=str,
+        default=None,
+        help="Path to top_factors.json file to load specific features (e.g., from feature-eval)",
+    )
+    parser.add_argument(
         "--leakage-random-walk",
         action="store_true",
         default=True,
@@ -304,6 +349,7 @@ def main():
         args.train_end,
         args.timeframe,
         args.feature_type,
+        args.top_factors,
     )
 
     # Prepare Rank IC labels
