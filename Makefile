@@ -606,6 +606,8 @@ FEATURE_EVAL_HORIZON ?= 24
 FEATURE_EVAL_TYPES ?= baseline,default,enhanced,hurst,wavelet,hilbert,spectral,order_flow,alpha101
 FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
+FEATURE_EVAL_START_DATE ?=2023-01-01
+FEATURE_EVAL_END_DATE ?=2025-01-01
 
 feature-eval:
 	@echo "🔍 Feature Type Evaluation (IC + Leakage Detection)..."
@@ -613,12 +615,14 @@ feature-eval:
 	@echo "   Timeframe: $(FEATURE_EVAL_TIMEFRAME)"
 	@echo "   Horizon: $(FEATURE_EVAL_HORIZON)"
 	@echo "   Feature Types: $(FEATURE_EVAL_TYPES)"
+	@echo "   Start Date: $(if $(FEATURE_EVAL_START_DATE),$(FEATURE_EVAL_START_DATE),Not specified - will load all available data)"
+	@echo "   End Date: $(if $(FEATURE_EVAL_END_DATE),$(FEATURE_EVAL_END_DATE),Not specified)"
 	@echo "   Output: $(FEATURE_EVAL_OUTPUT_DIR)"
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.feature_type_evaluator \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(FEATURE_EVAL_SYMBOL) \
-		$(if $(START_DATE),--train-start $(START_DATE),) \
-		$(if $(END_DATE),--train-end $(END_DATE),) \
+		$(if $(FEATURE_EVAL_START_DATE),--train-start $(FEATURE_EVAL_START_DATE),) \
+		$(if $(FEATURE_EVAL_END_DATE),--train-end $(FEATURE_EVAL_END_DATE),) \
 		--timeframe $(FEATURE_EVAL_TIMEFRAME) \
 		--horizon $(FEATURE_EVAL_HORIZON) \
 		--feature-types $(FEATURE_EVAL_TYPES) \

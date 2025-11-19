@@ -177,6 +177,58 @@ def evaluate_feature_type(
             f"   ✅ Average Rank IC: {avg_rank_ic:.4f} ± {results['rank_ic_std']:.4f}"
         )
 
+        # Calculate individual feature ICs for feature selection
+        print("\n📊 Calculating individual feature ICs...")
+        feature_ics = []
+        future_return = df_with_labels["future_return"]
+
+        for col in feature_cols:
+            try:
+                feature_series = df_with_labels[col]
+                # Filter NaN values
+                valid_mask = feature_series.notna() & future_return.notna()
+                if valid_mask.sum() < 10:
+                    continue
+
+                feature_valid = feature_series[valid_mask]
+                return_valid = future_return[valid_mask]
+
+                # Compute Spearman correlation (Rank IC)
+                from scipy.stats import spearmanr
+
+                ic, p_value = spearmanr(
+                    feature_valid.values, return_valid.values, nan_policy="omit"
+                )
+
+                if not np.isnan(ic):
+                    feature_ics.append(
+                        {
+                            "feature": col,
+                            "ic": float(ic),
+                            "abs_ic": abs(float(ic)),
+                            "p_value": float(p_value) if not np.isnan(p_value) else 1.0,
+                        }
+                    )
+            except Exception as e:
+                # Skip features that cause errors
+                continue
+
+        # Sort by absolute IC (descending)
+        feature_ics.sort(key=lambda x: x["abs_ic"], reverse=True)
+        results["feature_ics"] = feature_ics
+
+        # Print top features
+        print(f"   ✅ Calculated IC for {len(feature_ics)} features")
+        print(f"\n   📈 Top 20 features by |Rank IC|:")
+        for i, feat_ic in enumerate(feature_ics[:20], 1):
+            ic_sign = "+" if feat_ic["ic"] >= 0 else "-"
+            print(
+                f"      {i:2d}. {feat_ic['feature']:40s} | IC: {ic_sign}{feat_ic['abs_ic']:.4f} (p={feat_ic['p_value']:.4f})"
+            )
+
+        if len(feature_ics) > 20:
+            print(f"      ... and {len(feature_ics) - 20} more features")
+
         # Data leakage tests
         if test_leakage:
             print("Running data leakage tests...")
@@ -313,11 +365,47 @@ def main():
     # Load data
     print("\n📊 Loading data...")
     loader = MarketDataLoader(args.data_path)
-    df = loader.load_data(
-        symbol=args.symbol,
-        start_date=args.train_start,
-        end_date=args.train_end,
-    )
+
+    # If no dates specified, try to load more data
+    if args.train_start is None and args.train_end is None:
+        print("   ℹ️  No date range specified, loading all available data...")
+        # Try to load from a reasonable start date (e.g., 2 years ago)
+        from datetime import datetime, timedelta
+
+        # First, try to load all available data
+        df = loader.load_data(
+            symbol=args.symbol,
+            start_date=None,
+            end_date=None,
+        )
+
+        if df is not None and not df.empty and isinstance(df.index, pd.DatetimeIndex):
+            # If we have data, try to load more by going back further
+            min_date = df.index.min()
+            max_date = df.index.max()
+            print(f"   ℹ️  Available data range: {min_date.date()} to {max_date.date()}")
+            print(f"   ℹ️  Current samples: {len(df)}")
+
+            # Try to load from 2 years ago if possible
+            two_years_ago = max_date - timedelta(days=730)
+            if two_years_ago > min_date:
+                print(
+                    f"   ℹ️  Attempting to load more data from {two_years_ago.date()}..."
+                )
+                df_extended = loader.load_data(
+                    symbol=args.symbol,
+                    start_date=two_years_ago.strftime("%Y-%m-%d"),
+                    end_date=None,
+                )
+                if df_extended is not None and not df_extended.empty:
+                    print(f"   ✅ Extended data loaded: {len(df_extended)} samples")
+                    df = df_extended
+    else:
+        df = loader.load_data(
+            symbol=args.symbol,
+            start_date=args.train_start,
+            end_date=args.train_end,
+        )
 
     if df is None or df.empty:
         print("❌ No data loaded")
@@ -382,12 +470,15 @@ def main():
     print("=" * 60)
 
     summary_data = []
+    all_feature_ics = []  # Collect all features across all types
+
     for feat_type, result in all_results.items():
         if result.get("status") == "completed":
             avg_ic = result.get("avg_rank_ic", 0.0)
             ic_std = result.get("rank_ic_std", 0.0)
             n_features = result.get("n_features", 0)
             has_leakage = result.get("has_leakage", False)
+            feature_ics = result.get("feature_ics", [])
 
             summary_data.append(
                 {
@@ -396,8 +487,22 @@ def main():
                     "avg_rank_ic": avg_ic,
                     "rank_ic_std": ic_std,
                     "has_leakage": has_leakage,
+                    "feature_ics": feature_ics,
                 }
             )
+
+            # Collect features with their type prefix
+            for feat_ic in feature_ics:
+                all_feature_ics.append(
+                    {
+                        "feature": f"{feat_type}::{feat_ic['feature']}",
+                        "feature_type": feat_type,
+                        "feature_name": feat_ic["feature"],
+                        "ic": feat_ic["ic"],
+                        "abs_ic": feat_ic["abs_ic"],
+                        "p_value": feat_ic["p_value"],
+                    }
+                )
 
             leakage_status = "⚠️  LEAKAGE" if has_leakage else "✅ CLEAN"
             print(
@@ -414,8 +519,35 @@ def main():
             f"{i:2d}. {data['feature_type']:20s} | IC: {data['avg_rank_ic']:7.4f} ± {data['rank_ic_std']:.4f} | {data['n_features']:4d} features{leakage_marker}"
         )
 
+    # Print all features sorted by IC
+    if all_feature_ics:
+        all_feature_ics.sort(key=lambda x: x["abs_ic"], reverse=True)
+        print("\n" + "=" * 60)
+        print("📊 All Features Ranked by |Rank IC| (for feature selection)")
+        print("=" * 60)
+        print(f"Total features: {len(all_feature_ics)}")
+        print("\nTop 50 features:")
+        for i, feat_ic in enumerate(all_feature_ics[:50], 1):
+            ic_sign = "+" if feat_ic["ic"] >= 0 else "-"
+            print(
+                f"{i:3d}. {feat_ic['feature']:50s} | IC: {ic_sign}{feat_ic['abs_ic']:.4f} (p={feat_ic['p_value']:.4f})"
+            )
+
+        if len(all_feature_ics) > 50:
+            print(f"\n... and {len(all_feature_ics) - 50} more features")
+
+        # Save feature IC ranking to file
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        feature_ic_file = output_dir / "feature_ic_ranking.csv"
+        feature_ic_df = pd.DataFrame(all_feature_ics)
+        feature_ic_df = feature_ic_df[
+            ["feature", "feature_type", "feature_name", "ic", "abs_ic", "p_value"]
+        ]
+        feature_ic_df.to_csv(feature_ic_file, index=False)
+        print(f"\n💾 Feature IC ranking saved to {feature_ic_file}")
+
     # Save results
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     results_file = output_dir / "feature_type_evaluation.json"
