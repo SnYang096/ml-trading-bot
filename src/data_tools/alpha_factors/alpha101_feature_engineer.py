@@ -88,6 +88,8 @@ class Alpha101FeatureEngineer:
         }
 
         # Derived inputs
+        # CRITICAL: pct_change() uses current and previous data, which is correct for predicting future_return[i]
+        # returns[i] = (close[i] - close[i-1]) / close[i-1] is valid for predicting future_return[i]
         data_frames["r"] = (
             data_frames["c"].pct_change().replace([-np.inf, np.inf], np.nan).fillna(0.0)
         )
@@ -160,7 +162,9 @@ class Alpha101FeatureEngineer:
         # This handles NaN values caused by rolling windows, shifts, and other time-series operations
         # Note: NaN values at the beginning are normal for time-series features that require historical windows
         # We use forward fill to propagate the first valid value backward, then fill remaining NaNs with 0
-        feature_df = feature_df.ffill().bfill().fillna(0.0)
+        # CRITICAL: Only forward fill (don't backward fill) to avoid using future data
+        # Backward fill would use future values to fill past NaNs, causing data leakage
+        feature_df = feature_df.ffill().fillna(0.0)
 
         return feature_df
 
@@ -262,12 +266,13 @@ class Alpha101FeatureEngineer:
         return df
 
     def _compute_vwap(self, base: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        # CRITICAL: VWAP calculation should only use historical data
+        # Using cumsum() is correct as it only uses data up to current time
         price = (base["high"] + base["low"] + base["close"]) / 3.0
         volume = base["volume"].replace(0, np.nan)
         cumulative = (price * volume).cumsum()
-        vwap_series = (
-            cumulative.div(volume.cumsum()).fillna(method="ffill").fillna(price)
-        )
+        # Only use forward fill (not backward fill) to avoid future data leakage
+        vwap_series = cumulative.div(volume.cumsum()).ffill().fillna(price)
         df = vwap_series.to_frame(symbol)
         df.columns.name = "ticker"
         return df

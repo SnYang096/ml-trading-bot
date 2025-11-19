@@ -525,6 +525,17 @@ class EnhancedFeatureEngineer:
         """
         Add Hilbert transform features for ALL signal sources.
         对 close, open, volume, cvd, taker_buy_ratio 都做Hilbert变换
+
+        NOTE: Hilbert transform is causal (only uses current and past data),
+        but the phase and frequency features may show high correlation with future returns.
+        This could indicate:
+        1. Genuine predictive signal (market cycles/patterns)
+        2. Potential data leakage if features are computed using future information
+
+        The current implementation uses scipy.signal.hilbert() which is causal,
+        but phase_change and phase_acceleration use diff() which is also causal.
+        However, if these features show suspiciously high correlation (>0.3) with future returns,
+        they should be reviewed for potential leakage.
         """
         df = data.copy()
 
@@ -560,11 +571,61 @@ class EnhancedFeatureEngineer:
                     df[f"{source_name}_hilbert_frequency"] = 0
                     continue
 
-                analytic_signal = hilbert(valid_data)
-                amplitude = np.abs(analytic_signal)
-                phase = np.angle(analytic_signal)
-                frequency = np.diff(np.unwrap(phase)) / (2.0 * np.pi)
-                frequency = np.concatenate([[frequency[0]], frequency])
+                # CRITICAL FIX: scipy.signal.hilbert() uses the ENTIRE signal,
+                # which includes future information. This causes data leakage!
+                # We need to use a rolling window approach to ensure causality.
+                #
+                # Use a rolling window Hilbert transform (causal)
+                window_size = min(
+                    100, len(valid_data)
+                )  # Use up to 100 points for Hilbert
+                amplitude = np.zeros(len(valid_data))
+                phase = np.zeros(len(valid_data))
+                frequency = np.zeros(len(valid_data))
+
+                for i in range(len(valid_data)):
+                    # Only use data up to current point (causal)
+                    end_idx = i + 1
+                    start_idx = max(0, end_idx - window_size)
+                    window_data = valid_data[start_idx:end_idx]
+
+                    if len(window_data) >= 10:  # Minimum window size for Hilbert
+                        try:
+                            window_analytic = hilbert(window_data)
+                            window_amplitude = np.abs(window_analytic)
+                            window_phase = np.angle(window_analytic)
+
+                            # Take the last value (current point)
+                            amplitude[i] = window_amplitude[-1]
+                            phase[i] = window_phase[-1]
+
+                            # Calculate frequency from phase difference
+                            if len(window_phase) > 1:
+                                phase_unwrapped = np.unwrap(window_phase)
+                                freq = np.diff(phase_unwrapped) / (2.0 * np.pi)
+                                frequency[i] = freq[-1] if len(freq) > 0 else 0.0
+                            else:
+                                frequency[i] = 0.0
+                        except:
+                            # Fallback to previous values if calculation fails
+                            if i > 0:
+                                amplitude[i] = amplitude[i - 1]
+                                phase[i] = phase[i - 1]
+                                frequency[i] = frequency[i - 1]
+                            else:
+                                amplitude[i] = 0.0
+                                phase[i] = 0.0
+                                frequency[i] = 0.0
+                    else:
+                        # Not enough data, use previous values or zero
+                        if i > 0:
+                            amplitude[i] = amplitude[i - 1]
+                            phase[i] = phase[i - 1]
+                            frequency[i] = frequency[i - 1]
+                        else:
+                            amplitude[i] = 0.0
+                            phase[i] = 0.0
+                            frequency[i] = 0.0
 
                 # Pad to original length if needed (left pad if we trimmed head)
                 if len(amplitude) < len(source_series):
@@ -660,8 +721,10 @@ class EnhancedFeatureEngineer:
                     continue
 
                 try:
-                    # 获取窗口数据
-                    window_data = source_data[i - window : i]
+                    # 获取窗口数据（确保不包含当前时刻 i）
+                    # 使用 [i-window : i) 确保只包含历史数据，不包含当前时刻
+                    start_idx = max(0, i - window)
+                    window_data = source_data[start_idx:i]  # 明确不包含 i
 
                     # 移除NaN
                     valid_data = window_data[np.isfinite(window_data)]
@@ -672,6 +735,9 @@ class EnhancedFeatureEngineer:
                     # 使用periodogram计算功率谱密度（更稳定）
                     if source_name in ["close", "open"]:
                         # 对价格信号，先转换为收益率
+                        # CRITICAL: 确保只使用历史数据，不包含当前时刻
+                        # np.diff(valid_data) 计算的是 valid_data[1] - valid_data[0], ...
+                        # 对应时间点 start_idx+1 到 i-1，不包含 i
                         returns = np.diff(valid_data) / (valid_data[:-1] + 1e-10)
                         if len(returns) < 5:
                             continue

@@ -344,24 +344,59 @@ class ComprehensiveFeatureEngineer:
             except Exception as e:
                 print(f"     ⚠️  默认传统指标特征失败: {e}")
 
-        # 3. Alpha101 因子特征
+        # 3. Alpha101 因子特征（只保留时序版本的关键因子）
         if self.use_alpha101:
-            print("  📊 Alpha101 因子特征...")
+            print("  📊 Alpha101 因子特征（时序版本，仅保留关键因子）...")
             try:
-                if self.alpha101_engineer is None:
-                    self.alpha101_engineer = Alpha101FeatureEngineer()
+                from .alpha_factors.alpha101_timeseries_adapted import (
+                    compute_adapted_alpha101_factors,
+                )
+
+                # 只计算这4个关键时序因子
                 alpha_source = df[["open", "high", "low", "close", "volume"]]
-                alpha_df = self.alpha101_engineer.compute(
-                    alpha_source, required_features=required_features
+                alpha_df = compute_adapted_alpha101_factors(
+                    alpha_source,
+                    use_ts_rank=True,
+                    alpha001_window=5,  # 波动率过滤器窗口
+                    alpha022_corr_window=10,  # 量价相关性窗口
+                    alpha022_delta_window=5,  # 相关性变化窗口
+                    alpha022_vol_window=20,  # 波动率窗口
+                    alpha043_vol_rank_window=20,  # 成交量排名窗口
+                    alpha043_mom_rank_window=8,  # 动量排名窗口
+                    alpha043_adv_window=20,  # 平均成交量窗口
+                    alpha043_mom_period=7,  # 动量周期
                 )
                 alpha_df = alpha_df.reindex(df.index)
                 df = df.join(alpha_df, how="left")
                 alpha101_features = len(df.columns) - prev_count
-                # 如果已经通过 required_features 过滤，就不需要再次过滤
+                # 只保留这4个关键因子，不需要额外过滤
+                kept_features = [
+                    "alpha101_001_ts",  # 波动率过滤器
+                    "alpha101_022_ts",  # 量价背离预警
+                    "alpha101_043_ts",  # 量价突破信号
+                    "alpha101_066_ts",  # K线情绪指标
+                ]
+                kept_count = len([c for c in kept_features if c in df.columns])
+                print(f"     ✅ Alpha101时序因子: {kept_count} 个关键因子已计算")
+                print(f"        - alpha101_001_ts: 波动率过滤器 (window=5)")
+                print(f"        - alpha101_022_ts: 量价背离预警 (corr_window=10)")
+                print(f"        - alpha101_043_ts: 量价突破信号 (mom_period=7)")
+                print(f"        - alpha101_066_ts: K线情绪指标")
+
+                # 如果指定了 required_features，只保留需要的特征
                 if required_features:
-                    kept_count = len([c for c in df.columns if c in required_features])
-                    print(f"     ✅ Alpha101特征: {kept_count} 个需要的特征已计算")
+                    # 移除不在 required_features 中的 alpha101 特征
+                    alpha101_cols = [c for c in df.columns if c.startswith("alpha101_")]
+                    for col in alpha101_cols:
+                        if col not in required_features:
+                            df = df.drop(columns=[col])
                 else:
+                    # 移除其他 alpha101 特征（如果有的话）
+                    alpha101_cols = [c for c in df.columns if c.startswith("alpha101_")]
+                    for col in alpha101_cols:
+                        if col not in kept_features:
+                            df = df.drop(columns=[col])
+
                     # 在过滤前保存新增的列名（用于统计本次生成的特征）
                     new_columns_before_filter = set(df.columns[prev_count:])
                     df = _filter_features(df, "Alpha101")

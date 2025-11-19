@@ -39,6 +39,9 @@ from time_series_model.pipeline.training.rank_ic_trainer import (
     evaluate_model_performance,
 )
 from time_series_model.pipeline.training.rank_ic_utils import compute_rank_ic
+from time_series_model.pipeline.training.data_leakage_detector import (
+    detect_data_leakage,
+)
 
 
 def load_data(
@@ -257,8 +260,30 @@ def main():
         action="store_true",
         help="Smooth target variable to reduce noise",
     )
+    parser.add_argument(
+        "--check-leakage",
+        action="store_true",
+        help="Run data leakage detection tests",
+    )
+    parser.add_argument(
+        "--leakage-random-walk",
+        action="store_true",
+        default=True,
+        help="Run random walk leakage test (default: True if --check-leakage)",
+    )
+    parser.add_argument(
+        "--leakage-correlation",
+        action="store_true",
+        default=True,
+        help="Run feature-future correlation test (default: True if --check-leakage)",
+    )
 
     args = parser.parse_args()
+
+    # Enable leakage checks if --check-leakage is set
+    if args.check_leakage:
+        args.leakage_random_walk = True
+        args.leakage_correlation = True
 
     print("=" * 60)
     print("🚀 Rank IC Regression Training (Standalone)")
@@ -302,6 +327,29 @@ def main():
     print(
         f"   ✅ Labels prepared: {df_with_labels['volatility_normalized_target'].notna().sum()} valid samples"
     )
+
+    # Data leakage detection
+    leakage_results_storage = None
+    if args.check_leakage or args.leakage_random_walk or args.leakage_correlation:
+        print("\n🔍 Running data leakage detection...")
+        leakage_results_storage = detect_data_leakage(
+            df=df_with_labels,
+            feature_cols=feature_cols,
+            future_return_col="future_return",
+            run_random_walk_test=args.leakage_random_walk,
+            run_correlation_test=args.leakage_correlation,
+            random_walk_params={
+                "n_samples": 2000,  # Use more samples for better statistical power
+                "n_features": min(100, len(feature_cols)),  # More features to test
+                "hold_period": args.horizon,
+                "n_splits": 5,  # Use more splits for better statistical stability
+                "threshold": 0.03,  # Stricter threshold for leakage detection
+            },
+            correlation_params={
+                "correlation_threshold": 0.1,
+                "min_samples": 100,
+            },
+        )
 
     # Split train/test
     print("\n✂️  Splitting data...")
@@ -396,6 +444,10 @@ def main():
             "evaluation": test_eval,
         },
     }
+
+    # Add leakage detection results if available
+    if leakage_results_storage is not None:
+        results["leakage_detection"] = leakage_results_storage
 
     with open(results_file, "w") as f:
         json.dump(results, f, indent=2, default=str)

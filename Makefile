@@ -551,6 +551,7 @@ RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
 RANK_IC_FILTER_HIGH_CONF ?= 0
 RANK_IC_MIN_TREND_STRENGTH ?= 1.0
 RANK_IC_SMOOTH_TARGET ?= 0
+RANK_IC_CHECK_LEAKAGE ?= 0
 
 ts-r-rank-ic-train:
 	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
@@ -574,9 +575,39 @@ ts-r-rank-ic-train:
 		--output-dir /workspace/$(RANK_IC_OUTPUT_DIR) \
 		$(if $(filter 1 true yes,$(RANK_IC_FILTER_HIGH_CONF)),--filter-high-confidence,) \
 		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
-		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,)
+		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
+		$(if $(filter 1 true yes,$(RANK_IC_CHECK_LEAKAGE)),--check-leakage,)
 	@echo "✅ Training complete. Check results in $(RANK_IC_OUTPUT_DIR)"
 
+
+# ---------------------------------------------------------------------------
+# Feature Type Evaluation
+# ---------------------------------------------------------------------------
+
+FEATURE_EVAL_SYMBOL ?= $(SYMBOL)
+FEATURE_EVAL_TIMEFRAME ?= 240T
+FEATURE_EVAL_HORIZON ?= 5
+FEATURE_EVAL_TYPES ?= baseline,default,enhanced,hurst,wavelet,hilbert,spectral,order_flow,alpha101
+FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
+
+feature-eval:
+	@echo "🔍 Feature Type Evaluation (IC + Leakage Detection)..."
+	@echo "   Symbol: $(FEATURE_EVAL_SYMBOL)"
+	@echo "   Timeframe: $(FEATURE_EVAL_TIMEFRAME)"
+	@echo "   Horizon: $(FEATURE_EVAL_HORIZON)"
+	@echo "   Feature Types: $(FEATURE_EVAL_TYPES)"
+	@echo "   Output: $(FEATURE_EVAL_OUTPUT_DIR)"
+	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.feature_type_evaluator \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(FEATURE_EVAL_SYMBOL) \
+		$(if $(START_DATE),--train-start $(START_DATE),) \
+		$(if $(END_DATE),--train-end $(END_DATE),) \
+		--timeframe $(FEATURE_EVAL_TIMEFRAME) \
+		--horizon $(FEATURE_EVAL_HORIZON) \
+		--feature-types $(FEATURE_EVAL_TYPES) \
+		--output-dir /workspace/$(FEATURE_EVAL_OUTPUT_DIR) \
+		--test-leakage
+	@echo "✅ Evaluation complete. Check results in $(FEATURE_EVAL_OUTPUT_DIR)"
 
 
 # ---------------------------------------------------------------------------

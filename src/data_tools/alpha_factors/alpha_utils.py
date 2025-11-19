@@ -17,7 +17,30 @@ def _ensure_dataframe(obj: pd.DataFrame | pd.Series) -> pd.DataFrame:
 
 
 def rank(df: pd.DataFrame) -> pd.DataFrame:
-    return _ensure_dataframe(df).rank(axis=1, pct=True)
+    """
+    Cross-sectional rank function.
+
+    In single-asset time series, rank(axis=1) returns constant values (1.0),
+    which makes features ineffective. For single-asset cases, we use
+    time-series rank (ts_rank) instead, which ranks values within a rolling window.
+
+    For multi-asset cases, rank(axis=1) works correctly.
+    """
+    df = _ensure_dataframe(df)
+
+    # Check if this is single-asset (only one column)
+    if df.shape[1] == 1:
+        # Single-asset case: use time-series rank instead
+        # This ranks each value within its historical rolling window
+        # Using a window of 20 periods (can be adjusted)
+        window = 20
+        return df.rolling(window, min_periods=1).apply(
+            lambda x: pd.Series(x).rank(pct=True).iloc[-1] if len(x) > 0 else 0.5,
+            raw=False,
+        )
+    else:
+        # Multi-asset case: use cross-sectional rank
+        return df.rank(axis=1, pct=True)
 
 
 def scale(df: pd.DataFrame, k: float = 1.0) -> pd.DataFrame:
