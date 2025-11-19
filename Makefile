@@ -566,7 +566,7 @@ nautilus-backtest:
 FEATURE_EVAL_SYMBOL ?= $(SYMBOL)
 FEATURE_EVAL_TIMEFRAME ?= 240T
 FEATURE_EVAL_HORIZON ?= 24
-FEATURE_EVAL_TYPES ?= baseline,default,enhanced,hurst,wavelet,hilbert,spectral,order_flow,alpha101
+FEATURE_EVAL_TYPES ?= baseline,default,hurst,wavelet,hilbert,spectral,order_flow,dl_sequence,alpha101
 FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
 FEATURE_EVAL_START_DATE ?=2023-01-01
@@ -614,9 +614,9 @@ RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
 RANK_IC_FILTER_HIGH_CONF ?= 0
 RANK_IC_MIN_TREND_STRENGTH ?= 1.0
 RANK_IC_SMOOTH_TARGET ?= 0
-RANK_IC_CHECK_LEAKAGE ?= 0
-RANK_IC_TOP_FACTORS ?=
-RANK_IC_TSCV_GAP ?= 0
+RANK_IC_CHECK_LEAKAGE ?= 1
+RANK_IC_TOP_FACTORS ?= 50
+RANK_IC_TSCV_GAP ?= 24
 
 ts-r-rank-ic-train:
 	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."

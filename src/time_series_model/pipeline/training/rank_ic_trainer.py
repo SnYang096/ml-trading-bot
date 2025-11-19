@@ -107,20 +107,67 @@ def prepare_rank_ic_labels(
     # Strategy: Use close[t+1] as entry price (assume trade at t+1 open)
     # future_return[t] = (close[t+1+horizon] - close[t+1]) / close[t+1]
     if group_cols:
+        # Compute future_return per group using transform for better alignment
+        def _compute_future_return(group: pd.Series) -> pd.Series:
+            # Entry price: close[t+1]
+            price_entry = group.shift(-1)
+            # Exit price: close[t+1+hold_period]
+            price_exit = group.shift(-1 - hold_period)
+            # Future return: (exit - entry) / entry
+            return (price_exit - price_entry) / price_entry
 
-        def _future_return(group: pd.DataFrame) -> pd.Series:
-            close_next = group[price_col].shift(-1)
-            return close_next.pct_change(hold_period).shift(-hold_period)
+        # Use transform to ensure proper alignment with original dataframe
+        df["future_return"] = df.groupby(group_cols, group_keys=False)[
+            price_col
+        ].transform(_compute_future_return)
 
-        future_ret = df.groupby(group_cols, group_keys=False).apply(_future_return)
-        # Ensure it's a Series, not DataFrame
-        if isinstance(future_ret, pd.DataFrame):
-            future_ret = future_ret.iloc[:, 0]
-        df["future_return"] = future_ret
+        # Debug: Check if calculation produced any valid values
+        valid_future_return = df["future_return"].notna().sum()
+        if valid_future_return == 0 and len(df) > 0:
+            print(
+                f"   ⚠️  Warning: future_return calculation (grouped) produced 0 valid values"
+            )
+            print(f"      Total samples: {len(df)}")
+            print(f"      Group columns: {group_cols}")
+            print(f"      hold_period: {hold_period}")
+            # Check a sample group
+            if group_cols and group_cols[0] in df.columns:
+                sample_group_val = df[group_cols[0]].iloc[0]
+                sample_group = df[df[group_cols[0]] == sample_group_val]
+                print(
+                    f"      Sample group '{group_cols[0]}={sample_group_val}': {len(sample_group)} samples"
+                )
+                if len(sample_group) > 0:
+                    price_entry_sample = sample_group[price_col].shift(-1)
+                    price_exit_sample = sample_group[price_col].shift(-1 - hold_period)
+                    print(
+                        f"      price_entry non-null in sample group: {price_entry_sample.notna().sum()}"
+                    )
+                    print(
+                        f"      price_exit non-null in sample group: {price_exit_sample.notna().sum()}"
+                    )
     else:
-        # Shift price forward by 1 to use next bar's close as entry
-        price_shifted = df[price_col].shift(-1)
-        df["future_return"] = price_shifted.pct_change(hold_period).shift(-hold_period)
+        # Entry price: close[t+1]
+        price_entry = df[price_col].shift(-1)
+        # Exit price: close[t+1+hold_period]
+        price_exit = df[price_col].shift(-1 - hold_period)
+        # Future return: (exit - entry) / entry
+        df["future_return"] = (price_exit - price_entry) / price_entry
+
+        # Debug: Check if calculation produced any valid values
+        valid_future_return = df["future_return"].notna().sum()
+        if valid_future_return == 0 and len(df) > 0:
+            print(f"   ⚠️  Warning: future_return calculation produced 0 valid values")
+            print(f"      Total samples: {len(df)}")
+            print(f"      price_entry non-null: {price_entry.notna().sum()}")
+            print(f"      price_exit non-null: {price_exit.notna().sum()}")
+            print(f"      hold_period: {hold_period}")
+            print(
+                f"      Sample price_entry values (first 5): {price_entry.head().tolist()}"
+            )
+            print(
+                f"      Sample price_exit values (first 5): {price_exit.head().tolist()}"
+            )
 
     # 2. Compute rolling volatility (if not already computed by ensure_volatility_feature)
     # Note: pct_change(hold_period) computes historical returns: (close[t] - close[t-hold_period]) / close[t-hold_period]
@@ -346,9 +393,63 @@ def train_rank_ic_model(
         - used_feature_cols: Final feature list actually used for training
     """
     # Prepare data
-    df = df.dropna(
-        subset=feature_cols + [target_col, "future_return", "return_quantile"]
-    ).copy()
+    # Diagnostic: Check NaN counts before dropping
+    target_cols = [target_col, "future_return", "return_quantile"]
+    required_cols = feature_cols + target_cols
+    print(f"   📊 Data preparation diagnostics:")
+    print(f"      Initial samples: {len(df)}")
+
+    # Check target columns first (these are critical)
+    missing_target_cols = [col for col in target_cols if col not in df.columns]
+    if missing_target_cols:
+        raise ValueError(
+            f"Missing required target columns: {missing_target_cols}. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+
+    for col in target_cols:
+        if col in df.columns:
+            nan_count = df[col].isna().sum()
+            print(
+                f"      - {col}: {nan_count} NaN values ({nan_count/len(df)*100:.1f}%)"
+            )
+
+    # Check feature columns with most NaN values
+    feature_nan_counts = []
+    for col in feature_cols:
+        if col in df.columns:
+            nan_count = df[col].isna().sum()
+            if nan_count > 0:
+                feature_nan_counts.append((col, nan_count, nan_count / len(df) * 100))
+
+    # Sort by NaN count and show top 10
+    feature_nan_counts.sort(key=lambda x: x[1], reverse=True)
+    for col, nan_count, pct in feature_nan_counts[:10]:
+        print(f"      - {col}: {nan_count} NaN values ({pct:.1f}%)")
+    if len(feature_nan_counts) > 10:
+        print(
+            f"      ... and {len(feature_nan_counts) - 10} more features with NaN values"
+        )
+
+    # First, drop rows where target columns are NaN (these are required)
+    df = df.dropna(subset=target_cols).copy()
+    print(f"      After dropping rows with NaN targets: {len(df)} samples")
+
+    # Then, handle feature NaN values by filling with 0 (or could use median/forward fill)
+    # This is less aggressive than dropping all rows with any NaN feature
+    for col in feature_cols:
+        if col in df.columns and df[col].isna().any():
+            # Fill NaN with 0 for features (could also use median or forward fill)
+            df[col] = df[col].fillna(0)
+
+    print(f"      After filling feature NaN values: {len(df)} samples")
+
+    if len(df) == 0:
+        print(f"      ⚠️  All samples removed! This is likely due to:")
+        print(
+            f"         - Missing future_return (need {hold_period if hold_period else 5} future bars)"
+        )
+        print(f"         - Missing target or quantile labels")
 
     if date_col and date_col in df.columns:
         df = df.sort_values(date_col).reset_index(drop=True)
@@ -426,6 +527,19 @@ def train_rank_ic_model(
         else np.ones(len(df), dtype=bool)
     )
     weights = df[weight_col].values if weight_col and weight_col in df.columns else None
+
+    # Check if we have enough samples for cross-validation
+    # TimeSeriesSplit requires at least n_splits + 1 samples
+    min_samples_required = n_splits + 1
+    if len(X) < min_samples_required:
+        error_msg = (
+            f"Insufficient samples for cross-validation: "
+            f"have {len(X)} samples, need at least {min_samples_required} samples "
+            f"for {n_splits} folds. "
+            f"This may be due to aggressive filtering or missing data."
+        )
+        print(f"   ❌ {error_msg}")
+        raise ValueError(error_msg)
 
     # Time series cross-validation
     tscv = TimeSeriesSplit(n_splits=n_splits)
