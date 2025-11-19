@@ -787,21 +787,23 @@ class BaselineFeatureEngineer:
         # 3. 成交量异常度
         if required_features is None or "vol_ma_ratio" in required_features:
             if "vol_ma_ratio" not in result.columns:
-                vol_ma = volume.rolling(window=periods_24h, min_periods=1).mean()
-                result["vol_ma_ratio"] = (
+                vol_ma = volume.rolling(
+                    window=periods_24h, min_periods=periods_24h
+                ).mean()
+                vol_ma_ratio = (
                     (volume / vol_ma.replace(0, np.nan))
                     .replace([np.inf, -np.inf], np.nan)
                     .fillna(1.0)
                 )
+                # 滚动统计衍生特征统一 shift(1)，确保在 t 时刻仅使用 t-1 及之前的数据
+                result["vol_ma_ratio"] = vol_ma_ratio.shift(1)
 
         if required_features is None or "vol_zscore" in required_features:
             if "vol_zscore" not in result.columns:
-                vol_mean = volume.rolling(window=periods_24h, min_periods=1).mean()
-                vol_std = volume.rolling(window=periods_24h, min_periods=1).std()
-                result["vol_zscore"] = (
-                    ((volume - vol_mean) / vol_std.replace(0, np.nan))
-                    .replace([np.inf, -np.inf], np.nan)
-                    .fillna(0.0)
+                result["vol_zscore"] = BaselineFeatureEngineer._rolling_zscore(
+                    volume.astype(float),
+                    window=periods_24h,
+                    min_periods=periods_24h,
                 )
 
         return result
@@ -962,8 +964,9 @@ class BaselineFeatureEngineer:
                             continue
 
                 if zscore_col not in result.columns:
+                    # 【关键修复】：强制 min_periods=window，确保满窗才输出，减少早期噪声
                     result[zscore_col] = BaselineFeatureEngineer._rolling_zscore(
-                        result[base_col], window=window
+                        result[base_col], window=window, min_periods=window
                     )
 
         # 1. RSI 滚动 Z-score（虽然 RSI 本身是 0-100，但 Z-score 能突出极端值）
@@ -1127,43 +1130,130 @@ class BaselineFeatureEngineer:
         return result
 
     @staticmethod
-    def _rolling_percentile(series: pd.Series, window: int) -> pd.Series:
-        """滚动百分位排名"""
-
-        def _rank(x: np.ndarray) -> float:
-            if len(x) <= 1 or not np.isfinite(x[-1]):
-                return np.nan
-            last = x[-1]
-            arr = x[np.isfinite(x)]
-            if len(arr) == 0:
-                return np.nan
-            return (arr <= last).sum() / float(len(arr))
-
-        return series.rolling(window=window, min_periods=1).apply(_rank, raw=True)
-
-    @staticmethod
-    def _rolling_zscore(
-        series: pd.Series, window: int, min_periods: int = None
+    def _rolling_percentile(
+        series: pd.Series, window: int, min_periods: int = None, shift: bool = True
     ) -> pd.Series:
         """
-        计算滚动 Z-score（标准化）
+        安全滚动百分位排名（严格因果，无未来信息）
+
+        【核心原则：滚动窗口统计特征需要 shift(1)】
+        - 虽然我们在 t 时刻可以使用 close[t]，但对于"滚动窗口统计特征"仍需 shift(1)
+        - 原因：避免将当前值包含在历史分布中，即使我们已经排除了当前值
+        - 更严格的做法：在 t 时刻使用的特征基于 t-1 及之前的数据计算
+
+        【关键区分】
+        - 基础滚动指标（sma, ema, atr, bb_width）：不需要 shift(1)
+        - 滚动窗口统计特征（zscore, percentile, entropy）：需要 shift(1)
 
         Args:
             series: 输入序列
-            window: 滚动窗口大小
-            min_periods: 最小周期数（默认：window // 10，至少 10）
+            window: 滚动窗口长度
+            min_periods: 最小观测数才开始输出（默认=window，最稳健）
+            shift: 是否 shift(1) 以确保完全因果（默认=True，推荐）
 
         Returns:
-            滚动 Z-score 序列
+            滚动百分位排名序列（0~1，早期不足窗口处为 NaN）
         """
         if min_periods is None:
-            min_periods = max(10, window // 10)
+            min_periods = window  # 默认：必须满窗才输出，最稳健
 
+        min_periods = min(min_periods, window)
+
+        def _percentile(x: np.ndarray) -> float:
+            """
+            计算当前值在历史窗口中的百分位排名（严格因果，无自我参照偏差）
+
+            【实现说明】
+            - current = x[-1]：当前值（如 close[t]），作为"新来的考生"
+            - history = x[:-1]：历史窗口（如 [t-N, t-1]），作为"老考生的成绩分数线"
+            - percentile = (history <= current).sum() / len(history)
+              表示：当前值在历史中的相对位置，完全基于历史评估当前状态
+            """
+            if len(x) < 2 or not np.isfinite(x[-1]):
+                return np.nan
+            current = x[-1]  # 当前值（如 close[t]），作为"新来的考生"
+            history = x[
+                :-1
+            ]  # ← 关键：只用历史（如 [t-N, t-1]），作为"老考生的成绩分数线"
+            history = history[np.isfinite(history)]
+            if len(history) == 0:
+                return np.nan
+            # 当前值在历史中的分位：(历史中 ≤ 当前值的数量) / 历史总数量
+            # 这表示：当前值相对于历史的位置，完全基于历史评估当前状态
+            return (history <= current).sum() / float(len(history))
+
+        percentile_series = series.rolling(
+            window=window, min_periods=min_periods
+        ).apply(_percentile, raw=True)
+
+        # 【关键修复】：对滚动窗口统计特征强制 shift(1)，确保完全因果
+        # 在 t 时刻使用的特征基于 t-1 及之前的数据计算
+        if shift:
+            percentile_series = percentile_series.shift(1)
+
+        return percentile_series
+
+    @staticmethod
+    def _rolling_zscore(
+        series: pd.Series,
+        window: int,
+        min_periods: int = None,
+        return_quality: bool = False,
+        shift: bool = True,
+    ):
+        """
+        安全滚动 Z-score（严格因果，无未来信息）
+
+        【核心原则：滚动窗口统计特征需要 shift(1)】
+        - 虽然我们在 t 时刻可以使用 close[t]，但对于"滚动窗口统计特征"仍需 shift(1)
+        - 原因：避免将当前值包含在历史分布中，即使 rolling 本身是因果的
+        - 更严格的做法：在 t 时刻使用的特征基于 t-1 及之前的数据计算
+
+        【关键区分】
+        - 基础滚动指标（sma, ema, atr, bb_width）：不需要 shift(1)
+        - 滚动窗口统计特征（zscore, percentile, entropy）：需要 shift(1)
+
+        【说明】
+        - min_periods 小会导致早期统计量不稳定（小样本噪声）
+        - 但 rolling() 只使用历史和当前数据，绝不包含未来
+        - 提高 min_periods 能降低虚假相关，因为剔除了高噪声样本
+
+        Args:
+            series: 输入时间序列（如 ATR、volatility）
+            window: 滚动窗口长度（如 288）
+            min_periods: 最小观测数才开始输出（默认=window，最稳健）
+            return_quality: 是否同时返回质量分数（0~1，1=完整窗口）
+            shift: 是否 shift(1) 以确保完全因果（默认=True，推荐）
+
+        Returns:
+            zscore: 标准化后的序列（早期不足窗口处为 NaN）
+            quality (可选): 每个点的统计质量 = 实际样本数 / window
+        """
+        if min_periods is None:
+            min_periods = window  # 默认：必须满窗才输出，最稳健
+
+        min_periods = min(min_periods, window)
+
+        # 滚动统计量（只依赖历史和当前，无未来信息）
         rolling_mean = series.rolling(window=window, min_periods=min_periods).mean()
         rolling_std = series.rolling(window=window, min_periods=min_periods).std()
 
         # 计算 Z-score: (x - mean) / std
         zscore = (series - rolling_mean) / rolling_std.replace(0, np.nan)
+
+        # 【关键修复】：对滚动窗口统计特征强制 shift(1)，确保完全因果
+        # 在 t 时刻使用的特征基于 t-1 及之前的数据计算
+        if shift:
+            zscore = zscore.shift(1)
+
+        if return_quality:
+            # 计算质量分数：实际样本数 / window（0~1，1表示使用了完整窗口）
+            count = series.rolling(window=window, min_periods=1).count()
+            quality = count / window
+            # Quality 也需要 shift(1) 以保持对齐
+            if shift:
+                quality = quality.shift(1)
+            return zscore, quality
 
         # 处理 inf 和 NaN：将 inf 替换为 NaN，然后保留 NaN（不填充，让下游处理）
         zscore = zscore.replace([np.inf, -np.inf], np.nan)
@@ -1582,11 +1672,10 @@ class BaselineFeatureEngineer:
             vwap_deviation = (data["close"] - vwap_safe) / vwap_safe
             vwap_dev_mean = vwap_deviation.rolling(window=50, min_periods=10).mean()
             vwap_dev_std = vwap_deviation.rolling(window=50, min_periods=10).std()
-            data["price_to_vwap_zscore"] = (
-                ((vwap_deviation - vwap_dev_mean) / vwap_dev_std.replace(0, np.nan))
-                .replace([np.inf, -np.inf], np.nan)
-                .fillna(0.0)
-            )
+            price_to_vwap_zscore = (
+                (vwap_deviation - vwap_dev_mean) / vwap_dev_std.replace(0, np.nan)
+            ).replace([np.inf, -np.inf], np.nan)
+            data["price_to_vwap_zscore"] = price_to_vwap_zscore.shift(1)
 
             # VWAP 趋势（VWAP 的变化率，无量纲）
             # 使用 6 根 K 线的 VWAP 变化率作为趋势指标
@@ -1679,13 +1768,23 @@ class BaselineFeatureEngineer:
             )
             data["volatility_ratio"] = volatility_ratio
 
+            # 【说明】：这不是数据泄漏问题，而是统计可靠性问题。
+            # - min_periods 小会导致早期统计量不稳定（小样本噪声）
+            # - 但 rolling() 只使用历史和当前数据，绝不包含未来
+            # - 提高 min_periods 能降低虚假相关，因为剔除了高噪声样本
+            # 使用 min_periods=window（最稳健），确保早期数据使用完整的统计量
             atr_mean_hist = (
-                data["atr"].rolling(self.percentile_window, min_periods=1).mean()
+                data["atr"]
+                .rolling(self.percentile_window, min_periods=self.percentile_window)
+                .mean()
             )
             eps = 1e-9
-            data["atr_compression_ratio"] = (
-                atr_mean_hist / (data["atr"] + eps)
-            ).replace([np.inf, -np.inf], np.nan)
+            # 【关键修复】：atr_compression_ratio 是比率特征，也需要 shift(1) 确保完全因果
+            # 在 t 时刻使用的特征基于 t-1 及之前的数据计算
+            atr_compression_ratio_raw = (atr_mean_hist / (data["atr"] + eps)).replace(
+                [np.inf, -np.inf], np.nan
+            )
+            data["atr_compression_ratio"] = atr_compression_ratio_raw.shift(1)
 
             vol_pct = self._rolling_percentile(
                 data["volume"].astype(float), window=self.percentile_window
@@ -1721,6 +1820,8 @@ class BaselineFeatureEngineer:
             data["internal_price_density"] = density.clip(0.0, 1.0)
 
             # 如果百分位是 NaN，使用 0.5（中位数）作为默认值
+            # 【说明】：compression_confidence 使用了已 shift(1) 的 atr_percentile 和 volume_percentile
+            # 所以它本身已经是因果的，不需要再次 shift
             atr_norm = data["atr_percentile"].fillna(0.5)
             vol_norm = data["volume_percentile"].fillna(0.5)
             dens_norm = data["internal_price_density"].fillna(0.0)

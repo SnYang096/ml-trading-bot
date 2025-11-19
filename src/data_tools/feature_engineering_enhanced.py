@@ -825,13 +825,52 @@ class EnhancedFeatureEngineer:
             )
 
             # 5. ATR percentile
-            def pct_rank(x):
-                r = pd.Series(x).rank(pct=True).iloc[-1] if len(x) > 0 else 0.5
-                return r
+            # 【说明】：这不是数据泄漏问题，而是统计可靠性问题。
+            # - min_periods 小会导致早期统计量不稳定（小样本噪声）
+            # - 但 rolling() 只使用历史和当前数据，绝不包含未来
+            # - 提高 min_periods 能降低虚假相关，因为剔除了高噪声样本
+            def _percentile(x):
+                """
+                计算当前值在历史窗口中的百分位排名（严格因果，无自我参照偏差）
 
-            df["atr_percentile"] = (
-                df["atr"].rolling(100, min_periods=20).apply(pct_rank, raw=False)
+                【核心原则：特征时间对齐】
+                - 决策点：在 t 时刻K线结束后做决策，预测 future_return[t+1]
+                - 可用数据：所有截至 t 时刻的数据，包括 close[t]（这是历史数据）
+                - 正确用法：计算 close[t] 相对于过去N天（不含今天）的位置
+                - 错误用法：把 close[t] 自己也放进历史窗口里去排名（自我参照偏差）
+
+                【实现说明】
+                - current = x[-1]：当前值（如 close[t]），作为"新来的考生"
+                - history = x[:-1]：历史窗口（如 [t-N, t-1]），作为"老考生的成绩分数线"
+                - percentile = (history <= current).sum() / len(history)
+                  表示：当前值在历史中的相对位置，完全基于历史评估当前状态
+
+                【为什么这样是正确的？】
+                - ✅ 使用了最新的价格信息（close[t]）
+                - ✅ 评估基准完全是历史数据（不含当前值）
+                - ✅ 既利用了最新信息，又避免了自我参照偏差
+                - ✅ 这才是真实、可交易、无偏差的动量信号
+                """
+                if len(x) < 2 or not np.isfinite(x[-1]):
+                    return np.nan
+                current = x[-1]  # 当前值（如 close[t]），作为"新来的考生"
+                history = x[
+                    :-1
+                ]  # ← 关键：只用历史（如 [t-N, t-1]），作为"老考生的成绩分数线"
+                history = history[np.isfinite(history)]
+                if len(history) == 0:
+                    return np.nan
+                # 当前值在历史中的分位：(历史中 ≤ 当前值的数量) / 历史总数量
+                # 这表示：当前值相对于历史的位置，完全基于历史评估当前状态
+                return (history <= current).sum() / float(len(history))
+
+            # 使用安全滚动百分位：默认 min_periods=window（最稳健）
+            # 【关键修复】：对滚动窗口统计特征强制 shift(1)，确保完全因果
+            # 在 t 时刻使用的特征基于 t-1 及之前的数据计算
+            atr_percentile_raw = (
+                df["atr"].rolling(100, min_periods=100).apply(_percentile, raw=True)
             )
+            df["atr_percentile"] = atr_percentile_raw.shift(1)
 
             # 6. Volatility reversal score
             atr_mean = df["atr"].rolling(50).mean()

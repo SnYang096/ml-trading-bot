@@ -1,0 +1,29 @@
+train_data:
+  data_path: /workspace/data/parquet_data
+  symbol: BTCUSDT
+  timeframe: 240T
+  train_start: 2023-01-01
+  train_end: 2025-01-01
+  test_size: 0.15
+
+features:
+  feature_type: custom
+  required_features:
+    - atr_zscore_w288
+    - atr_percentile
+    - atr_compression_ratio
+    - bb_width_zscore_w288
+    - bb_lower
+    - bb_upper
+    - bb_middle
+    - vwap
+    - ad
+    - sma_5
+    - sma_10
+
+model:
+  horizon: 24
+  n_splits: 5
+  tscv_gap: 24
+(*** End Patch) code is not valid JSON and requires manual verification.}	Error: Invalid JSON. Please double-check your syntax and try again. Keep in mind that JSON requires double quotes for strings, and does not support trailing commas. Pay extra attention to escape characters.
+
