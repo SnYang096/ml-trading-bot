@@ -829,10 +829,12 @@ def main() -> None:
                 # 必须按标的分别计算，否则会导致跨标的数据泄露
                 if "symbol" in feat_df.columns and len(feat_df["symbol"].unique()) > 1:
                     # Multi-asset: calculate future_return separately for each symbol
+                    # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
                     def calc_future_return(group):
-                        group["future_return"] = (
-                            group["close"].shift(-fb) / group["close"] - 1
-                        )
+                        close_next = group["close"].shift(
+                            -1
+                        )  # Use next bar's close as entry
+                        group["future_return"] = close_next.shift(-fb) / close_next - 1
                         return group
 
                     feat_df = feat_df.groupby("symbol", group_keys=False).apply(
@@ -842,9 +844,11 @@ def main() -> None:
                     "symbol" in feat_df.columns and len(feat_df["symbol"].unique()) == 1
                 ):
                     # Single asset: calculate directly
-                    feat_df["future_return"] = (
-                        feat_df["close"].shift(-fb) / feat_df["close"] - 1
-                    )
+                    # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
+                    close_next = feat_df["close"].shift(
+                        -1
+                    )  # Use next bar's close as entry
+                    feat_df["future_return"] = close_next.shift(-fb) / close_next - 1
                 else:
                     # 🔒 CRITICAL: 如果没有 symbol 信息，无法确定是单标的还是多标的
                     # 如果数据来自多个文件但没有 symbol 列，这是不安全的

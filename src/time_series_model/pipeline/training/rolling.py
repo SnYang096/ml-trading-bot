@@ -911,7 +911,9 @@ tr:hover{{background:#f0f8ff}}
 
             def _add_targets(df: pd.DataFrame) -> pd.DataFrame:
                 out = df.copy()
-                out["future_return"] = out["close"].shift(-fb) / out["close"] - 1
+                # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
+                close_next = out["close"].shift(-1)  # Use next bar's close as entry
+                out["future_return"] = close_next.shift(-fb) / close_next - 1
                 # ✅ Compute future volatility label: RMS of future single-period returns
                 out["future_volatility"] = future_volatility_label(
                     out["close"],

@@ -103,25 +103,40 @@ def prepare_rank_ic_labels(
     group_cols = [asset_col] if asset_col and asset_col in df.columns else []
 
     # 1. Compute future return
+    # ⚠️  FIXED: Avoid using current bar's close (which may not be finalized in real-time)
+    # Strategy: Use close[t+1] as entry price (assume trade at t+1 open)
+    # future_return[t] = (close[t+1+horizon] - close[t+1]) / close[t+1]
     if group_cols:
-        future_ret = (
-            df.groupby(group_cols)[price_col]
-            .pct_change(hold_period)
-            .shift(-hold_period)
-        )
+
+        def _future_return(group: pd.DataFrame) -> pd.Series:
+            close_next = group[price_col].shift(-1)
+            return close_next.pct_change(hold_period).shift(-hold_period)
+
+        future_ret = df.groupby(group_cols, group_keys=False).apply(_future_return)
         # Ensure it's a Series, not DataFrame
         if isinstance(future_ret, pd.DataFrame):
             future_ret = future_ret.iloc[:, 0]
         df["future_return"] = future_ret
     else:
-        df["future_return"] = df[price_col].pct_change(hold_period).shift(-hold_period)
+        # Shift price forward by 1 to use next bar's close as entry
+        price_shifted = df[price_col].shift(-1)
+        df["future_return"] = price_shifted.pct_change(hold_period).shift(-hold_period)
 
     # 2. Compute rolling volatility (if not already computed by ensure_volatility_feature)
+    # Note: pct_change(hold_period) computes historical returns: (close[t] - close[t-hold_period]) / close[t-hold_period]
+    # This is correct - rolling_vol[t] uses only historical information up to time t
     if "rolling_vol" not in df.columns or df["rolling_vol"].isna().all():
 
         def _rolling_vol(series: pd.Series) -> pd.Series:
-            rets = series.pct_change(hold_period).dropna()
-            return rets.rolling(window=lookback_window, min_periods=min_samples).std()
+            # Compute historical returns: (close[t] - close[t-hold_period]) / close[t-hold_period]
+            rets = series.pct_change(hold_period)
+            # rolling_vol[t] = std of historical returns over [t-window, t]
+            # Note: rets has NaN for first hold_period values, which is correct
+            rolling_vol = rets.rolling(
+                window=lookback_window, min_periods=min_samples
+            ).std()
+            # Reindex to match original series index (preserve NaN positions)
+            return rolling_vol.reindex(series.index)
 
         if group_cols:
             df["rolling_vol"] = df.groupby(group_cols)[price_col].transform(
@@ -295,7 +310,7 @@ def train_rank_ic_model(
     smooth_method: str = "moving_average",
     smooth_window: int = 3,
     hold_period: Optional[int] = None,
-) -> Tuple[List[lgb.Booster], float, pd.DataFrame]:
+) -> Tuple[List[lgb.Booster], float, pd.DataFrame, List[str]]:
     """
     Train Rank IC-optimized model with time series cross-validation.
 
@@ -324,10 +339,11 @@ def train_rank_ic_model(
         hold_period: Optional holding period for adaptive anti-overfitting parameters
 
     Returns:
-        Tuple of (models, avg_rank_ic, results_df):
+        Tuple of (models, avg_rank_ic, results_df, used_feature_cols):
         - models: List of trained models (one per fold)
         - avg_rank_ic: Average Rank IC across folds
         - results_df: DataFrame with predictions and metrics per fold
+        - used_feature_cols: Final feature list actually used for training
     """
     # Prepare data
     df = df.dropna(
@@ -571,7 +587,7 @@ def train_rank_ic_model(
 
     results_df = pd.DataFrame(fold_results)
 
-    return models, avg_ic, results_df
+    return models, avg_ic, results_df, feature_cols
 
 
 def generate_ensemble_signals(

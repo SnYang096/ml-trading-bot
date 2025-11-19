@@ -114,7 +114,9 @@ def _simple_series_random_walk_test(
     for i in range(n_features):
         df[f"baseline_feature_{i}"] = rng.normal(0.0, 1.0, size=len(df))
 
-    df["future_return"] = df["close"].pct_change(hold_period).shift(-hold_period)
+    # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
+    close_next = df["close"].shift(-1)  # Use next bar's close as entry
+    df["future_return"] = close_next.pct_change(hold_period).shift(-hold_period)
     df = df.iloc[:-hold_period].copy()
     df = df.dropna(subset=["future_return"])
 
@@ -326,7 +328,7 @@ def test_random_walk_leakage(
         if "trend_strength" in df_with_labels_reset.columns:
             df_with_labels_reset["trend_strength"] = 1.0  # Set uniform weights
 
-        models, avg_rank_ic, cv_results = train_rank_ic_model(
+        models, avg_rank_ic, cv_results, _used_feature_cols = train_rank_ic_model(
             df_with_labels_reset,
             feature_cols=available_features,
             target_col="volatility_normalized_target",

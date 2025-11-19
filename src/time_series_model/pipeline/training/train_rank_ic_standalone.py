@@ -475,8 +475,13 @@ def main():
             run_random_walk_test=args.leakage_random_walk,
             run_correlation_test=args.leakage_correlation,
             random_walk_params={
-                "n_samples": 2000,  # Use more samples for better statistical power
+                # Ensure at least 150 samples per feature for tree models
+                # If using 20 features, need at least 3000 samples
+                # If using 100 features, need at least 15000 samples
                 "n_features": min(100, len(feature_cols)),  # More features to test
+                "n_samples": max(
+                    4000, min(100, len(feature_cols)) * 150
+                ),  # At least 150 samples/feature
                 "hold_period": args.horizon,
                 "n_splits": 5,  # Use more splits for better statistical stability
                 "threshold": 0.03,  # Stricter threshold for leakage detection
@@ -493,7 +498,7 @@ def main():
 
     # Train with TSCV
     print("\n🌲 Training Rank IC model with Time Series Cross-Validation...")
-    models, avg_rank_ic_cv, cv_results = train_rank_ic_model(
+    models, avg_rank_ic_cv, cv_results, trained_feature_cols = train_rank_ic_model(
         df_train,
         feature_cols=feature_cols,
         target_col="volatility_normalized_target",
@@ -516,7 +521,7 @@ def main():
     df_test_signals = generate_ensemble_signals(
         df_test,
         models=models,
-        feature_cols=feature_cols,
+        feature_cols=trained_feature_cols,
         confidence_threshold=0.85,
         asset_col=asset_col,
     )
@@ -571,7 +576,7 @@ def main():
             "total_samples": len(df_with_labels),
             "train_samples": len(df_train),
             "test_samples": len(df_test),
-            "n_features": len(feature_cols),
+            "n_features": len(trained_feature_cols),
         },
         "cv_results": {
             "avg_rank_ic": float(avg_rank_ic_cv),

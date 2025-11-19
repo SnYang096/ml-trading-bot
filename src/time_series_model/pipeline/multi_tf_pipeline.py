@@ -53,7 +53,9 @@ class MultiTimeframePipeline:
             classification_target is None if model_type != "classification"
         """
         # Calculate future returns
-        future_returns = data["close"].shift(-self.forward_bars) / data["close"] - 1
+        # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
+        close_next = data["close"].shift(-1)  # Use next bar's close as entry
+        future_returns = close_next.shift(-self.forward_bars) / close_next - 1
 
         # ✅ Compute future volatility label: RMS of future single-period returns
         future_volatility = future_volatility_label(

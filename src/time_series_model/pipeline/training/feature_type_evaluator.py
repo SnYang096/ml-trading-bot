@@ -170,7 +170,7 @@ def evaluate_feature_type(
             print(f"      - Collecting more data")
 
         # Pass hold_period to train_rank_ic_model for adaptive parameters
-        models, avg_rank_ic, cv_results = train_rank_ic_model(
+        models, avg_rank_ic, cv_results, _used_feature_cols = train_rank_ic_model(
             df_with_labels,
             feature_cols=feature_cols,
             target_col="volatility_normalized_target",
@@ -278,7 +278,9 @@ def evaluate_feature_type(
 
             leakage_test = test_random_walk_leakage(
                 feature_cols=feature_cols,
-                n_samples=2000,
+                n_samples=max(
+                    4000, min(100, len(feature_cols)) * 150
+                ),  # At least 150 samples/feature
                 n_features=min(100, len(feature_cols)),
                 hold_period=hold_period,
                 n_splits=3,

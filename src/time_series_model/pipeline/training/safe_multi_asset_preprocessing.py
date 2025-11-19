@@ -614,11 +614,13 @@ def safe_multi_asset_preprocessing(
         except ImportError:
             # 如果 scipy 不可用，使用 simple return
             print(f"      ⚠️  scipy 不可用，使用 simple return")
-            simple_returns = (
-                symbol_resampled["close"].shift(-forward_bars)
-                / symbol_resampled["close"]
-                - 1
-            ).iloc[:-forward_bars]
+            # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
+            close_next = symbol_resampled["close"].shift(
+                -1
+            )  # Use next bar's close as entry
+            simple_returns = (close_next.shift(-forward_bars) / close_next - 1).iloc[
+                :-forward_bars
+            ]
             symbol_feat_df["future_return"] = simple_returns.reindex(
                 symbol_feat_df.index, fill_value=np.nan
             )

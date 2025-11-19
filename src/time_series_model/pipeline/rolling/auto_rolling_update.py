@@ -415,9 +415,9 @@ def main() -> None:
 
         def _apply_labeling(df: pd.DataFrame) -> pd.DataFrame:
             df = df.copy()
-            df["future_return"] = (
-                df["close"].shift(-args.forward_bars) / df["close"] - 1
-            )
+            # ⚠️  FIXED: Use close[t+1] as entry price to avoid current bar's close
+            close_next = df["close"].shift(-1)  # Use next bar's close as entry
+            df["future_return"] = close_next.shift(-args.forward_bars) / close_next - 1
             # ✅ Compute future volatility label: RMS of future single-period returns
             df["future_volatility"] = future_volatility_label(
                 df["close"],
