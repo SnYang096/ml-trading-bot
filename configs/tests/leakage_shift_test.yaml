@@ -25,5 +25,3 @@ model:
   horizon: 24
   n_splits: 5
   tscv_gap: 24
-(*** End Patch) code is not valid JSON and requires manual verification.}	Error: Invalid JSON. Please double-check your syntax and try again. Keep in mind that JSON requires double quotes for strings, and does not support trailing commas. Pay extra attention to escape characters.
-

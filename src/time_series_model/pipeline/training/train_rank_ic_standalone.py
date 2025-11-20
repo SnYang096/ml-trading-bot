@@ -425,6 +425,19 @@ def main():
         default=True,
         help="Run feature-future correlation test (default: True if --check-leakage)",
     )
+    parser.add_argument(
+        "--signal-method",
+        type=str,
+        default="quantile",
+        choices=["quantile", "sign", "hybrid", "optimized"],
+        help="Signal generation method: 'quantile' (current), 'sign' (use prediction sign), 'hybrid' (combine sign and quantile), 'optimized' (optimize threshold)",
+    )
+    parser.add_argument(
+        "--calibrate-predictions",
+        action="store_true",
+        default=False,
+        help="Calibrate predictions to match true return distribution",
+    )
 
     args = parser.parse_args()
 
@@ -708,6 +721,25 @@ def main():
     print("\n✂️  Splitting labeled data...")
     df_train, df_test = split_train_test(df_with_labels, test_size=args.test_size)
 
+    # Check feature columns in train/test sets
+    train_feature_cols = [col for col in feature_cols if col in df_train.columns]
+    test_feature_cols = [col for col in feature_cols if col in df_test.columns]
+    missing_in_train = set(feature_cols) - set(train_feature_cols)
+    missing_in_test = set(feature_cols) - set(test_feature_cols)
+
+    print(f"   📊 Feature columns check after split:")
+    print(f"      Requested: {len(feature_cols)} features")
+    print(f"      In train set: {len(train_feature_cols)} features")
+    print(f"      In test set: {len(test_feature_cols)} features")
+    if missing_in_train:
+        print(f"      ⚠️  Missing in train: {len(missing_in_train)} features")
+        for col in list(missing_in_train)[:10]:
+            print(f"         - {col}")
+    if missing_in_test:
+        print(f"      ⚠️  Missing in test: {len(missing_in_test)} features")
+        for col in list(missing_in_test)[:10]:
+            print(f"         - {col}")
+
     # Train with TSCV
     print("\n🌲 Training Rank IC model with Time Series Cross-Validation...")
     models, avg_rank_ic_cv, cv_results, trained_feature_cols = train_rank_ic_model(
@@ -736,6 +768,8 @@ def main():
         feature_cols=trained_feature_cols,
         confidence_threshold=0.85,
         asset_col=asset_col,
+        signal_method=args.signal_method,
+        calibrate_predictions=args.calibrate_predictions,
     )
 
     # Evaluate on test set
@@ -744,6 +778,7 @@ def main():
         df_test_signals,
         signals=df_test_signals["signal"],
         confidence_threshold=0.85,
+        hold_period=args.horizon,  # FIXED: Prevent overlapping trades
     )
 
     # Compute Rank IC on test set

@@ -1108,6 +1108,9 @@ class ComprehensiveFeatureEngineer:
             "macd_fix_hist",
             "atr",  # 原始ATR（未归一化），保留natr和atr_normalized
         }
+        # 时间特征（保留，但需要确保正确使用）
+        # 注意：时间特征本身不应该有数据泄漏，但如果与未来收益有相关性，
+        # 可能是真实的时间模式（如不同时段的交易行为差异）
         # 排除未归一化的小波特征（保留归一化的小波特征）
         # 未归一化：wpt_*_energy, wpt_*_mean, wpt_*_std
         # 已归一化：wpt_*_energy_ratio, wpt_shannon_entropy, wpt_energy_concentration, wpt_high_low_ratio, wpt_dominant_band
@@ -1128,12 +1131,9 @@ class ComprehensiveFeatureEngineer:
                             col.endswith(suffix) for suffix in normalized_suffixes
                         ):
                             continue
-                    # 排除未归一化的小波特征（wpt_*_energy, wpt_*_mean, wpt_*_std）
-                    # 但保留归一化的小波特征（wpt_*_energy_ratio, wpt_shannon_entropy 等）
-                    if "wpt_" in col and any(col.endswith(p) for p in wpt_raw_patterns):
-                        # 检查是否是 energy_ratio（已归一化）
-                        if not col.endswith("_energy_ratio"):
-                            continue
+                    # WPT 特征：保留所有特征（包括 mean），因为它们会在后续处理中归一化
+                    # 注意：原始的 wpt_*_mean 特征包含绝对量纲，但可以通过滚动窗口归一化来修复
+                    # 这里不排除，让特征工程流程处理归一化
                     # 排除 channel 的原始价格量纲特征（保留归一化的距离特征）
                     if col in ["channel_mid", "channel_upper", "channel_lower"]:
                         continue

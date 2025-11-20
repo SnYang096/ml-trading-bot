@@ -616,7 +616,9 @@ RANK_IC_MIN_TREND_STRENGTH ?= 1.0
 RANK_IC_SMOOTH_TARGET ?= 0
 RANK_IC_CHECK_LEAKAGE ?= 1
 RANK_IC_TOP_FACTORS ?= 50
-RANK_IC_TSCV_GAP ?= 24
+RANK_IC_TSCV_GAP ?= 48
+RANK_IC_SIGNAL_METHOD ?= quantile
+RANK_IC_CALIBRATE_PREDICTIONS ?= 0
 
 ts-r-rank-ic-train:
 	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
@@ -628,6 +630,8 @@ ts-r-rank-ic-train:
 	@echo "   TSCV Folds: $(RANK_IC_N_SPLITS)"
 	@echo "   OOS Test Size: $(RANK_IC_TEST_SIZE)"
 	@echo "   TSCV Gap: $(RANK_IC_TSCV_GAP)"
+	@echo "   Signal Method: $(RANK_IC_SIGNAL_METHOD)"
+	@echo "   Calibrate Predictions: $(RANK_IC_CALIBRATE_PREDICTIONS)"
 	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
 		--data-path /workspace/$(DATA_DIR) \
@@ -645,8 +649,29 @@ ts-r-rank-ic-train:
 		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
 		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
 		$(if $(filter 1 true yes,$(RANK_IC_CHECK_LEAKAGE)),--check-leakage,) \
-		$(if $(RANK_IC_TOP_FACTORS),--top-factors /workspace/$(RANK_IC_TOP_FACTORS),)
+		$(if $(RANK_IC_TOP_FACTORS),--top-factors /workspace/$(RANK_IC_TOP_FACTORS),) \
+		--signal-method $(RANK_IC_SIGNAL_METHOD) \
+		$(if $(filter 1 true yes,$(RANK_IC_CALIBRATE_PREDICTIONS)),--calibrate-predictions,)
 	@echo "✅ Training complete. Check results in $(RANK_IC_OUTPUT_DIR)"
+
+
+# Verify feature correlation (distinguish real Alpha vs data leakage)
+VERIFY_TOP_FACTORS ?= $(RANK_IC_TOP_FACTORS)
+verify-feature-correlation:
+	@echo "🔬 Verifying Feature Correlation (Real Alpha vs Data Leakage)..."
+	@echo "   Symbol: $(RANK_IC_SYMBOL)"
+	@echo "   Horizon: $(RANK_IC_HORIZON)"
+	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
+	@echo "   Top Factors: $(if $(VERIFY_TOP_FACTORS),$(VERIFY_TOP_FACTORS),Not specified - will use all features)"
+	$(DOCKER_RUN_NO_TTY) python3 scripts/verify_feature_correlation.py \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(RANK_IC_SYMBOL) \
+		$(if $(FEATURE_EVAL_START_DATE),--start-date $(FEATURE_EVAL_START_DATE),) \
+		$(if $(FEATURE_EVAL_END_DATE),--end-date $(FEATURE_EVAL_END_DATE),) \
+		--timeframe $(RANK_IC_TIMEFRAME) \
+		--horizon $(RANK_IC_HORIZON) \
+		$(if $(VERIFY_TOP_FACTORS),--top-factors /workspace/$(VERIFY_TOP_FACTORS),)
+	@echo "✅ Verification complete."
 
 
 

@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
+
+# Try to import yaml, but make it optional
+try:
+    import yaml
+
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
 
 
 def _slugify(value: str, default: str = "unknown") -> str:
@@ -69,18 +78,51 @@ def _derive_feature_insights(stage_baseline: Dict, stage_candidate: Dict) -> Dic
 
 
 def load_top_factors_list(path: str) -> List[str]:
-    """Load top factors from JSON file.
+    """Load top factors from JSON or YAML file.
+
+    Supports both JSON (.json) and YAML (.yaml, .yml) formats.
 
     Args:
-        path: Path to top_factors.json file
+        path: Path to top_factors file (JSON or YAML)
 
     Returns:
         List of feature names
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
 
+    Raises:
+        ValueError: If file extension is not supported or YAML is not available
+    """
+    # Detect file format from extension
+    file_ext = os.path.splitext(path)[1].lower()
+
+    # Load data based on file format
+    with open(path, "r", encoding="utf-8") as f:
+        if file_ext in (".yaml", ".yml"):
+            if not YAML_AVAILABLE:
+                raise ValueError(
+                    f"YAML file detected but 'yaml' package is not installed. "
+                    f"Install with: pip install pyyaml"
+                )
+            data = yaml.safe_load(f)
+        elif file_ext == ".json":
+            data = json.load(f)
+        else:
+            # Try JSON first, then YAML if available
+            try:
+                f.seek(0)
+                data = json.load(f)
+            except json.JSONDecodeError:
+                if YAML_AVAILABLE:
+                    f.seek(0)
+                    data = yaml.safe_load(f)
+                else:
+                    raise ValueError(
+                        f"Unsupported file format: {file_ext}. "
+                        f"Supported: .json, .yaml, .yml"
+                    )
+
+    # Parse data structure (same logic for both JSON and YAML)
     if isinstance(data, dict):
+        # Check for top_factors (JSON format)
         if "top_factors" in data:
             top_factors_list = data["top_factors"]
             if isinstance(top_factors_list, list):
@@ -88,9 +130,24 @@ def load_top_factors_list(path: str) -> List[str]:
                     item.get("name", item) if isinstance(item, dict) else item
                     for item in top_factors_list
                 ]
+        # Check for features.required_features (YAML config format)
+        elif "features" in data and isinstance(data["features"], dict):
+            if "required_features" in data["features"]:
+                required = data["features"]["required_features"]
+                if isinstance(required, list):
+                    return required
+        # Check for top-level features (list)
         elif "features" in data:
             return data["features"] if isinstance(data["features"], list) else []
+        # Check for top-level required_features
+        elif "required_features" in data:
+            return (
+                data["required_features"]
+                if isinstance(data["required_features"], list)
+                else []
+            )
     elif isinstance(data, list):
+        # Direct list format (both JSON and YAML support this)
         return data
 
     return []

@@ -465,10 +465,27 @@ class EnhancedFeatureEngineer:
             df[f"{source_name}_hurst_mean_revert_signal"] = (
                 df[f"{source_name}_hurst"] < 0.45
             ).astype(int)
-            df[f"{source_name}_hurst_change"] = df[f"{source_name}_hurst"].diff()
-            df[f"{source_name}_hurst_acceleration"] = df[
-                f"{source_name}_hurst_change"
-            ].diff()
+            # 使用 shift(1) 确保时间对齐，避免使用未来信息
+            # 对 Hurst 指数进行平滑处理，减少噪声（使用更大的窗口）
+            hurst_smooth = (
+                df[f"{source_name}_hurst"].rolling(window=10, min_periods=1).mean()
+            )
+
+            # 计算 change（一阶差分）
+            hurst_change = hurst_smooth.diff().shift(1)
+
+            # 对 change 进行平滑处理，减少噪声（使用更大的窗口）
+            hurst_change_smooth = hurst_change.rolling(window=5, min_periods=1).mean()
+
+            # 计算 acceleration（二阶差分），并进行平滑
+            hurst_acceleration_raw = hurst_change_smooth.diff().shift(1)
+            # 对 acceleration 也进行平滑，进一步减少噪声
+            hurst_acceleration = hurst_acceleration_raw.rolling(
+                window=3, min_periods=1
+            ).mean()
+
+            df[f"{source_name}_hurst_change"] = hurst_change_smooth
+            df[f"{source_name}_hurst_acceleration"] = hurst_acceleration
 
         return df
 
@@ -515,6 +532,79 @@ class EnhancedFeatureEngineer:
 
             # Convert to DataFrame
             wpt_df = pd.DataFrame(wpt_features_list, index=df.index)
+            # 先不 fillna，保留 NaN 用于后续处理
+
+            # 对 WPT 原始特征（mean, energy, std）进行滚动窗口归一化，消除绝对量纲影响
+            # 使用滚动窗口的 z-score 归一化，确保只使用历史信息
+            # 注意：对于 mean 特征，使用更激进的归一化方法（分位数归一化 + z-score）
+            raw_wpt_patterns = ["_mean", "_energy", "_std"]
+            for pattern in raw_wpt_patterns:
+                raw_cols = [col for col in wpt_df.columns if col.endswith(pattern)]
+                for col in raw_cols:
+                    if col in wpt_df.columns:
+                        # 跳过已经归一化的特征（如 energy_ratio）
+                        if "_ratio" in col or "_normalized" in col:
+                            continue
+
+                        # 获取原始值（不 fillna，保留 NaN）
+                        original_vals = wpt_df[col].copy()
+
+                        # 方法1: 滚动窗口 z-score 归一化（更保守，保留相对模式）
+                        rolling_mean = original_vals.rolling(
+                            window=min(window, 288), min_periods=20
+                        ).mean()
+                        rolling_std = original_vals.rolling(
+                            window=min(window, 288), min_periods=20
+                        ).std()
+
+                        # Z-score 归一化
+                        zscore_normalized = (original_vals - rolling_mean) / (
+                            rolling_std + 1e-8
+                        )
+
+                        # 方法2: 对于 mean 特征，额外使用分位数归一化（更激进，消除分布模式）
+                        if pattern == "_mean":
+                            # 使用滚动窗口的分位数进行归一化
+                            rolling_q25 = original_vals.rolling(
+                                window=min(window, 288), min_periods=20
+                            ).quantile(0.25)
+                            rolling_q75 = original_vals.rolling(
+                                window=min(window, 288), min_periods=20
+                            ).quantile(0.75)
+                            rolling_iqr = rolling_q75 - rolling_q25
+
+                            # 使用 IQR 归一化（更稳健）
+                            iqr_normalized = (original_vals - rolling_q25) / (
+                                rolling_iqr + 1e-8
+                            )
+
+                            # 结合两种归一化方法：先 IQR 归一化，再 z-score
+                            # 这样可以更彻底地消除绝对量纲和分布模式
+                            combined_normalized = (
+                                iqr_normalized
+                                - iqr_normalized.rolling(
+                                    window=min(window, 288), min_periods=20
+                                ).mean()
+                            ) / (
+                                iqr_normalized.rolling(
+                                    window=min(window, 288), min_periods=20
+                                ).std()
+                                + 1e-8
+                            )
+
+                            # 使用组合归一化结果
+                            normalized_val = combined_normalized
+                        else:
+                            # 对于 energy 和 std，使用 z-score 归一化
+                            normalized_val = zscore_normalized
+
+                        # shift(1) 确保时间对齐，只使用历史信息
+                        normalized_val = normalized_val.shift(1)
+
+                        # 替换原始特征为归一化版本
+                        wpt_df[col] = normalized_val.values
+
+            # 最后 fillna，将 NaN 填充为 0（归一化后的 0 表示接近均值）
             wpt_df = wpt_df.fillna(0)
 
             # Add to main dataframe
@@ -1070,11 +1160,13 @@ class EnhancedFeatureEngineer:
 
                 ofi_long_mean = ofi_long_raw.rolling(100, min_periods=20).mean()
                 ofi_long_std = ofi_long_raw.rolling(100, min_periods=20).std()
+                # 使用 shift(1) 确保时间对齐，避免使用未来信息
                 df["ofi_long"] = (
                     ((ofi_long_raw - ofi_long_mean) / ofi_long_std.replace(0, np.nan))
                     .replace([np.inf, -np.inf], np.nan)
                     .fillna(0)
                     .clip(-self.feature_clip_bound, self.feature_clip_bound)
+                    .shift(1)
                 )
 
                 # 向后兼容：保留cumulative_ofi，并进行Z-score标准化
@@ -1191,11 +1283,13 @@ class EnhancedFeatureEngineer:
 
                 ofi_long_mean = ofi_long_raw.rolling(100, min_periods=20).mean()
                 ofi_long_std = ofi_long_raw.rolling(100, min_periods=20).std()
+                # 使用 shift(1) 确保时间对齐，避免使用未来信息
                 df["ofi_long"] = (
                     ((ofi_long_raw - ofi_long_mean) / ofi_long_std.replace(0, np.nan))
                     .replace([np.inf, -np.inf], np.nan)
                     .fillna(0)
                     .clip(-self.feature_clip_bound, self.feature_clip_bound)
+                    .shift(1)
                 )
 
                 # 向后兼容，并进行Z-score标准化
@@ -1386,16 +1480,27 @@ class EnhancedFeatureEngineer:
                     .clip(-self.feature_clip_bound, self.feature_clip_bound)
                 )
 
-                cvd_medium_momentum_raw = df["cvd_medium_trend"].diff()
-                cvd_medium_momentum_mean = cvd_medium_momentum_raw.rolling(
+                # 使用 shift(1) 确保时间对齐，避免使用未来信息
+                # 对 cvd_medium_trend 先进行平滑，减少噪声
+                cvd_medium_trend_smooth = (
+                    df["cvd_medium_trend"].rolling(window=3, min_periods=1).mean()
+                )
+                cvd_medium_momentum_raw = cvd_medium_trend_smooth.diff().shift(1)
+
+                # 对 momentum 也进行平滑
+                cvd_medium_momentum_smooth = cvd_medium_momentum_raw.rolling(
+                    window=3, min_periods=1
+                ).mean()
+
+                cvd_medium_momentum_mean = cvd_medium_momentum_smooth.rolling(
                     50, min_periods=10
                 ).mean()
-                cvd_medium_momentum_std = cvd_medium_momentum_raw.rolling(
+                cvd_medium_momentum_std = cvd_medium_momentum_smooth.rolling(
                     50, min_periods=10
                 ).std()
                 df["cvd_medium_momentum"] = (
                     (
-                        (cvd_medium_momentum_raw - cvd_medium_momentum_mean)
+                        (cvd_medium_momentum_smooth - cvd_medium_momentum_mean)
                         / cvd_medium_momentum_std.replace(0, np.nan)
                     )
                     .replace([np.inf, -np.inf], np.nan)
@@ -1457,6 +1562,7 @@ class EnhancedFeatureEngineer:
                 cvd_medium_long_ratio_std = cvd_medium_long_ratio_log.rolling(
                     50, min_periods=10
                 ).std()
+                # 使用 shift(1) 确保时间对齐，避免使用未来信息
                 df["cvd_medium_long_ratio"] = (
                     (
                         (cvd_medium_long_ratio_log - cvd_medium_long_ratio_mean)
@@ -1465,12 +1571,14 @@ class EnhancedFeatureEngineer:
                     .replace([np.inf, -np.inf], np.nan)
                     .fillna(0)
                     .clip(-self.feature_clip_bound, self.feature_clip_bound)
+                    .shift(1)
                 )
 
                 # CVD趋势一致性（短中长期同向），已经是0/1，不需要归一化
-                cvd_short_sign = np.sign(df["cvd_short"])
-                cvd_medium_sign = np.sign(df["cvd_medium"])
-                cvd_long_sign = np.sign(df["cvd_long"])
+                # 使用 shift(1) 确保时间对齐，避免使用未来信息
+                cvd_short_sign = np.sign(df["cvd_short"].shift(1))
+                cvd_medium_sign = np.sign(df["cvd_medium"].shift(1))
+                cvd_long_sign = np.sign(df["cvd_long"].shift(1))
                 df["cvd_trend_alignment"] = (
                     (cvd_short_sign == cvd_medium_sign)
                     & (cvd_medium_sign == cvd_long_sign)
@@ -1483,14 +1591,24 @@ class EnhancedFeatureEngineer:
 
             # 5. Taker Buy Ratio动量和极值
             # taker_buy_ratio 在 [0, 1] 范围内，diff值在 [-1, 1] 范围内，但需要标准化
-            tbr_momentum_5_raw = df["taker_buy_ratio"].diff(5)
-            tbr_momentum_20_raw = df["taker_buy_ratio"].diff(20)
+            # 使用 shift(1) 确保时间对齐，避免使用未来信息
+            # 先对 taker_buy_ratio 进行平滑，减少噪声
+            tbr_smooth = df["taker_buy_ratio"].rolling(window=3, min_periods=1).mean()
+            tbr_momentum_5_raw = tbr_smooth.diff(5).shift(1)
+            tbr_momentum_20_raw = tbr_smooth.diff(20).shift(1)
 
-            tbr_momentum_5_mean = tbr_momentum_5_raw.rolling(50, min_periods=5).mean()
-            tbr_momentum_5_std = tbr_momentum_5_raw.rolling(50, min_periods=5).std()
+            # 对 momentum 也进行平滑
+            tbr_momentum_5_smooth = tbr_momentum_5_raw.rolling(
+                window=3, min_periods=1
+            ).mean()
+
+            tbr_momentum_5_mean = tbr_momentum_5_smooth.rolling(
+                50, min_periods=5
+            ).mean()
+            tbr_momentum_5_std = tbr_momentum_5_smooth.rolling(50, min_periods=5).std()
             df["tbr_momentum_5"] = (
                 (
-                    (tbr_momentum_5_raw - tbr_momentum_5_mean)
+                    (tbr_momentum_5_smooth - tbr_momentum_5_mean)
                     / tbr_momentum_5_std.replace(0, np.nan)
                 )
                 .replace([np.inf, -np.inf], np.nan)
@@ -1498,13 +1616,20 @@ class EnhancedFeatureEngineer:
                 .clip(-self.feature_clip_bound, self.feature_clip_bound)
             )
 
-            tbr_momentum_20_mean = tbr_momentum_20_raw.rolling(
+            # 对 momentum_20 也进行平滑
+            tbr_momentum_20_smooth = tbr_momentum_20_raw.rolling(
+                window=3, min_periods=1
+            ).mean()
+
+            tbr_momentum_20_mean = tbr_momentum_20_smooth.rolling(
                 50, min_periods=20
             ).mean()
-            tbr_momentum_20_std = tbr_momentum_20_raw.rolling(50, min_periods=20).std()
+            tbr_momentum_20_std = tbr_momentum_20_smooth.rolling(
+                50, min_periods=20
+            ).std()
             df["tbr_momentum_20"] = (
                 (
-                    (tbr_momentum_20_raw - tbr_momentum_20_mean)
+                    (tbr_momentum_20_smooth - tbr_momentum_20_mean)
                     / tbr_momentum_20_std.replace(0, np.nan)
                 )
                 .replace([np.inf, -np.inf], np.nan)
@@ -1513,12 +1638,12 @@ class EnhancedFeatureEngineer:
             )
 
             # TBR极值（买方/卖方主导）
-            df["tbr_extreme_buy"] = (df["taker_buy_ratio"] > 0.7).astype(
-                int
-            )  # 买方主导
-            df["tbr_extreme_sell"] = (df["taker_buy_ratio"] < 0.3).astype(
-                int
-            )  # 卖方主导
+            # 注意：极值特征本身不应该有数据泄漏，但可能对异常值敏感
+            # 使用 shift(1) 确保时间对齐，避免使用未来信息
+            # 对 taker_buy_ratio 先进行平滑，减少噪声
+            tbr_for_extreme = tbr_smooth.shift(1)
+            df["tbr_extreme_buy"] = (tbr_for_extreme > 0.7).astype(int)  # 买方主导
+            df["tbr_extreme_sell"] = (tbr_for_extreme < 0.3).astype(int)  # 卖方主导
             df["tbr_neutral"] = (
                 (df["taker_buy_ratio"] >= 0.45) & (df["taker_buy_ratio"] <= 0.55)
             ).astype(int)

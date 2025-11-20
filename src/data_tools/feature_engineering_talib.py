@@ -258,10 +258,12 @@ class TalibFeatureEngineer:
                 )
 
         # 真实波幅 (TRANGE)
+        # 使用 shift(1) 确保时间对齐，避免使用未来信息
         if "trange" not in df.columns:
-            df["trange"] = talib.TRANGE(
+            trange_vals = talib.TRANGE(
                 df["high"].values, df["low"].values, df["close"].values
             )
+            df["trange"] = pd.Series(trange_vals, index=df.index).shift(1)
 
         # 平均方向指数 (ADX) - 也用于波动率
         if "natr" not in df.columns:
@@ -435,8 +437,10 @@ class TalibFeatureEngineer:
         df["minindex"] = talib.MININDEX(df["close"].values, timeperiod=14)
 
         # 统计指标
-        df["stddev"] = talib.STDDEV(df["close"].values, timeperiod=14)
-        df["var"] = talib.VAR(df["close"].values, timeperiod=14)
+        # 使用 shift(1) 确保时间对齐，避免使用未来信息
+        # stddev 和 var 是滚动窗口统计，本身只使用历史数据，但为了安全起见添加 shift(1)
+        df["stddev"] = talib.STDDEV(df["close"].values, timeperiod=14).shift(1)
+        df["var"] = talib.VAR(df["close"].values, timeperiod=14).shift(1)
 
         return df
 

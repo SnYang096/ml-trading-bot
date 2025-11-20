@@ -1115,10 +1115,12 @@ class BaselineFeatureEngineer:
             if "volume_ratio" not in result.columns:
                 if "volume_sma_20" in result.columns:
                     denom = result["volume_sma_20"].replace(0, np.nan)
+                    # 使用 shift(1) 确保时间对齐，避免使用未来信息
                     result["volume_ratio"] = (
                         (result["volume"] / denom)
                         .replace([np.inf, -np.inf], np.nan)
                         .fillna(1.0)
+                        .shift(1)
                     )
 
         # Final cleanup: 处理所有数值列的 inf，保留 NaN 到预处理阶段
@@ -1833,6 +1835,10 @@ class BaselineFeatureEngineer:
         data = self._add_advanced_derived_features(data)
 
         # Time factors
+        # 注意：时间特征本身不应该有数据泄漏（它们只依赖于时间戳）
+        # 如果时间特征与未来收益有相关性，可能是真实的时间模式（如不同时段的交易行为差异）
+        # 在打乱测试中，由于时间特征是确定性的，即使打乱收益，相关性仍然存在
+        # 这不是数据泄漏，而是特征的性质。需要通过其他方法（如滞后测试、walk-forward）验证其预测价值
         try:
             idx = data.index
             if hasattr(idx, "hour") and hasattr(idx, "dayofweek"):
@@ -1847,6 +1853,8 @@ class BaselineFeatureEngineer:
                         hour = idx.hour.astype(int)
                         midnight_delta = (idx - idx.normalize()).total_seconds() / 60.0
 
+                    # 时间特征：使用当前时间点的时间信息
+                    # 这些特征本身不包含未来信息，但如果与未来收益相关，可能是真实的时间模式
                     data["hour_sin"] = np.sin(2 * np.pi * hour / 24)
                     data["hour_cos"] = np.cos(2 * np.pi * hour / 24)
                     data["Hour_of_Day"] = hour
@@ -2083,6 +2091,7 @@ def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
         "roll_low_l",
         # 排除 volatility（虽然基于收益率，但不同资产分布差异大）
         "volatility",
+        # 注意：时间特征保留，它们可能包含真实的时间模式信息
     }
     exclude.update(
         [

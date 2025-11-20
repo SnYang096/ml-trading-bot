@@ -117,9 +117,13 @@ def prepare_rank_ic_labels(
             return (price_exit - price_entry) / price_entry
 
         # Use transform to ensure proper alignment with original dataframe
-        df["future_return"] = df.groupby(group_cols, group_keys=False)[
-            price_col
-        ].transform(_compute_future_return)
+        future_return = df.groupby(group_cols, group_keys=False)[price_col].transform(
+            _compute_future_return
+        )
+        # Ensure future_return is a Series (transform should return Series, but check anyway)
+        if isinstance(future_return, pd.DataFrame):
+            future_return = future_return.iloc[:, 0]
+        df["future_return"] = future_return
 
         # Debug: Check if calculation produced any valid values
         valid_future_return = df["future_return"].notna().sum()
@@ -148,11 +152,19 @@ def prepare_rank_ic_labels(
                     )
     else:
         # Entry price: close[t+1]
-        price_entry = df[price_col].shift(-1)
+        price_series = df[price_col]
+        # Ensure price_series is a Series, not DataFrame
+        if isinstance(price_series, pd.DataFrame):
+            price_series = price_series.iloc[:, 0]  # Take first column if DataFrame
+        price_entry = price_series.shift(-1)
         # Exit price: close[t+1+hold_period]
-        price_exit = df[price_col].shift(-1 - hold_period)
+        price_exit = price_series.shift(-1 - hold_period)
         # Future return: (exit - entry) / entry
-        df["future_return"] = (price_exit - price_entry) / price_entry
+        future_return = (price_exit - price_entry) / price_entry
+        # Ensure future_return is a Series
+        if isinstance(future_return, pd.DataFrame):
+            future_return = future_return.iloc[:, 0]
+        df["future_return"] = future_return
 
         # Debug: Check if calculation produced any valid values
         valid_future_return = df["future_return"].notna().sum()
@@ -241,6 +253,7 @@ def evaluate_model_performance(
     confidence_col: str = "confidence_score",
     true_return_col: str = "future_return",
     confidence_threshold: float = 0.85,
+    hold_period: Optional[int] = None,  # NEW: Hold period to prevent overlapping trades
 ) -> Dict:
     """
     Comprehensive model performance evaluation.
@@ -291,6 +304,8 @@ def evaluate_model_performance(
             confidence_threshold=confidence_threshold,
             price_col=price_series,
             predictions=df["pred"] if "pred" in df.columns else None,
+            use_multi_period_returns=True,  # FIXED: Use future_return directly
+            hold_period=hold_period,  # FIXED: Prevent overlapping trades
         )
         results["confidence_statistics"] = confidence_stats
 
@@ -397,18 +412,24 @@ def train_rank_ic_model(
     target_cols = [target_col, "future_return", "return_quantile"]
 
     # Validate feature columns exist in dataframe
+    print(f"   📊 Checking feature columns: requested {len(feature_cols)} features")
+    print(f"   📊 DataFrame has {len(df.columns)} columns")
     missing_feature_cols = [col for col in feature_cols if col not in df.columns]
     if missing_feature_cols:
         print(
             f"   ⚠️  Warning: {len(missing_feature_cols)} feature columns not found in dataframe:"
         )
-        for col in missing_feature_cols[:10]:
+        for col in missing_feature_cols[:20]:
             print(f"      - {col}")
-        if len(missing_feature_cols) > 10:
-            print(f"      ... and {len(missing_feature_cols) - 10} more")
+        if len(missing_feature_cols) > 20:
+            print(f"      ... and {len(missing_feature_cols) - 20} more")
         # Remove missing columns from feature list
         feature_cols = [col for col in feature_cols if col in df.columns]
-        print(f"   ✅ Using {len(feature_cols)} available feature columns")
+        print(
+            f"   ✅ Using {len(feature_cols)} available feature columns (removed {len(missing_feature_cols)} missing)"
+        )
+    else:
+        print(f"   ✅ All {len(feature_cols)} requested features found in dataframe")
 
     if len(feature_cols) == 0:
         raise ValueError(
@@ -524,7 +545,13 @@ def train_rank_ic_model(
     is_high_dim = samples_per_feature < 10  # Less than 10 samples per feature
 
     # Feature selection for high-dimensional cases
-    if is_high_dim and n_features > 50:
+    # DISABLED: Use all features from config, even if correlation is NaN
+    # Original logic was:
+    # if is_high_dim and n_features > 50:
+    #     # Select top features based on correlation with target
+    #     ...
+    # Now we use all features from the configuration file regardless of correlation
+    if False:  # Disabled: always use all features from config
         print(
             f"   ⚠️  High-dimensional case detected ({n_features} features, {samples_per_feature:.1f} samples/feature)"
         )
@@ -533,13 +560,26 @@ def train_rank_ic_model(
         )
         # Select top features based on correlation with target
         feature_importance_scores = []
+        invalid_features = []  # Track features that couldn't be scored
         for col in feature_cols:
             try:
                 corr = abs(df[col].corr(df[target_col]))
                 if not np.isnan(corr):
                     feature_importance_scores.append((col, corr))
-            except:
-                pass
+                else:
+                    invalid_features.append((col, "correlation is NaN"))
+            except Exception as e:
+                invalid_features.append((col, f"error: {str(e)[:50]}"))
+
+        # Log invalid features if any
+        if invalid_features:
+            print(
+                f"      ⚠️  {len(invalid_features)} features could not be scored (skipped in selection):"
+            )
+            for feat, reason in invalid_features[:10]:
+                print(f"         - {feat}: {reason}")
+            if len(invalid_features) > 10:
+                print(f"         ... and {len(invalid_features) - 10} more")
 
         # Sort by correlation and keep top features
         feature_importance_scores.sort(key=lambda x: x[1], reverse=True)
@@ -549,8 +589,15 @@ def train_rank_ic_model(
         n_features = len(feature_cols)
         samples_per_feature = n_samples / max(n_features, 1)
         print(
-            f"      Selected {n_features} features (samples/feature: {samples_per_feature:.1f})"
+            f"      Selected {n_features} features from {len(feature_importance_scores)} valid features "
+            f"(max allowed: {max_features}, samples/feature: {samples_per_feature:.1f})"
         )
+
+    # Use all features from config (even if correlation is NaN)
+    print(
+        f"   ✅ Using all {n_features} features from configuration "
+        f"(samples/feature: {samples_per_feature:.1f})"
+    )
 
     # Validate feature columns before creating X
     available_feature_cols = [col for col in feature_cols if col in df.columns]
@@ -626,15 +673,17 @@ def train_rank_ic_model(
             "num_leaves": min(
                 15, max(7, int(n_samples / 100))
             ),  # Adaptive: smaller for small samples
-            "learning_rate": 0.02,  # Lower learning rate
-            "feature_fraction": 0.7,  # More aggressive feature sampling
+            "learning_rate": 0.01,  # Lower learning rate (reduced from 0.02 to prevent overfitting)
+            "feature_fraction": 0.5,  # More aggressive feature sampling (reduced from 0.7)
             "bagging_fraction": 0.7,  # More aggressive bagging
             "bagging_freq": 3,
-            "min_data_in_leaf": max(20, int(n_samples / 50)),  # More samples per leaf
-            "min_gain_to_split": 0.1,  # Higher threshold to split
-            "lambda_l1": 0.1,  # L1 regularization
-            "lambda_l2": 0.1,  # L2 regularization
-            "max_depth": 5,  # Limit tree depth
+            "min_data_in_leaf": max(
+                50, int(n_samples / 30)
+            ),  # More samples per leaf (increased from 20)
+            "min_gain_to_split": 0.2,  # Higher threshold to split (increased from 0.1)
+            "lambda_l1": 0.5,  # L1 regularization (increased from 0.1)
+            "lambda_l2": 0.5,  # L2 regularization (increased from 0.1)
+            "max_depth": 4,  # Limit tree depth (reduced from 5)
             "verbose": -1,
             "force_col_wise": True,
         }
@@ -695,27 +744,32 @@ def train_rank_ic_model(
             X_train,
             label=y_train,
             weight=w_train,
+            feature_name=feature_cols,  # Preserve feature names
             free_raw_data=False,
         )
         val_data = lgb.Dataset(
             X_val,
             label=y[val_idx],
             reference=train_data,
+            feature_name=feature_cols,  # Preserve feature names
             free_raw_data=False,
         )
 
         # Adaptive early stopping based on sample size
-        # For small samples, use more aggressive early stopping
+        # For small samples, use more aggressive early stopping to prevent overfitting
         if is_small_sample or is_long_horizon or is_high_dim:
             stopping_rounds = max(
-                20, min(50, int(len(X_train) / 20))
+                10,
+                min(
+                    30, int(len(X_train) / 30)
+                ),  # More aggressive (reduced from 20-50 to 10-30)
             )  # Adaptive stopping
             num_boost_round = max(
-                100, min(300, int(len(X_train) / 5))
+                50, min(200, int(len(X_train) / 10))  # Reduced max iterations
             )  # Limit iterations
         else:
-            stopping_rounds = 50
-            num_boost_round = 500
+            stopping_rounds = 30  # Reduced from 50
+            num_boost_round = 300  # Reduced from 500
 
         # Train model
         model = lgb.train(
@@ -773,6 +827,8 @@ def generate_ensemble_signals(
     long_threshold: float = 0.9,
     short_threshold: float = 0.1,
     asset_col: Optional[str] = None,
+    signal_method: str = "quantile",  # "quantile", "sign", "hybrid", "optimized"
+    calibrate_predictions: bool = False,
 ) -> pd.DataFrame:
     """
     Generate trading signals using ensemble of models.
@@ -781,7 +837,7 @@ def generate_ensemble_signals(
     1. Computes ensemble predictions (average of all models)
     2. Computes prediction quantile
     3. Computes confidence score
-    4. Generates signals based on quantile and confidence
+    4. Generates signals based on selected method
 
     Args:
         df: DataFrame with features
@@ -791,6 +847,12 @@ def generate_ensemble_signals(
         long_threshold: Quantile threshold for Long
         short_threshold: Quantile threshold for Short
         asset_col: Optional asset identifier for multi-asset
+        signal_method: Signal generation method
+            - "quantile": Use quantile (current method, default)
+            - "sign": Use prediction sign directly
+            - "hybrid": Combine sign and quantile
+            - "optimized": Optimize threshold based on historical performance
+        calibrate_predictions: Whether to calibrate predictions (requires future_return in df)
 
     Returns:
         DataFrame with added columns:
@@ -806,6 +868,22 @@ def generate_ensemble_signals(
     preds = np.array([model.predict(X) for model in models])
     df["pred"] = np.mean(preds, axis=0)
 
+    # Optionally calibrate predictions
+    if calibrate_predictions and "future_return" in df.columns:
+        try:
+            from time_series_model.pipeline.training.rank_ic_utils_improved import (
+                calibrate_predictions as calibrate,
+            )
+
+            df["pred"] = calibrate(
+                pd.Series(df["pred"], index=df.index),
+                pd.Series(df["future_return"], index=df.index),
+                method="sigmoid",
+            )
+            print(f"   ✅ Calibrated predictions using sigmoid scaling")
+        except Exception as e:
+            print(f"   ⚠️  Prediction calibration failed: {e}")
+
     # Compute prediction quantile
     asset_series = df[asset_col] if asset_col and asset_col in df.columns else None
     df["pred_quantile"] = prediction_quantile(
@@ -816,13 +894,47 @@ def generate_ensemble_signals(
     # Compute confidence score
     df["confidence_score"] = confidence_score(df["pred_quantile"])
 
-    # Generate signals
-    df["signal"] = generate_trading_signals(
-        df["pred_quantile"],
-        df["confidence_score"],
-        confidence_threshold=confidence_threshold,
-        long_threshold=long_threshold,
-        short_threshold=short_threshold,
-    )
+    # Generate signals using selected method
+    if signal_method in ["sign", "hybrid", "optimized"]:
+        try:
+            from time_series_model.pipeline.training.rank_ic_utils_improved import (
+                generate_trading_signals_improved,
+            )
+
+            true_returns = (
+                df["future_return"] if "future_return" in df.columns else None
+            )
+            df["signal"] = generate_trading_signals_improved(
+                pd.Series(df["pred"], index=df.index),
+                df["pred_quantile"],
+                df["confidence_score"],
+                true_returns=true_returns,
+                method=signal_method,
+                confidence_threshold=confidence_threshold,
+                long_threshold=long_threshold,
+                short_threshold=short_threshold,
+                optimize_on_train=(
+                    signal_method == "optimized" and true_returns is not None
+                ),
+            )
+            print(f"   ✅ Generated signals using '{signal_method}' method")
+        except Exception as e:
+            print(f"   ⚠️  Improved signal method failed: {e}, falling back to quantile")
+            df["signal"] = generate_trading_signals(
+                df["pred_quantile"],
+                df["confidence_score"],
+                confidence_threshold=confidence_threshold,
+                long_threshold=long_threshold,
+                short_threshold=short_threshold,
+            )
+    else:
+        # Default: use quantile method
+        df["signal"] = generate_trading_signals(
+            df["pred_quantile"],
+            df["confidence_score"],
+            confidence_threshold=confidence_threshold,
+            long_threshold=long_threshold,
+            short_threshold=short_threshold,
+        )
 
     return df

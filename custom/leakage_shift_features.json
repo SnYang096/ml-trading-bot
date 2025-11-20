@@ -1,0 +1,15 @@
+{
+  "top_factors": [
+    { "name": "atr_zscore_w288" },
+    { "name": "atr_percentile" },
+    { "name": "atr_compression_ratio" },
+    { "name": "bb_width_zscore_w288" },
+    { "name": "bb_lower" },
+    { "name": "bb_middle" },
+    { "name": "bb_upper" },
+    { "name": "vwap" },
+    { "name": "ad" },
+    { "name": "sma_5" },
+    { "name": "sma_10" }
+  ]
+}

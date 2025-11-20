@@ -111,6 +111,8 @@ def compute_confidence_statistics(
     fee_rate: float = 0.001,
     price_col: Optional[pd.Series] = None,
     predictions: Optional[pd.Series] = None,
+    use_multi_period_returns: bool = True,  # NEW: Use future_return directly if True
+    hold_period: Optional[int] = None,  # NEW: Hold period to prevent overlapping trades
 ) -> Dict:
     """
     Compute confidence-based trading statistics with proper equity curve construction.
@@ -291,112 +293,298 @@ def compute_confidence_statistics(
         # Create position series (-1, 0, 1) with consistent index
         position = high_conf_signals.reindex(common_index).fillna(0)
 
-        # Compute single-period returns for equity curve construction
-        # If price_col is provided, use it to compute single-period returns
-        # Otherwise, assume true_returns is already single-period (may be incorrect for multi-period)
-        if price_col is not None:
-            price_aligned = price_col.loc[common_index].sort_index()
-            # Ensure price_aligned is a Series (not DataFrame)
-            if isinstance(price_aligned, pd.DataFrame):
-                price_aligned = price_aligned.iloc[:, 0]  # Take first column
-            # Compute single-period returns from price and ensure index alignment
-            period_returns = price_aligned.pct_change().fillna(0)
-            # Ensure period_returns is a Series
+        # FIXED: Use multi-period returns (future_return) directly if available
+        # Signal at time t corresponds to future_return[t] (from t+1 to t+1+hold_period)
+        if use_multi_period_returns:
+            # Use future_return directly: signal[t] * future_return[t]
+            # No shift needed: signal at t directly corresponds to future_return[t]
+            trade_returns = returns_aligned.reindex(common_index).fillna(0)
+
+            # Ensure trade_returns is a 1D Series
+            if isinstance(trade_returns, pd.DataFrame):
+                trade_returns = trade_returns.iloc[:, 0]
+
+            # FIXED: Filter overlapping trades if hold_period is provided
+            # Prevent opening new positions while holding an existing position
+            position_filtered = position.copy()
+            if hold_period is not None and hold_period > 0:
+                # Create a mask to filter overlapping trades
+                position_filtered = position.copy()
+                last_trade_pos = None
+
+                # Convert to list for easier indexing
+                common_index_list = list(common_index)
+
+                for i, idx in enumerate(common_index_list):
+                    current_signal = position.loc[idx] if idx in position.index else 0
+
+                    # If we have a valid signal
+                    if current_signal != 0:
+                        # Check if we're still within hold_period of last trade
+                        if last_trade_pos is not None:
+                            distance = i - last_trade_pos
+
+                            # If within hold_period, filter out this signal (no overlapping trades)
+                            if distance < hold_period:
+                                position_filtered.loc[idx] = 0
+                                continue
+
+                        # This is a valid new trade
+                        last_trade_pos = i
+                    else:
+                        # No signal, reset if we've passed hold_period
+                        if last_trade_pos is not None:
+                            distance = i - last_trade_pos
+
+                            if distance >= hold_period:
+                                last_trade_pos = None
+
+            # Calculate PnL: signal[t] * future_return[t]
+            position_values = position_filtered.reindex(common_index).fillna(0).values
+            trade_returns_values = trade_returns.reindex(common_index).fillna(0).values
+
+            # Ensure trade_returns_values is 1D
+            if trade_returns_values.ndim > 1:
+                trade_returns_values = (
+                    trade_returns_values.flatten()
+                    if trade_returns_values.shape[1] == 1
+                    else trade_returns_values[:, 0]
+                )
+
+            # Calculate PnL: signal[t] * future_return[t] (no shift!)
+            pnl_values = position_values * trade_returns_values
+
+            # Convert back to Series with proper index
+            pnl = pd.Series(pnl_values, index=common_index)
+
+            # Deduct trading fees when position changes (only on entry/exit, not hold)
+            position_changes = position_filtered.diff().abs()
+            pnl = pnl - (position_changes * fee_rate)
+
+            # Filter out NaN values (from future_return calculation)
+            pnl = pnl[pnl.notna()]
+
+            # Update position to filtered version for statistics
+            position = position_filtered
+        else:
+            # OLD LOGIC: Use single-period returns (for backward compatibility)
+            # Compute single-period returns for equity curve construction
+            if price_col is not None:
+                price_aligned = price_col.loc[common_index].sort_index()
+                if isinstance(price_aligned, pd.DataFrame):
+                    price_aligned = price_aligned.iloc[:, 0]
+                period_returns = price_aligned.pct_change().fillna(0)
+                if isinstance(period_returns, pd.DataFrame):
+                    period_returns = period_returns.iloc[:, 0]
+                period_returns = period_returns.reindex(common_index).fillna(0)
+            else:
+                period_returns = returns_aligned.copy()
+                if period_returns.abs().max() > 0.5:
+                    period_returns = period_returns / 5.0
+                period_returns = period_returns.reindex(common_index).fillna(0)
+
             if isinstance(period_returns, pd.DataFrame):
                 period_returns = period_returns.iloc[:, 0]
-            # Reindex to match position index exactly
-            period_returns = period_returns.reindex(common_index).fillna(0)
-        else:
-            # Assume true_returns might be multi-period, but we'll use it as-is
-            # This is a fallback - ideally price_col should be provided
-            period_returns = returns_aligned.copy()
-            # If returns are very large (likely multi-period), approximate single-period
-            # by dividing by a typical hold period (this is a rough approximation)
-            if period_returns.abs().max() > 0.5:  # Likely multi-period if > 50%
-                period_returns = period_returns / 5.0  # Rough approximation
-            # Ensure index alignment
-            period_returns = period_returns.reindex(common_index).fillna(0)
 
-        # Ensure period_returns is a 1D Series
-        if isinstance(period_returns, pd.DataFrame):
-            period_returns = period_returns.iloc[:, 0]
-
-        # Ensure both series have the same index type and order
-        # Convert to numpy arrays to avoid index type mismatch issues
-        position_values = position.reindex(common_index).fillna(0).values
-        period_returns_values = period_returns.reindex(common_index).fillna(0).values
-
-        # Ensure period_returns_values is 1D
-        if period_returns_values.ndim > 1:
+            position_values = position.reindex(common_index).fillna(0).values
             period_returns_values = (
-                period_returns_values.flatten()
-                if period_returns_values.shape[1] == 1
-                else period_returns_values[:, 0]
+                period_returns.reindex(common_index).fillna(0).values
             )
 
-        # Calculate PnL: T-1 signal determines T position
-        # position.shift(1) means we use yesterday's signal to determine today's position
-        # Shift position array manually
-        position_shifted = np.concatenate([[0], position_values[:-1]])
+            if period_returns_values.ndim > 1:
+                period_returns_values = (
+                    period_returns_values.flatten()
+                    if period_returns_values.shape[1] == 1
+                    else period_returns_values[:, 0]
+                )
 
-        # Calculate PnL using numpy arrays
-        pnl_values = position_shifted * period_returns_values
-
-        # Convert back to Series with proper index
-        pnl = pd.Series(pnl_values, index=common_index)
-
-        # Deduct trading fees when position changes (only on entry/exit, not hold)
-        position_changes = position.diff().abs()
-        pnl = pnl - (position_changes * fee_rate)
-
-        # Remove first row (NaN from shift)
-        pnl = pnl.iloc[1:]
+            # OLD: Calculate PnL with shift (T-1 signal determines T position)
+            position_shifted = np.concatenate([[0], position_values[:-1]])
+            pnl_values = position_shifted * period_returns_values
+            pnl = pd.Series(pnl_values, index=common_index)
+            position_changes = position.diff().abs()
+            pnl = pnl - (position_changes * fee_rate)
+            pnl = pnl.iloc[1:]
 
         if len(pnl) > 0 and pnl.notna().sum() > 0:
-            # Build equity curve
-            equity_curve = (1 + pnl).cumprod()
+            if use_multi_period_returns:
+                # FIXED: For multi-period returns, calculate statistics per trade
+                # Each signal corresponds to one trade with future_return
 
-            # Calculate statistics
-            total_return = equity_curve.iloc[-1] - 1.0 if len(equity_curve) > 0 else 0.0
+                # Filter to only non-zero signals (actual trades)
+                trade_mask = position != 0
+                trade_pnl = pnl[trade_mask]
 
-            # Period returns for Sharpe calculation
-            period_returns = pnl[pnl.notna()]
-            avg_return = period_returns.mean()
-            std_return = period_returns.std()
-            sharpe_ratio = (
-                (avg_return - risk_free_rate) / std_return if std_return > 0 else 0.0
-            )
+                if len(trade_pnl) > 0:
+                    # Win rate: percentage of profitable trades
+                    win_rate = (trade_pnl > 0).mean()
 
-            # Drawdown calculation
-            running_max = equity_curve.expanding().max()
-            drawdown = (equity_curve - running_max) / running_max
-            max_drawdown = drawdown.min()
+                    # FIXED: For multi-period returns (future_return), each trade is independent
+                    # future_return is already the complete return for the holding period
+                    # If trades don't overlap, use product; if they overlap, we need continuous equity curve
+                    # For simplicity, assume trades are sequential and non-overlapping
+                    # Total return = product of (1 + return) for all trades - 1
+                    total_return = (
+                        float((1 + trade_pnl).prod() - 1.0)
+                        if len(trade_pnl) > 0
+                        else 0.0
+                    )
 
-            # Win rate: count periods with positive PnL
-            win_rate = (pnl > 0).mean()
+                    # Build equity curve for drawdown calculation
+                    # Use cumprod for visualization, but total_return is calculated above
+                    equity_curve = (1 + trade_pnl).cumprod()
 
-            # Count trades (position changes)
-            long_count = int((position == 1).sum())
-            short_count = int((position == -1).sum())
+                    # Statistics
+                    avg_return = trade_pnl.mean()
+                    std_return = trade_pnl.std()
 
-            # Separate long/short statistics
-            long_mask = position == 1
-            short_mask = position == -1
+                    # FIXED: Calculate Sharpe Ratio with better method
+                    # For multi-period returns, each trade_pnl value is the complete return for that trade
+                    # Sharpe Ratio = (mean return - risk_free_rate) / std return
+                    #
+                    # Note: With few trades (e.g., 25), std may be unstable
+                    # Consider using time-series approach or annualized version
 
-            # Long PnL (only when holding long)
-            long_pnl = pnl[long_mask.shift(1).fillna(False)]
-            avg_return_long = float(long_pnl.mean()) if len(long_pnl) > 0 else 0.0
-            win_rate_long = float((long_pnl > 0).mean()) if len(long_pnl) > 0 else 0.0
+                    if std_return > 0:
+                        sharpe_ratio = (avg_return - risk_free_rate) / std_return
+                    else:
+                        sharpe_ratio = 0.0
 
-            # Short PnL (only when holding short)
-            short_pnl = pnl[short_mask.shift(1).fillna(False)]
-            avg_return_short = float(short_pnl.mean()) if len(short_pnl) > 0 else 0.0
-            win_rate_short = (
-                float((short_pnl > 0).mean()) if len(short_pnl) > 0 else 0.0
-            )
+                    # Additional diagnostic: Check if Sharpe Ratio is affected by outliers
+                    # For small samples, median-based Sharpe might be more robust
+                    if len(trade_pnl) < 30:
+                        # Small sample: use median-based Sharpe for robustness
+                        median_return = trade_pnl.median()
+                        # Use MAD (Median Absolute Deviation) as robust std estimate
+                        mad = (trade_pnl - median_return).abs().median()
+                        robust_std = (
+                            mad * 1.4826
+                        )  # Convert MAD to std for normal distribution
+                        if robust_std > 0:
+                            robust_sharpe = (
+                                median_return - risk_free_rate
+                            ) / robust_std
+                            # Use the more conservative estimate
+                            sharpe_ratio = (
+                                min(sharpe_ratio, robust_sharpe)
+                                if sharpe_ratio > 0
+                                else robust_sharpe
+                            )
+
+                    # Drawdown calculation
+                    running_max = equity_curve.expanding().max()
+                    drawdown = (equity_curve - running_max) / running_max
+                    max_drawdown = drawdown.min()
+
+                    # Count trades (only count actual trades with valid PnL)
+                    trade_count = len(trade_pnl)
+                    long_mask = position == 1
+                    short_mask = position == -1
+
+                    # Count long/short trades (only those with valid PnL)
+                    long_trade_mask = long_mask[trade_mask]
+                    short_trade_mask = short_mask[trade_mask]
+                    long_count = int(long_trade_mask.sum())
+                    short_count = int(short_trade_mask.sum())
+
+                    # Separate long/short statistics
+                    long_pnl = trade_pnl[long_trade_mask]
+                    avg_return_long = (
+                        float(long_pnl.mean()) if len(long_pnl) > 0 else 0.0
+                    )
+                    win_rate_long = (
+                        float((long_pnl > 0).mean()) if len(long_pnl) > 0 else 0.0
+                    )
+
+                    short_pnl = trade_pnl[short_trade_mask]
+                    avg_return_short = (
+                        float(short_pnl.mean()) if len(short_pnl) > 0 else 0.0
+                    )
+                    win_rate_short = (
+                        float((short_pnl > 0).mean()) if len(short_pnl) > 0 else 0.0
+                    )
+                else:
+                    # No trades
+                    trade_count = 0
+                    win_rate = 0.0
+                    total_return = 0.0
+                    avg_return = 0.0
+                    std_return = 0.0
+                    sharpe_ratio = 0.0
+                    max_drawdown = 0.0
+                    long_count = 0
+                    short_count = 0
+                    avg_return_long = 0.0
+                    win_rate_long = 0.0
+                    avg_return_short = 0.0
+                    win_rate_short = 0.0
+            else:
+                # OLD LOGIC: Build equity curve from period returns
+                equity_curve = (1 + pnl).cumprod()
+                total_return = (
+                    equity_curve.iloc[-1] - 1.0 if len(equity_curve) > 0 else 0.0
+                )
+                period_returns = pnl[pnl.notna()]
+                avg_return = period_returns.mean()
+                std_return = period_returns.std()
+                sharpe_ratio = (
+                    (avg_return - risk_free_rate) / std_return
+                    if std_return > 0
+                    else 0.0
+                )
+                running_max = equity_curve.expanding().max()
+                drawdown = (equity_curve - running_max) / running_max
+                max_drawdown = drawdown.min()
+                win_rate = (pnl > 0).mean()
+                long_count = int((position == 1).sum())
+                short_count = int((position == -1).sum())
+                long_mask = position == 1
+                short_mask = position == -1
+                long_pnl = pnl[long_mask.shift(1).fillna(False)]
+                avg_return_long = float(long_pnl.mean()) if len(long_pnl) > 0 else 0.0
+                win_rate_long = (
+                    float((long_pnl > 0).mean()) if len(long_pnl) > 0 else 0.0
+                )
+                short_pnl = pnl[short_mask.shift(1).fillna(False)]
+                avg_return_short = (
+                    float(short_pnl.mean()) if len(short_pnl) > 0 else 0.0
+                )
+                win_rate_short = (
+                    float((short_pnl > 0).mean()) if len(short_pnl) > 0 else 0.0
+                )
+
+            # Determine trade count based on logic used
+            if use_multi_period_returns:
+                # For multi-period returns, trade_count is already calculated
+                trade_count_value = trade_count
+            else:
+                # For single-period returns, count position changes
+                trade_count_value = int(position_changes.sum())
+
+            # Add diagnostic information for Sharpe Ratio
+            sharpe_diagnostic = {}
+            if use_multi_period_returns and "trade_pnl" in locals():
+                sharpe_diagnostic = {
+                    "n_trades": len(trade_pnl),
+                    "avg_return": float(avg_return),
+                    "std_return": float(std_return),
+                    "return_volatility_ratio": (
+                        float(std_return / abs(avg_return))
+                        if avg_return != 0
+                        else float("inf")
+                    ),
+                    "min_return": float(trade_pnl.min()),
+                    "max_return": float(trade_pnl.max()),
+                    "median_return": float(trade_pnl.median()),
+                }
+                # Note about small sample size
+                if len(trade_pnl) < 30:
+                    sharpe_diagnostic["note"] = (
+                        "Small sample size may cause unstable Sharpe Ratio"
+                    )
 
             stats["high_confidence_trades"] = {
-                "count": int(position_changes.sum()),  # Number of position changes
+                "count": trade_count_value,  # Number of trades
                 "long_count": long_count,
                 "short_count": short_count,
                 "win_rate": float(win_rate),
@@ -409,6 +597,7 @@ def compute_confidence_statistics(
                 "avg_return_short": avg_return_short,
                 "win_rate_long": win_rate_long,
                 "win_rate_short": win_rate_short,
+                "sharpe_diagnostic": sharpe_diagnostic,  # NEW: Diagnostic info
             }
         else:
             stats["high_confidence_trades"] = {"error": "No valid PnL data"}
@@ -530,10 +719,19 @@ def ensure_volatility_feature(
         for symbol in df[asset_col].unique():
             mask = df[asset_col] == symbol
             symbol_data = df.loc[mask, price_col].sort_index()
+            # Ensure symbol_data is a Series, not DataFrame
+            if isinstance(symbol_data, pd.DataFrame):
+                symbol_data = symbol_data.iloc[:, 0]  # Take first column if DataFrame
             returns = symbol_data.pct_change()
+            # Ensure returns is a Series
+            if isinstance(returns, pd.DataFrame):
+                returns = returns.iloc[:, 0]
             vol_series = historical_rolling_volatility(
                 returns, window=window, min_periods=window // 2
             )
+            # Ensure vol_series is a Series
+            if isinstance(vol_series, pd.DataFrame):
+                vol_series = vol_series.iloc[:, 0]
             vol_list.append(vol_series)
         # Concatenate and align - ensure it's a Series
         vol_combined = pd.concat(vol_list, axis=0).sort_index()
@@ -542,10 +740,21 @@ def ensure_volatility_feature(
         df[volatility_col] = vol_combined.reindex(df.index)
     else:
         # Single asset
-        returns = df[price_col].pct_change()
-        df[volatility_col] = historical_rolling_volatility(
+        price_series = df[price_col]
+        # Ensure price_series is a Series, not DataFrame
+        if isinstance(price_series, pd.DataFrame):
+            price_series = price_series.iloc[:, 0]  # Take first column if DataFrame
+        returns = price_series.pct_change()
+        # Ensure returns is a Series
+        if isinstance(returns, pd.DataFrame):
+            returns = returns.iloc[:, 0]
+        vol_result = historical_rolling_volatility(
             returns, window=window, min_periods=window // 2
         )
+        # Ensure vol_result is a Series
+        if isinstance(vol_result, pd.DataFrame):
+            vol_result = vol_result.iloc[:, 0]
+        df[volatility_col] = vol_result
 
     print(f"   ✅ Computed volatility feature '{volatility_col}' (window={window})")
 
