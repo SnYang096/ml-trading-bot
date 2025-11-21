@@ -118,14 +118,36 @@ class BaselineFeatureEngineer:
 
     @staticmethod
     def compute_zigzag(
-        high: pd.Series, low: pd.Series, threshold: float = 0.05
-    ) -> pd.Series:
-        """计算ZigZag指标."""
+        high: pd.Series,
+        low: pd.Series,
+        threshold: float = 0.05,
+        return_high_low: bool = False,
+    ) -> pd.Series | Tuple[pd.Series, pd.Series, pd.Series]:
+        """
+        计算ZigZag指标（优化版：可同时计算高点和低点）
+
+        Args:
+            high: 最高价序列
+            low: 最低价序列
+            threshold: 转折阈值（默认 0.05，即 5%）
+            return_high_low: 是否同时返回高点和低点序列（默认 False）
+
+        Returns:
+            如果 return_high_low=False: 返回 zigzag 序列
+            如果 return_high_low=True: 返回 (zigzag, zz_high, zz_low) 元组
+        """
         high = pd.to_numeric(high, errors="coerce")
         low = pd.to_numeric(low, errors="coerce")
         if len(high) < 2:
+            if return_high_low:
+                empty = pd.Series(index=high.index, dtype=float)
+                return empty, empty, empty
             return pd.Series(index=high.index, dtype=float)
+
         zigzag = pd.Series(index=high.index, dtype=float)
+        zz_high = pd.Series(index=high.index, dtype=float) if return_high_low else None
+        zz_low = pd.Series(index=high.index, dtype=float) if return_high_low else None
+
         last_pivot = high.iloc[0]
         trend = None
         try:
@@ -135,62 +157,56 @@ class BaselineFeatureEngineer:
                         trend = "up"
                         last_pivot = high.iloc[i]
                         zigzag.iloc[i] = high.iloc[i]
+                        if return_high_low:
+                            zz_high.iloc[i] = high.iloc[i]
                     elif low.iloc[i] <= last_pivot * (1 - threshold):
                         trend = "down"
                         last_pivot = low.iloc[i]
                         zigzag.iloc[i] = low.iloc[i]
+                        if return_high_low:
+                            zz_low.iloc[i] = low.iloc[i]
                 elif trend == "up":
                     if low.iloc[i] <= last_pivot * (1 - threshold):
+                        # 趋势反转：从上涨转为下跌
                         trend = "down"
                         last_pivot = low.iloc[i]
                         zigzag.iloc[i] = low.iloc[i]
+                        if return_high_low:
+                            zz_low.iloc[i] = low.iloc[i]
                     elif high.iloc[i] >= last_pivot:
+                        # 继续上涨，更新高点
                         last_pivot = high.iloc[i]
                         zigzag.iloc[i] = high.iloc[i]
+                        if return_high_low:
+                            zz_high.iloc[i] = high.iloc[i]
                 else:  # trend == 'down'
                     if high.iloc[i] >= last_pivot * (1 + threshold):
+                        # 趋势反转：从下跌转为上涨
                         trend = "up"
                         last_pivot = high.iloc[i]
                         zigzag.iloc[i] = high.iloc[i]
+                        if return_high_low:
+                            zz_high.iloc[i] = high.iloc[i]
                     elif low.iloc[i] <= last_pivot:
+                        # 继续下跌，更新低点
                         last_pivot = low.iloc[i]
                         zigzag.iloc[i] = low.iloc[i]
+                        if return_high_low:
+                            zz_low.iloc[i] = low.iloc[i]
+
             zigzag = zigzag.ffill()
+            if return_high_low:
+                zz_high = zz_high.ffill()
+                zz_low = zz_low.ffill()
         except Exception:
             zigzag = pd.Series(0, index=high.index, dtype=float)
+            if return_high_low:
+                zz_high = pd.Series(0, index=high.index, dtype=float)
+                zz_low = pd.Series(0, index=high.index, dtype=float)
+
+        if return_high_low:
+            return zigzag, zz_high, zz_low
         return zigzag
-
-    @staticmethod
-    def compute_zigzag_high_low(zigzag: pd.Series) -> Tuple[pd.Series, pd.Series]:
-        """
-        从 ZigZag 序列中提取高点和低点
-
-        Returns:
-            (zz_high, zz_low): ZigZag 高点和低点序列
-        """
-        zz_high = pd.Series(index=zigzag.index, dtype=float)
-        zz_low = pd.Series(index=zigzag.index, dtype=float)
-
-        # 找到转折点
-        zigzag_diff = zigzag.diff()
-        turn_points = (zigzag_diff * zigzag_diff.shift(1) < 0) | (zigzag_diff != 0) & (
-            zigzag_diff.shift(1) == 0
-        )
-
-        # 分离高点和低点
-        for i in range(len(zigzag)):
-            if turn_points.iloc[i]:
-                if i > 0:
-                    if zigzag.iloc[i] > zigzag.iloc[i - 1]:
-                        zz_high.iloc[i] = zigzag.iloc[i]
-                    else:
-                        zz_low.iloc[i] = zigzag.iloc[i]
-
-        # 前向填充
-        zz_high = zz_high.ffill()
-        zz_low = zz_low.ffill()
-
-        return zz_high, zz_low
 
     @staticmethod
     def compute_poc(
@@ -299,81 +315,93 @@ class BaselineFeatureEngineer:
         df: pd.DataFrame,
         window: int = 60,
         tolerance_factor: float = 0.5,
-        sr_type: Optional[str] = None,
+        sr_type: str = "support",  # 必须指定: 'support' 或 'resistance'
+        max_lookahead_bars: int = 3,
     ) -> float:
         """
-        计算结构质量评分（Structure Quality Score, SQS）
-        量化支撑/阻力位的可靠性
+        计算支撑/阻力位的质量评分（Structure Quality Score, SQS）
+
+        ⚠️ 要求：df 必须是截止到【当前决策时刻之前】的历史数据（即不含未来K线）
+        例如，在时刻 i 决策时，df = data.iloc[:i]
 
         Args:
-            sr_price: 当前考虑的支撑/阻力价格
-            df: 包含 high, low, close, volume, atr 的K线数据
-            window: 回看窗口大小
-            tolerance_factor: ATR 容忍带系数（默认 0.5）
+            sr_price: 支撑或阻力价位
+            df: 历史K线数据，必须包含 ['high', 'low', 'close', 'atr']，索引为时间
+            window: 回看窗口长度（单位：K线根数）
+            tolerance_factor: ATR 容忍带系数，默认 0.5
+            sr_type: 必须为 'support' 或 'resistance'
+            max_lookahead_bars: 最大反应观察期（不超过窗口剩余长度）
 
         Returns:
-            SQS 分数（越高越好，>2.0 可接受）
+            SQS 分数（>=0，越高越好；无有效测试时返回 0.0）
         """
-        if len(df) < window or "atr" not in df.columns:
+        if sr_type not in {"support", "resistance"}:
+            raise ValueError("sr_type must be 'support' or 'resistance'")
+
+        if len(df) < window or "atr" not in df.columns or df["atr"].empty:
             return 0.0
 
-        # 使用最近的 ATR 值
-        current_atr = df["atr"].iloc[-1] if not df["atr"].empty else df["atr"].mean()
+        # 使用窗口内最后一个 ATR（即最新可用ATR）
+        current_atr = df["atr"].iloc[-1]
         if current_atr <= 0:
             return 0.0
 
         tolerance = current_atr * tolerance_factor
         window_df = df.tail(window).copy()
 
-        # 1. 测试次数：过去 window 根 K 线中，价格进入 sr_price ± tolerance 区域的次数
+        # 1. 找出触及 SR 区域的K线（价格区间与 [sr_price ± tolerance] 有交集）
         near_sr = (window_df["low"] <= sr_price + tolerance) & (
             window_df["high"] >= sr_price - tolerance
         )
-        test_count = near_sr.sum()
+        test_indices = window_df[near_sr].index.tolist()
+        if not test_indices:
+            return 0.0
 
-        # 2. 反应强度：每次测试后的平均反弹/回落幅度（绝对值）
         reactions = []
-        near_sr_indices = window_df[near_sr].index
+        n = len(window_df)
 
-        for idx in near_sr_indices:
-            idx_pos = window_df.index.get_loc(idx)
-            if idx_pos + 3 < len(window_df):  # 确保有后续 K 线
-                # 判断是阻力还是支撑
-                if sr_type == "resistance":
-                    is_resistance = True
-                elif sr_type == "support":
-                    is_resistance = False
-                else:
-                    is_resistance = abs(sr_price - window_df.loc[idx, "high"]) < abs(
-                        sr_price - window_df.loc[idx, "low"]
-                    )
+        for idx in test_indices:
+            try:
+                pos = window_df.index.get_loc(idx)
+            except KeyError:
+                continue
 
-                if is_resistance:
-                    # 阻力：看后续是否回落
-                    reaction = (
-                        window_df.loc[idx, "close"]
-                        - window_df.iloc[idx_pos : idx_pos + 3]["low"].min()
-                    )
-                else:
-                    # 支撑：看后续是否反弹
-                    reaction = (
-                        window_df.iloc[idx_pos : idx_pos + 3]["high"].max()
-                        - window_df.loc[idx, "close"]
-                    )
-                reactions.append(abs(reaction))
+            # 确保后面还有至少1根K线用于观察反应
+            if pos >= n - 1:
+                continue
 
+            # 动态确定实际可观察的反应期（不超过 max_lookahead_bars，也不越界）
+            actual_lookahead = min(max_lookahead_bars, n - pos - 1)
+            if actual_lookahead <= 0:
+                continue
+
+            future_slice = window_df.iloc[pos + 1 : pos + 1 + actual_lookahead]
+            close_at_touch = window_df.loc[idx, "close"]
+
+            if sr_type == "resistance":
+                # 阻力：期望价格下跌 → 反应 = 触及时收盘价 - 未来最低价
+                reaction = close_at_touch - future_slice["low"].min()
+                if reaction > 0:  # 仅当确实下跌时才计入
+                    reactions.append(reaction / current_atr)
+            else:  # support
+                # 支撑：期望价格上涨 → 反应 = 未来最高价 - 触及时收盘价
+                reaction = future_slice["high"].max() - close_at_touch
+                if reaction > 0:  # 仅当确实反弹时才计入
+                    reactions.append(reaction / current_atr)
+
+        # 汇总指标
+        test_count = len(test_indices)
+        valid_reaction_count = len(reactions)
         avg_reaction = np.mean(reactions) if reactions else 0.0
+        recent_test_count = near_sr.tail(20).sum()  # 近20根K线内的测试次数
 
-        # 3. 时间衰减：越近的测试权重越高
-        recent_tests = near_sr.tail(20).sum()
+        # 标准化打分（抑制极端值，强调有效反应）
+        test_score = min(test_count, 5) * 0.4
+        reaction_score = min(avg_reaction * 2, 3.0) * 0.4  # avg_reaction=1.5 → 满分
+        recency_score = min(recent_test_count, 3) * 0.2
 
-        # 综合打分（可调权重）
-        reaction_score = (avg_reaction / current_atr) if current_atr > 0 else 0.0
-        sqs = (
-            0.4 * min(test_count, 5) + 0.3 * reaction_score + 0.3 * min(recent_tests, 3)
-        )
-
-        return sqs
+        sqs = test_score + reaction_score + recency_score
+        return float(sqs)
 
     @staticmethod
     def calculate_volume_price_confirmation(
@@ -670,15 +698,23 @@ class BaselineFeatureEngineer:
                 if pd.isna(sr_price):
                     continue
 
-                window_slice = data.iloc[max(0, i - window) : i + 1]
+                # 【关键修复】：window_slice 不包含当前时刻 i，只使用历史数据 [i-window, i)
+                # 这样 calculate_sqs 在计算反应强度时，可以使用 [i-window, i) 范围内的数据
+                # 对于窗口内的每个测试点，可以使用该点之后、窗口结束之前的数据来计算反应
+                window_slice = data.iloc[max(0, i - window) : i]
                 try:
-                    base = BaselineFeatureEngineer.calculate_sqs(
-                        sr_price,
-                        window_slice,
-                        window=window,
-                        tolerance_factor=tolerance_factor,
-                        sr_type=sr_type,
-                    )
+                    # 对于 "mid" 类型的边界（如 poc, ols_mid, vwap），无法计算 SQS
+                    # 因为它们既不是支撑也不是阻力，而是价格中轴线
+                    if sr_type == "mid":
+                        base = 0.0
+                    else:
+                        base = BaselineFeatureEngineer.calculate_sqs(
+                            sr_price,
+                            window_slice,
+                            window=window,
+                            tolerance_factor=tolerance_factor,
+                            sr_type=sr_type,
+                        )
                 except Exception:
                     base = 0.0
 
@@ -728,13 +764,23 @@ class BaselineFeatureEngineer:
             sr_series = data[column]
             conf = pd.Series(0.0, index=data.index, dtype=float)
 
+            # 【关键修复】：在时刻 i，只能使用历史数据 [0, i] 来检测突破和计算确认
+            # 不能使用未来数据来确认是否站稳，因为这会导致数据泄漏
+            # 解决方案：在突破发生后的 confirmation_bars 根K线之后，才计算确认分数
+            # 这样在时刻 i，我们使用的是历史突破事件（发生在 i - confirmation_bars 之前）的确认结果
             for i in range(lookback + confirmation_bars, len(data)):
-                sr_price = sr_series.iloc[i - 1]
+                # 检测突破：使用历史数据（i - confirmation_bars 时刻的突破）
+                # 这样在时刻 i，我们计算的是历史突破的确认结果
+                breakout_check_idx = i - confirmation_bars
+                if breakout_check_idx < 0:
+                    continue
+
+                sr_price = sr_series.iloc[breakout_check_idx - 1]
                 if pd.isna(sr_price):
                     continue
 
-                prev_close = data["close"].iloc[i - 1]
-                curr_close = data["close"].iloc[i]
+                prev_close = data["close"].iloc[breakout_check_idx - 1]
+                curr_close = data["close"].iloc[breakout_check_idx]
                 breakout = False
                 direction = 0
 
@@ -758,11 +804,13 @@ class BaselineFeatureEngineer:
                         direction = 1 if curr_close > sr_price else -1
 
                 if breakout:
+                    # 【修复】：只使用历史数据 [0, i] 来计算确认
+                    # 在时刻 i，我们已经有了 [breakout_check_idx, i] 的数据来确认是否站稳
                     try:
                         score = (
                             BaselineFeatureEngineer.calculate_volume_price_confirmation(
-                                data.iloc[: i + confirmation_bars + 1],
-                                i,
+                                data.iloc[: i + 1],  # 只使用历史数据，不包含未来
+                                breakout_check_idx,  # 突破发生在 breakout_check_idx
                                 sr_price,
                                 lookback=lookback,
                                 vol_threshold=vol_threshold,
@@ -934,26 +982,37 @@ class BaselineFeatureEngineer:
         )
 
         # 4. 假突破迹象（突破后3根K线是否收回？）
+        # 【关键修复】：在时刻 i，只能使用历史数据来判断假突破
+        # 解决方案：在时刻 i，检查发生在 i - 3 的突破是否在后续被收回
         fake_breakout = pd.Series(False, index=data.index, dtype=bool)
 
         for i in range(3, len(data)):
-            if breakout_status.iloc[i] == 0:
+            # 检查发生在 i - 3 的突破是否在后续被收回
+            check_idx = i - 3
+            if check_idx < 0 or breakout_status.iloc[check_idx] == 0:
                 continue
 
-            nearest_sr_price = nearest_sr.iloc[i]
+            nearest_sr_price = nearest_sr.iloc[check_idx]
             if pd.isna(nearest_sr_price):
                 continue
 
-            # 检查突破后3根K线是否收回
-            if breakout_status.iloc[i] == 1:  # 向上突破
-                # 如果当前收盘价回到阻力位下方，可能是假突破
-                if i + 3 < len(data):
-                    if data["close"].iloc[i + 3] < nearest_sr_price:
+            # 检查突破后3根K线是否收回（使用历史数据）
+            if breakout_status.iloc[check_idx] == 1:  # 向上突破
+                # 如果后续收盘价回到阻力位下方，可能是假突破
+                # 在时刻 i，我们已经有了 [check_idx, i] 的数据来判断
+                if i >= check_idx + 1:
+                    # 检查从 check_idx + 1 到 i 的收盘价是否回到阻力位下方
+                    if (
+                        data["close"].iloc[check_idx + 1 : i + 1] < nearest_sr_price
+                    ).any():
                         fake_breakout.iloc[i] = True
-            elif breakout_status.iloc[i] == -1:  # 向下突破
-                # 如果当前收盘价回到支撑位上方，可能是假突破
-                if i + 3 < len(data):
-                    if data["close"].iloc[i + 3] > nearest_sr_price:
+            elif breakout_status.iloc[check_idx] == -1:  # 向下突破
+                # 如果后续收盘价回到支撑位上方，可能是假突破
+                if i >= check_idx + 1:
+                    # 检查从 check_idx + 1 到 i 的收盘价是否回到支撑位上方
+                    if (
+                        data["close"].iloc[check_idx + 1 : i + 1] > nearest_sr_price
+                    ).any():
                         fake_breakout.iloc[i] = True
 
         data["fake_breakout"] = fake_breakout.shift(1).fillna(False).astype(int)
@@ -1112,11 +1171,12 @@ class BaselineFeatureEngineer:
                     result["atr"] = 0
 
         # 按需计算 ZigZag
+        # 注意：这里只计算 zigzag，不计算高点和低点（高点和低点在 add_zigzag_dimensionless_features 中计算）
         if required_features is None or "zigzag" in required_features:
             if "zigzag" not in result.columns:
                 try:
                     result["zigzag"] = BaselineFeatureEngineer.compute_zigzag(
-                        result["high"], result["low"]
+                        result["high"], result["low"], return_high_low=False
                     )
                 except Exception as e:
                     print(f"Warning: Error computing ZigZag: {e}")
@@ -1218,10 +1278,13 @@ class BaselineFeatureEngineer:
                 )
 
         close = result["close"].replace(0, np.nan)
-        zigzag = result["zigzag"]
 
-        # 提取 ZigZag 高点和低点
-        zz_high, zz_low = BaselineFeatureEngineer.compute_zigzag_high_low(zigzag)
+        # 优化：直接计算 zigzag + 高点和低点（一次性完成）
+        # 如果 zigzag 已存在，重新计算以确保高点和低点正确（性能影响可忽略）
+        zigzag, zz_high, zz_low = BaselineFeatureEngineer.compute_zigzag(
+            result["high"], result["low"], return_high_low=True
+        )
+        result["zigzag"] = zigzag
         result["zz_high_value"] = zz_high
         result["zz_low_value"] = zz_low
 
@@ -2780,6 +2843,9 @@ class BaselineFeatureEngineer:
             boundary_name = name.replace("volume_price_confirmation_", "")
             strength_col = f"sqs_{boundary_name}"
             if strength_col in data.columns:
+                # 【关键修复】：虽然 sqs_* 和 volume_price_confirmation_* 都已经 shift(1) 了
+                # 但相乘后的结果需要确保时间对齐，这里不需要再次 shift
+                # 因为两个已经 shift 过的序列相乘，结果仍然是正确对齐的
                 breakout_quality = (
                     data[strength_col] * series * (1.0 + compression_effect)
                 )
@@ -2789,6 +2855,8 @@ class BaselineFeatureEngineer:
             col for col in data.columns if col.startswith("sr_breakout_quality_")
         ]
         if quality_columns:
+            # 【关键修复】：确保聚合后的特征也正确对齐
+            # 由于所有 quality_columns 都是基于已 shift 的特征计算的，这里不需要再次 shift
             quality_df = data[quality_columns]
             data["sr_breakout_quality_max"] = quality_df.max(axis=1)
             data["sr_breakout_quality_sum"] = quality_df.sum(axis=1)

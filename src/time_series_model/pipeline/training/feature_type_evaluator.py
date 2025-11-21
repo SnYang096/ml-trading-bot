@@ -2,9 +2,12 @@
 Feature Type Evaluator
 
 This script evaluates different feature types for:
-1. Data leakage detection
-2. Rank IC (Information Coefficient) calculation
-3. Feature usefulness assessment
+1. Rank IC (Information Coefficient) calculation
+2. Feature usefulness assessment
+3. Top factors selection and export
+
+Note: Data leakage detection has been moved to verify-feature-correlation script.
+This script focuses solely on finding the best features by IC.
 """
 
 from __future__ import annotations
@@ -23,10 +26,6 @@ from time_series_model.pipeline.training.rank_ic_trainer import (
     train_rank_ic_model,
 )
 from time_series_model.pipeline.training.rank_ic_utils import compute_rank_ic
-from time_series_model.pipeline.training.data_leakage_detector import (
-    check_feature_future_correlation,
-    test_random_walk_leakage,
-)
 
 
 def evaluate_feature_type(
@@ -34,23 +33,21 @@ def evaluate_feature_type(
     feature_type: str,
     hold_period: int = 5,
     n_splits: int = 3,
-    test_leakage: bool = True,
-    leakage_threshold: float = 0.03,
     train_only: bool = False,
     test_size: float = 0.15,
 ) -> Dict:
     """
-    Evaluate a specific feature type for IC and data leakage.
+    Evaluate a specific feature type for Rank IC.
 
     Args:
         df: DataFrame with price data
         feature_type: Feature type to evaluate (e.g., 'baseline', 'enhanced', etc.)
         hold_period: Holding period for labels
         n_splits: Number of CV folds
-        test_leakage: Whether to run leakage tests
+        train_only: Whether to use only training data
 
     Returns:
-        Dictionary with evaluation results
+        Dictionary with evaluation results (IC metrics, feature list)
     """
     print(f"\n{'='*60}")
     print(f"🔍 Evaluating Feature Type: {feature_type}")
@@ -260,54 +257,8 @@ def evaluate_feature_type(
         if len(feature_ics) > 20:
             print(f"      ... and {len(feature_ics) - 20} more features")
 
-        # Data leakage tests
-        if test_leakage:
-            print("Running data leakage tests...")
-
-            # Random walk test
-            # For long horizons (e.g., 24 forwards = 4 days), use a more lenient threshold
-            # Longer horizons may have slightly higher Rank IC on random data due to statistical noise
-            adaptive_threshold = leakage_threshold
-            if hold_period >= 20:  # Long horizon (e.g., 4 days for 240T)
-                adaptive_threshold = max(
-                    leakage_threshold, 0.04
-                )  # More lenient for long horizons
-                print(
-                    f"   ℹ️  Long horizon detected (hold_period={hold_period}), using threshold={adaptive_threshold:.3f}"
-                )
-
-            leakage_test = test_random_walk_leakage(
-                feature_cols=feature_cols,
-                n_samples=max(
-                    4000, min(100, len(feature_cols)) * 150
-                ),  # At least 150 samples/feature
-                n_features=min(100, len(feature_cols)),
-                hold_period=hold_period,
-                n_splits=3,
-                threshold=adaptive_threshold,
-            )
-            results["random_walk_test"] = leakage_test
-
-            # Correlation test
-            corr_test = check_feature_future_correlation(
-                df=df_with_labels,
-                feature_cols=feature_cols,
-                future_return_col="future_return",
-                correlation_threshold=0.1,
-                min_samples=100,
-            )
-            results["correlation_test"] = corr_test
-
-            # Overall leakage assessment
-            has_leakage = leakage_test.get("has_leakage", False) or corr_test.get(
-                "has_leakage", False
-            )
-            results["has_leakage"] = has_leakage
-
-            if has_leakage:
-                print(f"   ⚠️  Data leakage detected!")
-            else:
-                print(f"   ✅ No data leakage detected")
+        # Note: Data leakage detection has been moved to verify-feature-correlation script
+        # This script focuses solely on IC evaluation and feature selection
 
         results["status"] = "completed"
 
@@ -321,7 +272,7 @@ def evaluate_feature_type(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate different feature types for IC and data leakage"
+        description="Evaluate different feature types for Rank IC and select top factors"
     )
     parser.add_argument(
         "--data-path",
@@ -370,18 +321,6 @@ def main():
         type=str,
         default="results/feature_evaluation",
         help="Output directory",
-    )
-    parser.add_argument(
-        "--test-leakage",
-        action="store_true",
-        default=True,
-        help="Run data leakage tests",
-    )
-    parser.add_argument(
-        "--leakage-threshold",
-        type=float,
-        default=0.03,
-        help="Threshold for data leakage detection (default: 0.03, use 0.04-0.05 for long horizons like 24 forwards)",
     )
     parser.add_argument(
         "--top-factors-count",
@@ -516,8 +455,6 @@ def main():
             feature_type=feat_type,
             hold_period=args.horizon,
             n_splits=3,
-            test_leakage=args.test_leakage,
-            leakage_threshold=args.leakage_threshold,
             train_only=args.train_only,
             test_size=args.test_size,
         )
@@ -536,7 +473,6 @@ def main():
             avg_ic = result.get("avg_rank_ic", 0.0)
             ic_std = result.get("rank_ic_std", 0.0)
             n_features = result.get("n_features", 0)
-            has_leakage = result.get("has_leakage", False)
             feature_ics = result.get("feature_ics", [])
 
             summary_data.append(
@@ -545,7 +481,6 @@ def main():
                     "n_features": n_features,
                     "avg_rank_ic": avg_ic,
                     "rank_ic_std": ic_std,
-                    "has_leakage": has_leakage,
                     "feature_ics": feature_ics,
                 }
             )
@@ -563,9 +498,8 @@ def main():
                     }
                 )
 
-            leakage_status = "⚠️  LEAKAGE" if has_leakage else "✅ CLEAN"
             print(
-                f"{feat_type:20s} | IC: {avg_ic:7.4f} ± {ic_std:.4f} | Features: {n_features:4d} | {leakage_status}"
+                f"{feat_type:20s} | IC: {avg_ic:7.4f} ± {ic_std:.4f} | Features: {n_features:4d}"
             )
 
     # Sort by Rank IC
@@ -573,9 +507,8 @@ def main():
 
     print("\n📈 Ranked by Rank IC (best to worst):")
     for i, data in enumerate(summary_data, 1):
-        leakage_marker = " ⚠️" if data["has_leakage"] else ""
         print(
-            f"{i:2d}. {data['feature_type']:20s} | IC: {data['avg_rank_ic']:7.4f} ± {data['rank_ic_std']:.4f} | {data['n_features']:4d} features{leakage_marker}"
+            f"{i:2d}. {data['feature_type']:20s} | IC: {data['avg_rank_ic']:7.4f} ± {data['rank_ic_std']:.4f} | {data['n_features']:4d} features"
         )
 
     # Print all features sorted by IC

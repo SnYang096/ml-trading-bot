@@ -22,8 +22,8 @@ import numpy as np
 import json
 from pathlib import Path
 from scipy.stats import spearmanr
+from data_tools.data_utils import load_data
 from time_series_model.pipeline.training.train_rank_ic_standalone import (
-    load_data,
     split_train_test,
 )
 from time_series_model.pipeline.training.rank_ic_trainer import prepare_rank_ic_labels

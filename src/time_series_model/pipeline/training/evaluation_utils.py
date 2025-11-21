@@ -179,7 +179,8 @@ def compute_confidence_statistics(
 
     # Check direction accuracy (sign consistency between predictions and true returns)
     # This is critical: IC measures ranking, but trading needs correct direction
-    # IMPORTANT: Use period_returns (single-period) for direction accuracy to match actual trading
+    # IMPORTANT: Use multi-period returns (future_return) for direction accuracy to match Win Rate
+    # This ensures Direction Accuracy and Win Rate use the same time window (RANK_IC_HORIZON)
     direction_stats = {}
     if predictions is not None:
         # Align predictions with common index
@@ -190,29 +191,12 @@ def compute_confidence_statistics(
         )
 
         if pred_aligned is not None:
-            # Compute period_returns for direction accuracy (to match actual trading)
-            # This should use the same period_returns as the equity curve calculation
-            period_returns_for_direction = None
-            if price_col is not None:
-                price_aligned = price_col.loc[common_index].sort_index()
-                if isinstance(price_aligned, pd.DataFrame):
-                    price_aligned = price_aligned.iloc[:, 0]
-                period_returns_for_direction = price_aligned.pct_change().fillna(0)
-                if isinstance(period_returns_for_direction, pd.DataFrame):
-                    period_returns_for_direction = period_returns_for_direction.iloc[
-                        :, 0
-                    ]
-                period_returns_for_direction = period_returns_for_direction.reindex(
-                    common_index
-                ).fillna(0)
-            else:
-                # Fallback to returns_aligned if price_col not available
-                period_returns_for_direction = returns_aligned.copy()
-                if period_returns_for_direction.abs().max() > 0.5:
-                    period_returns_for_direction = period_returns_for_direction / 5.0
-                period_returns_for_direction = period_returns_for_direction.reindex(
-                    common_index
-                ).fillna(0)
+            # Use multi-period returns (returns_aligned, i.e., future_return) for direction accuracy
+            # This matches the time window used for Win Rate calculation
+            # returns_aligned is already the multi-period return (horizon=RANK_IC_HORIZON)
+            period_returns_for_direction = returns_aligned.reindex(common_index).fillna(
+                0
+            )
 
             if period_returns_for_direction is not None:
                 valid_direction_mask = (
@@ -222,7 +206,7 @@ def compute_confidence_statistics(
                 )
                 if valid_direction_mask.sum() > 0:
                     pred_sign = np.sign(pred_aligned.loc[valid_direction_mask])
-                    # Use period_returns (single-period) for direction accuracy, not multi-period returns
+                    # Use multi-period returns (future_return) for direction accuracy to match Win Rate
                     true_sign = np.sign(
                         period_returns_for_direction.loc[valid_direction_mask]
                     )

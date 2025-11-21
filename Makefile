@@ -571,13 +571,13 @@ FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
 FEATURE_EVAL_START_DATE ?=2023-01-01
 FEATURE_EVAL_END_DATE ?=2025-01-01
-FEATURE_EVAL_TOP_FACTORS_COUNT ?=100
+FEATURE_EVAL_TOP_FACTORS_COUNT ?=50
 FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD ?= 0.02
 FEATURE_EVAL_TRAIN_ONLY ?= 1
 FEATURE_EVAL_TEST_SIZE ?= 0.15
 
 feature-eval:
-	@echo "🔍 Feature Type Evaluation (IC + Leakage Detection)..."
+	@echo "🔍 Feature Type Evaluation (IC Ranking + Top Factors Selection)..."
 	@echo "   Symbol: $(FEATURE_EVAL_SYMBOL)"
 	@echo "   Timeframe: $(FEATURE_EVAL_TIMEFRAME)"
 	@echo "   Horizon: $(FEATURE_EVAL_HORIZON)"
@@ -596,8 +596,6 @@ feature-eval:
 		--horizon $(FEATURE_EVAL_HORIZON) \
 		--feature-types $(FEATURE_EVAL_TYPES) \
 		--output-dir /workspace/$(FEATURE_EVAL_OUTPUT_DIR) \
-		--test-leakage \
-		--leakage-threshold $(FEATURE_EVAL_LEAKAGE_THRESHOLD) \
 		$(if $(FEATURE_EVAL_TOP_FACTORS_COUNT),--top-factors-count $(FEATURE_EVAL_TOP_FACTORS_COUNT),--top-factors-ic-threshold $(FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD)) \
 		$(if $(filter 1 true yes,$(FEATURE_EVAL_TRAIN_ONLY)),--train-only --test-size $(FEATURE_EVAL_TEST_SIZE),)
 	@echo "✅ Evaluation complete. Check results in $(FEATURE_EVAL_OUTPUT_DIR)"
@@ -607,7 +605,7 @@ feature-eval:
 RANK_IC_SYMBOL ?= $(SYMBOL)
 RANK_IC_HORIZON ?= 24
 RANK_IC_TIMEFRAME ?= 240T
-RANK_IC_FEATURE_TYPE ?= comprehensive
+RANK_IC_FEATURE_TYPE ?= baseline
 RANK_IC_N_SPLITS ?= 5
 RANK_IC_TEST_SIZE ?= 0.15
 RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
@@ -622,8 +620,8 @@ RANK_IC_FILTER_HIGH_CONF ?= 0
 # Default: 1.0
 RANK_IC_MIN_TREND_STRENGTH ?= 1.0
 RANK_IC_SMOOTH_TARGET ?= 0
-RANK_IC_CHECK_LEAKAGE ?= 1
 # Top factors file path (if not set, will use FEATURE_EVAL_OUTPUT_DIR/top_factors.json)
+# Note: Data leakage detection has been moved to verify-feature-correlation target
 # Set this to override the default path from feature evaluation
 RANK_IC_TOP_FACTORS ?=
 RANK_IC_TSCV_GAP ?= 24
@@ -634,13 +632,13 @@ RANK_IC_TSCV_GAP ?= 24
 #   - "hybrid": Combine sign and quantile methods (balanced approach)
 #   - "optimized": Optimize threshold based on historical performance (requires future_return)
 # Default: quantile
-RANK_IC_SIGNAL_METHOD ?= optimized
+RANK_IC_SIGNAL_METHOD ?= sign
 # Whether to calibrate predictions to match true return distribution
 # When enabled (1/true/yes), uses sigmoid scaling to calibrate predictions,
 # making them better match the actual return distribution (requires future_return in data).
 # This can improve signal quality by reducing prediction bias.
 # Default: 0 (disabled)
-RANK_IC_CALIBRATE_PREDICTIONS ?= true
+RANK_IC_CALIBRATE_PREDICTIONS ?= false
 
 # Default to using top_factors.json from feature evaluation output
 # If RANK_IC_TOP_FACTORS is explicitly set, use that instead
@@ -674,7 +672,6 @@ ts-r-rank-ic-train:
 		$(if $(filter 1 true yes,$(RANK_IC_FILTER_HIGH_CONF)),--filter-high-confidence,) \
 		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
 		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
-		$(if $(filter 1 true yes,$(RANK_IC_CHECK_LEAKAGE)),--check-leakage,) \
 		$(if $(RANK_IC_TOP_FACTORS_PATH),--top-factors /workspace/$(RANK_IC_TOP_FACTORS_PATH),) \
 		--signal-method $(RANK_IC_SIGNAL_METHOD) \
 		$(if $(filter 1 true yes,$(RANK_IC_CALIBRATE_PREDICTIONS)),--calibrate-predictions,)
