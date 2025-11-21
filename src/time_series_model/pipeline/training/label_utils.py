@@ -418,10 +418,13 @@ def smooth_target(
 
     def _smooth_series(series: pd.Series) -> pd.Series:
         if method == "moving_average":
-            return series.rolling(window=window, min_periods=1).mean().shift(-1)
+            # 使用 shift(1) 而不是 shift(-1) 以避免数据泄漏
+            # shift(1) 确保 t 时刻的平滑值只使用 t-1 及之前的信息
+            return series.rolling(window=window, min_periods=1).mean().shift(1)
         elif method == "ewm":
             span_val = span if span is not None else window
-            return series.ewm(span=span_val).mean().shift(-1)
+            # 使用 shift(1) 而不是 shift(-1) 以避免数据泄漏
+            return series.ewm(span=span_val).mean().shift(1)
         elif method == "quantile":
             from sklearn.preprocessing import QuantileTransformer
 
