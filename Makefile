@@ -566,12 +566,12 @@ nautilus-backtest:
 FEATURE_EVAL_SYMBOL ?= $(SYMBOL)
 FEATURE_EVAL_TIMEFRAME ?= 240T
 FEATURE_EVAL_HORIZON ?= 24
-FEATURE_EVAL_TYPES ?= baseline,default,hurst,wavelet,hilbert,spectral,order_flow,dl_sequence,alpha101
+FEATURE_EVAL_TYPES ?= baseline
 FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
 FEATURE_EVAL_START_DATE ?=2023-01-01
 FEATURE_EVAL_END_DATE ?=2025-01-01
-FEATURE_EVAL_TOP_FACTORS_COUNT ?=50
+FEATURE_EVAL_TOP_FACTORS_COUNT ?=100
 FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD ?= 0.02
 FEATURE_EVAL_TRAIN_ONLY ?= 1
 FEATURE_EVAL_TEST_SIZE ?= 0.15
@@ -611,14 +611,40 @@ RANK_IC_FEATURE_TYPE ?= comprehensive
 RANK_IC_N_SPLITS ?= 5
 RANK_IC_TEST_SIZE ?= 0.15
 RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
+# Filter to high-confidence samples only (strong trends)
+# When enabled (1/true/yes), filters out choppy/consolidation periods where signals are weak,
+# focusing training on periods with clear trends (trend_strength >= RANK_IC_MIN_TREND_STRENGTH).
+# This can improve model performance by training only on high-quality samples.
+# Default: 0 (disabled - use all samples)
 RANK_IC_FILTER_HIGH_CONF ?= 0
+# Minimum trend strength threshold for high-confidence filtering
+# Only samples with trend_strength >= this value will be kept when RANK_IC_FILTER_HIGH_CONF is enabled
+# Default: 1.0
 RANK_IC_MIN_TREND_STRENGTH ?= 1.0
 RANK_IC_SMOOTH_TARGET ?= 0
 RANK_IC_CHECK_LEAKAGE ?= 1
-RANK_IC_TOP_FACTORS ?= 50
-RANK_IC_TSCV_GAP ?= 48
-RANK_IC_SIGNAL_METHOD ?= quantile
-RANK_IC_CALIBRATE_PREDICTIONS ?= 0
+# Top factors file path (if not set, will use FEATURE_EVAL_OUTPUT_DIR/top_factors.json)
+# Set this to override the default path from feature evaluation
+RANK_IC_TOP_FACTORS ?=
+RANK_IC_TSCV_GAP ?= 24
+# Signal generation method for trading signals
+# Options:
+#   - "quantile": Use quantile-based signals (default, most stable)
+#   - "sign": Use prediction sign directly (simpler, may be more volatile)
+#   - "hybrid": Combine sign and quantile methods (balanced approach)
+#   - "optimized": Optimize threshold based on historical performance (requires future_return)
+# Default: quantile
+RANK_IC_SIGNAL_METHOD ?= optimized
+# Whether to calibrate predictions to match true return distribution
+# When enabled (1/true/yes), uses sigmoid scaling to calibrate predictions,
+# making them better match the actual return distribution (requires future_return in data).
+# This can improve signal quality by reducing prediction bias.
+# Default: 0 (disabled)
+RANK_IC_CALIBRATE_PREDICTIONS ?= true
+
+# Default to using top_factors.json from feature evaluation output
+# If RANK_IC_TOP_FACTORS is explicitly set, use that instead
+RANK_IC_TOP_FACTORS_PATH ?= $(if $(RANK_IC_TOP_FACTORS),$(RANK_IC_TOP_FACTORS),$(FEATURE_EVAL_OUTPUT_DIR)/top_factors.json)
 
 ts-r-rank-ic-train:
 	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
@@ -626,7 +652,7 @@ ts-r-rank-ic-train:
 	@echo "   Horizon: $(RANK_IC_HORIZON)"
 	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
 	@echo "   Feature Type: $(RANK_IC_FEATURE_TYPE)"
-	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS),$(RANK_IC_TOP_FACTORS),Not specified - will generate all features)"
+	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS_PATH),$(RANK_IC_TOP_FACTORS_PATH),Not specified - will generate all features)"
 	@echo "   TSCV Folds: $(RANK_IC_N_SPLITS)"
 	@echo "   OOS Test Size: $(RANK_IC_TEST_SIZE)"
 	@echo "   TSCV Gap: $(RANK_IC_TSCV_GAP)"
@@ -649,20 +675,19 @@ ts-r-rank-ic-train:
 		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
 		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
 		$(if $(filter 1 true yes,$(RANK_IC_CHECK_LEAKAGE)),--check-leakage,) \
-		$(if $(RANK_IC_TOP_FACTORS),--top-factors /workspace/$(RANK_IC_TOP_FACTORS),) \
+		$(if $(RANK_IC_TOP_FACTORS_PATH),--top-factors /workspace/$(RANK_IC_TOP_FACTORS_PATH),) \
 		--signal-method $(RANK_IC_SIGNAL_METHOD) \
 		$(if $(filter 1 true yes,$(RANK_IC_CALIBRATE_PREDICTIONS)),--calibrate-predictions,)
 	@echo "✅ Training complete. Check results in $(RANK_IC_OUTPUT_DIR)"
 
 
 # Verify feature correlation (distinguish real Alpha vs data leakage)
-VERIFY_TOP_FACTORS ?= $(RANK_IC_TOP_FACTORS)
 verify-feature-correlation:
 	@echo "🔬 Verifying Feature Correlation (Real Alpha vs Data Leakage)..."
 	@echo "   Symbol: $(RANK_IC_SYMBOL)"
 	@echo "   Horizon: $(RANK_IC_HORIZON)"
 	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
-	@echo "   Top Factors: $(if $(VERIFY_TOP_FACTORS),$(VERIFY_TOP_FACTORS),Not specified - will use all features)"
+	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS_PATH),$(RANK_IC_TOP_FACTORS_PATH),Not specified - will use all features)"
 	$(DOCKER_RUN_NO_TTY) python3 scripts/verify_feature_correlation.py \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(RANK_IC_SYMBOL) \
@@ -670,7 +695,7 @@ verify-feature-correlation:
 		$(if $(FEATURE_EVAL_END_DATE),--end-date $(FEATURE_EVAL_END_DATE),) \
 		--timeframe $(RANK_IC_TIMEFRAME) \
 		--horizon $(RANK_IC_HORIZON) \
-		$(if $(VERIFY_TOP_FACTORS),--top-factors /workspace/$(VERIFY_TOP_FACTORS),)
+		$(if $(RANK_IC_TOP_FACTORS_PATH),--top-factors /workspace/$(RANK_IC_TOP_FACTORS_PATH),)
 	@echo "✅ Verification complete."
 
 
