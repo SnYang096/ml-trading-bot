@@ -1,8 +1,8 @@
 """
-SR 突破策略训练脚本
+趋势跟踪策略训练脚本
 
-模型：XGBoost Regressor（回归）
-标签：连续标签（实现 R/R）
+模型：LightGBM Regressor（回归）
+标签：百分位标签（Rank）
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ sys.path.insert(0, str(project_root))
 
 from src.data_tools.data_utils import load_raw_data
 from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
-from src.time_series_model.strategies.strategies.sr_breakout.features import (
-    build_sr_breakout_features,
-    select_sr_breakout_features,
+from src.time_series_model.strategies.trend_following.features import (
+    build_trend_following_features,
+    select_trend_following_features,
 )
-from src.time_series_model.strategies.labels.sr_breakout_label import (
-    compute_sr_breakout_label,
+from src.time_series_model.strategies.labels.trend_following_label import (
+    compute_trend_following_label,
 )
 from src.time_series_model.strategies.models.strategy_trainer import (
     train_strategy_model,
@@ -36,7 +36,7 @@ from src.time_series_model.pipeline.training.rank_ic_utils import compute_rank_i
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train SR Breakout Strategy Model")
+    parser = argparse.ArgumentParser(description="Train Trend Following Strategy Model")
     parser.add_argument("--data-path", type=str, default="data/parquet_data")
     parser.add_argument("--symbol", type=str, required=True)
     parser.add_argument("--horizon", type=int, default=50)
@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--feature-type", type=str, default="baseline,enhanced")
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument(
-        "--output-dir", type=str, default="results/strategies/sr_breakout"
+        "--output-dir", type=str, default="results/strategies/trend_following"
     )
 
     args = parser.parse_args()
@@ -53,7 +53,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("📈 SR Breakout Strategy Training")
+    print("📊 Trend Following Strategy Training")
     print("=" * 60)
 
     # Load data
@@ -77,60 +77,55 @@ def main():
     df_train_features = engineer.engineer_all_features(df_train_raw, fit=True)
     df_test_features = engineer.engineer_all_features(df_test_raw, fit=False)
 
-    # Build SR breakout specific features
-    print("\n🔧 Building SR breakout features...")
-    df_train_features = build_sr_breakout_features(df_train_features)
-    df_test_features = build_sr_breakout_features(df_test_features)
+    # Build trend following specific features
+    print("\n🔧 Building trend following features...")
+    df_train_features = build_trend_following_features(df_train_features)
+    df_test_features = build_trend_following_features(df_test_features)
 
     feature_cols = engineer.get_feature_columns()
-    breakout_features = select_sr_breakout_features(df_train_features, feature_cols)
-    print(f"   ✅ Selected {len(breakout_features)} breakout features")
-
-    # Generate signal if not exists
-    if "signal" not in df_train_features.columns:
-        df_train_features["signal"] = 0
-        df_test_features["signal"] = 0
+    trend_features = select_trend_following_features(df_train_features, feature_cols)
+    print(f"   ✅ Selected {len(trend_features)} trend features")
 
     # Compute labels
-    print("\n📝 Computing SR breakout labels...")
-    df_train_features["label"] = compute_sr_breakout_label(
+    print("\n📝 Computing trend following labels...")
+    df_train_features["label"] = compute_trend_following_label(
         df_train_features,
-        signal_col="signal",
-        hold_bars=args.horizon,
-        max_rr=3.0,
+        horizon=args.horizon,
+        rank_window=200,
     )
-    df_test_features["label"] = compute_sr_breakout_label(
+    df_test_features["label"] = compute_trend_following_label(
         df_test_features,
-        signal_col="signal",
-        hold_bars=args.horizon,
-        max_rr=3.0,
+        horizon=args.horizon,
+        rank_window=200,
     )
 
     # Filter valid samples
     df_train_valid = df_train_features[
         df_train_features["label"].notna()
-        & df_train_features[breakout_features].notna().all(axis=1)
+        & df_train_features[trend_features].notna().all(axis=1)
     ].copy()
     df_test_valid = df_test_features[
         df_test_features["label"].notna()
-        & df_test_features[breakout_features].notna().all(axis=1)
+        & df_test_features[trend_features].notna().all(axis=1)
     ].copy()
 
     print(f"   ✅ Train: {len(df_train_valid)} valid samples")
     print(f"   ✅ Test: {len(df_test_valid)} valid samples")
-    print(f"   ✅ Average R/R: {df_train_valid['label'].mean():.2f}")
+    print(
+        f"   ✅ Label range: [{df_train_valid['label'].min():.2f}, {df_train_valid['label'].max():.2f}]"
+    )
 
     if len(df_train_valid) < 100:
         print("   ⚠️  Warning: Too few training samples")
         return
 
     # Train model
-    print("\n🚀 Training XGBoost Regressor...")
+    print("\n🚀 Training LightGBM Regressor...")
     models, avg_metric, cv_results, used_features = train_strategy_model(
         df_train_valid,
-        feature_cols=breakout_features,
+        feature_cols=trend_features,
         target_col="label",
-        model_type="xgboost",
+        model_type="lightgbm",
         task_type="regression",  # Regression
         n_splits=5,
         tscv_gap=24,
@@ -140,7 +135,7 @@ def main():
 
     # Evaluate on test set
     print("\n📊 Evaluating on test set...")
-    import xgboost as xgb
+    import lightgbm as lgb
 
     X_test = df_test_valid[used_features].values
     y_test = df_test_valid["label"].values
@@ -148,8 +143,7 @@ def main():
     # Ensemble prediction
     pred_test = np.zeros(len(X_test))
     for model in models:
-        dtest = xgb.DMatrix(X_test)
-        pred_test += model.predict(dtest) / len(models)
+        pred_test += model.predict(X_test) / len(models)
 
     # Compute test metric (Rank IC)
     test_metric = compute_rank_ic(pred_test, y_test)
@@ -157,15 +151,18 @@ def main():
 
     # Save results
     results = {
-        "strategy": "sr_breakout",
-        "model_type": "xgboost",
+        "strategy": "trend_following",
+        "model_type": "lightgbm",
         "task_type": "regression",
         "avg_cv_metric": float(avg_metric),
         "test_rank_ic": float(test_metric),
         "n_features": len(used_features),
         "n_train_samples": len(df_train_valid),
         "n_test_samples": len(df_test_valid),
-        "avg_rr": float(df_train_valid["label"].mean()),
+        "label_range": [
+            float(df_train_valid["label"].min()),
+            float(df_train_valid["label"].max()),
+        ],
         "features": used_features,
     }
 

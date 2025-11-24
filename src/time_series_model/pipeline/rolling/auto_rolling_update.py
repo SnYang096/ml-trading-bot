@@ -43,7 +43,7 @@ from time_series_model.pipeline.training.label_utils import (
     future_volatility_label,
     rolling_quantile_classification_labels,
 )
-from time_series_model.strategies.classification_strategy_handler import (
+from src.time_series_model.strategies.classification_strategy_handler import (
     ClassificationStrategyHandler,
 )
 from time_series_model.pipeline.training.preprocessing import RobustWinsorizer

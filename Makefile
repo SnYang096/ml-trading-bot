@@ -678,7 +678,7 @@ ts-sr-reversal:
 	@echo "   Feature Type: $(SR_REVERSAL_FEATURE_TYPE)"
 	@echo "   Test Size: $(SR_REVERSAL_TEST_SIZE)"
 	@echo "   Output: $(SR_REVERSAL_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.sr_reversal.train \
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.sr_reversal.train \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(SR_REVERSAL_SYMBOL) \
 		--horizon $(SR_REVERSAL_HORIZON) \
@@ -703,7 +703,7 @@ ts-sr-breakout:
 	@echo "   Feature Type: $(SR_BREAKOUT_FEATURE_TYPE)"
 	@echo "   Test Size: $(SR_BREAKOUT_TEST_SIZE)"
 	@echo "   Output: $(SR_BREAKOUT_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.sr_breakout.train \
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.sr_breakout.train \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(SR_BREAKOUT_SYMBOL) \
 		--horizon $(SR_BREAKOUT_HORIZON) \
@@ -728,7 +728,7 @@ ts-compression-breakout:
 	@echo "   Feature Type: $(COMPRESSION_BREAKOUT_FEATURE_TYPE)"
 	@echo "   Test Size: $(COMPRESSION_BREAKOUT_TEST_SIZE)"
 	@echo "   Output: $(COMPRESSION_BREAKOUT_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.compression_breakout.train \
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.compression_breakout.train \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(COMPRESSION_BREAKOUT_SYMBOL) \
 		--horizon $(COMPRESSION_BREAKOUT_HORIZON) \
@@ -753,7 +753,7 @@ ts-trend-following:
 	@echo "   Feature Type: $(TREND_FOLLOWING_FEATURE_TYPE)"
 	@echo "   Test Size: $(TREND_FOLLOWING_TEST_SIZE)"
 	@echo "   Output: $(TREND_FOLLOWING_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.trend_following.train \
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.trend_following.train \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(TREND_FOLLOWING_SYMBOL) \
 		--horizon $(TREND_FOLLOWING_HORIZON) \

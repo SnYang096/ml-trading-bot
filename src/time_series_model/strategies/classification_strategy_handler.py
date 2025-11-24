@@ -3,9 +3,11 @@
 import pandas as pd
 import numpy as np
 from typing import Dict
-from time_series_model.strategies.base_strategy_handler import BaseStrategyHandler
-from time_series_model.models.lightgbm_model import LightGBMTrainer
-from time_series_model.pipeline.training.label_utils import invert_log_return_magnitude
+from src.time_series_model.strategies.base_strategy_handler import BaseStrategyHandler
+from src.time_series_model.strategies.models.lightgbm_model import LightGBMTrainer
+from src.time_series_model.pipeline.training.label_utils import (
+    invert_log_return_magnitude,
+)
 
 
 class ClassificationStrategyHandler(BaseStrategyHandler):
