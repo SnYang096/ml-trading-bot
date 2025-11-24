@@ -233,7 +233,7 @@ FACTOR_TEST_FACTORS ?=
 FACTOR_TEST_SYMBOL ?= BTCUSDT
 FACTOR_TEST_START_DATE ?= 2024-01-01
 FACTOR_TEST_END_DATE ?= 2025-9-30
-FACTOR_TEST_FEATURE_TYPE ?= comprehensive
+FACTOR_TEST_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
 FACTOR_TEST_TIMEFRAME ?= 240T
 FACTOR_TEST_OUTPUT_DIR ?=
 
@@ -252,9 +252,43 @@ factor-test:
 		--symbol $(FACTOR_TEST_SYMBOL) \
 		--start-date $(FACTOR_TEST_START_DATE) \
 		--end-date $(FACTOR_TEST_END_DATE) \
-		--feature-type $(FACTOR_TEST_FEATURE_TYPE) \
+		--features-config $(FACTOR_TEST_FEATURES_CONFIG) \
 		--timeframe $(FACTOR_TEST_TIMEFRAME) \
 		$(if $(FACTOR_TEST_OUTPUT_DIR),--output-dir /workspace/$(FACTOR_TEST_OUTPUT_DIR),)
+
+# ---------------------------------------------------------------------------
+# Factor TS evaluation
+# ---------------------------------------------------------------------------
+
+FACTOR_TS_STRATEGY ?= config/strategies/factor_ts_simple
+FACTOR_TS_FACTORS ?=
+FACTOR_TS_SYMBOL ?= BTCUSDT
+FACTOR_TS_TIMEFRAME ?= 240T
+FACTOR_TS_START ?=
+FACTOR_TS_END ?=
+FACTOR_TS_QUANTILE ?= 0.2
+FACTOR_TS_OUTPUT_DIR ?= results/factor_ts_eval
+FACTOR_TS_MODE ?= strategy
+
+factor-ts-eval:
+	@if [ -z "$(FACTOR_TS_FACTORS)" ]; then \
+		echo "❌ 错误: 必须指定 FACTOR_TS_FACTORS"; \
+		echo "用法: make factor-ts-eval FACTOR_TS_FACTORS='atr sqs_hal_high' FACTOR_TS_STRATEGY=config/strategies/sr_reversal"; \
+		exit 1; \
+	fi
+	@echo "📈 TS 因子评价: $(FACTOR_TS_FACTORS)"
+	@echo "   策略配置: $(FACTOR_TS_STRATEGY)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/factor_ts_eval.py \
+		--strategy-config /workspace/$(FACTOR_TS_STRATEGY) \
+		--symbol $(FACTOR_TS_SYMBOL) \
+		--factors $(FACTOR_TS_FACTORS) \
+		--data-path /workspace/$(DATA_DIR) \
+		--timeframe $(FACTOR_TS_TIMEFRAME) \
+		$(if $(FACTOR_TS_START),--start-date $(FACTOR_TS_START),) \
+		$(if $(FACTOR_TS_END),--end-date $(FACTOR_TS_END),) \
+		--quantile $(FACTOR_TS_QUANTILE) \
+		--feature-mode $(FACTOR_TS_MODE) \
+		--output-dir /workspace/$(FACTOR_TS_OUTPUT_DIR)
 
 FACTOR_COMPUTE_FACTORS ?=
 FACTOR_COMPUTE_INPUT ?=
@@ -263,7 +297,7 @@ FACTOR_COMPUTE_SYMBOL ?=
 FACTOR_COMPUTE_START_DATE ?=
 FACTOR_COMPUTE_END_DATE ?=
 FACTOR_COMPUTE_OUTPUT ?= results/factors/computed_factors.csv
-FACTOR_COMPUTE_FEATURE_TYPE ?= comprehensive
+FACTOR_COMPUTE_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
 FACTOR_COMPUTE_FORMAT ?= csv
 
 factor-compute:
@@ -282,7 +316,7 @@ factor-compute:
 		$(if $(FACTOR_COMPUTE_START_DATE),--start-date $(FACTOR_COMPUTE_START_DATE),) \
 		$(if $(FACTOR_COMPUTE_END_DATE),--end-date $(FACTOR_COMPUTE_END_DATE),) \
 		--output /workspace/$(FACTOR_COMPUTE_OUTPUT) \
-		--feature-type $(FACTOR_COMPUTE_FEATURE_TYPE) \
+		--features-config $(FACTOR_COMPUTE_FEATURES_CONFIG) \
 		--format $(FACTOR_COMPUTE_FORMAT)
 
 # ---------------------------------------------------------------------------

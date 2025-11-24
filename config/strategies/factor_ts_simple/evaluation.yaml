@@ -1,0 +1,10 @@
+evaluation:
+  metrics:
+    - name: rank_ic
+      type: rank_ic
+    - name: pearson_correlation
+      type: correlation
+      params:
+        method: pearson
+  save_details: false
+

@@ -1,0 +1,28 @@
+name: factor_ts_simple
+
+trainer:
+  module: src.time_series_model.strategies.models.strategy_trainer
+  function: train_strategy_model
+  params:
+    model_type: xgboost
+    task_type: regression
+    target_col: tf_rank
+    n_splits: 3
+    tscv_gap: 12
+    use_gpu: true
+    model_params:
+      max_depth: 4
+      learning_rate: 0.05
+      n_estimators: 200
+      subsample: 0.8
+      colsample_bytree: 0.8
+      random_state: 42
+
+prediction:
+  method: ensemble_mean
+  model_type: xgboost
+
+output:
+  save_results: true
+  filename: results.json
+

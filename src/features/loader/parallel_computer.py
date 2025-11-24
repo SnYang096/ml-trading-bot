@@ -14,7 +14,7 @@ import hashlib
 import pickle
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Dict, List, Optional, Callable, Tuple, Any
 import pandas as pd
 import numpy as np
 
@@ -77,6 +77,44 @@ def analyze_dependency_levels(
     return levels
 
 
+def _build_call_args(
+    feature_info: Dict, df: pd.DataFrame
+) -> Tuple[List[Any], Dict[str, Any]]:
+    """
+    根据特征配置构建 compute_func 所需的 args/kwargs.
+    支持配置 column_mappings，将 DataFrame 指定列注入到函数参数。
+    """
+    compute_params = feature_info.get("compute_params", {}) or {}
+    column_mappings = feature_info.get("column_mappings", {}) or {}
+    call_kwargs = dict(compute_params)
+
+    for param_name, source in column_mappings.items():
+        if isinstance(source, str):
+            col_name = source
+            if col_name not in df.columns:
+                raise KeyError(
+                    f"Column '{col_name}' required for parameter '{param_name}' not found in DataFrame"
+                )
+            call_kwargs[param_name] = df[col_name]
+        elif isinstance(source, list):
+            missing = [col for col in source if col not in df.columns]
+            if missing:
+                raise KeyError(
+                    f"Columns {missing} required for parameter '{param_name}' not found in DataFrame"
+                )
+            call_kwargs[param_name] = df[source]
+        else:
+            raise ValueError(
+                f"Unsupported column mapping type for parameter '{param_name}': {type(source)}"
+            )
+
+    call_args: List[Any] = []
+    if feature_info.get("pass_full_df", True):
+        call_args.append(df)
+
+    return call_args, call_kwargs
+
+
 def _compute_single_feature_worker(
     feature_name: str,
     feature_info: Dict,
@@ -120,12 +158,8 @@ def _compute_single_feature_worker(
     try:
         compute_func_name = feature_info["compute_func"]
         compute_func = get_compute_func(compute_func_name)
-        compute_params = feature_info.get("compute_params", {})
-        
-        if compute_params:
-            result_df = compute_func(df, **compute_params)
-        else:
-            result_df = compute_func(df)
+        call_args, call_kwargs = _build_call_args(feature_info, df)
+        result_df = compute_func(*call_args, **call_kwargs)
         
         # 保存磁盘缓存
         if cache_key and cache_dir:
@@ -343,10 +377,8 @@ class ParallelFeatureComputer:
                     try:
                         compute_func_name = feature_info["compute_func"]
                         compute_func = get_compute_func(compute_func_name)
-                        if compute_params:
-                            feature_result = compute_func(result_df, **compute_params)
-                        else:
-                            feature_result = compute_func(result_df)
+                        call_args, call_kwargs = _build_call_args(feature_info, result_df)
+                        feature_result = compute_func(*call_args, **call_kwargs)
                         
                         # 合并结果
                         # 如果返回的是 DataFrame，合并新列
@@ -422,5 +454,4 @@ class ParallelFeatureComputer:
     def __del__(self):
         """清理资源"""
         if self.executor:
-            self.executor.shutdown(wait=True)
-
+            self.executor.shutdown(wait=True)  # ensure executor cleaned up

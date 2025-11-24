@@ -1,0 +1,11 @@
+strategy:
+  name: factor_ts_simple
+  description: >
+    Minimal strategy configuration used for single-factor evaluation and
+    benchmarking. Only requests inexpensive technical indicators (ATR, RSI)
+    and uses a trend-following percentile label.
+  tags:
+    - factor-test
+    - lightweight
+  owner: quant_research
+

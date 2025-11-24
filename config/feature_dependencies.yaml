@@ -24,6 +24,9 @@ features:
     description: "Relative Strength Index"
     compute_params:
       period: 14
+    pass_full_df: false
+    column_mappings:
+      series: close
   
   macd:
     module: baseline
@@ -37,6 +40,9 @@ features:
       fast: 12
       slow: 26
       signal: 9
+    pass_full_df: false
+    column_mappings:
+      series: close
   
   # ========================================================================
   # WPT 重构价格（所有 SR 的基础）

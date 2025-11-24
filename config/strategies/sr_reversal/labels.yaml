@@ -6,7 +6,7 @@ label_generator:
   function: compute_sr_reversal_label
   params:
     signal_col: signal
-    hold_bars: 50
+    max_holding_bars: 50
     rr_ratio: 2.0
 
 filters:

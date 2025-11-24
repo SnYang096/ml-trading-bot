@@ -39,7 +39,11 @@ def wpt_decompose(
     )
     
     # 提取最低频子带（趋势）
-    trend_node = wp.get_node("a" * level)  # 'aaaa' for level=4
+    trend_path = "a" * level
+    trend_node = next(
+        (node for node in wp.get_level(level, "natural") if node.path == trend_path),
+        None,
+    )
     trend = trend_node.data if trend_node else np.zeros_like(signal)
     
     # 重构趋势
@@ -47,12 +51,17 @@ def wpt_decompose(
         data=None, wavelet=wavelet, mode=mode, maxlevel=level
     )
     for node in wp.get_level(level, "natural"):
-        if node.path == "a" * level:
+        if node.path == trend_path:
             wp_trend[node.path] = node.data
         else:
             wp_trend[node.path] = np.zeros_like(node.data)
     
     trend_recon = wp_trend.reconstruct()
+    if len(trend_recon) != len(signal):
+        min_len = min(len(trend_recon), len(signal))
+        trend_recon = trend_recon[-min_len:]
+        signal = signal[-min_len:]
+        trend = trend[-min_len:]
     
     # 残差（波动）
     fluctuation = signal - trend_recon
@@ -304,4 +313,3 @@ def wpt_reconstruct_subband(
             wp_recon[node.path] = np.zeros_like(node.data)
     
     return wp_recon.reconstruct()
-

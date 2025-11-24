@@ -1,0 +1,9 @@
+name: factor_test
+description: Minimal feature config for factor diagnostics.
+
+feature_pipeline:
+  requested_features:
+    - atr
+    - rsi
+  post_processors: []
+
