@@ -122,7 +122,7 @@ help:
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  Core Workflow (Recommended):"
-	@echo "    make rolling            # Rolling training (recommended for production)"
+	@echo "    make rolling            # Config-driven rolling training (expanding window, recommended for production)"
 	@echo "    make tune-q50-params    # Pre-train Q50 parameter search (for quantile models)"
 	@echo ""
 	@echo "  Data commands:"
@@ -140,7 +140,7 @@ help:
 	@echo "    make ts-factor-eval     # Time-series factor IC / win-rate evaluation (single asset)"
 	@echo "    make ts-dim-compare     # Dimensionality comparison & top factor selection"
 	@echo "    make ts-timeframe-forward-report # Timeframe vs forward-bar correlation analysis"
-	@echo "    make ts-strategy-feature-compare # Compare multiple feature configs for a strategy"
+	@echo "    make ts-strategy-feature-compare # Ablation Study: Compare multiple feature configs for a strategy"
 	@echo "    make ts-vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make ts-nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo "    make cs-factor-eval    # Cross-sectional factor evaluation (IC, decay, quantile spread)"
@@ -398,8 +398,13 @@ STRAT_COMPARE_ROLL_TEST ?= 1000
 STRAT_COMPARE_ROLL_STEP ?= 1000
 STRAT_COMPARE_ROLL_MAX ?= 5
 
+# Ablation Study (消融实验): Compare strategy performance across different feature configurations
+# This command trains the same strategy with different feature sets to evaluate
+# the contribution of each feature group. Use --feature-overrides to specify variants.
+# Example: make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
+#          STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
 ts-strategy-feature-compare:
-	@echo "🆚 Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
+	@echo "🆚 Ablation Study: Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/strategy_management/strategy_feature_compare.py \
 		--strategy-config /workspace/$(STRAT_COMPARE_CONFIG) \
 		--symbol $(STRAT_COMPARE_SYMBOL) \
@@ -473,59 +478,29 @@ timeframe-forward-report:
 
 DIM_COMPARE_ARGS ?=
 HORIZONS ?= 24
-DIM_COMPARE_FEATURE_TYPE ?= baseline
-DIM_COMPARE_TIMEFRAME ?= 60T
-DIM_COMPARE_VALIDATE_PIPELINE ?= true
-DIM_COMPARE_REPORT_HTML ?=
-DIM_COMPARE_EXPORT_MODEL ?=
+DIM_COMPARE_CONFIG ?= config/strategies/sr_reversal
+DIM_COMPARE_TIMEFRAME ?= 15T
 
+# Config-driven dimensionality comparison: Three-stage feature selection
+# Stage 1: Missing/stability filter → Stage 2: IC ranking → Stage 3: Correlation-based selection
+# Outputs top_factors.json for use in rolling training
 ts-dim-compare:
-	@echo "🔬 Dimensionality Reduction Comparison for $(SYMBOLS) ..."
-	@echo "Usage: make ts-dim-compare SYMBOLS=BTCUSDT,ETHUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=comprehensive DIM_COMPARE_TIMEFRAME=5T"
-	@echo "       This runs three-stage feature selection:"
-	@echo "         Stage 1: Missing/stability filter (removes >20%% missing or low variance)"
-	@echo "         Stage 2: IC ranking (selects top features by Information Coefficient)"
-	@echo "         Stage 3: Correlation-based representative selection (removes redundant features)"
-	@echo ""
-	@echo "       Configuration:"
-	@echo "         Multi-horizon training: $(HORIZONS)"
-	@echo "         Feature type: $(DIM_COMPARE_FEATURE_TYPE)"
-	@echo "         Timeframe: $(DIM_COMPARE_TIMEFRAME)"
-	@echo "         Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	@if [ "$(START_DATE)" != "" ]; then \
-		echo "         Training period: $(START_DATE) → $(END_DATE)"; \
+	@if [ -z "$(DIM_COMPARE_CONFIG)" ]; then \
+		echo "❌ 错误: 必须指定 DIM_COMPARE_CONFIG"; \
+		echo "用法: make ts-dim-compare DIM_COMPARE_CONFIG=config/strategies/sr_reversal SYMBOL=BTCUSDT"; \
+		exit 1; \
 	fi
-	@if [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "1" ] || [ "$(DIM_COMPARE_VALIDATE_PIPELINE)" = "true" ]; then \
-		echo "         Pipeline validation: enabled (synthetic signal injection)"; \
-	else \
-		echo "         Pipeline validation: disabled"; \
-	fi
-	@echo "         Stability validation: $(if $(ENABLE_STABILITY_VALIDATION),enabled,disabled)"
-	@if [ "$(ENABLE_STABILITY_VALIDATION)" = "1" ] || [ "$(ENABLE_STABILITY_VALIDATION)" = "true" ]; then \
-		echo "         Validation start: $(VALIDATION_START)"; \
-		echo "         Validation years: $(VALIDATION_YEARS)"; \
-	fi
-	@if [ "$(DIM_COMPARE_REPORT_HTML)" != "" ]; then \
-		echo "         HTML report: $(DIM_COMPARE_REPORT_HTML)"; \
-	fi
-	@if [ "$(DIM_COMPARE_EXPORT_MODEL)" != "" ]; then \
-		echo "         Export model: $(DIM_COMPARE_EXPORT_MODEL)"; \
-	fi
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.dimensionality.dimensionality_comparison \
-		--data-path /workspace/data/parquet_data \
-		--symbol $(SYMBOLS) \
-		--feature-type $(DIM_COMPARE_FEATURE_TYPE) \
+	@echo "🔬 Config-Driven Dimensionality Comparison"
+	@echo "   策略配置: $(DIM_COMPARE_CONFIG)"
+	@echo "   交易对: $(SYMBOL)"
+	@echo "   时间周期: $(DIM_COMPARE_TIMEFRAME)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/dimensionality/dim_compare.py \
+		--config /workspace/$(DIM_COMPARE_CONFIG) \
+		--symbol $(SYMBOL) \
+		--data-path /workspace/$(DATA_DIR) \
 		--timeframe $(DIM_COMPARE_TIMEFRAME) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
-		$(if $(END_DATE),--train-end $(END_DATE)) \
-		--horizons $(HORIZONS) \
-		$(if $(filter true 1,$(DIM_COMPARE_VALIDATE_PIPELINE)),--validate-pipeline) \
-		$(if $(ENABLE_STABILITY_VALIDATION),--enable-stability-validation) \
-		$(if $(VALIDATION_START),--validation-start $(VALIDATION_START)) \
-		$(if $(VALIDATION_YEARS),--validation-years $(VALIDATION_YEARS)) \
-		$(if $(DIM_COMPARE_REPORT_HTML),--report-html /workspace/$(DIM_COMPARE_REPORT_HTML)) \
-		$(if $(DIM_COMPARE_EXPORT_MODEL),--export-model /workspace/$(DIM_COMPARE_EXPORT_MODEL)) \
-		$(DIM_COMPARE_ARGS)
+		$(if $(END_DATE),--train-end $(END_DATE))
 
 dim-compare:
 	@echo "⚠️ 'dim-compare' has been renamed to 'ts-dim-compare'. Please update your workflows."
@@ -582,37 +557,33 @@ PARAMS_FILE ?=
 
 FORWARD_BARS ?= 3
 
-ROLLING_FREQ ?= $(FREQ)
-ROLLING_FBS ?= $(FORWARD_BARS)
-DIRECTION_THRESHOLD ?= f1_optimize
-ROLLING_OUTPUT ?=
-ROLLING_FEATURE_TYPE ?= $(TRAIN_FEATURE_TYPE)
-ROLLING_USE_TOP_FACTORS ?=
-ROLLING_TOPK ?=
-ROLLING_TOPK_SOURCE ?=
+ROLLING_CONFIG ?= config/strategies/sr_reversal
+ROLLING_TIMEFRAME ?= 15T
+ROLLING_UPDATE_ONLY ?= false
 
-
+# Config-driven rolling training: Expanding window training for time-series strategies
+# Each test month uses all previous months for training (simulating real-world deployment)
 rolling:
-	@echo "🔄 Rolling training (regression) for $(SYMBOLS) tf=$(ROLLING_FREQ) fb=$(ROLLING_FBS)"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset training)"
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.rolling \
+	@if [ -z "$(ROLLING_CONFIG)" ]; then \
+		echo "❌ 错误: 必须指定 ROLLING_CONFIG"; \
+		echo "用法: make rolling ROLLING_CONFIG=config/strategies/sr_reversal SYMBOL=BTCUSDT"; \
+		exit 1; \
+	fi
+	@echo "🔄 Config-Driven Rolling Training"
+	@echo "   策略配置: $(ROLLING_CONFIG)"
+	@echo "   交易对: $(SYMBOL)"
+	@echo "   时间周期: $(ROLLING_TIMEFRAME)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/rolling/rolling_train.py \
+		--config /workspace/$(ROLLING_CONFIG) \
+		--symbol $(SYMBOL) \
 		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		$(if $(ROLLING_START),--start $(ROLLING_START),) \
-		$(if $(ROLLING_END),--end $(ROLLING_END),) \
+		--timeframe $(ROLLING_TIMEFRAME) \
 		--initial-train-months $(INITIAL_TRAIN_MONTHS) \
 		--min-train-months $(MIN_TRAIN_MONTHS) \
-		--freq $(ROLLING_FREQ) \
-		--forward-bars $(ROLLING_FBS) \
-		--cv-folds $(CV_FOLDS) \
-		$(if $(filter-out 0,$(CV_FOLDS)),--cv-on-rolling,) \
-		$(if $(ROLLING_OUTPUT),--output $(ROLLING_OUTPUT),) \
-		--feature-type $(ROLLING_FEATURE_TYPE) \
-		$(if $(ROLLING_USE_TOP_FACTORS),--use-top-factors $(ROLLING_USE_TOP_FACTORS),) \
-		$(if $(ROLLING_TOPK),--topk $(ROLLING_TOPK),) \
-		$(if $(ROLLING_TOPK_SOURCE),--topk-source $(ROLLING_TOPK_SOURCE),) \
-		--direction-threshold $(DIRECTION_THRESHOLD) \
-		--gpu
+		--output-root /workspace/results/rolling \
+		$(if $(ROLLING_START),--start $(ROLLING_START),) \
+		$(if $(ROLLING_END),--end $(ROLLING_END),) \
+		$(if $(filter true,$(ROLLING_UPDATE_ONLY)),--update-only,)
 
 
 BACKTEST_START ?=$(START_DATE)

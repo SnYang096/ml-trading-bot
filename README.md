@@ -21,82 +21,86 @@ This repository hosts the production-ready components for the factor research, d
 
 ## Recommended Usage Flow
 
-### Core Workflow (3 Commands)
+### Core Workflow (Config-Driven Architecture)
 
-The recommended workflow consists of only 3 commands:
+The recommended workflow uses **config-driven architecture** with strategy-specific configurations:
 
-1. **Research** (`make ts-dim-compare`): Find optimal features and compression
-2. **Train** (`make train`): Train production model (optional, for single evaluation)
-3. **Rolling Update** (`make auto-rolling-update`): Rolling update to latest data (main workflow)
+1. **Feature Analysis** (`make ts-factor-eval`, `make ts-dim-compare`): Evaluate factors and select optimal features
+2. **Strategy Training** (`make train-strategy`, `make rolling`): Train models using strategy configs
+3. **Ablation Study** (`make ts-strategy-feature-compare`): Compare feature configurations (optional)
+4. **Backtesting** (`make ts-vectorbot-backtest`): Validate strategy performance
+
+**📖 See [完整流程指南](docs/时序模型/完整流程指南.md) for detailed workflow.**
 
 ### Step-by-Step Workflow
 
-#### Step 1: Research Dimensionality Reduction
+#### Step 1: Feature Analysis
 
-Find optimal features and compression dimension using one quarter of data:
-
+**1.1 Evaluate Individual Factors** (Optional):
 ```bash
-# Basic: Research dimensionality reduction
-make ts-dim-compare SYMBOL=BTCUSDT \
-  START_DATE=2025-05-01 END_DATE=2025-07-31 \
-  ENCODING_DIM=32
-
-# Enhanced: With VAE and automatic optimization
-make ts-dim-compare SYMBOL=BTCUSDT \
-  START_DATE=2025-05-01 END_DATE=2025-07-31 \
-  AE_TYPE=vae \
-  AUTO_ENCODING_GRID=1 \
-  AE_AUTO_TUNE=1 \
-  AE_TASK_LOSS=1 \
-  TASK_WEIGHT=0.1 \
-  KL_WEIGHT=1e-3
+make ts-factor-eval \
+  TS_FACTOR_STRATEGY=config/strategies/sr_reversal \
+  TS_FACTOR_FACTORS="atr sqs_hal_high" \
+  TS_FACTOR_SYMBOL=BTCUSDT
 ```
 
-**Enhanced Options**:
-- `AE_TYPE=vae`: Use Variational Autoencoder (VAE) instead of standard AE (better latent space)
-- `AUTO_ENCODING_GRID=1`: Automatically generate encoding dimensions based on compression ratios
-- `AE_AUTO_TUNE=1`: Automatically tune hyperparameters (learning rate, batch size, epochs)
-- `AE_TASK_LOSS=1`: Enable task-aware loss (reconstruction + prediction task loss)
-- `TASK_WEIGHT=0.1`: Weight for task loss in multi-task training (default: 0.1)
-- `KL_WEIGHT=1e-3`: KL divergence weight for VAE (default: 1e-3)
-
-**Output** (in `results/production_dimensionality_20250501_20250731/`):
-- `top_factors.json` - Representative features (60-100 features)
-- `production_autoencoder.pth` - Best Autoencoder model
-- `production_results.json` - Performance comparison
-- `dimensionality_report.html` - HTML visualization
-
-**Key Information**:
-- Representative features: `top_factors.json`
-- Best compression dimension: `production_results.json` → `data_info.stage4_compressed_dim` (e.g., 32)
-- Autoencoder model: `production_autoencoder.pth`
-
-#### Step 2: Train Production Model (Optional)
-
-Train a single model using the optimal configuration:
-
+**1.2 Feature Selection (Dimensionality Reduction)**:
 ```bash
-DIM_DIR=results/production_dimensionality_20250501_20250731
-
-# DEPRECATED: make train has been removed. Use make rolling instead.
-# For single-month training, use:
-make rolling SYMBOLS=BTCUSDT \
-  ROLLING_START=2025-07 ROLLING_END=2025-07 \
-  INITIAL_TRAIN_MONTHS=1 \
-  ROLLING_USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json
+# Config-driven feature selection (three-stage pipeline)
+make ts-dim-compare \
+  DIM_COMPARE_CONFIG=config/strategies/sr_reversal \
+  SYMBOL=BTCUSDT \
+  START_DATE=2024-01-01 \
+  END_DATE=2024-12-31
 ```
 
-**Note**: `make train` has been **removed**. Use `make rolling` instead.
-- `make rolling`: Trains **multiple** models (one per month) using expanding window, evaluates model stability over time
-- For single-month training, use: `make rolling ROLLING_START=YYYY-MM ROLLING_END=YYYY-MM INITIAL_TRAIN_MONTHS=1`
-- Rolling training provides better evaluation through multiple model checkpoints
+**Output** (in `results/dim_compare/{strategy}_{symbol}_{timestamp}/`):
+- `top_factors.json` - Selected top features (for use in rolling training)
+- `results.json` - Performance comparison (before vs after reduction)
+
+**Three-Stage Pipeline**:
+1. **Stage 1**: Missing/stability filter (removes >20% missing or low variance)
+2. **Stage 2**: IC ranking (selects top features by Information Coefficient)
+3. **Stage 3**: Correlation-based selection (removes redundant features)
+
+#### Step 2: Strategy Training
+
+**2.1 Quick Validation** (Single Training):
+```bash
+make train-strategy \
+  STRATEGY_CONFIG=config/strategies/sr_reversal \
+  SYMBOL=BTCUSDT \
+  TIMEFRAME=15T
+```
+
+**2.2 Production Training** (Rolling Window - Recommended):
+```bash
+# Expanding window training: each test month uses all previous months
+make rolling \
+  ROLLING_CONFIG=config/strategies/sr_reversal \
+  SYMBOL=BTCUSDT \
+  INITIAL_TRAIN_MONTHS=6 \
+  MIN_TRAIN_MONTHS=3
+```
 
 **Output**:
-- `results/rolling_*/latest/classification_pipeline.pkl` - Production models
-- `results/rolling_*/monthly_results.csv` - Monthly performance metrics
-- `results/rolling_*/monthly_rolling_report.html` - HTML report
+- `results/rolling/{strategy}/{month}/model.pkl` - Models for each month
+- `results/rolling/{strategy}/monthly_results.json` - Aggregated results
 
-#### Step 3: Rolling Update (Main Workflow)
+#### Step 3: Ablation Study (Optional)
+
+Compare different feature configurations to evaluate feature group contributions:
+
+```bash
+make ts-strategy-feature-compare \
+  STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
+  STRAT_COMPARE_SYMBOL=BTCUSDT \
+  STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
+```
+
+**📖 See [消融实验说明](docs/时序模型/消融实验说明.md) for details.**
+
+#### Step 4: Backtesting
 
 Rolling update to latest available data using optimal configuration:
 
