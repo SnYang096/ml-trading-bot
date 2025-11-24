@@ -5,13 +5,11 @@ from __future__ import annotations
 import os
 import shutil
 import zipfile
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import re
-
-from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 
 
 def load_parquet_file(parquet_path: str) -> Optional[pd.DataFrame]:
@@ -237,19 +235,20 @@ def add_order_flow_features(
 
 def engineer_features(
     df: pd.DataFrame,
-    feature_engineer: Optional[ComprehensiveFeatureEngineer] = None,
+    feature_engineer: Optional[Any] = None,
     *,
     fit: bool = True,
-) -> Tuple[pd.DataFrame, ComprehensiveFeatureEngineer]:
-    """Engineer features using the reusable ComprehensiveFeatureEngineer."""
+) -> Tuple[pd.DataFrame, Any]:
+    """
+    Deprecated: legacy feature engineering helper has been removed.
 
-    if feature_engineer is None:
-        feature_engineer = ComprehensiveFeatureEngineer(
-            scaler_type="standard", wavelet="db4", wpt_level=3, hurst_window=100
-        )
+    Use the config-driven pipeline via scripts/train_strategy.py instead.
+    """
 
-    engineered_data = feature_engineer.engineer_features(df, fit=fit)
-    return engineered_data, feature_engineer
+    raise RuntimeError(
+        "rolling_data.engineer_features is deprecated. "
+        "Use scripts/train_strategy.py with strategy configs."
+    )
 
 
 def create_labels(

@@ -14,9 +14,9 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from src.strategy_config import StrategyConfigLoader
 from src.data_tools.data_utils import load_raw_data
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
+from src.strategy_config import StrategyConfigLoader
 
 BASE_DATA_COLUMNS = {
     "timestamp",
@@ -283,6 +283,80 @@ def evaluate_predictions(
     return results
 
 
+def run_vectorbt_backtest(
+    df: pd.DataFrame,
+    preds: np.ndarray,
+    backtest_cfg,
+    task_type: str,
+) -> Optional[Dict[str, float]]:
+    if not backtest_cfg.enabled:
+        return None
+    try:
+        import vectorbt as vbt
+    except ImportError:
+        print("   ⚠️  vectorbt not installed. Skipping backtest.")
+        return None
+
+    params = backtest_cfg.params or {}
+    price_col = params.get("price_col", "close")
+    if price_col not in df.columns:
+        print(f"   ⚠️  Price column '{price_col}' not found. Skipping backtest.")
+        return None
+
+    price = df[price_col].astype(float)
+    fee = params.get("fee", 0.0004)
+    slippage = params.get("slippage", 0.0)
+    init_cash = params.get("initial_cash", 10000.0)
+
+    index = df.index
+
+    if task_type == "multiclass" and preds.ndim == 2:
+        class_preds = np.argmax(preds, axis=1)
+        multi_cfg = params.get("multiclass", {})
+        long_class = multi_cfg.get("long_class", 2)
+        short_class = multi_cfg.get("short_class", 0)
+        neutral_class = multi_cfg.get("neutral_class", 1)
+        long_entries = pd.Series(class_preds == long_class, index=index)
+        long_exits = pd.Series(class_preds == neutral_class, index=index)
+        short_entries = pd.Series(class_preds == short_class, index=index)
+        short_exits = pd.Series(class_preds == neutral_class, index=index)
+    else:
+        long_entry = params.get("long_entry_threshold", 0.6)
+        long_exit = params.get("long_exit_threshold", 0.4)
+        short_entry = params.get("short_entry_threshold", 0.4)
+        short_exit = params.get("short_exit_threshold", 0.6)
+
+        preds_series = pd.Series(preds, index=index)
+        long_entries = preds_series >= long_entry
+        long_exits = preds_series <= long_exit
+        short_entries = preds_series <= short_entry
+        short_exits = preds_series >= short_exit
+
+    try:
+        portfolio = vbt.Portfolio.from_signals(
+            price,
+            entries=long_entries,
+            exits=long_exits,
+            short_entries=short_entries,
+            short_exits=short_exits,
+            init_cash=init_cash,
+            fees=fee,
+            slippage=slippage,
+            freq=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ⚠️  Backtest failed: {exc}")
+        return None
+
+    stats = portfolio.stats()
+    return {
+        "total_return_pct": float(stats.get("Total Return [%]", 0.0)),
+        "sharpe": float(stats.get("Sharpe Ratio", 0.0)),
+        "max_drawdown_pct": float(stats.get("Max Drawdown [%]", 0.0)),
+        "win_rate": float(stats.get("Win Rate [%]", 0.0)),
+    }
+
+
 def train_strategy(
     config_dir: Path,
     args: argparse.Namespace,
@@ -410,6 +484,15 @@ def train_strategy(
         "n_test_samples": len(df_test_filtered),
         "evaluation": evaluation_results,
     }
+
+    backtest_results = run_vectorbt_backtest(
+        df_test_filtered,
+        preds,
+        strategy_config.backtest,
+        task_type=task_type,
+    )
+    if backtest_results:
+        results["backtest"] = backtest_results
 
     output_cfg = strategy_config.model.output
     if output_cfg.get("save_results", True):

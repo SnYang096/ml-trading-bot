@@ -1,9 +1,4 @@
-"""
-Config-driven feature engineer that loads features defined in YAML configs.
-
-This replaces the legacy ComprehensiveFeatureEngineer and ensures that all
-features are computed strictly from the feature dependency configuration.
-"""
+"""Config-driven feature engineer that loads features defined in YAML configs."""
 
 from __future__ import annotations
 
