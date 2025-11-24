@@ -1,0 +1,22 @@
+name: sr_reversal
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.sr_reversal_label
+  function: compute_sr_reversal_label
+  params:
+    signal_col: signal
+    hold_bars: 50
+    rr_ratio: 2.0
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters:
+  - ensure_feature_non_null: true
+    description: Drop samples where any selected feature is NaN
+
+notes: |
+  标签：TP 先于 SL → 1.0；SL 先于 TP → 0.0；超时 → NaN。
+

@@ -1,0 +1,28 @@
+name: compression_breakout
+description: >
+  Compression breakout strategy combining compression strength, trigger, and
+  direction confirmation signals across WPT/VPVR/Spectrum domains.
+
+feature_pipeline:
+  requested_features:
+    - atr
+    - spectrum_dominant
+    - wpt_price_energy_high_ratio
+    - wpt_volume_energy
+    - liquidity_void_detected
+    - liquidity_void_speed
+    - hilbert_phase
+    - wpt_price_energy_mid_ratio
+    - wpt_price_energy_low_ratio
+  post_processors:
+    - module: src.time_series_model.strategies.compression_breakout.features
+      function: build_compression_breakout_features
+      params: {}
+  selector:
+    module: src.time_series_model.strategies.compression_breakout.features
+    function: select_compression_breakout_features
+    params: {}
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+

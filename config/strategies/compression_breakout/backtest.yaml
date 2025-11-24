@@ -1,0 +1,4 @@
+backtest:
+  enabled: false
+  notes: "Backtest configuration placeholder."
+

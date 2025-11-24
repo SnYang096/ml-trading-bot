@@ -3,6 +3,9 @@ SR 突破策略标签：连续标签（实现 R/R）
 
 标签定义：
 突破后最大有利偏移 / 最大不利偏移（MFE/MAE），截断在 [0, 3] 区间
+
+动态检查：
+一旦触达止损就停止扫描（因为 MAE 已经确定），max_holding_bars 只是寻找上限
 """
 
 from __future__ import annotations
@@ -20,12 +23,12 @@ def compute_sr_breakout_label(
     low_col: str = "low",
     atr_col: str = "atr",
     atr_window: int = 14,
-    hold_bars: int = 50,
+    max_holding_bars: int = 50,  # 只是寻找上限，实际会动态检查
     max_rr: float = 3.0,
     stop_loss_r: float = 1.0,
 ) -> pd.Series:
     """
-    计算 SR 突破策略的连续标签（实现 R/R）
+    计算 SR 突破策略的连续标签（实现 R/R，动态检查）
 
     Args:
         df: DataFrame with OHLCV data and signals
@@ -35,7 +38,7 @@ def compute_sr_breakout_label(
         low_col: Low column
         atr_col: ATR column
         atr_window: ATR window if ATR column doesn't exist
-        hold_bars: Maximum holding period
+        max_holding_bars: Maximum holding period (只是寻找上限，实际会动态检查)
         max_rr: Maximum R/R to cap (default: 3.0)
         stop_loss_r: Stop loss in R units (default: 1.0)
 
@@ -79,7 +82,10 @@ def compute_sr_breakout_label(
 
     labels = np.full(len(df), np.nan, dtype=float)
 
-    for i in range(len(df) - hold_bars - 1):
+    # 动态检查：一旦触达止损就停止，不需要等到 max_holding_bars
+    max_i = len(df) - max_holding_bars - 1
+
+    for i in range(max_i):
         signal = signals[i]
 
         if pd.isna(signal) or signal == 0:
@@ -97,23 +103,40 @@ def compute_sr_breakout_label(
             else entry_price + stop_loss_r * atr
         )
 
-        # Scan future price path for MFE and MAE
-        future_highs = high_arr[i + 1 : i + 1 + hold_bars]
-        future_lows = low_arr[i + 1 : i + 1 + hold_bars]
+        # 动态扫描未来价格路径（最多 max_holding_bars，但一旦触达止损就停止）
+        max_favorable = 0.0
+        max_adverse = 0.0
+        hit_stop_loss = False
 
-        if len(future_highs) == 0:
-            continue
+        # 扫描范围：从 i+1 到 i+1+max_holding_bars（但不一定扫完）
+        end_idx = min(i + 1 + max_holding_bars, len(df))
 
-        if signal > 0:  # Long
-            # Maximum Favorable Excursion (upward)
-            max_favorable = np.max(future_highs) - entry_price
-            # Maximum Adverse Excursion (downward)
-            max_adverse = entry_price - np.min(future_lows)
-        else:  # Short
-            # Maximum Favorable Excursion (downward)
-            max_favorable = entry_price - np.min(future_lows)
-            # Maximum Adverse Excursion (upward)
-            max_adverse = np.max(future_highs) - entry_price
+        for j in range(i + 1, end_idx):
+            high = high_arr[j]
+            low = low_arr[j]
+
+            if signal > 0:  # Long
+                # 检查是否触达止损（使用 low 模拟 intra-bar 执行）
+                if not hit_stop_loss and low <= stop_loss:
+                    hit_stop_loss = True
+                    # 一旦触达止损，MAE 已经确定，立即停止扫描
+                    max_adverse = entry_price - low
+                    break
+
+                # 更新 MFE 和 MAE
+                max_favorable = max(max_favorable, high - entry_price)
+                max_adverse = max(max_adverse, entry_price - low)
+            else:  # Short
+                # 检查是否触达止损（使用 high 模拟 intra-bar 执行）
+                if not hit_stop_loss and high >= stop_loss:
+                    hit_stop_loss = True
+                    # 一旦触达止损，MAE 已经确定，立即停止扫描
+                    max_adverse = high - entry_price
+                    break
+
+                # 更新 MFE 和 MAE
+                max_favorable = max(max_favorable, entry_price - low)
+                max_adverse = max(max_adverse, high - entry_price)
 
         # Calculate R/R: MFE / MAE (normalized by ATR)
         if max_adverse > 0:

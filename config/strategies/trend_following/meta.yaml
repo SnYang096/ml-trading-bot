@@ -1,0 +1,10 @@
+strategy:
+  name: trend_following
+  description: >
+    Trend-following strategy targeting sustained moves validated by Hurst,
+    Hilbert, and multi-frequency WPT context.
+  tags:
+    - trend
+    - momentum
+  owner: quant_team
+

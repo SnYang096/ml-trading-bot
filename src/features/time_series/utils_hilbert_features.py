@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Optional
+from typing import Optional, Dict
 from scipy.signal import hilbert
 
 
@@ -116,9 +116,10 @@ def extract_hilbert_features(
     cvd_fluctuation_col: Optional[str] = "wpt_cvd_fluctuation",
     price_trend_col: Optional[str] = "wpt_price_trend",
     cvd_trend_col: Optional[str] = "wpt_cvd_trend",
+    window: int = 64,
 ) -> pd.DataFrame:
     """
-    从 DataFrame 中提取 Hilbert 特征
+    从 DataFrame 中提取 Hilbert 特征（滚动窗口，无数据泄露）
     
     Args:
         df: DataFrame with WPT features
@@ -126,57 +127,136 @@ def extract_hilbert_features(
         cvd_fluctuation_col: CVD fluctuation column
         price_trend_col: Price trend column
         cvd_trend_col: CVD trend column
+        window: Rolling window size for Hilbert transform (default: 64)
     
     Returns:
         DataFrame with Hilbert features added
     """
     df = df.copy()
     
-    # 对价格波动做 Hilbert
+    # 初始化特征列
+    hilbert_cols = [
+        "hilbert_price_phase",
+        "hilbert_price_envelope",
+        "hilbert_price_freq",
+        "hilbert_price_envelope_slope",
+        "hilbert_cvd_phase",
+        "hilbert_cvd_envelope",
+        "hilbert_cvd_freq",
+        "hilbert_cvd_envelope_slope",
+        "hilbert_phase_diff",
+        "hilbert_cvd_leads",
+        "hilbert_phase_diff_mean",
+        "hilbert_phase_diff_std",
+        "hilbert_cvd_leads_strong",
+    ]
+    for col in hilbert_cols:
+        df[col] = np.nan
+    
+    # 对价格波动做 Hilbert（滚动窗口）
     if price_fluctuation_col in df.columns:
         price_fluc = df[price_fluctuation_col].values
-        price_hilbert = hilbert_transform(price_fluc, detrend=False)
         
-        df["hilbert_price_phase"] = price_hilbert["phase"]
-        df["hilbert_price_envelope"] = price_hilbert["envelope"]
-        df["hilbert_price_freq"] = price_hilbert["instantaneous_freq"]
-        
-        # 包络斜率
-        df["hilbert_price_envelope_slope"] = np.gradient(price_hilbert["envelope"])
+        for i in range(window, len(df)):
+            # 使用历史窗口数据 [i-window, i)
+            window_data = price_fluc[i - window : i]
+            
+            if len(window_data) < 10:  # 最小长度要求
+                continue
+            
+            price_hilbert = hilbert_transform(window_data, detrend=False)
+            
+            # 只使用最后一个点的值（当前时刻的特征）
+            if len(price_hilbert["phase"]) > 0:
+                df.iloc[i, df.columns.get_loc("hilbert_price_phase")] = (
+                    price_hilbert["phase"][-1]
+                )
+                df.iloc[i, df.columns.get_loc("hilbert_price_envelope")] = (
+                    price_hilbert["envelope"][-1]
+                )
+                df.iloc[i, df.columns.get_loc("hilbert_price_freq")] = (
+                    price_hilbert["instantaneous_freq"][-1]
+                )
+                
+                # 包络斜率（使用梯度）
+                envelope_slope = np.gradient(price_hilbert["envelope"])
+                if len(envelope_slope) > 0:
+                    df.iloc[i, df.columns.get_loc("hilbert_price_envelope_slope")] = (
+                        envelope_slope[-1]
+                    )
     
-    # 对 CVD 波动做 Hilbert
+    # 对 CVD 波动做 Hilbert（滚动窗口）
     if cvd_fluctuation_col and cvd_fluctuation_col in df.columns:
         cvd_fluc = df[cvd_fluctuation_col].values
-        cvd_hilbert = hilbert_transform(cvd_fluc, detrend=False)
         
-        df["hilbert_cvd_phase"] = cvd_hilbert["phase"]
-        df["hilbert_cvd_envelope"] = cvd_hilbert["envelope"]
-        df["hilbert_cvd_freq"] = cvd_hilbert["instantaneous_freq"]
-        
-        # 包络斜率
-        df["hilbert_cvd_envelope_slope"] = np.gradient(cvd_hilbert["envelope"])
-        
-        # 相位差（CVD - Price）
-        if price_fluctuation_col in df.columns:
-            phase_diff = cvd_hilbert["phase_unwrapped"] - price_hilbert["phase_unwrapped"]
-            df["hilbert_phase_diff"] = phase_diff
-            df["hilbert_cvd_leads"] = (phase_diff > 0).astype(float)
+        for i in range(window, len(df)):
+            window_data = cvd_fluc[i - window : i]
             
-            # 相位差滚动统计
-            if len(df) > 20:
-                df["hilbert_phase_diff_mean"] = (
-                    pd.Series(phase_diff).rolling(window=20, min_periods=1).mean()
+            if len(window_data) < 10:
+                continue
+            
+            cvd_hilbert = hilbert_transform(window_data, detrend=False)
+            
+            if len(cvd_hilbert["phase"]) > 0:
+                df.iloc[i, df.columns.get_loc("hilbert_cvd_phase")] = (
+                    cvd_hilbert["phase"][-1]
                 )
-                df["hilbert_phase_diff_std"] = (
-                    pd.Series(phase_diff).rolling(window=20, min_periods=1).std()
+                df.iloc[i, df.columns.get_loc("hilbert_cvd_envelope")] = (
+                    cvd_hilbert["envelope"][-1]
                 )
-                # CVD 是否持续领先（相位差 > 1 标准差且持续 3 根 K 线）
-                df["hilbert_cvd_leads_strong"] = (
-                    (phase_diff > df["hilbert_phase_diff_mean"] + df["hilbert_phase_diff_std"])
-                    .rolling(window=3, min_periods=1)
-                    .min()
-                    .astype(float)
+                df.iloc[i, df.columns.get_loc("hilbert_cvd_freq")] = (
+                    cvd_hilbert["instantaneous_freq"][-1]
                 )
+                
+                envelope_slope = np.gradient(cvd_hilbert["envelope"])
+                if len(envelope_slope) > 0:
+                    df.iloc[i, df.columns.get_loc("hilbert_cvd_envelope_slope")] = (
+                        envelope_slope[-1]
+                    )
+                
+                # 相位差（CVD - Price）
+                if price_fluctuation_col in df.columns:
+                    price_window = price_fluc[i - window : i]
+                    if len(price_window) >= 10:
+                        price_hilbert = hilbert_transform(price_window, detrend=False)
+                        
+                        if (len(cvd_hilbert["phase_unwrapped"]) > 0 and 
+                            len(price_hilbert["phase_unwrapped"]) > 0):
+                            phase_diff = (
+                                cvd_hilbert["phase_unwrapped"][-1] - 
+                                price_hilbert["phase_unwrapped"][-1]
+                            )
+                            df.iloc[i, df.columns.get_loc("hilbert_phase_diff")] = phase_diff
+                            df.iloc[i, df.columns.get_loc("hilbert_cvd_leads")] = (
+                                1.0 if phase_diff > 0 else 0.0
+                            )
+    
+    # 相位差滚动统计（使用历史数据）
+    if "hilbert_phase_diff" in df.columns:
+        phase_diff_series = df["hilbert_phase_diff"]
+        if len(phase_diff_series.dropna()) > 20:
+            df["hilbert_phase_diff_mean"] = (
+                phase_diff_series.rolling(window=20, min_periods=1).mean()
+            )
+            df["hilbert_phase_diff_std"] = (
+                phase_diff_series.rolling(window=20, min_periods=1).std()
+            )
+            
+            # CVD 是否持续领先（相位差 > 1 标准差且持续 3 根 K 线）
+            df["hilbert_cvd_leads_strong"] = (
+                (phase_diff_series > df["hilbert_phase_diff_mean"] + df["hilbert_phase_diff_std"])
+                .rolling(window=3, min_periods=1)
+                .min()
+                .astype(float)
+            )
+    
+    # 使用 shift(1) 确保时间对齐，只使用历史信息
+    for col in hilbert_cols:
+        if col in df.columns:
+            df[col] = df[col].shift(1)
+    
+    # Fill NaN with 0 (after shift, NaN means insufficient history)
+    df[hilbert_cols] = df[hilbert_cols].fillna(0.0)
     
     return df
 

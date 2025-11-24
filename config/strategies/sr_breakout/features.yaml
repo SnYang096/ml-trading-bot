@@ -1,0 +1,32 @@
+name: sr_breakout
+description: >
+  SR breakout strategy focusing on breakout quality, momentum persistence,
+  and liquidity void confirmation using WPT/Hilbert/Spectrum features.
+
+feature_pipeline:
+  requested_features:
+    - wpt_price_reconstructed
+    - wpt_volume_energy
+    - wpt_breakout_confidence
+    - wpt_false_breakout_risk
+    - liquidity_void
+    - vpvr_lvn_distance
+    - wpt_price_energy_mid_ratio
+    - wpt_price_energy_low_ratio
+    - wpt_energy_cascade
+    - wpt_multi_scale_consistency
+    - hurst_price
+    - vpvr_price_in_lvn
+    - spectrum_dominant
+  post_processors:
+    - module: src.time_series_model.strategies.sr_breakout.features
+      function: build_sr_breakout_features
+      params: {}
+  selector:
+    module: src.time_series_model.strategies.sr_breakout.features
+    function: select_sr_breakout_features
+    params: {}
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+

@@ -1,0 +1,27 @@
+name: trend_following
+description: >
+  Trend-following strategy leveraging WPT trend, Hurst persistence, Hilbert
+  phase stability, and multi-timeframe context features.
+
+feature_pipeline:
+  requested_features:
+    - hurst_price
+    - wpt_price_trend
+    - wpt_price_energy_low_ratio
+    - hilbert_phase
+    - hilbert_cvd_leads
+    - wpt_cvd_fluctuation
+    - hilbert_price_freq_stability
+    - hilbert_cvd_freq_stability
+    - spectrum_dominant
+    - atr
+    - rsi
+  post_processors:
+    - module: src.time_series_model.strategies.trend_following.features
+      function: build_trend_following_features
+      params: {}
+  selector:
+    module: src.time_series_model.strategies.trend_following.features
+    function: select_trend_following_features
+    params: {}
+

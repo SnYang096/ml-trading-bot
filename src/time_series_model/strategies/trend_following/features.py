@@ -17,6 +17,7 @@ from src.features.time_series.utils_wpt_features import extract_wpt_features
 from src.features.time_series.utils_hilbert_features import extract_hilbert_features
 from src.features.time_series.utils_hurst_features import extract_hurst_features
 from src.features.time_series.utils_spectrum_features import extract_spectrum_features
+from src.features.time_series.utils_liquidity_features import extract_liquidity_features
 
 
 def build_trend_following_features(
@@ -119,7 +120,31 @@ def build_trend_following_features(
         rolling_window=64,
     )
 
-    # 5. 资金验证特征
+    # 5. VPVR 特征（空间域：趋势中的流动性聚集区）
+    print("   📊 Extracting VPVR features...")
+    df = extract_liquidity_features(
+        df,
+        price_col=price_col,
+        volume_col=volume_col,
+        high_col=high_col,
+        low_col=low_col,
+        atr_col=atr_col,
+        feature_type="vpvr",  # 仅提取 VPVR 特征
+    )
+
+    # 6. ZigZag 特征（空间域：趋势结构锚点）
+    if "zz_high_value" in df.columns and "zz_low_value" in df.columns:
+        # 趋势方向上的 ZigZag 结构
+        if price_col in df.columns:
+            # 当前价格相对于 ZigZag 结构的位置
+            df["price_above_zz_high"] = (df[price_col] > df["zz_high_value"]).astype(
+                float
+            )
+            df["price_below_zz_low"] = (df[price_col] < df["zz_low_value"]).astype(
+                float
+            )
+
+    # 7. 资金验证特征
     # 滚动 5D CVD 趋势（斜率）
     if cvd_col and cvd_col in df.columns:
         if len(df) > 5:
@@ -149,7 +174,7 @@ def build_trend_following_features(
             df["volume_price_alignment"].rolling(window=20, min_periods=1).mean()
         )
 
-    # 6. 趋势强度特征（ADX 等，如果有）
+    # 8. 趋势强度特征（ADX 等，如果有）
     if "adx" in df.columns:
         df["trend_strength_adx"] = (df["adx"] > 25).astype(float)
 
@@ -159,7 +184,7 @@ def build_trend_following_features(
         df["roc_20"] = roc_20
         df["trend_direction"] = (roc_20 > 0).astype(float) - (roc_20 < 0).astype(float)
 
-    # 7. 收益率百分位（Rank Label 的天然特征）
+    # 9. 收益率百分位（Rank Label 的天然特征）
     if price_col in df.columns:
         returns = df[price_col].pct_change()
         if len(df) > 200:
@@ -167,13 +192,14 @@ def build_trend_following_features(
                 lambda x: (x.iloc[-1] <= x).sum() / len(x) if len(x) > 0 else 0.5
             )
 
-    # 8. 确保所有特征都有 shift(1) 以避免未来数据
+    # 10. 确保所有特征都有 shift(1) 以避免未来数据
     wpt_cols = [col for col in df.columns if col.startswith("wpt_")]
     hilbert_cols = [col for col in df.columns if col.startswith("hilbert_")]
     hurst_cols = [col for col in df.columns if col.startswith("hurst_")]
     spectrum_cols = [col for col in df.columns if col.startswith("spectrum_")]
+    vpvr_cols = [col for col in df.columns if col.startswith("vpvr_")]
 
-    for col in wpt_cols + hilbert_cols + hurst_cols + spectrum_cols:
+    for col in wpt_cols + hilbert_cols + hurst_cols + spectrum_cols + vpvr_cols:
         if col in df.columns:
             df[col] = df[col].shift(1)
 
@@ -223,6 +249,15 @@ def select_trend_following_features(
         "roc_20",
         # 收益率百分位
         "return_percentile",
+        # VPVR 特征（空间域）
+        "vpvr_pvp",
+        "vpvr_hvn",
+        "vpvr_volume_density",
+        # ZigZag 特征（空间域）
+        "zz_high",
+        "zz_low",
+        "price_above_zz",
+        "price_below_zz",
         # Default 特征（趋势指标）
         "adx",
         "parabolic",

@@ -221,30 +221,44 @@ def extract_hurst_features(
         else:
             df["hurst_price_rolling"] = 0.5
     
-    # CVD Hurst
+    # CVD Hurst（滚动窗口）
     if cvd_col and cvd_col in df.columns:
         cvd_values = df[cvd_col].values
         cvd_diff = np.diff(cvd_values, prepend=cvd_values[0])
         
-        if method == "dfa":
-            hurst_cvd = compute_hurst_dfa(cvd_diff)
-        else:
-            hurst_cvd = compute_hurst_rs(cvd_diff)
+        df["hurst_cvd"] = np.nan
         
-        df["hurst_cvd"] = hurst_cvd
+        for i in range(rolling_window, len(df)):
+            window_diff = cvd_diff[i - rolling_window : i]
+            if method == "dfa":
+                h = compute_hurst_dfa(window_diff)
+            else:
+                h = compute_hurst_rs(window_diff)
+            df.iloc[i, df.columns.get_loc("hurst_cvd")] = h
     
-    # Volume Hurst（对数变换后）
+    # Volume Hurst（对数变换后，滚动窗口）
     if volume_col and volume_col in df.columns:
         volume = df[volume_col].values
         volume_log = np.log(volume + 1e-10)
         volume_diff = np.diff(volume_log, prepend=volume_log[0])
         
-        if method == "dfa":
-            hurst_volume = compute_hurst_dfa(volume_diff)
-        else:
-            hurst_volume = compute_hurst_rs(volume_diff)
+        df["hurst_volume"] = np.nan
         
-        df["hurst_volume"] = hurst_volume
+        for i in range(rolling_window, len(df)):
+            window_diff = volume_diff[i - rolling_window : i]
+            if method == "dfa":
+                h = compute_hurst_dfa(window_diff)
+            else:
+                h = compute_hurst_rs(window_diff)
+            df.iloc[i, df.columns.get_loc("hurst_volume")] = h
+    
+    # 使用 shift(1) 确保时间对齐，只使用历史信息
+    hurst_cols = [col for col in df.columns if col.startswith("hurst_")]
+    for col in hurst_cols:
+        df[col] = df[col].shift(1)
+    
+    # Fill NaN with 0.5 (default random walk)
+    df[hurst_cols] = df[hurst_cols].fillna(0.5)
     
     return df
 

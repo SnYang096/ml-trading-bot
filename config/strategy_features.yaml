@@ -1,0 +1,127 @@
+# 策略特征配置文件
+# 为每个策略定义所需的特征集
+# 核心原则：每类策略只关心与其盈利来源直接相关的市场维度
+
+strategies:
+  # ========================================================================
+  # SR 反转策略（高胜率、高 R/R、在关键位拒绝）
+  # 盈利逻辑：价格触及强共识区（POC/Swing）后，因流动性枯竭或订单堆积而反弹
+  # ========================================================================
+  sr_reversal:
+    requested_features:
+      # 核心：SR 强度（基于 WPT 重构价格）
+      - wpt_price_reconstructed
+      - sr_strength_max
+      - sqs_hal_high
+      - sqs_hal_low
+      - vpvr_pvp
+      - vpvr_hvn_count
+      # 核心：流动性验证
+      - hilbert_phase
+      - hilbert_cvd_leads
+      - wpt_cvd_fluctuation
+      # 辅助：波动状态
+      - atr
+      - rsi
+    excluded_features:
+      - "趋势指标（如 MA 斜率、ADX）"
+      - "全局收益率百分位"
+    notes: |
+      推荐特征：
+      1. SR 强度：WPT 低频 POC 与当前价距离、SR 重叠数、VPVR 高量节点支撑强度
+      2. 流动性验证：CVD 在 SR 区的净买入斜率、Hilbert 相位差、Take Buy Ratio
+      3. 波动状态：ATR/Close、Bollinger Band Width
+      必加：当前是否在 WPT 低频子带的"趋势通道内"（避免逆势反转）
+  
+  # ========================================================================
+  # SR 突破策略（真突破跑远，假突破回抽）
+  # 盈利逻辑：价格突破关键位后，是否有持续流动性跟进推动趋势延续
+  # ========================================================================
+  sr_breakout:
+    requested_features:
+      # 核心：突破质量
+      - wpt_price_reconstructed
+      - wpt_volume_energy
+      - wpt_breakout_confidence
+      - wpt_false_breakout_risk
+      - liquidity_void
+      - vpvr_lvn_distance
+      # 核心：动能持续性
+      - wpt_price_energy_mid_ratio
+      - wpt_price_energy_low_ratio
+      - wpt_energy_cascade
+      - wpt_multi_scale_consistency
+      - hurst_price
+      # 辅助：真空区识别
+      - vpvr_price_in_lvn
+      - spectrum_dominant
+    excluded_features:
+      - "SR 重叠密度（高重叠区反而难突破）"
+      - "RSI 极值（突破常发生在超买/超卖区，无区分度）"
+    notes: |
+      推荐特征：
+      1. 突破质量：突破时成交量/20日均量、VPER 中频 spike、突破后 3 根 K 线收盘站稳比例
+      2. 动能持续性：WPT 中低频能量比、Hurst 指数、ROC(5)/ROC(20) 比值
+      3. 真空区识别：突破方向上的 VPVR 低量节点距离、Spectrum 主频迁移
+      必加：突破前 CVD 是否已提前积累（相位领先）
+  
+  # ========================================================================
+  # 压缩区突破策略（低波动蓄力后的爆发）
+  # 盈利逻辑：市场在极低波动下积蓄能量，一旦打破平衡，波动率扩张带来大行情
+  # 推荐模型：CatBoost（对类别性特征和条件交互更高效）
+  # ========================================================================
+  compression_breakout:
+    requested_features:
+      # 核心：压缩强度
+      - atr
+      - spectrum_dominant
+      - wpt_price_energy_high_ratio
+      # 核心：突破触发
+      - wpt_volume_energy
+      - liquidity_void_detected
+      - liquidity_void_speed
+      # 核心：方向确认
+      - hilbert_phase
+      - wpt_price_energy_mid_ratio
+      - wpt_price_energy_low_ratio
+    excluded_features:
+      - "长期趋势指标（如 200MA）"
+      - "全局 CVD 累积值"
+    notes: |
+      推荐特征：
+      1. 压缩强度：Bollinger Band Width 分位数（<10%）、ATR/MA(ATR) 比值（<0.8）、Spectrum 频谱平坦度
+      2. 突破触发：最近 3 根 K 线 range 扩张率、Volume spike（>2σ）、CVD 净流入突变
+      3. 方向确认：突破首根 K 线 body/range 比、Take Buy Ratio 方向一致性、WPT 高频子带能量方向
+      必加：压缩区内 SR 密度（高密度压缩区突破更强）
+      推荐模型：CatBoost（对类别性特征和条件交互更高效，小样本更稳健）
+  
+  # ========================================================================
+  # 趋势跟踪策略（捕捉大级别动量）
+  # 盈利逻辑：在强趋势市场中，跟随主力资金方向，吃主升浪
+  # ========================================================================
+  trend_following:
+    requested_features:
+      # 核心：趋势强度
+      - hurst_price
+      - wpt_price_trend
+      - wpt_price_energy_low_ratio
+      # 核心：资金验证
+      - hilbert_phase
+      - hilbert_cvd_leads
+      - wpt_cvd_fluctuation
+      # 辅助：节奏感知
+      - hilbert_price_freq_stability
+      - hilbert_cvd_freq_stability
+      - spectrum_dominant
+      - atr
+      - rsi
+    excluded_features:
+      - "局部 SR 位置（趋势中 SR 经常被无视）"
+      - "短期波动率（趋势初期常伴随高波动）"
+    notes: |
+      推荐特征：
+      1. 趋势强度：Hurst 指数（>0.6）、ADX(14) > 25、WPT 低频子带斜率
+      2. 资金验证：滚动 5D CVD 趋势（斜率）、MFE/MAE 比、Volume 与 price 同向率
+      3. 节奏感知：Hilbert 瞬时频率稳定性、Spectrum 主频周期长度、Mamba embedding
+      必加：收益率在滚动窗口中的百分位（Rank Label 的天然特征）
+

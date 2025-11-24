@@ -16,6 +16,7 @@ from typing import List, Optional
 from src.features.time_series.utils_wpt_features import extract_wpt_features
 from src.features.time_series.utils_hilbert_features import extract_hilbert_features
 from src.features.time_series.utils_hurst_features import extract_hurst_features
+from src.features.time_series.utils_liquidity_features import extract_liquidity_features
 
 
 def build_sr_reversal_features(
@@ -78,7 +79,19 @@ def build_sr_reversal_features(
         rolling_window=50,
     )
 
-    # 4. SR 强度特征（如果已有 SR 相关特征）
+    # 4. VPVR 特征（空间域：流动性聚集区）
+    print("   📊 Extracting VPVR features...")
+    df = extract_liquidity_features(
+        df,
+        price_col=price_col,
+        volume_col=volume_col,
+        high_col=high_col,
+        low_col=low_col,
+        atr_col=atr_col,
+        feature_type="vpvr",  # 仅提取 VPVR 特征
+    )
+
+    # 5. SR 强度特征（如果已有 SR 相关特征）
     if "sqs" in df.columns or "dist_to_nearest_sr" in df.columns:
         # SR 重叠密度
         if "sqs" in df.columns:
@@ -88,7 +101,22 @@ def build_sr_reversal_features(
         if "dist_to_nearest_sr" in df.columns:
             df["sr_distance_normalized"] = df["dist_to_nearest_sr"].fillna(0.0)
 
-    # 5. 流动性验证特征
+    # 6. ZigZag 结构特征（空间域：结构锚点）
+    if "zz_high_value" in df.columns and "zz_low_value" in df.columns:
+        # 到最近 ZigZag 高点的距离
+        if price_col in df.columns:
+            df["dist_to_zz_high"] = (df[price_col] - df["zz_high_value"]).abs()
+            df["dist_to_zz_low"] = (df[price_col] - df["zz_low_value"]).abs()
+            # 归一化距离（相对于 ATR）
+            if atr_col in df.columns:
+                df["dist_to_zz_high_atr"] = df["dist_to_zz_high"] / df[atr_col].replace(
+                    0, np.nan
+                )
+                df["dist_to_zz_low_atr"] = df["dist_to_zz_low"] / df[atr_col].replace(
+                    0, np.nan
+                )
+
+    # 7. 流动性验证特征
     if cvd_col and cvd_col in df.columns:
         # CVD 在 SR 区的净买入斜率（滚动 5 根）
         if len(df) > 5:
@@ -100,7 +128,7 @@ def build_sr_reversal_features(
                 )
             )
 
-    # 6. 波动状态特征
+    # 8. 波动状态特征
     if atr_col in df.columns and price_col in df.columns:
         df["atr_ratio"] = df[atr_col] / df[price_col].replace(0, np.nan)
 
@@ -116,17 +144,18 @@ def build_sr_reversal_features(
         df["bb_width_ratio"] = bb_width
         df["compression_score"] = 1.0 / (1.0 + bb_width)
 
-    # 7. Take Buy Ratio 特征（如果有）
+    # 9. Take Buy Ratio 特征（如果有）
     if tbr_col and tbr_col in df.columns:
         df["tbr_ma_5"] = df[tbr_col].rolling(window=5, min_periods=1).mean()
         df["tbr_spike"] = (df[tbr_col] > df["tbr_ma_5"] * 1.5).astype(float)
 
-    # 8. 确保所有特征都有 shift(1) 以避免未来数据
+    # 10. 确保所有特征都有 shift(1) 以避免未来数据
     wpt_cols = [col for col in df.columns if col.startswith("wpt_")]
     hilbert_cols = [col for col in df.columns if col.startswith("hilbert_")]
     hurst_cols = [col for col in df.columns if col.startswith("hurst_")]
+    vpvr_cols = [col for col in df.columns if col.startswith("vpvr_")]
 
-    for col in wpt_cols + hilbert_cols + hurst_cols:
+    for col in wpt_cols + hilbert_cols + hurst_cols + vpvr_cols:
         if col in df.columns:
             df[col] = df[col].shift(1)
 
@@ -161,6 +190,15 @@ def select_sr_reversal_features(
         "wpt_volume",
         "wpt_cvd",
         "wpt_vper",
+        # VPVR 特征（空间域）
+        "vpvr_pvp",
+        "vpvr_hvn",
+        "vpvr_lvn",
+        "vpvr_volume_density",
+        # ZigZag 特征（空间域）
+        "zz_high",
+        "zz_low",
+        "dist_to_zz",
         # Hilbert 特征（相位领先）
         "hilbert_phase",
         "hilbert_cvd_leads",

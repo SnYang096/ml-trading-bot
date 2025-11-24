@@ -1,0 +1,26 @@
+name: compression_breakout
+
+trainer:
+  module: src.time_series_model.strategies.models.strategy_trainer
+  function: train_strategy_model
+  params:
+    model_type: catboost
+    task_type: multiclass
+    target_col: label_class
+    n_splits: 5
+    tscv_gap: 24
+    use_gpu: true
+    model_params:
+      iterations: 800
+      learning_rate: 0.05
+      depth: 6
+      random_seed: 42
+
+prediction:
+  method: ensemble_mean
+  model_type: catboost
+
+output:
+  save_results: true
+  filename: results.json
+

@@ -1,0 +1,27 @@
+name: compression_breakout
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.compression_breakout_label
+  function: compute_compression_breakout_label
+  params:
+    price_col: close
+    compression_col: compression_score
+    confirmation_bars: 3
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters:
+  - type: map_values
+    column: label
+    output_column: label_class
+    mapping:
+      -1.0: 0
+      0.0: 1
+      1.0: 2
+  - column: label_class
+    notna: true
+  - ensure_feature_non_null: true
+

@@ -122,15 +122,21 @@ class BaselineFeatureEngineer:
         low: pd.Series,
         threshold: float = 0.05,
         return_high_low: bool = False,
+        price_col: Optional[pd.Series] = None,
     ) -> pd.Series | Tuple[pd.Series, pd.Series, pd.Series]:
         """
         计算ZigZag指标（优化版：可同时计算高点和低点）
+        
+        ✅ 建议：使用 WPT 中高频重构价格（price_col）而非原始价格
+        这样可以保留关键拐点，同时去除毛刺噪声。
 
         Args:
-            high: 最高价序列
-            low: 最低价序列
+            high: 最高价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
+            low: 最低价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
             threshold: 转折阈值（默认 0.05，即 5%）
             return_high_low: 是否同时返回高点和低点序列（默认 False）
+            price_col: 可选的价格序列（如 WPT 中高频重构价格）。如果提供，将使用此价格
+                       而非原始 high/low。默认 None，使用原始价格（向后兼容）
 
         Returns:
             如果 return_high_low=False: 返回 zigzag 序列
@@ -148,51 +154,70 @@ class BaselineFeatureEngineer:
         zz_high = pd.Series(index=high.index, dtype=float) if return_high_low else None
         zz_low = pd.Series(index=high.index, dtype=float) if return_high_low else None
 
-        last_pivot = high.iloc[0]
+        # 确定使用的价格序列
+        if price_col is not None:
+            # 使用 WPT 重构价格（同时作为 high 和 low）
+            price_series = price_col
+            last_pivot = price_series.iloc[0]
+        else:
+            # 使用原始价格
+            price_series = None
+            last_pivot = high.iloc[0]
+        
         trend = None
         try:
             for i in range(1, len(high)):
+                if price_col is not None:
+                    # 使用 WPT 重构价格
+                    current_price = price_series.iloc[i]
+                    current_high = current_price
+                    current_low = current_price
+                else:
+                    # 使用原始价格
+                    current_high = high.iloc[i]
+                    current_low = low.iloc[i]
+                
                 if trend is None:
-                    if high.iloc[i] >= last_pivot * (1 + threshold):
+                    if current_high >= last_pivot * (1 + threshold):
                         trend = "up"
-                        last_pivot = high.iloc[i]
-                        zigzag.iloc[i] = high.iloc[i]
+                        last_pivot = current_high
+                        zigzag.iloc[i] = current_high
                         if return_high_low:
-                            zz_high.iloc[i] = high.iloc[i]
-                    elif low.iloc[i] <= last_pivot * (1 - threshold):
+                            zz_high.iloc[i] = current_high
+                    elif current_low <= last_pivot * (1 - threshold):
                         trend = "down"
-                        last_pivot = low.iloc[i]
-                        zigzag.iloc[i] = low.iloc[i]
+                        last_pivot = current_low
+                        zigzag.iloc[i] = current_low
                         if return_high_low:
-                            zz_low.iloc[i] = low.iloc[i]
+                            zz_low.iloc[i] = current_low
                 elif trend == "up":
-                    if low.iloc[i] <= last_pivot * (1 - threshold):
+                    if current_low <= last_pivot * (1 - threshold):
                         # 趋势反转：从上涨转为下跌
                         trend = "down"
-                        last_pivot = low.iloc[i]
-                        zigzag.iloc[i] = low.iloc[i]
+                        last_pivot = current_low
+                        zigzag.iloc[i] = current_low
                         if return_high_low:
-                            zz_low.iloc[i] = low.iloc[i]
-                    elif high.iloc[i] >= last_pivot:
+                            zz_low.iloc[i] = current_low
+                    elif current_high >= last_pivot:
                         # 继续上涨，更新高点
-                        last_pivot = high.iloc[i]
-                        zigzag.iloc[i] = high.iloc[i]
+                        last_pivot = current_high
+                        zigzag.iloc[i] = current_high
                         if return_high_low:
-                            zz_high.iloc[i] = high.iloc[i]
+                            zz_high.iloc[i] = current_high
                 else:  # trend == 'down'
-                    if high.iloc[i] >= last_pivot * (1 + threshold):
+                    if current_high >= last_pivot * (1 + threshold):
                         # 趋势反转：从下跌转为上涨
                         trend = "up"
-                        last_pivot = high.iloc[i]
-                        zigzag.iloc[i] = high.iloc[i]
+                        last_pivot = current_high
+                        zigzag.iloc[i] = current_high
                         if return_high_low:
-                            zz_high.iloc[i] = high.iloc[i]
-                    elif low.iloc[i] <= last_pivot:
+                            zz_high.iloc[i] = current_high
+                    elif current_low <= last_pivot:
                         # 继续下跌，更新低点
-                        last_pivot = low.iloc[i]
-                        zigzag.iloc[i] = low.iloc[i]
+                        last_pivot = current_low
+                        zigzag.iloc[i] = current_low
                         if return_high_low:
-                            zz_low.iloc[i] = low.iloc[i]
+                            zz_low.iloc[i] = current_low
 
             zigzag = zigzag.ffill()
             if return_high_low:
@@ -216,17 +241,23 @@ class BaselineFeatureEngineer:
         window: int = 160,
         bins: int = 50,
         value_area_ratio: float = 0.7,
+        price_col: Optional[pd.Series] = None,
     ) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
         """
         计算 POC (Point of Control) 和 HAL (Value Area 70% 价格区间的上下界)
+        
+        ✅ 强烈建议：使用 WPT 低频重构价格（price_col）而非原始价格
+        这样可以过滤高频噪声，使 POC/HAL 更接近真实供需平衡点。
 
         Args:
-            high: 最高价序列
-            low: 最低价序列
-            volume: 成交量序列
+            high: 最高价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
+            low: 最低价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
+            volume: 成交量序列（始终使用原始成交量，不应过滤）
             window: 滚动窗口大小
             bins: 价格分档数量
             value_area_ratio: Value Area 的成交量占比（默认 0.7，即 70%）
+            price_col: 可选的价格序列（如 WPT 低频重构价格）。如果提供，将使用此价格
+                       而非 (high+low)/2。默认 None，使用原始价格（向后兼容）
 
         Returns:
             (poc, poc_volume_ratio, hal_high, hal_low):
@@ -241,11 +272,21 @@ class BaselineFeatureEngineer:
         hal_low = pd.Series(index=high.index, dtype=float)
 
         for i in range(window, len(high)):
-            window_high = high.iloc[i - window : i].max()
-            window_low = low.iloc[i - window : i].min()
+            # 确定使用的价格序列和窗口边界
+            if price_col is not None:
+                # 使用 WPT 重构价格
+                window_high = price_col.iloc[i - window : i].max()
+                window_low = price_col.iloc[i - window : i].min()
+            else:
+                # 使用原始价格
+                window_high = high.iloc[i - window : i].max()
+                window_low = low.iloc[i - window : i].min()
 
             if window_high <= window_low:
-                poc.iloc[i] = (high.iloc[i] + low.iloc[i]) / 2
+                if price_col is not None:
+                    poc.iloc[i] = price_col.iloc[i]
+                else:
+                    poc.iloc[i] = (high.iloc[i] + low.iloc[i]) / 2
                 hal_high.iloc[i] = window_high
                 hal_low.iloc[i] = window_low
                 # 无法计算成交量占比，保持 NaN
@@ -257,7 +298,11 @@ class BaselineFeatureEngineer:
 
             # 计算每个价格档的成交量
             for j in range(i - window, i):
-                price = (high.iloc[j] + low.iloc[j]) / 2
+                # 使用 price_col 或 (high+low)/2
+                if price_col is not None:
+                    price = price_col.iloc[j]
+                else:
+                    price = (high.iloc[j] + low.iloc[j]) / 2
                 vol = volume.iloc[j]
 
                 # 找到价格所在的分档
@@ -1947,10 +1992,16 @@ class BaselineFeatureEngineer:
 
         close = result["close"].replace(0, np.nan)
 
+        # 确定使用的价格序列（优先使用 WPT 中高频重构价格）
+        price_series = None
+        if "wpt_price_reconstructed" in result.columns:
+            # 自动检测 WPT 重构价格（中高频，保留关键拐点）
+            price_series = result["wpt_price_reconstructed"]
+        
         # 优化：直接计算 zigzag + 高点和低点（一次性完成）
         # 如果 zigzag 已存在，重新计算以确保高点和低点正确（性能影响可忽略）
         zigzag, zz_high, zz_low = BaselineFeatureEngineer.compute_zigzag(
-            result["high"], result["low"], return_high_low=True
+            result["high"], result["low"], return_high_low=True, price_col=price_series
         )
         result["zigzag"] = zigzag
         result["zz_high_value"] = zz_high
@@ -2015,10 +2066,16 @@ class BaselineFeatureEngineer:
 
     @staticmethod
     def add_poc_hal_dimensionless_features(
-        df: pd.DataFrame, required_features: Optional[set] = None, poc_window: int = 160
+        df: pd.DataFrame, 
+        required_features: Optional[set] = None, 
+        poc_window: int = 160,
+        price_col: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         添加 POC (Point of Control) 和 HAL (Value Area 70% 价格区间的上下界) 相关的无量纲特征
+        
+        ✅ 强烈建议：使用 WPT 低频重构价格（price_col='wpt_price_reconstructed'）
+        这样可以过滤高频噪声，使 POC/HAL 更接近真实供需平衡点。
 
         注意：POC 和 HAL 的计算合并在一起，因为它们都基于相同的 volume profile 计算，
         避免重复计算浪费性能。
@@ -2033,6 +2090,13 @@ class BaselineFeatureEngineer:
         - price_to_hal_low_pct: 当前价格到 HAL 低点的相对距离
         - price_to_hal_mid_pct: 当前价格到 HAL 中点的相对距离
         - hal_bandwidth_pct: HAL 带宽（相对）
+        
+        Args:
+            df: 输入 DataFrame
+            required_features: 需要的特征集合（可选）
+            poc_window: POC 计算窗口大小
+            price_col: 可选的价格列名（如 'wpt_price_reconstructed'）。如果提供，将使用此列
+                       而非原始 high/low。默认 None，使用原始价格（向后兼容）
         """
         if df.empty:
             return df
@@ -2050,6 +2114,15 @@ class BaselineFeatureEngineer:
         if not (need_poc or need_hal):
             return result
 
+        # 确定使用的价格序列
+        # 优先使用 WPT 低频重构价格，如果不存在则使用原始价格
+        price_series = None
+        if price_col and price_col in result.columns:
+            price_series = result[price_col]
+        elif "wpt_price_reconstructed" in result.columns:
+            # 自动检测 WPT 重构价格
+            price_series = result["wpt_price_reconstructed"]
+        
         # 计算 POC 和 HAL（一次性计算，避免重复）
         need_compute = False
         if need_poc and (
@@ -2064,7 +2137,11 @@ class BaselineFeatureEngineer:
         if need_compute:
             poc, poc_volume_ratio, hal_high, hal_low = (
                 BaselineFeatureEngineer.compute_poc(
-                    result["high"], result["low"], result["volume"], window=poc_window
+                    result["high"], 
+                    result["low"], 
+                    result["volume"], 
+                    window=poc_window,
+                    price_col=price_series,  # 传入 WPT 重构价格（如果存在）
                 )
             )
             result["poc"] = poc
@@ -2138,14 +2215,26 @@ class BaselineFeatureEngineer:
         required_features: Optional[set] = None,
         swing_win_short: int = 20,
         swing_win_long: int = 60,
+        price_col: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         添加 Swing High/Low 相关的无量纲特征
+        
+        ✅ 建议：使用 WPT 中频重构价格（price_col='wpt_price_reconstructed'）
+        这样可以捕捉中期结构，同时过滤高频噪声。
 
         新增特征：
         - swing_high_pct_close: Swing High 相对收盘价的比率
         - swing_low_pct_close: Swing Low 相对收盘价的比率
         - swing_amplitude_pct: Swing 波幅（相对）
+        
+        Args:
+            df: 输入 DataFrame
+            required_features: 需要的特征集合（可选）
+            swing_win_short: 短期 Swing 窗口大小
+            swing_win_long: 长期 Swing 窗口大小
+            price_col: 可选的价格列名（如 'wpt_price_reconstructed'）。如果提供，将使用此列
+                       而非原始 high/low。默认 None，使用原始价格（向后兼容）
         """
         if df.empty:
             return df
@@ -2154,21 +2243,45 @@ class BaselineFeatureEngineer:
 
         close = result["close"].replace(0, np.nan)
 
+        # 确定使用的价格序列（优先使用 WPT 中频重构价格）
+        swing_price = None
+        if price_col and price_col in result.columns:
+            swing_price = result[price_col]
+        elif "wpt_price_reconstructed" in result.columns:
+            # 自动检测 WPT 重构价格（中频，捕捉中期结构）
+            swing_price = result["wpt_price_reconstructed"]
+
         # 计算 Swing High/Low（如果不存在）
         if "roll_high_s" not in result.columns:
             if required_features and any("swing" in f for f in required_features):
-                result["roll_high_s"] = (
-                    result["high"].rolling(swing_win_short, min_periods=1).max()
-                )
-                result["roll_low_s"] = (
-                    result["low"].rolling(swing_win_short, min_periods=1).min()
-                )
-                result["roll_high_l"] = (
-                    result["high"].rolling(swing_win_long, min_periods=1).max()
-                )
-                result["roll_low_l"] = (
-                    result["low"].rolling(swing_win_long, min_periods=1).min()
-                )
+                if swing_price is not None:
+                    # 使用 WPT 重构价格
+                    result["roll_high_s"] = (
+                        swing_price.rolling(swing_win_short, min_periods=1).max()
+                    )
+                    result["roll_low_s"] = (
+                        swing_price.rolling(swing_win_short, min_periods=1).min()
+                    )
+                    result["roll_high_l"] = (
+                        swing_price.rolling(swing_win_long, min_periods=1).max()
+                    )
+                    result["roll_low_l"] = (
+                        swing_price.rolling(swing_win_long, min_periods=1).min()
+                    )
+                else:
+                    # 使用原始价格
+                    result["roll_high_s"] = (
+                        result["high"].rolling(swing_win_short, min_periods=1).max()
+                    )
+                    result["roll_low_s"] = (
+                        result["low"].rolling(swing_win_short, min_periods=1).min()
+                    )
+                    result["roll_high_l"] = (
+                        result["high"].rolling(swing_win_long, min_periods=1).max()
+                    )
+                    result["roll_low_l"] = (
+                        result["low"].rolling(swing_win_long, min_periods=1).min()
+                    )
             else:
                 return result
 

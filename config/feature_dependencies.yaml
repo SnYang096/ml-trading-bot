@@ -1,0 +1,244 @@
+# 特征依赖配置文件
+# 定义所有特征及其依赖关系
+
+features:
+  # ========================================================================
+  # 基础技术指标（无依赖）
+  # ========================================================================
+  atr:
+    module: baseline
+    compute_func: BaselineFeatureEngineer._compute_atr
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["atr"]
+    category: technical_indicator
+    description: "Average True Range"
+  
+  rsi:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_rsi
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["rsi"]
+    category: technical_indicator
+    description: "Relative Strength Index"
+    compute_params:
+      period: 14
+  
+  macd:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_macd
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["macd", "macd_signal", "macd_histogram"]
+    category: technical_indicator
+    description: "MACD Indicator"
+    compute_params:
+      fast: 12
+      slow: 26
+      signal: 9
+  
+  # ========================================================================
+  # WPT 重构价格（所有 SR 的基础）
+  # 核心原则：所有 SR 均由 WPT 重构价格生成，实现天然多尺度对齐，无需 resample
+  # ========================================================================
+  wpt_price_reconstructed:
+    module: enhanced
+    compute_func: extract_wpt_features
+    dependencies: []
+    required_columns: ["close", "high", "low"]
+    output_columns: ["wpt_price_trend", "wpt_price_fluctuation", "wpt_price_reconstructed"]
+    category: wpt
+    description: "WPT 重构价格（趋势 + 波动），用于生成多尺度 SR"
+    compute_params:
+      wavelet: "db4"
+      level: 4
+    notes: |
+      所有 SR（POC、HAL、Swing、ZigZag）都应基于 WPT 重构价格计算，实现天然多尺度对齐。
+      - 低频子带（'aaaa'）→ 长期 SR（周线级）
+      - 中频子带（'aaad', 'aada'）→ 中期 SR（日线级）
+      - 高频子带（'dddd'）→ 短期 SR（分钟级）
+  
+  # ========================================================================
+  # SR 特征（依赖 WPT 重构价格）
+  # 注意：所有 SR 特征都基于 WPT 重构价格，实现多尺度对齐
+  # ========================================================================
+  sqs_hal_high:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.calculate_sqs
+    dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
+    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
+    output_columns: ["sqs_hal_high"]
+    category: sr_structure
+    description: "Structure Quality Score for HAL high (基于 WPT 重构价格)"
+    compute_params:
+      sr_type: "resistance"
+      window: 60
+      tolerance_factor: 0.5
+    notes: "基于 WPT 重构价格计算，实现多尺度对齐"
+  
+  sqs_hal_low:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.calculate_sqs
+    dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
+    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
+    output_columns: ["sqs_hal_low"]
+    category: sr_structure
+    description: "Structure Quality Score for HAL low (基于 WPT 重构价格)"
+    compute_params:
+      sr_type: "support"
+      window: 60
+      tolerance_factor: 0.5
+    notes: "基于 WPT 重构价格计算，实现多尺度对齐"
+  
+  sr_strength_max:
+    module: baseline
+    compute_func: BaselineFeatureEngineer._compute_boundary_strengths
+    dependencies: ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
+    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
+    output_columns: ["sr_strength_max"]
+    category: sr_structure
+    description: "Maximum SR strength across all boundaries (基于 WPT 重构价格)"
+    notes: "所有 SR 边界都基于 WPT 重构价格计算，实现多尺度对齐"
+  
+  # ========================================================================
+  # WPT 特征（无依赖，但可能需要基础数据）
+  # 注意：WPT 用于过滤高频噪音，是 POC/HAL 等特征的前置依赖
+  # ========================================================================
+  wpt_price_fluctuation:
+    module: enhanced
+    compute_func: extract_wpt_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["wpt_price_fluctuation", "wpt_price_trend", "wpt_price_energy_low_ratio", "wpt_price_energy_mid_ratio", "wpt_price_energy_high_ratio"]
+    category: wpt
+    description: "WPT price fluctuation (用于过滤高频噪音，POC/HAL 特征的前置依赖)"
+    compute_params:
+      wavelet: "db4"
+      level: 4
+    notes: "WPT 过滤高频噪音，提高 POC/HAL 等 SR 特征的识别准确性"
+  
+  wpt_cvd_fluctuation:
+    module: enhanced
+    compute_func: extract_wpt_features
+    dependencies: []
+    required_columns: ["cvd"]
+    output_columns: ["wpt_cvd_fluctuation"]
+    category: wpt
+    description: "WPT CVD fluctuation"
+    compute_params:
+      wavelet: "db4"
+      level: 4
+  
+  # ========================================================================
+  # 流动性特征（依赖 WPT 和基础指标）
+  # 核心功能：识别流动性真空区、真假突破、VPVR 分析
+  # ========================================================================
+  wpt_vpvr:
+    module: enhanced
+    compute_func: extract_liquidity_features
+    dependencies: ["wpt_price_reconstructed", "atr"]
+    required_columns: ["close", "high", "low", "volume", "atr"]
+    output_columns: ["vpvr_pvp", "vpvr_hvn_count", "vpvr_lvn_count", "vpvr_lvn_distance", "vpvr_volume_density", "vpvr_price_in_lvn"]
+    category: liquidity
+    description: "WPT 降噪的 VPVR（Volume Profile Visible Range）"
+    compute_params:
+      wavelet: "db4"
+      level: 4
+      vpvr_window: 100
+      bins: 50
+      feature_type: "vpvr"
+    notes: |
+      WPT 降噪后的 VPVR 能更清晰地识别关键支撑/阻力位：
+      - PVP: Point of Control（最高成交量对应的价格）
+      - HVN: High Volume Node（高成交量节点）
+      - LVN: Low Volume Node（低成交量节点，流动性真空区）
+  
+  liquidity_void:
+    module: enhanced
+    compute_func: extract_liquidity_features
+    dependencies: ["wpt_price_reconstructed", "atr"]
+    required_columns: ["close", "high", "low", "volume", "atr"]
+    output_columns: ["liquidity_void_detected", "liquidity_void_speed", "liquidity_void_volume_ratio", "liquidity_void_retracement", "liquidity_void_false_breakout_risk"]
+    category: liquidity
+    description: "流动性真空区识别（Liquidity Void / Gap Detection）"
+    compute_params:
+      lookback_window: 20
+      speed_threshold_multiplier: 2.0
+      volume_quantile: 0.2
+      feature_type: "void"
+    notes: |
+      流动性真空区 ≠ 历史低成交量区域，而是当前订单簿深度缺失。
+      特征：
+      - 价格快速穿越（速度 > 阈值）
+      - 成交量显著低于前后区间
+      - 突破后 1~3 根 K 线内迅速回撤 >50%
+  
+  wpt_volume_energy:
+    module: enhanced
+    compute_func: extract_liquidity_features
+    dependencies: ["wpt_price_reconstructed", "wpt_cvd_fluctuation"]
+    required_columns: ["close", "volume"]
+    output_columns: ["wpt_vper_low", "wpt_vper_mid", "wpt_vper_high", "wpt_energy_cascade", "wpt_multi_scale_consistency", "wpt_breakout_confidence", "wpt_false_breakout_risk"]
+    category: liquidity
+    description: "WPT + Volume 能量协同分析（VPER、能量下移、真假突破判断）"
+    compute_params:
+      wavelet: "db4"
+      level: 4
+      lookback_window: 20
+      feature_type: "energy"
+    notes: |
+      WPT + Volume 能量协同分析：
+      - VPER: Volume-Price Energy Ratio（量价能量比）
+      - 能量下移（Energy Cascade）: 高频能量向中低频转移
+      - 多尺度一致性: 至少两个中低频子带同时出现能量上升
+      - 真假突破评分: 基于多尺度能量和 VPER 的综合评分
+  
+  # ========================================================================
+  # Hilbert 特征（依赖 WPT 去趋势化）
+  # 重要：Hilbert 相位分析必须使用 CVD（而不是 Volume）做相位领先分析
+  # 原因：
+  # 1. Volume 与 Price 同向共振，相位差≈0，无法区分"跟随"还是"引领"
+  # 2. CVD 具有方向性（净买量），可以提前积累，Price 尚未反应时 CVD 已领先
+  # 3. CVD 相位领先能够预测价格变化，Volume 相位差几乎无预测价值
+  # 4. 必须去趋势化（使用 WPT），否则累积趋势会淹没相位动态
+  # ========================================================================
+  hilbert_phase:
+    module: enhanced
+    compute_func: extract_hilbert_features
+    dependencies: ["wpt_price_fluctuation", "wpt_cvd_fluctuation"]
+    required_columns: ["wpt_price_fluctuation", "wpt_cvd_fluctuation"]
+    output_columns: ["hilbert_phase", "hilbert_phase_diff", "hilbert_cvd_leads", "hilbert_cvd_leads_strong", "hilbert_price_envelope", "hilbert_cvd_envelope", "hilbert_price_envelope_slope", "hilbert_cvd_envelope_slope", "hilbert_price_freq_stability", "hilbert_cvd_freq_stability"]
+    category: hilbert
+    description: "Hilbert phase analysis (必须使用 CVD，不能使用 Volume)"
+    notes: |
+      Hilbert 相位领先分析的关键要点：
+      1. 必须使用 CVD（Cumulative Volume Delta）而不是 Volume
+      2. 必须去趋势化（使用 WPT 过滤），否则趋势会淹没相位动态
+      3. CVD 相位领先能够预测价格变化，Volume 相位差几乎无预测价值
+      4. 只有当 CVD 包络放大 + 相位领先时，才视为有效信号
+  
+  # ========================================================================
+  # Hurst 特征（无依赖）
+  # ========================================================================
+  hurst_price:
+    module: enhanced
+    compute_func: extract_hurst_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["hurst_price"]
+    category: hurst
+    description: "Hurst exponent for price"
+  
+  # ========================================================================
+  # Spectrum 特征（无依赖）
+  # ========================================================================
+  spectrum_dominant:
+    module: enhanced
+    compute_func: extract_spectrum_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["spectrum_dominant"]
+    category: spectrum
+    description: "Dominant frequency from spectrum analysis"
+

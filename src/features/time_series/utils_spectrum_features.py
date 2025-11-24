@@ -130,23 +130,60 @@ def extract_spectrum_features(
         df["spectrum_price_flatness"] = spectral_flatness
         df["spectrum_price_high_freq_ratio"] = high_freq_ratios
     
-    # 成交量频谱
+    # 成交量频谱（滚动窗口）
     if volume_col and volume_col in df.columns:
         volume = df[volume_col].values
         volume_diff = np.diff(volume, prepend=volume[0])
         
-        spec_features = compute_spectrum_features(volume_diff)
-        df["spectrum_volume_dominant_freq"] = spec_features["dominant_freq"]
-        df["spectrum_volume_flatness"] = spec_features["spectral_flatness"]
+        df["spectrum_volume_dominant_freq"] = np.nan
+        df["spectrum_volume_flatness"] = np.nan
+        
+        for i in range(rolling_window, len(df)):
+            window_diff = volume_diff[i - rolling_window : i]
+            spec_features = compute_spectrum_features(window_diff)
+            df.iloc[i, df.columns.get_loc("spectrum_volume_dominant_freq")] = (
+                spec_features["dominant_freq"]
+            )
+            df.iloc[i, df.columns.get_loc("spectrum_volume_flatness")] = (
+                spec_features["spectral_flatness"]
+            )
     
-    # CVD 频谱
+    # CVD 频谱（滚动窗口）
     if cvd_col and cvd_col in df.columns:
         cvd = df[cvd_col].values
         cvd_diff = np.diff(cvd, prepend=cvd[0])
         
-        spec_features = compute_spectrum_features(cvd_diff)
-        df["spectrum_cvd_dominant_freq"] = spec_features["dominant_freq"]
-        df["spectrum_cvd_flatness"] = spec_features["spectral_flatness"]
+        df["spectrum_cvd_dominant_freq"] = np.nan
+        df["spectrum_cvd_flatness"] = np.nan
+        
+        for i in range(rolling_window, len(df)):
+            window_diff = cvd_diff[i - rolling_window : i]
+            spec_features = compute_spectrum_features(window_diff)
+            df.iloc[i, df.columns.get_loc("spectrum_cvd_dominant_freq")] = (
+                spec_features["dominant_freq"]
+            )
+            df.iloc[i, df.columns.get_loc("spectrum_cvd_flatness")] = (
+                spec_features["spectral_flatness"]
+            )
+    
+    # 使用 shift(1) 确保时间对齐，只使用历史信息
+    spectrum_cols = [col for col in df.columns if col.startswith("spectrum_")]
+    for col in spectrum_cols:
+        df[col] = df[col].shift(1)
+    
+    # Fill NaN with default values (after shift)
+    df["spectrum_price_dominant_freq"] = df["spectrum_price_dominant_freq"].fillna(0.0)
+    df["spectrum_price_period"] = df["spectrum_price_period"].fillna(np.inf)
+    df["spectrum_price_flatness"] = df["spectrum_price_flatness"].fillna(1.0)
+    df["spectrum_price_high_freq_ratio"] = df["spectrum_price_high_freq_ratio"].fillna(0.0)
+    
+    if "spectrum_volume_dominant_freq" in df.columns:
+        df["spectrum_volume_dominant_freq"] = df["spectrum_volume_dominant_freq"].fillna(0.0)
+        df["spectrum_volume_flatness"] = df["spectrum_volume_flatness"].fillna(1.0)
+    
+    if "spectrum_cvd_dominant_freq" in df.columns:
+        df["spectrum_cvd_dominant_freq"] = df["spectrum_cvd_dominant_freq"].fillna(0.0)
+        df["spectrum_cvd_flatness"] = df["spectrum_cvd_flatness"].fillna(1.0)
     
     return df
 

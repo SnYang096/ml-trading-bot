@@ -16,6 +16,7 @@ from typing import List, Optional
 from src.features.time_series.utils_wpt_features import extract_wpt_features
 from src.features.time_series.utils_hilbert_features import extract_hilbert_features
 from src.features.time_series.utils_spectrum_features import extract_spectrum_features
+from src.features.time_series.utils_liquidity_features import extract_liquidity_features
 
 
 def build_compression_breakout_features(
@@ -68,7 +69,32 @@ def build_compression_breakout_features(
         rolling_window=64,
     )
 
-    # 3. 压缩强度特征
+    # 3. VPVR 特征（空间域：压缩区内的 SR 密度）
+    print("   📊 Extracting VPVR features...")
+    df = extract_liquidity_features(
+        df,
+        price_col=price_col,
+        volume_col=volume_col,
+        high_col=high_col,
+        low_col=low_col,
+        atr_col=atr_col,
+        feature_type="vpvr",  # 仅提取 VPVR 特征
+    )
+
+    # 4. ZigZag 结构特征（空间域：压缩区间识别）
+    if "zz_high_value" in df.columns and "zz_low_value" in df.columns:
+        # 压缩区间高度（ZigZag 高点 - 低点）
+        if price_col in df.columns:
+            df["compression_range_height"] = (
+                df["zz_high_value"] - df["zz_low_value"]
+            ).abs()
+            # 当前价格在压缩区间内的位置（0~1）
+            df["price_in_compression_range"] = (
+                (df[price_col] >= df["zz_low_value"])
+                & (df[price_col] <= df["zz_high_value"])
+            ).astype(float)
+
+    # 5. 压缩强度特征
     # Bollinger Band Width 分位数
     if (
         "bb_upper" in df.columns
@@ -97,7 +123,7 @@ def build_compression_breakout_features(
     if "spectrum_price_flatness" in df.columns:
         df["compression_spectrum"] = (df["spectrum_price_flatness"] < 0.3).astype(float)
 
-    # 4. 突破触发特征
+    # 6. 突破触发特征
     # 最近 3 根 K 线 range 扩张率
     if high_col in df.columns and low_col in df.columns:
         price_range = df[high_col] - df[low_col]
@@ -122,7 +148,7 @@ def build_compression_breakout_features(
         cvd_zscore = (cvd_diff - cvd_ma) / cvd_std.replace(0, np.nan)
         df["cvd_spike"] = (cvd_zscore.abs() > 2.0).astype(float)
 
-    # 5. 方向确认特征
+    # 7. 方向确认特征
     # 突破首根 K 线 body/range 比
     if price_col in df.columns and high_col in df.columns and low_col in df.columns:
         body = abs(df[price_col] - df[price_col].shift(1))
@@ -143,11 +169,11 @@ def build_compression_breakout_features(
         energy_high_change = df["wpt_price_energy_high_ratio"].diff()
         df["wpt_high_energy_increasing"] = (energy_high_change > 0).astype(float)
 
-    # 6. 压缩区内 SR 密度（如果有 SR 特征）
-    if "sr_density" in df.columns:
-        df["compression_sr_density"] = df["sr_density"].fillna(0.0)
+    # 8. 压缩区内 SR 密度（使用 VPVR HVN 数量）
+    if "vpvr_hvn_count" in df.columns:
+        df["compression_sr_density"] = df["vpvr_hvn_count"].fillna(0.0)
 
-    # 7. 确保所有特征都有 shift(1) 以避免未来数据
+    # 9. 确保所有特征都有 shift(1) 以避免未来数据
     wpt_cols = [col for col in df.columns if col.startswith("wpt_")]
     spectrum_cols = [col for col in df.columns if col.startswith("spectrum_")]
     compression_cols = [
@@ -155,8 +181,9 @@ def build_compression_breakout_features(
         for col in df.columns
         if "compression" in col.lower() or "range_expansion" in col.lower()
     ]
+    vpvr_cols = [col for col in df.columns if col.startswith("vpvr_")]
 
-    for col in wpt_cols + spectrum_cols + compression_cols:
+    for col in wpt_cols + spectrum_cols + compression_cols + vpvr_cols:
         if col in df.columns:
             df[col] = df[col].shift(1)
 
@@ -221,6 +248,16 @@ def select_compression_breakout_features(
         "wpt_price",
         "wpt_volume",
         "wpt_energy",
+        # VPVR 特征（空间域）
+        "vpvr_pvp",
+        "vpvr_hvn",
+        "vpvr_lvn",
+        "vpvr_volume_density",
+        # ZigZag 特征（空间域）
+        "zz_high",
+        "zz_low",
+        "compression_range",
+        "price_in_compression",
         # Default 特征（压缩区检测）
         "bbands",
         "bollinger",

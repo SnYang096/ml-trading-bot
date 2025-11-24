@@ -7,7 +7,7 @@ from typing import Dict, Optional, Tuple, Any
 import numpy as np
 import pandas as pd
 
-from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
+from src.features.loader.config_feature_engineer import ConfigFeatureEngineer
 from data_tools.data_loader import MarketDataLoader
 from time_series_model.utils.sample_data import create_sample_data
 
@@ -23,7 +23,7 @@ class UnifiedDataLoader:
 
     def __init__(self, data_path: Optional[str] = None) -> None:
         self.data_path = data_path
-        self.feature_engineer: Optional[ComprehensiveFeatureEngineer] = None
+        self.feature_engineer: Optional[ConfigFeatureEngineer] = None
 
     def load_real_data(
         self,
@@ -52,7 +52,7 @@ class UnifiedDataLoader:
             df = df.copy()
             df["timestamp"] = df.index
 
-            self.feature_engineer = ComprehensiveFeatureEngineer()
+            self.feature_engineer = ConfigFeatureEngineer(strategy_name="sr_breakout")
             df_features = self.feature_engineer.engineer_all_features(df, fit=True)
             # Ensure timestamp survives after feature engineering
             if "timestamp" not in df_features.columns and "timestamp" in df.columns:

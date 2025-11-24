@@ -12,7 +12,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 
 from data_tools.data_loader import MarketDataLoader
-from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
+from src.features.loader.config_feature_engineer import ConfigFeatureEngineer
 from time_series_model.pipeline.dimensionality.utils import load_top_factors_list
 
 
@@ -104,11 +104,11 @@ def load_data(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     timeframe: str = "15T",
-    feature_type: str = "comprehensive",
+    feature_strategy: str = "sr_breakout",
     top_factors: Optional[str] = None,
-    engineer: Optional[ComprehensiveFeatureEngineer] = None,
+    engineer: Optional[ConfigFeatureEngineer] = None,
     fit: bool = True,
-) -> Tuple[pd.DataFrame, List[str], Optional[ComprehensiveFeatureEngineer]]:
+) -> Tuple[pd.DataFrame, List[str], Optional[ConfigFeatureEngineer]]:
     """
     Load and prepare market data with features.
 
@@ -121,9 +121,9 @@ def load_data(
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
         timeframe: Resampling timeframe (e.g., "15T", "1H")
-        feature_type: Feature engineering type (comprehensive, baseline, etc.)
+        feature_strategy: Strategy name defined in strategy_features.yaml
         top_factors: Path to top_factors.json file to filter features
-        engineer: Pre-fitted ComprehensiveFeatureEngineer (optional)
+        engineer: Pre-fitted ConfigFeatureEngineer (optional)
         fit: Whether to fit the engineer (True) or transform only (False)
 
     Returns:
@@ -155,17 +155,19 @@ def load_data(
             print(f"   📊 Will only generate these features (others will be skipped)")
         except Exception as e:
             print(f"   ⚠️  Failed to load top factors: {e}")
-            print(f"   ⚠️  Will generate all features for {feature_type}")
+            print(f"   ⚠️  Will generate all features for strategy {feature_strategy}")
 
     # Feature engineering
     if engineer is None:
-        print(f"🔧 Engineering features ({feature_type})...")
-        engineer = ComprehensiveFeatureEngineer(feature_types=feature_type)
+        print(f"🔧 Engineering features (strategy: {feature_strategy})...")
+        engineer = ConfigFeatureEngineer(strategy_name=feature_strategy)
         df_features = engineer.engineer_all_features(
             df, fit=fit, required_features=selected_features
         )
     else:
-        print(f"🔧 Transforming features using pre-fitted engineer ({feature_type})...")
+        print(
+            f"🔧 Transforming features using pre-fitted engineer (strategy: {feature_strategy})..."
+        )
         df_features = engineer.engineer_all_features(
             df, fit=False, required_features=selected_features
         )

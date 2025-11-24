@@ -17,6 +17,7 @@ from src.features.time_series.utils_wpt_features import extract_wpt_features
 from src.features.time_series.utils_hilbert_features import extract_hilbert_features
 from src.features.time_series.utils_hurst_features import extract_hurst_features
 from src.features.time_series.utils_spectrum_features import extract_spectrum_features
+from src.features.time_series.utils_liquidity_features import extract_liquidity_features
 
 
 def build_sr_breakout_features(
@@ -93,7 +94,43 @@ def build_sr_breakout_features(
         rolling_window=64,
     )
 
-    # 5. 突破质量特征
+    # 5. VPVR 特征（空间域：流动性真空区识别）
+    print("   📊 Extracting VPVR features...")
+    df = extract_liquidity_features(
+        df,
+        price_col=price_col,
+        volume_col=volume_col,
+        high_col=high_col,
+        low_col=low_col,
+        atr_col=atr_col,
+        feature_type="vpvr",  # 仅提取 VPVR 特征
+    )
+
+    # 6. WPT + Volume 能量协同分析（真假突破判断）
+    print("   📊 Extracting WPT+Volume energy features...")
+    df = extract_liquidity_features(
+        df,
+        price_col=price_col,
+        volume_col=volume_col,
+        feature_type="energy",  # 仅提取能量特征
+    )
+
+    # 7. ZigZag 结构特征（空间域：突破点识别）
+    if "zz_high_value" in df.columns and "zz_low_value" in df.columns:
+        # 到最近 ZigZag 高点的距离（用于识别突破点）
+        if price_col in df.columns:
+            df["dist_to_zz_high"] = (df[price_col] - df["zz_high_value"]).abs()
+            df["dist_to_zz_low"] = (df[price_col] - df["zz_low_value"]).abs()
+            # 归一化距离
+            if atr_col in df.columns:
+                df["dist_to_zz_high_atr"] = df["dist_to_zz_high"] / df[atr_col].replace(
+                    0, np.nan
+                )
+                df["dist_to_zz_low_atr"] = df["dist_to_zz_low"] / df[atr_col].replace(
+                    0, np.nan
+                )
+
+    # 8. 突破质量特征
     if volume_col in df.columns:
         # 突破时成交量 / 20日均量
         df["volume_ma_20"] = df[volume_col].rolling(window=20, min_periods=1).mean()
@@ -107,7 +144,7 @@ def build_sr_breakout_features(
                 df["wpt_vper"] > df["wpt_vper"].rolling(window=20).quantile(0.8)
             ).astype(float)
 
-    # 6. 动能持续性特征
+    # 9. 动能持续性特征
     # ROC(5) / ROC(20) 比值
     if price_col in df.columns:
         roc_5 = df[price_col].pct_change(5)
@@ -118,7 +155,7 @@ def build_sr_breakout_features(
     if "hurst_price_rolling" in df.columns:
         df["trend_strength_hurst"] = (df["hurst_price_rolling"] > 0.6).astype(float)
 
-    # 7. 真空区识别特征
+    # 10. 真空区识别特征（使用 VPVR LVN）
     # Spectrum 主频迁移（从高频→低频）
     if "spectrum_price_period" in df.columns:
         df["spectrum_period_change"] = df["spectrum_price_period"].pct_change()
@@ -126,7 +163,7 @@ def build_sr_breakout_features(
             float
         )
 
-    # 8. 突破确认特征
+    # 11. 突破确认特征
     # 突破后 3 根 K 线收盘站稳比例（需要未来数据，这里用历史数据模拟）
     if price_col in df.columns and high_col in df.columns and low_col in df.columns:
         # 使用历史数据计算"站稳"（收盘价在区间内）
@@ -137,13 +174,30 @@ def build_sr_breakout_features(
             df["price_in_range"].rolling(window=3, min_periods=1).mean()
         )
 
-    # 9. 确保所有特征都有 shift(1) 以避免未来数据
+    # 12. 确保所有特征都有 shift(1) 以避免未来数据
     wpt_cols = [col for col in df.columns if col.startswith("wpt_")]
     hilbert_cols = [col for col in df.columns if col.startswith("hilbert_")]
     hurst_cols = [col for col in df.columns if col.startswith("hurst_")]
     spectrum_cols = [col for col in df.columns if col.startswith("spectrum_")]
+    vpvr_cols = [col for col in df.columns if col.startswith("vpvr_")]
+    liquidity_cols = [
+        col
+        for col in df.columns
+        if col.startswith("liquidity_")
+        or col.startswith("wpt_vper")
+        or col.startswith("wpt_energy")
+        or col.startswith("wpt_multi_scale")
+        or col.startswith("wpt_breakout")
+    ]
 
-    for col in wpt_cols + hilbert_cols + hurst_cols + spectrum_cols:
+    for col in (
+        wpt_cols
+        + hilbert_cols
+        + hurst_cols
+        + spectrum_cols
+        + vpvr_cols
+        + liquidity_cols
+    ):
         if col in df.columns:
             df[col] = df[col].shift(1)
 
@@ -206,6 +260,23 @@ def select_sr_breakout_features(
         "liquidity",
         "liquidity_pool",
         "order_block",
+        # VPVR 特征（空间域）
+        "vpvr_pvp",
+        "vpvr_hvn",
+        "vpvr_lvn",
+        "vpvr_lvn_distance",
+        "vpvr_volume_density",
+        "vpvr_price_in_lvn",
+        # ZigZag 特征（空间域）
+        "zz_high",
+        "zz_low",
+        "dist_to_zz",
+        # WPT + Volume 能量协同
+        "wpt_vper",
+        "wpt_energy_cascade",
+        "wpt_multi_scale_consistency",
+        "wpt_breakout_confidence",
+        "wpt_false_breakout_risk",
         # 波动率
         "volatility",
         "volatility_regime",
