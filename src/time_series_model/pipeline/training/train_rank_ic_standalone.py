@@ -32,7 +32,7 @@ import pandas as pd
 
 from data_tools.data_loader import MarketDataLoader
 from data_tools.data_utils import load_raw_data
-from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 from time_series_model.pipeline.dimensionality.utils import load_top_factors_list
 from time_series_model.pipeline.training.rank_ic_trainer import (
     prepare_rank_ic_labels,
@@ -205,8 +205,18 @@ def prepare_labels(
     df_features: pd.DataFrame,
     feature_cols: List[str],
     horizon: int,
+    use_risk_reward_label: bool = False,  # NEW: Enable R/R label
+    rr_ratio_threshold: float = 2.0,  # NEW: Target R/R
+    max_holding_bars: int = 24,  # NEW: Max holding period
+    use_continuous_rr_label: bool = False,  # NEW: Use continuous R/R or binary
+    split_by_reaction_type: bool = False,  # NEW: Split by reversal vs breakout
 ) -> tuple[pd.DataFrame, List[str], Optional[str], Optional[str]]:
-    """Prepare Rank IC labels and verify feature columns."""
+    """
+    Prepare Rank IC labels and verify feature columns.
+
+    If use_risk_reward_label=True, will generate initial signal based on existing features
+    (e.g., breakout_status) if signal column doesn't exist, then compute R/R labels.
+    """
     print("\n📝 Preparing Rank IC labels...")
 
     asset_col = "_symbol" if "_symbol" in df_features.columns else None
@@ -214,6 +224,55 @@ def prepare_labels(
     if isinstance(df_features.index, pd.DatetimeIndex):
         date_col = "date"
         df_features["date"] = df_features.index
+
+    # If using R/R label, generate initial signal if not exists
+    signal_col = None
+    if use_risk_reward_label:
+        # Try to find existing signal column
+        for col in ["signal", "sr_signal", "trading_signal"]:
+            if col in df_features.columns:
+                signal_col = col
+                break
+
+        # If no signal column exists, generate one based on existing features
+        if signal_col is None:
+            print("   📊 Generating initial signal based on existing features...")
+            signal = pd.Series(0, index=df_features.index, dtype=int)
+
+            # Option 1: Use breakout_status if available
+            if "breakout_status" in df_features.columns:
+                signal = df_features["breakout_status"].fillna(0).astype(int)
+                print("      ✅ Using breakout_status as initial signal")
+            # Option 2: Use dist_to_nearest_sr and direction_to_nearest_sr
+            elif (
+                "dist_to_nearest_sr" in df_features.columns
+                and "direction_to_nearest_sr" in df_features.columns
+            ):
+                # If price is close to SR and moving towards it, generate signal
+                close_to_sr = (
+                    df_features["dist_to_nearest_sr"].abs() < 0.01
+                )  # Within 1% of SR
+                direction = df_features["direction_to_nearest_sr"]
+                # If moving up towards resistance (direction > 0), potential short
+                # If moving down towards support (direction < 0), potential long
+                signal.loc[close_to_sr & (direction < 0)] = (
+                    1  # Long when approaching support
+                )
+                signal.loc[close_to_sr & (direction > 0)] = (
+                    -1
+                )  # Short when approaching resistance
+                print(
+                    "      ✅ Using dist_to_nearest_sr and direction_to_nearest_sr as initial signal"
+                )
+            else:
+                print("      ⚠️  Warning: No suitable features found to generate signal")
+                print("      ⚠️  R/R label will not be computed")
+                use_risk_reward_label = False
+
+            if use_risk_reward_label:
+                df_features["signal"] = signal
+                signal_col = "signal"
+                print(f"      ✅ Generated {len(signal[signal != 0])} non-zero signals")
 
     df_with_labels = prepare_rank_ic_labels(
         df_features,
@@ -223,6 +282,12 @@ def prepare_labels(
         hold_period=horizon,
         lookback_window=60,
         ensure_volatility=True,
+        use_risk_reward_label=use_risk_reward_label,
+        rr_ratio_threshold=rr_ratio_threshold,
+        max_holding_bars=max_holding_bars,
+        signal_col=signal_col,
+        use_continuous_rr_label=use_continuous_rr_label,
+        split_by_reaction_type=split_by_reaction_type,
     )
 
     # Verify feature columns still exist
@@ -488,6 +553,33 @@ def main():
         default=False,
         help="Calibrate predictions to match true return distribution",
     )
+    parser.add_argument(
+        "--use-risk-reward-label",
+        action="store_true",
+        help="Use R/R label instead of fixed hold period return (recommended for SR strategies)",
+    )
+    parser.add_argument(
+        "--rr-ratio-threshold",
+        type=float,
+        default=2.0,
+        help="Target risk-reward ratio for R/R label (default: 2.0)",
+    )
+    parser.add_argument(
+        "--max-holding-bars",
+        type=int,
+        default=24,
+        help="Maximum holding period for R/R label (default: 24)",
+    )
+    parser.add_argument(
+        "--use-continuous-rr-label",
+        action="store_true",
+        help="Use continuous R/R label (realized R/R) instead of binary label",
+    )
+    parser.add_argument(
+        "--split-by-reaction-type",
+        action="store_true",
+        help="Split SR opportunities by reaction type (reversal vs breakout) - recommended for SR strategies",
+    )
 
     args = parser.parse_args()
 
@@ -529,6 +621,11 @@ def main():
         df_features=df_features,
         feature_cols=feature_cols,
         horizon=args.horizon,
+        use_risk_reward_label=getattr(args, "use_risk_reward_label", False),
+        rr_ratio_threshold=getattr(args, "rr_ratio_threshold", 2.0),
+        max_holding_bars=getattr(args, "max_holding_bars", 24),
+        use_continuous_rr_label=getattr(args, "use_continuous_rr_label", False),
+        split_by_reaction_type=getattr(args, "split_by_reaction_type", False),
     )
 
     # Step 5: Split labeled data

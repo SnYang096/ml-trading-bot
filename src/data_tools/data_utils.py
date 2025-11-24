@@ -12,7 +12,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 
 from data_tools.data_loader import MarketDataLoader
-from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 from time_series_model.pipeline.dimensionality.utils import load_top_factors_list
 
 

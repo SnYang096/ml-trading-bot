@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from data_tools.data_loader import MarketDataLoader
-from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 from time_series_model.pipeline.training.rank_ic_trainer import (
     prepare_rank_ic_labels,
     train_rank_ic_model,

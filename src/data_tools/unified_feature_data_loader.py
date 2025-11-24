@@ -7,7 +7,7 @@ from typing import Dict, Optional, Tuple, Any
 import numpy as np
 import pandas as pd
 
-from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 from data_tools.data_loader import MarketDataLoader
 from time_series_model.utils.sample_data import create_sample_data
 

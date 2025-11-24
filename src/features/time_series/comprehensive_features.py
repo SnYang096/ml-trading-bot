@@ -18,16 +18,16 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # 导入所有特征工程模块
-from .feature_engineering import FeatureEngineer
-from .feature_engineering_enhanced import EnhancedFeatureEngineer
-from .feature_engineering_talib import TalibFeatureEngineer
-from .dl_sequence_features import add_dl_sequence_features
-from .baseline_features import (
+from src.features.time_series.feature_engineering import FeatureEngineer
+from src.features.time_series.enhanced_features import EnhancedFeatureEngineer
+from src.features.time_series.feature_engineering_talib import TalibFeatureEngineer
+from src.features.time_series.dl_sequence_features import add_dl_sequence_features
+from src.features.time_series.baseline_features import (
     BaselineFeatureEngineer,
     engineer_baseline_features,
     get_baseline_feature_columns,
 )
-from .alpha_factors.alpha101_feature_engineer import Alpha101FeatureEngineer
+from src.data_tools.alpha_factors.alpha101_feature_engineer import Alpha101FeatureEngineer
 
 
 class ComprehensiveFeatureEngineer:
@@ -454,7 +454,7 @@ class ComprehensiveFeatureEngineer:
         if self.use_alpha101:
             print("  📊 Alpha101 因子特征（时序版本，仅保留关键因子）...")
             try:
-                from .alpha_factors.alpha101_timeseries_adapted import (
+                from src.data_tools.alpha_factors.alpha101_timeseries_adapted import (
                     compute_adapted_alpha101_factors,
                 )
 
@@ -855,7 +855,7 @@ class ComprehensiveFeatureEngineer:
                     # 如果 fit=True，创建新的 extractor；如果 fit=False，使用已保存的 extractor
                     if fit:
                         # Create new extractor and fit
-                        from .dl_sequence_features import DeepLearningSequenceExtractor
+                        from src.features.time_series.dl_sequence_features import DeepLearningSequenceExtractor
 
                         self.dl_sequence_extractor = DeepLearningSequenceExtractor(
                             backend=self.dl_backend,

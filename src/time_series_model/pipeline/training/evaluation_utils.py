@@ -241,6 +241,8 @@ def compute_confidence_statistics(
                                         period_returns_for_direction.loc[long_mask]
                                     )
                                 ).mean()
+                                # Long 交易的收益就是 future_return 本身
+                                # 因为 Long 信号（signal = 1）的收益 = 1 * future_return
                                 long_avg_return = period_returns_for_direction.loc[
                                     long_mask
                                 ].mean()
@@ -260,9 +262,16 @@ def compute_confidence_statistics(
                                         period_returns_for_direction.loc[short_mask]
                                     )
                                 ).mean()
-                                short_avg_return = period_returns_for_direction.loc[
+                                # 【关键修复】：Short 交易的收益应该是 -future_return
+                                # 因为 Short 信号（signal = -1）的收益 = -1 * future_return
+                                # 如果 future_return < 0（价格下跌），Short 盈利（收益为正）
+                                # 如果 future_return > 0（价格上涨），Short 亏损（收益为负）
+                                short_returns = period_returns_for_direction.loc[
                                     short_mask
-                                ].mean()
+                                ]
+                                short_avg_return = (
+                                    -short_returns.mean()
+                                )  # 反转符号，表示 Short 交易的收益
                                 direction_stats["short_direction_accuracy"] = float(
                                     short_direction_acc
                                 )
@@ -341,9 +350,14 @@ def compute_confidence_statistics(
             # Convert back to Series with proper index
             pnl = pd.Series(pnl_values, index=common_index)
 
-            # Deduct trading fees when position changes (only on entry/exit, not hold)
+            # 【关键修复】：对于 multi-period returns，每笔交易只扣除一次费用（开仓时）
+            # future_return 已经包含了整个持有期的收益，平仓时不需要再扣除费用
+            # 只在新开仓时（position 从 0 变为非0）扣除费用
             position_changes = position_filtered.diff().abs()
-            pnl = pnl - (position_changes * fee_rate)
+            # 只扣除开仓费用（position 从 0 变为非0），不扣除平仓费用
+            # 因为 future_return 已经包含了整个持有期的收益
+            entry_fees = (position_changes > 0) & (position_filtered != 0)
+            pnl = pnl - (entry_fees.astype(float) * fee_rate)
 
             # Filter out NaN values (from future_return calculation)
             pnl = pnl[pnl.notna()]

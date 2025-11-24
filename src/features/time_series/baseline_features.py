@@ -317,6 +317,9 @@ class BaselineFeatureEngineer:
         tolerance_factor: float = 0.5,
         sr_type: str = "support",  # 必须指定: 'support' 或 'resistance'
         max_lookahead_bars: int = 3,
+        use_volume_confirmation: bool = True,  # 是否使用量价确认
+        volume_lookback: int = 20,  # 成交量回看窗口（用于计算平均成交量）
+        min_volume_ratio: float = 1.0,  # 最小成交量比率（低于此值不计入有效反应）
     ) -> float:
         """
         计算支撑/阻力位的质量评分（Structure Quality Score, SQS）
@@ -326,11 +329,14 @@ class BaselineFeatureEngineer:
 
         Args:
             sr_price: 支撑或阻力价位
-            df: 历史K线数据，必须包含 ['high', 'low', 'close', 'atr']，索引为时间
+            df: 历史K线数据，必须包含 ['high', 'low', 'close', 'atr', 'volume']，索引为时间
             window: 回看窗口长度（单位：K线根数）
             tolerance_factor: ATR 容忍带系数，默认 0.5
             sr_type: 必须为 'support' 或 'resistance'
             max_lookahead_bars: 最大反应观察期（不超过窗口剩余长度）
+            use_volume_confirmation: 是否使用量价确认（默认 True）
+            volume_lookback: 成交量回看窗口（用于计算平均成交量）
+            min_volume_ratio: 最小成交量比率（低于此值不计入有效反应，默认 1.0 表示不强制要求放量）
 
         Returns:
             SQS 分数（>=0，越高越好；无有效测试时返回 0.0）
@@ -378,16 +384,56 @@ class BaselineFeatureEngineer:
             future_slice = window_df.iloc[pos + 1 : pos + 1 + actual_lookahead]
             close_at_touch = window_df.loc[idx, "close"]
 
+            # 【安全实现量价加权】：在反应循环内计算成交量统计
+            # 关键原则：
+            # 1. current_vol（测试点K线的成交量）可以使用，因为在该K线结束后是已知的
+            # 2. avg_vol（基准平均成交量）必须来自更早的数据（不含当前K线）
+            # 3. 使用 pos - volume_lookback : pos 确保不包含当前K线
+            if use_volume_confirmation and "volume" in window_df.columns:
+                # 用测试点之前的 volume_lookback 根K线计算平均成交量（不含当前K线）
+                if pos >= volume_lookback:
+                    # 有足够历史数据：使用 pos - volume_lookback : pos（不包含 pos）
+                    ref_vols = window_df.iloc[pos - volume_lookback : pos]["volume"]
+                else:
+                    # 数据不足：使用可用数据（至少1根，但不包含当前K线）
+                    ref_vols = window_df.iloc[:max(1, pos)]["volume"]
+
+                avg_vol = ref_vols.mean() if len(ref_vols) > 0 else 1.0
+                current_vol = window_df.loc[idx, "volume"]  # 当前K线成交量（可以使用）
+                vol_ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
+
+                # 体积确认因子（抑制极端值，限制在3倍以内）
+                vol_factor = min(vol_ratio, 3.0)
+            else:
+                vol_factor = 1.0
+                vol_ratio = 1.0
+
             if sr_type == "resistance":
                 # 阻力：期望价格下跌 → 反应 = 触及时收盘价 - 未来最低价
                 reaction = close_at_touch - future_slice["low"].min()
                 if reaction > 0:  # 仅当确实下跌时才计入
-                    reactions.append(reaction / current_atr)
+                    # 只有放量且方向正确的反应才计入
+                    if use_volume_confirmation and "volume" in window_df.columns:
+                        if vol_ratio >= min_volume_ratio:
+                            # 使用平方根加权，避免极端值影响过大
+                            weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
+                            reactions.append(weighted_reaction)
+                    else:
+                        # 不使用量价确认，直接归一化
+                        reactions.append(reaction / current_atr)
             else:  # support
                 # 支撑：期望价格上涨 → 反应 = 未来最高价 - 触及时收盘价
                 reaction = future_slice["high"].max() - close_at_touch
                 if reaction > 0:  # 仅当确实反弹时才计入
-                    reactions.append(reaction / current_atr)
+                    # 只有放量且方向正确的反应才计入
+                    if use_volume_confirmation and "volume" in window_df.columns:
+                        if vol_ratio >= min_volume_ratio:
+                            # 使用平方根加权，避免极端值影响过大
+                            weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
+                            reactions.append(weighted_reaction)
+                    else:
+                        # 不使用量价确认，直接归一化
+                        reactions.append(reaction / current_atr)
 
         # 汇总指标
         test_count = len(test_indices)
@@ -402,6 +448,83 @@ class BaselineFeatureEngineer:
 
         sqs = test_score + reaction_score + recency_score
         return float(sqs)
+
+    @staticmethod
+    def evaluate_level_quality_bidirectional(
+        sr_price: float,
+        df: pd.DataFrame,
+        window: int = 60,
+        tolerance_factor: float = 0.5,
+        max_lookahead_bars: int = 3,
+        use_volume_confirmation: bool = True,
+        volume_lookback: int = 20,
+        min_volume_ratio: float = 1.0,
+    ) -> Dict[str, float | str]:
+        """
+        对未知类型的价格水平进行双向 SQS 评估（Bidirectional Testing）
+
+        适用于：
+        - 历史高点/低点（突破后角色可能转换）
+        - 成交密集区中轴（POC）
+        - OLS 通道中线、VWAP 等动态中轴
+        - 其他无法明确判断是支撑还是阻力的水平
+
+        Args:
+            sr_price: 价格水平
+            df: 历史K线数据，必须包含 ['high', 'low', 'close', 'atr', 'volume']
+            window: 回看窗口长度
+            tolerance_factor: ATR 容忍带系数
+            max_lookahead_bars: 最大反应观察期
+            use_volume_confirmation: 是否使用量价确认
+            volume_lookback: 成交量回看窗口
+            min_volume_ratio: 最小成交量比率
+
+        Returns:
+            包含以下键的字典：
+            - sqs: 最佳 SQS 分数（支撑和阻力中的较高者）
+            - type: 最佳类型（'support' 或 'resistance'）
+            - support_sqs: 作为支撑的 SQS 分数
+            - resistance_sqs: 作为阻力的 SQS 分数
+        """
+        # 分别计算支撑和阻力质量
+        support_sqs = BaselineFeatureEngineer.calculate_sqs(
+            sr_price,
+            df,
+            window=window,
+            tolerance_factor=tolerance_factor,
+            sr_type="support",
+            max_lookahead_bars=max_lookahead_bars,
+            use_volume_confirmation=use_volume_confirmation,
+            volume_lookback=volume_lookback,
+            min_volume_ratio=min_volume_ratio,
+        )
+
+        resistance_sqs = BaselineFeatureEngineer.calculate_sqs(
+            sr_price,
+            df,
+            window=window,
+            tolerance_factor=tolerance_factor,
+            sr_type="resistance",
+            max_lookahead_bars=max_lookahead_bars,
+            use_volume_confirmation=use_volume_confirmation,
+            volume_lookback=volume_lookback,
+            min_volume_ratio=min_volume_ratio,
+        )
+
+        # 选择更优角色
+        if support_sqs >= resistance_sqs:
+            best_sqs = support_sqs
+            best_type = "support"
+        else:
+            best_sqs = resistance_sqs
+            best_type = "resistance"
+
+        return {
+            "sqs": float(best_sqs),
+            "type": best_type,
+            "support_sqs": float(support_sqs),
+            "resistance_sqs": float(resistance_sqs),
+        }
 
     @staticmethod
     def calculate_volume_price_confirmation(
@@ -673,7 +796,19 @@ class BaselineFeatureEngineer:
         cluster_weight: float = 0.15,
         compression_series: Optional[pd.Series] = None,
     ) -> Dict[str, pd.Series]:
-        """计算每个边界的 SQS 强度，并考虑边界重合与压缩质量"""
+        """
+        计算每个边界的 SQS 强度，并考虑边界重合与压缩质量
+        
+        对于 mid 类型的边界（如 poc, ols_mid, vwap），不仅输出加权平均的 base，
+        还输出原始分量和上下文特征，让模型学习交互关系：
+        - {name}_support_sqs: 支撑方向的 SQS
+        - {name}_resistance_sqs: 阻力方向的 SQS
+        - {name}_price_above: 价格是否在边界上方 (1.0/0.0)
+        - {name}_trend_down: 价格是否向下走 (1.0/0.0)
+        - {name}_weight_support: 支撑权重
+        - {name}_weight_resistance: 阻力权重
+        - sqs_{name}: 加权平均的 base（保留用于向后兼容）
+        """
         if "atr" not in data.columns or not boundaries:
             return {}
 
@@ -692,6 +827,15 @@ class BaselineFeatureEngineer:
             sr_type = boundary["type"]
             sr_series = sr_values[name]
             strength = pd.Series(0.0, index=data.index, dtype=float)
+            
+            # 对于 mid 类型，初始化额外的特征序列
+            if sr_type == "mid":
+                support_sqs_series = pd.Series(0.0, index=data.index, dtype=float)
+                resistance_sqs_series = pd.Series(0.0, index=data.index, dtype=float)
+                price_above_series = pd.Series(0.0, index=data.index, dtype=float)
+                trend_down_series = pd.Series(0.0, index=data.index, dtype=float)
+                weight_support_series = pd.Series(0.5, index=data.index, dtype=float)
+                weight_resistance_series = pd.Series(0.5, index=data.index, dtype=float)
 
             for i in range(window, len(data)):
                 sr_price = sr_series.iloc[i]
@@ -703,20 +847,106 @@ class BaselineFeatureEngineer:
                 # 对于窗口内的每个测试点，可以使用该点之后、窗口结束之前的数据来计算反应
                 window_slice = data.iloc[max(0, i - window) : i]
                 try:
-                    # 对于 "mid" 类型的边界（如 poc, ols_mid, vwap），无法计算 SQS
-                    # 因为它们既不是支撑也不是阻力，而是价格中轴线
+                    # 对于 "mid" 类型的边界（如 poc, ols_mid, vwap），使用双向测试
+                    # 因为它们既可能是支撑也可能是阻力，取决于价格相对位置
                     if sr_type == "mid":
-                        base = 0.0
+                        # 使用双向测试，自动识别当前市场角色
+                        level_quality = (
+                            BaselineFeatureEngineer.evaluate_level_quality_bidirectional(
+                                sr_price,
+                                window_slice,
+                                window=window,
+                                tolerance_factor=tolerance_factor,
+                                use_volume_confirmation=True,
+                            )
+                        )
+                        # 【关键修复】：对于 mid 类型，使用 support_sqs 和 resistance_sqs 的加权平均
+                        # 而不是只选择较大的那个，避免偏向某一方向
+                        # 权重根据价格趋势动态调整：
+                        # - 价格在边界上方且向下走 → 边界作为支撑 → support 权重更高
+                        # - 价格在边界下方且向上走 → 边界作为阻力 → resistance 权重更高
+                        support_sqs_val = level_quality.get("support_sqs", 0.0)
+                        resistance_sqs_val = level_quality.get("resistance_sqs", 0.0)
+                        
+                        # 判断价格位置和趋势
+                        current_price = data["close"].iloc[i]
+                        if not pd.isna(current_price) and not pd.isna(sr_price):
+                            price_above = current_price > sr_price
+                            
+                            # 计算价格趋势（使用最近几根K线的平均变化）
+                            lookback_trend = 3  # 使用最近3根K线判断趋势
+                            if i >= lookback_trend:
+                                recent_prices = data["close"].iloc[i - lookback_trend : i]
+                                if len(recent_prices) > 1 and recent_prices.notna().all():
+                                    price_trend = (recent_prices.iloc[-1] - recent_prices.iloc[0]) / recent_prices.iloc[0]
+                                    # price_trend > 0 表示上涨，< 0 表示下跌
+                                    
+                                    # 动态权重分配：
+                                    # 1. 价格在边界上方且向下走 → 边界作为支撑 → support 权重更高
+                                    # 2. 价格在边界下方且向上走 → 边界作为阻力 → resistance 权重更高
+                                    if price_above and price_trend < 0:
+                                        # 价格在边界上方且向下走，边界作为支撑
+                                        weight_support = 0.7
+                                        weight_resistance = 0.3
+                                    elif not price_above and price_trend > 0:
+                                        # 价格在边界下方且向上走，边界作为阻力
+                                        weight_support = 0.3
+                                        weight_resistance = 0.7
+                                    else:
+                                        # 其他情况（价格远离边界或趋势不明显），使用平衡权重
+                                        weight_support = 0.5
+                                        weight_resistance = 0.5
+                                else:
+                                    # 数据不足，使用位置判断
+                                    if price_above:
+                                        # 价格在边界上方，更可能作为支撑（如果回落）
+                                        weight_support = 0.6
+                                        weight_resistance = 0.4
+                                    else:
+                                        # 价格在边界下方，更可能作为阻力（如果反弹）
+                                        weight_support = 0.4
+                                        weight_resistance = 0.6
+                            else:
+                                # 数据不足，使用位置判断
+                                if price_above:
+                                    weight_support = 0.6
+                                    weight_resistance = 0.4
+                                else:
+                                    weight_support = 0.4
+                                    weight_resistance = 0.6
+                            
+                            base = (
+                                support_sqs_val * weight_support
+                                + resistance_sqs_val * weight_resistance
+                            )
+                            
+                            # 【增强方案】：不仅输出加权平均的 base，还输出原始分量和上下文特征
+                            # 让模型自己学习交互关系，而不是依赖预定义的权重
+                            support_sqs_series.iloc[i] = support_sqs_val
+                            resistance_sqs_series.iloc[i] = resistance_sqs_val
+                            price_above_series.iloc[i] = 1.0 if price_above else 0.0
+                            trend_down_series.iloc[i] = 1.0 if price_trend < 0 else 0.0
+                            weight_support_series.iloc[i] = weight_support
+                            weight_resistance_series.iloc[i] = weight_resistance
+                        else:
+                            # 如果无法判断价格位置，使用简单平均
+                            base = (support_sqs_val + resistance_sqs_val) / 2.0
+                            # 仍然记录原始分量
+                            support_sqs_series.iloc[i] = support_sqs_val
+                            resistance_sqs_series.iloc[i] = resistance_sqs_val
                     else:
+                        # 对于明确类型的边界，使用量价确认增强的 SQS
                         base = BaselineFeatureEngineer.calculate_sqs(
                             sr_price,
                             window_slice,
                             window=window,
                             tolerance_factor=tolerance_factor,
                             sr_type=sr_type,
+                            use_volume_confirmation=True,  # 启用量价确认
                         )
                 except Exception:
                     base = 0.0
+                    # 如果发生异常，对于 mid 类型，保持特征为默认值（已在初始化时设置）
 
                 tolerance = (
                     atr_series.iloc[i] * tolerance_factor
@@ -741,9 +971,442 @@ class BaselineFeatureEngineer:
                 score = base * (1.0 + cluster_bonus) + 0.2 * compression_bonus
                 strength.iloc[i] = score
 
-            strengths[f"sqs_{name}"] = strength.shift(1).fillna(0.0)
+            # 对于 mid 类型，不仅输出加权平均的 base，还输出原始分量和上下文特征
+            if sr_type == "mid":
+                strengths[f"sqs_{name}"] = strength.shift(1).fillna(0.0)  # 保留加权平均的 base
+                # 输出原始分量和上下文特征，让模型学习交互关系
+                strengths[f"{name}_support_sqs"] = support_sqs_series.shift(1).fillna(0.0)
+                strengths[f"{name}_resistance_sqs"] = resistance_sqs_series.shift(1).fillna(0.0)
+                strengths[f"{name}_price_above"] = price_above_series.shift(1).fillna(0.0)
+                strengths[f"{name}_trend_down"] = trend_down_series.shift(1).fillna(0.0)
+                strengths[f"{name}_weight_support"] = weight_support_series.shift(1).fillna(0.5)
+                strengths[f"{name}_weight_resistance"] = weight_resistance_series.shift(1).fillna(0.5)
+            else:
+                strengths[f"sqs_{name}"] = strength.shift(1).fillna(0.0)
 
         return strengths
+
+    @staticmethod
+    def _compute_breakout_confirmation_and_role_flip(
+        data: pd.DataFrame,
+        boundaries: List[Dict[str, str]],
+        lookback: int = 20,
+        confirmation_bars: int = 3,
+        max_retest_bars: int = 10,
+    ) -> Dict[str, pd.Series]:
+        """
+        计算突破确认和角色转换特征
+        
+        包括：
+        1. 突破确认概率：基于量价关系判断真伪突破
+        2. 角色转换概率：支撑/阻力角色转换的概率
+        3. 转换状态显式标记：post_breakout_retest, post_breakdown_retest 等
+        
+        这些特征帮助模型理解"同一个位置，在不同市场环境下会扮演完全相反的角色"
+        """
+        if "atr" not in data.columns or not boundaries:
+            return {}
+        
+        features: Dict[str, pd.Series] = {}
+        atr_series = data["atr"].ffill()
+        
+        for boundary in boundaries:
+            name = boundary["name"]
+            column = boundary["column"]
+            sr_type = boundary["type"]
+            sr_series = data[column]
+            
+            # 初始化特征序列
+            breakout_confirmation = pd.Series(0.0, index=data.index, dtype=float)
+            role_flip_prob = pd.Series(0.0, index=data.index, dtype=float)
+            post_breakout_retest = pd.Series(0.0, index=data.index, dtype=float)
+            post_breakdown_retest = pd.Series(0.0, index=data.index, dtype=float)
+            
+            # 记录最近的突破事件（用于检测回踩）
+            last_breakout_idx = -1
+            last_breakout_direction = 0  # 1=向上突破, -1=向下突破
+            last_breakout_price = np.nan
+            
+            for i in range(lookback + confirmation_bars + max_retest_bars, len(data)):
+                sr_price = sr_series.iloc[i]
+                if pd.isna(sr_price):
+                    continue
+                
+                current_price = data["close"].iloc[i]
+                current_high = data["high"].iloc[i]
+                current_low = data["low"].iloc[i]
+                current_volume = data["volume"].iloc[i]
+                
+                # 计算 ATR 用于归一化
+                current_atr = atr_series.iloc[i] if not pd.isna(atr_series.iloc[i]) else 1.0
+                
+                # 1. 检测突破（使用历史数据）
+                breakout_idx = i - confirmation_bars - max_retest_bars
+                if breakout_idx >= 0:
+                    prev_close = data["close"].iloc[breakout_idx - 1] if breakout_idx > 0 else current_price
+                    breakout_close = data["close"].iloc[breakout_idx]
+                    breakout_high = data["high"].iloc[breakout_idx]
+                    breakout_low = data["low"].iloc[breakout_idx]
+                    breakout_volume = data["volume"].iloc[breakout_idx]
+                    
+                    # 检测突破方向
+                    detected_breakout = False
+                    breakout_direction = 0
+                    
+                    if sr_type == "resistance":
+                        if prev_close <= sr_price and breakout_high > sr_price:
+                            detected_breakout = True
+                            breakout_direction = 1
+                    elif sr_type == "support":
+                        if prev_close >= sr_price and breakout_low < sr_price:
+                            detected_breakout = True
+                            breakout_direction = -1
+                    elif sr_type == "mid":
+                        if (prev_close <= sr_price and breakout_close > sr_price) or \
+                           (prev_close >= sr_price and breakout_close < sr_price):
+                            detected_breakout = True
+                            breakout_direction = 1 if breakout_close > sr_price else -1
+                    
+                    if detected_breakout:
+                        last_breakout_idx = breakout_idx
+                        last_breakout_direction = breakout_direction
+                        last_breakout_price = sr_price
+                        
+                        # 计算突破确认概率（基于量价关系）
+                        # 使用历史数据计算平均成交量
+                        if breakout_idx >= lookback:
+                            avg_vol = data["volume"].iloc[breakout_idx - lookback : breakout_idx].mean()
+                        else:
+                            avg_vol = data["volume"].iloc[:breakout_idx].mean() if breakout_idx > 0 else 1.0
+                        
+                        volume_ratio = breakout_volume / avg_vol if avg_vol > 0 else 1.0
+                        
+                        # 突破幅度（归一化）
+                        breakout_size = abs(breakout_close - sr_price) / current_atr if current_atr > 0 else 0.0
+                        
+                        # 突破后回踩速度（在 confirmation_bars 内是否回踩）
+                        retrace_speed = 0.0
+                        if breakout_idx + confirmation_bars < i:
+                            post_breakout_slice = data.iloc[breakout_idx + 1 : breakout_idx + 1 + confirmation_bars]
+                            if len(post_breakout_slice) > 0:
+                                if breakout_direction == 1:  # 向上突破
+                                    min_after = post_breakout_slice["low"].min()
+                                    retrace_pct = (sr_price - min_after) / current_atr if current_atr > 0 else 0.0
+                                    retrace_speed = max(0.0, retrace_pct)  # 回踩越深，速度越快
+                                else:  # 向下突破
+                                    max_after = post_breakout_slice["high"].max()
+                                    retrace_pct = (max_after - sr_price) / current_atr if current_atr > 0 else 0.0
+                                    retrace_speed = max(0.0, retrace_pct)
+                        
+                        # 突破确认概率 = sigmoid(量能验证 * 0.5 + 突破幅度 * 0.3 - 回踩速度 * 0.2)
+                        import math
+                        confirmation_score = (
+                            min(volume_ratio, 3.0) * 0.5 +
+                            min(breakout_size, 2.0) * 0.3 -
+                            min(retrace_speed, 1.5) * 0.2
+                        )
+                        breakout_confirmation.iloc[i] = 1.0 / (1.0 + math.exp(-confirmation_score))  # Sigmoid
+                
+                # 2. 检测回踩（突破后回踩原边界）
+                if last_breakout_idx >= 0 and i > last_breakout_idx:
+                    # 检查是否回踩到原边界附近（在 ATR 范围内）
+                    tolerance = current_atr * 0.5
+                    near_original_sr = abs(current_price - last_breakout_price) <= tolerance
+                    
+                    if last_breakout_direction == 1:  # 向上突破后回踩
+                        if near_original_sr and current_low <= last_breakout_price + tolerance:
+                            post_breakout_retest.iloc[i] = 1.0
+                    elif last_breakout_direction == -1:  # 向下突破后回踩
+                        if near_original_sr and current_high >= last_breakout_price - tolerance:
+                            post_breakdown_retest.iloc[i] = 1.0
+                
+                # 3. 计算角色转换概率（仅对 mid 类型）
+                if sr_type == "mid":
+                    # 获取双向 SQS（如果已计算）
+                    support_sqs_col = f"{name}_support_sqs"
+                    resistance_sqs_col = f"{name}_resistance_sqs"
+                    
+                    if support_sqs_col in data.columns and resistance_sqs_col in data.columns:
+                        support_sqs = data[support_sqs_col].iloc[i] if i < len(data) else 0.0
+                        resistance_sqs = data[resistance_sqs_col].iloc[i] if i < len(data) else 0.0
+                        
+                        # 支撑/阻力主导强度差
+                        strength_diff = abs(support_sqs - resistance_sqs)
+                        
+                        # 价格位置（+1=在边界上方，-1=在边界下方）
+                        price_position = 1.0 if current_price > sr_price else -1.0
+                        
+                        # 角色转换临界点（价格突破后回踩原阻力/支撑）
+                        flip_zone = 0.0
+                        if last_breakout_idx >= 0 and i > last_breakout_idx:
+                            if (last_breakout_direction == 1 and price_position < 0) or \
+                               (last_breakout_direction == -1 and price_position > 0):
+                                flip_zone = 1.0
+                        
+                        # 转换概率 = sigmoid(强度差 * 0.7 + 位置验证 * 1.2)
+                        import math
+                        flip_score = strength_diff * 0.7 + flip_zone * 1.2
+                        role_flip_prob.iloc[i] = 1.0 / (1.0 + math.exp(-flip_score))  # Sigmoid
+            
+            # 保存特征（shift(1) 确保因果性）
+            features[f"{name}_breakout_confirmation"] = breakout_confirmation.shift(1).fillna(0.0)
+            features[f"{name}_role_flip_prob"] = role_flip_prob.shift(1).fillna(0.0)
+            features[f"{name}_post_breakout_retest"] = post_breakout_retest.shift(1).fillna(0.0)
+            features[f"{name}_post_breakdown_retest"] = post_breakdown_retest.shift(1).fillna(0.0)
+        
+        return features
+
+    @staticmethod
+    def _add_breakout_quality_features(
+        data: pd.DataFrame,
+        boundaries: List[Dict[str, str]],
+    ) -> pd.DataFrame:
+        """
+        添加4类12个核心特征，用于让模型自动学习突破质量判断
+        
+        整体特征体系设计（共4类12个核心特征）：
+        
+        A. 结构质量（3个）
+        1. sqs - SR测试次数+反应强度+时间衰减（已有）
+        2. dist_to_nearest_sr - 当前价距最近SR的距离（已有）
+        3. sr_confluence - 是否多个周期SR重合（新增）
+        
+        B. 突破动能（3个）
+        1. vol_ratio - 突破K线量比（已有 volume_ratio）
+        2. order_flow_delta - 主动买卖差（新增，基于 delta 或 buy_qty - sell_qty）
+        3. breakout_speed - 突破K线实体/影线比（新增）
+        
+        C. 动能持续性（3个）
+        1. follow_through_1 - 第2根K线是否继续新高/新低（新增）
+        2. follow_through_2 - 第3根K线是否站稳（新增）
+        3. momentum_decay - 突破后3根K线的斜率变化（新增）
+        
+        D. 市场环境（3个）
+        1. compression_score - 布林带宽度 / ATR 比值（已有 compression_confidence）
+        2. trend_strength - ADX(14) 或 slope of MA50（新增）
+        3. time_phase - 是否在活跃交易时段（已有 hour_sin, hour_cos）
+        """
+        if data.empty:
+            return data
+        
+        # 确保有必要的列
+        if "atr" not in data.columns:
+            data["atr"] = BaselineFeatureEngineer._compute_atr(data)
+        
+        # A.3. SR重合度（sr_confluence）
+        # 检查是否有多个边界在相近位置（ATR范围内）
+        sr_confluence = pd.Series(0.0, index=data.index, dtype=float)
+        if boundaries:
+            for i in range(len(data)):
+                current_price = data["close"].iloc[i]
+                current_atr = data["atr"].iloc[i] if not pd.isna(data["atr"].iloc[i]) else 1.0
+                tolerance = current_atr * 0.5
+                
+                # 收集所有非NaN的边界价格
+                nearby_boundaries = []
+                for boundary in boundaries:
+                    col = boundary["column"]
+                    if col in data.columns:
+                        sr_price = data[col].iloc[i]
+                        if not pd.isna(sr_price) and abs(sr_price - current_price) <= tolerance * 2:
+                            nearby_boundaries.append(sr_price)
+                
+                # 计算在 tolerance 范围内的边界数量
+                if len(nearby_boundaries) >= 2:
+                    # 检查有多少个边界在 tolerance 范围内
+                    count = 0
+                    for sr1 in nearby_boundaries:
+                        for sr2 in nearby_boundaries:
+                            if sr1 != sr2 and abs(sr1 - sr2) <= tolerance:
+                                count += 1
+                    sr_confluence.iloc[i] = min(count / 2.0, 3.0) / 3.0  # 归一化到 [0, 1]
+        
+        data["sr_confluence"] = sr_confluence.shift(1).fillna(0.0)
+        
+        # B.2. 订单流差值（order_flow_delta）
+        # 注意：如果已经加载了 order_flow features，可以直接使用：
+        # - cvd_normalized（单根K线，归一化，等同于 order_flow_delta）
+        # - cvd_change_1（单根K线，原始值）
+        # - cvd_change_5（5根K线周期）
+        # - cvd_change_20（20根K线周期）
+        # 
+        # 这里为了保持特征命名一致性，优先使用 cvd_normalized，如果没有则计算
+        if "cvd_normalized" in data.columns:
+            # 直接使用已有的 cvd_normalized（单根K线，归一化）
+            data["order_flow_delta"] = data["cvd_normalized"].shift(1).fillna(0.0)
+        elif "cvd_change_1" in data.columns:
+            # 使用 cvd_change_1（单根K线，原始值），需要归一化
+            if "volume" in data.columns:
+                total_vol = data["volume"].replace(0, np.nan)
+                order_flow_delta_normalized = (data["cvd_change_1"] / total_vol).fillna(0.0)
+            else:
+                order_flow_delta_normalized = data["cvd_change_1"]
+            data["order_flow_delta"] = order_flow_delta_normalized.shift(1).fillna(0.0)
+        elif "delta" in data.columns:
+            # 使用 delta，需要归一化
+            if "volume" in data.columns:
+                total_vol = data["volume"].replace(0, np.nan)
+                order_flow_delta_normalized = (data["delta"] / total_vol).fillna(0.0)
+            else:
+                order_flow_delta_normalized = data["delta"]
+            data["order_flow_delta"] = order_flow_delta_normalized.shift(1).fillna(0.0)
+        elif "buy_qty" in data.columns and "sell_qty" in data.columns:
+            # 从 buy_qty 和 sell_qty 计算
+            order_flow_delta = data["buy_qty"] - data["sell_qty"]
+            if "volume" in data.columns:
+                total_vol = data["volume"].replace(0, np.nan)
+                order_flow_delta_normalized = (order_flow_delta / total_vol).fillna(0.0)
+            else:
+                order_flow_delta_normalized = order_flow_delta
+            data["order_flow_delta"] = order_flow_delta_normalized.shift(1).fillna(0.0)
+        else:
+            # 如果没有订单流数据，使用0
+            data["order_flow_delta"] = pd.Series(0.0, index=data.index)
+        
+        # B.3. 突破速度（breakout_speed）
+        # 突破K线实体/影线比
+        breakout_speed = pd.Series(0.0, index=data.index, dtype=float)
+        for i in range(1, len(data)):
+            high = data["high"].iloc[i]
+            low = data["low"].iloc[i]
+            open_price = data["open"].iloc[i]
+            close = data["close"].iloc[i]
+            
+            # 实体大小
+            body = abs(close - open_price)
+            # 上影线
+            upper_shadow = high - max(open_price, close)
+            # 下影线
+            lower_shadow = min(open_price, close) - low
+            # 总影线
+            total_shadow = upper_shadow + lower_shadow
+            
+            # 突破速度 = 实体 / (实体 + 影线)
+            if body + total_shadow > 0:
+                speed = body / (body + total_shadow)
+            else:
+                speed = 0.0
+            
+            breakout_speed.iloc[i] = speed
+        
+        data["breakout_speed"] = breakout_speed.shift(1).fillna(0.0)
+        
+        # C. 动能持续性特征
+        # 需要检测突破事件，然后计算后续K线的表现
+        follow_through_1 = pd.Series(0.0, index=data.index, dtype=float)
+        follow_through_2 = pd.Series(0.0, index=data.index, dtype=float)
+        momentum_decay = pd.Series(0.0, index=data.index, dtype=float)
+        
+        # 检测突破事件（相对于最近SR）
+        if "dist_to_nearest_sr" in data.columns and len(boundaries) > 0:
+            # 找到最近的SR边界
+            nearest_sr = pd.Series(index=data.index, dtype=float)
+            for boundary in boundaries:
+                col = boundary["column"]
+                if col in data.columns:
+                    if nearest_sr.isna().all():
+                        nearest_sr = data[col]
+                    else:
+                        # 选择距离当前价格更近的边界
+                        current_price = data["close"]
+                        dist1 = abs(nearest_sr - current_price)
+                        dist2 = abs(data[col] - current_price)
+                        nearest_sr = np.where(dist2 < dist1, data[col], nearest_sr)
+            
+            for i in range(3, len(data)):
+                if pd.isna(nearest_sr.iloc[i]):
+                    continue
+                
+                sr_price = nearest_sr.iloc[i]
+                prev_close = data["close"].iloc[i - 1]
+                curr_close = data["close"].iloc[i]
+                curr_high = data["high"].iloc[i]
+                curr_low = data["low"].iloc[i]
+                
+                # 检测突破方向
+                breakout_direction = 0
+                if prev_close <= sr_price and curr_high > sr_price:
+                    breakout_direction = 1  # 向上突破
+                elif prev_close >= sr_price and curr_low < sr_price:
+                    breakout_direction = -1  # 向下突破
+                
+                if breakout_direction != 0:
+                    # C.1. follow_through_1: 第2根K线是否继续新高/新低
+                    if i + 1 < len(data):
+                        next_high = data["high"].iloc[i + 1]
+                        next_low = data["low"].iloc[i + 1]
+                        if breakout_direction == 1:
+                            # 向上突破：第2根K线是否创新高
+                            follow_through_1.iloc[i + 1] = 1.0 if next_high > curr_high else 0.0
+                        else:
+                            # 向下突破：第2根K线是否创新低
+                            follow_through_1.iloc[i + 1] = 1.0 if next_low < curr_low else 0.0
+                    
+                    # C.2. follow_through_2: 第3根K线是否站稳
+                    if i + 2 < len(data):
+                        third_close = data["close"].iloc[i + 2]
+                        if breakout_direction == 1:
+                            # 向上突破：第3根K线收盘价是否仍在SR上方
+                            follow_through_2.iloc[i + 2] = 1.0 if third_close > sr_price else 0.0
+                        else:
+                            # 向下突破：第3根K线收盘价是否仍在SR下方
+                            follow_through_2.iloc[i + 2] = 1.0 if third_close < sr_price else 0.0
+                    
+                    # C.3. momentum_decay: 突破后3根K线的斜率变化
+                    if i + 3 < len(data):
+                        # 计算突破后3根K线的价格变化
+                        prices_after = data["close"].iloc[i + 1 : i + 4].values
+                        if len(prices_after) == 3 and all(~np.isnan(prices_after)):
+                            # 计算斜率（使用线性回归）
+                            x = np.array([1, 2, 3])
+                            y = prices_after
+                            slope = np.polyfit(x, y, 1)[0]
+                            
+                            # 归一化斜率（除以ATR）
+                            current_atr = data["atr"].iloc[i] if not pd.isna(data["atr"].iloc[i]) else 1.0
+                            normalized_slope = slope / current_atr if current_atr > 0 else 0.0
+                            
+                            # 动能衰减 = 1 - abs(斜率)（斜率越小，衰减越大）
+                            momentum_decay.iloc[i + 3] = 1.0 - min(abs(normalized_slope), 1.0)
+        
+        data["follow_through_1"] = follow_through_1.shift(1).fillna(0.0)
+        data["follow_through_2"] = follow_through_2.shift(1).fillna(0.0)
+        data["momentum_decay"] = momentum_decay.shift(1).fillna(0.0)
+        
+        # D.2. 趋势强度（trend_strength）
+        # 使用 ADX(14) 或 MA50 斜率
+        if "close" in data.columns:
+            # 计算 MA50
+            ma50 = data["close"].rolling(window=50, min_periods=1).mean()
+            
+            # 计算 MA50 斜率（使用线性回归）
+            trend_strength = pd.Series(0.0, index=data.index, dtype=float)
+            for i in range(50, len(data)):
+                if i >= 14:
+                    ma_window = ma50.iloc[i - 13 : i + 1].values
+                    if len(ma_window) == 14 and all(~np.isnan(ma_window)):
+                        x = np.arange(14)
+                        slope = np.polyfit(x, ma_window, 1)[0]
+                        # 归一化斜率（除以当前价格）
+                        current_price = data["close"].iloc[i]
+                        normalized_slope = slope / current_price if current_price > 0 else 0.0
+                        trend_strength.iloc[i] = normalized_slope * 100  # 放大100倍便于观察
+            
+            # 如果可以使用 TA-Lib，优先使用 ADX
+            try:
+                import talib
+                high = data["high"].values
+                low = data["low"].values
+                close = data["close"].values
+                adx = talib.ADX(high, low, close, timeperiod=14)
+                # ADX 范围是 0-100，归一化到 [0, 1]
+                trend_strength = pd.Series(adx / 100.0, index=data.index)
+            except Exception:
+                pass  # 如果 TA-Lib 不可用，使用 MA50 斜率
+        
+        data["trend_strength"] = trend_strength.shift(1).fillna(0.0)
+        
+        return data
 
     @staticmethod
     def _compute_boundary_volume_confirmations(
@@ -1079,6 +1742,11 @@ class BaselineFeatureEngineer:
         # 标准化距离特征
         data["dist_to_nearest_sr"] = dist_to_sr.shift(1).fillna(0.0)
         data["direction_to_nearest_sr"] = direction_to_sr.shift(1).fillna(0.0)
+        
+        # 【新增】：添加4类12个核心特征，用于让模型自动学习突破质量判断
+        data = BaselineFeatureEngineer._add_breakout_quality_features(
+            data, boundaries
+        )
 
         return data
 
@@ -2865,6 +3533,19 @@ class BaselineFeatureEngineer:
             data["sr_breakout_confirm_any"] = (
                 data[confirmation_columns].max(axis=1) > 0
             ).astype(int)
+
+        # 【新增】：计算突破确认和角色转换特征
+        # 这些特征帮助模型理解"同一个位置，在不同市场环境下会扮演完全相反的角色"
+        breakout_role_features = BaselineFeatureEngineer._compute_breakout_confirmation_and_role_flip(
+            data,
+            boundaries,
+            lookback=20,
+            confirmation_bars=3,
+            max_retest_bars=10,
+        )
+        
+        for name, series in breakout_role_features.items():
+            data[name] = series
 
         # 价格行为特征（Price Action Features）
         # 这些特征基于当前15m级别的价格行为，结合SR结构信息

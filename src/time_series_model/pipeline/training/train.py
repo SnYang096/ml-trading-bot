@@ -22,11 +22,11 @@ from sklearn.metrics import f1_score
 from scipy.interpolate import interp1d
 
 from data_tools.rolling_data import load_parquet_file
-from data_tools.baseline_features import (
+from src.features.time_series.baseline_features import (
     engineer_baseline_features,
     get_baseline_feature_columns,
 )
-from data_tools.comprehensive_feature_engineering import (
+from src.features.time_series.comprehensive_features import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )
@@ -5536,7 +5536,7 @@ def main() -> None:
                       <li>📌 <strong>用途</strong>：在特征工程阶段标准化特征（如StandardScaler、ATR分位数、波动率分位数等）</li>
                       <li>📌 <strong>何时需要</strong>：如果使用特征工程器（FeatureEngineer）生成特征，需要<strong>手动加载</strong>scalers.pkl来标准化特征，确保推理时使用与训练时相同的预处理方式</li>
                       <li>📌 <strong>使用方法</strong>：
-                        <pre style='background:#f5f5f5;padding:10px;border-radius:5px;margin:5px 0;'><code>from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+                        <pre style='background:#f5f5f5;padding:10px;border-radius:5px;margin:5px 0;'><code>from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 
 # 初始化特征工程器
 fe = ComprehensiveFeatureEngineer()

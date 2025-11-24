@@ -51,6 +51,12 @@ def prepare_rank_ic_labels(
     vol_mult: float = 0.5,
     min_samples: int = 30,
     ensure_volatility: bool = True,
+    use_risk_reward_label: bool = False,  # NEW: Enable R/R label
+    rr_ratio_threshold: float = 2.0,  # NEW: Target R/R
+    max_holding_bars: int = 24,  # NEW: Max holding period for R/R label
+    signal_col: Optional[str] = None,  # NEW: Signal column for R/R label
+    use_continuous_rr_label: bool = False,  # NEW: Use continuous R/R or binary
+    split_by_reaction_type: bool = False,  # NEW: Split by reversal vs breakout
 ) -> pd.DataFrame:
     """
     Prepare labels for Rank IC-optimized training.
@@ -102,84 +108,233 @@ def prepare_rank_ic_labels(
     # Group columns for multi-asset support
     group_cols = [asset_col] if asset_col and asset_col in df.columns else []
 
-    # 1. Compute future return
-    # ⚠️  FIXED: Avoid using current bar's close (which may not be finalized in real-time)
-    # Strategy: Use close[t+1] as entry price (assume trade at t+1 open)
-    # future_return[t] = (close[t+1+horizon] - close[t+1]) / close[t+1]
-    if group_cols:
-        # Compute future_return per group using transform for better alignment
-        def _compute_future_return(group: pd.Series) -> pd.Series:
-            # Entry price: close[t+1]
-            price_entry = group.shift(-1)
-            # Exit price: close[t+1+hold_period]
-            price_exit = group.shift(-1 - hold_period)
-            # Future return: (exit - entry) / entry
-            return (price_exit - price_entry) / price_entry
-
-        # Use transform to ensure proper alignment with original dataframe
-        future_return = df.groupby(group_cols, group_keys=False)[price_col].transform(
-            _compute_future_return
+    # 0. Compute R/R label if enabled (before computing future_return)
+    if use_risk_reward_label:
+        from time_series_model.pipeline.training.label_utils import (
+            compute_rr_label,
+            classify_sr_reaction,
+            compute_rr_label_by_reaction,
         )
-        # Ensure future_return is a Series (transform should return Series, but check anyway)
-        if isinstance(future_return, pd.DataFrame):
-            future_return = future_return.iloc[:, 0]
-        df["future_return"] = future_return
 
-        # Debug: Check if calculation produced any valid values
-        valid_future_return = df["future_return"].notna().sum()
-        if valid_future_return == 0 and len(df) > 0:
-            print(
-                f"   ⚠️  Warning: future_return calculation (grouped) produced 0 valid values"
-            )
-            print(f"      Total samples: {len(df)}")
-            print(f"      Group columns: {group_cols}")
-            print(f"      hold_period: {hold_period}")
-            # Check a sample group
-            if group_cols and group_cols[0] in df.columns:
-                sample_group_val = df[group_cols[0]].iloc[0]
-                sample_group = df[df[group_cols[0]] == sample_group_val]
-                print(
-                    f"      Sample group '{group_cols[0]}={sample_group_val}': {len(sample_group)} samples"
+        # Determine signal column
+        if signal_col is None:
+            # Try to find signal column
+            for col in ["signal", "sr_signal", "trading_signal"]:
+                if col in df.columns:
+                    signal_col = col
+                    break
+
+        if signal_col and signal_col in df.columns:
+            # Classify SR reaction type if split_by_reaction_type is enabled
+            if split_by_reaction_type:
+                print(f"   📊 Classifying SR reaction types...")
+                df["sr_reaction"] = classify_sr_reaction(
+                    df,
+                    signal_col=signal_col,
+                    price_col=price_col,
+                    atr_col="atr",
+                    atr_window=14,
+                    lookback_window=5,
                 )
-                if len(sample_group) > 0:
-                    price_entry_sample = sample_group[price_col].shift(-1)
-                    price_exit_sample = sample_group[price_col].shift(-1 - hold_period)
-                    print(
-                        f"      price_entry non-null in sample group: {price_entry_sample.notna().sum()}"
-                    )
-                    print(
-                        f"      price_exit non-null in sample group: {price_exit_sample.notna().sum()}"
-                    )
-    else:
-        # Entry price: close[t+1]
-        price_series = df[price_col]
-        # Ensure price_series is a Series, not DataFrame
-        if isinstance(price_series, pd.DataFrame):
-            price_series = price_series.iloc[:, 0]  # Take first column if DataFrame
-        price_entry = price_series.shift(-1)
-        # Exit price: close[t+1+hold_period]
-        price_exit = price_series.shift(-1 - hold_period)
-        # Future return: (exit - entry) / entry
-        future_return = (price_exit - price_entry) / price_entry
-        # Ensure future_return is a Series
-        if isinstance(future_return, pd.DataFrame):
-            future_return = future_return.iloc[:, 0]
-        df["future_return"] = future_return
 
-        # Debug: Check if calculation produced any valid values
-        valid_future_return = df["future_return"].notna().sum()
-        if valid_future_return == 0 and len(df) > 0:
-            print(f"   ⚠️  Warning: future_return calculation produced 0 valid values")
-            print(f"      Total samples: {len(df)}")
-            print(f"      price_entry non-null: {price_entry.notna().sum()}")
-            print(f"      price_exit non-null: {price_exit.notna().sum()}")
-            print(f"      hold_period: {hold_period}")
+                reversal_count = (df["sr_reaction"] == "reversal").sum()
+                breakout_count = (df["sr_reaction"] == "breakout").sum()
+                print(f"      ✅ Reaction types classified:")
+                print(f"         - Reversal: {reversal_count} samples")
+                print(f"         - Breakout: {breakout_count} samples")
+
             print(
-                f"      Sample price_entry values (first 5): {price_entry.head().tolist()}"
+                f"   📊 Computing R/R labels (signal_col={signal_col}, rr_ratio={rr_ratio_threshold})"
             )
+
+            if split_by_reaction_type:
+                # Compute separate labels for reversal and breakout
+                print(f"      Computing R/R labels for reversal opportunities...")
+                rr_reversal = compute_rr_label_by_reaction(
+                    df,
+                    signal_col=signal_col,
+                    reaction_col="sr_reaction",
+                    price_col=price_col,
+                    atr_col="atr",
+                    atr_window=14,
+                    rr_ratio=rr_ratio_threshold,
+                    max_holding_bars=max_holding_bars,
+                    stop_loss_r=1.0,
+                    take_profit_r=rr_ratio_threshold,
+                    reaction_type="reversal",
+                    use_continuous_label=use_continuous_rr_label,
+                )
+                df["rr_reversal_achieved"] = rr_reversal
+
+                print(f"      Computing R/R labels for breakout opportunities...")
+                rr_breakout = compute_rr_label_by_reaction(
+                    df,
+                    signal_col=signal_col,
+                    reaction_col="sr_reaction",
+                    price_col=price_col,
+                    atr_col="atr",
+                    atr_window=14,
+                    rr_ratio=rr_ratio_threshold,
+                    max_holding_bars=max_holding_bars,
+                    stop_loss_r=1.0,
+                    take_profit_r=rr_ratio_threshold,
+                    reaction_type="breakout",
+                    use_continuous_label=use_continuous_rr_label,
+                )
+                df["rr_breakout_achieved"] = rr_breakout
+
+                # For SR reversal strategy, use reversal labels as primary target
+                # Breakout labels can be used for filtering or separate model
+                df["rr_achieved"] = (
+                    rr_reversal  # Primary target for SR reversal strategy
+                )
+                df["volatility_normalized_target"] = rr_reversal.fillna(0.0)
+
+                valid_reversal = rr_reversal.notna().sum()
+                valid_breakout = rr_breakout.notna().sum()
+                if valid_reversal > 0:
+                    reversal_success = (rr_reversal == 1.0).sum() / valid_reversal * 100
+                    print(
+                        f"      ✅ Reversal R/R labels: {valid_reversal} samples, {reversal_success:.2f}% success"
+                    )
+                if valid_breakout > 0:
+                    breakout_success = (rr_breakout == 1.0).sum() / valid_breakout * 100
+                    print(
+                        f"      ✅ Breakout R/R labels: {valid_breakout} samples, {breakout_success:.2f}% success"
+                    )
+            else:
+                # Compute unified R/R labels (no split)
+                rr_labels = compute_rr_label(
+                    df,
+                    signal_col=signal_col,
+                    price_col=price_col,
+                    atr_col="atr",
+                    atr_window=14,
+                    rr_ratio=rr_ratio_threshold,
+                    max_holding_bars=max_holding_bars,
+                    stop_loss_r=1.0,
+                    take_profit_r=rr_ratio_threshold,
+                    use_continuous_label=use_continuous_rr_label,
+                )
+                df["rr_achieved"] = rr_labels
+
+                # Use R/R label as the target
+                if use_continuous_rr_label:
+                    # Continuous: use realized R/R directly
+                    df["volatility_normalized_target"] = rr_labels.fillna(0.0)
+                else:
+                    # Binary: use as-is (0 or 1)
+                    df["volatility_normalized_target"] = rr_labels.fillna(0.0)
+
+                valid_rr = rr_labels.notna().sum()
+                if valid_rr > 0:
+                    success_rate = (rr_labels == 1.0).sum() / valid_rr * 100
+                    print(f"   ✅ R/R labels computed: {valid_rr} valid samples")
+                    print(f"      Success rate: {success_rate:.2f}%")
+                else:
+                    print(f"   ⚠️  Warning: No valid R/R labels computed")
+        else:
             print(
-                f"      Sample price_exit values (first 5): {price_exit.head().tolist()}"
+                f"   ⚠️  Warning: signal_col '{signal_col}' not found, falling back to future_return"
             )
+            use_risk_reward_label = False
+
+    # 1. Compute future return (only if not using R/R label)
+    if not use_risk_reward_label:
+        # ⚠️  FIXED: Avoid using current bar's close (which may not be finalized in real-time)
+        # Strategy: Use close[t+1] as entry price (assume trade at t+1 open)
+        # future_return[t] = (close[t+1+horizon] - close[t+1]) / close[t+1]
+        if group_cols:
+            # Compute future_return per group using transform for better alignment
+            def _compute_future_return(group: pd.Series) -> pd.Series:
+                # Entry price: close[t+1]
+                price_entry = group.shift(-1)
+                # Exit price: close[t+1+hold_period]
+                price_exit = group.shift(-1 - hold_period)
+                # Future return: (exit - entry) / entry
+                return (price_exit - price_entry) / price_entry
+
+            # Use transform to ensure proper alignment with original dataframe
+            future_return = df.groupby(group_cols, group_keys=False)[
+                price_col
+            ].transform(_compute_future_return)
+            # Ensure future_return is a Series (transform should return Series, but check anyway)
+            if isinstance(future_return, pd.DataFrame):
+                future_return = future_return.iloc[:, 0]
+            df["future_return"] = future_return
+
+            # Debug: Check if calculation produced any valid values
+            valid_future_return = df["future_return"].notna().sum()
+            if valid_future_return == 0 and len(df) > 0:
+                print(
+                    f"   ⚠️  Warning: future_return calculation (grouped) produced 0 valid values"
+                )
+                print(f"      Total samples: {len(df)}")
+                print(f"      Group columns: {group_cols}")
+                print(f"      hold_period: {hold_period}")
+                # Check a sample group
+                if group_cols and group_cols[0] in df.columns:
+                    sample_group_val = df[group_cols[0]].iloc[0]
+                    sample_group = df[df[group_cols[0]] == sample_group_val]
+                    print(
+                        f"      Sample group '{group_cols[0]}={sample_group_val}': {len(sample_group)} samples"
+                    )
+                    if len(sample_group) > 0:
+                        price_entry_sample = sample_group[price_col].shift(-1)
+                        price_exit_sample = sample_group[price_col].shift(
+                            -1 - hold_period
+                        )
+                        print(
+                            f"      price_entry non-null in sample group: {price_entry_sample.notna().sum()}"
+                        )
+                        print(
+                            f"      price_exit non-null in sample group: {price_exit_sample.notna().sum()}"
+                        )
+        else:
+            # Entry price: close[t+1]
+            price_series = df[price_col]
+            # Ensure price_series is a Series, not DataFrame
+            if isinstance(price_series, pd.DataFrame):
+                price_series = price_series.iloc[:, 0]  # Take first column if DataFrame
+            price_entry = price_series.shift(-1)
+            # Exit price: close[t+1+hold_period]
+            price_exit = price_series.shift(-1 - hold_period)
+            # Future return: (exit - entry) / entry
+            future_return = (price_exit - price_entry) / price_entry
+            # Ensure future_return is a Series
+            if isinstance(future_return, pd.DataFrame):
+                future_return = future_return.iloc[:, 0]
+            df["future_return"] = future_return
+
+            # Debug: Check if calculation produced any valid values
+            valid_future_return = df["future_return"].notna().sum()
+            if valid_future_return == 0 and len(df) > 0:
+                print(
+                    f"   ⚠️  Warning: future_return calculation produced 0 valid values"
+                )
+                print(f"      Total samples: {len(df)}")
+                print(f"      price_entry non-null: {price_entry.notna().sum()}")
+                print(f"      price_exit non-null: {price_exit.notna().sum()}")
+                print(f"      hold_period: {hold_period}")
+                print(
+                    f"      Sample price_entry values (first 5): {price_entry.head().tolist()}"
+                )
+                print(
+                    f"      Sample price_exit values (first 5): {price_exit.head().tolist()}"
+                )
+    else:
+        # If using R/R label, still compute future_return for compatibility
+        # but it won't be used as the target
+        if "future_return" not in df.columns:
+            price_series = df[price_col]
+            if isinstance(price_series, pd.DataFrame):
+                price_series = price_series.iloc[:, 0]
+            price_entry = price_series.shift(-1)
+            price_exit = price_series.shift(-1 - hold_period)
+            future_return = (price_exit - price_entry) / price_entry
+            if isinstance(future_return, pd.DataFrame):
+                future_return = future_return.iloc[:, 0]
+            df["future_return"] = future_return
 
     # 2. Compute rolling volatility (if not already computed by ensure_volatility_feature)
     # Note: pct_change(hold_period) computes historical returns: (close[t] - close[t-hold_period]) / close[t-hold_period]
@@ -205,9 +360,12 @@ def prepare_rank_ic_labels(
             df["rolling_vol"] = _rolling_vol(df[price_col])
 
     # 3. Create volatility-normalized target
-    df["volatility_normalized_target"] = volatility_normalized_target(
-        df["future_return"], df["rolling_vol"]
-    )
+    if not use_risk_reward_label:
+        # Use traditional volatility-normalized target
+        df["volatility_normalized_target"] = volatility_normalized_target(
+            df["future_return"], df["rolling_vol"]
+        )
+    # If using R/R label, volatility_normalized_target was already set above
 
     # 4. Compute historical quantile label
     asset_series = df[asset_col] if asset_col and asset_col in df.columns else None
@@ -786,7 +944,17 @@ def train_rank_ic_model(
 
         # Predict and evaluate Rank IC
         pred_val = model.predict(X_val)
-        valid_mask = ~np.isnan(quantile_val)
+        # 【关键修复】：统一样本过滤方式，与 OOS 测试保持一致
+        # 同时检查 pred、future_return 和 quantile_val（如果可用）
+        # quantile_val 为 NaN 的样本通常是数据不足时的低质量样本，应该排除
+        # 但也要确保 pred 和 future_return 有效，以与 OOS 测试保持一致
+        valid_mask = (
+            ~np.isnan(pred_val)
+            & ~np.isnan(y_val_true_ret)
+            & np.isfinite(pred_val)
+            & np.isfinite(y_val_true_ret)
+            & ~np.isnan(quantile_val)  # 保留 quantile_val 检查，排除低质量样本
+        )
 
         if valid_mask.sum() > 10:
             ic = compute_rank_ic(pred_val[valid_mask], y_val_true_ret[valid_mask])
@@ -884,12 +1052,48 @@ def generate_ensemble_signals(
         except Exception as e:
             print(f"   ⚠️  Prediction calibration failed: {e}")
 
-    # Compute prediction quantile
+    # 【关键修复】：先计算分位数，再检测并反转负相关的预测值
+    # 这样可以确保分位数计算基于原始预测值分布，而不是反转后的分布
+    # Compute prediction quantile FIRST (before potential inversion)
     asset_series = df[asset_col] if asset_col and asset_col in df.columns else None
     df["pred_quantile"] = prediction_quantile(
         pd.Series(df["pred"], index=df.index),
         asset_col=asset_series,
     )
+
+    # 【移除反转逻辑】：如果特征已经修复，Rank IC 应该是正的
+    # 如果 Rank IC 是负的，说明特征或模型有问题，应该深入调查原因，而不是简单反转
+    # 反转逻辑是"补丁"，用来纠正问题，而不是解决问题
+    # 如果特征已经修复，就不需要反转逻辑了
+    #
+    # 如果确实需要保留（作为安全网），可以使用更严格的条件：
+    # - 只在 Rank IC < -0.1 时才触发（而不是 -0.05）
+    # - 或者完全移除，让问题暴露出来，便于调试
+    #
+    # 当前策略：完全移除反转逻辑，如果 Rank IC 是负的，应该检查：
+    # 1. 目标变量计算是否正确
+    # 2. 模型训练是否有问题
+    # 3. 特征和目标变量的关系是否真的是负的
+    if "future_return" in df.columns:
+        valid_mask = df["pred"].notna() & df["future_return"].notna()
+        if valid_mask.sum() > 10:
+            from scipy.stats import spearmanr
+
+            # 计算 Rank IC（Spearman 相关性）用于诊断
+            rank_ic, _ = spearmanr(
+                df.loc[valid_mask, "pred"].values,
+                df.loc[valid_mask, "future_return"].values,
+            )
+            if not np.isnan(rank_ic) and rank_ic < -0.05:
+                print(f"   ⚠️  WARNING: Negative Rank IC ({rank_ic:.4f}) detected!")
+                print(f"   💡 This may indicate:")
+                print(f"      - Target variable calculation issue")
+                print(f"      - Model training problem")
+                print(f"      - Feature-target relationship is truly negative (rare)")
+                print(
+                    f"   🔍 Please investigate the root cause instead of inverting predictions"
+                )
+            # 不再自动反转，让问题暴露出来
 
     # Compute confidence score
     df["confidence_score"] = confidence_score(df["pred_quantile"])
@@ -904,6 +1108,7 @@ def generate_ensemble_signals(
             true_returns = (
                 df["future_return"] if "future_return" in df.columns else None
             )
+            # 不再需要传递反转标记（因为已移除反转逻辑）
             df["signal"] = generate_trading_signals_improved(
                 pd.Series(df["pred"], index=df.index),
                 df["pred_quantile"],
@@ -916,6 +1121,7 @@ def generate_ensemble_signals(
                 optimize_on_train=(
                     signal_method == "optimized" and true_returns is not None
                 ),
+                pred_inverted=False,  # 不再使用反转逻辑
             )
             print(f"   ✅ Generated signals using '{signal_method}' method")
         except Exception as e:

@@ -14,11 +14,11 @@ import pandas as pd
 import numpy as np
 
 from data_tools.rolling_data import load_and_process_file
-from data_tools.baseline_features import (
+from src.features.time_series.baseline_features import (
     engineer_baseline_features,
     get_baseline_feature_columns,
 )
-from data_tools.comprehensive_feature_engineering import (
+from src.features.time_series.comprehensive_features import (
     ComprehensiveFeatureEngineer,
     get_feature_columns_by_type,
 )
@@ -1685,7 +1685,7 @@ tr:hover{{background:#f0f8ff}}
                     f.write("feature_cols = joblib.load('features.pkl')\n\n")
                     f.write("# Load scalers\n")
                     f.write(
-                        "from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer\n"
+                        "from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer\n"
                     )
                     f.write(
                         "engineer = ComprehensiveFeatureEngineer(feature_types='comprehensive')\n"

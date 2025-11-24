@@ -7,8 +7,8 @@
 import pandas as pd
 from typing import Dict, Optional
 
-from .baseline_features import BaselineFeatureEngineer
-from .feature_engineering_talib import TalibFeatureEngineer
+from src.features.time_series.baseline_features import BaselineFeatureEngineer
+from src.features.time_series.feature_engineering_talib import TalibFeatureEngineer
 
 
 class FeatureEngineer:

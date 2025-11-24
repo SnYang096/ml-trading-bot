@@ -270,6 +270,417 @@ def historical_quantile_label(
     return result.rename("return_quantile")
 
 
+def compute_rr_label(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    price_col: str = "close",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    rr_ratio: float = 2.0,
+    max_holding_bars: int = 24,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    use_continuous_label: bool = False,
+) -> pd.Series:
+    """
+    计算基于风险回报比（R/R）的标签，匹配 SR 策略的真实交易逻辑。
+
+    策略逻辑：
+    - 在高概率区域入场（由信号决定方向）
+    - 设定 1R 止损
+    - 捕捉至少 2R 的有利运行
+    - 动态止盈止损
+
+    标签计算：
+    - 二元标签（use_continuous_label=False）：是否实现 ≥2R（1=成功，0=失败）
+    - 连续标签（use_continuous_label=True）：实际实现的盈亏比（Realized R/R）
+
+    Args:
+        df: DataFrame with OHLCV data, signals, and ATR
+        signal_col: Column name for trading signals (1=Long, -1=Short, 0=Hold)
+        price_col: Column name for price (used for entry price)
+        atr_col: Column name for ATR
+        atr_window: ATR window if ATR column doesn't exist
+        rr_ratio: Target risk-reward ratio (default: 2.0)
+        max_holding_bars: Maximum holding period
+        stop_loss_r: Stop loss in R units (default: 1.0)
+        take_profit_r: Take profit in R units (default: 2.0)
+        use_continuous_label: If True, return realized R/R; if False, return binary label
+
+    Returns:
+        Series with R/R labels (binary or continuous)
+    """
+    if signal_col not in df.columns:
+        # If no signal column, return NaN series
+        return pd.Series(np.nan, index=df.index)
+
+    # Ensure ATR exists
+    if atr_col not in df.columns:
+        # Compute ATR if not available
+        if "high" in df.columns and "low" in df.columns and price_col in df.columns:
+            import talib
+
+            high = df["high"].values
+            low = df["low"].values
+            close = df[price_col].values
+            atr_values = talib.ATR(high, low, close, timeperiod=atr_window)
+            df[atr_col] = pd.Series(atr_values, index=df.index)
+        else:
+            # Fallback: use a simple volatility proxy
+            if price_col in df.columns:
+                df[atr_col] = df[price_col].rolling(window=atr_window).std()
+            else:
+                return pd.Series(np.nan, index=df.index)
+
+    signals = df[signal_col]
+    atr_series = df[atr_col]
+
+    # Use open[t+1] as entry price (next bar's open)
+    if "open" in df.columns:
+        entry_prices = df["open"].shift(-1)  # Entry at next bar's open
+    else:
+        entry_prices = df[price_col].shift(-1)  # Fallback to close
+
+    # Initialize labels with NaN (will be set to 0.0 for valid samples)
+    labels = pd.Series(np.nan, index=df.index, dtype=float)
+
+    # Get high/low columns for efficient access
+    high_col = "high" if "high" in df.columns else price_col
+    low_col = "low" if "low" in df.columns else price_col
+
+    # Pre-extract arrays for faster access (avoid repeated iloc calls)
+    signals_arr = signals.values
+    entry_prices_arr = entry_prices.values
+    atr_arr = atr_series.values
+    high_arr = df[high_col].values
+    low_arr = df[low_col].values
+
+    # Process each sample
+    # Note: We need to scan future bars, so we can't process the last max_holding_bars samples
+    max_i = len(df) - max_holding_bars - 1
+
+    for i in range(max_i):
+        signal = signals_arr[i]
+
+        # Skip if no signal
+        if pd.isna(signal) or signal == 0:
+            continue
+
+        entry_price = entry_prices_arr[i]
+        atr = atr_arr[i]
+
+        # Skip if invalid entry price or ATR
+        if pd.isna(entry_price) or pd.isna(atr) or atr <= 0:
+            continue
+
+        # Calculate stop loss and take profit
+        if signal > 0:  # Long signal
+            stop_loss = entry_price - stop_loss_r * atr
+            take_profit = entry_price + take_profit_r * atr
+        else:  # Short signal
+            stop_loss = entry_price + stop_loss_r * atr
+            take_profit = entry_price - take_profit_r * atr
+
+        # Scan future price path (up to max_holding_bars)
+        # This is the core logic: check if TP or SL is hit first
+        hit_tp = False
+        hit_sl = False
+        tp_bar = None
+        sl_bar = None
+        max_favorable = 0.0
+        max_adverse = 0.0
+
+        # Scan from i+1 to i+max_holding_bars
+        end_idx = min(i + 1 + max_holding_bars, len(df))
+
+        for j in range(i + 1, end_idx):
+            high = high_arr[j]
+            low = low_arr[j]
+
+            if signal > 0:  # Long
+                # Check if TP or SL hit (using high/low to simulate intra-bar execution)
+                if not hit_tp and high >= take_profit:
+                    hit_tp = True
+                    tp_bar = j - i  # Bar number relative to entry
+                if not hit_sl and low <= stop_loss:
+                    hit_sl = True
+                    sl_bar = j - i  # Bar number relative to entry
+
+                # Track MFE/MAE for continuous label
+                if use_continuous_label:
+                    max_favorable = max(max_favorable, (high - entry_price) / atr)
+                    max_adverse = max(max_adverse, (entry_price - low) / atr)
+            else:  # Short
+                # Check if TP or SL hit
+                if not hit_tp and low <= take_profit:
+                    hit_tp = True
+                    tp_bar = j - i
+                if not hit_sl and high >= stop_loss:
+                    hit_sl = True
+                    sl_bar = j - i
+
+                # Track MFE/MAE for continuous label
+                if use_continuous_label:
+                    max_favorable = max(max_favorable, (entry_price - low) / atr)
+                    max_adverse = max(max_adverse, (high - entry_price) / atr)
+
+            # Early exit: if both hit, check which came first
+            if hit_tp and hit_sl:
+                break
+
+        # Calculate label
+        if use_continuous_label:
+            # Continuous label: Realized R/R
+            # MFE / MAE, truncated at [0, take_profit_r]
+            if max_adverse > 0:
+                realized_rr = min(max_favorable, take_profit_r) / max(max_adverse, 0.1)
+                realized_rr = min(realized_rr, take_profit_r)  # Cap at target R/R
+            else:
+                realized_rr = 0.0
+            labels.iloc[i] = realized_rr
+        else:
+            # Binary label: Did we achieve ≥2R?
+            # Success = hit TP before SL (or hit TP and never hit SL)
+            if hit_tp and (
+                not hit_sl
+                or (tp_bar is not None and sl_bar is not None and tp_bar < sl_bar)
+            ):
+                labels.iloc[i] = 1.0  # Success: hit TP before SL
+            else:
+                labels.iloc[i] = (
+                    0.0  # Failure: hit SL first, or timeout without hitting TP
+                )
+
+    return labels
+
+
+def classify_sr_reaction(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    sr_zone_col: Optional[str] = None,
+    price_col: str = "close",
+    high_col: str = "high",
+    low_col: str = "low",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    lookback_window: int = 5,
+    threshold_factor: float = 0.5,
+) -> pd.Series:
+    """
+    对每个 SR 信号，判断后续价格是"反向"（reversal）还是"突破"（breakout）。
+
+    这是 SR 策略建模的关键拆分：
+    - 反转型机会：价格回测 SR 区 → 试探（wick 进入）→ 快速反向运行（核心盈利来源）
+    - 突破型机会：价格强势穿过 SR 区，继续沿原方向运行（趋势延续，非反转）
+
+    逻辑：
+    - Long 信号（期待从需求区反弹）：
+        - 如果价格深跌破区域（< zone_price - threshold * ATR）→ 突破型（反向失败）
+        - 如果价格快速上涨（> zone_price + 2 * ATR）且未深跌 → 突破型（强势突破）
+        - 否则（有下影线试探后上涨）→ 反转型
+    - Short 信号（期待从供给区回落）：
+        - 如果价格强势突破区域（> zone_price + threshold * ATR）→ 突破型（反向失败）
+        - 如果价格快速下跌（< zone_price - 2 * ATR）且未突破 → 突破型（强势突破）
+        - 否则（有上影线试探后下跌）→ 反转型
+
+    Args:
+        df: DataFrame with OHLCV data and signals
+        signal_col: Column name for trading signals (1=Long, -1=Short, 0=Hold)
+        sr_zone_col: Column name for SR zone price (if None, will try to infer from features)
+        price_col: Column name for price
+        high_col: Column name for high
+        low_col: Column name for low
+        atr_col: Column name for ATR
+        atr_window: ATR window if ATR column doesn't exist
+        lookback_window: Number of future bars to observe
+        threshold_factor: Factor for determining "deep penetration" (default: 0.5)
+
+    Returns:
+        Series with reaction types: 'reversal', 'breakout', or np.nan
+    """
+    if signal_col not in df.columns:
+        return pd.Series(np.nan, index=df.index)
+
+    # Ensure ATR exists
+    if atr_col not in df.columns:
+        if "high" in df.columns and "low" in df.columns and price_col in df.columns:
+            import talib
+
+            high = df["high"].values
+            low = df["low"].values
+            close = df[price_col].values
+            atr_values = talib.ATR(high, low, close, timeperiod=atr_window)
+            df[atr_col] = pd.Series(atr_values, index=df.index)
+        else:
+            if price_col in df.columns:
+                df[atr_col] = df[price_col].rolling(window=atr_window).std()
+            else:
+                return pd.Series(np.nan, index=df.index)
+
+    signals = df[signal_col]
+    atr_series = df[atr_col]
+
+    # Try to find SR zone price
+    zone_price = None
+    if sr_zone_col and sr_zone_col in df.columns:
+        zone_price = df[sr_zone_col]
+    else:
+        # Try to infer from features
+        for col in ["nearest_sr", "dist_to_nearest_sr", "sqs"]:
+            if col in df.columns:
+                # If we have dist_to_nearest_sr, we can compute zone_price
+                if col == "dist_to_nearest_sr" and price_col in df.columns:
+                    # dist_to_nearest_sr is normalized distance, need to convert back
+                    # For now, use current price as proxy (will be refined)
+                    zone_price = df[price_col]
+                    break
+                elif col == "nearest_sr" and col in df.columns:
+                    zone_price = df[col]
+                    break
+
+        if zone_price is None:
+            # Fallback: use current price as proxy (not ideal, but allows function to run)
+            zone_price = df[price_col]
+
+    reactions = pd.Series(np.nan, index=df.index, dtype=object)
+
+    # Pre-extract arrays for faster access
+    signals_arr = signals.values
+    atr_arr = atr_series.values
+    zone_price_arr = (
+        zone_price.values if isinstance(zone_price, pd.Series) else zone_price
+    )
+    high_arr = df[high_col].values
+    low_arr = df[low_col].values
+    price_arr = df[price_col].values
+
+    max_i = len(df) - lookback_window - 1
+
+    for i in range(max_i):
+        signal = signals_arr[i]
+
+        if pd.isna(signal) or signal == 0:
+            continue
+
+        atr = atr_arr[i]
+        zone = (
+            zone_price_arr[i]
+            if isinstance(zone_price_arr, np.ndarray)
+            else zone_price_arr
+        )
+
+        if pd.isna(atr) or atr <= 0 or pd.isna(zone):
+            continue
+
+        # Observe future price behavior
+        end_idx = min(i + 1 + lookback_window, len(df))
+        future_highs = high_arr[i + 1 : end_idx]
+        future_lows = low_arr[i + 1 : end_idx]
+
+        if len(future_highs) == 0:
+            continue
+
+        min_low = np.min(future_lows)
+        max_high = np.max(future_highs)
+        threshold = threshold_factor * atr
+
+        if signal > 0:  # Long signal (expecting bounce from demand zone)
+            # Check for deep penetration below zone (breakout failure)
+            if min_low < zone - threshold:
+                # Strong breakdown → breakout type (reversal failed)
+                reactions.iloc[i] = "breakout"
+            # Check for strong upward move without deep penetration
+            elif max_high > zone + 2 * atr and min_low > zone - 0.5 * atr:
+                # Fast upward move, no deep dip → likely strong breakout (not reversal)
+                reactions.iloc[i] = "breakout"
+            else:
+                # Has lower wick test then bounce → typical reversal
+                reactions.iloc[i] = "reversal"
+        else:  # Short signal (expecting rejection from supply zone)
+            # Check for strong penetration above zone (breakout failure)
+            if max_high > zone + threshold:
+                # Strong breakout → breakout type (reversal failed)
+                reactions.iloc[i] = "breakout"
+            # Check for strong downward move without penetration
+            elif min_low < zone - 2 * atr and max_high < zone + 0.5 * atr:
+                # Fast downward move, no penetration → likely strong breakdown (not reversal)
+                reactions.iloc[i] = "breakout"
+            else:
+                # Has upper wick test then rejection → typical reversal
+                reactions.iloc[i] = "reversal"
+
+    return reactions
+
+
+def compute_rr_label_by_reaction(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    reaction_col: str = "sr_reaction",
+    price_col: str = "close",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    rr_ratio: float = 2.0,
+    max_holding_bars: int = 24,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    reaction_type: Optional[str] = None,  # 'reversal' or 'breakout' or None (both)
+    use_continuous_label: bool = False,
+) -> pd.Series:
+    """
+    计算基于风险回报比（R/R）的标签，支持按反应类型（反转 vs 突破）分类。
+
+    这是 SR 策略精细化建模的关键：将反转型和突破型机会分开处理。
+
+    Args:
+        df: DataFrame with OHLCV data, signals, and reaction types
+        signal_col: Column name for trading signals (1=Long, -1=Short, 0=Hold)
+        reaction_col: Column name for SR reaction type ('reversal' or 'breakout')
+        price_col: Column name for price
+        atr_col: Column name for ATR
+        atr_window: ATR window if ATR column doesn't exist
+        rr_ratio: Target risk-reward ratio (default: 2.0)
+        max_holding_bars: Maximum holding period
+        stop_loss_r: Stop loss in R units (default: 1.0)
+        take_profit_r: Take profit in R units (default: 2.0)
+        reaction_type: Filter by reaction type ('reversal', 'breakout', or None for both)
+        use_continuous_label: If True, return realized R/R; if False, return binary label
+
+    Returns:
+        Series with R/R labels (binary or continuous), NaN for filtered samples
+    """
+    if signal_col not in df.columns:
+        return pd.Series(np.nan, index=df.index)
+
+    # Filter by reaction type if specified
+    if reaction_type and reaction_col in df.columns:
+        mask = df[reaction_col] == reaction_type
+        if not mask.any():
+            print(f"   ⚠️  Warning: No samples with reaction_type='{reaction_type}'")
+            return pd.Series(np.nan, index=df.index)
+    else:
+        mask = pd.Series(True, index=df.index)
+
+    # Compute R/R label for all samples first
+    rr_labels = compute_rr_label(
+        df,
+        signal_col=signal_col,
+        price_col=price_col,
+        atr_col=atr_col,
+        atr_window=atr_window,
+        rr_ratio=rr_ratio,
+        max_holding_bars=max_holding_bars,
+        stop_loss_r=stop_loss_r,
+        take_profit_r=take_profit_r,
+        use_continuous_label=use_continuous_label,
+    )
+
+    # Filter by reaction type
+    if reaction_type and reaction_col in df.columns:
+        rr_labels = rr_labels.where(mask)
+
+    return rr_labels
+
+
 def tradable_mask(
     future_return: pd.Series,
     rolling_vol: pd.Series,

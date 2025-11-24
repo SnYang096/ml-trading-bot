@@ -908,7 +908,7 @@ class VectorBotBacktest:
         # Load and process all data files
         print("\n📊 Loading and processing data...")
         from data_tools.rolling_data import load_and_process_file
-        from data_tools.comprehensive_feature_engineering import (
+        from src.features.time_series.comprehensive_features import (
             ComprehensiveFeatureEngineer,
         )
 

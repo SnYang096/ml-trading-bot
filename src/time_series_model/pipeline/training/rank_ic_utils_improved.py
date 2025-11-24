@@ -32,6 +32,7 @@ def generate_trading_signals_improved(
     long_threshold: float = 0.9,
     short_threshold: float = 0.1,
     optimize_on_train: bool = True,
+    pred_inverted: bool = False,  # NEW: 标记预测值是否已反转
 ) -> pd.Series:
     """
     改进的交易信号生成方法
@@ -95,9 +96,25 @@ def generate_trading_signals_improved(
         quantile_long = pred_quantile >= long_threshold
         quantile_short = pred_quantile <= short_threshold
 
-        # 只有当符号和分位数方向一致时才交易
-        long_mask = (pred_sign > 0) & quantile_long & high_confidence
-        short_mask = (pred_sign < 0) & quantile_short & high_confidence
+        # 【关键修复】：如果预测值已反转，调整信号生成逻辑
+        # 反转后，如果所有预测都是负的，pred_sign < 0，但分位数已反转
+        # 此时应该允许 Long 信号（因为反转后的负值实际上对应原始的正值）
+        if pred_inverted:
+            # 反转后：pred_sign < 0 且 quantile >= 0.9 → Long（因为分位数已反转）
+            # 反转后：pred_sign < 0 且 quantile <= 0.1 → Short（因为分位数已反转）
+            # 但更准确的是：如果分位数已反转，那么：
+            # - 高分位（quantile >= 0.9）对应原始的低预测值，反转后变成高预测值 → Long
+            # - 低分位（quantile <= 0.1）对应原始的高预测值，反转后变成低预测值 → Short
+            long_mask = (
+                quantile_long & high_confidence
+            )  # 高分位 → Long（不考虑 pred_sign）
+            short_mask = (
+                quantile_short & high_confidence
+            )  # 低分位 → Short（不考虑 pred_sign）
+        else:
+            # 未反转：只有当符号和分位数方向一致时才交易
+            long_mask = (pred_sign > 0) & quantile_long & high_confidence
+            short_mask = (pred_sign < 0) & quantile_short & high_confidence
 
         signals.loc[long_mask] = 1
         signals.loc[short_mask] = -1

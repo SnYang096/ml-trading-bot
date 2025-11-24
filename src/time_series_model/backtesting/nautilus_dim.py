@@ -35,7 +35,7 @@ except Exception as _e:  # pragma: no cover
     Strategy = object  # type: ignore
     _NAUTILUS_ERR = _e
 
-from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 
 try:
     from sklearn.preprocessing import StandardScaler

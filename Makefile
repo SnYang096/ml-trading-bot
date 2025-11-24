@@ -130,6 +130,10 @@ help:
 	@echo ""
 	@echo "  Other commands:"
 	@echo "    make ts-r-rank-ic-train # Rank IC regression training (TSCV + OOS testing)"
+	@echo "    make ts-sr-reversal # SR Reversal model training (XGBoost Binary)"
+	@echo "    make ts-sr-breakout # SR Breakout model training (XGBoost Regression)"
+	@echo "    make ts-compression-breakout # Compression Breakout model training (CatBoost Multiclass)"
+	@echo "    make ts-trend-following # Trend Following model training (LightGBM Regression)"
 	@echo "    make factor-analysis   # Factor effectiveness analysis using Alphalens (IC, quantile backtest, decay)"
 	@echo "    make cross-sectional-build-panel  # Generate multi-asset factor panels for CS modelling"
 	@echo "    make cross-sectional-report  # Fama-MacBeth + Newey-West + IC/IR markdown report"
@@ -570,7 +574,7 @@ FEATURE_EVAL_TYPES ?= baseline
 FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
 FEATURE_EVAL_START_DATE ?=2023-01-01
-FEATURE_EVAL_END_DATE ?=2025-01-01
+FEATURE_EVAL_END_DATE ?=2025-10-31
 FEATURE_EVAL_TOP_FACTORS_COUNT ?=50
 FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD ?= 0.02
 FEATURE_EVAL_TRAIN_ONLY ?= 1
@@ -632,7 +636,7 @@ RANK_IC_TSCV_GAP ?= 24
 #   - "hybrid": Combine sign and quantile methods (balanced approach)
 #   - "optimized": Optimize threshold based on historical performance (requires future_return)
 # Default: quantile
-RANK_IC_SIGNAL_METHOD ?= sign
+RANK_IC_SIGNAL_METHOD ?= hybrid
 # Whether to calibrate predictions to match true return distribution
 # When enabled (1/true/yes), uses sigmoid scaling to calibrate predictions,
 # making them better match the actual return distribution (requires future_return in data).
@@ -657,6 +661,106 @@ ts-r-rank-ic-train:
 	@echo "   Signal Method: $(RANK_IC_SIGNAL_METHOD)"
 	@echo "   Calibrate Predictions: $(RANK_IC_CALIBRATE_PREDICTIONS)"
 	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
+
+# SR Reversal Model Training
+SR_REVERSAL_SYMBOL ?= $(SYMBOL)
+SR_REVERSAL_HORIZON ?= 24
+SR_REVERSAL_TIMEFRAME ?= 15T
+SR_REVERSAL_FEATURE_TYPE ?= comprehensive
+SR_REVERSAL_TEST_SIZE ?= 0.15
+SR_REVERSAL_OUTPUT_DIR ?= results/sr_reversal_model
+
+ts-sr-reversal:
+	@echo "🔄 Training SR Reversal Model..."
+	@echo "   Symbol: $(SR_REVERSAL_SYMBOL)"
+	@echo "   Horizon: $(SR_REVERSAL_HORIZON)"
+	@echo "   Timeframe: $(SR_REVERSAL_TIMEFRAME)"
+	@echo "   Feature Type: $(SR_REVERSAL_FEATURE_TYPE)"
+	@echo "   Test Size: $(SR_REVERSAL_TEST_SIZE)"
+	@echo "   Output: $(SR_REVERSAL_OUTPUT_DIR)"
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.sr_reversal.train \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(SR_REVERSAL_SYMBOL) \
+		--horizon $(SR_REVERSAL_HORIZON) \
+		--timeframe $(SR_REVERSAL_TIMEFRAME) \
+		--feature-type $(SR_REVERSAL_FEATURE_TYPE) \
+		--test-size $(SR_REVERSAL_TEST_SIZE) \
+		--output-dir /workspace/$(SR_REVERSAL_OUTPUT_DIR)
+
+# SR Breakout Model Training
+SR_BREAKOUT_SYMBOL ?= $(SYMBOL)
+SR_BREAKOUT_HORIZON ?= 24
+SR_BREAKOUT_TIMEFRAME ?= 15T
+SR_BREAKOUT_FEATURE_TYPE ?= comprehensive
+SR_BREAKOUT_TEST_SIZE ?= 0.15
+SR_BREAKOUT_OUTPUT_DIR ?= results/sr_breakout_model
+
+ts-sr-breakout:
+	@echo "📈 Training SR Breakout Model..."
+	@echo "   Symbol: $(SR_BREAKOUT_SYMBOL)"
+	@echo "   Horizon: $(SR_BREAKOUT_HORIZON)"
+	@echo "   Timeframe: $(SR_BREAKOUT_TIMEFRAME)"
+	@echo "   Feature Type: $(SR_BREAKOUT_FEATURE_TYPE)"
+	@echo "   Test Size: $(SR_BREAKOUT_TEST_SIZE)"
+	@echo "   Output: $(SR_BREAKOUT_OUTPUT_DIR)"
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.sr_breakout.train \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(SR_BREAKOUT_SYMBOL) \
+		--horizon $(SR_BREAKOUT_HORIZON) \
+		--timeframe $(SR_BREAKOUT_TIMEFRAME) \
+		--feature-type $(SR_BREAKOUT_FEATURE_TYPE) \
+		--test-size $(SR_BREAKOUT_TEST_SIZE) \
+		--output-dir /workspace/$(SR_BREAKOUT_OUTPUT_DIR)
+
+# Compression Breakout Model Training
+COMPRESSION_BREAKOUT_SYMBOL ?= $(SYMBOL)
+COMPRESSION_BREAKOUT_HORIZON ?= 24
+COMPRESSION_BREAKOUT_TIMEFRAME ?= 15T
+COMPRESSION_BREAKOUT_FEATURE_TYPE ?= comprehensive
+COMPRESSION_BREAKOUT_TEST_SIZE ?= 0.15
+COMPRESSION_BREAKOUT_OUTPUT_DIR ?= results/compression_breakout_model
+
+ts-compression-breakout:
+	@echo "💥 Training Compression Breakout Model..."
+	@echo "   Symbol: $(COMPRESSION_BREAKOUT_SYMBOL)"
+	@echo "   Horizon: $(COMPRESSION_BREAKOUT_HORIZON)"
+	@echo "   Timeframe: $(COMPRESSION_BREAKOUT_TIMEFRAME)"
+	@echo "   Feature Type: $(COMPRESSION_BREAKOUT_FEATURE_TYPE)"
+	@echo "   Test Size: $(COMPRESSION_BREAKOUT_TEST_SIZE)"
+	@echo "   Output: $(COMPRESSION_BREAKOUT_OUTPUT_DIR)"
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.compression_breakout.train \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(COMPRESSION_BREAKOUT_SYMBOL) \
+		--horizon $(COMPRESSION_BREAKOUT_HORIZON) \
+		--timeframe $(COMPRESSION_BREAKOUT_TIMEFRAME) \
+		--feature-type $(COMPRESSION_BREAKOUT_FEATURE_TYPE) \
+		--test-size $(COMPRESSION_BREAKOUT_TEST_SIZE) \
+		--output-dir /workspace/$(COMPRESSION_BREAKOUT_OUTPUT_DIR)
+
+# Trend Following Strategy Training
+TREND_FOLLOWING_SYMBOL ?= $(SYMBOL)
+TREND_FOLLOWING_HORIZON ?= 50
+TREND_FOLLOWING_TIMEFRAME ?= 15T
+TREND_FOLLOWING_FEATURE_TYPE ?= baseline,enhanced
+TREND_FOLLOWING_TEST_SIZE ?= 0.15
+TREND_FOLLOWING_OUTPUT_DIR ?= results/strategies/trend_following
+
+ts-trend-following:
+	@echo "📊 Training Trend Following Model..."
+	@echo "   Symbol: $(TREND_FOLLOWING_SYMBOL)"
+	@echo "   Horizon: $(TREND_FOLLOWING_HORIZON)"
+	@echo "   Timeframe: $(TREND_FOLLOWING_TIMEFRAME)"
+	@echo "   Feature Type: $(TREND_FOLLOWING_FEATURE_TYPE)"
+	@echo "   Test Size: $(TREND_FOLLOWING_TEST_SIZE)"
+	@echo "   Output: $(TREND_FOLLOWING_OUTPUT_DIR)"
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.strategies.trend_following.train \
+		--data-path /workspace/$(DATA_DIR) \
+		--symbol $(TREND_FOLLOWING_SYMBOL) \
+		--horizon $(TREND_FOLLOWING_HORIZON) \
+		--timeframe $(TREND_FOLLOWING_TIMEFRAME) \
+		--feature-type $(TREND_FOLLOWING_FEATURE_TYPE) \
+		--test-size $(TREND_FOLLOWING_TEST_SIZE) \
+		--output-dir /workspace/$(TREND_FOLLOWING_OUTPUT_DIR)
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(RANK_IC_SYMBOL) \

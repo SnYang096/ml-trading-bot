@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import re
 
-from data_tools.comprehensive_feature_engineering import ComprehensiveFeatureEngineer
+from src.features.time_series.comprehensive_features import ComprehensiveFeatureEngineer
 
 
 def load_parquet_file(parquet_path: str) -> Optional[pd.DataFrame]:
@@ -614,7 +614,9 @@ def add_dl_time_series_features(
     """Add DL sequence features (Mamba/Transformer) to the dataset."""
 
     try:
-        from data_tools.dl_sequence_features import add_dl_sequence_features
+        from src.features.time_series.dl_sequence_features import (
+            add_dl_sequence_features,
+        )
 
         df_with_dl = add_dl_sequence_features(
             df,
