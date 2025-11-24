@@ -199,7 +199,7 @@ def main() -> None:
         "--use-top-factors",
         type=str,
         default=None,
-        help="Path to top_factors JSON (from dim-compare). If provided, filters engineered features to this Top-K list.",
+        help="Path to top_factors JSON (from ts-dim-compare). If provided, filters engineered features to this Top-K list.",
     )
     parser.add_argument(
         "--forward-bars",

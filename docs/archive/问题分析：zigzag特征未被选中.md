@@ -75,7 +75,7 @@ ZigZag 的核心价值在于：
 ### 1. **重新运行特征选择**
 
 ```bash
-make dim-compare SYMBOL=BTCUSDT,ETHUSDT \
+make ts-dim-compare SYMBOL=BTCUSDT,ETHUSDT \
   START_DATE=2020-01-01 END_DATE=2021-12-31 \
   DIM_COMPARE_FEATURE_TYPE=comprehensive
 ```

@@ -169,7 +169,7 @@ for date in dates:
 
 ### 3. 与模型集成
 ```python
-# 从 dim-compare 的结果中读取 top_factors.json
+# 从 ts-dim-compare 的结果中读取 top_factors.json
 with open("results/dim_compare/.../top_factors.json") as f:
     top_factors = json.load(f)
 
@@ -208,13 +208,13 @@ make factor-compute FACTOR_COMPUTE_FACTORS="$(cat top_factors.json | jq -r '.[]'
 | **研究/训练** | 完整特征工程（需要所有特征） |
 | **因子测试** | `factor-test`（评估因子质量） |
 | **实盘计算** | `factor-compute`（只计算需要的因子） |
-| **特征选择** | `dim-compare`（找出最优因子） |
+| **特征选择** | `ts-dim-compare`（找出最优因子） |
 
 ### 最佳实践
 
 ```bash
 # 1. 研究阶段：找出最优因子
-make dim-compare SYMBOLS=BTCUSDT FACTOR_COUNTS=20,40,60
+make ts-dim-compare SYMBOLS=BTCUSDT FACTOR_COUNTS=20,40,60
 
 # 2. 获取选出的因子列表
 top_factors=$(cat results/dim_compare/.../top_factors.json | jq -r '.[]' | tr '\n' ' ')

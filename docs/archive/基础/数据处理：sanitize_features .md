@@ -122,7 +122,7 @@ if skip_clip_mask is not None:
 函数设计 优秀，简洁、实用、工程化
 适用场景 量化因子预处理、Autoencoder 输入清洗
 是否推荐使用？ ✅ 强烈推荐，但可进一步增强
-下一步建议 结合此函数 + 聚类去冗余 + 深度 AE，重新运行 dim-compare 实验
+下一步建议 结合此函数 + 聚类去冗余 + 深度 AE，重新运行 ts-dim-compare 实验
 
 如果你需要，我可以帮你把这个函数升级成一个完整的 FactorPreprocessor 类，支持：
 缺失值填充策略选择

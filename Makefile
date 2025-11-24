@@ -93,11 +93,13 @@ endif
 
 .PHONY: help clean format lint dev-install install-hooks docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
-	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only vectorbot-backtest \
-		dim-compare nautilus-backtest factor-analysis \
-		timeframe-forward-report feature-indicators \
-	cross-sectional-catalog \
-	cross-sectional-build-panel cross-sectional-report cross-sectional-train cross-sectional-workflow
+	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
+	ts-vectorbot-backtest ts-nautilus-backtest \
+	ts-dim-compare ts-feature-eval ts-factor-eval ts-timeframe-forward-report \
+	ts-strategy-feature-compare feature-indicators \
+	vectorbot-backtest nautilus-backtest dim-compare feature-eval timeframe-forward-report strategy-feature-compare \
+	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
+	cs-build-panel cs-report cs-train cs-workflow
 
 help:
 	@echo "ML Trading Project"
@@ -134,14 +136,19 @@ help:
 	@echo "    make ts-sr-breakout # SR Breakout model training (XGBoost Regression)"
 	@echo "    make ts-compression-breakout # Compression Breakout model training (CatBoost Multiclass)"
 	@echo "    make ts-trend-following # Trend Following model training (LightGBM Regression)"
-	@echo "    make factor-analysis   # Factor effectiveness analysis using Alphalens (IC, quantile backtest, decay)"
-	@echo "    make cross-sectional-build-panel  # Generate multi-asset factor panels for CS modelling"
-	@echo "    make cross-sectional-report  # Fama-MacBeth + Newey-West + IC/IR markdown report"
-	@echo "    make cross-sectional-train   # Train cross-sectional models (boosting/Fama-MacBeth)"
-	@echo "    make cross-sectional-workflow# Build panel + report + train in one go"
-	@echo "    make cross-sectional-catalog # Categorise factors from an existing panel"
-	@echo "    make vectorbot-backtest # Run VectorBot risk-managed backtest"
-	@echo "    make nautilus-backtest  # Run Nautilus Trader backtest"
+	@echo "    make ts-feature-eval    # Time-series feature IC / leakage evaluation"
+	@echo "    make ts-factor-eval     # Time-series factor IC / win-rate evaluation (single asset)"
+	@echo "    make ts-dim-compare     # Dimensionality comparison & top factor selection"
+	@echo "    make ts-timeframe-forward-report # Timeframe vs forward-bar correlation analysis"
+	@echo "    make ts-strategy-feature-compare # Compare multiple feature configs for a strategy"
+	@echo "    make ts-vectorbot-backtest # Run VectorBot risk-managed backtest"
+	@echo "    make ts-nautilus-backtest  # Run Nautilus Trader backtest"
+	@echo "    make cs-factor-eval    # Cross-sectional factor evaluation (IC, decay, quantile spread)"
+	@echo "    make cs-build-panel    # Generate multi-asset factor panels for CS modelling"
+	@echo "    make cs-report         # Fama-MacBeth + Newey-West + IC/IR markdown report"
+	@echo "    make cs-train          # Train cross-sectional models (boosting/Fama-MacBeth)"
+	@echo "    make cs-workflow       # Build panel + report + train in one go"
+	@echo "    make cs-catalog        # Categorise factors from an existing panel"
 	@echo ""
 	@echo ""
 	@echo "Override defaults, e.g. \"make rolling SYMBOLS=\"BTCUSDT ETHUSDT\" ROLLING_START=2024-10 ROLLING_END=2024-12\""
@@ -257,38 +264,38 @@ factor-test:
 		$(if $(FACTOR_TEST_OUTPUT_DIR),--output-dir /workspace/$(FACTOR_TEST_OUTPUT_DIR),)
 
 # ---------------------------------------------------------------------------
-# Factor TS evaluation
+# TS factor evaluation
 # ---------------------------------------------------------------------------
 
-FACTOR_TS_STRATEGY ?= config/strategies/factor_ts_simple
-FACTOR_TS_FACTORS ?=
-FACTOR_TS_SYMBOL ?= BTCUSDT
-FACTOR_TS_TIMEFRAME ?= 240T
-FACTOR_TS_START ?=
-FACTOR_TS_END ?=
-FACTOR_TS_QUANTILE ?= 0.2
-FACTOR_TS_OUTPUT_DIR ?= results/factor_ts_eval
-FACTOR_TS_MODE ?= strategy
+TS_FACTOR_STRATEGY ?= config/strategies/factor_ts_simple
+TS_FACTOR_FACTORS ?=
+TS_FACTOR_SYMBOL ?= BTCUSDT
+TS_FACTOR_TIMEFRAME ?= 240T
+TS_FACTOR_START ?=
+TS_FACTOR_END ?=
+TS_FACTOR_QUANTILE ?= 0.2
+TS_FACTOR_OUTPUT_DIR ?= results/factor_ts_eval
+TS_FACTOR_MODE ?= strategy
 
-factor-ts-eval:
-	@if [ -z "$(FACTOR_TS_FACTORS)" ]; then \
-		echo "❌ 错误: 必须指定 FACTOR_TS_FACTORS"; \
-		echo "用法: make factor-ts-eval FACTOR_TS_FACTORS='atr sqs_hal_high' FACTOR_TS_STRATEGY=config/strategies/sr_reversal"; \
+ts-factor-eval:
+	@if [ -z "$(TS_FACTOR_FACTORS)" ]; then \
+		echo "❌ 错误: 必须指定 TS_FACTOR_FACTORS"; \
+		echo "用法: make ts-factor-eval TS_FACTOR_FACTORS='atr sqs_hal_high' TS_FACTOR_STRATEGY=config/strategies/sr_reversal"; \
 		exit 1; \
 	fi
-	@echo "📈 TS 因子评价: $(FACTOR_TS_FACTORS)"
-	@echo "   策略配置: $(FACTOR_TS_STRATEGY)"
+	@echo "📈 TS 因子评价: $(TS_FACTOR_FACTORS)"
+	@echo "   策略配置: $(TS_FACTOR_STRATEGY)"
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/factor_ts_eval.py \
-		--strategy-config /workspace/$(FACTOR_TS_STRATEGY) \
-		--symbol $(FACTOR_TS_SYMBOL) \
-		--factors $(FACTOR_TS_FACTORS) \
+		--strategy-config /workspace/$(TS_FACTOR_STRATEGY) \
+		--symbol $(TS_FACTOR_SYMBOL) \
+		--factors $(TS_FACTOR_FACTORS) \
 		--data-path /workspace/$(DATA_DIR) \
-		--timeframe $(FACTOR_TS_TIMEFRAME) \
-		$(if $(FACTOR_TS_START),--start-date $(FACTOR_TS_START),) \
-		$(if $(FACTOR_TS_END),--end-date $(FACTOR_TS_END),) \
-		--quantile $(FACTOR_TS_QUANTILE) \
-		--feature-mode $(FACTOR_TS_MODE) \
-		--output-dir /workspace/$(FACTOR_TS_OUTPUT_DIR)
+		--timeframe $(TS_FACTOR_TIMEFRAME) \
+		$(if $(TS_FACTOR_START),--start-date $(TS_FACTOR_START),) \
+		$(if $(TS_FACTOR_END),--end-date $(TS_FACTOR_END),) \
+		--quantile $(TS_FACTOR_QUANTILE) \
+		--feature-mode $(TS_FACTOR_MODE) \
+		--output-dir /workspace/$(TS_FACTOR_OUTPUT_DIR)
 
 FACTOR_COMPUTE_FACTORS ?=
 FACTOR_COMPUTE_INPUT ?=
@@ -350,37 +357,68 @@ TRAIN_FEATURE_TYPE ?= baseline
 DIRECTION_THRESHOLD ?= f1_optimize
 
 
-FACTOR_ANALYSIS_OUTPUT_DIR ?= results/factor_analysis
-FACTOR_ANALYSIS_PERIODS ?= 24
-FACTOR_ANALYSIS_QUANTILES ?= 10
-FACTOR_ANALYSIS_FACTOR_NAME ?=
-FACTOR_ANALYSIS_FEATURE_TYPE ?= baseline
+CS_FACTOR_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
+CS_FACTOR_SYMBOLS ?= BTCUSDT,ETHUSDT
+CS_FACTOR_TIMEFRAME ?= 240T
+CS_FACTOR_HORIZON ?= 24
+CS_FACTOR_QUANTILES ?= 5
+CS_FACTOR_IC_LAGS ?= 1,3,5
+CS_FACTOR_MIN_XS ?= 3
+CS_FACTOR_OUTPUT_DIR ?= results/cross_sectional_eval
 
-factor-analysis:
-	@echo "📊 Factor effectiveness analysis using Alphalens for $(SYMBOLS) ($(START_DATE) → $(END_DATE))..."
-	@echo "Example: make factor-analysis SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT START_DATE=2024-10-01 END_DATE=2024-12-31 FREQ=15T"
-	@echo "       Symbols: $(SYMBOLS) (comma-separated for multi-asset analysis)"
-	@echo "       Timeframe: $(FREQ) (override with FREQ=5T,15T,60T,240T, etc.)"
-	@echo "       Feature Type: $(FACTOR_ANALYSIS_FEATURE_TYPE)"
-	@echo "       Periods: $(FACTOR_ANALYSIS_PERIODS) bars (e.g., 1,4,24 for 15min, 1h, 6h prediction)"
-	@echo "       Quantiles: $(FACTOR_ANALYSIS_QUANTILES) (for Top vs Bottom analysis)"
-	@if [ -n "$(FACTOR_ANALYSIS_FACTOR_NAME)" ]; then \
-		echo "       Factor Name: $(FACTOR_ANALYSIS_FACTOR_NAME)"; \
-	fi
-	@echo "       Note: Alphalens frequency warnings are expected for intraday data (workaround applied)"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/analysis/factor_analysis_alphalens.py \
-		$(if $(shell echo $(START_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--start $(shell echo $(START_DATE) | cut -c1-7),) \
-		$(if $(shell echo $(END_DATE) | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$$'),--end $(shell echo $(END_DATE) | cut -c1-7),) \
-		--data-dir /workspace/$(DATA_DIR) \
-		--symbol $(SYMBOLS) \
-		--freq $(FREQ) \
-		--feature-type $(FACTOR_ANALYSIS_FEATURE_TYPE) \
-		--output-dir /workspace/$(FACTOR_ANALYSIS_OUTPUT_DIR) \
-		--periods $(FACTOR_ANALYSIS_PERIODS) \
-		--quantiles $(FACTOR_ANALYSIS_QUANTILES) \
-		$(if $(FACTOR_ANALYSIS_FACTOR_NAME),--factor-name $(FACTOR_ANALYSIS_FACTOR_NAME),)
+cs-factor-eval:
+	@echo "📊 Cross-sectional factor evaluation for $(CS_FACTOR_SYMBOLS) ($(START_DATE) → $(END_DATE))"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/cross_sectional_eval.py \
+		--features-config $(CS_FACTOR_FEATURES_CONFIG) \
+		--symbols $(CS_FACTOR_SYMBOLS) \
+		--data-path /workspace/$(DATA_DIR) \
+		--timeframe $(CS_FACTOR_TIMEFRAME) \
+		$(if $(START_DATE),--start-date $(START_DATE),) \
+		$(if $(END_DATE),--end-date $(END_DATE),) \
+		--horizon $(CS_FACTOR_HORIZON) \
+		--quantiles $(CS_FACTOR_QUANTILES) \
+		--ic-decay-lags $(CS_FACTOR_IC_LAGS) \
+		--min-cross-sectional $(CS_FACTOR_MIN_XS) \
+		--output-dir /workspace/$(CS_FACTOR_OUTPUT_DIR)
 
-timeframe-forward-report:
+# ---------------------------------------------------------------------------
+# Strategy feature comparison
+# ---------------------------------------------------------------------------
+
+STRAT_COMPARE_CONFIG ?= config/strategies/sr_reversal
+STRAT_COMPARE_DATA_PATH ?= $(DATA_DIR)
+STRAT_COMPARE_SYMBOL ?= BTCUSDT
+STRAT_COMPARE_TIMEFRAME ?= 240T
+STRAT_COMPARE_TEST_SIZE ?= 0.15
+STRAT_COMPARE_OUTPUT_DIR ?= results/strategy_compare
+STRAT_COMPARE_OVERRIDES ?=
+STRAT_COMPARE_RUN_ROLLING ?= false
+STRAT_COMPARE_ROLL_TRAIN ?= 5000
+STRAT_COMPARE_ROLL_TEST ?= 1000
+STRAT_COMPARE_ROLL_STEP ?= 1000
+STRAT_COMPARE_ROLL_MAX ?= 5
+
+ts-strategy-feature-compare:
+	@echo "🆚 Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/strategy_management/strategy_feature_compare.py \
+		--strategy-config /workspace/$(STRAT_COMPARE_CONFIG) \
+		--symbol $(STRAT_COMPARE_SYMBOL) \
+		--data-path /workspace/$(STRAT_COMPARE_DATA_PATH) \
+		--timeframe $(STRAT_COMPARE_TIMEFRAME) \
+		--test-size $(STRAT_COMPARE_TEST_SIZE) \
+		--output-dir /workspace/$(STRAT_COMPARE_OUTPUT_DIR) \
+		$(if $(STRAT_COMPARE_OVERRIDES),--feature-overrides $(STRAT_COMPARE_OVERRIDES),) \
+		$(if $(filter true,$(STRAT_COMPARE_RUN_ROLLING)),--run-rolling,) \
+		--rolling-train-bars $(STRAT_COMPARE_ROLL_TRAIN) \
+		--rolling-test-bars $(STRAT_COMPARE_ROLL_TEST) \
+		--rolling-step-bars $(STRAT_COMPARE_ROLL_STEP) \
+		--rolling-max-windows $(STRAT_COMPARE_ROLL_MAX)
+
+strategy-feature-compare:
+	@echo "⚠️ 'strategy-feature-compare' has been renamed to 'ts-strategy-feature-compare'. Please update your workflows."
+	@$(MAKE) ts-strategy-feature-compare
+
+ts-timeframe-forward-report:
 	@echo "🧮 Analysing timeframe and forward bar correlations for $(SYMBOLS)..."
 	@mkdir -p $(TF_ANALYSIS_OUTPUT_DIR)
 	SYMBOLS_SPACE="$(shell echo $(SYMBOLS) | tr ',' ' ')" ; \
@@ -404,7 +442,7 @@ timeframe-forward-report:
 ifneq ($(TF_ANALYSIS_RUN_TAG),)
 	@TF_RUN_DIR="$(TF_ANALYSIS_OUTPUT_DIR)/$(TF_ANALYSIS_RUN_TAG)" ; \
 	if [ ! -f "$$TF_RUN_DIR/timeframe_forward_details.csv" ]; then \
-		echo "❌ Cannot find $$TF_RUN_DIR/timeframe_forward_details.csv -- did timeframe-forward-report succeed?"; \
+		echo "❌ Cannot find $$TF_RUN_DIR/timeframe_forward_details.csv -- did ts-timeframe-forward-report succeed?"; \
 		exit 1; \
 	fi
 	@echo "🧾 Building strategy configuration from $(TF_ANALYSIS_RUN_TAG)..."
@@ -425,6 +463,10 @@ ifneq ($(TF_ANALYSIS_RUN_TAG),)
 	fi
 endif
 
+timeframe-forward-report:
+	@echo "⚠️ 'timeframe-forward-report' has been renamed to 'ts-timeframe-forward-report'. Please update your workflows."
+	@$(MAKE) ts-timeframe-forward-report
+
 # ---------------------------------------------------------------------------
 # Dimensionality: Three-stage feature selection (before vs after reduction)
 # ---------------------------------------------------------------------------
@@ -437,9 +479,9 @@ DIM_COMPARE_VALIDATE_PIPELINE ?= true
 DIM_COMPARE_REPORT_HTML ?=
 DIM_COMPARE_EXPORT_MODEL ?=
 
-dim-compare:
+ts-dim-compare:
 	@echo "🔬 Dimensionality Reduction Comparison for $(SYMBOLS) ..."
-	@echo "Usage: make dim-compare SYMBOLS=BTCUSDT,ETHUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=comprehensive DIM_COMPARE_TIMEFRAME=5T"
+	@echo "Usage: make ts-dim-compare SYMBOLS=BTCUSDT,ETHUSDT HORIZONS=1,5,10,15 DIM_COMPARE_FEATURE_TYPE=comprehensive DIM_COMPARE_TIMEFRAME=5T"
 	@echo "       This runs three-stage feature selection:"
 	@echo "         Stage 1: Missing/stability filter (removes >20%% missing or low variance)"
 	@echo "         Stage 2: IC ranking (selects top features by Information Coefficient)"
@@ -484,6 +526,10 @@ dim-compare:
 		$(if $(DIM_COMPARE_REPORT_HTML),--report-html /workspace/$(DIM_COMPARE_REPORT_HTML)) \
 		$(if $(DIM_COMPARE_EXPORT_MODEL),--export-model /workspace/$(DIM_COMPARE_EXPORT_MODEL)) \
 		$(DIM_COMPARE_ARGS)
+
+dim-compare:
+	@echo "⚠️ 'dim-compare' has been renamed to 'ts-dim-compare'. Please update your workflows."
+	@$(MAKE) ts-dim-compare
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +619,7 @@ BACKTEST_START ?=$(START_DATE)
 BACKTEST_END ?=$(END_DATE)
 BACKTEST_SYMBOL ?=$(SYMBOL)
 BACKTEST_MODEL ?=$(MODEL_PATH)
-vectorbot-backtest:
+ts-vectorbot-backtest:
 	@echo "🤖 Running VectorBot backtest with model=$(BACKTEST_MODEL) symbol=$(BACKTEST_SYMBOL) range=$(BACKTEST_START)→$(BACKTEST_END) ..."
 	$(DOCKER_RUN_NO_TTY) bash -c "python3 -m time_series_model.backtesting.vectorbot \
 		$(if $(BACKTEST_MODEL),--model '$(BACKTEST_MODEL)') \
@@ -581,7 +627,11 @@ vectorbot-backtest:
 		$(if $(BACKTEST_START),--start '$(BACKTEST_START)') \
 		$(if $(BACKTEST_END),--end '$(BACKTEST_END)')"
 
-nautilus-backtest:
+vectorbot-backtest:
+	@echo "⚠️ 'vectorbot-backtest' has been renamed to 'ts-vectorbot-backtest'. Please update your workflows."
+	@$(MAKE) ts-vectorbot-backtest
+
+ts-nautilus-backtest:
 	@echo "⛵ Running Nautilus AE+LGB backtest (host env, requires nautilus-trader installed)..."
 	PYTHONPATH=src $(PYTHON) -m time_series_model.backtesting.nautilus_dim \
 		--data-dir $(DATA_DIR) \
@@ -590,6 +640,10 @@ nautilus-backtest:
 		--timeframe 5T \
 		--start $(START_DATE) --end $(END_DATE) \
 		--output-dir $(RESULTS_DIR)/nautilus_backtests
+
+nautilus-backtest:
+	@echo "⚠️ 'nautilus-backtest' has been renamed to 'ts-nautilus-backtest'. Please update your workflows."
+	@$(MAKE) ts-nautilus-backtest
 
 # ---------------------------------------------------------------------------
 # Rank IC Regression Training (Standalone)
@@ -614,7 +668,7 @@ FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD ?= 0.02
 FEATURE_EVAL_TRAIN_ONLY ?= 1
 FEATURE_EVAL_TEST_SIZE ?= 0.15
 
-feature-eval:
+ts-feature-eval:
 	@echo "🔍 Feature Type Evaluation (IC Ranking + Top Factors Selection)..."
 	@echo "   Symbol: $(FEATURE_EVAL_SYMBOL)"
 	@echo "   Timeframe: $(FEATURE_EVAL_TIMEFRAME)"
@@ -638,6 +692,10 @@ feature-eval:
 		$(if $(filter 1 true yes,$(FEATURE_EVAL_TRAIN_ONLY)),--train-only --test-size $(FEATURE_EVAL_TEST_SIZE),)
 	@echo "✅ Evaluation complete. Check results in $(FEATURE_EVAL_OUTPUT_DIR)"
 	@echo "📄 top_factors.json generated for ts-r-rank-ic-train"
+
+feature-eval:
+	@echo "⚠️ 'feature-eval' has been renamed to 'ts-feature-eval'. Please update your workflows."
+	@$(MAKE) ts-feature-eval
 
 
 RANK_IC_SYMBOL ?= $(SYMBOL)
@@ -848,7 +906,7 @@ CS_BUILD_FEATURE_TYPE ?= baseline
 CS_BUILD_OUTPUT ?= $(RESULTS_DIR)/feature_exports/cs_panel_$(shell echo $(CS_BUILD_SYMBOLS) | tr ' ,' '__' | cut -c1-40)_$(CS_BUILD_TIMEFRAME)_$(CS_BUILD_HORIZON)b_$(CS_BUILD_FEATURE_TYPE)_$(shell echo $(CS_BUILD_START))_$(shell echo $(CS_BUILD_END)).parquet
 CS_BUILD_DROPNA ?= 1
 
-cross-sectional-build-panel:
+cs-build-panel:
 	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
 	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
 	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
@@ -876,7 +934,7 @@ CS_PERIODS_PER_YEAR ?= auto
 CS_WINSOR ?= 3.0
 CS_REPORT_EXTRA ?=
 
-cross-sectional-report:
+cs-report:
 	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
 	@mkdir -p $(dir $(CS_OUTPUT))
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_famacbeth_report.py \
@@ -909,7 +967,7 @@ CS_TRAIN_IC_THRESHOLD ?=
 CS_TRAIN_IR_THRESHOLD ?=
 CS_TRAIN_SELECTION_STAT ?= ic
 
-cross-sectional-train:
+cs-train:
 	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
 	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/train_cross_sectional_model.py \
@@ -937,16 +995,16 @@ cross-sectional-train:
 # Full cross-sectional workflow (panel -> report -> training)
 # ---------------------------------------------------------------------------
 
-cross-sectional-workflow:
+cs-workflow:
 	@echo "🔄 Running end-to-end cross-sectional pipeline..."
-	$(MAKE) cross-sectional-build-panel
-	$(MAKE) cross-sectional-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
-	$(MAKE) cross-sectional-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+	$(MAKE) cs-build-panel
+	$(MAKE) cs-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+	$(MAKE) cs-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
 
 CS_CATALOG_INPUT ?= $(CS_BUILD_OUTPUT)
 CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
 
-cross-sectional-catalog:
+cs-catalog:
 	@echo "🗂  Exporting factor catalogue from $(CS_CATALOG_INPUT)..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/export_factor_catalog.py \
 		--input $(CS_CATALOG_INPUT) \
@@ -966,7 +1024,7 @@ CS_SELECT_RANKING ?= ic
 CS_SELECT_INCLUDE ?=
 CS_SELECT_EXTRA ?=
 
-cross-sectional-select:
+cs-select:
 	@echo "🧠 Auto-selecting factors from $(CS_SELECT_INPUT)..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/auto_select_factors.py \
 		--input $(CS_SELECT_INPUT) \
@@ -992,7 +1050,7 @@ CS_SHAP_OUTPUT ?= results/cross_sectional/shap_reports
 CS_SHAP_MAX_SAMPLES ?= 2000
 CS_SHAP_ADDITIONAL ?=
 
-cross-sectional-shap:
+cs-shap:
 	@echo "📈 Running SHAP analysis..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_analysis.py \
 		--model $(CS_SHAP_MODEL) \
@@ -1009,7 +1067,7 @@ CS_LOGIC_OUTPUT ?= results/cross_sectional/shap_logic_report.md
 CS_LOGIC_TOLERANCE ?= 0.0
 CS_LOGIC_EXTRA ?=
 
-cross-sectional-logic-check:
+cs-logic-check:
 	@echo "🧐 Validating factor economic logic..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_factor_logic_check.py \
 		--shap-manifest $(CS_SHAP_OUTPUT)/manifest.json \
@@ -1024,7 +1082,7 @@ CS_DRIFT_OUTPUT ?= results/cross_sectional/shap_drift_report.md
 CS_DRIFT_UPDATE ?= 0
 CS_DRIFT_EXTRA ?=
 
-cross-sectional-shap-drift:
+cs-shap-drift:
 	@echo "📉 Checking SHAP drift..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_drift_monitor.py \
 		--current $(CS_SHAP_OUTPUT)/manifest.json \
@@ -1041,10 +1099,10 @@ CS_AUTO_IR_THRESHOLD ?= 0.5
 CS_AUTO_MIN_ASSETS ?= 4
 CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
 
-cross-sectional-auto:
+cs-auto:
 	@echo "🤖 Running fully automated cross-sectional pipeline..."
-	$(MAKE) cross-sectional-build-panel
-	$(MAKE) cross-sectional-select \
+	$(MAKE) cs-build-panel
+	$(MAKE) cs-select \
 		CS_SELECT_INPUT="$(CS_BUILD_OUTPUT)" \
 		CS_SELECT_OUTPUT="$(CS_AUTO_FEATURE_FILE)" \
 		CS_SELECT_OUTPUT_JSON="results/cross_sectional/selection_summary.json" \
@@ -1053,22 +1111,22 @@ cross-sectional-auto:
 		CS_SELECT_GLOBAL_TOP=$(CS_AUTO_GLOBAL_TOP) \
 		CS_SELECT_IC_THRESHOLD=$(CS_AUTO_IC_THRESHOLD) \
 		CS_SELECT_IR_THRESHOLD=$(CS_AUTO_IR_THRESHOLD)
-	$(MAKE) cross-sectional-report \
+	$(MAKE) cs-report \
 		CS_INPUT="$(CS_BUILD_OUTPUT)" \
 		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
 		CS_HORIZON=$(CS_BUILD_HORIZON) \
 		CS_REPORT_EXTRA="--feature-file $(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cross-sectional-train \
+	$(MAKE) cs-train \
 		CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" \
 		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
 		CS_HORIZON=$(CS_BUILD_HORIZON) \
 		CS_PERIODS_PER_YEAR=$(CS_PERIODS_PER_YEAR) \
 		CS_TRAIN_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cross-sectional-shap \
+	$(MAKE) cs-shap \
 		CS_SHAP_MODEL="$(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)" \
 		CS_SHAP_PANEL="$(CS_BUILD_OUTPUT)" \
 		CS_SHAP_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cross-sectional-logic-check \
+	$(MAKE) cs-logic-check \
 		CS_LOGIC_EXPECTATIONS="$(CS_LOGIC_EXPECTATIONS)"
-	$(MAKE) cross-sectional-shap-drift \
+	$(MAKE) cs-shap-drift \
 		CS_DRIFT_BASELINE="$(CS_DRIFT_BASELINE)"

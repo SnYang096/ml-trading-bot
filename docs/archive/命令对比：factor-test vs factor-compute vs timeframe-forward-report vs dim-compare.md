@@ -1,4 +1,4 @@
-# 命令对比：factor-test vs factor-compute vs timeframe-forward-report vs dim-compare
+# 命令对比：factor-test vs factor-compute vs ts-timeframe-forward-report vs ts-dim-compare
 
 ## 快速对比表
 
@@ -6,8 +6,8 @@
 |------|---------|------|---------|--------|
 | `factor-test` | 测试因子有效性 | IC/IR 报告（HTML/TXT/JSON） | 研究阶段：评估因子质量 | ⭐ 低 |
 | `factor-compute` | 计算因子值 | CSV/Parquet 文件 | 实盘：计算指定因子 | ⭐ 低 |
-| `timeframe-forward-report` | 分析时间框架和预测周期 | 相关性报告 | 策略设计：选择最优时间框架 | ⭐⭐ 中 |
-| `dim-compare` | 特征选择和降维对比 | 模型性能报告、top_factors.json | 模型优化：特征选择 | ⭐⭐⭐ 高 |
+| `ts-timeframe-forward-report` | 分析时间框架和预测周期 | 相关性报告 | 策略设计：选择最优时间框架 | ⭐⭐ 中 |
+| `ts-dim-compare` | 特征选择和降维对比 | 模型性能报告、top_factors.json | 模型优化：特征选择 | ⭐⭐⭐ 高 |
 
 ---
 
@@ -73,7 +73,7 @@ make factor-compute \
 
 ---
 
-## 3. `timeframe-forward-report` - 时间框架和预测周期分析
+## 3. `ts-timeframe-forward-report` - 时间框架和预测周期分析
 
 ### 功能
 分析不同时间框架（5T, 15T, 60T等）和预测周期（forward bars）的相关性，找出最优组合。
@@ -85,7 +85,7 @@ make factor-compute \
 
 ### 示例
 ```bash
-make timeframe-forward-report \
+make ts-timeframe-forward-report \
   SYMBOLS=BTCUSDT,ETHUSDT \
   TF_ANALYSIS_TIMEFRAMES="5T,15T,60T,240T" \
   TF_ANALYSIS_FORWARD_BARS="1,3,6,12,24" \
@@ -104,7 +104,7 @@ make timeframe-forward-report \
 
 ---
 
-## 4. `dim-compare` - 特征选择和降维对比
+## 4. `ts-dim-compare` - 特征选择和降维对比
 
 ### 功能
 对比不同特征集（不同因子数量）的模型性能，进行特征选择和降维。
@@ -116,7 +116,7 @@ make timeframe-forward-report \
 
 ### 示例
 ```bash
-make dim-compare \
+make ts-dim-compare \
   SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT \
   HORIZONS=1,5,10,15 \
   DIM_COMPARE_FEATURE_TYPE=baseline \
@@ -151,7 +151,7 @@ make factor-test FACTOR_TEST_FACTORS="new_factor_1,new_factor_2"
 ### 阶段 2：策略设计
 ```bash
 # 1. 分析最优时间框架和预测周期
-make timeframe-forward-report \
+make ts-timeframe-forward-report \
   SYMBOLS=BTCUSDT \
   TF_ANALYSIS_TIMEFRAMES="5T,15T,60T,240T"
 
@@ -161,7 +161,7 @@ make timeframe-forward-report \
 ### 阶段 3：特征选择
 ```bash
 # 1. 对比不同特征集，找出最优因子组合
-make dim-compare \
+make ts-dim-compare \
   SYMBOLS=BTCUSDT,ETHUSDT \
   DIM_COMPARE_FEATURE_TYPE=comprehensive \
   FACTOR_COUNTS=20,40,60,80,100
@@ -185,15 +185,15 @@ make factor-compute \
 - **factor-test**：评估因子质量（IC/IR），不输出因子值
 - **factor-compute**：计算因子值，不评估质量
 
-### `timeframe-forward-report` vs `dim-compare`
-- **timeframe-forward-report**：分析时间框架和预测周期，不训练模型
-- **dim-compare**：训练模型并对比性能，包含完整的机器学习流程
+### `ts-timeframe-forward-report` vs `ts-dim-compare`
+- **ts-timeframe-forward-report**：分析时间框架和预测周期，不训练模型
+- **ts-dim-compare**：训练模型并对比性能，包含完整的机器学习流程
 
 ### 选择建议
 - 🧪 **快速测试因子** → `factor-test`
 - 💻 **实盘计算因子** → `factor-compute`
-- ⏰ **选择时间框架** → `timeframe-forward-report`
-- 🎯 **优化特征集** → `dim-compare`
+- ⏰ **选择时间框架** → `ts-timeframe-forward-report`
+- 🎯 **优化特征集** → `ts-dim-compare`
 
 ---
 
@@ -212,13 +212,13 @@ make factor-compute \
 - `FACTOR_COMPUTE_SYMBOL` - 交易对（如果从数据目录加载）
 - `FACTOR_COMPUTE_OUTPUT` - 输出文件（必需）
 
-### timeframe-forward-report
+### ts-timeframe-forward-report
 - `SYMBOLS` - 交易对列表
 - `TF_ANALYSIS_TIMEFRAMES` - 时间框架列表（如 "5T,15T,60T"）
 - `TF_ANALYSIS_FORWARD_BARS` - 预测周期列表（如 "1,3,6,12"）
 - `TF_ANALYSIS_FEATURE_TYPE` - 特征类型
 
-### dim-compare
+### ts-dim-compare
 - `SYMBOLS` - 交易对列表
 - `DIM_COMPARE_FEATURE_TYPE` - 特征类型
 - `TIMEFRAME` - 时间框架

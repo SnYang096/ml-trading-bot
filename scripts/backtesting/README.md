@@ -10,10 +10,10 @@
 
 ```bash
 # VectorBot 回测（默认使用 Makefile 中的 MODEL_PATH 变量）
-make vectorbot-backtest
+make ts-vectorbot-backtest
 
 # Nautilus Dim 回测（需宿主环境安装 nautilus-trader）
-make nautilus-backtest SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT \
+make ts-nautilus-backtest SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT \
     DATA_DIR=data/parquet_data \
     RESULTS_DIR=results/production_dimensionality_20251109_140314 \
     START_DATE=2024-10-01 END_DATE=2024-12-31

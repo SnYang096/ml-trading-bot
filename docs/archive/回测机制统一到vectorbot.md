@@ -103,7 +103,7 @@ print_backtest_results(bt_results, "Monthly Backtest")
 - ✅ 使用 signal_strength 直接作为仓位大小
 - ✅ 适合训练阶段的快速反馈
 
-#### 3. 维度比较回测（用于 dim-compare）
+#### 3. 维度比较回测（用于 ts-dim-compare）
 
 ```python
 from time_series_model.backtesting.vectorbot import (
@@ -226,7 +226,7 @@ src/time_series_model/pipeline/dimensionality/
 python3 -c "from time_series_model.backtesting.vectorbot import *; print('✅ All imports successful')"
 
 # 运行回测
-make vectorbot-backtest BACKTEST_MODEL=results/rolling_btcusdt_ethusdt_20251115_001813/latest
+make ts-vectorbot-backtest BACKTEST_MODEL=results/rolling_btcusdt_ethusdt_20251115_001813/latest
 ```
 
 ---

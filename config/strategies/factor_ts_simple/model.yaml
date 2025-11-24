@@ -4,16 +4,16 @@ trainer:
   module: src.time_series_model.strategies.models.strategy_trainer
   function: train_strategy_model
   params:
-    model_type: xgboost
+    model_type: lightgbm
     task_type: regression
     target_col: tf_rank
     n_splits: 3
     tscv_gap: 12
-    use_gpu: true
+    use_gpu: false
     model_params:
-      max_depth: 4
+      max_depth: -1
       learning_rate: 0.05
-      n_estimators: 200
+      n_estimators: 400
       subsample: 0.8
       colsample_bytree: 0.8
       random_state: 42

@@ -77,7 +77,7 @@
 **实现方式**:
 1. 为每个时间窗口（1、5、10、15根K线）创建独立的标签
 2. 分别训练每个时间窗口的模型
-3. 在 `dim-compare` 中对比不同时间窗口的特征表现
+3. 在 `ts-dim-compare` 中对比不同时间窗口的特征表现
 4. 选择表现最好的时间窗口用于生产
 
 **优点**:
@@ -135,10 +135,10 @@ def create_labels_multi_horizon(
 
 #### 步骤 2: 修改训练流程
 
-修改 `dim-compare` 和 `auto-rolling-update`，支持多时间窗口训练：
+修改 `ts-dim-compare` 和 `auto-rolling-update`，支持多时间窗口训练：
 
 ```python
-# 在 dim-compare 中，对每个时间窗口分别训练和评估
+# 在 ts-dim-compare 中，对每个时间窗口分别训练和评估
 for horizon in [1, 5, 10, 15]:
     # 创建该时间窗口的标签
     df_horizon = create_labels_multi_horizon(df, horizons=[horizon])
@@ -156,7 +156,7 @@ for horizon in [1, 5, 10, 15]:
 
 #### 步骤 3: 对比不同时间窗口的表现
 
-在 `dim-compare` 的报告中，添加多时间窗口对比表：
+在 `ts-dim-compare` 的报告中，添加多时间窗口对比表：
 
 ```
 时间窗口对比表:
@@ -181,8 +181,8 @@ for horizon in [1, 5, 10, 15]:
 
 **实现方式**:
 ```bash
-# 使用多时间窗口进行 dim-compare
-make dim-compare \
+# 使用多时间窗口进行 ts-dim-compare
+make ts-dim-compare \
   SYMBOL=BTCUSDT \
   START_DATE=2025-04-01 \
   END_DATE=2025-07-31 \
@@ -203,8 +203,8 @@ make dim-compare \
 # 在 Makefile 中添加
 HORIZONS ?= 1,5,10,15  # 默认使用4个时间窗口
 
-# 在 dim-compare 中使用
-make dim-compare \
+# 在 ts-dim-compare 中使用
+make ts-dim-compare \
   SYMBOL=BTCUSDT \
   START_DATE=2025-04-01 \
   END_DATE=2025-07-31 \
@@ -228,7 +228,7 @@ make dim-compare \
 - 添加 `create_labels_multi_horizon` 函数
 - 支持多个时间窗口的标签创建
 
-### 优先级 2: 修改 `dim-compare`（必需）
+### 优先级 2: 修改 `ts-dim-compare`（必需）
 
 **文件**: `src/time_series_model/pipeline/dimensionality/dimensionality_comparison.py`
 
@@ -271,7 +271,7 @@ make dim-compare \
 ## 下一步行动
 
 1. **修改 `create_labels` 函数**: 支持多个时间窗口
-2. **修改 `dim-compare`**: 添加多时间窗口对比
+2. **修改 `ts-dim-compare`**: 添加多时间窗口对比
 3. **修改 `auto-rolling-update`**: 支持多时间窗口训练
 4. **更新文档**: 添加多时间窗口使用说明
 

@@ -3407,7 +3407,7 @@ def main() -> Tuple[Dict, any, str]:
                     {
                         "top_factors": [{"name": factor} for factor in factors_only],
                         "count": len(factors_only),
-                        "source": "dim-compare",
+                        "source": "ts-dim-compare",
                         "stage": "Stage 3: Representative features",
                         "effective": feature_insights_stage3.get("effective", False),
                         "note": (

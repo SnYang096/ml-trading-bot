@@ -8,7 +8,7 @@ This guide explains how to judge whether dimensionality reduction (Top‑K selec
   - Runs paired training with identical data splits and outputs a single JSON summary with metrics.
   - Command:
   ```bash
-  make dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS="--top-k 40"
+  make ts-dim-compare SYMBOL=BTCUSDT ENCODING_DIM=16 DIM_COMPARE_ARGS="--top-k 40"
   ```
 
 - Manual two-run comparison
@@ -54,7 +54,7 @@ Consider dimensionality reduction “effective” if most of the following hold:
 
 ### Where to find outputs
 
-- `make dim-compare` writes a JSON summary (e.g., `production_results.json`) containing side-by-side metrics for original vs compressed/Top‑K.
+- `make ts-dim-compare` writes a JSON summary (e.g., `production_results.json`) containing side-by-side metrics for original vs compressed/Top‑K.
 - `make dimensionality-real` writes `results/.../top_factors_<symbol>.json` and a research report with visual comparisons.
 - `make train` / `make train-topk` write models under `models/` and logs/metrics under `results/`.
 

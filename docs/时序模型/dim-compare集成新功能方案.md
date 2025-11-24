@@ -1,6 +1,6 @@
-# dim-compare 集成新 Rank IC 训练功能方案
+# ts-dim-compare 集成新 Rank IC 训练功能方案
 
-## 当前 dim-compare 的状态
+## 当前 ts-dim-compare 的状态
 
 ### 现有功能
 1. **标签类型**：使用 `create_labels_multi_horizon` 创建分类标签（Long/Short/Hold）
@@ -105,7 +105,7 @@ else:
 
 ## 方案 3：完全迁移到 Rank IC 训练（最大改动）
 
-将 dim-compare 完全迁移到 Rank IC 训练流程。
+将 ts-dim-compare 完全迁移到 Rank IC 训练流程。
 
 ### 实现方式
 

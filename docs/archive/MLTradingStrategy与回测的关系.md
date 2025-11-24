@@ -221,5 +221,5 @@ def _load_rolling_models(self, model_dir: str) -> None:
 | `vectorbot.py` (Legacy) | Legacy 格式回测 | ✅ 使用 |
 | `vectorbot.py` (Rolling) | Rolling 格式回测 | ❌ 不使用 |
 | `rolling.py` | Rolling 训练 | ❌ 不使用 |
-| `dim-compare` | 特征选择 | ❌ 不使用 |
+| `ts-dim-compare` | 特征选择 | ❌ 不使用 |
 

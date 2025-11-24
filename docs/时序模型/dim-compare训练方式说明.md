@@ -1,10 +1,10 @@
-# dim-compare 训练方式说明
+# ts-dim-compare 训练方式说明
 
 ## 当前状态
 
 ### 训练方式：**分类训练**（不是回归）
 
-`dim-compare` 目前使用的是**多分类训练**：
+`ts-dim-compare` 目前使用的是**多分类训练**：
 - **标签类型**：3类分类（0=Hold, 1=Long, 2=Short）
 - **训练目标**：`objective='multiclass'`, `num_class=3`
 - **评估指标**：Accuracy, F1-score, R², RMSE（分类任务的 R²/RMSE）
@@ -31,7 +31,7 @@
 
 ## 两种训练方式的区别
 
-### 方式 1：当前 dim-compare 使用的（分类训练）
+### 方式 1：当前 ts-dim-compare 使用的（分类训练）
 
 ```python
 # 标签：0=Hold, 1=Long, 2=Short（分类标签）
@@ -89,7 +89,7 @@ rank_ic = compute_rank_ic(pred, true_returns)
 
 ## 对比总结
 
-| 特性 | 当前 dim-compare（分类） | 新 Rank IC 训练（回归） |
+| 特性 | 当前 ts-dim-compare（分类） | 新 Rank IC 训练（回归） |
 |------|------------------------|----------------------|
 | **标签类型** | 分类（0/1/2） | 回归（连续值） |
 | **训练目标** | multi_logloss | rmse |
@@ -103,7 +103,7 @@ rank_ic = compute_rank_ic(pred, true_returns)
 
 ---
 
-## 如何让 dim-compare 使用新的 Rank IC 训练？
+## 如何让 ts-dim-compare 使用新的 Rank IC 训练？
 
 ### 方案 1：添加可选参数（推荐）
 
@@ -136,7 +136,7 @@ else:
 
 ### 方案 2：完全迁移到 Rank IC 训练
 
-将 dim-compare 完全改为使用 Rank IC 训练（回归），但这需要：
+将 ts-dim-compare 完全改为使用 Rank IC 训练（回归），但这需要：
 - 修改标签生成逻辑
 - 修改评估逻辑
 - 修改报告生成逻辑
@@ -144,7 +144,7 @@ else:
 
 ---
 
-## 当前 dim-compare 的实际效果
+## 当前 ts-dim-compare 的实际效果
 
 ### 分类训练 + Rank IC 评估
 
@@ -162,7 +162,7 @@ else:
 
 ## 建议
 
-1. **当前使用**：dim-compare 的分类训练 + Rank IC 评估
+1. **当前使用**：ts-dim-compare 的分类训练 + Rank IC 评估
    - 可以快速评估模型预测能力
    - 适合对比降维前后的效果
 
@@ -170,7 +170,7 @@ else:
    - 直接优化 Rank IC
    - 使用所有新功能（波动率标准化、历史分位数等）
 
-3. **未来**：可以考虑在 dim-compare 中添加 `--use-rank-ic-training` 参数
+3. **未来**：可以考虑在 ts-dim-compare 中添加 `--use-rank-ic-training` 参数
    - 让用户选择使用哪种训练方式
    - 可以对比两种方法的效果
 

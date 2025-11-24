@@ -152,8 +152,8 @@ make rolling SYMBOLS=BTCUSDT,ETHUSDT \
 #### 方案 A: 使用 `make rolling`（手动指定时间范围）
 
 ```bash
-# 1. 先运行 dim-compare 获取 top factors
-make dim-compare SYMBOLS=BTCUSDT,ETHUSDT \
+# 1. 先运行 ts-dim-compare 获取 top factors
+make ts-dim-compare SYMBOLS=BTCUSDT,ETHUSDT \
   START_DATE=2024-01-01 END_DATE=2024-12-31 \
   DIM_COMPARE_FEATURE_TYPE=comprehensive \
   TIMEFRAME=60T
@@ -175,8 +175,8 @@ make rolling SYMBOLS=BTCUSDT,ETHUSDT \
 #### 方案 B: 使用 `make auto-rolling-update`（自动检测最新数据，推荐）
 
 ```bash
-# 1. 先运行 dim-compare
-make dim-compare SYMBOLS=BTCUSDT,ETHUSDT \
+# 1. 先运行 ts-dim-compare
+make ts-dim-compare SYMBOLS=BTCUSDT,ETHUSDT \
   START_DATE=2024-01-01 END_DATE=2024-12-31 \
   DIM_COMPARE_FEATURE_TYPE=comprehensive \
   TIMEFRAME=60T
@@ -243,5 +243,5 @@ make rolling SYMBOLS=BTCUSDT \
 - ✅ **生产环境**：使用 `make rolling` 或 `make auto-rolling-update`
 - ✅ **回测**：使用 `make rolling`
 - ✅ **开发测试**：使用 `make train`
-- ✅ 两者都支持 `--use-top-factors` 加载 dim-compare 的结果
+- ✅ 两者都支持 `--use-top-factors` 加载 ts-dim-compare 的结果
 

@@ -25,7 +25,7 @@ This repository hosts the production-ready components for the factor research, d
 
 The recommended workflow consists of only 3 commands:
 
-1. **Research** (`make dim-compare`): Find optimal features and compression
+1. **Research** (`make ts-dim-compare`): Find optimal features and compression
 2. **Train** (`make train`): Train production model (optional, for single evaluation)
 3. **Rolling Update** (`make auto-rolling-update`): Rolling update to latest data (main workflow)
 
@@ -37,12 +37,12 @@ Find optimal features and compression dimension using one quarter of data:
 
 ```bash
 # Basic: Research dimensionality reduction
-make dim-compare SYMBOL=BTCUSDT \
+make ts-dim-compare SYMBOL=BTCUSDT \
   START_DATE=2025-05-01 END_DATE=2025-07-31 \
   ENCODING_DIM=32
 
 # Enhanced: With VAE and automatic optimization
-make dim-compare SYMBOL=BTCUSDT \
+make ts-dim-compare SYMBOL=BTCUSDT \
   START_DATE=2025-05-01 END_DATE=2025-07-31 \
   AE_TYPE=vae \
   AUTO_ENCODING_GRID=1 \
@@ -152,7 +152,7 @@ make auto-workflow SYMBOLS=BTCUSDT \
 
 该命令会自动执行：
 
-1. `make dim-compare` 等价的特征对比（生成 `top_factors.json`）
+1. `make ts-dim-compare` 等价的特征对比（生成 `top_factors.json`）
 2. 基于最佳特征调用训练管线（`make train`）
 3. 使用相同配置运行滚动评估（`make rolling`）
 
@@ -195,7 +195,7 @@ make data-pipeline DOWNLOAD_SYMBOLS="BTCUSDT ETHUSDT"
 
 | Command | Purpose | When to Use |
 |---------|---------|-------------|
-| `make dim-compare` | Research dimensionality reduction | **Required**: Before any training |
+| `make ts-dim-compare` | Research dimensionality reduction | **Required**: Before any training |
 | `make train` | Train single model | **Optional**: For single evaluation only |
 | `make auto-rolling-update` | Rolling update | **Required**: Main production workflow |
 
@@ -213,7 +213,7 @@ make data-pipeline DOWNLOAD_SYMBOLS="BTCUSDT ETHUSDT"
 
 ```bash
 # 1. Research (find optimal configuration)
-make dim-compare SYMBOL=BTCUSDT \
+make ts-dim-compare SYMBOL=BTCUSDT \
   START_DATE=2025-05-01 END_DATE=2025-07-31 \
   ENCODING_DIM=32
 
@@ -231,7 +231,7 @@ make auto-rolling-update SYMBOL=BTCUSDT \
 
 ```bash
 # 1. Research
-make dim-compare SYMBOL=BTCUSDT \
+make ts-dim-compare SYMBOL=BTCUSDT \
   START_DATE=2025-05-01 END_DATE=2025-07-31 \
   ENCODING_DIM=32
 
@@ -277,7 +277,7 @@ make train
 
 make rolling-multi SYMBOLS="BTCUSDT,ETHUSDT" FREQS="15T,60T,240T" FBS="5" INITIAL_TRAIN_MONTHS=3 MIN_TRAIN_MONTHS=3 ROLLING_START=2021-01 ROLLING_END=2025-10 ROLLING_FEATURE_TYPE=comprehansive
 
-make cross-sectional-select \
+make cs-select \
   CS_INPUT="results/feature_exports/cs_panel_BTCUSDT_15T_12b_comprehensive_2024-11-01_2025-04-30.parquet" \
   CS_SELECT_MIN_ASSETS=8 \
   CS_SELECT_PER_CATEGORY_TOP=2 \
@@ -285,7 +285,7 @@ make cross-sectional-select \
   CS_SELECT_IC_THRESHOLD=0.01 \
   CS_SELECT_IR_THRESHOLD=0.5
 
-make cross-sectional-auto \
+make cs-auto \
   CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
   CS_BUILD_TIMEFRAME=15T \
   CS_BUILD_HORIZON=12 \
@@ -295,7 +295,7 @@ make cross-sectional-auto \
   CS_AUTO_IC_THRESHOLD=0.01 \
   CS_AUTO_IR_THRESHOLD=0.5
 
-make cross-sectional-auto \
+make cs-auto \
   CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
   CS_BUILD_TIMEFRAME=15T \
   CS_BUILD_HORIZON=12 \
@@ -319,6 +319,6 @@ make rolling ROLLING_USE_TOP_FACTORS=results/dim_compare/BTCUSDT-ETHUSDT_baselin
   ROLLING_FBS=24
 
 
-make vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_164429/latest
+make ts-vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_164429/latest
 
 make factor-test FACTOR_TEST_FACTORS="price_to_zz_high_pct,price_to_poc_pct" FACTOR_TEST_SYMBOL=BTCUSDT,ETHUSDT FACTOR_TEST_FEATURE_TYPE=baseline
