@@ -159,7 +159,35 @@ def _compute_single_feature_worker(
         compute_func_name = feature_info["compute_func"]
         compute_func = get_compute_func(compute_func_name)
         call_args, call_kwargs = _build_call_args(feature_info, df)
-        result_df = compute_func(*call_args, **call_kwargs)
+        feature_result = compute_func(*call_args, **call_kwargs)
+        
+        # Handle different return types
+        # If function returns a tuple (e.g., MACD returns (macd, signal, histogram)),
+        # convert it to a DataFrame with columns from output_columns config
+        if isinstance(feature_result, tuple):
+            output_cols = feature_info.get("output_columns", [feature_name])
+            if len(feature_result) == len(output_cols):
+                # Create DataFrame from tuple
+                result_df = pd.DataFrame({
+                    col: series for col, series in zip(output_cols, feature_result)
+                }, index=df.index)
+            else:
+                # Fallback: use feature_name with index
+                result_df = pd.DataFrame({
+                    f"{feature_name}_{i}": series for i, series in enumerate(feature_result)
+                }, index=df.index)
+        elif isinstance(feature_result, pd.DataFrame):
+            result_df = feature_result
+        elif isinstance(feature_result, pd.Series):
+            # Convert Series to DataFrame
+            output_cols = feature_info.get("output_columns", [feature_name])
+            if len(output_cols) == 1:
+                result_df = pd.DataFrame({output_cols[0]: feature_result}, index=df.index)
+            else:
+                result_df = pd.DataFrame({feature_name: feature_result}, index=df.index)
+        else:
+            # Fallback: try to convert to Series/DataFrame
+            result_df = pd.DataFrame({feature_name: feature_result}, index=df.index)
         
         # 保存磁盘缓存
         if cache_key and cache_dir:
@@ -173,6 +201,8 @@ def _compute_single_feature_worker(
         return (feature_name, pickle.dumps(result_df), cache_key)
     except Exception as e:
         print(f"     ❌ Error computing {feature_name}: {e}")
+        import traceback
+        traceback.print_exc()
         return (feature_name, df_bytes, cache_key)  # 返回原始 DataFrame
 
 
@@ -223,11 +253,30 @@ class ParallelFeatureComputer:
             self.executor = None
     
     def _get_cache_key(
-        self, feature_name: str, df_hash: str, params: Dict
+        self, feature_name: str, df_hash: str, params: Dict, feature_info: Optional[Dict] = None
     ) -> str:
-        """生成缓存键"""
+        """
+        生成缓存键
+        
+        Args:
+            feature_name: 特征名
+            df_hash: DataFrame 哈希
+            params: 计算参数
+            feature_info: 特征配置信息（用于包含 output_columns 等信息）
+        """
         params_str = str(sorted(params.items()))
-        key_str = f"{feature_name}_{df_hash}_{params_str}"
+        
+        # 包含 output_columns 信息，确保缓存键在配置改变时也会改变
+        output_cols_str = ""
+        if feature_info:
+            output_cols = feature_info.get("output_columns", [feature_name])
+            output_cols_str = str(sorted(output_cols))
+        
+        # 包含代码版本（处理 Tuple 的逻辑版本）
+        # 当处理逻辑改变时，这个版本号应该更新
+        code_version = "v2"  # v2: 支持 Tuple 返回值转换为 DataFrame
+        
+        key_str = f"{feature_name}_{df_hash}_{params_str}_{output_cols_str}_{code_version}"
         return hashlib.md5(key_str.encode()).hexdigest()
     
     def _get_df_hash(self, df: pd.DataFrame, n_rows: int = 100) -> str:
@@ -286,11 +335,39 @@ class ParallelFeatureComputer:
         Returns:
             df_with_features: 包含计算特征的 DataFrame
         """
+        # 0. 预处理：如果用户请求了 output_columns（如 macd_signal），自动找到对应的父特征
+        actual_requested = []
+        output_col_to_feature = {}  # Map output column to parent feature
+        
+        # Build reverse mapping: output_columns -> feature_name
+        for feature_name, feature_info in features.items():
+            output_cols = feature_info.get("output_columns", [feature_name])
+            for output_col in output_cols:
+                output_col_to_feature[output_col] = feature_name
+        
+        # Resolve requested features
+        for requested in requested_features:
+            if requested in features:
+                # Direct feature name
+                actual_requested.append(requested)
+            elif requested in output_col_to_feature:
+                # Output column name, use parent feature
+                parent_feature = output_col_to_feature[requested]
+                if parent_feature not in actual_requested:
+                    actual_requested.append(parent_feature)
+                    print(f"     ℹ️  '{requested}' is an output column of '{parent_feature}', computing parent feature instead")
+            else:
+                # Not found, will be handled later
+                actual_requested.append(requested)
+        
+        # Remove duplicates while preserving order
+        actual_requested = list(dict.fromkeys(actual_requested))
+        
         # 1. 分析依赖层级
-        levels = analyze_dependency_levels(features, requested_features)
+        levels = analyze_dependency_levels(features, actual_requested)
         
         print(
-            f"   📊 Computing {len(requested_features)} features in {len(levels)} levels..."
+            f"   📊 Computing {len(actual_requested)} features in {len(levels)} levels..."
         )
         
         result_df = df.copy()
@@ -333,7 +410,7 @@ class ParallelFeatureComputer:
                 feature_info = features[feature_name]
                 compute_params = feature_info.get("compute_params", {})
                 cache_key = (
-                    self._get_cache_key(feature_name, df_hash, compute_params)
+                    self._get_cache_key(feature_name, df_hash, compute_params, feature_info)
                     if self.use_disk_cache
                     else None
                 )
@@ -380,9 +457,26 @@ class ParallelFeatureComputer:
                         call_args, call_kwargs = _build_call_args(feature_info, result_df)
                         feature_result = compute_func(*call_args, **call_kwargs)
                         
-                        # 合并结果
+                        # Handle different return types
+                        # If function returns a tuple (e.g., MACD), convert to DataFrame
+                        if isinstance(feature_result, tuple):
+                            output_cols = feature_info.get("output_columns", [feature_name])
+                            if len(feature_result) == len(output_cols):
+                                # Create DataFrame from tuple and merge columns
+                                feature_df = pd.DataFrame({
+                                    col: series for col, series in zip(output_cols, feature_result)
+                                }, index=result_df.index)
+                                new_cols = [c for c in feature_df.columns if c not in result_df.columns]
+                                if new_cols:
+                                    result_df = pd.concat([result_df, feature_df[new_cols]], axis=1)
+                            else:
+                                # Fallback: add with indexed names
+                                for i, series in enumerate(feature_result):
+                                    col_name = output_cols[i] if i < len(output_cols) else f"{feature_name}_{i}"
+                                    if col_name not in result_df.columns:
+                                        result_df[col_name] = series
                         # 如果返回的是 DataFrame，合并新列
-                        if isinstance(feature_result, pd.DataFrame):
+                        elif isinstance(feature_result, pd.DataFrame):
                             new_cols = [
                                 c for c in feature_result.columns if c not in result_df.columns
                             ]
@@ -390,10 +484,10 @@ class ParallelFeatureComputer:
                                 result_df = pd.concat([result_df, feature_result[new_cols]], axis=1)
                         # 如果返回的是 Series，添加到 DataFrame
                         elif isinstance(feature_result, pd.Series):
-                            if feature_result.name and feature_result.name not in result_df.columns:
-                                result_df[feature_result.name] = feature_result
-                            elif feature_name not in result_df.columns:
-                                result_df[feature_name] = feature_result
+                            output_cols = feature_info.get("output_columns", [feature_name])
+                            col_name = output_cols[0] if output_cols else (feature_result.name or feature_name)
+                            if col_name not in result_df.columns:
+                                result_df[col_name] = feature_result
                         
                         # 保存缓存
                         if self.use_memory_cache:

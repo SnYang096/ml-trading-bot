@@ -229,46 +229,12 @@ builder-shell:
 	@echo "🔧 Opening interactive shell in $(BUILDER_IMAGE) ..."
 	DOCKER_IMAGE=$(BUILDER_IMAGE) $(DOCKER_RUN) bash
 
-
-
-
-# ---------------------------------------------------------------------------
-# Factor Management: Test and compute specific factors
-# ---------------------------------------------------------------------------
-
-FACTOR_TEST_FACTORS ?=
-FACTOR_TEST_SYMBOL ?= BTCUSDT
-FACTOR_TEST_START_DATE ?= 2024-01-01
-FACTOR_TEST_END_DATE ?= 2025-9-30
-FACTOR_TEST_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
-FACTOR_TEST_TIMEFRAME ?= 240T
-FACTOR_TEST_OUTPUT_DIR ?=
-
-factor-test:
-	@if [ -z "$(FACTOR_TEST_FACTORS)" ]; then \
-		echo "❌ 错误: 必须指定 FACTOR_TEST_FACTORS"; \
-		echo "用法: make factor-test FACTOR_TEST_FACTORS='rsi_7 zigzag_normalized' FACTOR_TEST_SYMBOL=BTCUSDT"; \
-		exit 1; \
-	fi
-	@echo "🧪 测试因子: $(FACTOR_TEST_FACTORS)"
-	@echo "   交易对: $(FACTOR_TEST_SYMBOL)"
-	@echo "   时间范围: $(FACTOR_TEST_START_DATE) 到 $(FACTOR_TEST_END_DATE)"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/test_single_factor.py \
-		--factors $(FACTOR_TEST_FACTORS) \
-		--data-path /workspace/$(DATA_DIR) \
-		--symbol $(FACTOR_TEST_SYMBOL) \
-		--start-date $(FACTOR_TEST_START_DATE) \
-		--end-date $(FACTOR_TEST_END_DATE) \
-		--features-config $(FACTOR_TEST_FEATURES_CONFIG) \
-		--timeframe $(FACTOR_TEST_TIMEFRAME) \
-		$(if $(FACTOR_TEST_OUTPUT_DIR),--output-dir /workspace/$(FACTOR_TEST_OUTPUT_DIR),)
-
 # ---------------------------------------------------------------------------
 # TS factor evaluation
 # ---------------------------------------------------------------------------
 
 TS_FACTOR_STRATEGY ?= config/strategies/factor_ts_simple
-TS_FACTOR_FACTORS ?=
+TS_FACTOR_FACTORS ?= rsi atr macd macd_signal macd_histogram
 TS_FACTOR_SYMBOL ?= BTCUSDT
 TS_FACTOR_TIMEFRAME ?= 240T
 TS_FACTOR_START ?=
@@ -276,71 +242,32 @@ TS_FACTOR_END ?=
 TS_FACTOR_QUANTILE ?= 0.2
 TS_FACTOR_OUTPUT_DIR ?= results/factor_ts_eval
 TS_FACTOR_MODE ?= strategy
+TS_FACTOR_IC_DECAY_LAGS ?= 1,3,5,10,20
 
 ts-factor-eval:
 	@if [ -z "$(TS_FACTOR_FACTORS)" ]; then \
 		echo "❌ 错误: 必须指定 TS_FACTOR_FACTORS"; \
 		echo "用法: make ts-factor-eval TS_FACTOR_FACTORS='atr sqs_hal_high' TS_FACTOR_STRATEGY=config/strategies/sr_reversal"; \
+		echo "   或者: make ts-factor-eval TS_FACTOR_FACTORS='rsi,macd' (逗号分隔会自动转换)"; \
 		exit 1; \
 	fi
 	@echo "📈 TS 因子评价: $(TS_FACTOR_FACTORS)"
 	@echo "   策略配置: $(TS_FACTOR_STRATEGY)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/factor_ts_eval.py \
+	@echo "   IC 衰减分析: $(TS_FACTOR_IC_DECAY_LAGS) bars"
+	@# Convert comma-separated factors to space-separated (support both formats)
+	@FACTORS_SPACE=$$(echo "$(TS_FACTOR_FACTORS)" | tr ',' ' '); \
+	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/factor_ts_eval.py \
 		--strategy-config /workspace/$(TS_FACTOR_STRATEGY) \
 		--symbol $(TS_FACTOR_SYMBOL) \
-		--factors $(TS_FACTOR_FACTORS) \
+		--factors $$FACTORS_SPACE \
 		--data-path /workspace/$(DATA_DIR) \
 		--timeframe $(TS_FACTOR_TIMEFRAME) \
 		$(if $(TS_FACTOR_START),--start-date $(TS_FACTOR_START),) \
 		$(if $(TS_FACTOR_END),--end-date $(TS_FACTOR_END),) \
 		--quantile $(TS_FACTOR_QUANTILE) \
 		--feature-mode $(TS_FACTOR_MODE) \
+		--ic-decay-lags $(TS_FACTOR_IC_DECAY_LAGS) \
 		--output-dir /workspace/$(TS_FACTOR_OUTPUT_DIR)
-
-FACTOR_COMPUTE_FACTORS ?=
-FACTOR_COMPUTE_INPUT ?=
-FACTOR_COMPUTE_DATA_PATH ?= $(DATA_DIR)
-FACTOR_COMPUTE_SYMBOL ?=
-FACTOR_COMPUTE_START_DATE ?=
-FACTOR_COMPUTE_END_DATE ?=
-FACTOR_COMPUTE_OUTPUT ?= results/factors/computed_factors.csv
-FACTOR_COMPUTE_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
-FACTOR_COMPUTE_FORMAT ?= csv
-
-factor-compute:
-	@if [ -z "$(FACTOR_COMPUTE_FACTORS)" ]; then \
-		echo "❌ 错误: 必须指定 FACTOR_COMPUTE_FACTORS"; \
-		echo "用法: make factor-compute FACTOR_COMPUTE_FACTORS='rsi_7 macd' FACTOR_COMPUTE_INPUT=data/btcusdt.parquet FACTOR_COMPUTE_OUTPUT=factors/rsi_macd.csv"; \
-		exit 1; \
-	fi
-	@echo "🔧 计算因子: $(FACTOR_COMPUTE_FACTORS)"
-	@echo "   输出: $(FACTOR_COMPUTE_OUTPUT)"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/compute_specific_factors.py \
-		--factors $(FACTOR_COMPUTE_FACTORS) \
-		$(if $(FACTOR_COMPUTE_INPUT),--input /workspace/$(FACTOR_COMPUTE_INPUT),) \
-		$(if $(FACTOR_COMPUTE_SYMBOL),--data-path /workspace/$(FACTOR_COMPUTE_DATA_PATH),) \
-		$(if $(FACTOR_COMPUTE_SYMBOL),--symbol $(FACTOR_COMPUTE_SYMBOL),) \
-		$(if $(FACTOR_COMPUTE_START_DATE),--start-date $(FACTOR_COMPUTE_START_DATE),) \
-		$(if $(FACTOR_COMPUTE_END_DATE),--end-date $(FACTOR_COMPUTE_END_DATE),) \
-		--output /workspace/$(FACTOR_COMPUTE_OUTPUT) \
-		--features-config $(FACTOR_COMPUTE_FEATURES_CONFIG) \
-		--format $(FACTOR_COMPUTE_FORMAT)
-
-# ---------------------------------------------------------------------------
-# Alphalens test (verify installation and basic functionality)
-# ---------------------------------------------------------------------------
-
-test-alphalens:
-	@echo "🧪 Testing Alphalens installation and basic functionality in Docker..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/test_alphalens.py
-
-alphalens-example:
-	@echo "📊 Running complete Alphalens example with comprehensive analysis..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_example.py
-
-alphalens-evaluate:
-	@echo "📊 Evaluating trading signal quality using Alphalens..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_evaluate_predictions.py
 
 # ---------------------------------------------------------------------------
 # Factor analysis using Alphalens （跑不起来）
@@ -355,31 +282,6 @@ TF_CONFIG_TOP_PER_GROUP ?= 10
 
 TRAIN_FEATURE_TYPE ?= baseline
 DIRECTION_THRESHOLD ?= f1_optimize
-
-
-CS_FACTOR_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
-CS_FACTOR_SYMBOLS ?= BTCUSDT,ETHUSDT
-CS_FACTOR_TIMEFRAME ?= 240T
-CS_FACTOR_HORIZON ?= 24
-CS_FACTOR_QUANTILES ?= 5
-CS_FACTOR_IC_LAGS ?= 1,3,5
-CS_FACTOR_MIN_XS ?= 3
-CS_FACTOR_OUTPUT_DIR ?= results/cross_sectional_eval
-
-cs-factor-eval:
-	@echo "📊 Cross-sectional factor evaluation for $(CS_FACTOR_SYMBOLS) ($(START_DATE) → $(END_DATE))"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/cross_sectional_eval.py \
-		--features-config $(CS_FACTOR_FEATURES_CONFIG) \
-		--symbols $(CS_FACTOR_SYMBOLS) \
-		--data-path /workspace/$(DATA_DIR) \
-		--timeframe $(CS_FACTOR_TIMEFRAME) \
-		$(if $(START_DATE),--start-date $(START_DATE),) \
-		$(if $(END_DATE),--end-date $(END_DATE),) \
-		--horizon $(CS_FACTOR_HORIZON) \
-		--quantiles $(CS_FACTOR_QUANTILES) \
-		--ic-decay-lags $(CS_FACTOR_IC_LAGS) \
-		--min-cross-sectional $(CS_FACTOR_MIN_XS) \
-		--output-dir /workspace/$(CS_FACTOR_OUTPUT_DIR)
 
 # ---------------------------------------------------------------------------
 # Strategy feature comparison
@@ -1101,3 +1003,46 @@ cs-auto:
 		CS_LOGIC_EXPECTATIONS="$(CS_LOGIC_EXPECTATIONS)"
 	$(MAKE) cs-shap-drift \
 		CS_DRIFT_BASELINE="$(CS_DRIFT_BASELINE)"
+
+
+
+# ---------------------------------------------------------------------------
+# Alphalens test (verify installation and basic functionality)
+# ---------------------------------------------------------------------------
+
+test-alphalens:
+	@echo "🧪 Testing Alphalens installation and basic functionality in Docker..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/test_alphalens.py
+
+alphalens-example:
+	@echo "📊 Running complete Alphalens example with comprehensive analysis..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_example.py
+
+alphalens-evaluate:
+	@echo "📊 Evaluating trading signal quality using Alphalens..."
+	$(DOCKER_RUN_NO_TTY) python3 scripts/alphalens_evaluate_predictions.py
+
+
+CS_FACTOR_FEATURES_CONFIG ?= config/tests/factor_test/features.yaml
+CS_FACTOR_SYMBOLS ?= BTCUSDT,ETHUSDT
+CS_FACTOR_TIMEFRAME ?= 240T
+CS_FACTOR_HORIZON ?= 24
+CS_FACTOR_QUANTILES ?= 5
+CS_FACTOR_IC_LAGS ?= 1,3,5
+CS_FACTOR_MIN_XS ?= 3
+CS_FACTOR_OUTPUT_DIR ?= results/cross_sectional_eval
+
+cs-factor-eval:
+	@echo "📊 Cross-sectional factor evaluation for $(CS_FACTOR_SYMBOLS) ($(START_DATE) → $(END_DATE))"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/cross_sectional_eval.py \
+		--features-config $(CS_FACTOR_FEATURES_CONFIG) \
+		--symbols $(CS_FACTOR_SYMBOLS) \
+		--data-path /workspace/$(DATA_DIR) \
+		--timeframe $(CS_FACTOR_TIMEFRAME) \
+		$(if $(START_DATE),--start-date $(START_DATE),) \
+		$(if $(END_DATE),--end-date $(END_DATE),) \
+		--horizon $(CS_FACTOR_HORIZON) \
+		--quantiles $(CS_FACTOR_QUANTILES) \
+		--ic-decay-lags $(CS_FACTOR_IC_LAGS) \
+		--min-cross-sectional $(CS_FACTOR_MIN_XS) \
+		--output-dir /workspace/$(CS_FACTOR_OUTPUT_DIR)

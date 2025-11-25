@@ -1,9 +1,13 @@
 name: factor_test
 description: Minimal feature config for factor diagnostics.
+# Note: This config is optional. You can test any factor directly via command line.
+# The requested_features here are just examples - you can test any factor name.
 
 feature_pipeline:
   requested_features:
     - atr
     - rsi
+    - macd
+    # Add more examples here if needed, but command-line factors will work regardless
   post_processors: []
 
