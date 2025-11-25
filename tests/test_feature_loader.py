@@ -384,14 +384,30 @@ class TestFeatureLoader(unittest.TestCase):
     def test_circular_dependency_detection(self):
         """测试循环依赖检测"""
         # 创建一个有循环依赖的测试配置
+        # 注意：resolve_dependencies 使用拓扑排序，如果检测到循环依赖会抛出 ValueError
+        # 但需要先更新 loader 的 feature_deps 来测试
+
+        # 保存原始配置
+        original_deps = self.loader.feature_deps.copy()
+
+        # 创建循环依赖的测试配置
         features_with_cycle = {
-            "feature_a": {"dependencies": ["feature_b"]},
-            "feature_b": {"dependencies": ["feature_c"]},
-            "feature_c": {"dependencies": ["feature_a"]},  # 循环依赖
+            "features": {
+                "feature_a": {"dependencies": ["feature_b"]},
+                "feature_b": {"dependencies": ["feature_c"]},
+                "feature_c": {"dependencies": ["feature_a"]},  # 循环依赖
+            }
         }
 
+        # 临时替换配置
+        self.loader.feature_deps = features_with_cycle
+
+        # 循环依赖应该导致 ValueError
         with self.assertRaises(ValueError):
-            analyze_dependency_levels(features_with_cycle, ["feature_a"])
+            self.loader.resolve_dependencies(["feature_a"])
+
+        # 恢复原始配置
+        self.loader.feature_deps = original_deps
 
 
 class TestStrategyFeaturesIntegration(unittest.TestCase):
