@@ -18,6 +18,7 @@ feature_pipeline:
     - rsi
     - acceleration_3
     - macd
+    - dl_sequence_features
   post_processors:
     - module: src.time_series_model.strategies.sr_reversal.features
       function: build_sr_reversal_features

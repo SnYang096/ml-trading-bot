@@ -1796,16 +1796,134 @@ class BaselineFeatureEngineer:
         return data
 
     @staticmethod
+    def compute_bb_width_features(
+        df: pd.DataFrame,
+        *,
+        period: int = 20,
+        std_dev: int = 2,
+        atr_window: int = 14,
+    ) -> pd.DataFrame:
+        """计算布林带宽度及其归一化特征。"""
+        if "bb_upper" not in df.columns or "bb_lower" not in df.columns:
+            upper, middle, lower = BaselineFeatureEngineer.compute_bollinger_bands(
+                df["close"], period=period, std_dev=std_dev
+            )
+            df["bb_upper"] = upper
+            df["bb_middle"] = middle
+            df["bb_lower"] = lower
+
+        width = (df["bb_upper"] - df["bb_lower"]).abs()
+        df["bb_width"] = width
+
+        if "atr" not in df.columns:
+            df["atr"] = BaselineFeatureEngineer.compute_atr(
+                df["high"], df["low"], df["close"], period=atr_window
+            )
+
+        df["bb_width_normalized"] = (
+            (width / df["atr"].replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+        return df
+
+    @staticmethod
+    def compute_range_ratio_5bar(df: pd.DataFrame) -> pd.DataFrame:
+        """计算 5/20 Bar 区间比率 z-score。"""
+        if "hl" not in df.columns:
+            df["hl"] = df["high"] - df["low"]
+
+        short_range = df["hl"].rolling(5).mean()
+        long_range = df["hl"].rolling(20).mean()
+        ratio = (short_range / long_range.replace(0, np.nan)).replace(
+            [np.inf, -np.inf], np.nan
+        )
+        ratio = ratio.fillna(1.0)
+        ratio_log = np.log1p(ratio)
+        mean = ratio_log.rolling(50, min_periods=5).mean()
+        std = ratio_log.rolling(50, min_periods=5).std()
+        df["range_ratio_5bar"] = (
+            ((ratio_log - mean) / std.replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+        return df
+
+    @staticmethod
+    def compute_volatility_reversal_score(df: pd.DataFrame) -> pd.DataFrame:
+        """ATR 回落 z-score，用于识别波动率反转。"""
+        if "atr" not in df.columns:
+            df["atr"] = BaselineFeatureEngineer.compute_atr(
+                df["high"], df["low"], df["close"]
+            )
+        atr_mean = df["atr"].rolling(50).mean()
+        atr_std = df["atr"].rolling(50).std()
+        df["volatility_reversal_score"] = (
+            (df["atr"] - atr_mean) / atr_std.replace(0, np.nan)
+        ).fillna(0.0)
+        return df
+
+    @staticmethod
+    def compute_price_range_symmetry(
+        df: pd.DataFrame,
+        *,
+        feature_shift: int = 0,
+    ) -> pd.DataFrame:
+        """价格区间对称性（高/低/收盘关系），衡量上下影线不对称。"""
+        high = df["high"].shift(feature_shift)
+        low = df["low"].shift(feature_shift)
+        close = df["close"].shift(feature_shift)
+
+        numerator = (high - close)
+        denominator = (close - low).replace(0, np.nan)
+        raw = (numerator / denominator).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+        log_val = np.log1p(np.abs(raw)) * np.sign(raw)
+        mean = log_val.rolling(50, min_periods=5).mean()
+        std = log_val.rolling(50, min_periods=5).std()
+        df["price_range_symmetry"] = (
+            ((log_val - mean) / std.replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+        return df
+
+    @staticmethod
+    def compute_volume_anomaly(df: pd.DataFrame) -> pd.DataFrame:
+        """成交量异常 z-score。"""
+        vol_ratio = df["volume"] / df["volume"].ewm(span=20, min_periods=10).mean()
+        vol_ratio = vol_ratio.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+        vol_log = np.log1p(vol_ratio)
+        mean = vol_log.rolling(50, min_periods=10).mean()
+        std = vol_log.rolling(50, min_periods=10).std()
+        df["volume_anomaly"] = (
+            ((vol_log - mean) / std.replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+        return df
+
+    @staticmethod
+    def compute_roc_5(df: pd.DataFrame) -> pd.DataFrame:
+        """5 Bar ROC z-score。"""
+        if "roc_5" in df.columns:
+            return df
+        roc_raw = df["close"].pct_change(5)
+        roc_mean = roc_raw.rolling(window=50, min_periods=5).mean()
+        roc_std = roc_raw.rolling(window=50, min_periods=5).std()
+        roc_std = roc_std.clip(lower=roc_raw.abs().quantile(0.01))
+        df["roc_5"] = (
+            ((roc_raw - roc_mean) / roc_std.replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+        return df
+
+    @staticmethod
     def compute_acceleration_3(df: pd.DataFrame, feature_shift: int = 0) -> pd.DataFrame:
-        """计算 acceleration_3 特征：ROC(3) 归一化后的差分（动量加速度）
-        
-        Args:
-            df: 包含 close 列的 DataFrame
-            feature_shift: 特征滞后偏移量（避免未来信息泄漏），默认 0
-        """
+        """计算 acceleration_3 特征：ROC(3) 归一化后的差分（动量加速度）。"""
         if "acceleration_3" in df.columns:
             return df
-        
+
         roc_3 = df["close"].pct_change(3)
         roc_3_mean = roc_3.rolling(window=50, min_periods=5).mean()
         roc_3_std = roc_3.rolling(window=50, min_periods=5).std()
@@ -1815,10 +1933,113 @@ class BaselineFeatureEngineer:
             .replace([np.inf, -np.inf], np.nan)
             .fillna(0.0)
         )
-        # 计算差分：当前值（shifted by feature_shift）- 前一个值（shifted by feature_shift + 1）
         current = roc_3_norm.shift(feature_shift) if feature_shift > 0 else roc_3_norm
         prev = roc_3_norm.shift(feature_shift + 1)
         df["acceleration_3"] = current - prev
+        return df
+
+    @staticmethod
+    def compute_trend_r2_20(
+        df: pd.DataFrame,
+        *,
+        feature_shift: int = 0,
+    ) -> pd.DataFrame:
+        """计算 20 Bar 趋势 R²。"""
+        df["trend_r2_20"] = BaselineFeatureEngineer._trend_r2(
+            df["close"], window=20, lag=feature_shift
+        )
+        return df
+
+    @staticmethod
+    def compute_trend_r2_50(
+        df: pd.DataFrame,
+        *,
+        feature_shift: int = 0,
+    ) -> pd.DataFrame:
+        """计算 50 Bar 趋势 R²。"""
+        df["trend_r2_50"] = BaselineFeatureEngineer._trend_r2(
+            df["close"], window=50, lag=feature_shift
+        )
+        return df
+
+    @staticmethod
+    def compute_slope_consistency_score(df: pd.DataFrame) -> pd.DataFrame:
+        """多均线斜率一致性（EMA10/20/50）。"""
+        ema10 = df["close"].ewm(span=10).mean()
+        ema20 = df["close"].ewm(span=20).mean()
+        ema50 = df["close"].ewm(span=50).mean()
+        slope10 = np.sign(ema10.diff())
+        slope20 = np.sign(ema20.diff())
+        slope50 = np.sign(ema50.diff())
+        df["slope_consistency_score"] = (
+            (slope10 == slope20).astype(int)
+            + (slope20 == slope50).astype(int)
+            + (slope10 == slope50).astype(int)
+        )
+        return df
+
+    @staticmethod
+    def compute_atr_percentile(
+        df: pd.DataFrame,
+        *,
+        window: int = 288,
+        shift: int = 1,
+    ) -> pd.DataFrame:
+        """ATR 百分位（压缩检测）。"""
+        if "atr" not in df.columns:
+            df["atr"] = BaselineFeatureEngineer.compute_atr(
+                df["high"], df["low"], df["close"]
+            )
+        if "atr_percentile" in df.columns:
+            return df
+
+        series = df["atr"].astype(float)
+        eps = 1e-9
+
+        def _percentile(arr: np.ndarray) -> float:
+            if len(arr) == 0:
+                return 0.5
+            current = arr[-1]
+            return float(np.mean(arr <= current))
+
+        pct = (
+            series.rolling(window=window, min_periods=window)
+            .apply(_percentile, raw=True)
+            .fillna(0.5)
+        )
+        if shift:
+            pct = pct.shift(shift)
+        df["atr_percentile"] = pct.clip(0.0, 1.0).fillna(0.5)
+        return df
+
+    @staticmethod
+    def compute_trend_volatility_alignment(
+        df: pd.DataFrame,
+        *,
+        feature_shift: int = 0,
+        atr_percentile_window: int = 288,
+    ) -> pd.DataFrame:
+        """趋势方向与波动率状态的一致性。"""
+        if "roc_5" not in df.columns:
+            df = BaselineFeatureEngineer.compute_roc_5(df)
+        if "atr_percentile" not in df.columns:
+            df = BaselineFeatureEngineer.compute_atr_percentile(
+                df, window=atr_percentile_window
+            )
+        df["trend_volatility_alignment"] = (
+            np.sign(df["roc_5"].shift(feature_shift)).fillna(0.0)
+            * df["atr_percentile"].fillna(0.0)
+        )
+        return df
+
+    @staticmethod
+    def compute_compression_to_breakout_prob(df: pd.DataFrame) -> pd.DataFrame:
+        """压缩持续时间与未来动量的联动。"""
+        if "compression_duration" not in df.columns or "roc_5" not in df.columns:
+            return df
+        df["compression_to_breakout_prob"] = (
+            df["compression_duration"].fillna(0.0) * df["roc_5"].fillna(0.0)
+        )
         return df
     
     @staticmethod

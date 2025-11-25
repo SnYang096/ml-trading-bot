@@ -732,21 +732,16 @@ def generate_html_report(
                 border-left: 4px solid #2196F3;
                 padding-left: 10px;
             }}
+            .table-wrapper {{
+                width: 100%;
+                overflow-x: auto;
+            }}
             table {{
                 width: 100%;
+                min-width: 900px;
                 border-collapse: collapse;
                 margin: 20px 0;
                 font-size: 13px;
-                table-layout: auto;
-                overflow-x: auto;
-                display: block;
-            }}
-            thead, tbody {{
-                display: block;
-            }}
-            tbody {{
-                max-height: 600px;
-                overflow-y: auto;
             }}
             th, td {{
                 white-space: nowrap;
@@ -760,6 +755,7 @@ def generate_html_report(
                 font-weight: 600;
                 position: sticky;
                 top: 0;
+                z-index: 2;
             }}
             td {{
                 padding: 10px;
@@ -825,14 +821,16 @@ def generate_html_report(
             </div>
             
             <h2>📊 Summary Table</h2>
-            <table>
-                <thead>
-                    {table_header}
-                </thead>
-                <tbody>
-                    {''.join(table_rows)}
-                </tbody>
-            </table>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        {table_header}
+                    </thead>
+                    <tbody>
+                        {''.join(table_rows)}
+                    </tbody>
+                </table>
+            </div>
             
             <h2>📈 Performance Charts</h2>
             

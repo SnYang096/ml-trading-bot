@@ -4,8 +4,8 @@
 
 ## 脚本
 
-- `grid_tune.py` - 网格搜索
 - `optuna_risk_search.py` - Optuna风险参数搜索
+- `ts_sr_reversal_optuna.py` - SR反转策略 Optuna 优化
 
 ## 使用示例
 

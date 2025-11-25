@@ -24,6 +24,16 @@ from src.features.loader.feature_wrappers import (
     compute_wpt_vpvr,
 )
 
+# TA-Lib 与 DL 特征包装函数
+from src.features.loader.talib_feature_wrappers import (
+    compute_talib_indicator,
+    compute_talib_sma,
+    compute_talib_ema,
+    compute_talib_rsi,
+    compute_talib_macd,
+)
+from src.features.loader.dl_feature_wrappers import compute_dl_sequence_features
+
 # 策略专属特征
 from src.time_series_model.strategies.sr_reversal.features import (
     build_sr_reversal_features,
@@ -81,6 +91,16 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "extract_liquidity_features": extract_liquidity_features,
     
     # ========================================================================
+    # TA-Lib 特征（按需计算单个指标）
+    # ========================================================================
+    "compute_talib_indicator": compute_talib_indicator,  # 通用函数，支持所有 talib 指标
+    "compute_talib_sma": compute_talib_sma,
+    "compute_talib_ema": compute_talib_ema,
+    "compute_talib_rsi": compute_talib_rsi,
+    "compute_talib_macd": compute_talib_macd,
+    "compute_dl_sequence_features": compute_dl_sequence_features,
+    
+    # ========================================================================
     # 策略专属特征构建函数
     # ========================================================================
     "build_sr_reversal_features": build_sr_reversal_features,
@@ -110,4 +130,3 @@ def get_compute_func(func_name: str) -> Optional[Callable]:
             f"Unknown compute function: {func_name}. "
             f"Available functions: {list(FEATURE_FUNCTION_MAP.keys())}"
         )
-

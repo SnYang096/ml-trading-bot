@@ -56,6 +56,137 @@ features:
     compute_params:
       feature_shift: 0
   
+  bb_width:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_bb_width_features
+    dependencies: []
+    required_columns: ["close", "high", "low"]
+    output_columns: ["bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_width_normalized"]
+    category: volatility
+    description: "Bollinger band width and ATR-normalized width"
+    pass_full_df: true
+  
+  range_ratio_5bar:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_range_ratio_5bar
+    dependencies: []
+    required_columns: ["high", "low"]
+    output_columns: ["range_ratio_5bar"]
+    category: volatility
+    description: "Short vs long term range ratio (5 vs 20 bar)"
+    pass_full_df: true
+  
+  volatility_reversal_score:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_volatility_reversal_score
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["volatility_reversal_score"]
+    category: volatility
+    description: "ATR mean-reversion z-score"
+    pass_full_df: true
+  
+  price_range_symmetry:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_price_range_symmetry
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["price_range_symmetry"]
+    category: price_structure
+    description: "Upper/lower shadow asymmetry score"
+    pass_full_df: true
+    compute_params:
+      feature_shift: 0
+  
+  volume_anomaly:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_volume_anomaly
+    dependencies: []
+    required_columns: ["volume"]
+    output_columns: ["volume_anomaly"]
+    category: liquidity
+    description: "Volume anomaly z-score (EWM based)"
+    pass_full_df: true
+  
+  roc_5:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_roc_5
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["roc_5"]
+    category: momentum
+    description: "5-bar rate of change z-score"
+    pass_full_df: true
+  
+  trend_r2_20:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_trend_r2_20
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["trend_r2_20"]
+    category: trend
+    description: "20-bar trend R² (log price)"
+    pass_full_df: true
+    compute_params:
+      feature_shift: 0
+  
+  trend_r2_50:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_trend_r2_50
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["trend_r2_50"]
+    category: trend
+    description: "50-bar trend R² (log price)"
+    pass_full_df: true
+    compute_params:
+      feature_shift: 0
+  
+  slope_consistency_score:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_slope_consistency_score
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["slope_consistency_score"]
+    category: trend
+    description: "EMA slope agreement (10/20/50)"
+    pass_full_df: true
+  
+  atr_percentile:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_atr_percentile
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["atr_percentile"]
+    category: volatility
+    description: "Rolling ATR percentile (compression detector)"
+    pass_full_df: true
+    compute_params:
+      window: 288
+      shift: 1
+  
+  trend_volatility_alignment:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_trend_volatility_alignment
+    dependencies: []
+    required_columns: ["close", "high", "low"]
+    output_columns: ["trend_volatility_alignment"]
+    category: trend
+    description: "Alignment of ROC sign and ATR percentile regime"
+    pass_full_df: true
+    compute_params:
+      feature_shift: 0
+  
+  compression_to_breakout_prob:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_compression_to_breakout_prob
+    dependencies: ["roc_5", "compression_duration"]
+    required_columns: ["compression_duration"]
+    output_columns: ["compression_to_breakout_prob"]
+    category: compression
+    description: "Compression duration weighted momentum proxy"
+    pass_full_df: true
+  
   # ========================================================================
   # WPT 重构价格（所有 SR 的基础）
   # 核心原则：所有 SR 均由 WPT 重构价格生成，实现天然多尺度对齐，无需 resample
@@ -270,4 +401,1063 @@ features:
     output_columns: ["spectrum_dominant"]
     category: spectrum
     description: "Dominant frequency from spectrum analysis"
+
+  # ========================================================================
+  # TA-Lib 指标（按需计算单个指标）
+  # 使用 compute_talib_indicator 通用函数，支持所有 talib 指标
+  # ========================================================================
+
+  sma_5:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["sma_5"]
+    category: trend
+    description: "Simple Moving Average (5)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SMA"
+      timeperiod: 5
+      output_column: "sma_5"
+    column_mappings:
+      real: close
+
+  sma_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["sma_10"]
+    category: trend
+    description: "Simple Moving Average (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SMA"
+      timeperiod: 10
+      output_column: "sma_10"
+    column_mappings:
+      real: close
+
+  sma_20:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["sma_20"]
+    category: trend
+    description: "Simple Moving Average (20)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SMA"
+      timeperiod: 20
+      output_column: "sma_20"
+    column_mappings:
+      real: close
+
+  sma_50:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["sma_50"]
+    category: trend
+    description: "Simple Moving Average (50)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SMA"
+      timeperiod: 50
+      output_column: "sma_50"
+    column_mappings:
+      real: close
+
+  sma_100:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["sma_100"]
+    category: trend
+    description: "Simple Moving Average (100)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SMA"
+      timeperiod: 100
+      output_column: "sma_100"
+    column_mappings:
+      real: close
+
+  sma_200:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["sma_200"]
+    category: trend
+    description: "Simple Moving Average (200)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SMA"
+      timeperiod: 200
+      output_column: "sma_200"
+    column_mappings:
+      real: close
+
+  ema_5:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["ema_5"]
+    category: trend
+    description: "Exponential Moving Average (5)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "EMA"
+      timeperiod: 5
+      output_column: "ema_5"
+    column_mappings:
+      real: close
+
+  ema_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["ema_10"]
+    category: trend
+    description: "Exponential Moving Average (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "EMA"
+      timeperiod: 10
+      output_column: "ema_10"
+    column_mappings:
+      real: close
+
+  ema_20:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["ema_20"]
+    category: trend
+    description: "Exponential Moving Average (20)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "EMA"
+      timeperiod: 20
+      output_column: "ema_20"
+    column_mappings:
+      real: close
+
+  ema_50:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["ema_50"]
+    category: trend
+    description: "Exponential Moving Average (50)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "EMA"
+      timeperiod: 50
+      output_column: "ema_50"
+    column_mappings:
+      real: close
+
+  ema_100:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["ema_100"]
+    category: trend
+    description: "Exponential Moving Average (100)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "EMA"
+      timeperiod: 100
+      output_column: "ema_100"
+    column_mappings:
+      real: close
+
+  wma_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["wma_10"]
+    category: trend
+    description: "Weighted Moving Average (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "WMA"
+      timeperiod: 10
+      output_column: "wma_10"
+    column_mappings:
+      real: close
+
+  wma_20:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["wma_20"]
+    category: trend
+    description: "Weighted Moving Average (20)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "WMA"
+      timeperiod: 20
+      output_column: "wma_20"
+    column_mappings:
+      real: close
+
+  wma_50:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["wma_50"]
+    category: trend
+    description: "Weighted Moving Average (50)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "WMA"
+      timeperiod: 50
+      output_column: "wma_50"
+    column_mappings:
+      real: close
+
+  tema_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["tema_10"]
+    category: trend
+    description: "Triple Exponential Moving Average (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "TEMA"
+      timeperiod: 10
+      output_column: "tema_10"
+    column_mappings:
+      real: close
+
+  tema_20:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["tema_20"]
+    category: trend
+    description: "Triple Exponential Moving Average (20)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "TEMA"
+      timeperiod: 20
+      output_column: "tema_20"
+    column_mappings:
+      real: close
+
+  tema_30:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["tema_30"]
+    category: trend
+    description: "Triple Exponential Moving Average (30)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "TEMA"
+      timeperiod: 30
+      output_column: "tema_30"
+    column_mappings:
+      real: close
+
+  kama_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["kama_10"]
+    category: trend
+    description: "Kaufman Adaptive Moving Average (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "KAMA"
+      timeperiod: 10
+      output_column: "kama_10"
+    column_mappings:
+      real: close
+
+  kama_20:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["kama_20"]
+    category: trend
+    description: "Kaufman Adaptive Moving Average (20)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "KAMA"
+      timeperiod: 20
+      output_column: "kama_20"
+    column_mappings:
+      real: close
+
+  kama_30:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["kama_30"]
+    category: trend
+    description: "Kaufman Adaptive Moving Average (30)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "KAMA"
+      timeperiod: 30
+      output_column: "kama_30"
+    column_mappings:
+      real: close
+
+  rsi_7:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["rsi_7"]
+    category: momentum
+    description: "Relative Strength Index (7)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "RSI"
+      timeperiod: 7
+      output_column: "rsi_7"
+    column_mappings:
+      real: close
+
+  rsi_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["rsi_14"]
+    category: momentum
+    description: "Relative Strength Index (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "RSI"
+      timeperiod: 14
+      output_column: "rsi_14"
+    column_mappings:
+      real: close
+
+  rsi_21:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["rsi_21"]
+    category: momentum
+    description: "Relative Strength Index (21)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "RSI"
+      timeperiod: 21
+      output_column: "rsi_21"
+    column_mappings:
+      real: close
+
+  mom_5:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["mom_5"]
+    category: momentum
+    description: "Momentum (5)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "MOM"
+      timeperiod: 5
+      output_column: "mom_5"
+    column_mappings:
+      real: close
+
+  mom_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["mom_10"]
+    category: momentum
+    description: "Momentum (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "MOM"
+      timeperiod: 10
+      output_column: "mom_10"
+    column_mappings:
+      real: close
+
+  mom_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["mom_14"]
+    category: momentum
+    description: "Momentum (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "MOM"
+      timeperiod: 14
+      output_column: "mom_14"
+    column_mappings:
+      real: close
+
+  roc_10:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["roc_10"]
+    category: momentum
+    description: "Rate of Change (10)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ROC"
+      timeperiod: 10
+      output_column: "roc_10"
+    column_mappings:
+      real: close
+
+  roc_20:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["roc_20"]
+    category: momentum
+    description: "Rate of Change (20)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ROC"
+      timeperiod: 20
+      output_column: "roc_20"
+    column_mappings:
+      real: close
+
+  ppo:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["ppo"]
+    category: momentum
+    description: "Percentage Price Oscillator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "PPO"
+      fastperiod: 12
+      slowperiod: 26
+      output_column: "ppo"
+    column_mappings:
+      real: close
+
+  trix_15:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["trix_15"]
+    category: momentum
+    description: "TRIX (15)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "TRIX"
+      timeperiod: 15
+      output_column: "trix_15"
+    column_mappings:
+      real: close
+
+  cmo_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["cmo_14"]
+    category: momentum
+    description: "Chande Momentum Oscillator (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "CMO"
+      timeperiod: 14
+      output_column: "cmo_14"
+    column_mappings:
+      real: close
+
+  willr_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["willr_14"]
+    category: momentum
+    description: "Williams %R (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "WILLR"
+      timeperiod: 14
+      output_column: "willr_14"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  adx:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["adx"]
+    category: trend
+    description: "Average Directional Index (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ADX"
+      timeperiod: 14
+      output_column: "adx"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  adxr:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["adxr"]
+    category: trend
+    description: "Average Directional Movement Rating (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ADXR"
+      timeperiod: 14
+      output_column: "adxr"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  plus_di:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["plus_di"]
+    category: trend
+    description: "Positive Directional Indicator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "PLUS_DI"
+      timeperiod: 14
+      output_column: "plus_di"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  minus_di:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["minus_di"]
+    category: trend
+    description: "Negative Directional Indicator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "MINUS_DI"
+      timeperiod: 14
+      output_column: "minus_di"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  sar:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low"]
+    output_columns: ["sar"]
+    category: trend
+    description: "Parabolic SAR"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SAR"
+      acceleration: 0.02
+      maximum: 0.2
+      output_column: "sar"
+    column_mappings:
+      high: high
+      low: low
+
+  sar_ext:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low"]
+    output_columns: ["sar_ext"]
+    category: trend
+    description: "Extended Parabolic SAR"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "SAREXT"
+      output_column: "sar_ext"
+    column_mappings:
+      high: high
+      low: low
+
+  aroon:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low"]
+    output_columns: ["aroon_down", "aroon_up"]
+    category: trend
+    description: "Aroon oscillator (up/down)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "AROON"
+      timeperiod: 14
+      output_columns:
+        - "aroon_down"
+        - "aroon_up"
+    column_mappings:
+      high: high
+      low: low
+
+  cci_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["cci_14"]
+    category: momentum
+    description: "Commodity Channel Index (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "CCI"
+      timeperiod: 14
+      output_column: "cci_14"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  ultosc:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["ultosc"]
+    category: momentum
+    description: "Ultimate Oscillator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ULTOSC"
+      output_column: "ultosc"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  stoch:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["stoch_k", "stoch_d"]
+    category: momentum
+    description: "Stochastic Oscillator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "STOCH"
+      fastk_period: 5
+      slowk_period: 3
+      slowd_period: 3
+      output_columns:
+        - "stoch_k"
+        - "stoch_d"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  stochf:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["stochf_k", "stochf_d"]
+    category: momentum
+    description: "Fast Stochastic Oscillator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "STOCHF"
+      fastk_period: 5
+      fastd_period: 3
+      output_columns:
+        - "stochf_k"
+        - "stochf_d"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  stochrsi:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["stochrsi_k", "stochrsi_d"]
+    category: momentum
+    description: "Stochastic RSI"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "STOCHRSI"
+      timeperiod: 14
+      fastk_period: 5
+      fastd_period: 3
+      output_columns:
+        - "stochrsi_k"
+        - "stochrsi_d"
+    column_mappings:
+      close: close
+
+  # 注意：macd 已在 baseline 模块中定义（line 31），此处删除 talib 版本避免重复
+  # 如果需要使用 talib 的 MACD，可以使用 macdext 或 macdfix
+  # macd:
+  #   module: talib
+  #   compute_func: compute_talib_indicator
+  #   dependencies: []
+  #   required_columns: ["close"]
+  #   output_columns: ["macd", "macd_signal", "macd_histogram"]
+  #   category: momentum
+  #   description: "MACD (12,26,9)"
+  #   pass_full_df: true
+  #   compute_params:
+  #     indicator_name: "MACD"
+  #     fastperiod: 12
+  #     slowperiod: 26
+  #     signalperiod: 9
+  #     output_columns:
+  #       - "macd"
+  #       - "macd_signal"
+  #       - "macd_histogram"
+  #   column_mappings:
+  #     real: close
+
+  macdext:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["macdext", "macdext_signal", "macdext_histogram"]
+    category: momentum
+    description: "Extended MACD"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "MACDEXT"
+      fastperiod: 12
+      slowperiod: 26
+      signalperiod: 9
+      output_columns:
+        - "macdext"
+        - "macdext_signal"
+        - "macdext_histogram"
+    column_mappings:
+      real: close
+
+  macdfix:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["macdfix", "macdfix_signal", "macdfix_histogram"]
+    category: momentum
+    description: "Fixed-period MACD"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "MACDFIX"
+      signalperiod: 9
+      output_columns:
+        - "macdfix"
+        - "macdfix_signal"
+        - "macdfix_histogram"
+    column_mappings:
+      real: close
+
+  bbands:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["bb_upper", "bb_middle", "bb_lower"]
+    category: volatility
+    description: "Bollinger Bands (20,2)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "BBANDS"
+      timeperiod: 20
+      nbdevup: 2
+      nbdevdn: 2
+      output_columns:
+        - "bb_upper"
+        - "bb_middle"
+        - "bb_lower"
+    column_mappings:
+      real: close
+
+  atr_7:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["atr_7"]
+    category: volatility
+    description: "Average True Range (7)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ATR"
+      timeperiod: 7
+      output_column: "atr_7"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  atr_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["atr_14"]
+    category: volatility
+    description: "Average True Range (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ATR"
+      timeperiod: 14
+      output_column: "atr_14"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  atr_21:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["atr_21"]
+    category: volatility
+    description: "Average True Range (21)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ATR"
+      timeperiod: 21
+      output_column: "atr_21"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  natr_14:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["natr_14"]
+    category: volatility
+    description: "Normalized ATR (14)"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "NATR"
+      timeperiod: 14
+      output_column: "natr_14"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  trange:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close"]
+    output_columns: ["trange"]
+    category: volatility
+    description: "True Range"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "TRANGE"
+      output_column: "trange"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+
+  obv:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["close", "volume"]
+    output_columns: ["obv"]
+    category: volume
+    description: "On Balance Volume"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "OBV"
+      output_column: "obv"
+    column_mappings:
+      real: close
+      volume: volume
+
+  ad_line:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close", "volume"]
+    output_columns: ["ad_line"]
+    category: volume
+    description: "Accumulation/Distribution Line"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "AD"
+      output_column: "ad_line"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+
+  adosc:
+    module: talib
+    compute_func: compute_talib_indicator
+    dependencies: []
+    required_columns: ["high", "low", "close", "volume"]
+    output_columns: ["adosc"]
+    category: volume
+    description: "Chaikin Oscillator"
+    pass_full_df: true
+    compute_params:
+      indicator_name: "ADOSC"
+      fastperiod: 3
+      slowperiod: 10
+      output_column: "adosc"
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+
+  # ========================================================================
+  # Deep Learning 序列嵌入（一次性生成 dl_seq_f0 ... dl_seq_f63）
+  # ========================================================================
+  dl_sequence_features:
+    module: dl
+    compute_func: compute_dl_sequence_features
+    dependencies: []
+    required_columns: ["open", "high", "low", "close", "volume"]
+    output_columns:
+      - "dl_seq_f0"
+      - "dl_seq_f1"
+      - "dl_seq_f2"
+      - "dl_seq_f3"
+      - "dl_seq_f4"
+      - "dl_seq_f5"
+      - "dl_seq_f6"
+      - "dl_seq_f7"
+      - "dl_seq_f8"
+      - "dl_seq_f9"
+      - "dl_seq_f10"
+      - "dl_seq_f11"
+      - "dl_seq_f12"
+      - "dl_seq_f13"
+      - "dl_seq_f14"
+      - "dl_seq_f15"
+      - "dl_seq_f16"
+      - "dl_seq_f17"
+      - "dl_seq_f18"
+      - "dl_seq_f19"
+      - "dl_seq_f20"
+      - "dl_seq_f21"
+      - "dl_seq_f22"
+      - "dl_seq_f23"
+      - "dl_seq_f24"
+      - "dl_seq_f25"
+      - "dl_seq_f26"
+      - "dl_seq_f27"
+      - "dl_seq_f28"
+      - "dl_seq_f29"
+      - "dl_seq_f30"
+      - "dl_seq_f31"
+      - "dl_seq_f32"
+      - "dl_seq_f33"
+      - "dl_seq_f34"
+      - "dl_seq_f35"
+      - "dl_seq_f36"
+      - "dl_seq_f37"
+      - "dl_seq_f38"
+      - "dl_seq_f39"
+      - "dl_seq_f40"
+      - "dl_seq_f41"
+      - "dl_seq_f42"
+      - "dl_seq_f43"
+      - "dl_seq_f44"
+      - "dl_seq_f45"
+      - "dl_seq_f46"
+      - "dl_seq_f47"
+      - "dl_seq_f48"
+      - "dl_seq_f49"
+      - "dl_seq_f50"
+      - "dl_seq_f51"
+      - "dl_seq_f52"
+      - "dl_seq_f53"
+      - "dl_seq_f54"
+      - "dl_seq_f55"
+      - "dl_seq_f56"
+      - "dl_seq_f57"
+      - "dl_seq_f58"
+      - "dl_seq_f59"
+      - "dl_seq_f60"
+      - "dl_seq_f61"
+      - "dl_seq_f62"
+      - "dl_seq_f63"
+    category: deep_learning
+    description: "Leak-free sequence embeddings (Mamba/Transformer auto-backend)."
+    pass_full_df: true
+    compute_params:
+      backend: "auto"
+      seq_length: 120
+      d_model: 64
+      use_fp16: false
+      feature_columns:
+        - "open"
+        - "high"
+        - "low"
+        - "close"
+        - "volume"
+      prefix: "dl_seq"
 
