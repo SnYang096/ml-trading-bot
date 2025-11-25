@@ -860,7 +860,16 @@ def train_rank_ic_model(
         }
 
     if lgbm_params:
+        # Handle n_estimators -> num_boost_round conversion
+        if "n_estimators" in lgbm_params:
+            lgbm_params = lgbm_params.copy()  # Don't modify original
+            lgbm_params.pop(
+                "n_estimators"
+            )  # Remove n_estimators (LightGBM uses num_boost_round)
         default_params.update(lgbm_params)
+
+    # Remove n_estimators from default_params if it exists (LightGBM uses num_boost_round instead)
+    default_params.pop("n_estimators", None)
 
     if use_gpu:
         default_params.update(

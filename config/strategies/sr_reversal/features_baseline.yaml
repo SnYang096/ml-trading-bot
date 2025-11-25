@@ -1,0 +1,35 @@
+name: sr_reversal
+description: >
+  SR reversal strategy feature pipeline. Focuses on SR strength, liquidity
+  confirmation, and volatility state using WPT/VPRR/Hilbert derived signals.
+
+feature_pipeline:
+  requested_features:
+    - wpt_price_reconstructed
+    - sr_strength_max
+    - sqs_hal_high
+    - sqs_hal_low
+    - vpvr_pvp
+    - vpvr_hvn_count
+    - hilbert_phase
+    - hilbert_cvd_leads
+    - wpt_cvd_fluctuation
+    - atr
+    - rsi
+    - acceleration_3
+  post_processors:
+    - module: src.time_series_model.strategies.sr_reversal.features
+      function: build_sr_reversal_features
+      params: {}
+  selector:
+    module: src.time_series_model.strategies.sr_reversal.features
+    function: select_sr_reversal_features
+    params: {}
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+  notes: |
+    1. 强调 WPT 低频 POC 与 SR 结构
+    2. 结合 Hilbert + CVD 做流动性确认
+    3. 通过 ZigZag/SQS/VPVR 建立 SR 反转上下文
+

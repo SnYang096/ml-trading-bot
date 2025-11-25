@@ -87,6 +87,7 @@ class TestLabelGenerators(unittest.TestCase):
             signal_col="signal",
             max_holding_bars=20,
             rr_ratio=2.0,
+            auto_generate_signals=False,
         )
 
         # 检查返回类型
@@ -184,7 +185,11 @@ class TestLabelGenerators(unittest.TestCase):
         df = self.test_df.copy()
         df["signal"] = 0  # 没有信号
 
-        labels = compute_sr_reversal_label(df, signal_col="signal")
+        labels = compute_sr_reversal_label(
+            df,
+            signal_col="signal",
+            auto_generate_signals=False,
+        )
 
         # 所有标签应该是 NaN
         self.assertTrue(
@@ -201,11 +206,40 @@ class TestLabelGenerators(unittest.TestCase):
             df,
             signal_col="signal",
             atr_window=14,
+            auto_generate_signals=False,
         )
 
         # 应该能正常计算
         self.assertIsInstance(labels, pd.Series)
         self.assertEqual(len(labels), len(df))
+
+    def test_sr_reversal_label_auto_signal_generation(self):
+        """测试自动生成 SR 信号后能正确得到标签"""
+        df = pd.DataFrame(
+            {
+                "open": [100.0, 99.8, 100.2, 101.5, 102.0, 102.3, 102.6, 103.0],
+                "high": [100.5, 100.6, 102.8, 103.2, 103.5, 103.6, 104.0, 104.2],
+                "low": [99.7, 99.3, 99.9, 100.9, 101.2, 101.8, 102.0, 102.5],
+                "close": [100.2, 100.4, 102.0, 102.8, 103.2, 103.4, 103.8, 104.0],
+                "atr": [1.0] * 8,
+                "sr_strength_max": [0.0, 1.2, 0.3, 0.2, 0.1, 0.1, 0.1, 0.1],
+                "sqs_hal_low": [0.0, 0.9, 0.2, 0.2, 0.1, 0.1, 0.1, 0.1],
+                "sqs_hal_high": [0.0] * 8,
+                "vpvr_pvp": [99.5] * 8,
+            }
+        )
+
+        labels = compute_sr_reversal_label(
+            df,
+            signal_col="signal",
+            max_holding_bars=4,
+        )
+
+        valid_labels = labels.dropna()
+        self.assertTrue(
+            (valid_labels == 1.0).all(),
+            f"Auto-generated SR signals should yield success labels, got {valid_labels.unique()}",
+        )
 
     def test_label_index_alignment(self):
         """测试标签索引对齐"""
@@ -213,7 +247,9 @@ class TestLabelGenerators(unittest.TestCase):
 
         # 测试所有标签生成器
         label_funcs = [
-            lambda d: compute_sr_reversal_label(d, signal_col="signal"),
+            lambda d: compute_sr_reversal_label(
+                d, signal_col="signal", auto_generate_signals=False
+            ),
             lambda d: compute_sr_breakout_label(d, signal_col="signal"),
             lambda d: compute_compression_breakout_label(d),
             lambda d: compute_trend_following_label(d, horizon=20),

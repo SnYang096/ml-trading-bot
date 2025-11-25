@@ -1796,6 +1796,32 @@ class BaselineFeatureEngineer:
         return data
 
     @staticmethod
+    def compute_acceleration_3(df: pd.DataFrame, feature_shift: int = 0) -> pd.DataFrame:
+        """计算 acceleration_3 特征：ROC(3) 归一化后的差分（动量加速度）
+        
+        Args:
+            df: 包含 close 列的 DataFrame
+            feature_shift: 特征滞后偏移量（避免未来信息泄漏），默认 0
+        """
+        if "acceleration_3" in df.columns:
+            return df
+        
+        roc_3 = df["close"].pct_change(3)
+        roc_3_mean = roc_3.rolling(window=50, min_periods=5).mean()
+        roc_3_std = roc_3.rolling(window=50, min_periods=5).std()
+        roc_3_std = roc_3_std.clip(lower=roc_3.abs().quantile(0.01))
+        roc_3_norm = (
+            ((roc_3 - roc_3_mean) / roc_3_std.replace(0, np.nan))
+            .replace([np.inf, -np.inf], np.nan)
+            .fillna(0.0)
+        )
+        # 计算差分：当前值（shifted by feature_shift）- 前一个值（shifted by feature_shift + 1）
+        current = roc_3_norm.shift(feature_shift) if feature_shift > 0 else roc_3_norm
+        prev = roc_3_norm.shift(feature_shift + 1)
+        df["acceleration_3"] = current - prev
+        return df
+    
+    @staticmethod
     def _compute_atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
         """计算 ATR（内部方法，使用类的静态方法）"""
         return BaselineFeatureEngineer.compute_atr(

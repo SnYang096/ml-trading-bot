@@ -2,5 +2,5 @@
 
 raise RuntimeError(
     "feature_type_evaluator.py has been removed. "
-    "Use config-defined strategies with scripts/train_strategy.py."
+    "Use config-defined strategies with scripts/train_strategy_pipeline.py."
 )

@@ -352,7 +352,16 @@ def train_production_lightgbm(
 
     # Merge with user-provided params
     if params:
+        # Handle n_estimators -> num_boost_round conversion
+        if "n_estimators" in params:
+            params = params.copy()  # Don't modify original
+            params.pop(
+                "n_estimators"
+            )  # Remove n_estimators (LightGBM uses num_boost_round)
         production_params.update(params)
+
+    # Remove n_estimators from production_params if it exists (LightGBM uses num_boost_round instead)
+    production_params.pop("n_estimators", None)
 
     # Add categorical feature parameters if provided
     if categorical_features:

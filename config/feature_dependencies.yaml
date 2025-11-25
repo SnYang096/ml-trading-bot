@@ -44,6 +44,18 @@ features:
     column_mappings:
       series: close
   
+  acceleration_3:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_acceleration_3
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["acceleration_3"]
+    category: technical_indicator
+    description: "Momentum acceleration: normalized ROC(3) difference (动量加速度)"
+    pass_full_df: true
+    compute_params:
+      feature_shift: 0
+  
   # ========================================================================
   # WPT 重构价格（所有 SR 的基础）
   # 核心原则：所有 SR 均由 WPT 重构价格生成，实现天然多尺度对齐，无需 resample
@@ -71,9 +83,9 @@ features:
   # ========================================================================
   sqs_hal_high:
     module: baseline
-    compute_func: BaselineFeatureEngineer.calculate_sqs
+    compute_func: compute_sqs_hal_high
     dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
-    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
+    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed"]
     output_columns: ["sqs_hal_high"]
     category: sr_structure
     description: "Structure Quality Score for HAL high (基于 WPT 重构价格)"
@@ -81,13 +93,16 @@ features:
       sr_type: "resistance"
       window: 60
       tolerance_factor: 0.5
+      poc_window: 160
+      price_col: "wpt_price_reconstructed"
+    pass_full_df: true
     notes: "基于 WPT 重构价格计算，实现多尺度对齐"
   
   sqs_hal_low:
     module: baseline
-    compute_func: BaselineFeatureEngineer.calculate_sqs
+    compute_func: compute_sqs_hal_low
     dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
-    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
+    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed"]
     output_columns: ["sqs_hal_low"]
     category: sr_structure
     description: "Structure Quality Score for HAL low (基于 WPT 重构价格)"
@@ -95,16 +110,23 @@ features:
       sr_type: "support"
       window: 60
       tolerance_factor: 0.5
+      poc_window: 160
+      price_col: "wpt_price_reconstructed"
+    pass_full_df: true
     notes: "基于 WPT 重构价格计算，实现多尺度对齐"
   
   sr_strength_max:
     module: baseline
-    compute_func: BaselineFeatureEngineer._compute_boundary_strengths
+    compute_func: compute_sr_strength_max
     dependencies: ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
     required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
     output_columns: ["sr_strength_max"]
     category: sr_structure
     description: "Maximum SR strength across all boundaries (基于 WPT 重构价格)"
+    compute_params:
+      window: 60
+      tolerance_factor: 0.5
+    pass_full_df: true
     notes: "所有 SR 边界都基于 WPT 重构价格计算，实现多尺度对齐"
   
   # ========================================================================
@@ -142,7 +164,7 @@ features:
   # ========================================================================
   wpt_vpvr:
     module: enhanced
-    compute_func: extract_liquidity_features
+    compute_func: compute_wpt_vpvr
     dependencies: ["wpt_price_reconstructed", "atr"]
     required_columns: ["close", "high", "low", "volume", "atr"]
     output_columns: ["vpvr_pvp", "vpvr_hvn_count", "vpvr_lvn_count", "vpvr_lvn_distance", "vpvr_volume_density", "vpvr_price_in_lvn"]
@@ -154,6 +176,7 @@ features:
       vpvr_window: 100
       bins: 50
       feature_type: "vpvr"
+    pass_full_df: true
     notes: |
       WPT 降噪后的 VPVR 能更清晰地识别关键支撑/阻力位：
       - PVP: Point of Control（最高成交量对应的价格）

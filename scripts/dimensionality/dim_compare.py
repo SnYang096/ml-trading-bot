@@ -39,8 +39,8 @@ from src.data_tools.data_utils import load_raw_data
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.strategy_config import StrategyConfigLoader
 
-# Import shared functions from train_strategy
-from scripts.train_strategy import (
+# Import shared functions from train_strategy_pipeline
+from scripts.train_strategy_pipeline import (
     BASE_DATA_COLUMNS,
     apply_filters,
     apply_post_label_filters,

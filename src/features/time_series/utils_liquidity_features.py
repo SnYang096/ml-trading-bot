@@ -105,15 +105,26 @@ def build_wpt_denoised_vpvr(
             price_denoised = price_window
         
         # Step 2: 构建 VPVR
-        price_min = price_denoised.min()
-        price_max = price_denoised.max()
+        # 过滤 NaN 值
+        valid_mask = ~np.isnan(price_denoised) & ~np.isnan(volume_window) & (volume_window > 0)
+        if not np.any(valid_mask):
+            continue
         
-        if price_max <= price_min:
+        price_denoised_valid = price_denoised[valid_mask]
+        volume_window_valid = volume_window[valid_mask]
+        
+        if len(price_denoised_valid) < 10:  # 有效数据不足
+            continue
+        
+        price_min = price_denoised_valid.min()
+        price_max = price_denoised_valid.max()
+        
+        if not np.isfinite(price_min) or not np.isfinite(price_max) or price_max <= price_min:
             continue
         
         # 计算每个价格档位的成交量
         hist, edges = np.histogram(
-            price_denoised, bins=bins, range=(price_min, price_max), weights=volume_window
+            price_denoised_valid, bins=bins, range=(price_min, price_max), weights=volume_window_valid
         )
         centers = (edges[:-1] + edges[1:]) / 2
         
@@ -169,7 +180,7 @@ def build_wpt_denoised_vpvr(
                 )
     
     # 前向填充缺失值
-    df["vpvr_pvp"] = df["vpvr_pvp"].fillna(method="ffill")
+    df["vpvr_pvp"] = df["vpvr_pvp"].ffill()
     df["vpvr_lvn_distance"] = df["vpvr_lvn_distance"].fillna(0.0)
     
     return df
@@ -496,7 +507,7 @@ def compute_wpt_volume_energy_features(
         "wpt_breakout_confidence",
         "wpt_false_breakout_risk",
     ]:
-        df[col] = df[col].fillna(method="ffill").fillna(0.0)
+        df[col] = df[col].ffill().fillna(0.0)
     
     return df
 

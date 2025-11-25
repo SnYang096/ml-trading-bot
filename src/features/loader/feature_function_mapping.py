@@ -16,6 +16,14 @@ from src.features.time_series.utils_hurst_features import extract_hurst_features
 from src.features.time_series.utils_spectrum_features import extract_spectrum_features
 from src.features.time_series.utils_liquidity_features import extract_liquidity_features
 
+# 特征包装函数
+from src.features.loader.feature_wrappers import (
+    compute_sqs_hal_high,
+    compute_sqs_hal_low,
+    compute_sr_strength_max,
+    compute_wpt_vpvr,
+)
+
 # 策略专属特征
 from src.time_series_model.strategies.sr_reversal.features import (
     build_sr_reversal_features,
@@ -43,6 +51,12 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     # Baseline SR 特征（注意：这些是静态方法，需要特殊处理）
     "BaselineFeatureEngineer.calculate_sqs": BaselineFeatureEngineer.calculate_sqs,
     "BaselineFeatureEngineer._compute_boundary_strengths": BaselineFeatureEngineer._compute_boundary_strengths,
+    
+    # SR 特征包装函数（用于配置文件直接调用）
+    "compute_sqs_hal_high": compute_sqs_hal_high,
+    "compute_sqs_hal_low": compute_sqs_hal_low,
+    "compute_sr_strength_max": compute_sr_strength_max,
+    "compute_wpt_vpvr": compute_wpt_vpvr,
     "BaselineFeatureEngineer._compute_breakout_confirmation_and_role_flip": BaselineFeatureEngineer._compute_breakout_confirmation_and_role_flip,
     "BaselineFeatureEngineer._add_breakout_quality_features": BaselineFeatureEngineer._add_breakout_quality_features,
     "BaselineFeatureEngineer._compute_boundary_volume_confirmations": BaselineFeatureEngineer._compute_boundary_volume_confirmations,

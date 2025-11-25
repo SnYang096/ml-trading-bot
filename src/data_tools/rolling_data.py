@@ -242,12 +242,12 @@ def engineer_features(
     """
     Deprecated: legacy feature engineering helper has been removed.
 
-    Use the config-driven pipeline via scripts/train_strategy.py instead.
+    Use the config-driven pipeline via scripts/train_strategy_pipeline.py instead.
     """
 
     raise RuntimeError(
         "rolling_data.engineer_features is deprecated. "
-        "Use scripts/train_strategy.py with strategy configs."
+        "Use scripts/train_strategy_pipeline.py with strategy configs."
     )
 
 

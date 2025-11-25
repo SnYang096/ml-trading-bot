@@ -280,14 +280,27 @@ class ParallelFeatureComputer:
         return hashlib.md5(key_str.encode()).hexdigest()
     
     def _get_df_hash(self, df: pd.DataFrame, n_rows: int = 100) -> str:
-        """生成 DataFrame 哈希（基于前 N 行）"""
-        sample = df.head(n_rows)
-        # 只使用数值列
-        numeric_cols = sample.select_dtypes(include=[np.number]).columns
-        if len(numeric_cols) == 0:
-            return hashlib.md5(str(df.shape).encode()).hexdigest()
-        sample_data = sample[numeric_cols].values.tobytes()
-        return hashlib.md5(sample_data).hexdigest()
+        """生成 DataFrame 哈希（基于前 N 行 + 时间范围/行数等元信息）"""
+        if df.empty:
+            base_hash = hashlib.md5(str(df.shape).encode()).hexdigest()
+            start_meta = "EMPTY"
+            end_meta = "EMPTY"
+        else:
+            sample = df.head(n_rows)
+            numeric_cols = sample.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) == 0:
+                base_hash = hashlib.md5(str(df.shape).encode()).hexdigest()
+            else:
+                sample_data = sample[numeric_cols].values.tobytes()
+                base_hash = hashlib.md5(sample_data).hexdigest()
+            try:
+                start_meta = str(df.index[0])
+                end_meta = str(df.index[-1])
+            except Exception:
+                start_meta = "NO_INDEX_START"
+                end_meta = "NO_INDEX_END"
+        meta_str = f"{base_hash}|rows={len(df)}|start={start_meta}|end={end_meta}"
+        return hashlib.md5(meta_str.encode()).hexdigest()
     
     def _load_from_disk_cache(self, cache_key: str) -> Optional[pd.DataFrame | pd.Series]:
         """从磁盘加载缓存（支持 DataFrame 和 Series）"""

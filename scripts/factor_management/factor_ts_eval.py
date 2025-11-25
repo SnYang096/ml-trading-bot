@@ -20,7 +20,7 @@ PROJECT_ROOT = CURRENT_DIR.parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts import train_strategy as strategy_runner  # noqa: E402
+from scripts import train_strategy_pipeline as strategy_runner  # noqa: E402
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader,

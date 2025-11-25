@@ -130,8 +130,15 @@ def train_lightgbm_model(
         **task_params,  # Add num_class for multiclass
     }
 
+    # Handle n_estimators -> num_boost_round conversion
     if params:
+        # Extract n_estimators if present and convert to num_boost_round
+        if "n_estimators" in params:
+            num_boost_round = params.pop("n_estimators")
         default_params.update(params)
+
+    # Remove n_estimators from default_params if it exists (LightGBM uses num_boost_round instead)
+    default_params.pop("n_estimators", None)
 
     if use_gpu:
         default_params.update(

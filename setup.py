@@ -33,13 +33,15 @@ setup(
     version="0.0.2",
     author="Your Name",
     author_email="your.email@example.com",
-    description=
-    "Machine learning algorithmic trading system with multi-timeframe analysis",
+    description="Machine learning algorithmic trading system with multi-timeframe analysis",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/ml-trading-project",
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=find_packages(where="src") + find_packages(where=".", include=["scripts*"]),
+    package_dir={
+        "": "src",
+        "scripts": "scripts",  # scripts 在项目根目录
+    },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
@@ -62,6 +64,15 @@ setup(
             "flake8>=4.0.0",
             "mypy>=0.950",
             "jupyter>=1.0.0",
+        ],
+    },
+    entry_points={
+        "console_scripts": [
+            # 主要训练脚本
+            "train-strategy=scripts.train_strategy_pipeline:main",
+            # 其他常用脚本可以继续添加
+            # "dim-compare=scripts.dimensionality.dim_compare:main",
+            # "rolling-train=scripts.rolling.rolling_train:main",
         ],
     },
 )

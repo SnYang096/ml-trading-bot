@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """
 Unified strategy training script driven entirely by per-strategy configuration directories.
+
+This script is the MAIN ENTRY POINT for strategy training. It orchestrates the entire pipeline:
+- Loads raw data and strategy configuration
+- Runs feature engineering pipeline
+- Generates labels
+- Calls the model trainer (strategy_trainer.py) for cross-validation
+- Evaluates predictions and runs vectorbt backtests
+- Saves results to disk
+
+IMPORTANT: This is different from strategy_trainer.py:
+- train_strategy_pipeline.py: Complete training pipeline orchestrator (THIS FILE)
+- strategy_trainer.py: Low-level model training function (XGBoost/CatBoost/LightGBM CV only)
+
+Usage:
+    python scripts/train_strategy_pipeline.py --config config/strategies/sr_reversal --symbol BTCUSDT
 """
 
 from __future__ import annotations
@@ -10,6 +25,7 @@ import json
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import sys
 
 import numpy as np
 import pandas as pd
@@ -36,6 +52,11 @@ BASE_DATA_COLUMNS = {
     "taker_buy_ratio",
     "cvd",
 }
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+VENDOR_DIR = PROJECT_ROOT / "vendor"
+if VENDOR_DIR.exists():
+    sys.path.insert(0, str(VENDOR_DIR))
 
 
 def parse_args() -> argparse.Namespace:
@@ -332,6 +353,36 @@ def run_vectorbt_backtest(
         short_entries = preds_series <= short_entry
         short_exits = preds_series >= short_exit
 
+    # Determine frequency for vectorbt metrics (REQUIRED for proper metrics calculation)
+    freq = params.get("freq", None)
+    if freq is None:
+        # Try to infer frequency from DatetimeIndex as fallback
+        if isinstance(index, pd.DatetimeIndex):
+            inferred_freq = index.inferred_freq
+            if inferred_freq:
+                freq = inferred_freq
+            else:
+                # Fallback: try to infer from common timeframes
+                if len(index) > 1:
+                    time_diff = index[1] - index[0]
+                    # Convert to pandas frequency string
+                    if time_diff.total_seconds() == 900:  # 15 minutes
+                        freq = "15T"
+                    elif time_diff.total_seconds() == 3600:  # 1 hour
+                        freq = "1H"
+                    elif time_diff.total_seconds() == 14400:  # 4 hours
+                        freq = "4H"
+                    elif time_diff.total_seconds() == 86400:  # 1 day
+                        freq = "1D"
+
+        # If still None, raise error - freq MUST be configured in backtest.yaml
+        if freq is None:
+            raise ValueError(
+                "❌ 'freq' must be configured in backtest.yaml params. "
+                "Example: freq: '4H' for 4-hour timeframe, '15T' for 15-minute. "
+                "This is required for vectorbt to calculate Sharpe ratio and other frequency-dependent metrics."
+            )
+
     try:
         portfolio = vbt.Portfolio.from_signals(
             price,
@@ -342,7 +393,7 @@ def run_vectorbt_backtest(
             init_cash=init_cash,
             fees=fee,
             slippage=slippage,
-            freq=None,
+            freq=freq,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"   ⚠️  Backtest failed: {exc}")

@@ -275,7 +275,7 @@ class RuleBasedRegimeDetector:
         combined_score = pd.Series(0.0, index=union_index)
         for tf, weight in weights.items():
             combined_score = combined_score.add(
-                scores[tf].reindex(union_index).fillna(method="ffill").fillna(0.0)
+                scores[tf].reindex(union_index).ffill().fillna(0.0)
                 * weight,
                 fill_value=0.0,
             )

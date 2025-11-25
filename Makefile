@@ -97,7 +97,7 @@ endif
 	ts-vectorbot-backtest ts-nautilus-backtest \
 	ts-dim-compare ts-feature-eval ts-factor-eval ts-timeframe-forward-report \
 	ts-strategy-feature-compare feature-indicators \
-	vectorbot-backtest nautilus-backtest dim-compare feature-eval timeframe-forward-report strategy-feature-compare \
+	vectorbot-backtest nautilus-backtest dim-compare feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
 	cs-build-panel cs-report cs-train cs-workflow
 
@@ -133,6 +133,7 @@ help:
 	@echo "  Other commands:"
 	@echo "    make ts-r-rank-ic-train # Rank IC regression training (TSCV + OOS testing)"
 	@echo "    make ts-sr-reversal # SR Reversal model training (XGBoost Binary)"
+	@echo "    make ts-sr-reversal-optuna # Optuna search for SR signal params"
 	@echo "    make ts-sr-breakout # SR Breakout model training (XGBoost Regression)"
 	@echo "    make ts-compression-breakout # Compression Breakout model training (CatBoost Multiclass)"
 	@echo "    make ts-trend-following # Trend Following model training (LightGBM Regression)"
@@ -269,19 +270,7 @@ ts-factor-eval:
 		--ic-decay-lags $(TS_FACTOR_IC_DECAY_LAGS) \
 		--output-dir /workspace/$(TS_FACTOR_OUTPUT_DIR)
 
-# ---------------------------------------------------------------------------
-# Factor analysis using Alphalens （跑不起来）
-# ---------------------------------------------------------------------------
 
-
-TF_CONFIG_PEARSON ?= 0.03
-TF_CONFIG_PVALUE ?= 1e-5
-TF_CONFIG_MIN_SAMPLES ?= 500
-TF_CONFIG_TOP_PER_SYMBOL ?= 5
-TF_CONFIG_TOP_PER_GROUP ?= 10
-
-TRAIN_FEATURE_TYPE ?= baseline
-DIRECTION_THRESHOLD ?= f1_optimize
 
 # ---------------------------------------------------------------------------
 # Strategy feature comparison
@@ -291,6 +280,8 @@ STRAT_COMPARE_CONFIG ?= config/strategies/sr_reversal
 STRAT_COMPARE_DATA_PATH ?= $(DATA_DIR)
 STRAT_COMPARE_SYMBOL ?= BTCUSDT
 STRAT_COMPARE_TIMEFRAME ?= 240T
+STRAT_COMPARE_START ?= 2025-01-01
+STRAT_COMPARE_END ?= 2025-10-31
 STRAT_COMPARE_TEST_SIZE ?= 0.15
 STRAT_COMPARE_OUTPUT_DIR ?= results/strategy_compare
 STRAT_COMPARE_OVERRIDES ?=
@@ -305,6 +296,9 @@ STRAT_COMPARE_ROLL_MAX ?= 5
 # the contribution of each feature group. Use --feature-overrides to specify variants.
 # Example: make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
 #          STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
+# make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
+#           STRAT_COMPARE_OVERRIDES="baseline=config/strategies/sr_reversal/features_baseline.yaml full=config/strategies/sr_reversal/features_full.yaml"
+
 ts-strategy-feature-compare:
 	@echo "🆚 Ablation Study: Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/strategy_management/strategy_feature_compare.py \
@@ -312,6 +306,8 @@ ts-strategy-feature-compare:
 		--symbol $(STRAT_COMPARE_SYMBOL) \
 		--data-path /workspace/$(STRAT_COMPARE_DATA_PATH) \
 		--timeframe $(STRAT_COMPARE_TIMEFRAME) \
+		$(if $(STRAT_COMPARE_START),--start-date $(STRAT_COMPARE_START),) \
+		$(if $(STRAT_COMPARE_END),--end-date $(STRAT_COMPARE_END),) \
 		--test-size $(STRAT_COMPARE_TEST_SIZE) \
 		--output-dir /workspace/$(STRAT_COMPARE_OUTPUT_DIR) \
 		$(if $(STRAT_COMPARE_OVERRIDES),--feature-overrides $(STRAT_COMPARE_OVERRIDES),) \
@@ -321,9 +317,14 @@ ts-strategy-feature-compare:
 		--rolling-step-bars $(STRAT_COMPARE_ROLL_STEP) \
 		--rolling-max-windows $(STRAT_COMPARE_ROLL_MAX)
 
-strategy-feature-compare:
-	@echo "⚠️ 'strategy-feature-compare' has been renamed to 'ts-strategy-feature-compare'. Please update your workflows."
-	@$(MAKE) ts-strategy-feature-compare
+TF_CONFIG_PEARSON ?= 0.03
+TF_CONFIG_PVALUE ?= 1e-5
+TF_CONFIG_MIN_SAMPLES ?= 500
+TF_CONFIG_TOP_PER_SYMBOL ?= 5
+TF_CONFIG_TOP_PER_GROUP ?= 10
+
+TRAIN_FEATURE_TYPE ?= baseline
+DIRECTION_THRESHOLD ?= f1_optimize
 
 ts-timeframe-forward-report:
 	@echo "🧮 Analysing timeframe and forward bar correlations for $(SYMBOLS)..."
@@ -634,6 +635,15 @@ SR_REVERSAL_TIMEFRAME ?= 15T
 SR_REVERSAL_FEATURE_TYPE ?= comprehensive
 SR_REVERSAL_TEST_SIZE ?= 0.15
 SR_REVERSAL_OUTPUT_DIR ?= results/sr_reversal_model
+SR_SR_OPTUNA_STRATEGY ?= config/strategies/sr_reversal
+SR_SR_OPTUNA_SYMBOL ?= $(SR_REVERSAL_SYMBOL)
+SR_SR_OPTUNA_TIMEFRAME ?= $(SR_REVERSAL_TIMEFRAME)
+SR_SR_OPTUNA_START ?=
+SR_SR_OPTUNA_END ?=
+SR_SR_OPTUNA_TEST_SIZE ?= 0.15
+SR_SR_OPTUNA_WARMUP ?= 200
+SR_SR_OPTUNA_TRIALS ?= 30
+SR_SR_OPTUNA_OUTPUT ?= results/sr_reversal_optuna
 
 ts-sr-reversal:
 	@echo "🔄 Training SR Reversal Model..."
@@ -651,6 +661,20 @@ ts-sr-reversal:
 		--feature-type $(SR_REVERSAL_FEATURE_TYPE) \
 		--test-size $(SR_REVERSAL_TEST_SIZE) \
 		--output-dir /workspace/$(SR_REVERSAL_OUTPUT_DIR)
+
+ts-sr-reversal-optuna:
+	@echo "🔍 Optuna search for SR Reversal signal parameters..."
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/optimization/ts_sr_reversal_optuna.py \
+		--strategy-config /workspace/$(SR_SR_OPTUNA_STRATEGY) \
+		--symbol $(SR_SR_OPTUNA_SYMBOL) \
+		--data-path /workspace/$(DATA_DIR) \
+		--timeframe $(SR_SR_OPTUNA_TIMEFRAME) \
+		$(if $(SR_SR_OPTUNA_START),--start-date $(SR_SR_OPTUNA_START),) \
+		$(if $(SR_SR_OPTUNA_END),--end-date $(SR_SR_OPTUNA_END),) \
+		--test-size $(SR_SR_OPTUNA_TEST_SIZE) \
+		--test-warmup-bars $(SR_SR_OPTUNA_WARMUP) \
+		--n-trials $(SR_SR_OPTUNA_TRIALS) \
+		--output-dir /workspace/$(SR_SR_OPTUNA_OUTPUT)
 
 # SR Breakout Model Training
 SR_BREAKOUT_SYMBOL ?= $(SYMBOL)

@@ -172,7 +172,7 @@ def run_dimensionality_comparison(
         if missing_ratio < 0.2 and std_val > 1e-8:
             keep_all.append(c)
 
-    df_all = dfX[keep_all].fillna(method="ffill").fillna(method="bfill").fillna(0.0)
+    df_all = dfX[keep_all].ffill().bfill().fillna(0.0)
     X_all_scaled = sanitize_features(StandardScaler().fit_transform(df_all.values))
     print(f"   ✅ Stage 1: {len(keep_all)} features after filtering")
 
@@ -206,7 +206,7 @@ def run_dimensionality_comparison(
 
     # Stage 3: Correlation-based representative selection
     print(f"\n[Stage 3] Correlation-based representative selection...")
-    df_ic_clean = df_ic.fillna(method="ffill").fillna(method="bfill").fillna(0.0)
+    df_ic_clean = df_ic.ffill().bfill().fillna(0.0)
     # Stage 3 should further reduce dimensionality: target 60-70% of Stage 2 features
     stage3_target = max(10, int(target_top_k * 0.65))
     desired_reps = min(stage3_target, len(df_ic_clean.columns))
@@ -932,12 +932,7 @@ def main() -> Tuple[Dict, any, str]:
         # This prevents sample depletion from over-cleaning
         # Strategy: ffill -> bfill -> fillna(0.0) to preserve maximum samples
         initial_numeric_samples = len(dfX)
-        df_numeric = (
-            dfX[numeric_features]
-            .fillna(method="ffill")
-            .fillna(method="bfill")
-            .fillna(0.0)
-        )
+        df_numeric = dfX[numeric_features].ffill().bfill().fillna(0.0)
 
         # Check sample retention after filling
         final_numeric_samples = len(df_numeric)
@@ -1592,9 +1587,7 @@ def main() -> Tuple[Dict, any, str]:
             s = df_ic[c]
             if s.isna().mean() < 0.2 and s.std() > 1e-8:
                 keep_ic.append(c)
-        df_ic_clean = (
-            df_ic[keep_ic].fillna(method="ffill").fillna(method="bfill").fillna(0.0)
-        )
+        df_ic_clean = df_ic[keep_ic].ffill().bfill().fillna(0.0)
 
         # Greedy representative selection by correlation threshold (0.9)
         # IMPORTANT: Select factors based on target_top_k FIRST, then apply correlation filtering

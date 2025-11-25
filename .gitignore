@@ -419,6 +419,11 @@ ta-lib_0.6.4_amd64.deb
 results/
 models/
 docker/
+# Vendored python deps
+vendor/
+vendor/**
+.vendor/
+.vendor/**
 # Large model files
 *.pkl
 *.h5

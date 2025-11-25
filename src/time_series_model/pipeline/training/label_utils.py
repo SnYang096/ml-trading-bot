@@ -281,6 +281,8 @@ def compute_rr_label(
     stop_loss_r: float = 1.0,
     take_profit_r: float = 2.0,
     use_continuous_label: bool = False,
+    entry_price_col: Optional[str] = None,
+    entry_offset: int = 0,
 ) -> pd.Series:
     """
     计算基于风险回报比（R/R）的标签，匹配 SR 策略的真实交易逻辑。
@@ -306,6 +308,8 @@ def compute_rr_label(
         stop_loss_r: Stop loss in R units (default: 1.0)
         take_profit_r: Take profit in R units (default: 2.0)
         use_continuous_label: If True, return realized R/R; if False, return binary label
+        entry_price_col: Column to use for entry price. Default: 'open' if available else price_col.
+        entry_offset: Bars to wait after signal before entering (>=0). entry_offset=1 = next bar entry.
 
     Returns:
         Series with R/R labels (binary or continuous)
@@ -335,11 +339,26 @@ def compute_rr_label(
     signals = df[signal_col]
     atr_series = df[atr_col]
 
-    # Use open[t+1] as entry price (next bar's open)
-    if "open" in df.columns:
-        entry_prices = df["open"].shift(-1)  # Entry at next bar's open
+    if entry_offset < 0:
+        raise ValueError("entry_offset must be >= 0")
+
+    if entry_price_col and entry_price_col not in df.columns:
+        raise ValueError(
+            f"entry_price_col='{entry_price_col}' not found in DataFrame columns"
+        )
+
+    if entry_price_col:
+        entry_series = df[entry_price_col]
+    elif "open" in df.columns:
+        entry_series = df["open"]
     else:
-        entry_prices = df[price_col].shift(-1)  # Fallback to close
+        entry_series = df[price_col]
+
+    if entry_offset > 0:
+        entry_prices = entry_series.shift(-entry_offset)
+    else:
+        # For offset 0, still shift by 0 (current bar price)
+        entry_prices = entry_series.copy()
 
     # Initialize labels with NaN (will be set to 0.0 for valid samples)
     labels = pd.Series(np.nan, index=df.index, dtype=float)
@@ -356,8 +375,8 @@ def compute_rr_label(
     low_arr = df[low_col].values
 
     # Process each sample
-    # Note: We need to scan future bars, so we can't process the last max_holding_bars samples
-    max_i = len(df) - max_holding_bars - 1
+    min_future = max(entry_offset, 1)
+    max_i = len(df) - max_holding_bars - min_future
 
     for i in range(max_i):
         signal = signals_arr[i]
@@ -390,10 +409,11 @@ def compute_rr_label(
         max_favorable = 0.0
         max_adverse = 0.0
 
-        # Scan from i+1 to i+max_holding_bars
-        end_idx = min(i + 1 + max_holding_bars, len(df))
+        # Scan from first tradable bar after entry
+        scan_start = i + max(entry_offset, 1)
+        end_idx = min(scan_start + max_holding_bars, len(df))
 
-        for j in range(i + 1, end_idx):
+        for j in range(scan_start, end_idx):
             high = high_arr[j]
             low = low_arr[j]
 
