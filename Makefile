@@ -183,7 +183,7 @@ docker-build:
 
 docker-install:
 	@echo "📦 Installing project inside Docker container..."
-	$(DOCKER_RUN) pip3 install -e /workspace
+	$(DOCKER_RUN) pip3 install -e /workspace/ml_trading_bot
 
 # ---------------------------------------------------------------------------
 # Data: download Binance monthly aggTrades ZIPs and convert to Parquet

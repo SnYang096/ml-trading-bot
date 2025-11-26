@@ -9,8 +9,18 @@ RUN pip3 install --no-cache-dir \
     notebook
 
 RUN apt-get update && \
-    apt-get install -y sudo && \
-    rm -rf /var/lib/apt/lists/*
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        sudo \
+        git \
+        curl \
+        wget \
+        ca-certificates \
+        build-essential \
+        pkg-config \
+        ssh \
+        vim \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create vscode user expected by devcontainer.json
 ARG USERNAME=vscode
