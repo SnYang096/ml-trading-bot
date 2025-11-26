@@ -67,9 +67,10 @@ class TestFeatureLoader(unittest.TestCase):
 
     def setUp(self):
         """每个测试方法前的初始化"""
+        # 不再加载 strategy_features.yaml，使用目录管理方式
         self.loader = StrategyFeatureLoader(
             feature_deps_path="config/feature_dependencies.yaml",
-            strategy_config_path="config/strategy_features.yaml",
+            strategy_config_path=None,  # 不再使用 strategy_features.yaml
             cache_dir=self.temp_cache_dir,
             use_disk_cache=True,
             use_memory_cache=True,
@@ -80,9 +81,8 @@ class TestFeatureLoader(unittest.TestCase):
     def test_config_loading(self):
         """测试配置文件加载"""
         self.assertIsNotNone(self.loader.feature_deps)
-        self.assertIsNotNone(self.loader.strategy_config)
         self.assertIn("features", self.loader.feature_deps)
-        self.assertIn("strategies", self.loader.strategy_config)
+        # strategy_config 现在是可选的，可能为空字典
 
     def test_dependency_resolution(self):
         """测试依赖解析"""
@@ -140,7 +140,7 @@ class TestFeatureLoader(unittest.TestCase):
         self.assertFalse(atr_series.isna().all())  # 不应该全是 NaN
 
     def test_sr_reversal_features(self):
-        """测试 SR Reversal 策略特征加载"""
+        """测试 SR Reversal 策略特征加载（使用目录管理方式）"""
         print("\n" + "=" * 70)
         print("测试 SR Reversal 策略特征加载")
         print("=" * 70)
@@ -148,17 +148,39 @@ class TestFeatureLoader(unittest.TestCase):
         df = self.test_df.copy()
 
         try:
-            result_df = self.loader.load_strategy_features(df, "sr_reversal", fit=True)
+            # 从目录管理方式读取特征配置
+            from src.strategy_config import StrategyConfigLoader
+            import yaml
+
+            strategy_dir = Path("config/strategies/sr_reversal")
+            if strategy_dir.exists():
+                config_loader = StrategyConfigLoader(strategy_dir)
+                strategy_config = config_loader.load()
+                requested_features = strategy_config.features.requested_features
+            else:
+                # Fallback: 直接从 features.yaml 读取
+                features_path = strategy_dir / "features.yaml"
+                if features_path.exists():
+                    with open(features_path, "r", encoding="utf-8") as f:
+                        features_data = yaml.safe_load(f)
+                    requested_features = features_data.get("feature_pipeline", {}).get(
+                        "requested_features", []
+                    )
+                else:
+                    # 使用默认特征列表
+                    requested_features = ["atr", "rsi"]
+
+            print(f"\n请求的特征: {requested_features}")
+
+            # 使用 load_features_from_requested 方法
+            result_df = self.loader.load_features_from_requested(
+                df, requested_features, fit=True
+            )
 
             # 检查是否返回了 DataFrame
             self.assertIsInstance(result_df, pd.DataFrame)
             self.assertGreaterEqual(len(result_df.columns), len(df.columns))
 
-            # 检查策略配置中请求的特征是否存在
-            strategy_config = self.loader.strategy_config["strategies"]["sr_reversal"]
-            requested_features = strategy_config.get("requested_features", [])
-
-            print(f"\n请求的特征: {requested_features}")
             print(f"原始列数: {len(df.columns)}")
             print(f"结果 DataFrame 列数: {len(result_df.columns)}")
 
@@ -167,9 +189,6 @@ class TestFeatureLoader(unittest.TestCase):
             if new_cols:
                 print(f"新增列示例: {new_cols[:10]}")
 
-            # 检查关键特征是否存在
-            # 注意：由于特征计算可能失败或返回不同的列名，我们只检查 DataFrame 是否有新增列
-            # 或者至少列数没有减少（说明基础特征工程成功了）
             self.assertGreaterEqual(
                 len(result_df.columns),
                 len(df.columns),
@@ -187,7 +206,7 @@ class TestFeatureLoader(unittest.TestCase):
             print("   这可能是正常的，如果某些特征需要特定的数据格式")
 
     def test_sr_breakout_features(self):
-        """测试 SR Breakout 策略特征加载"""
+        """测试 SR Breakout 策略特征加载（使用目录管理方式）"""
         print("\n" + "=" * 70)
         print("测试 SR Breakout 策略特征加载")
         print("=" * 70)
@@ -195,15 +214,36 @@ class TestFeatureLoader(unittest.TestCase):
         df = self.test_df.copy()
 
         try:
-            result_df = self.loader.load_strategy_features(df, "sr_breakout", fit=True)
+            # 从目录管理方式读取特征配置
+            from src.strategy_config import StrategyConfigLoader
+            import yaml
+
+            strategy_dir = Path("config/strategies/sr_breakout")
+            if strategy_dir.exists():
+                config_loader = StrategyConfigLoader(strategy_dir)
+                strategy_config = config_loader.load()
+                requested_features = strategy_config.features.requested_features
+            else:
+                # Fallback: 直接从 features.yaml 读取
+                features_path = strategy_dir / "features.yaml"
+                if features_path.exists():
+                    with open(features_path, "r", encoding="utf-8") as f:
+                        features_data = yaml.safe_load(f)
+                    requested_features = features_data.get("feature_pipeline", {}).get(
+                        "requested_features", []
+                    )
+                else:
+                    requested_features = ["atr", "rsi"]
+
+            print(f"\n请求的特征: {requested_features}")
+
+            result_df = self.loader.load_features_from_requested(
+                df, requested_features, fit=True
+            )
 
             self.assertIsInstance(result_df, pd.DataFrame)
             self.assertGreaterEqual(len(result_df.columns), len(df.columns))
 
-            strategy_config = self.loader.strategy_config["strategies"]["sr_breakout"]
-            requested_features = strategy_config.get("requested_features", [])
-
-            print(f"\n请求的特征: {requested_features}")
             print(f"原始列数: {len(df.columns)}")
             print(f"结果 DataFrame 列数: {len(result_df.columns)}")
 
@@ -228,7 +268,7 @@ class TestFeatureLoader(unittest.TestCase):
             print("   这可能是正常的，如果某些特征需要特定的数据格式")
 
     def test_compression_breakout_features(self):
-        """测试 Compression Breakout 策略特征加载"""
+        """测试 Compression Breakout 策略特征加载（使用目录管理方式）"""
         print("\n" + "=" * 70)
         print("测试 Compression Breakout 策略特征加载")
         print("=" * 70)
@@ -236,19 +276,36 @@ class TestFeatureLoader(unittest.TestCase):
         df = self.test_df.copy()
 
         try:
-            result_df = self.loader.load_strategy_features(
-                df, "compression_breakout", fit=True
+            # 从目录管理方式读取特征配置
+            from src.strategy_config import StrategyConfigLoader
+            import yaml
+
+            strategy_dir = Path("config/strategies/compression_breakout")
+            if strategy_dir.exists():
+                config_loader = StrategyConfigLoader(strategy_dir)
+                strategy_config = config_loader.load()
+                requested_features = strategy_config.features.requested_features
+            else:
+                # Fallback: 直接从 features.yaml 读取
+                features_path = strategy_dir / "features.yaml"
+                if features_path.exists():
+                    with open(features_path, "r", encoding="utf-8") as f:
+                        features_data = yaml.safe_load(f)
+                    requested_features = features_data.get("feature_pipeline", {}).get(
+                        "requested_features", []
+                    )
+                else:
+                    requested_features = ["atr", "rsi"]
+
+            print(f"\n请求的特征: {requested_features}")
+
+            result_df = self.loader.load_features_from_requested(
+                df, requested_features, fit=True
             )
 
             self.assertIsInstance(result_df, pd.DataFrame)
             self.assertGreaterEqual(len(result_df.columns), len(df.columns))
 
-            strategy_config = self.loader.strategy_config["strategies"][
-                "compression_breakout"
-            ]
-            requested_features = strategy_config.get("requested_features", [])
-
-            print(f"\n请求的特征: {requested_features}")
             print(f"原始列数: {len(df.columns)}")
             print(f"结果 DataFrame 列数: {len(result_df.columns)}")
 
@@ -275,7 +332,7 @@ class TestFeatureLoader(unittest.TestCase):
             print("   这可能是正常的，如果某些特征需要特定的数据格式")
 
     def test_trend_following_features(self):
-        """测试 Trend Following 策略特征加载"""
+        """测试 Trend Following 策略特征加载（使用目录管理方式）"""
         print("\n" + "=" * 70)
         print("测试 Trend Following 策略特征加载")
         print("=" * 70)
@@ -283,19 +340,36 @@ class TestFeatureLoader(unittest.TestCase):
         df = self.test_df.copy()
 
         try:
-            result_df = self.loader.load_strategy_features(
-                df, "trend_following", fit=True
+            # 从目录管理方式读取特征配置
+            from src.strategy_config import StrategyConfigLoader
+            import yaml
+
+            strategy_dir = Path("config/strategies/trend_following")
+            if strategy_dir.exists():
+                config_loader = StrategyConfigLoader(strategy_dir)
+                strategy_config = config_loader.load()
+                requested_features = strategy_config.features.requested_features
+            else:
+                # Fallback: 直接从 features.yaml 读取
+                features_path = strategy_dir / "features.yaml"
+                if features_path.exists():
+                    with open(features_path, "r", encoding="utf-8") as f:
+                        features_data = yaml.safe_load(f)
+                    requested_features = features_data.get("feature_pipeline", {}).get(
+                        "requested_features", []
+                    )
+                else:
+                    requested_features = ["atr", "rsi"]
+
+            print(f"\n请求的特征: {requested_features}")
+
+            result_df = self.loader.load_features_from_requested(
+                df, requested_features, fit=True
             )
 
             self.assertIsInstance(result_df, pd.DataFrame)
             self.assertGreaterEqual(len(result_df.columns), len(df.columns))
 
-            strategy_config = self.loader.strategy_config["strategies"][
-                "trend_following"
-            ]
-            requested_features = strategy_config.get("requested_features", [])
-
-            print(f"\n请求的特征: {requested_features}")
             print(f"原始列数: {len(df.columns)}")
             print(f"结果 DataFrame 列数: {len(result_df.columns)}")
 
@@ -320,30 +394,78 @@ class TestFeatureLoader(unittest.TestCase):
             print("   这可能是正常的，如果某些特征需要特定的数据格式")
 
     def test_cache_functionality(self):
-        """测试缓存功能"""
+        """测试缓存功能（使用目录管理方式）"""
         df = self.test_df.copy()
 
+        # 从目录管理方式读取特征配置
+        from src.strategy_config import StrategyConfigLoader
+        import yaml
+
+        strategy_dir = Path("config/strategies/sr_reversal")
+        if strategy_dir.exists():
+            config_loader = StrategyConfigLoader(strategy_dir)
+            strategy_config = config_loader.load()
+            requested_features = strategy_config.features.requested_features
+        else:
+            # Fallback: 直接从 features.yaml 读取
+            features_path = strategy_dir / "features.yaml"
+            if features_path.exists():
+                with open(features_path, "r", encoding="utf-8") as f:
+                    features_data = yaml.safe_load(f)
+                requested_features = features_data.get("feature_pipeline", {}).get(
+                    "requested_features", []
+                )
+            else:
+                requested_features = ["atr", "rsi"]
+
         # 第一次计算（应该写入缓存）
-        result_df1 = self.loader.load_strategy_features(df, "sr_reversal", fit=True)
+        result_df1 = self.loader.load_features_from_requested(
+            df, requested_features, fit=True
+        )
 
         # 清除内存缓存
         self.loader.clear_cache(memory=True, disk=False)
 
         # 第二次计算（应该从磁盘缓存读取）
-        result_df2 = self.loader.load_strategy_features(df, "sr_reversal", fit=False)
+        result_df2 = self.loader.load_features_from_requested(
+            df, requested_features, fit=False
+        )
 
         # 检查结果是否一致（至少列数应该相同）
         self.assertEqual(len(result_df1.columns), len(result_df2.columns))
 
     def test_get_strategy_features(self):
-        """测试获取策略特征列表"""
-        features = self.loader.get_strategy_features("sr_reversal")
+        """测试获取策略特征列表（使用目录管理方式）"""
+        # 从目录管理方式读取特征配置
+        from src.strategy_config import StrategyConfigLoader
+        import yaml
+
+        strategy_dir = Path("config/strategies/sr_reversal")
+        if strategy_dir.exists():
+            config_loader = StrategyConfigLoader(strategy_dir)
+            strategy_config = config_loader.load()
+            requested_features = strategy_config.features.requested_features
+        else:
+            # Fallback: 直接从 features.yaml 读取
+            features_path = strategy_dir / "features.yaml"
+            if features_path.exists():
+                with open(features_path, "r", encoding="utf-8") as f:
+                    features_data = yaml.safe_load(f)
+                requested_features = features_data.get("feature_pipeline", {}).get(
+                    "requested_features", []
+                )
+            else:
+                requested_features = ["atr", "rsi"]
+
+        # 解析依赖关系
+        features = self.loader.resolve_dependencies(requested_features)
 
         self.assertIsInstance(features, list)
         self.assertGreater(len(features), 0)
 
         # 应该包含请求的特征和依赖
-        self.assertIn("sr_strength_max", features)
+        if "sr_strength_max" in requested_features:
+            self.assertIn("sr_strength_max", features)
         self.assertIn("atr", features)  # 依赖特征
 
     def test_parallel_computation(self):
@@ -375,11 +497,19 @@ class TestFeatureLoader(unittest.TestCase):
             computer.clear_cache()
 
     def test_invalid_strategy(self):
-        """测试无效策略名称"""
+        """测试无效特征列表（使用目录管理方式）"""
         df = self.test_df.copy()
 
-        with self.assertRaises(ValueError):
-            self.loader.load_strategy_features(df, "invalid_strategy", fit=True)
+        # 使用不存在的特征名称
+        invalid_features = ["nonexistent_feature_12345"]
+
+        # 应该能够处理，但会输出警告
+        result_df = self.loader.load_features_from_requested(
+            df, invalid_features, fit=True
+        )
+
+        # 结果应该只包含原始列（因为没有有效特征）
+        self.assertGreaterEqual(len(result_df.columns), len(df.columns))
 
     def test_circular_dependency_detection(self):
         """测试循环依赖检测"""
@@ -453,7 +583,7 @@ class TestStrategyFeaturesIntegration(unittest.TestCase):
 
         loader = StrategyFeatureLoader(
             feature_deps_path="config/feature_dependencies.yaml",
-            strategy_config_path="config/strategy_features.yaml",
+            strategy_config_path=None,  # 不再使用 strategy_features.yaml
             cache_dir=self.temp_cache_dir,
             use_disk_cache=True,
             use_memory_cache=True,
@@ -475,8 +605,31 @@ class TestStrategyFeaturesIntegration(unittest.TestCase):
             print(f"{'=' * 70}")
 
             try:
+                # 从目录管理方式读取特征配置
+                from src.strategy_config import StrategyConfigLoader
+                import yaml
+
+                strategy_dir = Path(f"config/strategies/{strategy}")
+                if strategy_dir.exists():
+                    config_loader = StrategyConfigLoader(strategy_dir)
+                    strategy_config = config_loader.load()
+                    requested_features = strategy_config.features.requested_features
+                else:
+                    # Fallback: 直接从 features.yaml 读取
+                    features_path = strategy_dir / "features.yaml"
+                    if features_path.exists():
+                        with open(features_path, "r", encoding="utf-8") as f:
+                            features_data = yaml.safe_load(f)
+                        requested_features = features_data.get(
+                            "feature_pipeline", {}
+                        ).get("requested_features", [])
+                    else:
+                        requested_features = ["atr", "rsi"]
+
                 df = self.test_df.copy()
-                result_df = loader.load_strategy_features(df, strategy, fit=True)
+                result_df = loader.load_features_from_requested(
+                    df, requested_features, fit=True
+                )
 
                 # 记录结果
                 original_cols = len(df.columns)

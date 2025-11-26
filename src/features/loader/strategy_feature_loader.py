@@ -24,7 +24,7 @@ class StrategyFeatureLoader:
     def __init__(
         self,
         feature_deps_path: str = "config/feature_dependencies.yaml",
-        strategy_config_path: str = "config/strategy_features.yaml",
+        strategy_config_path: Optional[str] = None,
         cache_dir: Optional[str] = "cache/features",
         use_disk_cache: bool = True,
         use_memory_cache: bool = True,
@@ -36,7 +36,7 @@ class StrategyFeatureLoader:
         
         Args:
             feature_deps_path: 特征依赖配置文件路径
-            strategy_config_path: 策略配置文件路径
+            strategy_config_path: 策略配置文件路径（可选，如果文件不存在则不加载）
             cache_dir: 磁盘缓存目录
             use_disk_cache: 是否使用磁盘缓存
             use_memory_cache: 是否使用内存缓存
@@ -44,7 +44,11 @@ class StrategyFeatureLoader:
             parallel_backend: 并行后端（process/thread）
         """
         self.feature_deps = self._load_yaml(feature_deps_path)
-        self.strategy_config = self._load_yaml(strategy_config_path)
+        # 可选加载策略配置（用于向后兼容）
+        if strategy_config_path is not None:
+            self.strategy_config = self._load_yaml_optional(strategy_config_path)
+        else:
+            self.strategy_config = {}
         
         # 创建并行计算器
         self.computer = ParallelFeatureComputer(
@@ -56,13 +60,22 @@ class StrategyFeatureLoader:
         )
     
     def _load_yaml(self, path: str) -> Dict:
-        """加载 YAML 配置文件"""
+        """加载 YAML 配置文件（必需）"""
         path_obj = Path(path)
         if not path_obj.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
         
         with open(path_obj, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
+    
+    def _load_yaml_optional(self, path: str) -> Dict:
+        """加载 YAML 配置文件（可选，文件不存在时返回空字典）"""
+        path_obj = Path(path)
+        if not path_obj.exists():
+            return {}
+        
+        with open(path_obj, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f) or {}
     
     def resolve_dependencies(self, requested_features: List[str]) -> List[str]:
         """
@@ -129,14 +142,24 @@ class StrategyFeatureLoader:
         """
         为指定策略加载特征（支持并行计算和缓存）
         
+        注意：此方法已废弃，推荐使用 load_features_from_requested() 配合目录管理方式。
+        此方法仅用于向后兼容，需要 strategy_features.yaml 文件存在。
+        
         Args:
             df: 输入 DataFrame
             strategy_name: 策略名称（sr_reversal, sr_breakout, compression_breakout, trend_following）
             fit: 是否拟合（研究阶段=True，实盘阶段=False）
+            requested_features_override: 可选的特征列表覆盖
         
         Returns:
             df_with_features: 包含计算特征的 DataFrame
         """
+        if not self.strategy_config or "strategies" not in self.strategy_config:
+            raise ValueError(
+                f"Strategy config not loaded. "
+                f"Please use load_features_from_requested() with directory-based configs instead."
+            )
+        
         if strategy_name not in self.strategy_config.get("strategies", {}):
             raise ValueError(
                 f"Unknown strategy: {strategy_name}. "
@@ -219,12 +242,21 @@ class StrategyFeatureLoader:
         """
         获取策略的特征列表（包括依赖）
         
+        注意：此方法已废弃，推荐使用目录管理方式。
+        此方法仅用于向后兼容，需要 strategy_features.yaml 文件存在。
+        
         Args:
             strategy_name: 策略名称
         
         Returns:
             feature_list: 特征列表（包括依赖）
         """
+        if not self.strategy_config or "strategies" not in self.strategy_config:
+            raise ValueError(
+                f"Strategy config not loaded. "
+                f"Please use directory-based configs instead."
+            )
+        
         if strategy_name not in self.strategy_config.get("strategies", {}):
             raise ValueError(f"Unknown strategy: {strategy_name}")
         
@@ -236,4 +268,3 @@ class StrategyFeatureLoader:
     def clear_cache(self, memory: bool = True, disk: bool = False):
         """清除缓存"""
         self.computer.clear_cache(memory=memory, disk=disk)
-

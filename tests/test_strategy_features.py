@@ -55,11 +55,11 @@ def test_strategy_features():
     print(f"数据列: {list(df.columns)}")
     print()
 
-    # 初始化加载器
+    # 初始化加载器（不再使用 strategy_features.yaml）
     try:
         loader = StrategyFeatureLoader(
             feature_deps_path="config/feature_dependencies.yaml",
-            strategy_config_path="config/strategy_features.yaml",
+            strategy_config_path=None,  # 不再使用 strategy_features.yaml
             cache_dir="cache/features",
             use_disk_cache=True,
             use_memory_cache=True,
@@ -91,18 +91,35 @@ def test_strategy_features():
         print("=" * 70)
 
         try:
-            # 获取策略配置
-            strategy_config = loader.strategy_config["strategies"][strategy]
-            requested_features = strategy_config.get("requested_features", [])
-            base_feature_types = strategy_config.get("base_feature_types", [])
+            # 从目录管理方式读取特征配置
+            from src.strategy_config import StrategyConfigLoader
+            import yaml
 
-            print(f"基础特征类型: {base_feature_types}")
+            strategy_dir = Path(f"config/strategies/{strategy}")
+            if strategy_dir.exists():
+                config_loader = StrategyConfigLoader(strategy_dir)
+                strategy_config = config_loader.load()
+                requested_features = strategy_config.features.requested_features
+            else:
+                # Fallback: 直接从 features.yaml 读取
+                features_path = strategy_dir / "features.yaml"
+                if features_path.exists():
+                    with open(features_path, "r", encoding="utf-8") as f:
+                        features_data = yaml.safe_load(f)
+                    requested_features = features_data.get("feature_pipeline", {}).get(
+                        "requested_features", []
+                    )
+                else:
+                    requested_features = ["atr", "rsi"]
+
             print(f"请求的特征: {requested_features}")
             print()
 
             # 加载特征
             print("开始加载特征...")
-            result_df = loader.load_strategy_features(df.copy(), strategy, fit=True)
+            result_df = loader.load_features_from_requested(
+                df.copy(), requested_features, fit=True
+            )
 
             # 分析结果
             original_cols = len(df.columns)
