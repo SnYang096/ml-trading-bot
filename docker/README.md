@@ -9,7 +9,16 @@
 # 多数程序会同时查找，优先级通常是小写覆盖大写，所以我们在 Dockerfile 里同时设置，保证无论谁检查哪一种都能拿到值。
 # 如果只给小写（http_proxy）赋值，apt-get 这类工具不会走代理；只给大写赋值，Git 可能不生效。因此在需要代理的场景，最好两个都设。
 
-docker build -f docker/Dockerfile.gpu  --target runtime -t hansenlovefiona017/lightgbm-runtime:v0.0.2 . --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= --build-arg http_proxy=http://host.docker.internal:7899 --build-arg https_proxy=http://host.docker.internal:7899 --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
+docker build -f Dockerfile.gpu  --target runtime -t lightgbm-runtime:v0.0.5 . 
+
+docker build -f ml_project/docker/Dockerfile.gpu `
+  --target runtime `
+  -t hansenlovefiona017/lightgbm-runtime:v0.0.5 `
+  . `
+  --build-arg http_proxy=http://host.docker.internal:7897 `
+  --build-arg https_proxy=http://host.docker.internal:7897 `
+  --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com `
+  --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
 docker build -f ml_project/docker/Dockerfile.gpu --target builder -t lightgbm-builder .  --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= --build-arg http_proxy=http://host.docker.internal:7899 --build-arg https_proxy=http://host.docker.internal:7899 --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
@@ -17,18 +26,7 @@ docker run --rm -it lightgbm-builder bash -lc "ls /lightgbm/python-package/"
 
 docker run --rm -it lightgbm-builder bash
 
-docker run --rm -it hansenlovefiona017/lightgbm-runtime:v0.0.2 bash
-
-docker commit -m "安装seaborn" -a "hansen" fe05bbe8ebf2 hansenlovefiona017/lightgbm-runtime:v0.0.2
-
-docker run --rm lightgbm-runtime python3 -c "import torch; import pandas as pd; import numpy as np; print('✅ PyTorch:', torch.__version__); print('✅ Pandas:', pd.__version__); print('✅ NumPy:', np.__version__); print('✅ CUDA available:', torch.cuda.is_available())"
-
-docker run --rm hansenlovefiona017/lightgbm-runtime:v0.0.2 pip3 show mamba-ssm
-
-docker run --rm -it --gpus all \
-    -e NVIDIA_VISIBLE_DEVICES=all \
-    hansenlovefiona017/lightgbm-runtime:v0.0.2 \
-    python3 -c "import torch; print(torch.__version__); import mamba_ssm; from mamba_ssm import Mamba; print('Mamba OK')"
+docker run --rm -it lightgbm-runtime bash
 ```
 ## 🎯 快速开始
 

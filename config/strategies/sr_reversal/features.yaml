@@ -5,16 +5,9 @@ description: >
 
 feature_pipeline:
   requested_features:
-    - wpt_price_reconstructed
     - sr_strength_max
     - sqs_hal_high
     - sqs_hal_low
-    - vpvr_pvp
-    - vpvr_hvn_count
-    - hilbert_phase
-    - hilbert_cvd_leads
-    - wpt_cvd_fluctuation
-    - atr
     - rsi
   post_processors:
     - module: src.time_series_model.strategies.sr_reversal.features

@@ -297,7 +297,7 @@ STRAT_COMPARE_ROLL_MAX ?= 5
 # Example: make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
 #          STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
 # make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
-#           STRAT_COMPARE_OVERRIDES="baseline=config/strategies/sr_reversal/features_baseline.yaml full=config/strategies/sr_reversal/features_full.yaml"
+#           STRAT_COMPARE_OVERRIDES="full=config/strategies/sr_reversal/features_full.yaml"
 
 ts-strategy-feature-compare:
 	@echo "🆚 Ablation Study: Comparing feature variants for $(STRAT_COMPARE_CONFIG)"

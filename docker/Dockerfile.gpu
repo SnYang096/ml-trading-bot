@@ -7,7 +7,7 @@
 #   - CUDA: 12.8.1
 # 
 # 核心包版本（所有包基于 numpy 1.26.4）:
-#   - numpy:        1.26.4  (核心基准)
+#   - numpy:        1.26.4  (核心基准)/
 #   - scipy:        1.11.4
 #   - pandas:       2.1.4
 #   - matplotlib:   3.7.5
@@ -37,7 +37,7 @@
 # ============================================================================
 # PyTorch 版本配置（builder 和 runtime 必须一致，确保 mamba-ssm CUDA 扩展 ABI 兼容）
 ARG PYTORCH_VERSION="2.9.0"
-ARG TORCHVISION_VERSION="0.20.0"
+ARG TORCHVISION_VERSION="0.24.0"
 ARG TORCHAUDIO_VERSION="2.9.0"
 ARG PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128"
 
@@ -97,7 +97,7 @@ RUN echo "📦 Installing build dependencies..." && \
     && echo "✅ Build dependencies installed"
 
 # 安装 CMake 3.28.3（LightGBM 编译需要）
-COPY docker/cmake-3.28.3-linux-x86_64.sh /tmp/
+COPY cmake-3.28.3-linux-x86_64.sh /tmp/
 RUN echo "📦 Installing CMake 3.28.3..." && \
     chmod +x /tmp/cmake-3.28.3-linux-x86_64.sh \
     && /tmp/cmake-3.28.3-linux-x86_64.sh --skip-license --prefix=/usr/local \
@@ -305,7 +305,7 @@ RUN echo "📦 Installing shap..." && \
 # 安装其他项目依赖
 # ============================================================================
 RUN echo "📦 Installing project dependencies..." && \
-    pip3 install --no-cache-dir --timeout=600 \
+    pip3 install --no-cache-dir --timeout=900 \
     PyWavelets==1.4.1 \
     optuna==3.4.0 \
     python-dotenv==1.0.0 \
@@ -316,12 +316,24 @@ RUN echo "📦 Installing project dependencies..." && \
     bokeh==3.3.4 \
     tensorboard==2.15.1 \
     joblib==1.3.2 \
-    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh; print('✅ 项目依赖库安装完成')"
+    statsmodels==0.14.1 \
+    gymnasium==0.29.1 \
+    alphalens-reloaded==0.4.5 \
+    openpyxl==3.1.2 \
+    stable-baselines3==2.3.0 \
+    "nautilus-trader>=1.0.0" \
+    tabulate==0.9.0 \
+    catboost \
+    xgboost \
+    arch \
+    vectorbt \
+    "dtaidistance[pure]==2.3.10" \
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, dtaidistance; print('✅ 项目依赖库安装完成')"
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库
 # ============================================================================
-COPY docker/ta-lib_0.6.4_amd64.deb /tmp/ta-lib_0.6.4_amd64.deb
+COPY ta-lib_0.6.4_amd64.deb /tmp/ta-lib_0.6.4_amd64.deb
 
 RUN echo "📦 Installing TA-Lib..." && \
     set -eux && \
