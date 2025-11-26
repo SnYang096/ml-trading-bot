@@ -331,6 +331,10 @@ def run_vectorbt_backtest(
 
     index = df.index
 
+    debug = bool(params.get("debug", False))
+    use_signal_direction = bool(params.get("use_signal_direction", False))
+    signal_col = params.get("signal_col", "signal")
+
     if task_type == "multiclass" and preds.ndim == 2:
         class_preds = np.argmax(preds, axis=1)
         multi_cfg = params.get("multiclass", {})
@@ -348,10 +352,38 @@ def run_vectorbt_backtest(
         short_exit = params.get("short_exit_threshold", 0.6)
 
         preds_series = pd.Series(preds, index=index)
-        long_entries = preds_series >= long_entry
-        long_exits = preds_series <= long_exit
-        short_entries = preds_series <= short_entry
-        short_exits = preds_series >= short_exit
+
+        if use_signal_direction and signal_col in df.columns:
+            # SR reversal 等策略：方向由 signal 决定，preds 只控制“是否参与这笔 SR 反转交易”
+            signal_series = df[signal_col].fillna(0).astype(float)
+
+            base_long_entries = preds_series >= long_entry
+            base_short_entries = preds_series <= short_entry
+
+            long_entries = (signal_series > 0) & base_long_entries
+            short_entries = (signal_series < 0) & base_short_entries
+
+            # 平仓沿用概率阈值，但不再强制依赖 signal 方向，避免死锁
+            long_exits = preds_series <= long_exit
+            short_exits = preds_series >= short_exit
+        else:
+            # 默认行为：仅根据预测得分构造多空信号
+            long_entries = preds_series >= long_entry
+            long_exits = preds_series <= long_exit
+            short_entries = preds_series <= short_entry
+            short_exits = preds_series >= short_exit
+
+        if debug:
+            debug_signals = pd.DataFrame(
+                {
+                    "price": price,
+                    "pred": preds_series,
+                    "long_entry": long_entries,
+                    "long_exit": long_exits,
+                    "short_entry": short_entries,
+                    "short_exit": short_exits,
+                }
+            )
 
     # Determine frequency for vectorbt metrics (REQUIRED for proper metrics calculation)
     freq = params.get("freq", None)
@@ -400,12 +432,78 @@ def run_vectorbt_backtest(
         return None
 
     stats = portfolio.stats()
-    return {
+
+    debug_payload: Dict[str, Any] | None = None
+    if debug:
+        debug_payload = {}
+        try:
+            trades = portfolio.trades.records_readable
+        except Exception:
+            trades = None
+
+        # 组装 debug summary，供日志和 HTML 使用
+        total_return_pct = float(stats.get("Total Return [%]", 0.0))
+        sharpe_ratio = float(stats.get("Sharpe Ratio", 0.0))
+        max_dd_pct = float(stats.get("Max Drawdown [%]", 0.0))
+        win_rate_pct = float(stats.get("Win Rate [%]", 0.0))
+
+        debug_payload["summary"] = {
+            "total_return_pct": total_return_pct,
+            "sharpe": sharpe_ratio,
+            "max_drawdown_pct": max_dd_pct,
+            "win_rate_pct": win_rate_pct,
+        }
+
+        if trades is not None and not trades.empty:
+            n_trades = int(len(trades))
+            n_win = int((trades["PnL"] > 0).sum())
+            win_rate_manual = 100.0 * n_win / n_trades
+
+            # 为 HTML 导出部分 trades（避免太大），按时间排序
+            trades_sample = (
+                trades.sort_values("Entry Timestamp").head(200).reset_index(drop=True)
+            )
+            debug_payload["trades"] = trades_sample.to_dict(orient="records")
+            debug_payload["trades_meta"] = {
+                "n_trades": n_trades,
+                "n_win": n_win,
+                "win_rate_manual": win_rate_manual,
+            }
+
+        # 存储部分信号行（仅非多分类情形下）
+        if "debug_signals" in locals():
+            entry_mask = long_entries | short_entries
+            signals_sample = (
+                debug_signals[entry_mask]
+                .head(200)
+                .reset_index()
+                .rename(columns={"index": "timestamp"})
+            )
+            debug_payload["signals"] = signals_sample.to_dict(orient="records")
+
+        # returns 统计
+        try:
+            returns = portfolio.returns()
+            mean_ret = float(returns.mean())
+            std_ret = float(returns.std())
+            debug_payload["returns_stats"] = {
+                "mean": mean_ret,
+                "std": std_ret,
+            }
+        except Exception:
+            pass
+
+    result: Dict[str, Any] = {
         "total_return_pct": float(stats.get("Total Return [%]", 0.0)),
         "sharpe": float(stats.get("Sharpe Ratio", 0.0)),
         "max_drawdown_pct": float(stats.get("Max Drawdown [%]", 0.0)),
         "win_rate": float(stats.get("Win Rate [%]", 0.0)),
     }
+
+    if debug_payload is not None:
+        result["debug"] = debug_payload
+
+    return result
 
 
 def train_strategy(

@@ -136,22 +136,26 @@ def _generate_sr_reversal_signals(
         price.abs() * cfg.min_tolerance_pct
     )
 
-    # Price must test the SR zone (wick enters band) and close back inside.
+    # Price must test the SR zone (wick enters band) and then be rejected:
+    # - 多头：下影线扎进支撑带，收盘重新站回支撑价之上 → “向下被拒绝，向上走”
+    # - 空头：上影线扎进阻力带，收盘重新回到阻力价之下 → “向上被拒绝，向下走”
     long_touch = (low <= zone_price + tolerance) & (price >= zone_price - tolerance)
     short_touch = (high >= zone_price - tolerance) & (price <= zone_price + tolerance)
 
+    # 多头 SR 反转：价格测试支撑区，并在支撑附近“下探失败后向上收盘”
     long_mask = (
         (sr_strength >= cfg.min_sr_strength)
         & (support_score >= cfg.min_support_score)
         & long_touch
-        & (price >= zone_price)  # Close above zone → rejection confirmed
+        & (price >= zone_price)  # Close above zone → 支撑生效，向上反转
     )
 
+    # 空头 SR 反转：价格测试阻力区，并在阻力附近“上冲失败后向下收盘”
     short_mask = (
         (sr_strength >= cfg.min_sr_strength)
         & (resistance_score >= cfg.min_resistance_score)
         & short_touch
-        & (price <= zone_price)  # Close below zone → rejection confirmed
+        & (price <= zone_price)  # Close below zone → 阻力生效，向下反转
     )
 
     signals_arr = np.zeros(len(df), dtype=float)

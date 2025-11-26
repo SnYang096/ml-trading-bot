@@ -19,6 +19,8 @@ from sklearn.linear_model import LinearRegression
 
 import talib
 
+from .utils_volume_profile import compute_wpt_volume_profile
+
 # ============================================================================
 # BaselineFeatureEngineer 类
 # ============================================================================
@@ -272,82 +274,70 @@ class BaselineFeatureEngineer:
         hal_low = pd.Series(index=high.index, dtype=float)
 
         for i in range(window, len(high)):
-            # 确定使用的价格序列和窗口边界
-            if price_col is not None:
-                # 使用 WPT 重构价格
-                window_high = price_col.iloc[i - window : i].max()
-                window_low = price_col.iloc[i - window : i].min()
-            else:
-                # 使用原始价格
-                window_high = high.iloc[i - window : i].max()
-                window_low = low.iloc[i - window : i].min()
+            price_window = (
+                price_col.iloc[i - window : i].values
+                if price_col is not None
+                else ((high.iloc[i - window : i].values + low.iloc[i - window : i].values) / 2.0)
+            )
+            volume_window = volume.iloc[i - window : i].values
 
-            if window_high <= window_low:
-                if price_col is not None:
-                    poc.iloc[i] = price_col.iloc[i]
-                else:
-                    poc.iloc[i] = (high.iloc[i] + low.iloc[i]) / 2
-                hal_high.iloc[i] = window_high
-                hal_low.iloc[i] = window_low
-                # 无法计算成交量占比，保持 NaN
+            vp_result = compute_wpt_volume_profile(
+                price_window=price_window,
+                volume_window=volume_window,
+                bins=bins,
+            )
+
+            if vp_result is None:
+                fallback_price = (
+                    float(price_window[-1])
+                    if len(price_window) > 0
+                    else float("nan")
+                )
+                poc.iloc[i] = fallback_price
+                hal_high.iloc[i] = fallback_price
+                hal_low.iloc[i] = fallback_price
                 continue
 
-            # 创建价格分档
-            price_bins = np.linspace(window_low, window_high, bins + 1)
-            bin_volumes = np.zeros(bins)
+            hist = vp_result.hist
+            total_volume = hist.sum()
 
-            # 计算每个价格档的成交量
-            for j in range(i - window, i):
-                # 使用 price_col 或 (high+low)/2
-                if price_col is not None:
-                    price = price_col.iloc[j]
-                else:
-                    price = (high.iloc[j] + low.iloc[j]) / 2
-                vol = volume.iloc[j]
+            if total_volume <= 0:
+                continue
 
-                # 找到价格所在的分档
-                bin_idx = np.digitize(price, price_bins) - 1
-                bin_idx = max(0, min(bins - 1, bin_idx))
-                bin_volumes[bin_idx] += vol
+            centers = vp_result.centers
+            edges = vp_result.edges
 
-            # 找到成交量最大的分档（POC）
-            max_vol_idx = np.argmax(bin_volumes)
-            poc.iloc[i] = (price_bins[max_vol_idx] + price_bins[max_vol_idx + 1]) / 2
+            max_vol_idx = int(np.argmax(hist))
+            poc.iloc[i] = centers[max_vol_idx]
 
-            # 计算 POC 价格档的成交量占比
-            total_volume = bin_volumes.sum()
-            if total_volume > 0:
-                poc_volume_ratio.iloc[i] = bin_volumes[max_vol_idx] / total_volume
+            poc_volume_ratio.iloc[i] = hist[max_vol_idx] / total_volume
 
-                # 计算 Value Area (70% 价格区间) - HAL 上下界
-                target_volume = total_volume * value_area_ratio
-                accumulated_volume = bin_volumes[max_vol_idx]
+            target_volume = total_volume * value_area_ratio
+            accumulated_volume = hist[max_vol_idx]
+            upper_idx = max_vol_idx
+            lower_idx = max_vol_idx
 
-                # 从 POC 开始，向上下扩展，累积成交量直到达到 70%
-                upper_idx = max_vol_idx
-                lower_idx = max_vol_idx
+            while accumulated_volume < target_volume:
+                upper_vol = hist[upper_idx + 1] if upper_idx + 1 < len(hist) else 0.0
+                lower_vol = hist[lower_idx - 1] if lower_idx - 1 >= 0 else 0.0
 
-                while accumulated_volume < target_volume:
-                    # 决定向上还是向下扩展
-                    upper_vol = (
-                        bin_volumes[upper_idx + 1] if upper_idx + 1 < bins else 0
-                    )
-                    lower_vol = bin_volumes[lower_idx - 1] if lower_idx - 1 >= 0 else 0
-
-                    if upper_vol >= lower_vol and upper_idx + 1 < bins:
+                if (upper_vol >= lower_vol and upper_idx + 1 < len(hist)) or lower_idx == 0:
+                    if upper_idx + 1 < len(hist):
                         upper_idx += 1
-                        accumulated_volume += bin_volumes[upper_idx]
-                    elif lower_idx - 1 >= 0:
-                        lower_idx -= 1
-                        accumulated_volume += bin_volumes[lower_idx]
+                        accumulated_volume += hist[upper_idx]
                     else:
-                        # 无法再扩展
                         break
+                elif lower_idx - 1 >= 0:
+                    lower_idx -= 1
+                    accumulated_volume += hist[lower_idx]
+                else:
+                    break
 
-                # HAL 上下界对应价格档的边界
-                hal_high.iloc[i] = price_bins[upper_idx + 1]
-                hal_low.iloc[i] = price_bins[lower_idx]
-            # 否则保持 NaN
+            # HAL 上下界对应价格档的边界
+            hal_high_edge_idx = min(upper_idx + 1, len(edges) - 1)
+            hal_low_edge_idx = max(lower_idx, 0)
+            hal_high.iloc[i] = edges[hal_high_edge_idx]
+            hal_low.iloc[i] = edges[hal_low_edge_idx]
 
         poc = poc.ffill()
         hal_high = hal_high.ffill()

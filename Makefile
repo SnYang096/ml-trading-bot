@@ -97,7 +97,7 @@ endif
 	ts-vectorbot-backtest ts-nautilus-backtest \
 	ts-dim-compare ts-feature-eval ts-factor-eval ts-timeframe-forward-report \
 	ts-strategy-feature-compare feature-indicators \
-	vectorbot-backtest nautilus-backtest dim-compare feature-eval timeframe-forward-report \
+	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
 	cs-build-panel cs-report cs-train cs-workflow
 
@@ -280,7 +280,7 @@ STRAT_COMPARE_CONFIG ?= config/strategies/sr_reversal
 STRAT_COMPARE_DATA_PATH ?= $(DATA_DIR)
 STRAT_COMPARE_SYMBOL ?= BTCUSDT
 STRAT_COMPARE_TIMEFRAME ?= 240T
-STRAT_COMPARE_START ?= 2025-01-01
+STRAT_COMPARE_START ?= 2024-01-01
 STRAT_COMPARE_END ?= 2025-10-31
 STRAT_COMPARE_TEST_SIZE ?= 0.15
 STRAT_COMPARE_OUTPUT_DIR ?= results/strategy_compare
@@ -404,11 +404,6 @@ ts-dim-compare:
 		--timeframe $(DIM_COMPARE_TIMEFRAME) \
 		$(if $(START_DATE),--train-start $(START_DATE)) \
 		$(if $(END_DATE),--train-end $(END_DATE))
-
-dim-compare:
-	@echo "⚠️ 'dim-compare' has been renamed to 'ts-dim-compare'. Please update your workflows."
-	@$(MAKE) ts-dim-compare
-
 
 # ---------------------------------------------------------------------------
 # Feature Indicators Visualization

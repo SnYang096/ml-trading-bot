@@ -17,8 +17,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
+
 import pywt
 from scipy import stats
+
+from .utils_volume_profile import (
+    VolumeProfileResult,
+    compute_wpt_volume_profile,
+)
 
 
 def build_wpt_denoised_vpvr(
@@ -80,62 +86,34 @@ def build_wpt_denoised_vpvr(
     
     # 滚动窗口计算 VPVR
     for i in range(vpvr_window, len(df)):
-        window_slice = df.iloc[i - vpvr_window : i]
         price_window = typical_price.iloc[i - vpvr_window : i].values
         volume_window = df[volume_col].iloc[i - vpvr_window : i].values
-        
-        if len(price_window) < 10:  # 数据不足
-            continue
-        
-        # Step 1: WPT 降噪
-        try:
-            wp = pywt.WaveletPacket(
-                data=price_window, wavelet=wavelet, mode="symmetric", maxlevel=level
-            )
-            
-            if drop_high_freq:
-                # 清除最高频子带（如 'dddd' for level=4）
-                for node in wp.get_level(level, "freq"):
-                    if all(c == "d" for c in node.path):  # 全高频路径
-                        wp[node.path].data = np.zeros_like(wp[node.path].data)
-            
-            price_denoised = wp.reconstruct()
-        except Exception:
-            # WPT 失败时使用原始价格
-            price_denoised = price_window
-        
-        # Step 2: 构建 VPVR
-        # 过滤 NaN 值
-        valid_mask = ~np.isnan(price_denoised) & ~np.isnan(volume_window) & (volume_window > 0)
-        if not np.any(valid_mask):
-            continue
-        
-        price_denoised_valid = price_denoised[valid_mask]
-        volume_window_valid = volume_window[valid_mask]
-        
-        if len(price_denoised_valid) < 10:  # 有效数据不足
-            continue
-        
-        price_min = price_denoised_valid.min()
-        price_max = price_denoised_valid.max()
-        
-        if not np.isfinite(price_min) or not np.isfinite(price_max) or price_max <= price_min:
-            continue
-        
-        # 计算每个价格档位的成交量
-        hist, edges = np.histogram(
-            price_denoised_valid, bins=bins, range=(price_min, price_max), weights=volume_window_valid
+
+        vp_result: Optional[VolumeProfileResult] = compute_wpt_volume_profile(
+            price_window=price_window,
+            volume_window=volume_window,
+            bins=bins,
+            wavelet=wavelet,
+            level=level,
+            drop_high_freq=drop_high_freq,
         )
-        centers = (edges[:-1] + edges[1:]) / 2
-        
+
+        if vp_result is None:
+            continue
+
+        hist = vp_result.hist
+        edges = vp_result.edges
+        centers = vp_result.centers
+
         # Step 3: 识别 PVP（最高成交量对应的价格）
         if np.sum(hist) > 0:
             pvp_idx = np.argmax(hist)
             df.iloc[i, df.columns.get_loc("vpvr_pvp")] = centers[pvp_idx]
         
         # Step 4: 识别 HVN 和 LVN
-        volume_mean = np.mean(hist[hist > 0]) if np.any(hist > 0) else 0
-        volume_std = np.std(hist[hist > 0]) if np.any(hist > 0) else 0
+        positive_mask = hist > 0
+        volume_mean = np.mean(hist[positive_mask]) if np.any(positive_mask) else 0
+        volume_std = np.std(hist[positive_mask]) if np.any(positive_mask) else 0
         
         if volume_std > 0:
             # HVN: 成交量 > mean + 0.5*std
@@ -157,14 +135,14 @@ def build_wpt_denoised_vpvr(
                 nearest_lvn_distance = lvn_distances[nearest_lvn_idx]
                 
                 # 归一化距离（相对于价格范围）
-                price_range = price_max - price_min
+                price_range = vp_result.price_max - vp_result.price_min
                 if price_range > 0:
                     df.iloc[i, df.columns.get_loc("vpvr_lvn_distance")] = (
                         nearest_lvn_distance / price_range
                     )
                 
                 # 判断当前价格是否在 LVN 中
-                bin_width = (price_max - price_min) / bins
+                bin_width = (vp_result.price_max - vp_result.price_min) / bins
                 if np.abs(current_price - nearest_lvn_price) < bin_width:
                     df.iloc[i, df.columns.get_loc("vpvr_price_in_lvn")] = 1.0
             

@@ -389,6 +389,9 @@ def summarize_results(results: List[Dict]) -> pd.DataFrame:
         backtest = item["base"].get("backtest") if item.get("base") else None
         if backtest:
             for key, value in backtest.items():
+                # 跳过 debug 等非标量字段，避免污染 summary CSV
+                if key == "debug":
+                    continue
                 row[f"bt_{key}"] = value
         rows.append(row)
     return pd.DataFrame(rows)
@@ -411,7 +414,9 @@ def generate_html_report(
         if item.get("base") and item["base"].get("evaluation"):
             eval_metrics.update(item["base"]["evaluation"].keys())
         if item.get("base") and item["base"].get("backtest"):
-            bt_metrics.update(item["base"]["backtest"].keys())
+            bt_metrics.update(
+                k for k in item["base"]["backtest"].keys() if k != "debug"
+            )
 
     eval_metrics = sorted(list(eval_metrics))
     bt_metrics = sorted(list(bt_metrics))
@@ -436,7 +441,7 @@ def generate_html_report(
         values = []
         for item in results:
             val = item.get("base", {}).get("backtest", {}).get(metric, 0.0)
-            if val is None or np.isnan(val):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
                 val = 0.0
             values.append(float(val))
         bt_chart_data[metric] = values
@@ -699,6 +704,158 @@ def generate_html_report(
         """
         )
 
+    # ---------------------------------------------------------------------
+    # Optional detailed debug report (signals & trades per variant)
+    # ---------------------------------------------------------------------
+    debug_sections: List[str] = []
+    for item in results:
+        variant = item["variant"]
+        base = item.get("base", {})
+        bt_data = base.get("backtest", {}) if base else {}
+        debug_data = bt_data.get("debug") if isinstance(bt_data, dict) else None
+        if not debug_data:
+            continue
+
+        # Summary
+        summary = debug_data.get("summary", {})
+        trades_meta = debug_data.get("trades_meta", {})
+        returns_stats = debug_data.get("returns_stats", {})
+
+        section_parts: List[str] = []
+        section_parts.append(f'<h2 id="variant-{variant}">Variant: {variant}</h2>')
+        section_parts.append("<div class='info-box'><ul>")
+        if summary:
+            section_parts.append(
+                f"<li><strong>Total Return:</strong> {summary.get('total_return_pct', 0.0):.2f}%</li>"
+            )
+            section_parts.append(
+                f"<li><strong>Sharpe:</strong> {summary.get('sharpe', 0.0):.2f}</li>"
+            )
+            section_parts.append(
+                f"<li><strong>Max DD:</strong> {summary.get('max_drawdown_pct', 0.0):.2f}%</li>"
+            )
+            section_parts.append(
+                f"<li><strong>Win Rate:</strong> {summary.get('win_rate_pct', 0.0):.2f}%</li>"
+            )
+        if trades_meta:
+            section_parts.append(
+                f"<li><strong>Trades:</strong> {trades_meta.get('n_trades', 0)} "
+                f"(wins={trades_meta.get('n_win', 0)}, "
+                f"win_rate_manual={trades_meta.get('win_rate_manual', 0.0):.2f}%)</li>"
+            )
+        if returns_stats:
+            section_parts.append(
+                f"<li><strong>Returns mean/std:</strong> "
+                f"{returns_stats.get('mean', 0.0):.3e} / "
+                f"{returns_stats.get('std', 0.0):.3e}</li>"
+            )
+        section_parts.append("</ul></div>")
+
+        # Helper to render table from list[dict]
+        def build_table(records: List[Dict[str, Any]], title: str) -> str:
+            if not records:
+                return f"<h3>{title}</h3><p>No records.</p>"
+            cols = list(records[0].keys())
+            header = "".join(f"<th>{c}</th>" for c in cols)
+            rows_html = []
+            for row in records:
+                cells = "".join(f"<td>{row.get(c, '')}</td>" for c in cols)
+                rows_html.append(f"<tr>{cells}</tr>")
+            return (
+                f"<h3>{title}</h3>"
+                "<div class='table-wrapper'><table>"
+                f"<thead><tr>{header}</tr></thead>"
+                f"<tbody>{''.join(rows_html)}</tbody>"
+                "</table></div>"
+            )
+
+        signals = debug_data.get("signals") or []
+        trades = debug_data.get("trades") or []
+        section_parts.append(build_table(signals, "Entry Signals (sample)"))
+        section_parts.append(build_table(trades, "Trades (sample)"))
+
+        debug_sections.append("".join(section_parts))
+
+    if debug_sections:
+        debug_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Strategy Feature Debug Details: {symbol}</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    margin: 20px;
+                    background-color: #f5f5f5;
+                }}
+                .container {{
+                    max-width: 95%;
+                    width: 100%;
+                    margin: 0 auto;
+                    background: white;
+                    padding: 30px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }}
+                h1 {{
+                    color: #333;
+                    border-bottom: 3px solid #4CAF50;
+                    padding-bottom: 10px;
+                }}
+                h2 {{
+                    color: #555;
+                    margin-top: 30px;
+                    border-left: 4px solid #2196F3;
+                    padding-left: 10px;
+                }}
+                .table-wrapper {{
+                    width: 100%;
+                    overflow-x: auto;
+                }}
+                table {{
+                    width: 100%;
+                    min-width: 900px;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                    font-size: 12px;
+                }}
+                th, td {{
+                    white-space: nowrap;
+                    padding: 6px 8px;
+                    text-align: left;
+                    border-bottom: 1px solid #ddd;
+                }}
+                th {{
+                    background-color: #2196F3;
+                    color: white;
+                    font-weight: 600;
+                    position: sticky;
+                    top: 0;
+                    z-index: 2;
+                }}
+                .info-box {{
+                    background: #e3f2fd;
+                    border-left: 4px solid #2196F3;
+                    padding: 15px;
+                    margin: 20px 0;
+                    border-radius: 4px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Strategy Feature Debug Details</h1>
+                <p>This page shows sample signals and trades for each variant where backtest.debug is enabled.</p>
+                {''.join(debug_sections)}
+            </div>
+        </body>
+        </html>
+        """
+        debug_path = output_dir / "strategy_feature_compare_debug.html"
+        with open(debug_path, "w", encoding="utf-8") as fh:
+            fh.write(debug_html)
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -817,7 +974,8 @@ def generate_html_report(
                 <strong>Configuration:</strong><br>
                 Symbol: {symbol} | Timeframe: {timeframe} | Test Size: {test_size:.1%}<br>
                 Variants Compared: {len(variants)}<br>
-                Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+                Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
+                Debug Details: <a href="strategy_feature_compare_debug.html" target="_blank">Open detailed signals & trades</a> (only for variants with backtest.debug enabled)
             </div>
             
             <h2>📊 Summary Table</h2>
