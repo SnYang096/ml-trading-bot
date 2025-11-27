@@ -5,7 +5,7 @@
     "--gpus", "all",
     "--shm-size=8gb"
   ],
-  "remoteUser": "vscode",
+  "remoteUser": "yin",
   "containerEnv": {
     "DEV_CONTAINER": "1",
     "PYTHONUNBUFFERED": "1",

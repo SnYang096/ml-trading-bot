@@ -15,6 +15,19 @@ from src.features.time_series.utils_hilbert_features import extract_hilbert_feat
 from src.features.time_series.utils_hurst_features import extract_hurst_features
 from src.features.time_series.utils_spectrum_features import extract_spectrum_features
 from src.features.time_series.utils_liquidity_features import extract_liquidity_features
+from src.features.time_series.utils_order_flow_features import extract_order_flow_features
+# 交互特征包装函数（用于配置文件）
+from src.features.loader.interaction_feature_wrappers import (
+    compute_liquidity_void_x_wpt_risk_wrapper,
+    compute_compression_energy_x_ofi_short_wrapper,
+    compute_hurst_x_trend_r2_wrapper,
+    compute_evt_x_trend_r2_wrapper,
+    compute_vpin_x_compression_wrapper,
+    compute_sma_slope_x_price_pos_wrapper,
+    compute_vpin_x_wick_upper_wrapper,
+    compute_vpin_x_wick_lower_wrapper,
+    apply_rank_transform_to_interaction_wrapper,
+)
 
 # 特征包装函数
 from src.features.loader.feature_wrappers import (
@@ -22,6 +35,22 @@ from src.features.loader.feature_wrappers import (
     compute_sqs_hal_low,
     compute_sr_strength_max,
     compute_wpt_vpvr,
+)
+
+# 组合特征包装函数（交互特征 + 衍生特征）
+from src.features.loader.common_derived_feature_wrappers import (
+    compute_sr_strength_combined_wrapper,
+    compute_sr_distance_normalized_wrapper,
+    compute_dist_to_zz_high_wrapper,
+    compute_dist_to_zz_low_wrapper,
+    compute_dist_to_zz_high_atr_wrapper,
+    compute_dist_to_zz_low_atr_wrapper,
+    compute_cvd_slope_wrapper,
+    compute_atr_ratio_wrapper,
+    compute_bb_width_ratio_wrapper,
+    compute_compression_score_wrapper,
+    compute_tbr_ma_wrapper,
+    compute_tbr_spike_wrapper,
 )
 
 # TA-Lib 与 DL 特征包装函数
@@ -82,13 +111,43 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "BaselineFeatureEngineer.add_common_derived_features": BaselineFeatureEngineer.add_common_derived_features,
     
     # ========================================================================
-    # Enhanced 特征（WPT, Hilbert, Hurst, Spectrum, Liquidity）
+    # Enhanced 特征（WPT, Hilbert, Hurst, Spectrum, Liquidity, Order Flow）
     # ========================================================================
     "extract_wpt_features": extract_wpt_features,
     "extract_hilbert_features": extract_hilbert_features,
     "extract_hurst_features": extract_hurst_features,
     "extract_spectrum_features": extract_spectrum_features,
     "extract_liquidity_features": extract_liquidity_features,
+    "extract_order_flow_features": extract_order_flow_features,
+    
+    # ========================================================================
+    # 交互特征（每个交互特征独立计算函数）
+    # ========================================================================
+    "compute_liquidity_void_x_wpt_risk": compute_liquidity_void_x_wpt_risk_wrapper,
+    "compute_compression_energy_x_ofi_short": compute_compression_energy_x_ofi_short_wrapper,
+    "compute_hurst_x_trend_r2": compute_hurst_x_trend_r2_wrapper,
+    "compute_evt_x_trend_r2": compute_evt_x_trend_r2_wrapper,
+    "compute_vpin_x_compression": compute_vpin_x_compression_wrapper,
+    "compute_sma_slope_x_price_pos": compute_sma_slope_x_price_pos_wrapper,
+    "compute_vpin_x_wick_upper": compute_vpin_x_wick_upper_wrapper,
+    "compute_vpin_x_wick_lower": compute_vpin_x_wick_lower_wrapper,
+    "apply_rank_transform_to_interaction": apply_rank_transform_to_interaction_wrapper,
+    
+    # ========================================================================
+    # 组合特征（交互特征 + 衍生特征，所有策略可用）
+    # ========================================================================
+    "compute_sr_strength_combined": compute_sr_strength_combined_wrapper,
+    "compute_sr_distance_normalized": compute_sr_distance_normalized_wrapper,
+    "compute_dist_to_zz_high": compute_dist_to_zz_high_wrapper,
+    "compute_dist_to_zz_low": compute_dist_to_zz_low_wrapper,
+    "compute_dist_to_zz_high_atr": compute_dist_to_zz_high_atr_wrapper,
+    "compute_dist_to_zz_low_atr": compute_dist_to_zz_low_atr_wrapper,
+    "compute_cvd_slope": compute_cvd_slope_wrapper,
+    "compute_atr_ratio": compute_atr_ratio_wrapper,
+    "compute_bb_width_ratio": compute_bb_width_ratio_wrapper,
+    "compute_compression_score": compute_compression_score_wrapper,
+    "compute_tbr_ma": compute_tbr_ma_wrapper,
+    "compute_tbr_spike": compute_tbr_spike_wrapper,
     
     # ========================================================================
     # TA-Lib 特征（按需计算单个指标）

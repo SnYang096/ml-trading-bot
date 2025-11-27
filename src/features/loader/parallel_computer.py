@@ -203,6 +203,9 @@ def _compute_single_feature_worker(
         print(f"     ❌ Error computing {feature_name}: {e}")
         import traceback
         traceback.print_exc()
+        # 如果是依赖缺失错误，应该抛出异常而不是继续
+        if isinstance(e, (ValueError, KeyError)) and ("not found" in str(e) or "Required" in str(e)):
+            raise  # 重新抛出依赖缺失错误
         return (feature_name, df_bytes, cache_key)  # 返回原始 DataFrame
 
 

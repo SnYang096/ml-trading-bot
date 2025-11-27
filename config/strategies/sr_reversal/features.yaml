@@ -5,10 +5,49 @@ description: >
 
 feature_pipeline:
   requested_features:
+    # 基础 SR 特征
     - sr_strength_max
     - sqs_hal_high
     - sqs_hal_low
     - rsi
+    # WPT 特征（多尺度 SR 结构）
+    - wpt_price_reconstructed
+    - wpt_price_fluctuation
+    - wpt_cvd_fluctuation
+    # Hilbert 特征（CVD 相位领先）
+    - hilbert_phase
+    # Hurst 特征（趋势持续性）
+    - hurst_price
+    # VPVR 特征（空间域：流动性聚集区）
+    - wpt_vpvr
+    # 订单流特征（VPIN）
+    - vpin_features
+    # 交互特征（状态 × 动量）- 按需选择
+    - vpin_x_wick_upper        # SR 反转专用
+    - vpin_x_wick_lower        # SR 反转专用
+    - vpin_x_wick_upper_rank   # Rank transform 版本
+    - vpin_x_wick_lower_rank   # Rank transform 版本
+    # 其他策略也可以选择：
+    # - liquidity_void_x_wpt_risk
+    # - compression_energy_x_ofi_short
+    # - hurst_x_trend_r2
+    # - evt_x_trend_r2
+    # - vpin_x_compression
+    # - sma_slope_x_price_pos
+    # 通用组合特征（衍生特征）- 按需选择
+    # - sr_strength_combined  # 需要 sqs 列，暂时注释
+    # 注意：以下特征需要依赖其他特征，暂时注释掉避免依赖错误
+    # - sr_distance_normalized  # 需要 dist_to_nearest_sr
+    # - dist_to_zz_high  # 需要 zz_high_value
+    # - dist_to_zz_low  # 需要 zz_low_value
+    # - dist_to_zz_high_atr  # 需要 dist_to_zz_high
+    # - dist_to_zz_low_atr  # 需要 dist_to_zz_low
+    - cvd_slope_5
+    - atr_ratio
+    # - bb_width_ratio  # 需要 bb_upper, bb_lower, bb_middle
+    # - compression_score  # 需要 bb_width_ratio
+    - tbr_ma_5
+    - tbr_spike
   post_processors:
     - module: src.time_series_model.strategies.sr_reversal.features
       function: build_sr_reversal_features

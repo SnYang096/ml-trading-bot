@@ -33,6 +33,7 @@ import pandas as pd
 from src.data_tools.data_utils import load_raw_data
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.strategy_config import StrategyConfigLoader
+from src.time_series_model.pipeline.training.label_utils import simulate_rr_exits
 
 BASE_DATA_COLUMNS = {
     "timestamp",
@@ -334,6 +335,7 @@ def run_vectorbt_backtest(
     debug = bool(params.get("debug", False))
     use_signal_direction = bool(params.get("use_signal_direction", False))
     signal_col = params.get("signal_col", "signal")
+    use_rr_exit = bool(params.get("use_rr_exit", False))
 
     if task_type == "multiclass" and preds.ndim == 2:
         class_preds = np.argmax(preds, axis=1)
@@ -363,7 +365,7 @@ def run_vectorbt_backtest(
             long_entries = (signal_series > 0) & base_long_entries
             short_entries = (signal_series < 0) & base_short_entries
 
-            # 平仓沿用概率阈值，但不再强制依赖 signal 方向，避免死锁
+            # 初始情形下仍保留概率退出，后续可被 RR 逻辑覆盖
             long_exits = preds_series <= long_exit
             short_exits = preds_series >= short_exit
         else:
@@ -384,6 +386,46 @@ def run_vectorbt_backtest(
                     "short_exit": short_exits,
                 }
             )
+
+    # 如果启用 RR 驱动的平仓逻辑，则重写 exits/short_exits（与 compute_rr_label 保持一致）
+    if use_rr_exit:
+        if not use_signal_direction:
+            raise ValueError(
+                "use_rr_exit=True 要求 use_signal_direction=True，以确保方向由 signal 决定"
+            )
+
+        rr_params = params.get("rr", {})
+        rr_max_holding_bars = int(rr_params.get("max_holding_bars", 24))
+        rr_stop_loss_r = float(rr_params.get("stop_loss_r", 1.0))
+        rr_take_profit_r = float(rr_params.get("take_profit_r", 2.0))
+        rr_atr_window = int(rr_params.get("atr_window", 14))
+        rr_entry_offset = int(rr_params.get("entry_offset", 1))
+        rr_entry_price_col = rr_params.get("entry_price_col", None)
+
+        # 构造仅包含“被模型选中的 SR 信号”的方向列：1=多，-1=空
+        rr_signal = pd.Series(0.0, index=index)
+        rr_signal[long_entries] = 1.0
+        rr_signal[short_entries] = -1.0
+
+        df_rr = df.copy()
+        df_rr[signal_col] = rr_signal
+
+        long_exits_rr, short_exits_rr = simulate_rr_exits(
+            df_rr,
+            signal_col=signal_col,
+            price_col=price_col,
+            atr_col=params.get("atr_col", "atr"),
+            atr_window=rr_atr_window,
+            max_holding_bars=rr_max_holding_bars,
+            stop_loss_r=rr_stop_loss_r,
+            take_profit_r=rr_take_profit_r,
+            entry_price_col=rr_entry_price_col,
+            entry_offset=rr_entry_offset,
+        )
+
+        # 用 RR 逻辑产生的 exits 覆盖概率退出
+        long_exits = long_exits_rr.reindex(index).fillna(False)
+        short_exits = short_exits_rr.reindex(index).fillna(False)
 
     # Determine frequency for vectorbt metrics (REQUIRED for proper metrics calculation)
     freq = params.get("freq", None)

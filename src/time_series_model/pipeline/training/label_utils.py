@@ -101,101 +101,25 @@ def future_volatility_label(
         min_periods: Minimum periods required (default: horizon)
 
     Returns:
-        Future volatility label series (aligned to current time index)
+        Series with future volatility labels
     """
     if min_periods is None:
         min_periods = horizon
 
-    # Compute single-period returns
-    returns = price_series.pct_change().dropna()
-
-    # Compute future volatility: RMS of returns over [t+1, t+horizon]
-    # Since pandas rolling doesn't support "future windows", we compute manually
-    future_vol = pd.Series(
-        index=price_series.index, dtype=float, name="future_volatility"
-    )
-
+    returns = price_series.pct_change()
+    future_returns = []
     for i in range(len(price_series)):
-        # Get future returns: [i+1, i+horizon]
-        start_idx = i + 1
-        end_idx = min(i + horizon + 1, len(returns))
-
-        if end_idx - start_idx < min_periods:
-            future_vol.iloc[i] = np.nan
-            continue
-
-        # Extract future returns and compute RMS
-        future_rets = returns.iloc[start_idx:end_idx].values
-        if len(future_rets) >= min_periods:
-            future_vol.iloc[i] = np.sqrt(np.mean(np.square(future_rets)))
+        if i + horizon > len(price_series):
+            future_returns.append(np.nan)
         else:
-            future_vol.iloc[i] = np.nan
+            future_window = returns.iloc[i + 1 : i + horizon + 1]
+            if len(future_window) >= min_periods:
+                rms = np.sqrt(np.mean(np.square(future_window.dropna())))
+                future_returns.append(rms)
+            else:
+                future_returns.append(np.nan)
 
-    # Set name for clarity
-    future_vol.name = "future_volatility"
-    return future_vol
-
-
-def rolling_quantile_classification_labels(
-    y_return: pd.Series,
-    window: int = 20,
-    lower_quantile: float = 0.4,
-    upper_quantile: float = 0.6,
-    min_periods: int = 20,
-) -> Tuple[pd.Series, np.ndarray, pd.Series, pd.Series]:
-    """
-    Build symmetric up/down labels using rolling quantile thresholds computed on
-    shifted returns to avoid forward-looking leakage.
-
-    Returns:
-        Tuple of (y_class, valid_mask, upper, lower):
-        - y_class: Full-length Series with binary labels (1=up, 0=down, NaN=invalid)
-                  Same index as y_return, preserving alignment
-        - valid_mask: Boolean array indicating which samples are valid (not NaN)
-        - upper: Upper quantile threshold Series
-        - lower: Lower quantile threshold Series
-    """
-    shifted = y_return.shift(1)
-    upper = shifted.rolling(window=window, min_periods=min_periods).quantile(
-        upper_quantile
-    )
-    lower = shifted.rolling(window=window, min_periods=min_periods).quantile(
-        lower_quantile
-    )
-
-    labels = pd.Series(np.nan, index=y_return.index)
-    valid_window = (~upper.isna()) & (~lower.isna())
-    labels.loc[valid_window & (y_return > upper)] = 1
-    labels.loc[valid_window & (y_return < lower)] = 0
-
-    valid_mask = labels.notna()
-    # Return full-length Series (with NaN for invalid samples) to preserve index alignment
-    # This ensures the returned Series has the same index as y_return
-    y_class = labels.astype("Int64")  # Use nullable integer type to preserve NaN
-    return y_class, valid_mask.to_numpy(), upper, lower
-
-
-def volatility_normalized_target(
-    future_return: pd.Series,
-    rolling_vol: pd.Series,
-    eps: float = 1e-8,
-) -> pd.Series:
-    """
-    Create volatility-normalized target (Sharpe-like target).
-
-    This normalizes future returns by rolling volatility to create a more
-    stable and learnable target that adapts to different volatility regimes.
-
-    Args:
-        future_return: Future return series
-        rolling_vol: Rolling volatility series (same index as future_return)
-        eps: Small value to avoid division by zero
-
-    Returns:
-        Volatility-normalized target: future_return / (rolling_vol + eps)
-    """
-    target = future_return / (rolling_vol + eps)
-    return target.rename("volatility_normalized_target")
+    return pd.Series(future_returns, index=price_series.index, name="future_volatility")
 
 
 def historical_quantile_label(
@@ -206,66 +130,61 @@ def historical_quantile_label(
     asset_col: Optional[pd.Series] = None,
 ) -> pd.Series:
     """
-    Compute historical quantile label: future_return's position in its historical distribution.
+    Compute historical quantile label: percentile rank of future return within
+    historical distribution of returns.
 
-    This calculates what percentile the current future_return falls into relative to
-    its historical rolling window, which is useful for:
-    - Adaptive evaluation (what is "strong" depends on historical context)
-    - Signal generation (only trade when return is in extreme quantiles)
+    This is a robust, non-parametric label that:
+    - Normalizes returns across different assets and time periods
+    - Reduces sensitivity to outliers
+    - Works well with tree-based models (LightGBM, XGBoost)
+
+    At time t, the label is:
+        quantile[t] = percentile_rank(future_return[t], historical_returns[t-window:t])
 
     Args:
-        future_return: Future return series
-        lookback_window: Number of periods to look back for historical distribution
-        hold_period: Holding period (to avoid lookahead bias)
-        min_samples: Minimum samples required for quantile calculation
-        asset_col: Optional asset identifier series for multi-asset data
+        future_return: Future return series (e.g., from price.pct_change().shift(-hold_period))
+        lookback_window: Number of historical periods to use for quantile calculation
+        hold_period: Number of periods to hold (for computing future return)
+        min_samples: Minimum number of samples required for quantile calculation
+        asset_col: Optional asset identifier column (for cross-sectional ranking)
 
     Returns:
-        Quantile series (0-1), where 1 means current return is in top percentile
+        Series with quantile labels (0-1 range)
     """
-
-    def _compute_quantile(group: pd.Series) -> pd.Series:
-        """Compute quantile for a single asset/series."""
-        quantiles = []
-        returns = group.values
-
-        for i in range(len(group)):
-            # Need enough history before this point
-            if i < lookback_window + hold_period:
-                quantiles.append(np.nan)
-                continue
-
-            # Get historical returns (excluding current and future)
-            start_idx = max(0, i - lookback_window - hold_period)
-            end_idx = i - hold_period
-            hist_rets = returns[start_idx:end_idx]
-            hist_rets = hist_rets[~np.isnan(hist_rets)]
-
-            if len(hist_rets) < min_samples:
-                quantiles.append(np.nan)
-                continue
-
-            current = returns[i]
-            if np.isnan(current):
-                quantiles.append(np.nan)
-                continue
-
-            # Compute quantile: what percentile is current return in historical distribution?
-            q = (hist_rets < current).mean()
-            quantiles.append(q)
-
-        return pd.Series(quantiles, index=group.index)
+    result = pd.Series(np.nan, index=future_return.index, name="return_quantile")
 
     if asset_col is not None:
-        # Multi-asset: compute quantile within each asset
-        result = future_return.groupby(asset_col).apply(_compute_quantile)
-        # If result is MultiIndex, drop the asset level
-        if isinstance(result.index, pd.MultiIndex):
-            result = result.droplevel(0)
-        result = result.reindex(future_return.index)
+        # Cross-sectional ranking: rank within each asset group
+        for asset in asset_col.unique():
+            asset_mask = asset_col == asset
+            asset_returns = future_return[asset_mask]
+            if len(asset_returns) < min_samples:
+                continue
+
+            for i in range(lookback_window, len(asset_returns)):
+                historical = asset_returns.iloc[i - lookback_window : i]
+                if len(historical.dropna()) < min_samples:
+                    continue
+
+                current_return = asset_returns.iloc[i]
+                if pd.isna(current_return):
+                    continue
+
+                quantile = (historical < current_return).sum() / len(historical)
+                result.iloc[asset_returns.index[i]] = quantile
     else:
-        # Single asset
-        result = _compute_quantile(future_return)
+        # Time-series ranking: rank within historical window
+        for i in range(lookback_window, len(future_return)):
+            historical = future_return.iloc[i - lookback_window : i]
+            if len(historical.dropna()) < min_samples:
+                continue
+
+            current_return = future_return.iloc[i]
+            if pd.isna(current_return):
+                continue
+
+            quantile = (historical < current_return).sum() / len(historical)
+            result.iloc[i] = quantile
 
     return result.rename("return_quantile")
 
@@ -283,6 +202,7 @@ def compute_rr_label(
     use_continuous_label: bool = False,
     entry_price_col: Optional[str] = None,
     entry_offset: int = 0,
+    use_breakeven_stop: bool = False,  # 新增参数：是否使用保本止损
 ) -> pd.Series:
     """
     计算基于风险回报比（R/R）的标签，匹配 SR 策略的真实交易逻辑。
@@ -292,6 +212,7 @@ def compute_rr_label(
     - 设定 1R 止损
     - 捕捉至少 2R 的有利运行
     - 动态止盈止损
+    - 可选：当价格达到 1R 时，止损上移到保本（use_breakeven_stop=True）
 
     标签计算：
     - 二元标签（use_continuous_label=False）：是否实现 ≥2R（1=成功，0=失败）
@@ -310,6 +231,7 @@ def compute_rr_label(
         use_continuous_label: If True, return realized R/R; if False, return binary label
         entry_price_col: Column to use for entry price. Default: 'open' if available else price_col.
         entry_offset: Bars to wait after signal before entering (>=0). entry_offset=1 = next bar entry.
+        use_breakeven_stop: If True, move stop loss to breakeven when price reaches 1R
 
     Returns:
         Series with R/R labels (binary or continuous)
@@ -394,11 +316,19 @@ def compute_rr_label(
 
         # Calculate stop loss and take profit
         if signal > 0:  # Long signal
-            stop_loss = entry_price - stop_loss_r * atr
+            initial_stop_loss = entry_price - stop_loss_r * atr
             take_profit = entry_price + take_profit_r * atr
+            breakeven_level = entry_price  # 保本价
+            breakeven_trigger = (
+                entry_price + stop_loss_r * atr
+            )  # 当价格达到1R时，止损上移到保本
         else:  # Short signal
-            stop_loss = entry_price + stop_loss_r * atr
+            initial_stop_loss = entry_price + stop_loss_r * atr
             take_profit = entry_price - take_profit_r * atr
+            breakeven_level = entry_price  # 保本价
+            breakeven_trigger = (
+                entry_price - stop_loss_r * atr
+            )  # 当价格达到1R时，止损上移到保本
 
         # Scan future price path (up to max_holding_bars)
         # This is the core logic: check if TP or SL is hit first
@@ -408,6 +338,8 @@ def compute_rr_label(
         sl_bar = None
         max_favorable = 0.0
         max_adverse = 0.0
+        stop_loss = initial_stop_loss  # 当前止损（可能上移到保本）
+        breakeven_activated = False  # 是否已激活保本止损
 
         # Scan from first tradable bar after entry
         scan_start = i + max(entry_offset, 1)
@@ -418,6 +350,15 @@ def compute_rr_label(
             low = low_arr[j]
 
             if signal > 0:  # Long
+                # 检查是否达到1R，如果是，将止损上移到保本
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated
+                    and high >= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level  # 止损上移到保本
+                    breakeven_activated = True
+
                 # Check if TP or SL hit (using high/low to simulate intra-bar execution)
                 if not hit_tp and high >= take_profit:
                     hit_tp = True
@@ -431,6 +372,15 @@ def compute_rr_label(
                     max_favorable = max(max_favorable, (high - entry_price) / atr)
                     max_adverse = max(max_adverse, (entry_price - low) / atr)
             else:  # Short
+                # 检查是否达到1R，如果是，将止损上移到保本
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated
+                    and low <= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level  # 止损上移到保本
+                    breakeven_activated = True
+
                 # Check if TP or SL hit
                 if not hit_tp and low <= take_profit:
                     hit_tp = True
@@ -472,6 +422,585 @@ def compute_rr_label(
                 )
 
     return labels
+
+
+def compute_rr_label_with_details(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    price_col: str = "close",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    rr_ratio: float = 2.0,
+    max_holding_bars: int = 24,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    use_continuous_label: bool = False,
+    entry_price_col: Optional[str] = None,
+    entry_offset: int = 0,
+    use_breakeven_stop: bool = False,
+) -> pd.DataFrame:
+    """
+    计算基于风险回报比（R/R）的标签，并返回详细信息。
+
+    返回 DataFrame 包含以下列：
+    - label: R/R 标签（1=成功，0=失败，NaN=无交易）
+    - breakeven_activated: 是否触发了保本止损（True/False/NaN）
+    - hit_tp: 是否触达止盈（True/False/NaN）
+    - hit_sl: 是否触达止损（True/False/NaN）
+    - final_result: 最终结果（"win"/"loss"/"breakeven"/NaN）
+
+    Args:
+        与 compute_rr_label 相同
+
+    Returns:
+        DataFrame with detailed trade information
+    """
+    if signal_col not in df.columns:
+        return pd.DataFrame(
+            {
+                "label": pd.Series(np.nan, index=df.index),
+                "breakeven_activated": pd.Series(np.nan, index=df.index),
+                "hit_tp": pd.Series(np.nan, index=df.index),
+                "hit_sl": pd.Series(np.nan, index=df.index),
+                "final_result": pd.Series(np.nan, index=df.index),
+            }
+        )
+
+    # 使用 compute_rr_label 的逻辑，但记录详细信息
+    if atr_col not in df.columns:
+        if "high" in df.columns and "low" in df.columns and price_col in df.columns:
+            import talib
+
+            high = df["high"].values
+            low = df["low"].values
+            close = df[price_col].values
+            atr_values = talib.ATR(high, low, close, timeperiod=atr_window)
+            df[atr_col] = pd.Series(atr_values, index=df.index)
+        else:
+            if price_col in df.columns:
+                df[atr_col] = df[price_col].rolling(window=atr_window).std()
+            else:
+                return pd.DataFrame(
+                    {
+                        "label": pd.Series(np.nan, index=df.index),
+                        "breakeven_activated": pd.Series(np.nan, index=df.index),
+                        "hit_tp": pd.Series(np.nan, index=df.index),
+                        "hit_sl": pd.Series(np.nan, index=df.index),
+                        "final_result": pd.Series(np.nan, index=df.index),
+                    }
+                )
+
+    signals = df[signal_col]
+    atr_series = df[atr_col]
+
+    if entry_price_col and entry_price_col in df.columns:
+        entry_series = df[entry_price_col]
+    elif "open" in df.columns:
+        entry_series = df["open"]
+    else:
+        entry_series = df[price_col]
+
+    if entry_offset > 0:
+        entry_prices = entry_series.shift(-entry_offset)
+    else:
+        entry_prices = entry_series.copy()
+
+    # Initialize result columns
+    labels = pd.Series(np.nan, index=df.index, dtype=float)
+    breakeven_activated = pd.Series(np.nan, index=df.index, dtype=bool)
+    hit_tp = pd.Series(np.nan, index=df.index, dtype=bool)
+    hit_sl = pd.Series(np.nan, index=df.index, dtype=bool)
+    final_result = pd.Series(np.nan, index=df.index, dtype=object)
+
+    high_col = "high" if "high" in df.columns else price_col
+    low_col = "low" if "low" in df.columns else price_col
+
+    signals_arr = signals.values
+    entry_prices_arr = entry_prices.values
+    atr_arr = atr_series.values
+    high_arr = df[high_col].values
+    low_arr = df[low_col].values
+
+    min_future = max(entry_offset, 1)
+    max_i = len(df) - max_holding_bars - min_future
+
+    for i in range(max_i):
+        signal = signals_arr[i]
+
+        if pd.isna(signal) or signal == 0:
+            continue
+
+        entry_price = entry_prices_arr[i]
+        atr = atr_arr[i]
+
+        if pd.isna(entry_price) or pd.isna(atr) or atr <= 0:
+            continue
+
+        if signal > 0:  # Long signal
+            initial_stop_loss = entry_price - stop_loss_r * atr
+            take_profit = entry_price + take_profit_r * atr
+            breakeven_level = entry_price
+            breakeven_trigger = entry_price + stop_loss_r * atr
+        else:  # Short signal
+            initial_stop_loss = entry_price + stop_loss_r * atr
+            take_profit = entry_price - take_profit_r * atr
+            breakeven_level = entry_price
+            breakeven_trigger = entry_price - stop_loss_r * atr
+
+        hit_tp_flag = False
+        hit_sl_flag = False
+        tp_bar = None
+        sl_bar = None
+        stop_loss = initial_stop_loss
+        breakeven_activated_flag = False
+
+        scan_start = i + max(entry_offset, 1)
+        end_idx = min(scan_start + max_holding_bars, len(df))
+
+        for j in range(scan_start, end_idx):
+            high = high_arr[j]
+            low = low_arr[j]
+
+            if signal > 0:  # Long
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated_flag
+                    and high >= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level
+                    breakeven_activated_flag = True
+
+                if not hit_tp_flag and high >= take_profit:
+                    hit_tp_flag = True
+                    tp_bar = j - i
+                if not hit_sl_flag and low <= stop_loss:
+                    hit_sl_flag = True
+                    sl_bar = j - i
+            else:  # Short
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated_flag
+                    and low <= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level
+                    breakeven_activated_flag = True
+
+                if not hit_tp_flag and low <= take_profit:
+                    hit_tp_flag = True
+                    tp_bar = j - i
+                if not hit_sl_flag and high >= stop_loss:
+                    hit_sl_flag = True
+                    sl_bar = j - i
+
+            if hit_tp_flag and hit_sl_flag:
+                break
+
+        # 计算标签和最终结果
+        if hit_tp_flag and (
+            not hit_sl_flag
+            or (tp_bar is not None and sl_bar is not None and tp_bar < sl_bar)
+        ):
+            labels.iloc[i] = 1.0
+            final_result.iloc[i] = "win"
+        else:
+            labels.iloc[i] = 0.0
+            if breakeven_activated_flag and hit_sl_flag:
+                # 保本止损触发，但最终亏损（可能是保本止损后价格继续下跌）
+                final_result.iloc[i] = "breakeven_loss"
+            elif breakeven_activated_flag and not hit_sl_flag:
+                # 保本止损触发，但没有亏损（保本+胜利）
+                final_result.iloc[i] = "breakeven_win"
+            else:
+                final_result.iloc[i] = "loss"
+
+        breakeven_activated.iloc[i] = breakeven_activated_flag
+        hit_tp.iloc[i] = hit_tp_flag
+        hit_sl.iloc[i] = hit_sl_flag
+
+    return pd.DataFrame(
+        {
+            "label": labels,
+            "breakeven_activated": breakeven_activated,
+            "hit_tp": hit_tp,
+            "hit_sl": hit_sl,
+            "final_result": final_result,
+        }
+    )
+
+
+def compute_adaptive_rr_label_with_future_vol(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    price_col: str = "close",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    max_holding_bars: int = 50,
+    stop_loss_multiplier: float = 1.0,
+    take_profit_multiplier: float = 2.0,
+    volatility_window: int = 10,
+    use_breakeven_stop: bool = True,
+    entry_price_col: Optional[str] = None,
+    entry_offset: int = 0,
+) -> pd.Series:
+    """
+    基于未来波动率的自适应 R/R 标签
+
+    核心思想：
+    - 对于每个信号点，计算未来 volatility_window 内的实际波动率
+    - 使用该波动率动态调整止盈止损：
+      - TP = entry ± (未来波动率 × take_profit_multiplier)
+      - SL = entry ± (未来波动率 × stop_loss_multiplier)
+    - 如果 use_breakeven_stop=True，当价格达到 stop_loss_multiplier × 未来波动率时，止损上移到保本
+
+    注意：此函数使用未来波动率，仅适用于标签生成阶段，不适用于实盘交易。
+
+    Args:
+        df: DataFrame with OHLCV data, signals, and ATR
+        signal_col: Column name for trading signals (1=Long, -1=Short, 0=Hold)
+        price_col: Column name for price
+        atr_col: Column name for ATR
+        atr_window: ATR window if ATR column doesn't exist
+        max_holding_bars: Maximum holding period
+        stop_loss_multiplier: Stop loss multiplier relative to future volatility
+        take_profit_multiplier: Take profit multiplier relative to future volatility
+        volatility_window: Window size for calculating future volatility
+        use_breakeven_stop: If True, move stop loss to breakeven when price reaches stop_loss_multiplier × future_vol
+        entry_price_col: Column to use for entry price
+        entry_offset: Bars to wait after signal before entering
+
+    Returns:
+        Series with R/R labels (1=success, 0=failure, NaN=no trade)
+    """
+    if signal_col not in df.columns:
+        return pd.Series(np.nan, index=df.index)
+
+    # Ensure ATR exists
+    if atr_col not in df.columns:
+        if "high" in df.columns and "low" in df.columns and price_col in df.columns:
+            import talib
+
+            high = df["high"].values
+            low = df["low"].values
+            close = df[price_col].values
+            atr_values = talib.ATR(high, low, close, timeperiod=atr_window)
+            df[atr_col] = pd.Series(atr_values, index=df.index)
+        else:
+            if price_col in df.columns:
+                df[atr_col] = df[price_col].rolling(window=atr_window).std()
+            else:
+                return pd.Series(np.nan, index=df.index)
+
+    signals = df[signal_col]
+    atr_series = df[atr_col]
+    prices = df[price_col]
+
+    if entry_price_col and entry_price_col in df.columns:
+        entry_series = df[entry_price_col]
+    elif "open" in df.columns:
+        entry_series = df["open"]
+    else:
+        entry_series = prices
+
+    if entry_offset > 0:
+        entry_prices = entry_series.shift(-entry_offset)
+    else:
+        entry_prices = entry_series.copy()
+
+    labels = pd.Series(np.nan, index=df.index, dtype=float)
+
+    high_col = "high" if "high" in df.columns else price_col
+    low_col = "low" if "low" in df.columns else price_col
+
+    signals_arr = signals.values
+    entry_prices_arr = entry_prices.values
+    prices_arr = prices.values
+    high_arr = df[high_col].values
+    low_arr = df[low_col].values
+
+    # 计算未来波动率（使用未来窗口）
+    returns = prices.pct_change()
+    future_volatility = (
+        returns.rolling(window=volatility_window, min_periods=1)
+        .std()
+        .shift(-volatility_window)
+    )  # 使用未来窗口的波动率
+
+    # 如果未来波动率为 NaN，使用当前 ATR 作为代理
+    future_vol_arr = future_volatility.fillna(atr_series / prices).values
+
+    min_future = max(entry_offset, 1)
+    max_i = len(df) - max_holding_bars - min_future
+
+    for i in range(max_i):
+        signal = signals_arr[i]
+
+        if pd.isna(signal) or signal == 0:
+            continue
+
+        entry_price = entry_prices_arr[i]
+        future_vol = future_vol_arr[i]
+
+        if pd.isna(entry_price) or pd.isna(future_vol) or future_vol <= 0:
+            continue
+
+        # 使用未来波动率计算止盈止损
+        if signal > 0:  # Long
+            initial_stop_loss = (
+                entry_price - stop_loss_multiplier * future_vol * entry_price
+            )
+            take_profit = (
+                entry_price + take_profit_multiplier * future_vol * entry_price
+            )
+            breakeven_level = entry_price
+            breakeven_trigger = (
+                entry_price + stop_loss_multiplier * future_vol * entry_price
+            )
+        else:  # Short
+            initial_stop_loss = (
+                entry_price + stop_loss_multiplier * future_vol * entry_price
+            )
+            take_profit = (
+                entry_price - take_profit_multiplier * future_vol * entry_price
+            )
+            breakeven_level = entry_price
+            breakeven_trigger = (
+                entry_price - stop_loss_multiplier * future_vol * entry_price
+            )
+
+        stop_loss = initial_stop_loss
+        breakeven_activated = False
+        hit_tp = False
+        hit_sl = False
+        tp_bar = None
+        sl_bar = None
+
+        scan_start = i + max(entry_offset, 1)
+        end_idx = min(scan_start + max_holding_bars, len(df))
+
+        for j in range(scan_start, end_idx):
+            high = high_arr[j]
+            low = low_arr[j]
+
+            if signal > 0:  # Long
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated
+                    and high >= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level
+                    breakeven_activated = True
+
+                if not hit_tp and high >= take_profit:
+                    hit_tp = True
+                    tp_bar = j - i
+                if not hit_sl and low <= stop_loss:
+                    hit_sl = True
+                    sl_bar = j - i
+            else:  # Short
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated
+                    and low <= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level
+                    breakeven_activated = True
+
+                if not hit_tp and low <= take_profit:
+                    hit_tp = True
+                    tp_bar = j - i
+                if not hit_sl and high >= stop_loss:
+                    hit_sl = True
+                    sl_bar = j - i
+
+            if hit_tp and hit_sl:
+                break
+
+        # 计算标签
+        if hit_tp and (
+            not hit_sl
+            or (tp_bar is not None and sl_bar is not None and tp_bar < sl_bar)
+        ):
+            labels.iloc[i] = 1.0
+        else:
+            labels.iloc[i] = 0.0
+
+    return labels
+
+
+def simulate_rr_exits(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    price_col: str = "close",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    max_holding_bars: int = 24,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    entry_price_col: Optional[str] = None,
+    entry_offset: int = 0,
+    use_breakeven_stop: bool = False,  # 新增参数：是否使用保本止损
+) -> tuple[pd.Series, pd.Series]:
+    """
+    使用与 compute_rr_label 相同的 R/R 扫描逻辑，返回每笔交易的平仓位置。
+
+    该函数用于回测场景：给定一列方向信号（1=多, -1=空, 0=不交易），基于 ATR 计算：
+    - 1R 止损
+    - take_profit_r * R 止盈（默认 2R）
+    - 最长持仓 max_holding_bars
+    - 可选：当价格达到 1R 时，止损上移到保本
+
+    并为每个入场点找到第一个触达 TP/SL 的 bar（若都未触达，则在观察窗口末尾超时平仓），
+    返回两个布尔 Series：
+    - long_exits[i]  在多头仓位的平仓 bar 处为 True
+    - short_exits[i] 在空头仓位的平仓 bar 处为 True
+
+    注意：该函数不负责计算盈亏，只负责确定平仓时刻，便于与 vectorbt.from_signals 配合。
+    """
+
+    if signal_col not in df.columns:
+        return (
+            pd.Series(False, index=df.index),
+            pd.Series(False, index=df.index),
+        )
+
+    work_df = df.copy()
+
+    # Ensure ATR exists (重用 compute_rr_label 中的逻辑)
+    if atr_col not in work_df.columns:
+        if (
+            "high" in work_df.columns
+            and "low" in work_df.columns
+            and price_col in work_df.columns
+        ):
+            import talib
+
+            high = work_df["high"].values
+            low = work_df["low"].values
+            close = work_df[price_col].values
+            atr_values = talib.ATR(high, low, close, timeperiod=atr_window)
+            work_df[atr_col] = pd.Series(atr_values, index=work_df.index)
+        else:
+            if price_col in work_df.columns:
+                work_df[atr_col] = work_df[price_col].rolling(window=atr_window).std()
+            else:
+                return (
+                    pd.Series(False, index=work_df.index),
+                    pd.Series(False, index=work_df.index),
+                )
+
+    signals = work_df[signal_col]
+
+    if entry_price_col and entry_price_col in work_df.columns:
+        entry_series = work_df[entry_price_col]
+    elif "open" in work_df.columns:
+        entry_series = work_df["open"]
+    else:
+        entry_series = work_df[price_col]
+
+    if entry_offset > 0:
+        entry_prices = entry_series.shift(-entry_offset)
+    else:
+        entry_prices = entry_series.copy()
+
+    long_exits = pd.Series(False, index=work_df.index)
+    short_exits = pd.Series(False, index=work_df.index)
+
+    high_col = "high" if "high" in work_df.columns else price_col
+    low_col = "low" if "low" in work_df.columns else price_col
+
+    signals_arr = signals.values
+    entry_prices_arr = entry_prices.values
+    atr_arr = work_df[atr_col].values
+    high_arr = work_df[high_col].values
+    low_arr = work_df[low_col].values
+
+    min_future = max(entry_offset, 1)
+    max_i = len(work_df) - max_holding_bars - min_future
+
+    for i in range(max_i):
+        signal = signals_arr[i]
+
+        if pd.isna(signal) or signal == 0:
+            continue
+
+        entry_price = entry_prices_arr[i]
+        atr = atr_arr[i]
+
+        if pd.isna(entry_price) or pd.isna(atr) or atr <= 0:
+            continue
+
+        if signal > 0:
+            initial_stop_loss = entry_price - stop_loss_r * atr
+            take_profit = entry_price + take_profit_r * atr
+            breakeven_level = entry_price
+            breakeven_trigger = entry_price + stop_loss_r * atr
+        else:
+            initial_stop_loss = entry_price + stop_loss_r * atr
+            take_profit = entry_price - take_profit_r * atr
+            breakeven_level = entry_price
+            breakeven_trigger = entry_price - stop_loss_r * atr
+
+        stop_loss = initial_stop_loss
+        breakeven_activated = False
+
+        scan_start = i + max(entry_offset, 1)
+        end_idx = min(scan_start + max_holding_bars, len(work_df))
+
+        exit_idx = None
+        hit_tp = False
+        hit_sl = False
+
+        for j in range(scan_start, end_idx):
+            high = high_arr[j]
+            low = low_arr[j]
+
+            if signal > 0:
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated
+                    and high >= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level
+                    breakeven_activated = True
+
+                if not hit_tp and high >= take_profit:
+                    exit_idx = j
+                    hit_tp = True
+                    break
+                if not hit_sl and low <= stop_loss:
+                    exit_idx = j
+                    hit_sl = True
+                    break
+            else:
+                if (
+                    use_breakeven_stop
+                    and not breakeven_activated
+                    and low <= breakeven_trigger
+                ):
+                    stop_loss = breakeven_level
+                    breakeven_activated = True
+
+                if not hit_tp and low <= take_profit:
+                    exit_idx = j
+                    hit_tp = True
+                    break
+                if not hit_sl and high >= stop_loss:
+                    exit_idx = j
+                    hit_sl = True
+                    break
+
+        if exit_idx is None:
+            exit_idx = end_idx - 1
+
+        if exit_idx >= len(work_df):
+            continue
+
+        if signal > 0:
+            long_exits.iloc[exit_idx] = True
+        else:
+            short_exits.iloc[exit_idx] = True
+
+    return long_exits, short_exits
 
 
 def classify_sr_reaction(
@@ -517,9 +1046,30 @@ def classify_sr_reaction(
 
     Returns:
         Series with reaction types: 'reversal', 'breakout', or np.nan
+
     """
     if signal_col not in df.columns:
-        return pd.Series(np.nan, index=df.index)
+        return pd.Series(np.nan, index=df.index, name="sr_reaction")
+
+    # Infer SR zone price if not provided
+    if sr_zone_col is None or sr_zone_col not in df.columns:
+        # Try common SR zone column names
+        candidates = [
+            "sr_zone_price",
+            "nearest_sr",
+            "vpvr_pvp",
+            "wpt_price_reconstructed",
+        ]
+        for col in candidates:
+            if col in df.columns:
+                sr_zone_col = col
+                break
+        else:
+            # Fallback to price
+            sr_zone_col = price_col
+
+    if sr_zone_col not in df.columns:
+        return pd.Series(np.nan, index=df.index, name="sr_reaction")
 
     # Ensure ATR exists
     if atr_col not in df.columns:
@@ -535,99 +1085,73 @@ def classify_sr_reaction(
             if price_col in df.columns:
                 df[atr_col] = df[price_col].rolling(window=atr_window).std()
             else:
-                return pd.Series(np.nan, index=df.index)
+                return pd.Series(np.nan, index=df.index, name="sr_reaction")
 
     signals = df[signal_col]
+    zone_prices = df[sr_zone_col]
     atr_series = df[atr_col]
+    prices = df[price_col]
+    highs = df[high_col] if high_col in df.columns else prices
+    lows = df[low_col] if low_col in df.columns else prices
 
-    # Try to find SR zone price
-    zone_price = None
-    if sr_zone_col and sr_zone_col in df.columns:
-        zone_price = df[sr_zone_col]
-    else:
-        # Try to infer from features
-        for col in ["nearest_sr", "dist_to_nearest_sr", "sqs"]:
-            if col in df.columns:
-                # If we have dist_to_nearest_sr, we can compute zone_price
-                if col == "dist_to_nearest_sr" and price_col in df.columns:
-                    # dist_to_nearest_sr is normalized distance, need to convert back
-                    # For now, use current price as proxy (will be refined)
-                    zone_price = df[price_col]
-                    break
-                elif col == "nearest_sr" and col in df.columns:
-                    zone_price = df[col]
-                    break
+    reactions = pd.Series(np.nan, index=df.index, name="sr_reaction")
 
-        if zone_price is None:
-            # Fallback: use current price as proxy (not ideal, but allows function to run)
-            zone_price = df[price_col]
-
-    reactions = pd.Series(np.nan, index=df.index, dtype=object)
-
-    # Pre-extract arrays for faster access
-    signals_arr = signals.values
-    atr_arr = atr_series.values
-    zone_price_arr = (
-        zone_price.values if isinstance(zone_price, pd.Series) else zone_price
-    )
-    high_arr = df[high_col].values
-    low_arr = df[low_col].values
-    price_arr = df[price_col].values
-
-    max_i = len(df) - lookback_window - 1
-
-    for i in range(max_i):
-        signal = signals_arr[i]
-
+    for i in range(len(df) - lookback_window):
+        signal = signals.iloc[i]
         if pd.isna(signal) or signal == 0:
             continue
 
-        atr = atr_arr[i]
-        zone = (
-            zone_price_arr[i]
-            if isinstance(zone_price_arr, np.ndarray)
-            else zone_price_arr
-        )
+        zone_price = zone_prices.iloc[i]
+        atr = atr_series.iloc[i]
 
-        if pd.isna(atr) or atr <= 0 or pd.isna(zone):
+        if pd.isna(zone_price) or pd.isna(atr) or atr <= 0:
             continue
 
-        # Observe future price behavior
-        end_idx = min(i + 1 + lookback_window, len(df))
-        future_highs = high_arr[i + 1 : end_idx]
-        future_lows = low_arr[i + 1 : end_idx]
+        # Observe future price action
+        future_window = slice(i + 1, min(i + 1 + lookback_window, len(df)))
+        future_prices = prices.iloc[future_window]
+        future_highs = highs.iloc[future_window]
+        future_lows = lows.iloc[future_window]
 
-        if len(future_highs) == 0:
+        if len(future_prices) == 0:
             continue
 
-        min_low = np.min(future_lows)
-        max_high = np.max(future_highs)
-        threshold = threshold_factor * atr
+        if signal > 0:  # Long signal (expecting reversal up)
+            # Check for deep penetration (breakout down)
+            min_low = future_lows.min()
+            if min_low < zone_price - threshold_factor * atr:
+                reactions.iloc[i] = "breakout"
+                continue
 
-        if signal > 0:  # Long signal (expecting bounce from demand zone)
-            # Check for deep penetration below zone (breakout failure)
-            if min_low < zone - threshold:
-                # Strong breakdown → breakout type (reversal failed)
+            # Check for strong upward move (breakout up)
+            max_high = future_highs.max()
+            if (
+                max_high > zone_price + 2 * atr
+                and min_low >= zone_price - threshold_factor * atr
+            ):
                 reactions.iloc[i] = "breakout"
-            # Check for strong upward move without deep penetration
-            elif max_high > zone + 2 * atr and min_low > zone - 0.5 * atr:
-                # Fast upward move, no deep dip → likely strong breakout (not reversal)
+                continue
+
+            # Otherwise: reversal (price tested zone and reversed)
+            reactions.iloc[i] = "reversal"
+        else:  # Short signal (expecting reversal down)
+            # Check for strong upward move (breakout up)
+            max_high = future_highs.max()
+            if max_high > zone_price + threshold_factor * atr:
                 reactions.iloc[i] = "breakout"
-            else:
-                # Has lower wick test then bounce → typical reversal
-                reactions.iloc[i] = "reversal"
-        else:  # Short signal (expecting rejection from supply zone)
-            # Check for strong penetration above zone (breakout failure)
-            if max_high > zone + threshold:
-                # Strong breakout → breakout type (reversal failed)
+                continue
+
+            # Check for strong downward move (breakout down)
+            min_low = future_lows.min()
+            if (
+                min_low < zone_price - 2 * atr
+                and max_high <= zone_price + threshold_factor * atr
+            ):
                 reactions.iloc[i] = "breakout"
-            # Check for strong downward move without penetration
-            elif min_low < zone - 2 * atr and max_high < zone + 0.5 * atr:
-                # Fast downward move, no penetration → likely strong breakdown (not reversal)
-                reactions.iloc[i] = "breakout"
-            else:
-                # Has upper wick test then rejection → typical reversal
-                reactions.iloc[i] = "reversal"
+                continue
+
+            # Otherwise: reversal (price tested zone and reversed)
+            reactions.iloc[i] = "reversal"
 
     return reactions
 
@@ -694,197 +1218,8 @@ def compute_rr_label_by_reaction(
         use_continuous_label=use_continuous_label,
     )
 
-    # Filter by reaction type
-    if reaction_type and reaction_col in df.columns:
+    # Apply reaction filter
+    if reaction_type:
         rr_labels = rr_labels.where(mask)
 
     return rr_labels
-
-
-def tradable_mask(
-    future_return: pd.Series,
-    rolling_vol: pd.Series,
-    return_quantile: pd.Series,
-    vol_mult: float = 0.5,
-    quantile_lower: float = 0.1,
-    quantile_upper: float = 0.9,
-) -> pd.Series:
-    """
-    Create tradable mask: filter low-quality samples.
-
-    Only keep samples where:
-    - |future_return| > vol_mult * rolling_vol (signal is strong enough)
-    - return_quantile is in [quantile_lower, quantile_upper] (exclude extreme tails)
-
-    This filters out:
-    - Noise trading (weak signals)
-    - Extreme outliers (likely data errors or black swan events)
-
-    Args:
-        future_return: Future return series
-        rolling_vol: Rolling volatility series
-        return_quantile: Historical quantile label
-        vol_mult: Multiplier for volatility threshold
-        quantile_lower: Lower bound for quantile (exclude bottom tail)
-        quantile_upper: Upper bound for quantile (exclude top tail)
-
-    Returns:
-        Boolean series indicating tradable samples
-    """
-    # Signal strength check: return must be significant relative to volatility
-    signal_strong = future_return.abs() > (vol_mult * rolling_vol)
-
-    # Quantile check: exclude extreme tails (likely noise or outliers)
-    quantile_valid = return_quantile.between(
-        quantile_lower, quantile_upper, inclusive="neither"
-    )
-
-    # Both conditions must be true
-    tradable = signal_strong & quantile_valid
-
-    return tradable.rename("tradable")
-
-
-def trend_strength_weight(
-    momentum: pd.Series,
-    rolling_vol: pd.Series,
-    eps: float = 1e-8,
-    clip_lower: float = 0.1,
-    clip_upper: float = 5.0,
-) -> pd.Series:
-    """
-    Compute trend strength as sample weight.
-
-    Trend strength = |momentum| / rolling_vol
-
-    This gives higher weight to samples with strong trends relative to volatility,
-    which helps the model focus on learnable patterns rather than noise.
-
-    Args:
-        momentum: Momentum series (e.g., moving average slope or price change)
-        rolling_vol: Rolling volatility series
-        eps: Small value to avoid division by zero
-        clip_lower: Lower bound for clipping weights
-        clip_upper: Upper bound for clipping weights
-
-    Returns:
-        Sample weight series (higher = stronger trend)
-    """
-    trend_strength = (momentum.abs() / (rolling_vol + eps)).clip(
-        lower=clip_lower, upper=clip_upper
-    )
-    return trend_strength.rename("trend_strength")
-
-
-def compute_momentum(
-    price: pd.Series,
-    window: int = 20,
-    diff_period: int = 5,
-    asset_col: Optional[pd.Series] = None,
-) -> pd.Series:
-    """
-    Compute momentum feature from price series.
-
-    If momentum is not available, this provides a simple alternative:
-    momentum = (MA(window) - MA(window).shift(diff_period)) / price
-
-    Args:
-        price: Price series (e.g., close price)
-        window: Moving average window
-        diff_period: Period for computing difference
-        asset_col: Optional asset identifier for multi-asset data
-
-    Returns:
-        Momentum series
-    """
-
-    def _compute_momentum(group: pd.Series) -> pd.Series:
-        ma = group.rolling(window=window, min_periods=window).mean()
-        momentum = ma.diff(diff_period) / group
-        return momentum
-
-    if asset_col is not None:
-        result = price.groupby(asset_col).apply(_compute_momentum)
-        if isinstance(result.index, pd.MultiIndex):
-            result = result.droplevel(0)
-        # Ensure it's a Series
-        if isinstance(result, pd.DataFrame):
-            result = result.iloc[:, 0]
-        result = result.reindex(price.index)
-    else:
-        result = _compute_momentum(price)
-
-    # Ensure it's a Series and set name
-    if isinstance(result, pd.DataFrame):
-        result = result.iloc[:, 0]
-    result.name = "momentum"
-    return result
-
-
-def smooth_target(
-    future_return: pd.Series,
-    method: str = "moving_average",
-    window: int = 3,
-    span: Optional[float] = None,
-    asset_col: Optional[pd.Series] = None,
-) -> pd.Series:
-    """
-    Smooth target variable to reduce noise.
-
-    Methods:
-    - "moving_average": Simple moving average
-    - "ewm": Exponential weighted moving average
-    - "quantile": Quantile transformation (maps to normal distribution)
-
-    Args:
-        future_return: Future return series
-        method: Smoothing method ("moving_average", "ewm", or "quantile")
-        window: Window size for moving average
-        span: Span for exponential weighted moving average
-        asset_col: Optional asset identifier for multi-asset data
-
-    Returns:
-        Smoothed target series
-    """
-
-    def _smooth_series(series: pd.Series) -> pd.Series:
-        if method == "moving_average":
-            # 使用 shift(1) 而不是 shift(-1) 以避免数据泄漏
-            # shift(1) 确保 t 时刻的平滑值只使用 t-1 及之前的信息
-            return series.rolling(window=window, min_periods=1).mean().shift(1)
-        elif method == "ewm":
-            span_val = span if span is not None else window
-            # 使用 shift(1) 而不是 shift(-1) 以避免数据泄漏
-            return series.ewm(span=span_val).mean().shift(1)
-        elif method == "quantile":
-            from sklearn.preprocessing import QuantileTransformer
-
-            qt = QuantileTransformer(
-                output_distribution="normal", n_quantiles=min(1000, len(series))
-            )
-            # Only transform non-NaN values
-            valid_mask = series.notna()
-            if valid_mask.sum() > 0:
-                transformed = series.copy()
-                transformed[valid_mask] = qt.fit_transform(
-                    series[valid_mask].values.reshape(-1, 1)
-                ).flatten()
-                return transformed
-            else:
-                return series
-        else:
-            raise ValueError(f"Unknown smoothing method: {method}")
-
-    if asset_col is not None:
-        result = future_return.groupby(asset_col).apply(_smooth_series)
-        if isinstance(result.index, pd.MultiIndex):
-            result = result.droplevel(0)
-        result = result.reindex(future_return.index)
-    else:
-        result = _smooth_series(future_return)
-
-    return result.rename(
-        f"smoothed_{future_return.name}"
-        if hasattr(future_return, "name")
-        else "smoothed_target"
-    )

@@ -33,6 +33,10 @@ class SRSignalConfig:
         tolerance_mult: Multiplier applied to ATR to determine the SR zone tolerance band.
         min_tolerance_pct: Minimum tolerance expressed as % of price to avoid zero bands when ATR is tiny.
         zone_candidates: Ordered list of columns to use as SR zone price proxies.
+        use_vpin_filter: Whether to use VPIN to filter signals (default: False for backward compatibility).
+        min_vpin: Minimum VPIN value for long signals (default: None, no filter).
+        max_vpin: Maximum VPIN value for short signals (default: None, no filter).
+        vpin_col: VPIN column name (default: "vpin").
     """
 
     min_sr_strength: float = 0.0
@@ -51,6 +55,15 @@ class SRSignalConfig:
         "vpvr_pvp",
         "wpt_price_reconstructed",
     )
+    # VPIN 过滤参数
+    use_vpin_filter: bool = False
+    min_vpin: Optional[float] = (
+        None  # 多头信号的最小 VPIN（VPIN 高表示买压大，适合反转做多）
+    )
+    max_vpin: Optional[float] = (
+        None  # 空头信号的最大 VPIN（VPIN 低表示卖压大，适合反转做空）
+    )
+    vpin_col: str = "vpin"
 
 
 def _ensure_atr(
@@ -142,12 +155,28 @@ def _generate_sr_reversal_signals(
     long_touch = (low <= zone_price + tolerance) & (price >= zone_price - tolerance)
     short_touch = (high >= zone_price - tolerance) & (price <= zone_price + tolerance)
 
+    # VPIN 过滤（可选）
+    vpin_filter_long = pd.Series(True, index=df.index)
+    vpin_filter_short = pd.Series(True, index=df.index)
+
+    if cfg.use_vpin_filter and cfg.vpin_col in df.columns:
+        vpin = df[cfg.vpin_col].fillna(0.5)  # 默认 0.5（中性）
+
+        # 多头：VPIN 高表示买压大，适合在支撑位反转做多
+        if cfg.min_vpin is not None:
+            vpin_filter_long = vpin >= cfg.min_vpin
+
+        # 空头：VPIN 低表示卖压大，适合在阻力位反转做空
+        if cfg.max_vpin is not None:
+            vpin_filter_short = vpin <= cfg.max_vpin
+
     # 多头 SR 反转：价格测试支撑区，并在支撑附近“下探失败后向上收盘”
     long_mask = (
         (sr_strength >= cfg.min_sr_strength)
         & (support_score >= cfg.min_support_score)
         & long_touch
         & (price >= zone_price)  # Close above zone → 支撑生效，向上反转
+        & vpin_filter_long  # VPIN 过滤
     )
 
     # 空头 SR 反转：价格测试阻力区，并在阻力附近“上冲失败后向下收盘”
@@ -156,6 +185,7 @@ def _generate_sr_reversal_signals(
         & (resistance_score >= cfg.min_resistance_score)
         & short_touch
         & (price <= zone_price)  # Close below zone → 阻力生效，向下反转
+        & vpin_filter_short  # VPIN 过滤
     )
 
     signals_arr = np.zeros(len(df), dtype=float)

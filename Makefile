@@ -317,6 +317,124 @@ ts-strategy-feature-compare:
 		--rolling-step-bars $(STRAT_COMPARE_ROLL_STEP) \
 		--rolling-max-windows $(STRAT_COMPARE_ROLL_MAX)
 
+# SR Reversal Rule Baseline: Test pure rule-based SR+RR strategy without ML
+# This helps diagnose whether low trade count is due to:
+# - Too few SR signals (feature/rule issue)
+# - Poor baseline edge (SR definition issue)
+# - Model/threshold being too conservative (ML issue)
+SR_BASELINE_CONFIG ?= config/strategies/sr_reversal
+SR_BASELINE_SYMBOL ?= BTCUSDT
+SR_BASELINE_DATA_PATH ?= $(DATA_DIR)
+SR_BASELINE_TIMEFRAME ?= 240T
+SR_BASELINE_START ?= 2024-01-01
+SR_BASELINE_END ?= 2025-10-31
+
+ts-sr-reversal-baseline:
+	@echo "📊 SR Reversal Rule Baseline: Testing pure SR+RR strategy (no ML)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_baseline.py \
+		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
+		--symbol $(SR_BASELINE_SYMBOL) \
+		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
+		--timeframe $(SR_BASELINE_TIMEFRAME) \
+		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
+		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),)
+
+ts-test-vpin-thresholds:
+	@echo "🧪 Testing different VPIN thresholds for SR Reversal"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/test_vpin_thresholds.py \
+		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
+		--symbol $(SR_BASELINE_SYMBOL) \
+		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
+		--timeframe $(SR_BASELINE_TIMEFRAME) \
+		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
+		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),)
+
+# SR Reversal Model Diagnosis: Analyze why model doesn't open trades
+# Compares model predictions vs rule baseline on signal points
+SR_DIAG_CONFIG ?= config/strategies/sr_reversal
+SR_DIAG_SYMBOL ?= BTCUSDT
+SR_DIAG_DATA_PATH ?= $(DATA_DIR)
+SR_DIAG_TIMEFRAME ?= 240T
+SR_DIAG_START ?= 2024-01-01
+SR_DIAG_END ?= 2025-10-31
+SR_DIAG_TEST_SIZE ?= 0.15
+SR_DIAG_LONG_THRESHOLD ?= 0.6
+SR_DIAG_SHORT_THRESHOLD ?= 0.4
+
+ts-sr-reversal-diagnosis:
+	@echo "🔍 SR Reversal Model Diagnosis: Why doesn't model open trades?"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_model_diagnosis.py \
+		--strategy-config /workspace/$(SR_DIAG_CONFIG) \
+		--symbol $(SR_DIAG_SYMBOL) \
+		--data-path /workspace/$(SR_DIAG_DATA_PATH) \
+		--timeframe $(SR_DIAG_TIMEFRAME) \
+		$(if $(SR_DIAG_START),--start-date $(SR_DIAG_START),) \
+		$(if $(SR_DIAG_END),--end-date $(SR_DIAG_END),) \
+		--test-size $(SR_DIAG_TEST_SIZE) \
+		--long-entry-threshold $(SR_DIAG_LONG_THRESHOLD) \
+		--short-entry-threshold $(SR_DIAG_SHORT_THRESHOLD)
+
+# SR Reversal Rule Optimization: Find parameter plateaus and compare with ML model
+SR_OPT_CONFIG ?= config/strategies/sr_reversal
+SR_OPT_SYMBOL ?= BTCUSDT
+SR_OPT_DATA_PATH ?= $(DATA_DIR)
+SR_OPT_TIMEFRAME ?= 240T
+SR_OPT_START ?= 2024-01-01
+SR_OPT_END ?= 2025-10-31
+SR_OPT_SEARCH_TYPE ?= random
+SR_OPT_N_TRIALS ?= 100
+SR_OPT_OUTPUT_DIR ?= results/rule_optimization
+
+ts-sr-reversal-rule-optimization:
+	@echo "🔍 SR Reversal Rule Parameter Optimization: Finding parameter plateaus"
+	@echo "   Symbol: $(SR_OPT_SYMBOL)"
+	@echo "   Timeframe: $(SR_OPT_TIMEFRAME)"
+	@echo "   Search Type: $(SR_OPT_SEARCH_TYPE)"
+	@echo "   N Trials: $(SR_OPT_N_TRIALS)"
+	@echo "   Output: $(SR_OPT_OUTPUT_DIR)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_optimization.py \
+		--strategy-config /workspace/$(SR_OPT_CONFIG) \
+		--symbol $(SR_OPT_SYMBOL) \
+		--data-path /workspace/$(SR_OPT_DATA_PATH) \
+		--timeframe $(SR_OPT_TIMEFRAME) \
+		$(if $(SR_OPT_START),--start-date $(SR_OPT_START),) \
+		$(if $(SR_OPT_END),--end-date $(SR_OPT_END),) \
+		--output-dir /workspace/$(SR_OPT_OUTPUT_DIR) \
+		--search-type $(SR_OPT_SEARCH_TYPE) \
+		--n-trials $(SR_OPT_N_TRIALS)
+
+# SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility
+SR_COMP_CONFIG ?= config/strategies/sr_reversal
+SR_COMP_SYMBOL ?= BTCUSDT
+SR_COMP_DATA_PATH ?= $(DATA_DIR)
+SR_COMP_TIMEFRAME ?= 240T
+SR_COMP_START ?= 2024-01-01
+SR_COMP_END ?= 2025-10-31
+SR_COMP_TEST_SIZE ?= 0.15
+SR_COMP_OUTPUT_DIR ?= results/model_comparison
+SR_COMP_RULE_PARAMS ?= results/rule_optimization/optimization_results.csv
+
+ts-sr-reversal-model-comparison:
+	@echo "📊 SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility"
+	@echo "   Symbol: $(SR_COMP_SYMBOL)"
+	@echo "   Timeframe: $(SR_COMP_TIMEFRAME)"
+	@echo "   Test Size: $(SR_COMP_TEST_SIZE)"
+	@echo "   Output: $(SR_COMP_OUTPUT_DIR)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_model_comparison.py \
+		--strategy-config /workspace/$(SR_COMP_CONFIG) \
+		--symbol $(SR_COMP_SYMBOL) \
+		--data-path /workspace/$(SR_COMP_DATA_PATH) \
+		--timeframe $(SR_COMP_TIMEFRAME) \
+		$(if $(SR_COMP_START),--start-date $(SR_COMP_START),) \
+		$(if $(SR_COMP_END),--end-date $(SR_COMP_END),) \
+		--test-size $(SR_COMP_TEST_SIZE) \
+		--output-dir /workspace/$(SR_COMP_OUTPUT_DIR) \
+		$(if $(SR_COMP_RULE_PARAMS),--rule-params /workspace/$(SR_COMP_RULE_PARAMS),)
+
+ts-analyze-ml-volatility:
+	@echo "🔍 Analyzing ML+Volatility Model Performance Issues"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/analyze_ml_volatility_model.py
+
 TF_CONFIG_PEARSON ?= 0.03
 TF_CONFIG_PVALUE ?= 1e-5
 TF_CONFIG_MIN_SAMPLES ?= 500

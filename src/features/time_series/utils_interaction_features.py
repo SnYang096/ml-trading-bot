@@ -1,0 +1,677 @@
+"""
+特征组合：交互特征和衍生特征
+
+包含两类组合特征：
+1. **交互特征**（Interaction）：两个特征的乘积（状态 × 动量）
+   - 如：vpin × compression_energy = vpin_x_compression
+   - 参考：docs/时序模型/高级特征：特征组合交互.md
+
+2. **衍生特征**（Derived）：单个特征的变换或两个特征的其他运算
+   - 如：dist_to_nearest_sr / atr = sr_distance_normalized（归一化）
+   - 如：abs(close - zz_high_value) = dist_to_zz_high（差值）
+   - 如：cvd 的滚动斜率 = cvd_slope_5（变换）
+
+所有特征都是独立的计算函数，可以在 feature_dependencies.yaml 中单独定义
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+from typing import Optional
+
+
+def compute_liquidity_void_x_wpt_risk(
+    df: pd.DataFrame,
+    liquidity_void_col: str = "liquidity_void_detected",
+    wpt_risk_col: str = "wpt_false_breakout_risk",
+) -> pd.Series:
+    """
+    计算流动性真空 × WPT 假突破风险交互项
+    
+    Args:
+        df: DataFrame with base features
+        liquidity_void_col: Liquidity void detection column
+        wpt_risk_col: WPT false breakout risk column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(liquidity_void_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(wpt_risk_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("liquidity_void_x_wpt_risk")
+
+
+def compute_compression_energy_x_ofi_short(
+    df: pd.DataFrame,
+    compression_col: str = "compression_energy",
+    ofi_col: str = "ofi_short",
+) -> pd.Series:
+    """
+    计算压缩能量 × 订单流强度交互项
+    
+    Args:
+        df: DataFrame with base features
+        compression_col: Compression energy column
+        ofi_col: Order flow imbalance column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(compression_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(ofi_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("compression_energy_x_ofi_short")
+
+
+def compute_hurst_x_trend_r2(
+    df: pd.DataFrame,
+    hurst_col: str = "hurst_close_rolling",
+    trend_r2_col: str = "trend_r2_20",
+) -> pd.Series:
+    """
+    计算 Hurst 指数 × 趋势 R² 交互项
+    
+    Args:
+        df: DataFrame with base features
+        hurst_col: Hurst exponent column
+        trend_r2_col: Trend R² column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(hurst_col, pd.Series(0.5, index=df.index))
+    momentum = df.get(trend_r2_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0.5) * momentum.fillna(0)).rename("hurst_x_trend_r2")
+
+
+def compute_evt_x_trend_r2(
+    df: pd.DataFrame,
+    evt_col: str = "evt_tail_shape",
+    trend_r2_col: str = "trend_r2_20",
+) -> pd.Series:
+    """
+    计算 EVT 尾部风险 × 趋势强度交互项
+    
+    Args:
+        df: DataFrame with base features
+        evt_col: EVT tail shape column
+        trend_r2_col: Trend R² column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(evt_col, pd.Series(0.3, index=df.index))
+    momentum = df.get(trend_r2_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0.3) * momentum.fillna(0)).rename("evt_x_trend_r2")
+
+
+def compute_vpin_x_compression(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    compression_col: str = "compression_energy",
+) -> pd.Series:
+    """
+    计算 VPIN × 压缩能量交互项
+    
+    Args:
+        df: DataFrame with base features
+        vpin_col: VPIN column
+        compression_col: Compression energy column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(compression_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_compression")
+
+
+def compute_sma_slope_x_price_pos(
+    df: pd.DataFrame,
+    sma_slope_col: str = "sma_200_slope",
+    sma_col: str = "sma_200",
+    close_col: str = "close",
+) -> pd.Series:
+    """
+    计算均线斜率 × 价格位置交互项
+    
+    Args:
+        df: DataFrame with base features
+        sma_slope_col: SMA slope column
+        sma_col: SMA column
+        close_col: Close price column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(sma_slope_col, pd.Series(0.0, index=df.index))
+    # 计算价格位置
+    if sma_col in df.columns and close_col in df.columns:
+        price_pos = (df[close_col] / df[sma_col].replace(0, np.nan)).fillna(1.0)
+    else:
+        price_pos = pd.Series(1.0, index=df.index)
+    return (state.fillna(0) * price_pos).rename("sma_slope_x_price_pos")
+
+
+def compute_vpin_x_wick_upper(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    wick_col: str = "wick_upper_ratio",
+) -> pd.Series:
+    """
+    计算 VPIN × 上影线占比交互项（反转策略专用）
+    
+    Args:
+        df: DataFrame with base features
+        vpin_col: VPIN column
+        wick_col: Upper wick ratio column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(wick_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_wick_upper")
+
+
+def compute_vpin_x_wick_lower(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    wick_col: str = "wick_lower_ratio",
+) -> pd.Series:
+    """
+    计算 VPIN × 下影线占比交互项（反转策略专用）
+    
+    Args:
+        df: DataFrame with base features
+        vpin_col: VPIN column
+        wick_col: Lower wick ratio column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(wick_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_wick_lower")
+
+
+def apply_rank_transform_to_interaction(
+    df: pd.DataFrame,
+    interaction_col: str,
+    groupby_col: Optional[str] = None,
+) -> pd.Series:
+    """
+    对单个交互项做 rank transform
+    
+    Args:
+        df: DataFrame with interaction feature
+        interaction_col: Interaction column name
+        groupby_col: Optional column for cross-sectional rank
+    
+    Returns:
+        Series with rank-transformed interaction feature
+    """
+    if interaction_col not in df.columns:
+        return pd.Series(dtype=float, index=df.index)
+    
+    if groupby_col and groupby_col in df.columns:
+        # 横截面 rank（多标的场景）
+        rank_series = df.groupby(groupby_col)[interaction_col].rank(pct=True, method="average")
+    else:
+        # 全局 rank（单标的时序场景）
+        rank_series = df[interaction_col].rank(pct=True, method="average")
+    
+    return rank_series.fillna(0.5).rename(f"{interaction_col}_rank")
+
+
+# ========================================================================
+# 衍生特征（Derived Features）：单个特征的变换或两个特征的其他运算
+# ========================================================================
+
+def compute_sr_strength_combined(
+    df: pd.DataFrame,
+    sqs_col: str = "sqs",
+) -> pd.Series:
+    """
+    计算 SR 强度组合特征（单个特征的简单映射）
+    
+    Args:
+        df: DataFrame with base features
+        sqs_col: SQS column name
+    
+    Returns:
+        Series with sr_strength_combined
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    if sqs_col not in df.columns:
+        raise ValueError(
+            f"Required column '{sqs_col}' not found for sr_strength_combined. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return df[sqs_col].fillna(0.0).rename("sr_strength_combined")
+
+
+def compute_sr_distance_normalized(
+    df: pd.DataFrame,
+    dist_col: str = "dist_to_nearest_sr",
+    atr_col: str = "atr",
+) -> pd.Series:
+    """
+    计算 SR 距离归一化（两个特征的比值：dist / atr）
+    
+    Args:
+        df: DataFrame with base features
+        dist_col: Distance to nearest SR column
+        atr_col: ATR column
+    
+    Returns:
+        Series with sr_distance_normalized
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [dist_col, atr_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for sr_distance_normalized. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        df[dist_col] / df[atr_col].replace(0, np.nan)
+    ).fillna(0.0).rename("sr_distance_normalized")
+
+
+def compute_dist_to_zz_high(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    zz_high_col: str = "zz_high_value",
+) -> pd.Series:
+    """
+    计算到 ZigZag 高点的距离（两个特征的差值：abs(price - zz_high)）
+    
+    Args:
+        df: DataFrame with base features
+        price_col: Price column
+        zz_high_col: ZigZag high value column
+    
+    Returns:
+        Series with dist_to_zz_high
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [price_col, zz_high_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for dist_to_zz_high. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        (df[price_col] - df[zz_high_col]).abs()
+    ).fillna(0.0).rename("dist_to_zz_high")
+
+
+def compute_dist_to_zz_low(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    zz_low_col: str = "zz_low_value",
+) -> pd.Series:
+    """
+    计算到 ZigZag 低点的距离（两个特征的差值：abs(price - zz_low)）
+    
+    Args:
+        df: DataFrame with base features
+        price_col: Price column
+        zz_low_col: ZigZag low value column
+    
+    Returns:
+        Series with dist_to_zz_low
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [price_col, zz_low_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for dist_to_zz_low. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        (df[price_col] - df[zz_low_col]).abs()
+    ).fillna(0.0).rename("dist_to_zz_low")
+
+
+def compute_dist_to_zz_high_atr(
+    df: pd.DataFrame,
+    dist_col: str = "dist_to_zz_high",
+    atr_col: str = "atr",
+) -> pd.Series:
+    """
+    计算到 ZigZag 高点的距离（归一化到 ATR：dist / atr）
+    
+    Args:
+        df: DataFrame with base features
+        dist_col: Distance to ZZ high column
+        atr_col: ATR column
+    
+    Returns:
+        Series with dist_to_zz_high_atr
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [dist_col, atr_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for dist_to_zz_high_atr. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        df[dist_col] / df[atr_col].replace(0, np.nan)
+    ).fillna(0.0).rename("dist_to_zz_high_atr")
+
+
+def compute_dist_to_zz_low_atr(
+    df: pd.DataFrame,
+    dist_col: str = "dist_to_zz_low",
+    atr_col: str = "atr",
+) -> pd.Series:
+    """
+    计算到 ZigZag 低点的距离（归一化到 ATR：dist / atr）
+    
+    Args:
+        df: DataFrame with base features
+        dist_col: Distance to ZZ low column
+        atr_col: ATR column
+    
+    Returns:
+        Series with dist_to_zz_low_atr
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [dist_col, atr_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for dist_to_zz_low_atr. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        df[dist_col] / df[atr_col].replace(0, np.nan)
+    ).fillna(0.0).rename("dist_to_zz_low_atr")
+
+
+def compute_cvd_slope(
+    df: pd.DataFrame,
+    cvd_col: str = "cvd",
+    window: int = 5,
+) -> pd.Series:
+    """
+    计算 CVD 斜率（单个特征的滚动变换）
+    
+    Args:
+        df: DataFrame with base features
+        cvd_col: CVD column
+        window: Rolling window size
+    
+    Returns:
+        Series with cvd_slope
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    if cvd_col not in df.columns:
+        raise ValueError(
+            f"Required column '{cvd_col}' not found for cvd_slope_{window}. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    if len(df) <= window:
+        raise ValueError(
+            f"DataFrame length ({len(df)}) must be greater than window ({window}) for cvd_slope_{window}"
+        )
+    
+    def _compute_slope(x):
+        if len(x) > 1:
+            return np.polyfit(range(len(x)), x, 1)[0]
+        return 0.0
+    
+    return (
+        df[cvd_col]
+        .rolling(window=window, min_periods=1)
+        .apply(_compute_slope)
+        .fillna(0.0)
+        .rename(f"cvd_slope_{window}")
+    )
+
+
+def compute_atr_ratio(
+    df: pd.DataFrame,
+    atr_col: str = "atr",
+    price_col: str = "close",
+) -> pd.Series:
+    """
+    计算 ATR 比率（两个特征的比值：atr / price）
+    
+    Args:
+        df: DataFrame with base features
+        atr_col: ATR column
+        price_col: Price column
+    
+    Returns:
+        Series with atr_ratio
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [atr_col, price_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for atr_ratio. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        df[atr_col] / df[price_col].replace(0, np.nan)
+    ).fillna(0.0).rename("atr_ratio")
+
+
+def compute_bb_width_ratio(
+    df: pd.DataFrame,
+    bb_upper_col: str = "bb_upper",
+    bb_lower_col: str = "bb_lower",
+    bb_middle_col: str = "bb_middle",
+) -> pd.Series:
+    """
+    计算 Bollinger Band 宽度比率（多个特征的组合：(upper - lower) / middle）
+    
+    Args:
+        df: DataFrame with base features
+        bb_upper_col: BB upper column
+        bb_lower_col: BB lower column
+        bb_middle_col: BB middle column
+    
+    Returns:
+        Series with bb_width_ratio
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    required_cols = [bb_upper_col, bb_lower_col, bb_middle_col]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for bb_width_ratio. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    bb_width = (
+        (df[bb_upper_col] - df[bb_lower_col]) / df[bb_middle_col].replace(0, np.nan)
+    ).fillna(0.0)
+    return bb_width.rename("bb_width_ratio")
+
+
+def compute_compression_score(
+    df: pd.DataFrame,
+    bb_width_ratio_col: str = "bb_width_ratio",
+) -> pd.Series:
+    """
+    计算压缩度分数（单个特征的变换：1 / (1 + bb_width_ratio)）
+    
+    Args:
+        df: DataFrame with base features
+        bb_width_ratio_col: BB width ratio column
+    
+    Returns:
+        Series with compression_score
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    if bb_width_ratio_col in df.columns:
+        return (
+            1.0 / (1.0 + df[bb_width_ratio_col])
+        ).fillna(0.0).rename("compression_score")
+    # 如果没有 bb_width_ratio，尝试从 BB 列计算
+    bb_cols = ["bb_upper", "bb_lower", "bb_middle"]
+    if all(col in df.columns for col in bb_cols):
+        bb_width = (
+            (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"].replace(0, np.nan)
+        ).fillna(0.0)
+        return (1.0 / (1.0 + bb_width)).fillna(0.0).rename("compression_score")
+    
+    # 如果都不存在，报错
+    raise ValueError(
+        f"Required column '{bb_width_ratio_col}' or BB columns {bb_cols} not found for compression_score. "
+        f"Available columns: {list(df.columns)[:20]}..."
+    )
+
+
+def compute_tbr_ma(
+    df: pd.DataFrame,
+    tbr_col: str = "taker_buy_ratio",
+    window: int = 5,
+) -> pd.Series:
+    """
+    计算 TBR 移动平均（单个特征的滚动变换）
+    
+    Args:
+        df: DataFrame with base features
+        tbr_col: TBR column
+        window: Moving average window
+    
+    Returns:
+        Series with tbr_ma
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    if tbr_col not in df.columns:
+        raise ValueError(
+            f"Required column '{tbr_col}' not found for tbr_ma_{window}. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    return (
+        df[tbr_col].rolling(window=window, min_periods=1).mean()
+    ).fillna(0.5).rename(f"tbr_ma_{window}")
+
+
+def compute_tbr_spike(
+    df: pd.DataFrame,
+    tbr_col: str = "taker_buy_ratio",
+    tbr_ma_col: str = "tbr_ma_5",
+    spike_threshold: float = 1.5,
+) -> pd.Series:
+    """
+    计算 TBR 突增信号（两个特征的比较：tbr > tbr_ma * threshold）
+    
+    Args:
+        df: DataFrame with base features
+        tbr_col: TBR column
+        tbr_ma_col: TBR moving average column
+        spike_threshold: Spike threshold multiplier
+    
+    Returns:
+        Series with tbr_spike
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    if tbr_col not in df.columns:
+        raise ValueError(
+            f"Required column '{tbr_col}' not found for tbr_spike. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    
+    if tbr_ma_col in df.columns:
+        tbr_ma = df[tbr_ma_col]
+    else:
+        # 如果没有 tbr_ma，尝试计算
+        tbr_ma = df[tbr_col].rolling(window=5, min_periods=1).mean()
+    
+    spike = (df[tbr_col] > tbr_ma * spike_threshold).astype(float)
+    return spike.rename("tbr_spike")
+
+
+# ========================================================================
+# 向后兼容：保留旧的批量函数（但推荐使用独立函数）
+# ========================================================================
+
+
+# 向后兼容：保留旧的批量函数（但推荐使用独立函数）
+def build_interaction_features(
+    df: pd.DataFrame,
+    interaction_config: Optional[dict] = None,
+) -> pd.DataFrame:
+    """
+    构建特征交互项（批量版本，向后兼容）
+    
+    推荐：使用独立的计算函数，在 feature_dependencies.yaml 中单独定义
+    """
+    df = df.copy()
+    
+    # 使用独立函数计算
+    if "liquidity_void_detected" in df.columns or "wpt_false_breakout_risk" in df.columns:
+        df["liquidity_void_x_wpt_risk"] = compute_liquidity_void_x_wpt_risk(df)
+    
+    if "compression_energy" in df.columns or "ofi_short" in df.columns:
+        df["compression_energy_x_ofi_short"] = compute_compression_energy_x_ofi_short(df)
+    
+    if "hurst_close_rolling" in df.columns or "trend_r2_20" in df.columns:
+        df["hurst_x_trend_r2"] = compute_hurst_x_trend_r2(df)
+    
+    if "evt_tail_shape" in df.columns or "trend_r2_20" in df.columns:
+        df["evt_x_trend_r2"] = compute_evt_x_trend_r2(df)
+    
+    if "vpin" in df.columns:
+        if "compression_energy" in df.columns:
+            df["vpin_x_compression"] = compute_vpin_x_compression(df)
+        if "wick_upper_ratio" in df.columns:
+            df["vpin_x_wick_upper"] = compute_vpin_x_wick_upper(df)
+        if "wick_lower_ratio" in df.columns:
+            df["vpin_x_wick_lower"] = compute_vpin_x_wick_lower(df)
+    
+    if "sma_200_slope" in df.columns or "sma_200" in df.columns:
+        df["sma_slope_x_price_pos"] = compute_sma_slope_x_price_pos(df)
+    
+    return df
+
+
+def extract_interaction_features(
+    df: pd.DataFrame,
+    interaction_config: Optional[dict] = None,
+    apply_rank: bool = True,
+    groupby_col: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    提取特征交互项（完整流程，向后兼容）
+    
+    推荐：使用独立的计算函数，在 feature_dependencies.yaml 中单独定义
+    """
+    df = build_interaction_features(df, interaction_config)
+    
+    if apply_rank:
+        interaction_cols = [col for col in df.columns if "_x_" in col]
+        for col in interaction_cols:
+            df[f"{col}_rank"] = apply_rank_transform_to_interaction(df, col, groupby_col)
+    
+    return df

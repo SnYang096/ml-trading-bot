@@ -22,17 +22,20 @@ RUN apt-get update && \
         unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Create vscode user expected by devcontainer.json
-ARG USERNAME=vscode
+# Create yin user to match host user (UID 1000)
+ARG USERNAME=yin
 ARG USER_UID=1000
-ARG USER_GID=$USER_UID
+ARG USER_GID=1000
 RUN if ! id -u "${USERNAME}" >/dev/null 2>&1; then \
         groupadd --gid "${USER_GID}" "${USERNAME}" && \
-        useradd --uid "${USER_UID}" --gid "${USER_GID}" --create-home "${USERNAME}"; \
+        useradd --uid "${USER_UID}" --gid "${USER_GID}" --create-home --shell /bin/bash "${USERNAME}"; \
     fi && \
     mkdir -p /etc/sudoers.d && \
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} && \
-    chmod 0440 /etc/sudoers.d/${USERNAME}
+    chmod 0440 /etc/sudoers.d/${USERNAME} && \
+    # Ensure workspace directory is accessible
+    mkdir -p /workspace && \
+    chown -R ${USERNAME}:${USERNAME} /workspace
 
 # Marker for Makefile container detection
 RUN touch /.devcontainer-env

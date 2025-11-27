@@ -387,8 +387,338 @@ features:
     dependencies: []
     required_columns: ["close"]
     output_columns: ["hurst_price"]
-    category: hurst
-    description: "Hurst exponent for price"
+  
+  # ========================================================================
+  # 订单流特征（VPIN）
+  # ========================================================================
+  vpin_features:
+    module: enhanced
+    compute_func: extract_order_flow_features
+    dependencies: []
+    required_columns: ["open", "close", "high", "low", "volume"]
+    output_columns: ["vpin", "vpin_ma5", "vpin_ma10", "vpin_ma20", "vpin_max5", "vpin_max10", "vpin_max20", "vpin_change", "vpin_change_pct"]
+    category: order_flow
+    description: "VPIN (Volume-Synchronized Probability of Informed Trading) - 订单流不平衡指标"
+    compute_params:
+      vpin_n_buckets: 50
+      vpin_adaptive: true
+    pass_full_df: true
+    notes: |
+      VPIN 用于检测知情交易者行为：
+      - 如果有 tick 数据，使用真实 VPIN
+      - 如果有 buy_qty/sell_qty，使用真实买卖量
+      - 否则使用代理 VPIN（基于 OHLCV）
+  
+  # ========================================================================
+  # 特征组合交互（状态 × 动量）- 每个交互特征独立定义
+  # ========================================================================
+  liquidity_void_x_wpt_risk:
+    module: enhanced
+    compute_func: compute_liquidity_void_x_wpt_risk
+    dependencies: ["liquidity_void", "wpt_volume_energy"]
+    required_columns: ["liquidity_void_detected", "wpt_false_breakout_risk"]
+    output_columns: ["liquidity_void_x_wpt_risk"]
+    category: interaction
+    description: "流动性真空 × WPT 假突破风险（SR突破、压缩区突破）"
+    pass_full_df: true
+  
+  compression_energy_x_ofi_short:
+    module: enhanced
+    compute_func: compute_compression_energy_x_ofi_short
+    dependencies: ["wpt_volume_energy"]
+    required_columns: ["compression_energy", "ofi_short"]
+    output_columns: ["compression_energy_x_ofi_short"]
+    category: interaction
+    description: "压缩能量 × 订单流强度（压缩区突破）"
+    pass_full_df: true
+  
+  hurst_x_trend_r2:
+    module: enhanced
+    compute_func: compute_hurst_x_trend_r2
+    dependencies: ["hurst_price"]
+    required_columns: ["hurst_close_rolling", "trend_r2_20"]
+    output_columns: ["hurst_x_trend_r2"]
+    category: interaction
+    description: "Hurst 指数 × 趋势 R²（趋势策略、SR突破）"
+    pass_full_df: true
+  
+  evt_x_trend_r2:
+    module: enhanced
+    compute_func: compute_evt_x_trend_r2
+    dependencies: []
+    required_columns: ["evt_tail_shape", "trend_r2_20"]
+    output_columns: ["evt_x_trend_r2"]
+    category: interaction
+    description: "EVT 尾部风险 × 趋势强度（SR反转、趋势策略）"
+    pass_full_df: true
+  
+  vpin_x_compression:
+    module: enhanced
+    compute_func: compute_vpin_x_compression
+    dependencies: ["vpin_features", "wpt_volume_energy"]
+    required_columns: ["vpin", "compression_energy"]
+    output_columns: ["vpin_x_compression"]
+    category: interaction
+    description: "VPIN × 压缩能量（压缩区突破）"
+    pass_full_df: true
+  
+  sma_slope_x_price_pos:
+    module: enhanced
+    compute_func: compute_sma_slope_x_price_pos
+    dependencies: []
+    required_columns: ["sma_200_slope", "sma_200", "close"]
+    output_columns: ["sma_slope_x_price_pos"]
+    category: interaction
+    description: "均线斜率 × 价格位置（趋势策略、SR突破）"
+    pass_full_df: true
+  
+  vpin_x_wick_upper:
+    module: enhanced
+    compute_func: compute_vpin_x_wick_upper
+    dependencies: ["vpin_features"]
+    required_columns: ["vpin", "wick_upper_ratio"]
+    output_columns: ["vpin_x_wick_upper"]
+    category: interaction
+    description: "VPIN × 上影线占比（SR反转策略）"
+    pass_full_df: true
+    notes: "高 VPIN + 长上影线 = 强卖压，可能反转"
+  
+  vpin_x_wick_lower:
+    module: enhanced
+    compute_func: compute_vpin_x_wick_lower
+    dependencies: ["vpin_features"]
+    required_columns: ["vpin", "wick_lower_ratio"]
+    output_columns: ["vpin_x_wick_lower"]
+    category: interaction
+    description: "VPIN × 下影线占比（SR反转策略）"
+    pass_full_df: true
+    notes: "高 VPIN + 长下影线 = 强买压，可能反转"
+  
+  # Rank transform 版本（可选，如果需要）
+  liquidity_void_x_wpt_risk_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["liquidity_void_x_wpt_risk"]
+    required_columns: ["liquidity_void_x_wpt_risk"]
+    output_columns: ["liquidity_void_x_wpt_risk_rank"]
+    category: interaction
+    description: "liquidity_void_x_wpt_risk 的 rank transform 版本"
+    compute_params:
+      interaction_col: "liquidity_void_x_wpt_risk"
+    pass_full_df: true
+  
+  compression_energy_x_ofi_short_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["compression_energy_x_ofi_short"]
+    required_columns: ["compression_energy_x_ofi_short"]
+    output_columns: ["compression_energy_x_ofi_short_rank"]
+    category: interaction
+    description: "compression_energy_x_ofi_short 的 rank transform 版本"
+    compute_params:
+      interaction_col: "compression_energy_x_ofi_short"
+    pass_full_df: true
+  
+  hurst_x_trend_r2_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["hurst_x_trend_r2"]
+    required_columns: ["hurst_x_trend_r2"]
+    output_columns: ["hurst_x_trend_r2_rank"]
+    category: interaction
+    description: "hurst_x_trend_r2 的 rank transform 版本"
+    compute_params:
+      interaction_col: "hurst_x_trend_r2"
+    pass_full_df: true
+  
+  evt_x_trend_r2_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["evt_x_trend_r2"]
+    required_columns: ["evt_x_trend_r2"]
+    output_columns: ["evt_x_trend_r2_rank"]
+    category: interaction
+    description: "evt_x_trend_r2 的 rank transform 版本"
+    compute_params:
+      interaction_col: "evt_x_trend_r2"
+    pass_full_df: true
+  
+  vpin_x_compression_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["vpin_x_compression"]
+    required_columns: ["vpin_x_compression"]
+    output_columns: ["vpin_x_compression_rank"]
+    category: interaction
+    description: "vpin_x_compression 的 rank transform 版本"
+    compute_params:
+      interaction_col: "vpin_x_compression"
+    pass_full_df: true
+  
+  sma_slope_x_price_pos_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["sma_slope_x_price_pos"]
+    required_columns: ["sma_slope_x_price_pos"]
+    output_columns: ["sma_slope_x_price_pos_rank"]
+    category: interaction
+    description: "sma_slope_x_price_pos 的 rank transform 版本"
+    compute_params:
+      interaction_col: "sma_slope_x_price_pos"
+    pass_full_df: true
+  
+  vpin_x_wick_upper_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["vpin_x_wick_upper"]
+    required_columns: ["vpin_x_wick_upper"]
+    output_columns: ["vpin_x_wick_upper_rank"]
+    category: interaction
+    description: "vpin_x_wick_upper 的 rank transform 版本"
+    compute_params:
+      interaction_col: "vpin_x_wick_upper"
+    pass_full_df: true
+  
+  vpin_x_wick_lower_rank:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction
+    dependencies: ["vpin_x_wick_lower"]
+    required_columns: ["vpin_x_wick_lower"]
+    output_columns: ["vpin_x_wick_lower_rank"]
+    category: interaction
+    description: "vpin_x_wick_lower 的 rank transform 版本"
+    compute_params:
+      interaction_col: "vpin_x_wick_lower"
+    pass_full_df: true
+  
+  # ========================================================================
+  # 通用组合特征（衍生特征）：单个特征的变换或两个特征的其他运算
+  # ========================================================================
+  sr_strength_combined:
+    module: enhanced
+    compute_func: compute_sr_strength_combined
+    dependencies: []
+    required_columns: ["sqs"]
+    output_columns: ["sr_strength_combined"]
+    category: derived
+    description: "SR 强度组合特征（单个特征的简单映射）"
+    pass_full_df: true
+  
+  sr_distance_normalized:
+    module: enhanced
+    compute_func: compute_sr_distance_normalized
+    dependencies: ["atr"]
+    required_columns: ["dist_to_nearest_sr", "atr"]
+    output_columns: ["sr_distance_normalized"]
+    category: derived
+    description: "SR 距离归一化（两个特征的比值：dist / atr）"
+    pass_full_df: true
+  
+  dist_to_zz_high:
+    module: enhanced
+    compute_func: compute_dist_to_zz_high
+    dependencies: []
+    required_columns: ["close", "zz_high_value"]
+    output_columns: ["dist_to_zz_high"]
+    category: derived
+    description: "到 ZigZag 高点的距离（两个特征的差值：abs(price - zz_high)）"
+    pass_full_df: true
+  
+  dist_to_zz_low:
+    module: enhanced
+    compute_func: compute_dist_to_zz_low
+    dependencies: []
+    required_columns: ["close", "zz_low_value"]
+    output_columns: ["dist_to_zz_low"]
+    category: derived
+    description: "到 ZigZag 低点的距离（两个特征的差值：abs(price - zz_low)）"
+    pass_full_df: true
+  
+  dist_to_zz_high_atr:
+    module: enhanced
+    compute_func: compute_dist_to_zz_high_atr
+    dependencies: ["dist_to_zz_high", "atr"]
+    required_columns: ["dist_to_zz_high", "atr"]
+    output_columns: ["dist_to_zz_high_atr"]
+    category: derived
+    description: "到 ZigZag 高点的距离（归一化到 ATR：dist / atr）"
+    pass_full_df: true
+  
+  dist_to_zz_low_atr:
+    module: enhanced
+    compute_func: compute_dist_to_zz_low_atr
+    dependencies: ["dist_to_zz_low", "atr"]
+    required_columns: ["dist_to_zz_low", "atr"]
+    output_columns: ["dist_to_zz_low_atr"]
+    category: derived
+    description: "到 ZigZag 低点的距离（归一化到 ATR：dist / atr）"
+    pass_full_df: true
+  
+  cvd_slope_5:
+    module: enhanced
+    compute_func: compute_cvd_slope
+    dependencies: []
+    required_columns: ["cvd"]
+    output_columns: ["cvd_slope_5"]
+    category: derived
+    description: "CVD 斜率（单个特征的滚动变换：滚动窗口的线性回归斜率）"
+    compute_params:
+      window: 5
+    pass_full_df: true
+  
+  atr_ratio:
+    module: enhanced
+    compute_func: compute_atr_ratio
+    dependencies: ["atr"]
+    required_columns: ["atr", "close"]
+    output_columns: ["atr_ratio"]
+    category: derived
+    description: "ATR 比率（两个特征的比值：atr / price）"
+    pass_full_df: true
+  
+  bb_width_ratio:
+    module: enhanced
+    compute_func: compute_bb_width_ratio
+    dependencies: []
+    required_columns: ["bb_upper", "bb_lower", "bb_middle"]
+    output_columns: ["bb_width_ratio"]
+    category: derived
+    description: "Bollinger Band 宽度比率（多个特征的组合：(upper - lower) / middle）"
+    pass_full_df: true
+  
+  compression_score:
+    module: enhanced
+    compute_func: compute_compression_score
+    dependencies: ["bb_width_ratio"]
+    required_columns: ["bb_width_ratio"]
+    output_columns: ["compression_score"]
+    category: derived
+    description: "压缩度分数（单个特征的变换：1 / (1 + bb_width_ratio)）"
+    pass_full_df: true
+  
+  tbr_ma_5:
+    module: enhanced
+    compute_func: compute_tbr_ma
+    dependencies: []
+    required_columns: ["taker_buy_ratio"]
+    output_columns: ["tbr_ma_5"]
+    category: derived
+    description: "TBR 移动平均（单个特征的滚动变换）"
+    compute_params:
+      window: 5
+    pass_full_df: true
+  
+  tbr_spike:
+    module: enhanced
+    compute_func: compute_tbr_spike
+    dependencies: ["tbr_ma_5"]
+    required_columns: ["taker_buy_ratio", "tbr_ma_5"]
+    output_columns: ["tbr_spike"]
+    category: derived
+    description: "TBR 突增信号（两个特征的比较：tbr > tbr_ma * threshold）"
+    compute_params:
+      spike_threshold: 1.5
+    pass_full_df: true
   
   # ========================================================================
   # Spectrum 特征（无依赖）
