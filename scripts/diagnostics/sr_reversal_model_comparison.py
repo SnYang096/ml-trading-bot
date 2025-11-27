@@ -181,27 +181,120 @@ def train_volatility_model(
     X_test: pd.DataFrame,
     y_vol_test: pd.Series,
 ) -> Tuple[Any, Dict[str, float]]:
-    """训练波动率模型"""
-    print("   📊 Training volatility model...")
+    """
+    训练波动率模型（使用高级特征：GARCH, 扩展波动率特征等）
+
+    优先使用能提高波动率预测准确性的特征：
+    - GARCH特征：波动聚集性和杠杆效应（garch_volatility, garch_persistence, garch_leverage_gamma等）
+    - 扩展波动率特征：历史波动率、滞后特征、趋势特征
+    - ATR相关特征：历史波动率
+    - 其他波动率相关特征
+
+    注意：
+    - EVT特征不用于波动率预测，而是用于风险管理/仓位控制（离场、不加仓）
+    - DTW特征不用于波动率模型，而是用于SR Reversal策略（反转模板匹配）
+    """
+    print("   📊 Training volatility model with advanced features...")
+
+    # 选择对波动率预测最有用的特征
+    volatility_relevant_features = []
+
+    # GARCH特征（波动聚集性和杠杆效应）- 关键特征
+    garch_features = [col for col in X_train.columns if col.startswith("garch_")]
+    volatility_relevant_features.extend(garch_features)
+
+    # 注意：EVT特征不用于波动率预测，而是用于风险管理/仓位控制（离场、不加仓）
+
+    # 扩展波动率特征（历史波动率、滞后特征、趋势特征）
+    extended_vol_features = [col for col in X_train.columns if col.startswith("vol_")]
+    volatility_relevant_features.extend(extended_vol_features)
+
+    # 注意：DTW特征不用于波动率模型，而是用于SR Reversal策略（反转模板匹配）
+
+    # ATR相关特征（历史波动率）
+    atr_features = [col for col in X_train.columns if "atr" in col.lower()]
+    volatility_relevant_features.extend(atr_features)
+
+    # 其他可能相关的特征（波动率压缩、范围等）
+    other_features = [
+        col
+        for col in X_train.columns
+        if any(
+            keyword in col.lower()
+            for keyword in [
+                "bb_width",
+                "compression",
+                "squeeze",
+                "range",
+                "range_ratio",
+            ]
+        )
+    ]
+    volatility_relevant_features.extend(other_features)
+
+    # 去重并确保特征存在
+    volatility_relevant_features = list(set(volatility_relevant_features))
+    available_features = [
+        f for f in volatility_relevant_features if f in X_train.columns
+    ]
+
+    if not available_features:
+        print("   ⚠️ No volatility-specific features found, using all features")
+        available_features = list(X_train.columns)
+    else:
+        print(f"   ✅ Using {len(available_features)} volatility-relevant features:")
+        print(
+            f"      GARCH: {len([f for f in available_features if f.startswith('garch_')])}"
+        )
+        print(
+            f"      Extended Volatility: {len([f for f in available_features if f.startswith('vol_')])}"
+        )
+        print(
+            f"      ATR: {len([f for f in available_features if 'atr' in f.lower()])}"
+        )
+        print(
+            f"      Other volatility-related: {len([f for f in available_features if f not in garch_features + extended_vol_features + atr_features])}"
+        )
+        print(
+            f"      Note: EVT features excluded (used for risk management, not volatility prediction)"
+        )
+
+    # 使用选定的特征
+    X_train_vol = X_train[available_features].copy()
+    X_test_vol = X_test[available_features].copy()
+
+    # 检测分类特征（如_symbol）
+    categorical_features = None
+    if "_symbol" in X_train_vol.columns and X_train_vol["_symbol"].nunique() > 1:
+        categorical_features = ["_symbol"]
+        print(f"   ✅ Using '_symbol' as categorical feature for volatility model")
 
     try:
         model = LightGBMTrainer(model_type="regression", use_gpu=True)
         metrics, _ = model.train(
-            X_train,
+            X_train_vol,
             y_vol_train,
             n_splits=5,
             use_time_series_cv=True,
             groups=None,
             auto_tune_params=False,
+            categorical_features=categorical_features,  # 传递分类特征
         )
+
+        # 存储使用的特征列表，供预测时使用
+        model._volatility_features = available_features
+        if categorical_features:
+            model._categorical_features = categorical_features
+
         return model, metrics
     except Exception as e:
         print(f"   ⚠️ LightGBMTrainer failed: {e}")
         print("   Using simple LightGBM instead...")
         import lightgbm as lgb
 
-        # Simple LightGBM training
-        train_data = lgb.Dataset(X_train.values, label=y_vol_train.values)
+        # Simple LightGBM training - 使用选定的特征
+        X_train_vol_values = X_train_vol.values
+        train_data = lgb.Dataset(X_train_vol_values, label=y_vol_train.values)
         params = {
             "objective": "regression",
             "metric": "rmse",
@@ -217,16 +310,25 @@ def train_volatility_model(
 
         # Create a simple wrapper
         class SimpleVolModel:
-            def __init__(self, lgb_model):
+            def __init__(self, lgb_model, features=None):
                 self.lgb_model = lgb_model
                 self.is_trained = True
+                self._volatility_features = features  # 存储特征列表
 
             def predict(self, X):
+                # 如果指定了特征，只使用这些特征
+                if self._volatility_features and isinstance(X, pd.DataFrame):
+                    X_used = X[self._volatility_features].copy()
+                else:
+                    X_used = X
+
                 return self.lgb_model.predict(
-                    X.values if isinstance(X, pd.DataFrame) else X
+                    X_used.values if isinstance(X_used, pd.DataFrame) else X_used
                 )
 
-        wrapped_model = SimpleVolModel(model)
+        wrapped_model = SimpleVolModel(model, features=available_features)
+        # 存储特征列表供预测使用
+        wrapped_model._volatility_features = available_features
         metrics = {"train_rmse": 0.0}  # Placeholder
         return wrapped_model, metrics
 
@@ -641,45 +743,162 @@ def evaluate_ml_volatility_model(
     df_temp = df_features.copy()
     df_temp["signal"] = ml_signals
 
+    # 添加未来波动率标签用于分析（如果还没有）
+    # 注意：必须在完整的df_features上计算，然后对齐到df_temp（测试集）
+    if "future_volatility" not in df_temp.columns:
+        # 问题：如果df_temp是测试集，直接在上面计算会导致最后horizon行无法计算
+        # 解决方案：在完整的df_features上计算，然后对齐到df_temp
+        if "future_volatility" in df_features.columns:
+            # 如果df_features已经有未来波动率标签，直接使用
+            df_temp["future_volatility"] = df_features.loc[
+                df_temp.index, "future_volatility"
+            ]
+        else:
+            # 在完整的df_features上计算未来波动率标签
+            future_vol_full = future_volatility_label(
+                df_features["close"],
+                horizon=10,
+            )
+            # 对齐到df_temp（测试集）
+            df_temp["future_volatility"] = future_vol_full.loc[df_temp.index]
+
+            # 调试：检查计算是否正确
+            if df_temp["future_volatility"].notna().sum() > 0:
+                print(f"   🔍 Future volatility label debug:")
+                print(f"      Total samples in df_temp: {len(df_temp)}")
+                print(
+                    f"      Non-NaN future_vol samples: {df_temp['future_volatility'].notna().sum()}"
+                )
+                print(f"      Mean: {df_temp['future_volatility'].mean():.8f}")
+                print(f"      Median: {df_temp['future_volatility'].median():.8f}")
+                print(f"      Min: {df_temp['future_volatility'].min():.8f}")
+                print(f"      Max: {df_temp['future_volatility'].max():.8f}")
+                print(
+                    f"      First 5 non-NaN values: {df_temp['future_volatility'].dropna().head(5).tolist()}"
+                )
+
     # 使用预测波动率计算自适应R/R标签
-    # 方案：使用Ensemble方法，混合预测波动率和ATR
-    # 这样可以避免预测波动率不准确时的问题
+    # 去掉Ensemble方法，直接使用预测波动率
     atr_values = atr_series.values
 
     # 计算预测波动率与ATR的比率
     vol_atr_ratio = pred_vol / (atr_values + 1e-8)
 
-    # Ensemble: 混合预测波动率和ATR
-    # 权重：预测波动率30%，ATR 70%（更保守，因为预测波动率偏高）
-    final_vol = 0.3 * pred_vol + 0.7 * atr_values
+    print(f"   🔧 Using predicted volatility directly (no ensemble)")
+    print(f"   📊 Predicted vol / ATR ratio stats:")
+    print(f"      Mean: {np.mean(vol_atr_ratio):.3f}, Std: {np.std(vol_atr_ratio):.3f}")
+    print(f"      Min: {np.min(vol_atr_ratio):.3f}, Max: {np.max(vol_atr_ratio):.3f}")
+    print(f"      Median: {np.median(vol_atr_ratio):.3f}")
 
-    print(f"   🔧 Using ensemble method: 30% predicted vol + 70% ATR")
-    print(f"   📊 Final vol stats:")
-    print(f"      Mean: {np.mean(final_vol):.2f}, Std: {np.std(final_vol):.2f}")
-    print(
-        f"      Final vol / ATR ratio - Mean: {np.mean(final_vol / (atr_values + 1e-8)):.3f}"
+    # 分析波动率预测准确性（如果有未来波动率标签）
+    if "future_volatility" in df_temp.columns:
+        future_vol = df_temp["future_volatility"].values
+        valid_mask = ~(np.isnan(pred_vol) | np.isnan(future_vol) | np.isnan(atr_values))
+        if valid_mask.sum() > 0:
+            pred_vol_valid = pred_vol[valid_mask]
+            future_vol_valid = future_vol[valid_mask]
+            atr_valid = atr_values[valid_mask]
+
+            # 检查未来波动率标签是否有问题
+            if np.mean(future_vol_valid) == 0.0:
+                print(f"   ⚠️  警告：未来波动率标签均值为0，可能存在计算问题")
+                print(f"      未来波动率标签统计:")
+                print(f"        非NaN数量: {np.sum(~np.isnan(future_vol))}")
+                print(f"        均值: {np.mean(future_vol_valid):.6f}")
+                print(f"        中位数: {np.median(future_vol_valid):.6f}")
+                print(f"        标准差: {np.std(future_vol_valid):.6f}")
+                print(f"        最小值: {np.min(future_vol_valid):.6f}")
+                print(f"        最大值: {np.max(future_vol_valid):.6f}")
+
+            # 计算预测误差（统一单位：都转换为相对ATR的比率）
+            # 注意：future_vol_valid 是相对波动率（RMS of returns，例如0.0066 = 0.66%）
+            # 需要先转换为绝对波动率，再除以ATR
+            prices_valid = df_temp.loc[df_temp.index[valid_mask], "close"].values
+            future_vol_absolute = future_vol_valid * prices_valid  # 转换为绝对波动率
+            future_vol_relative = future_vol_absolute / (
+                atr_valid + 1e-8
+            )  # 转换为相对ATR的比率
+
+            pred_vol_relative = pred_vol_valid / (
+                atr_valid + 1e-8
+            )  # 预测波动率已经是绝对波动率
+
+            error = pred_vol_relative - future_vol_relative
+            mae = np.mean(np.abs(error))
+            rmse = np.sqrt(np.mean(error**2))
+
+            # 计算相关性（需要有效数据）
+            if (
+                len(pred_vol_relative) > 1
+                and np.std(pred_vol_relative) > 1e-8
+                and np.std(future_vol_relative) > 1e-8
+            ):
+                correlation = np.corrcoef(pred_vol_relative, future_vol_relative)[0, 1]
+            else:
+                correlation = np.nan
+
+            print(f"   📊 Volatility Prediction Accuracy:")
+            print(f"      Valid samples: {len(pred_vol_relative)}")
+            print(f"      MAE (relative to ATR): {mae:.4f}")
+            print(f"      RMSE (relative to ATR): {rmse:.4f}")
+            if not np.isnan(correlation):
+                print(f"      Correlation: {correlation:.4f}")
+            print(
+                f"      Predicted mean: {np.mean(pred_vol_relative):.3f}, Actual mean: {np.mean(future_vol_relative):.3f}"
+            )
+            print(
+                f"      Predicted median: {np.median(pred_vol_relative):.3f}, Actual median: {np.median(future_vol_relative):.3f}"
+            )
+
+    # 直接使用预测波动率，但需要clip到合理范围
+    effective_atr_lower = atr_lower_bound
+    effective_atr_upper = atr_upper_bound
+
+    # 使用带详细信息的函数来计算标签
+    from scripts.diagnostics.compute_adaptive_rr_with_predicted_vol import (
+        compute_adaptive_rr_label_with_predicted_vol_details,
     )
 
-    # 仍然需要clip到合理范围（但范围更宽松，因为已经ensemble了）
-    effective_atr_lower = max(atr_lower_bound, 0.7)  # 至少是ATR的70%
-    effective_atr_upper = min(atr_upper_bound, 1.3)  # 最多是ATR的130%
-
-    labels = compute_adaptive_rr_label_with_predicted_vol(
-        df_temp,
-        predicted_vol=final_vol,  # 使用ensemble后的波动率
-        signal_col="signal",
-        price_col="close",
-        atr_col="atr",
-        atr_window=14,
-        max_holding_bars=params.get("max_holding_bars", 50),
-        stop_loss_multiplier=params.get("stop_loss_r", 1.0),
-        take_profit_multiplier=params.get("take_profit_r", 2.0),
-        atr_lower_bound=effective_atr_lower,
-        atr_upper_bound=effective_atr_upper,
-        use_breakeven_stop=True,  # 启用保本止损
-        entry_price_col="open",
-        entry_offset=1,
-    )
+    # 如果函数存在，使用详细信息版本；否则使用普通版本
+    breakeven_info = None
+    try:
+        result_details = compute_adaptive_rr_label_with_predicted_vol_details(
+            df_temp,
+            predicted_vol=pred_vol,  # 直接使用预测波动率
+            signal_col="signal",
+            price_col="close",
+            atr_col="atr",
+            atr_window=14,
+            max_holding_bars=params.get("max_holding_bars", 50),
+            stop_loss_multiplier=params.get("stop_loss_r", 1.0),
+            take_profit_multiplier=params.get("take_profit_r", 2.0),
+            atr_lower_bound=effective_atr_lower,
+            atr_upper_bound=effective_atr_upper,
+            use_breakeven_stop=True,  # 启用保本止损
+            entry_price_col="open",
+            entry_offset=1,
+        )
+        labels = result_details["label"]
+        breakeven_info = result_details
+    except (ImportError, AttributeError, NameError) as e:
+        # 如果详细信息版本不存在，使用普通版本
+        print(f"   ⚠️  Using standard version (details not available: {e})")
+        labels = compute_adaptive_rr_label_with_predicted_vol(
+            df_temp,
+            predicted_vol=pred_vol,  # 直接使用预测波动率
+            signal_col="signal",
+            price_col="close",
+            atr_col="atr",
+            atr_window=14,
+            max_holding_bars=params.get("max_holding_bars", 50),
+            stop_loss_multiplier=params.get("stop_loss_r", 1.0),
+            take_profit_multiplier=params.get("take_profit_r", 2.0),
+            atr_lower_bound=effective_atr_lower,
+            atr_upper_bound=effective_atr_upper,
+            use_breakeven_stop=True,  # 启用保本止损
+            entry_price_col="open",
+            entry_offset=1,
+        )
 
     # 统计指标
     mask_valid = (ml_signals != 0) & labels.notna()
@@ -704,6 +923,67 @@ def evaluate_ml_volatility_model(
 
     n_win = int((df_trades["label"] == 1.0).sum())
     win_rate = n_win / n_trades if n_trades > 0 else 0.0
+
+    # 如果有详细信息，分析保本止损触发情况和自适应R/R逻辑
+    if breakeven_info is not None and isinstance(breakeven_info, pd.DataFrame):
+        valid_indices = df_temp.index[mask_valid]
+        if len(valid_indices) > 0 and all(
+            idx in breakeven_info.index for idx in valid_indices
+        ):
+            breakeven_activated = breakeven_info.loc[
+                valid_indices, "breakeven_activated"
+            ].fillna(False)
+            n_breakeven_activated = int(breakeven_activated.sum())
+            final_results = breakeven_info.loc[valid_indices, "final_result"]
+            n_breakeven_win = int(
+                (final_results == "breakeven_win").fillna(False).sum()
+            )
+            n_breakeven_loss = int(
+                (final_results == "breakeven_loss").fillna(False).sum()
+            )
+            n_loss_total = int((labels[mask_valid] == 0.0).sum())
+
+            print(f"   📊 Breakeven Stop-Loss Analysis:")
+            print(f"      Total trades: {n_trades}")
+            print(
+                f"      Breakeven activated: {n_breakeven_activated} ({100*n_breakeven_activated/n_trades:.1f}%)"
+            )
+            print(f"      Breakeven → Win: {n_breakeven_win}")
+            print(f"      Breakeven → Loss: {n_breakeven_loss}")
+            print(f"      Total losses: {n_loss_total}")
+            if n_breakeven_win + n_loss_total > 0:
+                breakeven_rate_calc = n_breakeven_win / (n_breakeven_win + n_loss_total)
+                print(f"      Breakeven rate: {100*breakeven_rate_calc:.2f}%")
+
+            # 分析自适应R/R逻辑
+            pred_vol_used = breakeven_info.loc[valid_indices, "predicted_vol_used"]
+            stop_loss_prices = breakeven_info.loc[valid_indices, "stop_loss_price"]
+            take_profit_prices = breakeven_info.loc[valid_indices, "take_profit_price"]
+            entry_prices = df_temp.loc[valid_indices, "open"]
+
+            # 计算SL/TP距离
+            sl_distances = np.abs(stop_loss_prices - entry_prices)
+            tp_distances = np.abs(take_profit_prices - entry_prices)
+            atr_valid = atr_series.loc[valid_indices]
+            sl_atr_ratios = sl_distances / (atr_valid + 1e-8)
+            tp_atr_ratios = tp_distances / (atr_valid + 1e-8)
+
+            print(f"   📊 Adaptive R/R Analysis:")
+            print(
+                f"      Predicted vol used - Mean: {pred_vol_used.mean():.2f}, Std: {pred_vol_used.std():.2f}"
+            )
+            print(
+                f"      SL distance / ATR - Mean: {sl_atr_ratios.mean():.3f}, Std: {sl_atr_ratios.std():.3f}"
+            )
+            print(
+                f"      TP distance / ATR - Mean: {tp_atr_ratios.mean():.3f}, Std: {tp_atr_ratios.std():.3f}"
+            )
+            print(
+                f"      SL distance / ATR - Min: {sl_atr_ratios.min():.3f}, Max: {sl_atr_ratios.max():.3f}"
+            )
+            print(
+                f"      TP distance / ATR - Min: {tp_atr_ratios.min():.3f}, Max: {tp_atr_ratios.max():.3f}"
+            )
 
     # 计算R（使用自适应R/R，需要从预测波动率计算实际R值）
     # 对于自适应R/R，每笔交易的R值可能不同，需要根据实际止盈止损计算
@@ -732,10 +1012,18 @@ def evaluate_ml_volatility_model(
     else:
         sharpe_ratio = 0.0
 
-    # 计算保本率（需要重新计算带details的标签）
-    # 注意：自适应R/R的保本率计算比较复杂，这里暂时返回0
-    # 未来可以扩展compute_adaptive_rr_label_with_predicted_vol来支持details
+    # 计算保本率（如果有详细信息）
     breakeven_rate = 0.0
+    if breakeven_info is not None and isinstance(breakeven_info, pd.DataFrame):
+        valid_indices = df_temp.index[mask_valid]
+        if len(valid_indices) > 0 and all(
+            idx in breakeven_info.index for idx in valid_indices
+        ):
+            final_results = breakeven_info.loc[valid_indices, "final_result"]
+            breakeven_win = int((final_results == "breakeven_win").fillna(False).sum())
+            n_loss_total = int((labels[mask_valid] == 0.0).sum())
+            if breakeven_win + n_loss_total > 0:
+                breakeven_rate = breakeven_win / (breakeven_win + n_loss_total)
 
     return {
         "n_trades": n_trades,
@@ -1019,10 +1307,17 @@ def main() -> None:
     )
 
     # Compute volatility labels
-    train_vol_labels = future_volatility_label(
-        df_train["close"],
-        horizon=10,
-    )
+    # 注意：必须在完整的df_features上计算，然后对齐到训练集
+    # 这样可以确保有足够的未来数据来计算标签
+    if "future_volatility" not in df_features.columns:
+        # 在完整的df_features上计算未来波动率标签
+        df_features["future_volatility"] = future_volatility_label(
+            df_features["close"],
+            horizon=10,
+        )
+
+    # 对齐到训练集
+    train_vol_labels = df_features.loc[df_train.index, "future_volatility"]
 
     # Prepare features (exclude non-numeric columns)
     feature_cols = [
@@ -1063,6 +1358,23 @@ def main() -> None:
     print(f"   Training samples: {len(X_train_valid)}")
     print(
         f"   Positive labels: {int(y_train_valid.sum())} ({y_train_valid.mean():.2%})"
+    )
+
+    # 检查DTW特征是否被加载
+    dtw_cols = [col for col in X_train_valid.columns if col.startswith("dtw_")]
+    if dtw_cols:
+        print(f"   ✅ DTW features loaded: {len(dtw_cols)} features")
+        print(f"      Examples: {dtw_cols[:5]}")
+    else:
+        print(f"   ⚠️  No DTW features found in training data")
+
+    # 检查其他关键特征
+    garch_cols = [col for col in X_train_valid.columns if col.startswith("garch_")]
+    print(
+        f"   📊 Feature summary: GARCH={len(garch_cols)}, DTW={len(dtw_cols)}, Total={len(X_train_valid.columns)}"
+    )
+    print(
+        f"      Note: EVT features excluded from volatility model (used for risk management)"
     )
 
     # Train ML model

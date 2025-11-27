@@ -3,8 +3,13 @@
 from typing import Dict, Tuple, Optional, Any, Callable
 import numpy as np
 import pandas as pd
+import lightgbm as lgb
 from time_series_model.models.lightgbm_model import LightGBMTrainer
 from time_series_model.pipeline.training.base_model_trainer import BaseModelTrainer
+from time_series_model.strategies.models.quantile_loss_with_q50_constraint import (
+    create_quantile_objective_with_q50_constraint,
+    create_quantile_metric_with_q50_constraint,
+)
 
 
 class QuantileModelTrainer(BaseModelTrainer):
@@ -115,10 +120,41 @@ class QuantileModelTrainer(BaseModelTrainer):
         else:
             q10_q90_weights_full = q10_q90_weights
 
-        # Stage 2: Train Q10 and Q90
+        # Get Q50 predictions and loss for Q50 constraint
+        q50_pred_full = model_q50.model.predict(X_df.values)
+        q50_error_full = y_return.values - q50_pred_full
+        q50_loss_full = np.mean(
+            np.where(q50_error_full >= 0, 0.5 * q50_error_full, 0.5 * (-q50_error_full))
+        )
+
+        print(
+            f"   Stage 2: Training Q10/Q90 models with Q50 constraint (Q50 loss: {q50_loss_full:.6f})..."
+        )
+
+        # Stage 2: Train Q10 and Q90 with Q50 constraint in loss function
         model_q10 = LightGBMTrainer(
             model_type="quantile", quantile_alpha=0.1, use_gpu=self.use_gpu
         )
+
+        # Create custom objective with Q50 constraint
+        q10_objective = create_quantile_objective_with_q50_constraint(
+            alpha=0.1,
+            q50_predictions=q50_pred_full,
+            q50_loss=q50_loss_full,
+            constraint_weight=1.0,
+        )
+        q10_metric = create_quantile_metric_with_q50_constraint(
+            alpha=0.1,
+            q50_predictions=q50_pred_full,
+            q50_loss=q50_loss_full,
+        )
+
+        # Update params to use custom objective
+        q10_params = model_q10.params.copy()
+        q10_params["objective"] = q10_objective
+        q10_params["metric"] = q10_metric
+        model_q10.params = q10_params
+
         q10_metrics, q10_preprocess_params = model_q10.train(
             X_df,
             y_return,
@@ -135,6 +171,26 @@ class QuantileModelTrainer(BaseModelTrainer):
         model_q90 = LightGBMTrainer(
             model_type="quantile", quantile_alpha=0.9, use_gpu=self.use_gpu
         )
+
+        # Create custom objective with Q50 constraint
+        q90_objective = create_quantile_objective_with_q50_constraint(
+            alpha=0.9,
+            q50_predictions=q50_pred_full,
+            q50_loss=q50_loss_full,
+            constraint_weight=1.0,
+        )
+        q90_metric = create_quantile_metric_with_q50_constraint(
+            alpha=0.9,
+            q50_predictions=q50_pred_full,
+            q50_loss=q50_loss_full,
+        )
+
+        # Update params to use custom objective
+        q90_params = model_q90.params.copy()
+        q90_params["objective"] = q90_objective
+        q90_params["metric"] = q90_metric
+        model_q90.params = q90_params
+
         q90_metrics, q90_preprocess_params = model_q90.train(
             X_df,
             y_return,

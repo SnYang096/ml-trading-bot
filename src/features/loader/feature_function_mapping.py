@@ -16,6 +16,25 @@ from src.features.time_series.utils_hurst_features import extract_hurst_features
 from src.features.time_series.utils_spectrum_features import extract_spectrum_features
 from src.features.time_series.utils_liquidity_features import extract_liquidity_features
 from src.features.time_series.utils_order_flow_features import extract_order_flow_features
+from src.features.time_series.utils_garch_features import extract_garch_features
+from src.features.time_series.utils_dtw_features import extract_dtw_features
+from src.features.time_series.utils_evt_features import extract_evt_features
+from src.features.time_series.utils_volatility_features import extract_extended_volatility_features
+# 独立DTW特征提取器（支持多窗口）
+from src.features.time_series.utils_dtw_individual import (
+    extract_dtw_hammer,
+    extract_dtw_head_shoulder_bottom,
+    extract_dtw_double_bottom,
+    extract_dtw_bullish_engulfing,
+    extract_dtw_shooting_star,
+    extract_dtw_head_shoulder_top,
+    extract_dtw_double_top,
+    extract_dtw_bearish_engulfing,
+    extract_dtw_bull_flag,
+    extract_dtw_bear_flag,
+    extract_dtw_triangle,
+    extract_dtw_decline_consolidation,
+)
 # 交互特征包装函数（用于配置文件）
 from src.features.loader.interaction_feature_wrappers import (
     compute_liquidity_void_x_wpt_risk_wrapper,
@@ -111,7 +130,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "BaselineFeatureEngineer.add_common_derived_features": BaselineFeatureEngineer.add_common_derived_features,
     
     # ========================================================================
-    # Enhanced 特征（WPT, Hilbert, Hurst, Spectrum, Liquidity, Order Flow）
+    # Enhanced 特征（WPT, Hilbert, Hurst, Spectrum, Liquidity, Order Flow, GARCH, DTW, EVT）
     # ========================================================================
     "extract_wpt_features": extract_wpt_features,
     "extract_hilbert_features": extract_hilbert_features,
@@ -119,6 +138,10 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "extract_spectrum_features": extract_spectrum_features,
     "extract_liquidity_features": extract_liquidity_features,
     "extract_order_flow_features": extract_order_flow_features,
+    "extract_garch_features": extract_garch_features,
+    "extract_dtw_features": extract_dtw_features,
+    "extract_evt_features": extract_evt_features,
+    "extract_extended_volatility_features": extract_extended_volatility_features,
     
     # ========================================================================
     # 交互特征（每个交互特征独立计算函数）

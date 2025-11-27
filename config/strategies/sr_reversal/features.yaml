@@ -22,6 +22,14 @@ feature_pipeline:
     - wpt_vpvr
     # 订单流特征（VPIN）
     - vpin_features
+    # GARCH 特征（波动聚集性和杠杆效应）- 波动率预测关键特征
+    - garch_features
+    # 扩展波动率特征（历史波动率、滞后特征、趋势特征）- 提高波动率预测准确性
+    - extended_volatility_features
+    # DTW 形态匹配特征（仅在SR附近计算，用于反转模式识别）
+    - dtw_features
+    # EVT 极值理论特征（尾部风险预警）- 用于风险管理/仓位控制，不用于波动率预测
+    - evt_features
     # 交互特征（状态 × 动量）- 按需选择
     - vpin_x_wick_upper        # SR 反转专用
     - vpin_x_wick_lower        # SR 反转专用

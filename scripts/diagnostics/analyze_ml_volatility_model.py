@@ -119,7 +119,7 @@ def analyze_ml_volatility_model():
         horizon=10,
     )
 
-    # 准备特征
+    # 准备特征 - 优先选择波动率相关特征
     feature_cols = [
         col
         for col in df_train.columns
@@ -144,7 +144,78 @@ def analyze_ml_volatility_model():
         df_train[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
     )
 
-    X_train = df_train[numeric_cols].fillna(0)
+    # 选择波动率相关特征（GARCH, 扩展波动率特征, ATR等）
+    volatility_relevant_features = []
+
+    # GARCH特征（波动聚集性和杠杆效应）- 关键特征
+    garch_features = [col for col in numeric_cols if col.startswith("garch_")]
+    volatility_relevant_features.extend(garch_features)
+
+    # 注意：EVT特征不用于波动率预测，而是用于风险管理/仓位控制（离场、不加仓）
+
+    # 扩展波动率特征（历史波动率、滞后特征、趋势特征）
+    extended_vol_features = [col for col in numeric_cols if col.startswith("vol_")]
+    volatility_relevant_features.extend(extended_vol_features)
+
+    # 注意：DTW特征不用于波动率模型，而是用于SR Reversal策略（反转模板匹配）
+
+    # ATR相关特征（历史波动率）
+    atr_features = [col for col in numeric_cols if "atr" in col.lower()]
+    volatility_relevant_features.extend(atr_features)
+
+    # 波动率相关特征
+    vol_features = [
+        col
+        for col in numeric_cols
+        if "vol" in col.lower() or "volatility" in col.lower()
+    ]
+    volatility_relevant_features.extend(vol_features)
+
+    # 其他可能相关的特征（波动率压缩、范围等）
+    other_features = [
+        col
+        for col in numeric_cols
+        if any(
+            keyword in col.lower()
+            for keyword in [
+                "bb_width",
+                "compression",
+                "squeeze",
+                "range",
+                "range_ratio",
+            ]
+        )
+    ]
+    volatility_relevant_features.extend(other_features)
+
+    # 去重并确保特征存在
+    volatility_relevant_features = list(set(volatility_relevant_features))
+    available_features = [
+        f for f in volatility_relevant_features if f in df_train.columns
+    ]
+
+    if not available_features:
+        print("   ⚠️ No volatility-specific features found, using all numeric features")
+        available_features = numeric_cols
+    else:
+        print(f"   ✅ Selected {len(available_features)} volatility-relevant features:")
+        print(
+            f"      GARCH: {len([f for f in available_features if f.startswith('garch_')])}"
+        )
+        print(
+            f"      Extended Volatility: {len([f for f in available_features if f.startswith('vol_')])}"
+        )
+        print(
+            f"      ATR: {len([f for f in available_features if 'atr' in f.lower()])}"
+        )
+        print(
+            f"      Other volatility-related: {len([f for f in available_features if f not in garch_features + extended_vol_features + atr_features])}"
+        )
+        print(
+            f"      Note: EVT features excluded (used for risk management, not volatility prediction)"
+        )
+
+    X_train = df_train[available_features].fillna(0)
     y_train = train_labels.fillna(0).astype(int)
     y_vol_train = train_vol_labels.fillna(train_vol_labels.median())
 
@@ -164,7 +235,7 @@ def analyze_ml_volatility_model():
     )
 
     # 训练波动率模型
-    print("\n🔧 Training volatility model...")
+    print("\n🔧 Training volatility model with volatility-specific features...")
     train_data = lgb.Dataset(X_train_valid.values, label=y_vol_train_valid.values)
     params = {
         "objective": "regression",
@@ -179,8 +250,8 @@ def analyze_ml_volatility_model():
     }
     vol_model = lgb.train(params, train_data, num_boost_round=100)
 
-    # 在测试集上预测
-    X_test = df_test[numeric_cols].fillna(0)
+    # 在测试集上预测（使用相同的特征）
+    X_test = df_test[available_features].fillna(0)
     pred_vol_relative = vol_model.predict(X_test.values)
     pred_vol_relative = np.maximum(pred_vol_relative, 0.0)
 

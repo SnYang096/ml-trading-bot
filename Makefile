@@ -6,6 +6,7 @@
 
 PYTHON := python3
 PIP := pip3
+SUDO ?=
 
 # Detect Dev Container environment (env var or marker file)
 INSIDE_FROM_ENV := $(if $(DEV_CONTAINER),yes,no)
@@ -91,7 +92,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 endif
 
 
-.PHONY: help clean format lint dev-install install-hooks docker-build docker-install builder-shell \
+.PHONY: help clean format lint fix-permissions fix-ownership dev-install install-hooks docker-build docker-install builder-shell \
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
 	ts-vectorbot-backtest ts-nautilus-backtest \
@@ -169,8 +170,22 @@ format:
 lint:
 	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
 
+PERM_DIR ?= scripts/diagnostics
+PERM_MODE ?= 664
+fix-permissions:
+	@echo "🔐 Updating file permissions under $(PERM_DIR) to mode $(PERM_MODE)..."
+	@$(SUDO) find $(PERM_DIR) -type f -exec chmod $(PERM_MODE) {} +
+	@echo "✅ Permissions updated."
+
 dev-install:
 	$(PIP) install -e .
+
+OWNER_DIR ?= scripts/diagnostics
+OWNER_USER ?= yin
+fix-ownership:
+	@echo "👤 Changing file ownership under $(OWNER_DIR) to $(OWNER_USER)..."
+	@$(SUDO) chown -R $(OWNER_USER) $(OWNER_DIR)
+	@echo "✅ Ownership updated."
 
 install-hooks:
 	@echo "📦 Installing Git hooks..."
@@ -434,6 +449,10 @@ ts-sr-reversal-model-comparison:
 ts-analyze-ml-volatility:
 	@echo "🔍 Analyzing ML+Volatility Model Performance Issues"
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/analyze_ml_volatility_model.py
+
+ts-analyze-dtw-volatility:
+	@echo "🔍 Analyzing DTW Features and Volatility Model"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/analyze_dtw_and_volatility.py
 
 TF_CONFIG_PEARSON ?= 0.03
 TF_CONFIG_PVALUE ?= 1e-5

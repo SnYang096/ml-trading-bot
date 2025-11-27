@@ -410,6 +410,114 @@ features:
       - 否则使用代理 VPIN（基于 OHLCV）
   
   # ========================================================================
+  # GARCH 特征（波动聚集性和杠杆效应）
+  # ========================================================================
+  garch_features:
+    module: enhanced
+    compute_func: extract_garch_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["garch_volatility", "garch_persistence", "garch_leverage_gamma", "garch_alpha", "garch_beta"]
+    category: volatility
+    description: "GARCH/GJR-GARCH 特征 - 波动聚集性和杠杆效应"
+    compute_params:
+      window: 120  # 增加窗口大小，减少过拟合
+      garch_p: 1
+      garch_q: 1
+      use_gjr: true
+      use_figarch: false
+    pass_full_df: true
+    notes: |
+      GARCH 特征用于：
+      - garch_volatility: 预测的下一期波动率
+      - garch_persistence: α+β，波动聚集性强度（0.95+表示波动会持续）
+      - garch_leverage_gamma: 杠杆效应系数（下跌时波动上升更快）
+      - 窗口大小增加到120，减少过拟合
+      - 需要安装 arch 包：pip install arch
+  
+  # ========================================================================
+  # 扩展波动率特征（历史波动率、滞后特征、趋势特征）
+  # ========================================================================
+  extended_volatility_features:
+    module: enhanced
+    compute_func: extract_extended_volatility_features
+    dependencies: ["atr"]
+    required_columns: ["close", "atr"]
+    output_columns: ["vol_historical_5", "vol_historical_10", "vol_historical_20", "vol_historical_60", "vol_atr_price_ratio", "vol_atr_ma_5", "vol_atr_ma_10", "vol_atr_ma_20", "vol_atr_std_5", "vol_atr_std_10", "vol_atr_std_20", "vol_atr_max_5", "vol_atr_max_10", "vol_atr_max_20", "vol_atr_min_5", "vol_atr_min_10", "vol_atr_min_20", "vol_atr_ratio_ma20", "vol_atr_change", "vol_atr_change_abs", "vol_lag_1", "vol_lag_2", "vol_lag_3", "vol_trend_slope_5", "vol_trend_slope_10", "vol_trend_slope_20", "vol_acceleration", "vol_ma_5", "vol_ma_10", "vol_ma_20", "vol_ema_5", "vol_ema_10", "vol_ema_20", "vol_volatility_zscore", "vol_percentile_rank", "vol_range_10", "vol_range_20", "vol_range_ratio_10", "vol_range_ratio_20", "vol_momentum_3", "vol_momentum_5", "vol_momentum_10"]
+    category: volatility
+    description: "扩展波动率特征：历史波动率、滞后特征、趋势特征、波动率regime特征（精简滞后特征，只保留1-3期）"
+    compute_params:
+      window: 20
+      lag_periods: [1, 2, 3]  # 精简：只保留短期滞后，降低过拟合风险
+    pass_full_df: true
+    notes: |
+      扩展波动率特征用于提高波动率预测准确性：
+      - 历史波动率：不同窗口的滚动标准差
+      - ATR相关特征：ATR的统计特征和比率
+      - 滞后特征：波动率的滞后值
+      - 趋势特征：波动率的斜率和加速度
+      - 移动平均：波动率的MA和EMA
+      - Regime特征：波动率的Z-score和百分位排名
+      - 范围特征：波动率的范围和范围比率
+      - 动量特征：波动率的变化率
+  
+  # ========================================================================
+  # DTW 特征（形态匹配）
+  # ========================================================================
+  dtw_features:
+    module: enhanced
+    compute_func: extract_dtw_features
+    dependencies: ["sr_strength_max"]  # 需要SR特征来计算dist_to_nearest_sr
+    required_columns: ["close", "dist_to_nearest_sr", "atr"]
+    output_columns: ["dtw_hammer_dist", "dtw_head_shoulder_bottom_dist", "dtw_double_bottom_dist", "dtw_bullish_engulfing_dist", "dtw_shooting_star_dist", "dtw_head_shoulder_top_dist", "dtw_double_top_dist", "dtw_bearish_engulfing_dist", "dtw_bull_flag_dist", "dtw_bear_flag_dist", "dtw_triangle_dist", "dtw_decline_consolidation_dist", "dtw_min_dist", "dtw_best_match"]
+    category: pattern
+    description: "DTW (Dynamic Time Warping) 形态匹配特征 - 仅在SR附近计算"
+    compute_params:
+      window: 20
+      compute_only_near_sr: true
+      sr_dist_col: "dist_to_nearest_sr"
+      sr_threshold: 1.5  # 仅在距离SR < 1.5 * ATR时计算
+    pass_full_df: true
+    notes: |
+      DTW 用于形态匹配：
+      - 距离越小，越像该形态
+      - 包含看涨、看跌、中继形态模板
+      - 仅在SR附近（dist_to_nearest_sr < 1.5 * ATR）计算，提高效率
+      - 需要安装 dtaidistance 包：pip install dtaidistance
+  
+  # ========================================================================
+  # EVT 特征（尾部风险预警）
+  # ========================================================================
+  evt_features:
+    module: enhanced
+    compute_func: extract_evt_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["evt_tail_shape", "evt_tail_shape_left", "evt_tail_shape_right", "evt_scale", "evt_var_99", "evt_es_99"]
+    category: risk_management
+    description: "EVT (Extreme Value Theory) 极值理论特征：尾部形状参数（黑天鹅预警）- 用于风险管理/仓位控制，不用于波动率预测"
+    compute_params:
+      window: 120
+      threshold_quantile: 0.95
+      min_excesses: 10
+      separate_tails: true
+    pass_full_df: true
+    notes: |
+      EVT 用于尾部风险预警和风险管理：
+      - evt_tail_shape (ξ): 尾部形状参数，>0.5表示厚尾（黑天鹅风险高）
+      - evt_tail_shape_left: 左尾（崩盘风险）
+      - evt_tail_shape_right: 右尾（泡沫风险）
+      - evt_var_99: 99% VaR估计
+      - evt_es_99: 99% Expected Shortfall估计
+      
+      应用场景：
+      - 控制离场：当 ξ 突增时，提前离场避免黑天鹅
+      - 不加仓：当尾部风险高时，避免加仓
+      - 不用于波动率预测：EVT特征描述极端事件概率，而非波动率水平
+      
+      需要 scipy 包（通常已安装）
+  
+  # ========================================================================
   # 特征组合交互（状态 × 动量）- 每个交互特征独立定义
   # ========================================================================
   liquidity_void_x_wpt_risk:
