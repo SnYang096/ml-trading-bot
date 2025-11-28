@@ -328,7 +328,8 @@ RUN echo "📦 Installing project dependencies..." && \
     arch \
     vectorbt \
     "dtaidistance[pure]==2.3.10" \
-    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, dtaidistance; print('✅ 项目依赖库安装完成')"
+    pytest \
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, dtaidistance, pytest; print('✅ 项目依赖库安装完成 (包括pytest)')"
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库

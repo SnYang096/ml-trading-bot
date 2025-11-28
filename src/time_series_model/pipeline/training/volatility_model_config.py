@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import yaml
 import pandas as pd
 import numpy as np
@@ -223,6 +223,50 @@ def prepare_volatility_model_data(
 
     # 创建VPIN衍生特征
     X_processed = create_vpin_volatility_features(X_processed, config)
+
+    # 增强WPT特征（如果存在WPT特征）
+    # 注意：增强的特征应该在配置文件的 wpt_volatility 组中列出
+    from src.features.time_series.utils_volatility_features import (
+        enhance_wpt_vol_features,
+        extract_volume_profile_volatility_features,
+    )
+
+    wpt_cols = [col for col in X_processed.columns if col.startswith("wpt_")]
+    if wpt_cols:
+        X_processed = enhance_wpt_vol_features(X_processed)
+
+    # 提取 Volume Profile 波动率特征（如果尚未存在）
+    vp_cols = [col for col in X_processed.columns if col.startswith("vp_")]
+    if (
+        not vp_cols
+        or len(
+            [
+                c
+                for c in [
+                    "vp_width_ratio",
+                    "vp_poc_deviation",
+                    "vp_skewness",
+                    "vp_entropy",
+                    "vp_lv_ratio",
+                    "vp_hv_ratio",
+                ]
+                if c in X_processed.columns
+            ]
+        )
+        < 6
+    ):
+        try:
+            X_processed = extract_volume_profile_volatility_features(
+                X_processed,
+                price_col="close",
+                volume_col="volume",
+                window=100,
+                wavelet="db4",
+                level=4,
+            )
+            print("   ✅ Computed Volume Profile volatility features")
+        except Exception as exc:
+            print(f"   ⚠️ Failed to compute Volume Profile volatility features: {exc}")
 
     # 去重并保持顺序
     seen = set()

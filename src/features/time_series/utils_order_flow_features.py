@@ -498,10 +498,13 @@ def extract_order_flow_features(
             lookback_minutes=loader_params.get("lookback_minutes", 60),
         )
     else:
+        # 如果没有tick数据，直接抛出错误并退出
+        # VPIN必须基于tick数据计算，不支持降级处理
         raise ValueError(
             "VPIN calculation requires tick data. "
             "Please provide tick data via the 'ticks' parameter "
-            "or configure ticks_loader_json."
+            "or configure ticks_loader_json. "
+            "VPIN cannot be computed without tick data."
         )
     
     # 对齐到 df 的时间索引（右对齐，避免未来信息泄露）

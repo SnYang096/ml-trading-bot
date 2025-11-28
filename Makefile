@@ -105,7 +105,7 @@ endif
 	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
 	cs-build-panel cs-report cs-train cs-workflow \
-	test-wpt-volume-profile test-wpt-volume-profile-simple
+	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features
 
 help:
 	@echo "ML Trading Project"
@@ -119,6 +119,8 @@ help:
 	@echo "Testing commands (run in Docker):"
 	@echo "  make test-wpt-volume-profile        # Test WPT volume profile improvements (pytest format)"
 	@echo "  make test-wpt-volume-profile-simple # Test WPT volume profile improvements (simple script)"
+	@echo "  make test-extended-volatility-features # Test extended volatility features extraction"
+	@echo "  make test-spectrum-features         # Test spectrum features with simulated data (pytest format)"
 	@echo ""
 	@echo "Docker setup commands:"
 	@echo "  make docker-build         # Build Docker image (lightgbm-runtime:latest)"
@@ -485,13 +487,23 @@ ts-sr-reversal-ml-param-sweep:
 		--output-dir /workspace/$(SR_COMP_OUTPUT_DIR)
 
 # ML Plateau Charts: Generate heatmaps/scatter plots from ML parameter sweep CSV (generic, works for any strategy)
+# Usage: make ts-ml-plateau-charts SR_COMP_TIMEFRAME=240T
 ts-ml-plateau-charts:
-	@echo "🖼️  Generating ML plateau heatmaps and scatter charts"
+	@echo "🖼️  Generating ML plateau heatmaps and scatter charts for $(SR_COMP_TIMEFRAME)"
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_ml_plateau_charts.py \
-		--results-csv /workspace/results/model_comparison/ml_param_sweep.csv \
-		--report-html /workspace/results/model_comparison/comparison_report.html
+		--results-csv /workspace/results/model_comparison/$(SR_COMP_TIMEFRAME)/ml_param_sweep.csv \
+		--report-html /workspace/results/model_comparison/$(SR_COMP_TIMEFRAME)/comparison_report.html
+
+# Timeframe Comparison Report: Generate comprehensive comparison between 1h and 4h timeframes
+ts-timeframe-comparison:
+	@echo "📊 Generating timeframe comparison report (1h vs 4h)"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_timeframe_comparison_report.py \
+		--output-dir /workspace/results/model_comparison \
+		--results-1h /workspace/results/model_comparison/comparison_results.csv \
+		--results-4h /workspace/results/model_comparison_240h/comparison_results.csv
 
 # SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility
+# Output structure: results/model_comparison/{timeframe}/ (e.g., results/model_comparison/240T/, results/model_comparison/60T/)
 SR_COMP_CONFIG ?= config/strategies/sr_reversal
 SR_COMP_SYMBOL ?= BTCUSDT
 SR_COMP_DATA_PATH ?= $(DATA_DIR)
@@ -499,7 +511,7 @@ SR_COMP_TIMEFRAME ?= 240T
 SR_COMP_START ?= 2024-01-01
 SR_COMP_END ?= 2025-10-31
 SR_COMP_TEST_SIZE ?= 0.15
-SR_COMP_OUTPUT_DIR ?= results/model_comparison_$(subst T,,$(SR_COMP_TIMEFRAME))h
+SR_COMP_OUTPUT_DIR ?= results/model_comparison/$(SR_COMP_TIMEFRAME)
 SR_COMP_RULE_PARAMS ?= results/rule_optimization/optimization_results.csv
 SR_COMP_TICK_MODE ?= auto
 SR_COMP_TICKS_DIR ?= data/parquet_data
@@ -1260,6 +1272,18 @@ test-wpt-volume-profile:
 test-wpt-volume-profile-simple:
 	@echo "🧪 Testing WPT Volume Profile improvements (simple script)..."
 	@$(DOCKER_RUN_NO_TTY) python3 tests/test_wpt_improvements_simple.py
+
+test-extended-volatility-features:
+	@echo "🧪 Testing Extended Volatility Features extraction..."
+	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest && python3 -m pytest tests/test_extended_volatility_features.py -v --tb=short"
+
+test-spectrum-features:
+	@echo "🧪 Testing Spectrum Features with simulated data..."
+	@$(DOCKER_RUN_NO_TTY) python3 tests/test_spectrum_features_docker.py
+
+test-volume-profile-volatility-features:
+	@echo "🧪 Testing Volume Profile Volatility Features with simulated data..."
+	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_volume_profile_volatility_features.py -v -s --tb=short"
 
 alphalens-example:
 	@echo "📊 Running complete Alphalens example with comprehensive analysis..."

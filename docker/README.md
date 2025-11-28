@@ -99,6 +99,107 @@ make docker-gpu-check      # 环境检查
 - [LightGBM GPU](https://lightgbm.readthedocs.io/en/latest/GPU-Tutorial.html)
 - [NVIDIA Docker](https://github.com/NVIDIA/nvidia-docker)
 
+## 🔧 故障排除
+
+### TLS Handshake Timeout 错误
+
+如果遇到 `TLS handshake timeout` 错误（如 `failed to resolve source metadata for docker.io/nvidia/cuda`），可以尝试以下解决方案：
+
+**快速诊断：**
+```bash
+# 运行诊断脚本
+bash docker/fix_docker_timeout.sh
+```
+
+该脚本会自动检测代理设置并生成正确的构建命令。
+
+#### 方案 1: 使用代理（推荐）
+
+如果你有可用的代理，在构建时传递代理参数：
+
+```bash
+docker build -f docker/Dockerfile.gpu \
+  --target runtime \
+  -t lightgbm-runtime:v0.0.5 \
+  . \
+  --build-arg HTTP_PROXY=http://host.docker.internal:7897 \
+  --build-arg HTTPS_PROXY=http://host.docker.internal:7897 \
+  --build-arg http_proxy=http://host.docker.internal:7897 \
+  --build-arg https_proxy=http://host.docker.internal:7897 \
+  --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com \
+  --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
+```
+
+#### 方案 2: 配置 Docker Daemon 代理
+
+编辑 `/etc/docker/daemon.json`（需要 root 权限）：
+
+```json
+{
+  "proxies": {
+    "http-proxy": "http://host.docker.internal:7897",
+    "https-proxy": "http://host.docker.internal:7897",
+    "no-proxy": "localhost,127.0.0.1"
+  }
+}
+```
+
+然后重启 Docker：
+```bash
+sudo systemctl restart docker
+```
+
+#### 方案 3: 使用 Docker 镜像加速器
+
+编辑 `/etc/docker/daemon.json`：
+
+```json
+{
+  "registry-mirrors": [
+    "https://docker.mirrors.ustc.edu.cn",
+    "https://hub-mirror.c.163.com"
+  ]
+}
+```
+
+重启 Docker 服务。
+
+#### 方案 4: 验证 CUDA 镜像标签
+
+检查 CUDA 12.8.1 镜像是否存在：
+
+```bash
+# 尝试手动拉取镜像
+docker pull nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+
+# 如果失败，可以尝试其他版本
+docker pull nvidia/cuda:12.6.1-cudnn-runtime-ubuntu22.04
+```
+
+如果标签不存在，需要更新 Dockerfile 中的 CUDA 版本。
+
+#### 方案 5: 增加超时时间
+
+在构建前设置环境变量：
+
+```bash
+export DOCKER_CLIENT_TIMEOUT=300
+export COMPOSE_HTTP_TIMEOUT=300
+```
+
+#### 方案 6: 重试构建
+
+网络问题可能是暂时的，可以多次重试：
+
+```bash
+# 重试 3 次
+for i in {1..3}; do
+  echo "Attempt $i/3..."
+  docker build -f docker/Dockerfile.gpu --target runtime -t lightgbm-runtime:v0.0.5 . && break
+  sleep 10
+done
+```
+
 ---
 
 **需要帮助?** 查看 [QUICKSTART.md](./QUICKSTART.md) 或 [README_GPU_DOCKER.md](./README_GPU_DOCKER.md)

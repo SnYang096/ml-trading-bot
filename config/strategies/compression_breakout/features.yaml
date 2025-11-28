@@ -6,14 +6,40 @@ description: >
 feature_pipeline:
   requested_features:
     - atr
-    - spectrum_dominant
-    - wpt_price_energy_high_ratio
-    - wpt_volume_energy
-    - liquidity_void_detected
-    - liquidity_void_speed
+    # 频谱特征（精确选择）- 作为"环境传感器"，区分真突破 vs 噪音刺破
+    # 核心逻辑：频谱 ≠ 直接信号，而是"市场可交易性诊断器"
+    # 
+    # 需要的特征列（在 selector 函数中选择）：
+    # - spectrum_price_high_freq_ratio  (核心：突破时噪声检测，真突破时不应飙升)
+    # - spectrum_price_low_freq_ratio   (核心：压缩期能量蓄势，low_freq 高 = 慢速资金主导)
+    # - spectrum_price_flatness         (辅助：压缩期结构识别)
+    # 
+    # 不需要的特征：
+    # - spectrum_price_entropy          (主要用于反转策略)
+    # - spectrum_price_has_dominant_freq (金融收益率通常无显著主频)
+    # - spectrum_price_centroid          (主要用于波动率预测)
+    # 
+    # 使用方式（参考文档）：
+    # 1. 压缩期间：监控 High-Freq Energy 是否下降（蓄势）
+    # 2. 突破瞬间：若 High-Freq Energy 未飙升 → 确认真突破
+    # 3. 真突破伴随能量从低频向中高频迁移，但不伴随微观噪声爆发
+    # 4. 若突破时 HF 能量暴增，可能是假信号（噪音刺破）
+    # 
+    # 压缩期特征：flatness 低（有结构），low_freq_ratio 高（慢速资金主导）
+    # 突破期特征：flatness 可能上升，high_freq_ratio 上升（流动性碎片化）
+    # 
+    # 注意：阈值由 LightGBM 模型自动学习，不需要硬编码
+    # 上述条件说明仅用于理解特征含义，实际使用中模型会根据数据自动学习最优判断逻辑
+    # WPT 特征（多尺度压缩区分析）
+    - wpt_price_reconstructed  # 包含: wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed
+    - wpt_price_fluctuation    # 包含: wpt_price_energy_low_ratio, wpt_price_energy_mid_ratio, wpt_price_energy_high_ratio
+    - wpt_volume_energy        # 包含: wpt_vper_low, wpt_vper_mid, wpt_vper_high, wpt_energy_cascade, wpt_multi_scale_consistency, wpt_breakout_confidence, wpt_false_breakout_risk
+    - wpt_cvd_fluctuation      # CVD 波动（资金流去趋势）
+    # 频谱特征（精确选择）- 作为"环境传感器"，区分真突破 vs 噪音刺破
+    - spectrum_features_compression_breakout  # 精确选择：high_freq_ratio, low_freq_ratio, flatness
+    # 流动性特征
+    - liquidity_void            # 包含: liquidity_void_detected, liquidity_void_speed, liquidity_void_volume_ratio, liquidity_void_retracement, liquidity_void_false_breakout_risk
     - hilbert_phase
-    - wpt_price_energy_mid_ratio
-    - wpt_price_energy_low_ratio
     - hurst_price  # 价格趋势持续性
     - hurst_cvd  # CVD 资金流的持续性（识别压缩区突破质量）
     # 订单流特征（VPIN）
@@ -30,14 +56,8 @@ feature_pipeline:
     # 专注于中继形态：三角收敛、旗形、横盘整理（压缩区典型形态）
     # 只包含中继形态及其反向模板，用于对比学习
     - dtw_features_compression
-  post_processors:
-    - module: src.time_series_model.strategies.compression_breakout.features
-      function: build_compression_breakout_features
-      params: {}
-  selector:
-    module: src.time_series_model.strategies.compression_breakout.features
-    function: select_compression_breakout_features
-    params: {}
+  # 注意：post_processors 和 selector 已移除，特征选择通过 YAML 中的精确特征定义完成
+  # 所有特征通过统一的 feature_dependencies.yaml 加载，不需要策略特定的处理函数
   ensure_signal_column:
     name: signal
     default_value: 0

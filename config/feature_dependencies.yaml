@@ -354,6 +354,29 @@ features:
       - 多尺度一致性: 至少两个中低频子带同时出现能量上升
       - 真假突破评分: 基于多尺度能量和 VPER 的综合评分
   
+  volume_profile_volatility_features:
+    module: enhanced
+    compute_func: extract_volume_profile_volatility_features
+    dependencies: []
+    required_columns: ["close", "volume"]
+    output_columns: ["vp_width_ratio", "vp_poc_deviation", "vp_skewness", "vp_entropy", "vp_lv_ratio", "vp_hv_ratio"]
+    category: volatility
+    description: "Volume Profile 波动率特征（从 WPT 降噪后的 Volume Profile 提取）"
+    compute_params:
+      window: 100
+      wavelet: "db4"
+      level: 4
+    notes: |
+      Volume Profile 波动率特征：
+      - vp_width_ratio: Value Area Width / Full Range（市场共识强度）
+      - vp_poc_deviation: 当前价格 vs POC 的标准化偏离
+      - vp_skewness: 成交量分布偏度（趋势倾向）
+      - vp_entropy: 信息熵（不确定性）
+      - vp_lv_ratio: 低成交量区域比例（LVN）
+      - vp_hv_ratio: 高成交量区域比例（HVN）
+      这些特征与 vol_zscore、vol_slope_10 结合，可显著提升对"波动率拐点"的识别能力。
+    pass_full_df: true
+  
   # ========================================================================
   # Hilbert 特征（依赖 WPT 去趋势化）
   # 重要：Hilbert 相位分析必须使用 CVD（而不是 Volume）做相位领先分析
@@ -594,7 +617,7 @@ features:
     compute_func: extract_extended_volatility_features
     dependencies: ["atr"]
     required_columns: ["close", "atr"]
-    output_columns: ["vol_historical_5", "vol_historical_10", "vol_historical_20", "vol_historical_60", "vol_atr_price_ratio", "vol_atr_ma_5", "vol_atr_ma_10", "vol_atr_ma_20", "vol_atr_std_5", "vol_atr_std_10", "vol_atr_std_20", "vol_atr_max_5", "vol_atr_max_10", "vol_atr_max_20", "vol_atr_min_5", "vol_atr_min_10", "vol_atr_min_20", "vol_atr_ratio_ma20", "vol_atr_change", "vol_atr_change_abs", "vol_lag_1", "vol_lag_2", "vol_lag_3", "vol_trend_slope_5", "vol_trend_slope_10", "vol_trend_slope_20", "vol_acceleration", "vol_ma_5", "vol_ma_10", "vol_ma_20", "vol_ema_5", "vol_ema_10", "vol_ema_20", "vol_volatility_zscore", "vol_percentile_rank", "vol_range_10", "vol_range_20", "vol_range_ratio_10", "vol_range_ratio_20", "vol_momentum_3", "vol_momentum_5", "vol_momentum_10"]
+    output_columns: ["vol_raw_5", "vol_raw_10", "vol_raw_20", "vol_raw_60", "vol_atr_norm", "vol_atr_ma_5", "vol_atr_ma_10", "vol_atr_ma_20", "vol_atr_std_5", "vol_atr_std_10", "vol_atr_std_20", "vol_atr_max_5", "vol_atr_max_10", "vol_atr_max_20", "vol_atr_min_5", "vol_atr_min_10", "vol_atr_min_20", "vol_atr_ratio_20", "vol_atr_change", "vol_atr_change_abs", "vol_lag_1", "vol_lag_2", "vol_lag_3", "vol_slope_5", "vol_slope_10", "vol_slope_20", "vol_accel", "vol_ma_5", "vol_ma_10", "vol_ma_20", "vol_ema_5", "vol_ema_10", "vol_ema_20", "vol_zscore", "vol_percentile_approx", "vol_range_10", "vol_range_20", "vol_range_pos_10", "vol_range_pos_20", "vol_mom_3", "vol_mom_5", "vol_mom_10"]
     category: volatility
     description: "扩展波动率特征：历史波动率、滞后特征、趋势特征、波动率regime特征（精简滞后特征，只保留1-3期）"
     compute_params:
@@ -1164,14 +1187,118 @@ features:
   # ========================================================================
   # Spectrum 特征（无依赖）
   # ========================================================================
-  spectrum_dominant:
+  # 基础频谱特征（包含所有列，用于波动率模型等需要全部特征的场景）
+  spectrum_features:
     module: enhanced
     compute_func: extract_spectrum_features
     dependencies: []
     required_columns: ["close"]
-    output_columns: ["spectrum_dominant"]
+    output_columns:
+      # 价格频谱特征（6个核心特征，总是生成）
+      - "spectrum_price_has_dominant_freq"      # 是否存在显著主频（布尔，0/1）
+      - "spectrum_price_flatness"                # 频谱平坦度（0-1），越低表示能量越集中（趋势/共振）
+      - "spectrum_price_high_freq_ratio"        # 高频能量占比（0-1），越高表示噪声/流动性碎片化越强
+      - "spectrum_price_low_freq_ratio"          # 低频能量占比（0-1），越高表示长期驱动/宏观因素主导
+      - "spectrum_price_entropy"                 # 谱熵（0-1），越低表示系统有序性越高（如闪崩前的同步）
+      - "spectrum_price_centroid"                # 频谱重心（Hz），能量集中在低频还是高频
+      # 成交量频谱特征（如果提供volume列，可选）
+      - "spectrum_volume_flatness"
+      - "spectrum_volume_high_freq_ratio"
+      - "spectrum_volume_low_freq_ratio"
+      - "spectrum_volume_entropy"
+      - "spectrum_volume_centroid"
+      # CVD频谱特征（如果提供cvd列，可选）
+      - "spectrum_cvd_flatness"
+      - "spectrum_cvd_high_freq_ratio"
+      - "spectrum_cvd_low_freq_ratio"
+      - "spectrum_cvd_entropy"
+      - "spectrum_cvd_centroid"
     category: spectrum
-    description: "Dominant frequency from spectrum analysis"
+    description: |
+      频谱分析特征（完整版，包含所有列）
+      用于波动率模型等需要全部特征的场景
+    pass_full_df: true
+    compute_params:
+      rolling_window: 64
+      price_col: "close"
+      volume_col: null
+      cvd_col: null
+
+  # SR 突破策略专用频谱特征（精确选择）
+  spectrum_features_sr_breakout:
+    module: enhanced
+    compute_func: extract_spectrum_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns:
+      - "spectrum_price_high_freq_ratio"  # 核心：噪声水平，假突破过滤
+      - "spectrum_price_flatness"         # 核心：市场结构，突破质量
+      - "spectrum_price_low_freq_ratio"   # 辅助：趋势驱动确认
+      - "spectrum_price_entropy"          # 辅助：系统有序性
+    category: spectrum
+    description: "SR 突破策略专用频谱特征（精确选择：high_freq_ratio, flatness, low_freq_ratio, entropy）"
+    pass_full_df: true
+    compute_params:
+      rolling_window: 64
+      price_col: "close"
+      volume_col: null
+      cvd_col: null
+
+  # SR 反转策略专用频谱特征（精确选择）
+  spectrum_features_sr_reversal:
+    module: enhanced
+    compute_func: extract_spectrum_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns:
+      - "spectrum_price_flatness"  # 核心：震荡市识别，flatness 高 = 白噪声
+      - "spectrum_price_entropy"   # 核心：系统有序性，高 entropy = 市场随机，适合反转
+    category: spectrum
+    description: "SR 反转策略专用频谱特征（精确选择：flatness, entropy）"
+    pass_full_df: true
+    compute_params:
+      rolling_window: 64
+      price_col: "close"
+      volume_col: null
+      cvd_col: null
+
+  # 压缩区突破策略专用频谱特征（精确选择）
+  spectrum_features_compression_breakout:
+    module: enhanced
+    compute_func: extract_spectrum_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns:
+      - "spectrum_price_high_freq_ratio"  # 核心：突破时噪声检测，真突破时不应飙升
+      - "spectrum_price_low_freq_ratio"   # 核心：压缩期能量蓄势，low_freq 高 = 慢速资金主导
+      - "spectrum_price_flatness"         # 辅助：压缩期结构识别
+    category: spectrum
+    description: "压缩区突破策略专用频谱特征（精确选择：high_freq_ratio, low_freq_ratio, flatness）"
+    pass_full_df: true
+    compute_params:
+      rolling_window: 64
+      price_col: "close"
+      volume_col: null
+      cvd_col: null
+
+  # 趋势跟踪策略专用频谱特征（精确选择）
+  spectrum_features_trend_following:
+    module: enhanced
+    compute_func: extract_spectrum_features
+    dependencies: []
+    required_columns: ["close"]
+    output_columns:
+      - "spectrum_price_low_freq_ratio"   # 核心：趋势驱动识别，low_freq 高 = 长期驱动主导
+      - "spectrum_price_flatness"         # 核心：市场结构识别，flatness 低 = 有结构，非白噪声
+      - "spectrum_price_high_freq_ratio"  # 辅助：噪声水平，用于降权
+    category: spectrum
+    description: "趋势跟踪策略专用频谱特征（精确选择：low_freq_ratio, flatness, high_freq_ratio）"
+    pass_full_df: true
+    compute_params:
+      rolling_window: 64
+      price_col: "close"
+      volume_col: null
+      cvd_col: null
 
   # ========================================================================
   # TA-Lib 指标（按需计算单个指标）

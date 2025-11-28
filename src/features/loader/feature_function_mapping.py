@@ -19,7 +19,10 @@ from src.features.time_series.utils_order_flow_features import extract_order_flo
 from src.features.time_series.utils_garch_features import extract_garch_features
 from src.features.time_series.utils_dtw_features import extract_dtw_features
 from src.features.time_series.utils_evt_features import extract_evt_features
-from src.features.time_series.utils_volatility_features import extract_extended_volatility_features
+from src.features.time_series.utils_volatility_features import (
+    extract_extended_volatility_features,
+    extract_volume_profile_volatility_features,
+)
 # 独立DTW特征提取器（支持多窗口）
 from src.features.time_series.utils_dtw_individual import (
     extract_dtw_hammer,
@@ -86,19 +89,8 @@ from src.features.loader.talib_feature_wrappers import (
 )
 from src.features.loader.dl_feature_wrappers import compute_dl_sequence_features
 
-# 策略专属特征
-from src.time_series_model.strategies.sr_reversal.features import (
-    build_sr_reversal_features,
-)
-from src.time_series_model.strategies.sr_breakout.features import (
-    build_sr_breakout_features,
-)
-from src.time_series_model.strategies.compression_breakout.features import (
-    build_compression_breakout_features,
-)
-from src.time_series_model.strategies.trend_following.features import (
-    build_trend_following_features,
-)
+# 策略专属特征（已移除，现在通过统一的 YAML 配置加载）
+# 所有特征现在通过 feature_dependencies.yaml 统一管理
 
 FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     # ========================================================================
@@ -146,6 +138,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "extract_dtw_features": extract_dtw_features,
     "extract_evt_features": extract_evt_features,
     "extract_extended_volatility_features": extract_extended_volatility_features,
+    "extract_volume_profile_volatility_features": extract_volume_profile_volatility_features,
     
     # ========================================================================
     # 交互特征（每个交互特征独立计算函数）
@@ -191,12 +184,10 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_dl_sequence_features": compute_dl_sequence_features,
     
     # ========================================================================
-    # 策略专属特征构建函数
+    # 策略专属特征构建函数（已移除，现在通过统一的 YAML 配置加载）
     # ========================================================================
-    "build_sr_reversal_features": build_sr_reversal_features,
-    "build_sr_breakout_features": build_sr_breakout_features,
-    "build_compression_breakout_features": build_compression_breakout_features,
-    "build_trend_following_features": build_trend_following_features,
+    # 注意：所有特征现在通过 feature_dependencies.yaml 统一管理
+    # 不再需要策略特定的 build_*_features 和 select_*_features 函数
 }
 
 

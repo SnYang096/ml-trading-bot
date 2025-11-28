@@ -29,27 +29,27 @@ CORE_GARCH_COLS = [
 ]
 
 CORE_EXTENDED_VOL_COLS = [
-    "vol_historical_5",
-    "vol_historical_10",
-    "vol_historical_20",
-    "vol_historical_60",
-    "vol_atr_price_ratio",
-    "vol_atr_ratio_ma20",
+    "vol_raw_5",
+    "vol_raw_10",
+    "vol_raw_20",
+    "vol_raw_60",
+    "vol_atr_norm",
+    "vol_atr_ratio_20",
     "vol_atr_change",
     "vol_atr_change_abs",
     "vol_lag_1",
     "vol_lag_2",
     "vol_lag_3",
-    "vol_trend_slope_5",
-    "vol_trend_slope_10",
-    "vol_trend_slope_20",
-    "vol_acceleration",
+    "vol_slope_5",
+    "vol_slope_10",
+    "vol_slope_20",
+    "vol_accel",
     "vol_ma_5",
     "vol_ma_10",
     "vol_ma_20",
-    "vol_percentile_rank",
-    "vol_range_ratio_10",
-    "vol_momentum_3",
+    "vol_percentile_approx",
+    "vol_range_pos_10",
+    "vol_mom_3",
 ]
 
 CORE_VPIN_COLS = ["vpin_volatility_10", "vpin_volatility_20"]
@@ -87,29 +87,29 @@ def create_mock_data(n_samples: int = 1000) -> pd.DataFrame:
 
     # 添加扩展波动率特征
     returns_pct = df["close"].pct_change()
-    df["vol_historical_5"] = returns_pct.rolling(5, min_periods=1).std()
-    df["vol_historical_10"] = returns_pct.rolling(10, min_periods=1).std()
-    df["vol_historical_20"] = returns_pct.rolling(20, min_periods=1).std()
-    df["vol_historical_60"] = returns_pct.rolling(60, min_periods=1).std()
-    df["vol_atr_price_ratio"] = df["atr"] / (df["close"] + 1e-6)
-    df["vol_atr_ratio_ma20"] = df["atr"] / (
+    df["vol_raw_5"] = returns_pct.rolling(5, min_periods=1).std()
+    df["vol_raw_10"] = returns_pct.rolling(10, min_periods=1).std()
+    df["vol_raw_20"] = returns_pct.rolling(20, min_periods=1).std()
+    df["vol_raw_60"] = returns_pct.rolling(60, min_periods=1).std()
+    df["vol_atr_norm"] = df["atr"] / (df["close"] + 1e-6)
+    df["vol_atr_ratio_20"] = df["atr"] / (
         df["atr"].rolling(20, min_periods=1).mean() + 1e-6
     )
     df["vol_atr_change"] = df["atr"].pct_change()
     df["vol_atr_change_abs"] = df["vol_atr_change"].abs()
-    df["vol_lag_1"] = df["vol_historical_5"].shift(1)
-    df["vol_lag_2"] = df["vol_historical_5"].shift(2)
-    df["vol_lag_3"] = df["vol_historical_5"].shift(3)
-    df["vol_trend_slope_5"] = np.random.randn(n_samples) * 0.01
-    df["vol_trend_slope_10"] = np.random.randn(n_samples) * 0.01
-    df["vol_trend_slope_20"] = np.random.randn(n_samples) * 0.01
-    df["vol_acceleration"] = np.random.randn(n_samples) * 0.01
-    df["vol_ma_5"] = df["vol_historical_5"].rolling(5, min_periods=1).mean()
-    df["vol_ma_10"] = df["vol_historical_10"].rolling(10, min_periods=1).mean()
-    df["vol_ma_20"] = df["vol_historical_20"].rolling(20, min_periods=1).mean()
-    df["vol_percentile_rank"] = df["vol_historical_20"].rank(pct=True).fillna(0)
-    df["vol_range_ratio_10"] = np.random.randn(n_samples) * 0.05
-    df["vol_momentum_3"] = returns_pct.rolling(3, min_periods=1).sum()
+    df["vol_lag_1"] = df["vol_raw_5"].shift(1)
+    df["vol_lag_2"] = df["vol_raw_5"].shift(2)
+    df["vol_lag_3"] = df["vol_raw_5"].shift(3)
+    df["vol_slope_5"] = np.random.randn(n_samples) * 0.01
+    df["vol_slope_10"] = np.random.randn(n_samples) * 0.01
+    df["vol_slope_20"] = np.random.randn(n_samples) * 0.01
+    df["vol_accel"] = np.random.randn(n_samples) * 0.01
+    df["vol_ma_5"] = df["vol_raw_5"].rolling(5, min_periods=1).mean()
+    df["vol_ma_10"] = df["vol_raw_10"].rolling(10, min_periods=1).mean()
+    df["vol_ma_20"] = df["vol_raw_20"].rolling(20, min_periods=1).mean()
+    df["vol_percentile_approx"] = df["vol_raw_20"].rank(pct=True).fillna(0)
+    df["vol_range_pos_10"] = np.random.randn(n_samples) * 0.05
+    df["vol_mom_3"] = returns_pct.rolling(3, min_periods=1).sum()
 
     # 添加VPIN特征
     df["vpin"] = np.random.uniform(0, 1, n_samples)

@@ -4,7 +4,7 @@
     "python.linting.enabled": true,
     "python.linting.flake8Path": "~/miniconda3/bin/flake8",
     "python.defaultInterpreterPath": "~/miniconda3/bin/python",
-    "python.terminal.activateEnvironment": true,
+    "python.terminal.activateEnvironment": false,
     "python.analysis.extraPaths": [
     ],
     "editor.insertSpaces": true,
@@ -16,5 +16,16 @@
         "editor.tabSize": 2,
         "editor.defaultIndentSize": 2
     },
-    "cursorpyright.analysis.extraPaths": []
+    "cursorpyright.analysis.extraPaths": [],
+    // 终端配置：确保终端有 tty
+    "terminal.integrated.inheritEnv": true,
+    "terminal.integrated.enablePersistentSessions": true,
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.profiles.linux": {
+        "bash": {
+            "path": "/bin/bash",
+            "args": ["-l"],
+            "icon": "terminal-bash"
+        }
+    }
 }

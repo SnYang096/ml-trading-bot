@@ -180,6 +180,70 @@ def compute_vpin_x_wick_lower_wrapper(
     )
 
 
+def compute_vpin_x_trade_cluster_max_buy_run_wrapper(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    cluster_col: str = "trade_cluster_max_buy_run",
+    **kwargs
+) -> pd.DataFrame:
+    """包装函数：计算 vpin_x_trade_cluster_max_buy_run"""
+    return _wrap_interaction_to_df(
+        df,
+        compute_vpin_x_trade_cluster_max_buy_run,
+        "vpin_x_trade_cluster_max_buy_run",
+        vpin_col=vpin_col,
+        cluster_col=cluster_col,
+    )
+
+
+def compute_vpin_zscore_x_trade_cluster_max_buy_run_wrapper(
+    df: pd.DataFrame,
+    vpin_zscore_col: str = "vpin_zscore_20",
+    cluster_col: str = "trade_cluster_max_buy_run",
+    **kwargs
+) -> pd.DataFrame:
+    """包装函数：计算 vpin_zscore_x_trade_cluster_max_buy_run"""
+    return _wrap_interaction_to_df(
+        df,
+        compute_vpin_zscore_x_trade_cluster_max_buy_run,
+        "vpin_zscore_x_trade_cluster_max_buy_run",
+        vpin_zscore_col=vpin_zscore_col,
+        cluster_col=cluster_col,
+    )
+
+
+def compute_vpin_signed_imbalance_x_trade_cluster_imbalance_wrapper(
+    df: pd.DataFrame,
+    vpin_signed_col: str = "vpin_signed_imbalance",
+    cluster_imbalance_col: str = "trade_cluster_imbalance_ratio",
+    **kwargs
+) -> pd.DataFrame:
+    """包装函数：计算 vpin_signed_imbalance_x_trade_cluster_imbalance"""
+    return _wrap_interaction_to_df(
+        df,
+        compute_vpin_signed_imbalance_x_trade_cluster_imbalance,
+        "vpin_signed_imbalance_x_trade_cluster_imbalance",
+        vpin_signed_col=vpin_signed_col,
+        cluster_imbalance_col=cluster_imbalance_col,
+    )
+
+
+def compute_vpin_x_trade_cluster_entropy_wrapper(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    entropy_col: str = "trade_cluster_directional_entropy",
+    **kwargs
+) -> pd.DataFrame:
+    """包装函数：计算 vpin_x_trade_cluster_entropy"""
+    return _wrap_interaction_to_df(
+        df,
+        compute_vpin_x_trade_cluster_entropy,
+        "vpin_x_trade_cluster_entropy",
+        vpin_col=vpin_col,
+        entropy_col=entropy_col,
+    )
+
+
 def apply_rank_transform_to_interaction_wrapper(
     df: pd.DataFrame,
     interaction_col: str,

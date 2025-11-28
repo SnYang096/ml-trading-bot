@@ -54,27 +54,63 @@ volatility_features:
       feature_name: extended_volatility_features
       required: true
       columns:
-        - vol_historical_5
-        - vol_historical_10
-        - vol_historical_20
-        - vol_historical_60
-        - vol_atr_price_ratio
-        - vol_atr_ratio_ma20
-        - vol_atr_change
-        - vol_atr_change_abs
+        # 1. Multi-scale historical volatility (raw volatility)
+        - vol_raw_5
+        - vol_raw_10
+        - vol_raw_20
+        - vol_raw_60
+        
+        # 2. ATR-derived features
+        - vol_atr_norm                    # ATR / Price ratio (normalized volatility)
+        - vol_atr_ma_5                    # ATR moving average (5-period)
+        - vol_atr_ma_10                   # ATR moving average (10-period)
+        - vol_atr_ma_20                   # ATR moving average (20-period)
+        - vol_atr_std_5                   # ATR rolling std (5-period)
+        - vol_atr_std_10                  # ATR rolling std (10-period)
+        - vol_atr_std_20                  # ATR rolling std (20-period)
+        - vol_atr_max_5                  # ATR rolling max (5-period)
+        - vol_atr_max_10                 # ATR rolling max (10-period)
+        - vol_atr_max_20                 # ATR rolling max (20-period)
+        - vol_atr_min_5                  # ATR rolling min (5-period)
+        - vol_atr_min_10                 # ATR rolling min (10-period)
+        - vol_atr_min_20                 # ATR rolling min (20-period)
+        - vol_atr_ratio_20               # ATR ratio (current / 20-period mean)
+        - vol_atr_change                 # ATR change rate (pct_change)
+        - vol_atr_change_abs             # ATR absolute change
+        
+        # 3. Lag features of base volatility
         - vol_lag_1
         - vol_lag_2
         - vol_lag_3
-        - vol_trend_slope_5
-        - vol_trend_slope_10
-        - vol_trend_slope_20
-        - vol_acceleration
-        - vol_ma_5
-        - vol_ma_10
-        - vol_ma_20
-        - vol_percentile_rank
-        - vol_range_ratio_10
-        - vol_momentum_3
+        
+        # 4. Trend features (slope and acceleration)
+        - vol_slope_5                    # Volatility slope (5-period)
+        - vol_slope_10                   # Volatility slope (10-period)
+        - vol_slope_20                   # Volatility slope (20-period)
+        - vol_accel                      # Volatility acceleration (derivative of slope)
+        
+        # 5. Moving averages of base volatility
+        - vol_ma_5                       # Volatility MA (5-period)
+        - vol_ma_10                      # Volatility MA (10-period)
+        - vol_ma_20                      # Volatility MA (20-period)
+        - vol_ema_5                      # Volatility EMA (5-period)
+        - vol_ema_10                     # Volatility EMA (10-period)
+        - vol_ema_20                     # Volatility EMA (20-period)
+        
+        # 6. Volatility regime features
+        - vol_zscore                     # Z-score of volatility (regime indicator)
+        - vol_percentile_approx          # Approximate percentile rank (fast approximation)
+        
+        # 7. Volatility range features
+        - vol_range_10                   # Volatility range (10-period: max - min)
+        - vol_range_20                   # Volatility range (20-period: max - min)
+        - vol_range_pos_10               # Volatility position in range (10-period)
+        - vol_range_pos_20               # Volatility position in range (20-period)
+        
+        # 8. Volatility momentum features
+        - vol_mom_3                      # Volatility momentum (3-period)
+        - vol_mom_5                      # Volatility momentum (5-period)
+        - vol_mom_10                     # Volatility momentum (10-period)
 
     - name: vpin_volatility
       feature_name: vpin_features
@@ -82,6 +118,83 @@ volatility_features:
       columns:
         - vpin_volatility_10
         - vpin_volatility_20
+
+    - name: spectrum_volatility
+      feature_name: spectrum_features
+      required: false
+      columns:
+        # 用于波动率预测的核心频谱特征（Strategy 3: Volatility Forecasting）
+        # 核心逻辑：频谱作为"环境传感器"，提前1-2根K线捕捉波动启动
+        # 
+        # 主要特征（波动率突增领先指标）：
+        - spectrum_price_high_freq_ratio      # 高频能量占比（噪声/流动性碎片化，领先指标）
+        - spectrum_price_centroid             # 频谱重心（能量向高频迁移预示波动突增）
+        # 
+        # 使用方式（参考文档）：
+        # 1. High-Freq Energy Ratio 连续2根K线 ↑ → 触发波动率扩张信号
+        # 2. Spectral Centroid 上移 → 早期信号（能量向高频迁移）
+        # 3. 结合 ATR 或 realized vol 验证
+        # 4. 波动启动常始于高频冲击（订单流失衡），频谱重心上移是早期信号
+        # 
+        # 辅助特征：
+        - spectrum_price_flatness              # 频谱平坦度（趋势强度代理）
+        - spectrum_price_entropy               # 谱熵（系统有序性）
+        # 
+        # 注意：这些特征对未来5~15分钟波动率具有Granger因果关系
+
+    - name: wpt_volatility
+      feature_name: wpt_features
+      required: false
+      columns:
+        # WPT (Wavelet Packet Transform) 多尺度波动率特征
+        # 核心思想：通过小波包变换提取不同频段的能量和结构信息，提供多尺度视角
+        # 
+        # 基础特征：
+        - wpt_price_trend                      # 价格趋势（最低频子带）
+        - wpt_price_fluctuation               # 价格波动（去趋势后的残差）
+        - wpt_price_energy_low_ratio          # 低频能量占比（趋势主导）
+        - wpt_price_energy_mid_ratio          # 中频能量占比（周期）
+        - wpt_price_energy_high_ratio        # 高频能量占比（噪声强度）
+        - wpt_price_energy_mid_low_ratio      # 中低频能量比
+        - wpt_volume_energy_low_ratio         # 成交量低频能量占比
+        - wpt_cvd_energy_low_ratio            # CVD低频能量占比（如果存在）
+        - wpt_vper                            # 体积-价格能量比（量价一致性）
+        # 
+        # 增强特征（通过 enhance_wpt_vol_features 动态生成，需在配置中列出）：
+        - wpt_price_high_energy_ratio        # 高频能量占比（噪声强度，与上面重复但保留兼容性）
+        - wpt_price_fluct_l1_l2_ratio         # 波动信号的L1/L2范数比（尖峰程度，衡量极端波动概率）
+        - wpt_vhph_sync                       # 体积-价格高频同步性（量价高频能量同步）
+        # 
+        # 使用说明：
+        # 1. 高频能量占比高 → 噪声大，波动可能不可持续
+        # 2. 低频能量占比高 → 趋势稳定，波动可持续
+        # 3. L1/L2比高 → 尖峰程度高，极端波动概率大
+        # 4. 体积-价格高频同步 → 量价一致，信号更可靠
+        # 
+        # 注意：WPT特征具有约 window//2 的相位滞后，适用于中低频策略（日线/4H）
+
+    - name: volume_profile_volatility
+      feature_name: volume_profile_volatility_features
+      required: true
+      columns:
+        # Volume Profile 波动率特征（从 WPT 降噪后的 Volume Profile 提取）
+        # 核心思想：Volume Profile 揭示价格在哪些区域积累了大量成交，与未来波动密切相关
+        # 
+        # 特征说明：
+        - vp_width_ratio        # Value Area Width / Full Range（市场共识强度，越小→共识强→波动可能低）
+        - vp_poc_deviation      # 当前价格 vs POC 的标准化偏离（绝对值大→远离价值中枢→波动可能高）
+        - vp_skewness           # 成交量分布偏度（绝对值大→趋势强→波动可能持续）
+        - vp_entropy            # 信息熵（不确定性，越大→分歧大→波动可能高）
+        - vp_lv_ratio           # 低成交量区域比例（LVN，越大→薄弱区多→波动易放大）
+        - vp_hv_ratio           # 高成交量区域比例（HVN，越大→支撑/阻力密集→波动可能受限）
+        # 
+        # 使用说明：
+        # 1. vp_width_ratio ↓ → 市场在窄区间达成共识 → 未来波动率大概率下降（压缩后爆发前）
+        # 2. vp_lv_ratio ↑ → 存在多个低成交量"真空带" → 价格一旦进入，会快速穿越 → 短期波动↑
+        # 3. vp_entropy ↑ → 成交分布分散，无明确方向 → 多空博弈激烈 → 波动↑
+        # 4. abs(vp_poc_deviation) ↑ → 远离价值中枢 → 回归动力强 或 趋势加速 → 波动↑
+        # 
+        # 注意：这些特征与 vol_zscore、vol_slope_10 结合，可显著提升对"波动率拐点"的识别能力
 
     - name: compression_optional
       feature_name: bb_width
@@ -155,7 +268,7 @@ notes: |
   
   2. 特征优先级：
      - 最高优先级：VPIN volatility特征（vpin_volatility_10, vpin_volatility_20）
-     - 高优先级：GARCH特征、扩展波动率特征
+     - 高优先级：GARCH特征、扩展波动率特征、频谱特征（high_freq_ratio, centroid）
      - 中优先级：ATR相关特征、传统波动率特征
      - 低优先级：量价交互特征、压缩/范围特征
   
@@ -166,6 +279,10 @@ notes: |
   4. 特征工程：
      - 动态生成 vpin_vol_ratio = vpin_volatility_10 / vpin_volatility_20
      - 动态生成 vpin_vol_zscore 用于极端事件检测
+     - 频谱特征（spectrum_features）：
+       * high_freq_energy_ratio：高频能量占比，作为波动率突增的领先指标
+       * spectral_centroid：频谱重心，能量向高频迁移预示波动突增
+       * 这些特征对未来5~15分钟波动率具有Granger因果关系
   
   5. ATR把关机制：
      - 使用ATR作为下限和上限，防止预测值过于极端

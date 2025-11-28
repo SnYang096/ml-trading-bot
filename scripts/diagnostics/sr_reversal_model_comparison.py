@@ -1335,20 +1335,81 @@ def main() -> None:
                 "   ⚠️  vpin_features missing in feature dependencies; cannot pass tick loader."
             )
 
-    df_features = strategy_runner.run_feature_pipeline(
-        df_raw,
+    # ⚠️ CRITICAL FIX: Split train/test BEFORE feature fitting to avoid look-ahead bias
+    # Split raw data first
+    split_idx = int(len(df_raw) * (1 - args.test_size))
+    df_raw_train = df_raw.iloc[:split_idx].copy()
+    df_raw_test = df_raw.iloc[split_idx:].copy()
+
+    # Fit features on training set only
+    print("   🔧 Fitting features on training set only (to avoid look-ahead bias)...")
+    df_train = strategy_runner.run_feature_pipeline(
+        df_raw_train,
         feature_loader=feature_loader,
         pipeline_cfg=strategy_cfg.features,
-        fit=True,
+        fit=True,  # Fit on training set
     )
+
+    # Transform test set using fitted features (fit=False)
+    # Note: tick_loader_json is already configured in feature_loader, so it will be used for test set too
+    print("   🔧 Transforming test set using fitted features...")
+
+    # Ensure tick_loader_json is still available for test set (needed for VPIN)
+    if tick_loader_json:
+        vpin_feature = feature_loader.feature_deps.get("features", {}).get(
+            "vpin_features"
+        )
+        if vpin_feature is not None:
+            vpin_feature.setdefault("compute_params", {})[
+                "ticks_loader_json"
+            ] = tick_loader_json
+
+    df_test = strategy_runner.run_feature_pipeline(
+        df_raw_test,
+        feature_loader=feature_loader,
+        pipeline_cfg=strategy_cfg.features,
+        fit=False,  # Don't fit on test set!
+    )
+
+    # Combine for ATR calculation (ATR is a simple rolling window, safe to compute on full data)
+    # Check for duplicate indices before concat
+    train_dup = df_train.index.duplicated().sum()
+    test_dup = df_test.index.duplicated().sum()
+    if train_dup > 0 or test_dup > 0:
+        print(
+            f"   ⚠️  Warning: Duplicate indices detected (train: {train_dup}, test: {test_dup})"
+        )
+        # Remove duplicates (keep last)
+        df_train = df_train[~df_train.index.duplicated(keep="last")]
+        df_test = df_test[~df_test.index.duplicated(keep="last")]
+
+    # Use index-based split instead of iloc to preserve original indices
+    df_features = pd.concat([df_train, df_test]).sort_index()
+
+    # Check for overlapping indices between train and test
+    overlap = set(df_train.index) & set(df_test.index)
+    if overlap:
+        print(
+            f"   ⚠️  Warning: {len(overlap)} overlapping indices between train and test"
+        )
+        # Remove overlapping indices from test set
+        df_test = df_test[~df_test.index.isin(overlap)]
+        df_features = pd.concat([df_train, df_test]).sort_index()
+
+    # Store original train/test indices before ATR calculation
+    train_indices = df_train.index
+    test_indices = df_test.index
 
     # Ensure ATR
     atr_series = _ensure_atr(df_features, "atr", "close", "high", "low", 14)
 
-    # Split train/test
-    split_idx = int(len(df_features) * (1 - args.test_size))
-    df_train = df_features.iloc[:split_idx].copy()
-    df_test = df_features.iloc[split_idx:].copy()
+    # Re-split using original indices (not iloc) to preserve index alignment
+    df_train = df_features.loc[train_indices].copy()
+    df_test = df_features.loc[test_indices].copy()
+
+    # Split ATR series using original indices
+    atr_train = atr_series.loc[train_indices]
+    atr_test = atr_series.loc[test_indices]
 
     # Load optimized rule parameters
     if args.rule_params and Path(args.rule_params).exists():
@@ -1407,9 +1468,7 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("1️⃣ Evaluating Rule-Based Strategy")
     print("=" * 60)
-    rule_results = evaluate_rule_based(
-        df_test, atr_series.iloc[split_idx:], rule_params
-    )
+    rule_results = evaluate_rule_based(df_test, atr_test, rule_params)
     print(f"   Trades: {int(rule_results['n_trades'])}")
     print(f"   Win Rate: {rule_results['win_rate']:.2%}")
     print(f"   Breakeven Rate: {rule_results['breakeven_rate']:.2%}")
@@ -1436,12 +1495,39 @@ def main() -> None:
         price_col="close",
         high_col="high",
         low_col="low",
-        atr_series=atr_series.iloc[:split_idx],
+        atr_series=atr_train,
         cfg=sr_cfg,
     )
     df_train["signal"] = train_signals
 
+    # Debug: Check signal generation
+    n_signals = int((train_signals != 0).sum())
+    print(
+        f"   📊 Generated {n_signals} signals in training set (out of {len(df_train)} samples)"
+    )
+
     # Compute labels
+    # Debug: Check df_train before label computation
+    print(
+        f"   🔍 Debug df_train: shape={df_train.shape}, index range=[{df_train.index[0]} to {df_train.index[-1]}]"
+    )
+    print(
+        f"   🔍 Debug df_train: duplicate indices={df_train.index.duplicated().sum()}"
+    )
+    print(
+        f"   🔍 Debug signals: shape={train_signals.shape}, non-zero={int((train_signals != 0).sum())}"
+    )
+    print(
+        f"   🔍 Debug signals: duplicate indices={train_signals.index.duplicated().sum()}"
+    )
+    print(f"   🔍 Debug df_train columns: {sorted(df_train.columns.tolist())[:10]}...")
+
+    # Check if df_train has required columns for label computation
+    required_cols = ["close", "high", "low", "open", "atr", "signal"]
+    missing_cols = [col for col in required_cols if col not in df_train.columns]
+    if missing_cols:
+        print(f"   ⚠️  Missing required columns for label computation: {missing_cols}")
+
     train_labels = compute_rr_label(
         df_train.copy(),
         signal_col="signal",
@@ -1457,18 +1543,33 @@ def main() -> None:
         use_breakeven_stop=False,
     )
 
+    # Debug: Check label computation result
+    print(
+        f"   🔍 Debug labels: shape={train_labels.shape}, not NaN={int(train_labels.notna().sum())}, NaN={int(train_labels.isna().sum())}"
+    )
+    if train_labels.notna().sum() == 0 and (train_signals != 0).sum() > 0:
+        # Check if signals and labels have matching indices
+        signal_indices = train_signals[train_signals != 0].index
+        label_indices = train_labels.index
+        print(
+            f"   🔍 Debug indices: signal indices match={signal_indices.equals(label_indices)}"
+        )
+        print(
+            f"   🔍 Debug: First 5 signal indices with non-zero: {signal_indices[:5].tolist()}"
+        )
+        print(f"   🔍 Debug: First 5 label indices: {label_indices[:5].tolist()}")
+
     # Compute volatility labels
-    # 注意：必须在完整的df_features上计算，然后对齐到训练集
-    # 这样可以确保有足够的未来数据来计算标签
-    if "future_volatility" not in df_features.columns:
-        # 在完整的df_features上计算未来波动率标签
-        df_features["future_volatility"] = future_volatility_label(
-            df_features["close"],
+    # 注意：future_volatility_label使用未来数据，这是正确的（标签可以使用未来信息）
+    # 但为了索引对齐，直接在df_train上计算
+    if "future_volatility" not in df_train.columns:
+        # 在训练集上计算未来波动率标签
+        train_vol_labels = future_volatility_label(
+            df_train["close"],
             horizon=10,
         )
-
-    # 对齐到训练集
-    train_vol_labels = df_features.loc[df_train.index, "future_volatility"]
+    else:
+        train_vol_labels = df_train["future_volatility"]
 
     # Prepare features (exclude non-numeric columns)
     feature_cols = [
@@ -1502,14 +1603,40 @@ def main() -> None:
 
     # Filter valid samples
     valid_mask = (train_signals != 0) & train_labels.notna()
+
+    # Debug: Check why valid samples might be 0
+    n_signals_nonzero = int((train_signals != 0).sum())
+    n_labels_notna = int(train_labels.notna().sum())
+    n_valid = int(valid_mask.sum())
+    print(
+        f"   🔍 Debug: Signals (non-zero): {n_signals_nonzero}, Labels (not NaN): {n_labels_notna}, Valid: {n_valid}"
+    )
+
+    if n_valid == 0:
+        print(f"   ⚠️  WARNING: No valid training samples!")
+        print(f"      This might be due to:")
+        print(f"      - No signals generated (signals non-zero: {n_signals_nonzero})")
+        print(f"      - No valid labels (labels not NaN: {n_labels_notna})")
+        print(f"      - Index mismatch between signals and labels")
+        if n_signals_nonzero > 0 and n_labels_notna == 0:
+            print(
+                f"      ⚠️  Signals exist but labels are all NaN - check label computation"
+            )
+        if n_signals_nonzero == 0:
+            print(f"      ⚠️  No signals generated - check signal generation parameters")
+
     X_train_valid = X_train[valid_mask]
     y_train_valid = y_train[valid_mask]
     y_vol_train_valid = y_vol_train[valid_mask]
 
     print(f"   Training samples: {len(X_train_valid)}")
-    print(
-        f"   Positive labels: {int(y_train_valid.sum())} ({y_train_valid.mean():.2%})"
-    )
+    if len(X_train_valid) > 0:
+        print(
+            f"   Positive labels: {int(y_train_valid.sum())} ({y_train_valid.mean():.2%})"
+        )
+    else:
+        print(f"   ⚠️  Cannot proceed: No valid training samples")
+        return
 
     # 检查DTW特征是否被加载
     dtw_cols = [col for col in X_train_valid.columns if col.startswith("dtw_")]
@@ -1557,7 +1684,7 @@ def main() -> None:
     print("=" * 60)
     ml_results = evaluate_ml_model(
         df_test,
-        atr_series.iloc[split_idx:],
+        atr_test,
         ml_model,
         rule_params,
         threshold=0.5,
@@ -1573,7 +1700,7 @@ def main() -> None:
     print("=" * 60)
     ml_vol_results = evaluate_ml_volatility_model(
         df_test,
-        atr_series.iloc[split_idx:],
+        atr_test,
         ml_model,
         vol_model,
         rule_params,
