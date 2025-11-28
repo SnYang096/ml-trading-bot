@@ -144,10 +144,18 @@ def select_sr_reversal_features(
         "zz_high",
         "zz_low",
         "dist_to_zz",
-        # Hilbert 特征（相位领先）
+        # Hilbert 特征（相位领先 + 背离信号）
         "hilbert_phase",
         "hilbert_cvd_leads",
         "hilbert_envelope",
+        "hilbert_price_env",
+        "hilbert_cvd_env",
+        "hilbert_cvd_price_env_ratio",
+        "hilbert_volume_env",
+        "hilbert_env_price_vol_ratio",
+        "hilbert_triple_divergence",
+        "hilbert_price_env_qnorm",
+        "hilbert_cvd_env_qnorm",
         # Hurst 特征
         "hurst_price",
         "hurst_cvd",

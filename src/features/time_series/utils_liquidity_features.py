@@ -36,7 +36,7 @@ def build_wpt_denoised_vpvr(
     wavelet: str = "db4",
     level: int = 4,
     vpvr_window: int = 100,
-    bins: int = 50,
+    bins: int | str = "auto",
     drop_high_freq: bool = True,
 ) -> pd.DataFrame:
     """
@@ -56,7 +56,7 @@ def build_wpt_denoised_vpvr(
         wavelet: Wavelet function
         level: WPT decomposition level
         vpvr_window: Rolling window for VPVR calculation
-        bins: Number of price bins for VPVR
+        bins: Number of price bins for VPVR. If "auto" (default), uses Freedman-Diaconis rule
         drop_high_freq: Whether to drop highest frequency subband
     
     Returns:

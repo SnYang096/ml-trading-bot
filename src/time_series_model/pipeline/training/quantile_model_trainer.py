@@ -206,15 +206,57 @@ class QuantileModelTrainer(BaseModelTrainer):
 
         # Train volatility model
         print(f"   Training volatility model...")
-        model_vol = LightGBMTrainer(model_type="regression", use_gpu=self.use_gpu)
+
+        # 使用配置文件进行特征选择
+        try:
+            from .volatility_model_config import (
+                prepare_volatility_model_data,
+                get_volatility_model_params,
+                load_volatility_model_config,
+            )
+
+            config = load_volatility_model_config()
+            # 注意：这里没有feature_loader，因为X_df已经包含了策略的所有特征
+            # 如果需要计算缺失特征，需要在调用前传入feature_loader
+            X_vol, vol_features, categorical_features = prepare_volatility_model_data(
+                X_df, config, feature_loader=None
+            )
+            print(f"   ✅ Selected {len(vol_features)} volatility features from config")
+
+            # 获取模型参数
+            model_params = get_volatility_model_params(config)
+            trainer_config = config.get("trainer", {})
+            use_gpu = trainer_config.get("use_gpu", self.use_gpu)
+        except Exception as e:
+            print(
+                f"   ⚠️ Failed to load volatility model config: {e}, using all features"
+            )
+            X_vol = X_df
+            vol_features = list(X_df.columns)
+            categorical_features = None
+            model_params = None
+            use_gpu = self.use_gpu
+
+        model_vol = LightGBMTrainer(model_type="regression", use_gpu=use_gpu)
+
+        # 如果配置了模型参数，设置它们
+        if model_params:
+            model_vol.params = model_params
+
         vol_metrics, vol_preprocess_params = model_vol.train(
-            X_df,
+            X_vol,
             y_vol,
             n_splits=max(2, n_splits),
             use_time_series_cv=True,
             groups=groups,
             feature_winsorize_k=feature_winsorize_k,
+            categorical_features=categorical_features,
         )
+
+        # 存储使用的特征列表
+        model_vol._volatility_features = vol_features
+        if categorical_features:
+            model_vol._categorical_features = categorical_features
 
         models_dict = {
             "q50": model_q50,

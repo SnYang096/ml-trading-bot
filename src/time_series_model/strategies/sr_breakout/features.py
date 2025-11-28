@@ -64,13 +64,18 @@ def build_sr_breakout_features(
     if "wpt_price_energy_mid_low_ratio" in df.columns:
         df["wpt_momentum_persistence"] = df["wpt_price_energy_mid_low_ratio"]
 
-    # 2. Hilbert 特征（CVD 相位领先）
+    # 2. Hilbert 特征（CVD 相位领先 + 成交量融合识别假突破）
     if cvd_col and "wpt_cvd_fluctuation" in df.columns:
         print("   📊 Extracting Hilbert features...")
         df = extract_hilbert_features(
             df,
             price_fluctuation_col="wpt_price_fluctuation",
             cvd_fluctuation_col="wpt_cvd_fluctuation",
+            volume_col=volume_col,
+            window=64,
+            ema_span=10,
+            # 高级功能：成交量融合（识别假突破）+ 三元背离信号
+            use_volume_fusion=True,
         )
 
     # 3. Hurst 特征（趋势持续性）
@@ -80,8 +85,9 @@ def build_sr_breakout_features(
         price_col=price_col,
         cvd_col=cvd_col,
         volume_col=volume_col,
-        method="dfa",
         rolling_window=50,
+        update_freq=1,  # 每根K线更新（日线策略）
+        clip_pct=0.5,  # 裁剪极端收益率
     )
 
     # 4. Spectrum 特征（主频迁移）
@@ -115,7 +121,22 @@ def build_sr_breakout_features(
         feature_type="energy",  # 仅提取能量特征
     )
 
-    # 7. ZigZag 结构特征（空间域：突破点识别）
+    # 7. VPIN 衍生特征（基于配置文件加载的 VPIN 特征）
+    # 注意：VPIN 基础特征已通过配置文件加载，这里只做策略特定的组合特征
+    if "vpin" in df.columns:
+        # VPIN 突增可能表示突破有真实订单流支撑
+        if "vpin_spike_flag_20" in df.columns:
+            df["vpin_breakout_signal"] = (
+                (df["vpin"] > df["vpin"].rolling(20).quantile(0.8))
+                & (df["vpin_spike_flag_20"] == 1)
+            ).astype(float)
+        # Signed imbalance 方向与突破方向一致时，突破更可靠
+        if "vpin_signed_imbalance" in df.columns:
+            df["vpin_direction_consistency"] = np.sign(
+                df["vpin_signed_imbalance"]
+            ) * np.sign(df[price_col].diff())
+
+    # 8. ZigZag 结构特征（空间域：突破点识别）
     if "zz_high_value" in df.columns and "zz_low_value" in df.columns:
         # 到最近 ZigZag 高点的距离（用于识别突破点）
         if price_col in df.columns:
@@ -130,7 +151,7 @@ def build_sr_breakout_features(
                     0, np.nan
                 )
 
-    # 8. 突破质量特征
+    # 9. 突破质量特征
     if volume_col in df.columns:
         # 突破时成交量 / 20日均量
         df["volume_ma_20"] = df[volume_col].rolling(window=20, min_periods=1).mean()
@@ -252,6 +273,14 @@ def select_sr_breakout_features(
         # Hurst 特征
         "hurst_price",
         "hurst_cvd",
+        # Hilbert 特征（识别假突破 + 背离信号）
+        "hilbert_phase",
+        "hilbert_price_env",
+        "hilbert_cvd_env",
+        "hilbert_cvd_price_env_ratio",
+        "hilbert_volume_env",
+        "hilbert_env_price_vol_ratio",
+        "hilbert_triple_divergence",
         # Spectrum 特征
         "spectrum",
         "spectrum_period",

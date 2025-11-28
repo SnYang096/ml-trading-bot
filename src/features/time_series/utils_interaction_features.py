@@ -126,6 +126,103 @@ def compute_vpin_x_compression(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_compression")
 
 
+def compute_vpin_x_trade_cluster_max_buy_run(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    cluster_col: str = "trade_cluster_max_buy_run",
+) -> pd.Series:
+    """
+    计算 VPIN × 最大连续买入长度交互项
+    
+    捕捉"高订单流不平衡 + 连续买入聚集"的组合信号
+    可能表示知情交易者的策略性连续买入
+    
+    Args:
+        df: DataFrame with base features
+        vpin_col: VPIN column
+        cluster_col: Trade cluster max buy run column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(cluster_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_trade_cluster_max_buy_run")
+
+
+def compute_vpin_zscore_x_trade_cluster_max_buy_run(
+    df: pd.DataFrame,
+    vpin_zscore_col: str = "vpin_zscore_20",
+    cluster_col: str = "trade_cluster_max_buy_run",
+) -> pd.Series:
+    """
+    计算 VPIN Z-score × 最大连续买入长度交互项
+    
+    捕捉"异常高的订单流不平衡 + 连续买入聚集"的组合信号
+    这是用户建议的交叉项，可能有超加成效应
+    
+    Args:
+        df: DataFrame with base features
+        vpin_zscore_col: VPIN Z-score column
+        cluster_col: Trade cluster max buy run column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_zscore_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(cluster_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_zscore_x_trade_cluster_max_buy_run")
+
+
+def compute_vpin_signed_imbalance_x_trade_cluster_imbalance(
+    df: pd.DataFrame,
+    vpin_signed_col: str = "vpin_signed_imbalance",
+    cluster_imbalance_col: str = "trade_cluster_imbalance_ratio",
+) -> pd.Series:
+    """
+    计算 VPIN Signed Imbalance × Trade Clustering Imbalance 交互项
+    
+    捕捉"订单流方向性 + 成交聚集方向性"的一致性
+    两者方向一致时，信号更可靠
+    
+    Args:
+        df: DataFrame with base features
+        vpin_signed_col: VPIN signed imbalance column
+        cluster_imbalance_col: Trade cluster imbalance ratio column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_signed_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(cluster_imbalance_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_signed_imbalance_x_trade_cluster_imbalance")
+
+
+def compute_vpin_x_trade_cluster_entropy(
+    df: pd.DataFrame,
+    vpin_col: str = "vpin",
+    entropy_col: str = "trade_cluster_directional_entropy",
+) -> pd.Series:
+    """
+    计算 VPIN × 方向熵交互项
+    
+    捕捉"订单流不平衡 + 成交混乱度"的组合
+    高 VPIN + 低熵 = 大单主导且有序（知情交易）
+    高 VPIN + 高熵 = 大单主导但混乱（可能假突破）
+    
+    Args:
+        df: DataFrame with base features
+        vpin_col: VPIN column
+        entropy_col: Trade cluster directional entropy column
+    
+    Returns:
+        Series with interaction feature
+    """
+    state = df.get(vpin_col, pd.Series(0.0, index=df.index))
+    momentum = df.get(entropy_col, pd.Series(0.0, index=df.index))
+    return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_trade_cluster_entropy")
+
+
 def compute_sma_slope_x_price_pos(
     df: pd.DataFrame,
     sma_slope_col: str = "sma_200_slope",

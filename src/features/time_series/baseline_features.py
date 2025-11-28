@@ -241,7 +241,7 @@ class BaselineFeatureEngineer:
         low: pd.Series,
         volume: pd.Series,
         window: int = 160,
-        bins: int = 50,
+        bins: int | str = "auto",
         value_area_ratio: float = 0.7,
         price_col: Optional[pd.Series] = None,
     ) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
@@ -256,7 +256,7 @@ class BaselineFeatureEngineer:
             low: 最低价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
             volume: 成交量序列（始终使用原始成交量，不应过滤）
             window: 滚动窗口大小
-            bins: 价格分档数量
+            bins: 价格分档数量。如果为 "auto"（默认），则使用 Freedman-Diaconis rule 自动计算
             value_area_ratio: Value Area 的成交量占比（默认 0.7，即 70%）
             price_col: 可选的价格序列（如 WPT 低频重构价格）。如果提供，将使用此价格
                        而非 (high+low)/2。默认 None，使用原始价格（向后兼容）

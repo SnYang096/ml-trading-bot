@@ -15,6 +15,7 @@ import shutil
 import logging
 import argparse
 import re
+from typing import Optional
 
 # 设置日志
 logging.basicConfig(
@@ -24,37 +25,17 @@ logger = logging.getLogger(__name__)
 
 
 class DataConverter:
-    """数据转换器"""
+    """数据转换器：将 Binance aggTrades ZIP → 原始 tick Parquet"""
 
     def __init__(self, input_dir, output_dir, backup_dir=None):
-        """
-        初始化数据转换器
-
-        Args:
-            input_dir: 输入目录（包含zip文件）
-            output_dir: 输出目录（存储parquet文件）
-            backup_dir: 备份目录（可选，用于备份原始zip文件）
-        """
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.backup_dir = backup_dir
-
-        # 创建输出目录
         os.makedirs(self.output_dir, exist_ok=True)
         if self.backup_dir:
             os.makedirs(self.backup_dir, exist_ok=True)
 
     def convert_zip_to_parquet(self, zip_file, symbol=None):
-        """
-        将单个zip文件转换为parquet格式
-
-        Args:
-            zip_file: zip文件路径
-            symbol: 交易对符号（自动从文件名检测）
-
-        Returns:
-            dict: 转换结果信息
-        """
         try:
             logger.info(f"Converting {os.path.basename(zip_file)}...")
 
@@ -126,27 +107,19 @@ class DataConverter:
 
                 logger.info(f"Loaded data: {df.shape}")
 
-                # 数据预处理
-                df = self._preprocess_data(df)
-                if df is None:
+                df_ticks = self._preprocess_tick_data(df)
+                if df_ticks is None or df_ticks.empty:
+                    logger.warning("No tick data after preprocessing for %s", zip_file)
                     return None
 
-                # 重采样为5分钟K线
-                df_ohlc = self._resample_to_ohlc(df)
-
-                # 设置 symbol
-                # 转换符号格式：ETH-USDT -> ETH-USD
                 normalized_symbol = symbol.upper()
-                df_ohlc["symbol"] = normalized_symbol
-
-                # 生成输出文件名
+                df_ticks["symbol"] = normalized_symbol
                 output_file = self._generate_output_filename(
                     zip_file, normalized_symbol
                 )
 
-                # 保存为parquet
-                df_ohlc.to_parquet(output_file, compression="snappy")
-                logger.info(f"Saved to: {output_file}")
+                df_ticks.to_parquet(output_file, compression="snappy", index=False)
+                logger.info(f"Saved tick parquet: {output_file}")
 
                 # 备份原始文件
                 if self.backup_dir:
@@ -159,9 +132,9 @@ class DataConverter:
                 return {
                     "original_file": zip_file,
                     "output_file": output_file,
-                    "start_date": df_ohlc.index.min().strftime("%Y-%m-%d"),
-                    "end_date": df_ohlc.index.max().strftime("%Y-%m-%d"),
-                    "shape": df_ohlc.shape,
+                    "start_date": df_ticks["timestamp"].min().strftime("%Y-%m-%d"),
+                    "end_date": df_ticks["timestamp"].max().strftime("%Y-%m-%d"),
+                    "shape": df_ticks.shape,
                     "symbol": symbol,
                 }
 
@@ -169,120 +142,32 @@ class DataConverter:
             logger.error(f"Error converting {zip_file}: {e}")
             return None
 
-    def _preprocess_data(self, df):
-        """数据预处理"""
+    def _preprocess_tick_data(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
         try:
-            # 检查必要的列
-            required_cols = ["transact_time", "price", "quantity"]
+            required_cols = {"transact_time", "price", "quantity"}
             if not all(col in df.columns for col in required_cols):
-                logger.warning(f"Missing required columns in {df.columns.tolist()}")
+                logger.warning("Missing required columns in %s", df.columns.tolist())
                 return None
 
-            # 转换时间戳
             df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms")
-
-            # 重命名列
-            df = df.rename(columns={"price": "close", "quantity": "volume"})
-
-            # 按时间排序
+            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+            df["volume"] = pd.to_numeric(df["quantity"], errors="coerce")
+            df = df.dropna(subset=["timestamp", "price", "volume"])
             df = df.sort_values("timestamp")
 
-            # 去除重复数据
-            df = df.drop_duplicates(subset=["timestamp"])
+            if "is_buyer_maker" in df.columns:
+                df["side"] = np.where(df["is_buyer_maker"].astype(bool), -1, 1)
+            elif "side" in df.columns:
+                df["side"] = (
+                    df["side"].map({"buy": 1, "sell": -1}).fillna(0).astype(int)
+                )
+            else:
+                df["side"] = np.sign(df["volume"]).replace(0, 1)
 
-            return df
+            return df[["timestamp", "price", "volume", "side"]]
 
         except Exception as e:
-            logger.error(f"Error preprocessing data: {e}")
-            return None
-
-    def _resample_to_ohlc(self, df):
-        """重采样为OHLC数据并添加订单流特征"""
-        try:
-            # 设置时间戳为索引
-            df_indexed = df.set_index("timestamp")
-
-            # 重采样为5分钟K线
-            df_ohlc = (
-                df_indexed.resample("5min")
-                .agg({"close": ["first", "max", "min", "last"], "volume": "sum"})
-                .dropna()
-            )
-
-            # 展平列名
-            df_ohlc.columns = ["open", "high", "low", "close", "volume"]
-
-            # 添加其他必要列 - symbol 从外部传入
-            # df_ohlc["symbol"] will be set by convert_zip_to_parquet
-            df_ohlc["timestamp"] = df_ohlc.index
-
-            # 计算交易数量
-            df_ohlc["trade_count"] = df_indexed.resample("5min").size()
-
-            # 添加订单流特征 (如果有 is_buyer_maker 列)
-            if "is_buyer_maker" in df_indexed.columns:
-                # 分类买卖方
-                df_indexed["taker_buy"] = (
-                    ~df_indexed["is_buyer_maker"].astype(bool)
-                ).astype(int)
-                df_indexed["buy_qty"] = np.where(
-                    df_indexed["taker_buy"] == 1, df_indexed["volume"], 0.0
-                )
-                df_indexed["sell_qty"] = np.where(
-                    df_indexed["taker_buy"] == 1, 0.0, df_indexed["volume"]
-                )
-
-                # 重采样订单流
-                order_flow = df_indexed.resample("5min").agg(
-                    {"buy_qty": "sum", "sell_qty": "sum"}
-                )
-
-                # 计算 taker_buy_ratio
-                order_flow["taker_buy_ratio"] = order_flow["buy_qty"] / (
-                    order_flow["buy_qty"] + order_flow["sell_qty"]
-                ).replace(0, np.nan)
-                order_flow["taker_buy_ratio"] = order_flow["taker_buy_ratio"].fillna(
-                    0.5
-                )
-
-                # 计算 CVD 特征
-                delta = order_flow["buy_qty"] - order_flow["sell_qty"]
-                order_flow["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
-                order_flow["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
-                order_flow["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
-                order_flow["cvd_change_1"] = delta
-                order_flow["cvd_change_5"] = delta.rolling(window=5).sum()
-                order_flow["cvd_change_20"] = delta.rolling(window=20).sum()
-
-                # CVD 归一化
-                total_volume = order_flow["buy_qty"] + order_flow["sell_qty"]
-                order_flow["cvd_normalized"] = delta / total_volume.replace(0, np.nan)
-                order_flow["cvd_normalized"] = order_flow["cvd_normalized"].fillna(0)
-                order_flow["cvd"] = delta.cumsum()
-
-                # 合并到 OHLC 数据
-                order_flow_subset = order_flow[
-                    [
-                        "buy_qty",
-                        "sell_qty",
-                        "taker_buy_ratio",
-                        "cvd",
-                        "cvd_short",
-                        "cvd_medium",
-                        "cvd_long",
-                        "cvd_change_1",
-                        "cvd_change_5",
-                        "cvd_change_20",
-                        "cvd_normalized",
-                    ]
-                ]
-                df_ohlc = df_ohlc.join(order_flow_subset, how="left")
-                df_ohlc = df_ohlc.ffill().fillna(0)
-
-            return df_ohlc
-
-        except Exception as e:
-            logger.error(f"Error resampling data: {e}")
+            logger.error("Error preprocessing tick data: %s", e)
             return None
 
     def _generate_output_filename(self, zip_file, symbol):

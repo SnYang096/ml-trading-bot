@@ -14,10 +14,20 @@ feature_pipeline:
     - wpt_price_reconstructed
     - wpt_price_fluctuation
     - wpt_cvd_fluctuation
-    # Hilbert 特征（CVD 相位领先）
+    # Hilbert 特征（CVD 相位领先 + 背离信号）
     - hilbert_phase
+    - hilbert_price_env
+    - hilbert_cvd_env
+    - hilbert_cvd_price_env_ratio
+    # Hilbert 高级功能：成交量融合（识别背离）+ 分位数标准化
+    - hilbert_volume_env
+    - hilbert_env_price_vol_ratio
+    - hilbert_triple_divergence
+    - hilbert_price_env_qnorm
+    - hilbert_cvd_env_qnorm
     # Hurst 特征（趋势持续性）
     - hurst_price
+    - hurst_cvd  # CVD 资金流的持续性（识别反转信号）
     # VPVR 特征（空间域：流动性聚集区）
     - wpt_vpvr
     # 订单流特征（VPIN）
@@ -26,22 +36,21 @@ feature_pipeline:
     - garch_features
     # 扩展波动率特征（历史波动率、滞后特征、趋势特征）- 提高波动率预测准确性
     - extended_volatility_features
-    # DTW 形态匹配特征（仅在SR附近计算，用于反转模式识别）
-    - dtw_features
+    # DTW 形态匹配特征（改进版：多窗口、反向模板、距离归一化）
+    # 专注于反转形态：锤子线、头肩底/顶、双底/顶、吞没形态
+    # 只包含反转形态及其反向模板，用于对比学习
+    - dtw_features_reversal
     # EVT 极值理论特征（尾部风险预警）- 用于风险管理/仓位控制，不用于波动率预测
     - evt_features
-    # 交互特征（状态 × 动量）- 按需选择
-    - vpin_x_wick_upper        # SR 反转专用
-    - vpin_x_wick_lower        # SR 反转专用
+    # 交互特征（状态 × 动量）
+    - vpin_x_wick_upper        # VPIN × 上影线（SR 反转专用）
+    - vpin_x_wick_lower        # VPIN × 下影线（SR 反转专用）
     - vpin_x_wick_upper_rank   # Rank transform 版本
     - vpin_x_wick_lower_rank   # Rank transform 版本
-    # 其他策略也可以选择：
-    # - liquidity_void_x_wpt_risk
-    # - compression_energy_x_ofi_short
-    # - hurst_x_trend_r2
-    # - evt_x_trend_r2
-    # - vpin_x_compression
-    # - sma_slope_x_price_pos
+    - evt_x_trend_r2  # EVT × 趋势强度（反转信号确认）
+    # VPIN × Trade Clustering 交叉特征（SR 反转策略）
+    - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（反转信号确认）
+    - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（识别混乱 vs 有序的反转）
     # 通用组合特征（衍生特征）- 按需选择
     # - sr_strength_combined  # 需要 sqs 列，暂时注释
     # 注意：以下特征需要依赖其他特征，暂时注释掉避免依赖错误

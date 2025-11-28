@@ -45,6 +45,10 @@ from src.features.loader.interaction_feature_wrappers import (
     compute_sma_slope_x_price_pos_wrapper,
     compute_vpin_x_wick_upper_wrapper,
     compute_vpin_x_wick_lower_wrapper,
+    compute_vpin_x_trade_cluster_max_buy_run_wrapper,
+    compute_vpin_zscore_x_trade_cluster_max_buy_run_wrapper,
+    compute_vpin_signed_imbalance_x_trade_cluster_imbalance_wrapper,
+    compute_vpin_x_trade_cluster_entropy_wrapper,
     apply_rank_transform_to_interaction_wrapper,
 )
 
@@ -154,6 +158,10 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_sma_slope_x_price_pos": compute_sma_slope_x_price_pos_wrapper,
     "compute_vpin_x_wick_upper": compute_vpin_x_wick_upper_wrapper,
     "compute_vpin_x_wick_lower": compute_vpin_x_wick_lower_wrapper,
+    "compute_vpin_x_trade_cluster_max_buy_run": compute_vpin_x_trade_cluster_max_buy_run_wrapper,
+    "compute_vpin_zscore_x_trade_cluster_max_buy_run": compute_vpin_zscore_x_trade_cluster_max_buy_run_wrapper,
+    "compute_vpin_signed_imbalance_x_trade_cluster_imbalance": compute_vpin_signed_imbalance_x_trade_cluster_imbalance_wrapper,
+    "compute_vpin_x_trade_cluster_entropy": compute_vpin_x_trade_cluster_entropy_wrapper,
     "apply_rank_transform_to_interaction": apply_rank_transform_to_interaction_wrapper,
     
     # ========================================================================

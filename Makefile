@@ -7,6 +7,8 @@
 PYTHON := python3
 PIP := pip3
 SUDO ?=
+HOST_UID ?= $(shell id -u)
+HOST_GID ?= $(shell id -g)
 
 # Detect Dev Container environment (env var or marker file)
 INSIDE_FROM_ENV := $(if $(DEV_CONTAINER),yes,no)
@@ -70,6 +72,7 @@ DOCKER_RUN := docker run --rm -it \
 	--runtime=nvidia \
 	-e NVIDIA_VISIBLE_DEVICES=all \
 	-e CUDA_VISIBLE_DEVICES=0 \
+	--user $(HOST_UID):$(HOST_GID) \
 	-e PYTHONPATH=/workspace/src \
 	-e PYTHONUNBUFFERED=1 \
 	-v $(PWD):/workspace \
@@ -82,6 +85,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 	--runtime=nvidia \
 	-e NVIDIA_VISIBLE_DEVICES=all \
 	-e CUDA_VISIBLE_DEVICES=0 \
+	--user $(HOST_UID):$(HOST_GID) \
 	-e PYTHONPATH=/workspace/src \
 	-e PYTHONUNBUFFERED=1 \
 	-v $(PWD):/workspace \
@@ -100,7 +104,8 @@ endif
 	ts-strategy-feature-compare feature-indicators \
 	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
-	cs-build-panel cs-report cs-train cs-workflow
+	cs-build-panel cs-report cs-train cs-workflow \
+	test-wpt-volume-profile test-wpt-volume-profile-simple
 
 help:
 	@echo "ML Trading Project"
@@ -110,6 +115,10 @@ help:
 	@echo "  make install-hooks        # Install Git pre-commit hooks (run make format & lint before commit)"
 	@echo "  make format               # Format code with black"
 	@echo "  make lint                 # Lint code with flake8"
+	@echo ""
+	@echo "Testing commands (run in Docker):"
+	@echo "  make test-wpt-volume-profile        # Test WPT volume profile improvements (pytest format)"
+	@echo "  make test-wpt-volume-profile-simple # Test WPT volume profile improvements (simple script)"
 	@echo ""
 	@echo "Docker setup commands:"
 	@echo "  make docker-build         # Build Docker image (lightgbm-runtime:latest)"
@@ -180,11 +189,16 @@ fix-permissions:
 dev-install:
 	$(PIP) install -e .
 
-OWNER_DIR ?= scripts/diagnostics
+OWNER_DIR ?= scripts
 OWNER_USER ?= yin
 fix-ownership:
 	@echo "👤 Changing file ownership under $(OWNER_DIR) to $(OWNER_USER)..."
 	@$(SUDO) chown -R $(OWNER_USER) $(OWNER_DIR)
+	@echo "✅ Ownership updated."
+
+fix-all-ownership:
+	@echo "👤 Changing file ownership for src/, tests/, and scripts/ to $(OWNER_USER)..."
+	@$(SUDO) chown -R $(OWNER_USER) src/ tests/ scripts/
 	@echo "✅ Ownership updated."
 
 install-hooks:
@@ -332,7 +346,7 @@ ts-strategy-feature-compare:
 		--rolling-step-bars $(STRAT_COMPARE_ROLL_STEP) \
 		--rolling-max-windows $(STRAT_COMPARE_ROLL_MAX)
 
-# SR Reversal Rule Baseline: Test pure rule-based SR+RR strategy without ML
+# SR Reversal Rule Baseline: Test pure rule-based SR+RR strategy without ML (sr_reversal strategy only)
 # This helps diagnose whether low trade count is due to:
 # - Too few SR signals (feature/rule issue)
 # - Poor baseline edge (SR definition issue)
@@ -343,16 +357,38 @@ SR_BASELINE_DATA_PATH ?= $(DATA_DIR)
 SR_BASELINE_TIMEFRAME ?= 240T
 SR_BASELINE_START ?= 2024-01-01
 SR_BASELINE_END ?= 2025-10-31
+SR_BASELINE_TICK_MODE ?= auto  # VPIN tick 数据模式：auto=<=120分钟自动启用，on=强制启用，off=禁用
+SR_BASELINE_TICKS_DIR ?= data/parquet_data  # tick 级 parquet 数据目录（统一数据源，不再区分 OHLCV 和 tick）
+SR_BASELINE_TICKS_LOOKBACK ?= 60  # VPIN 计算时向前/向后额外加载的分钟数（用于边界处理）
 
-ts-sr-reversal-baseline:
-	@echo "📊 SR Reversal Rule Baseline: Testing pure SR+RR strategy (no ML)"
+ts-sr-reversal-rule-baseline:
+	@echo "📊 SR Reversal Rule Baseline: Testing pure rule-based SR+RR strategy (no ML)"
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_baseline.py \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
 		--timeframe $(SR_BASELINE_TIMEFRAME) \
 		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
-		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),)
+		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),) \
+		--tick-data-mode $(SR_BASELINE_TICK_MODE) \
+		--ticks-dir /workspace/$(SR_BASELINE_TICKS_DIR) \
+		--ticks-lookback-minutes $(SR_BASELINE_TICKS_LOOKBACK)
+
+# SR Reversal 1h Baseline: Test rule-based strategy on 1h timeframe (more trades, finer granularity)
+# Adjusts max_holding_bars to maintain same holding period as 4h (200 bars ≈ 8.3 days)
+ts-sr-reversal-1h-baseline:
+	@echo "📊 SR Reversal Rule Baseline (1h): Testing pure rule-based SR+RR strategy on 1h timeframe"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_baseline.py \
+		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
+		--symbol $(SR_BASELINE_SYMBOL) \
+		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
+		--timeframe 60T \
+		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
+		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),) \
+		--tick-data-mode $(SR_BASELINE_TICK_MODE) \
+		--ticks-dir /workspace/$(SR_BASELINE_TICKS_DIR) \
+		--ticks-lookback-minutes $(SR_BASELINE_TICKS_LOOKBACK) \
+		--max-holding-bars 200
 
 ts-test-vpin-thresholds:
 	@echo "🧪 Testing different VPIN thresholds for SR Reversal"
@@ -400,6 +436,9 @@ SR_OPT_SEARCH_TYPE ?= random
 SR_OPT_N_TRIALS ?= 100
 SR_OPT_OUTPUT_DIR ?= results/rule_optimization
 
+# SR Reversal Rule Optimization: Find parameter plateaus using grid/random/Optuna search (sr_reversal strategy only)
+# Automatically generates plateau charts after optimization completes.
+# Outputs: results/rule_optimization/optimization_results.csv and optimization_report.html (with charts)
 ts-sr-reversal-rule-optimization:
 	@echo "🔍 SR Reversal Rule Parameter Optimization: Finding parameter plateaus"
 	@echo "   Symbol: $(SR_OPT_SYMBOL)"
@@ -417,6 +456,40 @@ ts-sr-reversal-rule-optimization:
 		--output-dir /workspace/$(SR_OPT_OUTPUT_DIR) \
 		--search-type $(SR_OPT_SEARCH_TYPE) \
 		--n-trials $(SR_OPT_N_TRIALS)
+	@echo ""
+	@echo "🖼️  Generating rule plateau heatmaps and scatter charts..."
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_rule_plateau_charts.py \
+		--results-csv /workspace/results/rule_optimization/optimization_results.csv \
+		--report-html /workspace/results/rule_optimization/optimization_report.html
+
+# Rule Plateau Charts: Generate heatmaps/scatter plots from rule optimization results (standalone, can be run separately)
+# Reads: results/rule_optimization/optimization_results.csv
+# Updates: results/rule_optimization/optimization_report.html (injects charts)
+ts-rule-plateau-charts:
+	@echo "🖼️  Generating rule plateau heatmaps and scatter charts"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_rule_plateau_charts.py \
+		--results-csv /workspace/results/rule_optimization/optimization_results.csv \
+		--report-html /workspace/results/rule_optimization/optimization_report.html
+
+# SR Reversal ML Parameter Sweep: Generate parameter grid data for plateau analysis (sr_reversal strategy only)
+ts-sr-reversal-ml-param-sweep:
+	@echo "🔁 Running ML parameter sweep for SR Reversal plateau analysis"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_ml_parameter_sweep.py \
+		--strategy-config /workspace/$(SR_COMP_CONFIG) \
+		--symbol $(SR_COMP_SYMBOL) \
+		--data-path /workspace/$(SR_COMP_DATA_PATH) \
+		--timeframe $(SR_COMP_TIMEFRAME) \
+		$(if $(SR_COMP_START),--start-date $(SR_COMP_START),) \
+		$(if $(SR_COMP_END),--end-date $(SR_COMP_END),) \
+		--test-size $(SR_COMP_TEST_SIZE) \
+		--output-dir /workspace/$(SR_COMP_OUTPUT_DIR)
+
+# ML Plateau Charts: Generate heatmaps/scatter plots from ML parameter sweep CSV (generic, works for any strategy)
+ts-ml-plateau-charts:
+	@echo "🖼️  Generating ML plateau heatmaps and scatter charts"
+	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_ml_plateau_charts.py \
+		--results-csv /workspace/results/model_comparison/ml_param_sweep.csv \
+		--report-html /workspace/results/model_comparison/comparison_report.html
 
 # SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility
 SR_COMP_CONFIG ?= config/strategies/sr_reversal
@@ -426,8 +499,11 @@ SR_COMP_TIMEFRAME ?= 240T
 SR_COMP_START ?= 2024-01-01
 SR_COMP_END ?= 2025-10-31
 SR_COMP_TEST_SIZE ?= 0.15
-SR_COMP_OUTPUT_DIR ?= results/model_comparison
+SR_COMP_OUTPUT_DIR ?= results/model_comparison_$(subst T,,$(SR_COMP_TIMEFRAME))h
 SR_COMP_RULE_PARAMS ?= results/rule_optimization/optimization_results.csv
+SR_COMP_TICK_MODE ?= auto
+SR_COMP_TICKS_DIR ?= data/parquet_data
+SR_COMP_TICKS_LOOKBACK ?= 60
 
 ts-sr-reversal-model-comparison:
 	@echo "📊 SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility"
@@ -444,6 +520,9 @@ ts-sr-reversal-model-comparison:
 		$(if $(SR_COMP_END),--end-date $(SR_COMP_END),) \
 		--test-size $(SR_COMP_TEST_SIZE) \
 		--output-dir /workspace/$(SR_COMP_OUTPUT_DIR) \
+		--tick-data-mode $(SR_COMP_TICK_MODE) \
+		--ticks-dir /workspace/$(SR_COMP_TICKS_DIR) \
+		--ticks-lookback-minutes $(SR_COMP_TICKS_LOOKBACK) \
 		$(if $(SR_COMP_RULE_PARAMS),--rule-params /workspace/$(SR_COMP_RULE_PARAMS),)
 
 ts-analyze-ml-volatility:
@@ -1169,6 +1248,18 @@ cs-auto:
 test-alphalens:
 	@echo "🧪 Testing Alphalens installation and basic functionality in Docker..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/test_alphalens.py
+
+# ---------------------------------------------------------------------------
+# WPT Volume Profile Tests
+# ---------------------------------------------------------------------------
+
+test-wpt-volume-profile:
+	@echo "🧪 Testing WPT Volume Profile improvements (pytest format)..."
+	@$(DOCKER_RUN_NO_TTY) python3 -m pytest tests/test_wpt_volume_profile_improvements.py -v
+
+test-wpt-volume-profile-simple:
+	@echo "🧪 Testing WPT Volume Profile improvements (simple script)..."
+	@$(DOCKER_RUN_NO_TTY) python3 tests/test_wpt_improvements_simple.py
 
 alphalens-example:
 	@echo "📊 Running complete Alphalens example with comprehensive analysis..."

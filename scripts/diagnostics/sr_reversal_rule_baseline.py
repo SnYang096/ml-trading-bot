@@ -17,7 +17,8 @@ Quick diagnostic script for SR Reversal:
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+import json
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,37 @@ from src.time_series_model.strategies.labels.sr_reversal_label import (  # noqa:
     _ensure_atr,
     _generate_sr_reversal_signals,
 )
+from src.data_tools.tick_loader import build_tick_loader_payload  # noqa: E402
+
+
+def _timeframe_to_minutes(tf: str) -> Optional[int]:
+    tf = (tf or "").strip().upper()
+    if tf.endswith("T"):
+        try:
+            return int(float(tf[:-1]))
+        except ValueError:
+            return None
+    if tf.endswith("H"):
+        try:
+            return int(float(tf[:-1]) * 60)
+        except ValueError:
+            return None
+    if tf.endswith("D"):
+        try:
+            return int(float(tf[:-1]) * 1440)
+        except ValueError:
+            return None
+    if tf.isdigit():
+        return int(tf)
+    return None
+
+
+def _should_use_tick_data(mode: str, timeframe: str) -> bool:
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +125,24 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Window size for calculating future volatility (default: 10).",
     )
+    parser.add_argument(
+        "--tick-data-mode",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Whether to load real tick data for VPIN (auto enables for <=120-minute timeframes).",
+    )
+    parser.add_argument(
+        "--ticks-dir",
+        type=str,
+        default="data/parquet_data",
+        help="Directory containing monthly tick parquet files (after conversion).",
+    )
+    parser.add_argument(
+        "--ticks-lookback-minutes",
+        type=int,
+        default=60,
+        help="Extra minutes of tick history to load before/after the data window.",
+    )
     return parser.parse_args()
 
 
@@ -115,7 +165,35 @@ def main() -> None:
     )
     print(f"   ✅ Loaded {len(df_raw)} bars.")
 
+    use_tick_data = _should_use_tick_data(args.tick_data_mode, args.timeframe)
+    tick_loader_json: Optional[str] = None
+    if use_tick_data:
+        if df_raw.empty:
+            raise ValueError("No bars available for tick-loader configuration.")
+        print("   📦 Tick data mode enabled for VPIN (mode=%s)" % args.tick_data_mode)
+        tick_loader_json = build_tick_loader_payload(
+            symbol=args.symbol.upper(),
+            start_ts=df_raw.index.min().isoformat(),
+            end_ts=df_raw.index.max().isoformat(),
+            ticks_dir=args.ticks_dir,
+            lookback_minutes=args.ticks_lookback_minutes,
+        )
+    else:
+        print("   ℹ️ Tick data mode disabled (mode=%s)" % args.tick_data_mode)
+
     feature_loader = StrategyFeatureLoader()
+    if tick_loader_json:
+        vpin_feature = feature_loader.feature_deps.get("features", {}).get(
+            "vpin_features"
+        )
+        if vpin_feature is not None:
+            vpin_feature.setdefault("compute_params", {})[
+                "ticks_loader_json"
+            ] = tick_loader_json
+        else:
+            print(
+                "   ⚠️  vpin_features missing in feature dependencies; cannot pass tick loader."
+            )
     df_features = strategy_runner.run_feature_pipeline(
         df_raw,
         feature_loader=feature_loader,

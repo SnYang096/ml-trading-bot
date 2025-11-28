@@ -7,19 +7,14 @@ import numpy as np
 from typing import List, Tuple, Dict, Optional
 from time_series_model.config.settings import TIMEFRAMES, TECHNICAL_INDICATORS
 
+TIMEFRAME_CACHE_DIR = Path("cache/timeframes")
+TIMEFRAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class MarketDataLoader:
-    """Handles loading and preprocessing of market data.
-    data_loader.py 的 MarketDataLoader 负责“路径解析 + 目录扫描 + 多格式读取（parquet/csv/zip）+ agg-trade→1s OHLCV 转换 + 按日期裁剪”。这是底层通用数据层。
-    """
+    """Handles loading of tick-level parquet and resamples to requested timeframe."""
 
     def __init__(self, data_path: Optional[str] = None):
-        """
-        Initialize the data loader.
-
-        Args:
-            data_path: Path to market data CSV file
-        """
         self.data_path = data_path
         self.raw_data: Optional[pd.DataFrame] = None
 
@@ -28,153 +23,166 @@ class MarketDataLoader:
         symbol: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        timeframe: str = "15T",
     ) -> pd.DataFrame:
         """
         Load raw market data.
 
+        Args:
+            symbol: Trading symbol
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            timeframe: Resampling timeframe (e.g., "15T", "60T", "240T")
+
         Returns:
             DataFrame with OHLCV data
         """
-        if self.data_path:
-            path = Path(self.data_path)
-            print(f"Loading data from {path}")
+        if not self.data_path:
+            raise ValueError("data_path is required for MarketDataLoader.")
 
-            def _normalize_symbol(s: str) -> str:
-                return s.replace("_", "-").upper()
+        if not symbol:
+            raise ValueError("Symbol must be provided to load tick parquet files.")
 
-            def _symbol_tokens(sym: Optional[str]) -> set:
-                if not sym:
-                    return set()
-                s = sym.upper()
-                tokens = {s, s.replace("_", "-"), s.replace("-", "_")}
-                # Common mapping: BTCUSDT -> BTC-USD / BTC_USD
-                if s.endswith("USDT") and len(s) > 4:
-                    base = s[:-4]
-                    tokens.add(f"{base}-USD")
-                    tokens.add(f"{base}_USD")
-                return {t.upper() for t in tokens}
-
-            def _read_and_standardize_frame(p: Path) -> pd.DataFrame:
-                if p.suffix.lower() == ".parquet":
-                    df = pd.read_parquet(p)
-                else:
-                    df = pd.read_csv(p)
-
-                # Try aggregate trade schema -> resample to OHLCV
-                if {"transact_time", "price", "quantity"}.issubset(df.columns):
-                    df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms")
-                    df.set_index("timestamp", inplace=True)
-                    df["price"] = pd.to_numeric(df["price"], errors="coerce")
-                    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
-                    raw_ohlc = df.groupby(pd.Grouper(freq="1s")).agg(
-                        {"price": "ohlc", "quantity": "sum"}
-                    )
-                    raw_ohlc.columns = ["open", "high", "low", "close", "volume"]
-                    return raw_ohlc
-
-                # Try OHLCV parquet/csv with timestamp column
-                if "timestamp" in df.columns and {
-                    "open",
-                    "high",
-                    "low",
-                    "close",
-                    "volume",
-                }.issubset(df.columns):
-                    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-                    df = (
-                        df.dropna(subset=["timestamp"])
-                        .set_index("timestamp")
-                        .sort_index()
-                    )
-                    # Preserve auxiliary columns (e.g., order-flow)
-                    return df
-
-                # Try already indexed by timestamp
-                if {"open", "high", "low", "close", "volume"}.issubset(df.columns):
-                    # Preserve auxiliary columns
-                    return df
-
-                raise ValueError(f"Unrecognized data schema in file: {p}")
-
-            frames: List[pd.DataFrame] = []
-            if path.is_dir():
-                # Collect candidate files
-                exts = (".parquet", ".csv")
-                candidates = [p for p in path.rglob("*") if p.suffix.lower() in exts]
-                if symbol:
-                    sym_tokens = _symbol_tokens(symbol)
-
-                    def _match(name: str) -> bool:
-                        up = name.upper().replace("_", "-")
-                        return any(tok in up for tok in sym_tokens)
-
-                    candidates = [p for p in candidates if _match(p.name)]
-                if not candidates:
-                    raise FileNotFoundError(
-                        f"No data files found under directory: {path}"
-                    )
-                for file_path in sorted(candidates):
-                    try:
-                        frames.append(_read_and_standardize_frame(file_path))
-                    except Exception:
-                        # Skip unreadable files silently to allow mixed folders
-                        continue
-                if not frames:
-                    raise FileNotFoundError(
-                        f"No readable OHLCV/agg-trade files in {path}"
-                    )
-                df_all = pd.concat(frames).sort_index()
-                # Deduplicate on index if overlapping months
-                df_all = df_all[~df_all.index.duplicated(keep="last")]
-                self.raw_data = df_all.ffill().dropna()
-            else:
-                # Single file path
-                p = path
-                self.raw_data = _read_and_standardize_frame(p).ffill().dropna()
-
-            # Optional date filtering on index
-            if start_date or end_date:
-                idx = self.raw_data.index
-                if not isinstance(idx, pd.DatetimeIndex):
-                    self.raw_data = self.raw_data.copy()
-                    self.raw_data.index = pd.to_datetime(
-                        self.raw_data.index, errors="coerce"
-                    )
-                start_ts = (
-                    pd.to_datetime(start_date)
-                    if start_date
-                    else self.raw_data.index.min()
-                )
-                end_ts = (
-                    pd.to_datetime(end_date) if end_date else self.raw_data.index.max()
-                )
-                self.raw_data = self.raw_data.loc[
-                    (self.raw_data.index >= start_ts) & (self.raw_data.index <= end_ts)
-                ]
-
-            print(f"Loaded {len(self.raw_data)} bars")
+        cache_file = self._cache_file_path(symbol, timeframe)
+        if cache_file.exists():
+            df_cached = pd.read_parquet(cache_file)
         else:
-            # Generate sample data for demonstration
-            print("Generating sample data for demonstration")
-            dates = pd.date_range("2020-01-01", periods=10000, freq="1min")
-            prices = 100 + np.cumsum(np.random.randn(10000) * 0.1)
-            volume = np.random.randint(1000, 10000, size=10000)
+            df_cached = self._build_timeframe_cache(symbol, timeframe)
+            df_cached.to_parquet(cache_file)
 
-            self.raw_data = pd.DataFrame(
-                {
-                    "timestamp": dates,
-                    "open": prices,
-                    "high": prices + np.abs(np.random.randn(10000) * 0.05),
-                    "low": prices - np.abs(np.random.randn(10000) * 0.05),
-                    "close": prices + np.random.randn(10000) * 0.02,
-                    "volume": volume,
-                }
+        df_cached.index = pd.to_datetime(df_cached.index)
+        start_ts = pd.to_datetime(start_date) if start_date else df_cached.index.min()
+        end_ts = pd.to_datetime(end_date) if end_date else df_cached.index.max()
+        df_subset = df_cached.loc[
+            (df_cached.index >= start_ts) & (df_cached.index <= end_ts)
+        ].copy()
+        df_subset["_symbol"] = symbol
+        self.raw_data = df_subset
+        print(f"Loaded {len(df_subset)} bars")
+        return self.raw_data
+
+    def _cache_file_path(self, symbol: str, timeframe: str) -> Path:
+        safe_symbol = symbol.replace("/", "_")
+        return TIMEFRAME_CACHE_DIR / f"{safe_symbol}_{timeframe}.parquet"
+
+    def _build_timeframe_cache(self, symbol: str, timeframe: str) -> pd.DataFrame:
+        data_root = Path(self.data_path)
+        pattern = f"{symbol}_*.parquet"
+        files = sorted(data_root.glob(pattern))
+        if not files:
+            raise FileNotFoundError(
+                f"No parquet files found for symbol {symbol} under {data_root}"
             )
 
-            self.raw_data["timestamp"] = pd.to_datetime(self.raw_data["timestamp"])
-            self.raw_data.set_index("timestamp", inplace=True)
+        frames = []
+        for file_path in files:
+            df = pd.read_parquet(file_path)
+            if df.empty:
+                continue
+            if {"open", "high", "low", "close"}.issubset(df.columns):
+                frames.append(self._resample_from_ohlc(df, timeframe))
+            else:
+                frames.append(self._resample_from_ticks(df, timeframe))
 
-        return self.raw_data
+        if not frames:
+            raise ValueError(f"No usable data after reading {len(files)} files.")
+
+        result = pd.concat(frames).sort_index()
+        result = result[~result.index.duplicated(keep="last")]
+        return result
+
+    def _resample_from_ohlc(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+        df = df.copy()
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df = df.set_index("timestamp")
+        df = df.sort_index()
+
+        agg_dict = {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+        optional_cols = [
+            "buy_qty",
+            "sell_qty",
+            "taker_buy_ratio",
+            "cvd",
+            "cvd_short",
+            "cvd_medium",
+            "cvd_long",
+            "cvd_change_1",
+            "cvd_change_5",
+            "cvd_change_20",
+            "cvd_normalized",
+        ]
+        for col in optional_cols:
+            if col in df.columns:
+                agg_dict[col] = "sum"
+
+        resampled = df.resample(timeframe).agg(agg_dict).dropna()
+        resampled["trade_count"] = df["close"].resample(timeframe).size()
+        return resampled
+
+    def _resample_from_ticks(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+        df = df.copy()
+        if "timestamp" not in df.columns:
+            raise ValueError("Tick parquet must contain 'timestamp' column.")
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.dropna(subset=["timestamp", "price", "volume"])
+        df = df.sort_values("timestamp").set_index("timestamp")
+
+        price_ohlc = df["price"].resample(timeframe).ohlc().dropna()
+        volume = df["volume"].resample(timeframe).sum()
+        result = price_ohlc.rename(
+            columns={"open": "open", "high": "high", "low": "low", "close": "close"}
+        )
+        result["volume"] = volume
+        result["trade_count"] = df["price"].resample(timeframe).size()
+
+        if "side" in df.columns:
+            buy_series = np.where(df["side"] == 1, df["volume"], 0.0)
+            sell_series = np.where(df["side"] == -1, df["volume"], 0.0)
+            order_flow = pd.DataFrame(
+                {"buy_qty": buy_series, "sell_qty": sell_series}, index=df.index
+            )
+            flow_resampled = order_flow.resample(timeframe).sum()
+            result["buy_qty"] = flow_resampled["buy_qty"]
+            result["sell_qty"] = flow_resampled["sell_qty"]
+            total_flow = result["buy_qty"] + result["sell_qty"]
+            result["taker_buy_ratio"] = (
+                result["buy_qty"] / total_flow.replace(0, np.nan)
+            ).fillna(0.5)
+
+            delta = result["buy_qty"].fillna(0) - result["sell_qty"].fillna(0)
+            result["cvd_change_1"] = delta
+            result["cvd_change_5"] = delta.rolling(window=5, min_periods=1).sum()
+            result["cvd_change_20"] = delta.rolling(window=20, min_periods=1).sum()
+            result["cvd_short"] = delta.rolling(window=20, min_periods=1).sum()
+            result["cvd_medium"] = delta.rolling(window=60, min_periods=1).sum()
+            result["cvd_long"] = delta.rolling(window=288, min_periods=1).sum()
+            result["cvd"] = delta.cumsum()
+            result["cvd_normalized"] = delta / total_flow.replace(0, np.nan)
+            result["cvd_normalized"] = result["cvd_normalized"].fillna(0)
+        else:
+            for col in [
+                "buy_qty",
+                "sell_qty",
+                "taker_buy_ratio",
+                "cvd",
+                "cvd_short",
+                "cvd_medium",
+                "cvd_long",
+                "cvd_change_1",
+                "cvd_change_5",
+                "cvd_change_20",
+                "cvd_normalized",
+            ]:
+                result[col] = 0.0
+
+        return result
 
     def resample_data(self, timeframe: str) -> pd.DataFrame:
         """

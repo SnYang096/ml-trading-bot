@@ -14,6 +14,22 @@ feature_pipeline:
     - hilbert_phase
     - wpt_price_energy_mid_ratio
     - wpt_price_energy_low_ratio
+    - hurst_price  # 价格趋势持续性
+    - hurst_cvd  # CVD 资金流的持续性（识别压缩区突破质量）
+    # 订单流特征（VPIN）
+    - vpin_features
+    # 交互特征（状态 × 动量）
+    - liquidity_void_x_wpt_risk  # 流动性真空 × WPT 假突破风险（识别假突破）
+    - compression_energy_x_ofi_short  # 压缩能量 × 订单流强度（压缩区突破确认）
+    - vpin_x_compression  # VPIN × 压缩能量（压缩区突破确认）
+    # VPIN × Trade Clustering 交叉特征（压缩区突破策略）
+    - vpin_zscore_x_trade_cluster_max_buy_run  # VPIN Z-score × 最大连续买入（异常订单流 × 连续买入，更通用）
+    - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（识别压缩期低熵 vs 突破期突增）
+    # 备选：vpin_x_trade_cluster_max_buy_run（如果需要绝对值版本，可取消注释）
+    # DTW 形态匹配特征（改进版：中继形态识别）
+    # 专注于中继形态：三角收敛、旗形、横盘整理（压缩区典型形态）
+    # 只包含中继形态及其反向模板，用于对比学习
+    - dtw_features_compression
   post_processors:
     - module: src.time_series_model.strategies.compression_breakout.features
       function: build_compression_breakout_features

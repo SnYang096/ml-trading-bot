@@ -452,8 +452,10 @@ class ParallelFeatureComputer:
                                 result_df[feature_name] = cached_result
                         continue
                 
+                run_sequential = feature_info.get("run_sequential", False) or not self.executor
+
                 # 提交任务
-                if self.executor:
+                if not run_sequential:
                     df_bytes = pickle.dumps(result_df)
                     future = self.executor.submit(
                         _compute_single_feature_worker,
@@ -466,7 +468,8 @@ class ParallelFeatureComputer:
                     )
                     futures.append(future)
                 else:
-                    # 串行计算（fallback）
+                    print(f"     🔸 Running {feature_name} sequentially", flush=True)
+                    # 串行计算（或被标记为顺序执行）
                     try:
                         compute_func_name = feature_info["compute_func"]
                         compute_func = get_compute_func(compute_func_name)

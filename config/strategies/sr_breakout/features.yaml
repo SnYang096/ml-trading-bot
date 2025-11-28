@@ -16,8 +16,30 @@ feature_pipeline:
     - wpt_energy_cascade
     - wpt_multi_scale_consistency
     - hurst_price
+    - hurst_cvd  # CVD 资金流的持续性（识别假突破）
     - vpvr_price_in_lvn
     - spectrum_dominant
+    # 交互特征（状态 × 动量）
+    - liquidity_void_x_wpt_risk  # 流动性真空 × WPT 假突破风险（识别假突破）
+    - hurst_x_trend_r2  # Hurst × 趋势 R²（确认突破质量）
+    # Hilbert 特征（识别假突破 + 背离信号）
+    - hilbert_phase
+    - hilbert_price_env
+    - hilbert_cvd_env
+    - hilbert_cvd_price_env_ratio
+    # Hilbert 高级功能：成交量融合（识别假突破）+ 三元背离信号
+    - hilbert_volume_env
+    - hilbert_env_price_vol_ratio
+    - hilbert_triple_divergence
+    # 订单流特征（VPIN + Trade Clustering）
+    - vpin_features
+    # VPIN × Trade Clustering 交叉特征（SR 突破策略）
+    - vpin_zscore_x_trade_cluster_max_buy_run  # 异常订单流不平衡 × 连续买入（突破确认）
+    - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（突破方向验证）
+    # DTW 形态匹配特征（改进版：突破形态识别）
+    # 专注于突破形态：头肩顶/底、双顶/底（突破确认）
+    # 只包含突破形态及其反向模板，用于对比学习
+    - dtw_features_breakout
   post_processors:
     - module: src.time_series_model.strategies.sr_breakout.features
       function: build_sr_breakout_features

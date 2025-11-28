@@ -253,7 +253,7 @@ def compute_wpt_vpvr(
     wavelet: str = "db4",
     level: int = 4,
     vpvr_window: int = 100,
-    bins: int = 50,
+    bins: int | str = "auto",
     feature_type: str = "vpvr",
     **kwargs
 ) -> pd.DataFrame:
@@ -267,7 +267,7 @@ def compute_wpt_vpvr(
         wavelet: Wavelet function
         level: WPT decomposition level
         vpvr_window: VPVR 计算窗口
-        bins: 价格分箱数
+        bins: 价格分箱数。如果为 "auto"（默认），则使用 Freedman-Diaconis rule 自动计算
         feature_type: 特征类型（'vpvr'）
         **kwargs: 其他参数
     

@@ -148,7 +148,22 @@ def build_compression_breakout_features(
         cvd_zscore = (cvd_diff - cvd_ma) / cvd_std.replace(0, np.nan)
         df["cvd_spike"] = (cvd_zscore.abs() > 2.0).astype(float)
 
-    # 7. 方向确认特征
+    # 7. VPIN 衍生特征（基于配置文件加载的 VPIN 特征）
+    # 注意：VPIN 基础特征已通过配置文件加载，这里只做策略特定的组合特征
+    if "vpin" in df.columns and "range_expanding" in df.columns:
+        # 压缩区突破时的 VPIN 验证
+        # 突破时 VPIN 高值表示有真实订单流
+        df["vpin_compression_breakout"] = (
+            (df["range_expanding"] == 1.0)
+            & (df["vpin"] > df["vpin"].rolling(20).quantile(0.75))
+        ).astype(float)
+        # VPIN momentum 与突破方向一致
+        if "vpin_momentum" in df.columns:
+            df["vpin_momentum_breakout"] = (
+                df["vpin_momentum"] * df[price_col].diff()
+            ) > 0
+
+    # 8. 方向确认特征
     # 突破首根 K 线 body/range 比
     if price_col in df.columns and high_col in df.columns and low_col in df.columns:
         body = abs(df[price_col] - df[price_col].shift(1))

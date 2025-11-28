@@ -4,6 +4,11 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from time_series_model.models.lightgbm_model import LightGBMTrainer
+from time_series_model.pipeline.training.volatility_model_config import (
+    prepare_volatility_model_data,
+    get_volatility_model_params,
+    load_volatility_model_config,
+)
 from time_series_model.config.settings import TIMEFRAMES
 from time_series_model.pipeline.training.label_utils import (
     future_volatility_label,
@@ -141,23 +146,95 @@ class MultiTimeframePipeline:
         Returns:
             Dictionary of training metrics for each timeframe
         """
+        # 加载配置
+        try:
+            config = load_volatility_model_config()
+            trainer_config = config.get("trainer", {})
+            use_gpu = trainer_config.get("use_gpu", True)
+            n_splits = trainer_config.get("n_splits", 5)
+            model_params = get_volatility_model_params(config)
+        except Exception as e:
+            print(f"   ⚠️ Failed to load volatility model config: {e}, using defaults")
+            config = None
+            use_gpu = True
+            n_splits = 5
+            model_params = None
+
         metrics = {}
 
         for timeframe, data in engineered_data.items():
-            # Prepare features
-            feature_columns = [
-                col
-                for col in data.columns
-                if col not in ["open", "high", "low", "close", "volume"]
-            ]
-            X = data[feature_columns]
+            print(f"   Training volatility model for {timeframe}...")
 
             # Prepare targets (volatility)
             _, volatility_target, _ = self.prepare_targets(data)
 
+            # 使用配置文件进行特征选择
+            if config is not None:
+                try:
+                    X_vol, vol_features, categorical_features = (
+                        prepare_volatility_model_data(data, config, feature_loader=None)
+                    )
+                    print(
+                        f"   ✅ Selected {len(vol_features)} volatility features from config"
+                    )
+                except Exception as e:
+                    print(f"   ⚠️ Feature selection failed: {e}, using all features")
+                    # Fallback: 排除基础价格/成交量列
+                    feature_columns = [
+                        col
+                        for col in data.columns
+                        if col
+                        not in [
+                            "open",
+                            "high",
+                            "low",
+                            "close",
+                            "volume",
+                            "volatility_target",
+                        ]
+                    ]
+                    X_vol = data[feature_columns]
+                    vol_features = list(X_vol.columns)
+                    categorical_features = None
+            else:
+                # Fallback: 排除基础价格/成交量列
+                feature_columns = [
+                    col
+                    for col in data.columns
+                    if col
+                    not in [
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "volatility_target",
+                    ]
+                ]
+                X_vol = data[feature_columns]
+                vol_features = list(X_vol.columns)
+                categorical_features = None
+
             # Create and train regression model for volatility
-            model = LightGBMTrainer(model_type="regression")
-            model_metrics = model.train(X, volatility_target)
+            model = LightGBMTrainer(model_type="regression", use_gpu=use_gpu)
+
+            # 如果配置了模型参数，设置它们
+            if model_params:
+                model.params = model_params
+
+            model_metrics, _ = model.train(
+                X_vol,
+                volatility_target,
+                n_splits=n_splits,
+                use_time_series_cv=True,
+                groups=None,
+                categorical_features=categorical_features,
+            )
+
+            # 存储使用的特征列表
+            model._volatility_features = vol_features
+            if categorical_features:
+                model._categorical_features = categorical_features
 
             # Store model and metrics
             self.volatility_models[timeframe] = model

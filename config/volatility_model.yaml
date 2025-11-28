@@ -1,0 +1,173 @@
+name: volatility_model
+description: >
+  波动率模型配置 - 用于预测未来波动率，供所有策略共用。
+  参考文档：docs/订单流策略/阶段1：增强波动率模型.md
+
+# 模型训练配置
+trainer:
+  module: src.time_series_model.pipeline.training.lightgbm_trainer
+  class: LightGBMTrainer
+  model_type: regression
+  use_gpu: true
+  
+  # 交叉验证配置
+  n_splits: 5
+  use_time_series_cv: true
+  tscv_gap: 24
+  
+  # 自动调参
+  auto_tune_params: false
+  tune_trials: 20
+  
+  # LightGBM 模型参数
+  model_params:
+    objective: regression
+    metric: rmse
+    boosting_type: gbdt
+    num_leaves: 63
+    learning_rate: 0.05
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    min_data_in_leaf: 20
+    lambda_l1: 0.1
+    lambda_l2: 0.1
+    max_depth: 6
+    verbose: -1
+    force_col_wise: true
+    random_state: 42
+
+# 波动率特征定义（显式列出需要的列，不使用通配符）
+volatility_features:
+  groups:
+    - name: garch
+      feature_name: garch_features
+      required: true
+      columns:
+        - garch_volatility
+        - garch_persistence
+        - garch_leverage_gamma
+        - garch_alpha
+        - garch_beta
+
+    - name: extended_volatility
+      feature_name: extended_volatility_features
+      required: true
+      columns:
+        - vol_historical_5
+        - vol_historical_10
+        - vol_historical_20
+        - vol_historical_60
+        - vol_atr_price_ratio
+        - vol_atr_ratio_ma20
+        - vol_atr_change
+        - vol_atr_change_abs
+        - vol_lag_1
+        - vol_lag_2
+        - vol_lag_3
+        - vol_trend_slope_5
+        - vol_trend_slope_10
+        - vol_trend_slope_20
+        - vol_acceleration
+        - vol_ma_5
+        - vol_ma_10
+        - vol_ma_20
+        - vol_percentile_rank
+        - vol_range_ratio_10
+        - vol_momentum_3
+
+    - name: vpin_volatility
+      feature_name: vpin_features
+      required: true
+      columns:
+        - vpin_volatility_10
+        - vpin_volatility_20
+
+    - name: compression_optional
+      feature_name: bb_width
+      required: false
+      columns:
+        - bb_width
+        - bb_width_normalized
+
+    - name: compression_ratio_optional
+      feature_name: bb_width_ratio
+      required: false
+      columns:
+        - bb_width_ratio
+
+    - name: atr_optional
+      feature_name: baseline_features
+      required: false
+      columns:
+        - atr
+        - atr_ratio
+
+  categorical_features:
+    - "_symbol"
+
+# 特征工程配置（可选，用于动态生成特征）
+feature_engineering:
+  # VPIN volatility ratio（如果不存在，动态生成）
+  create_vpin_vol_ratio: true
+  vpin_vol_ratio_params:
+    short_window: 10
+    long_window: 20
+    epsilon: 1e-8
+  
+  # VPIN volatility Z-score（如果不存在，动态生成）
+  create_vpin_vol_zscore: true
+  vpin_vol_zscore_params:
+    window: 50
+    threshold: 2.0  # 用于spike检测
+
+# 数据预处理配置
+preprocessing:
+  feature_winsorize_k: 4.0  # Winsorization参数
+  handle_missing: drop  # 处理缺失值：drop, fill_zero, forward_fill
+
+# 预测配置
+prediction:
+  # 波动率预测的horizon（用于生成标签）
+  horizon: 10  # 预测未来10根K线的波动率
+  
+  # ATR把关机制（参考文档建议）
+  use_atr_safeguard: true
+  atr_safeguard_params:
+    lower_bound_mult: 0.8  # 如果预测值 < 0.8 × ATR，使用 ATR
+    upper_bound_mult: 1.5  # 如果预测值 > 1.5 × ATR，使用 1.5 × ATR
+    atr_window: 14  # ATR计算窗口
+
+# 日志和调试
+logging:
+  verbose: true
+  log_feature_counts: true  # 记录每个特征类别的数量
+  log_feature_importance: true  # 记录特征重要性
+
+notes: |
+  波动率模型增强要点（参考 docs/订单流策略/阶段1：增强波动率模型.md）：
+  
+  1. VPIN Volatility 特征的重要性：
+     - vpin_volatility_10/20 是"胜负手"级别的特征
+     - 反映信息流强度的波动性，而非价格本身的跳动
+     - 对未来5~15分钟波动率具有Granger因果关系
+     - 在重大事件前10分钟已开始上升，而价格仍平静
+  
+  2. 特征优先级：
+     - 最高优先级：VPIN volatility特征（vpin_volatility_10, vpin_volatility_20）
+     - 高优先级：GARCH特征、扩展波动率特征
+     - 中优先级：ATR相关特征、传统波动率特征
+     - 低优先级：量价交互特征、压缩/范围特征
+  
+  3. 排除特征：
+     - EVT特征：用于风险管理/仓位控制，不用于波动率预测
+     - DTW特征：用于SR Reversal策略，不用于波动率模型
+  
+  4. 特征工程：
+     - 动态生成 vpin_vol_ratio = vpin_volatility_10 / vpin_volatility_20
+     - 动态生成 vpin_vol_zscore 用于极端事件检测
+  
+  5. ATR把关机制：
+     - 使用ATR作为下限和上限，防止预测值过于极端
+     - 最终波动率 = clip(predicted_volatility, 0.8 × ATR, 1.5 × ATR)
+

@@ -86,8 +86,9 @@ def build_trend_following_features(
         price_col=price_col,
         cvd_col=cvd_col,
         volume_col=volume_col,
-        method="dfa",
         rolling_window=50,
+        update_freq=1,  # 每根K线更新（日线策略）
+        clip_pct=0.5,  # 裁剪极端收益率
     )
 
     # Hurst > 0.6 表示强趋势
@@ -95,20 +96,21 @@ def build_trend_following_features(
         df["trend_strength_hurst"] = (df["hurst_price_rolling"] > 0.6).astype(float)
         df["trend_strength_hurst_value"] = df["hurst_price_rolling"]
 
-    # 3. Hilbert 特征（瞬时频率稳定性）
+    # 3. Hilbert 特征（包络强度，改进版 + 高级功能）
     print("   📊 Extracting Hilbert features...")
     if "wpt_price_fluctuation" in df.columns:
         df = extract_hilbert_features(
             df,
             price_fluctuation_col="wpt_price_fluctuation",
             cvd_fluctuation_col="wpt_cvd_fluctuation" if cvd_col else None,
+            volume_col=volume_col,
+            window=64,
+            ema_span=10,
+            # 高级功能：分位数标准化（跨品种可比）+ 成交量融合（确认趋势质量）
+            use_quantile_normalize=True,
+            quantile_window=252,  # 日线年化窗口
+            use_volume_fusion=True,
         )
-
-        # 瞬时频率稳定性（高频震荡 vs 趋势运行）
-        if "hilbert_price_freq" in df.columns:
-            df["hilbert_freq_stability"] = 1.0 / (
-                1.0 + df["hilbert_price_freq"].rolling(window=10, min_periods=1).std()
-            )
 
     # 4. Spectrum 特征（主频周期长度）
     print("   📊 Extracting Spectrum features...")
@@ -144,7 +146,24 @@ def build_trend_following_features(
                 float
             )
 
-    # 7. 资金验证特征
+    # 7. VPIN 衍生特征（基于配置文件加载的 VPIN 特征）
+    # 注意：VPIN 基础特征已通过配置文件加载，这里只做策略特定的组合特征
+    if "vpin_signed_imbalance" in df.columns:
+        # Signed imbalance 方向与趋势方向一致时，趋势更可靠
+        price_trend = df[price_col].diff(5)  # 5 根 K 线趋势
+        df["vpin_trend_alignment"] = np.sign(df["vpin_signed_imbalance"]) * np.sign(
+            price_trend
+        )
+        # VPIN momentum 与趋势方向一致
+        if "vpin_momentum" in df.columns:
+            df["vpin_momentum_trend"] = (df["vpin_momentum"] * price_trend) > 0
+        # VPIN 稳定性（低波动率）表示趋势健康
+        if "vpin_volatility_20" in df.columns:
+            df["vpin_trend_quality"] = 1.0 / (
+                1.0 + df["vpin_volatility_20"]
+            )  # 波动率越低，质量越高
+
+    # 8. 资金验证特征
     # 滚动 5D CVD 趋势（斜率）
     if cvd_col and cvd_col in df.columns:
         if len(df) > 5:
@@ -238,9 +257,16 @@ def select_trend_following_features(
         "cvd_slope",
         "volume_price_alignment",
         "volume_price_alignment_ratio",
-        # 节奏感知
-        "hilbert_freq",
-        "hilbert_freq_stability",
+        # 节奏感知（Hilbert 包络强度 + 高级功能）
+        "hilbert_price_env",
+        "hilbert_cvd_env",
+        "hilbert_cvd_price_env_ratio",
+        "hilbert_price_env_slope",
+        "hilbert_cvd_env_slope",
+        "hilbert_price_env_qnorm",
+        "hilbert_cvd_env_qnorm",
+        "hilbert_volume_env",
+        "hilbert_env_price_vol_ratio",
         "spectrum",
         "spectrum_period",
         "spectrum_dominant",

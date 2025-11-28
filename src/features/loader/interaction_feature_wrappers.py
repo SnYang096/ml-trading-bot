@@ -18,6 +18,10 @@ from src.features.time_series.utils_interaction_features import (
     compute_sma_slope_x_price_pos,
     compute_vpin_x_wick_upper,
     compute_vpin_x_wick_lower,
+    compute_vpin_x_trade_cluster_max_buy_run,
+    compute_vpin_zscore_x_trade_cluster_max_buy_run,
+    compute_vpin_signed_imbalance_x_trade_cluster_imbalance,
+    compute_vpin_x_trade_cluster_entropy,
     apply_rank_transform_to_interaction,
 )
 

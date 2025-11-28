@@ -5,7 +5,6 @@ GARCH / GJR-GARCH / FIGARCH 特征提取器
 
 import numpy as np
 import pandas as pd
-from typing import Optional
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -182,7 +181,7 @@ def extract_garch_features(
     )
     
     # Forward fill NaN values (use last valid value)
-    result = result.fillna(method="ffill").fillna(0.0)
+    result = result.ffill().fillna(0.0)
     
     return result
 

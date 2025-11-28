@@ -36,6 +36,13 @@ from src.time_series_model.pipeline.training.label_utils import (  # noqa: E402
     future_volatility_label,
     compute_rr_label_with_details,
 )
+from src.time_series_model.pipeline.training.volatility_model_config import (  # noqa: E402
+    load_volatility_model_config,
+    get_volatility_model_params,
+    get_categorical_features,
+    prepare_volatility_model_data,
+)
+from src.data_tools.tick_loader import build_tick_loader_payload  # noqa: E402
 
 try:
     from src.time_series_model.strategies.models.lightgbm_model import (
@@ -49,6 +56,40 @@ except ImportError:
 from scripts import train_strategy_pipeline as strategy_runner  # noqa: E402
 
 warnings.filterwarnings("ignore")
+
+
+def _timeframe_to_minutes(tf: str) -> Optional[int]:
+    """Convert timeframe string to minutes."""
+    tf = (tf or "").strip().upper()
+    if tf.endswith("T"):
+        try:
+            return int(float(tf[:-1]))
+        except ValueError:
+            return None
+    if tf.endswith("H"):
+        try:
+            return int(float(tf[:-1]) * 60)
+        except ValueError:
+            return None
+    if tf.endswith("D"):
+        try:
+            return int(float(tf[:-1]) * 1440)
+        except ValueError:
+            return None
+    if tf.isdigit():
+        return int(tf)
+    return None
+
+
+def _should_use_tick_data(mode: str, timeframe: str) -> bool:
+    """Determine if tick data should be used based on mode and timeframe."""
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    # auto mode: enable for timeframes <= 120 minutes
+    minutes = _timeframe_to_minutes(timeframe)
+    return minutes is not None and minutes <= 120
 
 
 def parse_args() -> argparse.Namespace:
@@ -108,6 +149,24 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Path to optimized rule parameters JSON (optional)",
+    )
+    parser.add_argument(
+        "--tick-data-mode",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Whether to load real tick data for VPIN (auto enables for <=120-minute timeframes).",
+    )
+    parser.add_argument(
+        "--ticks-dir",
+        type=str,
+        default="data/parquet_data",
+        help="Directory containing tick parquet files for VPIN.",
+    )
+    parser.add_argument(
+        "--ticks-lookback-minutes",
+        type=int,
+        default=60,
+        help="Extra minutes of tick history to load before/after the data window.",
     )
     return parser.parse_args()
 
@@ -180,105 +239,161 @@ def train_volatility_model(
     y_vol_train: pd.Series,
     X_test: pd.DataFrame,
     y_vol_test: pd.Series,
+    config_path: Optional[Path | str] = None,
+    feature_loader: Optional[Any] = None,
 ) -> Tuple[Any, Dict[str, float]]:
     """
-    训练波动率模型（使用高级特征：GARCH, 扩展波动率特征等）
+    训练波动率模型（使用配置文件选择特征和参数）
 
-    优先使用能提高波动率预测准确性的特征：
-    - GARCH特征：波动聚集性和杠杆效应（garch_volatility, garch_persistence, garch_leverage_gamma等）
-    - 扩展波动率特征：历史波动率、滞后特征、趋势特征
-    - ATR相关特征：历史波动率
-    - 其他波动率相关特征
+    特征选择优先级（根据配置文件）：
+    1. VPIN Volatility 特征（核心特征，参考文档强调的重要性）
+    2. VPIN 衍生特征（VPIN volatility ratio, spike等）
+    3. GARCH 特征（波动聚集性和杠杆效应）
+    4. 扩展波动率特征（历史波动率、滞后特征、趋势特征）
+    5. ATR 相关特征
+    6. 其他波动率相关特征
 
     注意：
     - EVT特征不用于波动率预测，而是用于风险管理/仓位控制（离场、不加仓）
     - DTW特征不用于波动率模型，而是用于SR Reversal策略（反转模板匹配）
+
+    Args:
+        X_train: 训练特征DataFrame
+        y_vol_train: 训练波动率标签
+        X_test: 测试特征DataFrame
+        y_vol_test: 测试波动率标签
+        config_path: 波动率模型配置文件路径，如果为None，使用默认路径
+
+    Returns:
+        (模型, 指标字典)
     """
-    print("   📊 Training volatility model with advanced features...")
+    print("   📊 Training volatility model with config-based feature selection...")
 
-    # 选择对波动率预测最有用的特征
-    volatility_relevant_features = []
+    # 加载配置
+    try:
+        config = load_volatility_model_config(config_path)
+        print("   ✅ Loaded volatility model config")
+    except Exception as e:
+        print(f"   ⚠️ Failed to load config: {e}, using default feature selection")
+        config = None
 
-    # GARCH特征（波动聚集性和杠杆效应）- 关键特征
-    garch_features = [col for col in X_train.columns if col.startswith("garch_")]
-    volatility_relevant_features.extend(garch_features)
-
-    # 注意：EVT特征不用于波动率预测，而是用于风险管理/仓位控制（离场、不加仓）
-
-    # 扩展波动率特征（历史波动率、滞后特征、趋势特征）
-    extended_vol_features = [col for col in X_train.columns if col.startswith("vol_")]
-    volatility_relevant_features.extend(extended_vol_features)
-
-    # 注意：DTW特征不用于波动率模型，而是用于SR Reversal策略（反转模板匹配）
-
-    # ATR相关特征（历史波动率）
-    atr_features = [col for col in X_train.columns if "atr" in col.lower()]
-    volatility_relevant_features.extend(atr_features)
-
-    # 其他可能相关的特征（波动率压缩、范围等）
-    other_features = [
-        col
-        for col in X_train.columns
-        if any(
-            keyword in col.lower()
-            for keyword in [
-                "bb_width",
-                "compression",
-                "squeeze",
-                "range",
-                "range_ratio",
-            ]
+    if config is not None:
+        X_train_prepared, available_features, categorical_features = (
+            prepare_volatility_model_data(
+                X_train, config, feature_loader=feature_loader
+            )
         )
-    ]
-    volatility_relevant_features.extend(other_features)
-
-    # 去重并确保特征存在
-    volatility_relevant_features = list(set(volatility_relevant_features))
-    available_features = [
-        f for f in volatility_relevant_features if f in X_train.columns
-    ]
-
-    if not available_features:
-        print("   ⚠️ No volatility-specific features found, using all features")
-        available_features = list(X_train.columns)
+        X_test_prepared, _, _ = prepare_volatility_model_data(
+            X_test, config, feature_loader=feature_loader
+        )
+        if not available_features:
+            print("   ⚠️ No volatility-specific features found, using all features")
+            available_features = list(X_train_prepared.columns)
+        else:
+            print(
+                f"   ✅ Using {len(available_features)} volatility features from config"
+            )
     else:
-        print(f"   ✅ Using {len(available_features)} volatility-relevant features:")
-        print(
-            f"      GARCH: {len([f for f in available_features if f.startswith('garch_')])}"
-        )
-        print(
-            f"      Extended Volatility: {len([f for f in available_features if f.startswith('vol_')])}"
-        )
-        print(
-            f"      ATR: {len([f for f in available_features if 'atr' in f.lower()])}"
-        )
-        print(
-            f"      Other volatility-related: {len([f for f in available_features if f not in garch_features + extended_vol_features + atr_features])}"
-        )
-        print(
-            f"      Note: EVT features excluded (used for risk management, not volatility prediction)"
-        )
+        # Fallback: 使用原有的特征选择逻辑
+        print("   ⚠️ Using fallback feature selection (no config)")
+        volatility_relevant_features = []
+
+        # GARCH特征
+        garch_features = [col for col in X_train.columns if col.startswith("garch_")]
+        volatility_relevant_features.extend(garch_features)
+
+        # 扩展波动率特征
+        extended_vol_features = [
+            col for col in X_train.columns if col.startswith("vol_")
+        ]
+        volatility_relevant_features.extend(extended_vol_features)
+
+        # ATR相关特征
+        atr_features = [col for col in X_train.columns if "atr" in col.lower()]
+        volatility_relevant_features.extend(atr_features)
+
+        # VPIN volatility特征（如果存在）
+        vpin_vol_features = [
+            col
+            for col in X_train.columns
+            if col.startswith("vpin_volatility") or col.startswith("vpin_vol")
+        ]
+        volatility_relevant_features.extend(vpin_vol_features)
+
+        # 其他波动率相关特征
+        other_features = [
+            col
+            for col in X_train.columns
+            if any(
+                keyword in col.lower()
+                for keyword in [
+                    "bb_width",
+                    "compression",
+                    "squeeze",
+                    "range",
+                    "range_ratio",
+                ]
+            )
+        ]
+        volatility_relevant_features.extend(other_features)
+
+        # 排除EVT和DTW特征
+        volatility_relevant_features = [
+            f
+            for f in volatility_relevant_features
+            if not f.startswith("evt_") and not f.startswith("dtw_")
+        ]
+
+        available_features = list(set(volatility_relevant_features))
+        available_features = [f for f in available_features if f in X_train.columns]
+
+        if not available_features:
+            available_features = list(X_train.columns)
+
+        X_train_prepared = X_train
+        X_test_prepared = X_test
+        categorical_features = None
 
     # 使用选定的特征
-    X_train_vol = X_train[available_features].copy()
-    X_test_vol = X_test[available_features].copy()
+    X_train_vol = X_train_prepared[available_features].copy()
+    X_test_vol = X_test_prepared[available_features].copy()
 
-    # 检测分类特征（如_symbol）
-    categorical_features = None
-    if "_symbol" in X_train_vol.columns and X_train_vol["_symbol"].nunique() > 1:
-        categorical_features = ["_symbol"]
-        print(f"   ✅ Using '_symbol' as categorical feature for volatility model")
+    # 获取分类特征
+    if config is None and categorical_features is None:
+        if "_symbol" in X_train_vol.columns and X_train_vol["_symbol"].nunique() > 1:
+            categorical_features = ["_symbol"]
+
+    if categorical_features:
+        print(f"   ✅ Using categorical features: {categorical_features}")
+
+    # 获取训练参数
+    if config is not None:
+        trainer_config = config.get("trainer", {})
+        use_gpu = trainer_config.get("use_gpu", True)
+        n_splits = trainer_config.get("n_splits", 5)
+        auto_tune_params = trainer_config.get("auto_tune_params", False)
+        model_params = get_volatility_model_params(config)
+    else:
+        use_gpu = True
+        n_splits = 5
+        auto_tune_params = False
+        model_params = None
 
     try:
-        model = LightGBMTrainer(model_type="regression", use_gpu=True)
+        model = LightGBMTrainer(model_type="regression", use_gpu=use_gpu)
+
+        # 如果配置了模型参数，设置它们
+        if model_params:
+            model.params = model_params
+
         metrics, _ = model.train(
             X_train_vol,
             y_vol_train,
-            n_splits=5,
+            n_splits=n_splits,
             use_time_series_cv=True,
             groups=None,
-            auto_tune_params=False,
-            categorical_features=categorical_features,  # 传递分类特征
+            auto_tune_params=auto_tune_params,
+            categorical_features=categorical_features,
         )
 
         # 存储使用的特征列表，供预测时使用
@@ -295,17 +410,23 @@ def train_volatility_model(
         # Simple LightGBM training - 使用选定的特征
         X_train_vol_values = X_train_vol.values
         train_data = lgb.Dataset(X_train_vol_values, label=y_vol_train.values)
-        params = {
-            "objective": "regression",
-            "metric": "rmse",
-            "boosting_type": "gbdt",
-            "num_leaves": 31,
-            "learning_rate": 0.05,
-            "feature_fraction": 0.9,
-            "bagging_fraction": 0.8,
-            "bagging_freq": 5,
-            "verbose": -1,
-        }
+
+        # 使用配置中的参数或默认参数
+        if model_params:
+            params = model_params.copy()
+        else:
+            params = {
+                "objective": "regression",
+                "metric": "rmse",
+                "boosting_type": "gbdt",
+                "num_leaves": 31,
+                "learning_rate": 0.05,
+                "feature_fraction": 0.9,
+                "bagging_fraction": 0.8,
+                "bagging_freq": 5,
+                "verbose": -1,
+            }
+
         model = lgb.train(params, train_data, num_boost_round=100)
 
         # Create a simple wrapper
@@ -1183,7 +1304,37 @@ def main() -> None:
     strategy_cfg_loader = StrategyConfigLoader(cfg_dir)
     strategy_cfg = strategy_cfg_loader.load()
 
+    # Configure tick loader for VPIN if needed
+    use_tick_data = _should_use_tick_data(args.tick_data_mode, args.timeframe)
+    tick_loader_json: Optional[str] = None
+    if use_tick_data:
+        if df_raw.empty:
+            raise ValueError("No bars available for tick-loader configuration.")
+        print(f"   📦 Tick data mode enabled for VPIN (mode={args.tick_data_mode})")
+        tick_loader_json = build_tick_loader_payload(
+            symbol=args.symbol.upper(),
+            start_ts=df_raw.index.min().isoformat(),
+            end_ts=df_raw.index.max().isoformat(),
+            ticks_dir=args.ticks_dir,
+            lookback_minutes=args.ticks_lookback_minutes,
+        )
+    else:
+        print(f"   ℹ️ Tick data mode disabled (mode={args.tick_data_mode})")
+
     feature_loader = StrategyFeatureLoader()
+    if tick_loader_json:
+        vpin_feature = feature_loader.feature_deps.get("features", {}).get(
+            "vpin_features"
+        )
+        if vpin_feature is not None:
+            vpin_feature.setdefault("compute_params", {})[
+                "ticks_loader_json"
+            ] = tick_loader_json
+        else:
+            print(
+                "   ⚠️  vpin_features missing in feature dependencies; cannot pass tick loader."
+            )
+
     df_features = strategy_runner.run_feature_pipeline(
         df_raw,
         feature_loader=feature_loader,
@@ -1397,6 +1548,7 @@ def main() -> None:
         y_vol_train_valid,
         X_train_valid,
         y_vol_train_valid,
+        feature_loader=feature_loader,  # 传入feature_loader以计算缺失特征
     )
 
     # Evaluate ML model

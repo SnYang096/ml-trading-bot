@@ -431,3 +431,5 @@ vendor/**
 *.pt
 *.pth
 *.onnx
+
+cache

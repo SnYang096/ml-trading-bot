@@ -44,7 +44,7 @@ def load_raw_data(
 
     for sym in symbol_list:
         df_single = loader.load_data(
-            symbol=sym, start_date=start_date, end_date=end_date
+            symbol=sym, start_date=start_date, end_date=end_date, timeframe=timeframe
         )
 
         if df_single is not None and not df_single.empty:

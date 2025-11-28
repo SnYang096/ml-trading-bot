@@ -6,16 +6,38 @@ description: >
 feature_pipeline:
   requested_features:
     - hurst_price
+    - hurst_cvd  # CVD 资金流的持续性（确认趋势质量）
+    - hurst_volume  # 成交量的持续性（确认趋势质量）
     - wpt_price_trend
     - wpt_price_energy_low_ratio
     - hilbert_phase
-    - hilbert_cvd_leads
+    - hilbert_price_env
+    - hilbert_cvd_env
+    - hilbert_cvd_price_env_ratio
+    - hilbert_price_env_slope
+    - hilbert_cvd_env_slope
+    # Hilbert 高级功能：分位数标准化（跨品种可比）+ 成交量融合（确认趋势质量）
+    - hilbert_price_env_qnorm
+    - hilbert_cvd_env_qnorm
+    - hilbert_volume_env
+    - hilbert_env_price_vol_ratio
     - wpt_cvd_fluctuation
-    - hilbert_price_freq_stability
-    - hilbert_cvd_freq_stability
     - spectrum_dominant
     - atr
     - rsi
+    # 订单流特征（VPIN）
+    - vpin_features
+    # 交互特征（状态 × 动量）
+    - hurst_x_trend_r2  # Hurst × 趋势 R²（确认趋势持续性）
+    - evt_x_trend_r2  # EVT × 趋势强度（风险管理）
+    - sma_slope_x_price_pos  # 均线斜率 × 价格位置（趋势确认）
+    # VPIN × Trade Clustering 交叉特征（趋势跟踪策略）
+    - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（趋势方向验证）
+    - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（低熵 = 健康趋势，高熵 = 趋势混乱）
+    # DTW 形态匹配特征（改进版：中继形态识别）
+    # 专注于中继形态：旗形、三角收敛（趋势中继确认）
+    # 只包含中继形态及其反向模板，用于对比学习
+    - dtw_features_trend
   post_processors:
     - module: src.time_series_model.strategies.trend_following.features
       function: build_trend_following_features
