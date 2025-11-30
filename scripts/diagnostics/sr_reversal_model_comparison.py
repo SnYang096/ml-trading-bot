@@ -81,15 +81,7 @@ def _timeframe_to_minutes(tf: str) -> Optional[int]:
     return None
 
 
-def _should_use_tick_data(mode: str, timeframe: str) -> bool:
-    """Determine if tick data should be used based on mode and timeframe."""
-    if mode == "on":
-        return True
-    if mode == "off":
-        return False
-    # auto mode: enable for timeframes <= 120 minutes
-    minutes = _timeframe_to_minutes(timeframe)
-    return minutes is not None and minutes <= 120
+# Removed _should_use_tick_data - always use tick data for VPIN
 
 
 def parse_args() -> argparse.Namespace:
@@ -150,12 +142,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to optimized rule parameters JSON (optional)",
     )
-    parser.add_argument(
-        "--tick-data-mode",
-        choices=["auto", "on", "off"],
-        default="auto",
-        help="Whether to load real tick data for VPIN (auto enables for <=120-minute timeframes).",
-    )
+    # Removed --tick-data-mode argument - tick data is always enabled for VPIN
     parser.add_argument(
         "--ticks-dir",
         type=str,
@@ -1304,22 +1291,18 @@ def main() -> None:
     strategy_cfg_loader = StrategyConfigLoader(cfg_dir)
     strategy_cfg = strategy_cfg_loader.load()
 
-    # Configure tick loader for VPIN if needed
-    use_tick_data = _should_use_tick_data(args.tick_data_mode, args.timeframe)
-    tick_loader_json: Optional[str] = None
-    if use_tick_data:
-        if df_raw.empty:
-            raise ValueError("No bars available for tick-loader configuration.")
-        print(f"   📦 Tick data mode enabled for VPIN (mode={args.tick_data_mode})")
-        tick_loader_json = build_tick_loader_payload(
-            symbol=args.symbol.upper(),
-            start_ts=df_raw.index.min().isoformat(),
-            end_ts=df_raw.index.max().isoformat(),
-            ticks_dir=args.ticks_dir,
-            lookback_minutes=args.ticks_lookback_minutes,
-        )
-    else:
-        print(f"   ℹ️ Tick data mode disabled (mode={args.tick_data_mode})")
+    # Always configure tick loader for VPIN (required for all timeframes)
+    if df_raw.empty:
+        raise ValueError("No bars available for tick-loader configuration.")
+    print(f"   📦 Tick data enabled for VPIN (always enabled for all timeframes)")
+    print(f"   📁 Using ticks_dir: {args.ticks_dir}")
+    tick_loader_json = build_tick_loader_payload(
+        symbol=args.symbol.upper(),
+        start_ts=df_raw.index.min().isoformat(),
+        end_ts=df_raw.index.max().isoformat(),
+        ticks_dir=args.ticks_dir,
+        lookback_minutes=args.ticks_lookback_minutes,
+    )
 
     feature_loader = StrategyFeatureLoader()
     if tick_loader_json:
@@ -1363,6 +1346,18 @@ def main() -> None:
             vpin_feature.setdefault("compute_params", {})[
                 "ticks_loader_json"
             ] = tick_loader_json
+            # Debug: verify ticks_loader_json is set
+            actual_value = vpin_feature.get("compute_params", {}).get(
+                "ticks_loader_json"
+            )
+            if actual_value:
+                print(f"   ✅ VPIN ticks_loader_json configured for test set")
+            else:
+                print(
+                    f"   ⚠️  WARNING: ticks_loader_json not found in VPIN compute_params!"
+                )
+        else:
+            print(f"   ⚠️  WARNING: vpin_features not found in feature_deps!")
 
     df_test = strategy_runner.run_feature_pipeline(
         df_raw_test,
@@ -1670,6 +1665,33 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("4️⃣ Training Volatility Model")
     print("=" * 60)
+
+    # Ensure tick_loader_json is configured for volatility model feature computation
+    if tick_loader_json and feature_loader:
+        # Update VPIN feature config in feature_deps
+        features_dict = feature_loader.feature_deps.get("features", {})
+        vpin_feature = features_dict.get("vpin_features")
+        if vpin_feature is not None:
+            # Ensure compute_params exists
+            if "compute_params" not in vpin_feature:
+                vpin_feature["compute_params"] = {}
+            vpin_feature["compute_params"]["ticks_loader_json"] = tick_loader_json
+            print(f"   ✅ VPIN ticks_loader_json configured for volatility model")
+            # Also update in the computer's feature_deps if it exists
+            if hasattr(feature_loader, "computer") and hasattr(
+                feature_loader.computer, "feature_deps"
+            ):
+                computer_features = feature_loader.computer.feature_deps.get(
+                    "features", {}
+                )
+                computer_vpin = computer_features.get("vpin_features")
+                if computer_vpin is not None:
+                    if "compute_params" not in computer_vpin:
+                        computer_vpin["compute_params"] = {}
+                    computer_vpin["compute_params"][
+                        "ticks_loader_json"
+                    ] = tick_loader_json
+
     vol_model, vol_metrics = train_volatility_model(
         X_train_valid,
         y_vol_train_valid,

@@ -118,7 +118,7 @@ def _infer_data_frequency(df: pd.DataFrame) -> Optional[str]:
     
     # 尝试从索引推断频率
     inferred_freq = df.index.inferred_freq
-    if inferred_freq:
+    if inferred_freq and inferred_freq.strip():
         return inferred_freq
     
     # 如果推断失败，从时间差计算
@@ -134,11 +134,14 @@ def _infer_data_frequency(df: pd.DataFrame) -> Optional[str]:
     if total_seconds < 60:
         return f"{int(total_seconds)}S"
     elif total_seconds < 3600:
-        return f"{int(total_seconds / 60)}T"
+        minutes = int(total_seconds / 60)
+        return f"{minutes}T" if minutes > 0 else None
     elif total_seconds < 86400:
-        return f"{int(total_seconds / 3600)}H"
+        hours = int(total_seconds / 3600)
+        return f"{hours}H" if hours > 0 else None
     else:
-        return f"{int(total_seconds / 86400)}D"
+        days = int(total_seconds / 86400)
+        return f"{days}D" if days > 0 else None
 
 
 def _estimate_volatility_characteristics(
@@ -201,28 +204,38 @@ def _auto_adjust_update_freq(
         return default_update_freq
     
     freq_str = _infer_data_frequency(df)
-    if freq_str is None:
+    if freq_str is None or not freq_str or len(freq_str) < 2:
         return default_update_freq
     
     # 解析频率字符串
-    if freq_str.endswith('S'):  # 秒级
-        return 5
-    elif freq_str.endswith('T'):  # 分钟级
-        minutes = int(freq_str[:-1])
-        if minutes < 15:
-            return 5  # 高频：每5根K线更新
-        elif minutes < 60:
-            return 3  # 中频：每3根K线更新
-        else:
-            return 1  # 低频：每根K线更新
-    elif freq_str.endswith('H'):  # 小时级
-        hours = int(freq_str[:-1])
-        if hours < 4:
-            return 1  # 4小时以下：每根K线更新
-        else:
-            return 1  # 4小时以上：每根K线更新
-    else:  # 日级及以上
-        return 1
+    try:
+        if freq_str.endswith('S'):  # 秒级
+            return 5
+        elif freq_str.endswith('T'):  # 分钟级
+            minutes_str = freq_str[:-1]
+            if not minutes_str:
+                return default_update_freq
+            minutes = int(minutes_str)
+            if minutes < 15:
+                return 5  # 高频：每5根K线更新
+            elif minutes < 60:
+                return 3  # 中频：每3根K线更新
+            else:
+                return 1  # 低频：每根K线更新
+        elif freq_str.endswith('H'):  # 小时级
+            hours_str = freq_str[:-1]
+            if not hours_str:
+                return default_update_freq
+            hours = int(hours_str)
+            if hours < 4:
+                return 1  # 4小时以下：每根K线更新
+            else:
+                return 1  # 4小时以上：每根K线更新
+        else:  # 日级及以上
+            return 1
+    except (ValueError, IndexError):
+        # 如果解析失败，返回默认值
+        return default_update_freq
 
 
 def _auto_adjust_clip_pct(

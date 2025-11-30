@@ -16,10 +16,7 @@ INSIDE_FROM_FILE := $(shell if [ -f /.devcontainer-env ]; then echo yes; else ec
 INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),yes,no)
 
 # Docker configuration
-DOCKER_COMPOSE := docker-compose
-DOCKER_SERVICE := ml-gpu
 DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.5
-BUILDER_IMAGE ?= lightgbm-builder
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
 DATA_DIR ?= data/parquet_data
@@ -105,7 +102,8 @@ endif
 	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
 	cs-build-panel cs-report cs-train cs-workflow \
-	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features
+	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
+	test-vpin-future-leak test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all
 
 help:
 	@echo "ML Trading Project"
@@ -121,11 +119,18 @@ help:
 	@echo "  make test-wpt-volume-profile-simple # Test WPT volume profile improvements (simple script)"
 	@echo "  make test-extended-volatility-features # Test extended volatility features extraction"
 	@echo "  make test-spectrum-features         # Test spectrum features with simulated data (pytest format)"
+	@echo "  make test-vpin-future-leak          # Test VPIN future leak and multi-asset normalization"
+	@echo "  make test-wpt-future-leak           # Test WPT future leak and multi-asset normalization"
+	@echo "  make test-volume-profile-volatility-future-leak # Test Volume Profile Volatility future leak and multi-asset"
+	@echo "  make test-key-features-all          # Test all key features (VPIN, WPT, Volume Profile Volatility)"
+	@echo "  make test-complex-features-comprehensive # Test all complex features (GARCH, EVT, Hurst, Spectrum, DTW, Extended Volatility)"
+	@echo "  make test-all-features-comprehensive # Test all features comprehensively"
+	@echo "  make start-docker                   # Start Docker daemon"
 	@echo ""
 	@echo "Docker setup commands:"
 	@echo "  make docker-build         # Build Docker image (lightgbm-runtime:latest)"
 	@echo "  make docker-install       # Install project inside Docker container"
-	@echo "  make builder-shell        # Open bash in $(BUILDER_IMAGE)"
+	@echo "  make builder-shell        # Open bash in $(DOCKER_IMAGE)"
 	@echo ""
 	@echo "Data commands:"
 	@echo "  make data-download       # Download Binance aggTrades ZIPs (non-interactive)"
@@ -195,12 +200,52 @@ OWNER_DIR ?= scripts
 OWNER_USER ?= yin
 fix-ownership:
 	@echo "👤 Changing file ownership under $(OWNER_DIR) to $(OWNER_USER)..."
-	@$(SUDO) chown -R $(OWNER_USER) $(OWNER_DIR)
+	@if [ -n "$(SUDO)" ]; then \
+		$(SUDO) chown -R $(OWNER_USER) $(OWNER_DIR); \
+	else \
+		chown -R $(OWNER_USER) $(OWNER_DIR) 2>/dev/null || { \
+			echo "⚠️  Permission denied. Checking if sudo is available..."; \
+			if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then \
+				echo "⚠️  Trying with sudo (interactive mode)..."; \
+				sudo chown -R $(OWNER_USER) $(OWNER_DIR) || { \
+					echo "❌ Permission denied. Please run: sudo make fix-ownership"; \
+					exit 1; \
+				}; \
+			else \
+				echo "❌ Permission denied and sudo is not available in non-interactive mode."; \
+				echo "   Please run one of:"; \
+				echo "   - sudo make fix-ownership (in an interactive terminal)"; \
+				echo "   - make fix-ownership SUDO=sudo (if sudo doesn't require a password)"; \
+				echo "   - Or fix ownership manually: sudo chown -R $(OWNER_USER) $(OWNER_DIR)"; \
+				exit 1; \
+			fi; \
+		}; \
+	fi
 	@echo "✅ Ownership updated."
 
 fix-all-ownership:
 	@echo "👤 Changing file ownership for src/, tests/, and scripts/ to $(OWNER_USER)..."
-	@$(SUDO) chown -R $(OWNER_USER) src/ tests/ scripts/
+	@if [ -n "$(SUDO)" ]; then \
+		$(SUDO) chown -R $(OWNER_USER) src/ tests/ scripts/; \
+	else \
+		chown -R $(OWNER_USER) src/ tests/ scripts/ 2>/dev/null || { \
+			echo "⚠️  Permission denied. Checking if sudo is available..."; \
+			if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then \
+				echo "⚠️  Trying with sudo (interactive mode)..."; \
+				sudo chown -R $(OWNER_USER) src/ tests/ scripts/ || { \
+					echo "❌ Permission denied. Please run: sudo make fix-all-ownership"; \
+					exit 1; \
+				}; \
+			else \
+				echo "❌ Permission denied and sudo is not available in non-interactive mode."; \
+				echo "   Please run one of:"; \
+				echo "   - sudo make fix-all-ownership (in an interactive terminal)"; \
+				echo "   - make fix-all-ownership SUDO=sudo (if sudo doesn't require a password)"; \
+				echo "   - Or fix ownership manually: sudo chown -R $(OWNER_USER) src/ tests/ scripts/"; \
+				exit 1; \
+			fi; \
+		}; \
+	fi
 	@echo "✅ Ownership updated."
 
 install-hooks:
@@ -258,8 +303,8 @@ data-pipeline:
 	@$(MAKE) data-convert
 
 builder-shell:
-	@echo "🔧 Opening interactive shell in $(BUILDER_IMAGE) ..."
-	DOCKER_IMAGE=$(BUILDER_IMAGE) $(DOCKER_RUN) bash
+	@echo "🔧 Opening interactive shell in $(DOCKER_IMAGE) ..."
+	DOCKER_IMAGE=$(DOCKER_IMAGE) $(DOCKER_RUN) bash
 
 # ---------------------------------------------------------------------------
 # TS factor evaluation
@@ -359,7 +404,7 @@ SR_BASELINE_DATA_PATH ?= $(DATA_DIR)
 SR_BASELINE_TIMEFRAME ?= 240T
 SR_BASELINE_START ?= 2024-01-01
 SR_BASELINE_END ?= 2025-10-31
-SR_BASELINE_TICK_MODE ?= auto  # VPIN tick 数据模式：auto=<=120分钟自动启用，on=强制启用，off=禁用
+# Removed SR_BASELINE_TICK_MODE - tick data is always enabled for VPIN
 SR_BASELINE_TICKS_DIR ?= data/parquet_data  # tick 级 parquet 数据目录（统一数据源，不再区分 OHLCV 和 tick）
 SR_BASELINE_TICKS_LOOKBACK ?= 60  # VPIN 计算时向前/向后额外加载的分钟数（用于边界处理）
 
@@ -372,7 +417,6 @@ ts-sr-reversal-rule-baseline:
 		--timeframe $(SR_BASELINE_TIMEFRAME) \
 		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
 		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),) \
-		--tick-data-mode $(SR_BASELINE_TICK_MODE) \
 		--ticks-dir /workspace/$(SR_BASELINE_TICKS_DIR) \
 		--ticks-lookback-minutes $(SR_BASELINE_TICKS_LOOKBACK)
 
@@ -387,7 +431,6 @@ ts-sr-reversal-1h-baseline:
 		--timeframe 60T \
 		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
 		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),) \
-		--tick-data-mode $(SR_BASELINE_TICK_MODE) \
 		--ticks-dir /workspace/$(SR_BASELINE_TICKS_DIR) \
 		--ticks-lookback-minutes $(SR_BASELINE_TICKS_LOOKBACK) \
 		--max-holding-bars 200
@@ -513,7 +556,7 @@ SR_COMP_END ?= 2025-10-31
 SR_COMP_TEST_SIZE ?= 0.15
 SR_COMP_OUTPUT_DIR ?= results/model_comparison/$(SR_COMP_TIMEFRAME)
 SR_COMP_RULE_PARAMS ?= results/rule_optimization/optimization_results.csv
-SR_COMP_TICK_MODE ?= auto
+# Removed SR_COMP_TICK_MODE - tick data is always enabled for VPIN
 SR_COMP_TICKS_DIR ?= data/parquet_data
 SR_COMP_TICKS_LOOKBACK ?= 60
 
@@ -523,6 +566,10 @@ ts-sr-reversal-model-comparison:
 	@echo "   Timeframe: $(SR_COMP_TIMEFRAME)"
 	@echo "   Test Size: $(SR_COMP_TEST_SIZE)"
 	@echo "   Output: $(SR_COMP_OUTPUT_DIR)"
+	@if ! docker ps &> /dev/null; then \
+		echo "⚠️  Docker not running, attempting to start..."; \
+		bash scripts/start_docker.sh || exit 1; \
+	fi
 	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_model_comparison.py \
 		--strategy-config /workspace/$(SR_COMP_CONFIG) \
 		--symbol $(SR_COMP_SYMBOL) \
@@ -532,7 +579,6 @@ ts-sr-reversal-model-comparison:
 		$(if $(SR_COMP_END),--end-date $(SR_COMP_END),) \
 		--test-size $(SR_COMP_TEST_SIZE) \
 		--output-dir /workspace/$(SR_COMP_OUTPUT_DIR) \
-		--tick-data-mode $(SR_COMP_TICK_MODE) \
 		--ticks-dir /workspace/$(SR_COMP_TICKS_DIR) \
 		--ticks-lookback-minutes $(SR_COMP_TICKS_LOOKBACK) \
 		$(if $(SR_COMP_RULE_PARAMS),--rule-params /workspace/$(SR_COMP_RULE_PARAMS),)
@@ -1284,6 +1330,46 @@ test-spectrum-features:
 test-volume-profile-volatility-features:
 	@echo "🧪 Testing Volume Profile Volatility Features with simulated data..."
 	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_volume_profile_volatility_features.py -v -s --tb=short"
+
+test-vpin-future-leak:
+	@echo "🧪 Testing VPIN future leak and multi-asset normalization..."
+	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_vpin_future_leak_and_multi_asset.py -v -s --tb=short"
+
+test-wpt-future-leak:
+	@echo "🧪 Testing WPT future leak and multi-asset normalization..."
+	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_wpt_future_leak_and_multi_asset.py -v -s --tb=short"
+
+test-volume-profile-volatility-future-leak:
+	@echo "🧪 Testing Volume Profile Volatility future leak and multi-asset normalization..."
+	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_volume_profile_volatility_future_leak_and_multi_asset.py -v -s --tb=short"
+
+test-key-features-all:
+	@echo "🧪 Testing all key features (VPIN, WPT, Volume Profile Volatility)..."
+	@if ! docker ps &> /dev/null; then \
+		echo "⚠️  Docker not running, attempting to start..."; \
+		bash scripts/start_docker.sh || exit 1; \
+	fi
+	@$(MAKE) test-vpin-future-leak
+	@$(MAKE) test-wpt-future-leak
+	@$(MAKE) test-volume-profile-volatility-future-leak
+
+# Docker startup helper
+start-docker:
+	@echo "🔧 Starting Docker..."
+	@bash scripts/start_docker.sh
+
+test-complex-features-comprehensive:
+	@echo "🧪 Testing all complex features (GARCH, EVT, Hurst, Spectrum, DTW, Extended Volatility)..."
+	@if ! docker ps &> /dev/null; then \
+		echo "⚠️  Docker not running, attempting to start..."; \
+		bash scripts/start_docker.sh || exit 1; \
+	fi
+	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy arch && python3 -m pytest tests/test_complex_features_comprehensive.py -v -s --tb=short"
+
+test-all-features-comprehensive:
+	@echo "🧪 Testing all features comprehensively..."
+	@$(MAKE) test-key-features-all
+	@$(MAKE) test-complex-features-comprehensive
 
 alphalens-example:
 	@echo "📊 Running complete Alphalens example with comprehensive analysis..."

@@ -191,6 +191,8 @@ def prepare_volatility_model_data(
         if not feature_loader or not feature_name:
             return
         try:
+            # 确保 feature_loader 的配置（如 tick_loader_json）被保留
+            # 注意：feature_loader 应该是从外部传入的，已经配置好的实例
             X_processed = feature_loader.load_features_from_requested(
                 X_processed,
                 requested_features=[feature_name],
@@ -199,6 +201,9 @@ def prepare_volatility_model_data(
             print(f"   ✅ Computed missing feature: {feature_name}")
         except Exception as exc:
             print(f"   ⚠️ Failed to compute feature '{feature_name}': {exc}")
+            import traceback
+
+            print(f"   Traceback: {traceback.format_exc()}")
 
     for group in feature_groups:
         feature_name = group.get("feature_name")
