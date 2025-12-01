@@ -9,18 +9,15 @@
 # 多数程序会同时查找，优先级通常是小写覆盖大写，所以我们在 Dockerfile 里同时设置，保证无论谁检查哪一种都能拿到值。
 # 如果只给小写（http_proxy）赋值，apt-get 这类工具不会走代理；只给大写赋值，Git 可能不生效。因此在需要代理的场景，最好两个都设。
 
-docker build -f Dockerfile.gpu  --target runtime -t lightgbm-runtime:v0.0.5 . 
-
-docker build -f ml_project/docker/Dockerfile.gpu `
-  --target runtime `
-  -t hansenlovefiona017/lightgbm-runtime:v0.0.5 `
-  . `
-  --build-arg http_proxy=http://host.docker.internal:7897 `
-  --build-arg https_proxy=http://host.docker.internal:7897 `
-  --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com `
+docker build -f docker/Dockerfile.gpu \
+  --target runtime \
+  -t hansenlovefiona017/lightgbm-runtime:v0.0.5 \
+  . \
+  --build-arg http_proxy=http://host.docker.internal:7897 \
+  --build-arg https_proxy=http://host.docker.internal:7897 \
+  --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com \
   --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
-docker build -f ml_project/docker/Dockerfile.gpu --target builder -t lightgbm-builder .  --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= --build-arg http_proxy=http://host.docker.internal:7899 --build-arg https_proxy=http://host.docker.internal:7899 --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
 docker run --rm -it lightgbm-builder bash -lc "ls /lightgbm/python-package/"
 
@@ -49,7 +46,8 @@ make docker-gpu-quickstart
 
 ## 📦 文件列表
 
-- `Dockerfile.gpu` - GPU 镜像定义
+- `Dockerfile.gpu` - GPU 镜像定义（Python 3.12，包含 CUDA、PyTorch、LightGBM GPU）
+- `Dockerfile.live` - 实盘交易镜像（Python 3.12，CPU 版本，包含 WebSocket、HTTP、特征计算）
 - `docker-compose.gpu.yml` - Compose 配置
 - `test_gpu_lightgbm.py` - GPU 测试脚本
 - `run_gpu_test.ps1` - Windows 运行脚本
@@ -57,25 +55,75 @@ make docker-gpu-quickstart
 
 ## 🚀 使用方法
 
-### Windows (PowerShell)
+### GPU 版本（训练/模型开发）
+
+#### Windows (PowerShell)
 
 ```powershell
 .\docker\run_gpu_test.ps1
 ```
 
-### Linux / WSL (Bash)
+#### Linux / WSL (Bash)
 
 ```bash
 bash docker/run_gpu_test.sh
 ```
 
-### 使用 Makefile
+#### 使用 Makefile
 
 ```bash
 make docker-gpu-test       # 运行测试
 make docker-gpu-shell      # 交互模式
-make docker-gpu-check      # 环境检查
+make docker-gpu-check     # 环境检查
 ```
+
+### 实盘版本（Live Trading - CPU Only）
+
+实盘 Dockerfile (`Dockerfile.live`) 专为生产环境设计，不包含 GPU 支持，专注于：
+- WebSocket 实时数据接收
+- HTTP API 调用
+- 特征计算
+- 实时交易策略执行
+
+#### 构建实盘镜像
+
+```bash
+docker build -f docker/Dockerfile.live \
+  -t ml-trading-bot-live:latest \
+  . \
+  --build-arg http_proxy=http://host.docker.internal:7897 \
+  --build-arg https_proxy=http://host.docker.internal:7897 \
+  --build-arg NO_PROXY=localhost,127.0.0.1 \
+  --build-arg no_proxy=localhost,127.0.0.1
+```
+
+#### 运行实盘容器
+
+```bash
+# 交互模式
+docker run --rm -it \
+  -v $(pwd):/workspace \
+  ml-trading-bot-live:latest bash
+
+# 运行实盘策略
+docker run --rm \
+  -v $(pwd):/workspace \
+  -v $(pwd)/config:/workspace/config \
+  -v $(pwd)/data:/workspace/data \
+  ml-trading-bot-live:latest \
+  python3 scripts/your_live_strategy.py
+```
+
+#### 实盘镜像特性
+
+- ✅ Python 3.12
+- ✅ WebSocket 支持（websockets, ccxt）
+- ✅ HTTP 客户端（requests, aiohttp, httpx）
+- ✅ 特征计算库（numpy, pandas, scipy, scikit-learn, TA-Lib）
+- ✅ LightGBM CPU 版本
+- ✅ 数据存储（pyarrow, parquet）
+- ❌ 不包含 GPU/CUDA（减小镜像体积）
+- ❌ 不包含深度学习框架（PyTorch, mamba-ssm）
 
 ## ✅ 解决的问题
 
@@ -100,6 +148,59 @@ make docker-gpu-check      # 环境检查
 - [NVIDIA Docker](https://github.com/NVIDIA/nvidia-docker)
 
 ## 🔧 故障排除
+
+### Docker 镜像拉取错误
+
+#### 错误：`failed to resolve source metadata` 或 `no such host`
+
+如果遇到以下错误：
+```
+ERROR: failed to solve: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04: 
+failed to resolve source metadata for docker.io/nvidia/cuda: 
+dial tcp: lookup docker.mirrors.ustc.edu.cn on 8.8.8.8:53: no such host
+```
+
+**原因：** Docker 配置了镜像加速器但无法访问，导致拉取基础镜像失败。
+
+**快速修复（推荐）：**
+
+1. **临时禁用镜像加速器，使用官方源+代理：**
+   ```bash
+   # 备份当前配置
+   sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
+   
+   # 编辑配置，移除 registry-mirrors，添加代理配置
+   sudo nano /etc/docker/daemon.json
+   ```
+   
+   将配置改为：
+   ```json
+   {
+     "runtimes": {
+       "nvidia": {
+         "args": [],
+         "path": "nvidia-container-runtime"
+       }
+     },
+     "proxies": {
+       "http-proxy": "http://host.docker.internal:7897",
+       "https-proxy": "http://host.docker.internal:7897",
+       "no-proxy": "localhost,127.0.0.1"
+     }
+   }
+   ```
+   
+   然后重启 Docker：
+   ```bash
+   sudo systemctl restart docker
+   ```
+
+2. **或者直接使用官方源（如果代理已配置在构建参数中）：**
+   ```bash
+   # 临时移除镜像加速器
+   sudo sed -i '/registry-mirrors/d' /etc/docker/daemon.json
+   sudo systemctl restart docker
+   ```
 
 ### TLS Handshake Timeout 错误
 

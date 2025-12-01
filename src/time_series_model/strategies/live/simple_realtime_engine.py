@@ -207,6 +207,9 @@ class SimpleRealtimeEngine:
                 symbol=base_symbol,
                 timeframe=timeframe,
                 warmup_bars=history_window,
+                exchange=exchange,  # 传入 exchange 用于数据补全
+                auto_fill_gaps=True,  # 启用自动补全
+                gap_detection_interval=60,  # 每 60 秒检查一次
             )
         self.data_manager = data_manager
 
@@ -446,7 +449,13 @@ class SimpleRealtimeEngine:
         """监控循环"""
         while self.running:
             try:
+                # 监控持仓和止盈止损
                 self.monitor_positions()
+
+                # 定期检查数据缺失
+                if self.data_manager:
+                    self.data_manager.periodic_gap_check()
+
                 await asyncio.sleep(1)  # 每秒检查一次
             except Exception as e:
                 print(f"❌ 监控循环出错: {e}")

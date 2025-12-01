@@ -241,6 +241,97 @@ def _estimate_bucket_volume_from_cache(
     return max(bucket_volume, 1e-6)
 
 
+def _get_monthly_vpin_cache_key(
+    file_path: str,
+    bucket_volume: float,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> str:
+    """生成按月VPIN缓存的键"""
+    import hashlib
+
+    path = Path(file_path)
+    month_str = path.stem.split("_")[-1] if "_" in path.stem else path.stem
+    key_str = f"vpin_monthly_{month_str}_{bucket_volume:.6f}_{start.isoformat()}_{end.isoformat()}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def _load_monthly_vpin_cache(
+    cache_dir: Path, cache_key: str
+) -> Optional[List[Tuple[pd.Timestamp, float]]]:
+    """从缓存加载单月的VPIN buckets"""
+    cache_file = cache_dir / f"{cache_key}.pkl"
+    if cache_file.exists():
+        try:
+            import pickle
+
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+        except Exception as e:
+            print(f"      ⚠️  Failed to load cache {cache_key}: {e}", flush=True)
+    return None
+
+
+def _save_monthly_vpin_cache(
+    cache_dir: Path, cache_key: str, buckets: List[Tuple[pd.Timestamp, float]]
+):
+    """保存单月的VPIN buckets到缓存"""
+    cache_file = cache_dir / f"{cache_key}.pkl"
+    try:
+        import pickle
+
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with open(cache_file, "wb") as f:
+            pickle.dump(buckets, f)
+    except Exception as e:
+        print(f"      ⚠️  Failed to save cache {cache_key}: {e}", flush=True)
+
+
+def _compute_vpin_buckets_for_month(
+    path: Path,
+    bucket_volume: float,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> List[Tuple[pd.Timestamp, float]]:
+    """计算单月的VPIN buckets"""
+    buckets = []
+    current_buy = 0.0
+    current_sell = 0.0
+    filled_volume = 0.0
+
+    df = pd.read_parquet(path, columns=["timestamp", "volume", "side"])
+    if df.empty:
+        return buckets
+
+    df = df.dropna(subset=["timestamp", "volume", "side"])
+    timestamps = pd.to_datetime(df["timestamp"]).to_numpy()
+    volumes = df["volume"].astype(float).to_numpy()
+    sides = df["side"].astype(int).to_numpy()
+
+    for ts, vol, side in zip(timestamps, volumes, sides):
+        if ts < start or ts > end:
+            continue
+        remaining = vol
+        while remaining > 0:
+            space_left = bucket_volume - filled_volume
+            trade = min(remaining, space_left)
+            if side == 1:
+                current_buy += trade
+            else:
+                current_sell += trade
+            filled_volume += trade
+            remaining -= trade
+
+            if filled_volume >= bucket_volume - 1e-9:
+                imbalance = abs(current_buy - current_sell)
+                buckets.append((pd.Timestamp(ts), imbalance / bucket_volume))
+                current_buy = 0.0
+                current_sell = 0.0
+                filled_volume = 0.0
+
+    return buckets
+
+
 def compute_vpin_from_cached_ticks(
     cache_files: List[str],
     start_ts: str,
@@ -251,7 +342,23 @@ def compute_vpin_from_cached_ticks(
     quantile: float = 0.3,
     lookback_days: int = 7,
     lookback_minutes: int = 60,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
 ) -> pd.Series:
+    """
+    从tick文件计算VPIN，支持按月缓存
+
+    Args:
+        cache_files: Tick parquet文件列表
+        start_ts: 开始时间
+        end_ts: 结束时间
+        bucket_volume: Bucket volume（如果为None则自适应计算）
+        n_buckets: 滚动窗口大小
+        adaptive: 是否自适应bucket volume
+        quantile: 自适应计算时的分位数
+        lookback_days: 自适应计算时的回看天数
+        lookback_minutes: 时间范围扩展的分钟数
+        monthly_cache_dir: 按月缓存目录（如果为None则禁用缓存）
+    """
     if not cache_files:
         raise ValueError("No cached tick files provided for VPIN computation.")
 
@@ -267,57 +374,68 @@ def compute_vpin_from_cached_ticks(
         else:
             bucket_volume = 100.0
 
-    buckets = []
-    current_buy = 0.0
-    current_sell = 0.0
-    filled_volume = 0.0
+    # 按月缓存目录
+    cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
 
+    # 收集所有月份的buckets
+    all_buckets = []
     total_files = len(cache_files)
+    cached_count = 0
+    computed_count = 0
+
     for idx, path_str in enumerate(cache_files, 1):
         path = Path(path_str)
         if not path.exists():
             continue
-        print(f"      -> [{idx}/{total_files}] {path.name}", flush=True)
-        df = pd.read_parquet(path, columns=["timestamp", "volume", "side"])
-        if df.empty:
-            continue
-        df = df.dropna(subset=["timestamp", "volume", "side"])
-        timestamps = pd.to_datetime(df["timestamp"]).to_numpy()
-        volumes = df["volume"].astype(float).to_numpy()
-        sides = df["side"].astype(int).to_numpy()
 
-        for ts, vol, side in zip(timestamps, volumes, sides):
-            if ts < start or ts > end:
-                continue
-            remaining = vol
-            while remaining > 0:
-                space_left = bucket_volume - filled_volume
-                trade = min(remaining, space_left)
-                if side == 1:
-                    current_buy += trade
-                else:
-                    current_sell += trade
-                filled_volume += trade
-                remaining -= trade
+        # 尝试从缓存加载
+        cache_key = None
+        month_buckets = None
+        if cache_dir:
+            cache_key = _get_monthly_vpin_cache_key(path_str, bucket_volume, start, end)
+            month_buckets = _load_monthly_vpin_cache(cache_dir, cache_key)
 
-                if filled_volume >= bucket_volume - 1e-9:
-                    imbalance = abs(current_buy - current_sell)
-                    buckets.append((ts, imbalance / bucket_volume))
-                    current_buy = 0.0
-                    current_sell = 0.0
-                    filled_volume = 0.0
+        if month_buckets is not None:
+            # 使用缓存
+            print(f"      -> [{idx}/{total_files}] {path.name} (cached)", flush=True)
+            all_buckets.extend(month_buckets)
+            cached_count += 1
+        else:
+            # 计算并缓存
+            print(f"      -> [{idx}/{total_files}] {path.name}", flush=True)
+            month_buckets = _compute_vpin_buckets_for_month(
+                path, bucket_volume, start, end
+            )
+            all_buckets.extend(month_buckets)
+            computed_count += 1
 
-    if not buckets:
+            # 保存缓存
+            if cache_dir and cache_key:
+                _save_monthly_vpin_cache(cache_dir, cache_key, month_buckets)
+
+    if not all_buckets:
         raise ValueError(
             "VPIN computation produced no buckets; check tick data source."
         )
 
-    buckets_df = pd.DataFrame(buckets, columns=["timestamp", "vpin"]).set_index(
-        "timestamp"
+    # 合并所有buckets并按时间排序
+    buckets_df = (
+        pd.DataFrame(all_buckets, columns=["timestamp", "vpin"])
+        .set_index("timestamp")
+        .sort_index()
     )
+
+    # 计算滚动平均
     vpin_series = buckets_df["vpin"].rolling(window=n_buckets, min_periods=1).mean()
+
     print(
-        f"   ✅ VPIN computed with {len(buckets)} buckets (bucket_volume={bucket_volume:.2f})",
+        f"   ✅ VPIN computed with {len(all_buckets)} buckets (bucket_volume={bucket_volume:.2f})",
         flush=True,
     )
+    if cache_dir and cached_count > 0:
+        print(
+            f"   💾 Used {cached_count} cached months, computed {computed_count} new months",
+            flush=True,
+        )
+
     return vpin_series.sort_index()

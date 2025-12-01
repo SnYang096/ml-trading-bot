@@ -23,7 +23,19 @@ echo "⚠️  Docker 未运行，尝试启动..."
 # 方法 1: 使用 service 命令（适用于 WSL2）
 if command -v service &> /dev/null; then
     echo "📦 使用 service 命令启动 Docker..."
-    sudo service docker start
+    # 检查是否在交互式终端中
+    if [ -t 0 ]; then
+        sudo service docker start
+    else
+        echo "⚠️  非交互式环境，无法使用sudo"
+        echo "   请手动运行: sudo service docker start"
+        echo "   或者配置无密码sudo（NOPASSWD）"
+        # 尝试不使用sudo（如果用户已经在docker组中）
+        if groups | grep -q docker; then
+            echo "   检测到用户在docker组中，尝试直接启动..."
+            service docker start 2>/dev/null || true
+        fi
+    fi
     sleep 3
     
     if docker ps &> /dev/null; then

@@ -30,6 +30,21 @@ except ImportError:
 
 from src.data_tools.data_utils import load_raw_data
 
+try:
+    import ccxt
+
+    CCXT_AVAILABLE = True
+except ImportError:
+    CCXT_AVAILABLE = False
+
+try:
+    from src.data_tools.data_gap_filler import DataGapFiller
+
+    GAP_FILLER_AVAILABLE = True
+except ImportError:
+    GAP_FILLER_AVAILABLE = False
+    DataGapFiller = None
+
 
 class QuestDBWriter:
     """
@@ -183,6 +198,9 @@ class RealtimeDataManager:
         questdb_ilp_port: int = 9009,
         parquet_data_path: str = "data/parquet_data",
         warmup_bars: int = 1000,
+        exchange: Optional[Any] = None,  # ccxt Exchange 实例（用于数据补全）
+        auto_fill_gaps: bool = True,  # 自动补全缺失数据
+        gap_detection_interval: int = 60,  # 定期检查间隔（秒）
     ):
         """
         Args:
@@ -199,9 +217,22 @@ class RealtimeDataManager:
         self.questdb_url = questdb_url
         self.parquet_data_path = parquet_data_path
         self.warmup_bars = warmup_bars
+        self.auto_fill_gaps = auto_fill_gaps
+        self.gap_detection_interval = gap_detection_interval
+        self.last_gap_check = time.time()
 
         # QuestDB 写入器
         self.questdb_writer = QuestDBWriter(questdb_ilp_host, questdb_ilp_port)
+
+        # 数据补全器（如果提供了 exchange）
+        if exchange and CCXT_AVAILABLE and GAP_FILLER_AVAILABLE:
+            try:
+                self.gap_filler = DataGapFiller(exchange)
+            except Exception as e:
+                print(f"⚠️ 初始化数据补全器失败: {e}")
+                self.gap_filler = None
+        else:
+            self.gap_filler = None
 
         # 数据缓存（内存中的滑动窗口）
         self.history_df: Optional[pd.DataFrame] = None
@@ -303,7 +334,19 @@ class RealtimeDataManager:
         if "cvd" in bar:
             new_bar_df["cvd"] = float(bar["cvd"])
 
-        # 2. 写入 QuestDB（异步，不阻塞主流程）
+        # 2. 检测并补全缺失数据（在追加新数据之前）
+        if (
+            self.auto_fill_gaps
+            and self.gap_filler
+            and self.history_df is not None
+            and len(self.history_df) > 0
+        ):
+            missing = self._detect_missing_bars(new_bar_df)
+            if missing:
+                print(f"⚠️ 检测到 {len(missing)} 条缺失数据，开始补全...")
+                self._fill_missing_bars(missing)
+
+        # 3. 写入 QuestDB（异步，不阻塞主流程）
         try:
             self.questdb_writer.write_bar(
                 {
@@ -315,7 +358,7 @@ class RealtimeDataManager:
         except Exception as e:
             print(f"⚠️ 写入 QuestDB 失败: {e}")
 
-        # 3. 追加到历史数据（内存中的滑动窗口）
+        # 4. 追加到历史数据（内存中的滑动窗口）
         if self.history_df is None:
             self.history_df = new_bar_df
         else:
@@ -434,6 +477,285 @@ class RealtimeDataManager:
         except Exception as e:
             print(f"⚠️ 从 Parquet 加载数据失败: {e}")
             return pd.DataFrame()
+
+    def _detect_missing_bars(self, new_bar: pd.DataFrame) -> List[pd.Timestamp]:
+        """
+        检测缺失的 K线数据
+
+        Args:
+            new_bar: 新的 K线数据 DataFrame（单行）
+
+        Returns:
+            缺失的时间戳列表
+        """
+        if len(self.history_df) == 0:
+            return []
+
+        # 计算期望的间隔
+        expected_interval = pd.Timedelta(self.timeframe)
+        tolerance = expected_interval * 0.1
+
+        # 检查最后一条数据和新数据之间的间隔
+        last_timestamp = pd.Timestamp(self.history_df["timestamp"].iloc[-1])
+        new_timestamp = pd.Timestamp(new_bar["timestamp"].iloc[0])
+
+        gap = new_timestamp - last_timestamp
+
+        # 如果间隔大于期望间隔的 1.5 倍，认为有缺失
+        if gap > expected_interval * 1.5:
+            # 计算缺失的时间戳数量
+            missing_count = int((gap - tolerance) / expected_interval)
+            missing_timestamps = [
+                last_timestamp + expected_interval * (i + 1)
+                for i in range(missing_count)
+                if last_timestamp + expected_interval * (i + 1)
+                < new_timestamp - tolerance
+            ]
+            return missing_timestamps
+
+        return []
+
+    def _fill_missing_bars(self, missing_timestamps: List[pd.Timestamp]):
+        """
+        补全缺失的 K线数据
+
+        Args:
+            missing_timestamps: 缺失的时间戳列表
+        """
+        if not self.gap_filler or not missing_timestamps:
+            return
+
+        # 转换符号格式（需要根据实际情况实现）
+        ccxt_symbol = self._get_ccxt_symbol()
+
+        # 下载缺失数据
+        missing_df = self.gap_filler.download_missing_bars(
+            symbol=ccxt_symbol,
+            missing_timestamps=missing_timestamps,
+            timeframe=self.timeframe,
+        )
+
+        if len(missing_df) == 0:
+            print(f"⚠️ 无法下载缺失数据（可能超出交易所历史范围）")
+            return
+
+        # 按时间顺序插入到历史数据中
+        missing_df = missing_df.sort_values("timestamp")
+
+        for _, row in missing_df.iterrows():
+            # 转换为标准格式
+            bar_dict = {
+                "timestamp": int(row["timestamp"].timestamp() * 1000),
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "volume": row["volume"],
+            }
+
+            # 追加到历史数据
+            bar_df = pd.DataFrame(
+                [
+                    {
+                        "timestamp": row["timestamp"],
+                        "datetime": row["timestamp"],
+                        "open": row["open"],
+                        "high": row["high"],
+                        "low": row["low"],
+                        "close": row["close"],
+                        "volume": row["volume"],
+                        "symbol": self.symbol,
+                    }
+                ]
+            )
+
+            # 插入到正确位置（按时间排序）
+            self.history_df = pd.concat([self.history_df, bar_df])
+            self.history_df = self.history_df.sort_values("timestamp").reset_index(
+                drop=True
+            )
+
+            # 写入 QuestDB
+            self.questdb_writer.write_bar(
+                {
+                    **bar_dict,
+                    "symbol": self.symbol,
+                    "timeframe": self.timeframe,
+                }
+            )
+
+        print(f"✅ 已补全 {len(missing_df)} 条缺失数据")
+
+    def _get_ccxt_symbol(self) -> str:
+        """
+        获取 ccxt 格式的交易对符号
+
+        简化处理，实际需要根据符号格式转换
+        例如：BTCUSDT -> BTC/USDT:USDT
+        """
+        # 这里需要根据实际情况实现符号转换
+        # 简化版本
+        if "USDT" in self.symbol:
+            base = self.symbol.replace("USDT", "")
+            return f"{base}/USDT:USDT"
+        return self.symbol
+
+    def periodic_gap_check(self):
+        """
+        定期检查数据缺失（后台任务）
+
+        应该在后台线程或异步任务中定期调用
+        """
+        current_time = time.time()
+
+        if current_time - self.last_gap_check < self.gap_detection_interval:
+            return
+
+        self.last_gap_check = current_time
+
+        if (
+            not self.auto_fill_gaps
+            or self.history_df is None
+            or len(self.history_df) < 2
+        ):
+            return
+
+        try:
+            # 检查最近一段时间的数据完整性
+            recent_df = self.history_df.tail(100)  # 检查最近 100 条
+
+            if len(recent_df) < 2:
+                return
+
+            # 检测缺失
+            missing = self._detect_missing_in_range(recent_df)
+
+            if missing:
+                print(f"⚠️ 定期检查发现 {len(missing)} 条缺失数据")
+                self._fill_missing_bars(missing)
+
+        except Exception as e:
+            print(f"⚠️ 定期检查数据缺失时出错: {e}")
+
+    def _detect_missing_in_range(self, df: pd.DataFrame) -> List[pd.Timestamp]:
+        """
+        在指定范围内检测缺失数据
+
+        Args:
+            df: 要检查的数据 DataFrame
+
+        Returns:
+            缺失的时间戳列表
+        """
+        if len(df) < 2:
+            return []
+
+        expected_interval = pd.Timedelta(self.timeframe)
+        tolerance = expected_interval * 0.1
+
+        df_sorted = df.sort_values("timestamp").reset_index(drop=True)
+        missing_timestamps = []
+
+        for i in range(len(df_sorted) - 1):
+            current_time = pd.Timestamp(df_sorted.iloc[i]["timestamp"])
+            next_time = pd.Timestamp(df_sorted.iloc[i + 1]["timestamp"])
+
+            gap = next_time - current_time
+            if gap > expected_interval + tolerance:
+                # 计算缺失的时间戳
+                missing_count = int((gap - tolerance) / expected_interval)
+                for j in range(1, missing_count + 1):
+                    missing_time = current_time + expected_interval * j
+                    if missing_time < next_time - tolerance:
+                        missing_timestamps.append(missing_time)
+
+        return missing_timestamps
+
+    def manual_fill_gaps(
+        self,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp,
+    ) -> int:
+        """
+        手动补全指定时间范围内的缺失数据
+
+        Args:
+            start_time: 开始时间
+            end_time: 结束时间
+
+        Returns:
+            补全的数据条数
+        """
+        if not self.gap_filler:
+            print("⚠️ 数据补全器未初始化（需要提供 exchange）")
+            return 0
+
+        # 查询 QuestDB 中已有的数据
+        missing = self._query_missing_from_questdb(start_time, end_time)
+
+        if not missing:
+            print("✅ 没有缺失数据")
+            return 0
+
+        print(f"📥 发现 {len(missing)} 条缺失数据，开始下载...")
+        self._fill_missing_bars(missing)
+
+        return len(missing)
+
+    def _query_missing_from_questdb(
+        self,
+        start_time: pd.Timestamp,
+        end_time: pd.Timestamp,
+    ) -> List[pd.Timestamp]:
+        """从 QuestDB 查询缺失的时间戳"""
+        if not REQUESTS_AVAILABLE:
+            return []
+
+        # 生成期望的时间序列
+        expected_times = pd.date_range(start_time, end_time, freq=self.timeframe)
+
+        # 查询 QuestDB 中已有的数据
+        timeframe_qdb = (
+            self.timeframe.replace("T", "m")
+            if "T" in self.timeframe
+            else self.timeframe
+        )
+
+        query = f"""
+        SELECT DISTINCT timestamp
+        FROM klines
+        WHERE symbol = '{self.symbol}' 
+          AND timeframe = '{timeframe_qdb}'
+          AND timestamp >= '{start_time}'
+          AND timestamp <= '{end_time}'
+        ORDER BY timestamp
+        """
+
+        try:
+            response = requests.post(
+                f"{self.questdb_url}/exec",
+                data=query,
+                timeout=10,
+            )
+            response.raise_for_status()
+
+            import io
+
+            df_db = pd.read_csv(io.StringIO(response.text))
+
+            if len(df_db) == 0:
+                # 完全没有数据，返回整个时间段
+                return expected_times.tolist()
+
+            # 找出缺失的时间戳
+            existing_times = pd.to_datetime(df_db["timestamp"])
+            missing = expected_times.difference(existing_times)
+
+            return missing.tolist()
+
+        except Exception as e:
+            print(f"⚠️ 查询 QuestDB 失败: {e}")
+            return []
 
 
 # 使用示例

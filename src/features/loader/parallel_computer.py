@@ -115,98 +115,157 @@ def _build_call_args(
     return call_args, call_kwargs
 
 
-def _compute_single_feature_worker(
+def _compute_single_feature_worker_monthly(
     feature_name: str,
     feature_info: Dict,
     df_bytes: bytes,
     fit: bool,
-    cache_key: Optional[str],
-    cache_dir: Optional[str],
-) -> Tuple[str, bytes, Optional[str]]:
+    monthly_cache_dir: Optional[str],
+) -> Tuple[str, bytes]:
     """
-    工作进程函数：计算单个特征
+    工作进程函数：按月计算单个特征
     
     Args:
         feature_name: 特征名
         feature_info: 特征配置信息
         df_bytes: DataFrame 的 pickle 字节
         fit: 是否拟合
-        cache_key: 缓存键
-        cache_dir: 缓存目录
+        monthly_cache_dir: 按月缓存目录
     
     Returns:
-        (feature_name, result_df_bytes, cache_key)
+        (feature_name, result_df_bytes)
     """
     import pandas as pd
     from src.features.loader.feature_function_mapping import get_compute_func
+    from pathlib import Path
+    import hashlib
     
     # 反序列化 DataFrame
     df = pickle.loads(df_bytes)
     
-    # 检查磁盘缓存
-    if cache_key and cache_dir:
-        cache_file = Path(cache_dir) / f"{cache_key}.pkl"
+    # 按月份拆分
+    def _split_df_by_month(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """按月份拆分DataFrame"""
+        if df.empty or not hasattr(df.index, 'to_period'):
+            return {"all": df}
+        monthly_dfs = {}
+        try:
+            for period, group in df.groupby(df.index.to_period('M')):
+                month_key = str(period)
+                monthly_dfs[month_key] = group
+        except Exception:
+            return {"all": df}
+        return monthly_dfs
+    
+    def _get_monthly_cache_key(feature_name: str, month_key: str, params: Dict, feature_info: Dict) -> str:
+        """生成按月缓存的键"""
+        params_str = str(sorted(params.items()))
+        output_cols_str = ""
+        if feature_info:
+            output_cols = feature_info.get("output_columns", [feature_name])
+            output_cols_str = str(sorted(output_cols))
+        code_version = "v3"  # v3: 支持按月缓存
+        key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
+        return hashlib.md5(key_str.encode()).hexdigest()
+    
+    def _load_monthly_cache(cache_dir: Path, cache_key: str) -> Optional[pd.DataFrame | pd.Series]:
+        """从按月缓存加载"""
+        if not cache_dir:
+            return None
+        cache_file = cache_dir / f"{cache_key}.pkl"
         if cache_file.exists():
             try:
                 with open(cache_file, 'rb') as f:
-                    cached_df = pickle.load(f)
-                    return (feature_name, pickle.dumps(cached_df), cache_key)
+                    return pickle.load(f)
             except Exception:
                 pass
+        return None
     
-    # 计算特征
+    def _save_monthly_cache(cache_dir: Path, cache_key: str, result: pd.DataFrame | pd.Series):
+        """保存到按月缓存"""
+        if not cache_dir:
+            return
+        cache_file = cache_dir / f"{cache_key}.pkl"
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            with open(cache_file, 'wb') as f:
+                pickle.dump(result, f)
+        except Exception:
+            pass
+    
+    # 按月计算
+    monthly_dfs = _split_df_by_month(df)
+    compute_params = feature_info.get("compute_params", {})
+    compute_func_name = feature_info["compute_func"]
+    compute_func = get_compute_func(compute_func_name)
+    cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
+    
+    monthly_results = {}
+    for month_key, month_df in monthly_dfs.items():
+        if month_key == "all":
+            # 无法按月拆分，直接计算
+            call_args, call_kwargs = _build_call_args(feature_info, month_df)
+            month_result = compute_func(*call_args, **call_kwargs)
+        else:
+            # 检查缓存
+            monthly_cache_key = _get_monthly_cache_key(feature_name, month_key, compute_params, feature_info)
+            cached_result = _load_monthly_cache(cache_dir, monthly_cache_key)
+            
+            if cached_result is not None:
+                month_result = cached_result
+            else:
+                # 计算该月份
+                call_args, call_kwargs = _build_call_args(feature_info, month_df)
+                month_result = compute_func(*call_args, **call_kwargs)
+                # 保存缓存
+                _save_monthly_cache(cache_dir, monthly_cache_key, month_result)
+        
+        monthly_results[month_key] = month_result
+    
+    # 合并所有月份的结果
     try:
-        compute_func_name = feature_info["compute_func"]
-        compute_func = get_compute_func(compute_func_name)
+        # 处理不同的返回类型
+        if isinstance(list(monthly_results.values())[0], tuple):
+            # 如果是tuple，需要分别合并每个元素
+            output_cols = feature_info.get("output_columns", [feature_name])
+            combined_results = []
+            for i in range(len(output_cols)):
+                combined_series = pd.concat([r[i] for r in monthly_results.values()], axis=0).sort_index()
+                combined_results.append(combined_series)
+            result_df = pd.DataFrame({
+                col: series for col, series in zip(output_cols, combined_results)
+            })
+        elif isinstance(list(monthly_results.values())[0], pd.DataFrame):
+            result_df = pd.concat(monthly_results.values(), axis=0).sort_index()
+        elif isinstance(list(monthly_results.values())[0], pd.Series):
+            result_df = pd.concat(monthly_results.values(), axis=0).sort_index()
+            output_cols = feature_info.get("output_columns", [feature_name])
+            if len(output_cols) == 1:
+                result_df = pd.DataFrame({output_cols[0]: result_df})
+            else:
+                result_df = pd.DataFrame({feature_name: result_df})
+        else:
+            # Fallback
+            result_df = pd.concat([pd.DataFrame({feature_name: r}) if isinstance(r, pd.Series) else r 
+                                  for r in monthly_results.values()], axis=0).sort_index()
+    except Exception as e:
+        # 如果合并失败，尝试直接计算
         call_args, call_kwargs = _build_call_args(feature_info, df)
         feature_result = compute_func(*call_args, **call_kwargs)
-        
-        # Handle different return types
-        # If function returns a tuple (e.g., MACD returns (macd, signal, histogram)),
-        # convert it to a DataFrame with columns from output_columns config
         if isinstance(feature_result, tuple):
             output_cols = feature_info.get("output_columns", [feature_name])
-            if len(feature_result) == len(output_cols):
-                # Create DataFrame from tuple
-                result_df = pd.DataFrame({
-                    col: series for col, series in zip(output_cols, feature_result)
-                }, index=df.index)
-            else:
-                # Fallback: use feature_name with index
-                result_df = pd.DataFrame({
-                    f"{feature_name}_{i}": series for i, series in enumerate(feature_result)
-                }, index=df.index)
+            result_df = pd.DataFrame({
+                col: series for col, series in zip(output_cols, feature_result)
+            }, index=df.index)
         elif isinstance(feature_result, pd.DataFrame):
             result_df = feature_result
         elif isinstance(feature_result, pd.Series):
-            # Convert Series to DataFrame
             output_cols = feature_info.get("output_columns", [feature_name])
-            if len(output_cols) == 1:
-                result_df = pd.DataFrame({output_cols[0]: feature_result}, index=df.index)
-            else:
-                result_df = pd.DataFrame({feature_name: feature_result}, index=df.index)
+            result_df = pd.DataFrame({output_cols[0] if output_cols else feature_name: feature_result}, index=df.index)
         else:
-            # Fallback: try to convert to Series/DataFrame
             result_df = pd.DataFrame({feature_name: feature_result}, index=df.index)
-        
-        # 保存磁盘缓存
-        if cache_key and cache_dir:
-            cache_file = Path(cache_dir) / f"{cache_key}.pkl"
-            try:
-                with open(cache_file, 'wb') as f:
-                    pickle.dump(result_df, f)
-            except Exception:
-                pass
-        
-        return (feature_name, pickle.dumps(result_df), cache_key)
-    except Exception as e:
-        print(f"     ❌ Error computing {feature_name}: {e}")
-        import traceback
-        traceback.print_exc()
-        # 如果是依赖缺失错误，应该抛出异常而不是继续
-        if isinstance(e, (ValueError, KeyError)) and ("not found" in str(e) or "Required" in str(e)):
-            raise  # 重新抛出依赖缺失错误
-        return (feature_name, df_bytes, cache_key)  # 返回原始 DataFrame
+    
+    return (feature_name, pickle.dumps(result_df))
 
 
 class ParallelFeatureComputer:
@@ -226,6 +285,7 @@ class ParallelFeatureComputer:
         use_memory_cache: bool = True,
         max_workers: Optional[int] = None,
         parallel_backend: str = "process",  # "process", "thread"
+        use_monthly_cache: bool = True,  # 是否使用按月缓存
     ):
         """
         Args:
@@ -234,6 +294,7 @@ class ParallelFeatureComputer:
             use_memory_cache: 是否使用内存缓存
             max_workers: 最大并行数（None 表示使用 CPU 核心数）
             parallel_backend: 并行后端（process/thread）
+            use_monthly_cache: 是否使用按月缓存（增量计算）
         """
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
@@ -241,11 +302,19 @@ class ParallelFeatureComputer:
         
         self.use_disk_cache = use_disk_cache
         self.use_memory_cache = use_memory_cache
+        self.use_monthly_cache = use_monthly_cache
         self.max_workers = max_workers or mp.cpu_count()
         self.parallel_backend = parallel_backend
         
         # 内存缓存
         self.memory_cache = {}
+        
+        # 按月缓存目录
+        if self.use_monthly_cache and self.cache_dir:
+            self.monthly_cache_dir = self.cache_dir / "monthly"
+            self.monthly_cache_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.monthly_cache_dir = None
         
         # 并行执行器
         if parallel_backend == "process":
@@ -255,82 +324,167 @@ class ParallelFeatureComputer:
         else:
             self.executor = None
     
-    def _get_cache_key(
-        self, feature_name: str, df_hash: str, params: Dict, feature_info: Optional[Dict] = None
+    def _get_df_hash(self, df: pd.DataFrame) -> str:
+        """生成 DataFrame 哈希（仅用于调试，不再用于缓存键）"""
+        if df.empty:
+            return "EMPTY"
+        try:
+            start_meta = str(df.index[0])
+            end_meta = str(df.index[-1])
+            return f"{start_meta}_{end_meta}"
+        except Exception:
+            return "NO_INDEX"
+    
+    def _split_df_by_month(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """按月份拆分DataFrame"""
+        if df.empty or not hasattr(df.index, 'to_period'):
+            return {"all": df}
+        
+        monthly_dfs = {}
+        try:
+            # 尝试按月份分组
+            for period, group in df.groupby(df.index.to_period('M')):
+                month_key = str(period)
+                monthly_dfs[month_key] = group
+        except Exception:
+            # 如果无法按月份分组，返回整个DataFrame
+            return {"all": df}
+        
+        return monthly_dfs
+    
+    def _get_monthly_cache_key(
+        self, feature_name: str, month_key: str, params: Dict, feature_info: Optional[Dict] = None
     ) -> str:
-        """
-        生成缓存键
-        
-        Args:
-            feature_name: 特征名
-            df_hash: DataFrame 哈希
-            params: 计算参数
-            feature_info: 特征配置信息（用于包含 output_columns 等信息）
-        """
+        """生成按月缓存的键"""
         params_str = str(sorted(params.items()))
-        
-        # 包含 output_columns 信息，确保缓存键在配置改变时也会改变
         output_cols_str = ""
         if feature_info:
             output_cols = feature_info.get("output_columns", [feature_name])
             output_cols_str = str(sorted(output_cols))
-        
-        # 包含代码版本（处理 Tuple 的逻辑版本）
-        # 当处理逻辑改变时，这个版本号应该更新
-        code_version = "v2"  # v2: 支持 Tuple 返回值转换为 DataFrame
-        
-        key_str = f"{feature_name}_{df_hash}_{params_str}_{output_cols_str}_{code_version}"
+        code_version = "v3"  # v3: 支持按月缓存
+        key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
         return hashlib.md5(key_str.encode()).hexdigest()
     
-    def _get_df_hash(self, df: pd.DataFrame, n_rows: int = 100) -> str:
-        """生成 DataFrame 哈希（基于前 N 行 + 时间范围/行数等元信息）"""
-        if df.empty:
-            base_hash = hashlib.md5(str(df.shape).encode()).hexdigest()
-            start_meta = "EMPTY"
-            end_meta = "EMPTY"
-        else:
-            sample = df.head(n_rows)
-            numeric_cols = sample.select_dtypes(include=[np.number]).columns
-            if len(numeric_cols) == 0:
-                base_hash = hashlib.md5(str(df.shape).encode()).hexdigest()
-            else:
-                sample_data = sample[numeric_cols].values.tobytes()
-                base_hash = hashlib.md5(sample_data).hexdigest()
-            try:
-                start_meta = str(df.index[0])
-                end_meta = str(df.index[-1])
-            except Exception:
-                start_meta = "NO_INDEX_START"
-                end_meta = "NO_INDEX_END"
-        meta_str = f"{base_hash}|rows={len(df)}|start={start_meta}|end={end_meta}"
-        return hashlib.md5(meta_str.encode()).hexdigest()
-    
-    def _load_from_disk_cache(self, cache_key: str) -> Optional[pd.DataFrame | pd.Series]:
-        """从磁盘加载缓存（支持 DataFrame 和 Series）"""
-        if not self.use_disk_cache or not self.cache_dir:
+    def _load_monthly_cache(self, cache_key: str) -> Optional[pd.DataFrame | pd.Series]:
+        """从按月缓存加载"""
+        if not self.monthly_cache_dir:
             return None
-        
-        cache_file = self.cache_dir / f"{cache_key}.pkl"
+        cache_file = self.monthly_cache_dir / f"{cache_key}.pkl"
         if cache_file.exists():
             try:
                 with open(cache_file, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                print(f"     ⚠️  Error loading cache {cache_key}: {e}")
                 return None
         return None
     
-    def _save_to_disk_cache(self, cache_key: str, result: pd.DataFrame | pd.Series):
-        """保存到磁盘缓存（支持 DataFrame 和 Series）"""
-        if not self.use_disk_cache or not self.cache_dir:
+    def _save_monthly_cache(self, cache_key: str, result: pd.DataFrame | pd.Series):
+        """保存到按月缓存"""
+        if not self.monthly_cache_dir:
             return
-        
-        cache_file = self.cache_dir / f"{cache_key}.pkl"
+        cache_file = self.monthly_cache_dir / f"{cache_key}.pkl"
         try:
             with open(cache_file, 'wb') as f:
                 pickle.dump(result, f)
         except Exception as e:
-            print(f"     ⚠️  Error saving cache {cache_key}: {e}")
+            pass
+    
+    def _try_monthly_cache(
+        self,
+        feature_name: str,
+        df: pd.DataFrame,
+        compute_params: Dict,
+        feature_info: Dict,
+    ) -> Optional[Dict[str, pd.DataFrame | pd.Series]]:
+        """
+        尝试使用按月缓存
+        
+        Returns:
+            Dict[month_key, result] 如果所有月份都有缓存，否则None
+        """
+        if df.empty or not self.monthly_cache_dir:
+            return None
+        
+        # 按月份拆分
+        monthly_dfs = self._split_df_by_month(df)
+        if len(monthly_dfs) <= 1:
+            # 无法按月拆分或只有一个月，不使用按月缓存
+            return None
+        
+        # 检查每个月的缓存
+        monthly_results = {}
+        missing_months = []
+        
+        for month_key, month_df in monthly_dfs.items():
+            if month_key == "all":
+                # 无法按月拆分，不使用按月缓存
+                return None
+            
+            monthly_cache_key = self._get_monthly_cache_key(
+                feature_name, month_key, compute_params, feature_info
+            )
+            cached_result = self._load_monthly_cache(monthly_cache_key)
+            
+            if cached_result is not None:
+                monthly_results[month_key] = cached_result
+            else:
+                missing_months.append(month_key)
+        
+        if missing_months:
+            # 有月份缺失缓存，返回None（将使用全量计算）
+            return None
+        
+        # 所有月份都有缓存
+        return monthly_results
+    
+    def _compute_and_cache_monthly(
+        self,
+        feature_name: str,
+        df: pd.DataFrame,
+        compute_params: Dict,
+        feature_info: Dict,
+        compute_func: Callable,
+    ) -> pd.DataFrame | pd.Series:
+        """
+        按月计算特征并缓存
+        
+        Returns:
+            合并后的特征结果
+        """
+        if df.empty:
+            return df
+        
+        # 按月份拆分
+        monthly_dfs = self._split_df_by_month(df)
+        if len(monthly_dfs) <= 1:
+            # 无法按月拆分，使用全量计算
+            return compute_func(df, **compute_params)
+        
+        # 按月计算
+        monthly_results = {}
+        for month_key, month_df in monthly_dfs.items():
+            if month_key == "all":
+                # 无法按月拆分，使用全量计算
+                return compute_func(df, **compute_params)
+            
+            # 检查缓存
+            monthly_cache_key = self._get_monthly_cache_key(
+                feature_name, month_key, compute_params, feature_info
+            )
+            cached_result = self._load_monthly_cache(monthly_cache_key)
+            
+            if cached_result is not None:
+                monthly_results[month_key] = cached_result
+            else:
+                # 计算该月份
+                month_result = compute_func(month_df, **compute_params)
+                monthly_results[month_key] = month_result
+                # 保存缓存
+                self._save_monthly_cache(monthly_cache_key, month_result)
+        
+        # 合并所有月份的结果
+        combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+        return combined_result
     
     def compute_features_parallel(
         self,
@@ -425,56 +579,69 @@ class ParallelFeatureComputer:
                 
                 feature_info = features[feature_name]
                 compute_params = feature_info.get("compute_params", {})
-                cache_key = (
-                    self._get_cache_key(feature_name, df_hash, compute_params, feature_info)
-                    if self.use_disk_cache
-                    else None
-                )
                 
-                # 检查磁盘缓存
-                if cache_key:
-                    cached_result = self._load_from_disk_cache(cache_key)
-                    if cached_result is not None:
-                        print(f"     💾 Using disk cache for {feature_name}")
-                        if self.use_memory_cache:
-                            self.memory_cache[feature_name] = cached_result
-                        # 合并结果（支持 Series 和 DataFrame）
-                        if isinstance(cached_result, pd.DataFrame):
+                # 使用按月缓存（如果特征支持）
+                use_monthly = self.use_monthly_cache and not feature_info.get("no_monthly_cache", False)
+                monthly_results = None
+                if use_monthly:
+                    monthly_results = self._try_monthly_cache(
+                        feature_name, result_df, compute_params, feature_info
+                    )
+                
+                if monthly_results is not None:
+                    # 按月缓存成功，合并结果
+                    print(f"     💾 Using monthly cache for {feature_name} ({len(monthly_results)} months)")
+                    if self.use_memory_cache:
+                        # 合并所有月份的结果
+                        combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+                        self.memory_cache[feature_name] = combined_result
+                        # 合并到result_df
+                        if isinstance(combined_result, pd.DataFrame):
                             new_cols = [
-                                c for c in cached_result.columns if c not in result_df.columns
+                                c for c in combined_result.columns if c not in result_df.columns
                             ]
                             if new_cols:
-                                result_df = pd.concat([result_df, cached_result[new_cols]], axis=1)
-                        elif isinstance(cached_result, pd.Series):
-                            if cached_result.name and cached_result.name not in result_df.columns:
-                                result_df[cached_result.name] = cached_result
+                                result_df = pd.concat([result_df, combined_result[new_cols]], axis=1)
+                        elif isinstance(combined_result, pd.Series):
+                            if combined_result.name and combined_result.name not in result_df.columns:
+                                result_df[combined_result.name] = combined_result
                             elif feature_name not in result_df.columns:
-                                result_df[feature_name] = cached_result
-                        continue
+                                result_df[feature_name] = combined_result
+                    continue
                 
                 run_sequential = feature_info.get("run_sequential", False) or not self.executor
 
                 # 提交任务
                 if not run_sequential:
+                    # 并行计算：按月计算并缓存
+                    print(f"     🔸 Computing {feature_name} in parallel (monthly)", flush=True)
                     df_bytes = pickle.dumps(result_df)
                     future = self.executor.submit(
-                        _compute_single_feature_worker,
+                        _compute_single_feature_worker_monthly,
                         feature_name,
                         feature_info,
                         df_bytes,
                         fit,
-                        cache_key,
-                        str(self.cache_dir) if self.cache_dir else None,
+                        str(self.monthly_cache_dir) if self.monthly_cache_dir else None,
                     )
                     futures.append(future)
                 else:
-                    print(f"     🔸 Running {feature_name} sequentially", flush=True)
-                    # 串行计算（或被标记为顺序执行）
+                    print(f"     🔸 Running {feature_name} sequentially (monthly)", flush=True)
+                    # 串行计算（或被标记为顺序执行）：按月计算并缓存
                     try:
                         compute_func_name = feature_info["compute_func"]
                         compute_func = get_compute_func(compute_func_name)
-                        call_args, call_kwargs = _build_call_args(feature_info, result_df)
-                        feature_result = compute_func(*call_args, **call_kwargs)
+                        
+                        # 使用按月计算（如果特征支持）
+                        use_monthly = self.use_monthly_cache and not feature_info.get("no_monthly_cache", False)
+                        if use_monthly:
+                            feature_result = self._compute_and_cache_monthly(
+                                feature_name, result_df, compute_params, feature_info, compute_func
+                            )
+                        else:
+                            # 不支持按月缓存的特征，直接计算
+                            call_args, call_kwargs = _build_call_args(feature_info, result_df)
+                            feature_result = compute_func(*call_args, **call_kwargs)
                         
                         # Handle different return types
                         # If function returns a tuple (e.g., MACD), convert to DataFrame
@@ -508,11 +675,9 @@ class ParallelFeatureComputer:
                             if col_name not in result_df.columns:
                                 result_df[col_name] = feature_result
                         
-                        # 保存缓存
+                        # 保存内存缓存
                         if self.use_memory_cache:
                             self.memory_cache[feature_name] = feature_result
-                        if cache_key:
-                            self._save_to_disk_cache(cache_key, feature_result)
                         
                         print(f"     ✅ Computed {feature_name}")
                     except Exception as e:
@@ -523,7 +688,7 @@ class ParallelFeatureComputer:
             # 等待所有任务完成
             for future in as_completed(futures):
                 try:
-                    feature_name, result_df_bytes, cache_key = future.result()
+                    feature_name, result_df_bytes = future.result()
                     feature_df = pickle.loads(result_df_bytes)
                     
                     # 合并结果

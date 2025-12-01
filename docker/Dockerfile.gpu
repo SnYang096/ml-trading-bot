@@ -3,7 +3,7 @@
 # ============================================================================
 # 环境版本:
 #   - Base: NVIDIA CUDA 12.8.1 + cuDNN + Ubuntu 22.04
-#   - Python: 3.10
+#   - Python: 3.12
 #   - CUDA: 12.8.1
 # 
 # 核心包版本（所有包基于 numpy 1.26.4）:
@@ -74,9 +74,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # 安装编译依赖
 RUN echo "📦 Installing build dependencies..." && \
     apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-dev \
-    python3.10-venv \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
+    python3.12-distutils \
     python3-pip \
     build-essential \
     cmake \
@@ -90,9 +94,9 @@ RUN echo "📦 Installing build dependencies..." && \
     ocl-icd-opencl-dev \
     opencl-headers \
     && update-ca-certificates \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1 \
-    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/* \
     && echo "✅ Build dependencies installed"
 
@@ -231,7 +235,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # =========================================================================
 RUN echo "📦 Installing runtime dependencies..." && \
     apt-get update && apt-get install -y \
-    python3.10 \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-venv \
+    python3.12-distutils \
     python3-pip \
     wget \
     ca-certificates \
@@ -240,7 +249,7 @@ RUN echo "📦 Installing runtime dependencies..." && \
     ocl-icd-libopencl1 \
     clinfo \
     && update-ca-certificates \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1 \
     && rm -rf /var/lib/apt/lists/* \
     && echo "✅ Runtime dependencies installed"
