@@ -42,7 +42,14 @@ feature_pipeline:
     - hilbert_phase
     - hurst_price  # 价格趋势持续性
     - hurst_cvd  # CVD 资金流的持续性（识别压缩区突破质量）
-    # 订单流特征（VPIN）
+    # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）
+    # 新增多维特征（自动包含，无需单独添加）：
+    # - vpin: 均值（整体不平衡度，向后兼容）
+    # - vpin_max: 峰值（捕捉极端知情交易，避免峰值被稀释，关键！推荐用于突破确认）
+    # - vpin_last: 最新值（反映最新情绪，突破瞬间）
+    # - vpin_std: 标准差（衡量VPIN在K线内的波动性，突破时波动性可能上升）
+    # - vpin_count: 事件数（代理流动性，突破时事件数可能增加）
+    # 推荐组合：vpin_max（峰值异常）+ vpin_last（最新突破信号）+ vpin_count（流动性确认）
     - vpin_features
     # 交互特征（状态 × 动量）
     - liquidity_void_x_wpt_risk  # 流动性真空 × WPT 假突破风险（识别假突破）

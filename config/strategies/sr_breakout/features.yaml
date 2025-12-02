@@ -38,7 +38,14 @@ feature_pipeline:
     - hilbert_volume_env
     - hilbert_env_price_vol_ratio
     - hilbert_triple_divergence
-    # 订单流特征（VPIN + Trade Clustering）
+    # 订单流特征（VPIN + Trade Clustering）- 包含多维统计特征（关键改进：保留峰值信号）
+    # 新增多维特征（自动包含，无需单独添加）：
+    # - vpin: 均值（整体不平衡度，向后兼容）
+    # - vpin_max: 峰值（捕捉极端知情交易，避免峰值被稀释，关键！推荐用于突破确认）
+    # - vpin_last: 最新值（反映最新情绪）
+    # - vpin_count: 事件数（代理流动性，区分突发事件vs持续活跃）
+    # - vpin_signed_imbalance_max: Signed imbalance 峰值（最大买卖压力方向）
+    # 推荐组合：vpin_max（峰值异常）+ vpin_count（流动性）+ vpin_zscore_20（异常检测）
     - vpin_features
     # VPIN × Trade Clustering 交叉特征（SR 突破策略）
     - vpin_zscore_x_trade_cluster_max_buy_run  # 异常订单流不平衡 × 连续买入（突破确认）

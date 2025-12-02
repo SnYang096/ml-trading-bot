@@ -54,7 +54,15 @@ feature_pipeline:
     - spectrum_features_trend_following  # 精确选择：low_freq_ratio, flatness, high_freq_ratio
     - atr
     - rsi
-    # 订单流特征（VPIN）
+    # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）
+    # 新增多维特征（自动包含，无需单独添加）：
+    # - vpin: 均值（整体不平衡度，向后兼容）
+    # - vpin_max: 峰值（捕捉极端知情交易，避免峰值被稀释）
+    # - vpin_last: 最新值（反映最新情绪，趋势延续信号）
+    # - vpin_std: 标准差（衡量VPIN在K线内的波动性，健康趋势应低波动）
+    # - vpin_count: 事件数（代理流动性，持续活跃的特征）
+    # - vpin_signed_imbalance_last: Signed imbalance 最新值（趋势方向确认）
+    # 推荐组合：vpin（整体）+ vpin_signed_imbalance_last（方向）+ vpin_std（稳定性）
     - vpin_features
     # 交互特征（状态 × 动量）
     - hurst_x_trend_r2  # Hurst × 趋势 R²（确认趋势持续性）

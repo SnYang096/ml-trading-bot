@@ -2,29 +2,70 @@
 
 解决 Windows WSL 中 LightGBM GPU 兼容性问题的 Docker 方案。
 
+## 🚀 快速构建（推荐）
+
+使用自动化构建脚本，自动处理 LightGBM 源码复制和清理：
+
+```bash
+# 基本构建
+./docker/build-gpu.sh
+
+# 指定镜像名称和标签
+./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.6 --no-ssh
+
+# 使用代理构建
+# 注意：脚本会自动修复代理地址（127.0.0.1 -> Docker 网桥 IP，以便容器访问宿主机代理）
+HTTP_PROXY=http://127.0.0.1:7897 \
+HTTPS_PROXY=http://127.0.0.1:7897 \
+NO_PROXY=localhost,127.0.0.1 \
+./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.6 --no-ssh
+
+# Clash TUN 模式用户注意：
+# 1. 如果配置了很多 DIRECT 规则（如 docker.io, ubuntu.com 等），可能不需要代理
+# 2. 如果需要代理，确保 Clash 配置中允许局域网连接（监听 0.0.0.0:7897）
+# 3. 或者直接不设置代理，让 TUN 模式处理流量
+
+# 不使用 SSH（如果不需要更新子模块）
+./docker/build-gpu.sh --no-ssh
+
+# 不使用代理（忽略环境变量中的代理设置，适用于 Clash TUN 模式）
+./docker/build-gpu.sh --no-proxy
+
+# 同时禁用 SSH 和代理
+./docker/build-gpu.sh --no-ssh --no-proxy
+
+# 查看帮助
+./docker/build-gpu.sh --help
+```
+
+## 📝 手动构建
+
+如果需要手动控制构建过程：
+
 ```sh
+# 1. 复制 LightGBM 到构建上下文
+cp -r /home/yin/trading/LightGBM ./LightGBM
 
-# HTTP_PROXY/HTTPS_PROXY/NO_PROXY（大写）是 POSIX / curl / apt 等多数 C/C++ 程序默认识别的代理变量；只要你在环境里 export，它们就会走代理。apt-get、wget、curl 都看这几个。
-# http_proxy/https_proxy/no_proxy（小写）是 curl 旧版本和一些 Python/Ruby 生态习惯使用的写法；Git 也支持，看的是小写版本。
-# 多数程序会同时查找，优先级通常是小写覆盖大写，所以我们在 Dockerfile 里同时设置，保证无论谁检查哪一种都能拿到值。
-# 如果只给小写（http_proxy）赋值，apt-get 这类工具不会走代理；只给大写赋值，Git 可能不生效。因此在需要代理的场景，最好两个都设。
-
-docker build -f docker/Dockerfile.gpu \
+# 2. 构建镜像
+DOCKER_BUILDKIT=1 docker build \
+  --ssh default \
+  -f docker/Dockerfile.gpu \
   --target runtime \
-  -t hansenlovefiona017/lightgbm-runtime:v0.0.5 \
+  -t lightgbm-gpu:latest \
   . \
   --build-arg http_proxy=http://host.docker.internal:7897 \
   --build-arg https_proxy=http://host.docker.internal:7897 \
   --build-arg NO_PROXY=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com \
   --build-arg no_proxy=localhost,127.0.0.1,archive.ubuntu.com,security.ubuntu.com
 
-
-docker run --rm -it lightgbm-builder bash -lc "ls /lightgbm/python-package/"
-
-docker run --rm -it lightgbm-builder bash
-
-docker run --rm -it lightgbm-runtime bash
+# 3. 清理临时文件
+rm -rf ./LightGBM
 ```
+
+**关于代理变量：**
+- `HTTP_PROXY/HTTPS_PROXY/NO_PROXY`（大写）是 POSIX / curl / apt 等多数 C/C++ 程序默认识别的代理变量
+- `http_proxy/https_proxy/no_proxy`（小写）是 curl 旧版本和一些 Python/Ruby 生态习惯使用的写法；Git 也支持
+- 多数程序会同时查找，优先级通常是小写覆盖大写，所以我们在 Dockerfile 里同时设置，保证无论谁检查哪一种都能拿到值
 ## 🎯 快速开始
 
 ```bash

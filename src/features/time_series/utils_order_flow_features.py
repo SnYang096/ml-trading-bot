@@ -488,6 +488,14 @@ def extract_order_flow_features(
         # 方法1：严格右对齐的向量化实现（极快，O(N log M)）
         aligned_vpin = None
         aligned_signed = None
+        # 初始化多维统计特征变量
+        aligned_vpin_max = None
+        aligned_vpin_min = None
+        aligned_vpin_std = None
+        aligned_vpin_last = None
+        aligned_vpin_count = None
+        aligned_signed_max = None
+        aligned_signed_last = None
         # 使用原始事件时间戳进行严格右对齐（不依赖 resample）
         # 关键：VPIN 事件应分配给满足 kline_start <= event_time < kline_end 的 K 线
         try:
@@ -519,29 +527,82 @@ def extract_order_flow_features(
                 valid_idx = idx[valid_mask]
                 valid_vpin = vpin_values[valid_mask]
                 valid_signed = signed_values[valid_mask]
-                # 按 K 线索引分组聚合（取均值）
+                valid_times = event_times[valid_mask]
+                
+                # 创建临时 DataFrame 用于多维统计
+                temp_df = pd.DataFrame({
+                    'kline_idx': valid_idx,
+                    'vpin': valid_vpin,
+                    'signed': valid_signed,
+                    'timestamp': valid_times
+                })
+                
+                # 按 K 线索引分组，计算多维统计特征
+                # 关键改进：不仅计算均值，还保留峰值（max）、最新值（last）、波动性（std）、事件数（count）等信息
+                # 使用 lambda 函数获取最后一个值（按时间戳排序）
                 aligned_vpin = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_max = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_min = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_last = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
                 aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
-                # 使用 pandas groupby 聚合（高效）
-                vpin_series = pd.Series(valid_vpin, index=valid_idx)
-                signed_series = pd.Series(valid_signed, index=valid_idx)
-                vpin_aggregated = vpin_series.groupby(valid_idx).mean()
-                signed_aggregated = signed_series.groupby(valid_idx).mean()
-                aligned_vpin.iloc[vpin_aggregated.index] = vpin_aggregated.values
-                aligned_signed.iloc[signed_aggregated.index] = signed_aggregated.values
+                aligned_signed_max = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
+                
+                # 按 K 线分组计算统计量（valid_idx 是整数位置索引）
+                grouped = temp_df.groupby('kline_idx')
+                for kline_pos in grouped.groups.keys():
+                    group_data = grouped.get_group(kline_pos)
+                    
+                    # 按时间排序获取最后一个值
+                    group_sorted = group_data.sort_values('timestamp')
+                    
+                    aligned_vpin.iloc[kline_pos] = group_data['vpin'].mean()
+                    aligned_vpin_max.iloc[kline_pos] = group_data['vpin'].max()
+                    aligned_vpin_min.iloc[kline_pos] = group_data['vpin'].min()
+                    aligned_vpin_std.iloc[kline_pos] = group_data['vpin'].std() if len(group_data) > 1 else 0.0
+                    aligned_vpin_last.iloc[kline_pos] = group_sorted['vpin'].iloc[-1]
+                    aligned_vpin_count.iloc[kline_pos] = len(group_data)
+                    
+                    aligned_signed.iloc[kline_pos] = group_data['signed'].mean()
+                    aligned_signed_max.iloc[kline_pos] = group_data['signed'].max()
+                    aligned_signed_last.iloc[kline_pos] = group_sorted['signed'].iloc[-1]
             else:
-                # 没有有效事件，初始化为 0
+                # 没有有效事件，初始化所有特征为 0
                 aligned_vpin = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_max = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_min = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_last = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
                 aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_signed_max = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
         except Exception as e:
             # 向量化方法失败，回退到循环方法
             print(f"   ⚠️  Vectorized alignment failed ({e}), falling back to loop method")
             aligned_vpin = None
             aligned_signed = None
+            # 清除之前初始化的变量，让循环方法重新初始化
+            aligned_vpin_max = None
+            aligned_vpin_min = None
+            aligned_vpin_std = None
+            aligned_vpin_last = None
+            aligned_vpin_count = None
+            aligned_signed_max = None
+            aligned_signed_last = None
         # 方法2：循环方法（兼容性，当向量化方法不可用时）
         if aligned_vpin is None:
-            aligned_vpin = pd.Series(index=df.index, dtype=float)
-            aligned_signed = pd.Series(index=df.index, dtype=float)
+            aligned_vpin = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_vpin_max = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_vpin_min = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_vpin_last = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
+            aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_signed_max = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
             # 获取事件数据
             if isinstance(vpin_events, pd.DataFrame):
                 event_vpin = vpin_events["vpin"]
@@ -556,16 +617,54 @@ def extract_order_flow_features(
                     vpin_events.index < window_end
                 )
                 if window_mask.any():
-                    aligned_vpin.loc[kline_time] = event_vpin.loc[window_mask].mean()
-                    aligned_signed.loc[kline_time] = event_signed.loc[window_mask].mean()
+                    vpin_window = event_vpin.loc[window_mask]
+                    signed_window = event_signed.loc[window_mask]
+                    # 计算多维统计特征
+                    aligned_vpin.loc[kline_time] = vpin_window.mean()
+                    aligned_vpin_max.loc[kline_time] = vpin_window.max()
+                    aligned_vpin_min.loc[kline_time] = vpin_window.min()
+                    aligned_vpin_std.loc[kline_time] = vpin_window.std() if len(vpin_window) > 1 else 0.0
+                    aligned_vpin_last.loc[kline_time] = vpin_window.iloc[-1]  # 最后一个事件（最新的）
+                    aligned_vpin_count.loc[kline_time] = len(vpin_window)
+                    aligned_signed.loc[kline_time] = signed_window.mean()
+                    aligned_signed_max.loc[kline_time] = signed_window.max()
+                    aligned_signed_last.loc[kline_time] = signed_window.iloc[-1]
                 else:
-                    aligned_vpin.loc[kline_time] = 0.0
-                    aligned_signed.loc[kline_time] = 0.0
+                    # 没有事件，所有特征保持默认值 0
+                    pass
+        # 添加基础 VPIN 特征（均值，保持向后兼容）
         df["vpin"] = aligned_vpin
+        
+        # 添加多维 VPIN 统计特征（关键改进：保留峰值信息，避免均值稀释）
+        # 这些特征能够保留 K 线周期内的峰值信号，而不是被均值稀释
+        # 如果变量未定义（理论上不应该发生），使用默认值
+        if aligned_vpin_last is None:
+            aligned_vpin_last = aligned_vpin.copy()
+        if aligned_vpin_max is None:
+            aligned_vpin_max = aligned_vpin.copy()
+        if aligned_vpin_min is None:
+            aligned_vpin_min = aligned_vpin.copy()
+        if aligned_vpin_std is None:
+            aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
+        if aligned_vpin_count is None:
+            aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
+            
+        df["vpin_last"] = aligned_vpin_last  # 最新值（反映最新情绪）
+        df["vpin_max"] = aligned_vpin_max  # 峰值（捕捉极端知情交易，关键！）
+        df["vpin_min"] = aligned_vpin_min  # 最小值
+        df["vpin_std"] = aligned_vpin_std  # 波动性（衡量VPIN在K线内的变化）
+        df["vpin_count"] = aligned_vpin_count  # 事件数（代理流动性，区分高VPIN是突发事件还是持续活跃）
+        
         # 对齐 signed_imbalance（已在向量化或循环方法中处理）
         if aligned_signed is None:
             aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
         df["vpin_signed_imbalance"] = aligned_signed
+        if aligned_signed_last is None:
+            aligned_signed_last = aligned_signed.copy()
+        if aligned_signed_max is None:
+            aligned_signed_max = aligned_signed.copy()
+        df["vpin_signed_imbalance_last"] = aligned_signed_last
+        df["vpin_signed_imbalance_max"] = aligned_signed_max
     else:
         # 如果 df 没有 datetime index，使用简单映射（不推荐，但保持兼容）
         vpin_series = vpin_series.reindex(df.index).fillna(0.0)

@@ -103,7 +103,7 @@ endif
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
 	cs-build-panel cs-report cs-train cs-workflow \
 	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
-	test-vpin-future-leak test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all
+	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all
 
 help:
 	@echo "ML Trading Project"
@@ -120,6 +120,7 @@ help:
 	@echo "  make test-extended-volatility-features # Test extended volatility features extraction"
 	@echo "  make test-spectrum-features         # Test spectrum features with simulated data (pytest format)"
 	@echo "  make test-vpin-future-leak          # Test VPIN future leak and multi-asset normalization"
+	@echo "  make test-vpin-multi-dimensional    # Test VPIN multi-dimensional features (peak preservation, correctness, no future leak)"
 	@echo "  make test-wpt-future-leak           # Test WPT future leak and multi-asset normalization"
 	@echo "  make test-volume-profile-volatility-future-leak # Test Volume Profile Volatility future leak and multi-asset"
 	@echo "  make test-key-features-all          # Test all key features (VPIN, WPT, Volume Profile Volatility)"
@@ -445,30 +446,6 @@ ts-test-vpin-thresholds:
 		$(if $(SR_BASELINE_START),--start-date $(SR_BASELINE_START),) \
 		$(if $(SR_BASELINE_END),--end-date $(SR_BASELINE_END),)
 
-# SR Reversal Model Diagnosis: Analyze why model doesn't open trades
-# Compares model predictions vs rule baseline on signal points
-SR_DIAG_CONFIG ?= config/strategies/sr_reversal
-SR_DIAG_SYMBOL ?= BTCUSDT
-SR_DIAG_DATA_PATH ?= $(DATA_DIR)
-SR_DIAG_TIMEFRAME ?= 240T
-SR_DIAG_START ?= 2024-01-01
-SR_DIAG_END ?= 2025-10-31
-SR_DIAG_TEST_SIZE ?= 0.15
-SR_DIAG_LONG_THRESHOLD ?= 0.6
-SR_DIAG_SHORT_THRESHOLD ?= 0.4
-
-ts-sr-reversal-diagnosis:
-	@echo "🔍 SR Reversal Model Diagnosis: Why doesn't model open trades?"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_model_diagnosis.py \
-		--strategy-config /workspace/$(SR_DIAG_CONFIG) \
-		--symbol $(SR_DIAG_SYMBOL) \
-		--data-path /workspace/$(SR_DIAG_DATA_PATH) \
-		--timeframe $(SR_DIAG_TIMEFRAME) \
-		$(if $(SR_DIAG_START),--start-date $(SR_DIAG_START),) \
-		$(if $(SR_DIAG_END),--end-date $(SR_DIAG_END),) \
-		--test-size $(SR_DIAG_TEST_SIZE) \
-		--long-entry-threshold $(SR_DIAG_LONG_THRESHOLD) \
-		--short-entry-threshold $(SR_DIAG_SHORT_THRESHOLD)
 
 # SR Reversal Rule Optimization: Find parameter plateaus and compare with ML model
 SR_OPT_CONFIG ?= config/strategies/sr_reversal
@@ -1307,69 +1284,10 @@ test-alphalens:
 	@echo "🧪 Testing Alphalens installation and basic functionality in Docker..."
 	$(DOCKER_RUN_NO_TTY) python3 scripts/test_alphalens.py
 
-# ---------------------------------------------------------------------------
-# WPT Volume Profile Tests
-# ---------------------------------------------------------------------------
-
-test-wpt-volume-profile:
-	@echo "🧪 Testing WPT Volume Profile improvements (pytest format)..."
-	@$(DOCKER_RUN_NO_TTY) python3 -m pytest tests/test_wpt_volume_profile_improvements.py -v
-
-test-wpt-volume-profile-simple:
-	@echo "🧪 Testing WPT Volume Profile improvements (simple script)..."
-	@$(DOCKER_RUN_NO_TTY) python3 tests/test_wpt_improvements_simple.py
-
-test-extended-volatility-features:
-	@echo "🧪 Testing Extended Volatility Features extraction..."
-	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest && python3 -m pytest tests/test_extended_volatility_features.py -v --tb=short"
-
-test-spectrum-features:
-	@echo "🧪 Testing Spectrum Features with simulated data..."
-	@$(DOCKER_RUN_NO_TTY) python3 tests/test_spectrum_features_docker.py
-
-test-volume-profile-volatility-features:
-	@echo "🧪 Testing Volume Profile Volatility Features with simulated data..."
-	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_volume_profile_volatility_features.py -v -s --tb=short"
-
-test-vpin-future-leak:
-	@echo "🧪 Testing VPIN future leak and multi-asset normalization..."
-	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_vpin_future_leak_and_multi_asset.py -v -s --tb=short"
-
-test-wpt-future-leak:
-	@echo "🧪 Testing WPT future leak and multi-asset normalization..."
-	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_wpt_future_leak_and_multi_asset.py -v -s --tb=short"
-
-test-volume-profile-volatility-future-leak:
-	@echo "🧪 Testing Volume Profile Volatility future leak and multi-asset normalization..."
-	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy && python3 -m pytest tests/test_volume_profile_volatility_future_leak_and_multi_asset.py -v -s --tb=short"
-
-test-key-features-all:
-	@echo "🧪 Testing all key features (VPIN, WPT, Volume Profile Volatility)..."
-	@if ! docker ps &> /dev/null; then \
-		echo "⚠️  Docker not running, attempting to start..."; \
-		bash scripts/start_docker.sh || exit 1; \
-	fi
-	@$(MAKE) test-vpin-future-leak
-	@$(MAKE) test-wpt-future-leak
-	@$(MAKE) test-volume-profile-volatility-future-leak
-
 # Docker startup helper
 start-docker:
 	@echo "🔧 Starting Docker..."
 	@bash scripts/start_docker.sh
-
-test-complex-features-comprehensive:
-	@echo "🧪 Testing all complex features (GARCH, EVT, Hurst, Spectrum, DTW, Extended Volatility)..."
-	@if ! docker ps &> /dev/null; then \
-		echo "⚠️  Docker not running, attempting to start..."; \
-		bash scripts/start_docker.sh || exit 1; \
-	fi
-	@$(DOCKER_RUN_NO_TTY) bash -c "pip3 install -q pytest scipy arch && python3 -m pytest tests/test_complex_features_comprehensive.py -v -s --tb=short"
-
-test-all-features-comprehensive:
-	@echo "🧪 Testing all features comprehensively..."
-	@$(MAKE) test-key-features-all
-	@$(MAKE) test-complex-features-comprehensive
 
 alphalens-example:
 	@echo "📊 Running complete Alphalens example with comprehensive analysis..."
@@ -1403,3 +1321,12 @@ cs-factor-eval:
 		--ic-decay-lags $(CS_FACTOR_IC_LAGS) \
 		--min-cross-sectional $(CS_FACTOR_MIN_XS) \
 		--output-dir /workspace/$(CS_FACTOR_OUTPUT_DIR)
+
+# ---------------------------------------------------------------------------
+# VPIN Multi-Dimensional Features Test
+# ---------------------------------------------------------------------------
+
+test-vpin-multi-dimensional:
+	@echo "🧪 Testing VPIN multi-dimensional features (peak preservation, correctness, no future leak)..."
+	@$(DOCKER_RUN_NO_TTY) python3 tests/test_vpin_multi_dimensional_features.py
+	@echo "✅ VPIN multi-dimensional features test completed"

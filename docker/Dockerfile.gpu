@@ -2,8 +2,8 @@
 # ML Project GPU Docker Image (Multi-Stage Build)
 # ============================================================================
 # 环境版本:
-#   - Base: NVIDIA CUDA 12.8.1 + cuDNN + Ubuntu 22.04
-#   - Python: 3.12
+#   - Base: NVIDIA CUDA 12.8.1 + cuDNN + Ubuntu 24.04
+#   - Python: 3.12 (Ubuntu 24.04 默认)
 #   - CUDA: 12.8.1
 # 
 # 核心包版本（所有包基于 numpy 1.26.4）:
@@ -48,7 +48,7 @@ ARG http_proxy=""
 ARG https_proxy=""
 ARG no_proxy=""
 
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04 AS builder
 ARG PYTORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
@@ -69,22 +69,21 @@ ENV HTTP_PROXY=${HTTP_PROXY:-} \
 ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:$PATH \
-    LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1
 
-# 安装编译依赖
+# 安装编译依赖（Ubuntu 24.04 默认 Python 3.12）
 RUN echo "📦 Installing build dependencies..." && \
     apt-get update && apt-get install -y \
-    software-properties-common \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-dev \
-    python3.12-venv \
-    python3.12-distutils \
+    python3 \
+    python3-dev \
+    python3-venv \
     python3-pip \
+    python-is-python3 \
     build-essential \
     cmake \
     git \
+    openssh-client \
     wget \
     curl \
     ca-certificates \
@@ -94,14 +93,13 @@ RUN echo "📦 Installing build dependencies..." && \
     ocl-icd-opencl-dev \
     opencl-headers \
     && update-ca-certificates \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1 \
-    && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/* \
     && echo "✅ Build dependencies installed"
 
 # 安装 CMake 3.28.3（LightGBM 编译需要）
-COPY cmake-3.28.3-linux-x86_64.sh /tmp/
+# 注意：构建上下文是仓库根目录 (.)，而安装脚本在 docker/ 目录下，
+# 所以这里需要加上 docker/ 前缀。
+COPY docker/cmake-3.28.3-linux-x86_64.sh /tmp/
 RUN echo "📦 Installing CMake 3.28.3..." && \
     chmod +x /tmp/cmake-3.28.3-linux-x86_64.sh \
     && /tmp/cmake-3.28.3-linux-x86_64.sh --skip-license --prefix=/usr/local \
@@ -118,58 +116,46 @@ RUN echo "⚙️  Configuring pip mirror..." && \
     && echo "✅ Pip mirror configured"
 
 # 安装编译 LightGBM 所需的 Python 包
+# 注意：Ubuntu 24.04 的 pip 由系统管理，避免尝试卸载/升级系统 pip（会触发 Debian 保护）。
 RUN echo "📦 Installing Python build packages..." && \
     pip3 install --no-cache-dir --timeout=600 \
-    numpy==1.26.4 \
-    scipy==1.11.4 \
-    scikit-build-core>=0.10.1 \
-    setuptools>=61.0.0 \
-    wheel \
-    ninja \
-    build \
-    && python3 -m pip install --upgrade pip \
+        numpy==1.26.4 \
+        scipy==1.11.4 \
+        scikit-build-core>=0.10.1 \
+        setuptools>=61.0.0 \
+        wheel \
+        ninja \
+        build \
     && echo "✅ Python build packages installed"
 
-# 配置 Git（增加超时和重试）
-RUN echo "⚙️  Configuring Git..." && \
-    git config --global http.postBuffer 524288000 && \
-    git config --global http.lowSpeedLimit 1000 && \
-    git config --global http.lowSpeedTime 600 && \
-    if [ -n "$http_proxy" ]; then \
-        echo "🌐 Setting Git proxy: $http_proxy" && \
-        git config --global http.proxy "$http_proxy" && \
-        git config --global https.proxy "$https_proxy"; \
-    fi && \
-    git config --global --list && \
-    echo "✅ Git configured"
+# 从本地复制 LightGBM 源码
+# 注意：构建时需要将 LightGBM 目录放在构建上下文中
+# 例如：在构建前执行: cp -r /home/yin/trading/LightGBM ./LightGBM
+# 或者使用构建参数指定路径（如果使用外部构建脚本）
+COPY LightGBM /lightgbm
 
-# 克隆 LightGBM（带重试机制）
-RUN echo "🔽 Cloning LightGBM v4.6.0 (this may take 5-10 minutes)..." && \
-    for i in 1 2 3; do \
-        echo "Attempt $i/3..." && \
-        git clone --depth 1 --branch v4.6.0 https://github.com/microsoft/LightGBM.git /lightgbm && break || \
-        (echo "⚠️  Attempt $i failed, retrying in 10 seconds..." && sleep 10); \
-    done && \
-    if [ ! -d /lightgbm ]; then \
-        echo "❌ Failed to clone LightGBM after 3 attempts" && exit 1; \
-    fi && \
-    echo "✅ LightGBM cloned successfully"
-
-# 更新子模块（带重试机制）
-RUN echo "🔽 Updating Git submodules (this may take 5-10 minutes)..." && \
+# 更新子模块（使用 SSH 协议）
+# 注意：构建时需要启用 BuildKit 并使用 --ssh default 参数
+# 例如：DOCKER_BUILDKIT=1 docker build --ssh default -f docker/Dockerfile.gpu .
+RUN --mount=type=ssh \
+    echo "🔽 Checking/updating Git submodules with SSH..." && \
+    mkdir -p ~/.ssh && \
+    ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true && \
     cd /lightgbm && \
-    for i in 1 2 3; do \
-        echo "Attempt $i/3 - Updating main submodules..." && \
-        git submodule update --init --depth 1 external_libs/compute external_libs/eigen external_libs/fast_double_parser external_libs/fmt && \
-        break || (echo "⚠️  Attempt $i failed, retrying in 10 seconds..." && sleep 10); \
-    done && \
-    echo "✅ Main submodules updated"
-
-RUN echo "🔽 Updating nested submodules..." && \
-    cd /lightgbm/external_libs/fast_double_parser && \
-    git submodule update --init --depth 1 benchmarks/dependencies/abseil-cpp benchmarks/dependencies/double-conversion || \
-    echo "⚠️  Nested submodules failed (non-critical)" && \
-    echo "✅ Submodule update completed"
+    if [ -d .git ]; then \
+        echo "⚙️  Configuring Git to use SSH for GitHub..." && \
+        git config --global url."git@github.com:".insteadOf "https://github.com/" && \
+        echo "Updating main submodules..." && \
+        git submodule update --init --depth 1 external_libs/compute external_libs/eigen external_libs/fast_double_parser external_libs/fmt || \
+        echo "⚠️  Submodule update skipped (may already be initialized)" && \
+        echo "Updating nested submodules..." && \
+        (cd external_libs/fast_double_parser && \
+         git submodule update --init --depth 1 benchmarks/dependencies/abseil-cpp benchmarks/dependencies/double-conversion || \
+         echo "⚠️  Nested submodules update skipped (non-critical)"); \
+    else \
+        echo "⚠️  No .git directory found, assuming submodules are already in place"; \
+    fi && \
+    echo "✅ LightGBM source ready"
 
 # 编译 LightGBM
 WORKDIR /lightgbm
@@ -211,7 +197,7 @@ RUN echo "🔨 Pre-building mamba-ssm wheel (this will take 30-60 minutes)..." &
 # =========================================================================
 # Stage 2: Runtime - 运行环境（不包含编译工具）
 # =========================================================================
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04 AS runtime
 ARG PYTORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
@@ -225,6 +211,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_HOME=/usr/local/cuda \
     PATH=/usr/local/cuda/bin:$PATH \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
     NUMBA_DISABLE_JIT=0 \
     NUMBA_THREADING_LAYER=omp \
@@ -232,15 +219,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # =========================================================================
 # 安装运行时依赖（不包含编译工具和开发头文件）
+# 使用 Ubuntu 24.04 自带的 Python 3.12
 # =========================================================================
 RUN echo "📦 Installing runtime dependencies..." && \
     apt-get update && apt-get install -y \
-    software-properties-common \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-venv \
-    python3.12-distutils \
+    python3 \
+    python3-venv \
     python3-pip \
     wget \
     ca-certificates \
@@ -249,8 +233,6 @@ RUN echo "📦 Installing runtime dependencies..." && \
     ocl-icd-libopencl1 \
     clinfo \
     && update-ca-certificates \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1 \
     && rm -rf /var/lib/apt/lists/* \
     && echo "✅ Runtime dependencies installed"
 
@@ -342,8 +324,10 @@ RUN echo "📦 Installing project dependencies..." && \
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库
+# 注意：构建上下文是仓库根目录 (.)，而 deb 文件在 docker/ 目录下，
+# 所以这里需要使用 docker/ 前缀。
 # ============================================================================
-COPY ta-lib_0.6.4_amd64.deb /tmp/ta-lib_0.6.4_amd64.deb
+COPY docker/ta-lib_0.6.4_amd64.deb /tmp/ta-lib_0.6.4_amd64.deb
 
 RUN echo "📦 Installing TA-Lib..." && \
     set -eux && \

@@ -30,7 +30,16 @@ feature_pipeline:
     - hurst_cvd  # CVD 资金流的持续性（识别反转信号）
     # VPVR 特征（空间域：流动性聚集区）
     - wpt_vpvr
-    # 订单流特征（VPIN）
+    # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）
+    # 新增多维特征（自动包含，无需单独添加）：
+    # - vpin: 均值（整体不平衡度，向后兼容）
+    # - vpin_max: 峰值（捕捉极端知情交易，避免峰值被稀释，关键！）
+    # - vpin_last: 最新值（反映最新情绪）
+    # - vpin_min: 最小值
+    # - vpin_std: 标准差（衡量VPIN在K线内的波动性）
+    # - vpin_count: 事件数（代理流动性，区分突发事件vs持续活跃）
+    # - vpin_signed_imbalance_last/max: Signed imbalance 最新值和峰值
+    # 推荐组合：vpin + vpin_max（峰值信号）+ vpin_last（最新情绪）+ vpin_count（流动性）
     - vpin_features
     # GARCH 特征（波动聚集性和杠杆效应）- 波动率预测关键特征
     - garch_features

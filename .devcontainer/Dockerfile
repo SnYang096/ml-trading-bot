@@ -6,8 +6,12 @@ RUN pip3 install --no-cache-dir \
     flake8 \
     pylint \
     mypy \
-    notebook
+    isort \
+    ipython \
+    notebook \
+    jupyterlab
 
+# Common CLI tools to make the devcontainer feel like a full Linux dev box
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         sudo \
@@ -20,7 +24,19 @@ RUN apt-get update && \
         ssh \
         vim \
         unzip \
+        htop \
+        tmux \
+        ripgrep \
+        fd-find \
+        fzf \
+        fish \
     && rm -rf /var/lib/apt/lists/*
+
+# Starship prompt (for nicer shell experience in bash & fish)
+RUN curl -fsSL https://starship.rs/install.sh | bash -s -- -y && \
+    echo 'eval \"$(starship init bash)\"' >> /etc/bash.bashrc && \
+    mkdir -p /etc/fish && \
+    echo 'eval \"$(starship init fish)\"' >> /etc/fish/config.fish
 
 # Create yin user to match host user (UID 1000)
 ARG USERNAME=yin

@@ -500,6 +500,14 @@ features:
       # 基础特征（2个）
       - "vpin"
       - "vpin_signed_imbalance"
+      # 多维对齐特征（关键改进：保留峰值信息，避免均值稀释）- 7个
+      - "vpin_last"          # 最新值（反映最新情绪）
+      - "vpin_max"           # 峰值（捕捉极端知情交易，关键！）
+      - "vpin_min"           # 最小值
+      - "vpin_std"           # 波动性（衡量VPIN在K线内的变化）
+      - "vpin_count"         # 事件数（代理流动性，区分高VPIN是突发事件还是持续活跃）
+      - "vpin_signed_imbalance_last"  # Signed imbalance 最新值
+      - "vpin_signed_imbalance_max"   # Signed imbalance 峰值
       # 滚动统计（6个）
       - "vpin_ma5"
       - "vpin_ma10"
@@ -553,7 +561,7 @@ features:
       - "trade_cluster_directional_entropy_zscore_20"
       - "trade_cluster_directional_entropy_zscore_50"
     category: order_flow
-    description: "VPIN (Volume-Synchronized Probability of Informed Trading) + Trade Clustering - 完整特征集（38个特征：21个VPIN + 17个Trade Clustering）"
+    description: "VPIN (Volume-Synchronized Probability of Informed Trading) + Trade Clustering - 完整特征集（45个特征：28个VPIN + 17个Trade Clustering）。关键改进：VPIN对齐时使用多维统计特征（last, max, mean, std, count），避免峰值信号被均值稀释。"
     compute_params:
       vpin_n_buckets: 50
       vpin_adaptive: true
@@ -566,9 +574,16 @@ features:
       - 否则抛出错误（不支持代理 VPIN）
       
       特征说明：
-      - VPIN 特征（21个）：
-        * 基础特征：vpin（不平衡度）、vpin_signed_imbalance（方向性）
-        * 统计特征：移动平均、最大值、Z-score、分位数排名、波动率
+      - VPIN 特征（28个）：
+        * 基础特征：vpin（不平衡度，均值）、vpin_signed_imbalance（方向性，均值）
+        * **多维对齐特征（关键改进，7个）**：对齐到K线时的多维统计，避免峰值信号被均值稀释
+          - vpin_last：最新值（反映最新情绪）
+          - vpin_max：峰值（捕捉极端知情交易，关键！避免均值稀释）
+          - vpin_min：最小值
+          - vpin_std：波动性（衡量VPIN在K线内的变化）
+          - vpin_count：事件数（代理流动性，区分高VPIN是突发事件还是持续活跃）
+          - vpin_signed_imbalance_last/max：Signed imbalance 的最新值和峰值
+        * 滚动统计特征：移动平均、最大值、Z-score、分位数排名、波动率
         * 异常检测：spike_flag（基于 MAD）
         * 动量特征：vpin_momentum（捕捉不平衡加速）
         * 方向性特征：signed_imbalance_zscore（极端买卖压力）
