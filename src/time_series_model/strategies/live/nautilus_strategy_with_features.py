@@ -62,11 +62,38 @@ except ImportError:
         pass
 
 
-from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.strategy_config import StrategyConfigLoader
-from src.time_series_model.strategies.live.realtime_feature_integration_example import (
-    RealtimeFeatureManager,
-)
+
+
+class RealtimeFeatureManager:
+    """
+    Minimal real-time feature manager.
+    Keeps a rolling window of bars and returns latest row as features.
+    """
+
+    def __init__(self, strategy_name: str, history_window: int, config_base_path: str):
+        self.strategy_name = strategy_name
+        self.history_window = history_window
+        self.config_base_path = config_base_path
+        self.history = pd.DataFrame()
+
+    def compute_features(self, new_bar_df: pd.DataFrame) -> pd.DataFrame:
+        # Append new bar and keep rolling window
+        self.history = pd.concat([self.history, new_bar_df], ignore_index=True).tail(
+            self.history_window
+        )
+        return self.history.copy()
+
+    def get_latest_features(self) -> Optional[pd.DataFrame]:
+        if self.history.empty:
+            return None
+        return self.history.tail(1)
+
+    def get_feature_columns(self) -> list:
+        return list(self.history.columns)
+
+    def reset_history(self) -> None:
+        self.history = pd.DataFrame()
 
 
 if NAUTILUS_AVAILABLE:

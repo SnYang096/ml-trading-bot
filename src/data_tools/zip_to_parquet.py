@@ -1,0 +1,416 @@
+"""
+数据转换工具：将 ZIP 格式的交易数据转换为 Parquet 格式
+
+这个模块提供了 DataConverter 类，用于批量将 Binance aggTrades ZIP 文件
+转换为 Parquet 格式，提高后续数据处理的效率。
+"""
+
+import os
+import pandas as pd
+import numpy as np
+import zipfile
+import glob
+from datetime import datetime
+import shutil
+import logging
+import re
+from typing import Optional, Dict, List
+from pathlib import Path
+
+# 设置日志
+logger = logging.getLogger(__name__)
+
+
+class DataConverter:
+    """数据转换器：将 Binance aggTrades ZIP → 原始 tick Parquet"""
+
+    def __init__(
+        self, input_dir: str, output_dir: str, backup_dir: Optional[str] = None
+    ):
+        """
+        初始化数据转换器
+
+        Args:
+            input_dir: ZIP 文件输入目录
+            output_dir: Parquet 文件输出目录
+            backup_dir: 备份目录（可选）
+        """
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        self.backup_dir = backup_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+        if self.backup_dir:
+            os.makedirs(self.backup_dir, exist_ok=True)
+
+    def convert_zip_to_parquet(
+        self, zip_file: str, symbol: Optional[str] = None
+    ) -> Optional[Dict]:
+        """
+        将单个 ZIP 文件转换为 Parquet 格式
+
+        Args:
+            zip_file: ZIP 文件路径
+            symbol: 交易对符号（如果为 None，从文件名自动检测）
+
+        Returns:
+            转换结果字典，包含原始文件、输出文件、日期范围等信息，失败返回 None
+        """
+        try:
+            logger.info(f"Converting {os.path.basename(zip_file)}...")
+
+            # 从文件名自动检测交易对
+            if symbol is None:
+                zip_basename = os.path.basename(zip_file)
+                upper_name = zip_basename.upper()
+                match = re.search(r"([A-Z]+)(USDT|USD)", upper_name)
+                if match:
+                    base = match.group(1)
+                    quote = match.group(2)
+                    if quote != "USDT":
+                        quote = "USDT"
+                    symbol = f"{base}{quote}"
+                else:
+                    symbol = "UNKNOWN"
+                    logger.warning(
+                        "Could not detect symbol from filename %s, using %s",
+                        zip_basename,
+                        symbol,
+                    )
+
+            # 解压zip文件
+            with zipfile.ZipFile(zip_file, "r") as zip_ref:
+                file_list = zip_ref.namelist()
+                if not file_list:
+                    logger.warning(f"No files in zip: {zip_file}")
+                    return None
+
+                # 读取CSV文件
+                csv_file = file_list[0]
+
+                with zip_ref.open(csv_file) as f:
+                    # 尝试读取第一行检查是否有header
+                    first_line = f.readline().decode("utf-8", errors="ignore")
+
+                read_params = {"low_memory": False}
+
+                # 如果第一行是数字，说明没有header
+                if first_line.strip().split(",")[0].replace(".", "").isdigit():
+                    logger.info("No header detected, using default column names")
+                    read_params.update(
+                        {
+                            "header": None,
+                            "names": [
+                                "agg_trade_id",
+                                "price",
+                                "quantity",
+                                "first_trade_id",
+                                "last_trade_id",
+                                "transact_time",
+                                "is_buyer_maker",
+                            ],
+                        }
+                    )
+
+                try:
+                    with zip_ref.open(csv_file) as csv_handle:
+                        df = pd.read_csv(csv_handle, **read_params)
+                except Exception as read_error:
+                    logger.warning(
+                        "Primary CSV load failed for %s, retrying with python engine: %s",
+                        os.path.basename(zip_file),
+                        read_error,
+                    )
+                    fallback_params = {**read_params, "engine": "python"}
+                    with zip_ref.open(csv_file) as csv_handle:
+                        df = pd.read_csv(csv_handle, **fallback_params)
+
+                logger.info(f"Loaded data: {df.shape}")
+
+                df_ticks = self._preprocess_tick_data(df)
+                if df_ticks is None or df_ticks.empty:
+                    logger.warning("No tick data after preprocessing for %s", zip_file)
+                    return None
+
+                normalized_symbol = symbol.upper()
+                df_ticks["symbol"] = normalized_symbol
+                output_file = self._generate_output_filename(
+                    zip_file, normalized_symbol
+                )
+
+                df_ticks.to_parquet(output_file, compression="snappy", index=False)
+                logger.info(f"Saved tick parquet: {output_file}")
+
+                # 备份原始文件
+                if self.backup_dir:
+                    backup_file = os.path.join(
+                        self.backup_dir, os.path.basename(zip_file)
+                    )
+                    shutil.copy2(zip_file, backup_file)
+                    logger.info(f"Backed up to: {backup_file}")
+
+                return {
+                    "original_file": zip_file,
+                    "output_file": output_file,
+                    "start_date": df_ticks["timestamp"].min().strftime("%Y-%m-%d"),
+                    "end_date": df_ticks["timestamp"].max().strftime("%Y-%m-%d"),
+                    "shape": df_ticks.shape,
+                    "symbol": symbol,
+                }
+
+        except Exception as e:
+            logger.error(f"Error converting {zip_file}: {e}")
+            return None
+
+    def _preprocess_tick_data(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """
+        预处理 tick 数据
+
+        Args:
+            df: 原始 DataFrame
+
+        Returns:
+            处理后的 DataFrame，失败返回 None
+        """
+        try:
+            required_cols = {"transact_time", "price", "quantity"}
+            if not all(col in df.columns for col in required_cols):
+                logger.warning("Missing required columns in %s", df.columns.tolist())
+                return None
+
+            df["timestamp"] = pd.to_datetime(df["transact_time"], unit="ms")
+            df["price"] = pd.to_numeric(df["price"], errors="coerce")
+            df["volume"] = pd.to_numeric(df["quantity"], errors="coerce")
+            df = df.dropna(subset=["timestamp", "price", "volume"])
+            df = df.sort_values("timestamp")
+
+            if "is_buyer_maker" in df.columns:
+                df["side"] = np.where(df["is_buyer_maker"].astype(bool), -1, 1)
+            elif "side" in df.columns:
+                df["side"] = (
+                    df["side"].map({"buy": 1, "sell": -1}).fillna(0).astype(int)
+                )
+            else:
+                df["side"] = np.sign(df["volume"]).replace(0, 1)
+
+            return df[["timestamp", "price", "volume", "side"]]
+
+        except Exception as e:
+            logger.error("Error preprocessing tick data: %s", e)
+            return None
+
+    def _generate_output_filename(self, zip_file: str, symbol: str) -> str:
+        """
+        生成输出文件名
+
+        Args:
+            zip_file: ZIP 文件路径
+            symbol: 交易对符号
+
+        Returns:
+            输出文件完整路径
+        """
+        zip_basename = os.path.basename(zip_file)
+
+        # 提取日期信息 - 支持多种格式
+        match = re.search(r"(\d{4})-(\d{2})", zip_basename)
+        if match:
+            date_part = f"{match.group(1)}-{match.group(2)}"
+        else:
+            date_part = datetime.now().strftime("%Y-%m")
+            logger.warning(
+                "Could not extract date from filename %s, using %s",
+                zip_basename,
+                date_part,
+            )
+
+        # 生成输出文件名
+        output_filename = f"{symbol}_{date_part}.parquet"
+        return os.path.join(self.output_dir, output_filename)
+
+    def convert_all_files(self, pattern: str = "*aggTrades-*.zip") -> Dict:
+        """
+        转换所有匹配的 ZIP 文件（支持多币种）
+
+        Args:
+            pattern: 文件匹配模式
+
+        Returns:
+            转换结果字典，包含成功和失败的文件列表
+        """
+        logger.info(f"Converting all files matching pattern: {pattern}")
+
+        # 查找所有匹配的zip文件
+        zip_files = glob.glob(os.path.join(self.input_dir, pattern))
+        logger.info(f"Found {len(zip_files)} files to convert")
+
+        converted_files: List[Dict] = []
+        failed_files: List[str] = []
+
+        total_files = len(zip_files)
+        if total_files == 0:
+            logger.warning("No matching ZIP files found for conversion.")
+            return {
+                "converted_files": converted_files,
+                "failed_files": failed_files,
+                "total_files": total_files,
+            }
+
+        for index, zip_file in enumerate(zip_files, start=1):
+            file_name = os.path.basename(zip_file)
+            progress_prefix = f"[{index}/{total_files}]"
+            print(f"{progress_prefix} Converting {file_name} ...")
+
+            result = self.convert_zip_to_parquet(zip_file)
+            if result:
+                converted_files.append(result)
+                print(f"{progress_prefix} ✅ Success: {file_name}")
+            else:
+                failed_files.append(zip_file)
+                print(f"{progress_prefix} ❌ Failed: {file_name}")
+
+        logger.info(
+            f"Conversion complete: {len(converted_files)} successful, {len(failed_files)} failed"
+        )
+
+        return {
+            "converted_files": converted_files,
+            "failed_files": failed_files,
+            "total_files": len(zip_files),
+        }
+
+    def cleanup_zip_files(self, converted_files: List[Dict]) -> int:
+        """
+        清理已转换的 ZIP 文件
+
+        Args:
+            converted_files: 已转换的文件信息列表
+
+        Returns:
+            清理的文件数量
+        """
+        logger.info("Cleaning up converted zip files...")
+
+        cleaned_count = 0
+        for file_info in converted_files:
+            try:
+                original_file = file_info["original_file"]
+                if os.path.exists(original_file):
+                    os.remove(original_file)
+                    cleaned_count += 1
+                    logger.info(f"Removed: {original_file}")
+            except Exception as e:
+                logger.error(f"Error removing {original_file}: {e}")
+
+        logger.info(f"Cleaned up {cleaned_count} zip files")
+        return cleaned_count
+
+
+def main():
+    """命令行入口点"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Convert Binance ZIP aggTrades to Parquet (tick data)"
+    )
+    parser.add_argument(
+        "--input-dir",
+        default=None,
+        help="ZIP input directory (default: data/agg_data)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Parquet output directory (default: data/parquet_data)",
+    )
+    parser.add_argument(
+        "--backup-dir",
+        default=None,
+        help="Backup directory for original ZIPs (optional)",
+    )
+    parser.add_argument(
+        "--cleanup",
+        choices=["yes", "no"],
+        default="yes",
+        help="Delete converted ZIPs without prompt (default: yes)",
+    )
+    args = parser.parse_args()
+
+    # 设置日志
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    print("🚀 Converting ZIP files to Parquet format...")
+
+    # 配置路径（使用绝对路径，指向仓库根目录）
+    # 从模块路径推断项目根目录
+    current_file = Path(__file__).resolve()
+    base_dir = current_file.parents[2]  # src/data_tools -> src -> project root
+    input_dir = args.input_dir or str(base_dir / "data" / "agg_data")
+    output_dir = args.output_dir or str(base_dir / "data" / "parquet_data")
+    backup_dir = args.backup_dir or str(base_dir / "data" / "backup_zip")
+
+    print(f"📂 Base directory: {base_dir}")
+    print(f"📂 Input directory: {input_dir}")
+    print(f"📂 Output directory: {output_dir}")
+    print(f"📂 Backup directory: {backup_dir}")
+    print()
+
+    # 检查输入目录
+    if not os.path.exists(input_dir):
+        print(f"❌ Input directory not found: {input_dir}")
+        print(f"💡 Expected data directory structure:")
+        print(f"   {base_dir}/data/agg_data/")
+        return
+
+    # 创建转换器
+    converter = DataConverter(input_dir, output_dir, backup_dir)
+
+    # 转换所有文件
+    results = converter.convert_all_files()
+
+    # 打印结果
+    print(f"\n📊 Conversion Results:")
+    print(f"   Total files: {results['total_files']}")
+    print(f"   Converted: {len(results['converted_files'])}")
+    print(f"   Failed: {len(results['failed_files'])}")
+
+    if results["converted_files"]:
+        print(f"\n✅ Successfully converted files:")
+        for file_info in results["converted_files"][:5]:  # 显示前5个
+            print(
+                f"   {os.path.basename(file_info['original_file'])} -> {os.path.basename(file_info['output_file'])}"
+            )
+
+        if len(results["converted_files"]) > 5:
+            print(f"   ... and {len(results['converted_files']) - 5} more files")
+
+    if results["failed_files"]:
+        print(f"\n❌ Failed files:")
+        for failed_file in results["failed_files"][:5]:  # 显示前5个
+            print(f"   {os.path.basename(failed_file)}")
+
+        if len(results["failed_files"]) > 5:
+            print(f"   ... and {len(results['failed_files']) - 5} more files")
+
+    # 清理zip文件（可非交互）
+    if results["converted_files"]:
+        if args.cleanup == "yes":
+            cleaned_count = converter.cleanup_zip_files(results["converted_files"])
+            print(f"✅ Cleaned up {cleaned_count} zip files")
+        else:
+            response = input(
+                f"\n🗑️  Clean up {len(results['converted_files'])} converted zip files? (y/N): "
+            )
+            if response.lower() == "y":
+                cleaned_count = converter.cleanup_zip_files(results["converted_files"])
+                print(f"✅ Cleaned up {cleaned_count} zip files")
+
+    print(f"\n🎉 Data conversion complete!")
+    print(f"   Output directory: {output_dir}")
+    print(f"   Backup directory: {backup_dir}")
+    print(f"   Ready for fast processing!")
+
+
+if __name__ == "__main__":
+    main()

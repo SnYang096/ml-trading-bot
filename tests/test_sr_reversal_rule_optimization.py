@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.diagnostics.sr_reversal_rule_optimization import (
+from src.diagnostics.sr_reversal_rule_optimization import (
     define_parameter_grid,
     sample_random_params,
     evaluate_rule_strategy,

@@ -181,7 +181,7 @@ def list_tick_files(
         if not file_path.exists():
             raise FileNotFoundError(
                 f"Required tick parquet not found: {file_path}. "
-                "Please run scripts/data_conversion/convert_zip_to_parquet.py first."
+                "Please run 'make data-convert' or 'python -m src.data_tools.zip_to_parquet' first."
             )
         tick_files.append(str(file_path))
     return sorted(tick_files)

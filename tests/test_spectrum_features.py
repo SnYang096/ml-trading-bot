@@ -425,5 +425,162 @@ def run_all_tests():
     unittest.main(verbosity=2)
 
 
+class TestSpectrumFeaturesCritical(unittest.TestCase):
+    """
+    频谱特征的四种关键测试
+
+    1. 多资产归一化测试（特征分布对齐）⭐⭐⭐⭐
+    2. 流式vs批量一致性测试 ⭐⭐⭐⭐
+    3. lag衰减平滑测试 ⭐⭐⭐（可选）
+    """
+
+    def setUp(self):
+        """设置测试数据"""
+        np.random.seed(42)
+        self.rolling_window = 64
+
+    def create_multi_asset_data(self):
+        """创建多资产测试数据（不同价格水平）"""
+        np.random.seed(42)
+        n = 200
+        dates = pd.date_range("2024-01-01", periods=n, freq="5min")
+
+        assets = {
+            "BTC": 50000 + np.cumsum(np.random.randn(n) * 100),
+            "ETH": 3000 + np.cumsum(np.random.randn(n) * 10),
+            "SOL": 100 + np.cumsum(np.random.randn(n) * 0.5),
+        }
+
+        results = []
+        for symbol, prices in assets.items():
+            df = pd.DataFrame(
+                {
+                    "close": prices,
+                    "volume": np.random.uniform(1000, 10000, n),
+                    "cvd": np.cumsum(np.random.randn(n) * 100),
+                },
+                index=dates,
+            )
+            df["_symbol"] = symbol
+            results.append(df)
+
+        return pd.concat(results, ignore_index=False)
+
+    def test_normalization_multi_asset(self):
+        """
+        测试：多资产归一化（特征分布对齐）⭐⭐⭐⭐
+
+        验证：
+        - 不同价格水平的资产，特征分布应该对齐
+        - 特征值应该在相似范围内，便于多资产训练
+        """
+        multi_asset_df = self.create_multi_asset_data()
+
+        # 按资产分组计算特征
+        results = []
+        for symbol in multi_asset_df["_symbol"].unique():
+            df_asset = multi_asset_df[multi_asset_df["_symbol"] == symbol].copy()
+            result = extract_spectrum_features(
+                df_asset,
+                price_col="close",
+                volume_col="volume",
+                cvd_col="cvd",
+                rolling_window=self.rolling_window,
+            )
+            result["_symbol"] = symbol
+            results.append(result)
+
+        combined = pd.concat(results, ignore_index=False)
+
+        # 检查不同资产的特征分布
+        for col in ["spectrum_price_flatness", "spectrum_price_entropy"]:
+            if col in combined.columns:
+                valid_data = combined[col].dropna()
+                if len(valid_data) > 0:
+                    by_symbol = combined.groupby("_symbol")[col].agg(["mean", "std"])
+
+                    # 检查均值范围
+                    mean_range = by_symbol["mean"].max() - by_symbol["mean"].min()
+
+                    # 对于频谱特征，不同资产的均值差异不应该太大
+                    # （因为频谱特征基于归一化的价格变化，应该对价格水平不敏感）
+                    assert mean_range < 0.5, (
+                        f"{col} 在不同资产间的均值差异过大: {mean_range:.4f}，"
+                        f"可能归一化不正确。各资产均值: {by_symbol['mean'].to_dict()}"
+                    )
+
+    def test_streaming_vs_batch_consistency(self):
+        """
+        测试：流式 vs 批量一致性 ⭐⭐⭐⭐
+        对生产部署至关重要：生产环境往往是流式推理，而训练是批量计算
+        """
+        np.random.seed(42)
+        n = 200
+        dates = pd.date_range("2024-01-01", periods=n, freq="5min")
+        prices = 100 + np.cumsum(np.random.randn(n) * 0.5)
+
+        df = pd.DataFrame(
+            {
+                "close": prices,
+                "volume": np.random.uniform(1000, 10000, n),
+                "cvd": np.cumsum(np.random.randn(n) * 100),
+            },
+            index=dates,
+        )
+
+        window = self.rolling_window
+
+        # 批量计算（一次性计算所有数据）
+        batch_result = extract_spectrum_features(
+            df,
+            price_col="close",
+            volume_col="volume",
+            cvd_col="cvd",
+            rolling_window=window,
+        )
+
+        # 流式计算（分块处理，模拟生产环境）
+        streaming_results = []
+        for i in range(window, len(df)):
+            df_stream = df.iloc[: i + 1].copy()
+            stream_result = extract_spectrum_features(
+                df_stream,
+                price_col="close",
+                volume_col="volume",
+                cvd_col="cvd",
+                rolling_window=window,
+            )
+            if len(stream_result) > 0:
+                # 取最后一行（当前时间点的特征）
+                streaming_results.append(stream_result.iloc[-1])
+
+        if len(streaming_results) > 0:
+            streaming_df = pd.DataFrame(streaming_results)
+            streaming_df.index = df.index[window:][: len(streaming_df)]
+
+            # 比较关键特征
+            key_col = "spectrum_price_flatness"
+            if key_col in batch_result.columns and key_col in streaming_df.columns:
+                batch_vals = batch_result[key_col].iloc[window:].dropna()
+                stream_vals = streaming_df[key_col].dropna()
+
+                # 找到共同索引
+                common_idx = batch_vals.index.intersection(stream_vals.index)
+                if len(common_idx) > 10:  # 至少需要10个数据点
+                    diff = (
+                        batch_vals.loc[common_idx] - stream_vals.loc[common_idx]
+                    ).abs()
+                    max_diff = diff.max()
+                    mean_diff = diff.mean()
+
+                    # 允许一定的数值误差（由于滚动窗口计算的微小差异）
+                    self.assertLess(
+                        max_diff,
+                        1e-5,
+                        f"流式与批量计算不一致 ({key_col})，最大差异: {max_diff:.8f}, "
+                        f"平均差异: {mean_diff:.8f}",
+                    )
+
+
 if __name__ == "__main__":
     run_all_tests()

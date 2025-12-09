@@ -165,11 +165,49 @@ RUN echo "🔨 Building LightGBM with GPU support (this may take 10-20 minutes).
     ls -lh dist/*.whl && \
     echo "✅ LightGBM built successfully"
 
+# 预置本地 wheel 文件（PyTorch、CUDA 依赖、catboost、xgboost 等，如果存在）
+RUN mkdir -p /tmp/local-wheels
+COPY docker/torch-*.whl /tmp/local-wheels/
+COPY docker/nvidia_cublas_cu12-*.whl /tmp/local-wheels/
+COPY docker/nvidia_cudnn_cu12-*.whl /tmp/local-wheels/
+COPY docker/catboost-*.whl /tmp/local-wheels/
+COPY docker/xgboost-*.whl /tmp/local-wheels/
+
 # 安装 PyTorch（builder 阶段，用于编译 mamba-ssm CUDA 扩展）
 # 关键：builder 和 runtime 的 PyTorch 版本必须完全一致，确保 ABI 兼容
+# 优先使用本地 wheel；若存在则先无依赖安装 torch，然后安装其余包
 RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) for mamba-ssm compilation..." && \
-    pip3 install --no-cache-dir --timeout=1200 \
-        torch==${PYTORCH_VERSION} \
+    export PIP_DEFAULT_TIMEOUT=3600 && \
+    if [ -n "$(ls -A /tmp/local-wheels/torch-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local torch wheel, installing with --no-deps"; \
+        pip3 install --no-deps --retries=5 --timeout=3600 --progress-bar off /tmp/local-wheels/torch-*.whl; \
+    else \
+        echo "🌐 Local torch wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+        pip3 install --retries=5 --timeout=3600 --progress-bar off \
+            torch==${PYTORCH_VERSION} \
+            --index-url ${PYTORCH_INDEX_URL}; \
+    fi && \
+    if [ -n "$(ls -A /tmp/local-wheels/nvidia_cublas_cu12-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local nvidia-cublas wheel, installing offline"; \
+        pip3 install --no-index --find-links /tmp/local-wheels \
+            --retries=5 --timeout=3600 --progress-bar off \
+            nvidia-cublas-cu12==12.8.4.1; \
+    else \
+        echo "🌐 Local nvidia-cublas wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+        pip3 install --retries=5 --timeout=3600 --progress-bar off \
+            nvidia-cublas-cu12==12.8.4.1 \
+            --index-url ${PYTORCH_INDEX_URL}; \
+    fi && \
+    if [ -n "$(ls -A /tmp/local-wheels/nvidia_cudnn_cu12-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local nvidia-cudnn wheel, installing offline"; \
+        pip3 install --no-index --find-links /tmp/local-wheels \
+            --retries=5 --timeout=3600 --progress-bar off \
+            /tmp/local-wheels/nvidia_cudnn_cu12-*.whl; \
+    else \
+        echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
+    fi && \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+        --find-links /tmp/local-wheels \
         torchvision==${TORCHVISION_VERSION} \
         torchaudio==${TORCHAUDIO_VERSION} \
         --index-url ${PYTORCH_INDEX_URL} && \
@@ -228,8 +266,6 @@ RUN echo "📦 Installing runtime dependencies..." && \
     python3-pip \
     wget \
     ca-certificates \
-    libboost-system1.74.0 \
-    libboost-filesystem1.74.0 \
     ocl-icd-libopencl1 \
     clinfo \
     && update-ca-certificates \
@@ -252,6 +288,19 @@ RUN mkdir -p /root/.pip \
 # =========================================================================
 COPY --from=builder /lightgbm/dist/*.whl /lightgbm-wheels/
 
+# =========================================================================
+# 安装 Boost 运行时库（匹配编译时使用的版本）
+# =========================================================================
+# LightGBM 编译时使用 libboost-dev，运行时需要匹配的库文件
+# Ubuntu 24.04 默认 Boost 版本是 1.83.0，安装开发包（包含运行时库）
+RUN echo "📦 Installing Boost runtime libraries..." && \
+    apt-get update && \
+    apt-get install -y \
+    libboost-system-dev \
+    libboost-filesystem-dev \
+    && rm -rf /var/lib/apt/lists/* && \
+    echo "✅ Boost libraries installed"
+
 # 安装 LightGBM wheel 包并验证
 RUN echo "📦 Installing LightGBM..." && \
     pip3 install --no-cache-dir /lightgbm-wheels/*.whl \
@@ -264,26 +313,59 @@ COPY --from=builder /wheelhouse /wheelhouse
 # ============================================================================
 # 安装 PyTorch GPU 版本（与 builder 阶段完全一致，确保 mamba-ssm ABI 兼容）
 # ============================================================================
+# 从 builder 复制本地 torch wheel 目录（如果存在）
+RUN mkdir -p /tmp/local-wheels
+COPY --from=builder /tmp/local-wheels/ /tmp/local-wheels/
+
 # 关键：必须与 builder 阶段使用相同的 PyTorch 版本（2.9.0+cu128）
+# 优先使用本地 wheel；若存在则先无依赖安装 torch，然后安装其余包
 RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) - matching builder stage..." && \
-    (pip3 install --no-cache-dir --timeout=1200 \
-        torch==${PYTORCH_VERSION} \
+    export PIP_DEFAULT_TIMEOUT=3600 && \
+    if [ -n "$(ls -A /tmp/local-wheels/torch-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local torch wheel, installing with --no-deps"; \
+        pip3 install --no-deps --retries=5 --timeout=3600 --progress-bar off /tmp/local-wheels/torch-*.whl; \
+    else \
+        echo "🌐 Local torch wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+        pip3 install --retries=5 --timeout=3600 --progress-bar off \
+            torch==${PYTORCH_VERSION} \
+            --index-url ${PYTORCH_INDEX_URL}; \
+    fi && \
+    if [ -n "$(ls -A /tmp/local-wheels/nvidia_cublas_cu12-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local nvidia-cublas wheel, installing offline"; \
+        pip3 install --no-index --find-links /tmp/local-wheels \
+            --retries=5 --timeout=3600 --progress-bar off \
+            nvidia-cublas-cu12==12.8.4.1; \
+    else \
+        echo "🌐 Local nvidia-cublas wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+        pip3 install --retries=5 --timeout=3600 --progress-bar off \
+            nvidia-cublas-cu12==12.8.4.1 \
+            --index-url ${PYTORCH_INDEX_URL}; \
+    fi && \
+    if [ -n "$(ls -A /tmp/local-wheels/nvidia_cudnn_cu12-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local nvidia-cudnn wheel, installing offline"; \
+        pip3 install --no-index --find-links /tmp/local-wheels \
+            --retries=5 --timeout=3600 --progress-bar off \
+            /tmp/local-wheels/nvidia_cudnn_cu12-*.whl; \
+    else \
+        echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
+    fi && \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+        --find-links /tmp/local-wheels \
         torchvision==${TORCHVISION_VERSION} \
         torchaudio==${TORCHAUDIO_VERSION} \
         --index-url ${PYTORCH_INDEX_URL} \
-    || pip3 install --no-cache-dir --timeout=1200 \
-        torch==${PYTORCH_VERSION} \
-        torchvision==${TORCHVISION_VERSION} \
-        torchaudio==${TORCHAUDIO_VERSION}) \
     && python3 -c "import torch; print('✅ PyTorch (runtime):', torch.__version__, '| CUDA可用:', torch.cuda.is_available(), '| CUDA版本:', torch.version.cuda)"
 
 # ============================================================================
 # 安装 numba + shap（与 numpy 1.26.4 兼容）
 # ============================================================================
-RUN echo "📦 Installing numba and llvmlite..." && \
-    pip3 install --no-cache-dir --timeout=600 \
-    llvmlite==0.41.1 \
-    numba==0.58.1 \
+# numba 0.58.x 不支持 Python 3.12，使用 0.60.0 预发行版本（需从官方 PyPI 获取）
+RUN echo "📦 Installing numba (Python 3.12 compatible)..." && \
+    pip3 install --no-cache-dir --timeout=1200 --retries=5 --pre --progress-bar off \
+    --index-url https://pypi.org/simple \
+    --trusted-host pypi.org --trusted-host files.pythonhosted.org \
+    llvmlite==0.43.0rc1 \
+    numba==0.60.0rc1 \
     && python3 -c "import numba, llvmlite; print('✅ numba:', numba.__version__, '| llvmlite:', llvmlite.__version__)"
 
 RUN echo "📦 Installing shap..." && \
@@ -295,8 +377,72 @@ RUN echo "📦 Installing shap..." && \
 # ============================================================================
 # 安装其他项目依赖
 # ============================================================================
+# 先升级 setuptools 和安装构建工具以确保 Python 3.12 兼容性
+# wheel 由系统安装，跳过安装（0.42.0 通常可用）
+RUN echo "📦 Upgrading setuptools and installing build tools for Python 3.12 compatibility..." && \
+    pip3 install --upgrade --no-cache-dir --break-system-packages \
+    setuptools>=69.0.0 build && \
+    echo "✅ Build tools upgraded"
+
+# 先安装构建依赖（numpy 和 Cython），PyWavelets 等包需要它们
+RUN echo "📦 Installing build dependencies (numpy, Cython)..." && \
+    pip3 install --timeout=1800 --retries=10 \
+    numpy==1.26.4 \
+    Cython>=3.0.0 && \
+    echo "✅ Build dependencies installed"
+
+# ============================================================================
+# 从源码编译安装 dtaidistance（需要 OpenMP 支持）
+# ============================================================================
+# 安装编译工具和 OpenMP 库
+RUN echo "📦 Installing build tools for dtaidistance compilation..." && \
+    apt-get update && apt-get install -y \
+    build-essential \
+    libomp-dev \
+    && rm -rf /var/lib/apt/lists/* && \
+    echo "✅ Build tools installed"
+
+# 复制 dtaidistance 源码（如果存在，构建脚本会确保目录存在）
+COPY dtaidistance /tmp/dtaidistance
+
+# 编译并安装 dtaidistance（如果源码存在）
+RUN if [ -f /tmp/dtaidistance/setup.py ]; then \
+        echo "🔨 Building dtaidistance from source..." && \
+        cd /tmp/dtaidistance && \
+        python3 setup.py build_ext --inplace && \
+        python3 setup.py install && \
+        cd / && \
+        rm -rf /tmp/dtaidistance && \
+        python3 -c "import dtaidistance; print('✅ dtaidistance installed:', dtaidistance.__version__ if hasattr(dtaidistance, '__version__') else 'OK')" && \
+        echo "✅ dtaidistance built and installed from source"; \
+    else \
+        echo "⚠️  dtaidistance source not found, skipping compilation"; \
+    fi
+
+# 先安装本地 wheel 文件（catboost、xgboost 等，如果存在）
+RUN if [ -n "$(ls -A /tmp/local-wheels/catboost-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local catboost wheel, installing from local..."; \
+        pip3 install --timeout=1800 --retries=10 --no-build-isolation \
+            --find-links /tmp/local-wheels \
+            /tmp/local-wheels/catboost-*.whl && \
+        echo "✅ Local catboost installed"; \
+    else \
+        echo "🌐 Local catboost wheel not found, will download from PyPI"; \
+    fi
+
+RUN if [ -n "$(ls -A /tmp/local-wheels/xgboost-*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found local xgboost wheel, installing from local..."; \
+        pip3 install --timeout=1800 --retries=10 --no-build-isolation \
+            --find-links /tmp/local-wheels \
+            /tmp/local-wheels/xgboost-*.whl && \
+        echo "✅ Local xgboost installed"; \
+    else \
+        echo "🌐 Local xgboost wheel not found, will download from PyPI"; \
+    fi
+
 RUN echo "📦 Installing project dependencies..." && \
-    pip3 install --no-cache-dir --timeout=900 \
+    pip3 install --timeout=1800 --retries=10 --no-build-isolation \
+    --find-links /tmp/local-wheels \
     PyWavelets==1.4.1 \
     optuna==3.4.0 \
     python-dotenv==1.0.0 \
@@ -307,6 +453,7 @@ RUN echo "📦 Installing project dependencies..." && \
     bokeh==3.3.4 \
     tensorboard==2.15.1 \
     joblib==1.3.2 \
+    scipy==1.12.0 \
     statsmodels==0.14.1 \
     gymnasium==0.29.1 \
     alphalens-reloaded==0.4.5 \
@@ -318,9 +465,9 @@ RUN echo "📦 Installing project dependencies..." && \
     xgboost \
     arch \
     vectorbt \
-    "dtaidistance[pure]==2.3.10" \
     pytest \
-    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, dtaidistance, pytest; print('✅ 项目依赖库安装完成 (包括pytest)')"
+    # dtaidistance==2.3.10 \  # 暂时移除：Python 3.12 编译问题，需要 C 扩展但缺少头文件
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, dtaidistance, pytest; print('✅ 项目依赖库安装完成 (包括pytest和dtaidistance)')"
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库

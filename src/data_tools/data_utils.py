@@ -11,9 +11,9 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
-from data_tools.data_loader import MarketDataLoader
+from src.data_tools.data_loader import MarketDataLoader
 from src.features.loader.config_feature_engineer import ConfigFeatureEngineer
-from time_series_model.pipeline.dimensionality.utils import load_top_factors_list
+from src.time_series_model.pipeline.dimensionality.utils import load_top_factors_list
 
 
 def load_raw_data(

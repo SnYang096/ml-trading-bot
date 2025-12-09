@@ -34,6 +34,9 @@ NO_PROXY=localhost,127.0.0.1 \
 # 同时禁用 SSH 和代理
 ./docker/build-gpu.sh --no-ssh --no-proxy
 
+# Makefile 便捷目标（使用固定名称/标签）
+make docker-build-gpu
+
 # 查看帮助
 ./docker/build-gpu.sh --help
 ```

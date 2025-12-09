@@ -88,7 +88,7 @@ export BINANCE_API_SECRET="your_api_secret"
 ### 3. 运行策略
 
 ```bash
-python scripts/live_trading/run_nautilus_strategy.py \
+python -m time_series_model.strategies.live.run_nautilus_strategy \
     --strategy sr_reversal \
     --symbol BTCUSDT-PERP \
     --timeframe 15T \
@@ -278,7 +278,7 @@ prediction = self.model.predict(X)[0]
 
 - `src/time_series_model/strategies/live/nautilus_strategy_with_features.py`：Strategy 集成类
 - `src/time_series_model/strategies/live/realtime_feature_integration_example.py`：特征管理器示例
-- `scripts/live_trading/run_nautilus_strategy.py`：运行脚本
+- `src/time_series_model/strategies/live/run_nautilus_strategy.py`：运行脚本入口
 
 ## 贡献
 

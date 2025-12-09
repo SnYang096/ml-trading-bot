@@ -16,7 +16,7 @@ INSIDE_FROM_FILE := $(shell if [ -f /.devcontainer-env ]; then echo yes; else ec
 INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),yes,no)
 
 # Docker configuration
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.5
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.6
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
 DATA_DIR ?= data/parquet_data
@@ -103,7 +103,8 @@ endif
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
 	cs-build-panel cs-report cs-train cs-workflow \
 	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
-	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all
+	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all \
+	docker-build-gpu
 
 help:
 	@echo "ML Trading Project"
@@ -126,6 +127,9 @@ help:
 	@echo "  make test-key-features-all          # Test all key features (VPIN, WPT, Volume Profile Volatility)"
 	@echo "  make test-complex-features-comprehensive # Test all complex features (GARCH, EVT, Hurst, Spectrum, DTW, Extended Volatility)"
 	@echo "  make test-all-features-comprehensive # Test all features comprehensively"
+	@echo "  make test-integration               # Run integration tests (full data pipeline)"
+	@echo "  make test-integration-dim-compare   # Test dimensionality comparison integration"
+	@echo "  make test-integration-fast          # Run fast integration tests (exclude slow)"
 	@echo "  make start-docker                   # Start Docker daemon"
 	@echo ""
 	@echo "Docker setup commands:"
@@ -187,7 +191,7 @@ format:
 lint:
 	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
 
-PERM_DIR ?= scripts/diagnostics
+PERM_DIR ?= src/diagnostics
 PERM_MODE ?= 664
 fix-permissions:
 	@echo "🔐 Updating file permissions under $(PERM_DIR) to mode $(PERM_MODE)..."
@@ -257,6 +261,10 @@ docker-build:
 	@echo "🔨 Building Docker image $(DOCKER_IMAGE)..."
 	docker build -f docker/Dockerfile.gpu -t $(DOCKER_IMAGE) .
 	
+docker-build-gpu:
+	@echo "🔨 Building GPU image hansenlovefiona017/lightgbm-runtime:v0.0.6 ..."
+	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.6 --no-ssh --no-proxy
+
 
 docker-install:
 	@echo "📦 Installing project inside Docker container..."
@@ -292,7 +300,7 @@ data-download:
 
 data-convert:
 	@echo "🔄 Converting ZIPs under data/agg_data → Parquet under data/parquet_data ..."
-	$(PYTHON) scripts/data_conversion/convert_zip_to_parquet.py --cleanup yes
+	$(PYTHON) -m src.data_tools.zip_to_parquet --cleanup yes
 
 data-pipeline:
 	@$(MAKE) data-download \
@@ -334,7 +342,7 @@ ts-factor-eval:
 	@echo "   IC 衰减分析: $(TS_FACTOR_IC_DECAY_LAGS) bars"
 	@# Convert comma-separated factors to space-separated (support both formats)
 	@FACTORS_SPACE=$$(echo "$(TS_FACTOR_FACTORS)" | tr ',' ' '); \
-	$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/factor_ts_eval.py \
+	$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.factor_ts_eval \
 		--strategy-config /workspace/$(TS_FACTOR_STRATEGY) \
 		--symbol $(TS_FACTOR_SYMBOL) \
 		--factors $$FACTORS_SPACE \
@@ -411,7 +419,7 @@ SR_BASELINE_TICKS_LOOKBACK ?= 60  # VPIN 计算时向前/向后额外加载的�
 
 ts-sr-reversal-rule-baseline:
 	@echo "📊 SR Reversal Rule Baseline: Testing pure rule-based SR+RR strategy (no ML)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_baseline.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_rule_baseline \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -425,7 +433,7 @@ ts-sr-reversal-rule-baseline:
 # Adjusts max_holding_bars to maintain same holding period as 4h (200 bars ≈ 8.3 days)
 ts-sr-reversal-1h-baseline:
 	@echo "📊 SR Reversal Rule Baseline (1h): Testing pure rule-based SR+RR strategy on 1h timeframe"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_baseline.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_rule_baseline \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -438,7 +446,7 @@ ts-sr-reversal-1h-baseline:
 
 ts-test-vpin-thresholds:
 	@echo "🧪 Testing different VPIN thresholds for SR Reversal"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/test_vpin_thresholds.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.test_vpin_thresholds \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -468,7 +476,7 @@ ts-sr-reversal-rule-optimization:
 	@echo "   Search Type: $(SR_OPT_SEARCH_TYPE)"
 	@echo "   N Trials: $(SR_OPT_N_TRIALS)"
 	@echo "   Output: $(SR_OPT_OUTPUT_DIR)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_rule_optimization.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_rule_optimization \
 		--strategy-config /workspace/$(SR_OPT_CONFIG) \
 		--symbol $(SR_OPT_SYMBOL) \
 		--data-path /workspace/$(SR_OPT_DATA_PATH) \
@@ -480,7 +488,7 @@ ts-sr-reversal-rule-optimization:
 		--n-trials $(SR_OPT_N_TRIALS)
 	@echo ""
 	@echo "🖼️  Generating rule plateau heatmaps and scatter charts..."
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_rule_plateau_charts.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_rule_plateau_charts \
 		--results-csv /workspace/results/rule_optimization/optimization_results.csv \
 		--report-html /workspace/results/rule_optimization/optimization_report.html
 
@@ -489,14 +497,14 @@ ts-sr-reversal-rule-optimization:
 # Updates: results/rule_optimization/optimization_report.html (injects charts)
 ts-rule-plateau-charts:
 	@echo "🖼️  Generating rule plateau heatmaps and scatter charts"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_rule_plateau_charts.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_rule_plateau_charts \
 		--results-csv /workspace/results/rule_optimization/optimization_results.csv \
 		--report-html /workspace/results/rule_optimization/optimization_report.html
 
 # SR Reversal ML Parameter Sweep: Generate parameter grid data for plateau analysis (sr_reversal strategy only)
 ts-sr-reversal-ml-param-sweep:
 	@echo "🔁 Running ML parameter sweep for SR Reversal plateau analysis"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_ml_parameter_sweep.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_ml_parameter_sweep \
 		--strategy-config /workspace/$(SR_COMP_CONFIG) \
 		--symbol $(SR_COMP_SYMBOL) \
 		--data-path /workspace/$(SR_COMP_DATA_PATH) \
@@ -510,14 +518,14 @@ ts-sr-reversal-ml-param-sweep:
 # Usage: make ts-ml-plateau-charts SR_COMP_TIMEFRAME=240T
 ts-ml-plateau-charts:
 	@echo "🖼️  Generating ML plateau heatmaps and scatter charts for $(SR_COMP_TIMEFRAME)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_ml_plateau_charts.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_ml_plateau_charts \
 		--results-csv /workspace/results/model_comparison/$(SR_COMP_TIMEFRAME)/ml_param_sweep.csv \
 		--report-html /workspace/results/model_comparison/$(SR_COMP_TIMEFRAME)/comparison_report.html
 
 # Timeframe Comparison Report: Generate comprehensive comparison between 1h and 4h timeframes
 ts-timeframe-comparison:
 	@echo "📊 Generating timeframe comparison report (1h vs 4h)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/generate_timeframe_comparison_report.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_timeframe_comparison_report \
 		--output-dir /workspace/results/model_comparison \
 		--results-1h /workspace/results/model_comparison/comparison_results.csv \
 		--results-4h /workspace/results/model_comparison_240h/comparison_results.csv
@@ -547,7 +555,7 @@ ts-sr-reversal-model-comparison:
 		echo "⚠️  Docker not running, attempting to start..."; \
 		bash scripts/start_docker.sh || exit 1; \
 	fi
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/sr_reversal_model_comparison.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_model_comparison \
 		--strategy-config /workspace/$(SR_COMP_CONFIG) \
 		--symbol $(SR_COMP_SYMBOL) \
 		--data-path /workspace/$(SR_COMP_DATA_PATH) \
@@ -562,11 +570,11 @@ ts-sr-reversal-model-comparison:
 
 ts-analyze-ml-volatility:
 	@echo "🔍 Analyzing ML+Volatility Model Performance Issues"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/analyze_ml_volatility_model.py
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.analyze_ml_volatility_model
 
 ts-analyze-dtw-volatility:
 	@echo "🔍 Analyzing DTW Features and Volatility Model"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/diagnostics/analyze_dtw_and_volatility.py
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.analyze_dtw_and_volatility
 
 TF_CONFIG_PEARSON ?= 0.03
 TF_CONFIG_PVALUE ?= 1e-5
@@ -648,7 +656,7 @@ ts-dim-compare:
 	@echo "   策略配置: $(DIM_COMPARE_CONFIG)"
 	@echo "   交易对: $(SYMBOL)"
 	@echo "   时间周期: $(DIM_COMPARE_TIMEFRAME)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/dimensionality/dim_compare.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.pipeline.dimensionality.dimensionality_comparison \
 		--config /workspace/$(DIM_COMPARE_CONFIG) \
 		--symbol $(SYMBOL) \
 		--data-path /workspace/$(DATA_DIR) \
@@ -1018,20 +1026,11 @@ ts-trend-following:
 
 
 # Verify feature correlation (distinguish real Alpha vs data leakage)
+# Note: Now using pytest - run with: pytest tests/test_verify_feature_correlation.py
 verify-feature-correlation:
 	@echo "🔬 Verifying Feature Correlation (Real Alpha vs Data Leakage)..."
-	@echo "   Symbol: $(RANK_IC_SYMBOL)"
-	@echo "   Horizon: $(RANK_IC_HORIZON)"
-	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
-	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS_PATH),$(RANK_IC_TOP_FACTORS_PATH),Not specified - will use all features)"
-	$(DOCKER_RUN_NO_TTY) python3 scripts/verify_feature_correlation.py \
-		--data-path /workspace/$(DATA_DIR) \
-		--symbol $(RANK_IC_SYMBOL) \
-		$(if $(FEATURE_EVAL_START_DATE),--start-date $(FEATURE_EVAL_START_DATE),) \
-		$(if $(FEATURE_EVAL_END_DATE),--end-date $(FEATURE_EVAL_END_DATE),) \
-		--timeframe $(RANK_IC_TIMEFRAME) \
-		--horizon $(RANK_IC_HORIZON) \
-		$(if $(RANK_IC_TOP_FACTORS_PATH),--top-factors /workspace/$(RANK_IC_TOP_FACTORS_PATH),)
+	@echo "   Running pytest tests/test_verify_feature_correlation.py"
+	$(DOCKER_RUN_NO_TTY) pytest tests/test_verify_feature_correlation.py -v
 	@echo "✅ Verification complete."
 
 
@@ -1282,7 +1281,29 @@ cs-auto:
 
 test-alphalens:
 	@echo "🧪 Testing Alphalens installation and basic functionality in Docker..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/test_alphalens.py
+	@echo "   Running pytest tests/test_alphalens.py"
+	$(DOCKER_RUN_NO_TTY) pytest tests/test_alphalens.py -v
+
+# ---------------------------------------------------------------------------
+# Integration Tests (require full data environment)
+# ---------------------------------------------------------------------------
+
+test-integration:
+	@echo "🔬 Running integration tests (full data pipeline)..."
+	@echo "   This includes: dimensionality comparison, feature engineering, etc."
+	$(DOCKER_RUN_NO_TTY) pytest tests/integration/ -v
+
+test-integration-dim-compare:
+	@echo "🔬 Running dimensionality comparison integration tests..."
+	$(DOCKER_RUN_NO_TTY) pytest tests/integration/test_dimensionality_comparison_integration.py -v
+
+test-integration-fast:
+	@echo "🔬 Running fast integration tests (excluding slow tests)..."
+	$(DOCKER_RUN_NO_TTY) pytest tests/integration/ -v -m "not slow"
+
+test-integration-example:
+	@echo "🔬 Running integration test examples (environment setup)..."
+	$(DOCKER_RUN_NO_TTY) pytest tests/integration/test_example.py -v
 
 # Docker startup helper
 start-docker:
@@ -1309,7 +1330,7 @@ CS_FACTOR_OUTPUT_DIR ?= results/cross_sectional_eval
 
 cs-factor-eval:
 	@echo "📊 Cross-sectional factor evaluation for $(CS_FACTOR_SYMBOLS) ($(START_DATE) → $(END_DATE))"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/factor_management/cross_sectional_eval.py \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.cross_sectional_eval \
 		--features-config $(CS_FACTOR_FEATURES_CONFIG) \
 		--symbols $(CS_FACTOR_SYMBOLS) \
 		--data-path /workspace/$(DATA_DIR) \

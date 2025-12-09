@@ -434,3 +434,7 @@ vendor/**
 
 cache
 LightGBM
+torch-2.9.0+cu128-cp312-cp312-manylinux_2_28_x86_64.whl
+nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl
+catboost-1.2.8-cp312-cp312-manylinux2014_x86_64.whl
+xgboost-3.1.2-py3-none-manylinux_2_28_x86_64.whl
