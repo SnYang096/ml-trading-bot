@@ -1,6 +1,6 @@
 {
   "name": "ML Trading Dev Container",
-  "image": "ml_trading_bot_devcontainer",
+  "image": "hansenlovefiona017/ml_trading_bot_devcontainer:latest",
   "runArgs": [
     "--gpus", "all",
     "--shm-size=8gb"
@@ -26,5 +26,5 @@
       }
     }
   },
-  "postCreateCommand": "pip3 install -e . || true"
+  "postCreateCommand": "sudo -H pip3 install -e ."
 }

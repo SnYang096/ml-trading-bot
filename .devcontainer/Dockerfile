@@ -1,4 +1,4 @@
-FROM hansenlovefiona017/lightgbm-runtime:v0.0.5
+FROM hansenlovefiona017/lightgbm-runtime:v0.0.6
 
 # Developer tools inside Dev Container (keeps parity with production image)
 RUN pip3 install --no-cache-dir \
@@ -33,25 +33,43 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Starship prompt (for nicer shell experience in bash & fish)
-RUN curl -fsSL https://starship.rs/install.sh | bash -s -- -y && \
-    echo 'eval \"$(starship init bash)\"' >> /etc/bash.bashrc && \
+RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y -b /usr/local/bin && \
+    starship --version && \
+    echo 'eval "$(starship init bash)"' >> /etc/bash.bashrc && \
     mkdir -p /etc/fish && \
-    echo 'eval \"$(starship init fish)\"' >> /etc/fish/config.fish
+    echo 'eval "$(starship init fish)"' >> /etc/fish/config.fish
 
-# Create yin user to match host user (UID 1000)
+# Create yin user to match host user (UID 1000), handle existing UID/GID gracefully
 ARG USERNAME=yin
 ARG USER_UID=1000
 ARG USER_GID=1000
-RUN if ! id -u "${USERNAME}" >/dev/null 2>&1; then \
-        groupadd --gid "${USER_GID}" "${USERNAME}" && \
+RUN /bin/bash -lc '\
+    set -eu; \
+    EXISTING_GROUP=$(getent group "${USER_GID}" | cut -d: -f1 || true); \
+    if [ -z "${EXISTING_GROUP}" ]; then \
+        groupadd --gid "${USER_GID}" "${USERNAME}"; \
+    else \
+        echo "Group with GID ${USER_GID} already exists: ${EXISTING_GROUP}"; \
+    fi; \
+    EXISTING_UID_USER=$(getent passwd "${USER_UID}" | cut -d: -f1 || true); \
+    if [ -n "${EXISTING_UID_USER}" ]; then \
+        echo "UID ${USER_UID} already exists (user: ${EXISTING_UID_USER}), creating ${USERNAME} with same UID/GID (non-unique)"; \
+        useradd -o --uid "${USER_UID}" --gid "${USER_GID}" --create-home --shell /bin/bash "${USERNAME}" || true; \
+    elif ! id -u "${USERNAME}" >/dev/null 2>&1; then \
         useradd --uid "${USER_UID}" --gid "${USER_GID}" --create-home --shell /bin/bash "${USERNAME}"; \
-    fi && \
-    mkdir -p /etc/sudoers.d && \
-    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} && \
-    chmod 0440 /etc/sudoers.d/${USERNAME} && \
-    # Ensure workspace directory is accessible
-    mkdir -p /workspace && \
-    chown -R ${USERNAME}:${USERNAME} /workspace
+    else \
+        echo "User ${USERNAME} already exists"; \
+    fi; \
+    mkdir -p /etc/sudoers.d; \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME}; \
+    chmod 0440 /etc/sudoers.d/${USERNAME}; \
+    if id -u ubuntu >/dev/null 2>&1; then \
+        echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu; \
+        chmod 0440 /etc/sudoers.d/ubuntu; \
+    fi; \
+    mkdir -p /workspace; \
+    chown -R ${USER_UID}:${USER_GID} /workspace \
+'
 
 # Marker for Makefile container detection
 RUN touch /.devcontainer-env
