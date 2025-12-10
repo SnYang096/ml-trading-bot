@@ -10,6 +10,43 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+import sys
+
+# Ensure project root on sys.path for config-driven imports in test envs
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Provide alias for `time_series_model` when project is not installed as a package
+import importlib.util
+
+if "time_series_model" not in sys.modules:
+    tsm_init = PROJECT_ROOT / "src" / "time_series_model" / "__init__.py"
+    if tsm_init.exists():
+        spec = importlib.util.spec_from_file_location("time_series_model", tsm_init)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            sys.modules["time_series_model"] = module
+    # Ensure config submodules are also available
+    cfg_init = PROJECT_ROOT / "src" / "time_series_model" / "config" / "__init__.py"
+    cfg_settings = PROJECT_ROOT / "src" / "time_series_model" / "config" / "settings.py"
+    if cfg_init.exists():
+        spec_cfg = importlib.util.spec_from_file_location(
+            "time_series_model.config", cfg_init
+        )
+        if spec_cfg and spec_cfg.loader:
+            mod_cfg = importlib.util.module_from_spec(spec_cfg)
+            spec_cfg.loader.exec_module(mod_cfg)
+            sys.modules["time_series_model.config"] = mod_cfg
+    if cfg_settings.exists():
+        spec_set = importlib.util.spec_from_file_location(
+            "time_series_model.config.settings", cfg_settings
+        )
+        if spec_set and spec_set.loader:
+            mod_set = importlib.util.module_from_spec(spec_set)
+            spec_set.loader.exec_module(mod_set)
+            sys.modules["time_series_model.config.settings"] = mod_set
 
 # Third-party imports
 import joblib
@@ -66,6 +103,10 @@ if str(PROJECT_ROOT) not in sys.path:
 try:
     from src.data_tools.data_utils import load_raw_data
     from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
+    from src.data_tools.tick_loader import (
+        serialize_tick_loader_params,
+        list_tick_files,
+    )
     from src.strategy_config import StrategyConfigLoader
     from scripts.train_strategy_pipeline import (
         apply_filters,
@@ -78,6 +119,50 @@ try:
     CONFIG_DRIVEN_AVAILABLE = True
 except ImportError:
     CONFIG_DRIVEN_AVAILABLE = False
+
+
+def _maybe_configure_vpin_ticks(
+    feature_loader: "StrategyFeatureLoader",
+    symbol: str,
+    data_path: str | Path,
+    train_start: Optional[str],
+    train_end: Optional[str],
+) -> None:
+    """If tick data exists, configure ticks_loader_json for VPIN features."""
+    if not train_start or not train_end:
+        return
+
+    features_cfg = feature_loader.feature_deps.get("features", {})
+    vpin_cfg = features_cfg.get("vpin_features")
+    if not vpin_cfg:
+        return
+
+    compute_params = vpin_cfg.setdefault("compute_params", {})
+    if compute_params.get("ticks_loader_json"):
+        return
+
+    tick_files = list_tick_files(
+        symbol=symbol,
+        start_ts=f"{train_start} 00:00:00",
+        end_ts=f"{train_end} 23:59:59",
+        ticks_dir=str(data_path),
+        lookback_minutes=60,
+    )
+
+    if not tick_files:
+        print("   ⚠️  VPIN tick files not found; VPIN may fail without ticks")
+        return
+
+    tick_params = {
+        "symbol": symbol,
+        "tick_files": [str(Path(f)) for f in tick_files],
+        "start_ts": f"{train_start} 00:00:00",
+        "end_ts": f"{train_end} 23:59:59",
+        "lookback_minutes": 60,
+    }
+    compute_params["ticks_loader_json"] = serialize_tick_loader_params(tick_params)
+    print(f"   ✅ Configured VPIN ticks_loader_json with {len(tick_files)} files")
+
 
 DIM_COMPARE_RESULTS_ROOT = Path("results") / "dim_compare"
 
@@ -157,12 +242,24 @@ def run_dim_compare(
     Returns:
         Tuple of (results dictionary, top_factors.json path)
     """
-    if not CONFIG_DRIVEN_AVAILABLE:
+    # Lazy import dependencies to work in test environments without package install
+    try:
+        from scripts.train_strategy_pipeline import (
+            apply_filters,
+            apply_post_label_filters,
+            determine_feature_columns,
+            import_callable,
+            run_feature_pipeline,
+        )
+        from src.data_tools.data_utils import load_raw_data
+        from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
+        from src.strategy_config import StrategyConfigLoader
+    except ImportError as e:
         raise ImportError(
             "Config-driven mode requires src.data_tools.data_utils, "
             "src.features.loader.strategy_feature_loader, and "
             "src.strategy_config modules"
-        )
+        ) from e
 
     print("🚀 Config-Driven Dimensionality Comparison")
     print("=" * 60)
@@ -190,6 +287,13 @@ def run_dim_compare(
     # Engineer features
     print("\n2. Engineering features...")
     feature_loader = StrategyFeatureLoader()
+    _maybe_configure_vpin_ticks(
+        feature_loader=feature_loader,
+        symbol=symbol,
+        data_path=data_path,
+        train_start=train_start,
+        train_end=train_end,
+    )
     df_features = run_feature_pipeline(
         df_raw,
         feature_loader=feature_loader,

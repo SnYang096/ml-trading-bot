@@ -166,7 +166,8 @@ class StrategyConfigLoader:
 
     def _parse_label_config(self, data: Dict[str, Any]) -> LabelConfig:
         target = data.get("target_column", "label")
-        generator = self._parse_module_function(data.get("label_generator", {}))
+        generator_cfg = data.get("label_generator") or data.get("generator") or {}
+        generator = self._parse_module_function(generator_cfg)
         filters = data.get("filters", []) or []
         post_filters = data.get("post_label_filters", []) or []
         return LabelConfig(

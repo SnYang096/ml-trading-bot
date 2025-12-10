@@ -29,9 +29,6 @@ class TestFeatureIndicatorVisualization:
             )
         except ImportError:
             # 如果导入失败，直接测试逻辑
-            from pathlib import Path
-            from datetime import datetime
-
             def generate_output_filename(
                 symbol: str,
                 timeframe: str,
@@ -80,9 +77,6 @@ class TestFeatureIndicatorVisualization:
             )
         except ImportError:
             # 如果导入失败，直接测试逻辑
-            from pathlib import Path
-            from datetime import datetime
-
             def generate_output_filename(
                 symbol: str,
                 timeframe: str,

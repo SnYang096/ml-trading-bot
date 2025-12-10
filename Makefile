@@ -233,7 +233,7 @@ data-download:
 	@echo "Symbols=$(DOWNLOAD_SYMBOLS) Range=$(DOWNLOAD_START_YEAR)-$(DOWNLOAD_START_MONTH) → $(DOWNLOAD_END_YEAR)-$(DOWNLOAD_END_MONTH)"
 	@mkdir -p $(AGG_DATA_DIR)
 	# Non-interactive confirm: auto-continue (downloads directly into agg_data)
-	@yes | $(PYTHON) scripts/utils/download_training_data.py \
+	@yes | $(PYTHON) src/data_tools/download_training_data.py \
 		--data-dir $(AGG_DATA_DIR) \
 		--parquet-dir $(DATA_DIR) \
 		$(if $(DOWNLOAD_SYMBOLS_LIST),--symbols $(DOWNLOAD_SYMBOLS_LIST)) \

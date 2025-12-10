@@ -13,6 +13,9 @@ import pytest
 import pandas as pd
 import numpy as np
 
+IMPORT_ERROR_TS = ""
+IMPORT_ERROR_CS = ""
+
 
 # Try to import functions, skip tests if imports fail
 try:
