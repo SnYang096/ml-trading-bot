@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -243,6 +244,23 @@ def apply_post_label_filters(
 
         if column and column in result.columns and filt.get("notna"):
             result = result[result[column].notna()]
+    return result
+
+
+def drop_inf_rows(df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
+    """Remove rows containing inf/-inf in feature columns."""
+    if not feature_cols:
+        return df
+    dedup_cols = list(dict.fromkeys(feature_cols))
+    result = df.copy()
+    subset = result[dedup_cols].replace([np.inf, -np.inf], np.nan)
+    for col in dedup_cols:
+        result[col] = subset[col]
+    finite_mask = np.isfinite(result[dedup_cols]).all(axis=1)
+    dropped = len(result) - finite_mask.sum()
+    result = result[finite_mask]
+    if dropped > 0:
+        print(f"   ⚠️  Dropped {dropped} rows due to inf/-inf in features")
     return result
 
 
@@ -613,6 +631,30 @@ def train_strategy(
         timeframe=args.timeframe,
     )
 
+    # Optional date cropping to align with available tick data or focus window
+    start_override = os.getenv("TRAIN_START_DATE")
+    end_override = os.getenv("TRAIN_END_DATE")
+    if start_override or end_override:
+        dt_idx = None
+        if not df_raw.empty:
+            for col in ("datetime", "timestamp", "date"):
+                if col in df_raw.columns:
+                    dt_idx = pd.to_datetime(df_raw[col])
+                    break
+            if dt_idx is None and isinstance(df_raw.index, pd.DatetimeIndex):
+                dt_idx = df_raw.index
+
+        if dt_idx is not None:
+            mask = pd.Series(True, index=df_raw.index)
+            if start_override:
+                mask &= dt_idx >= pd.to_datetime(start_override)
+            if end_override:
+                mask &= dt_idx <= pd.to_datetime(end_override)
+            df_raw = df_raw.loc[mask]
+            print(
+                f"   ℹ️  Cropped data to [{start_override or '-inf'}, {end_override or '+inf'}], rows={len(df_raw)}"
+            )
+
     # Configure VPIN tick loader if tick data is available
     datetime_col = next(
         (col for col in ("datetime", "timestamp", "date") if col in df_raw.columns),
@@ -677,6 +719,15 @@ def train_strategy(
     df_test_features[strategy_config.labels.target_column] = label_func(
         df_test_features.copy(), **strategy_config.labels.generator.params
     )
+    train_labels = df_train_features[strategy_config.labels.target_column]
+    test_labels = df_test_features[strategy_config.labels.target_column]
+    print(
+        f"   ℹ️  Label stats before filtering - "
+        f"Train non-null: {train_labels.notna().sum()}, "
+        f"pos: {(train_labels==1).sum()}, neg: {(train_labels==0).sum()}; "
+        f"Test non-null: {test_labels.notna().sum()}, "
+        f"pos: {(test_labels==1).sum()}, neg: {(test_labels==0).sum()}"
+    )
 
     df_train_filtered = apply_filters(df_train_features, strategy_config.labels.filters)
     df_test_filtered = apply_filters(df_test_features, strategy_config.labels.filters)
@@ -691,6 +742,9 @@ def train_strategy(
         strategy_config.labels.post_label_filters,
         feature_cols,
     )
+
+    df_train_filtered = drop_inf_rows(df_train_filtered, feature_cols)
+    df_test_filtered = drop_inf_rows(df_test_filtered, feature_cols)
 
     print(
         f"   ✅ Valid samples after filtering - "

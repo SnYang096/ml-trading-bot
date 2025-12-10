@@ -830,9 +830,18 @@ ts-r-rank-ic-train:
 # SR Reversal Model Training
 SR_REVERSAL_CONFIG ?= config/strategies/sr_reversal
 SR_REVERSAL_SYMBOL ?= $(SYMBOL)
-SR_REVERSAL_TIMEFRAME ?= 15T
+SR_REVERSAL_TIMEFRAME ?= 240T
 SR_REVERSAL_TEST_SIZE ?= 0.15
 SR_REVERSAL_OUTPUT_ROOT ?= results/strategies/sr_reversal
+# Relaxed SR signal thresholds to ensure signal generation when auto-generating
+SR_SIGNAL_MIN_STRENGTH ?= 0.0
+SR_SIGNAL_MIN_SUPPORT ?= 0.0
+SR_SIGNAL_MIN_RESISTANCE ?= 0.0
+SR_SIGNAL_TOLERANCE_MULT ?= 2.5
+SR_SIGNAL_MIN_TOLERANCE_PCT ?= 0.0
+SR_SIGNAL_REQUIRE_FIRST_TOUCH ?= 0
+SR_SIGNAL_MAX_TOUCHES ?= 20
+SR_SIGNAL_ZONE_PRECISION ?= 3
 SR_SR_OPTUNA_STRATEGY ?= config/strategies/sr_reversal
 SR_SR_OPTUNA_SYMBOL ?= $(SR_REVERSAL_SYMBOL)
 SR_SR_OPTUNA_TIMEFRAME ?= $(SR_REVERSAL_TIMEFRAME)
@@ -850,13 +859,34 @@ ts-sr-reversal:
 	@echo "   Test Size: $(SR_REVERSAL_TEST_SIZE)"
 	@echo "   Config: $(SR_REVERSAL_CONFIG)"
 	@echo "   Output Root: $(SR_REVERSAL_OUTPUT_ROOT)"
-	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src python3 scripts/train_strategy_pipeline.py \
+	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src \
+		$(if $(TRAIN_START_DATE),TRAIN_START_DATE=$(TRAIN_START_DATE),) \
+		$(if $(TRAIN_END_DATE),TRAIN_END_DATE=$(TRAIN_END_DATE),) \
+		SR_SIGNAL_MIN_STRENGTH=$(SR_SIGNAL_MIN_STRENGTH) \
+		SR_SIGNAL_MIN_SUPPORT=$(SR_SIGNAL_MIN_SUPPORT) \
+		SR_SIGNAL_MIN_RESISTANCE=$(SR_SIGNAL_MIN_RESISTANCE) \
+		SR_SIGNAL_TOLERANCE_MULT=$(SR_SIGNAL_TOLERANCE_MULT) \
+		SR_SIGNAL_MIN_TOLERANCE_PCT=$(SR_SIGNAL_MIN_TOLERANCE_PCT) \
+		SR_SIGNAL_REQUIRE_FIRST_TOUCH=$(SR_SIGNAL_REQUIRE_FIRST_TOUCH) \
+		SR_SIGNAL_MAX_TOUCHES=$(SR_SIGNAL_MAX_TOUCHES) \
+		SR_SIGNAL_ZONE_PRECISION=$(SR_SIGNAL_ZONE_PRECISION) \
+		python3 scripts/train_strategy_pipeline.py \
 		--config /workspace/$(SR_REVERSAL_CONFIG) \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(SR_REVERSAL_SYMBOL) \
 		--timeframe $(SR_REVERSAL_TIMEFRAME) \
 		--test-size $(SR_REVERSAL_TEST_SIZE) \
 		--output-root /workspace/$(SR_REVERSAL_OUTPUT_ROOT)
+
+ts-sr-reversal-long:
+	@$(MAKE) ts-sr-reversal \
+		SR_REVERSAL_CONFIG=config/strategies/sr_reversal_long \
+		SR_REVERSAL_OUTPUT_ROOT=results/strategies/sr_reversal_long
+
+ts-sr-reversal-short:
+	@$(MAKE) ts-sr-reversal \
+		SR_REVERSAL_CONFIG=config/strategies/sr_reversal_short \
+		SR_REVERSAL_OUTPUT_ROOT=results/strategies/sr_reversal_short
 
 ts-sr-reversal-optuna:
 	@echo "🔍 Optuna search for SR Reversal signal parameters..."

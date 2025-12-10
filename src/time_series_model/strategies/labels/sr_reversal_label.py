@@ -244,83 +244,64 @@ def _generate_sr_reversal_signals(
     return pd.Series(signals_arr, index=df.index, dtype=float)
 
 
-def compute_sr_reversal_label(
+def _combine_long_short(
+    long_labels: pd.Series, short_labels: pd.Series, mode: str = "any_success"
+) -> pd.Series:
+    """
+    Combine long/short labels into a single binary series.
+
+    mode:
+        - "any_success": 1 if either long or short succeeds; 0 if both fail; NaN otherwise
+        - "long_only": use long_labels
+        - "short_only": use short_labels
+    """
+    if mode == "long_only":
+        return long_labels
+    if mode == "short_only":
+        return short_labels
+
+    # any_success
+    success = (long_labels == 1) | (short_labels == 1)
+    fail = (long_labels == 0) & (short_labels == 0)
+    result = pd.Series(np.nan, index=long_labels.index, dtype=float)
+    result.loc[success] = 1.0
+    result.loc[fail] = 0.0
+    return result
+
+
+def compute_sr_reversal_label_full_scan(
     df: pd.DataFrame,
-    signal_col: str = "signal",
     price_col: str = "close",
     high_col: str = "high",
     low_col: str = "low",
     atr_col: str = "atr",
     atr_window: int = 14,
     max_holding_bars: int = 50,
-    rr_ratio: float = 2.0,
     stop_loss_r: float = 1.0,
     take_profit_r: float = 2.0,
-    auto_generate_signals: bool = True,
-    sr_signal_cfg: Optional[SRSignalConfig] = None,
+    combine_mode: str = "any_success",
 ) -> pd.Series:
     """
-    SR 反转策略标签：在 SR 区入场后，50 根 K 内是否先触达 +2R 而非 -1R。
+    通用反转标签：不预先过滤信号，对每根 K 线都假设入场，扫描 ±R/R。
 
-    改进点：
-    - 当缺少信号列或信号全为 0 时，自动从 SR 强度 + SQS + 价格贴近度中推导信号。
-    - 统一使用 label_utils.compute_rr_label 以复用经过验证的 R/R 扫描逻辑。
-
-    Args:
-        df: Input DataFrame (OHLCV + SR 特征).
-        signal_col: Existing signal column name (if present).
-        price_col/high_col/low_col: Price columns.
-        atr_col: ATR column; will be computed if missing.
-        atr_window: ATR lookback used when计算.
-        max_holding_bars: Upper bound of holding horizon (默认 50 根).
-        rr_ratio: Target R/R (information only; keep for backward compat).
-        stop_loss_r/take_profit_r: SL/TP multiples in ATR units.
-        auto_generate_signals: Whether to derive SR signals when缺失/全0.
-        sr_signal_cfg: Optional SRSignalConfig for fine-tuning auto-signal heuristics.
-
-    Returns:
-        pd.Series of binary labels (1=成功 ≥2R, 0=失败, NaN=无交易/超时).
+    - 做多：entry=open[t+1]，TP=+take_profit_r*ATR，SL=-stop_loss_r*ATR
+    - 做空：entry=open[t+1]，TP=-take_profit_r*ATR，SL=+stop_loss_r*ATR
+    - 分别计算 long/short 的 2R 成功与否，再按 combine_mode 合并。
     """
 
     work_df = df.copy()
-    if sr_signal_cfg is None:
-        sr_signal_cfg = SRSignalConfig()
-    elif isinstance(sr_signal_cfg, dict):
-        sr_signal_cfg = SRSignalConfig(**sr_signal_cfg)
-    sr_signal_cfg = _apply_env_overrides(sr_signal_cfg)
-
     atr_series = _ensure_atr(work_df, atr_col, price_col, high_col, low_col, atr_window)
     work_df[atr_col] = atr_series
 
-    missing_signal = signal_col not in work_df.columns
-    existing_signal = work_df[signal_col] if not missing_signal else None
-    needs_auto_signal = (
-        missing_signal
-        or not existing_signal.dropna().abs().gt(0).any()
-        or (existing_signal is None)
-    )
-
-    if auto_generate_signals and needs_auto_signal:
-        auto_signals = _generate_sr_reversal_signals(
-            work_df,
-            price_col=price_col,
-            high_col=high_col,
-            low_col=low_col,
-            atr_series=atr_series,
-            cfg=sr_signal_cfg,
-        )
-        work_df[signal_col] = auto_signals
-    elif missing_signal:
-        # Cannot proceed without either existing or auto-generated signals.
-        return pd.Series(np.nan, index=work_df.index)
-
-    labels = compute_rr_label(
+    # Long-only synthetic signals (+1 everywhere)
+    work_df["__long_signal"] = 1.0
+    long_labels = compute_rr_label(
         work_df,
-        signal_col=signal_col,
+        signal_col="__long_signal",
         price_col=price_col,
         atr_col=atr_col,
         atr_window=atr_window,
-        rr_ratio=rr_ratio,
+        rr_ratio=take_profit_r / stop_loss_r if stop_loss_r != 0 else take_profit_r,
         max_holding_bars=max_holding_bars,
         stop_loss_r=stop_loss_r,
         take_profit_r=take_profit_r,
@@ -329,9 +310,26 @@ def compute_sr_reversal_label(
         entry_offset=1,
     )
 
-    # compute_rr_label sets timeout samples to 0.0. For SR reversal我们将其设为 NaN 以忽略。
-    timeout_mask = labels.isna()
-    return labels.where(~timeout_mask, np.nan)
+    # Short-only synthetic signals (-1 everywhere)
+    work_df["__short_signal"] = -1.0
+    short_labels = compute_rr_label(
+        work_df,
+        signal_col="__short_signal",
+        price_col=price_col,
+        atr_col=atr_col,
+        atr_window=atr_window,
+        rr_ratio=take_profit_r / stop_loss_r if stop_loss_r != 0 else take_profit_r,
+        max_holding_bars=max_holding_bars,
+        stop_loss_r=stop_loss_r,
+        take_profit_r=take_profit_r,
+        use_continuous_label=False,
+        entry_price_col="open",
+        entry_offset=1,
+    )
+
+    combined = _combine_long_short(long_labels, short_labels, mode=combine_mode)
+    timeout_mask = combined.isna()
+    return combined.where(~timeout_mask, np.nan)
 
 
 def _apply_env_overrides(cfg: SRSignalConfig) -> SRSignalConfig:

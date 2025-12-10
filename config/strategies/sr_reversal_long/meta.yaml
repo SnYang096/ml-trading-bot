@@ -1,0 +1,12 @@
+strategy:
+  name: sr_reversal_long
+  description: >
+    Long-only SR reversal variant: full-scan labels, model learns when long entries
+    reach +2R before -1R without pre-filtering signals.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+  owner: quant_team
+

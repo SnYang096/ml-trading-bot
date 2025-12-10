@@ -8,7 +8,7 @@ label_generator:
     max_holding_bars: 50
     take_profit_r: 2.0
     stop_loss_r: 1.0
-    combine_mode: any_success
+    combine_mode: short_only
 
 filters:
   - column: label
