@@ -1,7 +1,7 @@
 """
 Rolling 训练流程测试
 
-测试 scripts/rolling/rolling_train.py 的核心功能
+测试 src/time_series_model/pipeline/rolling/rolling_train.py 的核心功能
 """
 
 import unittest
@@ -264,14 +264,26 @@ class TestRollingTrainIntegration(unittest.TestCase):
 
             spec = importlib.util.spec_from_file_location(
                 "rolling_train",
-                project_root / "scripts" / "rolling" / "rolling_train.py",
+                project_root
+                / "src"
+                / "time_series_model"
+                / "pipeline"
+                / "rolling"
+                / "rolling_train.py",
             )
             # 不实际加载，只验证文件存在
             self.assertTrue(spec is not None, "rolling_train.py should exist")
         except Exception:
             # 如果导入失败，至少验证文件存在
             self.assertTrue(
-                (project_root / "scripts" / "rolling" / "rolling_train.py").exists(),
+                (
+                    project_root
+                    / "src"
+                    / "time_series_model"
+                    / "pipeline"
+                    / "rolling"
+                    / "rolling_train.py"
+                ).exists(),
                 "rolling_train.py should exist",
             )
 

@@ -137,10 +137,6 @@ help:
 	@echo "  make docker-install       # Install project inside Docker container"
 	@echo "  make builder-shell        # Open bash in $(DOCKER_IMAGE)"
 	@echo ""
-	@echo "Data commands:"
-	@echo "  make data-download       # Download Binance aggTrades ZIPs (non-interactive)"
-	@echo "  make data-convert        # Convert ZIPs to Parquet (5min OHLC + orderflow)"
-	@echo "  make data-pipeline       # Download then convert"
 	@echo ""
 	@echo "Training/ML commands (run in Docker):"
 	@echo "  Core Workflow (Recommended):"
@@ -200,58 +196,6 @@ fix-permissions:
 
 dev-install:
 	$(PIP) install -e .
-
-OWNER_DIR ?= scripts
-OWNER_USER ?= yin
-fix-ownership:
-	@echo "👤 Changing file ownership under $(OWNER_DIR) to $(OWNER_USER)..."
-	@if [ -n "$(SUDO)" ]; then \
-		$(SUDO) chown -R $(OWNER_USER) $(OWNER_DIR); \
-	else \
-		chown -R $(OWNER_USER) $(OWNER_DIR) 2>/dev/null || { \
-			echo "⚠️  Permission denied. Checking if sudo is available..."; \
-			if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then \
-				echo "⚠️  Trying with sudo (interactive mode)..."; \
-				sudo chown -R $(OWNER_USER) $(OWNER_DIR) || { \
-					echo "❌ Permission denied. Please run: sudo make fix-ownership"; \
-					exit 1; \
-				}; \
-			else \
-				echo "❌ Permission denied and sudo is not available in non-interactive mode."; \
-				echo "   Please run one of:"; \
-				echo "   - sudo make fix-ownership (in an interactive terminal)"; \
-				echo "   - make fix-ownership SUDO=sudo (if sudo doesn't require a password)"; \
-				echo "   - Or fix ownership manually: sudo chown -R $(OWNER_USER) $(OWNER_DIR)"; \
-				exit 1; \
-			fi; \
-		}; \
-	fi
-	@echo "✅ Ownership updated."
-
-fix-all-ownership:
-	@echo "👤 Changing file ownership for src/, tests/, and scripts/ to $(OWNER_USER)..."
-	@if [ -n "$(SUDO)" ]; then \
-		$(SUDO) chown -R $(OWNER_USER) src/ tests/ scripts/; \
-	else \
-		chown -R $(OWNER_USER) src/ tests/ scripts/ 2>/dev/null || { \
-			echo "⚠️  Permission denied. Checking if sudo is available..."; \
-			if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then \
-				echo "⚠️  Trying with sudo (interactive mode)..."; \
-				sudo chown -R $(OWNER_USER) src/ tests/ scripts/ || { \
-					echo "❌ Permission denied. Please run: sudo make fix-all-ownership"; \
-					exit 1; \
-				}; \
-			else \
-				echo "❌ Permission denied and sudo is not available in non-interactive mode."; \
-				echo "   Please run one of:"; \
-				echo "   - sudo make fix-all-ownership (in an interactive terminal)"; \
-				echo "   - make fix-all-ownership SUDO=sudo (if sudo doesn't require a password)"; \
-				echo "   - Or fix ownership manually: sudo chown -R $(OWNER_USER) src/ tests/ scripts/"; \
-				exit 1; \
-			fi; \
-		}; \
-	fi
-	@echo "✅ Ownership updated."
 
 install-hooks:
 	@echo "📦 Installing Git hooks..."
@@ -730,7 +674,7 @@ rolling:
 	@echo "   策略配置: $(ROLLING_CONFIG)"
 	@echo "   交易对: $(SYMBOL)"
 	@echo "   时间周期: $(ROLLING_TIMEFRAME)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/rolling/rolling_train.py \
+	@$(DOCKER_RUN_NO_TTY) python3 src/time_series_model/pipeline/rolling/rolling_train.py \
 		--config /workspace/$(ROLLING_CONFIG) \
 		--symbol $(SYMBOL) \
 		--data-dir /workspace/$(DATA_DIR) \
@@ -918,7 +862,7 @@ ts-sr-reversal:
 
 ts-sr-reversal-optuna:
 	@echo "🔍 Optuna search for SR Reversal signal parameters..."
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/optimization/ts_sr_reversal_optuna.py \
+	@$(DOCKER_RUN_NO_TTY) python3 src/time_series_model/optimization/ts_sr_reversal_optuna.py \
 		--strategy-config /workspace/$(SR_SR_OPTUNA_STRATEGY) \
 		--symbol $(SR_SR_OPTUNA_SYMBOL) \
 		--data-path /workspace/$(DATA_DIR) \

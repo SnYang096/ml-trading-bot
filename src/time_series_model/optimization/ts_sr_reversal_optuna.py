@@ -25,7 +25,7 @@ from scripts.strategy_management.strategy_feature_compare import (
     load_raw_data,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in os.sys.path:
     os.sys.path.append(str(PROJECT_ROOT))
 

@@ -21,8 +21,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+# Add project root to path (repo root)
+# __file__ = src/time_series_model/pipeline/rolling/rolling_train.py
+# parents: [rolling, pipeline, time_series_model, src, repo_root]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_tools.data_utils import load_raw_data
