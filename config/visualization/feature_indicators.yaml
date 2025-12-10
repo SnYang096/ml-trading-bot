@@ -1,0 +1,71 @@
+name: feature_indicators
+description: >
+  Feature indicators visualization configuration.
+  Defines which feature types to visualize and their display settings.
+
+# Feature types to visualize
+feature_types:
+  # Hurst exponent features (trend persistence)
+  hurst:
+    enabled: true
+    display_name: "Hurst Exponent"
+    description: "Measures trend persistence and mean reversion"
+    column_patterns:
+      - "hurst_"
+      - "hurst_price"
+      - "hurst_cvd"
+      - "hurst_volume"
+  
+  # Hilbert transform features (phase and envelope)
+  hilbert:
+    enabled: true
+    display_name: "Hilbert Transform"
+    description: "Phase analysis and envelope detection"
+    column_patterns:
+      - "hilbert_"
+      - "hilbert_phase"
+      - "hilbert_price_env"
+      - "hilbert_cvd_env"
+      - "hilbert_volume_env"
+  
+  # Wavelet Packet Transform features
+  wavelet:
+    enabled: true
+    display_name: "Wavelet Packet Transform"
+    description: "Multi-scale decomposition and energy analysis"
+    column_patterns:
+      - "wpt_"
+      - "wpt_price_"
+      - "wpt_cvd_"
+      - "wpt_vpvr"
+  
+  # Spectral analysis features
+  spectral:
+    enabled: true
+    display_name: "Spectral Analysis"
+    description: "Frequency domain analysis and market structure"
+    column_patterns:
+      - "spectrum_"
+      - "spectral_"
+      - "spectrum_price_"
+      - "spectrum_flatness"
+      - "spectrum_entropy"
+
+# Display settings
+display:
+  # Show feature statistics in the report
+  show_statistics: true
+  # Show sample values
+  show_samples: true
+  # Number of sample values to show
+  sample_count: 5
+  # Group features by type
+  group_by_type: true
+
+# Output settings
+output:
+  # Include data quality metrics
+  include_quality_metrics: true
+  # Include feature correlation matrix
+  include_correlation: false  # Can be enabled for detailed analysis
+

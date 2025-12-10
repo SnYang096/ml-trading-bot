@@ -18,7 +18,9 @@ import pandas as pd
 import yaml
 
 CURRENT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CURRENT_DIR.parents[1]
+PROJECT_ROOT = CURRENT_DIR.parents[
+    4
+]  # evaluation -> strategies -> time_series_model -> src -> project_root
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

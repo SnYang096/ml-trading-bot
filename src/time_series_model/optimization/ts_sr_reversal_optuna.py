@@ -19,7 +19,7 @@ from typing import Dict, Optional
 import optuna
 import numpy as np
 
-from scripts.strategy_management.strategy_feature_compare import (
+from src.time_series_model.strategies.evaluation.strategy_feature_compare import (
     execute_single_run,
     StrategyConfigLoader,
     load_raw_data,

@@ -330,7 +330,7 @@ STRAT_COMPARE_ROLL_MAX ?= 5
 
 ts-strategy-feature-compare:
 	@echo "🆚 Ablation Study: Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
-	@$(DOCKER_RUN_NO_TTY) python3 scripts/strategy_management/strategy_feature_compare.py \
+	@$(DOCKER_RUN_NO_TTY) python3 src/time_series_model/strategies/evaluation/strategy_feature_compare.py \
 		--strategy-config /workspace/$(STRAT_COMPARE_CONFIG) \
 		--symbol $(STRAT_COMPARE_SYMBOL) \
 		--data-path /workspace/$(STRAT_COMPARE_DATA_PATH) \
@@ -612,25 +612,26 @@ ts-dim-compare:
 # Feature Indicators Visualization
 # ---------------------------------------------------------------------------
 
-FEATURE_INDICATORS_OUTPUT ?= results/feature_indicators/$(SYMBOL)_$(TIMEFRAME).html
-FEATURE_INDICATORS_FEATURE_TYPES ?= hurst,hilbert,wavelet,spectral
+FEATURE_INDICATORS_CONFIG ?= config/visualization/feature_indicators.yaml
+FEATURE_INDICATORS_OUTPUT_DIR ?= results/feature_indicators
 
 feature-indicators:
 	@echo "📈 Generating feature indicators visualization for $(SYMBOL)..."
 	@echo "   Timeframe: $(TIMEFRAME)"
-	@echo "   Feature types: $(FEATURE_INDICATORS_FEATURE_TYPES)"
-	@echo "   Output: $(FEATURE_INDICATORS_OUTPUT)"
-	@mkdir -p $(dir $(FEATURE_INDICATORS_OUTPUT))
-	$(DOCKER_RUN_NO_TTY) python3 scripts/visualization/feature_indicator_visualizer.py \
+	@echo "   Config: $(FEATURE_INDICATORS_CONFIG)"
+	@echo "   Start Date: $(if $(START_DATE),$(START_DATE),Not specified)"
+	@echo "   End Date: $(if $(END_DATE),$(END_DATE),Not specified)"
+	@echo "   Output Directory: $(FEATURE_INDICATORS_OUTPUT_DIR)"
+	@mkdir -p $(FEATURE_INDICATORS_OUTPUT_DIR)
+	$(DOCKER_RUN_NO_TTY) python3 src/time_series_model/visualization/feature_indicator_visualizer.py \
 		--data-path /workspace/data/parquet_data \
 		--symbol $(SYMBOL) \
 		--timeframe $(TIMEFRAME) \
-		--feature-types $(FEATURE_INDICATORS_FEATURE_TYPES) \
-		--feature-type comprehensive \
+		--config /workspace/$(FEATURE_INDICATORS_CONFIG) \
 		$(if $(START_DATE),--start-date $(START_DATE)) \
 		$(if $(END_DATE),--end-date $(END_DATE)) \
-		--output $(FEATURE_INDICATORS_OUTPUT)
-	@echo "✅ Feature indicators visualization saved to $(FEATURE_INDICATORS_OUTPUT)"
+		--output-dir /workspace/$(FEATURE_INDICATORS_OUTPUT_DIR)
+	@echo "✅ Feature indicators visualization saved to $(FEATURE_INDICATORS_OUTPUT_DIR)"
 
 
 
