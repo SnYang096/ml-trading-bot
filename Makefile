@@ -828,12 +828,11 @@ ts-r-rank-ic-train:
 	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
 
 # SR Reversal Model Training
+SR_REVERSAL_CONFIG ?= config/strategies/sr_reversal
 SR_REVERSAL_SYMBOL ?= $(SYMBOL)
-SR_REVERSAL_HORIZON ?= 24
 SR_REVERSAL_TIMEFRAME ?= 15T
-SR_REVERSAL_FEATURE_TYPE ?= comprehensive
 SR_REVERSAL_TEST_SIZE ?= 0.15
-SR_REVERSAL_OUTPUT_DIR ?= results/sr_reversal_model
+SR_REVERSAL_OUTPUT_ROOT ?= results/strategies/sr_reversal
 SR_SR_OPTUNA_STRATEGY ?= config/strategies/sr_reversal
 SR_SR_OPTUNA_SYMBOL ?= $(SR_REVERSAL_SYMBOL)
 SR_SR_OPTUNA_TIMEFRAME ?= $(SR_REVERSAL_TIMEFRAME)
@@ -847,19 +846,17 @@ SR_SR_OPTUNA_OUTPUT ?= results/sr_reversal_optuna
 ts-sr-reversal:
 	@echo "🔄 Training SR Reversal Model..."
 	@echo "   Symbol: $(SR_REVERSAL_SYMBOL)"
-	@echo "   Horizon: $(SR_REVERSAL_HORIZON)"
 	@echo "   Timeframe: $(SR_REVERSAL_TIMEFRAME)"
-	@echo "   Feature Type: $(SR_REVERSAL_FEATURE_TYPE)"
 	@echo "   Test Size: $(SR_REVERSAL_TEST_SIZE)"
-	@echo "   Output: $(SR_REVERSAL_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.sr_reversal.train \
+	@echo "   Config: $(SR_REVERSAL_CONFIG)"
+	@echo "   Output Root: $(SR_REVERSAL_OUTPUT_ROOT)"
+	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src python3 scripts/train_strategy_pipeline.py \
+		--config /workspace/$(SR_REVERSAL_CONFIG) \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(SR_REVERSAL_SYMBOL) \
-		--horizon $(SR_REVERSAL_HORIZON) \
 		--timeframe $(SR_REVERSAL_TIMEFRAME) \
-		--feature-type $(SR_REVERSAL_FEATURE_TYPE) \
 		--test-size $(SR_REVERSAL_TEST_SIZE) \
-		--output-dir /workspace/$(SR_REVERSAL_OUTPUT_DIR)
+		--output-root /workspace/$(SR_REVERSAL_OUTPUT_ROOT)
 
 ts-sr-reversal-optuna:
 	@echo "🔍 Optuna search for SR Reversal signal parameters..."
@@ -876,79 +873,70 @@ ts-sr-reversal-optuna:
 		--output-dir /workspace/$(SR_SR_OPTUNA_OUTPUT)
 
 # SR Breakout Model Training
+SR_BREAKOUT_CONFIG ?= config/strategies/sr_breakout
 SR_BREAKOUT_SYMBOL ?= $(SYMBOL)
-SR_BREAKOUT_HORIZON ?= 24
 SR_BREAKOUT_TIMEFRAME ?= 15T
-SR_BREAKOUT_FEATURE_TYPE ?= comprehensive
 SR_BREAKOUT_TEST_SIZE ?= 0.15
-SR_BREAKOUT_OUTPUT_DIR ?= results/sr_breakout_model
+SR_BREAKOUT_OUTPUT_ROOT ?= results/strategies/sr_breakout
 
 ts-sr-breakout:
 	@echo "📈 Training SR Breakout Model..."
 	@echo "   Symbol: $(SR_BREAKOUT_SYMBOL)"
-	@echo "   Horizon: $(SR_BREAKOUT_HORIZON)"
 	@echo "   Timeframe: $(SR_BREAKOUT_TIMEFRAME)"
-	@echo "   Feature Type: $(SR_BREAKOUT_FEATURE_TYPE)"
 	@echo "   Test Size: $(SR_BREAKOUT_TEST_SIZE)"
-	@echo "   Output: $(SR_BREAKOUT_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.sr_breakout.train \
+	@echo "   Config: $(SR_BREAKOUT_CONFIG)"
+	@echo "   Output Root: $(SR_BREAKOUT_OUTPUT_ROOT)"
+	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src python3 scripts/train_strategy_pipeline.py \
+		--config /workspace/$(SR_BREAKOUT_CONFIG) \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(SR_BREAKOUT_SYMBOL) \
-		--horizon $(SR_BREAKOUT_HORIZON) \
 		--timeframe $(SR_BREAKOUT_TIMEFRAME) \
-		--feature-type $(SR_BREAKOUT_FEATURE_TYPE) \
 		--test-size $(SR_BREAKOUT_TEST_SIZE) \
-		--output-dir /workspace/$(SR_BREAKOUT_OUTPUT_DIR)
+		--output-root /workspace/$(SR_BREAKOUT_OUTPUT_ROOT)
 
 # Compression Breakout Model Training
+COMPRESSION_BREAKOUT_CONFIG ?= config/strategies/compression_breakout
 COMPRESSION_BREAKOUT_SYMBOL ?= $(SYMBOL)
-COMPRESSION_BREAKOUT_HORIZON ?= 24
 COMPRESSION_BREAKOUT_TIMEFRAME ?= 15T
-COMPRESSION_BREAKOUT_FEATURE_TYPE ?= comprehensive
 COMPRESSION_BREAKOUT_TEST_SIZE ?= 0.15
-COMPRESSION_BREAKOUT_OUTPUT_DIR ?= results/compression_breakout_model
+COMPRESSION_BREAKOUT_OUTPUT_ROOT ?= results/strategies/compression_breakout
 
 ts-compression-breakout:
 	@echo "💥 Training Compression Breakout Model..."
 	@echo "   Symbol: $(COMPRESSION_BREAKOUT_SYMBOL)"
-	@echo "   Horizon: $(COMPRESSION_BREAKOUT_HORIZON)"
 	@echo "   Timeframe: $(COMPRESSION_BREAKOUT_TIMEFRAME)"
-	@echo "   Feature Type: $(COMPRESSION_BREAKOUT_FEATURE_TYPE)"
 	@echo "   Test Size: $(COMPRESSION_BREAKOUT_TEST_SIZE)"
-	@echo "   Output: $(COMPRESSION_BREAKOUT_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.compression_breakout.train \
+	@echo "   Config: $(COMPRESSION_BREAKOUT_CONFIG)"
+	@echo "   Output Root: $(COMPRESSION_BREAKOUT_OUTPUT_ROOT)"
+	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src python3 scripts/train_strategy_pipeline.py \
+		--config /workspace/$(COMPRESSION_BREAKOUT_CONFIG) \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(COMPRESSION_BREAKOUT_SYMBOL) \
-		--horizon $(COMPRESSION_BREAKOUT_HORIZON) \
 		--timeframe $(COMPRESSION_BREAKOUT_TIMEFRAME) \
-		--feature-type $(COMPRESSION_BREAKOUT_FEATURE_TYPE) \
 		--test-size $(COMPRESSION_BREAKOUT_TEST_SIZE) \
-		--output-dir /workspace/$(COMPRESSION_BREAKOUT_OUTPUT_DIR)
+		--output-root /workspace/$(COMPRESSION_BREAKOUT_OUTPUT_ROOT)
 
 # Trend Following Strategy Training
+TREND_FOLLOWING_CONFIG ?= config/strategies/trend_following
 TREND_FOLLOWING_SYMBOL ?= $(SYMBOL)
-TREND_FOLLOWING_HORIZON ?= 50
 TREND_FOLLOWING_TIMEFRAME ?= 15T
-TREND_FOLLOWING_FEATURE_TYPE ?= baseline,enhanced
 TREND_FOLLOWING_TEST_SIZE ?= 0.15
-TREND_FOLLOWING_OUTPUT_DIR ?= results/strategies/trend_following
+TREND_FOLLOWING_OUTPUT_ROOT ?= results/strategies/trend_following
 
 ts-trend-following:
 	@echo "📊 Training Trend Following Model..."
 	@echo "   Symbol: $(TREND_FOLLOWING_SYMBOL)"
-	@echo "   Horizon: $(TREND_FOLLOWING_HORIZON)"
 	@echo "   Timeframe: $(TREND_FOLLOWING_TIMEFRAME)"
-	@echo "   Feature Type: $(TREND_FOLLOWING_FEATURE_TYPE)"
 	@echo "   Test Size: $(TREND_FOLLOWING_TEST_SIZE)"
-	@echo "   Output: $(TREND_FOLLOWING_OUTPUT_DIR)"
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.strategies.trend_following.train \
+	@echo "   Config: $(TREND_FOLLOWING_CONFIG)"
+	@echo "   Output Root: $(TREND_FOLLOWING_OUTPUT_ROOT)"
+	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src python3 scripts/train_strategy_pipeline.py \
+		--config /workspace/$(TREND_FOLLOWING_CONFIG) \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(TREND_FOLLOWING_SYMBOL) \
-		--horizon $(TREND_FOLLOWING_HORIZON) \
 		--timeframe $(TREND_FOLLOWING_TIMEFRAME) \
-		--feature-type $(TREND_FOLLOWING_FEATURE_TYPE) \
 		--test-size $(TREND_FOLLOWING_TEST_SIZE) \
-		--output-dir /workspace/$(TREND_FOLLOWING_OUTPUT_DIR)
+		--output-root /workspace/$(TREND_FOLLOWING_OUTPUT_ROOT)
 	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
 		--data-path /workspace/$(DATA_DIR) \
 		--symbol $(RANK_IC_SYMBOL) \

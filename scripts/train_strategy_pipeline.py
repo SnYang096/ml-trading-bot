@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from src.data_tools.data_utils import load_raw_data
+from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.strategy_config import StrategyConfigLoader
 from src.time_series_model.pipeline.training.label_utils import simulate_rr_exits
@@ -118,6 +119,49 @@ def ensure_signal_column(
     if column not in df.columns:
         df[column] = default_value
     return df
+
+
+def _maybe_configure_vpin_ticks(
+    feature_loader: StrategyFeatureLoader,
+    symbol: str,
+    data_path: str | Path,
+    start_ts: Optional[str],
+    end_ts: Optional[str],
+) -> None:
+    """If tick data exists, configure ticks_loader_json for VPIN features."""
+    if not start_ts or not end_ts:
+        return
+
+    features_cfg = feature_loader.feature_deps.get("features", {})
+    vpin_cfg = features_cfg.get("vpin_features")
+    if not vpin_cfg:
+        return
+
+    compute_params = vpin_cfg.setdefault("compute_params", {})
+    if compute_params.get("ticks_loader_json"):
+        return
+
+    tick_files = list_tick_files(
+        symbol=symbol,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        ticks_dir=str(data_path),
+        lookback_minutes=60,
+    )
+
+    if not tick_files:
+        print("   ⚠️  VPIN tick files not found; VPIN may fail without ticks")
+        return
+
+    tick_params = {
+        "symbol": symbol,
+        "tick_files": [str(Path(f)) for f in tick_files],
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "lookback_minutes": 60,
+    }
+    compute_params["ticks_loader_json"] = serialize_tick_loader_params(tick_params)
+    print(f"   ✅ Configured VPIN ticks_loader_json with {len(tick_files)} files")
 
 
 def run_feature_pipeline(
@@ -568,6 +612,34 @@ def train_strategy(
         symbol=args.symbol,
         timeframe=args.timeframe,
     )
+
+    # Configure VPIN tick loader if tick data is available
+    datetime_col = next(
+        (col for col in ("datetime", "timestamp", "date") if col in df_raw.columns),
+        None,
+    )
+    if not df_raw.empty:
+        if datetime_col:
+            dt_series = pd.to_datetime(df_raw[datetime_col])
+        elif isinstance(df_raw.index, pd.DatetimeIndex):
+            dt_series = df_raw.index
+        else:
+            dt_series = None
+
+        if dt_series is not None and len(dt_series) > 0:
+            start_ts = dt_series.min().strftime("%Y-%m-%d %H:%M:%S")
+            end_ts = dt_series.max().strftime("%Y-%m-%d %H:%M:%S")
+            _maybe_configure_vpin_ticks(
+                feature_loader,
+                symbol=args.symbol,
+                data_path=args.data_path,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            )
+        else:
+            print("   ⚠️  No datetime/timestamp found; skipping VPIN ticks setup")
+    else:
+        print("   ⚠️  Empty dataframe; skipping VPIN ticks setup")
 
     split_idx = int(len(df_raw) * (1 - args.test_size))
     df_train_raw = df_raw.iloc[:split_idx].copy()
