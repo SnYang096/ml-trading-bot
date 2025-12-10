@@ -997,7 +997,7 @@ cs-build-panel:
 	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
 	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
 	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/generate_panel.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/generate_panel.py \
 		--symbols $$CS_BUILD_SYMBOLS_SPACE \
 		--timeframe $(CS_BUILD_TIMEFRAME) \
 		--horizon $(CS_BUILD_HORIZON) \
@@ -1024,7 +1024,7 @@ CS_REPORT_EXTRA ?=
 cs-report:
 	@echo "📊 Cross-sectional Fama-MacBeth analysis for $(SYMBOLS)..."
 	@mkdir -p $(dir $(CS_OUTPUT))
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_famacbeth_report.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_famacbeth_report.py \
 		--input $(CS_INPUT) \
 		--output $(CS_OUTPUT) \
 		--symbols "$(SYMBOLS)" \
@@ -1057,7 +1057,7 @@ CS_TRAIN_SELECTION_STAT ?= ic
 cs-train:
 	@echo "🚀 Cross-sectional training ($(CS_TRAIN_MODEL)) for $(SYMBOLS)..."
 	@mkdir -p $(CS_TRAIN_OUTPUT_DIR)
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/train_cross_sectional_model.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/train_cross_sectional_model.py \
 		--input $(CS_TRAIN_INPUT) \
 		--output-dir $(CS_TRAIN_OUTPUT_DIR) \
 		--symbols "$(SYMBOLS)" \
@@ -1093,7 +1093,7 @@ CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
 
 cs-catalog:
 	@echo "🗂  Exporting factor catalogue from $(CS_CATALOG_INPUT)..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/export_factor_catalog.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/export_factor_catalog.py \
 		--input $(CS_CATALOG_INPUT) \
 		--output-dir $(CS_CATALOG_OUTPUT)
 	@echo "✅ Factor sets saved to $(CS_CATALOG_OUTPUT)"
@@ -1113,7 +1113,7 @@ CS_SELECT_EXTRA ?=
 
 cs-select:
 	@echo "🧠 Auto-selecting factors from $(CS_SELECT_INPUT)..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/auto_select_factors.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/auto_select_factors.py \
 		--input $(CS_SELECT_INPUT) \
 		$(if $(CS_SELECT_TARGET),--target $(CS_SELECT_TARGET),) \
 		--min-assets $(CS_SELECT_MIN_ASSETS) \
@@ -1139,7 +1139,7 @@ CS_SHAP_ADDITIONAL ?=
 
 cs-shap:
 	@echo "📈 Running SHAP analysis..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_analysis.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_shap_analysis.py \
 		--model $(CS_SHAP_MODEL) \
 		--panel $(CS_SHAP_PANEL) \
 		$(if $(CS_SHAP_FEATURE_FILE),--feature-file $(CS_SHAP_FEATURE_FILE),) \
@@ -1156,7 +1156,7 @@ CS_LOGIC_EXTRA ?=
 
 cs-logic-check:
 	@echo "🧐 Validating factor economic logic..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_factor_logic_check.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_factor_logic_check.py \
 		--shap-manifest $(CS_SHAP_OUTPUT)/manifest.json \
 		--expectations $(CS_LOGIC_EXPECTATIONS) \
 		--tolerance $(CS_LOGIC_TOLERANCE) \
@@ -1171,7 +1171,7 @@ CS_DRIFT_EXTRA ?=
 
 cs-shap-drift:
 	@echo "📉 Checking SHAP drift..."
-	$(DOCKER_RUN_NO_TTY) python3 scripts/cross_sectional/run_shap_drift_monitor.py \
+	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/run_shap_drift_monitor.py \
 		--current $(CS_SHAP_OUTPUT)/manifest.json \
 		--baseline $(CS_DRIFT_BASELINE) \
 		--threshold $(CS_DRIFT_THRESHOLD) \
