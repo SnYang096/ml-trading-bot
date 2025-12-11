@@ -130,6 +130,10 @@ help:
 	@echo "  make test-integration               # Run integration tests (full data pipeline)"
 	@echo "  make test-integration-dim-compare   # Test dimensionality comparison integration"
 	@echo "  make test-integration-fast          # Run fast integration tests (exclude slow)"
+	@echo "  make test-optuna                   # Test Optuna threshold optimization (in Docker)"
+	@echo "  make test-optuna-joint              # Test Optuna joint optimization (in Docker)"
+	@echo "  make test-optuna-imbalanced         # Test Optuna imbalanced data handling (in Docker)"
+	@echo "  make test-optuna-all                # Run all Optuna tests (in Docker)"
 	@echo "  make start-docker                   # Start Docker daemon"
 	@echo ""
 	@echo "Docker setup commands:"
@@ -149,9 +153,9 @@ help:
 	@echo "    make data-pipeline     # Download then convert"
 	@echo ""
 	@echo "  Other commands:"
-	@echo "    make ts-r-rank-ic-train # Rank IC regression training (TSCV + OOS testing)"
 	@echo "    make ts-sr-reversal # SR Reversal model training (XGBoost Binary)"
-	@echo "    make ts-sr-reversal-optuna # Optuna search for SR signal params"
+	@echo "    make ts-sr-reversal-optuna # Optuna search for SR prediction thresholds (fast)"
+	@echo "    make ts-sr-reversal-optuna-joint # Optuna joint optimization: model hyperparams + thresholds (slow but comprehensive)"
 	@echo "    make ts-sr-breakout # SR Breakout model training (XGBoost Regression)"
 	@echo "    make ts-compression-breakout # Compression Breakout model training (CatBoost Multiclass)"
 	@echo "    make ts-trend-following # Trend Following model training (LightGBM Regression)"
@@ -771,61 +775,6 @@ feature-eval:
 	@$(MAKE) ts-feature-eval
 
 
-RANK_IC_SYMBOL ?= $(SYMBOL)
-RANK_IC_HORIZON ?= 24
-RANK_IC_TIMEFRAME ?= 240T
-RANK_IC_FEATURE_TYPE ?= baseline
-RANK_IC_N_SPLITS ?= 5
-RANK_IC_TEST_SIZE ?= 0.15
-RANK_IC_OUTPUT_DIR ?= results/rank_ic_training
-# Filter to high-confidence samples only (strong trends)
-# When enabled (1/true/yes), filters out choppy/consolidation periods where signals are weak,
-# focusing training on periods with clear trends (trend_strength >= RANK_IC_MIN_TREND_STRENGTH).
-# This can improve model performance by training only on high-quality samples.
-# Default: 0 (disabled - use all samples)
-RANK_IC_FILTER_HIGH_CONF ?= 0
-# Minimum trend strength threshold for high-confidence filtering
-# Only samples with trend_strength >= this value will be kept when RANK_IC_FILTER_HIGH_CONF is enabled
-# Default: 1.0
-RANK_IC_MIN_TREND_STRENGTH ?= 1.0
-RANK_IC_SMOOTH_TARGET ?= 0
-# Top factors file path (if not set, will use FEATURE_EVAL_OUTPUT_DIR/top_factors.json)
-# Note: Data leakage detection has been moved to verify-feature-correlation target
-# Set this to override the default path from feature evaluation
-RANK_IC_TOP_FACTORS ?=
-RANK_IC_TSCV_GAP ?= 24
-# Signal generation method for trading signals
-# Options:
-#   - "quantile": Use quantile-based signals (default, most stable)
-#   - "sign": Use prediction sign directly (simpler, may be more volatile)
-#   - "hybrid": Combine sign and quantile methods (balanced approach)
-#   - "optimized": Optimize threshold based on historical performance (requires future_return)
-# Default: quantile
-RANK_IC_SIGNAL_METHOD ?= hybrid
-# Whether to calibrate predictions to match true return distribution
-# When enabled (1/true/yes), uses sigmoid scaling to calibrate predictions,
-# making them better match the actual return distribution (requires future_return in data).
-# This can improve signal quality by reducing prediction bias.
-# Default: 0 (disabled)
-RANK_IC_CALIBRATE_PREDICTIONS ?= false
-
-# Default to using top_factors.json from feature evaluation output
-# If RANK_IC_TOP_FACTORS is explicitly set, use that instead
-RANK_IC_TOP_FACTORS_PATH ?= $(if $(RANK_IC_TOP_FACTORS),$(RANK_IC_TOP_FACTORS),$(FEATURE_EVAL_OUTPUT_DIR)/top_factors.json)
-
-ts-r-rank-ic-train:
-	@echo "🎯 Rank IC Regression Training (TSCV + OOS Testing)..."
-	@echo "   Symbol: $(RANK_IC_SYMBOL)"
-	@echo "   Horizon: $(RANK_IC_HORIZON)"
-	@echo "   Timeframe: $(RANK_IC_TIMEFRAME)"
-	@echo "   Feature Type: $(RANK_IC_FEATURE_TYPE)"
-	@echo "   Top Factors: $(if $(RANK_IC_TOP_FACTORS_PATH),$(RANK_IC_TOP_FACTORS_PATH),Not specified - will generate all features)"
-	@echo "   TSCV Folds: $(RANK_IC_N_SPLITS)"
-	@echo "   OOS Test Size: $(RANK_IC_TEST_SIZE)"
-	@echo "   TSCV Gap: $(RANK_IC_TSCV_GAP)"
-	@echo "   Signal Method: $(RANK_IC_SIGNAL_METHOD)"
-	@echo "   Calibrate Predictions: $(RANK_IC_CALIBRATE_PREDICTIONS)"
-	@echo "   Output: $(RANK_IC_OUTPUT_DIR)"
 
 # SR Reversal Model Training
 SR_REVERSAL_CONFIG ?= config/strategies/sr_reversal
@@ -833,15 +782,8 @@ SR_REVERSAL_SYMBOL ?= $(SYMBOL)
 SR_REVERSAL_TIMEFRAME ?= 240T
 SR_REVERSAL_TEST_SIZE ?= 0.15
 SR_REVERSAL_OUTPUT_ROOT ?= results/strategies/sr_reversal
-# Relaxed SR signal thresholds to ensure signal generation when auto-generating
-SR_SIGNAL_MIN_STRENGTH ?= 0.0
-SR_SIGNAL_MIN_SUPPORT ?= 0.0
-SR_SIGNAL_MIN_RESISTANCE ?= 0.0
-SR_SIGNAL_TOLERANCE_MULT ?= 2.5
-SR_SIGNAL_MIN_TOLERANCE_PCT ?= 0.0
-SR_SIGNAL_REQUIRE_FIRST_TOUCH ?= 0
-SR_SIGNAL_MAX_TOUCHES ?= 20
-SR_SIGNAL_ZONE_PRECISION ?= 3
+# Note: SR signal thresholds removed - labels now use full scan mode (compute_sr_reversal_label_full_scan)
+# Model will learn to filter signals based on features, not pre-filtered labels
 SR_SR_OPTUNA_STRATEGY ?= config/strategies/sr_reversal
 SR_SR_OPTUNA_SYMBOL ?= $(SR_REVERSAL_SYMBOL)
 SR_SR_OPTUNA_TIMEFRAME ?= $(SR_REVERSAL_TIMEFRAME)
@@ -851,6 +793,13 @@ SR_SR_OPTUNA_TEST_SIZE ?= 0.15
 SR_SR_OPTUNA_WARMUP ?= 200
 SR_SR_OPTUNA_TRIALS ?= 30
 SR_SR_OPTUNA_OUTPUT ?= results/sr_reversal_optuna
+# Joint optimization (model + thresholds)
+SR_SR_OPTUNA_JOINT_OUTPUT ?= results/sr_reversal_optuna_joint
+SR_SR_OPTUNA_JOINT_TRIALS ?= 50
+# Optimization objective (sharpe, total_return, cv_metric, sharpe_with_cv_fallback)
+SR_SR_OPTUNA_OBJECTIVE ?= sharpe
+SR_SR_OPTUNA_MIN_TRADES ?= 10
+SR_SR_OPTUNA_MIN_WIN_RATE ?= 0.0
 
 ts-sr-reversal:
 	@echo "🔄 Training SR Reversal Model..."
@@ -862,14 +811,6 @@ ts-sr-reversal:
 	$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src \
 		$(if $(TRAIN_START_DATE),TRAIN_START_DATE=$(TRAIN_START_DATE),) \
 		$(if $(TRAIN_END_DATE),TRAIN_END_DATE=$(TRAIN_END_DATE),) \
-		SR_SIGNAL_MIN_STRENGTH=$(SR_SIGNAL_MIN_STRENGTH) \
-		SR_SIGNAL_MIN_SUPPORT=$(SR_SIGNAL_MIN_SUPPORT) \
-		SR_SIGNAL_MIN_RESISTANCE=$(SR_SIGNAL_MIN_RESISTANCE) \
-		SR_SIGNAL_TOLERANCE_MULT=$(SR_SIGNAL_TOLERANCE_MULT) \
-		SR_SIGNAL_MIN_TOLERANCE_PCT=$(SR_SIGNAL_MIN_TOLERANCE_PCT) \
-		SR_SIGNAL_REQUIRE_FIRST_TOUCH=$(SR_SIGNAL_REQUIRE_FIRST_TOUCH) \
-		SR_SIGNAL_MAX_TOUCHES=$(SR_SIGNAL_MAX_TOUCHES) \
-		SR_SIGNAL_ZONE_PRECISION=$(SR_SIGNAL_ZONE_PRECISION) \
 		python3 scripts/train_strategy_pipeline.py \
 		--config /workspace/$(SR_REVERSAL_CONFIG) \
 		--data-path /workspace/$(DATA_DIR) \
@@ -889,8 +830,15 @@ ts-sr-reversal-short:
 		SR_REVERSAL_OUTPUT_ROOT=results/strategies/sr_reversal_short
 
 ts-sr-reversal-optuna:
-	@echo "🔍 Optuna search for SR Reversal signal parameters..."
-	@$(DOCKER_RUN_NO_TTY) python3 src/time_series_model/optimization/ts_sr_reversal_optuna.py \
+	@echo "🔍 Optuna search for SR Reversal prediction thresholds (fast - no model retraining)..."
+	@echo "   Symbol: $(SR_SR_OPTUNA_SYMBOL)"
+	@echo "   Timeframe: $(SR_SR_OPTUNA_TIMEFRAME)"
+	@echo "   Trials: $(SR_SR_OPTUNA_TRIALS)"
+	@echo "   Objective: $(SR_SR_OPTUNA_OBJECTIVE) (robust to imbalanced data)"
+	@echo "   Min trades: $(SR_SR_OPTUNA_MIN_TRADES), Min win rate: $(SR_SR_OPTUNA_MIN_WIN_RATE)"
+	@echo "   Output: $(SR_SR_OPTUNA_OUTPUT)"
+	@$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src \
+		python3 src/time_series_model/optimization/ts_sr_reversal_optuna.py \
 		--strategy-config /workspace/$(SR_SR_OPTUNA_STRATEGY) \
 		--symbol $(SR_SR_OPTUNA_SYMBOL) \
 		--data-path /workspace/$(DATA_DIR) \
@@ -900,7 +848,35 @@ ts-sr-reversal-optuna:
 		--test-size $(SR_SR_OPTUNA_TEST_SIZE) \
 		--test-warmup-bars $(SR_SR_OPTUNA_WARMUP) \
 		--n-trials $(SR_SR_OPTUNA_TRIALS) \
+		--objective $(SR_SR_OPTUNA_OBJECTIVE) \
+		--min-trades $(SR_SR_OPTUNA_MIN_TRADES) \
+		--min-win-rate $(SR_SR_OPTUNA_MIN_WIN_RATE) \
 		--output-dir /workspace/$(SR_SR_OPTUNA_OUTPUT)
+
+ts-sr-reversal-optuna-joint:
+	@echo "🔍 Optuna joint optimization for SR Reversal (model hyperparams + thresholds)..."
+	@echo "   ⚠️  This is computationally expensive - each trial retrains the model"
+	@echo "   Symbol: $(SR_SR_OPTUNA_SYMBOL)"
+	@echo "   Timeframe: $(SR_SR_OPTUNA_TIMEFRAME)"
+	@echo "   Trials: $(SR_SR_OPTUNA_JOINT_TRIALS)"
+	@echo "   Objective: $(SR_SR_OPTUNA_OBJECTIVE) (robust to imbalanced data)"
+	@echo "   Min trades: $(SR_SR_OPTUNA_MIN_TRADES), Min win rate: $(SR_SR_OPTUNA_MIN_WIN_RATE)"
+	@echo "   Output: $(SR_SR_OPTUNA_JOINT_OUTPUT)"
+	@$(DOCKER_RUN_NO_TTY) env PYTHONPATH=/workspace:/workspace/src \
+		python3 src/time_series_model/optimization/ts_sr_reversal_optuna_joint.py \
+		--strategy-config /workspace/$(SR_SR_OPTUNA_STRATEGY) \
+		--symbol $(SR_SR_OPTUNA_SYMBOL) \
+		--data-path /workspace/$(DATA_DIR) \
+		--timeframe $(SR_SR_OPTUNA_TIMEFRAME) \
+		$(if $(SR_SR_OPTUNA_START),--start-date $(SR_SR_OPTUNA_START),) \
+		$(if $(SR_SR_OPTUNA_END),--end-date $(SR_SR_OPTUNA_END),) \
+		--test-size $(SR_SR_OPTUNA_TEST_SIZE) \
+		--test-warmup-bars $(SR_SR_OPTUNA_WARMUP) \
+		--n-trials $(SR_SR_OPTUNA_JOINT_TRIALS) \
+		--objective $(SR_SR_OPTUNA_OBJECTIVE) \
+		--min-trades $(SR_SR_OPTUNA_MIN_TRADES) \
+		--min-win-rate $(SR_SR_OPTUNA_MIN_WIN_RATE) \
+		--output-dir /workspace/$(SR_SR_OPTUNA_JOINT_OUTPUT)
 
 # SR Breakout Model Training
 SR_BREAKOUT_CONFIG ?= config/strategies/sr_breakout
@@ -967,25 +943,6 @@ ts-trend-following:
 		--timeframe $(TREND_FOLLOWING_TIMEFRAME) \
 		--test-size $(TREND_FOLLOWING_TEST_SIZE) \
 		--output-root /workspace/$(TREND_FOLLOWING_OUTPUT_ROOT)
-	$(DOCKER_RUN_NO_TTY) python3 -m time_series_model.pipeline.training.train_rank_ic_standalone \
-		--data-path /workspace/$(DATA_DIR) \
-		--symbol $(RANK_IC_SYMBOL) \
-		$(if $(FEATURE_EVAL_START_DATE),--train-start $(FEATURE_EVAL_START_DATE),) \
-		$(if $(FEATURE_EVAL_END_DATE),--train-end $(FEATURE_EVAL_END_DATE),) \
-		--horizon $(RANK_IC_HORIZON) \
-		--timeframe $(RANK_IC_TIMEFRAME) \
-		--feature-type $(RANK_IC_FEATURE_TYPE) \
-		--n-splits $(RANK_IC_N_SPLITS) \
-		--test-size $(RANK_IC_TEST_SIZE) \
-		--tscv-gap $(RANK_IC_TSCV_GAP) \
-		--output-dir /workspace/$(RANK_IC_OUTPUT_DIR) \
-		$(if $(filter 1 true yes,$(RANK_IC_FILTER_HIGH_CONF)),--filter-high-confidence,) \
-		--min-trend-strength $(RANK_IC_MIN_TREND_STRENGTH) \
-		$(if $(filter 1 true yes,$(RANK_IC_SMOOTH_TARGET)),--smooth-target,) \
-		$(if $(RANK_IC_TOP_FACTORS_PATH),--top-factors /workspace/$(RANK_IC_TOP_FACTORS_PATH),) \
-		--signal-method $(RANK_IC_SIGNAL_METHOD) \
-		$(if $(filter 1 true yes,$(RANK_IC_CALIBRATE_PREDICTIONS)),--calibrate-predictions,)
-	@echo "✅ Training complete. Check results in $(RANK_IC_OUTPUT_DIR)"
 
 
 # Verify feature correlation (distinguish real Alpha vs data leakage)
@@ -1267,6 +1224,35 @@ test-integration-fast:
 test-integration-example:
 	@echo "🔬 Running integration test examples (environment setup)..."
 	$(DOCKER_RUN_NO_TTY) pytest tests/integration/test_example.py -v
+
+# ---------------------------------------------------------------------------
+# Optuna Optimization Tests (run in Docker for full dependency support)
+# ---------------------------------------------------------------------------
+
+test-optuna:
+	@echo "🧪 Testing Optuna optimization scripts (threshold optimization)..."
+	@echo "   Running tests in Docker for full dependency support"
+	$(DOCKER_RUN_NO_TTY) pytest tests/test_ts_sr_reversal_optuna.py -v
+
+test-optuna-joint:
+	@echo "🧪 Testing Optuna joint optimization scripts (model + thresholds)..."
+	@echo "   Running tests in Docker for full dependency support"
+	$(DOCKER_RUN_NO_TTY) pytest tests/test_ts_sr_reversal_optuna_joint.py -v
+
+test-optuna-imbalanced:
+	@echo "🧪 Testing Optuna imbalanced data handling..."
+	@echo "   Running tests in Docker for full dependency support"
+	$(DOCKER_RUN_NO_TTY) pytest tests/test_optuna_imbalanced_data.py -v
+
+test-optuna-integration:
+	@echo "🧪 Testing Optuna optimization integration tests..."
+	@echo "   Running tests in Docker for full dependency support"
+	$(DOCKER_RUN_NO_TTY) pytest tests/integration/test_optimization_integration.py::TestTSRReversalOptuna tests/integration/test_optimization_integration.py::test_optimization_scripts_importable tests/integration/test_ts_sr_reversal_optuna_integration.py -v
+
+test-optuna-all:
+	@echo "🧪 Running all Optuna optimization tests..."
+	@echo "   Running tests in Docker for full dependency support"
+	$(DOCKER_RUN_NO_TTY) pytest tests/test_ts_sr_reversal_optuna.py tests/test_ts_sr_reversal_optuna_joint.py tests/test_optuna_imbalanced_data.py tests/integration/test_optimization_integration.py::TestTSRReversalOptuna tests/integration/test_optimization_integration.py::test_optimization_scripts_importable tests/integration/test_ts_sr_reversal_optuna_integration.py -v
 
 # Docker startup helper
 start-docker:

@@ -11,9 +11,8 @@ R = 1×ATR
 from __future__ import annotations
 
 from collections import defaultdict
-import os
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence, Union
+from typing import Iterable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,10 +25,20 @@ class SRSignalConfig:
     """
     Configuration for auto-generating SR reversal signals.
 
+    Note: This config is primarily used for diagnostic/optimization scripts.
+    Label generation now uses `compute_sr_reversal_label_full_scan` which does NOT
+    pre-filter signals - the model learns to filter based on features.
+
+    Thresholds default to 0.0 (no filtering) to allow full signal generation.
+    Model will learn which signals to use based on features, not pre-filtered labels.
+
     Attributes:
         min_sr_strength: Minimum SR strength score (sr_strength_max) required.
+            Default 0.0 = no filtering (model learns from features).
         min_support_score: Minimum SQS score for support zones.
+            Default 0.0 = no filtering (model learns from features).
         min_resistance_score: Minimum SQS score for resistance zones.
+            Default 0.0 = no filtering (model learns from features).
         tolerance_mult: Multiplier applied to ATR to determine the SR zone tolerance band.
         min_tolerance_pct: Minimum tolerance expressed as % of price to avoid zero bands when ATR is tiny.
         zone_candidates: Ordered list of columns to use as SR zone price proxies.
@@ -39,9 +48,15 @@ class SRSignalConfig:
         vpin_col: VPIN column name (default: "vpin").
     """
 
-    min_sr_strength: float = 0.0
-    min_support_score: float = 0.0
-    min_resistance_score: float = 0.0
+    min_sr_strength: float = (
+        0.0  # Default 0.0 = no filtering, model learns from features
+    )
+    min_support_score: float = (
+        0.0  # Default 0.0 = no filtering, model learns from features
+    )
+    min_resistance_score: float = (
+        0.0  # Default 0.0 = no filtering, model learns from features
+    )
     tolerance_mult: float = 1.2
     min_tolerance_pct: float = 0.003
     require_first_touch: bool = False
@@ -282,7 +297,12 @@ def compute_sr_reversal_label_full_scan(
     combine_mode: str = "any_success",
 ) -> pd.Series:
     """
-    通用反转标签：不预先过滤信号，对每根 K 线都假设入场，扫描 ±R/R。
+    全量扫描标签生成：不预先过滤信号，对每根 K 线都假设入场，扫描 ±R/R。
+
+    这是推荐的标签生成方式，因为：
+    - 不依赖信号过滤规则（如 min_sr_strength, min_support_score 等）
+    - 模型可以根据特征学习哪些信号应该使用
+    - 保留更多训练样本，避免标签数据过少
 
     - 做多：entry=open[t+1]，TP=+take_profit_r*ATR，SL=-stop_loss_r*ATR
     - 做空：entry=open[t+1]，TP=-take_profit_r*ATR，SL=+stop_loss_r*ATR
@@ -332,34 +352,7 @@ def compute_sr_reversal_label_full_scan(
     return combined.where(~timeout_mask, np.nan)
 
 
-def _apply_env_overrides(cfg: SRSignalConfig) -> SRSignalConfig:
-    """Override SR signal config using environment variables for Optuna/CLI sweeps."""
-
-    ENV_MAP: dict[str, tuple[str, Union[type, callable]]] = {
-        "SR_SIGNAL_MIN_STRENGTH": ("min_sr_strength", float),
-        "SR_SIGNAL_MIN_SUPPORT": ("min_support_score", float),
-        "SR_SIGNAL_MIN_RESISTANCE": ("min_resistance_score", float),
-        "SR_SIGNAL_TOLERANCE_MULT": ("tolerance_mult", float),
-        "SR_SIGNAL_MIN_TOLERANCE_PCT": ("min_tolerance_pct", float),
-        "SR_SIGNAL_REQUIRE_FIRST_TOUCH": (
-            "require_first_touch",
-            lambda v: v.lower() in {"1", "true", "yes"},
-        ),
-        "SR_SIGNAL_MAX_TOUCHES": (
-            "max_zone_touches",
-            lambda v: None if v.lower() in {"none", "-1"} else int(v),
-        ),
-        "SR_SIGNAL_ZONE_PRECISION": ("zone_price_precision", int),
-    }
-
-    for env_var, (field, caster) in ENV_MAP.items():
-        raw = os.getenv(env_var)
-        if raw is None:
-            continue
-        try:
-            value = caster(raw)
-        except Exception:
-            continue
-        setattr(cfg, field, value)
-
-    return cfg
+# NOTE: _apply_env_overrides function removed - no longer used
+# Label generation now uses compute_sr_reversal_label_full_scan which does NOT
+# use signal filtering. Diagnostic scripts create SRSignalConfig() directly.
+# If needed in the future, environment variable support can be re-added.

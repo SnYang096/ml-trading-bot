@@ -46,7 +46,7 @@ class TestProjectStructure(unittest.TestCase):
             "src/time_series_model/__init__.py",
             "src/time_series_model/config/settings.py",
             "src/time_series_model/models/lightgbm_model.py",
-            "src/time_series_model/pipeline/multi_tf_pipeline.py",
+            # Note: multi_tf_pipeline.py removed (replaced by config-driven training)
             "src/time_series_model/pipeline/risk_management.py",
             "src/time_series_model/strategies/ml_strategy.py",
             "src/data_tools/data_loader.py",

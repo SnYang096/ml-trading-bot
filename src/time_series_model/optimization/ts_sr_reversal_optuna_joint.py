@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Optuna search for SR Reversal prediction thresholds.
+Optuna joint optimization for SR Reversal: Model hyperparameters + Prediction thresholds.
 
-Each trial tweaks the prediction thresholds (long_entry_threshold, etc.) in
-backtest.yaml, runs a single training pass identical to ts-strategy-feature-compare's
-execute_single_run, and uses the average CV metric as the objective.
+This script simultaneously optimizes:
+1. Model hyperparameters (XGBoost: max_depth, learning_rate, n_estimators, etc.)
+2. Prediction thresholds (long_entry_threshold, short_entry_threshold, etc.)
 
-Note: This optimizes the final trading signal thresholds, not the signal generation
-thresholds. The model learns from full-scan labels, and these thresholds determine
-when to actually enter/exit trades based on model predictions.
+This is an end-to-end optimization that directly targets the business objective (backtest performance).
+
+Note: This is computationally expensive as each trial requires full model training.
+Use this when you need to optimize both model and thresholds together.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ if str(PROJECT_ROOT) not in __import__("sys").path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Optuna search for SR reversal prediction thresholds."
+        description="Optuna joint optimization for SR reversal: model hyperparameters + prediction thresholds."
     )
     parser.add_argument(
         "--strategy-config", required=True, help="Path to strategy directory."
@@ -47,8 +48,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-date", default=None)
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument("--test-warmup-bars", type=int, default=200)
-    parser.add_argument("--n-trials", type=int, default=30)
-    parser.add_argument("--output-dir", default="results/sr_reversal_optuna")
+    parser.add_argument("--n-trials", type=int, default=50)
+    parser.add_argument("--output-dir", default="results/sr_reversal_optuna_joint")
+    parser.add_argument(
+        "--optimize-model-only",
+        action="store_true",
+        help="Only optimize model hyperparameters, not thresholds",
+    )
+    parser.add_argument(
+        "--optimize-thresholds-only",
+        action="store_true",
+        help="Only optimize thresholds, not model hyperparameters",
+    )
     parser.add_argument(
         "--objective",
         type=str,
@@ -90,27 +101,55 @@ def build_dataset(args: argparse.Namespace):
     return df_train_raw, df_test_raw, test_warmup
 
 
-def sample_params(trial: optuna.Trial) -> Dict[str, float]:
+def sample_model_params(trial: optuna.Trial, model_type: str = "xgboost") -> Dict:
+    """
+    Sample model hyperparameters for Optuna trial.
+
+    Supports XGBoost and LightGBM.
+    """
+    if model_type.lower() == "xgboost":
+        return {
+            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
+            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+            "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
+            "gamma": trial.suggest_float("gamma", 0.0, 1.0),
+            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+        }
+    elif model_type.lower() == "lightgbm":
+        return {
+            "num_leaves": trial.suggest_int("num_leaves", 20, 255),
+            "max_depth": trial.suggest_int("max_depth", 3, 12),
+            "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.2, log=True),
+            "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 10, 200),
+            "min_sum_hessian_in_leaf": trial.suggest_float(
+                "min_sum_hessian_in_leaf", 1e-3, 10.0, log=True
+            ),
+            "feature_fraction": trial.suggest_float("feature_fraction", 0.5, 1.0),
+            "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 1.0),
+            "bagging_freq": trial.suggest_int("bagging_freq", 1, 7),
+            "lambda_l1": trial.suggest_float("lambda_l1", 1e-8, 10.0, log=True),
+            "lambda_l2": trial.suggest_float("lambda_l2", 1e-8, 10.0, log=True),
+        }
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def sample_threshold_params(trial: optuna.Trial) -> Dict[str, float]:
     """
     Sample prediction thresholds for Optuna trial.
 
-    These thresholds determine when to enter/exit trades based on model predictions:
-    - long_entry_threshold: Model prediction >= this value to enter long
-    - long_exit_threshold: Model prediction <= this value to exit long
-    - short_entry_threshold: Model prediction <= this value to enter short
-    - short_exit_threshold: Model prediction >= this value to exit short
-
-    Constraints:
-    - long_entry_threshold > long_exit_threshold (to avoid immediate exit after entry)
-    - short_exit_threshold > short_entry_threshold (to avoid immediate exit after entry)
+    These thresholds determine when to enter/exit trades based on model predictions.
     """
-    # Sample thresholds with reasonable ranges
     long_entry = trial.suggest_float("long_entry_threshold", 0.4, 0.8)
     long_exit = trial.suggest_float("long_exit_threshold", 0.2, 0.5)
     short_entry = trial.suggest_float("short_entry_threshold", 0.2, 0.6)
     short_exit = trial.suggest_float("short_exit_threshold", 0.5, 0.8)
 
-    # Ensure logical constraints (prune invalid trials)
+    # Ensure logical constraints
     if long_entry <= long_exit:
         raise optuna.TrialPruned(
             f"Invalid: long_entry_threshold ({long_entry:.4f}) <= long_exit_threshold ({long_exit:.4f})"
@@ -137,39 +176,54 @@ def main():
     strategy_cfg = cfg_loader.load()
     df_train_raw, df_test_raw, warmup = build_dataset(args)
 
+    # Determine model type from config
+    model_type = strategy_cfg.model.trainer.params.get("model_type", "xgboost")
+
     def objective(trial: optuna.Trial) -> float:
-        """
-        Objective function for Optuna optimization.
-
-        For imbalanced data, we prioritize business metrics (Sharpe, total return)
-        over model metrics (CV accuracy), as business metrics are naturally robust
-        to class imbalance.
-        """
-        # Sample prediction thresholds
-        threshold_params = sample_params(trial)
-
-        # Create a copy of strategy config and update backtest params
+        # Create a copy of strategy config
         trial_cfg = deepcopy(strategy_cfg)
-        if trial_cfg.backtest.params is None:
-            trial_cfg.backtest.params = {}
 
-        # Update thresholds in backtest config
-        trial_cfg.backtest.params.update(threshold_params)
+        # 1. Optimize model hyperparameters (if enabled)
+        if not args.optimize_thresholds_only:
+            model_params = sample_model_params(trial, model_type=model_type)
+            # Update model_params in trainer params
+            if trial_cfg.model.trainer.params.get("model_params") is None:
+                trial_cfg.model.trainer.params["model_params"] = {}
+            trial_cfg.model.trainer.params["model_params"].update(model_params)
+            trial.set_user_attr("model_params", model_params)
+        else:
+            # Use default model params
+            trial.set_user_attr("model_params", {})
 
-        # Run training and evaluation with these thresholds
+        # 2. Optimize prediction thresholds (if enabled)
+        if not args.optimize_model_only:
+            threshold_params = sample_threshold_params(trial)
+            # Update thresholds in backtest config
+            if trial_cfg.backtest.params is None:
+                trial_cfg.backtest.params = {}
+            trial_cfg.backtest.params.update(threshold_params)
+            trial.set_user_attr("threshold_params", threshold_params)
+        else:
+            # Use default thresholds
+            trial.set_user_attr("threshold_params", {})
+
+        # 3. Run training and evaluation with these parameters
         result = execute_single_run(
             trial_cfg,
             df_train_raw.copy(),
             df_test_raw.copy(),
             test_warmup_bars=warmup,
-            variant_name=f"optuna_trial_{trial.number}",
+            variant_name=f"optuna_joint_trial_{trial.number}",
         )
 
         if not result:
             raise optuna.TrialPruned("Insufficient samples.")
 
         # Store threshold params for analysis
-        trial.set_user_attr("threshold_params", threshold_params)
+        if not args.optimize_model_only:
+            trial.set_user_attr("threshold_params", threshold_params)
+        if not args.optimize_thresholds_only:
+            trial.set_user_attr("model_params", model_params)
 
         # Get backtest results for business metrics
         backtest_results = result.get("backtest")
@@ -245,13 +299,16 @@ def main():
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
 
-    best_thresholds = study.best_trial.user_attrs.get("threshold_params", {})
+    # Extract best parameters
+    best_model_params = study.best_trial.user_attrs.get("model_params", {})
+    best_threshold_params = study.best_trial.user_attrs.get("threshold_params", {})
     best_backtest = study.best_trial.user_attrs.get("backtest_results", {})
 
     best = {
         "value": study.best_value,
         "params": study.best_trial.params,
-        "threshold_params": best_thresholds,
+        "model_params": best_model_params,
+        "threshold_params": best_threshold_params,
         "backtest_results": best_backtest,
     }
 
@@ -261,15 +318,32 @@ def main():
     trials_df = study.trials_dataframe()
     trials_df.to_csv(output_dir / "trial_history.csv", index=False)
 
-    print("✅ Optuna completed. Best metric:", best["value"])
-    print("   Best thresholds:")
-    for key, value in best_thresholds.items():
-        print(f"     {key}: {value:.4f}")
+    print("✅ Optuna joint optimization completed. Best metric:", best["value"])
+
+    if best_model_params:
+        print("   Best model hyperparameters:")
+        for key, value in best_model_params.items():
+            if isinstance(value, (int, float)):
+                print(
+                    f"     {key}: {value:.4f}"
+                    if isinstance(value, float)
+                    else f"     {key}: {value}"
+                )
+
+    if best_threshold_params:
+        print("   Best thresholds:")
+        for key, value in best_threshold_params.items():
+            print(f"     {key}: {value:.4f}")
+
     if best_backtest:
         print("   Best backtest results:")
         for key, value in best_backtest.items():
             if isinstance(value, (int, float)):
-                print(f"     {key}: {value:.4f}")
+                print(
+                    f"     {key}: {value:.4f}"
+                    if isinstance(value, float)
+                    else f"     {key}: {value}"
+                )
 
 
 if __name__ == "__main__":

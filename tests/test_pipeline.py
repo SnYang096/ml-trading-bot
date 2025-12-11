@@ -8,46 +8,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import unittest
 import pandas as pd
 import numpy as np
-from time_series_model.pipeline.multi_tf_pipeline import MultiTimeframePipeline
+
+# Note: MultiTimeframePipeline has been removed (replaced by config-driven training)
+# from time_series_model.pipeline.multi_tf_pipeline import MultiTimeframePipeline
 from time_series_model.pipeline.risk_management import RiskManager
 
 
-class TestMultiTimeframePipeline(unittest.TestCase):
-    """Test cases for the multi-timeframe pipeline."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.pipeline = MultiTimeframePipeline()
-
-    def test_pipeline_initialization(self):
-        """Test pipeline initialization."""
-        self.assertFalse(self.pipeline.is_trained)
-        self.assertEqual(len(self.pipeline.stage1_models), 0)
-        self.assertEqual(len(self.pipeline.stage2_models), 0)
-
-    def test_prepare_targets(self):
-        """Test target preparation."""
-        # Create sample data
-        data = pd.DataFrame(
-            {
-                "close": [100, 101, 102, 101.5, 103],
-                "open": [99, 100, 101, 100.5, 102],
-                "high": [101, 102, 103, 102, 104],
-                "low": [99, 100, 101, 100, 101.5],
-                "volume": [1000, 1100, 1200, 1050, 1300],
-            }
-        )
-
-        stage1_target, stage2_target = self.pipeline.prepare_targets(data)
-
-        # Check that targets have correct length
-        self.assertEqual(len(stage1_target), len(data))
-        self.assertEqual(len(stage2_target), len(data))
-
-        # Check that stage1 target contains expected values (-1, 0, 1)
-        unique_values = set(stage1_target.unique())
-        expected_values = {-1, 0, 1}
-        self.assertTrue(unique_values.issubset(expected_values))
+# Note: TestMultiTimeframePipeline removed - MultiTimeframePipeline is deprecated
+# All training now uses config-driven pipeline (scripts/train_strategy_pipeline.py)
 
 
 class TestRiskManager(unittest.TestCase):

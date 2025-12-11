@@ -231,6 +231,42 @@ class TestVPINMonthlyCache:
         # 不同bucket_volume应该生成不同的键
         assert key1 != key3
 
+    def test_vpin_usd_cache_key_generation(self):
+        """测试VPIN USD模式缓存键生成"""
+        file_path = "/path/to/BTCUSDT_2024-01.parquet"
+        bucket_volume = 100.0
+        bucket_volume_usd = 1000000.0
+        start = pd.Timestamp("2024-01-01")
+        end = pd.Timestamp("2024-01-31")
+
+        # 传统模式
+        key_traditional = _get_monthly_vpin_cache_key(
+            file_path, bucket_volume, start, end, bucket_volume_usd=None
+        )
+
+        # USD 模式
+        key_usd = _get_monthly_vpin_cache_key(
+            file_path, bucket_volume, start, end, bucket_volume_usd=bucket_volume_usd
+        )
+
+        # 相同 USD bucket_volume 应该生成相同的键
+        key_usd2 = _get_monthly_vpin_cache_key(
+            file_path, bucket_volume, start, end, bucket_volume_usd=bucket_volume_usd
+        )
+        assert key_usd == key_usd2
+
+        # 不同 USD bucket_volume 应该生成不同的键
+        key_usd3 = _get_monthly_vpin_cache_key(
+            file_path, bucket_volume, start, end, bucket_volume_usd=2000000.0
+        )
+        assert key_usd != key_usd3
+
+        # USD 模式和传统模式应该生成不同的键
+        assert key_traditional != key_usd
+
+        # 验证缓存键确实不同（因为缓存键是 MD5 哈希，我们验证它们不同即可）
+        # 注意：缓存键是 MD5 哈希，所以不包含 "usd" 字符串，但 key_str 中包含
+
     def test_vpin_save_and_load_cache(self, temp_cache_dir):
         """测试VPIN缓存的保存和加载"""
         # 创建测试buckets

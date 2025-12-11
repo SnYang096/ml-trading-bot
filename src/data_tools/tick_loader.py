@@ -246,13 +246,17 @@ def _get_monthly_vpin_cache_key(
     bucket_volume: float,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    bucket_volume_usd: Optional[float] = None,
 ) -> str:
     """生成按月VPIN缓存的键"""
     import hashlib
 
     path = Path(file_path)
     month_str = path.stem.split("_")[-1] if "_" in path.stem else path.stem
-    key_str = f"vpin_monthly_{month_str}_{bucket_volume:.6f}_{start.isoformat()}_{end.isoformat()}"
+    if bucket_volume_usd is not None:
+        key_str = f"vpin_monthly_usd_{month_str}_{bucket_volume_usd:.6f}_{start.isoformat()}_{end.isoformat()}"
+    else:
+        key_str = f"vpin_monthly_{month_str}_{bucket_volume:.6f}_{start.isoformat()}_{end.isoformat()}"
     return hashlib.md5(key_str.encode()).hexdigest()
 
 
@@ -292,42 +296,77 @@ def _compute_vpin_buckets_for_month(
     bucket_volume: float,
     start: pd.Timestamp,
     end: pd.Timestamp,
+    bucket_volume_usd: Optional[float] = None,
 ) -> List[Tuple[pd.Timestamp, float]]:
-    """计算单月的VPIN buckets"""
+    """
+    计算单月的VPIN buckets
+
+    Args:
+        path: Tick 文件路径
+        bucket_volume: Bucket volume (数量，如果 bucket_volume_usd 为 None 时使用)
+        start: 开始时间
+        end: 结束时间
+        bucket_volume_usd: Bucket volume in USD (如果提供，使用 USD 价值计算)
+
+    Returns:
+        List of (timestamp, vpin_value) tuples
+    """
     buckets = []
     current_buy = 0.0
     current_sell = 0.0
-    filled_volume = 0.0
+    filled_value = 0.0
 
-    df = pd.read_parquet(path, columns=["timestamp", "volume", "side"])
+    # 如果使用 USD bucket_volume，需要读取 price 列
+    if bucket_volume_usd is not None:
+        required_cols = ["timestamp", "volume", "side", "price"]
+    else:
+        required_cols = ["timestamp", "volume", "side"]
+
+    df = pd.read_parquet(path, columns=required_cols)
     if df.empty:
         return buckets
 
-    df = df.dropna(subset=["timestamp", "volume", "side"])
+    df = df.dropna(subset=required_cols)
     timestamps = pd.to_datetime(df["timestamp"]).to_numpy()
     volumes = df["volume"].astype(float).to_numpy()
     sides = df["side"].astype(int).to_numpy()
 
-    for ts, vol, side in zip(timestamps, volumes, sides):
+    # 如果使用 USD bucket_volume，计算每个 tick 的 USD 价值
+    if bucket_volume_usd is not None:
+        prices = df["price"].astype(float).to_numpy()
+        values_usd = prices * volumes  # 每个 tick 的 USD 价值
+        target_bucket = bucket_volume_usd
+    else:
+        values_usd = None
+        target_bucket = bucket_volume
+
+    for i, (ts, vol, side) in enumerate(zip(timestamps, volumes, sides)):
         if ts < start or ts > end:
             continue
-        remaining = vol
-        while remaining > 0:
-            space_left = bucket_volume - filled_volume
-            trade = min(remaining, space_left)
-            if side == 1:
-                current_buy += trade
-            else:
-                current_sell += trade
-            filled_volume += trade
-            remaining -= trade
 
-            if filled_volume >= bucket_volume - 1e-9:
+        # 确定当前 tick 的价值（USD 或数量）
+        if bucket_volume_usd is not None:
+            tick_value = values_usd[i]
+        else:
+            tick_value = vol
+
+        remaining = tick_value
+        while remaining > 0:
+            space_left = target_bucket - filled_value
+            trade_value = min(remaining, space_left)
+            if side == 1:
+                current_buy += trade_value
+            else:
+                current_sell += trade_value
+            filled_value += trade_value
+            remaining -= trade_value
+
+            if filled_value >= target_bucket - 1e-9:
                 imbalance = abs(current_buy - current_sell)
-                buckets.append((pd.Timestamp(ts), imbalance / bucket_volume))
+                buckets.append((pd.Timestamp(ts), imbalance / target_bucket))
                 current_buy = 0.0
                 current_sell = 0.0
-                filled_volume = 0.0
+                filled_value = 0.0
 
     return buckets
 
@@ -343,6 +382,7 @@ def compute_vpin_from_cached_ticks(
     lookback_days: int = 7,
     lookback_minutes: int = 60,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    bucket_volume_usd: Optional[float] = None,
 ) -> pd.Series:
     """
     从tick文件计算VPIN，支持按月缓存
@@ -351,13 +391,14 @@ def compute_vpin_from_cached_ticks(
         cache_files: Tick parquet文件列表
         start_ts: 开始时间
         end_ts: 结束时间
-        bucket_volume: Bucket volume（如果为None则自适应计算）
+        bucket_volume: Bucket volume（数量，如果为None且bucket_volume_usd为None则自适应计算）
         n_buckets: 滚动窗口大小
-        adaptive: 是否自适应bucket volume
+        adaptive: 是否自适应bucket volume（仅在bucket_volume_usd为None时有效）
         quantile: 自适应计算时的分位数
         lookback_days: 自适应计算时的回看天数
         lookback_minutes: 时间范围扩展的分钟数
         monthly_cache_dir: 按月缓存目录（如果为None则禁用缓存）
+        bucket_volume_usd: Bucket volume in USD（如果提供，使用USD价值计算，所有品种使用相同值）
     """
     if not cache_files:
         raise ValueError("No cached tick files provided for VPIN computation.")
@@ -366,13 +407,24 @@ def compute_vpin_from_cached_ticks(
     end = pd.to_datetime(end_ts) + pd.Timedelta(minutes=lookback_minutes)
 
     cache_files = sorted(cache_files)
-    if bucket_volume is None:
-        if adaptive:
-            bucket_volume = _estimate_bucket_volume_from_cache(
-                cache_files, lookback_days=lookback_days, quantile=quantile
-            )
-        else:
-            bucket_volume = 100.0
+
+    # 如果提供了 bucket_volume_usd，优先使用 USD 模式
+    if bucket_volume_usd is not None:
+        # USD 模式：所有品种使用相同的 USD bucket_volume
+        if bucket_volume_usd <= 0:
+            raise ValueError("bucket_volume_usd must be positive")
+        print(
+            f"   💰 Using USD bucket_volume mode: ${bucket_volume_usd:,.0f} USD per bucket"
+        )
+    else:
+        # 传统模式：按数量计算
+        if bucket_volume is None:
+            if adaptive:
+                bucket_volume = _estimate_bucket_volume_from_cache(
+                    cache_files, lookback_days=lookback_days, quantile=quantile
+                )
+            else:
+                bucket_volume = 100.0
 
     # 按月缓存目录
     cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
@@ -392,7 +444,9 @@ def compute_vpin_from_cached_ticks(
         cache_key = None
         month_buckets = None
         if cache_dir:
-            cache_key = _get_monthly_vpin_cache_key(path_str, bucket_volume, start, end)
+            cache_key = _get_monthly_vpin_cache_key(
+                path_str, bucket_volume, start, end, bucket_volume_usd
+            )
             month_buckets = _load_monthly_vpin_cache(cache_dir, cache_key)
 
         if month_buckets is not None:
@@ -404,7 +458,7 @@ def compute_vpin_from_cached_ticks(
             # 计算并缓存
             print(f"      -> [{idx}/{total_files}] {path.name}", flush=True)
             month_buckets = _compute_vpin_buckets_for_month(
-                path, bucket_volume, start, end
+                path, bucket_volume, start, end, bucket_volume_usd
             )
             all_buckets.extend(month_buckets)
             computed_count += 1
@@ -439,3 +493,60 @@ def compute_vpin_from_cached_ticks(
         )
 
     return vpin_series.sort_index()
+
+
+# ============================================================================
+# Trade Clustering 缓存函数
+# ============================================================================
+
+
+def _get_monthly_trade_clustering_cache_key(
+    file_path: str,
+    window_size: int,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> str:
+    """生成按月 Trade Clustering 缓存的键"""
+    import hashlib
+
+    path = Path(file_path)
+    month_str = path.stem.split("_")[-1] if "_" in path.stem else path.stem
+    key_str = f"trade_clustering_monthly_{month_str}_{window_size}_{start.isoformat()}_{end.isoformat()}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def _load_monthly_trade_clustering_cache(
+    cache_dir: Path, cache_key: str
+) -> Optional[Tuple[pd.DataFrame, Dict[str, Any]]]:
+    """从缓存加载单月的 Trade Clustering 结果和状态"""
+    cache_file = cache_dir / f"{cache_key}.pkl"
+    if cache_file.exists():
+        try:
+            import pickle
+
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+        except Exception as e:
+            print(
+                f"      ⚠️  Failed to load trade clustering cache {cache_key}: {e}",
+                flush=True,
+            )
+    return None
+
+
+def _save_monthly_trade_clustering_cache(
+    cache_dir: Path, cache_key: str, result: Tuple[pd.DataFrame, Dict[str, Any]]
+):
+    """保存单月的 Trade Clustering 结果和状态到缓存"""
+    cache_file = cache_dir / f"{cache_key}.pkl"
+    try:
+        import pickle
+
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with open(cache_file, "wb") as f:
+            pickle.dump(result, f)
+    except Exception as e:
+        print(
+            f"      ⚠️  Failed to save trade clustering cache {cache_key}: {e}",
+            flush=True,
+        )

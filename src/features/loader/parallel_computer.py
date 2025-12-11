@@ -200,11 +200,19 @@ def _compute_single_feature_worker_monthly(
     compute_func = get_compute_func(compute_func_name)
     cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
     
+    # 检查函数是否支持 monthly_cache_dir 参数，如果支持则自动注入
+    import inspect
+    func_sig = inspect.signature(compute_func)
+    supports_monthly_cache = "monthly_cache_dir" in func_sig.parameters
+    
     monthly_results = {}
     for month_key, month_df in monthly_dfs.items():
         if month_key == "all":
             # 无法按月拆分，直接计算
             call_args, call_kwargs = _build_call_args(feature_info, month_df)
+            # 如果函数支持 monthly_cache_dir，自动注入
+            if supports_monthly_cache and monthly_cache_dir:
+                call_kwargs["monthly_cache_dir"] = monthly_cache_dir
             month_result = compute_func(*call_args, **call_kwargs)
         else:
             # 检查缓存
@@ -216,6 +224,9 @@ def _compute_single_feature_worker_monthly(
             else:
                 # 计算该月份
                 call_args, call_kwargs = _build_call_args(feature_info, month_df)
+                # 如果函数支持 monthly_cache_dir，自动注入
+                if supports_monthly_cache and monthly_cache_dir:
+                    call_kwargs["monthly_cache_dir"] = monthly_cache_dir
                 month_result = compute_func(*call_args, **call_kwargs)
                 # 保存缓存
                 _save_monthly_cache(cache_dir, monthly_cache_key, month_result)

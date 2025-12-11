@@ -91,59 +91,51 @@ class TestTSRReversalOptuna:
         try:
             from src.time_series_model.optimization import ts_sr_reversal_optuna
 
-            assert hasattr(ts_sr_reversal_optuna, "sr_signal_env")
+            # 验证新的函数存在（不再使用环境变量）
             assert hasattr(ts_sr_reversal_optuna, "sample_params")
             assert hasattr(ts_sr_reversal_optuna, "build_dataset")
+            # 验证不再使用环境变量（已移除）
+            assert not hasattr(
+                ts_sr_reversal_optuna, "sr_signal_env"
+            ), "sr_signal_env should be removed"
+            assert not hasattr(
+                ts_sr_reversal_optuna, "ENV_KEYS"
+            ), "ENV_KEYS should be removed"
         except ImportError:
             # 如果导入失败，至少文件存在
             pass
 
-    def test_sr_signal_env_context_manager(self):
-        """测试环境变量上下文管理器"""
+    def test_sample_params_returns_thresholds(self):
+        """测试 sample_params 返回阈值参数（不再使用环境变量）"""
         try:
             from src.time_series_model.optimization import ts_sr_reversal_optuna
         except ImportError:
             pytest.skip("Cannot import ts_sr_reversal_optuna due to dependencies")
 
-        # 清除可能存在的环境变量
-        for key in ts_sr_reversal_optuna.ENV_KEYS:
-            os.environ.pop(key, None)
+        # 创建mock trial
+        trial = MagicMock(spec=optuna.Trial)
+        trial.suggest_float = MagicMock(
+            side_effect={
+                "long_entry_threshold": 0.6,
+                "long_exit_threshold": 0.3,
+                "short_entry_threshold": 0.3,
+                "short_exit_threshold": 0.7,
+            }.get
+        )
 
-        params = {
-            "SR_SIGNAL_MIN_STRENGTH": "0.1",
-            "SR_SIGNAL_MIN_SUPPORT": "0.2",
-        }
+        params = ts_sr_reversal_optuna.sample_params(trial)
 
-        # 测试设置和恢复
-        with ts_sr_reversal_optuna.sr_signal_env(params):
-            assert os.environ.get("SR_SIGNAL_MIN_STRENGTH") == "0.1"
-            assert os.environ.get("SR_SIGNAL_MIN_SUPPORT") == "0.2"
-
-        # 测试恢复
-        assert os.environ.get("SR_SIGNAL_MIN_STRENGTH") is None
-        assert os.environ.get("SR_SIGNAL_MIN_SUPPORT") is None
-
-    def test_sr_signal_env_preserves_existing(self):
-        """测试环境变量上下文管理器保留现有值"""
-        try:
-            from src.time_series_model.optimization import ts_sr_reversal_optuna
-        except ImportError:
-            pytest.skip("Cannot import ts_sr_reversal_optuna due to dependencies")
-
-        # 设置初始值
-        os.environ["SR_SIGNAL_MIN_STRENGTH"] = "0.5"
-
-        params = {"SR_SIGNAL_MIN_STRENGTH": "0.1"}
-
-        with ts_sr_reversal_optuna.sr_signal_env(params):
-            assert os.environ.get("SR_SIGNAL_MIN_STRENGTH") == "0.1"
-
-        # 应该恢复到原始值
-        assert os.environ.get("SR_SIGNAL_MIN_STRENGTH") == "0.5"
-        os.environ.pop("SR_SIGNAL_MIN_STRENGTH", None)
+        # 验证返回的是阈值参数，不是环境变量
+        assert isinstance(params, dict)
+        assert "long_entry_threshold" in params
+        assert "long_exit_threshold" in params
+        assert "short_entry_threshold" in params
+        assert "short_exit_threshold" in params
+        # 验证不再返回环境变量键
+        assert "SR_SIGNAL_MIN_STRENGTH" not in params
 
     def test_sample_params_structure(self):
-        """测试参数采样函数的结构"""
+        """测试参数采样函数的结构（返回阈值参数）"""
         try:
             from src.time_series_model.optimization import ts_sr_reversal_optuna
         except ImportError:
@@ -154,21 +146,18 @@ class TestTSRReversalOptuna:
         trial.suggest_float = MagicMock(
             side_effect=lambda name, low, high: (low + high) / 2
         )
-        trial.suggest_categorical = MagicMock(
-            side_effect=lambda name, choices: choices[0]
-        )
 
-        raw_params, env_params = ts_sr_reversal_optuna.sample_params(trial)
+        params = ts_sr_reversal_optuna.sample_params(trial)
 
-        # 检查返回结构
-        assert isinstance(raw_params, dict)
-        assert isinstance(env_params, dict)
+        # 检查返回结构（现在是单个字典，不是元组）
+        assert isinstance(params, dict)
+        assert not isinstance(params, tuple)
 
-        # 检查必要的键
-        assert "min_strength" in raw_params
-        assert "min_support" in raw_params
-        assert "SR_SIGNAL_MIN_STRENGTH" in env_params
-        assert "SR_SIGNAL_MIN_SUPPORT" in env_params
+        # 检查必要的键（阈值参数）
+        assert "long_entry_threshold" in params
+        assert "long_exit_threshold" in params
+        assert "short_entry_threshold" in params
+        assert "short_exit_threshold" in params
 
     def test_build_dataset(self):
         """测试数据集构建函数"""
@@ -314,7 +303,7 @@ class TestOptimizationIntegration:
 
 @pytest.mark.parametrize(
     "script_name",
-    ["optuna_risk_search", "ts_sr_reversal_optuna"],
+    ["optuna_risk_search", "ts_sr_reversal_optuna", "ts_sr_reversal_optuna_joint"],
 )
 def test_optimization_scripts_importable(script_name):
     """参数化测试：确保所有优化脚本文件存在"""

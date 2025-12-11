@@ -180,20 +180,22 @@ def compute_vpin_from_ticks(
     lookback_days: int = 7,
     quantile: float = 0.3,
     adaptive: bool = True,
+    bucket_volume_usd: Optional[float] = None,
 ) -> pd.DataFrame:
     """
     基于逐笔成交数据计算真实 VPIN（向量化实现）
     Args:
         ticks: DataFrame with tick data, must contain:
             - timestamp (datetime index)
-            - price (float)
+            - price (float) - 必需，用于计算 USD 价值
             - volume (float)
             - side (1 for buy, -1 for sell, or 'buy'/'sell')
-        bucket_volume: Fixed bucket volume (BTC/USD). If None and adaptive=True, will be calculated
+        bucket_volume: Fixed bucket volume (数量). If None and adaptive=True, will be calculated
         n_buckets: Number of buckets for rolling average
         lookback_days: Days to look back for adaptive bucket calculation
         quantile: Quantile for adaptive bucket volume (0.2-0.4 recommended)
         adaptive: If True, use adaptive bucket volume based on recent volume
+        bucket_volume_usd: Bucket volume in USD (如果提供，使用USD价值计算，所有品种使用相同值)
     Returns:
         DataFrame with columns:
             - vpin: VPIN values (0-1 range)
@@ -249,8 +251,22 @@ def compute_vpin_from_ticks(
         else:
             min_bucket_volume = 0.01  # fallback（如果没有价格数据）
         bucket_volume = max(bucket_volume, min_bucket_volume)
-    if bucket_volume is None:
-        bucket_volume = 100.0  # 默认值
+    # 如果使用 USD bucket_volume，需要价格数据
+    if bucket_volume_usd is not None:
+        if "price" not in ticks.columns:
+            raise ValueError("price column is required when using bucket_volume_usd")
+        # USD 模式：使用 USD 价值而不是数量
+        prices = ticks["price"].values
+        volumes = ticks["volume"].values
+        values_usd = prices * volumes  # 每个 tick 的 USD 价值
+        target_bucket = bucket_volume_usd
+    else:
+        # 传统模式：使用数量
+        if bucket_volume is None:
+            bucket_volume = 100.0  # 默认值
+        values_usd = None
+        target_bucket = bucket_volume
+    
     # 确保按时间排序
     if not isinstance(ticks.index, pd.DatetimeIndex):
         if "timestamp" in ticks.columns:
@@ -259,22 +275,35 @@ def compute_vpin_from_ticks(
             raise ValueError("ticks must have DatetimeIndex or 'timestamp' column")
     else:
         ticks = ticks.sort_index()
-    # 向量化实现：使用 cumsum + searchsorted 划分桶边界
-    # 这比 iterrows() 快 10-100 倍
-    volumes = ticks["volume"].values
+    
+    # 重新获取排序后的数据
+    if bucket_volume_usd is not None:
+        prices = ticks["price"].values
+        volumes = ticks["volume"].values
+        values_usd = prices * volumes
+    else:
+        volumes = ticks["volume"].values
+    
     sides = ticks["side"].values
     timestamps = ticks.index.values
-    # 计算累计成交量
-    cumvol = np.cumsum(volumes)
-    total_volume = cumvol[-1]
-    if total_volume < bucket_volume:
-        # 总成交量不足一个桶
+    
+    # 计算累计值（USD 价值或数量）
+    if bucket_volume_usd is not None:
+        cumval = np.cumsum(values_usd)
+        total_value = cumval[-1]
+    else:
+        cumval = np.cumsum(volumes)
+        total_value = cumval[-1]
+    
+    if total_value < target_bucket:
+        # 总价值不足一个桶
         return pd.DataFrame(columns=["vpin", "signed_imbalance"], dtype=float)
-    # 生成桶边界（累计成交量阈值）
-    bucket_edges = np.arange(bucket_volume, total_volume + bucket_volume, bucket_volume)
+    
+    # 生成桶边界（累计价值阈值）
+    bucket_edges = np.arange(target_bucket, total_value + target_bucket, target_bucket)
     # 找到每个桶边界对应的 tick 索引
-    # searchsorted 返回插入位置，即第一个 >= bucket_edge 的 cumvol 位置
-    bucket_tick_indices = np.searchsorted(cumvol, bucket_edges, side="right")
+    # searchsorted 返回插入位置，即第一个 >= bucket_edge 的 cumval 位置
+    bucket_tick_indices = np.searchsorted(cumval, bucket_edges, side="right")
     # 过滤超出范围的索引
     valid_mask = bucket_tick_indices < len(ticks)
     bucket_tick_indices = bucket_tick_indices[valid_mask]
@@ -294,28 +323,53 @@ def compute_vpin_from_ticks(
         if prev_idx < bucket_end_idx:
             # 完整包含的 tick 范围：[prev_idx, bucket_end_idx)
             for j in range(prev_idx, bucket_end_idx):
-                if sides[j] == 1:
-                    buy_vol += volumes[j]
+                if bucket_volume_usd is not None:
+                    # USD 模式：使用 USD 价值
+                    tick_value = values_usd[j]
                 else:
-                    sell_vol += volumes[j]
+                    # 传统模式：使用数量
+                    tick_value = volumes[j]
+                
+                if sides[j] == 1:
+                    buy_vol += tick_value
+                else:
+                    sell_vol += tick_value
+        
         # 处理跨越桶边界的最后一个 tick（如果有）
-        # 计算桶还需要多少 volume
+        # 计算桶还需要多少 value
         if bucket_end_idx > 0:
-            cumvol_at_end = cumvol[bucket_end_idx - 1]
+            cumval_at_end = cumval[bucket_end_idx - 1]
         else:
-            cumvol_at_end = 0.0
-        remaining_to_fill = bucket_edge - cumvol_at_end
+            cumval_at_end = 0.0
+        remaining_to_fill = bucket_edge - cumval_at_end
         if remaining_to_fill > MIN_BUCKET_VOLUME_TOL and bucket_end_idx < len(ticks):
-            # 需要从 bucket_end_idx 这个 tick 借用部分 volume
-            borrow_vol = min(remaining_to_fill, volumes[bucket_end_idx])
-            if sides[bucket_end_idx] == 1:
-                buy_vol += borrow_vol
+            # 需要从 bucket_end_idx 这个 tick 借用部分 value
+            if bucket_volume_usd is not None:
+                borrow_value = min(remaining_to_fill, values_usd[bucket_end_idx])
             else:
-                sell_vol += borrow_vol
+                borrow_value = min(remaining_to_fill, volumes[bucket_end_idx])
+            
+            if sides[bucket_end_idx] == 1:
+                buy_vol += borrow_value
+            else:
+                sell_vol += borrow_value
+        
         # 计算 VPIN 和 signed imbalance
-        imbalance = abs(buy_vol - sell_vol)
-        vpin_value = imbalance / bucket_volume
-        signed_imbalance = (buy_vol - sell_vol) / bucket_volume
+        # 注意：buy_vol + sell_vol 应该等于 target_bucket（或接近）
+        # 但由于浮点数精度和跨桶分割，可能略有差异
+        total_vol_in_bucket = buy_vol + sell_vol
+        if total_vol_in_bucket > 0:
+            # 归一化到实际桶体积（处理浮点数误差）
+            imbalance = abs(buy_vol - sell_vol)
+            vpin_value = imbalance / total_vol_in_bucket  # 使用实际桶体积，而不是 target_bucket
+            signed_imbalance = (buy_vol - sell_vol) / total_vol_in_bucket
+        else:
+            vpin_value = 0.0
+            signed_imbalance = 0.0
+        
+        # 确保 VPIN 值在 [0, 1] 范围内（防止浮点数误差）
+        vpin_value = min(vpin_value, 1.0)
+        signed_imbalance = max(-1.0, min(1.0, signed_imbalance))
         # 桶的时间戳：使用桶内最后一个 tick 的时间
         # 注意：也可以考虑使用"桶结束时的虚拟时间"（bucket_edge 对应的累计时间），
         # 但当前实现使用最后一个 tick 的时间更直观，且能准确反映事件发生时刻
@@ -381,6 +435,8 @@ def extract_order_flow_features(
     freq: Optional[str] = None,
     include_trade_clustering: bool = True,
     trade_clustering_window: int = 100,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    vpin_bucket_volume_usd: Optional[float] = None,
 ) -> pd.DataFrame:
     """
     提取订单流特征（VPIN 等）
@@ -421,6 +477,7 @@ def extract_order_flow_features(
             bucket_volume=vpin_bucket_volume,
             n_buckets=vpin_n_buckets,
             adaptive=vpin_adaptive,
+            bucket_volume_usd=vpin_bucket_volume_usd,
         )
     elif ticks_loader_json:
         loader_params = deserialize_tick_loader_params(ticks_loader_json)
@@ -434,6 +491,8 @@ def extract_order_flow_features(
             n_buckets=vpin_n_buckets,
             adaptive=vpin_adaptive,
             lookback_minutes=loader_params.get("lookback_minutes", 60),
+            monthly_cache_dir=monthly_cache_dir,
+            bucket_volume_usd=vpin_bucket_volume_usd,
         )
     else:
         # 如果没有tick数据，直接抛出错误并退出
@@ -477,14 +536,28 @@ def extract_order_flow_features(
                     if abs((freq_td - std_td).total_seconds()) < abs(std_td.total_seconds() * 0.05):
                         freq = std_freq
                         break
-                # 如果仍无法匹配，使用计算出的 freq_td
+                # 如果仍无法匹配，使用计算出的 freq_td（freq 保持为 None）
                 if freq is None:
-                    freq_td = freq_td
+                    # freq_td 已经在上面计算好了，直接使用
+                    pass
             else:
-                freq = "1T"  # fallback
+                freq = "1min"  # fallback（使用新格式）
                 freq_td = pd.Timedelta(minutes=1)
         else:
-            freq_td = pd.Timedelta(freq) if isinstance(freq, str) else freq
+            # freq 不为 None，尝试解析
+            if isinstance(freq, str):
+                # 处理旧格式（向后兼容）
+                if freq == "1T":
+                    freq = "1min"
+                elif freq == "1S":
+                    freq = "1s"
+                try:
+                    freq_td = pd.Timedelta(freq)
+                except ValueError:
+                    # 如果解析失败，使用默认值
+                    freq_td = pd.Timedelta(minutes=1)
+            else:
+                freq_td = freq if freq is not None else pd.Timedelta(minutes=1)
         # 方法1：严格右对齐的向量化实现（极快，O(N log M)）
         aligned_vpin = None
         aligned_signed = None
@@ -767,6 +840,7 @@ def extract_order_flow_features(
                 ticks=ticks,
                 window_size=trade_clustering_window,
                 freq=freq,
+                monthly_cache_dir=monthly_cache_dir,
             )
         except Exception as e:
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
@@ -779,6 +853,7 @@ def extract_order_flow_features(
                 ticks_loader_json=ticks_loader_json,
                 window_size=trade_clustering_window,
                 freq=freq,
+                monthly_cache_dir=monthly_cache_dir,
             )
         except Exception as e:
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
@@ -1009,6 +1084,7 @@ def extract_trade_clustering_features(
     ticks_loader_json: Optional[str] = None,
     window_size: int = 100,
     freq: Optional[str] = None,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
 ) -> pd.DataFrame:
     """
     提取交易聚集性（Trade Clustering）特征并对齐到 K 线
@@ -1050,6 +1126,13 @@ def extract_trade_clustering_features(
         
         # 从 tick_files 推断 ticks_dir（取第一个文件的目录）
         import os
+        from pathlib import Path
+        from src.data_tools.tick_loader import (
+            _get_monthly_trade_clustering_cache_key,
+            _load_monthly_trade_clustering_cache,
+            _save_monthly_trade_clustering_cache,
+        )
+        
         if tick_files:
             first_file = tick_files[0]
             ticks_dir = os.path.dirname(first_file)
@@ -1062,6 +1145,9 @@ def extract_trade_clustering_features(
         end_ts = pd.to_datetime(loader_params["end_ts"])
         lookback_minutes = loader_params.get("lookback_minutes", 60)
         
+        # 按月缓存目录
+        cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
+        
         # 生成月份范围
         current_month = (start_ts - pd.Timedelta(minutes=lookback_minutes)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         end_month = end_ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -1070,6 +1156,27 @@ def extract_trade_clustering_features(
         # 维护跨月连续性状态，确保 Trade Clustering 计算的正确性
         cluster_results = []
         state = None  # 跨月连续性状态
+        total_files = len(tick_files)
+        cached_count = 0
+        computed_count = 0
+        
+        # 按月份匹配 tick 文件
+        month_to_files = {}
+        for file_path in tick_files:
+            path = Path(file_path)
+            # 从文件名提取月份（假设格式为 SYMBOL_YYYY-MM.parquet）
+            if "_" in path.stem:
+                parts = path.stem.split("_")
+                if len(parts) >= 2:
+                    month_str = parts[-1]  # 如 "2025-01"
+                    try:
+                        month_ts = pd.to_datetime(month_str)
+                        month_key = month_ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                        if month_key not in month_to_files:
+                            month_to_files[month_key] = []
+                        month_to_files[month_key].append(file_path)
+                    except:
+                        pass
         
         while current_month <= end_month:
             month_start = current_month
@@ -1081,38 +1188,65 @@ def extract_trade_clustering_features(
             if month_end > end_ts:
                 month_end = end_ts
             
-            # 加载该月的 tick 数据（只加载必要的列）
-            try:
-                month_ticks = load_tick_data(
-                    symbol=loader_params["symbol"],
-                    start_ts=month_start.isoformat(),
-                    end_ts=month_end.isoformat(),
-                    ticks_dir=ticks_dir,
-                    lookback_minutes=0,
-                )
-                
-                if month_ticks is not None and len(month_ticks) > 0:
-                    # 只保留 side 列（Trade Clustering 只需要 side）
-                    month_ticks = month_ticks[["side"]].copy()
-                    print(f"      ✅ Loaded {month_start.strftime('%Y-%m')}: {len(month_ticks)} ticks")
-                    
-                    # 计算该月的 Trade Clustering（传入上个月的状态）
-                    month_cluster_df, state = compute_trade_clustering_from_ticks(
-                        month_ticks,
-                        window_size=window_size,
-                        initial_state=state,
+            # 尝试从缓存加载
+            cached_result = None
+            if cache_dir:
+                # 找到该月的 tick 文件
+                month_files = month_to_files.get(current_month, [])
+                if month_files:
+                    # 使用第一个文件生成缓存键（假设同一个月所有文件参数相同）
+                    cache_key = _get_monthly_trade_clustering_cache_key(
+                        month_files[0], window_size, month_start, month_end
+                    )
+                    cached_result = _load_monthly_trade_clustering_cache(cache_dir, cache_key)
+            
+            if cached_result is not None:
+                # 使用缓存
+                month_cluster_df, state = cached_result
+                cluster_results.append(month_cluster_df)
+                cached_count += 1
+                print(f"      ✅ Loaded {month_start.strftime('%Y-%m')} (cached): {len(month_cluster_df)} features")
+            else:
+                # 计算该月
+                try:
+                    month_ticks = load_tick_data(
+                        symbol=loader_params["symbol"],
+                        start_ts=month_start.isoformat(),
+                        end_ts=month_end.isoformat(),
+                        ticks_dir=ticks_dir,
+                        lookback_minutes=0,
                     )
                     
-                    # 保存该月的结果
-                    cluster_results.append(month_cluster_df)
-                    print(f"      ✅ Computed {month_start.strftime('%Y-%m')}: {len(month_cluster_df)} features")
-                    
-                    # 立即释放该月的数据
-                    del month_ticks, month_cluster_df
-                    # 注意：state 中的 deque 已经被转换为 list（在 compute_trade_clustering_from_ticks 中）
-                    # 下一批次使用时会在 compute_trade_clustering_from_ticks 中自动转换回 deque
-            except Exception as e:
-                print(f"      ⚠️  Failed to process {month_start.strftime('%Y-%m')}: {e}")
+                    if month_ticks is not None and len(month_ticks) > 0:
+                        # 只保留 side 列（Trade Clustering 只需要 side）
+                        month_ticks = month_ticks[["side"]].copy()
+                        print(f"      ✅ Loaded {month_start.strftime('%Y-%m')}: {len(month_ticks)} ticks")
+                        
+                        # 计算该月的 Trade Clustering（传入上个月的状态）
+                        month_cluster_df, state = compute_trade_clustering_from_ticks(
+                            month_ticks,
+                            window_size=window_size,
+                            initial_state=state,
+                        )
+                        
+                        # 保存该月的结果
+                        cluster_results.append(month_cluster_df)
+                        computed_count += 1
+                        print(f"      ✅ Computed {month_start.strftime('%Y-%m')}: {len(month_cluster_df)} features")
+                        
+                        # 保存缓存
+                        if cache_dir and month_files:
+                            cache_key = _get_monthly_trade_clustering_cache_key(
+                                month_files[0], window_size, month_start, month_end
+                            )
+                            _save_monthly_trade_clustering_cache(
+                                cache_dir, cache_key, (month_cluster_df, state)
+                            )
+                        
+                        # 立即释放该月的数据
+                        del month_ticks, month_cluster_df
+                except Exception as e:
+                    print(f"      ⚠️  Failed to process {month_start.strftime('%Y-%m')}: {e}")
             
             # 移动到下一个月
             current_month = current_month + pd.DateOffset(months=1)
@@ -1124,6 +1258,12 @@ def extract_trade_clustering_features(
         print(f"      📊 Merging {len(cluster_results)} months of trade clustering results...")
         cluster_df = pd.concat(cluster_results, axis=0).sort_index()
         del cluster_results  # 释放内存
+        
+        if cache_dir and cached_count > 0:
+            print(
+                f"   💾 Used {cached_count} cached months, computed {computed_count} new months",
+                flush=True,
+            )
     else:
         raise ValueError(
             "Trade clustering calculation requires tick data. "
