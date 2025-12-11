@@ -71,7 +71,7 @@ def feature_loader():
 @pytest.fixture
 def strategy_config():
     """加载策略配置 fixture"""
-    from src.strategy_config import StrategyConfigLoader
+    from src.time_series_model.strategy_config import StrategyConfigLoader
 
     strategy_dir = PROJECT_ROOT / "config" / "strategies" / "sr_reversal"
     config_loader = StrategyConfigLoader(strategy_dir)

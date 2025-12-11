@@ -24,7 +24,7 @@ from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader,
 )  # noqa: E402
-from src.strategy_config import StrategyConfigLoader  # noqa: E402
+from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 from src.time_series_model.pipeline.training.label_utils import (
     compute_rr_label,
 )  # noqa: E402

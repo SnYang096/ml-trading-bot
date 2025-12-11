@@ -62,7 +62,7 @@ except ImportError:
         pass
 
 
-from src.strategy_config import StrategyConfigLoader
+from src.time_series_model.strategy_config import StrategyConfigLoader
 
 
 class RealtimeFeatureManager:

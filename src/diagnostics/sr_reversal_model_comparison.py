@@ -25,7 +25,7 @@ from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader,
 )  # noqa: E402
-from src.strategy_config import StrategyConfigLoader  # noqa: E402
+from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 from src.time_series_model.strategies.labels.sr_reversal_label import (  # noqa: E402
     SRSignalConfig,
     _generate_sr_reversal_signals,
@@ -963,7 +963,7 @@ def evaluate_ml_volatility_model(
     effective_atr_upper = atr_upper_bound
 
     # 使用带详细信息的函数来计算标签
-        from src.diagnostics.compute_adaptive_rr_with_predicted_vol import (
+    from src.diagnostics.compute_adaptive_rr_with_predicted_vol import (
         compute_adaptive_rr_label_with_predicted_vol_details,
     )
 

@@ -48,7 +48,7 @@ from src.time_series_model.pipeline.training.label_utils import (  # noqa: E402
 from src.time_series_model.strategies.labels.sr_reversal_label import (  # noqa: E402
     _ensure_atr,
 )
-from src.strategy_config import StrategyConfigLoader  # noqa: E402
+from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 
 warnings.filterwarnings("ignore")
 

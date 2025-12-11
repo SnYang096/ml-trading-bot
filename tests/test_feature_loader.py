@@ -149,7 +149,7 @@ class TestFeatureLoader(unittest.TestCase):
 
         try:
             # 从目录管理方式读取特征配置
-            from src.strategy_config import StrategyConfigLoader
+            from src.time_series_model.strategy_config import StrategyConfigLoader
             import yaml
 
             strategy_dir = Path("config/strategies/sr_reversal")
@@ -215,7 +215,7 @@ class TestFeatureLoader(unittest.TestCase):
 
         try:
             # 从目录管理方式读取特征配置
-            from src.strategy_config import StrategyConfigLoader
+            from src.time_series_model.strategy_config import StrategyConfigLoader
             import yaml
 
             strategy_dir = Path("config/strategies/sr_breakout")
@@ -277,7 +277,7 @@ class TestFeatureLoader(unittest.TestCase):
 
         try:
             # 从目录管理方式读取特征配置
-            from src.strategy_config import StrategyConfigLoader
+            from src.time_series_model.strategy_config import StrategyConfigLoader
             import yaml
 
             strategy_dir = Path("config/strategies/compression_breakout")
@@ -341,7 +341,7 @@ class TestFeatureLoader(unittest.TestCase):
 
         try:
             # 从目录管理方式读取特征配置
-            from src.strategy_config import StrategyConfigLoader
+            from src.time_series_model.strategy_config import StrategyConfigLoader
             import yaml
 
             strategy_dir = Path("config/strategies/trend_following")
@@ -398,7 +398,7 @@ class TestFeatureLoader(unittest.TestCase):
         df = self.test_df.copy()
 
         # 从目录管理方式读取特征配置
-        from src.strategy_config import StrategyConfigLoader
+        from src.time_series_model.strategy_config import StrategyConfigLoader
         import yaml
 
         strategy_dir = Path("config/strategies/sr_reversal")
@@ -437,7 +437,7 @@ class TestFeatureLoader(unittest.TestCase):
     def test_get_strategy_features(self):
         """测试获取策略特征列表（使用目录管理方式）"""
         # 从目录管理方式读取特征配置
-        from src.strategy_config import StrategyConfigLoader
+        from src.time_series_model.strategy_config import StrategyConfigLoader
         import yaml
 
         strategy_dir = Path("config/strategies/sr_reversal")
@@ -606,7 +606,7 @@ class TestStrategyFeaturesIntegration(unittest.TestCase):
 
             try:
                 # 从目录管理方式读取特征配置
-                from src.strategy_config import StrategyConfigLoader
+                from src.time_series_model.strategy_config import StrategyConfigLoader
                 import yaml
 
                 strategy_dir = Path(f"config/strategies/{strategy}")

@@ -28,7 +28,10 @@ class TestTSRReversalOptunaIntegration:
             from src.time_series_model.optimization.ts_sr_reversal_optuna import (
                 sample_params,
             )
-            from src.strategy_config.loader import StrategyConfig, BacktestConfig
+            from src.time_series_model.strategy_config.loader import (
+                StrategyConfig,
+                BacktestConfig,
+            )
         except ImportError:
             pytest.skip("Cannot import required modules due to dependencies")
 
@@ -76,7 +79,10 @@ class TestTSRReversalOptunaIntegration:
             from src.time_series_model.optimization.ts_sr_reversal_optuna import (
                 sample_params,
             )
-            from src.strategy_config.loader import StrategyConfig, BacktestConfig
+            from src.time_series_model.strategy_config.loader import (
+                StrategyConfig,
+                BacktestConfig,
+            )
             from src.time_series_model.strategies.evaluation.strategy_feature_compare import (
                 execute_single_run,
             )

@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data_tools.data_utils import load_raw_data
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.strategy_config import StrategyConfigLoader
+from src.time_series_model.strategy_config import StrategyConfigLoader
 from src.time_series_model.strategies.labels.sr_reversal_label import (
     SRSignalConfig,
     _generate_sr_reversal_signals,
@@ -169,14 +169,18 @@ def analyze_ml_volatility_model():
 
     # 其他可能相关的特征（波动率压缩、范围等）
     other_features = [
-        col for col in numeric_cols if any(keyword in col.lower()
-                                           for keyword in [
-                                               "bb_width",
-                                               "compression",
-                                               "squeeze",
-                                               "range",
-                                               "range_ratio",
-                                           ])
+        col
+        for col in numeric_cols
+        if any(
+            keyword in col.lower()
+            for keyword in [
+                "bb_width",
+                "compression",
+                "squeeze",
+                "range",
+                "range_ratio",
+            ]
+        )
     ]
     volatility_relevant_features.extend(other_features)
 

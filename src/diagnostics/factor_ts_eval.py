@@ -24,7 +24,7 @@ from scripts import train_strategy_pipeline as strategy_runner  # noqa: E402
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader, )  # noqa: E402
-from src.strategy_config import StrategyConfigLoader  # noqa: E402
+from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,16 +50,14 @@ def parse_args() -> argparse.Namespace:
         "--feature-mode",
         choices=["strategy", "only", "append"],
         default="strategy",
-        help=
-        "How to handle feature pipeline: use strategy defaults, only requested factors, or append requested factors.",
+        help="How to handle feature pipeline: use strategy defaults, only requested factors, or append requested factors.",
     )
     parser.add_argument("--output-dir", default="results/factor_ts_eval")
     parser.add_argument(
         "--ic-decay-lags",
         type=str,
         default="1,3,5,10,20",
-        help=
-        "Comma-separated forward bars for IC decay analysis (e.g., '1,3,5,10,20')",
+        help="Comma-separated forward bars for IC decay analysis (e.g., '1,3,5,10,20')",
     )
     parser.add_argument(
         "--generate-html",

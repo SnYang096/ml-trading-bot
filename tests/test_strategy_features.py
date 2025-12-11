@@ -92,7 +92,7 @@ def test_strategy_features():
 
         try:
             # 从目录管理方式读取特征配置
-            from src.strategy_config import StrategyConfigLoader
+            from src.time_series_model.strategy_config import StrategyConfigLoader
             import yaml
 
             strategy_dir = Path(f"config/strategies/{strategy}")

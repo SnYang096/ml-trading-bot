@@ -34,7 +34,7 @@ import pandas as pd
 from src.data_tools.data_utils import load_raw_data
 from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.strategy_config import StrategyConfigLoader
+from src.time_series_model.strategy_config import StrategyConfigLoader
 from src.time_series_model.pipeline.training.label_utils import simulate_rr_exits
 from src.time_series_model.strategies.backtesting.vectorbt_backtest import (
     VectorBTBacktest,

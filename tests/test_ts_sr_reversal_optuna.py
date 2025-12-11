@@ -185,7 +185,10 @@ class TestConfigUpdate:
             from src.time_series_model.optimization.ts_sr_reversal_optuna import (
                 sample_params,
             )
-            from src.strategy_config.loader import BacktestConfig, StrategyConfig
+            from src.time_series_model.strategy_config.loader import (
+                BacktestConfig,
+                StrategyConfig,
+            )
         except ImportError:
             pytest.skip("Cannot import required modules due to dependencies")
 
@@ -214,7 +217,7 @@ class TestConfigUpdate:
     def test_config_update_preserves_existing_params(self):
         """测试配置更新保留现有参数"""
         try:
-            from src.strategy_config.loader import BacktestConfig
+            from src.time_series_model.strategy_config.loader import BacktestConfig
         except ImportError:
             pytest.skip("Cannot import required modules due to dependencies")
 
@@ -255,7 +258,10 @@ class TestObjectiveFunction:
             from src.time_series_model.optimization.ts_sr_reversal_optuna import (
                 sample_params,
             )
-            from src.strategy_config.loader import StrategyConfig, BacktestConfig
+            from src.time_series_model.strategy_config.loader import (
+                StrategyConfig,
+                BacktestConfig,
+            )
         except ImportError:
             pytest.skip("Cannot import required modules due to dependencies")
 

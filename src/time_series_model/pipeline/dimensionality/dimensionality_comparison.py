@@ -107,7 +107,7 @@ try:
         serialize_tick_loader_params,
         list_tick_files,
     )
-    from src.strategy_config import StrategyConfigLoader
+    from src.time_series_model.strategy_config import StrategyConfigLoader
     from scripts.train_strategy_pipeline import (
         apply_filters,
         apply_post_label_filters,
@@ -253,7 +253,7 @@ def run_dim_compare(
         )
         from src.data_tools.data_utils import load_raw_data
         from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-        from src.strategy_config import StrategyConfigLoader
+        from src.time_series_model.strategy_config import StrategyConfigLoader
     except ImportError as e:
         raise ImportError(
             "Config-driven mode requires src.data_tools.data_utils, "

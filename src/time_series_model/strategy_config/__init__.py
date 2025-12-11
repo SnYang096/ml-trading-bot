@@ -1,4 +1,4 @@
-"""Strategy configuration loader package."""
+"""Strategy configuration loader package (moved under time_series_model)."""
 
 from .loader import (
     StrategyConfig,
@@ -21,4 +21,3 @@ __all__ = [
     "EvaluationConfig",
     "BacktestConfig",
 ]
-

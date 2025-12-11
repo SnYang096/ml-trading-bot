@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import train_strategy_pipeline as strategy_runner
 from src.data_tools.data_utils import load_raw_data
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.strategy_config import StrategyConfigLoader
+from src.time_series_model.strategy_config import StrategyConfigLoader
 from src.time_series_model.pipeline.training.label_utils import compute_rr_label
 from src.time_series_model.strategies.labels.sr_reversal_label import (
     SRSignalConfig,
