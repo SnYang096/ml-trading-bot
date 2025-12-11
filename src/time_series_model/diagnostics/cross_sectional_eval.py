@@ -21,26 +21,23 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
-    StrategyFeatureLoader, )  # noqa: E402
+    StrategyFeatureLoader,
+)  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Cross-sectional factor evaluation")
-    parser.add_argument("--features-config",
-                        required=True,
-                        help="YAML file with requested features")
-    parser.add_argument("--symbols",
-                        required=True,
-                        help="Comma-separated symbol list")
+    parser = argparse.ArgumentParser(description="Cross-sectional factor evaluation")
+    parser.add_argument(
+        "--features-config", required=True, help="YAML file with requested features"
+    )
+    parser.add_argument("--symbols", required=True, help="Comma-separated symbol list")
     parser.add_argument("--data-path", default="data/parquet_data")
     parser.add_argument("--timeframe", default="240T")
     parser.add_argument("--start-date", default=None)
     parser.add_argument("--end-date", default=None)
-    parser.add_argument("--horizon",
-                        type=int,
-                        default=24,
-                        help="Future return horizon (bars)")
+    parser.add_argument(
+        "--horizon", type=int, default=24, help="Future return horizon (bars)"
+    )
     parser.add_argument("--quantiles", type=int, default=5)
     parser.add_argument(
         "--ic-decay-lags",
@@ -92,15 +89,17 @@ def compute_factor_metrics(
     def per_timestamp_ic(group: pd.DataFrame, target: str) -> float:
         if len(group) < min_assets:
             return np.nan
-        corr = spearmanr(group[factor], group[target],
-                         nan_policy="omit").correlation
+        corr = spearmanr(group[factor], group[target], nan_policy="omit").correlation
         return corr if corr is not None else np.nan
 
     ic_series = grouped.apply(lambda g: per_timestamp_ic(g, target_col))
     metrics["rank_ic_mean"] = float(ic_series.mean(skipna=True))
     metrics["rank_ic_std"] = float(ic_series.std(skipna=True))
-    metrics["rank_ic_ir"] = (metrics["rank_ic_mean"] / metrics["rank_ic_std"]
-                             if metrics["rank_ic_std"] else 0.0)
+    metrics["rank_ic_ir"] = (
+        metrics["rank_ic_mean"] / metrics["rank_ic_std"]
+        if metrics["rank_ic_std"]
+        else 0.0
+    )
 
     for lag in ic_decay_lags:
         lag_col = f"{target_col}_lag{lag}"
@@ -118,11 +117,13 @@ def compute_factor_metrics(
         short_mask = q_values <= (1 / quantiles)
         long_ret = group.loc[long_mask, target_col].mean()
         short_ret = group.loc[short_mask, target_col].mean()
-        quantile_returns.append({
-            "timestamp": ts,
-            "long_return": long_ret,
-            "short_return": short_ret,
-        })
+        quantile_returns.append(
+            {
+                "timestamp": ts,
+                "long_return": long_ret,
+                "short_return": short_ret,
+            }
+        )
 
     quantile_df = pd.DataFrame(quantile_returns)
     if quantile_df.empty:
@@ -133,11 +134,11 @@ def compute_factor_metrics(
         quantile_df = quantile_df.set_index("timestamp")
         metrics["avg_long_return"] = float(quantile_df["long_return"].mean())
         metrics["avg_short_return"] = float(quantile_df["short_return"].mean())
-        metrics["long_short_spread"] = (metrics["avg_long_return"] -
-                                        metrics["avg_short_return"])
+        metrics["long_short_spread"] = (
+            metrics["avg_long_return"] - metrics["avg_short_return"]
+        )
         quantile_df["long_cum"] = quantile_df["long_return"].fillna(0).cumsum()
-        quantile_df["short_cum"] = quantile_df["short_return"].fillna(
-            0).cumsum()
+        quantile_df["short_cum"] = quantile_df["short_return"].fillna(0).cumsum()
 
     metrics["n_observations"] = int(len(valid))
     metrics["n_timestamps"] = int(grouped.ngroups)
@@ -166,11 +167,9 @@ def main() -> None:
             fit=True,
         )
         df_features["_symbol"] = symbol
-        df_features["future_return"] = compute_future_return(
-            df_features, args.horizon)
+        df_features["future_return"] = compute_future_return(df_features, args.horizon)
         df_features = df_features.dropna(subset=["future_return"])
-        df_features = df_features.reset_index().rename(
-            columns={"index": "timestamp"})
+        df_features = df_features.reset_index().rename(columns={"index": "timestamp"})
         all_frames.append(df_features)
 
     if not all_frames:
@@ -178,9 +177,7 @@ def main() -> None:
 
     combined = pd.concat(all_frames, axis=0, ignore_index=True)
     combined = combined.sort_values("timestamp")
-    ic_decay_lags = [
-        int(x.strip()) for x in args.ic_decay_lags.split(",") if x.strip()
-    ]
+    ic_decay_lags = [int(x.strip()) for x in args.ic_decay_lags.split(",") if x.strip()]
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

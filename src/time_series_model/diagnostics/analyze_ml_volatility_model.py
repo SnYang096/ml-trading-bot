@@ -23,8 +23,9 @@ from src.time_series_model.pipeline.training.label_utils import (
     compute_rr_label,
     future_volatility_label,
 )
-from src.diagnostics.compute_adaptive_rr_with_predicted_vol import (
-    compute_adaptive_rr_label_with_predicted_vol, )
+from src.time_series_model.diagnostics.compute_adaptive_rr_with_predicted_vol import (
+    compute_adaptive_rr_label_with_predicted_vol,
+)
 import lightgbm as lgb
 
 
@@ -120,7 +121,10 @@ def analyze_ml_volatility_model():
 
     # 准备特征 - 优先选择波动率相关特征
     feature_cols = [
-        col for col in df_train.columns if col not in [
+        col
+        for col in df_train.columns
+        if col
+        not in [
             "open",
             "high",
             "low",
@@ -136,8 +140,9 @@ def analyze_ml_volatility_model():
             "date",
         ]
     ]
-    numeric_cols = (df_train[feature_cols].select_dtypes(
-        include=[np.number]).columns.tolist())
+    numeric_cols = (
+        df_train[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
+    )
 
     # 选择波动率相关特征（GARCH, 扩展波动率特征, ATR等）
     volatility_relevant_features = []
@@ -149,9 +154,7 @@ def analyze_ml_volatility_model():
     # 注意：EVT特征不用于波动率预测，而是用于风险管理/仓位控制（离场、不加仓）
 
     # 扩展波动率特征（历史波动率、滞后特征、趋势特征）
-    extended_vol_features = [
-        col for col in numeric_cols if col.startswith("vol_")
-    ]
+    extended_vol_features = [col for col in numeric_cols if col.startswith("vol_")]
     volatility_relevant_features.extend(extended_vol_features)
 
     # 注意：DTW特征不用于波动率模型，而是用于SR Reversal策略（反转模板匹配）
@@ -162,7 +165,8 @@ def analyze_ml_volatility_model():
 
     # 波动率相关特征
     vol_features = [
-        col for col in numeric_cols
+        col
+        for col in numeric_cols
         if "vol" in col.lower() or "volatility" in col.lower()
     ]
     volatility_relevant_features.extend(vol_features)
@@ -191,14 +195,10 @@ def analyze_ml_volatility_model():
     ]
 
     if not available_features:
-        print(
-            "   ⚠️ No volatility-specific features found, using all numeric features"
-        )
+        print("   ⚠️ No volatility-specific features found, using all numeric features")
         available_features = numeric_cols
     else:
-        print(
-            f"   ✅ Selected {len(available_features)} volatility-relevant features:"
-        )
+        print(f"   ✅ Selected {len(available_features)} volatility-relevant features:")
         print(
             f"      GARCH: {len([f for f in available_features if f.startswith('garch_')])}"
         )
@@ -236,8 +236,7 @@ def analyze_ml_volatility_model():
 
     # 训练波动率模型
     print("\n🔧 Training volatility model with volatility-specific features...")
-    train_data = lgb.Dataset(X_train_valid.values,
-                             label=y_vol_train_valid.values)
+    train_data = lgb.Dataset(X_train_valid.values, label=y_vol_train_valid.values)
     params = {
         "objective": "regression",
         "metric": "rmse",
@@ -268,8 +267,7 @@ def analyze_ml_volatility_model():
         df_test["close"],
         horizon=10,
     )
-    actual_vol_relative = test_vol_labels.fillna(
-        test_vol_labels.median()).values
+    actual_vol_relative = test_vol_labels.fillna(test_vol_labels.median()).values
     actual_vol_absolute = actual_vol_relative * prices_test
 
     print("\n📊 Volatility Prediction Analysis:")
@@ -360,9 +358,7 @@ def analyze_ml_volatility_model():
 
     # 1. 检查预测波动率是否系统性偏差
     vol_bias = np.mean(pred_vol_relative - actual_vol_relative)
-    print(
-        f"   1. Volatility prediction bias: {vol_bias:.6f} ({vol_bias*100:.2f}%)"
-    )
+    print(f"   1. Volatility prediction bias: {vol_bias:.6f} ({vol_bias*100:.2f}%)")
     if abs(vol_bias) > 0.001:
         print(
             f"      ⚠️ Systematic bias detected! Predicted vol is {'higher' if vol_bias > 0 else 'lower'} than actual."
@@ -375,15 +371,11 @@ def analyze_ml_volatility_model():
         f"   2. Predicted Vol/ATR ratio: {pred_atr_ratio_mean:.3f} vs Actual: {actual_atr_ratio_mean:.3f}"
     )
     if abs(pred_atr_ratio_mean - actual_atr_ratio_mean) > 0.2:
-        print(
-            f"      ⚠️ Significant mismatch! This may cause incorrect R/R adjustment."
-        )
+        print(f"      ⚠️ Significant mismatch! This may cause incorrect R/R adjustment.")
 
     # 3. 检查自适应R/R是否导致止损止盈范围过大或过小
-    sl_change_pct = np.mean(
-        (adaptive_sl_range - fixed_sl_range) / fixed_sl_range * 100)
-    tp_change_pct = np.mean(
-        (adaptive_tp_range - fixed_tp_range) / fixed_tp_range * 100)
+    sl_change_pct = np.mean((adaptive_sl_range - fixed_sl_range) / fixed_sl_range * 100)
+    tp_change_pct = np.mean((adaptive_tp_range - fixed_tp_range) / fixed_tp_range * 100)
     print(
         f"   3. SL range change: {sl_change_pct:.2f}%, TP range change: {tp_change_pct:.2f}%"
     )
@@ -394,7 +386,7 @@ def analyze_ml_volatility_model():
 
     # 4. 检查预测波动率的准确性
     vol_mae = np.mean(np.abs(pred_vol_relative - actual_vol_relative))
-    vol_rmse = np.sqrt(np.mean((pred_vol_relative - actual_vol_relative)**2))
+    vol_rmse = np.sqrt(np.mean((pred_vol_relative - actual_vol_relative) ** 2))
     print(
         f"   4. Volatility prediction accuracy - MAE: {vol_mae:.6f}, RMSE: {vol_rmse:.6f}"
     )
@@ -404,8 +396,7 @@ def analyze_ml_volatility_model():
         )
 
     # 5. 检查是否有极端值
-    extreme_pred_vol = np.sum((pred_vol_atr_ratio < 0.1)
-                              | (pred_vol_atr_ratio > 3.0))
+    extreme_pred_vol = np.sum((pred_vol_atr_ratio < 0.1) | (pred_vol_atr_ratio > 3.0))
     print(
         f"   5. Extreme predicted vol/ATR ratios (<0.1 or >3.0): {extreme_pred_vol} ({extreme_pred_vol/len(pred_vol_atr_ratio)*100:.2f}%)"
     )
@@ -418,12 +409,9 @@ def analyze_ml_volatility_model():
     print(
         "   1. If prediction bias is large, retrain volatility model with better features"
     )
-    print(
-        "   2. If Vol/ATR ratio mismatch, adjust atr_lower_bound and atr_upper_bound"
-    )
+    print("   2. If Vol/ATR ratio mismatch, adjust atr_lower_bound and atr_upper_bound")
     print("   3. If R/R adjustment is too large, use more conservative bounds")
-    print(
-        "   4. If prediction accuracy is poor, consider using ATR as fallback")
+    print("   4. If prediction accuracy is poor, consider using ATR as fallback")
     print("   5. Consider using ensemble: (predicted_vol + ATR) / 2")
 
 

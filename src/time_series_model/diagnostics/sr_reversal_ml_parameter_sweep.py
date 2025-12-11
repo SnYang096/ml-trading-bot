@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 """
 SR Reversal ML Parameter Sweep: Generate parameter grid data for plateau analysis.
 
@@ -25,16 +26,22 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import train_strategy_pipeline as strategy_runner  # noqa: E402
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
-    StrategyFeatureLoader, )  # noqa: E402
+    StrategyFeatureLoader,
+)  # noqa: E402
 from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 from src.time_series_model.strategies.labels.sr_reversal_label import (  # noqa: E402
-    SRSignalConfig, _generate_sr_reversal_signals, _ensure_atr,
+    SRSignalConfig,
+    _generate_sr_reversal_signals,
+    _ensure_atr,
 )
 from src.time_series_model.pipeline.training.label_utils import (  # noqa: E402
-    compute_rr_label, future_volatility_label,
+    compute_rr_label,
+    future_volatility_label,
 )
-from src.diagnostics.sr_reversal_model_comparison import (  # noqa: E402
-    train_ml_model, train_volatility_model, evaluate_ml_model,
+from src.time_series_model.diagnostics.sr_reversal_model_comparison import (  # noqa: E402
+    train_ml_model,
+    train_volatility_model,
+    evaluate_ml_model,
     evaluate_ml_volatility_model,
 )
 
@@ -47,7 +54,8 @@ def parse_list(arg: str, cast_type) -> List:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Sweep ML/ML+Vol parameters to build plateau dataset")
+        description="Sweep ML/ML+Vol parameters to build plateau dataset"
+    )
     parser.add_argument("--strategy-config", required=True, type=str)
     parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--data-path", required=True, type=str)
@@ -55,9 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", type=str, default=None)
     parser.add_argument("--end-date", type=str, default=None)
     parser.add_argument("--test-size", type=float, default=0.15)
-    parser.add_argument("--output-dir",
-                        type=str,
-                        default="results/model_comparison")
+    parser.add_argument("--output-dir", type=str, default="results/model_comparison")
     parser.add_argument(
         "--thresholds",
         type=str,
@@ -170,14 +176,18 @@ def main() -> None:
     )
     if "future_volatility" not in df_features.columns:
         df_features["future_volatility"] = future_volatility_label(
-            df_features["close"], horizon=10)
-    train_vol_labels = df_features.loc[
-        df_train.index,
-        "future_volatility"].fillna(df_features["future_volatility"].median())
+            df_features["close"], horizon=10
+        )
+    train_vol_labels = df_features.loc[df_train.index, "future_volatility"].fillna(
+        df_features["future_volatility"].median()
+    )
 
     # Prepare features
     feature_cols = [
-        col for col in df_train.columns if col not in [
+        col
+        for col in df_train.columns
+        if col
+        not in [
             "open",
             "high",
             "low",
@@ -193,14 +203,15 @@ def main() -> None:
             "date",
         ]
     ]
-    numeric_cols = (df_train[feature_cols].select_dtypes(
-        include=[np.number]).columns.tolist())
+    numeric_cols = (
+        df_train[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
+    )
     X_train = df_train[numeric_cols].fillna(0)
     X_train_valid = X_train[(train_signals != 0) & train_labels.notna()]
-    y_train_valid = train_labels[(train_signals != 0)
-                                 & train_labels.notna()].astype(int)
-    y_vol_train_valid = train_vol_labels[(train_signals != 0)
-                                         & train_labels.notna()]
+    y_train_valid = train_labels[(train_signals != 0) & train_labels.notna()].astype(
+        int
+    )
+    y_vol_train_valid = train_vol_labels[(train_signals != 0) & train_labels.notna()]
 
     # Train models once
     print("🤖 Training ML model for sweep...")
@@ -228,11 +239,13 @@ def main() -> None:
             for tp in take_profits:
                 for max_hold in max_holdings:
                     trial_params = base_params.copy()
-                    trial_params.update({
-                        "stop_loss_r": sl,
-                        "take_profit_r": tp,
-                        "max_holding_bars": max_hold,
-                    })
+                    trial_params.update(
+                        {
+                            "stop_loss_r": sl,
+                            "take_profit_r": tp,
+                            "max_holding_bars": max_hold,
+                        }
+                    )
                     ml_metrics = evaluate_ml_model(
                         df_test_base.copy(),
                         atr_test_base.copy(),
@@ -240,13 +253,15 @@ def main() -> None:
                         trial_params,
                         threshold=threshold,
                     )
-                    ml_metrics.update({
-                        "method": "ml_model",
-                        "threshold": threshold,
-                        "stop_loss_r": sl,
-                        "take_profit_r": tp,
-                        "max_holding_bars": max_hold,
-                    })
+                    ml_metrics.update(
+                        {
+                            "method": "ml_model",
+                            "threshold": threshold,
+                            "stop_loss_r": sl,
+                            "take_profit_r": tp,
+                            "max_holding_bars": max_hold,
+                        }
+                    )
                     results.append(ml_metrics)
 
                     ml_vol_metrics = evaluate_ml_volatility_model(
@@ -257,13 +272,15 @@ def main() -> None:
                         trial_params,
                         threshold=threshold,
                     )
-                    ml_vol_metrics.update({
-                        "method": "ml_volatility",
-                        "threshold": threshold,
-                        "stop_loss_r": sl,
-                        "take_profit_r": tp,
-                        "max_holding_bars": max_hold,
-                    })
+                    ml_vol_metrics.update(
+                        {
+                            "method": "ml_volatility",
+                            "threshold": threshold,
+                            "stop_loss_r": sl,
+                            "take_profit_r": tp,
+                            "max_holding_bars": max_hold,
+                        }
+                    )
                     results.append(ml_vol_metrics)
 
     output_dir = Path(args.output_dir).resolve()

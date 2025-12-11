@@ -843,7 +843,7 @@ def evaluate_ml_volatility_model(
 
     # 使用自适应R/R（基于预测波动率）
     # 导入自适应R/R计算函数
-    from src.diagnostics.compute_adaptive_rr_with_predicted_vol import (
+    from src.time_series_model.diagnostics.compute_adaptive_rr_with_predicted_vol import (
         compute_adaptive_rr_label_with_predicted_vol,
     )
 
@@ -963,7 +963,7 @@ def evaluate_ml_volatility_model(
     effective_atr_upper = atr_upper_bound
 
     # 使用带详细信息的函数来计算标签
-    from src.diagnostics.compute_adaptive_rr_with_predicted_vol import (
+    from src.time_series_model.diagnostics.compute_adaptive_rr_with_predicted_vol import (
         compute_adaptive_rr_label_with_predicted_vol_details,
     )
 

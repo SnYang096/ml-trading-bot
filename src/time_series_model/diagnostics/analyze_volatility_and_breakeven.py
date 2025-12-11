@@ -28,8 +28,9 @@ from src.time_series_model.pipeline.training.label_utils import (
     future_volatility_label,
     compute_rr_label_with_details,
 )
-from src.diagnostics.compute_adaptive_rr_with_predicted_vol import (
-    compute_adaptive_rr_label_with_predicted_vol_details, )
+from src.time_series_model.diagnostics.compute_adaptive_rr_with_predicted_vol import (
+    compute_adaptive_rr_label_with_predicted_vol_details,
+)
 
 try:
     from src.time_series_model.strategies.models.lightgbm_model import LightGBMTrainer
@@ -79,9 +80,8 @@ def analyze_future_volatility_label(df: pd.DataFrame) -> None:
             if len(returns) > 20:
                 test_idx = 100
                 if test_idx + 10 < len(returns):
-                    test_window = returns.iloc[test_idx + 1:test_idx + 11]
-                    manual_vol = np.sqrt(
-                        np.mean(np.square(test_window.dropna())))
+                    test_window = returns.iloc[test_idx + 1 : test_idx + 11]
+                    manual_vol = np.sqrt(np.mean(np.square(test_window.dropna())))
                     print(f"      手动计算示例 (idx={test_idx}):")
                     print(f"        未来10期收益率: {test_window.tolist()}")
                     print(f"        手动计算的波动率: {manual_vol:.6f}")
@@ -146,8 +146,9 @@ def analyze_breakeven_trigger(
     print(f"      总交易数: {n_trades}")
 
     valid_indices = df.index[mask_valid]
-    breakeven_activated = details.loc[valid_indices,
-                                      "breakeven_activated"].fillna(False)
+    breakeven_activated = details.loc[valid_indices, "breakeven_activated"].fillna(
+        False
+    )
     n_breakeven_activated = int(breakeven_activated.sum())
 
     print(
@@ -157,8 +158,7 @@ def analyze_breakeven_trigger(
     if n_breakeven_activated > 0:
         # 分析激活后的结果
         activated_mask = breakeven_activated
-        activated_results = details.loc[valid_indices[activated_mask],
-                                        "final_result"]
+        activated_results = details.loc[valid_indices[activated_mask], "final_result"]
 
         n_breakeven_win = int((activated_results == "breakeven_win").sum())
         n_breakeven_loss = int((activated_results == "breakeven_loss").sum())
@@ -195,8 +195,11 @@ def analyze_breakeven_trigger(
                 long_indices = valid_indices[not_activated_mask][long_signals]
                 entry_prices = df.loc[long_indices, "open"]
                 atr_values = atr_series.loc[long_indices]
-                max_highs = (df.loc[long_indices, "high"].rolling(
-                    window=params.get("max_holding_bars", 50)).max())
+                max_highs = (
+                    df.loc[long_indices, "high"]
+                    .rolling(window=params.get("max_holding_bars", 50))
+                    .max()
+                )
 
                 trigger_levels = entry_prices + stop_loss_r * atr_values
                 reached_trigger = max_highs >= trigger_levels
@@ -213,7 +216,8 @@ def analyze_breakeven_trigger(
         print(f"   ⚠️  没有交易激活保本止损")
         print(f"      可能原因:")
         print(
-            f"        1. 触发条件过于严格 (需要达到 {params.get('stop_loss_r', 1.0)}×ATR)")
+            f"        1. 触发条件过于严格 (需要达到 {params.get('stop_loss_r', 1.0)}×ATR)"
+        )
         print(f"        2. 交易在达到触发点前就止盈/止损了")
         print(f"        3. 最大持仓期太短")
 
@@ -241,8 +245,9 @@ def analyze_volatility_prediction_accuracy(
     future_vol = future_volatility_label(df["close"], horizon=10)
 
     # 对齐数据
-    valid_mask = ~(np.isnan(pred_vol_absolute) | np.isnan(future_vol)
-                   | np.isnan(atr_series.values))
+    valid_mask = ~(
+        np.isnan(pred_vol_absolute) | np.isnan(future_vol) | np.isnan(atr_series.values)
+    )
 
     if valid_mask.sum() == 0:
         print("   ⚠️  没有有效数据用于分析")
@@ -263,8 +268,9 @@ def analyze_volatility_prediction_accuracy(
     mape = np.mean(np.abs(error) / (future_vol_relative_to_atr + 1e-8)) * 100
 
     # 计算相关性
-    correlation = np.corrcoef(pred_vol_relative_to_atr,
-                              future_vol_relative_to_atr)[0, 1]
+    correlation = np.corrcoef(pred_vol_relative_to_atr, future_vol_relative_to_atr)[
+        0, 1
+    ]
 
     print(f"   📊 预测准确性统计 (相对于ATR):")
     print(f"      样本数: {len(pred_vol_relative_to_atr)}")
@@ -296,19 +302,15 @@ def analyze_volatility_prediction_accuracy(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze volatility prediction and breakeven stop-loss")
-    parser.add_argument("--symbol",
-                        type=str,
-                        default="BTCUSDT",
-                        help="Symbol to analyze")
-    parser.add_argument("--timeframe",
-                        type=str,
-                        default="240T",
-                        help="Timeframe")
-    parser.add_argument("--data-path",
-                        type=str,
-                        default="data/parquet_data",
-                        help="Data path")
+        description="Analyze volatility prediction and breakeven stop-loss"
+    )
+    parser.add_argument(
+        "--symbol", type=str, default="BTCUSDT", help="Symbol to analyze"
+    )
+    parser.add_argument("--timeframe", type=str, default="240T", help="Timeframe")
+    parser.add_argument(
+        "--data-path", type=str, default="data/parquet_data", help="Data path"
+    )
     parser.add_argument(
         "--config-dir",
         type=str,

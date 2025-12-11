@@ -40,13 +40,14 @@ def check_feature_fitting_order(script_path: str) -> dict:
             if "split_idx" in line and "int(len(df_features)" in line:
                 split_line = i
                 if fit_before_split and fit_line < split_line:
-                    issues.append({
-                        "type": "feature_fit_before_split",
-                        "severity": "HIGH",
-                        "description":
-                        f"特征计算在划分训练/测试集之前使用了fit=True（第{fit_line+1}行），这会导致数据泄漏",
-                        "line": fit_line + 1,
-                    })
+                    issues.append(
+                        {
+                            "type": "feature_fit_before_split",
+                            "severity": "HIGH",
+                            "description": f"特征计算在划分训练/测试集之前使用了fit=True（第{fit_line+1}行），这会导致数据泄漏",
+                            "line": fit_line + 1,
+                        }
+                    )
                     split_after_fit = True
 
         return {
@@ -55,13 +56,14 @@ def check_feature_fitting_order(script_path: str) -> dict:
         }
     except Exception as e:
         return {
-            "has_issues":
-            True,
-            "issues": [{
-                "type": "error",
-                "severity": "HIGH",
-                "description": f"无法读取脚本: {e}",
-            }],
+            "has_issues": True,
+            "issues": [
+                {
+                    "type": "error",
+                    "severity": "HIGH",
+                    "description": f"无法读取脚本: {e}",
+                }
+            ],
         }
 
 
@@ -81,13 +83,14 @@ def check_volatility_model_training(script_path: str) -> dict:
                 lines = content.split("\n")
                 for i, line in enumerate(lines):
                     if "future_volatility_label" in line and "df_features" in line:
-                        issues.append({
-                            "type": "future_vol_in_training",
-                            "severity": "INFO",
-                            "description":
-                            f"在完整的df_features上计算未来波动率标签（第{i+1}行），这是正确的，因为标签可以使用未来信息",
-                            "line": i + 1,
-                        })
+                        issues.append(
+                            {
+                                "type": "future_vol_in_training",
+                                "severity": "INFO",
+                                "description": f"在完整的df_features上计算未来波动率标签（第{i+1}行），这是正确的，因为标签可以使用未来信息",
+                                "line": i + 1,
+                            }
+                        )
 
         return {
             "has_issues": len(issues) > 0,
@@ -95,13 +98,14 @@ def check_volatility_model_training(script_path: str) -> dict:
         }
     except Exception as e:
         return {
-            "has_issues":
-            True,
-            "issues": [{
-                "type": "error",
-                "severity": "HIGH",
-                "description": f"无法读取脚本: {e}",
-            }],
+            "has_issues": True,
+            "issues": [
+                {
+                    "type": "error",
+                    "severity": "HIGH",
+                    "description": f"无法读取脚本: {e}",
+                }
+            ],
         }
 
 
@@ -123,23 +127,28 @@ def check_test_set_usage(script_path: str) -> dict:
                 in_evaluate_function = True
             if in_evaluate_function and "def " in line and "def evaluate" not in line:
                 in_evaluate_function = False
-            if in_evaluate_function and ("train" in line.lower()
-                                         or "fit" in line.lower()):
+            if in_evaluate_function and (
+                "train" in line.lower() or "fit" in line.lower()
+            ):
                 if "X_test" in line or "df_test" in line:
-                    train_calls_in_evaluate.append({
-                        "line": i + 1,
-                        "content": line.strip(),
-                    })
+                    train_calls_in_evaluate.append(
+                        {
+                            "line": i + 1,
+                            "content": line.strip(),
+                        }
+                    )
 
         if train_calls_in_evaluate:
             for call in train_calls_in_evaluate:
-                issues.append({
-                    "type": "train_on_test",
-                    "severity": "CRITICAL",
-                    "description": f'在评估函数中使用了测试集来训练模型（第{call["line"]}行）',
-                    "line": call["line"],
-                    "content": call["content"],
-                })
+                issues.append(
+                    {
+                        "type": "train_on_test",
+                        "severity": "CRITICAL",
+                        "description": f'在评估函数中使用了测试集来训练模型（第{call["line"]}行）',
+                        "line": call["line"],
+                        "content": call["content"],
+                    }
+                )
 
         return {
             "has_issues": len(issues) > 0,
@@ -147,19 +156,19 @@ def check_test_set_usage(script_path: str) -> dict:
         }
     except Exception as e:
         return {
-            "has_issues":
-            True,
-            "issues": [{
-                "type": "error",
-                "severity": "HIGH",
-                "description": f"无法读取脚本: {e}",
-            }],
+            "has_issues": True,
+            "issues": [
+                {
+                    "type": "error",
+                    "severity": "HIGH",
+                    "description": f"无法读取脚本: {e}",
+                }
+            ],
         }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Check for look-ahead bias issues")
+    parser = argparse.ArgumentParser(description="Check for look-ahead bias issues")
     parser.add_argument(
         "--script",
         type=str,
@@ -211,11 +220,8 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("📊 Summary:")
 
-    all_issues = fit_check["issues"] + vol_check["issues"] + test_check[
-        "issues"]
-    critical_issues = [
-        i for i in all_issues if i.get("severity") == "CRITICAL"
-    ]
+    all_issues = fit_check["issues"] + vol_check["issues"] + test_check["issues"]
+    critical_issues = [i for i in all_issues if i.get("severity") == "CRITICAL"]
     high_issues = [i for i in all_issues if i.get("severity") == "HIGH"]
 
     if critical_issues:

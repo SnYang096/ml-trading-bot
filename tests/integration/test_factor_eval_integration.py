@@ -19,7 +19,7 @@ IMPORT_ERROR_CS = ""
 
 # Try to import functions, skip tests if imports fail
 try:
-    from src.diagnostics.factor_ts_eval import (
+    from src.time_series_model.diagnostics.factor_ts_eval import (
         compute_factor_metrics,
         compute_ic_decay,
     )
@@ -30,7 +30,7 @@ except ImportError as e:
     IMPORT_ERROR_TS = str(e)
 
 try:
-    from src.diagnostics.cross_sectional_eval import (
+    from src.time_series_model.diagnostics.cross_sectional_eval import (
         load_requested_features,
         compute_future_return,
         compute_factor_metrics as cs_compute_factor_metrics,

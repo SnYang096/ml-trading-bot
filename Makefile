@@ -290,7 +290,7 @@ ts-factor-eval:
 	@echo "   IC 衰减分析: $(TS_FACTOR_IC_DECAY_LAGS) bars"
 	@# Convert comma-separated factors to space-separated (support both formats)
 	@FACTORS_SPACE=$$(echo "$(TS_FACTOR_FACTORS)" | tr ',' ' '); \
-	$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.factor_ts_eval \
+	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.factor_ts_eval \
 		--strategy-config /workspace/$(TS_FACTOR_STRATEGY) \
 		--symbol $(TS_FACTOR_SYMBOL) \
 		--factors $$FACTORS_SPACE \
@@ -367,7 +367,7 @@ SR_BASELINE_TICKS_LOOKBACK ?= 60  # VPIN 计算时向前/向后额外加载的�
 
 ts-sr-reversal-rule-baseline:
 	@echo "📊 SR Reversal Rule Baseline: Testing pure rule-based SR+RR strategy (no ML)"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_rule_baseline \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_rule_baseline \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -381,7 +381,7 @@ ts-sr-reversal-rule-baseline:
 # Adjusts max_holding_bars to maintain same holding period as 4h (200 bars ≈ 8.3 days)
 ts-sr-reversal-1h-baseline:
 	@echo "📊 SR Reversal Rule Baseline (1h): Testing pure rule-based SR+RR strategy on 1h timeframe"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_rule_baseline \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_rule_baseline \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -394,7 +394,7 @@ ts-sr-reversal-1h-baseline:
 
 ts-test-vpin-thresholds:
 	@echo "🧪 Testing different VPIN thresholds for SR Reversal"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.test_vpin_thresholds \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.test_vpin_thresholds \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -424,7 +424,7 @@ ts-sr-reversal-rule-optimization:
 	@echo "   Search Type: $(SR_OPT_SEARCH_TYPE)"
 	@echo "   N Trials: $(SR_OPT_N_TRIALS)"
 	@echo "   Output: $(SR_OPT_OUTPUT_DIR)"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_rule_optimization \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_rule_optimization \
 		--strategy-config /workspace/$(SR_OPT_CONFIG) \
 		--symbol $(SR_OPT_SYMBOL) \
 		--data-path /workspace/$(SR_OPT_DATA_PATH) \
@@ -436,7 +436,7 @@ ts-sr-reversal-rule-optimization:
 		--n-trials $(SR_OPT_N_TRIALS)
 	@echo ""
 	@echo "🖼️  Generating rule plateau heatmaps and scatter charts..."
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_rule_plateau_charts \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.generate_rule_plateau_charts \
 		--results-csv /workspace/results/rule_optimization/optimization_results.csv \
 		--report-html /workspace/results/rule_optimization/optimization_report.html
 
@@ -445,14 +445,14 @@ ts-sr-reversal-rule-optimization:
 # Updates: results/rule_optimization/optimization_report.html (injects charts)
 ts-rule-plateau-charts:
 	@echo "🖼️  Generating rule plateau heatmaps and scatter charts"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_rule_plateau_charts \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.generate_rule_plateau_charts \
 		--results-csv /workspace/results/rule_optimization/optimization_results.csv \
 		--report-html /workspace/results/rule_optimization/optimization_report.html
 
 # SR Reversal ML Parameter Sweep: Generate parameter grid data for plateau analysis (sr_reversal strategy only)
 ts-sr-reversal-ml-param-sweep:
 	@echo "🔁 Running ML parameter sweep for SR Reversal plateau analysis"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_ml_parameter_sweep \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_ml_parameter_sweep \
 		--strategy-config /workspace/$(SR_COMP_CONFIG) \
 		--symbol $(SR_COMP_SYMBOL) \
 		--data-path /workspace/$(SR_COMP_DATA_PATH) \
@@ -466,14 +466,14 @@ ts-sr-reversal-ml-param-sweep:
 # Usage: make ts-ml-plateau-charts SR_COMP_TIMEFRAME=240T
 ts-ml-plateau-charts:
 	@echo "🖼️  Generating ML plateau heatmaps and scatter charts for $(SR_COMP_TIMEFRAME)"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_ml_plateau_charts \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.generate_ml_plateau_charts \
 		--results-csv /workspace/results/model_comparison/$(SR_COMP_TIMEFRAME)/ml_param_sweep.csv \
 		--report-html /workspace/results/model_comparison/$(SR_COMP_TIMEFRAME)/comparison_report.html
 
 # Timeframe Comparison Report: Generate comprehensive comparison between 1h and 4h timeframes
 ts-timeframe-comparison:
 	@echo "📊 Generating timeframe comparison report (1h vs 4h)"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.generate_timeframe_comparison_report \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.generate_timeframe_comparison_report \
 		--output-dir /workspace/results/model_comparison \
 		--results-1h /workspace/results/model_comparison/comparison_results.csv \
 		--results-4h /workspace/results/model_comparison_240h/comparison_results.csv
@@ -503,7 +503,7 @@ ts-sr-reversal-model-comparison:
 		echo "⚠️  Docker not running, attempting to start..."; \
 		bash scripts/start_docker.sh || exit 1; \
 	fi
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.sr_reversal_model_comparison \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_model_comparison \
 		--strategy-config /workspace/$(SR_COMP_CONFIG) \
 		--symbol $(SR_COMP_SYMBOL) \
 		--data-path /workspace/$(SR_COMP_DATA_PATH) \
@@ -518,11 +518,11 @@ ts-sr-reversal-model-comparison:
 
 ts-analyze-ml-volatility:
 	@echo "🔍 Analyzing ML+Volatility Model Performance Issues"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.analyze_ml_volatility_model
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.analyze_ml_volatility_model
 
 ts-analyze-dtw-volatility:
 	@echo "🔍 Analyzing DTW Features and Volatility Model"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.analyze_dtw_and_volatility
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.analyze_dtw_and_volatility
 
 TF_CONFIG_PEARSON ?= 0.03
 TF_CONFIG_PVALUE ?= 1e-5
@@ -1279,7 +1279,7 @@ CS_FACTOR_OUTPUT_DIR ?= results/cross_sectional_eval
 
 cs-factor-eval:
 	@echo "📊 Cross-sectional factor evaluation for $(CS_FACTOR_SYMBOLS) ($(START_DATE) → $(END_DATE))"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.diagnostics.cross_sectional_eval \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.cross_sectional_eval \
 		--features-config $(CS_FACTOR_FEATURES_CONFIG) \
 		--symbols $(CS_FACTOR_SYMBOLS) \
 		--data-path /workspace/$(DATA_DIR) \

@@ -23,29 +23,25 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import train_strategy_pipeline as strategy_runner  # noqa: E402
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
-    StrategyFeatureLoader, )  # noqa: E402
+    StrategyFeatureLoader,
+)  # noqa: E402
 from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate individual factors via the strategy pipeline")
-    parser.add_argument("--strategy-config",
-                        required=True,
-                        help="Path to strategy dir")
+        description="Evaluate individual factors via the strategy pipeline"
+    )
+    parser.add_argument("--strategy-config", required=True, help="Path to strategy dir")
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--factors",
-                        nargs="+",
-                        required=True,
-                        help="Factor columns")
+    parser.add_argument("--factors", nargs="+", required=True, help="Factor columns")
     parser.add_argument("--data-path", default="data/parquet_data")
     parser.add_argument("--timeframe", default="15T")
     parser.add_argument("--start-date", default=None)
     parser.add_argument("--end-date", default=None)
-    parser.add_argument("--quantile",
-                        type=float,
-                        default=0.2,
-                        help="Top/Bottom quantile")
+    parser.add_argument(
+        "--quantile", type=float, default=0.2, help="Top/Bottom quantile"
+    )
     parser.add_argument(
         "--feature-mode",
         choices=["strategy", "only", "append"],
@@ -92,20 +88,16 @@ def _compute_requested_features(
     )
 
     if missing_features:
-        print(
-            f"⚠️  Warning: Some requested factors were not found: {missing_features}"
-        )
+        print(f"⚠️  Warning: Some requested factors were not found: {missing_features}")
 
         # Check each missing feature's output_columns configuration
         features_config = feature_loader.feature_deps.get("features", {})
         for feature_name in missing_features:
             if feature_name in features_config:
                 feature_info = features_config[feature_name]
-                expected_outputs = feature_info.get("output_columns",
-                                                    [feature_name])
+                expected_outputs = feature_info.get("output_columns", [feature_name])
                 found_outputs = [
-                    col for col in expected_outputs
-                    if col in df_features.columns
+                    col for col in expected_outputs if col in df_features.columns
                 ]
 
                 if found_outputs:
@@ -129,9 +121,7 @@ def _compute_requested_features(
                             if c not in df_raw.columns
                         ]
                         if missing_req:
-                            print(
-                                f"      ⚠️  Missing required columns: {missing_req}"
-                            )
+                            print(f"      ⚠️  Missing required columns: {missing_req}")
                         else:
                             print(f"      ✅ All required columns present")
                     # Check if compute function exists
@@ -166,8 +156,7 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
     if hasattr(strategy_cfg.features, "requested_features"):
         strategy_requested = strategy_cfg.features.requested_features or []
     elif isinstance(strategy_cfg.features, dict):
-        strategy_requested = strategy_cfg.features.get("requested_features",
-                                                       [])
+        strategy_requested = strategy_cfg.features.get("requested_features", [])
 
     # Check if requested factors are in strategy config
     # MACD outputs multiple columns: macd, macd_signal, macd_histogram
@@ -184,13 +173,12 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
                 factor_found = True
             else:
                 # Check MACD variants (macd outputs: macd, macd_signal, macd_histogram)
-                macd_variants = [
-                    "macd", "macd_signal", "macd_histogram", "macd_hist"
-                ]
+                macd_variants = ["macd", "macd_signal", "macd_histogram", "macd_hist"]
                 if factor in macd_variants:
                     # If user requests "macd", check if any MACD column is in strategy
-                    if any(variant in strategy_requested_set
-                           for variant in macd_variants):
+                    if any(
+                        variant in strategy_requested_set for variant in macd_variants
+                    ):
                         factor_found = True
                     # Or if strategy has "macd" as a feature name (which generates all MACD columns)
                     if "macd" in strategy_requested_set:
@@ -216,8 +204,7 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
         )
     elif feature_mode == "only":
         if not extra_factors:
-            raise ValueError(
-                "--feature-mode=only requires --factors to be specified")
+            raise ValueError("--feature-mode=only requires --factors to be specified")
         df_features = _compute_requested_features(
             df_raw,
             feature_loader,
@@ -226,8 +213,7 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
         )
     elif feature_mode == "append":
         if not extra_factors:
-            raise ValueError(
-                "--feature-mode=append requires --factors to be specified")
+            raise ValueError("--feature-mode=append requires --factors to be specified")
         base_features = strategy_runner.run_feature_pipeline(
             df_raw,
             feature_loader=feature_loader,
@@ -256,11 +242,12 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
         for feature_name in extra_factors:
             if feature_name in features_config:
                 feature_info = features_config[feature_name]
-                output_cols = feature_info.get("output_columns",
-                                               [feature_name])
+                output_cols = feature_info.get("output_columns", [feature_name])
                 for output_col in output_cols:
-                    if (output_col in requested_df.columns
-                            and output_col not in base_features.columns):
+                    if (
+                        output_col in requested_df.columns
+                        and output_col not in base_features.columns
+                    ):
                         base_features[output_col] = requested_df[output_col]
 
         df_features = base_features
@@ -273,10 +260,12 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
     )
     target_col = strategy_cfg.labels.target_column
     df_features[target_col] = label_func(
-        df_features.copy(), **strategy_cfg.labels.generator.params)
+        df_features.copy(), **strategy_cfg.labels.generator.params
+    )
 
-    df_filtered = strategy_runner.apply_filters(df_features,
-                                                strategy_cfg.labels.filters)
+    df_filtered = strategy_runner.apply_filters(
+        df_features, strategy_cfg.labels.filters
+    )
     df_filtered = strategy_runner.apply_post_label_filters(
         df_filtered,
         strategy_cfg.labels.post_label_filters,
@@ -285,10 +274,9 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
     return df_filtered
 
 
-def compute_ic_series(df: pd.DataFrame,
-                      factor: str,
-                      target_col: str,
-                      window: int = 60) -> pd.Series:
+def compute_ic_series(
+    df: pd.DataFrame, factor: str, target_col: str, window: int = 60
+) -> pd.Series:
     """Compute rolling IC series."""
     valid = df[[factor, target_col]].dropna()
     if len(valid) < window:
@@ -296,7 +284,7 @@ def compute_ic_series(df: pd.DataFrame,
 
     ic_series = []
     for i in range(window, len(valid) + 1):
-        window_data = valid.iloc[i - window:i]
+        window_data = valid.iloc[i - window : i]
         factor_ranks = window_data[factor].rank(pct=True)
         target_ranks = window_data[target_col].rank(pct=True)
         ic = spearmanr(factor_ranks, target_ranks).correlation
@@ -305,7 +293,7 @@ def compute_ic_series(df: pd.DataFrame,
         else:
             ic_series.append(0.0)
 
-    return pd.Series(ic_series, index=valid.index[window - 1:])
+    return pd.Series(ic_series, index=valid.index[window - 1 :])
 
 
 def compute_ic_decay(
@@ -335,10 +323,12 @@ def compute_ic_decay(
         pearson_ic = np.corrcoef(valid[factor], valid[lag_target.name])[0, 1]
 
         # Keep NaN as NaN, don't convert to 0.0, so Best Lag calculation can skip invalid values
-        decay_metrics[f"ic_lag_{lag}"] = (float(rank_ic)
-                                          if not np.isnan(rank_ic) else np.nan)
+        decay_metrics[f"ic_lag_{lag}"] = (
+            float(rank_ic) if not np.isnan(rank_ic) else np.nan
+        )
         decay_metrics[f"ic_lag_{lag}_pearson"] = (
-            float(pearson_ic) if not np.isnan(pearson_ic) else np.nan)
+            float(pearson_ic) if not np.isnan(pearson_ic) else np.nan
+        )
 
     return decay_metrics
 
@@ -357,19 +347,24 @@ def compute_factor_metrics(
     # Check if factor exists
     if factor not in df.columns:
         metrics["error"] = "factor_missing"
-        available = sorted([
-            c for c in df.columns if c not in [
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "timestamp",
-                "_symbol",
-                "signal",
-                "future_return",
+        available = sorted(
+            [
+                c
+                for c in df.columns
+                if c
+                not in [
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "timestamp",
+                    "_symbol",
+                    "signal",
+                    "future_return",
+                ]
             ]
-        ])[:30]
+        )[:30]
         metrics["available_columns"] = available
         print(f"   ❌ Factor '{factor}' not found in DataFrame columns")
         print(f"      Available feature columns: {available[:15]}...")
@@ -392,8 +387,9 @@ def compute_factor_metrics(
     if len(ic_series) > 0:
         metrics["ic_mean"] = float(ic_series.mean())
         metrics["ic_std"] = float(ic_series.std())
-        metrics["ic_ir"] = (metrics["ic_mean"] / metrics["ic_std"]
-                            if metrics["ic_std"] > 0 else 0.0)
+        metrics["ic_ir"] = (
+            metrics["ic_mean"] / metrics["ic_std"] if metrics["ic_std"] > 0 else 0.0
+        )
         metrics["ic_positive_ratio"] = float((ic_series > 0).mean())
         ic_series_df = pd.DataFrame({"ic": ic_series})
     else:
@@ -417,10 +413,8 @@ def compute_factor_metrics(
     long_returns = valid.loc[long_mask, target_col]
     short_returns = valid.loc[short_mask, target_col]
 
-    win_rate_long = float(
-        (long_returns > 0).mean()) if len(long_returns) else 0.0
-    win_rate_short = float(
-        (short_returns < 0).mean()) if len(short_returns) else 0.0
+    win_rate_long = float((long_returns > 0).mean()) if len(long_returns) else 0.0
+    win_rate_short = float((short_returns < 0).mean()) if len(short_returns) else 0.0
 
     # Simple long-short backtest
     position = pd.Series(0.0, index=valid.index)
@@ -438,32 +432,36 @@ def compute_factor_metrics(
         in_dd = dd_series > 0
         if in_dd.any():
             dd_periods = (in_dd != in_dd.shift()).cumsum()
-            max_dd_duration = (int(dd_periods.value_counts().max())
-                               if len(dd_periods) > 0 else 0)
+            max_dd_duration = (
+                int(dd_periods.value_counts().max()) if len(dd_periods) > 0 else 0
+            )
 
     # Risk-adjusted returns
     strategy_ret_clean = strategy_ret[strategy_ret != 0]
     if len(strategy_ret_clean) > 0:
         ret_std = float(strategy_ret_clean.std())
         ret_mean = float(strategy_ret_clean.mean())
-        sharpe_ratio = (ret_mean / ret_std *
-                        np.sqrt(252)) if ret_std > 1e-8 else 0.0
+        sharpe_ratio = (ret_mean / ret_std * np.sqrt(252)) if ret_std > 1e-8 else 0.0
         calmar_ratio = (total_return / abs(max_dd)) if max_dd < -1e-8 else 0.0
         # Sortino ratio (downside deviation)
         downside_returns = strategy_ret_clean[strategy_ret_clean < 0]
-        downside_std = (float(downside_returns.std())
-                        if len(downside_returns) > 0 else 0.0)
-        sortino_ratio = ((ret_mean / downside_std *
-                          np.sqrt(252)) if downside_std > 1e-8 else 0.0)
+        downside_std = (
+            float(downside_returns.std()) if len(downside_returns) > 0 else 0.0
+        )
+        sortino_ratio = (
+            (ret_mean / downside_std * np.sqrt(252)) if downside_std > 1e-8 else 0.0
+        )
     else:
         sharpe_ratio = 0.0
         calmar_ratio = 0.0
         sortino_ratio = 0.0
 
     # Quantile spread (long-short return difference)
-    quantile_spread = (float(long_returns.mean() -
-                             short_returns.mean()) if len(long_returns) > 0
-                       and len(short_returns) > 0 else 0.0)
+    quantile_spread = (
+        float(long_returns.mean() - short_returns.mean())
+        if len(long_returns) > 0 and len(short_returns) > 0
+        else 0.0
+    )
 
     # Statistical significance of IC
     if len(ic_series) > 1:
@@ -494,10 +492,12 @@ def compute_factor_metrics(
     # Quantile return statistics
     if len(long_returns) > 0:
         metrics["long_return_std"] = float(long_returns.std())
-        metrics["long_return_skew"] = (float(skew(long_returns))
-                                       if len(long_returns) > 2 else 0.0)
-        metrics["long_return_kurtosis"] = (float(kurtosis(long_returns))
-                                           if len(long_returns) > 3 else 0.0)
+        metrics["long_return_skew"] = (
+            float(skew(long_returns)) if len(long_returns) > 2 else 0.0
+        )
+        metrics["long_return_kurtosis"] = (
+            float(kurtosis(long_returns)) if len(long_returns) > 3 else 0.0
+        )
     else:
         metrics["long_return_std"] = 0.0
         metrics["long_return_skew"] = 0.0
@@ -505,10 +505,12 @@ def compute_factor_metrics(
 
     if len(short_returns) > 0:
         metrics["short_return_std"] = float(short_returns.std())
-        metrics["short_return_skew"] = (float(skew(short_returns))
-                                        if len(short_returns) > 2 else 0.0)
-        metrics["short_return_kurtosis"] = (float(kurtosis(short_returns))
-                                            if len(short_returns) > 3 else 0.0)
+        metrics["short_return_skew"] = (
+            float(skew(short_returns)) if len(short_returns) > 2 else 0.0
+        )
+        metrics["short_return_kurtosis"] = (
+            float(kurtosis(short_returns)) if len(short_returns) > 3 else 0.0
+        )
     else:
         metrics["short_return_std"] = 0.0
         metrics["short_return_skew"] = 0.0
@@ -520,67 +522,47 @@ def compute_factor_metrics(
     factor_kurt = float(kurtosis(valid[factor])) if len(valid) > 3 else 0.0
 
     # Factor autocorrelation (stability measure)
-    factor_autocorr = float(valid[factor].autocorr(
-        lag=1)) if len(valid) > 1 else 0.0
+    factor_autocorr = float(valid[factor].autocorr(lag=1)) if len(valid) > 1 else 0.0
 
     # Turnover calculation (position change rate)
-    position_changes = ((position.diff().abs().sum() /
-                         len(position)) if len(position) > 1 else 0.0)
+    position_changes = (
+        (position.diff().abs().sum() / len(position)) if len(position) > 1 else 0.0
+    )
     turnover = float(position_changes)
 
     # Factor-target correlation distribution stats
     target_stats = valid[target_col].describe()
 
-    metrics.update({
-        "n_samples":
-        int(len(valid)),
-        "rank_ic":
-        float(rank_ic) if not np.isnan(rank_ic) else 0.0,
-        "pearson":
-        float(pearson) if not np.isnan(pearson) else 0.0,
-        "win_rate_long":
-        win_rate_long,
-        "win_rate_short":
-        win_rate_short,
-        "avg_return_long":
-        float(long_returns.mean()) if len(long_returns) else 0.0,
-        "avg_return_short":
-        (float(short_returns.mean()) if len(short_returns) else 0.0),
-        "quantile_spread":
-        quantile_spread,
-        "total_return":
-        total_return,
-        "max_drawdown":
-        max_dd,
-        "max_drawdown_duration":
-        max_dd_duration,
-        "sharpe_ratio":
-        sharpe_ratio,
-        "calmar_ratio":
-        calmar_ratio,
-        "sortino_ratio":
-        sortino_ratio,
-        "turnover":
-        turnover,
-        "factor_mean":
-        float(factor_stats["mean"]),
-        "factor_std":
-        float(factor_stats["std"]),
-        "factor_min":
-        float(factor_stats["min"]),
-        "factor_max":
-        float(factor_stats["max"]),
-        "factor_skewness":
-        factor_skewness,
-        "factor_kurtosis":
-        factor_kurt,
-        "factor_autocorr":
-        factor_autocorr,
-        "target_mean":
-        float(target_stats["mean"]),
-        "target_std":
-        float(target_stats["std"]),
-    })
+    metrics.update(
+        {
+            "n_samples": int(len(valid)),
+            "rank_ic": float(rank_ic) if not np.isnan(rank_ic) else 0.0,
+            "pearson": float(pearson) if not np.isnan(pearson) else 0.0,
+            "win_rate_long": win_rate_long,
+            "win_rate_short": win_rate_short,
+            "avg_return_long": float(long_returns.mean()) if len(long_returns) else 0.0,
+            "avg_return_short": (
+                float(short_returns.mean()) if len(short_returns) else 0.0
+            ),
+            "quantile_spread": quantile_spread,
+            "total_return": total_return,
+            "max_drawdown": max_dd,
+            "max_drawdown_duration": max_dd_duration,
+            "sharpe_ratio": sharpe_ratio,
+            "calmar_ratio": calmar_ratio,
+            "sortino_ratio": sortino_ratio,
+            "turnover": turnover,
+            "factor_mean": float(factor_stats["mean"]),
+            "factor_std": float(factor_stats["std"]),
+            "factor_min": float(factor_stats["min"]),
+            "factor_max": float(factor_stats["max"]),
+            "factor_skewness": factor_skewness,
+            "factor_kurtosis": factor_kurt,
+            "factor_autocorr": factor_autocorr,
+            "target_mean": float(target_stats["mean"]),
+            "target_std": float(target_stats["std"]),
+        }
+    )
     return metrics, ic_series_df
 
 
@@ -599,12 +581,14 @@ def generate_html_report(
     summary_rows = []
     for factor, metrics in results.items():
         if "error" in metrics:
-            summary_rows.append(f"""
+            summary_rows.append(
+                f"""
                 <tr>
                     <td><strong>{factor}</strong></td>
                     <td colspan="12" style="color: red;">Error: {metrics['error']}</td>
                 </tr>
-                """)
+                """
+            )
             continue
 
         # Find best lag (highest IC value, not absolute value)
@@ -648,24 +632,24 @@ def generate_html_report(
 
         # Color coding for key metrics
         ic_ir = metrics.get("ic_ir", 0.0)
-        ic_ir_class = "good" if ic_ir > 0.5 else (
-            "warning" if ic_ir > 0 else "bad")
+        ic_ir_class = "good" if ic_ir > 0.5 else ("warning" if ic_ir > 0 else "bad")
 
         sharpe = metrics.get("sharpe_ratio", 0.0)
-        sharpe_class = "good" if sharpe > 1.0 else (
-            "warning" if sharpe > 0 else "bad")
+        sharpe_class = "good" if sharpe > 1.0 else ("warning" if sharpe > 0 else "bad")
 
         quantile_spread = metrics.get("quantile_spread", 0.0)
         spread_class = "good" if quantile_spread > 0 else "bad"
 
         best_lag_display = f"{best_lag}" if best_lag is not None else "N/A"
         best_ic_display = f"{best_ic:.4f}" if best_ic is not None else "N/A"
-        best_ic_class = ("good" if
-                         (best_ic is not None and best_ic > 0.05) else
-                         ("warning" if
-                          (best_ic is not None and best_ic > 0) else "bad"))
+        best_ic_class = (
+            "good"
+            if (best_ic is not None and best_ic > 0.05)
+            else ("warning" if (best_ic is not None and best_ic > 0) else "bad")
+        )
 
-        summary_rows.append(f"""
+        summary_rows.append(
+            f"""
             <tr>
                 <td><strong>{factor}</strong></td>
                 <td>{metrics.get('n_samples', 0)}</td>
@@ -695,7 +679,8 @@ def generate_html_report(
                 <td>{metrics.get('turnover', 0.0):.4f}</td>
                 <td>{metrics.get('factor_autocorr', 0.0):.4f}</td>
             </tr>
-            """)
+            """
+        )
 
     # Create detailed metrics section with IC decay charts for each factor
     detailed_sections = []
@@ -1136,9 +1121,7 @@ def main() -> None:
     target_col = strategy_cfg.labels.target_column
 
     # Parse IC decay lags
-    ic_decay_lags = [
-        int(x.strip()) for x in args.ic_decay_lags.split(",") if x.strip()
-    ]
+    ic_decay_lags = [int(x.strip()) for x in args.ic_decay_lags.split(",") if x.strip()]
 
     results = {}
     ic_series_data = {}
@@ -1146,9 +1129,9 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for factor in args.factors:
-        metrics, ic_series_df = compute_factor_metrics(df, factor, target_col,
-                                                       args.quantile,
-                                                       ic_decay_lags)
+        metrics, ic_series_df = compute_factor_metrics(
+            df, factor, target_col, args.quantile, ic_decay_lags
+        )
         results[factor] = metrics
         if not ic_series_df.empty:
             ic_series_data[factor] = ic_series_df
