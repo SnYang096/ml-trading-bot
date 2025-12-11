@@ -332,6 +332,75 @@ class TestTradeClusteringMonthlyStreaming:
             f"   生成 {len([c for c in result_memory.columns if 'trade_cluster' in c])} 个特征列"
         )
 
+    def test_persist_monthly_and_batch_merge(
+        self, sample_ohlcv, sample_ticks_multiple_months
+    ):
+        """测试按月落盘+分批合并的内存友好模式"""
+        print("\n测试按月落盘 + 分批合并模式...")
+        combined_ticks, monthly_ticks_list = sample_ticks_multiple_months
+
+        # 基准：纯内存模式
+        baseline = extract_trade_clustering_features(
+            sample_ohlcv,
+            ticks=combined_ticks,
+            window_size=100,
+            freq="1H",
+            merge_batch_size=4,
+            persist_monthly=False,
+        )
+
+        # 临时目录做落盘，并用 ticks_loader_json 走分月读取逻辑
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tick_files = []
+            for i, month_df in enumerate(monthly_ticks_list):
+                month_str = (month_df.index.min()).strftime("%Y-%m")
+                path = Path(tmpdir) / f"BTCUSDT_{month_str}.parquet"
+                # 保存 timestamp 列以及 side/price/volume，满足 load_tick_data 需求
+                month_df_with_ts = month_df.reset_index().rename(
+                    columns={"index": "timestamp"}
+                )
+                month_df_with_ts.to_parquet(path)
+                tick_files.append(str(path))
+
+            loader_params = {
+                "symbol": "BTCUSDT",
+                "start_ts": combined_ticks.index.min().isoformat(),
+                "end_ts": combined_ticks.index.max().isoformat(),
+                "lookback_minutes": 0,  # 测试中关闭 lookback，避免跨月额外读取
+                "tick_files": tick_files,
+            }
+            import json
+
+            ticks_loader_json = json.dumps(loader_params)
+
+            result_persist = extract_trade_clustering_features(
+                sample_ohlcv,
+                ticks_loader_json=ticks_loader_json,
+                window_size=100,
+                freq="1H",
+                merge_batch_size=2,  # 强制更小批次，触发多次落盘/读回
+                monthly_cache_dir=tmpdir,
+                persist_monthly=True,
+            )
+
+            # 检查是否生成 parquet
+            parquet_files = list(Path(tmpdir).glob("trade_cluster_*.parquet"))
+            assert len(parquet_files) > 0, "应生成按月 parquet 缓存文件"
+
+        # 结果应与基准一致
+        pd.testing.assert_index_equal(baseline.index, result_persist.index)
+        pd.testing.assert_series_equal(
+            baseline["trade_cluster_imbalance_ratio"],
+            result_persist["trade_cluster_imbalance_ratio"],
+            check_exact=False,
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        # 其他列数量一致
+        assert len([c for c in baseline.columns if "trade_cluster" in c]) == len(
+            [c for c in result_persist.columns if "trade_cluster" in c]
+        )
+
     def test_empty_data(self):
         """测试空数据的情况"""
         print("\n测试空数据...")

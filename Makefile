@@ -83,6 +83,7 @@ DOCKER_RUN_NO_TTY := docker run --rm \
 	-e NVIDIA_VISIBLE_DEVICES=all \
 	-e CUDA_VISIBLE_DEVICES=0 \
 	--user $(HOST_UID):$(HOST_GID) \
+	--memory=32g --memory-swap=32g \
 	-e PYTHONPATH=/workspace/src \
 	-e PYTHONUNBUFFERED=1 \
 	-v $(PWD):/workspace \
@@ -800,6 +801,8 @@ SR_SR_OPTUNA_JOINT_TRIALS ?= 50
 SR_SR_OPTUNA_OBJECTIVE ?= sharpe
 SR_SR_OPTUNA_MIN_TRADES ?= 10
 SR_SR_OPTUNA_MIN_WIN_RATE ?= 0.0
+TRAIN_START_DATE ?= 2025-01-01
+TRAIN_END_DATE ?= 2025-07-31
 
 ts-sr-reversal:
 	@echo "🔄 Training SR Reversal Model..."

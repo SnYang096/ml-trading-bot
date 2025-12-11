@@ -1085,6 +1085,8 @@ def extract_trade_clustering_features(
     window_size: int = 100,
     freq: Optional[str] = None,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    merge_batch_size: int = 4,
+    persist_monthly: bool = True,
 ) -> pd.DataFrame:
     """
     提取交易聚集性（Trade Clustering）特征并对齐到 K 线
@@ -1154,7 +1156,9 @@ def extract_trade_clustering_features(
         
         # 流式处理：按月计算 Trade Clustering，避免一次性加载所有数据
         # 维护跨月连续性状态，确保 Trade Clustering 计算的正确性
-        cluster_results = []
+        cluster_results: list[pd.DataFrame] = []
+        cluster_paths: list[Path] = []  # 按月落盘以降低内存
+        cluster_df_accum: Optional[pd.DataFrame] = None
         state = None  # 跨月连续性状态
         total_files = len(tick_files)
         cached_count = 0
@@ -1250,14 +1254,74 @@ def extract_trade_clustering_features(
             
             # 移动到下一个月
             current_month = current_month + pd.DateOffset(months=1)
+            
+            # 批次合并，降低一次性 concat 的内存峰值
+            if merge_batch_size and len(cluster_results) >= merge_batch_size:
+                print(f"      📊 Merging a batch of {len(cluster_results)} months of trade clustering results...")
+                if persist_monthly and cache_dir:
+                    # 将本批次先落盘为 parquet，再清空内存
+                    for df_month in cluster_results:
+                        month_start_ts = df_month.index.min()
+                        month_str = month_start_ts.strftime("%Y-%m") if pd.notna(month_start_ts) else "unknown"
+                        file_path = cache_dir / f"trade_cluster_{month_str}_ws{window_size}.parquet"
+                        df_month.to_parquet(file_path)
+                        cluster_paths.append(file_path)
+                    cluster_results.clear()
+                else:
+                    if cluster_df_accum is None:
+                        cluster_df_accum = pd.concat(cluster_results, axis=0).sort_index()
+                    else:
+                        cluster_df_accum = (
+                            pd.concat([cluster_df_accum] + cluster_results, axis=0)
+                            .sort_index()
+                        )
+                    cluster_results.clear()
         
-        if not cluster_results:
-            raise ValueError("No trade clustering results computed.")
-        
-        # 合并所有月份的结果（只合并特征结果，不合并原始 tick 数据）
-        print(f"      📊 Merging {len(cluster_results)} months of trade clustering results...")
-        cluster_df = pd.concat(cluster_results, axis=0).sort_index()
-        del cluster_results  # 释放内存
+        # 合并剩余的批次（只合并特征结果，不合并原始 tick 数据）
+        if cluster_results:
+            print(f"      📊 Merging remaining {len(cluster_results)} months of trade clustering results...")
+            if persist_monthly and cache_dir:
+                for df_month in cluster_results:
+                    month_start_ts = df_month.index.min()
+                    month_str = month_start_ts.strftime("%Y-%m") if pd.notna(month_start_ts) else "unknown"
+                    file_path = cache_dir / f"trade_cluster_{month_str}_ws{window_size}.parquet"
+                    df_month.to_parquet(file_path)
+                    cluster_paths.append(file_path)
+                cluster_results.clear()
+            else:
+                if cluster_df_accum is None:
+                    cluster_df_accum = pd.concat(cluster_results, axis=0).sort_index()
+                else:
+                    cluster_df_accum = (
+                        pd.concat([cluster_df_accum] + cluster_results, axis=0)
+                        .sort_index()
+                    )
+                cluster_results.clear()
+
+        # 如已落盘，则分批读回并拼接，控制内存峰值
+        if persist_monthly and cluster_paths:
+            print(f"      📊 Loading and merging {len(cluster_paths)} persisted months of trade clustering results...")
+            cluster_paths = sorted(cluster_paths)
+            step = merge_batch_size or 1
+            for i in range(0, len(cluster_paths), step):
+                batch_files = cluster_paths[i : i + step]
+                batch_dfs = [pd.read_parquet(p) for p in batch_files]
+                batch_df = pd.concat(batch_dfs, axis=0).sort_index()
+                if cluster_df_accum is None:
+                    cluster_df_accum = batch_df
+                else:
+                    cluster_df_accum = (
+                        pd.concat([cluster_df_accum, batch_df], axis=0)
+                        .sort_index()
+                    )
+                del batch_dfs, batch_df
+
+        # 如果既无在内存的累积结果，又没有任何落盘文件，记录警告并返回原 df
+        if cluster_df_accum is None and not cluster_paths:
+            print("   ⚠️  Trade clustering produced no results; skipping feature merge.")
+            return df
+
+        cluster_df = cluster_df_accum if cluster_df_accum is not None else pd.DataFrame()
         
         if cache_dir and cached_count > 0:
             print(

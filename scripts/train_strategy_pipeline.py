@@ -764,6 +764,22 @@ def train_strategy(
         feature_cols,
     )
 
+    def _debug_inf(df: pd.DataFrame, name: str):
+        if not feature_cols:
+            return
+        inf_mask = ~np.isfinite(df[feature_cols])
+        if inf_mask.any().any():
+            # 统计每列 inf/-inf 数量
+            col_counts = inf_mask.sum().sort_values(ascending=False)
+            top_cols = col_counts[col_counts > 0].head(10)
+            print(
+                f"   ⚠️  {name}: found inf/-inf in {len(top_cols)} columns "
+                f"(top): {top_cols.to_dict()}"
+            )
+
+    _debug_inf(df_train_filtered, "Train before drop_inf_rows")
+    _debug_inf(df_test_filtered, "Test before drop_inf_rows")
+
     df_train_filtered = drop_inf_rows(df_train_filtered, feature_cols)
     df_test_filtered = drop_inf_rows(df_test_filtered, feature_cols)
 

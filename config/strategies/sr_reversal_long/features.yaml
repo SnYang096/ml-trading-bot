@@ -17,8 +17,9 @@ feature_pipeline:
     # Hilbert 特征（CVD 相位领先 + 背离信号）
     - hilbert_phase
     - hilbert_price_env
-    - hilbert_cvd_env
-    - hilbert_cvd_price_env_ratio
+    # 临时移除存在 inf 的 Hilbert CVD 环境特征（排查用）
+    # - hilbert_cvd_env
+    # - hilbert_cvd_price_env_ratio
     # Hilbert 高级功能：成交量融合（识别背离）+ 分位数标准化
     - hilbert_volume_env
     - hilbert_env_price_vol_ratio
@@ -42,9 +43,10 @@ feature_pipeline:
     # 推荐组合：vpin + vpin_max（峰值信号）+ vpin_last（最新情绪）+ vpin_count（流动性）
     - vpin_features
     # GARCH 特征（波动聚集性和杠杆效应）- 波动率预测关键特征
-    - garch_features
+    # 临时移除存在 inf 的波动率特征（排查用）
+    # - garch_features
     # 扩展波动率特征（历史波动率、滞后特征、趋势特征）- 提高波动率预测准确性
-    - extended_volatility_features
+    # - extended_volatility_features
     # 频谱特征（精确选择）- 作为"环境传感器"，动态激活反转信号
     # 核心逻辑：频谱 ≠ 直接信号，而是"市场可交易性诊断器"
     # 
@@ -61,7 +63,8 @@ feature_pipeline:
     # 只包含反转形态及其反向模板，用于对比学习
     - dtw_features_reversal
     # EVT 极值理论特征（尾部风险预警）- 用于风险管理/仓位控制，不用于波动率预测
-    - evt_features
+    # 临时移除 inf 的 EVT 特征（排查用）
+    # - evt_features
     # 交互特征（状态 × 动量）
     - vpin_x_wick_upper        # VPIN × 上影线（SR 反转专用）
     - vpin_x_wick_lower        # VPIN × 下影线（SR 反转专用）
