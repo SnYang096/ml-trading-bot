@@ -36,6 +36,9 @@ from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_pa
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.strategy_config import StrategyConfigLoader
 from src.time_series_model.pipeline.training.label_utils import simulate_rr_exits
+from src.time_series_model.strategies.backtesting.vectorbt_backtest import (
+    VectorBTBacktest,
+)
 
 BASE_DATA_COLUMNS = {
     "timestamp",
@@ -610,6 +613,24 @@ def run_vectorbt_backtest(
     return result
 
 
+def run_backtest_with_strategy(
+    df: pd.DataFrame,
+    preds: np.ndarray,
+    strategy_config,
+    task_type: str,
+) -> Optional[Dict[str, float]]:
+    """
+    根据 backtest 配置动态选择回测类；若未指定 class 则回退到 VectorBTBacktest。
+    """
+    backtest_cfg = strategy_config.backtest
+    params = backtest_cfg.params or {}
+    params["enabled"] = backtest_cfg.enabled
+
+    # 统一使用 VectorBTBacktest（训练阶段不切换到策略特定类）
+    backtester = VectorBTBacktest()
+    return backtester.run(df=df, predictions=preds, task_type=task_type, **params)
+
+
 def train_strategy(
     config_dir: Path,
     args: argparse.Namespace,
@@ -802,10 +823,10 @@ def train_strategy(
         "evaluation": evaluation_results,
     }
 
-    backtest_results = run_vectorbt_backtest(
+    backtest_results = run_backtest_with_strategy(
         df_test_filtered,
         preds,
-        strategy_config.backtest,
+        strategy_config,
         task_type=task_type,
     )
     if backtest_results:

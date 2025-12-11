@@ -2,11 +2,22 @@ backtest:
   enabled: true
   params:
     price_col: close
-    long_entry_threshold: 0.65
-    long_exit_threshold: 0.45
-    short_entry_threshold: 0.35
-    short_exit_threshold: 0.55
+    freq: "4H"
+    # 趋势类：用概率阈值控制进出，不强制 RR 退出
+    use_signal_direction: false
+    use_rr_exit: false
+    long_entry_threshold: 0.6
+    long_exit_threshold: 0.4
+    short_entry_threshold: 0.4
+    short_exit_threshold: 0.6
     initial_cash: 10000
     fee: 0.0004
     slippage: 0.0001
+    # 可选：ATR 风险控制的动态仓位
+    position_sizing:
+      type: atr_risk
+      risk_pct: 0.01
+      atr_col: atr
+      atr_window: 14
+      max_size_cap: 10
 

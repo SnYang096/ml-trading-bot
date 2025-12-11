@@ -1,79 +1,74 @@
 """
-SR 反转策略专属回测
+压缩区突破策略专属回测
 
 回测逻辑：
-- 方向：由 SR 类型决定（支撑区 → 做多，阻力区 → 做空）
-- 入场点：价格触及 SR 区边界
-- 止损：入场价 ± 1×ATR（反向）
-- 止盈：入场价 ± 2×ATR（同向）
-- 仓位：position_size ∝ P(success)
+- 方向：直接由标签符号决定（+1 → 多，-1 → 空）
+- 入场点：突破确认 K 线收盘后
+- 止损：区间另一侧边界 或 突破点 ±1×ATR
+- 止盈：初始 TP = 区间高度（Measured Move）
+- 仓位：position_size = base_size if label ≠ 0 else 0
 - 加仓：❌ 通常不加仓
-- 减仓：若价格未快速脱离，且 CVD 相位转负，可提前部分止盈
+- 减仓：价格达到区间高度目标，减半仓
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass
 
 
 @dataclass
-class Trade:
-    """单笔交易记录"""
+class CompressionTrade:
+    """压缩区突破交易记录"""
 
     entry_idx: int
     entry_price: float
-    direction: int  # 1=Long, -1=Short
+    direction: int  # 1=Long, -1=Short, 0=No trade
     stop_loss: float
-    take_profit: float
+    take_profit: float  # Measured Move target
+    compression_range_height: float
     position_size: float
     exit_idx: Optional[int] = None
     exit_price: Optional[float] = None
     exit_reason: Optional[str] = None  # "tp", "sl", "timeout", "reduce"
     pnl: Optional[float] = None
-    rr_achieved: Optional[float] = None
+    label: int  # -1, 0, +1
 
 
-def backtest_sr_reversal(
+def backtest_compression_breakout(
     df: pd.DataFrame,
-    predictions: np.ndarray,  # P(success) = P(label=1)
-    sr_type_col: Optional[str] = None,  # "support" or "resistance"
+    predictions: np.ndarray,  # -1, 0, +1
+    compression_range_col: Optional[str] = None,  # Tuple of (low, high)
     price_col: str = "close",
     high_col: str = "high",
     low_col: str = "low",
     atr_col: str = "atr",
-    cvd_col: Optional[str] = None,
     atr_window: int = 14,
     stop_loss_r: float = 1.0,
-    take_profit_r: float = 2.0,
     max_holding_bars: int = 50,
-    min_confidence: float = 0.3,
     base_position_size: float = 0.1,
-    trading_fee: float = 0.001,  # 0.1% per trade
+    trading_fee: float = 0.001,
     enable_reduce_position: bool = True,
 ) -> Dict:
     """
-    SR 反转策略专属回测
+    压缩区突破策略专属回测
 
     Args:
         df: DataFrame with OHLCV data
-        predictions: Model predictions (P(success))
-        sr_type_col: Column indicating SR type ("support" or "resistance")
+        predictions: Model predictions (-1, 0, +1)
+        compression_range_col: Column with compression range (low, high) tuple
         price_col: Price column
         high_col: High column
         low_col: Low column
         atr_col: ATR column
-        cvd_col: CVD column (for reduce position logic)
         atr_window: ATR window if ATR column doesn't exist
-        stop_loss_r: Stop loss in R units
-        take_profit_r: Take profit in R units
+        stop_loss_r: Stop loss in R units (if range not available)
         max_holding_bars: Maximum holding period
-        min_confidence: Minimum confidence threshold
         base_position_size: Base position size
         trading_fee: Trading fee per trade
-        enable_reduce_position: Whether to enable reduce position logic
+        enable_reduce_position: Whether to enable reduce position at target
 
     Returns:
         Dictionary with backtest results
@@ -96,43 +91,29 @@ def backtest_sr_reversal(
         else:
             raise ValueError(f"ATR column '{atr_col}' not found and cannot be computed")
 
-    # Determine direction from SR type
-    if sr_type_col and sr_type_col in df.columns:
-        directions = (
-            df[sr_type_col]
-            .apply(lambda x: 1 if x == "support" else (-1 if x == "resistance" else 0))
-            .values
-        )
-    else:
-        # Fallback: use predictions to infer direction (if prediction > 0.5, assume long)
-        # This is a simplified approach; in practice, SR type should be explicitly provided
-        directions = np.ones(len(df), dtype=int)  # Default to long
-
-    # Extract arrays for performance
+    # Extract arrays
     prices = df[price_col].values
     highs = df[high_col].values
     lows = df[low_col].values
     atrs = df[atr_col].values
 
-    if cvd_col and cvd_col in df.columns:
-        cvd_values = df[cvd_col].values
-    else:
-        cvd_values = None
+    # Get compression range if available
+    compression_ranges: Optional[np.ndarray] = None
+    if compression_range_col and compression_range_col in df.columns:
+        compression_ranges = df[compression_range_col].values
 
     # Initialize tracking
-    trades: List[Trade] = []
-    equity = 100000.0  # Initial capital
+    trades: List[CompressionTrade] = []
+    equity = 100000.0
     equity_curve = [equity]
-    current_trade: Optional[Trade] = None
+    current_trade: Optional[CompressionTrade] = None
 
     for i in range(len(df) - max_holding_bars):
         # Check if we should enter a new trade
         if current_trade is None:
-            # Entry condition: prediction > min_confidence
-            if predictions[i] >= min_confidence and not np.isnan(predictions[i]):
-                direction = directions[i]
-                if direction == 0:  # No valid direction
-                    continue
+            # Entry condition: prediction != 0
+            if predictions[i] != 0 and not np.isnan(predictions[i]):
+                direction = int(predictions[i])  # -1, +1
 
                 entry_price = prices[i]
                 atr = atrs[i]
@@ -140,24 +121,37 @@ def backtest_sr_reversal(
                     continue
 
                 # Calculate stop loss and take profit
-                if direction == 1:  # Long
-                    stop_loss = entry_price - stop_loss_r * atr
-                    take_profit = entry_price + take_profit_r * atr
-                else:  # Short
-                    stop_loss = entry_price + stop_loss_r * atr
-                    take_profit = entry_price - take_profit_r * atr
+                if compression_ranges is not None and compression_ranges[i] is not None:
+                    range_low, range_high = compression_ranges[i]
+                    range_height = abs(range_high - range_low)
 
-                # Calculate position size (proportional to P(success))
-                position_size = base_position_size * predictions[i]
+                    if direction == 1:  # Long
+                        stop_loss = max(range_low, entry_price - stop_loss_r * atr)
+                        take_profit = entry_price + range_height  # Measured Move
+                    else:  # Short
+                        stop_loss = min(range_high, entry_price + stop_loss_r * atr)
+                        take_profit = entry_price - range_height
+                else:
+                    # Fallback: use ATR
+                    range_height = 2.0 * atr  # Approximate
+                    if direction == 1:
+                        stop_loss = entry_price - stop_loss_r * atr
+                        take_profit = entry_price + range_height
+                    else:
+                        stop_loss = entry_price + stop_loss_r * atr
+                        take_profit = entry_price - range_height
 
-                # Create trade
-                current_trade = Trade(
+                current_trade = CompressionTrade(
                     entry_idx=i,
                     entry_price=entry_price,
                     direction=direction,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
-                    position_size=position_size,
+                    compression_range_height=(
+                        range_height if compression_ranges is not None else 2.0 * atr
+                    ),
+                    position_size=base_position_size,
+                    label=int(predictions[i]),
                 )
 
         # Check if we have an open trade
@@ -190,23 +184,20 @@ def backtest_sr_reversal(
                 exit_reason = "timeout"
                 exit_price = prices[i]
 
-            # Check reduce position (if enabled)
-            if (
-                enable_reduce_position
-                and exit_reason is None
-                and cvd_values is not None
-            ):
-                # Check if CVD phase turns negative (for long) or positive (for short)
-                if i > 0:
-                    cvd_change = cvd_values[i] - cvd_values[i - 1]
-                    if (
-                        current_trade.direction == 1
-                        and cvd_change < 0
-                        and predictions[i] < 0.7
-                    ):
-                        # Reduce position by 50%
+            # Reduce position logic (when price reaches target)
+            if enable_reduce_position and exit_reason is None:
+                if current_trade.direction == 1:
+                    if prices[i] >= current_trade.take_profit * 0.9:  # 90% of target
                         current_trade.position_size *= 0.5
-                        # Continue holding with reduced position
+                        exit_reason = "reduce"
+                        exit_price = prices[i]
+                else:
+                    if (
+                        prices[i] <= current_trade.take_profit * 1.1
+                    ):  # 110% of target (for short)
+                        current_trade.position_size *= 0.5
+                        exit_reason = "reduce"
+                        exit_price = prices[i]
 
             # Exit trade if condition met
             if exit_reason is not None:
@@ -215,28 +206,19 @@ def backtest_sr_reversal(
                 current_trade.exit_reason = exit_reason
 
                 # Calculate PnL
-                if current_trade.direction == 1:  # Long
+                if current_trade.direction == 1:
                     pnl_pct = (
                         exit_price - current_trade.entry_price
                     ) / current_trade.entry_price
-                else:  # Short
+                else:
                     pnl_pct = (
                         current_trade.entry_price - exit_price
                     ) / current_trade.entry_price
 
                 # Apply trading fees
-                pnl_pct -= trading_fee * 2  # Entry + Exit
+                pnl_pct -= trading_fee * 2
 
                 current_trade.pnl = pnl_pct * current_trade.position_size
-
-                # Calculate R/R achieved
-                atr_entry = atrs[current_trade.entry_idx]
-                if atr_entry > 0:
-                    if current_trade.direction == 1:
-                        price_move = exit_price - current_trade.entry_price
-                    else:
-                        price_move = current_trade.entry_price - exit_price
-                    current_trade.rr_achieved = price_move / (stop_loss_r * atr_entry)
 
                 trades.append(current_trade)
 
@@ -246,7 +228,7 @@ def backtest_sr_reversal(
 
                 current_trade = None
 
-        # Update equity curve even if no trade
+        # Update equity curve
         if current_trade is None:
             equity_curve.append(equity)
 
@@ -269,14 +251,6 @@ def backtest_sr_reversal(
         pnl_pct -= trading_fee * 2
         current_trade.pnl = pnl_pct * current_trade.position_size
 
-        atr_entry = atrs[current_trade.entry_idx]
-        if atr_entry > 0:
-            if current_trade.direction == 1:
-                price_move = exit_price - current_trade.entry_price
-            else:
-                price_move = current_trade.entry_price - exit_price
-            current_trade.rr_achieved = price_move / (stop_loss_r * atr_entry)
-
         trades.append(current_trade)
         equity *= 1.0 + current_trade.pnl
         equity_curve.append(equity)
@@ -288,16 +262,16 @@ def backtest_sr_reversal(
             "winning_trades": 0,
             "losing_trades": 0,
             "win_rate": 0.0,
+            "accuracy": 0.0,
+            "f1_score": 0.0,
             "total_return": 0.0,
-            "avg_rr": 0.0,
-            "avg_win_rr": 0.0,
-            "avg_loss_rr": 0.0,
             "profit_factor": 0.0,
             "sharpe_ratio": 0.0,
             "max_drawdown": 0.0,
             "final_equity": equity,
             "equity_curve": equity_curve,
             "trades": [],
+            "confusion_matrix": {},
         }
 
     # Trade statistics
@@ -307,15 +281,36 @@ def backtest_sr_reversal(
 
     win_rate = len(winning_trades) / total_trades * 100.0 if total_trades > 0 else 0.0
 
-    # R/R statistics
-    rr_values = [t.rr_achieved for t in trades if t.rr_achieved is not None]
-    avg_rr = np.mean(rr_values) if rr_values else 0.0
+    # Accuracy: correct direction predictions
+    correct_predictions = sum(
+        1
+        for t in trades
+        if (t.direction == 1 and t.pnl > 0) or (t.direction == -1 and t.pnl > 0)
+    )
+    accuracy = correct_predictions / total_trades * 100.0 if total_trades > 0 else 0.0
 
-    win_rr = [t.rr_achieved for t in winning_trades if t.rr_achieved is not None]
-    loss_rr = [t.rr_achieved for t in losing_trades if t.rr_achieved is not None]
+    # F1-score: for multiclass classification
+    # True positives: correct direction + profitable
+    tp = correct_predictions
+    # False positives: wrong direction or unprofitable
+    fp = total_trades - correct_predictions
+    # False negatives: missed opportunities (predictions == 0)
+    # Note: We can't calculate FN without knowing true labels, so we use a simplified version
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / total_trades if total_trades > 0 else 0.0
+    f1_score = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
 
-    avg_win_rr = np.mean(win_rr) if win_rr else 0.0
-    avg_loss_rr = np.mean(loss_rr) if loss_rr else 0.0
+    # Confusion matrix (simplified)
+    confusion_matrix = {
+        "true_positive": tp,
+        "false_positive": fp,
+        "precision": precision,
+        "recall": recall,
+    }
 
     # PnL statistics
     total_pnl = sum(t.pnl for t in trades if t.pnl)
@@ -334,7 +329,7 @@ def backtest_sr_reversal(
         if len(trade_returns) > 1 and np.std(trade_returns) > 0:
             sharpe_ratio = (
                 np.mean(trade_returns) / np.std(trade_returns) * np.sqrt(252.0)
-            )  # Annualized
+            )
         else:
             sharpe_ratio = 0.0
     else:
@@ -351,20 +346,21 @@ def backtest_sr_reversal(
         "winning_trades": len(winning_trades),
         "losing_trades": len(losing_trades),
         "win_rate": win_rate,
+        "accuracy": accuracy,
+        "f1_score": f1_score,
         "total_return": total_return,
-        "avg_rr": avg_rr,
-        "avg_win_rr": avg_win_rr,
-        "avg_loss_rr": avg_loss_rr,
         "profit_factor": profit_factor,
         "sharpe_ratio": sharpe_ratio,
         "max_drawdown": max_drawdown,
         "final_equity": equity,
         "equity_curve": equity_curve,
+        "confusion_matrix": confusion_matrix,
         "trades": [
             {
                 "entry_idx": t.entry_idx,
                 "exit_idx": t.exit_idx,
                 "direction": t.direction,
+                "label": t.label,
                 "entry_price": t.entry_price,
                 "exit_price": t.exit_price,
                 "stop_loss": t.stop_loss,
@@ -372,7 +368,6 @@ def backtest_sr_reversal(
                 "position_size": t.position_size,
                 "exit_reason": t.exit_reason,
                 "pnl": t.pnl,
-                "rr_achieved": t.rr_achieved,
             }
             for t in trades
         ],

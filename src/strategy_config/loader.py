@@ -55,6 +55,7 @@ class EvaluationConfig:
 @dataclass
 class BacktestConfig:
     enabled: bool = False
+    class_path: Optional[str] = None
     params: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -198,6 +199,7 @@ class StrategyConfigLoader:
             return BacktestConfig()
         return BacktestConfig(
             enabled=backtest.get("enabled", False),
+            class_path=backtest.get("class"),
             params=backtest.get("params", {}),
         )
 
@@ -212,4 +214,3 @@ class StrategyConfigLoader:
             raise ValueError(f"Incomplete module/function config: {entry}")
         params = entry.get("params", {}) or {}
         return ModuleFunctionConfig(module=module, function=function, params=params)
-
