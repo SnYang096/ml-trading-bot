@@ -1,9 +1,21 @@
+"""
+统一的 Volume Profile 特征计算
+
+整合所有 Volume Profile 相关功能：
+1. WPT 降噪的 Volume Profile 基础计算
+2. POC/HAL 特征（价值区间）
+3. HVN/LVN 特征（流动性节点）
+4. 衍生特征（无量纲特征）
+
+所有功能统一在一个文件中，避免代码分散。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
-
 import numpy as np
+import pandas as pd
 import pywt
 
 
@@ -66,6 +78,7 @@ def freedman_diaconis_bins(data: np.ndarray, min_bins: int = 10, max_bins: int =
 
 @dataclass
 class VolumeProfileResult:
+    """Volume Profile 计算结果"""
     hist: np.ndarray
     edges: np.ndarray
     centers: np.ndarray
@@ -84,9 +97,7 @@ def compute_wpt_volume_profile(
 ) -> Optional[VolumeProfileResult]:
     """
     使用 WPT 降噪后的价格序列构建 volume profile 直方图。
-
-    将该函数独立出来，供 VPVR 与 baseline POC/HAL 共享，避免重复计算。
-
+    
     Args:
         price_window: 价格序列窗口
         volume_window: 成交量序列窗口（与 price_window 等长）
@@ -95,7 +106,7 @@ def compute_wpt_volume_profile(
         level: WPT 分解层数（默认 4）
         drop_high_freq: 是否剔除高频子带进行降噪（默认 True）
             - 如果为 True，将按频率排序剔除最高频的 25% 子带
-
+    
     Returns:
         VolumeProfileResult 对象，包含：
         - hist: 成交量直方图
@@ -105,31 +116,25 @@ def compute_wpt_volume_profile(
         - price_max: 价格最大值
         - price_denoised: 降噪后的价格序列（可选，用于上层特征扩展）
     """
-
     if price_window is None or volume_window is None:
         return None
-
+    
     if len(price_window) != len(volume_window) or len(price_window) < 10:
         return None
-
+    
     price_window = np.asarray(price_window, dtype=float)
     volume_window = np.asarray(volume_window, dtype=float)
-
+    
     # Step 1: WPT 降噪（改进版：按频率排序剔除高频子带）
-    # 修复1: 动态限制 level，防止超过最大允许分解层数
-    # 先验证小波函数是否有效（避免在 dwt_max_level 阶段抛出异常）
     try:
-        # 验证小波函数是否有效
         _ = pywt.Wavelet(wavelet)
         max_level = pywt.dwt_max_level(len(price_window), wavelet)
         actual_level = min(level, max_level) if max_level > 0 else 1
     except (ValueError, RuntimeError, TypeError):
-        # 无效小波函数，直接使用原始价格
         price_denoised = price_window
         actual_level = 0
     
     if actual_level < 1:
-        # 无法分解，直接使用原始价格
         price_denoised = price_window
     else:
         try:
@@ -137,61 +142,52 @@ def compute_wpt_volume_profile(
                 data=price_window, wavelet=wavelet, mode="symmetric", maxlevel=actual_level
             )
             if drop_high_freq:
-                # 使用 "freq" 排序获取按频率升序排列的子带
                 freq_nodes = wp.get_level(actual_level, "freq")
                 if len(freq_nodes) > 0:
-                    # 剔除最高频的 25% 子带（至少剔除1个）
                     n_drop = max(1, len(freq_nodes) // 4)
                     for node in freq_nodes[-n_drop:]:
                         wp[node.path].data = np.zeros_like(node.data)
             price_denoised = wp.reconstruct(update=True)
             
-            # 修复2: 强制对齐长度（WPT 重建后长度可能不一致）
             if len(price_denoised) != len(price_window):
-                # 截断到原始长度（最安全的方法）
                 if len(price_denoised) > len(price_window):
                     price_denoised = price_denoised[:len(price_window)]
                 else:
-                    # 如果重建后长度更短，使用线性插值扩展（较少见）
-                    # 或者直接使用原始价格（更安全）
                     price_denoised = price_window
-        except (ValueError, RuntimeError, TypeError) as e:
-            # 修复4: 只捕获预期的小波相关异常，不捕获 MemoryError、KeyboardInterrupt 等
+        except (ValueError, RuntimeError, TypeError):
             price_denoised = price_window
-
+    
     # Step 2: 过滤无效值
     valid_mask = (
         np.isfinite(price_denoised)
         & np.isfinite(volume_window)
         & (volume_window > 0)
     )
-
+    
     if not np.any(valid_mask):
         return None
-
+    
     price_valid = price_denoised[valid_mask]
     volume_valid = volume_window[valid_mask]
-
+    
     if len(price_valid) < 10:
         return None
-
+    
     price_min = price_valid.min()
     price_max = price_valid.max()
-
-    # 检查价格范围（考虑浮点数精度问题）
     price_range = price_max - price_min
+    
     if not np.isfinite(price_min) or not np.isfinite(price_max) or price_range <= 1e-10:
         return None
-
-    # Step 3: 动态 bins 计算（如果 bins="auto"）
+    
+    # Step 3: 动态 bins 计算
     if isinstance(bins, str) and bins == "auto":
         bins = freedman_diaconis_bins(price_valid, min_bins=10, max_bins=100)
     
-    # 修复3: 防止 bins > 数据点数（避免过度分箱）
     bins = min(bins, len(price_valid))
     if bins < 1:
         bins = 1
-
+    
     # Step 4: 构建 volume profile
     hist, edges = np.histogram(
         price_valid,
@@ -199,12 +195,12 @@ def compute_wpt_volume_profile(
         range=(price_min, price_max),
         weights=volume_valid,
     )
-
+    
     if np.sum(hist) <= 0:
         return None
-
+    
     centers = (edges[:-1] + edges[1:]) / 2
-
+    
     return VolumeProfileResult(
         hist=hist,
         edges=edges,
@@ -214,3 +210,292 @@ def compute_wpt_volume_profile(
         price_denoised=price_denoised,
     )
 
+
+def compute_unified_volume_profile_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str = "volume",
+    high_col: str = "high",
+    low_col: str = "low",
+    window: int = 160,
+    bins: int | str = "auto",
+    value_area_ratio: float = 0.7,
+    wavelet: str = "db4",
+    level: int = 4,
+    drop_high_freq: bool = True,
+    use_typical_price: bool = False,
+    price_series: Optional[pd.Series] = None,
+) -> pd.DataFrame:
+    """
+    统一的 Volume Profile 特征计算（合并 POC/HAL 和 VPVR）
+    
+    在一次计算中同时输出：
+    1. POC/HAL 特征（价值区间）
+    2. HVN/LVN 特征（流动性节点）
+    
+    Args:
+        df: DataFrame with OHLCV data
+        price_col: Price column name (default: "close")
+        volume_col: Volume column name (default: "volume")
+        high_col: High column name (default: "high")
+        low_col: Low column name (default: "low")
+        window: Rolling window size (default: 160)
+        bins: Number of price bins. If "auto" (default), uses Freedman-Diaconis rule
+        value_area_ratio: Value Area ratio (default: 0.7, i.e., 70%)
+        wavelet: Wavelet function (default: "db4")
+        level: WPT decomposition level (default: 4)
+        drop_high_freq: Whether to drop highest frequency subband (default: True)
+        use_typical_price: If True, use (H+L+C)/3; else use price_col or price_series
+        price_series: Optional price series (e.g., WPT reconstructed price)
+    
+    Returns:
+        DataFrame with unified volume profile features:
+        
+        # POC/HAL 特征
+        - vp_poc: Point of Control (price with highest volume)
+        - vp_poc_volume_ratio: Volume ratio at POC
+        - vp_hal_high: HAL high (Value Area upper bound)
+        - vp_hal_low: HAL low (Value Area lower bound)
+        - vp_hal_mid: HAL mid point
+        
+        # HVN/LVN 特征
+        - vp_hvn_count: High Volume Node count
+        - vp_lvn_count: Low Volume Node count
+        - vp_lvn_distance: Distance to nearest LVN (normalized)
+        - vp_volume_density: Volume density at current price
+        - vp_price_in_lvn: Whether current price is in LVN (1.0/0.0)
+    """
+    df = df.copy()
+    
+    # 确定使用的价格序列
+    if price_series is not None:
+        price_data = price_series
+    elif use_typical_price and high_col in df.columns and low_col in df.columns:
+        price_data = (df[high_col] + df[low_col] + df[price_col]) / 3.0
+    else:
+        price_data = df[price_col]
+    
+    # 初始化输出列
+    # POC/HAL 特征
+    df["vp_poc"] = np.nan
+    df["vp_poc_volume_ratio"] = np.nan
+    df["vp_hal_high"] = np.nan
+    df["vp_hal_low"] = np.nan
+    df["vp_hal_mid"] = np.nan
+    
+    # HVN/LVN 特征
+    df["vp_hvn_count"] = 0.0
+    df["vp_lvn_count"] = 0.0
+    df["vp_lvn_distance"] = np.nan
+    df["vp_volume_density"] = 0.0
+    df["vp_price_in_lvn"] = 0.0
+    
+    # 滚动窗口计算
+    for i in range(window, len(df)):
+        price_window = price_data.iloc[i - window : i].values
+        volume_window = df[volume_col].iloc[i - window : i].values
+        
+        # 计算 WPT Volume Profile（共享计算）
+        vp_result: Optional[VolumeProfileResult] = compute_wpt_volume_profile(
+            price_window=price_window,
+            volume_window=volume_window,
+            bins=bins,
+            wavelet=wavelet,
+            level=level,
+            drop_high_freq=drop_high_freq,
+        )
+        
+        if vp_result is None:
+            continue
+        
+        hist = vp_result.hist
+        edges = vp_result.edges
+        centers = vp_result.centers
+        total_volume = hist.sum()
+        
+        if total_volume <= 0:
+            continue
+        
+        current_price = price_data.iloc[i]
+        price_range = vp_result.price_max - vp_result.price_min
+        
+        # ========== POC/HAL 计算 ==========
+        # 1. POC (Point of Control)
+        max_vol_idx = int(np.argmax(hist))
+        poc_price = centers[max_vol_idx]
+        poc_volume_ratio = hist[max_vol_idx] / total_volume
+        
+        df.iloc[i, df.columns.get_loc("vp_poc")] = poc_price
+        df.iloc[i, df.columns.get_loc("vp_poc_volume_ratio")] = poc_volume_ratio
+        
+        # 2. HAL (Value Area 70%)
+        target_volume = total_volume * value_area_ratio
+        accumulated_volume = hist[max_vol_idx]
+        upper_idx = max_vol_idx
+        lower_idx = max_vol_idx
+        
+        while accumulated_volume < target_volume:
+            upper_vol = hist[upper_idx + 1] if upper_idx + 1 < len(hist) else 0.0
+            lower_vol = hist[lower_idx - 1] if lower_idx - 1 >= 0 else 0.0
+            
+            if (upper_vol >= lower_vol and upper_idx + 1 < len(hist)) or lower_idx == 0:
+                if upper_idx + 1 < len(hist):
+                    upper_idx += 1
+                    accumulated_volume += hist[upper_idx]
+                else:
+                    break
+            elif lower_idx - 1 >= 0:
+                lower_idx -= 1
+                accumulated_volume += hist[lower_idx]
+            else:
+                break
+        
+        # HAL 上下界对应价格档的边界
+        hal_high_edge_idx = min(upper_idx + 1, len(edges) - 1)
+        hal_low_edge_idx = max(lower_idx, 0)
+        hal_high = edges[hal_high_edge_idx]
+        hal_low = edges[hal_low_edge_idx]
+        hal_mid = (hal_high + hal_low) / 2.0
+        
+        df.iloc[i, df.columns.get_loc("vp_hal_high")] = hal_high
+        df.iloc[i, df.columns.get_loc("vp_hal_low")] = hal_low
+        df.iloc[i, df.columns.get_loc("vp_hal_mid")] = hal_mid
+        
+        # ========== HVN/LVN 计算 ==========
+        # 1. 计算 HVN 和 LVN
+        positive_mask = hist > 0
+        volume_mean = np.mean(hist[positive_mask]) if np.any(positive_mask) else 0
+        volume_std = np.std(hist[positive_mask]) if np.any(positive_mask) else 0
+        
+        if volume_std > 0:
+            # HVN: 成交量 > mean + 0.5*std
+            hvn_mask = hist > (volume_mean + 0.5 * volume_std)
+            df.iloc[i, df.columns.get_loc("vp_hvn_count")] = np.sum(hvn_mask)
+            
+            # LVN: 成交量 < mean - 0.5*std
+            lvn_mask = hist < (volume_mean - 0.5 * volume_std)
+            df.iloc[i, df.columns.get_loc("vp_lvn_count")] = np.sum(lvn_mask)
+            
+            # 2. 计算当前价格到最近 LVN 的距离
+            lvn_prices = centers[lvn_mask]
+            
+            if len(lvn_prices) > 0:
+                lvn_distances = np.abs(lvn_prices - current_price)
+                nearest_lvn_idx = np.argmin(lvn_distances)
+                nearest_lvn_price = lvn_prices[nearest_lvn_idx]
+                nearest_lvn_distance = lvn_distances[nearest_lvn_idx]
+                
+                # 归一化距离（相对于价格范围）
+                if price_range > 0:
+                    df.iloc[i, df.columns.get_loc("vp_lvn_distance")] = (
+                        nearest_lvn_distance / price_range
+                    )
+                
+                # 判断当前价格是否在 LVN 中
+                if isinstance(bins, int):
+                    bin_width = price_range / bins
+                else:
+                    bin_width = price_range / len(centers) if len(centers) > 0 else 0
+                
+                if bin_width > 0 and np.abs(current_price - nearest_lvn_price) < bin_width:
+                    df.iloc[i, df.columns.get_loc("vp_price_in_lvn")] = 1.0
+        
+        # 3. 计算当前价格的成交量密度
+        current_price_bin = np.digitize(current_price, edges) - 1
+        current_price_bin = np.clip(current_price_bin, 0, len(hist) - 1)
+        
+        if current_price_bin < len(hist):
+            current_volume = hist[current_price_bin]
+            max_volume = np.max(hist) if len(hist) > 0 else 1.0
+            df.iloc[i, df.columns.get_loc("vp_volume_density")] = (
+                current_volume / max_volume if max_volume > 0 else 0.0
+            )
+    
+    # 前向填充缺失值
+    df["vp_poc"] = df["vp_poc"].ffill()
+    df["vp_hal_high"] = df["vp_hal_high"].ffill()
+    df["vp_hal_low"] = df["vp_hal_low"].ffill()
+    df["vp_hal_mid"] = df["vp_hal_mid"].ffill()
+    df["vp_lvn_distance"] = df["vp_lvn_distance"].fillna(0.0)
+    
+    return df
+
+
+def compute_unified_volume_profile_derived_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+) -> pd.DataFrame:
+    """
+    计算统一的 Volume Profile 衍生特征（无量纲特征）
+    
+    基于 compute_unified_volume_profile_features 的输出，计算相对距离等衍生特征。
+    
+    Args:
+        df: DataFrame with volume profile features (from compute_unified_volume_profile_features)
+        price_col: Price column name (default: "close")
+    
+    Returns:
+        DataFrame with derived features added:
+        
+        # POC 衍生特征
+        - vp_price_to_poc_pct: Current price to POC relative distance
+        - vp_poc_position_ratio: POC position in price range (0-1)
+        
+        # HAL 衍生特征
+        - vp_price_to_hal_high_pct: Current price to HAL high relative distance
+        - vp_price_to_hal_low_pct: Current price to HAL low relative distance
+        - vp_price_to_hal_mid_pct: Current price to HAL mid relative distance
+        - vp_hal_bandwidth_pct: HAL bandwidth (relative)
+    """
+    df = df.copy()
+    
+    close = df[price_col].replace(0, np.nan)
+    
+    # POC 衍生特征
+    if "vp_poc" in df.columns:
+        poc = df["vp_poc"]
+        
+        # 当前价格到 POC 的相对距离
+        if "vp_price_to_poc_pct" not in df.columns:
+            df["vp_price_to_poc_pct"] = ((poc - close) / close).replace(
+                [np.inf, -np.inf], np.nan
+            )
+        
+        # POC 在价格区间中的位置（需要 high/low）
+        if "high" in df.columns and "low" in df.columns:
+            price_range = df["high"] - df["low"]
+            if "vp_poc_position_ratio" not in df.columns:
+                df["vp_poc_position_ratio"] = (
+                    ((poc - df["low"]) / price_range).replace([np.inf, -np.inf], np.nan)
+                )
+    
+    # HAL 衍生特征
+    if "vp_hal_high" in df.columns and "vp_hal_low" in df.columns:
+        hal_high = df["vp_hal_high"]
+        hal_low = df["vp_hal_low"]
+        hal_mid = df.get("vp_hal_mid", (hal_high + hal_low) / 2.0)
+        
+        # 当前价格到 HAL 的相对距离
+        if "vp_price_to_hal_high_pct" not in df.columns:
+            df["vp_price_to_hal_high_pct"] = (
+                ((hal_high - close) / close).replace([np.inf, -np.inf], np.nan)
+            )
+        
+        if "vp_price_to_hal_low_pct" not in df.columns:
+            df["vp_price_to_hal_low_pct"] = (
+                ((hal_low - close) / close).replace([np.inf, -np.inf], np.nan)
+            )
+        
+        if "vp_price_to_hal_mid_pct" not in df.columns:
+            df["vp_price_to_hal_mid_pct"] = (
+                ((hal_mid - close) / close).replace([np.inf, -np.inf], np.nan)
+            )
+        
+        # HAL 带宽（相对）
+        if "vp_hal_bandwidth_pct" not in df.columns:
+            hal_bandwidth = hal_high - hal_low
+            df["vp_hal_bandwidth_pct"] = (
+                (hal_bandwidth / close).replace([np.inf, -np.inf], np.nan)
+            )
+    
+    return df

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -387,16 +387,49 @@ def _compute_vpin_buckets_for_month(
 
     关键：支持从初始状态继续计算，确保跨月 bucket 连续性
 
+    VPIN (Volume-Weighted Price Imbalance) 计算原理：
+    1. 按交易量（或 USD 价值）顺序填充 bucket
+    2. 每个 bucket 填满后，计算买卖不平衡度：|buy_volume - sell_volume| / bucket_volume
+    3. 支持跨 tick 拆分（一个 tick 可能填充多个 bucket）
+    4. 使用容差 BUCKET_COMPLETION_TOLERANCE = 1e-6 避免浮点误差
+
     Args:
-        path: Tick 文件路径
-        bucket_volume: Bucket volume (数量，如果 bucket_volume_usd 为 None 时使用)
-        bucket_volume_usd: Bucket volume in USD (如果提供，使用 USD 价值计算)
-        initial_state: 初始 bucket 状态，格式：{"current_buy": float, "current_sell": float, "filled_value": float}
+        path (str | Path): Tick 文件路径（Parquet 格式）
+        bucket_volume (float): Bucket volume (数量，如果 bucket_volume_usd 为 None 时使用)
+            例如：bucket_volume=1000 表示每个 bucket 需要 1000 个币的交易量
+        bucket_volume_usd (Optional[float]): Bucket volume in USD (如果提供，使用 USD 价值计算)
+            例如：bucket_volume_usd=100000 表示每个 bucket 需要 10 万美元的交易量
+            注意：bucket_volume 和 bucket_volume_usd 二选一，优先使用 bucket_volume_usd
+        initial_state (Optional[dict]): 初始 bucket 状态（用于跨月连续性），格式：
+            {
+                "current_buy": float,      # 当前 bucket 的买入量
+                "current_sell": float,     # 当前 bucket 的卖出量
+                "filled_value": float      # 当前 bucket 已填充的总量（current_buy + current_sell）
+            }
+            如果为 None，从空 bucket 开始计算
 
     Returns:
-        (buckets, final_state) tuple:
+        tuple[List[Tuple[pd.Timestamp, float]], dict]:
             - buckets: List of (timestamp, vpin_value) tuples
-            - final_state: 未完成的 bucket 状态，格式：{"current_buy": float, "current_sell": float, "filled_value": float}
+                - timestamp: 该 bucket 完成的时间戳
+                - vpin_value: VPIN 值（0.0 到 1.0 之间，表示买卖不平衡度）
+            - final_state: 未完成的 bucket 状态（用于下一批次），格式：
+                {
+                    "current_buy": float,
+                    "current_sell": float,
+                    "filled_value": float
+                }
+
+    Example:
+        >>> buckets, final_state = _compute_vpin_buckets_for_month(
+        ...     "BTCUSDT_2024-01.parquet",
+        ...     bucket_volume=1000.0,
+        ...     initial_state={"current_buy": 200.0, "current_sell": 100.0, "filled_value": 300.0}
+        ... )
+        >>> len(buckets)  # 该月完成的 bucket 数量
+        150
+        >>> final_state["filled_value"]  # 未完成的 bucket 已填充量
+        450.0
     """
     buckets = []
 
@@ -954,53 +987,53 @@ def compute_vpin_from_cached_ticks(
 
         if cached_result is not None:
             # 缓存命中
-            current_buckets, current_final_state = cached_result
+            cached_buckets, cached_final_state = cached_result
             cached_count += 1
 
-            if prev_bucket_state is None:
-                # prev_bucket_state 为空，说明前面没有数据了（prev_month_file 为 None）
-                # 注意：永远不应该直接使用标准缓存的 buckets，因为：
-                # 1. 标准缓存的 buckets 是从 prev=None 计算的，可能不符合实际情况
-                # 2. 即使 prev_bucket_state 为空，也应该重新计算以确保正确性
-                # 标准缓存只用于提供 final_state（用于后续月份的状态传递）
-                print(
-                    f"      -> {Path(current_month_file).name} (computed, final_state from cache, prev=None)",
-                    flush=True,
-                )
-                current_buckets, computed_final_state = _compute_vpin_buckets_for_month(
-                    current_month_file,
-                    bucket_volume,
-                    bucket_volume_usd,
-                    initial_state=None,
-                )
-                computed_count += 1
-                # 验证 final_state 是否一致（应该一致，因为只取决于该月数据）
-                if (
-                    abs(
-                        computed_final_state.get("filled_value", 0.0)
-                        - current_final_state.get("filled_value", 0.0)
-                    )
-                    > 1e-6
-                ):
+            # 明确处理标准缓存只存 final_state 的情况（buckets=None）
+            if cached_buckets is None:
+                # 标准缓存只存了 final_state，需要重新计算 buckets
+                if prev_bucket_state is None:
+                    # prev_bucket_state 为空，说明前面没有数据了（prev_month_file 为 None）
                     print(
-                        f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {current_final_state.get('filled_value', 0.0):.6f})",
+                        f"      -> {Path(current_month_file).name} (computed, final_state from cache, prev=None)",
                         flush=True,
                     )
-                    current_final_state = computed_final_state
-            else:
-                filled_pct = (
-                    (prev_bucket_state.get("filled_value", 0.0) / bucket_volume * 100)
-                    if bucket_volume > 0
-                    else 0.0
-                )
-                if cache_key_used == state_cache_key:
-                    # 状态缓存命中，直接使用
-                    print(
-                        f"      -> {Path(current_month_file).name} (cached, with prev state {filled_pct:.1f}% filled)",
-                        flush=True,
+                    current_buckets, computed_final_state = (
+                        _compute_vpin_buckets_for_month(
+                            current_month_file,
+                            bucket_volume,
+                            bucket_volume_usd,
+                            initial_state=None,
+                        )
                     )
+                    computed_count += 1
+                    # 验证 final_state 是否一致（应该一致，因为只取决于该月数据）
+                    if (
+                        abs(
+                            computed_final_state.get("filled_value", 0.0)
+                            - cached_final_state.get("filled_value", 0.0)
+                        )
+                        > 1e-6
+                    ):
+                        print(
+                            f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {cached_final_state.get('filled_value', 0.0):.6f})",
+                            flush=True,
+                        )
+                        current_final_state = computed_final_state
+                    else:
+                        current_final_state = cached_final_state
                 else:
-                    # 使用了标准缓存（只存了final_state），但 prev_bucket_state 不为空，需要重新计算
+                    # prev_bucket_state 不为空，使用它重新计算 buckets
+                    filled_pct = (
+                        (
+                            prev_bucket_state.get("filled_value", 0.0)
+                            / bucket_volume
+                            * 100
+                        )
+                        if bucket_volume > 0
+                        else 0.0
+                    )
                     print(
                         f"      -> {Path(current_month_file).name} (computed, prev state {filled_pct:.1f}% filled, final_state from cache)",
                         flush=True,
@@ -1019,18 +1052,23 @@ def compute_vpin_from_cached_ticks(
                     if (
                         abs(
                             computed_final_state.get("filled_value", 0.0)
-                            - current_final_state.get("filled_value", 0.0)
+                            - cached_final_state.get("filled_value", 0.0)
                         )
                         > 1e-6
                     ):
                         print(
-                            f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {current_final_state.get('filled_value', 0.0):.6f})",
+                            f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {cached_final_state.get('filled_value', 0.0):.6f})",
                             flush=True,
                         )
                         current_final_state = computed_final_state
+                    else:
+                        current_final_state = cached_final_state
 
                     # 缓存结果（使用包含状态的缓存键，以便下次直接使用）
-                    if state_cache_key != standard_cache_key:  # 避免重复缓存
+                    if (
+                        state_cache_key is not None
+                        and state_cache_key != standard_cache_key
+                    ):  # 避免重复缓存
                         _save_monthly_vpin_cache(
                             cache_dir,
                             state_cache_key,
@@ -1038,6 +1076,78 @@ def compute_vpin_from_cached_ticks(
                             current_final_state,
                             save_buckets=True,
                         )
+            else:
+                # 缓存包含完整的 buckets，可以直接使用
+                current_buckets = cached_buckets
+                current_final_state = cached_final_state
+
+                if prev_bucket_state is None:
+                    # prev_bucket_state 为空，但缓存有 buckets，可以直接使用
+                    print(
+                        f"      -> {Path(current_month_file).name} (cached, prev=None)",
+                        flush=True,
+                    )
+                else:
+                    # prev_bucket_state 不为空
+                    filled_pct = (
+                        (
+                            prev_bucket_state.get("filled_value", 0.0)
+                            / bucket_volume
+                            * 100
+                        )
+                        if bucket_volume > 0
+                        else 0.0
+                    )
+                    if cache_key_used == state_cache_key:
+                        # 状态缓存命中，直接使用
+                        print(
+                            f"      -> {Path(current_month_file).name} (cached, with prev state {filled_pct:.1f}% filled)",
+                            flush=True,
+                        )
+                    else:
+                        # 使用了标准缓存的 buckets，但 prev_bucket_state 不为空
+                        # 注意：标准缓存的 buckets 是从 prev=None 计算的，可能不符合实际情况
+                        # 为了确保正确性，应该重新计算
+                        print(
+                            f"      -> {Path(current_month_file).name} (computed, prev state {filled_pct:.1f}% filled, buckets from cache may be incorrect)",
+                            flush=True,
+                        )
+                        current_buckets, computed_final_state = (
+                            _compute_vpin_buckets_for_month(
+                                current_month_file,
+                                bucket_volume,
+                                bucket_volume_usd,
+                                initial_state=prev_bucket_state,
+                            )
+                        )
+                        computed_count += 1
+
+                        # 验证 final_state 是否一致（应该一致，因为只取决于该月数据）
+                        if (
+                            abs(
+                                computed_final_state.get("filled_value", 0.0)
+                                - current_final_state.get("filled_value", 0.0)
+                            )
+                            > 1e-6
+                        ):
+                            print(
+                                f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {current_final_state.get('filled_value', 0.0):.6f})",
+                                flush=True,
+                            )
+                            current_final_state = computed_final_state
+
+                        # 缓存结果（使用包含状态的缓存键，以便下次直接使用）
+                        if (
+                            state_cache_key is not None
+                            and state_cache_key != standard_cache_key
+                        ):  # 避免重复缓存
+                            _save_monthly_vpin_cache(
+                                cache_dir,
+                                state_cache_key,
+                                current_buckets,
+                                current_final_state,
+                                save_buckets=True,
+                            )
         else:
             # 缓存未命中，重新计算
             if prev_bucket_state is not None:
@@ -1249,29 +1359,124 @@ def compute_vpin_from_cached_ticks(
 def _get_monthly_trade_clustering_cache_key(
     file_path: str,
     window_size: int,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
+    initial_state: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """生成按月 Trade Clustering 缓存的键"""
+    """
+    生成按月 Trade Clustering 缓存的键（不包含 start/end，按月完整计算）
+
+    优化：按月完整计算并缓存，不同时间窗口可以复用同一月份的缓存
+
+    如果 initial_state 不为空，将其信息加入缓存键，以支持跨月连续性的缓存
+    """
     import hashlib
+    import json
 
     path = Path(file_path)
     month_str = path.stem.split("_")[-1] if "_" in path.stem else path.stem
-    key_str = f"trade_clustering_monthly_{month_str}_{window_size}_{start.isoformat()}_{end.isoformat()}"
+    key_str = f"trade_clustering_monthly_{month_str}_{window_size}"
+
+    # 如果 initial_state 不为空，将其信息加入缓存键
+    if initial_state is not None:
+        # 将 initial_state 序列化为字符串（使用固定精度避免浮点误差）
+        # 注意：需要将 numpy 类型转换为 Python 原生类型
+        current_run_side = initial_state.get("current_run_side")
+        if current_run_side is not None:
+            # 转换为 Python int（如果是 numpy int64）
+            if hasattr(current_run_side, "item"):
+                current_run_side = current_run_side.item()
+            else:
+                current_run_side = int(current_run_side)
+
+        state_str = json.dumps(
+            {
+                "current_run_side": current_run_side,
+                "current_run_length": round(
+                    float(initial_state.get("current_run_length", 0)), 6
+                ),
+                "window_total_ticks": round(
+                    float(initial_state.get("window_total_ticks", 0)), 6
+                ),
+                # 注意：window_runs, buy_runs_in_window, sell_runs_in_window 是 deque，
+                # 序列化时会被转换为 list，这里只保存关键信息
+                "window_runs_count": int(len(initial_state.get("window_runs", []))),
+                "buy_runs_count": int(len(initial_state.get("buy_runs_in_window", []))),
+                "sell_runs_count": int(
+                    len(initial_state.get("sell_runs_in_window", []))
+                ),
+            },
+            sort_keys=True,
+        )
+        key_str = f"{key_str}_state_{state_str}"
+
     return hashlib.md5(key_str.encode()).hexdigest()
 
 
 def _load_monthly_trade_clustering_cache(
     cache_dir: Path, cache_key: str
 ) -> Optional[Tuple[pd.DataFrame, Dict[str, Any]]]:
-    """从缓存加载单月的 Trade Clustering 结果和状态"""
+    """
+    从缓存加载单月的 Trade Clustering 结果和状态
+
+    返回: (DataFrame, state) 或 None
+    支持多种缓存格式：
+    1. 标准缓存：只保存 state（DataFrame 为 None）
+    2. 状态缓存：保存完整结果（DataFrame + state）
+    """
+    from collections import deque
+
     cache_file = cache_dir / f"{cache_key}.pkl"
     if cache_file.exists():
         try:
             import pickle
 
             with open(cache_file, "rb") as f:
-                return pickle.load(f)
+                cached_data = pickle.load(f)
+
+                # 处理不同的缓存格式
+                if isinstance(cached_data, tuple):
+                    cluster_df, state = cached_data
+                    # 如果 state 中的 deque 被序列化为 list，转换回 deque
+                    if state is not None:
+                        if "window_runs" in state and isinstance(
+                            state["window_runs"], list
+                        ):
+                            state["window_runs"] = deque(state["window_runs"])
+                        if "buy_runs_in_window" in state and isinstance(
+                            state["buy_runs_in_window"], list
+                        ):
+                            state["buy_runs_in_window"] = deque(
+                                state["buy_runs_in_window"]
+                            )
+                        if "sell_runs_in_window" in state and isinstance(
+                            state["sell_runs_in_window"], list
+                        ):
+                            state["sell_runs_in_window"] = deque(
+                                state["sell_runs_in_window"]
+                            )
+                    return (cluster_df, state)
+                elif isinstance(cached_data, dict):
+                    # 旧格式：只有 state（标准缓存）
+                    # 如果 state 中的 deque 被序列化为 list，转换回 deque
+                    if "window_runs" in cached_data and isinstance(
+                        cached_data["window_runs"], list
+                    ):
+                        cached_data["window_runs"] = deque(cached_data["window_runs"])
+                    if "buy_runs_in_window" in cached_data and isinstance(
+                        cached_data["buy_runs_in_window"], list
+                    ):
+                        cached_data["buy_runs_in_window"] = deque(
+                            cached_data["buy_runs_in_window"]
+                        )
+                    if "sell_runs_in_window" in cached_data and isinstance(
+                        cached_data["sell_runs_in_window"], list
+                    ):
+                        cached_data["sell_runs_in_window"] = deque(
+                            cached_data["sell_runs_in_window"]
+                        )
+                    return (None, cached_data)
+                else:
+                    # 未知格式，返回 None
+                    return None
         except Exception as e:
             print(
                 f"      ⚠️  Failed to load trade clustering cache {cache_key}: {e}",
@@ -1281,16 +1486,38 @@ def _load_monthly_trade_clustering_cache(
 
 
 def _save_monthly_trade_clustering_cache(
-    cache_dir: Path, cache_key: str, result: Tuple[pd.DataFrame, Dict[str, Any]]
+    cache_dir: Path,
+    cache_key: str,
+    result: Tuple[Optional[pd.DataFrame], Dict[str, Any]],
 ):
-    """保存单月的 Trade Clustering 结果和状态到缓存"""
+    """
+    保存单月的 Trade Clustering 结果和状态到缓存
+
+    Args:
+        cache_dir: 缓存目录
+        cache_key: 缓存键
+        result: (DataFrame, state) 元组
+            - DataFrame: Trade Clustering 结果（可以为 None，标准缓存只保存 state）
+            - state: final_state 字典，必须提供
+
+    缓存格式：
+    1. 标准缓存（DataFrame 为 None）：只保存 state（dict）
+    2. 状态缓存（DataFrame 不为 None）：保存完整结果（tuple）
+    """
     cache_file = cache_dir / f"{cache_key}.pkl"
     try:
         import pickle
 
         cache_dir.mkdir(parents=True, exist_ok=True)
+        cluster_df, state = result
+
         with open(cache_file, "wb") as f:
-            pickle.dump(result, f)
+            if cluster_df is None:
+                # 标准缓存：只保存 state（dict）
+                pickle.dump(state, f)
+            else:
+                # 状态缓存：保存完整结果（tuple）
+                pickle.dump((cluster_df, state), f)
     except Exception as e:
         print(
             f"      ⚠️  Failed to save trade clustering cache {cache_key}: {e}",

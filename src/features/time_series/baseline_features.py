@@ -236,114 +236,7 @@ class BaselineFeatureEngineer:
         return zigzag
 
     @staticmethod
-    def compute_poc(
-        high: pd.Series,
-        low: pd.Series,
-        volume: pd.Series,
-        window: int = 160,
-        bins: int | str = "auto",
-        value_area_ratio: float = 0.7,
-        price_col: Optional[pd.Series] = None,
-    ) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
-        """
-        计算 POC (Point of Control) 和 HAL (Value Area 70% 价格区间的上下界)
-        
-        ✅ 强烈建议：使用 WPT 低频重构价格（price_col）而非原始价格
-        这样可以过滤高频噪声，使 POC/HAL 更接近真实供需平衡点。
-
-        Args:
-            high: 最高价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
-            low: 最低价序列（如果提供了 price_col，此参数将被忽略用于价格计算）
-            volume: 成交量序列（始终使用原始成交量，不应过滤）
-            window: 滚动窗口大小
-            bins: 价格分档数量。如果为 "auto"（默认），则使用 Freedman-Diaconis rule 自动计算
-            value_area_ratio: Value Area 的成交量占比（默认 0.7，即 70%）
-            price_col: 可选的价格序列（如 WPT 低频重构价格）。如果提供，将使用此价格
-                       而非 (high+low)/2。默认 None，使用原始价格（向后兼容）
-
-        Returns:
-            (poc, poc_volume_ratio, hal_high, hal_low):
-            - poc: POC 价格序列
-            - poc_volume_ratio: POC 价格档的成交量占比序列
-            - hal_high: HAL 高点（Value Area 上界）
-            - hal_low: HAL 低点（Value Area 下界）
-        """
-        poc = pd.Series(index=high.index, dtype=float)
-        poc_volume_ratio = pd.Series(index=high.index, dtype=float)
-        hal_high = pd.Series(index=high.index, dtype=float)
-        hal_low = pd.Series(index=high.index, dtype=float)
-
-        for i in range(window, len(high)):
-            price_window = (
-                price_col.iloc[i - window : i].values
-                if price_col is not None
-                else ((high.iloc[i - window : i].values + low.iloc[i - window : i].values) / 2.0)
-            )
-            volume_window = volume.iloc[i - window : i].values
-
-            vp_result = compute_wpt_volume_profile(
-                price_window=price_window,
-                volume_window=volume_window,
-                bins=bins,
-            )
-
-            if vp_result is None:
-                fallback_price = (
-                    float(price_window[-1])
-                    if len(price_window) > 0
-                    else float("nan")
-                )
-                poc.iloc[i] = fallback_price
-                hal_high.iloc[i] = fallback_price
-                hal_low.iloc[i] = fallback_price
-                continue
-
-            hist = vp_result.hist
-            total_volume = hist.sum()
-
-            if total_volume <= 0:
-                continue
-
-            centers = vp_result.centers
-            edges = vp_result.edges
-
-            max_vol_idx = int(np.argmax(hist))
-            poc.iloc[i] = centers[max_vol_idx]
-
-            poc_volume_ratio.iloc[i] = hist[max_vol_idx] / total_volume
-
-            target_volume = total_volume * value_area_ratio
-            accumulated_volume = hist[max_vol_idx]
-            upper_idx = max_vol_idx
-            lower_idx = max_vol_idx
-
-            while accumulated_volume < target_volume:
-                upper_vol = hist[upper_idx + 1] if upper_idx + 1 < len(hist) else 0.0
-                lower_vol = hist[lower_idx - 1] if lower_idx - 1 >= 0 else 0.0
-
-                if (upper_vol >= lower_vol and upper_idx + 1 < len(hist)) or lower_idx == 0:
-                    if upper_idx + 1 < len(hist):
-                        upper_idx += 1
-                        accumulated_volume += hist[upper_idx]
-                    else:
-                        break
-                elif lower_idx - 1 >= 0:
-                    lower_idx -= 1
-                    accumulated_volume += hist[lower_idx]
-                else:
-                    break
-
-            # HAL 上下界对应价格档的边界
-            hal_high_edge_idx = min(upper_idx + 1, len(edges) - 1)
-            hal_low_edge_idx = max(lower_idx, 0)
-            hal_high.iloc[i] = edges[hal_high_edge_idx]
-            hal_low.iloc[i] = edges[hal_low_edge_idx]
-
-        poc = poc.ffill()
-        hal_high = hal_high.ffill()
-        hal_low = hal_low.ffill()
-        return poc, poc_volume_ratio, hal_high, hal_low
-
+    # compute_poc 已删除，现在使用 utils_volume_profile.compute_unified_volume_profile_features
     @staticmethod
     def calculate_sqs(
         sr_price: float,
@@ -2372,20 +2265,29 @@ class BaselineFeatureEngineer:
             need_compute = True
 
         if need_compute:
-            poc, poc_volume_ratio, hal_high, hal_low = (
-                BaselineFeatureEngineer.compute_poc(
-                    result["high"], 
-                    result["low"], 
-                    result["volume"], 
-                    window=poc_window,
-                    price_col=price_series,  # 传入 WPT 重构价格（如果存在）
-                )
+            # 使用统一的 Volume Profile 实现
+            from .utils_volume_profile import (
+                compute_unified_volume_profile_features,
+                compute_unified_volume_profile_derived_features,
             )
-            result["poc"] = poc
-            result["poc_volume_ratio"] = poc_volume_ratio
-            result["hal_high"] = hal_high
-            result["hal_low"] = hal_low
-            result["hal_mid"] = (hal_high + hal_low) / 2.0
+            
+            result = compute_unified_volume_profile_features(
+                result,
+                window=poc_window,
+                price_series=price_series,
+            )
+            
+            # 映射到旧的特征名称（向后兼容）
+            if "vp_poc" in result.columns:
+                result["poc"] = result["vp_poc"]
+            if "vp_poc_volume_ratio" in result.columns:
+                result["poc_volume_ratio"] = result["vp_poc_volume_ratio"]
+            if "vp_hal_high" in result.columns:
+                result["hal_high"] = result["vp_hal_high"]
+            if "vp_hal_low" in result.columns:
+                result["hal_low"] = result["vp_hal_low"]
+            if "vp_hal_mid" in result.columns:
+                result["hal_mid"] = result["vp_hal_mid"]
 
         close = result["close"].replace(0, np.nan)
         poc = result["poc"]

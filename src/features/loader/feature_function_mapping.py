@@ -61,6 +61,7 @@ from src.features.loader.feature_wrappers import (
     compute_sqs_hal_low,
     compute_sr_strength_max,
     compute_wpt_vpvr,
+    compute_unified_volume_profile,
 )
 
 # 组合特征包装函数（交互特征 + 衍生特征）
@@ -110,7 +111,8 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_sqs_hal_high": compute_sqs_hal_high,
     "compute_sqs_hal_low": compute_sqs_hal_low,
     "compute_sr_strength_max": compute_sr_strength_max,
-    "compute_wpt_vpvr": compute_wpt_vpvr,
+    "compute_wpt_vpvr": compute_wpt_vpvr,  # 向后兼容，现在使用统一实现
+    "compute_unified_volume_profile": compute_unified_volume_profile,  # 新的统一实现
     "BaselineFeatureEngineer._compute_breakout_confirmation_and_role_flip": BaselineFeatureEngineer._compute_breakout_confirmation_and_role_flip,
     "BaselineFeatureEngineer._add_breakout_quality_features": BaselineFeatureEngineer._add_breakout_quality_features,
     "BaselineFeatureEngineer._compute_boundary_volume_confirmations": BaselineFeatureEngineer._compute_boundary_volume_confirmations,

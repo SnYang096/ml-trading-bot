@@ -16,7 +16,7 @@ INSIDE_FROM_FILE := $(shell if [ -f /.devcontainer-env ]; then echo yes; else ec
 INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),yes,no)
 
 # Docker configuration
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.6
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.7
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
 DATA_DIR ?= data/parquet_data

@@ -985,7 +985,18 @@ def compute_trade_clustering_from_ticks(
             - timestamp (datetime index)
             - side (1 for buy, -1 for sell)
             - volume (float, optional, for weighted clustering)
-        window_size: 滚动窗口大小（用于计算统计量）
+        window_size (int): 滚动窗口大小，单位为 tick 笔数（非时间）
+            例如：window_size=100 表示最近 100 笔成交
+            
+            ⚠️  注意：该设计在低流动性时段可能导致窗口时间跨度极大
+            - 低流动性时段：100 笔可能跨越数小时甚至数天
+            - 高流动性时段：100 笔可能仅几毫秒
+            - 这会导致特征尺度不稳定，难以跨时间/品种比较
+            
+            未来改进方向：
+            - 添加 window_type 参数：`"ticks"` 或 `"time"`
+            - 如果 window_type="time"，使用 window_seconds 参数（如 3600 秒）
+            - 保持向后兼容：默认 window_type="ticks"
         initial_state: 初始状态（用于跨批次连续性），包含：
             - current_run_side: 当前 run 的方向
             - current_run_length: 当前 run 的长度
@@ -1054,17 +1065,36 @@ def compute_trade_clustering_from_ticks(
     cluster_features = []
     
     # 初始化状态（从 initial_state 或默认值）
-    # 注意：initial_state 中的 deque 可能被序列化为 list，需要转换回 deque
+    # 注意：initial_state 中的 deque 可能被序列化为 list（如从缓存加载），需要转换回 deque
+    # 统一在入口转换，确保后续代码可以安全使用 deque 的方法（如 .popleft()）
     if initial_state:
         window_runs_data = initial_state.get("window_runs", [])
-        window_runs = deque(window_runs_data) if not isinstance(window_runs_data, deque) else window_runs_data
+        if isinstance(window_runs_data, list):
+            window_runs = deque(window_runs_data)
+        elif isinstance(window_runs_data, deque):
+            window_runs = window_runs_data
+        else:
+            window_runs = deque()
+        
         current_run_side = initial_state.get("current_run_side")
         current_run_length = initial_state.get("current_run_length", 0)
         window_total_ticks = initial_state.get("window_total_ticks", 0)
+        
         buy_runs_data = initial_state.get("buy_runs_in_window", [])
-        buy_runs_in_window = deque(buy_runs_data) if not isinstance(buy_runs_data, deque) else buy_runs_data
+        if isinstance(buy_runs_data, list):
+            buy_runs_in_window = deque(buy_runs_data)
+        elif isinstance(buy_runs_data, deque):
+            buy_runs_in_window = buy_runs_data
+        else:
+            buy_runs_in_window = deque()
+        
         sell_runs_data = initial_state.get("sell_runs_in_window", [])
-        sell_runs_in_window = deque(sell_runs_data) if not isinstance(sell_runs_data, deque) else sell_runs_data
+        if isinstance(sell_runs_data, list):
+            sell_runs_in_window = deque(sell_runs_data)
+        elif isinstance(sell_runs_data, deque):
+            sell_runs_in_window = sell_runs_data
+        else:
+            sell_runs_in_window = deque()
     else:
         window_runs = deque()  # 存储 (side, length) 元组，按时间顺序
         current_run_side = None  # 当前 run 的方向（窗口末尾的 run）
@@ -1300,25 +1330,93 @@ def extract_trade_clustering_features(
             if month_end > end_ts:
                 month_end = end_ts
             
+            # 优化：类似 VPIN，如果 state 为 None，尝试从前一个月加载状态
+            # 找到该月的 tick 文件
+            month_files = month_to_files.get(current_month, [])
+            
+            # 如果 state 为 None，尝试从前一个月加载状态
+            if state is None and current_month > (start_ts - pd.Timedelta(minutes=lookback_minutes)).replace(day=1, hour=0, minute=0, second=0, microsecond=0):
+                prev_month = current_month - pd.DateOffset(months=1)
+                prev_month_files = month_to_files.get(prev_month, [])
+                
+                if prev_month_files and cache_dir:
+                    # 尝试从缓存加载前一个月的 final_state
+                    prev_cache_key = _get_monthly_trade_clustering_cache_key(
+                        prev_month_files[0], window_size, initial_state=None
+                    )
+                    prev_cached_result = _load_monthly_trade_clustering_cache(cache_dir, prev_cache_key)
+                    if prev_cached_result is not None:
+                        _, prev_state = prev_cached_result
+                        if prev_state is not None:
+                            state = prev_state
+                            print(f"      📥 Loaded prev_month state for {current_month.strftime('%Y-%m')}")
+            
+            # 生成缓存键（包含 state 信息，如果存在）
+            standard_cache_key = None
+            state_cache_key = None
+            if cache_dir and month_files:
+                standard_cache_key = _get_monthly_trade_clustering_cache_key(
+                    month_files[0], window_size, initial_state=None
+                )
+                if state is not None:
+                    state_cache_key = _get_monthly_trade_clustering_cache_key(
+                        month_files[0], window_size, initial_state=state
+                    )
+            
             # 尝试从缓存加载
             cached_result = None
-            if cache_dir:
-                # 找到该月的 tick 文件
-                month_files = month_to_files.get(current_month, [])
-                if month_files:
-                    # 使用第一个文件生成缓存键（假设同一个月所有文件参数相同）
-                    cache_key = _get_monthly_trade_clustering_cache_key(
-                        month_files[0], window_size, month_start, month_end
-                    )
-                    cached_result = _load_monthly_trade_clustering_cache(cache_dir, cache_key)
+            cache_key_used = None
+            
+            if state is not None and state_cache_key is not None:
+                # 如果 state 不为空，先尝试使用状态缓存
+                cached_result = _load_monthly_trade_clustering_cache(cache_dir, state_cache_key)
+                if cached_result is not None:
+                    cache_key_used = state_cache_key
+            
+            if cached_result is None and standard_cache_key is not None:
+                # 如果状态缓存未命中，尝试使用标准缓存
+                cached_result = _load_monthly_trade_clustering_cache(cache_dir, standard_cache_key)
+                if cached_result is not None:
+                    cache_key_used = standard_cache_key
             
             if cached_result is not None:
                 # 使用缓存
-                month_cluster_df, state = cached_result
-                cluster_results.append(month_cluster_df)
-                cached_count += 1
-                print(f"      ✅ Loaded {month_start.strftime('%Y-%m')} (cached): {len(month_cluster_df)} features")
-            else:
+                month_cluster_df, cached_state = cached_result
+                
+                if state is None:
+                    # state 为空，使用标准缓存
+                    if month_cluster_df is not None:
+                        # 标准缓存包含 DataFrame，直接使用
+                        cluster_results.append(month_cluster_df)
+                        cached_count += 1
+                        state = cached_state  # 更新 state 供下一个月使用
+                        print(f"      ✅ Loaded {month_start.strftime('%Y-%m')} (cached): {len(month_cluster_df)} features")
+                    else:
+                        # 标准缓存只保存了 state，需要重新计算 DataFrame
+                        print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (cached state only, recomputing DataFrame)...")
+                        state = cached_state  # 使用缓存的 state
+                        cached_result = None  # 继续到计算逻辑
+                else:
+                    # state 不为空
+                    if cache_key_used == state_cache_key:
+                        # 状态缓存命中，直接使用
+                        if month_cluster_df is not None:
+                            cluster_results.append(month_cluster_df)
+                            cached_count += 1
+                            state = cached_state
+                            print(f"      ✅ Loaded {month_start.strftime('%Y-%m')} (cached, with state): {len(month_cluster_df)} features")
+                        else:
+                            # 状态缓存只保存了 state，需要重新计算 DataFrame
+                            print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (cached state only, recomputing DataFrame)...")
+                            state = cached_state  # 使用缓存的 state
+                            cached_result = None  # 继续到计算逻辑
+                    else:
+                        # 使用了标准缓存，但 state 不为空，需要重新计算
+                        print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (state mismatch, recomputing)...")
+                        state = cached_state  # 使用缓存的 state（但需要重新计算 DataFrame）
+                        cached_result = None  # 继续到计算逻辑
+            
+            if cached_result is None:
                 # 计算该月
                 try:
                     month_ticks = load_tick_data(
@@ -1347,16 +1445,21 @@ def extract_trade_clustering_features(
                         print(f"      ✅ Computed {month_start.strftime('%Y-%m')}: {len(month_cluster_df)} features")
                         
                         # 保存缓存
+                        # 标准缓存：只保存 final_state（优化：不保存 DataFrame，节省存储空间）
                         if cache_dir and month_files:
-                            cache_key = _get_monthly_trade_clustering_cache_key(
-                                month_files[0], window_size, month_start, month_end
-                            )
-                            _save_monthly_trade_clustering_cache(
-                                cache_dir, cache_key, (month_cluster_df, state)
-                            )
+                            if standard_cache_key is not None:
+                                # 只保存 state（标准缓存）
+                                _save_monthly_trade_clustering_cache(
+                                    cache_dir, standard_cache_key, (None, state)  # DataFrame 为 None，只保存 state
+                                )
+                            # 状态缓存：保存完整结果（DataFrame + state）
+                            if state_cache_key is not None and state_cache_key != standard_cache_key:
+                                _save_monthly_trade_clustering_cache(
+                                    cache_dir, state_cache_key, (month_cluster_df, state)
+                                )
                         
                         # 立即释放该月的数据
-                        del month_ticks, month_cluster_df
+                        del month_ticks
                 except Exception as e:
                     print(f"      ⚠️  Failed to process {month_start.strftime('%Y-%m')}: {e}")
             
@@ -1511,11 +1614,47 @@ def extract_trade_clustering_features(
         df["trade_cluster_max_run_ratio"] = (
             (df["trade_cluster_max_buy_run"] - df["trade_cluster_max_sell_run"]) / (total_max + TOL)
         )
+        # 最大连续长度（buy 或 sell 中的较大值）
+        df["trade_cluster_max_run"] = df[["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]].max(axis=1)
+        # 买方 vs 卖方最大连续长度比
+        df["trade_cluster_buy_sell_max_ratio"] = (
+            df["trade_cluster_max_buy_run"] / (df["trade_cluster_max_sell_run"] + TOL)
+        )
     if "trade_cluster_avg_buy_run" in df.columns and "trade_cluster_avg_sell_run" in df.columns:
         # 平均连续长度比率
         total_avg = df["trade_cluster_avg_buy_run"] + df["trade_cluster_avg_sell_run"]
         df["trade_cluster_avg_run_ratio"] = (
             (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"]) / (total_avg + TOL)
+        )
+        # 买方 vs 卖方平均连续长度比
+        df["trade_cluster_buy_sell_avg_ratio"] = (
+            df["trade_cluster_avg_buy_run"] / (df["trade_cluster_avg_sell_run"] + TOL)
+        )
+        # 总连续长度（buy + sell）
+        if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
+            df["trade_cluster_total_run_length"] = (
+                df["trade_cluster_avg_buy_run"] * df["trade_cluster_buy_run_count"] +
+                df["trade_cluster_avg_sell_run"] * df["trade_cluster_sell_run_count"]
+            )
+            # 平均连续长度（所有 runs）
+            if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
+                total_runs = df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
+                df["trade_cluster_avg_run_length"] = (
+                    df["trade_cluster_total_run_length"] / (total_runs + TOL)
+                )
+    # 净 Runs 特征
+    if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
+        # 净 runs（buy - sell）
+        df["trade_cluster_net_runs"] = (
+            df["trade_cluster_buy_run_count"] - df["trade_cluster_sell_run_count"]
+        )
+        # 总 runs 数（衡量活跃度）
+        df["trade_cluster_total_runs"] = (
+            df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
+        )
+        # 净 runs 比率（标准化）
+        df["trade_cluster_net_runs_ratio"] = (
+            df["trade_cluster_net_runs"] / (df["trade_cluster_total_runs"] + TOL)
         )
     # 方向熵的衍生特征
     if "trade_cluster_directional_entropy" in df.columns:
@@ -1545,4 +1684,43 @@ def extract_trade_clustering_features(
             df[f"trade_cluster_imbalance_ratio_ma{w}"] = (
                 df["trade_cluster_imbalance_ratio"].rolling(window=w, min_periods=1).mean()
             )
+        if "trade_cluster_net_runs" in df.columns:
+            df[f"trade_cluster_net_runs_ma{w}"] = (
+                df["trade_cluster_net_runs"].rolling(window=w, min_periods=1).mean()
+            )
+        if "trade_cluster_total_runs" in df.columns:
+            df[f"trade_cluster_total_runs_ma{w}"] = (
+                df["trade_cluster_total_runs"].rolling(window=w, min_periods=1).mean()
+            )
+    
+    # Z-score 特征（识别超买/超卖）
+    if "trade_cluster_imbalance_ratio" in df.columns:
+        for w in [20, 50]:
+            rolling_mean = df["trade_cluster_imbalance_ratio"].rolling(window=w, min_periods=1).mean()
+            rolling_std = df["trade_cluster_imbalance_ratio"].rolling(window=w, min_periods=1).std()
+            df[f"trade_cluster_imbalance_zscore_{w}"] = (
+                (df["trade_cluster_imbalance_ratio"] - rolling_mean) / (rolling_std + TOL)
+            )
+    if "trade_cluster_net_runs" in df.columns:
+        for w in [20, 50]:
+            rolling_mean = df["trade_cluster_net_runs"].rolling(window=w, min_periods=1).mean()
+            rolling_std = df["trade_cluster_net_runs"].rolling(window=w, min_periods=1).std()
+            df[f"trade_cluster_net_runs_zscore_{w}"] = (
+                (df["trade_cluster_net_runs"] - rolling_mean) / (rolling_std + TOL)
+            )
+    if "trade_cluster_max_buy_run" in df.columns:
+        for w in [20, 50]:
+            rolling_mean = df["trade_cluster_max_buy_run"].rolling(window=w, min_periods=1).mean()
+            rolling_std = df["trade_cluster_max_buy_run"].rolling(window=w, min_periods=1).std()
+            df[f"trade_cluster_max_buy_run_zscore_{w}"] = (
+                (df["trade_cluster_max_buy_run"] - rolling_mean) / (rolling_std + TOL)
+            )
+    if "trade_cluster_max_sell_run" in df.columns:
+        for w in [20, 50]:
+            rolling_mean = df["trade_cluster_max_sell_run"].rolling(window=w, min_periods=1).mean()
+            rolling_std = df["trade_cluster_max_sell_run"].rolling(window=w, min_periods=1).std()
+            df[f"trade_cluster_max_sell_run_zscore_{w}"] = (
+                (df["trade_cluster_max_sell_run"] - rolling_mean) / (rolling_std + TOL)
+            )
+    
     return df

@@ -466,12 +466,32 @@ RUN echo "📦 Installing project dependencies..." && \
     pytest \
     && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, pytest; print('✅ 项目依赖库安装完成 (包括pytest)')"
 
-# 安装 dtaidistance（暂时跳过，Python 3.12 上 C 扩展编译有问题）
-# 如果需要 dtaidistance，可以后续手动安装或使用 conda 环境
-# RUN echo "📦 Installing dtaidistance..." && \
-#     pip3 install --no-cache-dir --timeout=1800 --retries=10 \
-#     "dtaidistance[pure]==2.3.10" && \
-#     python3 -c "import dtaidistance; print('✅ dtaidistance installed:', getattr(dtaidistance, '__version__', 'OK'))"
+# 安装编译工具（用于编译 dtaidistance 的 C 扩展）
+RUN echo "📦 Installing build tools for dtaidistance C extension compilation..." && \
+    apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    g++ \
+    libomp-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/* && \
+    echo "✅ Build tools installed"
+
+# 复制 dtaidistance 源码（从构建脚本复制的目录）
+COPY dtaidistance /tmp/dtaidistance
+
+# 从本地源码编译安装 dtaidistance
+RUN echo "📦 Building dtaidistance from local source (with C extensions)..." && \
+    if [ -f /tmp/dtaidistance/setup.py ]; then \
+    cd /tmp/dtaidistance && \
+    pip3 install --no-cache-dir --timeout=1800 --retries=10 . && \
+    cd / && \
+    rm -rf /tmp/dtaidistance && \
+    python3 -c "import dtaidistance; print('✅ dtaidistance installed with C extensions:', getattr(dtaidistance, '__version__', 'OK'))" && \
+    echo "✅ dtaidistance built and installed from source"; \
+    else \
+    echo "⚠️  dtaidistance source not found at /tmp/dtaidistance, skipping"; \
+    fi
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库
@@ -498,7 +518,7 @@ RUN echo "📦 Installing data science libraries..." && \
     scipy==1.11.4 \
     scikit-learn==1.3.2 \
     pyyaml==6.0.2 \
-    websockets==12.0.3 \
+    websockets==12.0 \
     && python3 -c "import pandas as pd, pyarrow, yaml, websockets; print('✅ pandas:', pd.__version__, '| pyarrow:', pyarrow.__version__, '| pyyaml:', yaml.__version__, '| websockets:', websockets.__version__)"
 
 # ============================================================================

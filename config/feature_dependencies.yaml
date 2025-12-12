@@ -500,12 +500,14 @@ features:
       # 基础特征（2个）
       - "vpin"
       - "vpin_signed_imbalance"
-      # 多维对齐特征（关键改进：保留峰值信息，避免均值稀释）- 7个
+      # 多维对齐特征（关键改进：保留峰值信息，避免均值稀释）- 9个
       - "vpin_last"          # 最新值（反映最新情绪）
       - "vpin_max"           # 峰值（捕捉极端知情交易，关键！）
       - "vpin_min"           # 最小值
       - "vpin_std"           # 波动性（衡量VPIN在K线内的变化）
       - "vpin_count"         # 事件数（代理流动性，区分高VPIN是突发事件还是持续活跃）
+      - "vpin_skewness"      # 偏度（VPIN分布的偏度，如果偏度为正，说明尾部风险大）
+      - "vpin_trend"         # 趋势（线性回归斜率，斜率为正表示风险在积聚，斜率为负表示风险在释放）
       - "vpin_signed_imbalance_last"  # Signed imbalance 最新值
       - "vpin_signed_imbalance_max"   # Signed imbalance 峰值
       # 滚动统计（6个）
@@ -545,7 +547,7 @@ features:
       - "trade_cluster_sell_run_count"
       - "trade_cluster_imbalance_ratio"
       - "trade_cluster_directional_entropy"  # 方向熵（捕捉混乱度）
-      # 衍生特征（10个）
+      # 原有衍生特征（9个）
       - "trade_cluster_max_run_ratio"
       - "trade_cluster_avg_run_ratio"
       - "trade_cluster_max_buy_run_ma5"
@@ -560,8 +562,35 @@ features:
       - "trade_cluster_directional_entropy_change"
       - "trade_cluster_directional_entropy_zscore_20"
       - "trade_cluster_directional_entropy_zscore_50"
+      # 新增特征（2024年补充）- 净 Runs 特征（3个）
+      - "trade_cluster_net_runs"              # 净 runs（buy - sell）
+      - "trade_cluster_total_runs"            # 总 runs 数（活跃度）
+      - "trade_cluster_net_runs_ratio"        # 净 runs 比率（标准化）
+      # 新增特征 - 长度比率特征（4个）
+      - "trade_cluster_max_run"               # 最大连续长度（buy 或 sell 中的较大值）
+      - "trade_cluster_buy_sell_max_ratio"    # 买方 vs 卖方最大连续长度比
+      - "trade_cluster_buy_sell_avg_ratio"    # 买方 vs 卖方平均连续长度比
+      - "trade_cluster_avg_run_length"        # 平均连续长度（所有 runs）
+      # 新增特征 - 总长度特征（1个）
+      - "trade_cluster_total_run_length"      # 总连续长度（buy + sell）
+      # 新增特征 - Z-score 特征（8个）
+      - "trade_cluster_imbalance_zscore_20"   # 不平衡比率的 Z-score（20窗口）
+      - "trade_cluster_imbalance_zscore_50"   # 不平衡比率的 Z-score（50窗口）
+      - "trade_cluster_net_runs_zscore_20"    # 净 runs 的 Z-score（20窗口）
+      - "trade_cluster_net_runs_zscore_50"    # 净 runs 的 Z-score（50窗口）
+      - "trade_cluster_max_buy_run_zscore_20" # 最大买单 run 的 Z-score（20窗口）
+      - "trade_cluster_max_buy_run_zscore_50" # 最大买单 run 的 Z-score（50窗口）
+      - "trade_cluster_max_sell_run_zscore_20" # 最大卖单 run 的 Z-score（20窗口）
+      - "trade_cluster_max_sell_run_zscore_50" # 最大卖单 run 的 Z-score（50窗口）
+      # 新增特征 - 移动平均特征（6个）
+      - "trade_cluster_net_runs_ma5"          # 净 runs 的移动平均（5窗口）
+      - "trade_cluster_net_runs_ma10"         # 净 runs 的移动平均（10窗口）
+      - "trade_cluster_net_runs_ma20"         # 净 runs 的移动平均（20窗口）
+      - "trade_cluster_total_runs_ma5"        # 总 runs 的移动平均（5窗口）
+      - "trade_cluster_total_runs_ma10"       # 总 runs 的移动平均（10窗口）
+      - "trade_cluster_total_runs_ma20"       # 总 runs 的移动平均（20窗口）
     category: order_flow
-    description: "VPIN (Volume-Synchronized Probability of Informed Trading) + Trade Clustering - 完整特征集（45个特征：28个VPIN + 17个Trade Clustering）。关键改进：VPIN对齐时使用多维统计特征（last, max, mean, std, count），避免峰值信号被均值稀释。"
+    description: "VPIN (Volume-Synchronized Probability of Informed Trading) + Trade Clustering - 完整特征集（67个特征：30个VPIN + 37个Trade Clustering）。关键改进：VPIN对齐时使用多维统计特征（last, max, mean, std, count, skewness, trend），避免峰值信号被均值稀释。VPIN新增2个特征：vpin_skewness（偏度，捕捉尾部风险）和vpin_trend（趋势，捕捉风险积聚/释放）。Trade Clustering 新增20个特征：净runs、长度比、Z-score等，用于捕捉订单流聚集性、极端行为和反转信号。"
     compute_params:
       vpin_n_buckets: 50
       vpin_adaptive: true

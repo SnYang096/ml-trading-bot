@@ -27,141 +27,7 @@ from .utils_volume_profile import (
 )
 
 
-def build_wpt_denoised_vpvr(
-    df: pd.DataFrame,
-    price_col: str = "close",
-    volume_col: str = "volume",
-    high_col: str = "high",
-    low_col: str = "low",
-    wavelet: str = "db4",
-    level: int = 4,
-    vpvr_window: int = 100,
-    bins: int | str = "auto",
-    drop_high_freq: bool = True,
-) -> pd.DataFrame:
-    """
-    构建 WPT 降噪后的 VPVR（Volume Profile Visible Range）
-    
-    核心思想：
-    1. 使用 WPT 对价格进行降噪，剔除高频噪声
-    2. 基于降噪后的价格构建 VPVR，使成交量分布更聚焦于真实交易区间
-    3. 识别 PVP（Point of Control）和 LVN（Low Volume Node）
-    
-    Args:
-        df: DataFrame with OHLCV data
-        price_col: Price column name
-        volume_col: Volume column name
-        high_col: High column name
-        low_col: Low column name
-        wavelet: Wavelet function
-        level: WPT decomposition level
-        vpvr_window: Rolling window for VPVR calculation
-        bins: Number of price bins for VPVR. If "auto" (default), uses Freedman-Diaconis rule
-        drop_high_freq: Whether to drop highest frequency subband
-    
-    Returns:
-        DataFrame with VPVR features added:
-        - vpvr_pvp: Point of Control (price with highest volume)
-        - vpvr_hvn_count: High Volume Node count
-        - vpvr_lvn_count: Low Volume Node count
-        - vpvr_lvn_distance: Distance to nearest LVN
-        - vpvr_volume_density: Volume density at current price
-        - vpvr_price_in_lvn: Whether current price is in LVN (1.0) or not (0.0)
-    """
-    df = df.copy()
-    
-    # 使用典型价格 (H+L+C)/3
-    if high_col in df.columns and low_col in df.columns:
-        typical_price = (df[high_col] + df[low_col] + df[price_col]) / 3.0
-    else:
-        typical_price = df[price_col]
-    
-    # 初始化输出列
-    df["vpvr_pvp"] = np.nan
-    df["vpvr_hvn_count"] = 0.0
-    df["vpvr_lvn_count"] = 0.0
-    df["vpvr_lvn_distance"] = np.nan
-    df["vpvr_volume_density"] = 0.0
-    df["vpvr_price_in_lvn"] = 0.0
-    
-    # 滚动窗口计算 VPVR
-    for i in range(vpvr_window, len(df)):
-        price_window = typical_price.iloc[i - vpvr_window : i].values
-        volume_window = df[volume_col].iloc[i - vpvr_window : i].values
-
-        vp_result: Optional[VolumeProfileResult] = compute_wpt_volume_profile(
-            price_window=price_window,
-            volume_window=volume_window,
-            bins=bins,
-            wavelet=wavelet,
-            level=level,
-            drop_high_freq=drop_high_freq,
-        )
-
-        if vp_result is None:
-            continue
-
-        hist = vp_result.hist
-        edges = vp_result.edges
-        centers = vp_result.centers
-
-        # Step 3: 识别 PVP（最高成交量对应的价格）
-        if np.sum(hist) > 0:
-            pvp_idx = np.argmax(hist)
-            df.iloc[i, df.columns.get_loc("vpvr_pvp")] = centers[pvp_idx]
-        
-        # Step 4: 识别 HVN 和 LVN
-        positive_mask = hist > 0
-        volume_mean = np.mean(hist[positive_mask]) if np.any(positive_mask) else 0
-        volume_std = np.std(hist[positive_mask]) if np.any(positive_mask) else 0
-        
-        if volume_std > 0:
-            # HVN: 成交量 > mean + 0.5*std
-            hvn_mask = hist > (volume_mean + 0.5 * volume_std)
-            df.iloc[i, df.columns.get_loc("vpvr_hvn_count")] = np.sum(hvn_mask)
-            
-            # LVN: 成交量 < mean - 0.5*std
-            lvn_mask = hist < (volume_mean - 0.5 * volume_std)
-            df.iloc[i, df.columns.get_loc("vpvr_lvn_count")] = np.sum(lvn_mask)
-            
-            # Step 5: 计算当前价格到最近 LVN 的距离
-            current_price = typical_price.iloc[i]
-            lvn_prices = centers[lvn_mask]
-            
-            if len(lvn_prices) > 0:
-                lvn_distances = np.abs(lvn_prices - current_price)
-                nearest_lvn_idx = np.argmin(lvn_distances)
-                nearest_lvn_price = lvn_prices[nearest_lvn_idx]
-                nearest_lvn_distance = lvn_distances[nearest_lvn_idx]
-                
-                # 归一化距离（相对于价格范围）
-                price_range = vp_result.price_max - vp_result.price_min
-                if price_range > 0:
-                    df.iloc[i, df.columns.get_loc("vpvr_lvn_distance")] = (
-                        nearest_lvn_distance / price_range
-                    )
-                
-                # 判断当前价格是否在 LVN 中
-                bin_width = (vp_result.price_max - vp_result.price_min) / bins
-                if np.abs(current_price - nearest_lvn_price) < bin_width:
-                    df.iloc[i, df.columns.get_loc("vpvr_price_in_lvn")] = 1.0
-            
-            # Step 6: 计算当前价格的成交量密度
-            current_price_bin = np.digitize(current_price, edges) - 1
-            current_price_bin = np.clip(current_price_bin, 0, len(hist) - 1)
-            
-            if current_price_bin < len(hist):
-                current_volume = hist[current_price_bin]
-                max_volume = np.max(hist) if len(hist) > 0 else 1.0
-                df.iloc[i, df.columns.get_loc("vpvr_volume_density")] = (
-                    current_volume / max_volume if max_volume > 0 else 0.0
-                )
-    
-    # 前向填充缺失值
-    df["vpvr_pvp"] = df["vpvr_pvp"].ffill()
-    df["vpvr_lvn_distance"] = df["vpvr_lvn_distance"].fillna(0.0)
-    
-    return df
+# build_wpt_denoised_vpvr 已删除，现在使用 utils_volume_profile.compute_unified_volume_profile_features
 
 
 def compute_liquidity_void_features(
@@ -522,13 +388,16 @@ def extract_liquidity_features(
     
     # 根据 feature_type 选择要提取的特征
     if feature_type in ["vpvr", "all"]:
-        # 1. WPT 降噪的 VPVR
-        df = build_wpt_denoised_vpvr(
+        # 1. WPT 降噪的 VPVR（使用统一实现）
+        from .utils_volume_profile import compute_unified_volume_profile_features
+        df = compute_unified_volume_profile_features(
             df,
             price_col=price_col,
             volume_col=volume_col,
             high_col=high_col,
             low_col=low_col,
+            window=100,  # VPVR 默认窗口
+            use_typical_price=True,  # VPVR 使用典型价格
             wavelet=wavelet,
             level=level,
         )
@@ -555,4 +424,3 @@ def extract_liquidity_features(
         )
     
     return df
-

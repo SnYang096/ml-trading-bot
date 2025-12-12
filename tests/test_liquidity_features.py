@@ -22,7 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.features.time_series.utils_liquidity_features import (
     extract_liquidity_features,
     compute_liquidity_void_features,
-    build_wpt_denoised_vpvr,
+    # build_wpt_denoised_vpvr 已删除，使用 compute_unified_volume_profile_features
 )
 
 

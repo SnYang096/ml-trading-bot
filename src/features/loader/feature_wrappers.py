@@ -11,7 +11,10 @@ from typing import Dict, List, Optional
 from src.features.time_series.baseline_features import BaselineFeatureEngineer
 from src.features.time_series.utils_liquidity_features import (
     extract_liquidity_features,
-    build_wpt_denoised_vpvr,
+)
+from src.features.time_series.utils_volume_profile import (
+    compute_unified_volume_profile_features,
+    compute_unified_volume_profile_derived_features,
 )
 
 
@@ -248,6 +251,78 @@ def compute_sr_strength_max(
     return result
 
 
+def compute_unified_volume_profile(
+    df: pd.DataFrame,
+    window: int = 160,
+    bins: int | str = "auto",
+    value_area_ratio: float = 0.7,
+    wavelet: str = "db4",
+    level: int = 4,
+    drop_high_freq: bool = True,
+    use_typical_price: bool = False,
+    use_wpt_price: bool = True,
+    **kwargs
+) -> pd.DataFrame:
+    """
+    统一的 Volume Profile 特征计算（合并 POC/HAL 和 VPVR）
+    
+    在一次计算中同时输出 POC/HAL 和 HVN/LVN 特征，避免重复计算。
+    
+    Args:
+        df: DataFrame with OHLCV data
+        window: Rolling window size (default: 160)
+        bins: Number of price bins. If "auto" (default), uses Freedman-Diaconis rule
+        value_area_ratio: Value Area ratio (default: 0.7, i.e., 70%)
+        wavelet: Wavelet function (default: "db4")
+        level: WPT decomposition level (default: 4)
+        drop_high_freq: Whether to drop highest frequency subband (default: True)
+        use_typical_price: If True, use (H+L+C)/3; else use close or WPT price
+        use_wpt_price: If True and wpt_price_reconstructed exists, use it (default: True)
+        **kwargs: Other parameters (price_col, volume_col, etc.)
+    
+    Returns:
+        DataFrame with unified volume profile features:
+        - vp_poc, vp_poc_volume_ratio, vp_hal_high, vp_hal_low, vp_hal_mid
+        - vp_hvn_count, vp_lvn_count, vp_lvn_distance, vp_volume_density, vp_price_in_lvn
+    """
+    from src.features.time_series.utils_volume_profile import (
+        compute_unified_volume_profile_features,
+        compute_unified_volume_profile_derived_features,
+    )
+    
+    result = df.copy()
+    
+    # 确定价格序列
+    price_series = None
+    if use_wpt_price and "wpt_price_reconstructed" in result.columns:
+        price_series = result["wpt_price_reconstructed"]
+    
+    # 计算基础特征
+    result = compute_unified_volume_profile_features(
+        result,
+        price_col=kwargs.get("price_col", "close"),
+        volume_col=kwargs.get("volume_col", "volume"),
+        high_col=kwargs.get("high_col", "high"),
+        low_col=kwargs.get("low_col", "low"),
+        window=window,
+        bins=bins,
+        value_area_ratio=value_area_ratio,
+        wavelet=wavelet,
+        level=level,
+        drop_high_freq=drop_high_freq,
+        use_typical_price=use_typical_price,
+        price_series=price_series,
+    )
+    
+    # 计算衍生特征
+    result = compute_unified_volume_profile_derived_features(
+        result,
+        price_col=kwargs.get("price_col", "close"),
+    )
+    
+    return result
+
+
 def compute_wpt_vpvr(
     df: pd.DataFrame,
     wavelet: str = "db4",
@@ -258,49 +333,29 @@ def compute_wpt_vpvr(
     **kwargs
 ) -> pd.DataFrame:
     """
-    计算 WPT 降噪的 VPVR 特征
+    计算 WPT 降噪的 VPVR 特征（向后兼容包装函数）
     
-    包装函数：传递 vpvr_window 参数给 build_wpt_denoised_vpvr
+    现在使用统一的 Volume Profile 实现，同时输出 POC/HAL 和 VPVR 特征。
     
     Args:
         df: DataFrame with OHLCV data
         wavelet: Wavelet function
         level: WPT decomposition level
-        vpvr_window: VPVR 计算窗口
+        vpvr_window: VPVR 计算窗口（现在作为 window 参数）
         bins: 价格分箱数。如果为 "auto"（默认），则使用 Freedman-Diaconis rule 自动计算
-        feature_type: 特征类型（'vpvr'）
+        feature_type: 特征类型（'vpvr'，向后兼容）
         **kwargs: 其他参数
     
     Returns:
-        DataFrame with VPVR features added
+        DataFrame with unified volume profile features
     """
-    result = df.copy()
-    
-    # 如果只需要 VPVR 特征，直接调用 build_wpt_denoised_vpvr
-    if feature_type == "vpvr":
-        result = build_wpt_denoised_vpvr(
-            result,
-            price_col=kwargs.get("price_col", "close"),
-            volume_col=kwargs.get("volume_col", "volume"),
-            high_col=kwargs.get("high_col", "high"),
-            low_col=kwargs.get("low_col", "low"),
-            wavelet=wavelet,
-            level=level,
-            vpvr_window=vpvr_window,
-            bins=bins,
-        )
-    else:
-        # 使用 extract_liquidity_features（不支持 vpvr_window）
-        result = extract_liquidity_features(
-            result,
-            price_col=kwargs.get("price_col", "close"),
-            volume_col=kwargs.get("volume_col", "volume"),
-            high_col=kwargs.get("high_col", "high"),
-            low_col=kwargs.get("low_col", "low"),
-            atr_col=kwargs.get("atr_col", "atr"),
-            wavelet=wavelet,
-            level=level,
-            feature_type=feature_type,
-        )
-    
-    return result
+    # 使用统一的实现
+    return compute_unified_volume_profile(
+        df,
+        window=vpvr_window,  # 使用 vpvr_window 作为 window
+        bins=bins,
+        wavelet=wavelet,
+        level=level,
+        use_typical_price=True,  # VPVR 使用典型价格
+        **kwargs
+    )
