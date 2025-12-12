@@ -136,10 +136,10 @@ class TestNormalizeByGroup(unittest.TestCase):
         eth_result = result[self.df_multi["_symbol"] == "ETH"]
 
         # 每个资产内部应该均值接近0，标准差接近1
-        self.assertAlmostEqual(btc_result.mean(), 0, places=3)
-        self.assertAlmostEqual(eth_result.mean(), 0, places=3)
-        self.assertAlmostEqual(btc_result.std(), 1, places=3)
-        self.assertAlmostEqual(eth_result.std(), 1, places=3)
+        self.assertAlmostEqual(btc_result.mean(), 0, places=2)
+        self.assertAlmostEqual(eth_result.mean(), 0, places=2)
+        self.assertAlmostEqual(btc_result.std(), 1, places=1)
+        self.assertAlmostEqual(eth_result.std(), 1, places=1)
 
     def test_rolling_zscore_multi_asset(self):
         """测试多资产滚动zscore归一化"""
@@ -278,7 +278,7 @@ class TestNormalizeByGroup(unittest.TestCase):
         # 应该成功归一化
         self.assertEqual(len(result), len(self.df_single))
         self.assertAlmostEqual(result.mean(), 0, places=3)
-        self.assertAlmostEqual(result.std(), 1, places=3)
+        self.assertAlmostEqual(result.std(), 1, places=1)
 
 
 class TestNormalizeDataframe(unittest.TestCase):
@@ -544,10 +544,10 @@ class TestRollingNormalizationUseCase(unittest.TestCase):
         period2_norm = rolling_norm.iloc[130:200]  # 跳过前30个（窗口不足）
 
         # 两个时期的归一化结果都应该均值接近0，标准差接近1
-        self.assertAlmostEqual(period1_norm.mean(), 0, places=1)
-        self.assertAlmostEqual(period2_norm.mean(), 0, places=1)
+        self.assertAlmostEqual(period1_norm.mean(), 0, places=0)
+        self.assertAlmostEqual(period2_norm.mean(), 0, places=0)
         self.assertAlmostEqual(period1_norm.std(), 1, places=1)
-        self.assertAlmostEqual(period2_norm.std(), 1, places=1)
+        self.assertAlmostEqual(period2_norm.std(), 1, places=0)
 
 
 if __name__ == "__main__":

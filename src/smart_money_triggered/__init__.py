@@ -2,7 +2,7 @@
 Smart money triggered event-driven utilities.
 
 This package contains:
-- WebSocket client for Alltick quote streams
+- WebSocket client for Binance trade streams
 - 100ms tick aggregation helpers
 - Order-flow signal calculation utilities
 - Orchestration helpers for realtime + manual execution

@@ -1,7 +1,7 @@
-## Smart Money Triggered (Alltick) — Realtime + Manual Signals
+## Smart Money Triggered (Binance) — Realtime + Manual Signals
 
 ### 组件
-- `smart_money_triggered/alltick_ws.py`：Alltick websocket 客户端（心跳 22000 + 订阅 22004，推送 22998）
+- `smart_money_triggered/binance_ws.py`：Binance trade websocket 客户端（combined stream 订阅，自动重连）
 - `smart_money_triggered/tick_store.py`：100ms tick 聚合并按 `data/smart_money_triggered/<symbol>/<date>.parquet` 持久化
 - `smart_money_triggered/signals.py`：订单流指标与信号判定
 - `smart_money_triggered/engine.py`：实时采集、手动/定时计算信号的入口
@@ -42,7 +42,6 @@ print(res.decision, res.debug)
 - 数据输出：`data/smart_money_triggered/<symbol>/<YYYY-MM-DD>.parquet`
 
 ### 提示
-- Alltick 要求 10s 心跳；断线自动重连。
-- 订阅请求为覆盖模式，`alltick_ws` 每次重连都会发送全量 symbol 列表。
+- Binance trade stream 自带心跳，客户端每次重连会使用 combined stream 订阅全量 symbol。
 - 若需 QuestDB/数据库写入，可在 `TickStorage.append` 中替换为自定义 sink。
 

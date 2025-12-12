@@ -224,6 +224,11 @@ def test_run_dim_compare_with_dates(tmp_strategy_config_dir, sample_market_data)
     except ImportError:
         pytest.skip("Required dependencies not available for full test")
 
+    # Skip if required tick parquet data is not available
+    tick_dir = Path(sample_market_data).parent / "parquet_data"
+    if not tick_dir.exists() or not any(tick_dir.glob("*.parquet")):
+        pytest.skip("Tick parquet data not available; skip run_dim_compare_with_dates.")
+
     results, top_factors_path = run_dim_compare(
         config_dir=tmp_strategy_config_dir,
         symbol="BTCUSDT",

@@ -51,6 +51,8 @@ feature_pipeline:
     # - vpin_count: 事件数（代理流动性，突破时事件数可能增加）
     # 推荐组合：vpin_max（峰值异常）+ vpin_last（最新突破信号）+ vpin_count（流动性确认）
     - vpin_features
+    # 单根K线 Footprint 特征（POC/HVN/LVN/VAH/VAL + delta/imbalance/skew/exhaustion/divergence）
+    - footprint_basic
     # 交互特征（状态 × 动量）
     - liquidity_void_x_wpt_risk  # 流动性真空 × WPT 假突破风险（识别假突破）
     - compression_energy_x_ofi_short  # 压缩能量 × 订单流强度（压缩区突破确认）

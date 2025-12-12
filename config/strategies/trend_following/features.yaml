@@ -64,6 +64,8 @@ feature_pipeline:
     # - vpin_signed_imbalance_last: Signed imbalance 最新值（趋势方向确认）
     # 推荐组合：vpin（整体）+ vpin_signed_imbalance_last（方向）+ vpin_std（稳定性）
     - vpin_features
+    # 单根K线 Footprint 特征（POC/HVN/LVN/VAH/VAL + delta/imbalance/skew/exhaustion/divergence）
+    - footprint_basic
     # 交互特征（状态 × 动量）
     - hurst_x_trend_r2  # Hurst × 趋势 R²（确认趋势持续性）
     - evt_x_trend_r2  # EVT × 趋势强度（风险管理）

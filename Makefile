@@ -27,7 +27,7 @@ SYMBOL ?= BTCUSDT
 # SYMBOLS ?= BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT
 SYMBOLS ?= BTCUSDT,ETHUSDT
 START_DATE ?= 2025-1-01
-END_DATE ?= 2025-10-30
+END_DATE ?= 2025-11-30
 YEAR ?= 2024
 START_YEAR ?= 2021
 END_YEAR ?= 2025
@@ -228,10 +228,11 @@ docker-install:
 
 # Download configuration
 AGG_DATA_DIR ?= data/agg_data
+BACKUP_AGG_DATA_DIR ?= data/backup_zip
 DOWNLOAD_SYMBOLS ?= $(SYMBOLS)
 comma := ,
 DOWNLOAD_SYMBOLS_LIST := $(strip $(subst $(comma), ,$(DOWNLOAD_SYMBOLS)))
-DOWNLOAD_START_YEAR ?= 2020
+DOWNLOAD_START_YEAR ?= 2023
 DOWNLOAD_START_MONTH ?= 1
 DOWNLOAD_END_YEAR ?= $(shell date +%Y)
 DOWNLOAD_END_MONTH ?= $(shell date +%m)
@@ -244,6 +245,7 @@ data-download:
 	@yes | $(PYTHON) src/data_tools/download_training_data.py \
 		--data-dir $(AGG_DATA_DIR) \
 		--parquet-dir $(DATA_DIR) \
+		--backup-dir $(BACKUP_AGG_DATA_DIR) \
 		$(if $(DOWNLOAD_SYMBOLS_LIST),--symbols $(DOWNLOAD_SYMBOLS_LIST)) \
 		--start-year $(DOWNLOAD_START_YEAR) \
 		--start-month $(DOWNLOAD_START_MONTH) \

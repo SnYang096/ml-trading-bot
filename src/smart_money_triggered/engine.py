@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from zoneinfo import ZoneInfo
 
-from .alltick_ws import AlltickWebsocketClient
+from .binance_ws import BinanceWebsocketClient
 from .config_loader import SmartMoneySettings, load_settings
 from .signals import SignalResult, generate_signal
 from .tick_store import TickStorage, aggregate_ticks_100ms
@@ -46,11 +46,7 @@ class SmartMoneyEngine:
     async def _collect_and_store(
         self, stop_event: asyncio.Event, symbols: List[str], use_stock_ws: bool
     ) -> None:
-        client = AlltickWebsocketClient(
-            token=self.settings.token,
-            symbols=symbols,
-            use_stock_ws=use_stock_ws,
-        )
+        client = BinanceWebsocketClient(token=self.settings.token, symbols=symbols, use_stock_ws=use_stock_ws)
 
         buffer: Dict[str, List] = {sym: [] for sym in symbols}
         trading_date = _current_trading_date()

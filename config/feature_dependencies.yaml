@@ -376,6 +376,25 @@ features:
       - vp_hv_ratio: 高成交量区域比例（HVN）
       这些特征与 vol_zscore、vol_slope_10 结合，可显著提升对"波动率拐点"的识别能力。
     pass_full_df: true
+
+  footprint_basic:
+    module: enhanced
+    compute_func: compute_footprint_features
+    dependencies: []
+    required_columns: ["open_time", "close_time"]  # kline time boundaries; tick data must be provided at runtime
+    output_columns: ["fp_poc", "fp_hvn", "fp_lvn", "fp_vah", "fp_val", "fp_delta_poc", "fp_max_imbalance_price", "fp_max_imbalance_ratio", "fp_volume_skew", "fp_delta_skew", "fp_exhaustion_price", "fp_exhaustion_zscore", "fp_delta_divergence"]
+    category: order_flow
+    description: "Single-bar footprint (POC/HVN/LVN/VAH/VAL + delta/imbalance/skew) computed from ticks inside each kline."
+    compute_params:
+      price_bin_method: "fd"          # Freedman–Diaconis by default
+      price_bin_target_bins: 40       # fallback bins when fixed_bins or FD fallback
+      value_area_pct: 0.7             # VAH/VAL coverage
+      price_bin_size: null            # optional explicit bin width
+      tick_size: null                 # optional per-symbol min price increment (highest priority)
+    notes: |
+      - 需要 ticks 数据：columns ['price','volume','side']，DatetimeIndex；通过调用时传入 ticks（不可从 df 推断）。
+      - 分箱优先级：tick_size > price_bin_size > Freedman–Diaconis 自适应 > 固定目标 bin 数（均分 price range）。
+      - 无 tick 的 K 线返回 NaN。
   
   # ========================================================================
   # Hilbert 特征（依赖 WPT 去趋势化）

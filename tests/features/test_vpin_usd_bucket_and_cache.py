@@ -275,14 +275,14 @@ class TestVPINUSDCache:
         start = pd.Timestamp("2024-01-01")
         end = pd.Timestamp("2024-01-31")
 
-        # 传统模式缓存键
+        # 传统模式缓存键（无 USD）
         key_traditional = _get_monthly_vpin_cache_key(
-            file_path, bucket_volume, start, end, bucket_volume_usd=None
+            file_path, bucket_volume, bucket_volume_usd=None
         )
 
         # USD 模式缓存键
         key_usd = _get_monthly_vpin_cache_key(
-            file_path, bucket_volume, start, end, bucket_volume_usd=bucket_volume_usd
+            file_path, bucket_volume, bucket_volume_usd=bucket_volume_usd
         )
 
         # 验证缓存键不同
@@ -306,15 +306,13 @@ class TestVPINUSDCache:
 
         # 计算并保存缓存
         cache_key = _get_monthly_vpin_cache_key(
-            sample_tick_file, 100.0, start, end, bucket_volume_usd=bucket_volume_usd
+            sample_tick_file, 100.0, bucket_volume_usd=bucket_volume_usd
         )
 
-        # 计算 buckets
-        buckets = _compute_vpin_buckets_for_month(
+        # 计算 buckets（不传 start/end，函数会计算整个月份）
+        buckets, final_state = _compute_vpin_buckets_for_month(
             Path(sample_tick_file),
             bucket_volume=100.0,
-            start=start,
-            end=end,
             bucket_volume_usd=bucket_volume_usd,
         )
 
@@ -325,11 +323,12 @@ class TestVPINUSDCache:
         cache_file = temp_cache_dir / f"{cache_key}.pkl"
         assert cache_file.exists(), "缓存文件应存在"
 
-        # 加载缓存
-        loaded_buckets = _load_monthly_vpin_cache(temp_cache_dir, cache_key)
+        # 加载缓存（返回 (buckets, final_state) tuple）
+        loaded_result = _load_monthly_vpin_cache(temp_cache_dir, cache_key)
 
         # 验证加载的数据正确
-        assert loaded_buckets is not None, "应能加载缓存"
+        assert loaded_result is not None, "应能加载缓存"
+        loaded_buckets, loaded_final_state = loaded_result
         assert len(loaded_buckets) == len(buckets), "缓存数据长度应一致"
 
         # 验证数据内容一致

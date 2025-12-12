@@ -47,6 +47,8 @@ feature_pipeline:
     # - vpin_signed_imbalance_max: Signed imbalance 峰值（最大买卖压力方向）
     # 推荐组合：vpin_max（峰值异常）+ vpin_count（流动性）+ vpin_zscore_20（异常检测）
     - vpin_features
+    # 单根K线 Footprint 特征（POC/HVN/LVN/VAH/VAL + delta/imbalance/skew/exhaustion/divergence）
+    - footprint_basic
     # VPIN × Trade Clustering 交叉特征（SR 突破策略）
     - vpin_zscore_x_trade_cluster_max_buy_run  # 异常订单流不平衡 × 连续买入（突破确认）
     - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（突破方向验证）

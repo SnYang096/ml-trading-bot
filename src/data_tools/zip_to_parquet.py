@@ -192,7 +192,52 @@ class DataConverter:
             else:
                 df["side"] = np.sign(df["volume"]).replace(0, 1)
 
-            return df[["timestamp", "price", "volume", "side"]]
+            # 追加：将原始 tick 聚合到 1s 级别（显著降低体积，适用于 1h/4h 策略）
+            # 聚合逻辑：
+            # - 秒内按买/卖分别累加成交量
+            # - 价格使用该秒的整体 VWAP（price * volume / sum(volume)）
+            # - 若某秒只有买或只有卖，则只输出对应一条记录
+            df["buy_volume"] = np.where(df["side"] == 1, df["volume"], 0.0)
+            df["sell_volume"] = np.where(df["side"] == -1, df["volume"], 0.0)
+            df["price_volume"] = df["price"] * df["volume"]
+
+            agg = (
+                df.set_index("timestamp")
+                .resample("1S")
+                .agg(
+                    {
+                        "buy_volume": "sum",
+                        "sell_volume": "sum",
+                        "price_volume": "sum",
+                        "volume": "sum",
+                    }
+                )
+            )
+
+            # 计算该秒 VWAP
+            agg["vwap"] = agg["price_volume"] / agg["volume"].replace(0, np.nan)
+
+            rows = []
+            for ts, row in agg.iterrows():
+                vwap = row["vwap"]
+                buy_vol = row["buy_volume"]
+                sell_vol = row["sell_volume"]
+                if not np.isfinite(vwap):
+                    continue
+                if buy_vol > 0:
+                    rows.append(
+                        {"timestamp": ts, "price": vwap, "volume": buy_vol, "side": 1}
+                    )
+                if sell_vol > 0:
+                    rows.append(
+                        {"timestamp": ts, "price": vwap, "volume": sell_vol, "side": -1}
+                    )
+
+            if not rows:
+                return None
+
+            agg_df = pd.DataFrame(rows)
+            return agg_df[["timestamp", "price", "volume", "side"]]
 
         except Exception as e:
             logger.error("Error preprocessing tick data: %s", e)

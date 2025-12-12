@@ -8,7 +8,7 @@ from typing import Dict, List
 
 import pandas as pd
 
-from .alltick_ws import AlltickTick
+from .binance_ws import BinanceTick
 
 
 @dataclass
@@ -47,7 +47,7 @@ class TickStorage:
         return pd.read_parquet(target)
 
 
-def aggregate_ticks_100ms(ticks: List[AlltickTick]) -> pd.DataFrame:
+def aggregate_ticks_100ms(ticks: List[BinanceTick]) -> pd.DataFrame:
     """
     Aggregate raw ticks into 100ms windows with order-flow fields.
     """

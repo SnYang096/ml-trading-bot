@@ -20,7 +20,7 @@ FUTURES_WS_BASE = "wss://fstream.binance.com"
 
 
 @dataclass
-class AlltickTick:
+class BinanceTick:
     code: str
     tick_time_ms: int
     price: float
@@ -29,7 +29,7 @@ class AlltickTick:
     trade_direction: int  # 1=BUY, 2=SELL
 
     @classmethod
-    def from_binance(cls, payload: Dict[str, Any]) -> "AlltickTick":
+    def from_binance(cls, payload: Dict[str, Any]) -> "BinanceTick":
         """
         Parse a Binance trade payload into the legacy tick structure.
         """
@@ -48,14 +48,14 @@ class AlltickTick:
         )
 
 
-class AlltickWebsocketClient:
+class BinanceWebsocketClient:
     """
-    Minimal Binance trade websocket client (compatibility shim for previous Alltick client).
+    Minimal Binance trade websocket client.
 
     Responsibilities:
     - manages connection & reconnection
     - subscribes via combined stream to all symbols
-    - yields parsed AlltickTick objects from Binance trade events
+    - yields parsed BinanceTick objects from Binance trade events
     """
 
     def __init__(
@@ -80,7 +80,7 @@ class AlltickWebsocketClient:
         streams = "/".join(f"{sym.lower()}@trade" for sym in self.symbols)
         return f"{base}/stream?streams={streams}"
 
-    async def stream_ticks(self, stop_event: asyncio.Event) -> AsyncIterator[AlltickTick]:
+    async def stream_ticks(self, stop_event: asyncio.Event) -> AsyncIterator[BinanceTick]:
         url = self._ws_url()
 
         while not stop_event.is_set():
@@ -104,7 +104,7 @@ class AlltickWebsocketClient:
                         if payload.get("e") != "trade":
                             continue
 
-                        tick = AlltickTick.from_binance(payload)
+                        tick = BinanceTick.from_binance(payload)
                         yield tick
 
                         if stop_event.is_set():

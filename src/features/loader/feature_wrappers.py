@@ -16,6 +16,10 @@ from src.features.time_series.utils_volume_profile import (
     compute_unified_volume_profile_features,
     compute_unified_volume_profile_derived_features,
 )
+from src.features.time_series.utils_footprint import (
+    compute_kline_footprint_features,
+    FootprintConfig,
+)
 
 
 def compute_sqs_hal_high(
@@ -228,6 +232,54 @@ def compute_sr_strength_max(
     if not boundaries:
         result["sr_strength_max"] = 0.0
         return result
+
+
+def compute_footprint_features(
+    df: pd.DataFrame,
+    ticks: pd.DataFrame,
+    open_col: str = "open_time",
+    close_col: str = "close_time",
+    price_bin_size: float = None,
+    price_bin_method: str = "fd",
+    price_bin_target_bins: int = 40,
+    value_area_pct: float = 0.7,
+    tick_size: float = None,
+) -> pd.DataFrame:
+    """
+    Compute single-bar footprint features and merge back to the kline DataFrame.
+
+    Args:
+        df: Kline DataFrame with open/close timestamp columns.
+        ticks: Tick DataFrame with columns ['price', 'volume', 'side'] and DateTimeIndex.
+        open_col/close_col: column names delimiting each bar.
+        price_bin_size: explicit bin width; if None, auto.
+        price_bin_method: 'fd' (Freedman–Diaconis) or 'fixed_bins'.
+        price_bin_target_bins: number of bins when using fixed_bins or as fallback.
+        value_area_pct: coverage for VAH/VAL (default 70%).
+        tick_size: per-symbol minimum price increment; highest priority when set.
+
+    Returns:
+        DataFrame with footprint columns appended.
+    """
+    cfg = FootprintConfig(
+        price_bin_size=price_bin_size,
+        price_bin_method=price_bin_method,
+        price_bin_target_bins=price_bin_target_bins,
+        value_area_pct=value_area_pct,
+        tick_size=tick_size,
+    )
+    fp_df = compute_kline_footprint_features(
+        ticks=ticks,
+        klines=df,
+        open_col=open_col,
+        close_col=close_col,
+        cfg=cfg,
+    )
+    # align and merge; footprint rows already aligned to df.index
+    out = df.copy()
+    for col in fp_df.columns:
+        out[col] = fp_df[col]
+    return out
     
     # 2. 计算边界强度
     compression_series = result.get("compression_confidence")

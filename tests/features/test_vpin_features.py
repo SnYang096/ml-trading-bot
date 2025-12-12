@@ -457,6 +457,9 @@ class TestTradeClustering:
             window_size=100,
         )
 
+        if isinstance(result, tuple):
+            result, _state = result
+
         # 验证返回类型
         assert isinstance(result, pd.DataFrame), "应返回 DataFrame"
 
@@ -510,6 +513,9 @@ class TestTradeClustering:
             window_size=100,
         )
 
+        if isinstance(result, tuple):
+            result, _state = result
+
         if len(result) > 0:
             # 所有 buy，应显示高度聚集（低熵）
             entropy_values = result["trade_cluster_directional_entropy"].dropna()
@@ -539,6 +545,9 @@ class TestTradeClustering:
             ticks_alternating,
             window_size=100,
         )
+
+        if isinstance(result, tuple):
+            result, _state = result
 
         if len(result) > 0:
             # 交替买卖，应显示高熵（混乱）
