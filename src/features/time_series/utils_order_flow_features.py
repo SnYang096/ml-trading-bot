@@ -20,14 +20,18 @@ from collections import deque
 
 # 常量定义
 TOL = 1e-10  # 浮点比较容差（用于 volume 比较、时间戳对齐等）
+EPS = 1e-9   # 通用极小量，避免分母为 0 产生 inf
 MIN_BUCKET_VOLUME_TOL = 1e-9  # 桶体积填充容差（用于判断桶是否填满）
 
 try:
-    from scipy.stats import percentileofscore, entropy as scipy_entropy
+    from scipy.stats import percentileofscore, entropy as scipy_entropy, skew as scipy_skew
+    from scipy.stats import linregress
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
     scipy_entropy = None
+    scipy_skew = None
+    linregress = None
 
 try:
     from numba import njit  # noqa: F401
@@ -619,6 +623,8 @@ def extract_order_flow_features(
                 aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_vpin_last = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
+                aligned_vpin_skew = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_trend = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_signed_max = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
@@ -630,6 +636,7 @@ def extract_order_flow_features(
                     
                     # 按时间排序获取最后一个值
                     group_sorted = group_data.sort_values('timestamp')
+                    vpin_values = group_data['vpin'].values
                     
                     aligned_vpin.iloc[kline_pos] = group_data['vpin'].mean()
                     aligned_vpin_max.iloc[kline_pos] = group_data['vpin'].max()
@@ -637,6 +644,40 @@ def extract_order_flow_features(
                     aligned_vpin_std.iloc[kline_pos] = group_data['vpin'].std() if len(group_data) > 1 else 0.0
                     aligned_vpin_last.iloc[kline_pos] = group_sorted['vpin'].iloc[-1]
                     aligned_vpin_count.iloc[kline_pos] = len(group_data)
+                    
+                    # 计算偏度（需要至少 3 个数据点）
+                    if len(vpin_values) >= 3:
+                        if HAS_SCIPY and scipy_skew is not None:
+                            aligned_vpin_skew.iloc[kline_pos] = scipy_skew(vpin_values, nan_policy='omit')
+                        else:
+                            # 手动计算偏度：E[(X - μ)^3] / σ^3
+                            mean_vpin = np.mean(vpin_values)
+                            std_vpin = np.std(vpin_values)
+                            if std_vpin > EPS:
+                                skew_val = np.mean(((vpin_values - mean_vpin) / std_vpin) ** 3)
+                                aligned_vpin_skew.iloc[kline_pos] = skew_val
+                    
+                    # 计算线性回归斜率（趋势）
+                    if len(group_sorted) >= 2:
+                        # 使用时间戳作为 x 轴（转换为数值）
+                        timestamps = group_sorted['timestamp'].values
+                        # 转换为相对于第一个时间戳的秒数
+                        time_seconds = (timestamps - timestamps[0]).astype('timedelta64[s]').astype(float)
+                        vpin_vals = group_sorted['vpin'].values
+                        
+                        if HAS_SCIPY and linregress is not None:
+                            # 使用 scipy 的线性回归
+                            slope, _, _, _, _ = linregress(time_seconds, vpin_vals)
+                            aligned_vpin_trend.iloc[kline_pos] = slope
+                        else:
+                            # 手动计算斜率：最小二乘法
+                            if len(time_seconds) > 1 and np.std(time_seconds) > EPS:
+                                # slope = cov(x,y) / var(x)
+                                cov_xy = np.cov(time_seconds, vpin_vals)[0, 1]
+                                var_x = np.var(time_seconds)
+                                if var_x > EPS:
+                                    slope = cov_xy / var_x
+                                    aligned_vpin_trend.iloc[kline_pos] = slope
                     
                     aligned_signed.iloc[kline_pos] = group_data['signed'].mean()
                     aligned_signed_max.iloc[kline_pos] = group_data['signed'].max()
@@ -649,6 +690,8 @@ def extract_order_flow_features(
                 aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_vpin_last = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
+                aligned_vpin_skew = pd.Series(0.0, index=df.index, dtype=float)
+                aligned_vpin_trend = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_signed_max = pd.Series(0.0, index=df.index, dtype=float)
                 aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
@@ -663,6 +706,8 @@ def extract_order_flow_features(
             aligned_vpin_std = None
             aligned_vpin_last = None
             aligned_vpin_count = None
+            aligned_vpin_skew = None
+            aligned_vpin_trend = None
             aligned_signed_max = None
             aligned_signed_last = None
         # 方法2：循环方法（兼容性，当向量化方法不可用时）
@@ -673,6 +718,8 @@ def extract_order_flow_features(
             aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
             aligned_vpin_last = pd.Series(0.0, index=df.index, dtype=float)
             aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
+            aligned_vpin_skew = pd.Series(0.0, index=df.index, dtype=float)
+            aligned_vpin_trend = pd.Series(0.0, index=df.index, dtype=float)
             aligned_signed = pd.Series(0.0, index=df.index, dtype=float)
             aligned_signed_max = pd.Series(0.0, index=df.index, dtype=float)
             aligned_signed_last = pd.Series(0.0, index=df.index, dtype=float)
@@ -683,6 +730,19 @@ def extract_order_flow_features(
             else:
                 event_vpin = vpin_events
                 event_signed = pd.Series(0.0, index=vpin_events.index)
+            # 确保 vpin_events.index 是 DatetimeIndex
+            if not isinstance(vpin_events.index, pd.DatetimeIndex):
+                if isinstance(vpin_events, pd.DataFrame):
+                    vpin_events = vpin_events.copy()
+                    if "timestamp" in vpin_events.columns:
+                        vpin_events = vpin_events.set_index("timestamp")
+                    else:
+                        # 如果索引不是 datetime 且没有 timestamp 列，尝试转换
+                        vpin_events.index = pd.to_datetime(vpin_events.index)
+                else:
+                    # Series
+                    vpin_events.index = pd.to_datetime(vpin_events.index)
+            
             for kline_time in df.index:
                 window_end = kline_time + freq_td
                 # 找到该 K 线时间段内的所有 VPIN 事件（右对齐：[kline_time, kline_time + freq)）
@@ -692,6 +752,9 @@ def extract_order_flow_features(
                 if window_mask.any():
                     vpin_window = event_vpin.loc[window_mask]
                     signed_window = event_signed.loc[window_mask]
+                    vpin_values = vpin_window.values
+                    vpin_times = vpin_window.index.values
+                    
                     # 计算多维统计特征
                     aligned_vpin.loc[kline_time] = vpin_window.mean()
                     aligned_vpin_max.loc[kline_time] = vpin_window.max()
@@ -699,6 +762,35 @@ def extract_order_flow_features(
                     aligned_vpin_std.loc[kline_time] = vpin_window.std() if len(vpin_window) > 1 else 0.0
                     aligned_vpin_last.loc[kline_time] = vpin_window.iloc[-1]  # 最后一个事件（最新的）
                     aligned_vpin_count.loc[kline_time] = len(vpin_window)
+                    
+                    # 计算偏度（需要至少 3 个数据点）
+                    if len(vpin_values) >= 3:
+                        if HAS_SCIPY and scipy_skew is not None:
+                            aligned_vpin_skew.loc[kline_time] = scipy_skew(vpin_values, nan_policy='omit')
+                        else:
+                            # 手动计算偏度
+                            mean_vpin = np.mean(vpin_values)
+                            std_vpin = np.std(vpin_values)
+                            if std_vpin > EPS:
+                                skew_val = np.mean(((vpin_values - mean_vpin) / std_vpin) ** 3)
+                                aligned_vpin_skew.loc[kline_time] = skew_val
+                    
+                    # 计算线性回归斜率（趋势）
+                    if len(vpin_times) >= 2:
+                        # 转换为相对于第一个时间戳的秒数
+                        time_seconds = (vpin_times - vpin_times[0]).astype('timedelta64[s]').astype(float)
+                        if HAS_SCIPY and linregress is not None:
+                            slope, _, _, _, _ = linregress(time_seconds, vpin_values)
+                            aligned_vpin_trend.loc[kline_time] = slope
+                        else:
+                            # 手动计算斜率
+                            if len(time_seconds) > 1 and np.std(time_seconds) > EPS:
+                                cov_xy = np.cov(time_seconds, vpin_values)[0, 1]
+                                var_x = np.var(time_seconds)
+                                if var_x > EPS:
+                                    slope = cov_xy / var_x
+                                    aligned_vpin_trend.loc[kline_time] = slope
+                    
                     aligned_signed.loc[kline_time] = signed_window.mean()
                     aligned_signed_max.loc[kline_time] = signed_window.max()
                     aligned_signed_last.loc[kline_time] = signed_window.iloc[-1]
@@ -706,6 +798,7 @@ def extract_order_flow_features(
                     # 没有事件，所有特征保持默认值 0
                     pass
         # 添加基础 VPIN 特征（均值，保持向后兼容）
+        # vpin = Mean_VPIN_4H：该 4H 周期内所有 VPIN buckets 的均值（衡量这 4 小时整体的博弈强度）
         df["vpin"] = aligned_vpin
         
         # 添加多维 VPIN 统计特征（关键改进：保留峰值信息，避免均值稀释）
@@ -721,12 +814,18 @@ def extract_order_flow_features(
             aligned_vpin_std = pd.Series(0.0, index=df.index, dtype=float)
         if aligned_vpin_count is None:
             aligned_vpin_count = pd.Series(0, index=df.index, dtype=int)
+        if aligned_vpin_skew is None:
+            aligned_vpin_skew = pd.Series(0.0, index=df.index, dtype=float)
+        if aligned_vpin_trend is None:
+            aligned_vpin_trend = pd.Series(0.0, index=df.index, dtype=float)
             
         df["vpin_last"] = aligned_vpin_last  # 最新值（反映最新情绪）
-        df["vpin_max"] = aligned_vpin_max  # 峰值（捕捉极端知情交易，关键！）
+        df["vpin_max"] = aligned_vpin_max  # 峰值（Max_VPIN_4H：该 4H 周期内 VPIN 的最大值）
         df["vpin_min"] = aligned_vpin_min  # 最小值
         df["vpin_std"] = aligned_vpin_std  # 波动性（衡量VPIN在K线内的变化）
         df["vpin_count"] = aligned_vpin_count  # 事件数（代理流动性，区分高VPIN是突发事件还是持续活跃）
+        df["vpin_skewness"] = aligned_vpin_skew  # 偏度（VPIN_Skewness：如果偏度为正，说明尾部风险大）
+        df["vpin_trend"] = aligned_vpin_trend  # 趋势（VPIN_Trend：斜率为正表示风险在积聚，斜率为负表示风险在释放）
         
         # 对齐 signed_imbalance（已在向量化或循环方法中处理）
         if aligned_signed is None:
@@ -747,13 +846,18 @@ def extract_order_flow_features(
         df[f"vpin_ma{w}"] = df["vpin"].rolling(window=w, min_periods=1).mean()
         df[f"vpin_max{w}"] = df["vpin"].rolling(window=w, min_periods=1).max()
     # VPIN 变化率（捕捉订单流突增）
-    df["vpin_change"] = df["vpin"].diff()
-    df["vpin_change_pct"] = df["vpin"].pct_change().fillna(0.0)
+    vpin_base = df["vpin"].replace([np.inf, -np.inf], np.nan)
+    df["vpin_change"] = vpin_base.diff()
+    # 手动 pct_change，加 EPS 避免分母为 0
+    prev = vpin_base.shift(1)
+    df["vpin_change_pct"] = ((vpin_base - prev) / (prev + EPS)).replace([np.inf, -np.inf], np.nan)
     # 增强特征：Z-score（识别异常高的订单流不平衡）
     for w in [20, 50]:
         rolling_mean = df["vpin"].rolling(window=w, min_periods=1).mean()
-        rolling_std = df["vpin"].rolling(window=w, min_periods=1).std()
-        df[f"vpin_zscore_{w}"] = (df["vpin"] - rolling_mean) / (rolling_std + TOL)
+        vpin_clean = df["vpin"].replace([np.inf, -np.inf], np.nan)
+        rolling_std = vpin_clean.rolling(window=w, min_periods=1).std()
+        z = (vpin_clean - rolling_mean) / (rolling_std + TOL)
+        df[f"vpin_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     # 增强特征：分位数排名（在滚动窗口中的位置，0~1）
     # 性能优化：使用 scipy.stats.percentileofscore（如果可用）
     for w in [20, 50]:
@@ -776,7 +880,9 @@ def extract_order_flow_features(
             )
     # 增强特征：VPIN 波动率（衡量订单流稳定性）
     for w in [10, 20]:
-        df[f"vpin_volatility_{w}"] = df["vpin"].rolling(window=w, min_periods=1).std()
+        vpin_clean = df["vpin"].replace([np.inf, -np.inf], np.nan)
+        vol = vpin_clean.rolling(window=w, min_periods=1).std()
+        df[f"vpin_volatility_{w}"] = vol.replace([np.inf, -np.inf], np.nan)
     # 增强特征：Spike 标志（VPIN 异常突增）
     # 性能优化：使用 numba 加速的 MAD 计算（优化版，比 pandas apply 快 100+ 倍）
     # 优化：同时计算 median 和 mad，避免重复计算
@@ -825,11 +931,11 @@ def extract_order_flow_features(
     # 新增特征：Signed Imbalance Z-score（识别极端买卖压力）
     if "vpin_signed_imbalance" in df.columns:
         for w in [20, 50]:
-            rolling_mean = df["vpin_signed_imbalance"].rolling(window=w, min_periods=1).mean()
-            rolling_std = df["vpin_signed_imbalance"].rolling(window=w, min_periods=1).std()
-            df[f"vpin_signed_imbalance_zscore_{w}"] = (
-                df["vpin_signed_imbalance"] - rolling_mean
-            ) / (rolling_std + TOL)
+            vsi_clean = df["vpin_signed_imbalance"].replace([np.inf, -np.inf], np.nan)
+            rolling_mean = vsi_clean.rolling(window=w, min_periods=1).mean()
+            rolling_std = vsi_clean.rolling(window=w, min_periods=1).std()
+            z = (vsi_clean - rolling_mean) / (rolling_std + TOL)
+            df[f"vpin_signed_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     # Trade Clustering 特征（与 VPIN 互补）
     # VPIN 关注 volume-bucketed 的净买卖差，Trade Clustering 关注连续同向成交的聚集性
     if include_trade_clustering and ticks is not None and len(ticks) > 0:
@@ -841,6 +947,7 @@ def extract_order_flow_features(
                 window_size=trade_clustering_window,
                 freq=freq,
                 monthly_cache_dir=monthly_cache_dir,
+                merge_batch_size=2,
             )
         except Exception as e:
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
@@ -854,6 +961,7 @@ def extract_order_flow_features(
                 window_size=trade_clustering_window,
                 freq=freq,
                 monthly_cache_dir=monthly_cache_dir,
+                merge_batch_size=2,
             )
         except Exception as e:
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")

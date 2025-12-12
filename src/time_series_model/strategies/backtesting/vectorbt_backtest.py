@@ -176,6 +176,7 @@ class VectorBTBacktest(BaseBacktest):
                 )
 
         try:
+            # Some vectorbt versions don't support size_short; use size only
             portfolio = vbt.Portfolio.from_signals(
                 price,
                 entries=long_entries,
@@ -187,10 +188,14 @@ class VectorBTBacktest(BaseBacktest):
                 slippage=slippage,
                 freq=freq,
                 size=long_size,
-                short_size=short_size,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"   ⚠️  Backtest failed: {exc}")
+            return None
+
+        # 如果没有任何交易或记录，直接返回 None，避免 stats 触发越界
+        if portfolio.wrapper.index.size == 0 or portfolio.trades.count() == 0:
+            print("   ⚠️  Backtest skipped: no trades or empty portfolio index.")
             return None
 
         stats = portfolio.stats()

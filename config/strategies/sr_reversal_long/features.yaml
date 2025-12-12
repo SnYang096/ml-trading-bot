@@ -14,23 +14,21 @@ feature_pipeline:
     - wpt_price_reconstructed  # 包含: wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed
     - wpt_price_fluctuation    # 包含: wpt_price_energy_low_ratio, wpt_price_energy_mid_ratio, wpt_price_energy_high_ratio
     - wpt_cvd_fluctuation      # CVD 波动（资金流去趋势）
-    # Hilbert 特征（CVD 相位领先 + 背离信号）
-    - hilbert_phase
-    - hilbert_price_env
-    # 临时移除存在 inf 的 Hilbert CVD 环境特征（排查用）
+    # Hilbert 特征（临时全部移除以排查 inf）
+    # - hilbert_phase
+    # - hilbert_price_env
     # - hilbert_cvd_env
     # - hilbert_cvd_price_env_ratio
-    # Hilbert 高级功能：成交量融合（识别背离）+ 分位数标准化
-    - hilbert_volume_env
-    - hilbert_env_price_vol_ratio
-    - hilbert_triple_divergence
-    - hilbert_price_env_qnorm
-    - hilbert_cvd_env_qnorm
+    # - hilbert_volume_env
+    # - hilbert_env_price_vol_ratio
+    # - hilbert_triple_divergence
+    # - hilbert_price_env_qnorm
+    # - hilbert_cvd_env_qnorm
     # Hurst 特征（趋势持续性）
     - hurst_price
     - hurst_cvd  # CVD 资金流的持续性（识别反转信号）
-    # VPVR 特征（空间域：流动性聚集区）
-    - wpt_vpvr
+    # VPVR 特征（空间域：流动性聚集区）— 临时移除以排查 inf
+    # - wpt_vpvr
     # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）
     # 新增多维特征（自动包含，无需单独添加）：
     # - vpin: 均值（整体不平衡度，向后兼容）

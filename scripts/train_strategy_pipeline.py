@@ -776,6 +776,14 @@ def train_strategy(
                 f"   ⚠️  {name}: found inf/-inf in {len(top_cols)} columns "
                 f"(top): {top_cols.to_dict()}"
             )
+            # 打印每个问题列的极值和示例索引，便于定位
+            for col in top_cols.index:
+                col_series = df[col]
+                bad_idx = col_series[~np.isfinite(col_series)].index[:5]
+                print(
+                    f"      ↳ {col}: min={col_series.min()}, max={col_series.max()}, "
+                    f"sample_idx={list(bad_idx)}"
+                )
 
     _debug_inf(df_train_filtered, "Train before drop_inf_rows")
     _debug_inf(df_test_filtered, "Test before drop_inf_rows")

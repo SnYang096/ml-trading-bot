@@ -28,6 +28,7 @@ def compute_hurst_dfa(
     series: np.ndarray,
     min_window: int = 4,
     max_window: Optional[int] = None,
+    eps: float = 1e-9,
 ) -> float:
     """
     使用 DFA 计算 Hurst 指数（仅适用于增量序列，如收益率）
@@ -95,7 +96,8 @@ def compute_hurst_dfa(
         return np.nan
     
     log_w = np.log(valid_windows)
-    log_f = np.log(fluctuations)
+    # 防止波动为 0 导致 log(0) -> -inf
+    log_f = np.log(np.maximum(fluctuations, eps))
     
     # 简单线性回归（忽略 NaN）
     mask = ~(np.isnan(log_w) | np.isnan(log_f))
@@ -406,7 +408,7 @@ def extract_hurst_features(
     
     # === 2. CVD 单期变化 ===
     if cvd_col and cvd_col in df.columns:
-        cvd_diff = df[cvd_col].diff().values  # t=0 为 NaN
+        cvd_diff = df[cvd_col].diff().replace([np.inf, -np.inf], np.nan).values  # t=0 为 NaN
         
         for i in range(rolling_window, len(df)):
             if (i - rolling_window) % update_freq != 0:
@@ -457,4 +459,3 @@ def extract_hurst_features(
     # 下游模型（如 LightGBM）可以自行处理缺失值
     
     return df
-

@@ -244,49 +244,134 @@ def _estimate_bucket_volume_from_cache(
 def _get_monthly_vpin_cache_key(
     file_path: str,
     bucket_volume: float,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
     bucket_volume_usd: Optional[float] = None,
+    prev_bucket_state: Optional[dict] = None,
 ) -> str:
-    """生成按月VPIN缓存的键"""
+    """
+    生成按月VPIN缓存的键（不包含 start/end，按月完整计算）
+
+    优化：按月完整计算并缓存，不同时间窗口可以复用同一月份的缓存
+
+    如果 prev_bucket_state 不为空，将其信息加入缓存键，以支持跨月连续性的缓存
+    """
     import hashlib
+    import json
 
     path = Path(file_path)
     month_str = path.stem.split("_")[-1] if "_" in path.stem else path.stem
     if bucket_volume_usd is not None:
-        key_str = f"vpin_monthly_usd_{month_str}_{bucket_volume_usd:.6f}_{start.isoformat()}_{end.isoformat()}"
+        key_str = f"vpin_monthly_usd_{month_str}_{bucket_volume_usd:.6f}"
     else:
-        key_str = f"vpin_monthly_{month_str}_{bucket_volume:.6f}_{start.isoformat()}_{end.isoformat()}"
+        key_str = f"vpin_monthly_{month_str}_{bucket_volume:.6f}"
+
+    # 如果 prev_bucket_state 不为空，将其信息加入缓存键
+    if prev_bucket_state is not None:
+        # 将 prev_bucket_state 序列化为字符串（使用固定精度避免浮点误差）
+        state_str = json.dumps(
+            {
+                "buy": round(prev_bucket_state.get("current_buy", 0.0), 6),
+                "sell": round(prev_bucket_state.get("current_sell", 0.0), 6),
+                "filled": round(prev_bucket_state.get("filled_value", 0.0), 6),
+            },
+            sort_keys=True,
+        )
+        key_str = f"{key_str}_state_{state_str}"
+
     return hashlib.md5(key_str.encode()).hexdigest()
 
 
 def _load_monthly_vpin_cache(
     cache_dir: Path, cache_key: str
-) -> Optional[List[Tuple[pd.Timestamp, float]]]:
-    """从缓存加载单月的VPIN buckets"""
+) -> Optional[tuple[List[Tuple[pd.Timestamp, float]], dict]]:
+    """
+    从缓存加载单月的VPIN buckets和final_state
+
+    返回: (buckets, final_state) 或 None
+    支持多种缓存格式：
+    1. 旧格式：只有buckets（list）
+    2. 标准格式：(buckets, final_state) tuple
+    3. 优化格式：只有final_state（dict），表示标准缓存只存了final_state
+    """
     cache_file = cache_dir / f"{cache_key}.pkl"
     if cache_file.exists():
         try:
             import pickle
 
             with open(cache_file, "rb") as f:
-                return pickle.load(f)
+                cached_data = pickle.load(f)
+                # 检查缓存格式
+                if isinstance(cached_data, list):
+                    # 旧格式：只有buckets，假设final_state为空
+                    empty_state = {
+                        "current_buy": 0.0,
+                        "current_sell": 0.0,
+                        "filled_value": 0.0,
+                    }
+                    return (cached_data, empty_state)
+                elif isinstance(cached_data, dict):
+                    # 优化格式：只有final_state（标准缓存）
+                    # 返回 None buckets，表示需要重新计算
+                    return (None, cached_data)
+                elif isinstance(cached_data, tuple) and len(cached_data) == 2:
+                    # 标准格式：(buckets, final_state) 或 (None, final_state)
+                    return cached_data
+                else:
+                    print(f"      ⚠️  Invalid cache format for {cache_key}", flush=True)
+                    return None
         except Exception as e:
             print(f"      ⚠️  Failed to load cache {cache_key}: {e}", flush=True)
     return None
 
 
 def _save_monthly_vpin_cache(
-    cache_dir: Path, cache_key: str, buckets: List[Tuple[pd.Timestamp, float]]
+    cache_dir: Path,
+    cache_key: str,
+    buckets: Optional[List[Tuple[pd.Timestamp, float]]],
+    final_state: Optional[dict] = None,
+    save_buckets: bool = True,
 ):
-    """保存单月的VPIN buckets到缓存"""
+    """
+    保存单月的VPIN buckets和final_state到缓存
+
+    Args:
+        cache_dir: 缓存目录
+        cache_key: 缓存键
+        buckets: VPIN buckets列表，如果为None表示不保存buckets
+        final_state: final_state字典，必须提供
+        save_buckets: 是否保存buckets（用于标准缓存优化：只存final_state）
+
+    缓存格式：
+    1. 标准缓存（save_buckets=False）：只保存final_state（dict）
+    2. 状态缓存（save_buckets=True）：保存(buckets, final_state) tuple
+    3. 向后兼容：如果final_state为空，保存为旧格式（只有buckets）
+    """
     cache_file = cache_dir / f"{cache_key}.pkl"
     try:
         import pickle
 
         cache_dir.mkdir(parents=True, exist_ok=True)
         with open(cache_file, "wb") as f:
-            pickle.dump(buckets, f)
+            # 如果final_state为空，保存为旧格式（只有buckets）以保持向后兼容
+            if final_state is None or all(
+                v < 1e-6 for v in final_state.values() if isinstance(v, (int, float))
+            ):
+                if buckets is not None:
+                    pickle.dump(buckets, f)
+                else:
+                    print(
+                        f"      ⚠️  Cannot save cache: both buckets and final_state are None",
+                        flush=True,
+                    )
+            elif not save_buckets:
+                # 优化格式：标准缓存只保存final_state
+                pickle.dump(final_state, f)
+            else:
+                # 标准格式：保存(buckets, final_state) tuple
+                if buckets is not None:
+                    pickle.dump((buckets, final_state), f)
+                else:
+                    # 如果没有buckets，只保存final_state
+                    pickle.dump(final_state, f)
     except Exception as e:
         print(f"      ⚠️  Failed to save cache {cache_key}: {e}", flush=True)
 
@@ -294,27 +379,36 @@ def _save_monthly_vpin_cache(
 def _compute_vpin_buckets_for_month(
     path: Path,
     bucket_volume: float,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
     bucket_volume_usd: Optional[float] = None,
-) -> List[Tuple[pd.Timestamp, float]]:
+    initial_state: Optional[dict] = None,
+) -> tuple[List[Tuple[pd.Timestamp, float]], dict]:
     """
-    计算单月的VPIN buckets
+    计算单月的VPIN buckets（完整月份，不裁剪）
+
+    关键：支持从初始状态继续计算，确保跨月 bucket 连续性
 
     Args:
         path: Tick 文件路径
         bucket_volume: Bucket volume (数量，如果 bucket_volume_usd 为 None 时使用)
-        start: 开始时间
-        end: 结束时间
         bucket_volume_usd: Bucket volume in USD (如果提供，使用 USD 价值计算)
+        initial_state: 初始 bucket 状态，格式：{"current_buy": float, "current_sell": float, "filled_value": float}
 
     Returns:
-        List of (timestamp, vpin_value) tuples
+        (buckets, final_state) tuple:
+            - buckets: List of (timestamp, vpin_value) tuples
+            - final_state: 未完成的 bucket 状态，格式：{"current_buy": float, "current_sell": float, "filled_value": float}
     """
     buckets = []
-    current_buy = 0.0
-    current_sell = 0.0
-    filled_value = 0.0
+
+    # 从初始状态开始（如果有），否则从0开始
+    if initial_state is not None:
+        current_buy = initial_state.get("current_buy", 0.0)
+        current_sell = initial_state.get("current_sell", 0.0)
+        filled_value = initial_state.get("filled_value", 0.0)
+    else:
+        current_buy = 0.0
+        current_sell = 0.0
+        filled_value = 0.0
 
     # 如果使用 USD bucket_volume，需要读取 price 列
     if bucket_volume_usd is not None:
@@ -324,7 +418,13 @@ def _compute_vpin_buckets_for_month(
 
     df = pd.read_parquet(path, columns=required_cols)
     if df.empty:
-        return buckets
+        # 返回空 buckets 和当前状态（可能来自 initial_state）
+        final_state = {
+            "current_buy": current_buy,
+            "current_sell": current_sell,
+            "filled_value": filled_value,
+        }
+        return buckets, final_state
 
     df = df.dropna(subset=required_cols)
     timestamps = pd.to_datetime(df["timestamp"]).to_numpy()
@@ -341,8 +441,6 @@ def _compute_vpin_buckets_for_month(
         target_bucket = bucket_volume
 
     for i, (ts, vol, side) in enumerate(zip(timestamps, volumes, sides)):
-        if ts < start or ts > end:
-            continue
 
         # 确定当前 tick 的价值（USD 或数量）
         if bucket_volume_usd is not None:
@@ -361,14 +459,22 @@ def _compute_vpin_buckets_for_month(
             filled_value += trade_value
             remaining -= trade_value
 
-            if filled_value >= target_bucket - 1e-9:
+            # 使用容差判断 bucket 完成，避免浮点误差（USD 模式下尤其重要）
+            BUCKET_COMPLETION_TOLERANCE = 1e-6  # 可配置的容差，适配不同币种量级
+            if filled_value >= target_bucket - BUCKET_COMPLETION_TOLERANCE:
                 imbalance = abs(current_buy - current_sell)
                 buckets.append((pd.Timestamp(ts), imbalance / target_bucket))
                 current_buy = 0.0
                 current_sell = 0.0
                 filled_value = 0.0
 
-    return buckets
+    # 返回 buckets 和未完成的 bucket 状态（用于跨月连续性）
+    final_state = {
+        "current_buy": current_buy,
+        "current_sell": current_sell,
+        "filled_value": filled_value,
+    }
+    return buckets, final_state
 
 
 def compute_vpin_from_cached_ticks(
@@ -406,7 +512,77 @@ def compute_vpin_from_cached_ticks(
     start = pd.to_datetime(start_ts) - pd.Timedelta(minutes=lookback_minutes)
     end = pd.to_datetime(end_ts) + pd.Timedelta(minutes=lookback_minutes)
 
-    cache_files = sorted(cache_files)
+    # 优化：根据 start/end 时间过滤 cache_files，只加载需要的月份
+    # 文件名格式：{symbol}_{year}-{month:02d}.parquet
+    def _get_file_month(path_str: str) -> Optional[pd.Timestamp]:
+        """从文件名提取月份时间戳"""
+        try:
+            path = Path(path_str)
+            # 假设文件名格式：BTCUSDT_2025-01.parquet
+            name = path.stem  # 去掉 .parquet
+            parts = name.split("_")
+            if len(parts) >= 2:
+                date_part = parts[-1]  # 2025-01
+                year, month = map(int, date_part.split("-"))
+                return pd.Timestamp(year=year, month=month, day=1)
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    # 优化：只加载当前月份和前一个月的数据（用于滚动平均）
+    # 策略：
+    # 1. 确定需要计算的时间范围涉及的月份（start 到 end）
+    # 2. 只加载这些月份 + 前一个月（用于滚动平均的 n_buckets 前置数据）
+    # 3. 最多只加载两个月的数据，大大减少内存占用
+    #
+    # 例如：
+    # - 计算7月的VPIN：只需要7月和6月的数据
+    # - 计算7月5日的VPIN：只需要7月5日之前（7月部分）和6月的数据
+
+    # 确定需要计算的月份范围
+    start_month = pd.Timestamp(year=start.year, month=start.month, day=1)
+    end_month = pd.Timestamp(year=end.year, month=end.month, day=1)
+
+    # 需要加载的月份：当前月份范围 + 前一个月（用于滚动平均）
+    required_months = set()
+
+    # 添加所有涉及的月份
+    current = start_month
+    while current <= end_month:
+        required_months.add((current.year, current.month))
+        current = current + pd.offsets.MonthBegin(1)
+
+    # 添加前一个月（用于滚动平均的前置数据）
+    prev_month = start_month - pd.offsets.MonthBegin(1)
+    required_months.add((prev_month.year, prev_month.month))
+
+    # 过滤：只保留需要的月份文件
+    def _file_month_matches(path_str: str) -> bool:
+        """检查文件月份是否在需要的月份列表中"""
+        file_month = _get_file_month(path_str)
+        if file_month is None:
+            # 无法解析文件名，保守处理：包含该文件
+            return True
+        return (file_month.year, file_month.month) in required_months
+
+    filtered_cache_files = [f for f in cache_files if _file_month_matches(f)]
+
+    if len(filtered_cache_files) < len(cache_files):
+        month_str = ", ".join([f"{y}-{m:02d}" for y, m in sorted(required_months)])
+        print(
+            f"   📅 Filtered cache files: {len(cache_files)} -> {len(filtered_cache_files)} "
+            f"(only loading months: {month_str})",
+            flush=True,
+        )
+    elif len(filtered_cache_files) > 0:
+        month_str = ", ".join([f"{y}-{m:02d}" for y, m in sorted(required_months)])
+        print(
+            f"   📅 Loading {len(filtered_cache_files)} month(s): {month_str} "
+            f"(time range: {start.date()} to {end.date()})",
+            flush=True,
+        )
+
+    cache_files = sorted(filtered_cache_files)
 
     # 如果提供了 bucket_volume_usd，优先使用 USD 模式
     if bucket_volume_usd is not None:
@@ -429,61 +605,631 @@ def compute_vpin_from_cached_ticks(
     # 按月缓存目录
     cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
 
-    # 收集所有月份的buckets
-    all_buckets = []
-    total_files = len(cache_files)
+    # 流式处理：按月分批计算，每次只加载两个月的数据（当前月+前一个月）
+    # 策略：
+    # 1. 确定需要计算的月份范围（start 到 end）
+    # 2. 按月循环处理：
+    #    - 计算5月：加载4月和5月的数据
+    #    - 计算6月：加载5月和6月的数据（5月可能已经缓存）
+    #    - 计算7月：加载6月和7月的数据（6月可能已经缓存）
+    # 3. 每次只加载两个月的数据到内存，大大减少内存占用
+
+    # 确定需要计算的月份范围
+    start_month = pd.Timestamp(year=start.year, month=start.month, day=1)
+    end_month = pd.Timestamp(year=end.year, month=end.month, day=1)
+
+    # 按月分批处理
+    all_vpin_series = []
+    total_months = 0
     cached_count = 0
     computed_count = 0
 
-    for idx, path_str in enumerate(cache_files, 1):
-        path = Path(path_str)
-        if not path.exists():
+    # 优化：维护固定长度的 buckets buffer（用于滚动平均），而不是整个前月的 buckets
+    # 只保留最近 n_buckets 个 buckets（包含时间戳），节省内存且逻辑更清晰
+    recent_buckets = []  # List[Tuple[Timestamp, float]]，最近 n_buckets 个 buckets
+    # 维护未完成的 bucket 状态（用于跨月连续性）
+    prev_bucket_state = None
+
+    # 预加载阶段：确保首次计算时有足够的历史 bucket（≥ n_buckets）
+    # 如果第一个月的数据不足以提供 n_buckets 个 bucket，需要向前多加载几个月
+    if len(recent_buckets) < n_buckets:
+        # 向前查找前几个月，直到收集到足够的 buckets
+        preload_month = start_month - pd.offsets.MonthBegin(1)
+        preload_attempts = 0
+        max_preload_attempts = 6  # 最多向前查找6个月
+
+        while (
+            len(recent_buckets) < n_buckets and preload_attempts < max_preload_attempts
+        ):
+            preload_file = None
+            for f in cache_files:
+                file_month = _get_file_month(f)
+                if (
+                    file_month is not None
+                    and file_month.year == preload_month.year
+                    and file_month.month == preload_month.month
+                ):
+                    preload_file = f
+                    break
+
+            if preload_file:
+                print(
+                    f"   📥 Preloading {preload_month.year}-{preload_month.month:02d} for rolling window initialization",
+                    flush=True,
+                )
+                if cache_dir:
+                    preload_cache_key = _get_monthly_vpin_cache_key(
+                        preload_file, bucket_volume, bucket_volume_usd
+                    )
+                    cached_result = _load_monthly_vpin_cache(
+                        cache_dir, preload_cache_key
+                    )
+                    if cached_result is not None:
+                        cached_preload_buckets, _ = cached_result
+                        if cached_preload_buckets is None:
+                            # 标准缓存只存了final_state，需要重新计算buckets
+                            preload_buckets, _ = _compute_vpin_buckets_for_month(
+                                preload_file,
+                                bucket_volume,
+                                bucket_volume_usd,
+                                initial_state=None,
+                            )
+                            cached_preload_buckets = preload_buckets
+                            computed_count += 1
+                        # 将预加载的 buckets 添加到 recent_buckets 前面（时间顺序）
+                        recent_buckets = cached_preload_buckets + recent_buckets
+                        cached_count += 1
+                        print(
+                            f"      -> {Path(preload_file).name} (cached, {len(cached_preload_buckets)} buckets)",
+                            flush=True,
+                        )
+                    else:
+                        preload_buckets, preload_final_state = (
+                            _compute_vpin_buckets_for_month(
+                                preload_file,
+                                bucket_volume,
+                                bucket_volume_usd,
+                                initial_state=None,
+                            )
+                        )
+                        # 将预加载的 buckets 添加到 recent_buckets 前面（时间顺序）
+                        recent_buckets = preload_buckets + recent_buckets
+                        computed_count += 1
+                        # 预加载阶段保存标准缓存：只保存final_state（优化：不保存buckets）
+                        _save_monthly_vpin_cache(
+                            cache_dir,
+                            preload_cache_key,
+                            None,
+                            preload_final_state,
+                            save_buckets=False,
+                        )
+                        print(
+                            f"      -> {Path(preload_file).name} (computed, {len(preload_buckets)} buckets)",
+                            flush=True,
+                        )
+                else:
+                    preload_buckets, preload_final_state = (
+                        _compute_vpin_buckets_for_month(
+                            preload_file,
+                            bucket_volume,
+                            bucket_volume_usd,
+                            initial_state=None,
+                        )
+                    )
+                    # 将预加载的 buckets 添加到 recent_buckets 前面（时间顺序）
+                    recent_buckets = preload_buckets + recent_buckets
+                    computed_count += 1
+                    print(
+                        f"      -> {Path(preload_file).name} (computed, no cache, {len(preload_buckets)} buckets)",
+                        flush=True,
+                    )
+
+                # 只保留最近 n_buckets 个（如果已经足够）
+                if len(recent_buckets) > n_buckets:
+                    recent_buckets = recent_buckets[-n_buckets:]
+
+            preload_month = preload_month - pd.offsets.MonthBegin(1)
+            preload_attempts += 1
+
+        if len(recent_buckets) < n_buckets:
+            print(
+                f"   ⚠️ Warning: Only collected {len(recent_buckets)} buckets for rolling window (need {n_buckets})",
+                flush=True,
+            )
+        else:
+            print(
+                f"   ✅ Preloaded {len(recent_buckets)} buckets for rolling window initialization",
+                flush=True,
+            )
+
+    current = start_month
+    while current <= end_month:
+        total_months += 1
+        year, month = current.year, current.month
+
+        # 当前月
+        current_month_file = None
+        for f in cache_files:
+            file_month = _get_file_month(f)
+            if (
+                file_month is not None
+                and file_month.year == year
+                and file_month.month == month
+            ):
+                current_month_file = f
+                break
+
+        if current_month_file is None:
+            # 跳过不存在的月份
+            current = current + pd.offsets.MonthBegin(1)
             continue
 
+        # 前一个月（用于滚动平均）
+        prev_month = current - pd.offsets.MonthBegin(1)
+        prev_month_file = None
+        for f in cache_files:
+            file_month = _get_file_month(f)
+            if (
+                file_month is not None
+                and file_month.year == prev_month.year
+                and file_month.month == prev_month.month
+            ):
+                prev_month_file = f
+                break
+
+        print(
+            f"   📅 Processing {year}-{month:02d} (loading {prev_month.year}-{prev_month.month:02d} + {year}-{month:02d})",
+            flush=True,
+        )
+
+        # 关键修复：如果 prev_bucket_state 为 None，应该尝试获取前一个月的 final_state
+        # 原因：即使当前月是循环的第一个月（如计算3~6月，3月是第一个），如果前面有数据（2月），
+        # 也不应该用 prev=None，而应该获取前一个月的 final_state 作为 prev
+        # 只有当前面没有数据了（既没有数据文件，也没有缓存），才应该用 prev=None
+        if prev_bucket_state is None:
+            # 尝试获取前一个月的 final_state
+            if prev_month_file is not None:
+                # 前一个月的数据文件存在，从文件计算或从缓存加载
+                if cache_dir is not None:
+                    prev_month_cache_key = _get_monthly_vpin_cache_key(
+                        prev_month_file,
+                        bucket_volume,
+                        bucket_volume_usd,
+                        prev_bucket_state=None,
+                    )
+                    prev_month_cached_result = _load_monthly_vpin_cache(
+                        cache_dir, prev_month_cache_key
+                    )
+                    if prev_month_cached_result is not None:
+                        _, prev_month_final_state = prev_month_cached_result
+                        if prev_month_final_state is not None:
+                            prev_bucket_state = prev_month_final_state
+                            print(
+                                f"      📥 Loaded prev_month final_state: filled_value = {prev_bucket_state.get('filled_value', 0.0):.6f}",
+                                flush=True,
+                            )
+                    else:
+                        # 前一个月的标准缓存不存在，需要临时计算以获取 final_state
+                        print(
+                            f"      📥 Computing prev_month to get final_state...",
+                            flush=True,
+                        )
+                        _, prev_month_final_state = _compute_vpin_buckets_for_month(
+                            Path(prev_month_file),
+                            bucket_volume,
+                            bucket_volume_usd,
+                            initial_state=None,
+                        )
+                        prev_bucket_state = prev_month_final_state
+                        # 缓存前一个月的 final_state（标准缓存）
+                        _save_monthly_vpin_cache(
+                            cache_dir,
+                            prev_month_cache_key,
+                            None,
+                            prev_month_final_state,
+                            save_buckets=False,
+                        )
+                        print(
+                            f"      📥 Computed prev_month final_state: filled_value = {prev_bucket_state.get('filled_value', 0.0):.6f}",
+                            flush=True,
+                        )
+                else:
+                    # 没有缓存目录，临时计算前一个月的 final_state
+                    print(
+                        f"      📥 Computing prev_month to get final_state (no cache)...",
+                        flush=True,
+                    )
+                    _, prev_month_final_state = _compute_vpin_buckets_for_month(
+                        Path(prev_month_file),
+                        bucket_volume,
+                        bucket_volume_usd,
+                        initial_state=None,
+                    )
+                    prev_bucket_state = prev_month_final_state
+            elif cache_dir is not None:
+                # 前一个月的数据文件不存在，但尝试从缓存中查找（可能之前计算过）
+                # 从当前月的文件名推断前一个月的文件名格式
+                # 例如：BTCUSDT_2024-01.parquet -> BTCUSDT_2023-12.parquet
+                try:
+                    current_file_path = Path(current_month_file)
+                    # 尝试从文件名中提取符号和日期
+                    # 假设格式为：SYMBOL_YYYY-MM.parquet 或 SYMBOL_YYYYMM.parquet
+                    file_stem = current_file_path.stem  # 不含扩展名
+                    parts = file_stem.split("_")
+                    if len(parts) >= 2:
+                        symbol = "_".join(parts[:-1])  # 符号部分
+                        date_str = parts[-1]  # 日期部分
+
+                        # 尝试解析日期
+                        if len(date_str) == 7 and date_str[4] == "-":  # YYYY-MM
+                            year, month = int(date_str[:4]), int(date_str[5:7])
+                        elif len(date_str) == 6:  # YYYYMM
+                            year, month = int(date_str[:4]), int(date_str[4:6])
+                        else:
+                            # 无法解析，跳过
+                            year, month = None, None
+
+                        if year is not None and month is not None:
+                            # 计算前一个月
+                            if month == 1:
+                                prev_year, prev_month = year - 1, 12
+                            else:
+                                prev_year, prev_month = year, month - 1
+
+                            # 构建前一个月的文件名（尝试两种格式）
+                            prev_month_file_candidates = [
+                                f"{symbol}_{prev_year}-{prev_month:02d}.parquet",
+                                f"{symbol}_{prev_year}{prev_month:02d}.parquet",
+                            ]
+
+                            # 尝试从缓存中查找前一个月的 final_state
+                            for prev_file_candidate in prev_month_file_candidates:
+                                prev_month_cache_key = _get_monthly_vpin_cache_key(
+                                    prev_file_candidate,
+                                    bucket_volume,
+                                    bucket_volume_usd,
+                                    prev_bucket_state=None,
+                                )
+                                prev_month_cached_result = _load_monthly_vpin_cache(
+                                    cache_dir, prev_month_cache_key
+                                )
+                                if prev_month_cached_result is not None:
+                                    _, prev_month_final_state = prev_month_cached_result
+                                    if prev_month_final_state is not None:
+                                        prev_bucket_state = prev_month_final_state
+                                        print(
+                                            f"      📥 Loaded prev_month final_state from cache (inferred file: {prev_file_candidate}): filled_value = {prev_bucket_state.get('filled_value', 0.0):.6f}",
+                                            flush=True,
+                                        )
+                                        break
+                except Exception as e:
+                    # 无法推断文件名格式，跳过
+                    pass
+
+        # 加载当前月的数据（使用 prev_bucket_state 确保跨月连续性）
+        current_buckets = []
+        current_final_state = None
+
+        # 优化缓存策略：
+        # 1. 每个月的 final_state 是固定的（只取决于该月数据），不依赖于前一个月的状态
+        # 2. 前一个月的状态只影响当前月的第一个 bucket，但不影响 final_state
+        # 3. 因此，我们可以：
+        #    - 总是缓存每个月的标准结果（从空状态开始），包含 buckets 和 final_state
+        #    - 如果 prev_bucket_state 不为空，先尝试使用状态缓存（如果存在），否则重新计算并缓存
+        #    - 状态缓存的 key 包含 prev_bucket_state 信息，以便下次直接使用
+
+        # 生成缓存键
+        standard_cache_key = None
+        state_cache_key = None
+        if cache_dir is not None:
+            standard_cache_key = _get_monthly_vpin_cache_key(
+                current_month_file,
+                bucket_volume,
+                bucket_volume_usd,
+                prev_bucket_state=None,
+            )
+            if prev_bucket_state is not None:
+                state_cache_key = _get_monthly_vpin_cache_key(
+                    current_month_file,
+                    bucket_volume,
+                    bucket_volume_usd,
+                    prev_bucket_state,
+                )
+
         # 尝试从缓存加载
-        cache_key = None
-        month_buckets = None
-        if cache_dir:
-            cache_key = _get_monthly_vpin_cache_key(
-                path_str, bucket_volume, start, end, bucket_volume_usd
-            )
-            month_buckets = _load_monthly_vpin_cache(cache_dir, cache_key)
+        cached_result = None
+        cache_key_used = None
 
-        if month_buckets is not None:
-            # 使用缓存
-            print(f"      -> [{idx}/{total_files}] {path.name} (cached)", flush=True)
-            all_buckets.extend(month_buckets)
+        if prev_bucket_state is not None and state_cache_key is not None:
+            # 如果 prev_bucket_state 不为空，先尝试使用状态缓存
+            cached_result = _load_monthly_vpin_cache(cache_dir, state_cache_key)
+            if cached_result is not None:
+                cache_key_used = state_cache_key
+
+        if cached_result is None and standard_cache_key is not None:
+            # 如果状态缓存未命中，尝试使用标准缓存
+            cached_result = _load_monthly_vpin_cache(cache_dir, standard_cache_key)
+            if cached_result is not None:
+                cache_key_used = standard_cache_key
+
+        if cached_result is not None:
+            # 缓存命中
+            current_buckets, current_final_state = cached_result
             cached_count += 1
+
+            if prev_bucket_state is None:
+                # prev_bucket_state 为空，说明前面没有数据了（prev_month_file 为 None）
+                # 注意：永远不应该直接使用标准缓存的 buckets，因为：
+                # 1. 标准缓存的 buckets 是从 prev=None 计算的，可能不符合实际情况
+                # 2. 即使 prev_bucket_state 为空，也应该重新计算以确保正确性
+                # 标准缓存只用于提供 final_state（用于后续月份的状态传递）
+                print(
+                    f"      -> {Path(current_month_file).name} (computed, final_state from cache, prev=None)",
+                    flush=True,
+                )
+                current_buckets, computed_final_state = _compute_vpin_buckets_for_month(
+                    current_month_file,
+                    bucket_volume,
+                    bucket_volume_usd,
+                    initial_state=None,
+                )
+                computed_count += 1
+                # 验证 final_state 是否一致（应该一致，因为只取决于该月数据）
+                if (
+                    abs(
+                        computed_final_state.get("filled_value", 0.0)
+                        - current_final_state.get("filled_value", 0.0)
+                    )
+                    > 1e-6
+                ):
+                    print(
+                        f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {current_final_state.get('filled_value', 0.0):.6f})",
+                        flush=True,
+                    )
+                    current_final_state = computed_final_state
+            else:
+                filled_pct = (
+                    (prev_bucket_state.get("filled_value", 0.0) / bucket_volume * 100)
+                    if bucket_volume > 0
+                    else 0.0
+                )
+                if cache_key_used == state_cache_key:
+                    # 状态缓存命中，直接使用
+                    print(
+                        f"      -> {Path(current_month_file).name} (cached, with prev state {filled_pct:.1f}% filled)",
+                        flush=True,
+                    )
+                else:
+                    # 使用了标准缓存（只存了final_state），但 prev_bucket_state 不为空，需要重新计算
+                    print(
+                        f"      -> {Path(current_month_file).name} (computed, prev state {filled_pct:.1f}% filled, final_state from cache)",
+                        flush=True,
+                    )
+                    current_buckets, computed_final_state = (
+                        _compute_vpin_buckets_for_month(
+                            current_month_file,
+                            bucket_volume,
+                            bucket_volume_usd,
+                            initial_state=prev_bucket_state,
+                        )
+                    )
+                    computed_count += 1
+
+                    # 验证 final_state 是否一致（应该一致，因为只取决于该月数据）
+                    if (
+                        abs(
+                            computed_final_state.get("filled_value", 0.0)
+                            - current_final_state.get("filled_value", 0.0)
+                        )
+                        > 1e-6
+                    ):
+                        print(
+                            f"      ⚠️  Warning: final_state mismatch (computed: {computed_final_state.get('filled_value', 0.0):.6f}, cached: {current_final_state.get('filled_value', 0.0):.6f})",
+                            flush=True,
+                        )
+                        current_final_state = computed_final_state
+
+                    # 缓存结果（使用包含状态的缓存键，以便下次直接使用）
+                    if state_cache_key != standard_cache_key:  # 避免重复缓存
+                        _save_monthly_vpin_cache(
+                            cache_dir,
+                            state_cache_key,
+                            current_buckets,
+                            current_final_state,
+                            save_buckets=True,
+                        )
         else:
-            # 计算并缓存
-            print(f"      -> [{idx}/{total_files}] {path.name}", flush=True)
-            month_buckets = _compute_vpin_buckets_for_month(
-                path, bucket_volume, start, end, bucket_volume_usd
+            # 缓存未命中，重新计算
+            if prev_bucket_state is not None:
+                filled_pct = (
+                    (prev_bucket_state.get("filled_value", 0.0) / bucket_volume * 100)
+                    if bucket_volume > 0
+                    else 0.0
+                )
+                print(
+                    f"      -> {Path(current_month_file).name} (computed, prev state {filled_pct:.1f}% filled)",
+                    flush=True,
+                )
+            else:
+                # prev_bucket_state 为 None，说明前面没有数据了（prev_month_file 为 None）
+                print(
+                    f"      -> {Path(current_month_file).name} (computed, prev=None)",
+                    flush=True,
+                )
+            current_buckets, current_final_state = _compute_vpin_buckets_for_month(
+                current_month_file,
+                bucket_volume,
+                bucket_volume_usd,
+                initial_state=prev_bucket_state,
             )
-            all_buckets.extend(month_buckets)
             computed_count += 1
+            # 缓存结果
+            # 标准缓存：只保存final_state（优化：不保存buckets，节省存储空间）
+            if standard_cache_key is not None:
+                _save_monthly_vpin_cache(
+                    cache_dir,
+                    standard_cache_key,
+                    None,
+                    current_final_state,
+                    save_buckets=False,
+                )
+            # 状态缓存：保存buckets和final_state（用于加速带上下文的查询）
+            if state_cache_key is not None and state_cache_key != standard_cache_key:
+                _save_monthly_vpin_cache(
+                    cache_dir,
+                    state_cache_key,
+                    current_buckets,
+                    current_final_state,
+                    save_buckets=True,
+                )
 
-            # 保存缓存
-            if cache_dir and cache_key:
-                _save_monthly_vpin_cache(cache_dir, cache_key, month_buckets)
+        # 优化：加载前一个月的数据用于滚动平均（如果需要）
+        # 策略：
+        # 1. 如果是第一个月且 recent_buckets 不足 n_buckets，需要加载前一个月
+        # 2. 否则，recent_buckets 已经包含足够的历史数据
+        need_prev_for_rolling = (
+            (len(recent_buckets) < n_buckets)
+            and (prev_month_file is not None)
+            and (prev_month_file != current_month_file)
+        )
 
-    if not all_buckets:
+        if need_prev_for_rolling:
+            # 需要加载前一个月的数据来初始化滚动窗口
+            # 检查前一个月的数据是否已经加载
+            need_load_prev = True
+            if recent_buckets:
+                first_bucket = recent_buckets[0]  # (timestamp, vpin) tuple
+                first_bucket_time = first_bucket[0]  # timestamp
+                if isinstance(first_bucket_time, pd.Timestamp):
+                    if (
+                        first_bucket_time.year == prev_month.year
+                        and first_bucket_time.month == prev_month.month
+                    ):
+                        need_load_prev = False
+
+            if need_load_prev:
+                # 前一个月的数据还没有加载，现在加载（完整月份，不需要 prev_bucket_state）
+                if cache_dir:
+                    prev_cache_key = _get_monthly_vpin_cache_key(
+                        prev_month_file,
+                        bucket_volume,
+                        bucket_volume_usd,
+                        prev_bucket_state=None,
+                    )
+                    cached_prev_result = _load_monthly_vpin_cache(
+                        cache_dir, prev_cache_key
+                    )
+                    if cached_prev_result is not None:
+                        cached_prev_buckets, _ = cached_prev_result
+                        if cached_prev_buckets is None:
+                            # 标准缓存只存了final_state，需要重新计算buckets
+                            prev_buckets, _ = _compute_vpin_buckets_for_month(
+                                prev_month_file,
+                                bucket_volume,
+                                bucket_volume_usd,
+                                initial_state=None,
+                            )
+                            cached_prev_buckets = prev_buckets
+                            computed_count += 1
+                        # 只保留最近 n_buckets 个 buckets
+                        recent_buckets = cached_prev_buckets[-n_buckets:]
+                        cached_count += 1
+                        print(
+                            f"      -> {Path(prev_month_file).name} (cached, kept last {len(recent_buckets)} buckets)",
+                            flush=True,
+                        )
+                    else:
+                        prev_buckets, prev_final_state = (
+                            _compute_vpin_buckets_for_month(
+                                prev_month_file,
+                                bucket_volume,
+                                bucket_volume_usd,
+                                initial_state=None,
+                            )
+                        )
+                        # 只保留最近 n_buckets 个 buckets
+                        recent_buckets = prev_buckets[-n_buckets:]
+                        computed_count += 1
+                        # 前一个月数据保存标准缓存：只保存final_state（优化：不保存buckets）
+                        _save_monthly_vpin_cache(
+                            cache_dir,
+                            prev_cache_key,
+                            None,
+                            prev_final_state,
+                            save_buckets=False,
+                        )
+                        print(
+                            f"      -> {Path(prev_month_file).name} (computed, kept last {len(recent_buckets)} buckets)",
+                            flush=True,
+                        )
+                else:
+                    prev_buckets, _ = _compute_vpin_buckets_for_month(
+                        prev_month_file,
+                        bucket_volume,
+                        bucket_volume_usd,
+                        initial_state=None,
+                    )
+                    # 只保留最近 n_buckets 个 buckets
+                    recent_buckets = prev_buckets[-n_buckets:]
+                    computed_count += 1
+                    print(
+                        f"      -> {Path(prev_month_file).name} (computed, no cache, kept last {len(recent_buckets)} buckets)",
+                        flush=True,
+                    )
+
+        # 合并 recent_buckets 和当前月的 buckets（用于滚动平均）
+        month_buckets = recent_buckets + current_buckets
+
+        if not month_buckets:
+            current = current + pd.offsets.MonthBegin(1)
+            continue
+
+        # 转换为 DataFrame 并计算滚动平均
+        buckets_df = (
+            pd.DataFrame(month_buckets, columns=["timestamp", "vpin"])
+            .set_index("timestamp")
+            .sort_index()
+        )
+
+        # 计算滚动平均（使用前一个月+当前月的数据）
+        vpin_series_full = (
+            buckets_df["vpin"].rolling(window=n_buckets, min_periods=1).mean()
+        )
+
+        # 只保留当前月的数据（裁剪到当前月的范围）
+        month_start = current
+        month_end = current + pd.offsets.MonthEnd(0) + pd.Timedelta(days=1)
+        # 与实际的 start/end 取交集
+        month_start = max(month_start, start)
+        month_end = min(month_end, end + pd.Timedelta(days=1))
+
+        month_vpin = vpin_series_full.loc[month_start:month_end]
+        if len(month_vpin) > 0:
+            all_vpin_series.append(month_vpin)
+
+        # 更新状态，供下一轮使用
+        # 1. 更新 recent_buckets：只保留最近 n_buckets 个 buckets（用于滚动平均）
+        # 将当前月的 buckets 添加到 recent_buckets，然后只保留最后 n_buckets 个
+        recent_buckets = (recent_buckets + current_buckets)[-n_buckets:]
+        # 2. 更新未完成的 bucket 状态（用于跨月连续性）
+        prev_bucket_state = current_final_state
+
+        # 移动到下一个月
+        current = current + pd.offsets.MonthBegin(1)
+
+    if not all_vpin_series:
         raise ValueError(
             "VPIN computation produced no buckets; check tick data source."
         )
 
-    # 合并所有buckets并按时间排序
-    buckets_df = (
-        pd.DataFrame(all_buckets, columns=["timestamp", "vpin"])
-        .set_index("timestamp")
-        .sort_index()
-    )
+    # 合并所有月份的 VPIN 序列
+    vpin_series = pd.concat(all_vpin_series).sort_index()
 
-    # 计算滚动平均
-    vpin_series = buckets_df["vpin"].rolling(window=n_buckets, min_periods=1).mean()
+    # 最终裁剪到需要的范围
+    vpin_series = vpin_series.loc[start:end]
 
     print(
-        f"   ✅ VPIN computed with {len(all_buckets)} buckets (bucket_volume={bucket_volume:.2f})",
+        f"   ✅ VPIN computed with {total_months} month(s) processed (bucket_volume={bucket_volume:.2f})",
         flush=True,
     )
     if cache_dir and cached_count > 0:

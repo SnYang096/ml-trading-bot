@@ -119,13 +119,13 @@ RUN echo "⚙️  Configuring pip mirror..." && \
 # 注意：Ubuntu 24.04 的 pip 由系统管理，避免尝试卸载/升级系统 pip（会触发 Debian 保护）。
 RUN echo "📦 Installing Python build packages..." && \
     pip3 install --no-cache-dir --timeout=600 \
-        numpy==1.26.4 \
-        scipy==1.11.4 \
-        scikit-build-core>=0.10.1 \
-        setuptools>=61.0.0 \
-        wheel \
-        ninja \
-        build \
+    numpy==1.26.4 \
+    scipy==1.11.4 \
+    scikit-build-core>=0.10.1 \
+    setuptools>=61.0.0 \
+    wheel \
+    ninja \
+    build \
     && echo "✅ Python build packages installed"
 
 # 从本地复制 LightGBM 源码
@@ -143,17 +143,17 @@ RUN --mount=type=ssh \
     ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null || true && \
     cd /lightgbm && \
     if [ -d .git ]; then \
-        echo "⚙️  Configuring Git to use SSH for GitHub..." && \
-        git config --global url."git@github.com:".insteadOf "https://github.com/" && \
-        echo "Updating main submodules..." && \
-        git submodule update --init --depth 1 external_libs/compute external_libs/eigen external_libs/fast_double_parser external_libs/fmt || \
-        echo "⚠️  Submodule update skipped (may already be initialized)" && \
-        echo "Updating nested submodules..." && \
-        (cd external_libs/fast_double_parser && \
-         git submodule update --init --depth 1 benchmarks/dependencies/abseil-cpp benchmarks/dependencies/double-conversion || \
-         echo "⚠️  Nested submodules update skipped (non-critical)"); \
+    echo "⚙️  Configuring Git to use SSH for GitHub..." && \
+    git config --global url."git@github.com:".insteadOf "https://github.com/" && \
+    echo "Updating main submodules..." && \
+    git submodule update --init --depth 1 external_libs/compute external_libs/eigen external_libs/fast_double_parser external_libs/fmt || \
+    echo "⚠️  Submodule update skipped (may already be initialized)" && \
+    echo "Updating nested submodules..." && \
+    (cd external_libs/fast_double_parser && \
+    git submodule update --init --depth 1 benchmarks/dependencies/abseil-cpp benchmarks/dependencies/double-conversion || \
+    echo "⚠️  Nested submodules update skipped (non-critical)"); \
     else \
-        echo "⚠️  No .git directory found, assuming submodules are already in place"; \
+    echo "⚠️  No .git directory found, assuming submodules are already in place"; \
     fi && \
     echo "✅ LightGBM source ready"
 
@@ -179,38 +179,38 @@ COPY docker/xgboost-*.whl /tmp/local-wheels/
 RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) for mamba-ssm compilation..." && \
     export PIP_DEFAULT_TIMEOUT=3600 && \
     if [ -n "$(ls -A /tmp/local-wheels/torch-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local torch wheel, installing with --no-deps"; \
-        pip3 install --no-deps --retries=5 --timeout=3600 --progress-bar off /tmp/local-wheels/torch-*.whl; \
+    echo "🔗 Found local torch wheel, installing with --no-deps"; \
+    pip3 install --no-deps --retries=5 --timeout=3600 --progress-bar off /tmp/local-wheels/torch-*.whl; \
     else \
-        echo "🌐 Local torch wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
-        pip3 install --retries=5 --timeout=3600 --progress-bar off \
-            torch==${PYTORCH_VERSION} \
-            --index-url ${PYTORCH_INDEX_URL}; \
+    echo "🌐 Local torch wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+    torch==${PYTORCH_VERSION} \
+    --index-url ${PYTORCH_INDEX_URL}; \
     fi && \
     if [ -n "$(ls -A /tmp/local-wheels/nvidia_cublas_cu12-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local nvidia-cublas wheel, installing offline"; \
-        pip3 install --no-index --find-links /tmp/local-wheels \
-            --retries=5 --timeout=3600 --progress-bar off \
-            nvidia-cublas-cu12==12.8.4.1; \
+    echo "🔗 Found local nvidia-cublas wheel, installing offline"; \
+    pip3 install --no-index --find-links /tmp/local-wheels \
+    --retries=5 --timeout=3600 --progress-bar off \
+    nvidia-cublas-cu12==12.8.4.1; \
     else \
-        echo "🌐 Local nvidia-cublas wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
-        pip3 install --retries=5 --timeout=3600 --progress-bar off \
-            nvidia-cublas-cu12==12.8.4.1 \
-            --index-url ${PYTORCH_INDEX_URL}; \
+    echo "🌐 Local nvidia-cublas wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+    nvidia-cublas-cu12==12.8.4.1 \
+    --index-url ${PYTORCH_INDEX_URL}; \
     fi && \
     if [ -n "$(ls -A /tmp/local-wheels/nvidia_cudnn_cu12-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local nvidia-cudnn wheel, installing offline"; \
-        pip3 install --no-index --find-links /tmp/local-wheels \
-            --retries=5 --timeout=3600 --progress-bar off \
-            /tmp/local-wheels/nvidia_cudnn_cu12-*.whl; \
+    echo "🔗 Found local nvidia-cudnn wheel, installing offline"; \
+    pip3 install --no-index --find-links /tmp/local-wheels \
+    --retries=5 --timeout=3600 --progress-bar off \
+    /tmp/local-wheels/nvidia_cudnn_cu12-*.whl; \
     else \
-        echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
+    echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
     fi && \
     pip3 install --retries=5 --timeout=3600 --progress-bar off \
-        --find-links /tmp/local-wheels \
-        torchvision==${TORCHVISION_VERSION} \
-        torchaudio==${TORCHAUDIO_VERSION} \
-        --index-url ${PYTORCH_INDEX_URL} && \
+    --find-links /tmp/local-wheels \
+    torchvision==${TORCHVISION_VERSION} \
+    torchaudio==${TORCHAUDIO_VERSION} \
+    --index-url ${PYTORCH_INDEX_URL} && \
     python3 -c "import torch; print('✅ PyTorch (builder):', torch.__version__, '| CUDA:', torch.version.cuda)"
 
 # 预编译 mamba-ssm wheel（这是最耗时的步骤！）
@@ -221,14 +221,14 @@ RUN echo "🔨 Pre-building mamba-ssm wheel (this will take 30-60 minutes)..." &
     set -e && \
     mkdir -p /wheelhouse && \
     pip3 wheel \
-        --no-cache-dir \
-        --timeout=3600 \
-        --wheel-dir /wheelhouse \
-        --no-deps \
-        --index-url https://pypi.org/simple \
-        --trusted-host pypi.org \
-        --trusted-host files.pythonhosted.org \
-        mamba-ssm>=1.0.0 && \
+    --no-cache-dir \
+    --timeout=3600 \
+    --wheel-dir /wheelhouse \
+    --no-deps \
+    --index-url https://pypi.org/simple \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org \
+    mamba-ssm>=1.0.0 && \
     ls -lh /wheelhouse/*.whl && \
     echo "✅ mamba-ssm wheel built successfully with PyTorch ${PYTORCH_VERSION}"
 
@@ -322,38 +322,38 @@ COPY --from=builder /tmp/local-wheels/ /tmp/local-wheels/
 RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) - matching builder stage..." && \
     export PIP_DEFAULT_TIMEOUT=3600 && \
     if [ -n "$(ls -A /tmp/local-wheels/torch-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local torch wheel, installing with --no-deps"; \
-        pip3 install --no-deps --retries=5 --timeout=3600 --progress-bar off /tmp/local-wheels/torch-*.whl; \
+    echo "🔗 Found local torch wheel, installing with --no-deps"; \
+    pip3 install --no-deps --retries=5 --timeout=3600 --progress-bar off /tmp/local-wheels/torch-*.whl; \
     else \
-        echo "🌐 Local torch wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
-        pip3 install --retries=5 --timeout=3600 --progress-bar off \
-            torch==${PYTORCH_VERSION} \
-            --index-url ${PYTORCH_INDEX_URL}; \
+    echo "🌐 Local torch wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+    torch==${PYTORCH_VERSION} \
+    --index-url ${PYTORCH_INDEX_URL}; \
     fi && \
     if [ -n "$(ls -A /tmp/local-wheels/nvidia_cublas_cu12-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local nvidia-cublas wheel, installing offline"; \
-        pip3 install --no-index --find-links /tmp/local-wheels \
-            --retries=5 --timeout=3600 --progress-bar off \
-            nvidia-cublas-cu12==12.8.4.1; \
+    echo "🔗 Found local nvidia-cublas wheel, installing offline"; \
+    pip3 install --no-index --find-links /tmp/local-wheels \
+    --retries=5 --timeout=3600 --progress-bar off \
+    nvidia-cublas-cu12==12.8.4.1; \
     else \
-        echo "🌐 Local nvidia-cublas wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
-        pip3 install --retries=5 --timeout=3600 --progress-bar off \
-            nvidia-cublas-cu12==12.8.4.1 \
-            --index-url ${PYTORCH_INDEX_URL}; \
+    echo "🌐 Local nvidia-cublas wheel not found, downloading from ${PYTORCH_INDEX_URL}"; \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+    nvidia-cublas-cu12==12.8.4.1 \
+    --index-url ${PYTORCH_INDEX_URL}; \
     fi && \
     if [ -n "$(ls -A /tmp/local-wheels/nvidia_cudnn_cu12-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local nvidia-cudnn wheel, installing offline"; \
-        pip3 install --no-index --find-links /tmp/local-wheels \
-            --retries=5 --timeout=3600 --progress-bar off \
-            /tmp/local-wheels/nvidia_cudnn_cu12-*.whl; \
+    echo "🔗 Found local nvidia-cudnn wheel, installing offline"; \
+    pip3 install --no-index --find-links /tmp/local-wheels \
+    --retries=5 --timeout=3600 --progress-bar off \
+    /tmp/local-wheels/nvidia_cudnn_cu12-*.whl; \
     else \
-        echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
+    echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
     fi && \
     pip3 install --retries=5 --timeout=3600 --progress-bar off \
-        --find-links /tmp/local-wheels \
-        torchvision==${TORCHVISION_VERSION} \
-        torchaudio==${TORCHAUDIO_VERSION} \
-        --index-url ${PYTORCH_INDEX_URL} \
+    --find-links /tmp/local-wheels \
+    torchvision==${TORCHVISION_VERSION} \
+    torchaudio==${TORCHAUDIO_VERSION} \
+    --index-url ${PYTORCH_INDEX_URL} \
     && python3 -c "import torch; print('✅ PyTorch (runtime):', torch.__version__, '| CUDA可用:', torch.cuda.is_available(), '| CUDA版本:', torch.version.cuda)"
 
 # ============================================================================
@@ -392,52 +392,50 @@ RUN echo "📦 Installing build dependencies (numpy, Cython)..." && \
     echo "✅ Build dependencies installed"
 
 # ============================================================================
-# 从源码编译安装 dtaidistance（需要 OpenMP 支持）
+# （可选）dtaidistance 源码构建
+# 构建上下文无 dtaidistance 目录，默认跳过，避免 COPY 失败。
+# 如需编译，请将源码放到构建上下文根目录并恢复下方步骤。
 # ============================================================================
-# 安装编译工具和 OpenMP 库
-RUN echo "📦 Installing build tools for dtaidistance compilation..." && \
-    apt-get update && apt-get install -y \
-    build-essential \
-    libomp-dev \
-    && rm -rf /var/lib/apt/lists/* && \
-    echo "✅ Build tools installed"
-
-# 复制 dtaidistance 源码（如果存在，构建脚本会确保目录存在）
-COPY dtaidistance /tmp/dtaidistance
-
-# 编译并安装 dtaidistance（如果源码存在）
-RUN if [ -f /tmp/dtaidistance/setup.py ]; then \
-        echo "🔨 Building dtaidistance from source..." && \
-        cd /tmp/dtaidistance && \
-        python3 setup.py build_ext --inplace && \
-        python3 setup.py install && \
-        cd / && \
-        rm -rf /tmp/dtaidistance && \
-        python3 -c "import dtaidistance; print('✅ dtaidistance installed:', dtaidistance.__version__ if hasattr(dtaidistance, '__version__') else 'OK')" && \
-        echo "✅ dtaidistance built and installed from source"; \
-    else \
-        echo "⚠️  dtaidistance source not found, skipping compilation"; \
-    fi
+# RUN echo "📦 Installing build tools for dtaidistance compilation..." && \
+#     apt-get update && apt-get install -y \
+#     build-essential \
+#     libomp-dev \
+#     && rm -rf /var/lib/apt/lists/* && \
+#     echo "✅ Build tools installed"
+#
+# COPY dtaidistance /tmp/dtaidistance
+# RUN if [ -f /tmp/dtaidistance/setup.py ]; then \
+#         echo "🔨 Building dtaidistance from source..." && \
+#         cd /tmp/dtaidistance && \
+#         python3 setup.py build_ext --inplace && \
+#         python3 setup.py install && \
+#         cd / && \
+#         rm -rf /tmp/dtaidistance && \
+#         python3 -c "import dtaidistance; print('✅ dtaidistance installed:', getattr(dtaidistance, '__version__', 'OK'))" && \
+#         echo "✅ dtaidistance built and installed from source"; \
+#     else \
+#         echo "⚠️  dtaidistance source not found, skipping compilation"; \
+#     fi
 
 # 先安装本地 wheel 文件（catboost、xgboost 等，如果存在）
 RUN if [ -n "$(ls -A /tmp/local-wheels/catboost-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local catboost wheel, installing from local..."; \
-        pip3 install --timeout=1800 --retries=10 --no-build-isolation \
-            --find-links /tmp/local-wheels \
-            /tmp/local-wheels/catboost-*.whl && \
-        echo "✅ Local catboost installed"; \
+    echo "🔗 Found local catboost wheel, installing from local..."; \
+    pip3 install --timeout=1800 --retries=10 --no-build-isolation \
+    --find-links /tmp/local-wheels \
+    /tmp/local-wheels/catboost-*.whl && \
+    echo "✅ Local catboost installed"; \
     else \
-        echo "🌐 Local catboost wheel not found, will download from PyPI"; \
+    echo "🌐 Local catboost wheel not found, will download from PyPI"; \
     fi
 
 RUN if [ -n "$(ls -A /tmp/local-wheels/xgboost-*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found local xgboost wheel, installing from local..."; \
-        pip3 install --timeout=1800 --retries=10 --no-build-isolation \
-            --find-links /tmp/local-wheels \
-            /tmp/local-wheels/xgboost-*.whl && \
-        echo "✅ Local xgboost installed"; \
+    echo "🔗 Found local xgboost wheel, installing from local..."; \
+    pip3 install --timeout=1800 --retries=10 --no-build-isolation \
+    --find-links /tmp/local-wheels \
+    /tmp/local-wheels/xgboost-*.whl && \
+    echo "✅ Local xgboost installed"; \
     else \
-        echo "🌐 Local xgboost wheel not found, will download from PyPI"; \
+    echo "🌐 Local xgboost wheel not found, will download from PyPI"; \
     fi
 
 RUN echo "📦 Installing project dependencies..." && \
@@ -466,8 +464,14 @@ RUN echo "📦 Installing project dependencies..." && \
     arch \
     vectorbt \
     pytest \
-    # dtaidistance==2.3.10 \  # 暂时移除：Python 3.12 编译问题，需要 C 扩展但缺少头文件
-    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, dtaidistance, pytest; print('✅ 项目依赖库安装完成 (包括pytest和dtaidistance)')"
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, pytest; print('✅ 项目依赖库安装完成 (包括pytest)')"
+
+# 安装 dtaidistance（暂时跳过，Python 3.12 上 C 扩展编译有问题）
+# 如果需要 dtaidistance，可以后续手动安装或使用 conda 环境
+# RUN echo "📦 Installing dtaidistance..." && \
+#     pip3 install --no-cache-dir --timeout=1800 --retries=10 \
+#     "dtaidistance[pure]==2.3.10" && \
+#     python3 -c "import dtaidistance; print('✅ dtaidistance installed:', getattr(dtaidistance, '__version__', 'OK'))"
 
 # ============================================================================
 # 安装 TA-Lib 技术分析库
@@ -493,7 +497,9 @@ RUN echo "📦 Installing data science libraries..." && \
     pyarrow \
     scipy==1.11.4 \
     scikit-learn==1.3.2 \
-    && python3 -c "import pandas as pd, pyarrow; print('✅ pandas:', pd.__version__, '| pyarrow:', pyarrow.__version__)"
+    pyyaml==6.0.2 \
+    websockets==12.0.3 \
+    && python3 -c "import pandas as pd, pyarrow, yaml, websockets; print('✅ pandas:', pd.__version__, '| pyarrow:', pyarrow.__version__, '| pyyaml:', yaml.__version__, '| websockets:', websockets.__version__)"
 
 # ============================================================================
 # 安装深度学习加速库

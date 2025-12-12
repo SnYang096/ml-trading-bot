@@ -163,7 +163,9 @@ class TalibFeatureEngineer:
         for period in [7, 14, 21]:
             col = f"rsi_{period}"
             if col not in df.columns:
-                df[col] = talib.RSI(df["close"].values, timeperiod=period)
+                rsi = talib.RSI(df["close"].values, timeperiod=period)
+                rsi = pd.Series(rsi, index=df.index).replace([np.inf, -np.inf], np.nan)
+                df[col] = rsi
 
         # 随机指标 (Stochastic)
         df["stoch_k"], df["stoch_d"] = talib.STOCH(

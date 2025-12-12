@@ -107,6 +107,9 @@ endif
 	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all \
 	docker-build-gpu
 
+start-docker:
+	@bash scripts/start_docker.sh
+
 help:
 	@echo "ML Trading Project"
 	@echo "===================="
@@ -206,13 +209,13 @@ install-hooks:
 	@echo "📦 Installing Git hooks..."
 	@bash scripts/install-git-hooks.sh
 
-docker-build:
-	@echo "🔨 Building Docker image $(DOCKER_IMAGE)..."
-	docker build -f docker/Dockerfile.gpu -t $(DOCKER_IMAGE) .
-	
-docker-build-gpu:
-	@echo "🔨 Building GPU image hansenlovefiona017/lightgbm-runtime:v0.0.6 ..."
-	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.6 --no-ssh --no-proxy
+docker-build: start-docker
+	@echo "🔨 Building Docker image $(DOCKER_IMAGE) via docker/build-gpu.sh ..."
+	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.7 --no-proxy --no-ssh
+
+docker-build-gpu: start-docker
+	@echo "🔨 Building GPU image hansenlovefiona017/lightgbm-runtime:v0.0.7 ..."
+	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.7 --no-proxy --no-ssh
 
 
 docker-install:
