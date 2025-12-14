@@ -127,7 +127,7 @@ def objective(trial: optuna.Trial):
 
 ## 风险参数优化（通用）
 
-所有策略都可以使用 `optuna_risk_search.py` 的模式来优化：
+所有策略都可以使用类似的模式来优化风险参数：
 - 止损/止盈比例
 - 风险百分比
 - 杠杆倍数

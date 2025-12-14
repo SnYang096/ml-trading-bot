@@ -155,6 +155,18 @@ def parse_args() -> argparse.Namespace:
         default=60,
         help="Extra minutes of tick history to load before/after the data window.",
     )
+    parser.add_argument(
+        "--volatility-model-path",
+        type=str,
+        default=None,
+        help="Path to pre-trained volatility model (.pkl file). If provided, will load instead of training.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=str,
+        default=None,
+        help="Root directory for model outputs. Used to auto-detect volatility model if --volatility-model-path not provided.",
+    )
     return parser.parse_args()
 
 
@@ -1661,44 +1673,92 @@ def main() -> None:
         y_train_valid,
     )
 
-    # Train volatility model
+    # Load or train volatility model
     print("\n" + "=" * 60)
-    print("4️⃣ Training Volatility Model")
+    print("4️⃣ Volatility Model")
     print("=" * 60)
 
-    # Ensure tick_loader_json is configured for volatility model feature computation
-    if tick_loader_json and feature_loader:
-        # Update VPIN feature config in feature_deps
-        features_dict = feature_loader.feature_deps.get("features", {})
-        vpin_feature = features_dict.get("vpin_features")
-        if vpin_feature is not None:
-            # Ensure compute_params exists
-            if "compute_params" not in vpin_feature:
-                vpin_feature["compute_params"] = {}
-            vpin_feature["compute_params"]["ticks_loader_json"] = tick_loader_json
-            print(f"   ✅ VPIN ticks_loader_json configured for volatility model")
-            # Also update in the computer's feature_deps if it exists
-            if hasattr(feature_loader, "computer") and hasattr(
-                feature_loader.computer, "feature_deps"
-            ):
-                computer_features = feature_loader.computer.feature_deps.get(
-                    "features", {}
-                )
-                computer_vpin = computer_features.get("vpin_features")
-                if computer_vpin is not None:
-                    if "compute_params" not in computer_vpin:
-                        computer_vpin["compute_params"] = {}
-                    computer_vpin["compute_params"][
-                        "ticks_loader_json"
-                    ] = tick_loader_json
+    vol_model = None
+    vol_metrics = None
 
-    vol_model, vol_metrics = train_volatility_model(
-        X_train_valid,
-        y_vol_train_valid,
-        X_train_valid,
-        y_vol_train_valid,
-        feature_loader=feature_loader,  # 传入feature_loader以计算缺失特征
-    )
+    # Try to load pre-trained model
+    vol_model_path = args.volatility_model_path
+    if not vol_model_path and args.output_root:
+        # Auto-detect: look for volatility_model.pkl in output_root/strategy_name/
+        strategy_name = Path(args.strategy_config).name
+        potential_path = Path(args.output_root) / strategy_name / "volatility_model.pkl"
+        if potential_path.exists():
+            vol_model_path = str(potential_path)
+            print(f"   📂 Auto-detected volatility model: {vol_model_path}")
+
+    if vol_model_path:
+        print(f"   📂 Loading pre-trained volatility model from {vol_model_path}")
+        try:
+            import joblib
+
+            vol_model = joblib.load(vol_model_path)
+            print(f"   ✅ Volatility model loaded successfully")
+            # Try to load metrics from results.json if available
+            if args.output_root:
+                strategy_name = Path(args.strategy_config).name
+                results_file = Path(args.output_root) / strategy_name / "results.json"
+                if results_file.exists():
+                    try:
+                        import json
+
+                        with open(results_file, "r") as f:
+                            results = json.load(f)
+                            if (
+                                "volatility_model" in results
+                                and "metrics" in results["volatility_model"]
+                            ):
+                                vol_metrics = results["volatility_model"]["metrics"]
+                                print(
+                                    f"   ✅ Loaded volatility model metrics from results.json"
+                                )
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"   ⚠️  Failed to load volatility model: {e}")
+            print(f"   🔄 Falling back to training...")
+            vol_model_path = None
+
+    # Train if not loaded
+    if not vol_model:
+        print("   🔄 Training volatility model...")
+        # Ensure tick_loader_json is configured for volatility model feature computation
+        if tick_loader_json and feature_loader:
+            # Update VPIN feature config in feature_deps
+            features_dict = feature_loader.feature_deps.get("features", {})
+            vpin_feature = features_dict.get("vpin_features")
+            if vpin_feature is not None:
+                # Ensure compute_params exists
+                if "compute_params" not in vpin_feature:
+                    vpin_feature["compute_params"] = {}
+                vpin_feature["compute_params"]["ticks_loader_json"] = tick_loader_json
+                print(f"   ✅ VPIN ticks_loader_json configured for volatility model")
+                # Also update in the computer's feature_deps if it exists
+                if hasattr(feature_loader, "computer") and hasattr(
+                    feature_loader.computer, "feature_deps"
+                ):
+                    computer_features = feature_loader.computer.feature_deps.get(
+                        "features", {}
+                    )
+                    computer_vpin = computer_features.get("vpin_features")
+                    if computer_vpin is not None:
+                        if "compute_params" not in computer_vpin:
+                            computer_vpin["compute_params"] = {}
+                        computer_vpin["compute_params"][
+                            "ticks_loader_json"
+                        ] = tick_loader_json
+
+        vol_model, vol_metrics = train_volatility_model(
+            X_train_valid,
+            y_vol_train_valid,
+            X_train_valid,
+            y_vol_train_valid,
+            feature_loader=feature_loader,  # 传入feature_loader以计算缺失特征
+        )
 
     # Evaluate ML model
     print("\n" + "=" * 60)

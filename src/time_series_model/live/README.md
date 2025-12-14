@@ -5,7 +5,7 @@ This folder contains live-trading helpers built on Nautilus Trader.
 ## TL;DR which file to use?
 - **Run real trading quickly** → `run_nautilus_strategy.py` (main entry).  
   Command:  
-  `python -m time_series_model.strategies.live.run_nautilus_strategy --strategy sr_reversal --symbol BTCUSDT-PERP --timeframe 15T --testnet`
+  `python -m time_series_model.live.run_nautilus_strategy --strategy sr_reversal --symbol BTCUSDT-PERP --timeframe 15T --testnet`
 - **Understand or extend the live strategy logic** → read/modify `nautilus_strategy_with_features.py`.
 
 ## Files

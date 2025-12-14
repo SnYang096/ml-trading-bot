@@ -6,7 +6,8 @@
 
 **通过的测试：**
 - ✅ `test_config_update_preserves_existing_params` - 配置更新测试
-- ✅ `test_optimization_scripts_importable[optuna_risk_search]` - 脚本存在性测试
+- ✅ `test_optimization_scripts_importable[ts_sr_reversal_optuna]` - 脚本存在性测试
+- ✅ `test_optimization_scripts_importable[ts_sr_reversal_optuna_joint]` - 脚本存在性测试
 - ✅ `test_optimization_scripts_importable[ts_sr_reversal_optuna]` - 阈值优化脚本测试
 - ✅ `test_optimization_scripts_importable[ts_sr_reversal_optuna_joint]` - 联合优化脚本测试（新增）
 

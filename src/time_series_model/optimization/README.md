@@ -4,35 +4,7 @@
 
 ## 脚本说明
 
-### 1. `optuna_risk_search.py` - 风险参数优化
-
-**用途**: 优化已训练模型的**风险管理和交易执行参数**
-
-**优化参数**:
-- 止损/止盈比例 (`sl`, `tp`)
-- 信号阈值 (`sig`)
-- 风险百分比 (`risk`)
-- 杠杆倍数 (`lev`)
-- 加仓参数 (`adds`, `add_frac`)
-- ATR 追踪止损参数 (`atr_trail`, `atr_k`)
-- 最大并发持仓 (`max_cc`)
-
-**工作流程**:
-1. 加载已训练的模型和特征工程器
-2. 准备回测数据（从ZIP文件提取）
-3. 对每个 trial 运行回测
-4. 优化目标：最大化 `return - 0.5 * drawdown`（最大回撤限制在10%）
-
-**使用场景**: 模型已训练完成，需要优化交易执行和风险管理参数
-
-**使用示例**:
-```bash
-python src/time_series_model/optimization/optuna_risk_search.py
-```
-
----
-
-### 2. `ts_sr_reversal_optuna.py` - SR反转预测阈值优化
+### 1. `ts_sr_reversal_optuna.py` - SR反转预测阈值优化
 
 **用途**: 优化**SR反转策略的预测阈值**（决定何时开仓/平仓）
 
@@ -102,7 +74,7 @@ python src/time_series_model/optimization/ts_sr_reversal_optuna.py \
 
 ---
 
-### 3. `ts_sr_reversal_optuna_joint.py` - SR反转联合优化（模型超参数 + 预测阈值）
+### 2. `ts_sr_reversal_optuna_joint.py` - SR反转联合优化（模型超参数 + 预测阈值）
 
 **用途**: 同时优化**模型超参数**和**预测阈值**，端到端优化业务目标。
 
@@ -162,15 +134,15 @@ python src/time_series_model/optimization/ts_sr_reversal_optuna_joint.py \
 
 ## 主要区别
 
-| 特性 | `optuna_risk_search.py` | `ts_sr_reversal_optuna.py` | `ts_sr_reversal_optuna_joint.py` |
-|------|------------------------|---------------------------|--------------------------------|
-| **优化对象** | 风险管理和交易执行参数 | 预测阈值（开仓/平仓阈值） | 模型超参数 + 预测阈值 |
-| **数据来源** | 已训练模型 + ZIP数据文件 | 策略配置 + Parquet数据 | 策略配置 + Parquet数据 |
-| **评估方式** | 回测结果（收益/回撤） | 交叉验证指标 + 回测结果 | 交叉验证指标 + 回测结果 |
-| **参数传递** | 函数参数 | 临时修改策略配置对象 | 临时修改策略配置对象 |
-| **适用阶段** | 模型训练后 | 模型训练后（优化交易阈值） | 模型训练阶段（端到端优化） |
-| **计算成本** | 低（不训练模型） | 低（不训练模型） | 高（每个 trial 训练模型） |
-| **输出** | 风险参数JSON | 阈值参数JSON + CSV历史 + 回测结果 | 模型参数 + 阈值参数 + CSV历史 + 回测结果 |
+| 特性 | `ts_sr_reversal_optuna.py` | `ts_sr_reversal_optuna_joint.py` |
+|------|---------------------------|--------------------------------|
+| **优化对象** | 预测阈值（开仓/平仓阈值） | 模型超参数 + 预测阈值 |
+| **数据来源** | 策略配置 + Parquet数据 | 策略配置 + Parquet数据 |
+| **评估方式** | 交叉验证指标 + 回测结果 | 交叉验证指标 + 回测结果 |
+| **参数传递** | 临时修改策略配置对象 | 临时修改策略配置对象 |
+| **适用阶段** | 模型训练后（优化交易阈值） | 模型训练阶段（端到端优化） |
+| **计算成本** | 低（不训练模型） | 高（每个 trial 训练模型） |
+| **输出** | 阈值参数JSON + CSV历史 + 回测结果 | 模型参数 + 阈值参数 + CSV历史 + 回测结果 |
 
 ## 其他策略优化需求
 
@@ -181,7 +153,7 @@ python src/time_series_model/optimization/ts_sr_reversal_optuna_joint.py \
 - **Compression Breakout** (可能需要类似优化)
 
 如果其他策略也有类似的信号参数或风险参数需要优化，可以考虑：
-1. 复用 `ts_sr_reversal_optuna.py` 的模式（如果使用环境变量配置）
-2. 复用 `optuna_risk_search.py` 的模式（如果优化风险参数）
+1. 复用 `ts_sr_reversal_optuna.py` 的模式（优化预测阈值）
+2. 复用 `ts_sr_reversal_optuna_joint.py` 的模式（联合优化模型和阈值）
 3. 创建策略特定的优化脚本
 

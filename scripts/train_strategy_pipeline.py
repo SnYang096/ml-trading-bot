@@ -25,7 +25,7 @@ import json
 import os
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import sys
 
 import numpy as np
@@ -35,7 +35,15 @@ from src.data_tools.data_utils import load_raw_data
 from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.strategy_config import StrategyConfigLoader
-from src.time_series_model.pipeline.training.label_utils import simulate_rr_exits
+from src.time_series_model.pipeline.training.label_utils import (
+    simulate_rr_exits,
+    future_volatility_label,
+)
+from src.time_series_model.pipeline.training.volatility_model_config import (
+    load_volatility_model_config,
+    prepare_volatility_model_data,
+    get_volatility_model_params,
+)
 from src.time_series_model.strategies.backtesting.vectorbt_backtest import (
     VectorBTBacktest,
 )
@@ -132,40 +140,51 @@ def _maybe_configure_vpin_ticks(
     start_ts: Optional[str],
     end_ts: Optional[str],
 ) -> None:
-    """If tick data exists, configure ticks_loader_json for VPIN features."""
+    """If tick data exists, configure ticks_loader_json for features that need ticks."""
     if not start_ts or not end_ts:
         return
 
     features_cfg = feature_loader.feature_deps.get("features", {})
-    vpin_cfg = features_cfg.get("vpin_features")
-    if not vpin_cfg:
-        return
 
-    compute_params = vpin_cfg.setdefault("compute_params", {})
-    if compute_params.get("ticks_loader_json"):
-        return
+    # 检查是否已经有 ticks_loader_json（从 vpin_features 或其他特征）
+    ticks_loader_json = None
+    for feature_name, feature_cfg in features_cfg.items():
+        compute_params = feature_cfg.get("compute_params", {})
+        if compute_params.get("ticks_loader_json"):
+            ticks_loader_json = compute_params["ticks_loader_json"]
+            break
 
-    tick_files = list_tick_files(
-        symbol=symbol,
-        start_ts=start_ts,
-        end_ts=end_ts,
-        ticks_dir=str(data_path),
-        lookback_minutes=60,
-    )
+    # 如果还没有，创建新的
+    if not ticks_loader_json:
+        tick_files = list_tick_files(
+            symbol=symbol,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            ticks_dir=str(data_path),
+            lookback_minutes=60,
+        )
 
-    if not tick_files:
-        print("   ⚠️  VPIN tick files not found; VPIN may fail without ticks")
-        return
+        if not tick_files:
+            print("   ⚠️  VPIN tick files not found; VPIN may fail without ticks")
+            return
 
-    tick_params = {
-        "symbol": symbol,
-        "tick_files": [str(Path(f)) for f in tick_files],
-        "start_ts": start_ts,
-        "end_ts": end_ts,
-        "lookback_minutes": 60,
-    }
-    compute_params["ticks_loader_json"] = serialize_tick_loader_params(tick_params)
-    print(f"   ✅ Configured VPIN ticks_loader_json with {len(tick_files)} files")
+        tick_params = {
+            "symbol": symbol,
+            "tick_files": [str(Path(f)) for f in tick_files],
+            "start_ts": start_ts,
+            "end_ts": end_ts,
+            "lookback_minutes": 60,
+        }
+        ticks_loader_json = serialize_tick_loader_params(tick_params)
+        print(f"   ✅ Configured ticks_loader_json with {len(tick_files)} files")
+
+    # 为所有需要 ticks 的特征设置 ticks_loader_json
+    features_need_ticks = ["vpin_features", "footprint_basic"]
+    for feature_name in features_need_ticks:
+        if feature_name in features_cfg:
+            compute_params = features_cfg[feature_name].setdefault("compute_params", {})
+            if not compute_params.get("ticks_loader_json"):
+                compute_params["ticks_loader_json"] = ticks_loader_json
 
 
 def run_feature_pipeline(
@@ -250,16 +269,129 @@ def apply_post_label_filters(
     return result
 
 
+def train_volatility_model_in_pipeline(
+    df_train: pd.DataFrame,
+    df_test: pd.DataFrame,
+    feature_loader: Any,
+    vol_config,
+) -> Tuple[Optional[Any], Optional[Dict[str, float]]]:
+    """
+    Train volatility model within the main training pipeline.
+
+    Args:
+        df_train: Training DataFrame with features
+        df_test: Test DataFrame with features
+        feature_loader: Feature loader for computing missing features
+        vol_config: VolatilityModelConfig instance
+
+    Returns:
+        Tuple of (volatility_model, metrics_dict) or (None, None) if training fails
+    """
+    try:
+        from src.time_series_model.strategies.models.lightgbm_model import (
+            LightGBMTrainer,
+        )
+
+        # Load volatility model config
+        config_path = vol_config.config_path
+        config = (
+            load_volatility_model_config(config_path)
+            if config_path
+            else load_volatility_model_config()
+        )
+
+        # Generate volatility labels
+        target_col = vol_config.target_column
+        if target_col not in df_train.columns:
+            print(f"   📊 Generating {target_col} labels...")
+            # Use future_volatility_label to generate labels
+            horizon = config.get("prediction", {}).get("horizon", 10)
+            df_train[target_col] = future_volatility_label(
+                df_train["close"], horizon=horizon
+            )
+            df_test[target_col] = future_volatility_label(
+                df_test["close"], horizon=horizon
+            )
+
+        # Prepare volatility model data
+        X_train_vol, vol_features, categorical_features = prepare_volatility_model_data(
+            df_train, config, feature_loader=feature_loader
+        )
+        X_test_vol, _, _ = prepare_volatility_model_data(
+            df_test, config, feature_loader=feature_loader
+        )
+
+        y_vol_train = df_train[target_col]
+        y_vol_test = df_test[target_col]
+
+        # Filter to valid samples
+        valid_train = y_vol_train.notna() & X_train_vol[vol_features].notna().all(
+            axis=1
+        )
+        valid_test = y_vol_test.notna() & X_test_vol[vol_features].notna().all(axis=1)
+
+        X_train_vol = X_train_vol[vol_features].loc[valid_train]
+        y_vol_train = y_vol_train.loc[valid_train]
+        X_test_vol = X_test_vol[vol_features].loc[valid_test]
+        y_vol_test = y_vol_test.loc[valid_test]
+
+        if len(X_train_vol) < 50:
+            print(
+                f"   ⚠️  Not enough samples for volatility model training: {len(X_train_vol)}"
+            )
+            return None, None
+
+        # Get training parameters from config
+        trainer_config = config.get("trainer", {})
+        use_gpu = trainer_config.get("use_gpu", True)
+        n_splits = trainer_config.get("n_splits", 5)
+        auto_tune_params = trainer_config.get("auto_tune_params", False)
+        model_params = get_volatility_model_params(config)
+
+        # Train volatility model
+        vol_model = LightGBMTrainer(model_type="regression", use_gpu=use_gpu)
+        if model_params:
+            vol_model.params = model_params
+
+        metrics, _ = vol_model.train(
+            X_train_vol,
+            y_vol_train,
+            n_splits=n_splits,
+            use_time_series_cv=True,
+            groups=None,
+            auto_tune_params=auto_tune_params,
+            categorical_features=categorical_features,
+        )
+
+        # Store feature list for prediction
+        vol_model._volatility_features = vol_features
+        if categorical_features:
+            vol_model._categorical_features = categorical_features
+
+        return vol_model, metrics
+
+    except Exception as e:
+        print(f"   ⚠️  Volatility model training failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None, None
+
+
 def drop_inf_rows(df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
-    """Remove rows containing inf/-inf in feature columns."""
+    """Remove rows containing inf/-inf in feature columns (NaN is kept)."""
     if not feature_cols:
         return df
     dedup_cols = list(dict.fromkeys(feature_cols))
     result = df.copy()
+    # 只替换 inf，保留 NaN（NaN 可能是正常的，如数据不足）
     subset = result[dedup_cols].replace([np.inf, -np.inf], np.nan)
     for col in dedup_cols:
         result[col] = subset[col]
-    finite_mask = np.isfinite(result[dedup_cols]).all(axis=1)
+    # 只检查 inf，不检查 NaN（因为 NaN 可能是正常的）
+    inf_mask = np.isinf(result[dedup_cols])
+    has_inf = inf_mask.any(axis=1)
+    finite_mask = ~has_inf
     dropped = len(result) - finite_mask.sum()
     result = result[finite_mask]
     if dropped > 0:
@@ -618,6 +750,7 @@ def run_backtest_with_strategy(
     preds: np.ndarray,
     strategy_config,
     task_type: str,
+    vol_model: Optional[Any] = None,
 ) -> Optional[Dict[str, float]]:
     """
     根据 backtest 配置动态选择回测类；若未指定 class 则回退到 VectorBTBacktest。
@@ -651,6 +784,11 @@ def train_strategy(
         symbol=args.symbol,
         timeframe=args.timeframe,
     )
+
+    # 监控源数据质量
+    from src.features.utils.data_monitor import check_source_data_quality
+
+    source_quality = check_source_data_quality(df_raw, args.data_path)
 
     # Optional date cropping to align with available tick data or focus window
     start_override = os.getenv("TRAIN_START_DATE")
@@ -710,6 +848,25 @@ def train_strategy(
 
     print(f"   ✅ Samples - Train: {len(df_train_raw)}, " f"Test: {len(df_test_raw)}")
 
+    # 打印测试集时间范围，用于验证 tick 数据可用性
+    if not df_test_raw.empty:
+        datetime_col = next(
+            (
+                col
+                for col in ("datetime", "timestamp", "date")
+                if col in df_test_raw.columns
+            ),
+            None,
+        )
+        if datetime_col:
+            test_start = pd.to_datetime(df_test_raw[datetime_col]).min()
+            test_end = pd.to_datetime(df_test_raw[datetime_col]).max()
+            print(f"   📅 Test set time range: {test_start} to {test_end}")
+        elif isinstance(df_test_raw.index, pd.DatetimeIndex):
+            test_start = df_test_raw.index.min()
+            test_end = df_test_raw.index.max()
+            print(f"   📅 Test set time range: {test_start} to {test_end}")
+
     df_train_features = run_feature_pipeline(
         df_train_raw,
         feature_loader=feature_loader,
@@ -767,7 +924,9 @@ def train_strategy(
     def _debug_inf(df: pd.DataFrame, name: str):
         if not feature_cols:
             return
-        inf_mask = ~np.isfinite(df[feature_cols])
+        # 正确区分 inf 和 NaN：只检查真正的 inf/-inf，不包括 NaN
+        # 注意：np.isfinite() 对 NaN 也返回 False，所以不能用来检查 inf
+        inf_mask = np.isinf(df[feature_cols])
         if inf_mask.any().any():
             # 统计每列 inf/-inf 数量
             col_counts = inf_mask.sum().sort_values(ascending=False)
@@ -779,10 +938,22 @@ def train_strategy(
             # 打印每个问题列的极值和示例索引，便于定位
             for col in top_cols.index:
                 col_series = df[col]
-                bad_idx = col_series[~np.isfinite(col_series)].index[:5]
+                # 只获取真正的 inf 值，不包括 NaN
+                inf_idx = col_series[np.isinf(col_series)].index[:5]
+                # 分别计算有限值、inf 值和 NaN 的统计
+                finite_vals = col_series[np.isfinite(col_series)]
+                inf_vals = col_series[np.isinf(col_series)]
+                nan_vals = col_series[col_series.isna()]
+                finite_min = finite_vals.min() if len(finite_vals) > 0 else None
+                finite_max = finite_vals.max() if len(finite_vals) > 0 else None
+                inf_count = len(inf_vals)
+                nan_count = len(nan_vals)
+                # 检查 inf 值的实际值
+                inf_actual = inf_vals.head(3).tolist() if len(inf_vals) > 0 else []
                 print(
-                    f"      ↳ {col}: min={col_series.min()}, max={col_series.max()}, "
-                    f"sample_idx={list(bad_idx)}"
+                    f"      ↳ {col}: finite_min={finite_min}, finite_max={finite_max}, "
+                    f"inf_count={inf_count}, nan_count={nan_count}, inf_samples={inf_actual}, "
+                    f"sample_idx={list(inf_idx)}"
                 )
 
     _debug_inf(df_train_filtered, "Train before drop_inf_rows")
@@ -817,6 +988,31 @@ def train_strategy(
 
     print(f"   ✅ Average CV Metric: {avg_metric:.4f}")
 
+    # Train volatility model if enabled
+    vol_model = None
+    vol_metrics = None
+    if (
+        strategy_config.model.volatility_model
+        and strategy_config.model.volatility_model.enabled
+    ):
+        print("\n" + "=" * 80)
+        print("📊 Training Volatility Model")
+        print("=" * 80)
+        vol_model, vol_metrics = train_volatility_model_in_pipeline(
+            df_train_filtered,
+            df_test_filtered,
+            feature_loader=feature_loader,
+            vol_config=strategy_config.model.volatility_model,
+        )
+        if vol_model:
+            print(f"   ✅ Volatility model trained successfully")
+            if vol_metrics:
+                for metric_name, score in vol_metrics.items():
+                    print(f"   ✅ Vol {metric_name}: {score:.4f}")
+        else:
+            print("   ⚠️  Volatility model training failed or skipped")
+        print("=" * 80 + "\n")
+
     X_test = df_test_filtered[used_features].values
     y_test = df_test_filtered[target_col].values
 
@@ -847,11 +1043,24 @@ def train_strategy(
         "evaluation": evaluation_results,
     }
 
+    # Add volatility model results if trained
+    if vol_model and vol_metrics:
+        results["volatility_model"] = {
+            "trained": True,
+            "metrics": {k: float(v) for k, v in vol_metrics.items()},
+        }
+    elif (
+        strategy_config.model.volatility_model
+        and strategy_config.model.volatility_model.enabled
+    ):
+        results["volatility_model"] = {"trained": False}
+
     backtest_results = run_backtest_with_strategy(
         df_test_filtered,
         preds,
         strategy_config,
         task_type=task_type,
+        vol_model=vol_model,  # Pass volatility model to backtest
     )
     if backtest_results:
         results["backtest"] = backtest_results
@@ -863,6 +1072,14 @@ def train_strategy(
         with open(results_file, "w", encoding="utf-8") as fh:
             json.dump(results, fh, indent=2, default=str)
         print(f"   💾 Results saved to {results_file}")
+
+        # Save volatility model if trained
+        if vol_model:
+            import joblib
+
+            vol_model_file = output_dir / "volatility_model.pkl"
+            joblib.dump(vol_model, vol_model_file)
+            print(f"   💾 Volatility model saved to {vol_model_file}")
 
 
 def main():

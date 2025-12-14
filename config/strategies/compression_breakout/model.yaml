@@ -24,3 +24,9 @@ output:
   save_results: true
   filename: results.json
 
+# Optional: Volatility model for position sizing and risk management
+volatility_model:
+  enabled: false
+  config_path: null
+  target_column: future_volatility
+

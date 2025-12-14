@@ -78,15 +78,65 @@ def analyze_dependency_levels(
 
 
 def _build_call_args(
-    feature_info: Dict, df: pd.DataFrame
+    feature_info: Dict, df: pd.DataFrame, ticks_loader_json: Optional[str] = None
 ) -> Tuple[List[Any], Dict[str, Any]]:
     """
     根据特征配置构建 compute_func 所需的 args/kwargs.
     支持配置 column_mappings，将 DataFrame 指定列注入到函数参数。
+    支持从 ticks_loader_json 加载 ticks 数据。
     """
     compute_params = feature_info.get("compute_params", {}) or {}
     column_mappings = feature_info.get("column_mappings", {}) or {}
-    call_kwargs = dict(compute_params)
+    
+    # 如果 ticks_loader_json 参数为 None，尝试从 compute_params 获取
+    if ticks_loader_json is None:
+        ticks_loader_json = compute_params.get("ticks_loader_json")
+    
+    # 复制 compute_params，但排除 ticks_loader_json（它只是配置，不是函数参数）
+    call_kwargs = {k: v for k, v in compute_params.items() if k != "ticks_loader_json"}
+
+    # 处理 ticks_loader_json：如果函数需要 ticks 参数，从 ticks_loader_json 加载
+    import inspect
+    from src.features.loader.feature_function_mapping import get_compute_func
+    compute_func_name = feature_info.get("compute_func")
+    if compute_func_name:
+        compute_func = get_compute_func(compute_func_name)
+        func_sig = inspect.signature(compute_func)
+        if "ticks" in func_sig.parameters and ticks_loader_json:
+            # 从 ticks_loader_json 加载 ticks 数据
+            from src.data_tools.tick_loader import deserialize_tick_loader_params, load_tick_data
+            try:
+                tick_params = deserialize_tick_loader_params(ticks_loader_json)
+                # 根据 df 的时间范围加载 ticks
+                if isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+                    start_ts = df.index.min().strftime("%Y-%m-%d %H:%M:%S")
+                    end_ts = df.index.max().strftime("%Y-%m-%d %H:%M:%S")
+                    # 从 tick_params 中获取 ticks_dir
+                    ticks_dir = tick_params.get("ticks_dir")
+                    if not ticks_dir:
+                        # 尝试从 tick_files 推断
+                        tick_files = tick_params.get("tick_files", [])
+                        if tick_files:
+                            from pathlib import Path
+                            ticks_dir = str(Path(tick_files[0]).parent)
+                        else:
+                            ticks_dir = "data/parquet_data"
+                    
+                    ticks = load_tick_data(
+                        symbol=tick_params["symbol"],
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        ticks_dir=ticks_dir,
+                        lookback_minutes=tick_params.get("lookback_minutes", 60),
+                    )
+                    if ticks is not None and len(ticks) > 0:
+                        call_kwargs["ticks"] = ticks
+                    else:
+                        print(f"     ⚠️  No ticks loaded for {compute_func_name} (time range: {start_ts} to {end_ts})")
+            except Exception as e:
+                print(f"     ⚠️  Failed to load ticks for {compute_func_name}: {e}")
+                import traceback
+                traceback.print_exc()
 
     for param_name, source in column_mappings.items():
         if isinstance(source, str):
@@ -121,6 +171,7 @@ def _compute_single_feature_worker_monthly(
     df_bytes: bytes,
     fit: bool,
     monthly_cache_dir: Optional[str],
+    ticks_loader_json: Optional[str] = None,
 ) -> Tuple[str, bytes]:
     """
     工作进程函数：按月计算单个特征
@@ -164,7 +215,7 @@ def _compute_single_feature_worker_monthly(
         if feature_info:
             output_cols = feature_info.get("output_columns", [feature_name])
             output_cols_str = str(sorted(output_cols))
-        code_version = "v3"  # v3: 支持按月缓存
+        code_version = "v4"  # v4: 修复了 sr_strength_max 代码结构错误，更新版本使旧缓存失效
         key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
         return hashlib.md5(key_str.encode()).hexdigest()
     
@@ -209,7 +260,7 @@ def _compute_single_feature_worker_monthly(
     for month_key, month_df in monthly_dfs.items():
         if month_key == "all":
             # 无法按月拆分，直接计算
-            call_args, call_kwargs = _build_call_args(feature_info, month_df)
+            call_args, call_kwargs = _build_call_args(feature_info, month_df, ticks_loader_json)
             # 如果函数支持 monthly_cache_dir，自动注入
             if supports_monthly_cache and monthly_cache_dir:
                 call_kwargs["monthly_cache_dir"] = monthly_cache_dir
@@ -223,7 +274,7 @@ def _compute_single_feature_worker_monthly(
                 month_result = cached_result
             else:
                 # 计算该月份
-                call_args, call_kwargs = _build_call_args(feature_info, month_df)
+                call_args, call_kwargs = _build_call_args(feature_info, month_df, ticks_loader_json)
                 # 如果函数支持 monthly_cache_dir，自动注入
                 if supports_monthly_cache and monthly_cache_dir:
                     call_kwargs["monthly_cache_dir"] = monthly_cache_dir
@@ -261,7 +312,9 @@ def _compute_single_feature_worker_monthly(
                                   for r in monthly_results.values()], axis=0).sort_index()
     except Exception as e:
         # 如果合并失败，尝试直接计算
-        call_args, call_kwargs = _build_call_args(feature_info, df)
+        # 注意：这里无法获取 ticks_loader_json，可能需要从 compute_params 中获取
+        ticks_loader_json = compute_params.get("ticks_loader_json")
+        call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
         feature_result = compute_func(*call_args, **call_kwargs)
         if isinstance(feature_result, tuple):
             output_cols = feature_info.get("output_columns", [feature_name])
@@ -372,7 +425,7 @@ class ParallelFeatureComputer:
         if feature_info:
             output_cols = feature_info.get("output_columns", [feature_name])
             output_cols_str = str(sorted(output_cols))
-        code_version = "v3"  # v3: 支持按月缓存
+        code_version = "v4"  # v4: 修复了 sr_strength_max 代码结构错误，更新版本使旧缓存失效
         key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
         return hashlib.md5(key_str.encode()).hexdigest()
     
@@ -465,18 +518,23 @@ class ParallelFeatureComputer:
         if df.empty:
             return df
         
+        # 获取 ticks_loader_json
+        ticks_loader_json = compute_params.get("ticks_loader_json")
+        
         # 按月份拆分
         monthly_dfs = self._split_df_by_month(df)
         if len(monthly_dfs) <= 1:
             # 无法按月拆分，使用全量计算
-            return compute_func(df, **compute_params)
+            call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
+            return compute_func(*call_args, **call_kwargs)
         
         # 按月计算
         monthly_results = {}
         for month_key, month_df in monthly_dfs.items():
             if month_key == "all":
                 # 无法按月拆分，使用全量计算
-                return compute_func(df, **compute_params)
+                call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
+                return compute_func(*call_args, **call_kwargs)
             
             # 检查缓存
             monthly_cache_key = self._get_monthly_cache_key(
@@ -488,7 +546,8 @@ class ParallelFeatureComputer:
                 monthly_results[month_key] = cached_result
             else:
                 # 计算该月份
-                month_result = compute_func(month_df, **compute_params)
+                call_args, call_kwargs = _build_call_args(feature_info, month_df, ticks_loader_json)
+                month_result = compute_func(*call_args, **call_kwargs)
                 monthly_results[month_key] = month_result
                 # 保存缓存
                 self._save_monthly_cache(monthly_cache_key, month_result)
@@ -627,6 +686,8 @@ class ParallelFeatureComputer:
                     # 并行计算：按月计算并缓存
                     print(f"     🔸 Computing {feature_name} in parallel (monthly)", flush=True)
                     df_bytes = pickle.dumps(result_df)
+                    # 从 compute_params 中获取 ticks_loader_json
+                    ticks_loader_json = compute_params.get("ticks_loader_json")
                     future = self.executor.submit(
                         _compute_single_feature_worker_monthly,
                         feature_name,
@@ -634,6 +695,7 @@ class ParallelFeatureComputer:
                         df_bytes,
                         fit,
                         str(self.monthly_cache_dir) if self.monthly_cache_dir else None,
+                        ticks_loader_json,
                     )
                     futures.append(future)
                 else:
@@ -651,7 +713,8 @@ class ParallelFeatureComputer:
                             )
                         else:
                             # 不支持按月缓存的特征，直接计算
-                            call_args, call_kwargs = _build_call_args(feature_info, result_df)
+                            ticks_loader_json = compute_params.get("ticks_loader_json")
+                            call_args, call_kwargs = _build_call_args(feature_info, result_df, ticks_loader_json)
                             feature_result = compute_func(*call_args, **call_kwargs)
                         
                         # Handle different return types

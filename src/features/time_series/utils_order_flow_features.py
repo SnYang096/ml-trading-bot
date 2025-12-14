@@ -1147,10 +1147,18 @@ def compute_trade_clustering_from_ticks(
             else:
                 temp_sell_runs.append(run_in_window)
         # 计算统计量
-        max_buy_run = max(temp_buy_runs) if temp_buy_runs else 0.0
-        max_sell_run = max(temp_sell_runs) if temp_sell_runs else 0.0
-        avg_buy_run = np.mean(temp_buy_runs) if temp_buy_runs else 0.0
-        avg_sell_run = np.mean(temp_sell_runs) if temp_sell_runs else 0.0
+        # 清理 temp_buy_runs 和 temp_sell_runs 中的 inf/NaN 值
+        temp_buy_runs_clean = [x for x in temp_buy_runs if np.isfinite(x) and x >= 0]
+        temp_sell_runs_clean = [x for x in temp_sell_runs if np.isfinite(x) and x >= 0]
+        max_buy_run = max(temp_buy_runs_clean) if temp_buy_runs_clean else 0.0
+        max_sell_run = max(temp_sell_runs_clean) if temp_sell_runs_clean else 0.0
+        avg_buy_run = np.mean(temp_buy_runs_clean) if temp_buy_runs_clean else 0.0
+        avg_sell_run = np.mean(temp_sell_runs_clean) if temp_sell_runs_clean else 0.0
+        # 确保结果是有限值
+        max_buy_run = max_buy_run if np.isfinite(max_buy_run) else 0.0
+        max_sell_run = max_sell_run if np.isfinite(max_sell_run) else 0.0
+        avg_buy_run = avg_buy_run if np.isfinite(avg_buy_run) else 0.0
+        avg_sell_run = avg_sell_run if np.isfinite(avg_sell_run) else 0.0
         buy_run_count = len(temp_buy_runs)
         sell_run_count = len(temp_sell_runs)
         # 不平衡比率
@@ -1419,16 +1427,25 @@ def extract_trade_clustering_features(
             if cached_result is None:
                 # 计算该月
                 try:
+                    # 转换时间格式（load_tick_data 期望 "YYYY-MM-DD HH:MM:SS" 格式）
+                    start_ts_str = month_start.strftime("%Y-%m-%d %H:%M:%S")
+                    end_ts_str = month_end.strftime("%Y-%m-%d %H:%M:%S")
                     month_ticks = load_tick_data(
                         symbol=loader_params["symbol"],
-                        start_ts=month_start.isoformat(),
-                        end_ts=month_end.isoformat(),
+                        start_ts=start_ts_str,
+                        end_ts=end_ts_str,
                         ticks_dir=ticks_dir,
                         lookback_minutes=0,
                     )
                     
                     if month_ticks is not None and len(month_ticks) > 0:
-                        # 只保留 side 列（Trade Clustering 只需要 side）
+                        # 确保索引是 DatetimeIndex（load_tick_data 应该已经设置了）
+                        if not isinstance(month_ticks.index, pd.DatetimeIndex):
+                            if "timestamp" in month_ticks.columns:
+                                month_ticks = month_ticks.set_index("timestamp")
+                            else:
+                                raise ValueError(f"Tick data must have DatetimeIndex or 'timestamp' column")
+                        # 只保留 side 列（Trade Clustering 只需要 side，但需要保留索引）
                         month_ticks = month_ticks[["side"]].copy()
                         print(f"      ✅ Loaded {month_start.strftime('%Y-%m')}: {len(month_ticks)} ticks")
                         
@@ -1462,6 +1479,8 @@ def extract_trade_clustering_features(
                         del month_ticks
                 except Exception as e:
                     print(f"      ⚠️  Failed to process {month_start.strftime('%Y-%m')}: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # 移动到下一个月
             current_month = current_month + pd.DateOffset(months=1)
@@ -1534,6 +1553,19 @@ def extract_trade_clustering_features(
 
         cluster_df = cluster_df_accum if cluster_df_accum is not None else pd.DataFrame()
         
+        # 打印 Trade Clustering 数据统计，用于调试
+        if cluster_df is not None and len(cluster_df) > 0:
+            print(f"   📊 Trade Clustering raw data: {len(cluster_df)} events")
+            print(f"      Time range: {cluster_df.index.min()} to {cluster_df.index.max()}")
+            # 检查是否有有效数据
+            valid_cols = [col for col in cluster_df.columns if cluster_df[col].notna().any()]
+            print(f"      Valid columns: {len(valid_cols)}/{len(cluster_df.columns)}")
+            if len(valid_cols) < len(cluster_df.columns):
+                nan_cols = [col for col in cluster_df.columns if col not in valid_cols]
+                print(f"      ⚠️  All-NaN columns: {nan_cols[:5]}..." if len(nan_cols) > 5 else f"      ⚠️  All-NaN columns: {nan_cols}")
+        else:
+            print(f"   ⚠️  Trade Clustering: No data computed")
+        
         if cache_dir and cached_count > 0:
             print(
                 f"   💾 Used {cached_count} cached months, computed {computed_count} new months",
@@ -1569,6 +1601,14 @@ def extract_trade_clustering_features(
             freq_td = pd.Timedelta(freq) if isinstance(freq, str) else freq
         # 严格右对齐的向量化实现
         aligned_features = {}
+        
+        # 打印对齐前的统计信息
+        print(f"   📊 Trade Clustering alignment:")
+        print(f"      Cluster events: {len(cluster_df)}")
+        print(f"      K-line bars: {len(df)}")
+        print(f"      K-line time range: {df.index.min()} to {df.index.max()}")
+        print(f"      Cluster time range: {cluster_df.index.min()} to {cluster_df.index.max()}")
+        
         for col in cluster_df.columns:
             aligned_series = None
             try:
@@ -1591,10 +1631,17 @@ def extract_trade_clustering_features(
                     feature_series = pd.Series(valid_values, index=valid_idx)
                     aggregated = feature_series.groupby(valid_idx).mean()
                     aligned_series.iloc[aggregated.index] = aggregated.values
+                    
+                    # 统计对齐结果
+                    non_zero_count = (aligned_series != 0.0).sum()
+                    print(f"      {col}: {non_zero_count}/{len(df)} bars have values")
                 else:
                     aligned_series = pd.Series(0.0, index=df.index, dtype=float)
+                    print(f"      ⚠️  {col}: No valid alignment (time range mismatch?)")
             except Exception as e:
                 print(f"   ⚠️  Trade clustering alignment failed for {col} ({e})")
+                import traceback
+                traceback.print_exc()
                 aligned_series = pd.Series(0.0, index=df.index, dtype=float)
             aligned_features[col] = aligned_series
         # 添加到 df
@@ -1617,9 +1664,12 @@ def extract_trade_clustering_features(
         # 最大连续长度（buy 或 sell 中的较大值）
         df["trade_cluster_max_run"] = df[["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]].max(axis=1)
         # 买方 vs 卖方最大连续长度比
+        # 检查输入数据是否包含 inf/NaN
+        max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
+        max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
         df["trade_cluster_buy_sell_max_ratio"] = (
-            df["trade_cluster_max_buy_run"] / (df["trade_cluster_max_sell_run"] + TOL)
-        )
+            max_buy_clean / (max_sell_clean + TOL)
+        ).replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_avg_buy_run" in df.columns and "trade_cluster_avg_sell_run" in df.columns:
         # 平均连续长度比率
         total_avg = df["trade_cluster_avg_buy_run"] + df["trade_cluster_avg_sell_run"]
@@ -1627,9 +1677,12 @@ def extract_trade_clustering_features(
             (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"]) / (total_avg + TOL)
         )
         # 买方 vs 卖方平均连续长度比
+        # 检查输入数据是否包含 inf/NaN
+        avg_buy_clean = df["trade_cluster_avg_buy_run"].replace([np.inf, -np.inf], np.nan)
+        avg_sell_clean = df["trade_cluster_avg_sell_run"].replace([np.inf, -np.inf], np.nan)
         df["trade_cluster_buy_sell_avg_ratio"] = (
-            df["trade_cluster_avg_buy_run"] / (df["trade_cluster_avg_sell_run"] + TOL)
-        )
+            avg_buy_clean / (avg_sell_clean + TOL)
+        ).replace([np.inf, -np.inf], np.nan)
         # 总连续长度（buy + sell）
         if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
             df["trade_cluster_total_run_length"] = (
@@ -1667,13 +1720,20 @@ def extract_trade_clustering_features(
         df["trade_cluster_directional_entropy_change"] = (
             df["trade_cluster_directional_entropy"].diff()
         )
-        # 方向熵的 Z-score（识别异常混乱或异常聚集）
-        for w in [20, 50]:
-            rolling_mean = df["trade_cluster_directional_entropy"].rolling(window=w, min_periods=1).mean()
-            rolling_std = df["trade_cluster_directional_entropy"].rolling(window=w, min_periods=1).std()
-            df[f"trade_cluster_directional_entropy_zscore_{w}"] = (
-                (df["trade_cluster_directional_entropy"] - rolling_mean) / (rolling_std + TOL)
-            )
+    # 方向熵的 Z-score（识别异常混乱或异常聚集）
+    for w in [20, 50]:
+        if "trade_cluster_directional_entropy" not in df.columns:
+            continue
+        # 先清理 inf 值，避免 rolling_std 产生 inf
+        entropy_clean = df["trade_cluster_directional_entropy"].replace([np.inf, -np.inf], np.nan)
+        rolling_mean = entropy_clean.rolling(window=w, min_periods=1).mean()
+        rolling_std = entropy_clean.rolling(window=w, min_periods=1).std()
+        # 检查 rolling_std 是否包含 inf（可能由输入数据中的 inf 导致）
+        if (~np.isfinite(rolling_std)).any():
+            print(f"   ⚠️  trade_cluster_directional_entropy rolling_std contains inf, replacing with NaN")
+            rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+        z = (entropy_clean - rolling_mean) / (rolling_std + TOL)
+        df[f"trade_cluster_directional_entropy_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     # 滚动统计
     for w in [5, 10, 20]:
         if "trade_cluster_max_buy_run" in df.columns:
@@ -1696,31 +1756,47 @@ def extract_trade_clustering_features(
     # Z-score 特征（识别超买/超卖）
     if "trade_cluster_imbalance_ratio" in df.columns:
         for w in [20, 50]:
-            rolling_mean = df["trade_cluster_imbalance_ratio"].rolling(window=w, min_periods=1).mean()
-            rolling_std = df["trade_cluster_imbalance_ratio"].rolling(window=w, min_periods=1).std()
-            df[f"trade_cluster_imbalance_zscore_{w}"] = (
-                (df["trade_cluster_imbalance_ratio"] - rolling_mean) / (rolling_std + TOL)
-            )
+            # 先清理 inf 值，避免 rolling_std 产生 inf
+            ratio_clean = df["trade_cluster_imbalance_ratio"].replace([np.inf, -np.inf], np.nan)
+            rolling_mean = ratio_clean.rolling(window=w, min_periods=1).mean()
+            rolling_std = ratio_clean.rolling(window=w, min_periods=1).std()
+            # 检查 rolling_std 是否包含 inf
+            if (~np.isfinite(rolling_std)).any():
+                rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+            z = (ratio_clean - rolling_mean) / (rolling_std + TOL)
+            df[f"trade_cluster_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_net_runs" in df.columns:
         for w in [20, 50]:
-            rolling_mean = df["trade_cluster_net_runs"].rolling(window=w, min_periods=1).mean()
-            rolling_std = df["trade_cluster_net_runs"].rolling(window=w, min_periods=1).std()
-            df[f"trade_cluster_net_runs_zscore_{w}"] = (
-                (df["trade_cluster_net_runs"] - rolling_mean) / (rolling_std + TOL)
-            )
+            # 先清理 inf 值，避免 rolling_std 产生 inf
+            net_runs_clean = df["trade_cluster_net_runs"].replace([np.inf, -np.inf], np.nan)
+            rolling_mean = net_runs_clean.rolling(window=w, min_periods=1).mean()
+            rolling_std = net_runs_clean.rolling(window=w, min_periods=1).std()
+            # 检查 rolling_std 是否包含 inf
+            if (~np.isfinite(rolling_std)).any():
+                rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+            z = (net_runs_clean - rolling_mean) / (rolling_std + TOL)
+            df[f"trade_cluster_net_runs_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_max_buy_run" in df.columns:
         for w in [20, 50]:
-            rolling_mean = df["trade_cluster_max_buy_run"].rolling(window=w, min_periods=1).mean()
-            rolling_std = df["trade_cluster_max_buy_run"].rolling(window=w, min_periods=1).std()
-            df[f"trade_cluster_max_buy_run_zscore_{w}"] = (
-                (df["trade_cluster_max_buy_run"] - rolling_mean) / (rolling_std + TOL)
-            )
+            # 先清理 inf 值，避免 rolling_std 产生 inf
+            max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
+            rolling_mean = max_buy_clean.rolling(window=w, min_periods=1).mean()
+            rolling_std = max_buy_clean.rolling(window=w, min_periods=1).std()
+            # 检查 rolling_std 是否包含 inf
+            if (~np.isfinite(rolling_std)).any():
+                rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+            z = (max_buy_clean - rolling_mean) / (rolling_std + TOL)
+            df[f"trade_cluster_max_buy_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_max_sell_run" in df.columns:
         for w in [20, 50]:
-            rolling_mean = df["trade_cluster_max_sell_run"].rolling(window=w, min_periods=1).mean()
-            rolling_std = df["trade_cluster_max_sell_run"].rolling(window=w, min_periods=1).std()
-            df[f"trade_cluster_max_sell_run_zscore_{w}"] = (
-                (df["trade_cluster_max_sell_run"] - rolling_mean) / (rolling_std + TOL)
-            )
+            # 先清理 inf 值，避免 rolling_std 产生 inf
+            max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
+            rolling_mean = max_sell_clean.rolling(window=w, min_periods=1).mean()
+            rolling_std = max_sell_clean.rolling(window=w, min_periods=1).std()
+            # 检查 rolling_std 是否包含 inf
+            if (~np.isfinite(rolling_std)).any():
+                rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+            z = (max_sell_clean - rolling_mean) / (rolling_std + TOL)
+            df[f"trade_cluster_max_sell_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     
     return df

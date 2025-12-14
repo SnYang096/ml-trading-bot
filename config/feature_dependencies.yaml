@@ -98,6 +98,18 @@ features:
     compute_params:
       feature_shift: 0
   
+  # 影线占比特征（用于交互特征）
+  wick_ratios:
+    module: baseline
+    compute_func: BaselineFeatureEngineer.compute_wick_ratios
+    dependencies: []
+    required_columns: ["high", "low", "close", "open"]
+    output_columns: ["wick_upper_ratio", "wick_lower_ratio"]
+    category: price_structure
+    description: "Upper and lower wick ratios (用于 VPIN × wick 交互特征)"
+    pass_full_df: true
+    notes: "上影线占比和下影线占比，用于衡量K线的上下影线长度"
+  
   volume_anomaly:
     module: baseline
     compute_func: BaselineFeatureEngineer.compute_volume_anomaly
@@ -217,7 +229,8 @@ features:
     compute_func: compute_sqs_hal_high
     dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
     required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed"]
-    output_columns: ["sqs_hal_high"]
+    # 注意：此函数会创建 hal_high 和 poc 列作为副产品
+    output_columns: ["sqs_hal_high", "hal_high", "poc"]
     category: sr_structure
     description: "Structure Quality Score for HAL high (基于 WPT 重构价格)"
     compute_params:
@@ -234,7 +247,8 @@ features:
     compute_func: compute_sqs_hal_low
     dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
     required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed"]
-    output_columns: ["sqs_hal_low"]
+    # 注意：此函数会创建 hal_low 和 poc 列作为副产品
+    output_columns: ["sqs_hal_low", "hal_low", "poc"]
     category: sr_structure
     description: "Structure Quality Score for HAL low (基于 WPT 重构价格)"
     compute_params:
@@ -249,7 +263,14 @@ features:
   sr_strength_max:
     module: baseline
     compute_func: compute_sr_strength_max
-    dependencies: ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
+    # 依赖关系：
+    # - atr: 边界强度计算必需
+    # - sqs_hal_high: 会创建 hal_high, poc 列（在 output_columns 中声明）
+    # - sqs_hal_low: 会创建 hal_low, poc 列（在 output_columns 中声明）
+    # - wpt_price_reconstructed: 用于计算边界（如果 hal_high/hal_low/poc 不存在时的后备方案）
+    # 注意：通过依赖解析，hal_high, hal_low, poc 应该已经在 sqs_hal_high/sqs_hal_low 中计算
+    # compute_sr_strength_max 中的自动修复机制只是防御性措施（defensive programming）
+    dependencies: ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]
     required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
     output_columns: ["sr_strength_max"]
     category: sr_structure
@@ -257,8 +278,12 @@ features:
     compute_params:
       window: 60
       tolerance_factor: 0.5
+      poc_window: 160  # POC/HAL 计算窗口
+      price_col: "wpt_price_reconstructed"  # 使用 WPT 重构价格
     pass_full_df: true
-    notes: "所有 SR 边界都基于 WPT 重构价格计算，实现多尺度对齐"
+    notes: |
+      所有 SR 边界都基于 WPT 重构价格计算，实现多尺度对齐。
+      函数会自动确保 hal_high, hal_low, poc, atr 列存在，即使依赖特征未完全计算。
   
   # ========================================================================
   # WPT 特征（无依赖，但可能需要基础数据）
@@ -269,13 +294,19 @@ features:
     compute_func: extract_wpt_features
     dependencies: []
     required_columns: ["close"]
+    # 注意：此特征输出包含 wpt_price_fluctuation 和 wpt_price_trend（与 wpt_price_reconstructed 重复）
+    # 但还包含能量比特征，这些能量比特征不在 wpt_price_reconstructed 中
     output_columns: ["wpt_price_fluctuation", "wpt_price_trend", "wpt_price_energy_low_ratio", "wpt_price_energy_mid_ratio", "wpt_price_energy_high_ratio"]
     category: wpt
-    description: "WPT price fluctuation (用于过滤高频噪音，POC/HAL 特征的前置依赖)"
+    description: "WPT price fluctuation + 能量比特征（用于 Hilbert 等需要去趋势价格的特征）"
     compute_params:
       wavelet: "db4"
       level: 4
-    notes: "WPT 过滤高频噪音，提高 POC/HAL 等 SR 特征的识别准确性"
+    notes: |
+      WPT 过滤高频噪音，提高 POC/HAL 等 SR 特征的识别准确性。
+      注意：此特征与 wpt_price_reconstructed 都输出 wpt_price_fluctuation 和 wpt_price_trend，
+      但此特征额外提供能量比特征（用于能量分析）。
+      如果只需要 wpt_price_fluctuation，可以依赖 wpt_price_reconstructed（更高效）。
   
   wpt_cvd_fluctuation:
     module: enhanced
@@ -408,6 +439,8 @@ features:
   hilbert_phase:
     module: enhanced
     compute_func: extract_hilbert_features
+    # 注意：依赖 wpt_price_fluctuation（而不是 wpt_price_reconstructed），
+    # 因为 Hilbert 分析需要去趋势后的波动分量，wpt_price_fluctuation 提供这个
     dependencies: ["wpt_price_fluctuation", "wpt_cvd_fluctuation"]
     required_columns: ["wpt_price_fluctuation", "wpt_cvd_fluctuation"]
     output_columns: ["hilbert_price_env", "hilbert_cvd_env", "hilbert_cvd_price_env_ratio", "hilbert_price_env_slope", "hilbert_cvd_env_slope"]
@@ -429,6 +462,8 @@ features:
   hilbert_advanced:
     module: enhanced
     compute_func: extract_hilbert_features
+    # 注意：依赖 wpt_price_fluctuation（而不是 wpt_price_reconstructed），
+    # 因为 Hilbert 分析需要去趋势后的波动分量，wpt_price_fluctuation 提供这个
     dependencies: ["wpt_price_fluctuation", "wpt_cvd_fluctuation"]
     required_columns: ["wpt_price_fluctuation", "wpt_cvd_fluctuation", "volume"]
     output_columns: ["hilbert_price_env", "hilbert_cvd_env", "hilbert_cvd_price_env_ratio", "hilbert_price_env_slope", "hilbert_cvd_env_slope", "hilbert_price_env_qnorm", "hilbert_cvd_env_qnorm", "hilbert_volume_env", "hilbert_env_price_vol_ratio", "hilbert_triple_divergence"]
@@ -917,7 +952,8 @@ features:
   hurst_x_trend_r2:
     module: enhanced
     compute_func: compute_hurst_x_trend_r2
-    dependencies: ["hurst_price"]
+    # 注意：需要 hurst_price 和 trend_r2_20 特征
+    dependencies: ["hurst_price", "trend_r2_20"]
     required_columns: ["hurst_close_rolling", "trend_r2_20"]
     output_columns: ["hurst_x_trend_r2"]
     category: interaction
@@ -927,7 +963,9 @@ features:
   evt_x_trend_r2:
     module: enhanced
     compute_func: compute_evt_x_trend_r2
-    dependencies: []
+    # 注意：需要 evt_features 和 trend_r2_20 特征
+    # evt_features 输出 evt_tail_shape，trend_r2_20 是独立的 baseline 特征
+    dependencies: ["evt_features", "trend_r2_20"]
     required_columns: ["evt_tail_shape", "trend_r2_20"]
     output_columns: ["evt_x_trend_r2"]
     category: interaction
@@ -957,7 +995,7 @@ features:
   vpin_x_wick_upper:
     module: enhanced
     compute_func: compute_vpin_x_wick_upper
-    dependencies: ["vpin_features"]
+    dependencies: ["vpin_features", "wick_ratios"]
     required_columns: ["vpin", "wick_upper_ratio"]
     output_columns: ["vpin_x_wick_upper"]
     category: interaction
@@ -968,7 +1006,7 @@ features:
   vpin_x_wick_lower:
     module: enhanced
     compute_func: compute_vpin_x_wick_lower
-    dependencies: ["vpin_features"]
+    dependencies: ["vpin_features", "wick_ratios"]
     required_columns: ["vpin", "wick_lower_ratio"]
     output_columns: ["vpin_x_wick_lower"]
     category: interaction

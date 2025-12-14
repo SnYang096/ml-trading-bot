@@ -195,7 +195,30 @@ class VectorBTBacktest(BaseBacktest):
 
         # 如果没有任何交易或记录，直接返回 None，避免 stats 触发越界
         if portfolio.wrapper.index.size == 0 or portfolio.trades.count() == 0:
+            # 添加调试信息
             print("   ⚠️  Backtest skipped: no trades or empty portfolio index.")
+            if debug:
+                print(f"      Debug info:")
+                print(f"        - long_entries sum: {long_entries.sum()}")
+                print(f"        - short_entries sum: {short_entries.sum()}")
+                print(
+                    f"        - total entries: {(long_entries | short_entries).sum()}"
+                )
+                if use_signal_direction and signal_col in df.columns:
+                    signal_series = df[signal_col].fillna(0).astype(float)
+                    print(f"        - signal > 0 count: {(signal_series > 0).sum()}")
+                    print(f"        - signal < 0 count: {(signal_series < 0).sum()}")
+                    print(f"        - signal == 0 count: {(signal_series == 0).sum()}")
+                    print(
+                        f"        - signal range: [{signal_series.min():.2f}, {signal_series.max():.2f}]"
+                    )
+                preds_series = pd.Series(predictions, index=index)
+                print(
+                    f"        - predictions >= {long_entry} (long): {(preds_series >= long_entry).sum()}"
+                )
+                print(
+                    f"        - predictions <= {short_entry} (short): {(preds_series <= short_entry).sum()}"
+                )
             return None
 
         stats = portfolio.stats()

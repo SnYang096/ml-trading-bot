@@ -39,10 +39,22 @@ class LabelConfig:
 
 
 @dataclass
+class VolatilityModelConfig:
+    """Configuration for volatility model training."""
+
+    enabled: bool = False
+    config_path: Optional[str] = (
+        None  # Path to volatility_model.yaml, None = use default
+    )
+    target_column: str = "future_volatility"  # Column name for volatility labels
+
+
+@dataclass
 class ModelConfig:
     trainer: ModuleFunctionConfig
     prediction: Dict[str, Any] = field(default_factory=dict)
     output: Dict[str, Any] = field(default_factory=dict)
+    volatility_model: Optional[VolatilityModelConfig] = None
 
 
 @dataclass
@@ -182,7 +194,23 @@ class StrategyConfigLoader:
         trainer = self._parse_module_function(data.get("trainer", {}))
         prediction = data.get("prediction", {})
         output = data.get("output", {})
-        return ModelConfig(trainer=trainer, prediction=prediction, output=output)
+
+        # Parse volatility model config (optional)
+        vol_model_data = data.get("volatility_model", {})
+        volatility_model = None
+        if vol_model_data and vol_model_data.get("enabled", False):
+            volatility_model = VolatilityModelConfig(
+                enabled=True,
+                config_path=vol_model_data.get("config_path"),
+                target_column=vol_model_data.get("target_column", "future_volatility"),
+            )
+
+        return ModelConfig(
+            trainer=trainer,
+            prediction=prediction,
+            output=output,
+            volatility_model=volatility_model,
+        )
 
     def _parse_evaluation_config(self, data: Dict[str, Any]) -> EvaluationConfig:
         evaluation = data.get("evaluation", {})

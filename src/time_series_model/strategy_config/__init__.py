@@ -7,6 +7,7 @@ from .loader import (
     FeaturePipelineConfig,
     LabelConfig,
     ModelConfig,
+    VolatilityModelConfig,
     EvaluationConfig,
     BacktestConfig,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "FeaturePipelineConfig",
     "LabelConfig",
     "ModelConfig",
+    "VolatilityModelConfig",
     "EvaluationConfig",
     "BacktestConfig",
 ]

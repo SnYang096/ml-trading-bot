@@ -5,7 +5,6 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from typing import List, Tuple, Dict, Optional
-from time_series_model.config.settings import TIMEFRAMES, TECHNICAL_INDICATORS
 
 TIMEFRAME_CACHE_DIR = Path("cache/timeframes")
 TIMEFRAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -252,15 +251,3 @@ class MarketDataLoader:
         resampled = pd.DataFrame(data_dict).dropna()
 
         return resampled
-
-    def get_multi_timeframe_data(self) -> Dict[str, pd.DataFrame]:
-        """
-        Get data for all configured timeframes.
-
-        Returns:
-            Dictionary mapping timeframe to DataFrame
-        """
-        multi_tf_data = {}
-        for tf in TIMEFRAMES:
-            multi_tf_data[tf] = self.resample_data(tf)
-        return multi_tf_data

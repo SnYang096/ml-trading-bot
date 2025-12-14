@@ -3,7 +3,7 @@
 Run Nautilus Trader Strategy with Feature Engineering.
 
 Usage (recommended):
-    python -m time_series_model.strategies.live.run_nautilus_strategy \\
+    python -m time_series_model.live.run_nautilus_strategy \\
         --strategy sr_reversal \\
         --symbol BTCUSDT-PERP \\
         --timeframe 15T \\
@@ -60,7 +60,7 @@ except ImportError:
     print("Install it with: pip install nautilus-trader")
     sys.exit(1)
 
-from src.time_series_model.strategies.live.nautilus_strategy_with_features import (
+from src.time_series_model.live.nautilus_strategy_with_features import (
     NautilusStrategyWithFeatures,
 )
 

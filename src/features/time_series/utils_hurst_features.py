@@ -76,11 +76,23 @@ def compute_hurst_dfa(
                 continue
             
             x = np.arange(len(seg_y))
+            # 检查输入数据是否有效
+            if not np.all(np.isfinite(seg_y)):
+                continue  # 跳过包含 inf/NaN 的段
             # 快速线性去趋势
-            slope = (np.mean(x * seg_y) - np.mean(x) * np.mean(seg_y)) / (np.var(x) + 1e-12)
+            x_var = np.var(x)
+            if x_var < 1e-12 or not np.isfinite(x_var):
+                continue  # 跳过方差过小或无效的段
+            slope = (np.mean(x * seg_y) - np.mean(x) * np.mean(seg_y)) / x_var
+            # 检查 slope 是否有效
+            if not np.isfinite(slope):
+                continue  # 跳过产生 inf 的段
             intercept = np.mean(seg_y) - slope * np.mean(x)
             trend = slope * x + intercept
             detrended = seg_y - trend
+            # 检查 detrended 是否有效
+            if not np.all(np.isfinite(detrended)):
+                continue  # 跳过包含 inf/NaN 的去趋势结果
             
             f = np.sqrt(np.nanmean(detrended ** 2))
             if not np.isnan(f):
@@ -98,14 +110,25 @@ def compute_hurst_dfa(
     log_w = np.log(valid_windows)
     # 防止波动为 0 导致 log(0) -> -inf
     log_f = np.log(np.maximum(fluctuations, eps))
+    # 检查是否有 inf 值
+    if np.any(~np.isfinite(log_f)) or np.any(~np.isfinite(log_w)):
+        print(f"   ⚠️  Hurst: log_f or log_w contains inf, log_f inf count: {np.sum(~np.isfinite(log_f))}, log_w inf count: {np.sum(~np.isfinite(log_w))}")
+        return np.nan
     
     # 简单线性回归（忽略 NaN）
     mask = ~(np.isnan(log_w) | np.isnan(log_f))
     if mask.sum() < 3:
         return np.nan
     
-    hurst = np.polyfit(log_w[mask], log_f[mask], 1)[0]
-    return np.clip(hurst, 0.0, 1.0)
+    try:
+        hurst = np.polyfit(log_w[mask], log_f[mask], 1)[0]
+        # 检查结果是否有效
+        if not np.isfinite(hurst):
+            return np.nan
+        return np.clip(hurst, 0.0, 1.0)
+    except (np.linalg.LinAlgError, ValueError):
+        # 线性回归失败（如所有点共线、数值不稳定等）
+        return np.nan
 
 
 def _infer_data_frequency(df: pd.DataFrame) -> Optional[str]:
@@ -381,7 +404,23 @@ def extract_hurst_features(
     
     # === 1. 价格收益率（t 时刻收益 = (P_t / P_{t-1}) - 1）===
     if price_col in df.columns:
-        price_returns = df[price_col].pct_change()
+        # 监控：检查输入数据质量
+        try:
+            from src.features.utils.data_monitor import check_data_quality
+            check_data_quality(
+                df[[price_col]],
+                data_source="HURST_FEATURES",
+                stage="before_price_returns_calc",
+                raise_on_inf=False,
+            )
+        except Exception:
+            pass
+        
+        # 首先检查输入数据是否包含 inf/NaN，如果有，先清理
+        price_series = df[price_col].replace([np.inf, -np.inf], np.nan)
+        # 如果价格序列包含 inf/NaN，pct_change 可能产生 inf
+        # 在计算 pct_change 前，确保没有 inf 值
+        price_returns = price_series.pct_change()
         # 处理 inf 值（可能由除权、价格归零等导致）
         price_returns = price_returns.replace([np.inf, -np.inf], np.nan)
         # 裁剪极端值（防止除权、闪崩等异常情况）
@@ -408,7 +447,10 @@ def extract_hurst_features(
     
     # === 2. CVD 单期变化 ===
     if cvd_col and cvd_col in df.columns:
-        cvd_diff = df[cvd_col].diff().replace([np.inf, -np.inf], np.nan).values  # t=0 为 NaN
+        # 首先检查输入数据是否包含 inf/NaN，如果有，先清理
+        cvd_series = df[cvd_col].replace([np.inf, -np.inf], np.nan)
+        # 在计算 diff 前，确保没有 inf 值
+        cvd_diff = cvd_series.diff().replace([np.inf, -np.inf], np.nan).values  # t=0 为 NaN
         
         for i in range(rolling_window, len(df)):
             if (i - rolling_window) % update_freq != 0:
@@ -427,7 +469,11 @@ def extract_hurst_features(
     
     # === 3. 成交量收益率 ===
     if volume_col and volume_col in df.columns:
-        vol_returns = df[volume_col].pct_change()
+        # 首先检查输入数据是否包含 inf/NaN，如果有，先清理
+        vol_series = df[volume_col].replace([np.inf, -np.inf], np.nan)
+        # 如果成交量序列包含 inf/NaN，pct_change 可能产生 inf
+        # 在计算 pct_change 前，确保没有 inf 值
+        vol_returns = vol_series.pct_change()
         # 处理 inf 值（可能由成交量归零等导致）
         vol_returns = vol_returns.replace([np.inf, -np.inf], np.nan)
         # 裁剪极端值（成交量偶尔会有异常波动）

@@ -72,8 +72,32 @@ class BaselineFeatureEngineer:
     def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
         """计算相对强弱指数 (RSI)."""
         series = pd.to_numeric(series, errors="coerce").astype(float)
-        values = talib.RSI(series.values, timeperiod=period)
-        return pd.Series(values, index=series.index)
+        
+        # 监控：检查输入数据质量
+        try:
+            from src.features.utils.data_monitor import check_data_quality
+            check_data_quality(
+                pd.DataFrame({"price": series}),
+                data_source="RSI_CALC",
+                stage="before_rsi_calc",
+                raise_on_inf=False,
+            )
+        except Exception:
+            pass
+        
+        # 检查输入数据：如果包含 inf/NaN 或全为 0，可能导致 RSI 计算异常
+        if series.isna().all() or (series == 0).all():
+            return pd.Series(np.nan, index=series.index)
+        # 清理输入数据中的 inf 值，避免传递给 talib
+        series_clean = series.replace([np.inf, -np.inf], np.nan)
+        # 如果清理后数据不足，返回 NaN
+        if series_clean.notna().sum() < period + 1:
+            return pd.Series(np.nan, index=series.index)
+        values = talib.RSI(series_clean.values, timeperiod=period)
+        rsi_series = pd.Series(values, index=series.index)
+        # 清理输出中的 inf 值
+        rsi_series = rsi_series.replace([np.inf, -np.inf], np.nan)
+        return rsi_series
 
     @staticmethod
     def compute_macd(
@@ -277,7 +301,8 @@ class BaselineFeatureEngineer:
 
         # 使用窗口内最后一个 ATR（即最新可用ATR）
         current_atr = df["atr"].iloc[-1]
-        if current_atr <= 0:
+        # 检查 ATR 是否有效（必须是有限的正数）
+        if not np.isfinite(current_atr) or current_atr <= 0:
             return 0.0
 
         tolerance = current_atr * tolerance_factor
@@ -326,12 +351,31 @@ class BaselineFeatureEngineer:
                     # 数据不足：使用可用数据（至少1根，但不包含当前K线）
                     ref_vols = window_df.iloc[:max(1, pos)]["volume"]
 
-                avg_vol = ref_vols.mean() if len(ref_vols) > 0 else 1.0
+                # 清理 ref_vols 中的 inf/NaN 值，避免影响 avg_vol 计算
+                ref_vols_clean = ref_vols.replace([np.inf, -np.inf], np.nan).dropna()
+                if len(ref_vols_clean) > 0:
+                    avg_vol = ref_vols_clean.mean()
+                    if not np.isfinite(avg_vol) or avg_vol <= 0:
+                        avg_vol = 1.0
+                else:
+                    avg_vol = 1.0
+                
                 current_vol = window_df.loc[idx, "volume"]  # 当前K线成交量（可以使用）
-                vol_ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
+                # 清理 current_vol 中的 inf/NaN 值
+                if not np.isfinite(current_vol) or current_vol < 0:
+                    current_vol = 0.0
+                
+                EPS = 1e-10
+                vol_ratio = current_vol / (avg_vol + EPS) if avg_vol > 0 else 1.0
+                # 确保 vol_ratio 是有限值
+                if not np.isfinite(vol_ratio):
+                    vol_ratio = 1.0
 
                 # 体积确认因子（抑制极端值，限制在3倍以内）
                 vol_factor = min(vol_ratio, 3.0)
+                # 确保 vol_factor 是有限值
+                if not np.isfinite(vol_factor):
+                    vol_factor = 1.0
             else:
                 vol_factor = 1.0
                 vol_ratio = 1.0
@@ -344,11 +388,18 @@ class BaselineFeatureEngineer:
                     if use_volume_confirmation and "volume" in window_df.columns:
                         if vol_ratio >= min_volume_ratio:
                             # 使用平方根加权，避免极端值影响过大
-                            weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
-                            reactions.append(weighted_reaction)
+                            # 确保 current_atr 是有限正数（前面已检查，这里再次确认）
+                            if np.isfinite(current_atr) and current_atr > 0:
+                                weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
+                                if np.isfinite(weighted_reaction):
+                                    reactions.append(weighted_reaction)
                     else:
                         # 不使用量价确认，直接归一化
-                        reactions.append(reaction / current_atr)
+                        # 确保 current_atr 是有限正数（前面已检查，这里再次确认）
+                        if np.isfinite(current_atr) and current_atr > 0:
+                            normalized_reaction = reaction / current_atr
+                            if np.isfinite(normalized_reaction):
+                                reactions.append(normalized_reaction)
             else:  # support
                 # 支撑：期望价格上涨 → 反应 = 未来最高价 - 触及时收盘价
                 reaction = future_slice["high"].max() - close_at_touch
@@ -357,11 +408,18 @@ class BaselineFeatureEngineer:
                     if use_volume_confirmation and "volume" in window_df.columns:
                         if vol_ratio >= min_volume_ratio:
                             # 使用平方根加权，避免极端值影响过大
-                            weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
-                            reactions.append(weighted_reaction)
+                            # 确保 current_atr 是有限正数（前面已检查，这里再次确认）
+                            if np.isfinite(current_atr) and current_atr > 0:
+                                weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
+                                if np.isfinite(weighted_reaction):
+                                    reactions.append(weighted_reaction)
                     else:
                         # 不使用量价确认，直接归一化
-                        reactions.append(reaction / current_atr)
+                        # 确保 current_atr 是有限正数（前面已检查，这里再次确认）
+                        if np.isfinite(current_atr) and current_atr > 0:
+                            normalized_reaction = reaction / current_atr
+                            if np.isfinite(normalized_reaction):
+                                reactions.append(normalized_reaction)
 
         # 汇总指标
         test_count = len(test_indices)
@@ -806,7 +864,18 @@ class BaselineFeatureEngineer:
                             if i >= lookback_trend:
                                 recent_prices = data["close"].iloc[i - lookback_trend : i]
                                 if len(recent_prices) > 1 and recent_prices.notna().all():
-                                    price_trend = (recent_prices.iloc[-1] - recent_prices.iloc[0]) / recent_prices.iloc[0]
+                                    # 防止除零：如果起始价格为 0 或非常小，使用 pct_change 代替
+                                    start_price = recent_prices.iloc[0]
+                                    EPS = 1e-10
+                                    if abs(start_price) < EPS:
+                                        # 如果起始价格接近 0，使用 pct_change 方法
+                                        price_trend = recent_prices.pct_change().mean()
+                                    else:
+                                        price_trend = (recent_prices.iloc[-1] - recent_prices.iloc[0]) / (start_price + EPS)
+                                    # 检查结果是否有效
+                                    if not np.isfinite(price_trend):
+                                        price_trend = 0.0
+                                        print(f"   ⚠️  price_trend is inf/NaN at index {i}, start_price={start_price}")
                                     # price_trend > 0 表示上涨，< 0 表示下跌
                                     
                                     # 动态权重分配：
@@ -1784,6 +1853,35 @@ class BaselineFeatureEngineer:
             .fillna(0.0)
         )
         return df
+
+    @staticmethod
+    def compute_wick_ratios(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        计算上影线和下影线占比
+        
+        Args:
+            df: DataFrame with high, low, open, close columns
+            
+        Returns:
+            DataFrame with wick_upper_ratio and wick_lower_ratio columns added
+        """
+        if "wick_upper_ratio" in df.columns and "wick_lower_ratio" in df.columns:
+            return df
+            
+        result = df.copy()
+        range_val = result["high"] - result["low"]
+        
+        # 上影线 = max(high, close, open) - max(close, open)
+        body_high = result[["close", "open"]].max(axis=1)
+        upper_wick = result["high"] - body_high
+        result["wick_upper_ratio"] = (upper_wick / range_val.replace(0, np.nan)).fillna(0.0)
+        
+        # 下影线 = min(close, open) - min(low, close, open)
+        body_low = result[["close", "open"]].min(axis=1)
+        lower_wick = body_low - result["low"]
+        result["wick_lower_ratio"] = (lower_wick / range_val.replace(0, np.nan)).fillna(0.0)
+        
+        return result
 
     @staticmethod
     def compute_roc_5(df: pd.DataFrame) -> pd.DataFrame:
@@ -3719,6 +3817,18 @@ class BaselineFeatureEngineer:
         )
 
         # 统一 SR 边界强度与突破确认特征
+        # 监控：检查计算前的数据质量
+        try:
+            from src.features.utils.data_monitor import check_data_quality
+            check_data_quality(
+                data[["open", "high", "low", "close", "volume", "atr"]],
+                data_source="BASELINE_FEATURES",
+                stage="before_sr_strength_calc",
+                raise_on_inf=False,
+            )
+        except Exception:
+            pass  # 监控失败不影响主流程
+        
         boundaries = BaselineFeatureEngineer._get_sr_boundary_definitions(data)
         compression_series = data.get("compression_confidence")
 
@@ -3729,6 +3839,20 @@ class BaselineFeatureEngineer:
             tolerance_factor=0.5,
             compression_series=compression_series,
         )
+        
+        # 监控：检查计算后的结果
+        try:
+            from src.features.utils.data_monitor import check_data_quality
+            strength_df = pd.DataFrame(boundary_strengths)
+            if not strength_df.empty:
+                check_data_quality(
+                    strength_df,
+                    data_source="BASELINE_FEATURES",
+                    stage="after_sr_strength_calc",
+                    raise_on_inf=False,
+                )
+        except Exception:
+            pass  # 监控失败不影响主流程
 
         strength_columns: List[str] = []
         for name, series in boundary_strengths.items():
@@ -3736,8 +3860,29 @@ class BaselineFeatureEngineer:
             strength_columns.append(name)
 
         if strength_columns:
-            data["sr_strength_max"] = data[strength_columns].max(axis=1)
-            data["sr_strength_sum"] = data[strength_columns].sum(axis=1)
+            # 计算 max/sum（pandas 的 max/sum 会自动忽略 NaN，但如果输入有 inf 会产生 inf）
+            # 先检查输入数据，找出产生 inf 的列
+            strength_df = data[strength_columns].copy()
+            # 检查并记录哪些列包含 inf
+            inf_cols = []
+            for col in strength_columns:
+                if col in strength_df.columns:
+                    inf_mask = ~np.isfinite(strength_df[col])
+                    if inf_mask.any():
+                        inf_count = inf_mask.sum()
+                        # 分别计算有限值和 inf 值的统计
+                        finite_vals = strength_df[col][np.isfinite(strength_df[col])]
+                        finite_min = finite_vals.min() if len(finite_vals) > 0 else None
+                        finite_max = finite_vals.max() if len(finite_vals) > 0 else None
+                        print(f"   ⚠️  {col}: {inf_count} inf values (finite_min={finite_min}, finite_max={finite_max})")
+                        inf_cols.append(col)
+                        # 将 inf 替换为 NaN（而不是直接删除，保留其他有效值）
+                        strength_df[col] = strength_df[col].replace([np.inf, -np.inf], np.nan)
+            data["sr_strength_max"] = strength_df.max(axis=1)
+            data["sr_strength_sum"] = strength_df.sum(axis=1)
+            # 确保结果中没有 inf（虽然理论上不应该有，但作为安全措施）
+            data["sr_strength_max"] = data["sr_strength_max"].replace([np.inf, -np.inf], np.nan)
+            data["sr_strength_sum"] = data["sr_strength_sum"].replace([np.inf, -np.inf], np.nan)
 
         boundary_confirmations = (
             BaselineFeatureEngineer._compute_boundary_volume_confirmations(

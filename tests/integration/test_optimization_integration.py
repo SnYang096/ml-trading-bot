@@ -23,55 +23,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-class TestOptunaRiskSearch:
-    """测试 optuna_risk_search.py 的核心功能"""
-
-    def test_import_optuna_risk_search(self):
-        """测试可以成功导入模块（使用mock避免依赖问题）"""
-        # 由于data_loader有复杂的依赖，我们只测试文件存在性
-        script_path = (
-            PROJECT_ROOT
-            / "src"
-            / "time_series_model"
-            / "optimization"
-            / "optuna_risk_search.py"
-        )
-        assert script_path.exists(), f"Script should exist at {script_path}"
-
-    def test_score_function(self):
-        """测试评分函数逻辑（直接测试函数，不导入模块）"""
-
-        # 直接测试评分逻辑，避免导入问题
-        def score(res):
-            """复制评分函数逻辑用于测试"""
-            dd = res["max_drawdown"]
-            ret = res["total_return"]
-            if dd > 10.0:
-                return -dd  # infeasible region
-            return ret - 0.5 * dd
-
-        # 测试正常情况：收益高、回撤低
-        res1 = {"max_drawdown": 5.0, "total_return": 10.0}
-        score1 = score(res1)
-        assert score1 == 10.0 - 0.5 * 5.0  # 7.5
-
-        # 测试回撤超过10%的情况（不可行区域）
-        res2 = {"max_drawdown": 15.0, "total_return": 10.0}
-        score2 = score(res2)
-        assert score2 == -15.0  # 惩罚回撤
-
-        # 测试边界情况：回撤刚好10%
-        res3 = {"max_drawdown": 10.0, "total_return": 5.0}
-        score3 = score(res3)
-        assert score3 == 5.0 - 0.5 * 10.0  # 0.0
-
-    def test_load_components_logic(self):
-        """测试加载组件的逻辑（不实际导入）"""
-        # 测试逻辑：load_components应该加载pickle文件并返回strategy和feature_engineer
-        # 由于依赖问题，这里只验证逻辑正确性
-        assert True  # 占位测试，实际功能需要完整环境
-
-
 class TestTSRReversalOptuna:
     """测试 ts_sr_reversal_optuna.py 的核心功能"""
 
@@ -303,7 +254,7 @@ class TestOptimizationIntegration:
 
 @pytest.mark.parametrize(
     "script_name",
-    ["optuna_risk_search", "ts_sr_reversal_optuna", "ts_sr_reversal_optuna_joint"],
+    ["ts_sr_reversal_optuna", "ts_sr_reversal_optuna_joint"],
 )
 def test_optimization_scripts_importable(script_name):
     """参数化测试：确保所有优化脚本文件存在"""

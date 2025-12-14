@@ -87,6 +87,19 @@ def load_raw_data(
 
                 df_single = df_single.resample(timeframe).agg(agg_dict).dropna()
 
+                # 监控：检查重采样后的数据质量
+                try:
+                    from src.features.utils.data_monitor import check_data_quality
+
+                    check_data_quality(
+                        df_single[["open", "high", "low", "close", "volume"]],
+                        data_source="DATA_LOADER",
+                        stage=f"after_resample_{timeframe}",
+                        raise_on_inf=False,
+                    )
+                except Exception:
+                    pass  # 监控失败不影响主流程
+
             if df_single is not None and not df_single.empty:
                 df_single["_symbol"] = sym
                 all_dfs.append(df_single)

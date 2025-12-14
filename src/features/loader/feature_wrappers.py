@@ -51,11 +51,22 @@ def compute_sqs_hal_high(
     """
     result = df.copy()
     
+    # 0. 确保 ATR 存在（SQS 计算必需）
+    if "atr" not in result.columns:
+        result["atr"] = BaselineFeatureEngineer.compute_atr(
+            result["high"],
+            result["low"],
+            result["close"],
+            period=14
+        )
+    
     # 1. 一次性计算 HAL（如果还没有计算）
     # HAL 是滚动窗口计算的，每个时间点都有一个值
     if "hal_high" not in result.columns:
         poc_window = kwargs.get("poc_window", 160)
         price_col = kwargs.get("price_col", None)
+        if price_col is None and "wpt_price_reconstructed" in result.columns:
+            price_col = "wpt_price_reconstructed"
         result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
             result,
             required_features={"hal_high"},
@@ -142,11 +153,22 @@ def compute_sqs_hal_low(
     """
     result = df.copy()
     
+    # 0. 确保 ATR 存在（SQS 计算必需）
+    if "atr" not in result.columns:
+        result["atr"] = BaselineFeatureEngineer.compute_atr(
+            result["high"],
+            result["low"],
+            result["close"],
+            period=14
+        )
+    
     # 1. 一次性计算 HAL（如果还没有计算）
     # HAL 是滚动窗口计算的，每个时间点都有一个值
     if "hal_low" not in result.columns:
         poc_window = kwargs.get("poc_window", 160)
         price_col = kwargs.get("price_col", None)
+        if price_col is None and "wpt_price_reconstructed" in result.columns:
+            price_col = "wpt_price_reconstructed"
         result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
             result,
             required_features={"hal_low"},
@@ -226,12 +248,73 @@ def compute_sr_strength_max(
     """
     result = df.copy()
     
-    # 1. 获取边界定义
+    # 0. 确保必需的边界列存在（hal_high, hal_low, poc）
+    # 这些列可能由 sqs_hal_high/sqs_hal_low 计算，但可能不完整
+    # 如果不存在，自动计算它们
+    need_compute_boundaries = False
+    boundary_cols = ["hal_high", "hal_low", "poc"]
+    missing_cols = [col for col in boundary_cols if col not in result.columns]
+    
+    if missing_cols:
+        need_compute_boundaries = True
+    else:
+        # 检查列是否存在但全部为 NaN
+        for col in boundary_cols:
+            if col in result.columns and result[col].notna().sum() == 0:
+                need_compute_boundaries = True
+                break
+    
+    if need_compute_boundaries:
+        # 使用与 sqs_hal_high/sqs_hal_low 相同的参数
+        poc_window = kwargs.get("poc_window", 160)
+        price_col = kwargs.get("price_col", None)
+        if price_col is None and "wpt_price_reconstructed" in result.columns:
+            price_col = "wpt_price_reconstructed"
+        
+        # 计算所有边界列（hal_high, hal_low, poc）
+        result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+            result,
+            required_features={"hal_high", "hal_low", "poc"},
+            poc_window=poc_window,
+            price_col=price_col,
+        )
+    
+    # 1. 确保 ATR 存在（边界强度计算必需）
+    if "atr" not in result.columns:
+        result["atr"] = BaselineFeatureEngineer.compute_atr(
+            result["high"],
+            result["low"],
+            result["close"],
+            period=14
+        )
+    
+    # 2. 获取边界定义
     boundaries = BaselineFeatureEngineer._get_sr_boundary_definitions(result)
     
     if not boundaries:
         result["sr_strength_max"] = 0.0
         return result
+    
+    # 3. 计算边界强度
+    compression_series = result.get("compression_confidence")
+    boundary_strengths = BaselineFeatureEngineer._compute_boundary_strengths(
+        data=result,
+        boundaries=boundaries,
+        window=window,
+        tolerance_factor=tolerance_factor,
+        compression_series=compression_series,
+    )
+    
+    # 4. 找到最大强度
+    if not boundary_strengths:
+        result["sr_strength_max"] = 0.0
+        return result
+    
+    # 合并所有强度序列，取每行的最大值
+    strength_df = pd.DataFrame(boundary_strengths)
+    result["sr_strength_max"] = strength_df.max(axis=1).fillna(0.0)
+    
+    return result
 
 
 def compute_footprint_features(
@@ -249,9 +332,9 @@ def compute_footprint_features(
     Compute single-bar footprint features and merge back to the kline DataFrame.
 
     Args:
-        df: Kline DataFrame with open/close timestamp columns.
+        df: Kline DataFrame with open/close timestamp columns or DateTimeIndex.
         ticks: Tick DataFrame with columns ['price', 'volume', 'side'] and DateTimeIndex.
-        open_col/close_col: column names delimiting each bar.
+        open_col/close_col: column names delimiting each bar. If columns don't exist, uses index.
         price_bin_size: explicit bin width; if None, auto.
         price_bin_method: 'fd' (Freedman–Diaconis) or 'fixed_bins'.
         price_bin_target_bins: number of bins when using fixed_bins or as fallback.
@@ -261,6 +344,33 @@ def compute_footprint_features(
     Returns:
         DataFrame with footprint columns appended.
     """
+    # 如果 open_time/close_time 列不存在，使用索引作为时间边界
+    if open_col not in df.columns or close_col not in df.columns:
+        if isinstance(df.index, pd.DatetimeIndex):
+            # 使用索引作为时间边界，创建临时列
+            df = df.copy()
+            # 对于每个 K 线，open_time 是当前索引，close_time 是下一个索引（或当前索引 + timeframe）
+            # 但为了简化，我们假设每个索引代表一个 K 线的开始时间
+            # close_time 可以通过计算下一个索引或使用时间间隔来推断
+            # 这里我们使用一个简单的方法：如果索引是 DatetimeIndex，直接使用索引
+            # 但 compute_kline_footprint_features 需要 open_col 和 close_col 列
+            # 所以我们需要创建这些列
+            df[open_col] = df.index
+            # 对于 close_time，我们需要推断下一个时间点
+            # 如果索引是规则的（如 4H），可以使用 shift(-1) 或计算时间间隔
+            # 这里我们尝试从索引推断时间间隔
+            if len(df) > 1:
+                time_delta = df.index[1] - df.index[0]
+                df[close_col] = df.index + time_delta
+            else:
+                # 如果只有一行，使用一个默认的时间间隔（如 4 小时）
+                df[close_col] = df.index + pd.Timedelta(hours=4)
+        else:
+            raise ValueError(
+                f"DataFrame must have '{open_col}' and '{close_col}' columns, "
+                f"or a DatetimeIndex to infer time boundaries."
+            )
+    
     cfg = FootprintConfig(
         price_bin_size=price_bin_size,
         price_bin_method=price_bin_method,
@@ -279,28 +389,13 @@ def compute_footprint_features(
     out = df.copy()
     for col in fp_df.columns:
         out[col] = fp_df[col]
+    # 移除临时创建的 open_time/close_time 列（如果它们原本不存在）
+    if open_col not in df.columns or close_col not in df.columns:
+        if open_col in out.columns and open_col not in df.columns:
+            out = out.drop(columns=[open_col])
+        if close_col in out.columns and close_col not in df.columns:
+            out = out.drop(columns=[close_col])
     return out
-    
-    # 2. 计算边界强度
-    compression_series = result.get("compression_confidence")
-    boundary_strengths = BaselineFeatureEngineer._compute_boundary_strengths(
-        data=result,
-        boundaries=boundaries,
-        window=window,
-        tolerance_factor=tolerance_factor,
-        compression_series=compression_series,
-    )
-    
-    # 3. 找到最大强度
-    if not boundary_strengths:
-        result["sr_strength_max"] = 0.0
-        return result
-    
-    # 合并所有强度序列，取每行的最大值
-    strength_df = pd.DataFrame(boundary_strengths)
-    result["sr_strength_max"] = strength_df.max(axis=1).fillna(0.0)
-    
-    return result
 
 
 def compute_unified_volume_profile(
