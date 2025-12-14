@@ -166,6 +166,7 @@ def prepare_volatility_model_data(
     X: pd.DataFrame,
     config: Optional[Dict[str, Any]] = None,
     feature_loader: Optional[Any] = None,
+    original_df: Optional[pd.DataFrame] = None,
 ) -> Tuple[pd.DataFrame, List[str], Optional[List[str]]]:
     """
     准备波动率模型训练数据：确保必需特征存在 + 特征选择 + 特征工程
@@ -174,6 +175,7 @@ def prepare_volatility_model_data(
         X: 原始特征DataFrame（可能不包含所有波动率模型需要的特征）
         config: 波动率模型配置
         feature_loader: 特征加载器（可选，用于计算缺失的特征）
+        original_df: 原始数据DataFrame（包含基础OHLCV列，可选）
 
     Returns:
         (处理后的特征DataFrame, 选中的特征列表, 分类特征列表)
@@ -186,13 +188,63 @@ def prepare_volatility_model_data(
     feature_groups = feature_config.get("groups", [])
     selected_columns: List[str] = []
 
+    # 存储原始输入以便后续访问基础列
+    # 优先使用传入的 original_df，否则使用 X
+    original_X = original_df.copy() if original_df is not None else X.copy()
+
     def _compute_feature(feature_name: str) -> None:
         nonlocal X_processed
         if not feature_loader or not feature_name:
             return
         try:
+            # 确保 required_columns 存在于 DataFrame 中
+            # 从 feature_dependencies.yaml 中获取 required_columns
+            features_cfg = feature_loader.feature_deps.get("features", {})
+            if feature_name in features_cfg:
+                feature_info = features_cfg[feature_name]
+                required_columns = feature_info.get("required_columns", [])
+                if required_columns:
+                    missing_cols = [
+                        col
+                        for col in required_columns
+                        if col not in X_processed.columns
+                    ]
+                    if missing_cols:
+                        # 尝试从原始输入 X 中获取缺失的列
+                        for col in missing_cols:
+                            if col in original_X.columns:
+                                # 确保索引对齐
+                                if len(X_processed) > 0:
+                                    # 使用 reindex 确保索引对齐，如果索引不匹配则使用 NaN
+                                    try:
+                                        X_processed[col] = original_X[col].reindex(
+                                            X_processed.index
+                                        )
+                                    except Exception:
+                                        # 如果 reindex 失败，尝试直接赋值（假设索引相同）
+                                        if len(original_X) == len(X_processed):
+                                            X_processed[col] = original_X[col].values
+                                        else:
+                                            print(
+                                                f"   ⚠️  Warning: Cannot align column '{col}' - index mismatch"
+                                            )
+                                else:
+                                    X_processed[col] = original_X[col]
+                            else:
+                                print(
+                                    f"   ⚠️  Warning: Required column '{col}' not found in input data for {feature_name}"
+                                )
+                                print(
+                                    f"      Available columns in original_X: {list(original_X.columns)[:20]}..."
+                                )
+                                print(
+                                    f"      Available columns in X_processed: {list(X_processed.columns)[:20]}..."
+                                )
+
             # 确保 feature_loader 的配置（如 tick_loader_json）被保留
             # 注意：feature_loader 应该是从外部传入的，已经配置好的实例
+            # 在调用 load_features_from_requested 之前，确保所有 required_columns 都在 X_processed 中
+            # 这样 load_features_from_requested 中的检查也能找到它们
             X_processed = feature_loader.load_features_from_requested(
                 X_processed,
                 requested_features=[feature_name],
@@ -213,9 +265,16 @@ def prepare_volatility_model_data(
             continue
 
         missing_cols = [col for col in columns if col not in X_processed.columns]
+        # 只有当 feature_name 存在且不为 None 时才尝试计算特征
         if missing_cols and feature_name:
             _compute_feature(feature_name)
             missing_cols = [col for col in columns if col not in X_processed.columns]
+        elif missing_cols and not feature_name:
+            # feature_name 为 null，说明这些列可能来自多个特征或通过其他方式生成
+            # 只打印警告，不尝试计算
+            print(
+                f"   ℹ️  Feature group '{group.get('name')}' has {len(missing_cols)} missing columns (no feature_name specified, columns may come from multiple features)"
+            )
 
         if missing_cols and required:
             print(
@@ -233,45 +292,15 @@ def prepare_volatility_model_data(
     # 注意：增强的特征应该在配置文件的 wpt_volatility 组中列出
     from src.features.time_series.utils_volatility_features import (
         enhance_wpt_vol_features,
-        extract_volume_profile_volatility_features,
     )
 
     wpt_cols = [col for col in X_processed.columns if col.startswith("wpt_")]
     if wpt_cols:
         X_processed = enhance_wpt_vol_features(X_processed)
 
-    # 提取 Volume Profile 波动率特征（如果尚未存在）
-    vp_cols = [col for col in X_processed.columns if col.startswith("vp_")]
-    if (
-        not vp_cols
-        or len(
-            [
-                c
-                for c in [
-                    "vp_width_ratio",
-                    "vp_poc_deviation",
-                    "vp_skewness",
-                    "vp_entropy",
-                    "vp_lv_ratio",
-                    "vp_hv_ratio",
-                ]
-                if c in X_processed.columns
-            ]
-        )
-        < 6
-    ):
-        try:
-            X_processed = extract_volume_profile_volatility_features(
-                X_processed,
-                price_col="close",
-                volume_col="volume",
-                window=100,
-                wavelet="db4",
-                level=4,
-            )
-            print("   ✅ Computed Volume Profile volatility features")
-        except Exception as exc:
-            print(f"   ⚠️ Failed to compute Volume Profile volatility features: {exc}")
+    # 注意：Volume Profile 波动率特征现在通过 yaml 配置统一管理
+    # 如果配置中定义了 volume_profile_volatility_features，会在上面的循环中通过 feature_loader 计算
+    # 不再需要这里的手动计算，避免重复计算
 
     # 去重并保持顺序
     seen = set()

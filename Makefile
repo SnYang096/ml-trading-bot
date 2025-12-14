@@ -66,9 +66,7 @@ DOCKER_RUN :=
 DOCKER_RUN_NO_TTY :=
 else
 DOCKER_RUN := docker run --rm -it \
-	--runtime=nvidia \
-	-e NVIDIA_VISIBLE_DEVICES=all \
-	-e CUDA_VISIBLE_DEVICES=0 \
+	--gpus all \
 	--user $(HOST_UID):$(HOST_GID) \
 	-e PYTHONPATH=/workspace/src \
 	-e PYTHONUNBUFFERED=1 \
@@ -79,9 +77,7 @@ DOCKER_RUN := docker run --rm -it \
 	$(DOCKER_IMAGE)
 
 DOCKER_RUN_NO_TTY := docker run --rm \
-	--runtime=nvidia \
-	-e NVIDIA_VISIBLE_DEVICES=all \
-	-e CUDA_VISIBLE_DEVICES=0 \
+	--gpus all \
 	--user $(HOST_UID):$(HOST_GID) \
 	--memory=32g --memory-swap=32g \
 	-e PYTHONPATH=/workspace/src \
@@ -160,6 +156,12 @@ help:
 	@echo "    make ts-sr-reversal # SR Reversal model training (XGBoost Binary)"
 	@echo "    make ts-sr-reversal-optuna # Optuna search for SR prediction thresholds (fast)"
 	@echo "    make ts-sr-reversal-optuna-joint # Optuna joint optimization: model hyperparams + thresholds (slow but comprehensive)"
+	@echo "    make ts-sr-reversal-model-comparison # SR Reversal model comparison (rule-based vs ML vs ML+Volatility)"
+	@echo "    make ts-sr-reversal-rule-baseline # SR Reversal rule baseline (pure rule-based strategy)"
+	@echo "    make ts-sr-reversal-1h-baseline # SR Reversal rule baseline (pure rule-based strategy on 1h timeframe)"
+	@echo "    make ts-sr-reversal-rule-optimization # SR Reversal rule optimization (find parameter plateaus)"
+	@echo "    make ts-sr-reversal-rule-optimization-joint # SR Reversal rule optimization (find parameter plateaus)"
+	@echo "    make ts-sr-reversal-rule-optimization-joint # SR Reversal rule optimization (find parameter plateaus)"
 	@echo "    make ts-sr-breakout # SR Breakout model training (XGBoost Regression)"
 	@echo "    make ts-compression-breakout # Compression Breakout model training (CatBoost Multiclass)"
 	@echo "    make ts-trend-following # Trend Following model training (LightGBM Regression)"
@@ -333,10 +335,19 @@ STRAT_COMPARE_ROLL_MAX ?= 5
 # Ablation Study (消融实验): Compare strategy performance across different feature configurations
 # This command trains the same strategy with different feature sets to evaluate
 # the contribution of each feature group. Use --feature-overrides to specify variants.
-# Example: make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
-#          STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
-# make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
-#           STRAT_COMPARE_OVERRIDES="full=config/strategies/sr_reversal/features_full.yaml"
+# 
+# Default strategy (bidirectional): config/strategies/sr_reversal (combine_mode: any_success)
+# For long-only: STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_long
+# For short-only: STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_short
+# 
+# Examples:
+#   # Compare bidirectional strategy (default)
+#   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
+#        STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
+#   
+#   # Compare long-only strategy
+#   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_long \
+#        STRAT_COMPARE_OVERRIDES="full=config/strategies/sr_reversal_long/features_full.yaml"
 
 ts-strategy-feature-compare:
 	@echo "🆚 Ablation Study: Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
@@ -490,8 +501,8 @@ SR_COMP_CONFIG ?= config/strategies/sr_reversal
 SR_COMP_SYMBOL ?= BTCUSDT
 SR_COMP_DATA_PATH ?= $(DATA_DIR)
 SR_COMP_TIMEFRAME ?= 240T
-SR_COMP_START ?= 2024-01-01
-SR_COMP_END ?= 2025-10-31
+SR_COMP_START ?= 2025-01-01
+SR_COMP_END ?= 2025-07-31
 SR_COMP_TEST_SIZE ?= 0.15
 SR_COMP_OUTPUT_DIR ?= results/model_comparison/$(SR_COMP_TIMEFRAME)
 SR_COMP_RULE_PARAMS ?= results/rule_optimization/optimization_results.csv

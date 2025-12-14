@@ -319,7 +319,8 @@ def compute_sr_strength_max(
 
 def compute_footprint_features(
     df: pd.DataFrame,
-    ticks: pd.DataFrame,
+    ticks: Optional[pd.DataFrame] = None,
+    ticks_loader_json: Optional[str] = None,
     open_col: str = "open_time",
     close_col: str = "close_time",
     price_bin_size: float = None,
@@ -334,6 +335,7 @@ def compute_footprint_features(
     Args:
         df: Kline DataFrame with open/close timestamp columns or DateTimeIndex.
         ticks: Tick DataFrame with columns ['price', 'volume', 'side'] and DateTimeIndex.
+        ticks_loader_json: JSON string for tick loader params (optional, used if ticks is None).
         open_col/close_col: column names delimiting each bar. If columns don't exist, uses index.
         price_bin_size: explicit bin width; if None, auto.
         price_bin_method: 'fd' (Freedman–Diaconis) or 'fixed_bins'.
@@ -343,7 +345,53 @@ def compute_footprint_features(
 
     Returns:
         DataFrame with footprint columns appended.
+    
+    Raises:
+        ValueError: If ticks data is not provided and ticks_loader_json is not available.
     """
+    # 检查 ticks 数据
+    if ticks is None or len(ticks) == 0:
+        if ticks_loader_json:
+            # 从 ticks_loader_json 加载 ticks 数据
+            from src.data_tools.tick_loader import deserialize_tick_loader_params, load_tick_data
+            loader_params = deserialize_tick_loader_params(ticks_loader_json)
+            # 根据 df 的时间范围加载 ticks
+            if isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+                start_ts = df.index.min().strftime("%Y-%m-%d %H:%M:%S")
+                end_ts = df.index.max().strftime("%Y-%m-%d %H:%M:%S")
+                ticks_dir = loader_params.get("ticks_dir")
+                if not ticks_dir:
+                    tick_files = loader_params.get("tick_files", [])
+                    if tick_files:
+                        from pathlib import Path
+                        ticks_dir = str(Path(tick_files[0]).parent)
+                    else:
+                        ticks_dir = "data/parquet_data"
+                ticks = load_tick_data(
+                    symbol=loader_params["symbol"],
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    ticks_dir=ticks_dir,
+                    lookback_minutes=loader_params.get("lookback_minutes", 60),
+                )
+            else:
+                raise ValueError("DataFrame must have DatetimeIndex to load ticks from ticks_loader_json")
+        else:
+            raise ValueError(
+                "Footprint calculation requires tick data. "
+                "Please provide tick data via the 'ticks' parameter "
+                "or configure ticks_loader_json. "
+                "Footprint cannot be computed without tick data."
+            )
+    
+    # 验证 ticks 数据格式
+    required_cols = ["price", "volume", "side"]
+    missing_cols = [col for col in required_cols if col not in ticks.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Tick data must contain columns: {required_cols}. "
+            f"Missing columns: {missing_cols}"
+        )
     # 如果 open_time/close_time 列不存在，使用索引作为时间边界
     if open_col not in df.columns or close_col not in df.columns:
         if isinstance(df.index, pd.DatetimeIndex):

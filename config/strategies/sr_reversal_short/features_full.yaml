@@ -12,7 +12,8 @@ feature_pipeline:
     - vpvr_pvp
     - vpvr_hvn_count
     - hilbert_phase
-    - hilbert_cvd_leads
+    # hilbert_cvd_leads: This feature is not defined in feature_dependencies.yaml
+    # Use hilbert_cvd_env_slope or hilbert_cvd_price_env_ratio from hilbert_phase instead
     - wpt_cvd_fluctuation
     - atr
     - rsi

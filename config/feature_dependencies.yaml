@@ -272,7 +272,7 @@ features:
     # compute_sr_strength_max 中的自动修复机制只是防御性措施（defensive programming）
     dependencies: ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]
     required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
-    output_columns: ["sr_strength_max"]
+    output_columns: ["sr_strength_max", "dist_to_nearest_sr", "direction_to_nearest_sr"]
     category: sr_structure
     description: "Maximum SR strength across all boundaries (基于 WPT 重构价格)"
     compute_params:
@@ -2453,6 +2453,7 @@ features:
       seq_length: 120
       d_model: 64
       use_fp16: false
+      device: "cuda"  # Use GPU if available, will auto-fallback to CPU if not available
       feature_columns:
         - "open"
         - "high"

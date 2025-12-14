@@ -95,15 +95,26 @@ def _build_call_args(
     # 复制 compute_params，但排除 ticks_loader_json（它只是配置，不是函数参数）
     call_kwargs = {k: v for k, v in compute_params.items() if k != "ticks_loader_json"}
 
-    # 处理 ticks_loader_json：如果函数需要 ticks 参数，从 ticks_loader_json 加载
+    # 处理 ticks_loader_json：如果函数需要 ticks 或 ticks_loader_json 参数
     import inspect
     from src.features.loader.feature_function_mapping import get_compute_func
     compute_func_name = feature_info.get("compute_func")
     if compute_func_name:
         compute_func = get_compute_func(compute_func_name)
         func_sig = inspect.signature(compute_func)
-        if "ticks" in func_sig.parameters and ticks_loader_json:
-            # 从 ticks_loader_json 加载 ticks 数据
+        
+        # 如果函数同时接受 ticks 和 ticks_loader_json，优先传递 ticks_loader_json
+        # 因为某些函数（如 extract_order_flow_features）可以自己处理 ticks_loader_json
+        has_ticks_param = "ticks" in func_sig.parameters
+        has_ticks_loader_json_param = "ticks_loader_json" in func_sig.parameters
+        
+        if has_ticks_loader_json_param:
+            # 函数支持 ticks_loader_json，直接传递（优先）
+            if ticks_loader_json:
+                call_kwargs["ticks_loader_json"] = ticks_loader_json
+            # 注意：如果 ticks_loader_json 是 None，不传递（让函数抛出错误，便于调试）
+        elif has_ticks_param and ticks_loader_json:
+            # 函数只支持 ticks 参数，需要加载 ticks 数据
             from src.data_tools.tick_loader import deserialize_tick_loader_params, load_tick_data
             try:
                 tick_params = deserialize_tick_loader_params(ticks_loader_json)
@@ -133,10 +144,16 @@ def _build_call_args(
                         call_kwargs["ticks"] = ticks
                     else:
                         print(f"     ⚠️  No ticks loaded for {compute_func_name} (time range: {start_ts} to {end_ts})")
+                        # 如果加载失败，但函数支持 ticks_loader_json，传递 ticks_loader_json 作为 fallback
+                        if has_ticks_loader_json_param:
+                            call_kwargs["ticks_loader_json"] = ticks_loader_json
             except Exception as e:
                 print(f"     ⚠️  Failed to load ticks for {compute_func_name}: {e}")
                 import traceback
                 traceback.print_exc()
+                # 如果加载失败，但函数支持 ticks_loader_json，传递 ticks_loader_json 作为 fallback
+                if has_ticks_loader_json_param:
+                    call_kwargs["ticks_loader_json"] = ticks_loader_json
 
     for param_name, source in column_mappings.items():
         if isinstance(source, str):
@@ -621,6 +638,9 @@ class ParallelFeatureComputer:
         
         # 获取 ticks_loader_json
         ticks_loader_json = compute_params.get("ticks_loader_json")
+        if not ticks_loader_json and feature_name in ["vpin_features", "footprint_basic"]:
+            print(f"     ⚠️  Warning: {feature_name} needs ticks_loader_json but it's not in compute_params")
+            print(f"     compute_params keys: {list(compute_params.keys())}")
         
         # 按月份拆分
         monthly_dfs = self._split_df_by_month(df)
@@ -654,7 +674,35 @@ class ParallelFeatureComputer:
                 self._save_monthly_cache(monthly_cache_key, month_result)
         
         # 合并所有月份的结果
-        combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+        # 处理不同的返回类型（tuple, DataFrame, Series）
+        if not monthly_results:
+            return df
+        
+        first_result = list(monthly_results.values())[0]
+        if isinstance(first_result, tuple):
+            # 如果是tuple，需要分别合并每个元素
+            output_cols = feature_info.get("output_columns", [feature_name])
+            combined_results = []
+            for i in range(len(output_cols)):
+                combined_series = pd.concat([r[i] for r in monthly_results.values()], axis=0).sort_index()
+                combined_results.append(combined_series)
+            combined_result = pd.DataFrame({
+                col: series for col, series in zip(output_cols, combined_results)
+            })
+        elif isinstance(first_result, pd.DataFrame):
+            combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+        elif isinstance(first_result, pd.Series):
+            combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+            output_cols = feature_info.get("output_columns", [feature_name])
+            if len(output_cols) == 1:
+                combined_result = pd.DataFrame({output_cols[0]: combined_result})
+            else:
+                combined_result = pd.DataFrame({feature_name: combined_result})
+        else:
+            # Fallback: 尝试转换为 DataFrame
+            combined_result = pd.concat([pd.Series(r) if not isinstance(r, (pd.Series, pd.DataFrame)) else r 
+                                        for r in monthly_results.values()], axis=0).sort_index()
+        
         return combined_result
     
     def compute_features_parallel(
@@ -714,6 +762,50 @@ class ParallelFeatureComputer:
         result_df = df.copy()
         df_hash = self._get_df_hash(result_df)
         
+        # 1.5. 确保所有请求特征的 required_columns 都在 DataFrame 中
+        # 收集所有需要的 required_columns
+        all_required_columns = set()
+        for feature_name in actual_requested:
+            if feature_name in features:
+                feature_info = features[feature_name]
+                required_columns = feature_info.get("required_columns", [])
+                all_required_columns.update(required_columns)
+        
+        # 检查缺失的 required_columns
+        missing_required = [col for col in all_required_columns if col not in result_df.columns]
+        if missing_required:
+            # 检查哪些是基础数据列（可能在原始df中），哪些是特征输出列（会通过依赖关系计算）
+            base_data_cols = ["open", "high", "low", "close", "volume", "timestamp", "datetime", "date", "symbol", "_symbol"]
+            feature_output_cols = set()
+            # 收集所有特征的输出列，包括依赖特征的输出列
+            for feature_name, feature_info in features.items():
+                output_cols = feature_info.get("output_columns", [feature_name])
+                feature_output_cols.update(output_cols)
+                # 也检查依赖特征的输出列
+                deps = feature_info.get("dependencies", [])
+                for dep in deps:
+                    if dep in features:
+                        dep_output_cols = features[dep].get("output_columns", [dep])
+                        feature_output_cols.update(dep_output_cols)
+            
+            missing_base = [col for col in missing_required if col in base_data_cols]
+            missing_features = [col for col in missing_required if col in feature_output_cols and col not in base_data_cols]
+            missing_unknown = [col for col in missing_required if col not in base_data_cols and col not in feature_output_cols]
+            
+            # 尝试从原始输入 df 中获取基础数据列
+            for col in missing_required:
+                if col in df.columns:
+                    result_df[col] = df[col]
+                elif col in missing_base:
+                    # 只对真正缺失的基础数据列发出警告
+                    print(f"   ⚠️  Warning: Required base column '{col}' not found in input DataFrame")
+                elif col in missing_features:
+                    # 特征输出列会通过依赖关系自动计算，不需要警告
+                    pass
+                elif col in missing_unknown:
+                    # 未知列，可能是配置错误或需要手动计算
+                    print(f"   ⚠️  Warning: Required column '{col}' not found and not in feature outputs. Check dependencies.")
+        
         # 2. 按层级顺序计算（每层内并行）
         for level in sorted(levels.keys()):
             level_features = levels[level]
@@ -753,6 +845,13 @@ class ParallelFeatureComputer:
                 feature_info = features[feature_name]
                 compute_params = feature_info.get("compute_params", {})
                 
+                # 调试信息：检查 ticks_loader_json
+                if feature_name in ["vpin_features", "footprint_basic"]:
+                    if "ticks_loader_json" not in compute_params:
+                        print(f"     ⚠️  Warning: {feature_name} compute_params does not contain ticks_loader_json")
+                        print(f"     compute_params keys: {list(compute_params.keys())}")
+                        print(f"     feature_info keys: {list(feature_info.keys())}")
+                
                 # 使用按月缓存（如果特征支持）
                 use_monthly = self.use_monthly_cache and not feature_info.get("no_monthly_cache", False)
                 monthly_results = None
@@ -765,8 +864,32 @@ class ParallelFeatureComputer:
                     # 按月缓存成功，合并结果
                     print(f"     💾 Using monthly cache for {feature_name} ({len(monthly_results)} months)")
                     if self.use_memory_cache:
-                        # 合并所有月份的结果
-                        combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+                        # 合并所有月份的结果（处理 tuple, DataFrame, Series）
+                        first_result = list(monthly_results.values())[0]
+                        if isinstance(first_result, tuple):
+                            # 如果是tuple，需要分别合并每个元素
+                            output_cols = feature_info.get("output_columns", [feature_name])
+                            combined_results = []
+                            for i in range(len(output_cols)):
+                                combined_series = pd.concat([r[i] for r in monthly_results.values()], axis=0).sort_index()
+                                combined_results.append(combined_series)
+                            combined_result = pd.DataFrame({
+                                col: series for col, series in zip(output_cols, combined_results)
+                            })
+                        elif isinstance(first_result, pd.DataFrame):
+                            combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+                        elif isinstance(first_result, pd.Series):
+                            combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+                            output_cols = feature_info.get("output_columns", [feature_name])
+                            if len(output_cols) == 1:
+                                combined_result = pd.DataFrame({output_cols[0]: combined_result})
+                            else:
+                                combined_result = pd.DataFrame({feature_name: combined_result})
+                        else:
+                            # Fallback: 尝试直接 concat
+                            combined_result = pd.concat([pd.Series(r) if not isinstance(r, (pd.Series, pd.DataFrame)) else r 
+                                                        for r in monthly_results.values()], axis=0).sort_index()
+                        
                         # 验证合并后的cache数据质量
                         self._validate_cache_quality(combined_result, feature_name, cache_type="monthly")
                         self.memory_cache[feature_name] = combined_result

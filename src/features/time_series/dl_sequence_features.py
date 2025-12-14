@@ -278,7 +278,12 @@ class DeepLearningSequenceExtractor:
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
-            self.device = torch.device(device)
+            # If explicitly specified, try to use it, but fallback to CPU if CUDA not available
+            if device == "cuda" and not torch.cuda.is_available():
+                print(f"   ⚠️  CUDA requested but not available, falling back to CPU")
+                self.device = torch.device("cpu")
+            else:
+                self.device = torch.device(device)
 
         # Select backend
         if backend == "auto":
@@ -297,7 +302,7 @@ class DeepLearningSequenceExtractor:
 
         print(f"\n🔷 DeepLearningSequenceExtractor (LEAK-FREE MODE)")
         print(f"   Backend: {self.backend}")
-        print(f"   Device: {self.device}")
+        print(f"   Device: {self.device} (CUDA available: {torch.cuda.is_available()})")
         print(f"   Sequence length: {seq_length}")
         print(f"   Output dimension: {d_model}")
         print(f"   FP16: {use_fp16}")
@@ -523,6 +528,7 @@ def add_dl_sequence_features(
     feature_columns: Optional[List[str]] = None,
     use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
     normalization_method: str = "ema",  # 强制使用 EMA（因果安全）
+    device: Optional[str] = None,  # 'cuda', 'cpu', or None (auto-detect)
 ) -> pd.DataFrame:
     """Convenience function to add DL sequence features.
 
@@ -550,6 +556,7 @@ def add_dl_sequence_features(
         d_model=d_model,
         use_fp16=use_fp16,
         normalization_method="ema",  # 强制使用 EMA（因果安全）
+        device=device,
     )
 
     df_with_features = extractor.add_to_dataframe(df, feature_columns)

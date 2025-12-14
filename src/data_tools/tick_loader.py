@@ -169,6 +169,9 @@ def list_tick_files(
 ) -> List[str]:
     """
     Return existing monthly tick parquet files covering [start_ts, end_ts].
+
+    Note: Only returns files that actually exist. If a month's file is missing,
+    it will be skipped (not raise an error) to allow partial data processing.
     """
     ticks_root = Path(ticks_dir)
     start = pd.to_datetime(start_ts) - pd.Timedelta(minutes=lookback_minutes)
@@ -176,14 +179,28 @@ def list_tick_files(
     months = _month_range(start, end)
 
     tick_files: List[str] = []
+    missing_files: List[str] = []
     for year, month in months:
         file_path = ticks_root / f"{symbol}_{year}-{month:02d}.parquet"
-        if not file_path.exists():
-            raise FileNotFoundError(
-                f"Required tick parquet not found: {file_path}. "
-                "Please run 'make data-convert' or 'python -m src.data_tools.zip_to_parquet' first."
-            )
-        tick_files.append(str(file_path))
+        if file_path.exists():
+            tick_files.append(str(file_path))
+        else:
+            missing_files.append(str(file_path))
+
+    if not tick_files:
+        raise FileNotFoundError(
+            f"No tick parquet files found for {symbol} in time range [{start_ts}, {end_ts}]. "
+            f"Missing files: {missing_files[:5]}... "
+            "Please run 'make data-convert' or 'python -m src.data_tools.zip_to_parquet' first."
+        )
+
+    if missing_files:
+        import warnings
+
+        warnings.warn(
+            f"Some tick files are missing (will use available data only): {missing_files[:5]}..."
+        )
+
     return sorted(tick_files)
 
 
@@ -765,10 +782,28 @@ def compute_vpin_from_cached_ticks(
             preload_attempts += 1
 
         if len(recent_buckets) < n_buckets:
-            print(
-                f"   ⚠️ Warning: Only collected {len(recent_buckets)} buckets for rolling window (need {n_buckets})",
-                flush=True,
-            )
+            if len(recent_buckets) == 0:
+                print(
+                    f"   ⚠️ Warning: No historical buckets found for rolling window initialization (need {n_buckets})",
+                    flush=True,
+                )
+                print(
+                    f"      This may happen if: (1) no historical data files exist, (2) data files are not in expected location, or (3) date range doesn't match",
+                    flush=True,
+                )
+                print(
+                    f"      Rolling window will start with available data (may have reduced accuracy initially)",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"   ⚠️ Warning: Only collected {len(recent_buckets)} buckets for rolling window (need {n_buckets})",
+                    flush=True,
+                )
+                print(
+                    f"      Rolling window will start with {len(recent_buckets)} buckets (may have reduced accuracy initially)",
+                    flush=True,
+                )
         else:
             print(
                 f"   ✅ Preloaded {len(recent_buckets)} buckets for rolling window initialization",

@@ -222,12 +222,62 @@ class StrategyFeatureLoader:
             return result_df
         
         features = self.feature_deps.get("features", {})
+        
+        # 调试信息：检查需要 ticks 的特征是否配置了 ticks_loader_json
+        features_need_ticks = ["vpin_features", "footprint_basic"]
+        for feature_name in requested_features:
+            if feature_name in features_need_ticks and feature_name in features:
+                compute_params = features[feature_name].get("compute_params", {})
+                if "ticks_loader_json" in compute_params:
+                    print(f"     ✅ {feature_name} has ticks_loader_json in load_features_from_requested")
+                else:
+                    print(f"     ⚠️  {feature_name} does NOT have ticks_loader_json in load_features_from_requested")
+                    print(f"     compute_params keys: {list(compute_params.keys())}")
+                    print(f"     feature_info keys: {list(features[feature_name].keys())}")
+        
+        # 确保所有请求特征的 required_columns 都在 DataFrame 中
+        # 收集所有需要的 required_columns
+        all_required_columns = set()
+        for feature_name in requested_features:
+            if feature_name in features:
+                feature_info = features[feature_name]
+                required_columns = feature_info.get("required_columns", [])
+                all_required_columns.update(required_columns)
+        
+        # 检查缺失的 required_columns 并尝试从原始 df 中获取
+        missing_required = [col for col in all_required_columns if col not in result_df.columns]
+        if missing_required:
+            for col in missing_required:
+                if col in df.columns:
+                    # 确保索引对齐
+                    try:
+                        result_df[col] = df[col].reindex(result_df.index)
+                    except Exception:
+                        # 如果 reindex 失败，尝试直接赋值（假设索引相同）
+                        if len(df) == len(result_df):
+                            result_df[col] = df[col].values
+                        else:
+                            # 如果长度不匹配，尝试使用 loc
+                            common_idx = result_df.index.intersection(df.index)
+                            if len(common_idx) > 0:
+                                result_df.loc[common_idx, col] = df.loc[common_idx, col]
+        
+        # Store original indices to filter out any new indices introduced during feature computation
+        original_indices = set(df.index)
+        
         result_df = self.computer.compute_features_parallel(
             result_df,
             features,
             requested_features,
             fit=fit,
         )
+        
+        # Filter out any indices that were not in the original input DataFrame
+        # This prevents feature computation from introducing overlapping indices
+        new_indices = set(result_df.index) - original_indices
+        if new_indices:
+            print(f"     ⚠️  Feature computation introduced {len(new_indices)} new indices, filtering them out")
+            result_df = result_df.loc[result_df.index.isin(original_indices)]
         
         output_cols = []
         for feature_name in requested_features:

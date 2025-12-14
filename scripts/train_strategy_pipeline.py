@@ -133,18 +133,84 @@ def ensure_signal_column(
     return df
 
 
-def _maybe_configure_vpin_ticks(
+def _ensure_ticks_configured(
     feature_loader: StrategyFeatureLoader,
     symbol: str,
     data_path: str | Path,
     start_ts: Optional[str],
     end_ts: Optional[str],
+    requested_features: List[str],
 ) -> None:
-    """If tick data exists, configure ticks_loader_json for features that need ticks."""
-    if not start_ts or not end_ts:
-        return
+    """
+    确保所有需要 ticks 数据的特征都配置了 ticks_loader_json。
 
-    features_cfg = feature_loader.feature_deps.get("features", {})
+    如果找不到 ticks 数据，抛出 ValueError。
+
+    Args:
+        feature_loader: 特征加载器
+        symbol: 交易对符号
+        data_path: 数据路径
+        start_ts: 开始时间戳
+        end_ts: 结束时间戳
+        requested_features: 请求的特征列表（用于检查哪些特征需要 ticks）
+
+    Raises:
+        ValueError: 如果找不到 ticks 数据文件
+    """
+    if not start_ts or not end_ts:
+        raise ValueError("start_ts and end_ts are required for ticks configuration")
+
+    # 确保 feature_deps 中有 "features" 键
+    if "features" not in feature_loader.feature_deps:
+        feature_loader.feature_deps["features"] = {}
+    features_cfg = feature_loader.feature_deps["features"]
+
+    # 关键：requested_features 里可能是 output columns（如 "vpin"），不是父特征名（如 "vpin_features"）。
+    # compute_features_parallel 会把 output column 映射回父特征；这里也必须做同样的解析，否则会漏配 ticks。
+    output_col_to_feature: dict[str, str] = {}
+    for feat_name, feat_cfg in features_cfg.items():
+        out_cols = feat_cfg.get("output_columns", [feat_name]) or [feat_name]
+        for out_col in out_cols:
+            output_col_to_feature[out_col] = feat_name
+
+    actual_requested: list[str] = []
+    for req in requested_features or []:
+        if req in features_cfg:
+            actual_requested.append(req)
+        elif req in output_col_to_feature:
+            parent = output_col_to_feature[req]
+            if parent not in actual_requested:
+                actual_requested.append(parent)
+        else:
+            # 保留未知项（后续可能由依赖解析或直接报错）
+            actual_requested.append(req)
+
+    # 基于 compute_func 签名判断是否需要 ticks（而不是硬编码）
+    tick_required_features: list[str] = []
+    try:
+        import inspect
+        from src.features.loader.feature_function_mapping import get_compute_func
+
+        for feat_name in actual_requested:
+            if feat_name not in features_cfg:
+                continue
+            compute_func_name = features_cfg[feat_name].get("compute_func")
+            if not compute_func_name:
+                continue
+            compute_func = get_compute_func(compute_func_name)
+            sig = inspect.signature(compute_func)
+            if ("ticks" in sig.parameters) or ("ticks_loader_json" in sig.parameters):
+                tick_required_features.append(feat_name)
+    except Exception:
+        # fallback：保守兼容旧逻辑
+        tick_required_features = [
+            f for f in actual_requested if f in ("vpin_features", "footprint_basic")
+        ]
+
+    tick_required_features = list(dict.fromkeys(tick_required_features))
+
+    if not tick_required_features:
+        return
 
     # 检查是否已经有 ticks_loader_json（从 vpin_features 或其他特征）
     ticks_loader_json = None
@@ -165,8 +231,11 @@ def _maybe_configure_vpin_ticks(
         )
 
         if not tick_files:
-            print("   ⚠️  VPIN tick files not found; VPIN may fail without ticks")
-            return
+            raise ValueError(
+                f"Tick data files not found for {symbol} in time range {start_ts} to {end_ts}. "
+                f"Required for features: {requested_need_ticks}. "
+                f"Please ensure tick data files exist in {data_path}"
+            )
 
         tick_params = {
             "symbol": symbol,
@@ -179,12 +248,50 @@ def _maybe_configure_vpin_ticks(
         print(f"   ✅ Configured ticks_loader_json with {len(tick_files)} files")
 
     # 为所有需要 ticks 的特征设置 ticks_loader_json
-    features_need_ticks = ["vpin_features", "footprint_basic"]
-    for feature_name in features_need_ticks:
+    for feature_name in tick_required_features:
         if feature_name in features_cfg:
-            compute_params = features_cfg[feature_name].setdefault("compute_params", {})
+            # 确保 feature_cfg 有 compute_params 键
+            if "compute_params" not in features_cfg[feature_name]:
+                features_cfg[feature_name]["compute_params"] = {}
+            compute_params = features_cfg[feature_name]["compute_params"]
+
             if not compute_params.get("ticks_loader_json"):
                 compute_params["ticks_loader_json"] = ticks_loader_json
+                print(f"   ✅ Set ticks_loader_json for {feature_name}")
+                # 验证设置是否成功
+                if features_cfg[feature_name]["compute_params"].get(
+                    "ticks_loader_json"
+                ):
+                    print(
+                        f"   ✅ Verified: {feature_name} now has ticks_loader_json in feature_deps"
+                    )
+                else:
+                    print(
+                        f"   ⚠️  Warning: Failed to set ticks_loader_json for {feature_name}"
+                    )
+            else:
+                print(f"   ℹ️  {feature_name} already has ticks_loader_json")
+        else:
+            raise ValueError(
+                f"Feature '{feature_name}' is requested but not found in feature_deps. "
+                f"Available features: {list(features_cfg.keys())[:20]}"
+            )
+
+    # 最终验证：检查所有需要的特征是否都有 ticks_loader_json
+    print(f"   🔍 Final verification of ticks_loader_json configuration:")
+    for feature_name in tick_required_features:
+        if feature_name in features_cfg:
+            compute_params = features_cfg[feature_name].get("compute_params", {})
+            if compute_params.get("ticks_loader_json"):
+                print(f"   ✅ {feature_name}: ticks_loader_json is set")
+            else:
+                print(
+                    f"   ❌ {feature_name}: ticks_loader_json is NOT set (keys: {list(compute_params.keys())})"
+                )
+                raise ValueError(
+                    f"Failed to set ticks_loader_json for {feature_name}. "
+                    f"This should not happen. Please check the code."
+                )
 
 
 def run_feature_pipeline(
@@ -902,17 +1009,25 @@ def train_strategy(
         if dt_series is not None and len(dt_series) > 0:
             start_ts = dt_series.min().strftime("%Y-%m-%d %H:%M:%S")
             end_ts = dt_series.max().strftime("%Y-%m-%d %H:%M:%S")
-            _maybe_configure_vpin_ticks(
+            print(
+                f"   📅 Ensuring ticks configuration for time range: {start_ts} to {end_ts}"
+            )
+            # 获取请求的特征列表
+            requested_features = strategy_config.features.requested_features
+            _ensure_ticks_configured(
                 feature_loader,
                 symbol=args.symbol,
                 data_path=args.data_path,
                 start_ts=start_ts,
                 end_ts=end_ts,
+                requested_features=requested_features,
             )
         else:
-            print("   ⚠️  No datetime/timestamp found; skipping VPIN ticks setup")
+            raise ValueError(
+                "No datetime/timestamp found in dataframe; cannot configure ticks"
+            )
     else:
-        print("   ⚠️  Empty dataframe; skipping VPIN ticks setup")
+        raise ValueError("Empty dataframe; cannot configure ticks")
 
     split_idx = int(len(df_raw) * (1 - args.test_size))
     df_train_raw = df_raw.iloc[:split_idx].copy()

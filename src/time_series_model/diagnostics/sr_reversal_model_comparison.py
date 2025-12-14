@@ -240,6 +240,8 @@ def train_volatility_model(
     y_vol_test: pd.Series,
     config_path: Optional[Path | str] = None,
     feature_loader: Optional[Any] = None,
+    original_df_train: Optional[pd.DataFrame] = None,
+    original_df_test: Optional[pd.DataFrame] = None,
 ) -> Tuple[Any, Dict[str, float]]:
     """
     训练波动率模型（使用配置文件选择特征和参数）
@@ -279,11 +281,14 @@ def train_volatility_model(
     if config is not None:
         X_train_prepared, available_features, categorical_features = (
             prepare_volatility_model_data(
-                X_train, config, feature_loader=feature_loader
+                X_train,
+                config,
+                feature_loader=feature_loader,
+                original_df=original_df_train,
             )
         )
         X_test_prepared, _, _ = prepare_volatility_model_data(
-            X_test, config, feature_loader=feature_loader
+            X_test, config, feature_loader=feature_loader, original_df=original_df_test
         )
         if not available_features:
             print("   ⚠️ No volatility-specific features found, using all features")
@@ -1331,23 +1336,49 @@ def main() -> None:
             )
 
     # ⚠️ CRITICAL FIX: Split train/test BEFORE feature fitting to avoid look-ahead bias
-    # Split raw data first
+    # Split raw data first using index-based split to preserve time order
     split_idx = int(len(df_raw) * (1 - args.test_size))
-    df_raw_train = df_raw.iloc[:split_idx].copy()
-    df_raw_test = df_raw.iloc[split_idx:].copy()
+
+    # Use index-based split to ensure clean separation
+    train_end_idx = df_raw.index[split_idx - 1] if split_idx > 0 else df_raw.index[0]
+    test_start_idx = (
+        df_raw.index[split_idx] if split_idx < len(df_raw) else df_raw.index[-1]
+    )
+
+    df_raw_train = df_raw.loc[df_raw.index <= train_end_idx].copy()
+    df_raw_test = df_raw.loc[df_raw.index > train_end_idx].copy()
+
+    # Ensure no overlap in raw data
+    overlap_raw = set(df_raw_train.index) & set(df_raw_test.index)
+    if overlap_raw:
+        print(
+            f"   ⚠️  Warning: {len(overlap_raw)} overlapping indices in raw data split, removing from test set"
+        )
+        df_raw_test = df_raw_test[~df_raw_test.index.isin(overlap_raw)]
+
+    print(f"   📊 Raw data split: train={len(df_raw_train)}, test={len(df_raw_test)}")
 
     # Fit features on training set only
     print("   🔧 Fitting features on training set only (to avoid look-ahead bias)...")
+    print(
+        f"   🔍 Raw train indices: [{df_raw_train.index.min()} to {df_raw_train.index.max()}] ({len(df_raw_train)} samples)"
+    )
     df_train = strategy_runner.run_feature_pipeline(
         df_raw_train,
         feature_loader=feature_loader,
         pipeline_cfg=strategy_cfg.features,
         fit=True,  # Fit on training set
     )
+    print(
+        f"   🔍 Train indices after features: [{df_train.index.min()} to {df_train.index.max()}] ({len(df_train)} samples)"
+    )
 
     # Transform test set using fitted features (fit=False)
     # Note: tick_loader_json is already configured in feature_loader, so it will be used for test set too
     print("   🔧 Transforming test set using fitted features...")
+    print(
+        f"   🔍 Raw test indices: [{df_raw_test.index.min()} to {df_raw_test.index.max()}] ({len(df_raw_test)} samples)"
+    )
 
     # Ensure tick_loader_json is still available for test set (needed for VPIN)
     if tick_loader_json:
@@ -1377,6 +1408,37 @@ def main() -> None:
         pipeline_cfg=strategy_cfg.features,
         fit=False,  # Don't fit on test set!
     )
+    print(
+        f"   🔍 Test indices after features: [{df_test.index.min()} to {df_test.index.max()}] ({len(df_test)} samples)"
+    )
+
+    # Debug: Check sizes after feature computation
+    print(
+        f"   📊 After feature computation: train={len(df_train)}, test={len(df_test)}"
+    )
+
+    # Filter out any indices that were not in the original raw data
+    # This prevents feature computation from introducing overlapping indices
+    train_new_indices = set(df_train.index) - set(df_raw_train.index)
+    test_new_indices = set(df_test.index) - set(df_raw_test.index)
+
+    if train_new_indices:
+        print(
+            f"   ⚠️  Warning: {len(train_new_indices)} new indices in train set after feature computation"
+        )
+        print(f"      Examples: {list(train_new_indices)[:5]}")
+        print(f"   🔧 Filtering out new indices to preserve original data split...")
+        df_train = df_train.loc[df_train.index.isin(df_raw_train.index)]
+        print(f"   ✅ Train set after filtering: {len(df_train)} samples")
+
+    if test_new_indices:
+        print(
+            f"   ⚠️  Warning: {len(test_new_indices)} new indices in test set after feature computation"
+        )
+        print(f"      Examples: {list(test_new_indices)[:5]}")
+        print(f"   🔧 Filtering out new indices to preserve original data split...")
+        df_test = df_test.loc[df_test.index.isin(df_raw_test.index)]
+        print(f"   ✅ Test set after filtering: {len(df_test)} samples")
 
     # Combine for ATR calculation (ATR is a simple rolling window, safe to compute on full data)
     # Check for duplicate indices before concat
@@ -1390,18 +1452,52 @@ def main() -> None:
         df_train = df_train[~df_train.index.duplicated(keep="last")]
         df_test = df_test[~df_test.index.duplicated(keep="last")]
 
-    # Use index-based split instead of iloc to preserve original indices
-    df_features = pd.concat([df_train, df_test]).sort_index()
-
-    # Check for overlapping indices between train and test
+    # Check for overlapping indices between train and test BEFORE combining
+    # This is critical - feature computation might have introduced overlap
     overlap = set(df_train.index) & set(df_test.index)
     if overlap:
         print(
-            f"   ⚠️  Warning: {len(overlap)} overlapping indices between train and test"
+            f"   ⚠️  Warning: {len(overlap)} overlapping indices between train and test after feature computation"
         )
-        # Remove overlapping indices from test set
+        print(
+            f"   🔍 Debug: Train index range: [{df_train.index.min()} to {df_train.index.max()}]"
+        )
+        print(
+            f"   🔍 Debug: Test index range: [{df_test.index.min()} to {df_test.index.max()}]"
+        )
+
+        # Store original sizes before removal
+        original_train_size = len(df_train)
+        original_test_size = len(df_test)
+
+        # Strategy: Always remove from test set to preserve training set integrity
+        # This ensures training set remains intact for model training
         df_test = df_test[~df_test.index.isin(overlap)]
-        df_features = pd.concat([df_train, df_test]).sort_index()
+        print(
+            f"   ℹ️  Removed {len(overlap)} overlapping indices from test set (train: {len(df_train)}, test: {len(df_test)})"
+        )
+
+        # Check if test set is too small after removal
+        if len(df_test) == 0:
+            raise ValueError(
+                f"❌ Test set is empty after removing {len(overlap)} overlapping indices. "
+                f"Original test size: {original_test_size}, overlap: {len(overlap)}. "
+                f"This suggests feature computation introduced overlap. Please check feature pipeline."
+            )
+        if len(df_test) < 10:
+            print(
+                f"   ⚠️  Warning: Test set is very small ({len(df_test)} samples) after removing overlap"
+            )
+
+        # Check if training set is empty (should not happen if we remove from test)
+        if len(df_train) == 0:
+            raise ValueError(
+                f"❌ Training set is empty. Original train size: {original_train_size}. "
+                f"Please check data split logic or reduce test_size."
+            )
+
+    # Use index-based split instead of iloc to preserve original indices
+    df_features = pd.concat([df_train, df_test]).sort_index()
 
     # Store original train/test indices before ATR calculation
     train_indices = df_train.index
@@ -1417,6 +1513,12 @@ def main() -> None:
     # Split ATR series using original indices
     atr_train = atr_series.loc[train_indices]
     atr_test = atr_series.loc[test_indices]
+
+    # Ensure ATR column exists in df_train and df_test for label computation
+    if "atr" not in df_train.columns:
+        df_train["atr"] = atr_train
+    if "atr" not in df_test.columns:
+        df_test["atr"] = atr_test
 
     # Load optimized rule parameters
     if args.rule_params and Path(args.rule_params).exists():
@@ -1515,6 +1617,11 @@ def main() -> None:
 
     # Compute labels
     # Debug: Check df_train before label computation
+    if len(df_train) == 0:
+        raise ValueError(
+            "❌ Training set is empty! Cannot compute labels. Please check data split and feature computation."
+        )
+
     print(
         f"   🔍 Debug df_train: shape={df_train.shape}, index range=[{df_train.index[0]} to {df_train.index[-1]}]"
     )
@@ -1651,16 +1758,18 @@ def main() -> None:
         print(f"   ✅ DTW features loaded: {len(dtw_cols)} features")
         print(f"      Examples: {dtw_cols[:5]}")
     else:
-        print(f"   ⚠️  No DTW features found in training data")
+        print(
+            f"   ℹ️  No DTW features in volatility model (expected: DTW used for SR Reversal strategy, not volatility prediction)"
+        )
 
     # 检查其他关键特征
     garch_cols = [col for col in X_train_valid.columns if col.startswith("garch_")]
     print(
         f"   📊 Feature summary: GARCH={len(garch_cols)}, DTW={len(dtw_cols)}, Total={len(X_train_valid.columns)}"
     )
-    print(
-        f"      Note: EVT features excluded from volatility model (used for risk management)"
-    )
+    print(f"      Note: EVT and DTW features excluded from volatility model")
+    print(f"      - EVT: used for risk management/position sizing")
+    print(f"      - DTW: used for SR Reversal strategy (pattern matching)")
 
     # Train ML model
     print("\n" + "=" * 60)
@@ -1752,12 +1861,15 @@ def main() -> None:
                             "ticks_loader_json"
                         ] = tick_loader_json
 
+        # Pass original dataframes to ensure base columns are available for feature computation
         vol_model, vol_metrics = train_volatility_model(
             X_train_valid,
             y_vol_train_valid,
             X_train_valid,
             y_vol_train_valid,
             feature_loader=feature_loader,  # 传入feature_loader以计算缺失特征
+            original_df_train=df_train,  # Pass original dataframe with base columns
+            original_df_test=df_test,  # Pass original dataframe with base columns
         )
 
     # Evaluate ML model

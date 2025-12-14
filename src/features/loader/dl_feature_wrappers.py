@@ -21,6 +21,7 @@ def compute_dl_sequence_features(
     feature_columns: Optional[List[str]] = None,
     use_fp16: bool = False,
     prefix: str = "dl_seq",
+    device: Optional[str] = None,  # 'cuda', 'cpu', or None (auto-detect)
 ) -> pd.DataFrame:
     """
     Compute leak-free deep learning sequence embeddings (Mamba/Transformer).
@@ -46,6 +47,7 @@ def compute_dl_sequence_features(
         d_model=d_model,
         feature_columns=feature_columns,
         use_fp16=use_fp16,
+        device=device,
     )
 
     # Ensure expected columns exist even if DL backend is unavailable

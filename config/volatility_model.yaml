@@ -143,7 +143,9 @@ volatility_features:
         # 注意：这些特征对未来5~15分钟波动率具有Granger因果关系
 
     - name: wpt_volatility
-      feature_name: wpt_features
+      # 注意：wpt_features 不存在，使用多个 WPT 相关特征组合
+      # 这些特征会通过依赖关系自动计算
+      feature_name: null  # 不使用单一特征名，直接检查列是否存在
       required: false
       columns:
         # WPT (Wavelet Packet Transform) 多尺度波动率特征

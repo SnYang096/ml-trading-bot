@@ -11,7 +11,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,8 +19,8 @@ import yaml
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parents[
-    4
-]  # evaluation -> strategies -> time_series_model -> src -> project_root
+    3
+]  # CURRENT_DIR=evaluation -> parents[0]=strategies -> [1]=time_series_model -> [2]=src -> [3]=project_root
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -32,7 +32,15 @@ if not logger.handlers:
     )
 logger.setLevel(logging.INFO)
 
-from scripts import train_strategy_pipeline as strategy_runner  # noqa: E402
+# Import train_strategy_pipeline using importlib to avoid import path issues
+import importlib.util
+
+train_strategy_pipeline_path = PROJECT_ROOT / "scripts" / "train_strategy_pipeline.py"
+spec = importlib.util.spec_from_file_location(
+    "train_strategy_pipeline", train_strategy_pipeline_path
+)
+strategy_runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(strategy_runner)
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader,
@@ -40,6 +48,10 @@ from src.features.loader.strategy_feature_loader import (
 from src.time_series_model.strategy_config import (
     StrategyConfig,
     StrategyConfigLoader,
+)  # noqa: E402
+from src.data_tools.tick_loader import (
+    list_tick_files,
+    serialize_tick_loader_params,
 )  # noqa: E402
 
 VENDOR_DIR = PROJECT_ROOT / "vendor"
@@ -165,12 +177,168 @@ def build_variants(
     return variants, temp_dirs
 
 
+def _configure_vpin_ticks(
+    feature_loader: StrategyFeatureLoader,
+    symbol: str,
+    data_path: str | Path,
+    start_ts: Optional[str],
+    end_ts: Optional[str],
+) -> None:
+    """
+    Configure ticks_loader_json for features that require tick data.
+
+    This project is based on tick data, so tick files must be available.
+    If tick files are not found, this function will raise an exception
+    indicating a configuration error.
+
+    Args:
+        feature_loader: StrategyFeatureLoader instance
+        symbol: Trading symbol (e.g., 'BTCUSDT')
+        data_path: Path to tick data directory
+        start_ts: Start timestamp string
+        end_ts: End timestamp string
+
+    Raises:
+        ValueError: If tick files are not found (configuration error)
+        RuntimeError: If tick configuration fails due to other errors
+    """
+    if not start_ts or not end_ts:
+        raise ValueError(
+            f"Cannot configure VPIN ticks: missing start_ts or end_ts. "
+            f"start_ts={start_ts}, end_ts={end_ts}"
+        )
+
+    features_cfg = feature_loader.feature_deps.get("features", {})
+    if not features_cfg:
+        raise ValueError(
+            "Cannot configure VPIN ticks: features config is empty. "
+            "This indicates a configuration loading error."
+        )
+
+    logger.info(
+        "Configuring VPIN ticks for symbol=%s, data_path=%s, " "start_ts=%s, end_ts=%s",
+        symbol,
+        data_path,
+        start_ts,
+        end_ts,
+    )
+
+    # 检查是否已经有 ticks_loader_json（从 vpin_features 或其他特征）
+    ticks_loader_json = None
+    for feature_name, feature_cfg in features_cfg.items():
+        compute_params = feature_cfg.get("compute_params", {})
+        if compute_params.get("ticks_loader_json"):
+            ticks_loader_json = compute_params["ticks_loader_json"]
+            logger.info("Found existing ticks_loader_json from %s", feature_name)
+            break
+
+    # 如果还没有，创建新的
+    if not ticks_loader_json:
+        try:
+            logger.debug(
+                "Searching for tick files: symbol=%s, ticks_dir=%s, "
+                "start_ts=%s, end_ts=%s, lookback_minutes=60",
+                symbol,
+                data_path,
+                start_ts,
+                end_ts,
+            )
+
+            tick_files = list_tick_files(
+                symbol=symbol,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                ticks_dir=str(data_path),
+                lookback_minutes=60,
+            )
+
+            if not tick_files:
+                error_msg = (
+                    f"VPIN tick files not found! This project is based on tick data, "
+                    f"so this indicates a configuration error.\n"
+                    f"  Symbol: {symbol}\n"
+                    f"  Data path: {data_path}\n"
+                    f"  Start timestamp: {start_ts}\n"
+                    f"  End timestamp: {end_ts}\n"
+                    f"  Tick directory: {data_path}\n"
+                    f"\n"
+                    f"Please check:\n"
+                    f"  1. Tick data files exist in the specified directory\n"
+                    f"  2. File naming convention matches expected format\n"
+                    f"  3. Data path is correctly configured\n"
+                    f"  4. Timestamps are within the available data range"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            logger.info(
+                "Found %d tick file(s) for symbol %s in range [%s, %s]",
+                len(tick_files),
+                symbol,
+                start_ts,
+                end_ts,
+            )
+
+            tick_params = {
+                "symbol": symbol,
+                "tick_files": [str(Path(f)) for f in tick_files],
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "lookback_minutes": 60,
+            }
+            ticks_loader_json = serialize_tick_loader_params(tick_params)
+            logger.info(
+                "Successfully configured ticks_loader_json with %d file(s) for %s",
+                len(tick_files),
+                symbol,
+            )
+        except ValueError:
+            # Re-raise ValueError (tick files not found)
+            raise
+        except Exception as e:
+            error_msg = (
+                f"Failed to configure VPIN ticks: {e}\n"
+                f"  Symbol: {symbol}\n"
+                f"  Data path: {data_path}\n"
+                f"  Start timestamp: {start_ts}\n"
+                f"  End timestamp: {end_ts}"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
+
+    # 为所有需要 ticks 的特征设置 ticks_loader_json
+    features_need_ticks = ["vpin_features", "footprint_basic"]
+    configured_count = 0
+    for feature_name in features_need_ticks:
+        if feature_name in features_cfg:
+            compute_params = features_cfg[feature_name].setdefault("compute_params", {})
+            if not compute_params.get("ticks_loader_json"):
+                compute_params["ticks_loader_json"] = ticks_loader_json
+                configured_count += 1
+                logger.debug(
+                    "Configured ticks_loader_json for feature: %s", feature_name
+                )
+
+    if configured_count > 0:
+        logger.info(
+            "Successfully configured ticks_loader_json for %d feature(s): %s",
+            configured_count,
+            features_need_ticks,
+        )
+    else:
+        logger.debug(
+            "No features requiring ticks found in requested features, or already configured"
+        )
+
+
 def execute_single_run(
     strategy_cfg: StrategyConfig,
     df_train_raw: pd.DataFrame,
     df_test_raw: pd.DataFrame,
     test_warmup_bars: int = 0,
     variant_name: str = "unknown",
+    symbol: Optional[str] = None,
+    data_path: Optional[str] = None,
 ) -> Optional[Dict]:
     if df_train_raw.empty or df_test_raw.empty:
         logger.warning(
@@ -189,6 +357,15 @@ def execute_single_run(
     )
 
     feature_loader = StrategyFeatureLoader()
+
+    # Configure tick loader if needed (for VPIN features)
+    # This project is based on tick data, so tick files must be available
+    if symbol and data_path and not df_train_raw.empty and not df_test_raw.empty:
+        start_ts = str(df_train_raw.index.min())
+        end_ts = str(df_test_raw.index.max())
+        # This will raise an exception if tick files are not found
+        _configure_vpin_ticks(feature_loader, symbol, data_path, start_ts, end_ts)
+
     df_train_features = strategy_runner.run_feature_pipeline(
         df_train_raw,
         feature_loader=feature_loader,
@@ -330,7 +507,12 @@ def run_rolling_evaluation(
             start + train_size : start + train_size + test_size
         ].copy()
         result = execute_single_run(
-            strategy_cfg, train_raw, test_raw, variant_name=variant_name
+            strategy_cfg,
+            train_raw,
+            test_raw,
+            variant_name=variant_name,
+            symbol=params.symbol,
+            data_path=params.data_path,
         )
         if result:
             result["window_start"] = str(train_raw.index[0])
@@ -1080,6 +1262,8 @@ def main() -> None:
                 df_test_raw,
                 test_warmup_bars=test_warmup,
                 variant_name=variant.name,
+                symbol=args.symbol,
+                data_path=args.data_path,
             )
             rolling_result = None
             if args.run_rolling:
