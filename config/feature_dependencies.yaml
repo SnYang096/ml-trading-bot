@@ -788,7 +788,7 @@ features:
       window: [15, 20, 25]  # 反转形态通常在1-5根K线内完成，关键反转点集中在最后10-20根K线
       template_filter: ["hammer", "head_shoulder_bottom", "double_bottom", "bullish_engulfing",
                         "shooting_star", "head_shoulder_top", "double_top", "bearish_engulfing"]
-      compute_only_near_sr: true
+      compute_only_near_sr: false
       sr_dist_col: "dist_to_nearest_sr"
       sr_threshold: 1.5
       normalize_distance: true
@@ -801,6 +801,7 @@ features:
                   shooting_star, head_shoulder_top, double_top, bearish_engulfing
       - 自动包含这些模板的反向版本（用于负样本对比）
       - 自动包含随机模板（用于负样本对比）
+      - 在所有位置计算 DTW features（compute_only_near_sr=false），让模型自行判断是否使用
   
   # SR 突破策略专用DTW特征（只包含突破形态）
   dtw_features_breakout:

@@ -507,6 +507,7 @@ def run_vectorbt_backtest(
     preds: np.ndarray,
     backtest_cfg,
     task_type: str,
+    strategy_config=None,
 ) -> Optional[Dict[str, float]]:
     if not backtest_cfg.enabled:
         return None
@@ -534,6 +535,30 @@ def run_vectorbt_backtest(
     signal_col = params.get("signal_col", "signal")
     use_rr_exit = bool(params.get("use_rr_exit", False))
 
+    # 确定策略方向：从配置或策略名称推断
+    strategy_direction = params.get(
+        "strategy_direction", None
+    )  # long_only, short_only, both
+    if strategy_direction is None and strategy_config is not None:
+        # 从 label_generator.params 中读取 combine_mode
+        label_params = strategy_config.labels.generator.params or {}
+        combine_mode = label_params.get("combine_mode")
+        if combine_mode == "long_only":
+            strategy_direction = "long_only"
+        elif combine_mode == "short_only":
+            strategy_direction = "short_only"
+        else:
+            # 从策略名称推断
+            strategy_name = strategy_config.name.lower()
+            if "_long" in strategy_name or strategy_name.endswith("_long"):
+                strategy_direction = "long_only"
+            elif "_short" in strategy_name or strategy_name.endswith("_short"):
+                strategy_direction = "short_only"
+            else:
+                strategy_direction = "both"  # 默认双向
+    elif strategy_direction is None:
+        strategy_direction = "both"  # 默认双向
+
     if task_type == "multiclass" and preds.ndim == 2:
         class_preds = np.argmax(preds, axis=1)
         multi_cfg = params.get("multiclass", {})
@@ -553,24 +578,43 @@ def run_vectorbt_backtest(
         preds_series = pd.Series(preds, index=index)
 
         if use_signal_direction and signal_col in df.columns:
-            # SR reversal 等策略：方向由 signal 决定，preds 只控制“是否参与这笔 SR 反转交易”
+            # SR reversal 等策略：方向由 signal 决定，preds 只控制"是否参与这笔 SR 反转交易"
             signal_series = df[signal_col].fillna(0).astype(float)
 
             base_long_entries = preds_series >= long_entry
             base_short_entries = preds_series <= short_entry
 
-            long_entries = (signal_series > 0) & base_long_entries
-            short_entries = (signal_series < 0) & base_short_entries
+            # 根据策略方向过滤信号
+            if strategy_direction == "long_only":
+                long_entries = (signal_series > 0) & base_long_entries
+                short_entries = pd.Series(False, index=index)  # 不做空
+            elif strategy_direction == "short_only":
+                long_entries = pd.Series(False, index=index)  # 不做多
+                short_entries = (signal_series < 0) & base_short_entries
+            else:  # both
+                long_entries = (signal_series > 0) & base_long_entries
+                short_entries = (signal_series < 0) & base_short_entries
 
             # 初始情形下仍保留概率退出，后续可被 RR 逻辑覆盖
             long_exits = preds_series <= long_exit
             short_exits = preds_series >= short_exit
         else:
             # 默认行为：仅根据预测得分构造多空信号
-            long_entries = preds_series >= long_entry
-            long_exits = preds_series <= long_exit
-            short_entries = preds_series <= short_entry
-            short_exits = preds_series >= short_exit
+            if strategy_direction == "long_only":
+                long_entries = preds_series >= long_entry
+                long_exits = preds_series <= long_exit
+                short_entries = pd.Series(False, index=index)  # 不做空
+                short_exits = pd.Series(False, index=index)
+            elif strategy_direction == "short_only":
+                long_entries = pd.Series(False, index=index)  # 不做多
+                long_exits = pd.Series(False, index=index)
+                short_entries = preds_series <= short_entry
+                short_exits = preds_series >= short_exit
+            else:  # both
+                long_entries = preds_series >= long_entry
+                long_exits = preds_series <= long_exit
+                short_entries = preds_series <= short_entry
+                short_exits = preds_series >= short_exit
 
         if debug:
             debug_signals = pd.DataFrame(
@@ -712,6 +756,12 @@ def run_vectorbt_backtest(
         # 存储部分信号行（仅非多分类情形下）
         if "debug_signals" in locals():
             entry_mask = long_entries | short_entries
+            if strategy_direction == "long_only":
+                debug_payload["strategy_direction"] = "long_only"
+            elif strategy_direction == "short_only":
+                debug_payload["strategy_direction"] = "short_only"
+            else:
+                debug_payload["strategy_direction"] = "both"
             signals_sample = (
                 debug_signals[entry_mask]
                 .head(200)
@@ -758,6 +808,28 @@ def run_backtest_with_strategy(
     backtest_cfg = strategy_config.backtest
     params = backtest_cfg.params or {}
     params["enabled"] = backtest_cfg.enabled
+
+    # 确定策略方向：从 label_generator.params 或策略名称推断
+    strategy_direction = params.get("strategy_direction")
+    if strategy_direction is None:
+        # 从 label_generator.params 中读取 combine_mode
+        label_params = strategy_config.labels.generator.params or {}
+        combine_mode = label_params.get("combine_mode")
+        if combine_mode == "long_only":
+            strategy_direction = "long_only"
+        elif combine_mode == "short_only":
+            strategy_direction = "short_only"
+        else:
+            # 从策略名称推断
+            strategy_name = strategy_config.name.lower()
+            if "_long" in strategy_name or strategy_name.endswith("_long"):
+                strategy_direction = "long_only"
+            elif "_short" in strategy_name or strategy_name.endswith("_short"):
+                strategy_direction = "short_only"
+            else:
+                strategy_direction = "both"  # 默认双向
+        params["strategy_direction"] = strategy_direction
+        params["strategy_name"] = strategy_config.name  # 也传递策略名称
 
     # 统一使用 VectorBTBacktest（训练阶段不切换到策略特定类）
     backtester = VectorBTBacktest()

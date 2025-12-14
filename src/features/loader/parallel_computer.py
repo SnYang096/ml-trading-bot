@@ -399,6 +399,107 @@ class ParallelFeatureComputer:
         except Exception:
             return "NO_INDEX"
     
+    def _validate_cache_quality(
+        self,
+        data: pd.DataFrame | pd.Series,
+        feature_name: str,
+        cache_type: str = "cache",
+        warn_threshold_nan: float = 0.5,
+        warn_threshold_inf: float = 0.1,
+    ) -> Dict[str, Any]:
+        """
+        验证cache数据的质量
+        
+        Args:
+            data: 要验证的数据（DataFrame或Series）
+            feature_name: 特征名称
+            cache_type: cache类型（"memory" 或 "monthly"）
+            warn_threshold_nan: NaN值占比警告阈值（默认0.5=50%）
+            warn_threshold_inf: inf值占比警告阈值（默认0.1=10%）
+        
+        Returns:
+            质量检查结果字典
+        """
+        result = {
+            "feature_name": feature_name,
+            "cache_type": cache_type,
+            "total_values": 0,
+            "nan_count": 0,
+            "nan_pct": 0.0,
+            "inf_count": 0,
+            "inf_pct": 0.0,
+            "has_issues": False,
+            "warnings": [],
+        }
+        
+        try:
+            if isinstance(data, pd.Series):
+                data = data.to_frame(name=feature_name)
+            
+            if data.empty:
+                result["warnings"].append("⚠️  Cache is empty")
+                result["has_issues"] = True
+                return result
+            
+            # 只检查数值类型的列
+            numeric_cols = data.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) == 0:
+                # 没有数值列，跳过验证（可能是纯object类型的数据）
+                return result
+            
+            # 只对数值列进行统计
+            numeric_data = data[numeric_cols]
+            total_values = numeric_data.size
+            
+            if total_values == 0:
+                result["warnings"].append("⚠️  Cache has no numeric values")
+                result["has_issues"] = True
+                return result
+            
+            # 统计NaN和inf（只对数值类型）
+            nan_count = numeric_data.isna().sum().sum()
+            inf_count = 0
+            
+            # 检查inf值（需要转换为numpy数组）
+            for col in numeric_cols:
+                col_values = numeric_data[col].values
+                # 只对数值类型使用isinf
+                try:
+                    inf_mask = np.isinf(col_values)
+                    inf_count += np.sum(inf_mask)
+                except (TypeError, ValueError):
+                    # 如果无法检查inf（非数值类型），跳过
+                    pass
+            
+            nan_pct = (nan_count / total_values) * 100
+            inf_pct = (inf_count / total_values) * 100
+            
+            result["total_values"] = total_values
+            result["nan_count"] = int(nan_count)
+            result["nan_pct"] = nan_pct
+            result["inf_count"] = int(inf_count)
+            result["inf_pct"] = inf_pct
+            
+            # 检查阈值
+            if nan_pct > warn_threshold_nan * 100:
+                msg = f"⚠️  {feature_name} ({cache_type} cache): {nan_pct:.1f}% NaN values (threshold: {warn_threshold_nan*100:.0f}%)"
+                result["warnings"].append(msg)
+                result["has_issues"] = True
+                print(f"     {msg}")
+            
+            if inf_pct > warn_threshold_inf * 100:
+                msg = f"⚠️  {feature_name} ({cache_type} cache): {inf_pct:.1f}% inf values (threshold: {warn_threshold_inf*100:.0f}%)"
+                result["warnings"].append(msg)
+                result["has_issues"] = True
+                print(f"     {msg}")
+            
+        except Exception as e:
+            result["warnings"].append(f"⚠️  Error validating cache quality: {e}")
+            result["has_issues"] = True
+            print(f"     ⚠️  {feature_name} ({cache_type} cache): Validation error: {e}")
+        
+        return result
+    
     def _split_df_by_month(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         """按月份拆分DataFrame"""
         if df.empty or not hasattr(df.index, 'to_period'):
@@ -633,6 +734,8 @@ class ParallelFeatureComputer:
                 if self.use_memory_cache and feature_name in self.memory_cache:
                     print(f"     💾 Using memory cache for {feature_name}")
                     cached_result = self.memory_cache[feature_name]
+                    # 验证cache数据质量
+                    self._validate_cache_quality(cached_result, feature_name, cache_type="memory")
                     # 合并结果（支持 Series 和 DataFrame）
                     if isinstance(cached_result, pd.DataFrame):
                         new_cols = [
@@ -664,6 +767,8 @@ class ParallelFeatureComputer:
                     if self.use_memory_cache:
                         # 合并所有月份的结果
                         combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+                        # 验证合并后的cache数据质量
+                        self._validate_cache_quality(combined_result, feature_name, cache_type="monthly")
                         self.memory_cache[feature_name] = combined_result
                         # 合并到result_df
                         if isinstance(combined_result, pd.DataFrame):
@@ -749,6 +854,9 @@ class ParallelFeatureComputer:
                             if col_name not in result_df.columns:
                                 result_df[col_name] = feature_result
                         
+                        # 验证新计算的特征质量
+                        self._validate_cache_quality(feature_result, feature_name, cache_type="computed")
+                        
                         # 保存内存缓存
                         if self.use_memory_cache:
                             self.memory_cache[feature_name] = feature_result
@@ -779,6 +887,9 @@ class ParallelFeatureComputer:
                             result_df[feature_df.name] = feature_df
                         elif feature_name not in result_df.columns:
                             result_df[feature_name] = feature_df
+                    
+                    # 验证并行计算的特征质量
+                    self._validate_cache_quality(feature_df, feature_name, cache_type="computed")
                     
                     # 保存内存缓存
                     if self.use_memory_cache:

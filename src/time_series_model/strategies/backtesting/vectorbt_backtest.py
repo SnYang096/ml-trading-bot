@@ -53,6 +53,20 @@ class VectorBTBacktest(BaseBacktest):
         signal_col = params.get("signal_col", "signal")
         use_rr_exit = bool(params.get("use_rr_exit", False))
 
+        # 确定策略方向：从配置或策略名称推断
+        strategy_direction = params.get(
+            "strategy_direction", None
+        )  # long_only, short_only, both
+        if strategy_direction is None:
+            # 从策略名称推断（如果通过 params 传入）
+            strategy_name = params.get("strategy_name", "").lower()
+            if "_long" in strategy_name or strategy_name.endswith("_long"):
+                strategy_direction = "long_only"
+            elif "_short" in strategy_name or strategy_name.endswith("_short"):
+                strategy_direction = "short_only"
+            else:
+                strategy_direction = "both"  # 默认双向
+
         if task_type == "multiclass" and predictions.ndim == 2:
             class_preds = np.argmax(predictions, axis=1)
             multi_cfg = params.get("multiclass", {})
@@ -78,18 +92,37 @@ class VectorBTBacktest(BaseBacktest):
                 base_long_entries = preds_series >= long_entry
                 base_short_entries = preds_series <= short_entry
 
-                long_entries = (signal_series > 0) & base_long_entries
-                short_entries = (signal_series < 0) & base_short_entries
+                # 根据策略方向过滤信号
+                if strategy_direction == "long_only":
+                    long_entries = (signal_series > 0) & base_long_entries
+                    short_entries = pd.Series(False, index=index)  # 不做空
+                elif strategy_direction == "short_only":
+                    long_entries = pd.Series(False, index=index)  # 不做多
+                    short_entries = (signal_series < 0) & base_short_entries
+                else:  # both
+                    long_entries = (signal_series > 0) & base_long_entries
+                    short_entries = (signal_series < 0) & base_short_entries
 
                 # 初始的概率退出，后续可能被 RR 覆盖
                 long_exits = preds_series <= long_exit
                 short_exits = preds_series >= short_exit
             else:
                 # 仅根据预测得分构造多空信号
-                long_entries = preds_series >= long_entry
-                long_exits = preds_series <= long_exit
-                short_entries = preds_series <= short_entry
-                short_exits = preds_series >= short_exit
+                if strategy_direction == "long_only":
+                    long_entries = preds_series >= long_entry
+                    long_exits = preds_series <= long_exit
+                    short_entries = pd.Series(False, index=index)  # 不做空
+                    short_exits = pd.Series(False, index=index)
+                elif strategy_direction == "short_only":
+                    long_entries = pd.Series(False, index=index)  # 不做多
+                    long_exits = pd.Series(False, index=index)
+                    short_entries = preds_series <= short_entry
+                    short_exits = preds_series >= short_exit
+                else:  # both
+                    long_entries = preds_series >= long_entry
+                    long_exits = preds_series <= long_exit
+                    short_entries = preds_series <= short_entry
+                    short_exits = preds_series >= short_exit
 
             if debug:
                 debug_signals = pd.DataFrame(
@@ -199,26 +232,49 @@ class VectorBTBacktest(BaseBacktest):
             print("   ⚠️  Backtest skipped: no trades or empty portfolio index.")
             if debug:
                 print(f"      Debug info:")
+                print(f"        - strategy_direction: {strategy_direction}")
                 print(f"        - long_entries sum: {long_entries.sum()}")
-                print(f"        - short_entries sum: {short_entries.sum()}")
+                if strategy_direction != "long_only":
+                    print(f"        - short_entries sum: {short_entries.sum()}")
                 print(
                     f"        - total entries: {(long_entries | short_entries).sum()}"
                 )
                 if use_signal_direction and signal_col in df.columns:
                     signal_series = df[signal_col].fillna(0).astype(float)
                     print(f"        - signal > 0 count: {(signal_series > 0).sum()}")
-                    print(f"        - signal < 0 count: {(signal_series < 0).sum()}")
+                    if strategy_direction != "long_only":
+                        print(
+                            f"        - signal < 0 count: {(signal_series < 0).sum()}"
+                        )
                     print(f"        - signal == 0 count: {(signal_series == 0).sum()}")
                     print(
                         f"        - signal range: [{signal_series.min():.2f}, {signal_series.max():.2f}]"
                     )
                 preds_series = pd.Series(predictions, index=index)
-                print(
-                    f"        - predictions >= {long_entry} (long): {(preds_series >= long_entry).sum()}"
-                )
-                print(
-                    f"        - predictions <= {short_entry} (short): {(preds_series <= short_entry).sum()}"
-                )
+                if strategy_direction != "short_only":
+                    print(
+                        f"        - predictions >= {long_entry} (long): {(preds_series >= long_entry).sum()}"
+                    )
+                if strategy_direction != "long_only":
+                    print(
+                        f"        - predictions <= {short_entry} (short): {(preds_series <= short_entry).sum()}"
+                    )
+                # 打印预测值分布
+                valid_preds = preds_series[~pd.isna(preds_series)]
+                if len(valid_preds) > 0:
+                    print(f"        - predictions distribution:")
+                    print(f"          min: {valid_preds.min():.4f}")
+                    print(f"          max: {valid_preds.max():.4f}")
+                    print(f"          mean: {valid_preds.mean():.4f}")
+                    print(f"          median: {valid_preds.median():.4f}")
+                    print(f"          std: {valid_preds.std():.4f}")
+                    print(f"          q25: {valid_preds.quantile(0.25):.4f}")
+                    print(f"          q75: {valid_preds.quantile(0.75):.4f}")
+                    print(f"          q90: {valid_preds.quantile(0.90):.4f}")
+                    print(f"          q95: {valid_preds.quantile(0.95):.4f}")
+                    print(f"          q99: {valid_preds.quantile(0.99):.4f}")
+                else:
+                    print(f"        - predictions: all NaN")
             return None
 
         stats = portfolio.stats()
