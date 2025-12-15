@@ -416,9 +416,46 @@ def enhance_wpt_vol_features(df: pd.DataFrame) -> pd.DataFrame:
     # 2. 波动信号的 L1/L2 范数比 → 尖峰程度（衡量极端波动概率）
     if "wpt_price_fluctuation" in df.columns:
         fluct = df["wpt_price_fluctuation"]
-        l1 = np.abs(fluct)
-        l2 = fluct ** 2
-        df["wpt_price_fluct_l1_l2_ratio"] = (l1 + 1e-8) / (np.sqrt(l2) + 1e-8)
+        
+        # 确保 fluct 是 Series，不是 DataFrame
+        if isinstance(fluct, pd.DataFrame):
+            # 如果是 DataFrame，取第一列
+            if len(fluct.columns) > 0:
+                fluct = fluct.iloc[:, 0]
+            else:
+                df["wpt_price_fluct_l1_l2_ratio"] = 0.0
+                return df
+        elif not isinstance(fluct, pd.Series):
+            # 如果是其他类型，尝试转换为 Series
+            try:
+                fluct = pd.Series(fluct, index=df.index)
+            except Exception:
+                df["wpt_price_fluct_l1_l2_ratio"] = 0.0
+                return df
+        
+        # 现在 fluct 应该是 Series，进行计算
+        # 确保 fluct 是 Series（再次检查，以防万一）
+        if not isinstance(fluct, pd.Series):
+            # 如果仍然不是 Series，尝试强制转换
+            try:
+                if isinstance(fluct, pd.DataFrame):
+                    fluct = fluct.iloc[:, 0] if len(fluct.columns) > 0 else pd.Series(0.0, index=df.index)
+                else:
+                    fluct = pd.Series(fluct, index=df.index)
+            except Exception:
+                df["wpt_price_fluct_l1_l2_ratio"] = 0.0
+                return df
+        
+        # 使用 .values 确保得到 numpy 数组，避免 DataFrame 问题
+        fluct_values = fluct.values if isinstance(fluct, pd.Series) else np.asarray(fluct).flatten()
+        
+        # 进行计算（使用 numpy 数组）
+        l1 = np.abs(fluct_values)
+        l2 = fluct_values ** 2
+        ratio_values = (l1 + 1e-8) / (np.sqrt(l2) + 1e-8)
+        
+        # 确保结果是 Series（使用原始索引）
+        df["wpt_price_fluct_l1_l2_ratio"] = pd.Series(ratio_values, index=df.index)
     else:
         df["wpt_price_fluct_l1_l2_ratio"] = 0.0
     
@@ -436,4 +473,3 @@ def enhance_wpt_vol_features(df: pd.DataFrame) -> pd.DataFrame:
     # 暂略，可用 vol_slope_* 替代
     
     return df
-

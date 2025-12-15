@@ -5,11 +5,19 @@
 from __future__ import annotations
 
 import re
+import gc
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import yaml
 import pandas as pd
 import numpy as np
+
+try:
+    import psutil
+
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 
 def load_volatility_model_config(
@@ -251,13 +259,26 @@ def prepare_volatility_model_data(
                 fit=True,
             )
             print(f"   ✅ Computed missing feature: {feature_name}")
+
+            # 清理内存（每个特征计算后）
+            gc.collect()
+            if PSUTIL_AVAILABLE:
+                try:
+                    process = psutil.Process()
+                    mem_mb = process.memory_info().rss / (1024**2)
+                    if mem_mb > 10000:  # 如果内存使用超过 10GB，打印警告
+                        print(
+                            f"   ⚠️  Memory usage after {feature_name}: {mem_mb/1024:.2f}GB"
+                        )
+                except Exception:
+                    pass
         except Exception as exc:
             print(f"   ⚠️ Failed to compute feature '{feature_name}': {exc}")
             import traceback
 
             print(f"   Traceback: {traceback.format_exc()}")
 
-    for group in feature_groups:
+    for group_idx, group in enumerate(feature_groups):
         feature_name = group.get("feature_name")
         required = bool(group.get("required", False))
         columns = group.get("columns", [])
@@ -269,6 +290,19 @@ def prepare_volatility_model_data(
         if missing_cols and feature_name:
             _compute_feature(feature_name)
             missing_cols = [col for col in columns if col not in X_processed.columns]
+
+            # 每计算 3 个特征组后清理一次内存
+            if (group_idx + 1) % 3 == 0:
+                gc.collect()
+                if PSUTIL_AVAILABLE:
+                    try:
+                        process = psutil.Process()
+                        mem_gb = process.memory_info().rss / (1024**3)
+                        print(
+                            f"   📊 Memory after {group_idx + 1} feature groups: {mem_gb:.2f}GB"
+                        )
+                    except Exception:
+                        pass
         elif missing_cols and not feature_name:
             # feature_name 为 null，说明这些列可能来自多个特征或通过其他方式生成
             # 只打印警告，不尝试计算
@@ -297,6 +331,8 @@ def prepare_volatility_model_data(
     wpt_cols = [col for col in X_processed.columns if col.startswith("wpt_")]
     if wpt_cols:
         X_processed = enhance_wpt_vol_features(X_processed)
+        # 清理内存（WPT 特征增强后）
+        gc.collect()
 
     # 注意：Volume Profile 波动率特征现在通过 yaml 配置统一管理
     # 如果配置中定义了 volume_profile_volatility_features，会在上面的循环中通过 feature_loader 计算

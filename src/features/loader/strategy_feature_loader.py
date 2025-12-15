@@ -277,7 +277,36 @@ class StrategyFeatureLoader:
         new_indices = set(result_df.index) - original_indices
         if new_indices:
             print(f"     ⚠️  Feature computation introduced {len(new_indices)} new indices, filtering them out")
+            if len(new_indices) <= 10:
+                print(f"        Examples of new indices: {sorted(list(new_indices))[:5]}")
             result_df = result_df.loc[result_df.index.isin(original_indices)]
+        
+        # 验证：确保输出索引与输入索引一致
+        if not result_df.index.equals(df.index):
+            # 尝试重新对齐索引
+            result_df = result_df.reindex(df.index)
+            print(f"     ℹ️  Reindexed output to match input index (may introduce NaN)")
+        
+        # 验证：检查数据类型
+        for col in result_df.columns:
+            try:
+                # 检查 col 是否是单个列（Series）还是多个列（DataFrame）
+                col_data = result_df[col]
+                if isinstance(col_data, pd.DataFrame):
+                    # 如果是 DataFrame，跳过（可能是多列特征）
+                    continue
+                elif isinstance(col_data, pd.Series):
+                    # 如果是 Series，检查 dtype
+                    if col_data.dtype == 'object':
+                        # 检查是否有意外的 object 类型（可能是字符串或其他类型）
+                        sample_values = col_data.dropna().head(5)
+                        if len(sample_values) > 0:
+                            first_val = sample_values.iloc[0]
+                            if not isinstance(first_val, (int, float, bool, type(None))):
+                                print(f"     ⚠️  Warning: Column '{col}' has unexpected dtype 'object' with sample value: {first_val}")
+            except (KeyError, AttributeError, TypeError) as e:
+                # 如果无法访问列，跳过
+                continue
         
         output_cols = []
         for feature_name in requested_features:

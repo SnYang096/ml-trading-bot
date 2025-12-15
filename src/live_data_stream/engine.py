@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from zoneinfo import ZoneInfo
 
-from .binance_ws import BinanceWebsocketClient
+from .websocket_client import BinanceWebSocketClient
 from .config_loader import SmartMoneySettings, load_settings
 from .signals import SignalResult, generate_signal
 from .tick_store import TickStorage, aggregate_ticks_100ms
@@ -46,20 +46,20 @@ class SmartMoneyEngine:
     async def _collect_and_store(
         self, stop_event: asyncio.Event, symbols: List[str], use_stock_ws: bool
     ) -> None:
-        client = BinanceWebsocketClient(token=self.settings.token, symbols=symbols, use_stock_ws=use_stock_ws)
+        client = BinanceWebSocketClient(symbols=symbols, use_futures=not use_stock_ws)
 
         buffer: Dict[str, List] = {sym: [] for sym in symbols}
         trading_date = _current_trading_date()
 
         async for tick in client.stream_ticks(stop_event):
-            buffer.setdefault(tick.code, []).append(tick)
+            buffer.setdefault(tick.symbol, []).append(tick)
 
             # flush per symbol when buffer large
-            if len(buffer[tick.code]) >= 200:  # ~20s of 100ms bins worst-case
-                agg_df = aggregate_ticks_100ms(buffer[tick.code])
+            if len(buffer[tick.symbol]) >= 200:  # ~20s of 100ms bins worst-case
+                agg_df = aggregate_ticks_100ms(buffer[tick.symbol])
                 if not agg_df.empty:
-                    self.storage.append(tick.code, trading_date, agg_df)
-                buffer[tick.code].clear()
+                    self.storage.append(tick.symbol, trading_date, agg_df)
+                buffer[tick.symbol].clear()
 
             if stop_event.is_set():
                 break

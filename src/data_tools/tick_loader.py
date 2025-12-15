@@ -156,7 +156,48 @@ def serialize_tick_loader_params(params: dict) -> str:
 
 
 def deserialize_tick_loader_params(payload: str) -> dict:
-    data = json.loads(payload)
+    """
+    反序列化 tick 加载器参数
+
+    Args:
+        payload: JSON 字符串，包含 tick 加载器参数
+
+    Returns:
+        dict: 包含以下键的字典：
+            - symbol: 交易对符号
+            - tick_files: tick 文件路径列表
+            - start_ts: 开始时间戳
+            - end_ts: 结束时间戳
+            - lookback_minutes: 回看分钟数
+
+    Raises:
+        ValueError: 如果 payload 格式不正确或缺少必需字段
+        json.JSONDecodeError: 如果 payload 不是有效的 JSON
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Failed to deserialize ticks_loader_json: Invalid JSON format. "
+            f"Error: {e}. Payload preview: {payload[:200]}..."
+        ) from e
+
+    # 验证必需字段
+    required_fields = ["symbol", "tick_files", "start_ts", "end_ts"]
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        raise ValueError(
+            f"Failed to deserialize ticks_loader_json: Missing required fields: {missing_fields}. "
+            f"Available fields: {list(data.keys())}"
+        )
+
+    # 验证 tick_files 不为空
+    if not data.get("tick_files"):
+        raise ValueError(
+            f"Failed to deserialize ticks_loader_json: tick_files is empty. "
+            f"Symbol: {data.get('symbol')}, Time range: {data.get('start_ts')} to {data.get('end_ts')}"
+        )
+
     return data
 
 

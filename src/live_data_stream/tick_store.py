@@ -8,7 +8,7 @@ from typing import Dict, List
 
 import pandas as pd
 
-from .binance_ws import BinanceTick
+from .websocket_client import BinanceTick
 
 
 @dataclass
@@ -58,14 +58,14 @@ def aggregate_ticks_100ms(ticks: List[BinanceTick]) -> pd.DataFrame:
     for t in ticks:
         rows.append(
             {
-                "ts": pd.to_datetime(t.tick_time_ms, unit="ms", utc=True),
-                "ts_ms": t.tick_time_ms,
+                "ts": pd.to_datetime(t.timestamp_ms, unit="ms", utc=True),
+                "ts_ms": t.timestamp_ms,
                 "price": t.price,
                 "volume": t.volume,
                 "turnover": t.turnover,
-                "side": "BUY" if t.trade_direction == 1 else "SELL" if t.trade_direction == 2 else "UNK",
-                "is_buy": 1 if t.trade_direction == 1 else 0,
-                "is_sell": 1 if t.trade_direction == 2 else 0,
+                "side": "BUY" if t.side == 1 else "SELL" if t.side == -1 else "UNK",
+                "is_buy": 1 if t.side == 1 else 0,
+                "is_sell": 1 if t.side == -1 else 0,
             }
         )
 

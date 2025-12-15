@@ -1,0 +1,389 @@
+"""
+事件驱动策略（实盘）
+
+基于 Nautilus Trader 的事件驱动架构，支持：
+1. Tick 级特征计算（VPIN、订单流等）
+2. Bar 级特征计算（技术指标、时间框架特征等）
+3. 定时器触发信号融合和交易决策
+4. 与训练流程统一的特征计算逻辑
+"""
+
+from __future__ import annotations
+
+import pickle
+from pathlib import Path
+from typing import Any, Dict, Optional
+from collections import deque
+import pandas as pd
+import numpy as np
+
+try:
+    from nautilus_trader.model import Bar, QuoteTick, TradeTick
+    from nautilus_trader.model import InstrumentId, BarType
+    from nautilus_trader.model import OrderSide, MarketOrder
+    from nautilus_trader.trading import Strategy
+    from nautilus_trader.model.enums import AggressorSide
+
+    NAUTILUS_AVAILABLE = True
+except ImportError:
+    NAUTILUS_AVAILABLE = False
+    Strategy = object
+    Bar = None
+    TradeTick = None
+    QuoteTick = None
+    InstrumentId = None
+    BarType = None
+    OrderSide = None
+    MarketOrder = None
+    AggressorSide = None
+
+from src.time_series_model.live.incremental_feature_computer import (
+    IncrementalFeatureComputer,
+)
+from src.time_series_model.strategy_config import StrategyConfigLoader
+
+
+class EventDrivenStrategy(Strategy):
+    """
+    事件驱动策略
+
+    特点：
+    - 在 on_tick 中计算 tick 相关特征
+    - 在 on_bar 中计算时间框架特征
+    - 在定时器中融合信号并执行交易
+    - 支持多时间框架特征融合
+    """
+
+    def __init__(
+        self,
+        strategy_name: str,
+        instrument_id: InstrumentId,
+        bar_types: Dict[str, BarType],  # {timeframe: BarType}
+        trade_size: float,
+        config_base_path: str = "config/strategies",
+        model_path: Optional[str] = None,
+        check_interval_minutes: int = 15,  # 信号检查间隔（分钟）
+        min_order_interval_minutes: int = 15,  # 最小开仓间隔（分钟）
+        vpin_bucket_volume_usd: Optional[float] = None,  # VPIN bucket volume (USD)
+    ):
+        """
+        Args:
+            strategy_name: 策略名称
+            instrument_id: 交易标的
+            bar_types: 时间框架字典 {timeframe: BarType}
+            trade_size: 交易规模
+            config_base_path: 配置基础路径
+            model_path: 模型路径
+            check_interval_minutes: 信号检查间隔（分钟）
+            min_order_interval_minutes: 最小开仓间隔（分钟）
+            vpin_bucket_volume_usd: VPIN bucket volume (USD)
+        """
+        super().__init__()
+        self.strategy_name = strategy_name
+        self.instrument_id = instrument_id
+        self.bar_types = bar_types
+        self.trade_size = trade_size
+        self.config_base_path = config_base_path
+        self.model_path = model_path
+        self.check_interval_minutes = check_interval_minutes
+        self.min_order_interval_ns = min_order_interval_minutes * 60 * 1_000_000_000
+
+        # 特征计算器
+        self.feature_computer = IncrementalFeatureComputer(
+            tick_window_minutes=30,
+            bar_window_size=1000,
+            vpin_bucket_volume_usd=vpin_bucket_volume_usd,
+            vpin_n_buckets=50,
+        )
+
+        # 状态管理
+        self.strategy_config = None
+        self.model = None
+        self.last_order_time_ns: Optional[int] = None
+
+        # 时间框架特征缓存
+        self.timeframe_features: Dict[str, Dict[str, float]] = {}
+
+    def on_start(self) -> None:
+        """策略启动"""
+        self.log.info(f"🚀 Starting {self.strategy_name} strategy (event-driven)")
+
+        try:
+            # 1. 加载策略配置
+            config_path = Path(self.config_base_path) / self.strategy_name
+            if not config_path.exists():
+                raise FileNotFoundError(f"Strategy config not found: {config_path}")
+
+            config_loader = StrategyConfigLoader(config_path)
+            self.strategy_config = config_loader.load()
+            self.log.info(f"✅ Loaded strategy config: {self.strategy_name}")
+
+            # 2. 加载模型
+            if self.model_path:
+                self.model = self._load_model(self.model_path)
+                self.log.info(f"✅ Loaded model from {self.model_path}")
+            else:
+                default_model_path = Path("models") / self.strategy_name / "model.pkl"
+                if default_model_path.exists():
+                    self.model = self._load_model(str(default_model_path))
+                    self.log.info(f"✅ Loaded model from {default_model_path}")
+                else:
+                    self.log.warning("⚠️ No model found. Using rule-based signals.")
+
+            # 3. 订阅市场数据
+            for timeframe, bar_type in self.bar_types.items():
+                self.subscribe_bars(bar_type)
+                self.log.info(f"✅ Subscribed to {timeframe}: {bar_type}")
+
+            # 4. 订阅 trade ticks（用于订单流特征）
+            self.subscribe_trade_ticks(self.instrument_id)
+            self.log.info(f"✅ Subscribed to trade ticks: {self.instrument_id}")
+
+            # 5. 启动定时器
+            self._schedule_next_check()
+
+            self.log.info("✅ Strategy initialization complete")
+
+        except Exception as e:
+            self.log.error(f"❌ Error during strategy initialization: {e}")
+            import traceback
+
+            self.log.error(traceback.format_exc())
+            raise
+
+    def on_tick(self, tick: QuoteTick) -> None:
+        """处理 quote tick（可选）"""
+        # Quote tick 通常用于价格更新，不用于订单流特征
+        pass
+
+    def on_trade_tick(self, tick: TradeTick) -> None:
+        """处理 trade tick（用于订单流特征）"""
+        try:
+            # 更新特征计算器
+            self.feature_computer.on_tick(tick)
+        except Exception as e:
+            self.log.error(f"❌ Error processing trade tick: {e}")
+
+    def on_bar(self, bar: Bar) -> None:
+        """处理 bar 数据（更新时间框架特征）"""
+        try:
+            # 确定时间框架
+            timeframe = self._get_timeframe_from_bar(bar)
+            if timeframe is None:
+                return
+
+            # 更新特征计算器
+            self.feature_computer.on_bar(bar, timeframe=timeframe)
+
+            # 缓存时间框架特征
+            if timeframe not in self.timeframe_features:
+                self.timeframe_features[timeframe] = {}
+
+            tf_features = self.feature_computer.timeframe_features.get(timeframe, {})
+            self.timeframe_features[timeframe].update(tf_features)
+
+        except Exception as e:
+            self.log.error(f"❌ Error processing bar: {e}")
+            import traceback
+
+            self.log.error(traceback.format_exc())
+
+    def _get_timeframe_from_bar(self, bar: Bar) -> Optional[str]:
+        """从 bar 获取时间框架字符串"""
+        # 从 bar_type 推断时间框架
+        for timeframe, bar_type in self.bar_types.items():
+            if bar.bar_type == bar_type:
+                return timeframe
+        return None
+
+    def _schedule_next_check(self) -> None:
+        """安排下一次信号检查（对齐到整点）"""
+        now_ns = self.clock.timestamp_ns()
+        now_sec = now_ns // 1_000_000_000
+        current_min = (now_sec // 60) % 60
+
+        # 计算下一个检查点（对齐到 check_interval_minutes 的倍数）
+        next_check_min = (
+            (current_min // self.check_interval_minutes) + 1
+        ) * self.check_interval_minutes
+
+        if next_check_min >= 60:
+            next_check_min = 0
+            delay_sec = (60 - current_min) * 60 - (now_sec % 60)
+        else:
+            delay_sec = (next_check_min - current_min) * 60 - (now_sec % 60)
+
+        if delay_sec <= 0:
+            delay_sec += self.check_interval_minutes * 60
+
+        self.clock.set_timer(
+            name="signal_check",
+            interval=delay_sec,
+            callback=self._on_signal_check,
+        )
+
+    def _on_signal_check(self, event=None) -> None:
+        """定时器回调：执行信号融合和交易决策"""
+        try:
+            current_time_ns = self.clock.timestamp_ns()
+
+            # 冷却期检查
+            if (
+                self.last_order_time_ns is not None
+                and current_time_ns - self.last_order_time_ns
+                < self.min_order_interval_ns
+            ):
+                self.log.debug("Signal check skipped: within cooldown period")
+                self._schedule_next_check()
+                return
+
+            # 获取所有特征
+            all_features = self.feature_computer.get_features()
+
+            # 获取订单流特征（最近 15 分钟）
+            orderflow_features = self.feature_computer.get_orderflow_features(
+                window_minutes=15
+            )
+
+            # 融合信号
+            should_enter, signal_reason = self._evaluate_entry_signal(
+                all_features,
+                orderflow_features,
+            )
+
+            if should_enter:
+                quote = self.cache.quote_tick(self.instrument_id)
+                if quote:
+                    self._execute_entry(
+                        side=signal_reason.get("side", OrderSide.BUY),
+                        price=float(quote.mid),
+                        reason=signal_reason.get("reason", "Unknown"),
+                    )
+                    self.last_order_time_ns = current_time_ns
+                    self.log.info(f"📊 Entry executed: {signal_reason.get('reason')}")
+                else:
+                    self.log.warning("No quote available for entry execution")
+
+            # 安排下一次检查
+            self._schedule_next_check()
+
+        except Exception as e:
+            self.log.error(f"❌ Error in signal check: {e}")
+            import traceback
+
+            self.log.error(traceback.format_exc())
+            self._schedule_next_check()
+
+    def _evaluate_entry_signal(
+        self,
+        all_features: Dict[str, float],
+        orderflow_features: Dict[str, float],
+    ) -> tuple[bool, Dict[str, Any]]:
+        """
+        评估入场信号
+
+        Returns:
+            (should_enter, signal_info)
+        """
+        # 1. 基础特征检查
+        if not all_features:
+            return False, {}
+
+        # 2. 如果有模型，使用模型预测
+        if self.model is not None:
+            try:
+                # 准备特征向量
+                feature_vector = self._prepare_feature_vector(all_features)
+                if feature_vector is None:
+                    return False, {}
+
+                # 模型预测
+                if hasattr(self.model, "predict_proba"):
+                    prediction = self.model.predict([feature_vector])[0]
+                    probability = self.model.predict_proba([feature_vector])[0]
+                else:
+                    prediction = self.model.predict([feature_vector])[0]
+                    probability = None
+
+                # 根据预测生成信号
+                if prediction == 1:
+                    return True, {
+                        "side": OrderSide.BUY,
+                        "reason": f"Model_Buy (prob: {probability[1] if probability is not None else 'N/A'})",
+                    }
+                elif prediction == -1:
+                    return True, {
+                        "side": OrderSide.SELL,
+                        "reason": f"Model_Sell (prob: {probability[-1] if probability is not None else 'N/A'})",
+                    }
+            except Exception as e:
+                self.log.warning(
+                    f"Model prediction failed: {e}, falling back to rule-based"
+                )
+
+        # 3. 规则-based 信号（示例）
+        vpin = orderflow_features.get("vpin", 0.0)
+        imbalance = orderflow_features.get("imbalance", 0.0)
+        total_vol = orderflow_features.get("total_vol", 0.0)
+
+        # 高 VPIN + 卖方主导 → 做空
+        if vpin > 0.6 and imbalance < -0.2 and total_vol > 1.0:
+            return True, {
+                "side": OrderSide.SELL,
+                "reason": "High VPIN + Sell Imbalance",
+            }
+
+        # 低 VPIN + 买方突增 → 做多
+        if vpin < 0.2 and imbalance > 0.3 and total_vol > 2.0:
+            return True, {
+                "side": OrderSide.BUY,
+                "reason": "Low VPIN + Buy Surge",
+            }
+
+        return False, {}
+
+    def _prepare_feature_vector(
+        self, features: Dict[str, float]
+    ) -> Optional[np.ndarray]:
+        """准备特征向量（需要与训练时一致）"""
+        # TODO: 从策略配置中获取特征列表
+        # 这里简化处理，实际应该从 config 中读取
+        if not features:
+            return None
+
+        # 转换为数组（按字母顺序排序以保持一致性）
+        feature_names = sorted(features.keys())
+        feature_values = [features[name] for name in feature_names]
+
+        return np.array(feature_values)
+
+    def _execute_entry(self, side: OrderSide, price: float, reason: str) -> None:
+        """执行入场"""
+        try:
+            quantity = self.instrument.make_qty(self.trade_size)
+
+            order = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=side,
+                quantity=quantity,
+            )
+
+            self.submit_order(order)
+
+            self.log.info(f"📊 Entry: {side} {quantity} @ {price} ({reason})")
+
+        except Exception as e:
+            self.log.error(f"❌ Error executing entry: {e}")
+            import traceback
+
+            self.log.error(traceback.format_exc())
+
+    def _load_model(self, model_path: str) -> Any:
+        """加载模型"""
+        with open(model_path, "rb") as f:
+            return pickle.load(f)
+
+    def on_stop(self) -> None:
+        """策略停止"""
+        self.log.info(f"🛑 Stopping {self.strategy_name} strategy")
+        self.feature_computer.reset()

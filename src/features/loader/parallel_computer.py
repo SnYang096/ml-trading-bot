@@ -13,10 +13,17 @@ from functools import lru_cache
 import hashlib
 import pickle
 import os
+import gc
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple, Any
 import pandas as pd
 import numpy as np
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 from src.features.loader.feature_function_mapping import get_compute_func
 
@@ -226,13 +233,15 @@ def _compute_single_feature_worker_monthly(
         return monthly_dfs
     
     def _get_monthly_cache_key(feature_name: str, month_key: str, params: Dict, feature_info: Dict) -> str:
-        """生成按月缓存的键"""
+        """生成按月缓存的键（模块级函数，用于 worker 进程）"""
         params_str = str(sorted(params.items()))
         output_cols_str = ""
         if feature_info:
             output_cols = feature_info.get("output_columns", [feature_name])
             output_cols_str = str(sorted(output_cols))
-        code_version = "v4"  # v4: 修复了 sr_strength_max 代码结构错误，更新版本使旧缓存失效
+        # v5: 改进错误处理和流程验证，添加索引对齐检查
+        # 注意：这是模块级函数，无法访问实例的 cache_version，所以使用硬编码版本
+        code_version = "v5"
         key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
         return hashlib.md5(key_str.encode()).hexdigest()
     
@@ -384,16 +393,30 @@ class ParallelFeatureComputer:
         self.use_disk_cache = use_disk_cache
         self.use_memory_cache = use_memory_cache
         self.use_monthly_cache = use_monthly_cache
-        self.max_workers = max_workers or mp.cpu_count()
+        
+        # 智能计算并行进程数（基于可用内存）
+        if max_workers is None:
+            self.max_workers = self._calculate_optimal_workers()
+        else:
+            self.max_workers = max_workers
+        
         self.parallel_backend = parallel_backend
         
         # 内存缓存
         self.memory_cache = {}
         
+        # 缓存版本控制（用于失效旧缓存）
+        # 当特征计算逻辑改变时，更新此版本号以失效旧缓存
+        # v5: 改进错误处理和流程验证，添加索引对齐检查
+        self.cache_version = "v5"
+        
         # 按月缓存目录
         if self.use_monthly_cache and self.cache_dir:
             self.monthly_cache_dir = self.cache_dir / "monthly"
             self.monthly_cache_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 检查版本号变化，自动清理旧缓存
+            self._check_and_cleanup_old_cache()
         else:
             self.monthly_cache_dir = None
         
@@ -543,7 +566,9 @@ class ParallelFeatureComputer:
         if feature_info:
             output_cols = feature_info.get("output_columns", [feature_name])
             output_cols_str = str(sorted(output_cols))
-        code_version = "v4"  # v4: 修复了 sr_strength_max 代码结构错误，更新版本使旧缓存失效
+        # 使用实例的缓存版本（而不是硬编码）
+        # v5: 改进错误处理和流程验证，添加索引对齐检查
+        code_version = getattr(self, 'cache_version', 'v5')
         key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
         return hashlib.md5(key_str.encode()).hexdigest()
     
@@ -813,6 +838,9 @@ class ParallelFeatureComputer:
                 f"   🔄 Level {level}: Computing {len(level_features)} features in parallel..."
             )
             
+            # 记录内存使用情况（在每层开始前）
+            self._log_memory_usage(f"before level {level}")
+            
             # 提交并行任务
             futures = []
             for feature_name in level_features:
@@ -988,13 +1016,33 @@ class ParallelFeatureComputer:
                     except Exception as e:
                         print(f"     ❌ Error computing {feature_name}: {e}")
                         import traceback
+                        # 提供更详细的错误信息
+                        error_type = type(e).__name__
+                        error_msg = str(e)
+                        print(f"        Error type: {error_type}")
+                        print(f"        Error message: {error_msg}")
+                        # 打印完整的堆栈跟踪
+                        print(f"        Full traceback:")
                         traceback.print_exc()
+                        # 如果是特征计算相关的错误，提供诊断信息
+                        if "ticks_loader_json" in error_msg.lower() or "tick" in error_msg.lower():
+                            print(f"        💡 Tip: This might be related to tick data loading. "
+                                  f"Check if ticks_loader_json is properly configured.")
+                        elif "required_columns" in error_msg.lower() or "column" in error_msg.lower():
+                            print(f"        💡 Tip: This might be related to missing columns. "
+                                  f"Check if all required_columns are present in the input DataFrame.")
             
-            # 等待所有任务完成
+            # 等待所有任务完成（分批处理，避免内存峰值）
+            completed_count = 0
             for future in as_completed(futures):
                 try:
                     feature_name, result_df_bytes = future.result()
                     feature_df = pickle.loads(result_df_bytes)
+                    
+                    # 每完成 5 个特征，检查一次内存并清理
+                    completed_count += 1
+                    if completed_count % 5 == 0:
+                        self._cleanup_memory()
                     
                     # 合并结果
                     # 如果 feature_df 是 DataFrame，合并新列
@@ -1021,13 +1069,113 @@ class ParallelFeatureComputer:
                     print(f"     ✅ Computed {feature_name}")
                 except Exception as e:
                     print(f"     ❌ Error in parallel computation: {e}")
-                    import traceback
-                    traceback.print_exc()
-        
+            
+            # 每层完成后清理内存
+            self._cleanup_memory()
+            self._log_memory_usage(f"after level {level}")
+
         return result_df
     
-    def clear_cache(self, memory: bool = True, disk: bool = False):
-        """清除缓存"""
+    def _calculate_optimal_workers(self) -> int:
+        """
+        基于可用内存智能计算最优并行进程数
+        
+        策略：
+        - 每个进程估计需要 2-4GB 内存
+        - 保留至少 20% 的系统内存
+        - 不超过 CPU 核心数
+        """
+        cpu_count = mp.cpu_count()
+        
+        if not PSUTIL_AVAILABLE:
+            # 如果没有 psutil，使用保守策略：使用 CPU 核心数的一半
+            return max(1, cpu_count // 2)
+        
+        try:
+            # 获取可用内存（GB）
+            mem = psutil.virtual_memory()
+            available_gb = mem.available / (1024 ** 3)
+            total_gb = mem.total / (1024 ** 3)
+            
+            # 每个进程估计需要 2-4GB 内存（根据数据大小调整）
+            # 保守估计：每个进程 4GB（增加以降低并行度，减少内存压力）
+            memory_per_worker_gb = 4.0
+            
+            # 保留至少 20% 的系统内存
+            reserved_gb = total_gb * 0.2
+            usable_gb = available_gb - reserved_gb
+            
+            # 计算基于内存的进程数
+            memory_based_workers = max(1, int(usable_gb / memory_per_worker_gb))
+            
+            # 取 CPU 核心数和内存限制的较小值
+            optimal_workers = min(cpu_count, memory_based_workers)
+            
+            # 至少保留 1 个进程，最多不超过 CPU 核心数
+            optimal_workers = max(1, min(optimal_workers, cpu_count))
+            
+            print(f"   💾 Memory: {available_gb:.1f}GB available, {total_gb:.1f}GB total")
+            print(f"   🔧 Optimal workers: {optimal_workers} (CPU: {cpu_count}, Memory-based: {memory_based_workers})")
+            
+            return optimal_workers
+        except Exception as e:
+            # 如果获取内存信息失败，使用保守策略
+            print(f"   ⚠️  Warning: Failed to calculate optimal workers: {e}, using {cpu_count // 2}")
+            return max(1, cpu_count // 2)
+    
+    def _get_memory_usage(self) -> Dict[str, float]:
+        """获取当前内存使用情况（GB）"""
+        if not PSUTIL_AVAILABLE:
+            return {}
+        
+        try:
+            mem = psutil.virtual_memory()
+            process = psutil.Process()
+            process_mem = process.memory_info()
+            
+            return {
+                "total_gb": mem.total / (1024 ** 3),
+                "available_gb": mem.available / (1024 ** 3),
+                "used_gb": mem.used / (1024 ** 3),
+                "percent": mem.percent,
+                "process_rss_gb": process_mem.rss / (1024 ** 3),  # Resident Set Size
+                "process_vms_gb": process_mem.vms / (1024 ** 3),  # Virtual Memory Size
+            }
+        except Exception:
+            return {}
+    
+    def _log_memory_usage(self, context: str = ""):
+        """记录内存使用情况"""
+        if not PSUTIL_AVAILABLE:
+            return
+        
+        mem_info = self._get_memory_usage()
+        if mem_info:
+            print(f"   📊 Memory usage {context}: "
+                  f"Process={mem_info.get('process_rss_gb', 0):.2f}GB, "
+                  f"System={mem_info.get('used_gb', 0):.1f}GB/{mem_info.get('total_gb', 0):.1f}GB "
+                  f"({mem_info.get('percent', 0):.1f}%)")
+    
+    def _cleanup_memory(self):
+        """清理内存（强制垃圾回收）"""
+        gc.collect()
+        if PSUTIL_AVAILABLE:
+            # 尝试清理系统缓存（如果可能）
+            try:
+                # 触发 Python 的垃圾回收
+                collected = gc.collect()
+                if collected > 0:
+                    print(f"   🧹 Garbage collected {collected} objects")
+            except Exception:
+                pass
+
+    def clear_cache(self, memory: bool = True, disk: bool = False, old_versions: bool = True):
+        """
+        清除缓存
+        
+        Args:
+            memory: 是否清除内存缓存
+        """
         if memory:
             self.memory_cache.clear()
             print("   🗑️  Memory cache cleared")
@@ -1036,8 +1184,74 @@ class ParallelFeatureComputer:
             for cache_file in self.cache_dir.glob("*.pkl"):
                 cache_file.unlink()
             print("   🗑️  Disk cache cleared")
+        
+        # 自动清理旧版本的按月缓存
+        if old_versions and self.monthly_cache_dir:
+            self._cleanup_old_version_cache()
+    
+    def _check_and_cleanup_old_cache(self):
+        """
+        检查版本号变化，自动清理旧版本的按月缓存文件
+        
+        工作原理：
+        1. 检查版本标记文件（.cache_version）中记录的版本号
+        2. 如果版本号改变了（比如从 v4 改为 v5），自动删除所有旧缓存文件
+        3. 更新版本标记文件为当前版本
+        
+        这样，当你更新代码中的 cache_version 时，旧缓存会自动被清理，无需手动删除。
+        """
+        if not self.monthly_cache_dir or not self.monthly_cache_dir.exists():
+            return
+        
+        current_version = getattr(self, 'cache_version', 'v5')
+        version_marker = self.monthly_cache_dir / ".cache_version"
+        
+        last_version = None
+        if version_marker.exists():
+            try:
+                last_version = version_marker.read_text().strip()
+            except Exception:
+                pass
+        
+        # 如果版本号改变了，清理所有旧缓存
+        if last_version and last_version != current_version:
+            print(f"   🔄 Cache version changed from {last_version} to {current_version}, cleaning old caches...")
+            deleted_count = 0
+            total_size = 0
+            
+            for cache_file in self.monthly_cache_dir.glob("*.pkl"):
+                try:
+                    file_size = cache_file.stat().st_size
+                    cache_file.unlink()
+                    deleted_count += 1
+                    total_size += file_size
+                except Exception:
+                    pass
+            
+            if deleted_count > 0:
+                print(f"   🗑️  Deleted {deleted_count} old cache files ({total_size / 1024 / 1024:.2f} MB)")
+            else:
+                print(f"   ℹ️  No old cache files to clean")
+        
+        # 更新版本标记文件（首次运行或版本改变后）
+        if not last_version or last_version != current_version:
+            try:
+                version_marker.write_text(current_version)
+            except Exception:
+                pass
+    
+    def _cleanup_old_version_cache(self):
+        """
+        清理旧版本的按月缓存文件（手动调用）
+        
+        这个方法在 clear_cache(old_versions=True) 时被调用
+        """
+        self._check_and_cleanup_old_cache()
     
     def __del__(self):
         """清理资源"""
-        if self.executor:
-            self.executor.shutdown(wait=True)  # ensure executor cleaned up
+        if hasattr(self, 'executor') and self.executor:
+            try:
+                self.executor.shutdown(wait=True)  # ensure executor cleaned up
+            except Exception:
+                pass  # 忽略清理时的错误

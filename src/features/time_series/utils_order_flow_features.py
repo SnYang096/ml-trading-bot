@@ -1728,9 +1728,9 @@ def extract_trade_clustering_features(
         entropy_clean = df["trade_cluster_directional_entropy"].replace([np.inf, -np.inf], np.nan)
         rolling_mean = entropy_clean.rolling(window=w, min_periods=1).mean()
         rolling_std = entropy_clean.rolling(window=w, min_periods=1).std()
-        # 检查 rolling_std 是否包含 inf（可能由输入数据中的 inf 导致）
+        # 检查 rolling_std 是否包含 inf（可能由输入数据中的 inf 或全 NaN 窗口导致）
+        # 静默处理：直接替换 inf 为 NaN，不打印警告（这是预期的数据清理步骤）
         if (~np.isfinite(rolling_std)).any():
-            print(f"   ⚠️  trade_cluster_directional_entropy rolling_std contains inf, replacing with NaN")
             rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
         z = (entropy_clean - rolling_mean) / (rolling_std + TOL)
         df[f"trade_cluster_directional_entropy_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
