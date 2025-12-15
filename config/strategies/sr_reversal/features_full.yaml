@@ -9,8 +9,8 @@ feature_pipeline:
     - sr_strength_max
     - sqs_hal_high
     - sqs_hal_low
-    - vpvr_pvp
-    - vpvr_hvn_count
+    # - vpvr_pvp
+    # - vpvr_hvn_count
     - hilbert_phase
     # hilbert_cvd_leads: This feature is not defined in feature_dependencies.yaml
     # Use hilbert_cvd_env_slope or hilbert_cvd_price_env_ratio from hilbert_phase instead

@@ -2,10 +2,8 @@ backtest:
   enabled: true
   params:
     price_col: close
-    long_entry_threshold: 0.6
-    long_exit_threshold: 0.45
-    short_entry_threshold: 0.4
-    short_exit_threshold: 0.55
+    long_entry_threshold: 0.2
+    long_exit_threshold: 0.1
     initial_cash: 10000
     fee: 0.0004
     slippage: 0.0001

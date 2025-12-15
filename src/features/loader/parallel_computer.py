@@ -1017,6 +1017,7 @@ class ParallelFeatureComputer:
             # 提交并行任务
             futures = []
             for feature_name in level_features:
+                print(f"     ▶️ {feature_name}: start (level {level})", flush=True)
                 if feature_name not in features:
                     print(
                         f"     ⚠️  Warning: Feature '{feature_name}' not found in dependencies config, skipping..."
@@ -1156,6 +1157,7 @@ class ParallelFeatureComputer:
                                 result_df[combined_result.name] = combined_result
                             elif feature_name not in result_df.columns:
                                 result_df[feature_name] = combined_result
+                    print(f"     ✅ {feature_name}: done via monthly cache", flush=True)
                     continue
                 
                 run_sequential = feature_info.get("run_sequential", False) or not self.executor

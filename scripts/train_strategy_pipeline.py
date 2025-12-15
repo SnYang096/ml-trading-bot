@@ -1054,17 +1054,26 @@ def train_strategy(
             test_end = df_test_raw.index.max()
             print(f"   📅 Test set time range: {test_start} to {test_end}")
 
+    requested = strategy_config.features.requested_features
+    print(f"\n   ▶️ Feature pipeline (train) start: {len(requested)} requested features")
     df_train_features = run_feature_pipeline(
         df_train_raw,
         feature_loader=feature_loader,
         pipeline_cfg=strategy_config.features,
         fit=True,
     )
+    print(
+        f"   ✅ Feature pipeline (train) done: rows={len(df_train_features)}, cols={len(df_train_features.columns)}"
+    )
+    print(f"   ▶️ Feature pipeline (test) start")
     df_test_features = run_feature_pipeline(
         df_test_raw,
         feature_loader=feature_loader,
         pipeline_cfg=strategy_config.features,
         fit=False,
+    )
+    print(
+        f"   ✅ Feature pipeline (test) done: rows={len(df_test_features)}, cols={len(df_test_features.columns)}\n"
     )
 
     feature_cols = determine_feature_columns(
@@ -1166,6 +1175,10 @@ def train_strategy(
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
 
+    print(
+        f"\n   🚀 Training model ({model_type}, task={task_type}) "
+        f"on {len(df_train_filtered)} samples, {len(feature_cols)} features"
+    )
     models, avg_metric, cv_results, used_features = trainer_func(
         df_train_filtered,
         feature_cols=feature_cols,
@@ -1203,6 +1216,7 @@ def train_strategy(
     X_test = df_test_filtered[used_features].values
     y_test = df_test_filtered[target_col].values
 
+    print(f"   ▶️ Generating predictions on test set ({len(df_test_filtered)} samples)")
     preds = generate_predictions(
         models=models,
         model_type=model_type,
@@ -1242,6 +1256,7 @@ def train_strategy(
     ):
         results["volatility_model"] = {"trained": False}
 
+    print(f"\n   ▶️ Running backtest on test set")
     backtest_results = run_backtest_with_strategy(
         df_test_filtered,
         preds,
@@ -1251,6 +1266,7 @@ def train_strategy(
     )
     if backtest_results:
         results["backtest"] = backtest_results
+        print(f"   ✅ Backtest completed")
 
     output_cfg = strategy_config.model.output
     if output_cfg.get("save_results", True):

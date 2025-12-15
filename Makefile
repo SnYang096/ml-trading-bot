@@ -154,6 +154,8 @@ help:
 	@echo ""
 	@echo "  Other commands:"
 	@echo "    make ts-sr-reversal # SR Reversal model training (XGBoost Binary)"
+	@echo "    make ts-sr-reversal-long # SR Reversal Long model training (XGBoost Binary)"
+	@echo "    make ts-sr-reversal-short # SR Reversal Short model training (XGBoost Binary)"
 	@echo "    make ts-sr-reversal-optuna # Optuna search for SR prediction thresholds (fast)"
 	@echo "    make ts-sr-reversal-optuna-joint # Optuna joint optimization: model hyperparams + thresholds (slow but comprehensive)"
 	@echo "    make ts-sr-reversal-model-comparison # SR Reversal model comparison (rule-based vs ML vs ML+Volatility)"

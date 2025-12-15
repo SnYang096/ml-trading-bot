@@ -40,7 +40,7 @@ feature_pipeline:
     # - vpin_count: 事件数（代理流动性，区分突发事件vs持续活跃）
     # - vpin_signed_imbalance_last/max: Signed imbalance 最新值和峰值
     # 推荐组合：vpin + vpin_max（峰值信号）+ vpin_last（最新情绪）+ vpin_count（流动性）
-    - vpin_features
+    # - vpin_features
     # GARCH 特征（波动聚集性和杠杆效应）- 波动率预测关键特征
     - garch_features
     # 扩展波动率特征（历史波动率、滞后特征、趋势特征）- 提高波动率预测准确性
@@ -63,15 +63,15 @@ feature_pipeline:
     # EVT 极值理论特征（尾部风险预警）- 用于风险管理/仓位控制，不用于波动率预测
     - evt_features
     # 交互特征（状态 × 动量）
-    - vpin_x_wick_upper        # VPIN × 上影线（SR 反转专用）
-    - vpin_x_wick_lower        # VPIN × 下影线（SR 反转专用）
-    - vpin_x_wick_upper_rank   # Rank transform 版本
-    - vpin_x_wick_lower_rank   # Rank transform 版本
-    - evt_x_trend_r2  # EVT × 趋势强度（反转信号确认）
+    # - vpin_x_wick_upper        # VPIN × 上影线（SR 反转专用）
+    # - vpin_x_wick_lower        # VPIN × 下影线（SR 反转专用）
+    # - vpin_x_wick_upper_rank   # Rank transform 版本
+    # - vpin_x_wick_lower_rank   # Rank transform 版本
+    # - evt_x_trend_r2  # EVT × 趋势强度（反转信号确认）
     # VPIN × Trade Clustering 交叉特征（SR 反转策略）
-    - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（反转信号确认）
-    - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（识别混乱 vs 有序的反转）
-    # 通用组合特征（衍生特征）- 按需选择
+    # - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（反转信号确认）
+    # - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（识别混乱 vs 有序的反转）
+    # # 通用组合特征（衍生特征）- 按需选择
     # - sr_strength_combined  # 需要 sqs 列，暂时注释
     # 注意：以下特征需要依赖其他特征，暂时注释掉避免依赖错误
     # - sr_distance_normalized  # 需要 dist_to_nearest_sr
