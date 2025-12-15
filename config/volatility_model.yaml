@@ -143,10 +143,11 @@ volatility_features:
         # 注意：这些特征对未来5~15分钟波动率具有Granger因果关系
 
     - name: wpt_volatility
-      # 注意：wpt_features 不存在，使用多个 WPT 相关特征组合
-      # 这些特征会通过依赖关系自动计算
-      feature_name: null  # 不使用单一特征名，直接检查列是否存在
+      # 使用专门的特征名，更优雅且可复用
+      feature_name: wpt_volatility_features  # 在 feature_dependencies.yaml 中定义
       required: false
+      # 注意：增强特征（wpt_price_high_energy_ratio, wpt_price_fluct_l1_l2_ratio, wpt_vhph_sync）
+      # 会通过 enhance_wpt_vol_features 函数自动生成（在 volume_profile_volatility_features 中调用）
       columns:
         # WPT (Wavelet Packet Transform) 多尺度波动率特征
         # 核心思想：通过小波包变换提取不同频段的能量和结构信息，提供多尺度视角
@@ -210,13 +211,17 @@ volatility_features:
       required: false
       columns:
         - bb_width_ratio
+      # 注意：bb_width_ratio 依赖于 bb_width 特征生成的 bb_upper, bb_lower, bb_middle 列
+      # 系统会自动处理依赖关系，先计算 bb_width，再计算 bb_width_ratio
 
     - name: atr_optional
-      feature_name: baseline_features
+      # 注意：atr 和 atr_ratio 是两个独立的特征
+      # atr_ratio 依赖于 atr，系统会自动处理依赖关系
+      feature_name: null  # 不使用单一特征名，因为需要两个特征
       required: false
       columns:
-        - atr
-        - atr_ratio
+        - atr      # 来自 atr 特征
+        - atr_ratio  # 来自 atr_ratio 特征（依赖于 atr）
 
   categorical_features:
     - "_symbol"

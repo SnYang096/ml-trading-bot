@@ -1,0 +1,35 @@
+{
+    // 保存时自动格式化
+    "editor.formatOnSave": true,
+    // 保存时执行的代码操作
+    "editor.codeActionsOnSave": {
+        // 使用默认格式化程序
+        "source.fixAll": "explicit",
+        // 或者针对特定语言
+        "source.organizeImports": "explicit"
+    },
+    // 指定默认格式化程序（可选）
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true
+    },
+    "[typescript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true
+    },
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true
+    },
+    "[yaml]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true
+    }
+}

@@ -219,18 +219,63 @@ features:
       - 低频子带（'aaaa'）→ 长期 SR（周线级）
       - 中频子带（'aaad', 'aada'）→ 中期 SR（日线级）
       - 高频子带（'dddd'）→ 短期 SR（分钟级）
+
+  wpt_volatility_features:
+    module: enhanced
+    compute_func: extract_wpt_features
+    dependencies: []
+    required_columns: ["close", "high", "low", "volume"]
+    # 包含所有 WPT 波动率相关特征（基础特征）
+    output_columns:
+      - wpt_price_trend
+      - wpt_price_fluctuation
+      - wpt_price_reconstructed
+      - wpt_price_energy_low_ratio
+      - wpt_price_energy_mid_ratio
+      - wpt_price_energy_high_ratio
+      - wpt_price_energy_mid_low_ratio
+      - wpt_volume_energy_low_ratio
+      - wpt_cvd_energy_low_ratio
+      - wpt_vper
+    category: wpt
+    description: "WPT 波动率特征（完整版，包含所有能量比和 VPER）"
+    compute_params:
+      wavelet: "db4"
+      level: 4
+      window: 100
+      return_reconstructed_price: false  # 返回所有特征，不只是重构价格
+    notes: |
+      用于波动率模型的 WPT 特征集合。
+      包含价格、成交量、CVD 的能量比特征和 VPER（体积-价格能量比）。
+      注意：增强特征（wpt_price_high_energy_ratio, wpt_price_fluct_l1_l2_ratio, wpt_vhph_sync）
+      需要通过 enhance_wpt_vol_features 函数生成，可通过依赖关系自动处理。
   
   # ========================================================================
   # SR 特征（依赖 WPT 重构价格）
   # 注意：所有 SR 特征都基于 WPT 重构价格，实现多尺度对齐
   # ========================================================================
+  # POC 和 HAL 作为独立的基础特征
+  poc_hal_features:
+    module: baseline
+    compute_func: compute_poc_hal_features
+    dependencies: ["wpt_price_reconstructed"]  # 依赖 WPT 重构价格
+    required_columns: ["high", "low", "close", "volume", "wpt_price_reconstructed"]
+    output_columns: ["poc", "hal_high", "hal_low", "hal_mid"]
+    category: sr_structure
+    description: "POC (Point of Control) 和 HAL (Value Area) 基础特征（基于 WPT 重构价格）"
+    compute_params:
+      poc_window: 160
+      price_col: "wpt_price_reconstructed"
+    pass_full_df: true
+    notes: "独立的基础特征，可被其他特征复用，避免重复计算"
+  
   sqs_hal_high:
     module: baseline
     compute_func: compute_sqs_hal_high
-    dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
-    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed"]
-    # 注意：此函数会创建 hal_high 和 poc 列作为副产品
-    output_columns: ["sqs_hal_high", "hal_high", "poc"]
+    dependencies: ["atr", "wpt_price_reconstructed", "poc_hal_features"]  # 依赖 POC/HAL 基础特征
+    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed", "poc", "hal_high"]
+    # 注意：poc 和 hal_high 现在来自 poc_hal_features，不再作为副产品
+    output_columns: ["sqs_hal_high"]
     category: sr_structure
     description: "Structure Quality Score for HAL high (基于 WPT 重构价格)"
     compute_params:
@@ -245,10 +290,10 @@ features:
   sqs_hal_low:
     module: baseline
     compute_func: compute_sqs_hal_low
-    dependencies: ["atr", "wpt_price_reconstructed"]  # 依赖 WPT 重构价格
-    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed"]
-    # 注意：此函数会创建 hal_low 和 poc 列作为副产品
-    output_columns: ["sqs_hal_low", "hal_low", "poc"]
+    dependencies: ["atr", "wpt_price_reconstructed", "poc_hal_features"]  # 依赖 POC/HAL 基础特征
+    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed", "poc", "hal_low"]
+    # 注意：poc 和 hal_low 现在来自 poc_hal_features，不再作为副产品
+    output_columns: ["sqs_hal_low"]
     category: sr_structure
     description: "Structure Quality Score for HAL low (基于 WPT 重构价格)"
     compute_params:
@@ -265,13 +310,13 @@ features:
     compute_func: compute_sr_strength_max
     # 依赖关系：
     # - atr: 边界强度计算必需
-    # - sqs_hal_high: 会创建 hal_high, poc 列（在 output_columns 中声明）
-    # - sqs_hal_low: 会创建 hal_low, poc 列（在 output_columns 中声明）
+    # - poc_hal_features: 提供 hal_high, hal_low, poc 列（独立的基础特征）
+    # - sqs_hal_high, sqs_hal_low: 可选，用于 SQS 值（如果需要）
     # - wpt_price_reconstructed: 用于计算边界（如果 hal_high/hal_low/poc 不存在时的后备方案）
-    # 注意：通过依赖解析，hal_high, hal_low, poc 应该已经在 sqs_hal_high/sqs_hal_low 中计算
+    # 注意：poc, hal_high, hal_low 现在来自 poc_hal_features，不再作为 sqs_hal_high/sqs_hal_low 的副产品
     # compute_sr_strength_max 中的自动修复机制只是防御性措施（defensive programming）
-    dependencies: ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]
-    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed"]
+    dependencies: ["atr", "poc_hal_features", "wpt_price_reconstructed"]
+    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed", "poc", "hal_high", "hal_low"]
     output_columns: ["sr_strength_max", "dist_to_nearest_sr", "direction_to_nearest_sr"]
     category: sr_structure
     description: "Maximum SR strength across all boundaries (基于 WPT 重构价格)"
@@ -1245,7 +1290,7 @@ features:
   bb_width_ratio:
     module: enhanced
     compute_func: compute_bb_width_ratio
-    dependencies: []
+    dependencies: ["bb_width"]  # 依赖于 bb_width 特征，它会生成 bb_upper, bb_lower, bb_middle
     required_columns: ["bb_upper", "bb_lower", "bb_middle"]
     output_columns: ["bb_width_ratio"]
     category: derived

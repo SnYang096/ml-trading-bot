@@ -406,12 +406,24 @@ def enhance_wpt_vol_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     
+    # 首先处理重复列名：如果有重复列，保留第一个
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
+    
     # 1. 高频能量占比 → 噪声强度
     if "wpt_price_energy_high_ratio" in df.columns:
-        df["wpt_price_high_energy_ratio"] = df["wpt_price_energy_high_ratio"]
+        # 确保是 Series，不是 DataFrame（处理重复列名的情况）
+        energy_high = df["wpt_price_energy_high_ratio"]
+        if isinstance(energy_high, pd.DataFrame):
+            # 如果是 DataFrame（可能因为重复列名），取第一列
+            if len(energy_high.columns) > 0:
+                energy_high = energy_high.iloc[:, 0]
+            else:
+                energy_high = pd.Series(0.0, index=df.index)
+        df["wpt_price_high_energy_ratio"] = energy_high
     else:
         # fallback: 手动计算
-        df["wpt_price_high_energy_ratio"] = df.get("wpt_price_energy_high_ratio", 0.0)
+        df["wpt_price_high_energy_ratio"] = 0.0
     
     # 2. 波动信号的 L1/L2 范数比 → 尖峰程度（衡量极端波动概率）
     if "wpt_price_fluctuation" in df.columns:
@@ -461,9 +473,23 @@ def enhance_wpt_vol_features(df: pd.DataFrame) -> pd.DataFrame:
     
     # 3. 体积-价格高频同步性
     if "wpt_volume_energy_high_ratio" in df.columns and "wpt_price_energy_high_ratio" in df.columns:
-        df["wpt_vhph_sync"] = (
-            df["wpt_volume_energy_high_ratio"] * df["wpt_price_energy_high_ratio"]
-        )
+        # 确保是 Series，不是 DataFrame（处理重复列名的情况）
+        vol_energy_high = df["wpt_volume_energy_high_ratio"]
+        price_energy_high = df["wpt_price_energy_high_ratio"]
+        
+        if isinstance(vol_energy_high, pd.DataFrame):
+            if len(vol_energy_high.columns) > 0:
+                vol_energy_high = vol_energy_high.iloc[:, 0]
+            else:
+                vol_energy_high = pd.Series(0.0, index=df.index)
+        
+        if isinstance(price_energy_high, pd.DataFrame):
+            if len(price_energy_high.columns) > 0:
+                price_energy_high = price_energy_high.iloc[:, 0]
+            else:
+                price_energy_high = pd.Series(0.0, index=df.index)
+        
+        df["wpt_vhph_sync"] = vol_energy_high * price_energy_high
     else:
         df["wpt_vhph_sync"] = 0.0
     

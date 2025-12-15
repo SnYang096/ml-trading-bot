@@ -235,7 +235,8 @@ def extract_wpt_features(
     else:
         price = df[price_col]
     
-    # 初始化特征列
+    # 初始化特征列（确保所有列都存在，即使某些列可能全为 NaN）
+    # 这对于按月计算时的列对齐很重要
     df["wpt_price_trend"] = np.nan
     df["wpt_price_fluctuation"] = np.nan
     df["wpt_price_reconstructed"] = np.nan
@@ -243,6 +244,19 @@ def extract_wpt_features(
     df["wpt_price_energy_mid_ratio"] = np.nan
     df["wpt_price_energy_high_ratio"] = np.nan
     df["wpt_price_energy_mid_low_ratio"] = np.nan
+    
+    # 初始化 volume 相关列（即使 volume_col 不存在，也要创建列以确保合并时列对齐）
+    df["wpt_volume_trend"] = np.nan
+    df["wpt_volume_fluctuation"] = np.nan
+    df["wpt_volume_energy_low_ratio"] = np.nan
+    
+    # 初始化 CVD 相关列（即使 cvd_col 不存在，也要创建列以确保合并时列对齐）
+    df["wpt_cvd_trend"] = np.nan
+    df["wpt_cvd_fluctuation"] = np.nan
+    df["wpt_cvd_energy_low_ratio"] = np.nan
+    
+    # 初始化 VPER 列
+    df["wpt_vper"] = np.nan
     
     # 滚动窗口计算 WPT 特征（只使用历史数据）
     # 性能优化：每 update_step 根K线更新一次，减少计算量
@@ -314,11 +328,9 @@ def extract_wpt_features(
         )
     
     # 对成交量做 WPT（滚动窗口）
+    # 注意：列已经在上面初始化，这里只需要计算值
     if volume_col in df.columns:
         volume = df[volume_col].values
-        df["wpt_volume_trend"] = np.nan
-        df["wpt_volume_fluctuation"] = np.nan
-        df["wpt_volume_energy_low_ratio"] = np.nan
         
         for i in range(min_length, len(df)):
             window_data = volume[i - window : i]
@@ -340,11 +352,9 @@ def extract_wpt_features(
                 )
     
     # 对 CVD 做 WPT（滚动窗口）
+    # 注意：列已经在上面初始化，这里只需要计算值
     if cvd_col and cvd_col in df.columns:
         cvd = df[cvd_col].values
-        df["wpt_cvd_trend"] = np.nan
-        df["wpt_cvd_fluctuation"] = np.nan
-        df["wpt_cvd_energy_low_ratio"] = np.nan
         
         for i in range(min_length, len(df)):
             window_data = cvd[i - window : i]
@@ -366,8 +376,8 @@ def extract_wpt_features(
                 )
     
     # VPER (Volume-Price Energy Ratio) - 需要滚动窗口计算
+    # 注意：列已经在上面初始化，这里只需要计算值
     if volume_col in df.columns:
-        df["wpt_vper"] = np.nan
         for i in range(min_length, len(df)):
             price_window = price_values[i - window : i]
             volume_window = volume[i - window : i]
@@ -387,12 +397,17 @@ def extract_wpt_features(
                 )
     
     # 使用 shift(1) 确保时间对齐，只使用历史信息
-    wpt_cols = [col for col in df.columns if col.startswith("wpt_")]
-    for col in wpt_cols:
-        df[col] = df[col].shift(1)
+    # 首先处理重复列名（如果有）
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
     
-    # Fill NaN with 0 (after shift, NaN means insufficient history)
-    df[wpt_cols] = df[wpt_cols].fillna(0.0)
+    # 获取所有 wpt_ 开头的列，并去重
+    wpt_cols = list(set([col for col in df.columns if col.startswith("wpt_")]))
+    
+    # 逐个处理每列，避免重复列名问题
+    for col in wpt_cols:
+        if col in df.columns:
+            df[col] = df[col].shift(1).fillna(0.0)
     
     return df
 

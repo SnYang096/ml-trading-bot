@@ -298,6 +298,27 @@ def _compute_single_feature_worker_monthly(
             
             if cached_result is not None:
                 month_result = cached_result
+                # 处理从缓存加载的数据中的重复列名
+                if isinstance(month_result, pd.DataFrame) and month_result.columns.duplicated().any():
+                    month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+                
+                # 根本性解决方案：只提取 output_columns 中定义的列
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                
+                if isinstance(month_result, pd.DataFrame):
+                    # 只保留 output_columns 中定义的列
+                    result_cols = [col for col in output_cols if col in month_result.columns]
+                    if result_cols:
+                        month_result = month_result[result_cols].copy()
+                    else:
+                        month_result = pd.DataFrame(index=month_result.index)
+                elif isinstance(month_result, pd.Series):
+                    series_name = month_result.name if month_result.name else feature_name
+                    if series_name not in output_cols:
+                        # 如果不在 output_columns 中，返回空 DataFrame
+                        month_result = pd.DataFrame(index=month_result.index)
             else:
                 # 计算该月份
                 call_args, call_kwargs = _build_call_args(feature_info, month_df, ticks_loader_json)
@@ -305,17 +326,52 @@ def _compute_single_feature_worker_monthly(
                 if supports_monthly_cache and monthly_cache_dir:
                     call_kwargs["monthly_cache_dir"] = monthly_cache_dir
                 month_result = compute_func(*call_args, **call_kwargs)
-                # 保存缓存
+                # 处理计算结果的重复列名
+                if isinstance(month_result, pd.DataFrame) and month_result.columns.duplicated().any():
+                    month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+                
+                # 根本性解决方案：只提取 output_columns 中定义的列
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                
+                if isinstance(month_result, pd.DataFrame):
+                    # 只保留 output_columns 中定义的列
+                    result_cols = [col for col in output_cols if col in month_result.columns]
+                    if result_cols:
+                        month_result = month_result[result_cols].copy()
+                    else:
+                        month_result = pd.DataFrame(index=month_result.index)
+                elif isinstance(month_result, pd.Series):
+                    series_name = month_result.name if month_result.name else feature_name
+                    if series_name not in output_cols:
+                        # 如果不在 output_columns 中，返回空 DataFrame
+                        month_result = pd.DataFrame(index=month_result.index)
+                
+                # 保存缓存（只保存 output_columns）
                 _save_monthly_cache(cache_dir, monthly_cache_key, month_result)
         
         monthly_results[month_key] = month_result
+        # 打印每个月份的结果信息
+        if isinstance(month_result, pd.DataFrame):
+            print(f"       📊 Month {month_key}: {len(month_result)} rows, {len(month_result.columns)} columns: {list(month_result.columns)[:5]}...")
+            if month_result.columns.duplicated().any():
+                dup_cols = month_result.columns[month_result.columns.duplicated()].tolist()
+                print(f"       ⚠️  Month {month_key} has duplicate columns: {dup_cols}")
+        elif isinstance(month_result, pd.Series):
+            print(f"       📊 Month {month_key}: {len(month_result)} rows, Series name: {month_result.name}")
+    
+    # 获取特征的输出列（根本性解决方案：只返回 output_columns 中定义的列）
+    output_cols = feature_info.get("output_columns", [feature_name])
+    if not output_cols:
+        output_cols = [feature_name]
     
     # 合并所有月份的结果
+    print(f"       🔄 Merging {len(monthly_results)} monthly results...")
     try:
         # 处理不同的返回类型
         if isinstance(list(monthly_results.values())[0], tuple):
             # 如果是tuple，需要分别合并每个元素
-            output_cols = feature_info.get("output_columns", [feature_name])
             combined_results = []
             for i in range(len(output_cols)):
                 combined_series = pd.concat([r[i] for r in monthly_results.values()], axis=0).sort_index()
@@ -324,19 +380,68 @@ def _compute_single_feature_worker_monthly(
                 col: series for col, series in zip(output_cols, combined_results)
             })
         elif isinstance(list(monthly_results.values())[0], pd.DataFrame):
-            result_df = pd.concat(monthly_results.values(), axis=0).sort_index()
+            # 根本性解决方案：只保留 output_columns 中定义的列
+            all_columns = set(output_cols)  # 只使用 output_columns，不包含其他列
+            
+            # 确保所有 DataFrame 都有相同的列（缺失的列填充 NaN）
+            aligned_results = []
+            for month_key, month_result in monthly_results.items():
+                # 处理重复列名：如果有重复列，保留第一个
+                if isinstance(month_result, pd.DataFrame) and month_result.columns.duplicated().any():
+                    dup_cols = month_result.columns[month_result.columns.duplicated()].tolist()
+                    print(f"       ⚠️  Month {month_key} has duplicate columns before dedup: {dup_cols}")
+                    month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+                    print(f"       ✅ Month {month_key} after dedup: {len(month_result.columns)} columns")
+                    # 更新字典中的值
+                    monthly_results[month_key] = month_result
+                
+                # 只提取 output_columns 中定义的列
+                if isinstance(month_result, pd.DataFrame):
+                    result_cols = [col for col in output_cols if col in month_result.columns]
+                    if result_cols:
+                        month_result_filtered = month_result[result_cols].copy()
+                    else:
+                        month_result_filtered = pd.DataFrame(index=month_result.index)
+                    print(f"       🔄 Aligning month {month_key}: {len(month_result.columns)} -> {len(all_columns)} columns (only output_columns)")
+                    aligned_df = month_result_filtered.reindex(columns=sorted(all_columns))
+                    print(f"       ✅ Month {month_key} aligned: {len(aligned_df)} rows, {len(aligned_df.columns)} columns")
+                else:
+                    aligned_df = month_result
+                aligned_results.append(aligned_df)
+            
+            print(f"       🔗 Concatenating {len(aligned_results)} aligned DataFrames...")
+            result_df = pd.concat(aligned_results, axis=0).sort_index()
+            print(f"       ✅ Merged result: {len(result_df)} rows, {len(result_df.columns)} columns (only output_columns)")
         elif isinstance(list(monthly_results.values())[0], pd.Series):
             result_df = pd.concat(monthly_results.values(), axis=0).sort_index()
-            output_cols = feature_info.get("output_columns", [feature_name])
-            if len(output_cols) == 1:
-                result_df = pd.DataFrame({output_cols[0]: result_df})
+            series_name = result_df.name if hasattr(result_df, 'name') and result_df.name else feature_name
+            # 只保留 output_columns 中定义的列
+            if series_name in output_cols:
+                if len(output_cols) == 1:
+                    result_df = pd.DataFrame({output_cols[0]: result_df})
+                else:
+                    result_df = pd.DataFrame({feature_name: result_df})
             else:
-                result_df = pd.DataFrame({feature_name: result_df})
+                # 如果不在 output_columns 中，返回空 DataFrame
+                result_df = pd.DataFrame(index=result_df.index)
         else:
             # Fallback
             result_df = pd.concat([pd.DataFrame({feature_name: r}) if isinstance(r, pd.Series) else r 
                                   for r in monthly_results.values()], axis=0).sort_index()
     except Exception as e:
+        # 打印详细的错误信息
+        print(f"       ❌ Error merging monthly results for {feature_name}: {e}")
+        print(f"       📊 Monthly results info:")
+        for month_key, month_result in monthly_results.items():
+            if isinstance(month_result, pd.DataFrame):
+                print(f"          Month {month_key}: shape={month_result.shape}, columns={list(month_result.columns)[:10]}...")
+                if month_result.columns.duplicated().any():
+                    dup_cols = month_result.columns[month_result.columns.duplicated()].tolist()
+                    print(f"          Month {month_key} duplicate columns: {dup_cols}")
+            elif isinstance(month_result, pd.Series):
+                print(f"          Month {month_key}: Series, length={len(month_result)}, name={month_result.name}")
+        import traceback
+        traceback.print_exc()
         # 如果合并失败，尝试直接计算
         # 注意：这里无法获取 ticks_loader_json，可能需要从 compute_params 中获取
         ticks_loader_json = compute_params.get("ticks_loader_json")
@@ -395,10 +500,22 @@ class ParallelFeatureComputer:
         self.use_monthly_cache = use_monthly_cache
         
         # 智能计算并行进程数（基于可用内存）
+        # 检查环境变量，允许强制单进程模式
+        force_single_process = os.environ.get("FORCE_SINGLE_PROCESS", "").lower() in ("1", "true", "yes")
+        
         if max_workers is None:
-            self.max_workers = self._calculate_optimal_workers()
+            if force_single_process:
+                print("   🔧 Force single-process mode (FORCE_SINGLE_PROCESS=1)")
+                self.max_workers = 1
+            else:
+                # 先打印内存信息，再计算最优进程数
+                self._print_memory_info()
+                self.max_workers = self._calculate_optimal_workers()
         else:
             self.max_workers = max_workers
+            # 即使指定了 max_workers，也打印内存信息用于调试
+            self._print_memory_info()
+            print(f"   🔧 Using {self.max_workers} worker(s) (manually specified)")
         
         self.parallel_backend = parallel_backend
         
@@ -409,6 +526,13 @@ class ParallelFeatureComputer:
         # 当特征计算逻辑改变时，更新此版本号以失效旧缓存
         # v5: 改进错误处理和流程验证，添加索引对齐检查
         self.cache_version = "v5"
+        
+        # 在初始化完成后再次打印内存信息（确保可见）
+        print("=" * 60)
+        print("🔧 ParallelFeatureComputer Initialized")
+        self._print_memory_info()
+        print(f"   🔧 Workers: {self.max_workers}, Backend: {self.parallel_backend}")
+        print("=" * 60)
         
         # 按月缓存目录
         if self.use_monthly_cache and self.cache_dir:
@@ -667,18 +791,35 @@ class ParallelFeatureComputer:
             print(f"     ⚠️  Warning: {feature_name} needs ticks_loader_json but it's not in compute_params")
             print(f"     compute_params keys: {list(compute_params.keys())}")
         
-        # 按月份拆分
-        monthly_dfs = self._split_df_by_month(df)
-        if len(monthly_dfs) <= 1:
-            # 无法按月拆分，使用全量计算
-            call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
-            return compute_func(*call_args, **call_kwargs)
+        # 优化：单进程模式下，如果数据量不大，直接全量计算（避免按月拆分的开销）
+        use_monthly_split = True
+        if self.max_workers == 1 and PSUTIL_AVAILABLE:
+            try:
+                mem = psutil.virtual_memory()
+                available_gb = mem.available / (1024 ** 3)
+                # 如果可用内存 > 20GB 且数据量 < 100万行，直接全量计算
+                if available_gb > 20 and len(df) < 1_000_000:
+                    use_monthly_split = False
+                    print(f"     ⚡ Using full-data computation (memory: {available_gb:.1f}GB available, data: {len(df)} rows)")
+            except Exception:
+                pass
+        
+        # 按月份拆分（如果启用）
+        if use_monthly_split:
+            monthly_dfs = self._split_df_by_month(df)
+            if len(monthly_dfs) <= 1:
+                # 无法按月拆分，使用全量计算
+                call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
+                return compute_func(*call_args, **call_kwargs)
+        else:
+            # 不使用按月拆分，直接全量计算
+            monthly_dfs = {"all": df}
         
         # 按月计算
         monthly_results = {}
         for month_key, month_df in monthly_dfs.items():
             if month_key == "all":
-                # 无法按月拆分，使用全量计算
+                # 无法按月拆分或禁用按月拆分，使用全量计算
                 call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
                 return compute_func(*call_args, **call_kwargs)
             
@@ -715,7 +856,39 @@ class ParallelFeatureComputer:
                 col: series for col, series in zip(output_cols, combined_results)
             })
         elif isinstance(first_result, pd.DataFrame):
-            combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+            # 根本性解决方案：只使用 output_columns 中定义的列
+            output_cols = feature_info.get("output_columns", [feature_name])
+            if not output_cols:
+                output_cols = [feature_name]
+            all_columns = set(output_cols)  # 只使用 output_columns
+            
+            # 确保所有 DataFrame 都有相同的列（缺失的列填充 NaN）
+            aligned_results = []
+            for month_key, month_result in monthly_results.items():
+                # 处理重复列名：如果有重复列，保留第一个
+                if isinstance(month_result, pd.DataFrame) and month_result.columns.duplicated().any():
+                    month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+                    # 更新字典中的值
+                    monthly_results[month_key] = month_result
+                
+                # 只提取 output_columns 中定义的列
+                if isinstance(month_result, pd.DataFrame):
+                    result_cols = [col for col in output_cols if col in month_result.columns]
+                    if result_cols:
+                        month_result_filtered = month_result[result_cols].copy()
+                    else:
+                        month_result_filtered = pd.DataFrame(index=month_result.index)
+                    aligned_df = month_result_filtered.reindex(columns=sorted(all_columns))
+                else:
+                    aligned_df = month_result
+                aligned_results.append(aligned_df)
+            
+            combined_result = pd.concat(aligned_results, axis=0).sort_index()
+            
+            # 最终确保只包含 output_columns
+            final_cols = [col for col in output_cols if col in combined_result.columns]
+            if len(final_cols) != len(combined_result.columns):
+                combined_result = combined_result[final_cols]
         elif isinstance(first_result, pd.Series):
             combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
             output_cols = feature_info.get("output_columns", [feature_name])
@@ -861,8 +1034,20 @@ class ParallelFeatureComputer:
                         new_cols = [
                             c for c in cached_result.columns if c not in result_df.columns
                         ]
+                        existing_cols = [c for c in cached_result.columns if c in result_df.columns]
+                        
+                        # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
+                        if existing_cols:
+                            # 直接跳过，不合并（节省内存和时间）
+                            pass
+                        
+                        # 添加新列
                         if new_cols:
                             result_df = pd.concat([result_df, cached_result[new_cols]], axis=1)
+                            # 释放临时对象
+                            del cached_result
+                            import gc
+                            gc.collect()
                     elif isinstance(cached_result, pd.Series):
                         if cached_result.name and cached_result.name not in result_df.columns:
                             result_df[cached_result.name] = cached_result
@@ -905,7 +1090,29 @@ class ParallelFeatureComputer:
                                 col: series for col, series in zip(output_cols, combined_results)
                             })
                         elif isinstance(first_result, pd.DataFrame):
-                            combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
+                            # 确保所有月份的 DataFrame 都有相同的列（使用 outer join）
+                            # 这样可以处理某些月份可能缺少某些列的情况
+                            all_columns = set()
+                            for month_result in monthly_results.values():
+                                all_columns.update(month_result.columns)
+                            
+                            # 确保所有 DataFrame 都有相同的列（缺失的列填充 NaN）
+                            aligned_results = []
+                            for month_key, month_result in monthly_results.items():
+                                # 处理重复列名：如果有重复列，保留第一个
+                                if isinstance(month_result, pd.DataFrame) and month_result.columns.duplicated().any():
+                                    month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+                                    # 更新字典中的值
+                                    monthly_results[month_key] = month_result
+                                
+                                # 使用 reindex 确保列对齐，缺失的列自动填充 NaN
+                                if isinstance(month_result, pd.DataFrame):
+                                    aligned_df = month_result.reindex(columns=sorted(all_columns))
+                                else:
+                                    aligned_df = month_result
+                                aligned_results.append(aligned_df)
+                            
+                            combined_result = pd.concat(aligned_results, axis=0).sort_index()
                         elif isinstance(first_result, pd.Series):
                             combined_result = pd.concat(monthly_results.values(), axis=0).sort_index()
                             output_cols = feature_info.get("output_columns", [feature_name])
@@ -923,11 +1130,27 @@ class ParallelFeatureComputer:
                         self.memory_cache[feature_name] = combined_result
                         # 合并到result_df
                         if isinstance(combined_result, pd.DataFrame):
+                            # 处理重复列名：如果有重复列，保留第一个
+                            if combined_result.columns.duplicated().any():
+                                combined_result = combined_result.loc[:, ~combined_result.columns.duplicated()]
+                            
                             new_cols = [
                                 c for c in combined_result.columns if c not in result_df.columns
                             ]
+                            existing_cols = [c for c in combined_result.columns if c in result_df.columns]
+                            
+                            # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
+                            if existing_cols:
+                                print(f"        ⏭️  Skipping {len(existing_cols)} existing columns (dropping duplicates): {existing_cols[:10]}...")
+                                # 直接跳过，不合并（节省内存和时间）
+                            
+                            # 添加新列
                             if new_cols:
                                 result_df = pd.concat([result_df, combined_result[new_cols]], axis=1)
+                                # 释放临时对象
+                                del combined_result
+                                import gc
+                                gc.collect()
                         elif isinstance(combined_result, pd.Series):
                             if combined_result.name and combined_result.name not in result_df.columns:
                                 result_df[combined_result.name] = combined_result
@@ -940,7 +1163,7 @@ class ParallelFeatureComputer:
                 # 提交任务
                 if not run_sequential:
                     # 并行计算：按月计算并缓存
-                    print(f"     🔸 Computing {feature_name} in parallel (monthly)", flush=True)
+                    print(f"     🔸 Computing {feature_name} in parallel (monthly)...", flush=True)
                     df_bytes = pickle.dumps(result_df)
                     # 从 compute_params 中获取 ticks_loader_json
                     ticks_loader_json = compute_params.get("ticks_loader_json")
@@ -982,9 +1205,25 @@ class ParallelFeatureComputer:
                                 feature_df = pd.DataFrame({
                                     col: series for col, series in zip(output_cols, feature_result)
                                 }, index=result_df.index)
+                                # 处理重复列名：如果有重复列，保留第一个
+                                if feature_df.columns.duplicated().any():
+                                    feature_df = feature_df.loc[:, ~feature_df.columns.duplicated()]
+                                
                                 new_cols = [c for c in feature_df.columns if c not in result_df.columns]
+                                existing_cols = [c for c in feature_df.columns if c in result_df.columns]
+                                
+                                # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
+                                if existing_cols:
+                                    # 直接跳过，不合并（节省内存和时间）
+                                    pass
+                                
+                                # 添加新列
                                 if new_cols:
                                     result_df = pd.concat([result_df, feature_df[new_cols]], axis=1)
+                                    # 释放临时对象
+                                    del feature_df
+                                    import gc
+                                    gc.collect()
                             else:
                                 # Fallback: add with indexed names
                                 for i, series in enumerate(feature_result):
@@ -993,11 +1232,27 @@ class ParallelFeatureComputer:
                                         result_df[col_name] = series
                         # 如果返回的是 DataFrame，合并新列
                         elif isinstance(feature_result, pd.DataFrame):
+                            # 处理重复列名：如果有重复列，保留第一个
+                            if feature_result.columns.duplicated().any():
+                                feature_result = feature_result.loc[:, ~feature_result.columns.duplicated()]
+                            
                             new_cols = [
                                 c for c in feature_result.columns if c not in result_df.columns
                             ]
+                            existing_cols = [c for c in feature_result.columns if c in result_df.columns]
+                            
+                            # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
+                            if existing_cols:
+                                # 直接跳过，不合并（节省内存和时间）
+                                pass
+                            
+                            # 添加新列
                             if new_cols:
                                 result_df = pd.concat([result_df, feature_result[new_cols]], axis=1)
+                                # 释放临时对象
+                                del feature_result
+                                import gc
+                                gc.collect()
                         # 如果返回的是 Series，添加到 DataFrame
                         elif isinstance(feature_result, pd.Series):
                             output_cols = feature_info.get("output_columns", [feature_name])
@@ -1034,24 +1289,64 @@ class ParallelFeatureComputer:
             
             # 等待所有任务完成（分批处理，避免内存峰值）
             completed_count = 0
+            total_futures = len(futures)
+            if total_futures > 0:
+                print(f"     ⏳ Waiting for {total_futures} feature(s) to complete...", flush=True)
+            
             for future in as_completed(futures):
                 try:
                     feature_name, result_df_bytes = future.result()
+                    completed_count += 1
+                    print(f"     📦 Received result for {feature_name} ({completed_count}/{total_futures})...", flush=True)
                     feature_df = pickle.loads(result_df_bytes)
                     
+                    # 打印 feature_df 的详细信息
+                    if isinstance(feature_df, pd.DataFrame):
+                        print(f"        📊 feature_df shape: {feature_df.shape}, columns: {len(feature_df.columns)}")
+                        print(f"        📋 feature_df columns: {list(feature_df.columns)[:15]}...")
+                        if feature_df.columns.duplicated().any():
+                            dup_cols = feature_df.columns[feature_df.columns.duplicated()].tolist()
+                            print(f"        ⚠️  feature_df has duplicate columns: {dup_cols}")
+                    elif isinstance(feature_df, pd.Series):
+                        print(f"        📊 feature_df is Series, length: {len(feature_df)}, name: {feature_df.name}")
+                    
                     # 每完成 5 个特征，检查一次内存并清理
-                    completed_count += 1
                     if completed_count % 5 == 0:
                         self._cleanup_memory()
                     
                     # 合并结果
                     # 如果 feature_df 是 DataFrame，合并新列
                     if isinstance(feature_df, pd.DataFrame):
+                        # 处理重复列名：如果有重复列，保留第一个
+                        if feature_df.columns.duplicated().any():
+                            dup_cols = feature_df.columns[feature_df.columns.duplicated()].tolist()
+                            print(f"        🔧 Removing duplicate columns from feature_df: {dup_cols}")
+                            feature_df = feature_df.loc[:, ~feature_df.columns.duplicated()]
+                        
+                        print(f"        📋 result_df columns before merge: {len(result_df.columns)}")
                         new_cols = [
                             c for c in feature_df.columns if c not in result_df.columns
                         ]
+                        existing_cols = [c for c in feature_df.columns if c in result_df.columns]
+                        
+                        # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
+                        if existing_cols:
+                            print(f"        ⏭️  Skipping {len(existing_cols)} existing columns (dropping duplicates): {existing_cols[:10]}...")
+                            # 直接跳过，不合并（节省内存和时间）
+                        
+                        # 添加新列
                         if new_cols:
+                            print(f"        ➕ Adding {len(new_cols)} new columns: {new_cols[:10]}...")
                             result_df = pd.concat([result_df, feature_df[new_cols]], axis=1)
+                            print(f"        ✅ result_df columns after merge: {len(result_df.columns)}")
+                            # 释放临时对象
+                            del feature_df
+                            import gc
+                            gc.collect()
+                        elif existing_cols:
+                            print(f"        ✅ Merged existing columns using combine_first")
+                        else:
+                            print(f"        ℹ️  No new columns to add")
                     # 如果 feature_df 是 Series，添加到 DataFrame
                     elif isinstance(feature_df, pd.Series):
                         if feature_df.name and feature_df.name not in result_df.columns:
@@ -1069,6 +1364,25 @@ class ParallelFeatureComputer:
                     print(f"     ✅ Computed {feature_name}")
                 except Exception as e:
                     print(f"     ❌ Error in parallel computation: {e}")
+                    import traceback
+                    print(f"        Error type: {type(e).__name__}")
+                    print(f"        Error message: {str(e)}")
+                    print(f"        Feature: {feature_name}")
+                    # 打印 feature_df 的信息（如果可用）
+                    try:
+                        if 'feature_df' in locals():
+                            if isinstance(feature_df, pd.DataFrame):
+                                print(f"        feature_df shape: {feature_df.shape}")
+                                print(f"        feature_df columns: {list(feature_df.columns)[:20]}...")
+                                if feature_df.columns.duplicated().any():
+                                    dup_cols = feature_df.columns[feature_df.columns.duplicated()].tolist()
+                                    print(f"        feature_df duplicate columns: {dup_cols}")
+                            elif isinstance(feature_df, pd.Series):
+                                print(f"        feature_df is Series, length: {len(feature_df)}, name: {feature_df.name}")
+                    except Exception:
+                        pass
+                    print(f"        Full traceback:")
+                    traceback.print_exc()
             
             # 每层完成后清理内存
             self._cleanup_memory()
@@ -1076,12 +1390,30 @@ class ParallelFeatureComputer:
 
         return result_df
     
+    def _print_memory_info(self):
+        """打印内存信息（用于调试和监控）"""
+        if not PSUTIL_AVAILABLE:
+            print("   ⚠️  psutil not available, cannot show memory info")
+            return
+        
+        try:
+            mem = psutil.virtual_memory()
+            available_gb = mem.available / (1024 ** 3)
+            total_gb = mem.total / (1024 ** 3)
+            used_gb = mem.used / (1024 ** 3)
+            percent = mem.percent
+            
+            print(f"   💾 Memory: {available_gb:.1f}GB available, {used_gb:.1f}GB used, {total_gb:.1f}GB total ({percent:.1f}% used)")
+        except Exception as e:
+            print(f"   ⚠️  Failed to get memory info: {e}")
+    
     def _calculate_optimal_workers(self) -> int:
         """
         基于可用内存智能计算最优并行进程数
         
         策略：
-        - 每个进程估计需要 2-4GB 内存
+        - 单进程模式：如果内存充足（>50GB），使用单进程模式，分配30GB内存
+        - 多进程模式：每个进程估计需要 4GB 内存
         - 保留至少 20% 的系统内存
         - 不超过 CPU 核心数
         """
@@ -1097,8 +1429,16 @@ class ParallelFeatureComputer:
             available_gb = mem.available / (1024 ** 3)
             total_gb = mem.total / (1024 ** 3)
             
-            # 每个进程估计需要 2-4GB 内存（根据数据大小调整）
-            # 保守估计：每个进程 4GB（增加以降低并行度，减少内存压力）
+            # 单进程模式：如果总内存 >= 40GB，使用单进程模式
+            # 单进程可以使用更多内存（~30GB），避免进程间通信开销，通常更快
+            # 降低阈值到 40GB，因为 Docker 容器可能限制了可见内存
+            if total_gb >= 40:
+                print(f"   🔧 Using single-process mode (1 worker)")
+                print(f"   💡 Single process can use ~30GB memory, avoiding inter-process overhead")
+                print(f"   💡 This is often faster for large datasets due to better cache locality")
+                return 1
+            
+            # 多进程模式：每个进程估计需要 4GB 内存
             memory_per_worker_gb = 4.0
             
             # 保留至少 20% 的系统内存
@@ -1114,7 +1454,6 @@ class ParallelFeatureComputer:
             # 至少保留 1 个进程，最多不超过 CPU 核心数
             optimal_workers = max(1, min(optimal_workers, cpu_count))
             
-            print(f"   💾 Memory: {available_gb:.1f}GB available, {total_gb:.1f}GB total")
             print(f"   🔧 Optimal workers: {optimal_workers} (CPU: {cpu_count}, Memory-based: {memory_based_workers})")
             
             return optimal_workers

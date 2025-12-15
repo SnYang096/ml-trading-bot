@@ -2352,11 +2352,19 @@ class BaselineFeatureEngineer:
             price_series = result["wpt_price_reconstructed"]
         
         # 计算 POC 和 HAL（一次性计算，避免重复）
+        # 优化：如果 poc 列已存在且完整（非 NaN 值 > 50%），跳过计算
         need_compute = False
-        if need_poc and (
-            "poc" not in result.columns or "poc_volume_ratio" not in result.columns
-        ):
-            need_compute = True
+        if need_poc:
+            poc_exists = "poc" in result.columns
+            if poc_exists:
+                poc_non_na_ratio = result["poc"].notna().sum() / len(result) if len(result) > 0 else 0
+                if poc_non_na_ratio > 0.5:
+                    # poc 列已存在且完整，跳过计算
+                    need_poc = False
+            if need_poc and (
+                "poc" not in result.columns or "poc_volume_ratio" not in result.columns
+            ):
+                need_compute = True
         if need_hal and (
             "hal_high" not in result.columns or "hal_low" not in result.columns
         ):

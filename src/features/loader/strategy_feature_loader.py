@@ -288,6 +288,19 @@ class StrategyFeatureLoader:
             print(f"     ℹ️  Reindexed output to match input index (may introduce NaN)")
         
         # 验证：检查数据类型
+        # 允许的 object 类型列（这些列本来就是字符串类型，不需要警告）
+        allowed_object_columns = {
+            '_symbol',  # 交易对标识符
+            'dtw_best_match_w15',  # DTW 特征：最佳匹配模式（可能是 "none"）
+            'dtw_best_match_w20',
+            'dtw_best_match_w25',
+        }
+        # 允许以这些前缀开头的列
+        allowed_object_prefixes = [
+            'dtw_best_match_',  # DTW 匹配模式列
+            '_symbol',  # 符号相关列
+        ]
+        
         for col in result_df.columns:
             try:
                 # 检查 col 是否是单个列（Series）还是多个列（DataFrame）
@@ -298,6 +311,20 @@ class StrategyFeatureLoader:
                 elif isinstance(col_data, pd.Series):
                     # 如果是 Series，检查 dtype
                     if col_data.dtype == 'object':
+                        # 检查是否在允许列表中
+                        if col in allowed_object_columns:
+                            continue  # 允许的列，跳过警告
+                        
+                        # 检查是否匹配允许的前缀
+                        is_allowed = False
+                        for prefix in allowed_object_prefixes:
+                            if col.startswith(prefix):
+                                is_allowed = True
+                                break
+                        
+                        if is_allowed:
+                            continue  # 允许的列，跳过警告
+                        
                         # 检查是否有意外的 object 类型（可能是字符串或其他类型）
                         sample_values = col_data.dropna().head(5)
                         if len(sample_values) > 0:

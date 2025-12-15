@@ -57,6 +57,7 @@ from src.features.loader.interaction_feature_wrappers import (
 
 # 特征包装函数
 from src.features.loader.feature_wrappers import (
+    compute_poc_hal_features,
     compute_sqs_hal_high,
     compute_sqs_hal_low,
     compute_sr_strength_max,
@@ -123,6 +124,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "BaselineFeatureEngineer._compute_boundary_strengths": BaselineFeatureEngineer._compute_boundary_strengths,
     
     # SR 特征包装函数（用于配置文件直接调用）
+    "compute_poc_hal_features": compute_poc_hal_features,
     "compute_sqs_hal_high": compute_sqs_hal_high,
     "compute_sqs_hal_low": compute_sqs_hal_low,
     "compute_sr_strength_max": compute_sr_strength_max,

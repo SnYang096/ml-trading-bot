@@ -459,12 +459,13 @@ RUN echo "📦 Installing project dependencies..." && \
     stable-baselines3==2.3.0 \
     "nautilus-trader>=1.0.0" \
     tabulate==0.9.0 \
+    psutil \
     catboost \
     xgboost \
     arch \
     vectorbt \
     pytest \
-    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, catboost, xgboost, arch, vectorbt, pytest; print('✅ 项目依赖库安装完成 (包括pytest)')"
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, psutil, catboost, xgboost, arch, vectorbt, pytest; print('✅ 项目依赖库安装完成 (包括pytest和psutil)')"
 
 # 安装编译工具（用于编译 dtaidistance 的 C 扩展）
 RUN echo "📦 Installing build tools for dtaidistance C extension compilation..." && \

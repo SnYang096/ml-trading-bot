@@ -443,7 +443,24 @@ def train_volatility_model(
             def predict(self, X):
                 # 如果指定了特征，只使用这些特征
                 if self._volatility_features and isinstance(X, pd.DataFrame):
-                    X_used = X[self._volatility_features].copy()
+                    # 只选择训练时使用的特征，按训练时的顺序
+                    vol_features = [
+                        f for f in self._volatility_features if f in X.columns
+                    ]
+                    if len(vol_features) != len(self._volatility_features):
+                        missing = set(self._volatility_features) - set(vol_features)
+                        print(
+                            f"   ⚠️  Warning: Some volatility features missing in predict. Missing: {missing}"
+                        )
+                        # 用 0 填充缺失的特征
+                        X_used = X[vol_features].copy()
+                        for f in missing:
+                            X_used[f] = 0.0
+                        # 确保列的顺序与训练时一致
+                        X_used = X_used[self._volatility_features]
+                    else:
+                        # 确保列的顺序与训练时一致
+                        X_used = X[self._volatility_features].copy()
                 else:
                     X_used = X
 
@@ -797,7 +814,22 @@ def evaluate_ml_volatility_model(
         preds_proba = preds_proba[:, 1]
 
     # 获取波动率预测（相对波动率，例如0.007475 = 0.75%）
-    pred_vol_relative = vol_model.predict(X)
+    # 确保只使用训练时的特征
+    if hasattr(vol_model, "_volatility_features") and vol_model._volatility_features:
+        # 只使用训练时的特征
+        vol_features = [f for f in vol_model._volatility_features if f in X.columns]
+        if len(vol_features) != len(vol_model._volatility_features):
+            print(
+                f"   ⚠️  Warning: Some volatility features missing. Expected {len(vol_model._volatility_features)}, found {len(vol_features)}"
+            )
+            print(
+                f"      Missing: {set(vol_model._volatility_features) - set(vol_features)}"
+            )
+        X_vol = X[vol_features] if vol_features else X
+    else:
+        X_vol = X
+
+    pred_vol_relative = vol_model.predict(X_vol)
     pred_vol_relative = np.maximum(pred_vol_relative, 0.0)  # Ensure non-negative
 
     # 将相对波动率转换为绝对波动率（乘以价格）

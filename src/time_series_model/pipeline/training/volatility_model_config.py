@@ -291,24 +291,100 @@ def prepare_volatility_model_data(
             _compute_feature(feature_name)
             missing_cols = [col for col in columns if col not in X_processed.columns]
 
-            # 每计算 3 个特征组后清理一次内存
-            if (group_idx + 1) % 3 == 0:
-                gc.collect()
-                if PSUTIL_AVAILABLE:
-                    try:
-                        process = psutil.Process()
-                        mem_gb = process.memory_info().rss / (1024**3)
+            # 每计算 1 个特征组后清理一次内存（更频繁的清理，防止 OOM）
+            gc.collect()
+            if PSUTIL_AVAILABLE:
+                try:
+                    process = psutil.Process()
+                    mem_gb = process.memory_info().rss / (1024**3)
+                    if (group_idx + 1) % 3 == 0:  # 每3个特征组打印一次
                         print(
                             f"   📊 Memory after {group_idx + 1} feature groups: {mem_gb:.2f}GB"
                         )
-                    except Exception:
-                        pass
+                    # 如果内存使用超过 10GB，打印警告
+                    if mem_gb > 10:
+                        print(
+                            f"   ⚠️  High memory usage after {group_idx + 1} feature groups: {mem_gb:.2f}GB"
+                        )
+                except Exception:
+                    pass
         elif missing_cols and not feature_name:
             # feature_name 为 null，说明这些列可能来自多个特征或通过其他方式生成
-            # 只打印警告，不尝试计算
-            print(
-                f"   ℹ️  Feature group '{group.get('name')}' has {len(missing_cols)} missing columns (no feature_name specified, columns may come from multiple features)"
-            )
+            # 尝试根据列名推断并计算相关特征
+
+            # 检查是否是 ATR 相关列
+            if "atr" in missing_cols and "atr_ratio" in missing_cols:
+                # 尝试计算 atr 和 atr_ratio
+                print(
+                    f"   🔧 Attempting to compute atr and atr_ratio features for missing columns..."
+                )
+                try:
+                    _compute_feature("atr")
+                    _compute_feature("atr_ratio")  # atr_ratio 依赖于 atr，会自动处理
+                    missing_cols = [
+                        col for col in columns if col not in X_processed.columns
+                    ]
+                    if missing_cols:
+                        print(
+                            f"   ✅ Computed atr/atr_ratio, {len(missing_cols)} columns still missing"
+                        )
+                    else:
+                        print(f"   ✅ All columns computed successfully")
+                except Exception as e:
+                    print(f"   ⚠️  Failed to compute atr/atr_ratio: {e}")
+
+            # 如果还有缺失列，提供提示信息
+            if missing_cols:
+                missing_cols_str = ", ".join(missing_cols[:5])
+                if len(missing_cols) > 5:
+                    missing_cols_str += f", ... (and {len(missing_cols) - 5} more)"
+
+                # 根据列名推断可能来自的特征（用于提示）
+                possible_features = []
+                if any("wpt_price" in col for col in missing_cols):
+                    possible_features.append(
+                        "wpt_price_reconstructed or wpt_volatility_features"
+                    )
+                if any("wpt_volume" in col for col in missing_cols):
+                    possible_features.append("wpt_volatility_features (if available)")
+                if any("wpt_cvd" in col for col in missing_cols):
+                    possible_features.append("wpt_volatility_features (if available)")
+                if any("atr" in col for col in missing_cols):
+                    possible_features.append("atr or atr_ratio")
+
+                feature_hint = ""
+                if possible_features:
+                    feature_hint = f" (may come from: {', '.join(possible_features)})"
+
+                print(
+                    f"   ℹ️  Feature group '{group.get('name')}' has {len(missing_cols)} missing columns{feature_hint}"
+                )
+                if len(missing_cols) <= 10:
+                    print(f"      Missing: {missing_cols_str}")
+                # 非 WPT 相关列，只显示警告
+                missing_cols_str = ", ".join(missing_cols[:5])
+                if len(missing_cols) > 5:
+                    missing_cols_str += f", ... (and {len(missing_cols) - 5} more)"
+
+                possible_features = []
+                if any("wpt_price" in col for col in missing_cols):
+                    possible_features.append(
+                        "wpt_price_reconstructed or wpt_price_fluctuation"
+                    )
+                if any("wpt_volume" in col for col in missing_cols):
+                    possible_features.append("wpt_volume_features (if available)")
+                if any("wpt_cvd" in col for col in missing_cols):
+                    possible_features.append("wpt_cvd_features (if available)")
+
+                feature_hint = ""
+                if possible_features:
+                    feature_hint = f" (may come from: {', '.join(possible_features)})"
+
+                print(
+                    f"   ℹ️  Feature group '{group.get('name')}' has {len(missing_cols)} missing columns{feature_hint}"
+                )
+                if len(missing_cols) <= 10:
+                    print(f"      Missing: {missing_cols_str}")
 
         if missing_cols and required:
             print(

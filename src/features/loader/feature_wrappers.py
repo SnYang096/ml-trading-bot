@@ -22,6 +22,47 @@ from src.features.time_series.utils_footprint import (
 )
 
 
+def compute_poc_hal_features(
+    df: pd.DataFrame,
+    poc_window: int = 160,
+    price_col: Optional[str] = None,
+    **kwargs
+) -> pd.DataFrame:
+    """
+    计算 POC (Point of Control) 和 HAL (Value Area) 特征
+    
+    这是一个独立的基础特征，用于计算：
+    - poc: Point of Control（成交量最大的价格点）
+    - hal_high: Value Area 上界（70% 成交量区间的上界）
+    - hal_low: Value Area 下界（70% 成交量区间的下界）
+    - hal_mid: Value Area 中点
+    
+    Args:
+        df: DataFrame with required columns: high, low, close, volume
+        poc_window: POC 计算窗口大小
+        price_col: 可选的价格列名（如 'wpt_price_reconstructed'）
+        **kwargs: 其他参数
+    
+    Returns:
+        DataFrame with poc, hal_high, hal_low, hal_mid columns added
+    """
+    result = df.copy()
+    
+    # 确定使用的价格序列
+    if price_col is None and "wpt_price_reconstructed" in result.columns:
+        price_col = "wpt_price_reconstructed"
+    
+    # 计算 POC 和 HAL
+    result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        result,
+        required_features={"poc", "hal_high", "hal_low", "hal_mid"},
+        poc_window=poc_window,
+        price_col=price_col,
+    )
+    
+    return result
+
+
 def compute_sqs_hal_high(
     df: pd.DataFrame,
     window: int = 60,
@@ -60,16 +101,18 @@ def compute_sqs_hal_high(
             period=14
         )
     
-    # 1. 一次性计算 HAL（如果还没有计算）
-    # HAL 是滚动窗口计算的，每个时间点都有一个值
-    if "hal_high" not in result.columns:
+    # 1. 检查 poc 和 hal_high 是否已存在（应该来自 poc_hal_features 依赖）
+    # 如果不存在，说明依赖关系有问题，需要报错或计算
+    if "poc" not in result.columns or "hal_high" not in result.columns:
+        # 如果列不存在，尝试计算（向后兼容，但会打印警告）
+        print(f"       ⚠️  Warning: 'poc' or 'hal_high' not found, computing them (should come from poc_hal_features dependency)")
         poc_window = kwargs.get("poc_window", 160)
         price_col = kwargs.get("price_col", None)
         if price_col is None and "wpt_price_reconstructed" in result.columns:
             price_col = "wpt_price_reconstructed"
         result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
             result,
-            required_features={"hal_high"},
+            required_features={"hal_high", "poc"},
             poc_window=poc_window,
             price_col=price_col,
         )
@@ -162,16 +205,18 @@ def compute_sqs_hal_low(
             period=14
         )
     
-    # 1. 一次性计算 HAL（如果还没有计算）
-    # HAL 是滚动窗口计算的，每个时间点都有一个值
-    if "hal_low" not in result.columns:
+    # 1. 检查 poc 和 hal_low 是否已存在（应该来自 poc_hal_features 依赖）
+    # 如果不存在，说明依赖关系有问题，需要报错或计算
+    if "poc" not in result.columns or "hal_low" not in result.columns:
+        # 如果列不存在，尝试计算（向后兼容，但会打印警告）
+        print(f"       ⚠️  Warning: 'poc' or 'hal_low' not found, computing them (should come from poc_hal_features dependency)")
         poc_window = kwargs.get("poc_window", 160)
         price_col = kwargs.get("price_col", None)
         if price_col is None and "wpt_price_reconstructed" in result.columns:
             price_col = "wpt_price_reconstructed"
         result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
             result,
-            required_features={"hal_low"},
+            required_features={"hal_low", "poc"},
             poc_window=poc_window,
             price_col=price_col,
         )
