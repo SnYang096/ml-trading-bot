@@ -91,6 +91,9 @@ def _build_call_args(
     根据特征配置构建 compute_func 所需的 args/kwargs.
     支持配置 column_mappings，将 DataFrame 指定列注入到函数参数。
     支持从 ticks_loader_json 加载 ticks 数据。
+    
+    优化：如果 pass_full_df=True，只传递 required_columns + 已有的 output_columns，
+    而不是整个宽表，以节省内存。
     """
     compute_params = feature_info.get("compute_params", {}) or {}
     column_mappings = feature_info.get("column_mappings", {}) or {}
@@ -184,7 +187,30 @@ def _build_call_args(
 
     call_args: List[Any] = []
     if feature_info.get("pass_full_df", True):
-        call_args.append(df)
+        # 优化：只传递必要的列，而不是整个宽表
+        # 收集 required_columns + 已有的 output_columns（可能来自依赖特征）
+        required_cols = set(feature_info.get("required_columns", []))
+        # 也包含 column_mappings 中引用的列
+        for source in column_mappings.values():
+            if isinstance(source, str):
+                required_cols.add(source)
+            elif isinstance(source, list):
+                required_cols.update(source)
+        
+        # 从 df 中筛选出必要的列（required_cols + 索引列）
+        needed_cols = [col for col in df.columns if col in required_cols]
+        
+        # 如果需要的列数量远少于总列数，则只传递必要的列（节省内存）
+        # 阈值：如果需要的列 < 总列数的 50% 且需要的列数 < 20，则只传递必要的列
+        # 这样可以避免在宽表（100+ 列）中传递不必要的列
+        if needed_cols and len(needed_cols) < min(len(df.columns) * 0.5, 20):
+            slim_df = df[needed_cols].copy()
+            slim_df.index = df.index  # 确保索引一致
+            call_args.append(slim_df)
+        else:
+            # 如果需要的列太多（接近全部）或没有明确指定，则传递整个 DataFrame
+            # 注意：某些特征函数可能需要访问其他列（如索引、时间戳等），所以保守处理
+            call_args.append(df)
 
     return call_args, call_kwargs
 
@@ -481,6 +507,7 @@ class ParallelFeatureComputer:
         max_workers: Optional[int] = None,
         parallel_backend: str = "process",  # "process", "thread"
         use_monthly_cache: bool = True,  # 是否使用按月缓存
+        enable_parallel: bool = False,  # default sequential for stability/unified live flow
     ):
         """
         Args:
@@ -499,25 +526,52 @@ class ParallelFeatureComputer:
         self.use_memory_cache = use_memory_cache
         self.use_monthly_cache = use_monthly_cache
         
-        # 智能计算并行进程数（基于可用内存）
-        # 检查环境变量，允许强制单进程模式
+        # Default: run feature-level execution sequentially to avoid wide-DF pickling/copies
+        # (better aligned with live trading feature update flow).
+        enable_parallel_env = os.environ.get("ENABLE_FEATURE_PARALLEL", "").lower() in ("1", "true", "yes")
         force_single_process = os.environ.get("FORCE_SINGLE_PROCESS", "").lower() in ("1", "true", "yes")
-        
-        if max_workers is None:
-            if force_single_process:
-                print("   🔧 Force single-process mode (FORCE_SINGLE_PROCESS=1)")
-                self.max_workers = 1
-            else:
-                # 先打印内存信息，再计算最优进程数
-                self._print_memory_info()
-                self.max_workers = self._calculate_optimal_workers()
-        else:
-            self.max_workers = max_workers
-            # 即使指定了 max_workers，也打印内存信息用于调试
+        self.enable_parallel = (
+            enable_parallel
+            or enable_parallel_env
+            or (max_workers is not None and max_workers > 1)
+        )
+
+        if not self.enable_parallel:
+            # Fully sequential mode at feature level (no executor, no pickling df)
+            self.max_workers = 1
+            self.parallel_backend = "sequential"
+            self.executor = None
             self._print_memory_info()
-            print(f"   🔧 Using {self.max_workers} worker(s) (manually specified)")
-        
-        self.parallel_backend = parallel_backend
+            print("   🔧 Feature-level parallelism disabled (default). Running sequentially.")
+        else:
+            # Parallel mode: decide workers (still supports FORCE_SINGLE_PROCESS)
+            if max_workers is None:
+                if force_single_process:
+                    print("   🔧 Force single-process mode (FORCE_SINGLE_PROCESS=1)")
+                    self.max_workers = 1
+                else:
+                    self._print_memory_info()
+                    self.max_workers = self._calculate_optimal_workers()
+            else:
+                self.max_workers = max_workers
+                self._print_memory_info()
+                print(f"   🔧 Using {self.max_workers} worker(s) (manually specified)")
+            self.parallel_backend = parallel_backend
+            # If only 1 worker, don't start a pool (still sequential)
+            if self.max_workers == 1 and parallel_backend == "process":
+                print(
+                    "   🔧 Detected single-worker process backend; "
+                    "disabling ProcessPoolExecutor and running features sequentially "
+                    "in the main process to reduce memory usage."
+                )
+                self.executor = None
+            else:
+                if parallel_backend == "process":
+                    self.executor = ProcessPoolExecutor(max_workers=self.max_workers)
+                elif parallel_backend == "thread":
+                    self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+                else:
+                    self.executor = None
         
         # 内存缓存
         self.memory_cache = {}
@@ -544,14 +598,6 @@ class ParallelFeatureComputer:
         else:
             self.monthly_cache_dir = None
         
-        # 并行执行器
-        if parallel_backend == "process":
-            self.executor = ProcessPoolExecutor(max_workers=self.max_workers)
-        elif parallel_backend == "thread":
-            self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
-        else:
-            self.executor = None
-    
     def _get_df_hash(self, df: pd.DataFrame) -> str:
         """生成 DataFrame 哈希（仅用于调试，不再用于缓存键）"""
         if df.empty:
@@ -809,8 +855,26 @@ class ParallelFeatureComputer:
             monthly_dfs = self._split_df_by_month(df)
             if len(monthly_dfs) <= 1:
                 # 无法按月拆分，使用全量计算
-                call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
-                return compute_func(*call_args, **call_kwargs)
+                call_args, call_kwargs = _build_call_args(
+                    feature_info, df, ticks_loader_json
+                )
+                full_result = compute_func(*call_args, **call_kwargs)
+                # 即使不按月拆分，也只返回 output_columns 中定义的列，避免宽表合并
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                if isinstance(full_result, pd.DataFrame):
+                    cols = [c for c in output_cols if c in full_result.columns]
+                    return full_result[cols] if cols else pd.DataFrame(index=df.index)
+                if isinstance(full_result, pd.Series):
+                    name = full_result.name or feature_name
+                    return (
+                        pd.DataFrame({name: full_result}, index=df.index)
+                        if name in output_cols
+                        else pd.DataFrame(index=df.index)
+                    )
+                # Fallback: wrap scalar/array
+                return pd.DataFrame({feature_name: full_result}, index=df.index)
         else:
             # 不使用按月拆分，直接全量计算
             monthly_dfs = {"all": df}
@@ -820,8 +884,25 @@ class ParallelFeatureComputer:
         for month_key, month_df in monthly_dfs.items():
             if month_key == "all":
                 # 无法按月拆分或禁用按月拆分，使用全量计算
-                call_args, call_kwargs = _build_call_args(feature_info, df, ticks_loader_json)
-                return compute_func(*call_args, **call_kwargs)
+                call_args, call_kwargs = _build_call_args(
+                    feature_info, df, ticks_loader_json
+                )
+                full_result = compute_func(*call_args, **call_kwargs)
+                # 同样仅返回 output_columns 定义的列，避免宽表泄漏
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                if isinstance(full_result, pd.DataFrame):
+                    cols = [c for c in output_cols if c in full_result.columns]
+                    return full_result[cols] if cols else pd.DataFrame(index=df.index)
+                if isinstance(full_result, pd.Series):
+                    name = full_result.name or feature_name
+                    return (
+                        pd.DataFrame({name: full_result}, index=df.index)
+                        if name in output_cols
+                        else pd.DataFrame(index=df.index)
+                    )
+                return pd.DataFrame({feature_name: full_result}, index=df.index)
             
             # 检查缓存
             monthly_cache_key = self._get_monthly_cache_key(
@@ -830,14 +911,60 @@ class ParallelFeatureComputer:
             cached_result = self._load_monthly_cache(monthly_cache_key)
             
             if cached_result is not None:
+                # 从缓存加载后，只提取 output_columns 中定义的列
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                
+                if isinstance(cached_result, pd.DataFrame):
+                    # 处理重复列名
+                    if cached_result.columns.duplicated().any():
+                        cached_result = cached_result.loc[:, ~cached_result.columns.duplicated()]
+                    # 只保留 output_columns 中定义的列
+                    result_cols = [col for col in output_cols if col in cached_result.columns]
+                    if result_cols:
+                        cached_result = cached_result[result_cols].copy()
+                    else:
+                        cached_result = pd.DataFrame(index=cached_result.index)
+                elif isinstance(cached_result, pd.Series):
+                    series_name = cached_result.name if cached_result.name else feature_name
+                    if series_name not in output_cols:
+                        cached_result = pd.DataFrame(index=cached_result.index)
+                
                 monthly_results[month_key] = cached_result
             else:
                 # 计算该月份
                 call_args, call_kwargs = _build_call_args(feature_info, month_df, ticks_loader_json)
                 month_result = compute_func(*call_args, **call_kwargs)
-                monthly_results[month_key] = month_result
-                # 保存缓存
-                self._save_monthly_cache(monthly_cache_key, month_result)
+                
+                # 处理计算结果的重复列名
+                if isinstance(month_result, pd.DataFrame) and month_result.columns.duplicated().any():
+                    month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+                
+                # 只提取 output_columns 中定义的列
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                
+                if isinstance(month_result, pd.DataFrame):
+                    result_cols = [col for col in output_cols if col in month_result.columns]
+                    if result_cols:
+                        month_result_filtered = month_result[result_cols].copy()
+                    else:
+                        month_result_filtered = pd.DataFrame(index=month_result.index)
+                elif isinstance(month_result, pd.Series):
+                    series_name = month_result.name if month_result.name else feature_name
+                    if series_name in output_cols:
+                        month_result_filtered = month_result
+                    else:
+                        month_result_filtered = pd.DataFrame(index=month_result.index)
+                else:
+                    # Fallback: wrap scalar/array
+                    month_result_filtered = pd.DataFrame({feature_name: month_result}, index=month_df.index)
+                
+                monthly_results[month_key] = month_result_filtered
+                # 保存缓存（只保存 output_columns）
+                self._save_monthly_cache(monthly_cache_key, month_result_filtered)
         
         # 合并所有月份的结果
         # 处理不同的返回类型（tuple, DataFrame, Series）
@@ -1028,33 +1155,63 @@ class ParallelFeatureComputer:
                 if self.use_memory_cache and feature_name in self.memory_cache:
                     print(f"     💾 Using memory cache for {feature_name}")
                     cached_result = self.memory_cache[feature_name]
-                    # 验证cache数据质量
-                    self._validate_cache_quality(cached_result, feature_name, cache_type="memory")
-                    # 合并结果（支持 Series 和 DataFrame）
-                    if isinstance(cached_result, pd.DataFrame):
-                        new_cols = [
-                            c for c in cached_result.columns if c not in result_df.columns
-                        ]
-                        existing_cols = [c for c in cached_result.columns if c in result_df.columns]
-                        
-                        # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
-                        if existing_cols:
-                            # 直接跳过，不合并（节省内存和时间）
-                            pass
-                        
-                        # 添加新列
-                        if new_cols:
-                            result_df = pd.concat([result_df, cached_result[new_cols]], axis=1)
-                            # 释放临时对象
-                            del cached_result
-                            import gc
-                            gc.collect()
-                    elif isinstance(cached_result, pd.Series):
-                        if cached_result.name and cached_result.name not in result_df.columns:
-                            result_df[cached_result.name] = cached_result
-                        elif feature_name not in result_df.columns:
-                            result_df[feature_name] = cached_result
-                    continue
+
+                    # SAFETY: cached results must match current index; otherwise it will
+                    # explode the index (train/test/volatility mix) and can cause huge memory use.
+                    try:
+                        if isinstance(cached_result, (pd.Series, pd.DataFrame)):
+                            if not cached_result.index.equals(result_df.index):
+                                print(
+                                    f"     ⚠️  Memory cache index mismatch for {feature_name} "
+                                    f"(cached={len(cached_result)}, current={len(result_df)}), recomputing."
+                                )
+                                cached_result = None
+                    except Exception:
+                        # Be conservative: if we cannot validate, don't use cache
+                        cached_result = None
+
+                    if cached_result is not None:
+                        # 验证cache数据质量
+                        self._validate_cache_quality(
+                            cached_result, feature_name, cache_type="memory"
+                        )
+                        # 合并结果（支持 Series 和 DataFrame）
+                        if isinstance(cached_result, pd.DataFrame):
+                            new_cols = [
+                                c
+                                for c in cached_result.columns
+                                if c not in result_df.columns
+                            ]
+                            existing_cols = [
+                                c
+                                for c in cached_result.columns
+                                if c in result_df.columns
+                            ]
+
+                            # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
+                            if existing_cols:
+                                # 直接跳过，不合并（节省内存和时间）
+                                pass
+
+                            # 添加新列
+                            if new_cols:
+                                result_df = pd.concat(
+                                    [result_df, cached_result[new_cols]], axis=1
+                                )
+                                # 释放临时对象
+                                del cached_result
+                                import gc
+
+                                gc.collect()
+                        elif isinstance(cached_result, pd.Series):
+                            if (
+                                cached_result.name
+                                and cached_result.name not in result_df.columns
+                            ):
+                                result_df[cached_result.name] = cached_result
+                            elif feature_name not in result_df.columns:
+                                result_df[feature_name] = cached_result
+                        continue
                 
                 feature_info = features[feature_name]
                 compute_params = feature_info.get("compute_params", {})
@@ -1198,6 +1355,10 @@ class ParallelFeatureComputer:
                             call_args, call_kwargs = _build_call_args(feature_info, result_df, ticks_loader_json)
                             feature_result = compute_func(*call_args, **call_kwargs)
                         
+                        # Normalize/merge different return types and keep a stable reference
+                        # for validation + optional memory cache (avoid UnboundLocalError due to del).
+                        computed_result_for_cache = feature_result
+
                         # Handle different return types
                         # If function returns a tuple (e.g., MACD), convert to DataFrame
                         if isinstance(feature_result, tuple):
@@ -1211,6 +1372,9 @@ class ParallelFeatureComputer:
                                 if feature_df.columns.duplicated().any():
                                     feature_df = feature_df.loc[:, ~feature_df.columns.duplicated()]
                                 
+                                # use the normalized df for cache/validation
+                                computed_result_for_cache = feature_df
+
                                 new_cols = [c for c in feature_df.columns if c not in result_df.columns]
                                 existing_cols = [c for c in feature_df.columns if c in result_df.columns]
                                 
@@ -1237,6 +1401,7 @@ class ParallelFeatureComputer:
                             # 处理重复列名：如果有重复列，保留第一个
                             if feature_result.columns.duplicated().any():
                                 feature_result = feature_result.loc[:, ~feature_result.columns.duplicated()]
+                            computed_result_for_cache = feature_result
                             
                             new_cols = [
                                 c for c in feature_result.columns if c not in result_df.columns
@@ -1251,23 +1416,21 @@ class ParallelFeatureComputer:
                             # 添加新列
                             if new_cols:
                                 result_df = pd.concat([result_df, feature_result[new_cols]], axis=1)
-                                # 释放临时对象
-                                del feature_result
-                                import gc
-                                gc.collect()
+                                # 不要在这里 del feature_result：后面还要做质量校验/可能存内存缓存
                         # 如果返回的是 Series，添加到 DataFrame
                         elif isinstance(feature_result, pd.Series):
                             output_cols = feature_info.get("output_columns", [feature_name])
                             col_name = output_cols[0] if output_cols else (feature_result.name or feature_name)
                             if col_name not in result_df.columns:
                                 result_df[col_name] = feature_result
+                            computed_result_for_cache = feature_result
                         
                         # 验证新计算的特征质量
-                        self._validate_cache_quality(feature_result, feature_name, cache_type="computed")
+                        self._validate_cache_quality(computed_result_for_cache, feature_name, cache_type="computed")
                         
                         # 保存内存缓存
                         if self.use_memory_cache:
-                            self.memory_cache[feature_name] = feature_result
+                            self.memory_cache[feature_name] = computed_result_for_cache
                         
                         print(f"     ✅ Computed {feature_name}")
                     except Exception as e:

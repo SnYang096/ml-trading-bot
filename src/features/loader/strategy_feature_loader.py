@@ -341,8 +341,21 @@ class StrategyFeatureLoader:
                 feature_info = features[feature_name]
                 output_cols.extend(feature_info.get("output_columns", [feature_name]))
         
-        all_cols = list(df.columns) + [c for c in output_cols if c in result_df.columns]
-        return result_df[all_cols]
+        # Avoid huge allocations from pandas block copies when slicing columns.
+        # Also protect against duplicate column names leaking in from upstream merges.
+        if result_df.columns.duplicated().any():
+            result_df = result_df.loc[:, ~result_df.columns.duplicated()]
+
+        # Build a stable, de-duplicated column list (preserve order).
+        all_cols = list(dict.fromkeys(list(df.columns) + output_cols))
+        all_cols = [c for c in all_cols if c in result_df.columns]
+
+        # In most cases result_df already contains exactly these columns; avoid an
+        # unnecessary copy that can blow up memory.
+        if len(all_cols) == len(result_df.columns) and set(all_cols) == set(result_df.columns):
+            return result_df
+
+        return result_df.loc[:, all_cols]
     
     def get_strategy_features(self, strategy_name: str) -> List[str]:
         """

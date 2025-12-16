@@ -66,6 +66,11 @@ from src.features.loader.feature_wrappers import (
     compute_footprint_features,
 )
 
+# Baseline wrappers (to avoid passing full wide df)
+from src.features.loader.baseline_feature_wrappers import (
+    compute_bb_width_features_from_series,
+)
+
 # 组合特征包装函数（交互特征 + 衍生特征）
 from src.features.loader.common_derived_feature_wrappers import (
     compute_sr_strength_combined_wrapper,
@@ -111,6 +116,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "BaselineFeatureEngineer.compute_acceleration_3": BaselineFeatureEngineer.compute_acceleration_3,
     "BaselineFeatureEngineer.compute_atr_percentile": BaselineFeatureEngineer.compute_atr_percentile,
     "BaselineFeatureEngineer.compute_bb_width_features": BaselineFeatureEngineer.compute_bb_width_features,
+    "compute_bb_width_features_from_series": compute_bb_width_features_from_series,
     "BaselineFeatureEngineer.compute_compression_to_breakout_prob": BaselineFeatureEngineer.compute_compression_to_breakout_prob,
     "BaselineFeatureEngineer.compute_range_ratio_5bar": BaselineFeatureEngineer.compute_range_ratio_5bar,
     "BaselineFeatureEngineer.compute_roc_5": BaselineFeatureEngineer.compute_roc_5,

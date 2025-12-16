@@ -112,12 +112,12 @@ volatility_features:
         - vol_mom_5                      # Volatility momentum (5-period)
         - vol_mom_10                     # Volatility momentum (10-period)
 
-    - name: vpin_volatility
-      feature_name: vpin_features
-      required: true
-      columns:
-        - vpin_volatility_10
-        - vpin_volatility_20
+    # - name: vpin_volatility
+    #   feature_name: vpin_features
+    #   required: true
+    #   columns:
+    #     - vpin_volatility_10
+    #     - vpin_volatility_20
 
     - name: spectrum_volatility
       feature_name: spectrum_features
@@ -176,20 +176,20 @@ volatility_features:
         # 
         # 注意：WPT特征具有约 window//2 的相位滞后，适用于中低频策略（日线/4H）
 
-    - name: volume_profile_volatility
-      feature_name: volume_profile_volatility_features
-      required: true
-      columns:
-        # Volume Profile 波动率特征（从 WPT 降噪后的 Volume Profile 提取）
-        # 核心思想：Volume Profile 揭示价格在哪些区域积累了大量成交，与未来波动密切相关
-        # 
-        # 特征说明：
-        - vp_width_ratio        # Value Area Width / Full Range（市场共识强度，越小→共识强→波动可能低）
-        - vp_poc_deviation      # 当前价格 vs POC 的标准化偏离（绝对值大→远离价值中枢→波动可能高）
-        - vp_skewness           # 成交量分布偏度（绝对值大→趋势强→波动可能持续）
-        - vp_entropy            # 信息熵（不确定性，越大→分歧大→波动可能高）
-        - vp_lv_ratio           # 低成交量区域比例（LVN，越大→薄弱区多→波动易放大）
-        - vp_hv_ratio           # 高成交量区域比例（HVN，越大→支撑/阻力密集→波动可能受限）
+    # - name: volume_profile_volatility
+    #   feature_name: volume_profile_volatility_features
+    #   required: true
+    #   columns:
+    #     # Volume Profile 波动率特征（从 WPT 降噪后的 Volume Profile 提取）
+    #     # 核心思想：Volume Profile 揭示价格在哪些区域积累了大量成交，与未来波动密切相关
+    #     # 
+    #     # 特征说明：
+    #     - vp_width_ratio        # Value Area Width / Full Range（市场共识强度，越小→共识强→波动可能低）
+    #     - vp_poc_deviation      # 当前价格 vs POC 的标准化偏离（绝对值大→远离价值中枢→波动可能高）
+    #     - vp_skewness           # 成交量分布偏度（绝对值大→趋势强→波动可能持续）
+    #     - vp_entropy            # 信息熵（不确定性，越大→分歧大→波动可能高）
+    #     - vp_lv_ratio           # 低成交量区域比例（LVN，越大→薄弱区多→波动易放大）
+    #     - vp_hv_ratio           # 高成交量区域比例（HVN，越大→支撑/阻力密集→波动可能受限）
         # 
         # 使用说明：
         # 1. vp_width_ratio ↓ → 市场在窄区间达成共识 → 未来波动率大概率下降（压缩后爆发前）
@@ -226,20 +226,20 @@ volatility_features:
   categorical_features:
     - "_symbol"
 
-# 特征工程配置（可选，用于动态生成特征）
-feature_engineering:
-  # VPIN volatility ratio（如果不存在，动态生成）
-  create_vpin_vol_ratio: true
-  vpin_vol_ratio_params:
-    short_window: 10
-    long_window: 20
-    epsilon: 1e-8
+# # 特征工程配置（可选，用于动态生成特征）
+# feature_engineering:
+#   # VPIN volatility ratio（如果不存在，动态生成）
+#   create_vpin_vol_ratio: true
+#   vpin_vol_ratio_params:
+#     short_window: 10
+#     long_window: 20
+#     epsilon: 1e-8
   
-  # VPIN volatility Z-score（如果不存在，动态生成）
-  create_vpin_vol_zscore: true
-  vpin_vol_zscore_params:
-    window: 50
-    threshold: 2.0  # 用于spike检测
+#   # VPIN volatility Z-score（如果不存在，动态生成）
+#   create_vpin_vol_zscore: true
+#   vpin_vol_zscore_params:
+#     window: 50
+#     threshold: 2.0  # 用于spike检测
 
 # 数据预处理配置
 preprocessing:

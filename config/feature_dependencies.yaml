@@ -58,13 +58,17 @@ features:
   
   bb_width:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_bb_width_features
+    compute_func: compute_bb_width_features_from_series
     dependencies: []
     required_columns: ["close", "high", "low"]
     output_columns: ["bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_width_normalized"]
     category: volatility
     description: "Bollinger band width and ATR-normalized width"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      high: high
+      low: low
   
   range_ratio_5bar:
     module: baseline
@@ -357,13 +361,19 @@ features:
     module: enhanced
     compute_func: extract_wpt_features
     dependencies: []
-    required_columns: ["cvd"]
+    # NOTE: extract_wpt_features always computes price WPT first; it needs close (and uses
+    # typical price if high/low exist). We still compute CVD WPT via cvd_col.
+    required_columns: ["close", "high", "low", "cvd"]
     output_columns: ["wpt_cvd_fluctuation"]
     category: wpt
     description: "WPT CVD fluctuation"
     compute_params:
       wavelet: "db4"
       level: 4
+      price_col: "close"
+      cvd_col: "cvd"
+      # keep other channels disabled
+      volume_col: "volume"
   
   # ========================================================================
   # 流动性特征（依赖 WPT 和基础指标）
