@@ -8,6 +8,17 @@ from typing import Dict, Callable, Optional
 
 # Baseline 特征
 from src.features.time_series.baseline_features import BaselineFeatureEngineer
+from src.features.time_series.baseline_features import (
+    compute_acceleration_3_from_series,
+    compute_volume_anomaly_from_series,
+    compute_trend_r2_20_from_series,
+    compute_trend_r2_50_from_series,
+    compute_slope_consistency_score_from_series,
+    compute_volatility_reversal_score_from_series,
+    compute_atr_percentile_from_series,
+    compute_trend_volatility_alignment_from_series,
+    compute_compression_to_breakout_prob_from_series,
+)
 
 # Enhanced 特征工具函数
 from src.features.time_series.utils_wpt_features import extract_wpt_features
@@ -86,7 +97,10 @@ from src.features.time_series.utils_order_flow_features import (
 from src.features.time_series.utils_garch_features import (
     extract_garch_features_from_series,
 )
-from src.features.time_series.utils_dtw_features import extract_dtw_features
+from src.features.time_series.utils_dtw_features import (
+    extract_dtw_features,
+    extract_dtw_features_from_series,
+)
 from src.features.time_series.utils_evt_features import extract_evt_features_from_series
 from src.features.time_series.utils_volatility_features import (
     extract_extended_volatility_features,
@@ -193,6 +207,13 @@ from src.features.time_series.utils_interaction_features import (
     compute_vpin_x_trade_cluster_entropy_from_series,
     compute_sma_slope_x_price_pos_from_series,
     apply_rank_transform_to_interaction_from_series,
+    compute_sr_strength_combined_from_series,
+    compute_sr_distance_normalized_from_series,
+    compute_dist_to_zz_high_from_series,
+    compute_dist_to_zz_low_from_series,
+    compute_dist_to_zz_high_atr_from_series,
+    compute_dist_to_zz_low_atr_from_series,
+    compute_cvd_slope_from_series,
 )
 from src.features.time_series.utils_interaction_features import (
     compute_tbr_ma_from_series,
@@ -237,6 +258,15 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     # Prefer narrow-input implementation for pipeline; keep old DF-based method for compatibility.
     "BaselineFeatureEngineer.compute_roc_5": BaselineFeatureEngineer.compute_roc_5,
     "compute_roc_5_from_series": compute_roc_5_from_series,
+    "compute_acceleration_3_from_series": compute_acceleration_3_from_series,
+    "compute_volume_anomaly_from_series": compute_volume_anomaly_from_series,
+    "compute_trend_r2_20_from_series": compute_trend_r2_20_from_series,
+    "compute_trend_r2_50_from_series": compute_trend_r2_50_from_series,
+    "compute_slope_consistency_score_from_series": compute_slope_consistency_score_from_series,
+    "compute_volatility_reversal_score_from_series": compute_volatility_reversal_score_from_series,
+    "compute_atr_percentile_from_series": compute_atr_percentile_from_series,
+    "compute_trend_volatility_alignment_from_series": compute_trend_volatility_alignment_from_series,
+    "compute_compression_to_breakout_prob_from_series": compute_compression_to_breakout_prob_from_series,
     "compute_price_range_symmetry_from_series": compute_price_range_symmetry_from_series,
     "compute_wick_ratios_from_series": compute_wick_ratios_from_series,
     "BaselineFeatureEngineer.compute_slope_consistency_score": BaselineFeatureEngineer.compute_slope_consistency_score,
@@ -346,6 +376,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "select_trade_cluster_block_features": select_trade_cluster_block_features,
     "extract_garch_features_from_series": extract_garch_features_from_series,
     "extract_dtw_features": extract_dtw_features,
+    "extract_dtw_features_from_series": extract_dtw_features_from_series,
     "extract_evt_features_from_series": extract_evt_features_from_series,
     "extract_extended_volatility_features": extract_extended_volatility_features,
     "compute_vol_raw_features_from_series": compute_vol_raw_features_from_series,
@@ -387,6 +418,13 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_dist_to_zz_high_atr": compute_dist_to_zz_high_atr_wrapper,
     "compute_dist_to_zz_low_atr": compute_dist_to_zz_low_atr_wrapper,
     "compute_cvd_slope": compute_cvd_slope_wrapper,
+    "compute_sr_strength_combined_from_series": compute_sr_strength_combined_from_series,
+    "compute_sr_distance_normalized_from_series": compute_sr_distance_normalized_from_series,
+    "compute_dist_to_zz_high_from_series": compute_dist_to_zz_high_from_series,
+    "compute_dist_to_zz_low_from_series": compute_dist_to_zz_low_from_series,
+    "compute_dist_to_zz_high_atr_from_series": compute_dist_to_zz_high_atr_from_series,
+    "compute_dist_to_zz_low_atr_from_series": compute_dist_to_zz_low_atr_from_series,
+    "compute_cvd_slope_from_series": compute_cvd_slope_from_series,
     "compute_atr_ratio": compute_atr_ratio_wrapper,
     "compute_atr_ratio_from_series": compute_atr_ratio_from_series,
     "compute_bb_width_ratio": compute_bb_width_ratio_wrapper,

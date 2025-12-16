@@ -514,6 +514,12 @@ def compute_sr_strength_combined(
     return df[sqs_col].fillna(0.0).rename("sr_strength_combined")
 
 
+def compute_sr_strength_combined_from_series(*, sqs: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for sr_strength_combined."""
+    s = pd.to_numeric(sqs, errors="coerce").fillna(0.0).astype(float)
+    return s.rename("sr_strength_combined").to_frame()
+
+
 def compute_sr_distance_normalized(
     df: pd.DataFrame,
     dist_col: str = "dist_to_nearest_sr",
@@ -542,6 +548,16 @@ def compute_sr_distance_normalized(
     return (
         df[dist_col] / df[atr_col].replace(0, np.nan)
     ).fillna(0.0).rename("sr_distance_normalized")
+
+
+def compute_sr_distance_normalized_from_series(
+    *, dist_to_nearest_sr: pd.Series, atr: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO entrypoint for sr_distance_normalized."""
+    dist = pd.to_numeric(dist_to_nearest_sr, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).replace(0, np.nan)
+    out = (dist / atr_s).fillna(0.0).rename("sr_distance_normalized")
+    return out.to_frame()
 
 
 def compute_dist_to_zz_high(
@@ -574,6 +590,15 @@ def compute_dist_to_zz_high(
     ).fillna(0.0).rename("dist_to_zz_high")
 
 
+def compute_dist_to_zz_high_from_series(
+    *, close: pd.Series, zz_high_value: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO entrypoint for dist_to_zz_high."""
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    z = pd.to_numeric(zz_high_value, errors="coerce").astype(float)
+    return (c - z).abs().fillna(0.0).rename("dist_to_zz_high").to_frame()
+
+
 def compute_dist_to_zz_low(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -602,6 +627,15 @@ def compute_dist_to_zz_low(
     return (
         (df[price_col] - df[zz_low_col]).abs()
     ).fillna(0.0).rename("dist_to_zz_low")
+
+
+def compute_dist_to_zz_low_from_series(
+    *, close: pd.Series, zz_low_value: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO entrypoint for dist_to_zz_low."""
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    z = pd.to_numeric(zz_low_value, errors="coerce").astype(float)
+    return (c - z).abs().fillna(0.0).rename("dist_to_zz_low").to_frame()
 
 
 def compute_dist_to_zz_high_atr(
@@ -634,6 +668,15 @@ def compute_dist_to_zz_high_atr(
     ).fillna(0.0).rename("dist_to_zz_high_atr")
 
 
+def compute_dist_to_zz_high_atr_from_series(
+    *, dist_to_zz_high: pd.Series, atr: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO entrypoint for dist_to_zz_high_atr."""
+    dist = pd.to_numeric(dist_to_zz_high, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).replace(0, np.nan)
+    return (dist / atr_s).fillna(0.0).rename("dist_to_zz_high_atr").to_frame()
+
+
 def compute_dist_to_zz_low_atr(
     df: pd.DataFrame,
     dist_col: str = "dist_to_zz_low",
@@ -662,6 +705,15 @@ def compute_dist_to_zz_low_atr(
     return (
         df[dist_col] / df[atr_col].replace(0, np.nan)
     ).fillna(0.0).rename("dist_to_zz_low_atr")
+
+
+def compute_dist_to_zz_low_atr_from_series(
+    *, dist_to_zz_low: pd.Series, atr: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO entrypoint for dist_to_zz_low_atr."""
+    dist = pd.to_numeric(dist_to_zz_low, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).replace(0, np.nan)
+    return (dist / atr_s).fillna(0.0).rename("dist_to_zz_low_atr").to_frame()
 
 
 def compute_cvd_slope(
@@ -705,6 +757,28 @@ def compute_cvd_slope(
         .fillna(0.0)
         .rename(f"cvd_slope_{window}")
     )
+
+
+def compute_cvd_slope_from_series(*, cvd: pd.Series, window: int = 5) -> pd.DataFrame:
+    """Narrow-IO entrypoint for cvd_slope_{window}."""
+    s = pd.to_numeric(cvd, errors="coerce").astype(float)
+    if len(s) <= window:
+        # keep legacy behavior of raising in df version, but return zeros for short series to keep pipeline robust
+        out = pd.Series(0.0, index=s.index, name=f"cvd_slope_{window}")
+        return out.to_frame()
+
+    def _compute_slope(x):
+        if len(x) > 1:
+            return np.polyfit(range(len(x)), x, 1)[0]
+        return 0.0
+
+    out = (
+        s.rolling(window=window, min_periods=1)
+        .apply(_compute_slope)
+        .fillna(0.0)
+        .rename(f"cvd_slope_{window}")
+    )
+    return out.to_frame()
 
 
 def compute_atr_ratio(

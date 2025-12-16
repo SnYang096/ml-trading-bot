@@ -4197,6 +4197,150 @@ def compute_roc_5_from_series(
     return roc_5
 
 
+def compute_acceleration_3_from_series(*, close: pd.Series, feature_shift: int = 0) -> pd.DataFrame:
+    """Narrow-IO acceleration_3: normalized ROC(3) difference."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    roc_3 = close.pct_change(3)
+    roc_3_mean = roc_3.rolling(window=50, min_periods=5).mean()
+    roc_3_std = roc_3.rolling(window=50, min_periods=5).std()
+    roc_3_std = roc_3_std.clip(lower=roc_3.abs().quantile(0.01))
+    roc_3_norm = (
+        ((roc_3 - roc_3_mean) / roc_3_std.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    current = roc_3_norm.shift(feature_shift) if feature_shift > 0 else roc_3_norm
+    prev = roc_3_norm.shift(feature_shift + 1)
+    # Match legacy behavior: first rows can be NaN due to shifting.
+    out = (current - prev).rename("acceleration_3")
+    return out.to_frame()
+
+
+def compute_volume_anomaly_from_series(*, volume: pd.Series) -> pd.DataFrame:
+    """Narrow-IO volume_anomaly: EWM-based z-score of volume ratio."""
+    volume = pd.to_numeric(volume, errors="coerce").astype(float)
+    vol_ratio = volume / volume.ewm(span=20, min_periods=10).mean()
+    vol_ratio = vol_ratio.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+    vol_log = np.log1p(vol_ratio)
+    mean = vol_log.rolling(50, min_periods=10).mean()
+    std = vol_log.rolling(50, min_periods=10).std()
+    out = (
+        ((vol_log - mean) / std.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .rename("volume_anomaly")
+    )
+    return out.to_frame()
+
+
+def compute_trend_r2_20_from_series(*, close: pd.Series, feature_shift: int = 0) -> pd.DataFrame:
+    """Narrow-IO 20-bar trend R²."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    # Match legacy behavior: initial rows can be NaN due to insufficient window.
+    out = BaselineFeatureEngineer._trend_r2(close, window=20, lag=feature_shift)
+    out.name = "trend_r2_20"
+    return out.to_frame()
+
+
+def compute_trend_r2_50_from_series(*, close: pd.Series, feature_shift: int = 0) -> pd.DataFrame:
+    """Narrow-IO 50-bar trend R²."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    # Match legacy behavior: initial rows can be NaN due to insufficient window.
+    out = BaselineFeatureEngineer._trend_r2(close, window=50, lag=feature_shift)
+    out.name = "trend_r2_50"
+    return out.to_frame()
+
+
+def compute_slope_consistency_score_from_series(*, close: pd.Series) -> pd.DataFrame:
+    """Narrow-IO EMA slope agreement (10/20/50)."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    ema10 = close.ewm(span=10).mean()
+    ema20 = close.ewm(span=20).mean()
+    ema50 = close.ewm(span=50).mean()
+    slope10 = np.sign(ema10.diff())
+    slope20 = np.sign(ema20.diff())
+    slope50 = np.sign(ema50.diff())
+    out = (
+        (slope10 == slope20).astype(int)
+        + (slope20 == slope50).astype(int)
+        + (slope10 == slope50).astype(int)
+    ).fillna(0).rename("slope_consistency_score")
+    return out.to_frame()
+
+
+def compute_volatility_reversal_score_from_series(
+    *, high: pd.Series, low: pd.Series, close: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO ATR mean-reversion z-score."""
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = BaselineFeatureEngineer.compute_atr(high, low, close)
+    atr_mean = atr.rolling(50).mean()
+    atr_std = atr.rolling(50).std()
+    out = ((atr - atr_mean) / atr_std.replace(0, np.nan)).fillna(0.0).rename(
+        "volatility_reversal_score"
+    )
+    return out.to_frame()
+
+
+def compute_atr_percentile_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Narrow-IO ATR percentile (compression detector)."""
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = BaselineFeatureEngineer.compute_atr(high, low, close).astype(float)
+
+    def _percentile(arr: np.ndarray) -> float:
+        if len(arr) == 0:
+            return 0.5
+        current = arr[-1]
+        return float(np.mean(arr <= current))
+
+    pct = atr.rolling(window=window, min_periods=window).apply(_percentile, raw=True).fillna(0.5)
+    if shift:
+        pct = pct.shift(shift)
+    out = pct.clip(0.0, 1.0).fillna(0.5).rename("atr_percentile")
+    return out.to_frame()
+
+
+def compute_trend_volatility_alignment_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    feature_shift: int = 0,
+    atr_percentile_window: int = 288,
+) -> pd.DataFrame:
+    """Narrow-IO alignment of ROC sign and ATR percentile regime."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    roc_5 = compute_roc_5_from_series(close=close)
+    atr_pct = compute_atr_percentile_from_series(
+        high=high, low=low, close=close, window=atr_percentile_window, shift=1
+    )["atr_percentile"]
+    out = (np.sign(roc_5.shift(feature_shift)).fillna(0.0) * atr_pct.fillna(0.0)).rename(
+        "trend_volatility_alignment"
+    )
+    return out.to_frame()
+
+
+def compute_compression_to_breakout_prob_from_series(
+    *, compression_duration: pd.Series, roc_5: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO compression_duration × roc_5 proxy."""
+    cd = pd.to_numeric(compression_duration, errors="coerce").astype(float).fillna(0.0)
+    r = pd.to_numeric(roc_5, errors="coerce").astype(float).fillna(0.0)
+    out = (cd * r).rename("compression_to_breakout_prob")
+    return out.to_frame()
+
+
 def compute_range_ratio_5bar_from_series(*, high: pd.Series, low: pd.Series) -> pd.Series:
     """5/20 Bar range ratio z-score (narrow input/output)."""
     high = pd.to_numeric(high, errors="coerce").astype(float)

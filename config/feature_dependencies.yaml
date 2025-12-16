@@ -53,15 +53,17 @@ features:
   
   acceleration_3:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_acceleration_3
+    compute_func: compute_acceleration_3_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["acceleration_3"]
     category: technical_indicator
     description: "Momentum acceleration: normalized ROC(3) difference (动量加速度)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       feature_shift: 0
+    column_mappings:
+      close: close
   
   bb_width:
     module: baseline
@@ -92,13 +94,17 @@ features:
   
   volatility_reversal_score:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_volatility_reversal_score
+    compute_func: compute_volatility_reversal_score_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["volatility_reversal_score"]
     category: volatility
     description: "ATR mean-reversion z-score"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
   
   price_range_symmetry:
     module: baseline
@@ -135,13 +141,15 @@ features:
   
   volume_anomaly:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_volume_anomaly
+    compute_func: compute_volume_anomaly_from_series
     dependencies: []
     required_columns: ["volume"]
     output_columns: ["volume_anomaly"]
     category: liquidity
     description: "Volume anomaly z-score (EWM based)"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      volume: volume
   
   roc_5:
     module: baseline
@@ -159,72 +167,89 @@ features:
   
   trend_r2_20:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_trend_r2_20
+    compute_func: compute_trend_r2_20_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["trend_r2_20"]
     category: trend
     description: "20-bar trend R² (log price)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       feature_shift: 0
+    column_mappings:
+      close: close
   
   trend_r2_50:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_trend_r2_50
+    compute_func: compute_trend_r2_50_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["trend_r2_50"]
     category: trend
     description: "50-bar trend R² (log price)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       feature_shift: 0
+    column_mappings:
+      close: close
   
   slope_consistency_score:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_slope_consistency_score
+    compute_func: compute_slope_consistency_score_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["slope_consistency_score"]
     category: trend
     description: "EMA slope agreement (10/20/50)"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
   
   atr_percentile:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_atr_percentile
+    compute_func: compute_atr_percentile_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["atr_percentile"]
     category: volatility
     description: "Rolling ATR percentile (compression detector)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       window: 288
       shift: 1
+    column_mappings:
+      high: high
+      low: low
+      close: close
   
   trend_volatility_alignment:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_trend_volatility_alignment
+    compute_func: compute_trend_volatility_alignment_from_series
     dependencies: []
     required_columns: ["close", "high", "low"]
     output_columns: ["trend_volatility_alignment"]
     category: trend
     description: "Alignment of ROC sign and ATR percentile regime"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       feature_shift: 0
+    column_mappings:
+      close: close
+      high: high
+      low: low
   
   compression_to_breakout_prob:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_compression_to_breakout_prob
+    compute_func: compute_compression_to_breakout_prob_from_series
     dependencies: ["roc_5", "compression_duration"]
-    required_columns: ["compression_duration"]
+    required_columns: ["compression_duration", "roc_5"]
     output_columns: ["compression_to_breakout_prob"]
     category: compression
     description: "Compression duration weighted momentum proxy"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      compression_duration: compression_duration
+      roc_5: roc_5
   
   # ========================================================================
   # WPT 重构价格（所有 SR 的基础）
@@ -2021,13 +2046,91 @@ features:
   # 通用DTW特征（包含所有模板）- 用于需要全部模板的场景
   dtw_features:
     module: enhanced
-    compute_func: extract_dtw_features
+    compute_func: extract_dtw_features_from_series
     dependencies: ["sr_strength_max"]  # 需要SR特征来计算dist_to_nearest_sr
     required_columns: ["close", "dist_to_nearest_sr", "atr"]
     # 注意：多窗口模式下，实际输出列名会包含 _w{window} 后缀
     # 例如：dtw_hammer_w20_dist, dtw_hammer_w30_dist, dtw_hammer_w40_dist
     # 单窗口模式下，列名不带后缀：dtw_hammer_dist
-    output_columns: []  # 动态列名，由函数返回的DataFrame决定
+    output_columns:
+      - dtw_hammer_dist_w20
+      - dtw_head_shoulder_bottom_dist_w20
+      - dtw_double_bottom_dist_w20
+      - dtw_bullish_engulfing_dist_w20
+      - dtw_shooting_star_dist_w20
+      - dtw_head_shoulder_top_dist_w20
+      - dtw_double_top_dist_w20
+      - dtw_bearish_engulfing_dist_w20
+      - dtw_bull_flag_dist_w20
+      - dtw_bear_flag_dist_w20
+      - dtw_triangle_dist_w20
+      - dtw_decline_consolidation_dist_w20
+      - dtw_hammer_inverse_dist_w20
+      - dtw_head_shoulder_bottom_inverse_dist_w20
+      - dtw_double_bottom_inverse_dist_w20
+      - dtw_bullish_engulfing_inverse_dist_w20
+      - dtw_shooting_star_inverse_dist_w20
+      - dtw_head_shoulder_top_inverse_dist_w20
+      - dtw_double_top_inverse_dist_w20
+      - dtw_bearish_engulfing_inverse_dist_w20
+      - dtw_decline_consolidation_inverse_dist_w20
+      - dtw_random_15_dist_w20
+      - dtw_random_20_dist_w20
+      - dtw_random_30_dist_w20
+      - dtw_min_dist_w20
+      - dtw_best_match_w20
+      - dtw_hammer_dist_w30
+      - dtw_head_shoulder_bottom_dist_w30
+      - dtw_double_bottom_dist_w30
+      - dtw_bullish_engulfing_dist_w30
+      - dtw_shooting_star_dist_w30
+      - dtw_head_shoulder_top_dist_w30
+      - dtw_double_top_dist_w30
+      - dtw_bearish_engulfing_dist_w30
+      - dtw_bull_flag_dist_w30
+      - dtw_bear_flag_dist_w30
+      - dtw_triangle_dist_w30
+      - dtw_decline_consolidation_dist_w30
+      - dtw_hammer_inverse_dist_w30
+      - dtw_head_shoulder_bottom_inverse_dist_w30
+      - dtw_double_bottom_inverse_dist_w30
+      - dtw_bullish_engulfing_inverse_dist_w30
+      - dtw_shooting_star_inverse_dist_w30
+      - dtw_head_shoulder_top_inverse_dist_w30
+      - dtw_double_top_inverse_dist_w30
+      - dtw_bearish_engulfing_inverse_dist_w30
+      - dtw_decline_consolidation_inverse_dist_w30
+      - dtw_random_15_dist_w30
+      - dtw_random_20_dist_w30
+      - dtw_random_30_dist_w30
+      - dtw_min_dist_w30
+      - dtw_best_match_w30
+      - dtw_hammer_dist_w40
+      - dtw_head_shoulder_bottom_dist_w40
+      - dtw_double_bottom_dist_w40
+      - dtw_bullish_engulfing_dist_w40
+      - dtw_shooting_star_dist_w40
+      - dtw_head_shoulder_top_dist_w40
+      - dtw_double_top_dist_w40
+      - dtw_bearish_engulfing_dist_w40
+      - dtw_bull_flag_dist_w40
+      - dtw_bear_flag_dist_w40
+      - dtw_triangle_dist_w40
+      - dtw_decline_consolidation_dist_w40
+      - dtw_hammer_inverse_dist_w40
+      - dtw_head_shoulder_bottom_inverse_dist_w40
+      - dtw_double_bottom_inverse_dist_w40
+      - dtw_bullish_engulfing_inverse_dist_w40
+      - dtw_shooting_star_inverse_dist_w40
+      - dtw_head_shoulder_top_inverse_dist_w40
+      - dtw_double_top_inverse_dist_w40
+      - dtw_bearish_engulfing_inverse_dist_w40
+      - dtw_decline_consolidation_inverse_dist_w40
+      - dtw_random_15_dist_w40
+      - dtw_random_20_dist_w40
+      - dtw_random_30_dist_w40
+      - dtw_min_dist_w40
+      - dtw_best_match_w40
     category: pattern
     description: "DTW (Dynamic Time Warping) 形态匹配特征（改进版）- 支持多窗口、反向模板、距离归一化"
     compute_params:
@@ -2038,7 +2141,11 @@ features:
       normalize_distance: true  # 距离归一化，使不同窗口的特征可比
       warping_window: 0.1  # 限制扭曲范围（10%），提高匹配质量
       use_c: true  # 使用C实现加速
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      dist_to_nearest_sr: dist_to_nearest_sr
+      atr: atr
     notes: |
       DTW 改进版特性：
       - 多窗口支持：自动生成不同窗口的特征（window=[20,30,40]）
@@ -2060,10 +2167,73 @@ features:
   # SR 反转策略专用DTW特征（只包含反转形态 + 反向模板 + 随机模板）
   dtw_features_reversal:
     module: enhanced
-    compute_func: extract_dtw_features
+    compute_func: extract_dtw_features_from_series
     dependencies: ["sr_strength_max"]
     required_columns: ["close", "dist_to_nearest_sr", "atr"]
-    output_columns: []  # 动态列名
+    output_columns:
+      - dtw_hammer_dist_w15
+      - dtw_hammer_inverse_dist_w15
+      - dtw_head_shoulder_bottom_dist_w15
+      - dtw_head_shoulder_bottom_inverse_dist_w15
+      - dtw_double_bottom_dist_w15
+      - dtw_double_bottom_inverse_dist_w15
+      - dtw_bullish_engulfing_dist_w15
+      - dtw_bullish_engulfing_inverse_dist_w15
+      - dtw_shooting_star_dist_w15
+      - dtw_shooting_star_inverse_dist_w15
+      - dtw_head_shoulder_top_dist_w15
+      - dtw_head_shoulder_top_inverse_dist_w15
+      - dtw_double_top_dist_w15
+      - dtw_double_top_inverse_dist_w15
+      - dtw_bearish_engulfing_dist_w15
+      - dtw_bearish_engulfing_inverse_dist_w15
+      - dtw_random_15_dist_w15
+      - dtw_random_20_dist_w15
+      - dtw_random_30_dist_w15
+      - dtw_min_dist_w15
+      - dtw_best_match_w15
+      - dtw_hammer_dist_w20
+      - dtw_hammer_inverse_dist_w20
+      - dtw_head_shoulder_bottom_dist_w20
+      - dtw_head_shoulder_bottom_inverse_dist_w20
+      - dtw_double_bottom_dist_w20
+      - dtw_double_bottom_inverse_dist_w20
+      - dtw_bullish_engulfing_dist_w20
+      - dtw_bullish_engulfing_inverse_dist_w20
+      - dtw_shooting_star_dist_w20
+      - dtw_shooting_star_inverse_dist_w20
+      - dtw_head_shoulder_top_dist_w20
+      - dtw_head_shoulder_top_inverse_dist_w20
+      - dtw_double_top_dist_w20
+      - dtw_double_top_inverse_dist_w20
+      - dtw_bearish_engulfing_dist_w20
+      - dtw_bearish_engulfing_inverse_dist_w20
+      - dtw_random_15_dist_w20
+      - dtw_random_20_dist_w20
+      - dtw_random_30_dist_w20
+      - dtw_min_dist_w20
+      - dtw_best_match_w20
+      - dtw_hammer_dist_w25
+      - dtw_hammer_inverse_dist_w25
+      - dtw_head_shoulder_bottom_dist_w25
+      - dtw_head_shoulder_bottom_inverse_dist_w25
+      - dtw_double_bottom_dist_w25
+      - dtw_double_bottom_inverse_dist_w25
+      - dtw_bullish_engulfing_dist_w25
+      - dtw_bullish_engulfing_inverse_dist_w25
+      - dtw_shooting_star_dist_w25
+      - dtw_shooting_star_inverse_dist_w25
+      - dtw_head_shoulder_top_dist_w25
+      - dtw_head_shoulder_top_inverse_dist_w25
+      - dtw_double_top_dist_w25
+      - dtw_double_top_inverse_dist_w25
+      - dtw_bearish_engulfing_dist_w25
+      - dtw_bearish_engulfing_inverse_dist_w25
+      - dtw_random_15_dist_w25
+      - dtw_random_20_dist_w25
+      - dtw_random_30_dist_w25
+      - dtw_min_dist_w25
+      - dtw_best_match_w25
     category: pattern
     description: "DTW 反转形态特征（SR反转策略专用）- 只包含反转形态及其反向模板"
     compute_params:
@@ -2076,7 +2246,11 @@ features:
       normalize_distance: true
       warping_window: 0.1
       use_c: true
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      dist_to_nearest_sr: dist_to_nearest_sr
+      atr: atr
     notes: |
       只包含反转形态模板及其反向版本，用于对比学习：
       - 反转形态：hammer, head_shoulder_bottom, double_bottom, bullish_engulfing,
@@ -2088,10 +2262,62 @@ features:
   # SR 突破策略专用DTW特征（只包含突破形态）
   dtw_features_breakout:
     module: enhanced
-    compute_func: extract_dtw_features
+    compute_func: extract_dtw_features_from_series
     dependencies: ["sr_strength_max"]
     required_columns: ["close", "dist_to_nearest_sr", "atr"]
-    output_columns: []  # 动态列名
+    output_columns:
+      - dtw_head_shoulder_bottom_dist_w30
+      - dtw_head_shoulder_bottom_inverse_dist_w30
+      - dtw_head_shoulder_top_dist_w30
+      - dtw_head_shoulder_top_inverse_dist_w30
+      - dtw_double_bottom_dist_w30
+      - dtw_double_bottom_inverse_dist_w30
+      - dtw_double_top_dist_w30
+      - dtw_double_top_inverse_dist_w30
+      - dtw_random_15_dist_w30
+      - dtw_random_20_dist_w30
+      - dtw_random_30_dist_w30
+      - dtw_min_dist_w30
+      - dtw_best_match_w30
+      - dtw_head_shoulder_bottom_dist_w40
+      - dtw_head_shoulder_bottom_inverse_dist_w40
+      - dtw_head_shoulder_top_dist_w40
+      - dtw_head_shoulder_top_inverse_dist_w40
+      - dtw_double_bottom_dist_w40
+      - dtw_double_bottom_inverse_dist_w40
+      - dtw_double_top_dist_w40
+      - dtw_double_top_inverse_dist_w40
+      - dtw_random_15_dist_w40
+      - dtw_random_20_dist_w40
+      - dtw_random_30_dist_w40
+      - dtw_min_dist_w40
+      - dtw_best_match_w40
+      - dtw_head_shoulder_bottom_dist_w50
+      - dtw_head_shoulder_bottom_inverse_dist_w50
+      - dtw_head_shoulder_top_dist_w50
+      - dtw_head_shoulder_top_inverse_dist_w50
+      - dtw_double_bottom_dist_w50
+      - dtw_double_bottom_inverse_dist_w50
+      - dtw_double_top_dist_w50
+      - dtw_double_top_inverse_dist_w50
+      - dtw_random_15_dist_w50
+      - dtw_random_20_dist_w50
+      - dtw_random_30_dist_w50
+      - dtw_min_dist_w50
+      - dtw_best_match_w50
+      - dtw_head_shoulder_bottom_dist_w60
+      - dtw_head_shoulder_bottom_inverse_dist_w60
+      - dtw_head_shoulder_top_dist_w60
+      - dtw_head_shoulder_top_inverse_dist_w60
+      - dtw_double_bottom_dist_w60
+      - dtw_double_bottom_inverse_dist_w60
+      - dtw_double_top_dist_w60
+      - dtw_double_top_inverse_dist_w60
+      - dtw_random_15_dist_w60
+      - dtw_random_20_dist_w60
+      - dtw_random_30_dist_w60
+      - dtw_min_dist_w60
+      - dtw_best_match_w60
     category: pattern
     description: "DTW 突破形态特征（SR突破策略专用）- 只包含突破形态及其反向模板"
     compute_params:
@@ -2103,7 +2329,11 @@ features:
       normalize_distance: true
       warping_window: 0.1
       use_c: true
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      dist_to_nearest_sr: dist_to_nearest_sr
+      atr: atr
     notes: |
       只包含突破形态模板及其反向版本：
       - 突破形态：head_shoulder_bottom, head_shoulder_top, double_bottom, double_top
@@ -2113,10 +2343,50 @@ features:
   # 压缩区突破策略专用DTW特征（只包含中继形态）
   dtw_features_compression:
     module: enhanced
-    compute_func: extract_dtw_features
+    compute_func: extract_dtw_features_from_series
     dependencies: []
     required_columns: ["close"]
-    output_columns: []  # 动态列名
+    output_columns:
+      - dtw_triangle_dist_w20
+      - dtw_bull_flag_dist_w20
+      - dtw_bear_flag_dist_w20
+      - dtw_decline_consolidation_dist_w20
+      - dtw_decline_consolidation_inverse_dist_w20
+      - dtw_random_15_dist_w20
+      - dtw_random_20_dist_w20
+      - dtw_random_30_dist_w20
+      - dtw_min_dist_w20
+      - dtw_best_match_w20
+      - dtw_triangle_dist_w30
+      - dtw_bull_flag_dist_w30
+      - dtw_bear_flag_dist_w30
+      - dtw_decline_consolidation_dist_w30
+      - dtw_decline_consolidation_inverse_dist_w30
+      - dtw_random_15_dist_w30
+      - dtw_random_20_dist_w30
+      - dtw_random_30_dist_w30
+      - dtw_min_dist_w30
+      - dtw_best_match_w30
+      - dtw_triangle_dist_w40
+      - dtw_bull_flag_dist_w40
+      - dtw_bear_flag_dist_w40
+      - dtw_decline_consolidation_dist_w40
+      - dtw_decline_consolidation_inverse_dist_w40
+      - dtw_random_15_dist_w40
+      - dtw_random_20_dist_w40
+      - dtw_random_30_dist_w40
+      - dtw_min_dist_w40
+      - dtw_best_match_w40
+      - dtw_triangle_dist_w50
+      - dtw_bull_flag_dist_w50
+      - dtw_bear_flag_dist_w50
+      - dtw_decline_consolidation_dist_w50
+      - dtw_decline_consolidation_inverse_dist_w50
+      - dtw_random_15_dist_w50
+      - dtw_random_20_dist_w50
+      - dtw_random_30_dist_w50
+      - dtw_min_dist_w50
+      - dtw_best_match_w50
     category: pattern
     description: "DTW 中继形态特征（压缩区突破策略专用）- 只包含中继形态及其反向模板"
     compute_params:
@@ -2126,7 +2396,9 @@ features:
       normalize_distance: true
       warping_window: 0.1
       use_c: true
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     notes: |
       只包含中继形态模板及其反向版本：
       - 中继形态：triangle, bull_flag, bear_flag, decline_consolidation
@@ -2136,10 +2408,34 @@ features:
   # 趋势跟踪策略专用DTW特征（只包含中继形态）
   dtw_features_trend:
     module: enhanced
-    compute_func: extract_dtw_features
+    compute_func: extract_dtw_features_from_series
     dependencies: []
     required_columns: ["close"]
-    output_columns: []  # 动态列名
+    output_columns:
+      - dtw_bull_flag_dist_w25
+      - dtw_bear_flag_dist_w25
+      - dtw_triangle_dist_w25
+      - dtw_random_15_dist_w25
+      - dtw_random_20_dist_w25
+      - dtw_random_30_dist_w25
+      - dtw_min_dist_w25
+      - dtw_best_match_w25
+      - dtw_bull_flag_dist_w35
+      - dtw_bear_flag_dist_w35
+      - dtw_triangle_dist_w35
+      - dtw_random_15_dist_w35
+      - dtw_random_20_dist_w35
+      - dtw_random_30_dist_w35
+      - dtw_min_dist_w35
+      - dtw_best_match_w35
+      - dtw_bull_flag_dist_w45
+      - dtw_bear_flag_dist_w45
+      - dtw_triangle_dist_w45
+      - dtw_random_15_dist_w45
+      - dtw_random_20_dist_w45
+      - dtw_random_30_dist_w45
+      - dtw_min_dist_w45
+      - dtw_best_match_w45
     category: pattern
     description: "DTW 中继形态特征（趋势跟踪策略专用）- 只包含中继形态及其反向模板"
     compute_params:
@@ -2149,7 +2445,9 @@ features:
       normalize_distance: true
       warping_window: 0.1
       use_c: true
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     notes: |
       只包含中继形态模板及其反向版本：
       - 中继形态：bull_flag, bear_flag, triangle
@@ -2498,67 +2796,84 @@ features:
   # ========================================================================
   sr_strength_combined:
     module: enhanced
-    compute_func: compute_sr_strength_combined
+    compute_func: compute_sr_strength_combined_from_series
     dependencies: []
     required_columns: ["sqs"]
     output_columns: ["sr_strength_combined"]
     category: derived
     description: "SR 强度组合特征（单个特征的简单映射）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      sqs: sqs
   
   sr_distance_normalized:
     module: enhanced
-    compute_func: compute_sr_distance_normalized
+    compute_func: compute_sr_distance_normalized_from_series
     dependencies: ["atr"]
     required_columns: ["dist_to_nearest_sr", "atr"]
     output_columns: ["sr_distance_normalized"]
     category: derived
     description: "SR 距离归一化（两个特征的比值：dist / atr）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      dist_to_nearest_sr: dist_to_nearest_sr
+      atr: atr
   
   dist_to_zz_high:
     module: enhanced
-    compute_func: compute_dist_to_zz_high
+    compute_func: compute_dist_to_zz_high_from_series
     dependencies: []
     required_columns: ["close", "zz_high_value"]
     output_columns: ["dist_to_zz_high"]
     category: derived
     description: "到 ZigZag 高点的距离（两个特征的差值：abs(price - zz_high)）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      zz_high_value: zz_high_value
   
   dist_to_zz_low:
     module: enhanced
-    compute_func: compute_dist_to_zz_low
+    compute_func: compute_dist_to_zz_low_from_series
     dependencies: []
     required_columns: ["close", "zz_low_value"]
     output_columns: ["dist_to_zz_low"]
     category: derived
     description: "到 ZigZag 低点的距离（两个特征的差值：abs(price - zz_low)）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      zz_low_value: zz_low_value
   
   dist_to_zz_high_atr:
     module: enhanced
-    compute_func: compute_dist_to_zz_high_atr
+    compute_func: compute_dist_to_zz_high_atr_from_series
     dependencies: ["dist_to_zz_high", "atr"]
     required_columns: ["dist_to_zz_high", "atr"]
     output_columns: ["dist_to_zz_high_atr"]
     category: derived
     description: "到 ZigZag 高点的距离（归一化到 ATR：dist / atr）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      dist_to_zz_high: dist_to_zz_high
+      atr: atr
   
   dist_to_zz_low_atr:
     module: enhanced
-    compute_func: compute_dist_to_zz_low_atr
+    compute_func: compute_dist_to_zz_low_atr_from_series
     dependencies: ["dist_to_zz_low", "atr"]
     required_columns: ["dist_to_zz_low", "atr"]
     output_columns: ["dist_to_zz_low_atr"]
     category: derived
     description: "到 ZigZag 低点的距离（归一化到 ATR：dist / atr）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      dist_to_zz_low: dist_to_zz_low
+      atr: atr
   
   cvd_slope_5:
     module: enhanced
-    compute_func: compute_cvd_slope
+    compute_func: compute_cvd_slope_from_series
     dependencies: []
     required_columns: ["cvd"]
     output_columns: ["cvd_slope_5"]
@@ -2566,7 +2881,9 @@ features:
     description: "CVD 斜率（单个特征的滚动变换：滚动窗口的线性回归斜率）"
     compute_params:
       window: 5
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      cvd: cvd
   
   atr_ratio:
     module: enhanced

@@ -335,19 +335,17 @@ def extract_dtw_features(
         else:
             windows = [window]
         
-        cols = []
+        # Keep naming consistent with DTW_AVAILABLE=True path:
+        # - dtw_{template}_dist_w{window} (multi-window) / dtw_{template}_dist (single window)
+        # - dtw_min_dist_w{window}, dtw_best_match_w{window} (multi-window) / dtw_min_dist, dtw_best_match (single window)
+        out = pd.DataFrame(index=df.index)
         for w in windows:
+            suffix = f"_w{w}" if len(windows) > 1 else ""
             for name in default_templates.keys():
-                if len(windows) > 1:
-                    cols.append(f"dtw_{name}_w{w}_dist")
-                else:
-                    cols.append(f"dtw_{name}_dist")
-            if len(windows) > 1:
-                cols.extend([f"dtw_min_dist_w{w}", f"dtw_best_match_w{w}"])
-            else:
-                cols.extend(["dtw_min_dist", "dtw_best_match"])
-        
-        return pd.DataFrame(index=df.index, columns=cols).fillna(1.0)
+                out[f"dtw_{name}_dist{suffix}"] = 1.0
+            out[f"dtw_min_dist{suffix}"] = 1.0
+            out[f"dtw_best_match{suffix}"] = "none"
+        return out
     
     df = df.copy()
     
@@ -521,3 +519,42 @@ def extract_dtw_features(
     
     return result
 
+
+def extract_dtw_features_from_series(
+    *,
+    close: pd.Series,
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    atr: Optional[pd.Series] = None,
+    window: Union[int, List[int], Tuple[int, int, int]] = 20,
+    templates: Optional[Dict[str, np.ndarray]] = None,
+    template_filter: Optional[List[str]] = None,
+    compute_only_near_sr: bool = False,
+    sr_dist_col: Optional[str] = None,
+    sr_threshold: float = 1.0,
+    normalize_distance: bool = True,
+    warping_window: Optional[float] = None,
+    use_c: bool = True,
+) -> pd.DataFrame:
+    """
+    Narrow-IO wrapper for DTW features (Series-in, DataFrame-out).
+    This avoids passing a wide DataFrame through the pipeline while reusing the
+    legacy DTW implementation.
+    """
+    df = pd.DataFrame({"close": close})
+    if dist_to_nearest_sr is not None:
+        df["dist_to_nearest_sr"] = dist_to_nearest_sr
+    if atr is not None:
+        df["atr"] = atr
+    return extract_dtw_features(
+        df,
+        price_col="close",
+        window=window,
+        templates=templates,
+        template_filter=template_filter,
+        compute_only_near_sr=compute_only_near_sr,
+        sr_dist_col=sr_dist_col,
+        sr_threshold=sr_threshold,
+        normalize_distance=normalize_distance,
+        warping_window=warping_window,
+        use_c=use_c,
+    )
