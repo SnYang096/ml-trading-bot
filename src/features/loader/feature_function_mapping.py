@@ -129,6 +129,8 @@ from src.features.time_series.utils_liquidity_features import (
     compute_wpt_volume_energy_features_from_series,
 )
 
+from src.features.loader.selector_utils import select_columns_from_series
+
 # 组合特征包装函数（交互特征 + 衍生特征）
 from src.features.loader.common_derived_feature_wrappers import (
     compute_sr_strength_combined_wrapper,
@@ -296,6 +298,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_vol_mom_features_from_series": compute_vol_mom_features_from_series,
     "select_extended_volatility_features": select_extended_volatility_features,
     "extract_volume_profile_volatility_features_from_series": extract_volume_profile_volatility_features_from_series,
+    "select_columns_from_series": select_columns_from_series,
     
     # ========================================================================
     # 交互特征（每个交互特征独立计算函数）

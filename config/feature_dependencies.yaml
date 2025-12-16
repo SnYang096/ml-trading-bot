@@ -791,7 +791,7 @@ features:
 
   vpin_derived_features:
     module: enhanced
-    compute_func: select_order_flow_features
+    compute_func: select_columns_from_series
     dependencies:
       - vpin_ma_max_features
       - vpin_change_features
@@ -843,7 +843,7 @@ features:
       - "vpin_signed_imbalance_zscore_50"
     category: order_flow
     description: "VPIN derived features (composite) computed from aligned base via sub-nodes (no ticks)."
-    pass_full_df: true
+    pass_full_df: false
 
   vpin_ma_max_features:
     module: enhanced
@@ -927,7 +927,7 @@ features:
 
   vpin_block_features:
     module: enhanced
-    compute_func: select_vpin_block_features
+    compute_func: select_columns_from_series
     dependencies: ["vpin_base_aligned_features", "vpin_derived_features"]
     required_columns:
       - vpin
@@ -993,11 +993,11 @@ features:
       - vpin_signed_imbalance_zscore_50
     category: order_flow
     description: "Order-flow sub-block: VPIN-only features (selected from base)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_block_features:
     module: enhanced
-    compute_func: select_trade_cluster_block_features
+    compute_func: select_columns_from_series
     dependencies: ["trade_cluster_base_aligned_features", "trade_cluster_derived_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1091,7 +1091,7 @@ features:
       - trade_cluster_total_runs_ma20
     category: order_flow
     description: "Order-flow sub-block: Trade Clustering-only features (selected from base)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_base_aligned_features:
     module: enhanced
@@ -1116,7 +1116,7 @@ features:
 
   trade_cluster_derived_features:
     module: enhanced
-    compute_func: select_order_flow_features
+    compute_func: select_columns_from_series
     dependencies:
       - trade_cluster_max_run_ratio_features
       - trade_cluster_buy_sell_max_ratio_features
@@ -1211,7 +1211,7 @@ features:
       - trade_cluster_total_runs_ma20
     category: order_flow
     description: "Trade clustering derived features (composite) from base aligned (no ticks)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_ratio_features:
     module: enhanced
@@ -1720,7 +1720,7 @@ features:
   # ========================================================================
   extended_volatility_features:
     module: enhanced
-    compute_func: select_extended_volatility_features
+    compute_func: select_columns_from_series
     dependencies:
       - vol_raw_features
       - vol_atr_features
@@ -1776,7 +1776,7 @@ features:
     output_columns: ["vol_raw_5", "vol_raw_10", "vol_raw_20", "vol_raw_60", "vol_atr_norm", "vol_atr_ma_5", "vol_atr_ma_10", "vol_atr_ma_20", "vol_atr_std_5", "vol_atr_std_10", "vol_atr_std_20", "vol_atr_max_5", "vol_atr_max_10", "vol_atr_max_20", "vol_atr_min_5", "vol_atr_min_10", "vol_atr_min_20", "vol_atr_ratio_20", "vol_atr_change", "vol_atr_change_abs", "vol_lag_1", "vol_lag_2", "vol_lag_3", "vol_slope_5", "vol_slope_10", "vol_slope_20", "vol_accel", "vol_ma_5", "vol_ma_10", "vol_ma_20", "vol_ema_5", "vol_ema_10", "vol_ema_20", "vol_zscore", "vol_percentile_approx", "vol_range_10", "vol_range_20", "vol_range_pos_10", "vol_range_pos_20", "vol_mom_3", "vol_mom_5", "vol_mom_10"]
     category: volatility
     description: "扩展波动率特征：历史波动率、滞后特征、趋势特征、波动率regime特征（精简滞后特征，只保留1-3期）"
-    pass_full_df: true
+    pass_full_df: false
     notes: |
       扩展波动率特征用于提高波动率预测准确性：
       - 历史波动率：不同窗口的滚动标准差

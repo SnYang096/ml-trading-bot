@@ -109,9 +109,15 @@ def _build_call_args(
     import inspect
     from src.features.loader.feature_function_mapping import get_compute_func
     compute_func_name = feature_info.get("compute_func")
+    compute_func = None
+    func_sig = None
+    has_var_kwargs = False
     if compute_func_name:
         compute_func = get_compute_func(compute_func_name)
         func_sig = inspect.signature(compute_func)
+        has_var_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in func_sig.parameters.values()
+        )
         
         # 如果函数同时接受 ticks 和 ticks_loader_json，优先传递 ticks_loader_json
         # 因为某些函数（如 extract_order_flow_features）可以自己处理 ticks_loader_json
@@ -184,6 +190,21 @@ def _build_call_args(
             raise ValueError(
                 f"Unsupported column mapping type for parameter '{param_name}': {type(source)}"
             )
+
+    # If pass_full_df is False and no explicit column_mappings were provided, fall back to
+    # automatically wiring required_columns by the same name *only when the target function
+    # can accept them* (either explicit parameter name match or **kwargs).
+    if not feature_info.get("pass_full_df", True) and not column_mappings:
+        required_cols = feature_info.get("required_columns", []) or []
+        for col in required_cols:
+            if col not in df.columns:
+                continue
+            if func_sig is None:
+                # Should not happen in normal flow, but keep safe.
+                continue
+            if has_var_kwargs or col in func_sig.parameters:
+                # Don't override values already set via compute_params/other wiring.
+                call_kwargs.setdefault(col, df[col])
 
     call_args: List[Any] = []
     if feature_info.get("pass_full_df", True):
