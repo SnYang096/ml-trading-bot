@@ -665,9 +665,84 @@ features:
 
   order_flow_all_features:
     module: enhanced
-    compute_func: extract_order_flow_features
-    dependencies: []
-    required_columns: ["open", "close", "high", "low", "volume"]
+    compute_func: select_columns_from_series
+    dependencies: ["vpin_block_features", "trade_cluster_block_features"]
+    required_columns:
+      # keep the same order as output_columns so selector emits a stable column order
+      - "vpin"
+      - "vpin_signed_imbalance"
+      - "vpin_last"
+      - "vpin_max"
+      - "vpin_min"
+      - "vpin_std"
+      - "vpin_count"
+      - "vpin_skewness"
+      - "vpin_trend"
+      - "vpin_signed_imbalance_last"
+      - "vpin_signed_imbalance_max"
+      - "vpin_ma5"
+      - "vpin_ma10"
+      - "vpin_ma20"
+      - "vpin_max5"
+      - "vpin_max10"
+      - "vpin_max20"
+      - "vpin_change"
+      - "vpin_change_pct"
+      - "vpin_zscore_20"
+      - "vpin_zscore_50"
+      - "vpin_quantile_rank_20"
+      - "vpin_quantile_rank_50"
+      - "vpin_volatility_10"
+      - "vpin_volatility_20"
+      - "vpin_spike_flag_20"
+      - "vpin_spike_flag_50"
+      - "vpin_momentum"
+      - "vpin_signed_imbalance_zscore_20"
+      - "vpin_signed_imbalance_zscore_50"
+      - "trade_cluster_max_buy_run"
+      - "trade_cluster_max_sell_run"
+      - "trade_cluster_avg_buy_run"
+      - "trade_cluster_avg_sell_run"
+      - "trade_cluster_buy_run_count"
+      - "trade_cluster_sell_run_count"
+      - "trade_cluster_imbalance_ratio"
+      - "trade_cluster_directional_entropy"
+      - "trade_cluster_max_run_ratio"
+      - "trade_cluster_avg_run_ratio"
+      - "trade_cluster_max_buy_run_ma5"
+      - "trade_cluster_max_buy_run_ma10"
+      - "trade_cluster_max_buy_run_ma20"
+      - "trade_cluster_imbalance_ratio_ma5"
+      - "trade_cluster_imbalance_ratio_ma10"
+      - "trade_cluster_imbalance_ratio_ma20"
+      - "trade_cluster_directional_entropy_ma5"
+      - "trade_cluster_directional_entropy_ma10"
+      - "trade_cluster_directional_entropy_ma20"
+      - "trade_cluster_directional_entropy_change"
+      - "trade_cluster_directional_entropy_zscore_20"
+      - "trade_cluster_directional_entropy_zscore_50"
+      - "trade_cluster_net_runs"
+      - "trade_cluster_total_runs"
+      - "trade_cluster_net_runs_ratio"
+      - "trade_cluster_max_run"
+      - "trade_cluster_buy_sell_max_ratio"
+      - "trade_cluster_buy_sell_avg_ratio"
+      - "trade_cluster_avg_run_length"
+      - "trade_cluster_total_run_length"
+      - "trade_cluster_imbalance_zscore_20"
+      - "trade_cluster_imbalance_zscore_50"
+      - "trade_cluster_net_runs_zscore_20"
+      - "trade_cluster_net_runs_zscore_50"
+      - "trade_cluster_max_buy_run_zscore_20"
+      - "trade_cluster_max_buy_run_zscore_50"
+      - "trade_cluster_max_sell_run_zscore_20"
+      - "trade_cluster_max_sell_run_zscore_50"
+      - "trade_cluster_net_runs_ma5"
+      - "trade_cluster_net_runs_ma10"
+      - "trade_cluster_net_runs_ma20"
+      - "trade_cluster_total_runs_ma5"
+      - "trade_cluster_total_runs_ma10"
+      - "trade_cluster_total_runs_ma20"
     output_columns:
       # 基础特征（2个）
       - "vpin"
@@ -756,11 +831,7 @@ features:
       - "trade_cluster_total_runs_ma20"
     category: order_flow
     description: "Order-flow: VPIN + Trade Clustering (full set). This is the heavy base node; downstream selectors split blocks."
-    compute_params:
-      vpin_n_buckets: 50
-      vpin_adaptive: true
-    run_sequential: true
-    pass_full_df: true
+    pass_full_df: false
 
   vpin_base_aligned_features:
     module: enhanced

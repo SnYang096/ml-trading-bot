@@ -25,3 +25,23 @@ def test_selector_autowires_required_columns_when_no_column_mappings():
     assert "a" in kwargs and "b" in kwargs
     assert kwargs["a"].equals(df["a"])
     assert kwargs["b"].equals(df["b"])
+
+
+def test_selector_preserves_required_columns_order_for_many_columns():
+    cols = [f"c{i}" for i in range(30)]
+    df = pd.DataFrame(
+        {c: [float(i), float(i + 1), float(i + 2)] for i, c in enumerate(cols)},
+        index=pd.date_range("2024-01-01", periods=3, freq="D"),
+    )
+    required = list(reversed(cols))
+
+    feature_info = {
+        "compute_func": "select_columns_from_series",
+        "pass_full_df": False,
+        "required_columns": required,
+        "compute_params": {"output_columns": required},
+    }
+    args, kwargs = _build_call_args(feature_info, df)
+    assert args == []
+    out = kwargs.pop("output_columns", None)
+    assert out == required
