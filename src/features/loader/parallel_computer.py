@@ -1086,6 +1086,31 @@ class ParallelFeatureComputer:
         
         result_df = df.copy()
         df_hash = self._get_df_hash(result_df)
+
+        # Memory cache is only valid for the exact same index. In this project we reuse the
+        # same StrategyFeatureLoader across train/test/volatility passes, so the in-memory
+        # cache can frequently hold results from a different index. Instead of repeatedly
+        # "hit then mismatch then recompute", proactively clear cache when the df signature changes.
+        if self.use_memory_cache:
+            try:
+                current_sig = (
+                    df_hash,
+                    len(result_df),
+                    str(result_df.index.min()) if len(result_df) else "EMPTY",
+                    str(result_df.index.max()) if len(result_df) else "EMPTY",
+                )
+                prev_sig = getattr(self, "_memory_cache_sig", None)
+                if prev_sig is not None and prev_sig != current_sig:
+                    if self.memory_cache:
+                        print(
+                            f"   🧹 Clearing memory cache due to df index change "
+                            f"(prev={prev_sig[0]}, current={current_sig[0]})"
+                        )
+                    self.memory_cache.clear()
+                self._memory_cache_sig = current_sig
+            except Exception:
+                # If anything goes wrong, be conservative: clear cache to prevent index blowups.
+                self.memory_cache.clear()
         
         # 1.5. 确保所有请求特征的 required_columns 都在 DataFrame 中
         # 收集所有需要的 required_columns

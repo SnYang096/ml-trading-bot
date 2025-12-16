@@ -207,6 +207,11 @@ class StrategyFeatureLoader:
         df: pd.DataFrame,
         requested_features: Optional[List[str]],
         fit: bool = True,
+        *,
+        feature_store_dir: Optional[str] = None,
+        feature_store_layer: Optional[str] = None,
+        feature_store_symbol: Optional[str] = None,
+        feature_store_timeframe: Optional[str] = None,
     ) -> pd.DataFrame:
         """
         直接根据请求的特征列表加载特征。
@@ -220,6 +225,43 @@ class StrategyFeatureLoader:
         requested_features = requested_features or []
         if not requested_features:
             return result_df
+
+        # Optional (Plan B): load from FeatureStore if available.
+        # This is best-effort and opt-in; fallback to compute if anything is missing.
+        if (
+            feature_store_dir
+            and feature_store_layer
+            and feature_store_symbol
+            and feature_store_timeframe
+            and isinstance(result_df.index, pd.DatetimeIndex)
+            and len(result_df) > 0
+        ):
+            try:
+                from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
+
+                store = FeatureStore(feature_store_dir)
+                spec = FeatureStoreSpec(
+                    layer=feature_store_layer,
+                    symbol=feature_store_symbol,
+                    timeframe=feature_store_timeframe,
+                )
+                df_store = store.read_range(spec, result_df.index.min(), result_df.index.max())
+                if not df_store.empty:
+                    df_store = df_store.reindex(result_df.index)
+                    features_cfg = self.feature_deps.get("features", {})
+                    output_cols: List[str] = []
+                    for feature_name in requested_features:
+                        if feature_name in features_cfg:
+                            output_cols.extend(features_cfg[feature_name].get("output_columns", [feature_name]))
+
+                    # if store already has all needed outputs, return joined frame
+                    if output_cols and all(c in df_store.columns for c in output_cols):
+                        merged = result_df.copy()
+                        for c in output_cols:
+                            merged[c] = df_store[c]
+                        return merged
+            except Exception:
+                pass
         
         features = self.feature_deps.get("features", {})
         

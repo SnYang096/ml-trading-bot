@@ -19,11 +19,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
 
+# Allow running this script directly without installing the project package.
+# (So `import src.*` works when executed from the repo root.)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.data_tools.data_utils import load_raw_data
+from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.strategy_config import StrategyConfigLoader
 
@@ -59,6 +67,12 @@ def parse_args() -> argparse.Namespace:
         default="feature_store/sr_reversal",
         help="Directory to store monthly feature Parquet files",
     )
+    parser.add_argument(
+        "--layer",
+        type=str,
+        default="heavy_v1",
+        help="FeatureStore layer name (e.g. base_v1, heavy_v1)",
+    )
     return parser.parse_args()
 
 
@@ -69,8 +83,7 @@ def main() -> None:
     cfg_loader = StrategyConfigLoader(strategy_cfg_path)
     strategy_config = cfg_loader.load()
 
-    out_root = Path(args.output_dir)
-    out_root.mkdir(parents=True, exist_ok=True)
+    store = FeatureStore(Path(args.output_dir))
 
     print(f"📂 Loading raw data for {args.symbol}, timeframe={args.timeframe}")
     df_raw = load_raw_data(
@@ -101,14 +114,18 @@ def main() -> None:
         f"requested_features={len(requested)}"
     )
 
+    spec = FeatureStoreSpec(
+        layer=args.layer, symbol=args.symbol, timeframe=args.timeframe
+    )
+
+    base_cols = ["open", "high", "low", "close", "volume", "_symbol"]
+
     for period, df_month in monthly_groups:
         if df_month.empty:
             continue
         month_str = period.strftime("%Y-%m")
-        out_file = out_root / f"{args.symbol}_{args.timeframe}_{month_str}.parquet"
-
-        if out_file.exists():
-            print(f"   ✅ Skip {month_str}: {out_file} already exists")
+        if store.has_month(spec, month_str):
+            print(f"   ✅ Skip {month_str}: already in store")
             continue
 
         print(
@@ -122,14 +139,23 @@ def main() -> None:
             requested_features=requested,
             fit=True,
         )
-        # Keep all computed columns; downstream scripts can select subsets.
+        # Keep computed columns; store can also trim columns if needed.
         print(
             f"   ✅ Features for {month_str} computed: rows={len(df_feats)}, "
             f"cols={len(df_feats.columns)}"
         )
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-        df_feats.to_parquet(out_file)
-        print(f"   💾 Saved features to {out_file}")
+        store.write_month(
+            spec,
+            month_str,
+            df_feats,
+            base_columns=base_cols,
+            feature_columns=None,
+            overwrite=False,
+            metadata={"requested_features": requested},
+        )
+        print(
+            f"   💾 Saved features to store: {spec.layer}/{spec.symbol}/{spec.timeframe}/{month_str}"
+        )
 
     print("\n🎉 Incremental feature generation completed.")
 
