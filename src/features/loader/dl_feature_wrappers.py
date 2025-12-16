@@ -57,3 +57,37 @@ def compute_dl_sequence_features(
             result[col] = 0.0
 
     return result
+
+
+def compute_dl_sequence_features_from_series(
+    *,
+    open: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    backend: str = "auto",
+    seq_length: int = 120,
+    d_model: int = 64,
+    feature_columns: Optional[List[str]] = None,
+    use_fp16: bool = False,
+    prefix: str = "dl_seq",
+    device: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Narrow-IO entrypoint for DL sequence embeddings (Series-in, DataFrame-out).
+    Keeps pipeline from passing a wide DF into heavy DL code.
+    """
+    df = pd.DataFrame(
+        {"open": open, "high": high, "low": low, "close": close, "volume": volume}
+    )
+    return compute_dl_sequence_features(
+        df,
+        backend=backend,
+        seq_length=seq_length,
+        d_model=d_model,
+        feature_columns=feature_columns,
+        use_fp16=use_fp16,
+        prefix=prefix,
+        device=device,
+    )

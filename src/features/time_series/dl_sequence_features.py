@@ -256,6 +256,7 @@ class DeepLearningSequenceExtractor:
         use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
         device: Optional[str] = None,
         normalization_method: Literal["ema"] = "ema",  # 仅支持 EMA（因果安全）
+        seed: int = 42,
     ):
         """
         Args:
@@ -273,6 +274,7 @@ class DeepLearningSequenceExtractor:
         self.d_model = d_model
         self.use_fp16 = use_fp16
         self.normalization_method = normalization_method
+        self.seed = seed
 
         # Auto-detect device
         if device is None:
@@ -310,30 +312,40 @@ class DeepLearningSequenceExtractor:
 
     def _create_model(self, input_dim: int):
         """Create the appropriate model based on backend."""
-        if self.backend == "mamba":
-            model = MambaSequenceEncoder(
-                input_dim=input_dim,
-                d_model=self.d_model,
-                d_state=16,
-                d_conv=4,
-                expand=2,
-            )
-        elif self.backend == "flash_attention":
-            model = FlashAttentionEncoder(
-                input_dim=input_dim,
-                d_model=self.d_model,
-                nhead=8,
-                num_layers=2,
-                dropout=0.1,
-            )
-        else:  # transformer
-            model = StandardTransformerEncoder(
-                input_dim=input_dim,
-                d_model=self.d_model,
-                nhead=8,
-                num_layers=2,
-                dropout=0.1,
-            )
+        # Make model init deterministic across calls so repeated feature computation
+        # (train/test splits, research/backtest/live) doesn't drift due to random weights.
+        rng_state = torch.random.get_rng_state()
+        try:
+            torch.manual_seed(self.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(self.seed)
+
+            if self.backend == "mamba":
+                model = MambaSequenceEncoder(
+                    input_dim=input_dim,
+                    d_model=self.d_model,
+                    d_state=16,
+                    d_conv=4,
+                    expand=2,
+                )
+            elif self.backend == "flash_attention":
+                model = FlashAttentionEncoder(
+                    input_dim=input_dim,
+                    d_model=self.d_model,
+                    nhead=8,
+                    num_layers=2,
+                    dropout=0.1,
+                )
+            else:  # transformer
+                model = StandardTransformerEncoder(
+                    input_dim=input_dim,
+                    d_model=self.d_model,
+                    nhead=8,
+                    num_layers=2,
+                    dropout=0.1,
+                )
+        finally:
+            torch.random.set_rng_state(rng_state)
 
         model = model.to(self.device)
         model.eval()  # Inference mode
@@ -529,6 +541,7 @@ def add_dl_sequence_features(
     use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
     normalization_method: str = "ema",  # 强制使用 EMA（因果安全）
     device: Optional[str] = None,  # 'cuda', 'cpu', or None (auto-detect)
+    seed: int = 42,
 ) -> pd.DataFrame:
     """Convenience function to add DL sequence features.
 
@@ -550,14 +563,39 @@ def add_dl_sequence_features(
 
     print(f"\n🔷 Extracting Leak-Free Deep Learning Sequence Features...")
 
-    extractor = DeepLearningSequenceExtractor(
-        backend=backend,
-        seq_length=seq_length,
-        d_model=d_model,
-        use_fp16=use_fp16,
-        normalization_method="ema",  # 强制使用 EMA（因果安全）
-        device=device,
+    if feature_columns is None:
+        feature_columns = ["open", "high", "low", "close", "volume"]
+
+    # Cache extractor per config to avoid repeated model re-inits and keep outputs consistent.
+    global _DL_EXTRACTOR_CACHE
+    try:
+        _DL_EXTRACTOR_CACHE
+    except NameError:
+        _DL_EXTRACTOR_CACHE = {}
+
+    cache_key = (
+        backend,
+        seq_length,
+        d_model,
+        use_fp16,
+        str(device) if device is not None else None,
+        tuple(feature_columns),
+        normalization_method,
+        seed,
     )
+
+    extractor = _DL_EXTRACTOR_CACHE.get(cache_key)
+    if extractor is None:
+        extractor = DeepLearningSequenceExtractor(
+            backend=backend,
+            seq_length=seq_length,
+            d_model=d_model,
+            use_fp16=use_fp16,
+            normalization_method=normalization_method,
+            device=device,
+            seed=seed,
+        )
+        _DL_EXTRACTOR_CACHE[cache_key] = extractor
 
     df_with_features = extractor.add_to_dataframe(df, feature_columns)
 

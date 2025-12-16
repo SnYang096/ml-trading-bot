@@ -4039,7 +4039,7 @@ features:
   # ========================================================================
   dl_sequence_features:
     module: dl
-    compute_func: compute_dl_sequence_features
+    compute_func: compute_dl_sequence_features_from_series
     dependencies: []
     required_columns: ["open", "high", "low", "close", "volume"]
     output_columns:
@@ -4109,7 +4109,7 @@ features:
       - "dl_seq_f63"
     category: deep_learning
     description: "Leak-free sequence embeddings (Mamba/Transformer auto-backend)."
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       backend: "auto"
       seq_length: 120
@@ -4123,4 +4123,10 @@ features:
         - "close"
         - "volume"
       prefix: "dl_seq"
+    column_mappings:
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
 

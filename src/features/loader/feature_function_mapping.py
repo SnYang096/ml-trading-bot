@@ -229,7 +229,10 @@ from src.features.loader.talib_feature_wrappers import (
     compute_talib_rsi,
     compute_talib_macd,
 )
-from src.features.loader.dl_feature_wrappers import compute_dl_sequence_features
+from src.features.loader.dl_feature_wrappers import (
+    compute_dl_sequence_features,
+    compute_dl_sequence_features_from_series,
+)
 
 # 策略专属特征（已移除，现在通过统一的 YAML 配置加载）
 # 所有特征现在通过 feature_dependencies.yaml 统一管理
@@ -458,6 +461,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_talib_rsi": compute_talib_rsi,
     "compute_talib_macd": compute_talib_macd,
     "compute_dl_sequence_features": compute_dl_sequence_features,
+    "compute_dl_sequence_features_from_series": compute_dl_sequence_features_from_series,
     
     # ========================================================================
     # 策略专属特征构建函数（已移除，现在通过统一的 YAML 配置加载）
