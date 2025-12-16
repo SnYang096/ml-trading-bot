@@ -22,6 +22,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.features.time_series.utils_liquidity_features import (
     extract_liquidity_features,
     compute_liquidity_void_features,
+    compute_liquidity_void_features_from_series,
+    compute_wpt_volume_energy_features,
+    compute_wpt_volume_energy_features_from_series,
     # build_wpt_denoised_vpvr 已删除，使用 compute_unified_volume_profile_features
 )
 
@@ -107,6 +110,68 @@ class TestLiquidityFeatures:
         )
         assert isinstance(result, pd.DataFrame)
         assert len(result) == len(df)
+
+    def test_liquidity_void_narrow_entrypoint_matches_legacy(self):
+        """回归：narrow Series-in entrypoint 与 legacy DF 版本输出一致（slim 输入）。"""
+        df = create_mock_data(n_samples=300, seed=123)
+        legacy = compute_liquidity_void_features(
+            df[["close", "volume", "atr"]].copy(),
+            price_col="close",
+            volume_col="volume",
+            atr_col="atr",
+        )
+        narrow = compute_liquidity_void_features_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            atr=df["atr"],
+        )
+        cols = [
+            "liquidity_void_detected",
+            "liquidity_void_speed",
+            "liquidity_void_volume_ratio",
+            "liquidity_void_retracement",
+            "liquidity_void_false_breakout_risk",
+        ]
+        for c in cols:
+            assert np.allclose(
+                legacy[c].values,
+                narrow[c].values,
+                equal_nan=True,
+                rtol=1e-12,
+                atol=1e-12,
+            ), f"mismatch col={c}"
+
+    def test_wpt_volume_energy_narrow_entrypoint_matches_legacy_small(self):
+        """回归：wpt_volume_energy narrow entrypoint 与 legacy 版本一致（小样本以控制耗时）。"""
+        df = create_mock_data(n_samples=90, seed=7)
+        legacy = compute_wpt_volume_energy_features(
+            df[["close", "volume"]].copy(),
+            price_col="close",
+            volume_col="volume",
+            wavelet="db2",
+            level=2,
+            lookback_window=20,
+        )
+        narrow = compute_wpt_volume_energy_features_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            wavelet="db2",
+            level=2,
+            lookback_window=20,
+        )
+        cols = [
+            "wpt_vper_low",
+            "wpt_vper_mid",
+            "wpt_vper_high",
+            "wpt_energy_cascade",
+            "wpt_multi_scale_consistency",
+            "wpt_breakout_confidence",
+            "wpt_false_breakout_risk",
+        ]
+        for c in cols:
+            assert np.allclose(
+                legacy[c].values, narrow[c].values, equal_nan=True, rtol=1e-9, atol=1e-9
+            ), f"mismatch col={c}"
 
     def test_no_future_leak(self):
         """

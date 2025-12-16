@@ -23,11 +23,52 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.features.time_series.utils_volatility_features import (
     extract_extended_volatility_features,
 )
-from src.features.time_series.utils_garch_features import extract_garch_features
-from src.features.time_series.utils_evt_features import extract_evt_features
-from src.features.time_series.utils_spectrum_features import extract_spectrum_features
+from src.features.time_series.utils_garch_features import (
+    extract_garch_features_from_series,
+)
+from src.features.time_series.utils_evt_features import extract_evt_features_from_series
+from src.features.time_series.utils_spectrum_features import (
+    extract_spectrum_features_from_series,
+)
 from src.features.time_series.utils_hurst_features import extract_hurst_features
 from src.features.time_series.utils_dtw_features import extract_dtw_features
+
+
+# ---------------------------------------------------------------------------
+# Route B: DF-style entrypoints removed from library.
+# Provide local DF wrappers for existing tests.
+# ---------------------------------------------------------------------------
+def extract_garch_features(
+    df: pd.DataFrame, price_col: str = "close", **kwargs
+) -> pd.DataFrame:
+    return extract_garch_features_from_series(close=df[price_col], **kwargs)
+
+
+def extract_evt_features(
+    df: pd.DataFrame, price_col: str = "close", **kwargs
+) -> pd.DataFrame:
+    return extract_evt_features_from_series(close=df[price_col], **kwargs)
+
+
+def extract_spectrum_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str | None = None,
+    cvd_col: str | None = None,
+    rolling_window: int = 64,
+) -> pd.DataFrame:
+    vol = df[volume_col] if volume_col and volume_col in df.columns else None
+    cvd = df[cvd_col] if cvd_col and cvd_col in df.columns else None
+    feats = extract_spectrum_features_from_series(
+        close=df[price_col],
+        volume=vol,
+        cvd=cvd,
+        rolling_window=rolling_window,
+    )
+    out = df.copy()
+    for c in feats.columns:
+        out[c] = feats[c]
+    return out
 
 
 class TestGARCHMultiAsset:

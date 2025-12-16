@@ -4151,6 +4151,328 @@ def get_baseline_feature_columns(df: pd.DataFrame) -> List[str]:
     return [c for c in df.columns if c not in exclude]
 
 
+def compute_bb_width_features_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    period: int = 20,
+    std_dev: int = 2,
+    atr_window: int = 14,
+) -> pd.DataFrame:
+    """
+    Narrow-input / narrow-output BB width computation for the feature pipeline.
+
+    Used with YAML `pass_full_df: false` + `column_mappings` to avoid passing/mutating
+    a wide DataFrame.
+    """
+    df = pd.DataFrame({"close": close, "high": high, "low": low})
+    out = BaselineFeatureEngineer.compute_bb_width_features(
+        df, period=period, std_dev=std_dev, atr_window=atr_window
+    )
+    keep = ["bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_width_normalized"]
+    return out[keep] if all(c in out.columns for c in keep) else out
+
+
+def compute_roc_5_from_series(
+    *,
+    close: pd.Series,
+    period: int = 5,
+    z_window: int = 50,
+    min_periods: int = 5,
+    clip_quantile: float = 0.01,
+) -> pd.Series:
+    """5-bar ROC z-score (narrow input/output for the feature pipeline)."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    roc_raw = close.pct_change(period)
+    roc_mean = roc_raw.rolling(window=z_window, min_periods=min_periods).mean()
+    roc_std = roc_raw.rolling(window=z_window, min_periods=min_periods).std()
+    roc_std = roc_std.clip(lower=roc_raw.abs().quantile(clip_quantile))
+    roc_5 = (
+        ((roc_raw - roc_mean) / roc_std.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    roc_5.name = "roc_5"
+    return roc_5
+
+
+def compute_range_ratio_5bar_from_series(*, high: pd.Series, low: pd.Series) -> pd.Series:
+    """5/20 Bar range ratio z-score (narrow input/output)."""
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    hl = high - low
+    short_range = hl.rolling(5).mean()
+    long_range = hl.rolling(20).mean()
+    ratio = (short_range / long_range.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    ratio = ratio.fillna(1.0)
+    ratio_log = np.log1p(ratio)
+    mean = ratio_log.rolling(50, min_periods=5).mean()
+    std = ratio_log.rolling(50, min_periods=5).std()
+    out = ((ratio_log - mean) / std.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out.name = "range_ratio_5bar"
+    return out
+
+
+def compute_price_range_symmetry_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    feature_shift: int = 0,
+) -> pd.Series:
+    """Upper/lower shadow asymmetry score (narrow input/output)."""
+    high = pd.to_numeric(high, errors="coerce").astype(float).shift(feature_shift)
+    low = pd.to_numeric(low, errors="coerce").astype(float).shift(feature_shift)
+    close = pd.to_numeric(close, errors="coerce").astype(float).shift(feature_shift)
+    numerator = high - close
+    denominator = (close - low).replace(0, np.nan)
+    raw = (numerator / denominator).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+    log_val = np.log1p(np.abs(raw)) * np.sign(raw)
+    mean = log_val.rolling(50, min_periods=5).mean()
+    std = log_val.rolling(50, min_periods=5).std()
+    out = ((log_val - mean) / std.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out.name = "price_range_symmetry"
+    return out
+
+
+def compute_wick_ratios_from_series(
+    *,
+    open: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+) -> pd.DataFrame:
+    """Upper/lower wick ratios (narrow input/output)."""
+    open = pd.to_numeric(open, errors="coerce").astype(float)
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    range_val = high - low
+    body_high = pd.concat([close, open], axis=1).max(axis=1)
+    upper_wick = high - body_high
+    wick_upper_ratio = (upper_wick / range_val.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    body_low = pd.concat([close, open], axis=1).min(axis=1)
+    lower_wick = body_low - low
+    wick_lower_ratio = (lower_wick / range_val.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return pd.DataFrame({"wick_upper_ratio": wick_upper_ratio, "wick_lower_ratio": wick_lower_ratio})
+
+
+def compute_poc_hal_features_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    wpt_price_reconstructed: pd.Series | None = None,
+    poc_window: int = 160,
+    price_col: str = "wpt_price_reconstructed",
+) -> pd.DataFrame:
+    """
+    Narrow-IO POC/HAL computation.
+    Returns only: poc, hal_high, hal_low, hal_mid
+    """
+    df = pd.DataFrame(
+        {
+            "high": pd.to_numeric(high, errors="coerce").astype(float),
+            "low": pd.to_numeric(low, errors="coerce").astype(float),
+            "close": pd.to_numeric(close, errors="coerce").astype(float),
+            "volume": pd.to_numeric(volume, errors="coerce").astype(float),
+        }
+    )
+    if price_col and price_col not in df.columns:
+        if price_col == "wpt_price_reconstructed" and wpt_price_reconstructed is not None:
+            df[price_col] = pd.to_numeric(wpt_price_reconstructed, errors="coerce").astype(float)
+        else:
+            # Fallback: use close as price reference if a custom price_col wasn't provided
+            df[price_col] = df["close"]
+
+    out = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        df,
+        required_features={"poc", "hal_high", "hal_low", "hal_mid"},
+        poc_window=poc_window,
+        price_col=price_col,
+    )
+    keep = ["poc", "hal_high", "hal_low", "hal_mid"]
+    return out[keep].reindex(index=df.index)
+
+
+def compute_sqs_from_sr_price_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    atr: pd.Series,
+    sr_price: pd.Series,
+    window: int = 60,
+    tolerance_factor: float = 0.5,
+    sr_type: str = "resistance",
+    output_name: str = "sqs",
+) -> pd.Series:
+    """
+    Generic narrow-IO SQS computation for a dynamic SR price series (e.g., hal_high/hal_low).
+    Uses only historical data up to i (no look-ahead).
+    """
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    volume = pd.to_numeric(volume, errors="coerce").astype(float)
+    atr = pd.to_numeric(atr, errors="coerce").astype(float)
+    sr_price = pd.to_numeric(sr_price, errors="coerce").astype(float)
+
+    out = np.zeros(len(close), dtype=float)
+    for i in range(len(close)):
+        if i < window:
+            continue
+        p = sr_price.iloc[i]
+        if pd.isna(p) or p <= 0:
+            continue
+        start_idx = max(0, i - window + 1)
+        hist_df = pd.DataFrame(
+            {
+                "high": high.iloc[start_idx : i + 1],
+                "low": low.iloc[start_idx : i + 1],
+                "close": close.iloc[start_idx : i + 1],
+                "atr": atr.iloc[start_idx : i + 1],
+                "volume": volume.iloc[start_idx : i + 1],
+            }
+        )
+        try:
+            sqs = BaselineFeatureEngineer.calculate_sqs(
+                sr_price=p,
+                df=hist_df,
+                window=min(window, len(hist_df)),
+                tolerance_factor=tolerance_factor,
+                sr_type=sr_type,
+            )
+            if not np.isnan(sqs):
+                out[i] = float(sqs)
+        except Exception:
+            # Conservative fallback: keep 0
+            pass
+
+    s = pd.Series(out, index=close.index, name=output_name)
+    return s
+
+
+def compute_sqs_hal_high_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    atr: pd.Series,
+    hal_high: pd.Series,
+    window: int = 60,
+    tolerance_factor: float = 0.5,
+    sr_type: str = "resistance",
+) -> pd.DataFrame:
+    sqs = compute_sqs_from_sr_price_series(
+        high=high,
+        low=low,
+        close=close,
+        volume=volume,
+        atr=atr,
+        sr_price=hal_high,
+        window=window,
+        tolerance_factor=tolerance_factor,
+        sr_type=sr_type,
+        output_name="sqs_hal_high",
+    )
+    return pd.DataFrame({"sqs_hal_high": sqs})
+
+
+def compute_sqs_hal_low_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    atr: pd.Series,
+    hal_low: pd.Series,
+    window: int = 60,
+    tolerance_factor: float = 0.5,
+    sr_type: str = "support",
+) -> pd.DataFrame:
+    sqs = compute_sqs_from_sr_price_series(
+        high=high,
+        low=low,
+        close=close,
+        volume=volume,
+        atr=atr,
+        sr_price=hal_low,
+        window=window,
+        tolerance_factor=tolerance_factor,
+        sr_type=sr_type,
+        output_name="sqs_hal_low",
+    )
+    return pd.DataFrame({"sqs_hal_low": sqs})
+
+
+def compute_sr_strength_max_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    atr: pd.Series,
+    poc: pd.Series,
+    hal_high: pd.Series,
+    hal_low: pd.Series,
+    window: int = 60,
+    tolerance_factor: float = 0.5,
+) -> pd.DataFrame:
+    """
+    Narrow-IO SR strength computation (returns only declared outputs).
+    """
+    data = pd.DataFrame(
+        {
+            "high": pd.to_numeric(high, errors="coerce").astype(float),
+            "low": pd.to_numeric(low, errors="coerce").astype(float),
+            "close": pd.to_numeric(close, errors="coerce").astype(float),
+            "atr": pd.to_numeric(atr, errors="coerce").astype(float),
+            "poc": pd.to_numeric(poc, errors="coerce").astype(float),
+            "hal_high": pd.to_numeric(hal_high, errors="coerce").astype(float),
+            "hal_low": pd.to_numeric(hal_low, errors="coerce").astype(float),
+            # seed columns so _compute_boundary_strengths also produces them
+            "dist_to_nearest_sr": 0.0,
+            "direction_to_nearest_sr": 0.0,
+        },
+        index=close.index,
+    )
+
+    boundaries = BaselineFeatureEngineer._get_sr_boundary_definitions(data)
+    if not boundaries:
+        return pd.DataFrame(
+            {
+                "sr_strength_max": pd.Series(0.0, index=data.index),
+                "dist_to_nearest_sr": pd.Series(0.0, index=data.index),
+                "direction_to_nearest_sr": pd.Series(0.0, index=data.index),
+            }
+        )
+
+    strengths = BaselineFeatureEngineer._compute_boundary_strengths(
+        data=data,
+        boundaries=boundaries,
+        window=window,
+        tolerance_factor=tolerance_factor,
+        compression_series=None,
+    )
+
+    # compute max across returned strength components without building a big wide df
+    sr_max = np.zeros(len(data), dtype=float)
+    for s in strengths.values():
+        if isinstance(s, pd.Series):
+            v = pd.to_numeric(s, errors="coerce").fillna(0.0).values
+            sr_max = np.maximum(sr_max, v)
+
+    out = pd.DataFrame(index=data.index)
+    out["sr_strength_max"] = pd.Series(sr_max, index=data.index).astype(float)
+    out["dist_to_nearest_sr"] = pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce").fillna(0.0).astype(float)
+    out["direction_to_nearest_sr"] = pd.to_numeric(data["direction_to_nearest_sr"], errors="coerce").fillna(0.0).astype(float)
+    return out
+
+
 # ============================================================================
 # 导出（保持向后兼容）
 # ============================================================================

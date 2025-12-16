@@ -24,8 +24,25 @@ warnings.filterwarnings("ignore")
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.features.time_series.utils_garch_features import extract_garch_features
-from src.features.time_series.utils_evt_features import extract_evt_features
+from src.features.time_series.utils_garch_features import (
+    extract_garch_features_from_series,
+)
+from src.features.time_series.utils_evt_features import (
+    extract_evt_features_from_series,
+)
+
+
+# Route B: DF-style entrypoints removed; provide local DF wrappers for existing tests.
+def extract_garch_features(
+    df: pd.DataFrame, price_col: str = "close", **kwargs
+) -> pd.DataFrame:
+    return extract_garch_features_from_series(close=df[price_col], **kwargs)
+
+
+def extract_evt_features(
+    df: pd.DataFrame, price_col: str = "close", **kwargs
+) -> pd.DataFrame:
+    return extract_evt_features_from_series(close=df[price_col], **kwargs)
 
 
 class TestGARCHFeatures(unittest.TestCase):
@@ -258,6 +275,37 @@ class TestGARCHFeatures(unittest.TestCase):
 
         print("  ✅ GARCH 因果性验证通过：特征在 t 时刻仅依赖历史数据")
 
+    def test_narrow_entrypoint_matches_df_entrypoint_close_only(self):
+        """
+        Narrow-IO regression:
+        - Series-in entrypoint should produce expected columns and align with input index.
+        """
+        n = 260
+        window = 80  # keep test fast
+        np.random.seed(321)
+        returns = np.random.randn(n) * 0.01
+        close = 100 * np.exp(np.cumsum(returns))
+        df = pd.DataFrame({"close": close})
+
+        narrow = extract_garch_features_from_series(
+            close=df["close"],
+            window=window,
+            garch_p=1,
+            garch_q=1,
+            use_gjr=True,
+            use_figarch=False,
+        )
+
+        self.assertTrue(narrow.index.equals(df.index))
+        expected_cols = [
+            "garch_volatility",
+            "garch_persistence",
+            "garch_leverage_gamma",
+            "garch_alpha",
+            "garch_beta",
+        ]
+        self.assertListEqual(list(narrow.columns), expected_cols)
+
     def test_edge_cases(self):
         """
         测试 4：边界情况处理
@@ -429,6 +477,45 @@ class TestEVTFeatures(unittest.TestCase):
             )
 
         print("  ✅ EVT 尾部风险检测验证通过")
+
+    def test_narrow_entrypoint_matches_df_entrypoint_close_only(self):
+        """
+        Narrow-IO regression:
+        - Series-in entrypoint should produce expected columns and align with input index.
+        """
+        n = 260
+        window = 80  # keep test fast
+        np.random.seed(123)
+        returns = np.random.randn(n) * 0.01
+        close = 100 * np.exp(np.cumsum(returns))
+        df = pd.DataFrame({"close": close})
+
+        narrow = extract_evt_features_from_series(
+            close=df["close"],
+            window=window,
+            threshold_quantile=0.1,
+            min_excesses=10,
+            separate_tails=True,
+            var_confidence=0.99,
+        )
+
+        self.assertTrue(narrow.index.equals(df.index))
+        expected_cols = [
+            "evt_tail_shape_left",
+            "evt_scale_left",
+            "evt_var_99_left",
+            "evt_es_99_left",
+            "evt_tail_shape",
+            "evt_scale",
+            "evt_var_99",
+            "evt_es_99",
+            "evt_tail_shape_right",
+            "evt_scale_right",
+            "evt_var_99_right",
+            "evt_es_99_right",
+        ]
+        for c in expected_cols:
+            self.assertIn(c, narrow.columns)
 
     def test_extreme_event_warning(self):
         """

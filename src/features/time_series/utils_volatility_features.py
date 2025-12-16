@@ -67,9 +67,10 @@ def extract_extended_volatility_features(
     """
     if lag_periods is None:
         lag_periods = [1, 2, 3, 5, 10]
-    
-    df = df.copy()
-    
+
+    # IMPORTANT: do NOT copy/mutate a potentially wide input df here.
+    # The feature pipeline already passes a slim df when configured, and this
+    # function should be read-only to avoid “wide table” memory blow-ups.
     if price_col not in df.columns:
         raise ValueError(f"Price column '{price_col}' not found")
     
@@ -79,7 +80,7 @@ def extract_extended_volatility_features(
     # Calculate returns with fillna to handle edge cases
     returns = price.pct_change().fillna(0.0)
     
-    # Initialize result DataFrame
+    # Initialize result DataFrame (only feature outputs live here)
     result = pd.DataFrame(index=df.index)
     
     # 1. Multi-scale historical volatility (raw volatility at different windows)
@@ -210,6 +211,184 @@ def extract_extended_volatility_features(
     return result
 
 
+# =============================================================================
+# Narrow-IO sub-features for Feature DAG (extended_volatility_features拆分)
+# =============================================================================
+
+
+def _compute_returns_from_close(close: pd.Series) -> pd.Series:
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    close = close.clip(lower=1e-8)
+    return close.pct_change().fillna(0.0)
+
+
+def _compute_vol_base(returns: pd.Series, window: int) -> pd.Series:
+    return returns.rolling(window=window, min_periods=max(1, window // 2)).std()
+
+
+def compute_vol_raw_features_from_series(
+    *,
+    close: pd.Series,
+    windows: List[int] | None = None,
+) -> pd.DataFrame:
+    """vol_raw_*: multi-scale rolling std of returns."""
+    if windows is None:
+        windows = [5, 10, 20, 60]
+    returns = _compute_returns_from_close(close)
+    out = pd.DataFrame(index=close.index)
+    for w in windows:
+        out[f"vol_raw_{w}"] = returns.rolling(window=w, min_periods=max(1, w // 2)).std()
+    return out
+
+
+def compute_vol_atr_features_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+) -> pd.DataFrame:
+    """vol_atr_*: ATR-derived volatility features."""
+    price = pd.to_numeric(close, errors="coerce").astype(float).clip(lower=1e-8)
+    atr_raw = pd.to_numeric(atr, errors="coerce").astype(float)
+    atr_filled = atr_raw.fillna(atr_raw.rolling(window=14, min_periods=1).mean())
+    atr_s = atr_filled.ffill().bfill().clip(lower=1e-8)
+
+    out = pd.DataFrame(index=price.index)
+    out["vol_atr_norm"] = atr_s / price
+
+    for w in [5, 10, 20]:
+        roll = atr_s.rolling(window=w, min_periods=max(1, w // 2))
+        out[f"vol_atr_ma_{w}"] = roll.mean()
+        out[f"vol_atr_std_{w}"] = roll.std()
+        out[f"vol_atr_max_{w}"] = roll.max()
+        out[f"vol_atr_min_{w}"] = roll.min()
+
+    atr_ma_20 = atr_s.rolling(window=20, min_periods=10).mean()
+    out["vol_atr_ratio_20"] = atr_s / (atr_ma_20 + 1e-8)
+    out["vol_atr_change"] = atr_s.pct_change().fillna(0.0)
+    out["vol_atr_change_abs"] = atr_s.diff().abs().fillna(0.0)
+    return out
+
+
+def compute_vol_lag_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+    lag_periods: List[int] | None = None,
+) -> pd.DataFrame:
+    """vol_lag_*: lags of vol_base."""
+    if lag_periods is None:
+        lag_periods = [1, 2, 3]
+    returns = _compute_returns_from_close(close)
+    vol_base = _compute_vol_base(returns, window=window)
+    out = pd.DataFrame(index=close.index)
+    for lag in lag_periods:
+        out[f"vol_lag_{lag}"] = vol_base.shift(lag)
+    return out
+
+
+def compute_vol_trend_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """vol_slope_* + vol_accel: trend/acceleration of vol_base."""
+    returns = _compute_returns_from_close(close)
+    vol_base = _compute_vol_base(returns, window=window)
+    out = pd.DataFrame(index=close.index)
+    for w in [5, 10, 20]:
+        out[f"vol_slope_{w}"] = (vol_base - vol_base.shift(w - 1)) / (w - 1 + 1e-8)
+    out["vol_accel"] = out["vol_slope_5"].diff().fillna(0.0)
+    return out
+
+
+def compute_vol_ma_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """vol_ma_* + vol_ema_*: moving averages of vol_base."""
+    returns = _compute_returns_from_close(close)
+    vol_base = _compute_vol_base(returns, window=window)
+    out = pd.DataFrame(index=close.index)
+    for w in [5, 10, 20]:
+        out[f"vol_ma_{w}"] = vol_base.rolling(window=w, min_periods=max(1, w // 2)).mean()
+        out[f"vol_ema_{w}"] = vol_base.ewm(span=w, min_periods=max(1, w // 2)).mean()
+    return out
+
+
+def compute_vol_regime_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """vol_zscore + vol_percentile_approx."""
+    returns = _compute_returns_from_close(close)
+    vol_base = _compute_vol_base(returns, window=window)
+    out = pd.DataFrame(index=close.index)
+    vol_ma_20 = vol_base.rolling(window=20, min_periods=10).mean()
+    vol_std_20 = vol_base.rolling(window=20, min_periods=10).std()
+    out["vol_zscore"] = (vol_base - vol_ma_20) / (vol_std_20 + 1e-8)
+
+    z = out["vol_zscore"].clip(-4, 4)
+    out["vol_percentile_approx"] = np.where(
+        z < -2,
+        0.01 + 0.09 * (z + 4) / 2,
+        np.where(
+            z < 0,
+            0.1 + 0.4 * (z + 2) / 2,
+            np.where(
+                z < 2,
+                0.5 + 0.4 * z / 2,
+                0.9 + 0.09 * (z - 2) / 2,
+            ),
+        ),
+    )
+    return out
+
+
+def compute_vol_range_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """vol_range_* + vol_range_pos_* from vol_base."""
+    returns = _compute_returns_from_close(close)
+    vol_base = _compute_vol_base(returns, window=window)
+    out = pd.DataFrame(index=close.index)
+    for w in [10, 20]:
+        vol_roll = vol_base.rolling(window=w, min_periods=max(1, w // 2))
+        vol_max = vol_roll.max()
+        vol_min = vol_roll.min()
+        vol_range = vol_max - vol_min
+        out[f"vol_range_{w}"] = vol_range
+        out[f"vol_range_pos_{w}"] = (
+            (vol_base - vol_min) / (vol_range.replace(0, np.nan) + 1e-8)
+        ).replace([np.inf, -np.inf], np.nan).fillna(0.5)
+    return out
+
+
+def compute_vol_mom_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """vol_mom_*: momentum of vol_base."""
+    returns = _compute_returns_from_close(close)
+    vol_base = _compute_vol_base(returns, window=window)
+    out = pd.DataFrame(index=close.index)
+    for p in [3, 5, 10]:
+        out[f"vol_mom_{p}"] = vol_base.pct_change(p).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return out
+
+
+def select_extended_volatility_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Composite node for Feature DAG.
+    Dependencies compute the individual sub-feature blocks; this node just passes them through.
+    """
+    return df
+
+
 def extract_volatility_features_from_vp(
     vp: Optional[VolumeProfileResult],
     current_price: Optional[float] = None,
@@ -308,41 +487,25 @@ def extract_volatility_features_from_vp(
     }
 
 
-def extract_volume_profile_volatility_features(
-    df: pd.DataFrame,
-    price_col: str = "close",
-    volume_col: str = "volume",
+def extract_volume_profile_volatility_features_from_series(
+    *,
+    close: pd.Series,
+    volume: pd.Series,
     window: int = 100,
     wavelet: str = "db4",
     level: int = 4,
 ) -> pd.DataFrame:
     """
-    从 DataFrame 中提取 Volume Profile 波动率特征（滚动窗口）
-    
-    Args:
-        df: DataFrame with OHLCV data
-        price_col: Price column name
-        volume_col: Volume column name
-        window: Rolling window size for Volume Profile calculation
-        wavelet: Wavelet function name
-        level: WPT decomposition level
-    
-    Returns:
-        DataFrame with Volume Profile volatility features added:
-        - vp_width_ratio: Value Area Width / Full Range（市场共识强度）
-        - vp_poc_deviation: 当前价格 vs POC 的标准化偏离
-        - vp_skewness: 成交量分布偏度（趋势倾向）
-        - vp_entropy: 信息熵（不确定性）
-        - vp_lv_ratio: 低成交量区域比例（LVN）
-        - vp_hv_ratio: 高成交量区域比例（HVN）
+    Narrow-IO entrypoint for Volume Profile volatility features.
+
+    Returns only the vp_* output columns.
     """
-    df = df.copy()
-    
-    if price_col not in df.columns or volume_col not in df.columns:
-        raise ValueError(f"Required columns '{price_col}' and '{volume_col}' not found")
-    
-    # 初始化特征列
-    feature_cols = [
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    vol_s = pd.to_numeric(volume, errors="coerce").astype(float)
+    idx = close_s.index
+    n = len(close_s)
+
+    keep = [
         "vp_width_ratio",
         "vp_poc_deviation",
         "vp_skewness",
@@ -350,25 +513,22 @@ def extract_volume_profile_volatility_features(
         "vp_lv_ratio",
         "vp_hv_ratio",
     ]
-    for col in feature_cols:
-        df[col] = np.nan
-    
-    price_values = df[price_col].values
-    volume_values = df[volume_col].values
-    
-    min_length = max(window, 2 ** level)
-    
-    # 滚动窗口计算 Volume Profile 特征
-    for i in range(min_length, len(df)):
-        # 使用历史窗口数据 [i-window, i)
+
+    # Initialize arrays
+    out_arrs = {c: np.full(n, np.nan, dtype=float) for c in keep}
+
+    price_values = close_s.values
+    volume_values = vol_s.values
+    min_length = max(window, 2**level)
+
+    for i in range(min_length, n):
         price_window = price_values[i - window : i]
         volume_window = volume_values[i - window : i]
-        current_price = price_values[i]  # 当前K线收盘价（用于计算偏离）
-        
-        if len(price_window) < 2 ** level:
+        current_price = price_values[i]
+
+        if len(price_window) < 2**level:
             continue
-        
-        # 计算 WPT Volume Profile
+
         vp = compute_wpt_volume_profile(
             price_window=price_window,
             volume_window=volume_window,
@@ -377,21 +537,17 @@ def extract_volume_profile_volatility_features(
             level=level,
             drop_high_freq=True,
         )
-        
         if vp is None:
             continue
-        
-        # 提取波动率特征
-        vp_feats = extract_volatility_features_from_vp(vp, current_price=current_price)
-        
-        # 添加到 DataFrame
-        for col, value in vp_feats.items():
-            df.iloc[i, df.columns.get_loc(col)] = value
-    
-    # 填充 NaN（前向填充，然后填充剩余 NaN 为 0）
-    df[feature_cols] = df[feature_cols].ffill().fillna(0.0)
-    
-    return df
+
+        feats = extract_volatility_features_from_vp(vp, current_price=current_price)
+        for c in keep:
+            if c in feats:
+                out_arrs[c][i] = float(feats[c])
+
+    out = pd.DataFrame(out_arrs, index=idx)
+    out = out.ffill().fillna(0.0)
+    return out
 
 
 def enhance_wpt_vol_features(df: pd.DataFrame) -> pd.DataFrame:

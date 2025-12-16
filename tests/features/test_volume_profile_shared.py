@@ -5,6 +5,7 @@ import pytest
 from src.features.time_series.utils_volume_profile import (
     compute_wpt_volume_profile,
     compute_unified_volume_profile_features,
+    compute_wpt_vpvr_from_series,
 )
 from src.features.time_series.baseline_features import BaselineFeatureEngineer
 
@@ -330,6 +331,14 @@ def test_vpvr_price_in_lvn_flag_and_low_density():
         bins=bins,
         use_typical_price=True,
     )
+    vpvr_narrow = compute_wpt_vpvr_from_series(
+        close=df["close"],
+        high=df["high"],
+        low=df["low"],
+        volume=df["volume"],
+        window=window,
+        bins=bins,
+    )
 
     idx = len(df) - 1
 
@@ -384,7 +393,11 @@ def test_vpvr_price_in_lvn_flag_and_low_density():
     assert vpvr_df["vp_lvn_distance"].iloc[idx] == pytest.approx(
         expected_lvn_distance, rel=1e-6, abs=1e-6
     )
-    assert vpvr_df["vpvr_price_in_lvn"].iloc[idx] == pytest.approx(
+    # Narrow entrypoint should match the unified implementation for the VPVR subset
+    assert vpvr_narrow["vpvr_lvn_distance"].iloc[idx] == pytest.approx(
+        expected_lvn_distance, rel=1e-6, abs=1e-6
+    )
+    assert vpvr_narrow["vpvr_price_in_lvn"].iloc[idx] == pytest.approx(
         expected_price_in_lvn, rel=1e-6, abs=1e-6
     )
 

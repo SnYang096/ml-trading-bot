@@ -42,6 +42,44 @@ def compute_liquidity_void_x_wpt_risk(
     return (state.fillna(0) * momentum.fillna(0)).rename("liquidity_void_x_wpt_risk")
 
 
+def compute_liquidity_void_x_wpt_risk_from_series(
+    *,
+    liquidity_void_detected: pd.Series,
+    wpt_false_breakout_risk: pd.Series,
+) -> pd.DataFrame:
+    lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0.0).astype(float)
+    risk = pd.to_numeric(wpt_false_breakout_risk, errors="coerce").fillna(0.0).astype(float)
+    return (lv * risk).rename("liquidity_void_x_wpt_risk").to_frame()
+
+
+def compute_liquidity_void_x_vpin_from_series(
+    *,
+    liquidity_void_detected: pd.Series,
+    vpin: pd.Series,
+    clip_vpin: float = 5.0,
+) -> pd.DataFrame:
+    """
+    Heavy gate feature: liquidity void state × VPIN signal.
+
+    This is intentionally a separate *heavy* node (depends on order-flow features) so the
+    original `liquidity_void` can remain a cheap proxy.
+
+    Args:
+        liquidity_void_detected: 0/1 state series
+        vpin: VPIN signal series (recommended: z-score like vpin_zscore_50)
+        clip_vpin: clip VPIN signal to [-clip_vpin, clip_vpin] to avoid outliers dominating
+
+    Returns:
+        DataFrame with one column: liquidity_void_x_vpin
+    """
+    lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0.0).astype(float)
+    vp = pd.to_numeric(vpin, errors="coerce").fillna(0.0).astype(float)
+    if clip_vpin is not None and float(clip_vpin) > 0:
+        vp = vp.clip(lower=-float(clip_vpin), upper=float(clip_vpin))
+    out = (lv * vp).rename("liquidity_void_x_vpin")
+    return out.to_frame()
+
+
 def compute_compression_energy_x_ofi_short(
     df: pd.DataFrame,
     compression_col: str = "compression_energy",
@@ -61,6 +99,16 @@ def compute_compression_energy_x_ofi_short(
     state = df.get(compression_col, pd.Series(0.0, index=df.index))
     momentum = df.get(ofi_col, pd.Series(0.0, index=df.index))
     return (state.fillna(0) * momentum.fillna(0)).rename("compression_energy_x_ofi_short")
+
+
+def compute_compression_energy_x_ofi_short_from_series(
+    *,
+    compression_energy: pd.Series,
+    ofi_short: pd.Series,
+) -> pd.DataFrame:
+    ce = pd.to_numeric(compression_energy, errors="coerce").fillna(0.0).astype(float)
+    ofi = pd.to_numeric(ofi_short, errors="coerce").fillna(0.0).astype(float)
+    return (ce * ofi).rename("compression_energy_x_ofi_short").to_frame()
 
 
 def compute_hurst_x_trend_r2(
@@ -84,6 +132,16 @@ def compute_hurst_x_trend_r2(
     return (state.fillna(0.5) * momentum.fillna(0)).rename("hurst_x_trend_r2")
 
 
+def compute_hurst_x_trend_r2_from_series(
+    *,
+    hurst_close_rolling: pd.Series,
+    trend_r2_20: pd.Series,
+) -> pd.DataFrame:
+    h = pd.to_numeric(hurst_close_rolling, errors="coerce").fillna(0.5).astype(float)
+    r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float)
+    return (h * r2).rename("hurst_x_trend_r2").to_frame()
+
+
 def compute_evt_x_trend_r2(
     df: pd.DataFrame,
     evt_col: str = "evt_tail_shape",
@@ -105,6 +163,16 @@ def compute_evt_x_trend_r2(
     return (state.fillna(0.3) * momentum.fillna(0)).rename("evt_x_trend_r2")
 
 
+def compute_evt_x_trend_r2_from_series(
+    *,
+    evt_tail_shape: pd.Series,
+    trend_r2_20: pd.Series,
+) -> pd.DataFrame:
+    evt = pd.to_numeric(evt_tail_shape, errors="coerce").fillna(0.3).astype(float)
+    r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float)
+    return (evt * r2).rename("evt_x_trend_r2").to_frame()
+
+
 def compute_vpin_x_compression(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -124,6 +192,16 @@ def compute_vpin_x_compression(
     state = df.get(vpin_col, pd.Series(0.0, index=df.index))
     momentum = df.get(compression_col, pd.Series(0.0, index=df.index))
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_compression")
+
+
+def compute_vpin_x_compression_from_series(
+    *,
+    vpin: pd.Series,
+    compression_energy: pd.Series,
+) -> pd.DataFrame:
+    vp = pd.to_numeric(vpin, errors="coerce").fillna(0.0).astype(float)
+    ce = pd.to_numeric(compression_energy, errors="coerce").fillna(0.0).astype(float)
+    return (vp * ce).rename("vpin_x_compression").to_frame()
 
 
 def compute_vpin_x_trade_cluster_max_buy_run(
@@ -150,6 +228,16 @@ def compute_vpin_x_trade_cluster_max_buy_run(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_trade_cluster_max_buy_run")
 
 
+def compute_vpin_x_trade_cluster_max_buy_run_from_series(
+    *,
+    vpin: pd.Series,
+    trade_cluster_max_buy_run: pd.Series,
+) -> pd.DataFrame:
+    vp = pd.to_numeric(vpin, errors="coerce").fillna(0.0).astype(float)
+    run = pd.to_numeric(trade_cluster_max_buy_run, errors="coerce").fillna(0.0).astype(float)
+    return (vp * run).rename("vpin_x_trade_cluster_max_buy_run").to_frame()
+
+
 def compute_vpin_zscore_x_trade_cluster_max_buy_run(
     df: pd.DataFrame,
     vpin_zscore_col: str = "vpin_zscore_20",
@@ -172,6 +260,16 @@ def compute_vpin_zscore_x_trade_cluster_max_buy_run(
     state = df.get(vpin_zscore_col, pd.Series(0.0, index=df.index))
     momentum = df.get(cluster_col, pd.Series(0.0, index=df.index))
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_zscore_x_trade_cluster_max_buy_run")
+
+
+def compute_vpin_zscore_x_trade_cluster_max_buy_run_from_series(
+    *,
+    vpin_zscore_20: pd.Series,
+    trade_cluster_max_buy_run: pd.Series,
+) -> pd.DataFrame:
+    vz = pd.to_numeric(vpin_zscore_20, errors="coerce").fillna(0.0).astype(float)
+    run = pd.to_numeric(trade_cluster_max_buy_run, errors="coerce").fillna(0.0).astype(float)
+    return (vz * run).rename("vpin_zscore_x_trade_cluster_max_buy_run").to_frame()
 
 
 def compute_vpin_signed_imbalance_x_trade_cluster_imbalance(
@@ -198,6 +296,16 @@ def compute_vpin_signed_imbalance_x_trade_cluster_imbalance(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_signed_imbalance_x_trade_cluster_imbalance")
 
 
+def compute_vpin_signed_imbalance_x_trade_cluster_imbalance_from_series(
+    *,
+    vpin_signed_imbalance: pd.Series,
+    trade_cluster_imbalance_ratio: pd.Series,
+) -> pd.DataFrame:
+    vp = pd.to_numeric(vpin_signed_imbalance, errors="coerce").fillna(0.0).astype(float)
+    imb = pd.to_numeric(trade_cluster_imbalance_ratio, errors="coerce").fillna(0.0).astype(float)
+    return (vp * imb).rename("vpin_signed_imbalance_x_trade_cluster_imbalance").to_frame()
+
+
 def compute_vpin_x_trade_cluster_entropy(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -221,6 +329,16 @@ def compute_vpin_x_trade_cluster_entropy(
     state = df.get(vpin_col, pd.Series(0.0, index=df.index))
     momentum = df.get(entropy_col, pd.Series(0.0, index=df.index))
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_trade_cluster_entropy")
+
+
+def compute_vpin_x_trade_cluster_entropy_from_series(
+    *,
+    vpin: pd.Series,
+    trade_cluster_directional_entropy: pd.Series,
+) -> pd.DataFrame:
+    vp = pd.to_numeric(vpin, errors="coerce").fillna(0.0).astype(float)
+    ent = pd.to_numeric(trade_cluster_directional_entropy, errors="coerce").fillna(0.0).astype(float)
+    return (vp * ent).rename("vpin_x_trade_cluster_entropy").to_frame()
 
 
 def compute_sma_slope_x_price_pos(
@@ -250,6 +368,19 @@ def compute_sma_slope_x_price_pos(
     return (state.fillna(0) * price_pos).rename("sma_slope_x_price_pos")
 
 
+def compute_sma_slope_x_price_pos_from_series(
+    *,
+    sma_200_slope: pd.Series,
+    sma_200: pd.Series,
+    close: pd.Series,
+) -> pd.DataFrame:
+    slope = pd.to_numeric(sma_200_slope, errors="coerce").fillna(0.0).astype(float)
+    sma = pd.to_numeric(sma_200, errors="coerce").astype(float)
+    cl = pd.to_numeric(close, errors="coerce").astype(float)
+    price_pos = (cl / sma.replace(0, np.nan)).fillna(1.0)
+    return (slope * price_pos).rename("sma_slope_x_price_pos").to_frame()
+
+
 def compute_vpin_x_wick_upper(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -271,6 +402,16 @@ def compute_vpin_x_wick_upper(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_wick_upper")
 
 
+def compute_vpin_x_wick_upper_from_series(
+    *,
+    vpin: pd.Series,
+    wick_upper_ratio: pd.Series,
+) -> pd.DataFrame:
+    vp = pd.to_numeric(vpin, errors="coerce").fillna(0.0).astype(float)
+    wr = pd.to_numeric(wick_upper_ratio, errors="coerce").fillna(0.0).astype(float)
+    return (vp * wr).rename("vpin_x_wick_upper").to_frame()
+
+
 def compute_vpin_x_wick_lower(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -290,6 +431,16 @@ def compute_vpin_x_wick_lower(
     state = df.get(vpin_col, pd.Series(0.0, index=df.index))
     momentum = df.get(wick_col, pd.Series(0.0, index=df.index))
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_wick_lower")
+
+
+def compute_vpin_x_wick_lower_from_series(
+    *,
+    vpin: pd.Series,
+    wick_lower_ratio: pd.Series,
+) -> pd.DataFrame:
+    vp = pd.to_numeric(vpin, errors="coerce").fillna(0.0).astype(float)
+    wr = pd.to_numeric(wick_lower_ratio, errors="coerce").fillna(0.0).astype(float)
+    return (vp * wr).rename("vpin_x_wick_lower").to_frame()
 
 
 def apply_rank_transform_to_interaction(
@@ -319,6 +470,19 @@ def apply_rank_transform_to_interaction(
         rank_series = df[interaction_col].rank(pct=True, method="average")
     
     return rank_series.fillna(0.5).rename(f"{interaction_col}_rank")
+
+
+def apply_rank_transform_to_interaction_from_series(
+    *,
+    interaction: pd.Series,
+) -> pd.DataFrame:
+    """
+    Narrow-IO rank transform for a single interaction series.
+    Uses global rank(pct=True) and fills missing with 0.5, matching legacy behavior.
+    """
+    s = pd.to_numeric(interaction, errors="coerce").astype(float)
+    ranked = s.rank(pct=True, method="average").fillna(0.5)
+    return ranked.rename(f"{interaction.name or 'interaction'}_rank").to_frame()
 
 
 # ========================================================================
@@ -573,6 +737,19 @@ def compute_atr_ratio(
     ).fillna(0.0).rename("atr_ratio")
 
 
+def compute_atr_ratio_from_series(
+    *,
+    atr: pd.Series,
+    close: pd.Series,
+) -> pd.Series:
+    """Narrow-input ATR ratio: atr / close."""
+    atr = pd.to_numeric(atr, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    return (atr / close.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0).rename(
+        "atr_ratio"
+    )
+
+
 def compute_bb_width_ratio(
     df: pd.DataFrame,
     bb_upper_col: str = "bb_upper",
@@ -605,6 +782,20 @@ def compute_bb_width_ratio(
         (df[bb_upper_col] - df[bb_lower_col]) / df[bb_middle_col].replace(0, np.nan)
     ).fillna(0.0)
     return bb_width.rename("bb_width_ratio")
+
+
+def compute_bb_width_ratio_from_series(
+    *,
+    bb_upper: pd.Series,
+    bb_lower: pd.Series,
+    bb_middle: pd.Series,
+) -> pd.Series:
+    """Narrow-input BB width ratio: (upper - lower) / middle."""
+    bb_upper = pd.to_numeric(bb_upper, errors="coerce").astype(float)
+    bb_lower = pd.to_numeric(bb_lower, errors="coerce").astype(float)
+    bb_middle = pd.to_numeric(bb_middle, errors="coerce").astype(float)
+    out = (bb_upper - bb_lower) / bb_middle.replace(0, np.nan)
+    return out.replace([np.inf, -np.inf], np.nan).fillna(0.0).rename("bb_width_ratio")
 
 
 def compute_compression_score(
@@ -643,6 +834,13 @@ def compute_compression_score(
     )
 
 
+def compute_compression_score_from_series(*, bb_width_ratio: pd.Series) -> pd.Series:
+    """Narrow-input compression_score: 1 / (1 + bb_width_ratio)."""
+    bb_width_ratio = pd.to_numeric(bb_width_ratio, errors="coerce").astype(float)
+    out = 1.0 / (1.0 + bb_width_ratio)
+    return out.replace([np.inf, -np.inf], np.nan).fillna(0.0).rename("compression_score")
+
+
 def compute_tbr_ma(
     df: pd.DataFrame,
     tbr_col: str = "taker_buy_ratio",
@@ -670,6 +868,13 @@ def compute_tbr_ma(
     return (
         df[tbr_col].rolling(window=window, min_periods=1).mean()
     ).fillna(0.5).rename(f"tbr_ma_{window}")
+
+
+def compute_tbr_ma_from_series(*, taker_buy_ratio: pd.Series, window: int = 5) -> pd.Series:
+    """Narrow-input TBR moving average."""
+    tbr = pd.to_numeric(taker_buy_ratio, errors="coerce").astype(float)
+    out = tbr.rolling(window=window, min_periods=1).mean()
+    return out.replace([np.inf, -np.inf], np.nan).fillna(0.5).rename(f"tbr_ma_{window}")
 
 
 def compute_tbr_spike(
@@ -707,6 +912,20 @@ def compute_tbr_spike(
     
     spike = (df[tbr_col] > tbr_ma * spike_threshold).astype(float)
     return spike.rename("tbr_spike")
+
+
+def compute_tbr_spike_from_series(
+    *,
+    taker_buy_ratio: pd.Series,
+    tbr_ma_5: pd.Series,
+    spike_threshold: float = 1.5,
+) -> pd.Series:
+    """Narrow-input TBR spike: taker_buy_ratio > tbr_ma_5 * threshold."""
+    tbr = pd.to_numeric(taker_buy_ratio, errors="coerce").astype(float)
+    ma = pd.to_numeric(tbr_ma_5, errors="coerce").astype(float)
+    out = (tbr > ma * float(spike_threshold)).astype(float)
+    out.name = "tbr_spike"
+    return out
 
 
 # ========================================================================

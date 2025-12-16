@@ -833,7 +833,7 @@ class ParallelFeatureComputer:
         
         # 获取 ticks_loader_json
         ticks_loader_json = compute_params.get("ticks_loader_json")
-        if not ticks_loader_json and feature_name in ["vpin_features", "footprint_basic"]:
+        if not ticks_loader_json and feature_name in ["vpin_features", "order_flow_all_features", "vpin_base_aligned_features", "trade_cluster_base_aligned_features", "footprint_basic"]:
             print(f"     ⚠️  Warning: {feature_name} needs ticks_loader_json but it's not in compute_params")
             print(f"     compute_params keys: {list(compute_params.keys())}")
         

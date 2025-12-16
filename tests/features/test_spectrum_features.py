@@ -32,8 +32,33 @@ except ImportError as e:
 
 from src.features.time_series.utils_spectrum_features import (
     compute_spectrum_features,
-    extract_spectrum_features,
+    extract_spectrum_features_from_series,
 )
+
+
+# ---------------------------------------------------------------------------
+# Route B: DF-style entrypoint removed from library.
+# Provide a local DF wrapper used by existing tests.
+# ---------------------------------------------------------------------------
+def extract_spectrum_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str | None = None,
+    cvd_col: str | None = None,
+    rolling_window: int = 64,
+) -> pd.DataFrame:
+    vol = df[volume_col] if volume_col and volume_col in df.columns else None
+    cvd = df[cvd_col] if cvd_col and cvd_col in df.columns else None
+    feats = extract_spectrum_features_from_series(
+        close=df[price_col],
+        volume=vol,
+        cvd=cvd,
+        rolling_window=rolling_window,
+    )
+    out = df.copy()
+    for c in feats.columns:
+        out[c] = feats[c]
+    return out
 
 
 class TestSpectrumFeatures(unittest.TestCase):
@@ -153,6 +178,65 @@ class TestSpectrumFeatures(unittest.TestCase):
         self.assertLessEqual(features["has_dominant_freq"], 1.0)
 
         print("  ✅ 所有核心特征计算正确，值在合理范围内")
+
+    def test_narrow_entrypoint_matches_df_entrypoint_close_only(self):
+        """
+        Narrow-IO regression:
+        - Series-in entrypoint should match the legacy DF entrypoint for close-only usage.
+        - Optional volume/cvd spectrum columns should exist and be NaN when not provided.
+        """
+        n = 180
+        rolling_window = 32
+        close = 100 + np.cumsum(np.random.randn(n) * 0.1)
+        df = pd.DataFrame({"close": close})
+
+        legacy = extract_spectrum_features(
+            df,
+            price_col="close",
+            volume_col=None,
+            cvd_col=None,
+            rolling_window=rolling_window,
+        )
+        narrow = extract_spectrum_features_from_series(
+            close=df["close"], rolling_window=rolling_window
+        )
+
+        price_cols = [
+            "spectrum_price_has_dominant_freq",
+            "spectrum_price_flatness",
+            "spectrum_price_high_freq_ratio",
+            "spectrum_price_low_freq_ratio",
+            "spectrum_price_entropy",
+            "spectrum_price_centroid",
+        ]
+        for c in price_cols:
+            self.assertIn(c, legacy.columns)
+            self.assertIn(c, narrow.columns)
+            a = legacy[c].values
+            b = narrow[c].values
+            self.assertTrue(
+                np.allclose(a, b, rtol=1e-10, atol=1e-12, equal_nan=True),
+                f"Mismatch in column {c}",
+            )
+
+        optional_cols = [
+            "spectrum_volume_flatness",
+            "spectrum_volume_high_freq_ratio",
+            "spectrum_volume_low_freq_ratio",
+            "spectrum_volume_entropy",
+            "spectrum_volume_centroid",
+            "spectrum_cvd_flatness",
+            "spectrum_cvd_high_freq_ratio",
+            "spectrum_cvd_low_freq_ratio",
+            "spectrum_cvd_entropy",
+            "spectrum_cvd_centroid",
+        ]
+        for c in optional_cols:
+            self.assertIn(c, narrow.columns)
+            self.assertTrue(
+                pd.isna(narrow[c]).all(),
+                f"{c} should be all-NaN when inputs are not provided",
+            )
 
     def test_trend_vs_white_noise(self):
         """

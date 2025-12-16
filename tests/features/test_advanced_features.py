@@ -18,12 +18,31 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # 导入特征提取函数
-from src.features.time_series.utils_garch_features import extract_garch_features
+from src.features.time_series.utils_garch_features import (
+    extract_garch_features_from_series,
+)
 from src.features.time_series.utils_dtw_features import (
     extract_dtw_features,
     create_dtw_templates,
 )
-from src.features.time_series.utils_evt_features import extract_evt_features
+from src.features.time_series.utils_evt_features import extract_evt_features_from_series
+
+
+# ---------------------------------------------------------------------------
+# Route B: DF-style entrypoints removed from library.
+# Keep test semantics by providing local DF wrappers that forward to *_from_series.
+# ---------------------------------------------------------------------------
+def extract_garch_features(
+    df: pd.DataFrame, price_col: str = "close", **kwargs
+) -> pd.DataFrame:
+    return extract_garch_features_from_series(close=df[price_col], **kwargs)
+
+
+def extract_evt_features(
+    df: pd.DataFrame, price_col: str = "close", **kwargs
+) -> pd.DataFrame:
+    return extract_evt_features_from_series(close=df[price_col], **kwargs)
+
 
 # 导入公共归一化模块
 from src.features.time_series.utils_normalization import (

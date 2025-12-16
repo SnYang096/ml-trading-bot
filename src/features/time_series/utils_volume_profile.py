@@ -499,3 +499,127 @@ def compute_unified_volume_profile_derived_features(
             )
     
     return df
+
+
+def compute_wpt_vpvr_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+    window: int = 100,
+    bins: int | str = 50,
+    wavelet: str = "db4",
+    level: int = 4,
+    drop_high_freq: bool = True,
+) -> pd.DataFrame:
+    """
+    Narrow-IO VPVR (Visible Range Volume Profile) features based on WPT-denoised volume profile.
+
+    Outputs the strategy-facing `vpvr_*` columns:
+    - vpvr_pvp (≈ POC)
+    - vpvr_hvn_count / vpvr_lvn_count
+    - vpvr_lvn_distance
+    - vpvr_volume_density
+    - vpvr_price_in_lvn
+    """
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    high_s = pd.to_numeric(high, errors="coerce").astype(float)
+    low_s = pd.to_numeric(low, errors="coerce").astype(float)
+    vol_s = pd.to_numeric(volume, errors="coerce").astype(float)
+    idx = close_s.index
+    n = len(close_s)
+
+    # Typical price (VPVR uses typical price)
+    price_data = (high_s + low_s + close_s) / 3.0
+
+    out_cols = [
+        "vpvr_pvp",
+        "vpvr_hvn_count",
+        "vpvr_lvn_count",
+        "vpvr_lvn_distance",
+        "vpvr_volume_density",
+        "vpvr_price_in_lvn",
+    ]
+    arr = {
+        "vpvr_pvp": np.full(n, np.nan, dtype=float),
+        "vpvr_hvn_count": np.zeros(n, dtype=float),
+        "vpvr_lvn_count": np.zeros(n, dtype=float),
+        "vpvr_lvn_distance": np.full(n, np.nan, dtype=float),
+        "vpvr_volume_density": np.zeros(n, dtype=float),
+        "vpvr_price_in_lvn": np.zeros(n, dtype=float),
+    }
+
+    min_length = max(window, 2**level)
+    price_vals = price_data.values
+    vol_vals = vol_s.values
+
+    for i in range(window, n):
+        if i < min_length:
+            continue
+        price_window = price_vals[i - window : i]
+        volume_window = vol_vals[i - window : i]
+        current_price = price_vals[i]
+
+        vp_result = compute_wpt_volume_profile(
+            price_window=price_window,
+            volume_window=volume_window,
+            bins=bins,
+            wavelet=wavelet,
+            level=level,
+            drop_high_freq=drop_high_freq,
+        )
+        if vp_result is None:
+            continue
+
+        hist = vp_result.hist
+        edges = vp_result.edges
+        centers = vp_result.centers
+        total_volume = float(np.sum(hist))
+        if total_volume <= 0:
+            continue
+
+        # PVP (POC)
+        max_vol_idx = int(np.argmax(hist))
+        pvp_price = float(centers[max_vol_idx])
+        arr["vpvr_pvp"][i] = pvp_price
+
+        # HVN/LVN masks
+        positive_mask = hist > 0
+        volume_mean = float(np.mean(hist[positive_mask])) if np.any(positive_mask) else 0.0
+        volume_std = float(np.std(hist[positive_mask])) if np.any(positive_mask) else 0.0
+
+        price_range = float(vp_result.price_max - vp_result.price_min)
+        if volume_std > 0:
+            hvn_mask = hist > (volume_mean + 0.5 * volume_std)
+            lvn_mask = hist < (volume_mean - 0.5 * volume_std)
+            arr["vpvr_hvn_count"][i] = float(np.sum(hvn_mask))
+            arr["vpvr_lvn_count"][i] = float(np.sum(lvn_mask))
+
+            lvn_prices = centers[lvn_mask]
+            if len(lvn_prices) > 0 and price_range > 0:
+                lvn_distances = np.abs(lvn_prices - current_price)
+                nearest_idx = int(np.argmin(lvn_distances))
+                nearest_price = float(lvn_prices[nearest_idx])
+                nearest_dist = float(lvn_distances[nearest_idx])
+                arr["vpvr_lvn_distance"][i] = nearest_dist / price_range
+
+                if isinstance(bins, int):
+                    bin_width = price_range / float(bins) if bins > 0 else 0.0
+                else:
+                    bin_width = price_range / float(len(centers)) if len(centers) > 0 else 0.0
+                if bin_width > 0 and abs(current_price - nearest_price) < bin_width:
+                    arr["vpvr_price_in_lvn"][i] = 1.0
+
+        # Volume density at current price
+        current_price_bin = int(np.digitize(current_price, edges) - 1)
+        current_price_bin = int(np.clip(current_price_bin, 0, len(hist) - 1))
+        current_volume = float(hist[current_price_bin]) if 0 <= current_price_bin < len(hist) else 0.0
+        max_volume = float(np.max(hist)) if len(hist) > 0 else 1.0
+        arr["vpvr_volume_density"][i] = current_volume / max_volume if max_volume > 0 else 0.0
+
+    out = pd.DataFrame(arr, index=idx)
+    out["vpvr_pvp"] = out["vpvr_pvp"].ffill()
+    out["vpvr_lvn_distance"] = out["vpvr_lvn_distance"].fillna(0.0)
+    out[out_cols] = out[out_cols].fillna(0.0)
+    return out[out_cols]

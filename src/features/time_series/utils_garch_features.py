@@ -17,9 +17,8 @@ except ImportError:
     print("⚠️ arch package not available. GARCH features will be disabled.")
 
 
-def extract_garch_features(
-    df: pd.DataFrame,
-    price_col: str = "close",
+def _extract_garch_features_from_close(
+    close: pd.Series,
     window: int = 60,
     garch_p: int = 1,
     garch_q: int = 1,
@@ -46,42 +45,30 @@ def extract_garch_features(
         - garch_alpha: GARCH α parameter
         - garch_beta: GARCH β parameter
     """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    index = close.index
+
+    cols = [
+        "garch_volatility",
+        "garch_persistence",
+        "garch_leverage_gamma",
+        "garch_alpha",
+        "garch_beta",
+    ]
+
     if not ARCH_AVAILABLE:
         # Return empty features if arch is not available
-        return pd.DataFrame(
-            index=df.index,
-            columns=[
-                "garch_volatility",
-                "garch_persistence",
-                "garch_leverage_gamma",
-                "garch_alpha",
-                "garch_beta",
-            ],
-        ).fillna(0.0)
-    
-    df = df.copy()
+        return pd.DataFrame(index=index, columns=cols).fillna(0.0)
     
     # Calculate returns
-    if price_col not in df.columns:
-        raise ValueError(f"Price column '{price_col}' not found")
-    
-    returns = df[price_col].pct_change().dropna()
+    returns = close.pct_change().dropna()
     
     if len(returns) < window + 10:
         # Not enough data
-        return pd.DataFrame(
-            index=df.index,
-            columns=[
-                "garch_volatility",
-                "garch_persistence",
-                "garch_leverage_gamma",
-                "garch_alpha",
-                "garch_beta",
-            ],
-        ).fillna(0.0)
+        return pd.DataFrame(index=index, columns=cols).fillna(0.0)
     
     # Initialize result arrays
-    n = len(df)
+    n = len(close)
     garch_vol = np.full(n, np.nan)
     persistence = np.full(n, np.nan)
     leverage_gamma = np.full(n, np.nan)
@@ -91,6 +78,7 @@ def extract_garch_features(
     # Rolling GARCH fitting
     returns_arr = returns.values
     returns_index = returns.index
+    idx_pos = index.get_indexer(returns_index)
     
     for i in range(window, len(returns)):
         try:
@@ -115,9 +103,10 @@ def extract_garch_features(
             
             # Get forecast
             forecast = res.forecast(horizon=1, reindex=False)
-            garch_vol_idx = returns_index[i]
-            df_idx = df.index.get_loc(garch_vol_idx)
+            df_idx = int(idx_pos[i])
             
+            if df_idx < 0 or df_idx >= n:
+                continue
             if df_idx < n:
                 garch_vol[df_idx] = np.sqrt(forecast.variance.values[-1, 0])
                 
@@ -177,7 +166,7 @@ def extract_garch_features(
             "garch_alpha": garch_alpha,
             "garch_beta": garch_beta,
         },
-        index=df.index,
+        index=index,
     )
     
     # Forward fill NaN values (use last valid value)
@@ -185,3 +174,26 @@ def extract_garch_features(
     
     return result
 
+
+def extract_garch_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 60,
+    garch_p: int = 1,
+    garch_q: int = 1,
+    use_gjr: bool = True,
+    use_figarch: bool = False,
+) -> pd.DataFrame:
+    """
+    Narrow-IO GARCH entrypoint for the feature DAG.
+
+    Uses legacy implementation internally but only constructs a slim DF containing `close`.
+    """
+    return _extract_garch_features_from_close(
+        close=close,
+        window=window,
+        garch_p=garch_p,
+        garch_q=garch_q,
+        use_gjr=use_gjr,
+        use_figarch=use_figarch,
+    )

@@ -22,6 +22,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.features.time_series.utils_interaction_features import (
     extract_interaction_features,
     compute_liquidity_void_x_wpt_risk,
+    compute_liquidity_void_x_vpin_from_series,
+    compute_vpin_x_compression_from_series,
+    apply_rank_transform_to_interaction_from_series,
     compute_compression_energy_x_ofi_short,
     compute_vpin_x_compression,
     compute_sr_distance_normalized,
@@ -59,6 +62,7 @@ def create_mock_data(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
     df["compression_energy"] = np.random.uniform(0, 1, n_samples)
     df["ofi_short"] = np.random.uniform(-1, 1, n_samples)
     df["vpin"] = np.random.uniform(0, 1, n_samples)
+    df["vpin_zscore_50"] = np.random.uniform(-2, 2, n_samples)
     df["dist_to_nearest_sr"] = np.random.uniform(0, 10, n_samples)
 
     # 计算 ATR
@@ -95,6 +99,42 @@ class TestInteractionFeatures:
         result2 = compute_compression_energy_x_ofi_short(df)
         assert isinstance(result2, pd.Series)
         assert len(result2) == len(df)
+
+        # 测试 heavy gate: liquidity_void_x_vpin（Series-in narrow）
+        out_df = compute_liquidity_void_x_vpin_from_series(
+            liquidity_void_detected=df["liquidity_void_detected"],
+            vpin=df["vpin_zscore_50"],
+        )
+        assert isinstance(out_df, pd.DataFrame)
+        assert "liquidity_void_x_vpin" in out_df.columns
+        expected = df["liquidity_void_detected"].fillna(0.0) * df[
+            "vpin_zscore_50"
+        ].fillna(0.0)
+        assert np.allclose(
+            out_df["liquidity_void_x_vpin"].values,
+            expected.values,
+            equal_nan=True,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+        # 测试：vpin_x_compression（Series-in narrow）
+        out2 = compute_vpin_x_compression_from_series(
+            vpin=df["vpin"],
+            compression_energy=df["compression_energy"],
+        )
+        assert "vpin_x_compression" in out2.columns
+        expected2 = df["vpin"].fillna(0.0) * df["compression_energy"].fillna(0.0)
+        assert np.allclose(
+            out2["vpin_x_compression"].values, expected2.values, equal_nan=True
+        )
+
+        # 测试：rank transform（Series-in narrow）
+        rank_df = apply_rank_transform_to_interaction_from_series(
+            interaction=out2["vpin_x_compression"]
+        )
+        assert rank_df.shape[1] == 1
+        assert rank_df.iloc[:, 0].between(0.0, 1.0).all()
 
     def test_extract_interaction_features(self):
         """测试：提取交互特征"""

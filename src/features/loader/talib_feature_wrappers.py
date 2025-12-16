@@ -13,7 +13,7 @@ import talib
 
 
 def _prepare_inputs(
-    df: pd.DataFrame, kwargs: Dict[str, object]
+    df: Optional[pd.DataFrame], kwargs: Dict[str, object]
 ) -> tuple[Dict[str, object], pd.Index]:
     """Convert pandas inputs to numpy arrays and infer index."""
 
@@ -22,17 +22,26 @@ def _prepare_inputs(
 
     for key, value in kwargs.items():
         if isinstance(value, pd.Series):
-            processed[key] = value.values
+            # TA-Lib expects float64 ("double") inputs for most indicators.
+            processed[key] = (
+                pd.to_numeric(value, errors="coerce").astype("float64").values
+            )
             if index is None:
                 index = value.index
         elif isinstance(value, pd.DataFrame):
-            processed[key] = value.values
+            processed[key] = value.apply(pd.to_numeric, errors="coerce").astype(
+                "float64"
+            ).values
             if index is None:
                 index = value.index
         else:
             processed[key] = value
 
     if index is None:
+        if df is None:
+            raise ValueError(
+                "Unable to infer index for TA-Lib inputs: no pandas Series/DataFrame provided."
+            )
         index = df.index
 
     return processed, index
@@ -84,6 +93,31 @@ def compute_talib_indicator(
         result[col] = pd.Series(talib_result, index=index)
 
     return result
+
+
+def compute_talib_indicator_from_series(
+    *,
+    indicator_name: str,
+    output_column: Optional[str] = None,
+    output_columns: Optional[List[str]] = None,
+    **kwargs,
+) -> pd.DataFrame:
+    """
+    Narrow-IO entrypoint for TA-Lib indicators.
+
+    Feature pipeline can call this with `pass_full_df: false` + `column_mappings`
+    so only required Series are passed (no wide DataFrame).
+    """
+    # Infer index from provided Series/DataFrame args, then call the canonical implementation.
+    _, index = _prepare_inputs(None, kwargs)
+    df = pd.DataFrame(index=index)
+    return compute_talib_indicator(
+        df,
+        indicator_name,
+        output_column=output_column,
+        output_columns=output_columns,
+        **kwargs,
+    )
 
 
 def compute_talib_sma(

@@ -35,9 +35,8 @@ except ImportError:
     print("⚠️ scipy package not available. EVT features will be disabled.")
 
 
-def extract_evt_features(
-    df: pd.DataFrame,
-    price_col: str = "close",
+def _extract_evt_features_from_close(
+    close: pd.Series,
     window: int = 120,
     threshold_quantile: float = 0.1,
     min_excesses: int = 10,
@@ -94,6 +93,9 @@ def extract_evt_features(
         - VaR和ES为负值表示损失，绝对值越大表示风险越高
         - 特征已使用ffill()向前填充，保留最后有效估计
     """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    index = close.index
+
     if not SCIPY_AVAILABLE:
         # Return empty features if scipy is not available
         cols = [
@@ -109,15 +111,10 @@ def extract_evt_features(
                 "evt_var_99_right",
                 "evt_es_99_right",
             ])
-        return pd.DataFrame(index=df.index, columns=cols)
-    
-    df = df.copy()
-    
-    if price_col not in df.columns:
-        raise ValueError(f"Price column '{price_col}' not found")
+        return pd.DataFrame(index=index, columns=cols)
     
     # Calculate returns
-    returns = df[price_col].pct_change().dropna()
+    returns = close.pct_change().dropna()
     
     if len(returns) < window + 10:
         # Not enough data
@@ -134,11 +131,11 @@ def extract_evt_features(
                 "evt_var_99_right",
                 "evt_es_99_right",
             ])
-        return pd.DataFrame(index=df.index, columns=cols)
+        return pd.DataFrame(index=index, columns=cols)
     
     # Initialize result arrays with small default values (instead of NaN)
     # These will be overwritten with actual computed values when possible
-    n = len(df)
+    n = len(close)
     xi_left = np.full(n, 0.01)      # Small positive shape (light tail)
     scale_left = np.full(n, 0.001)  # Small scale
     var_99_left = np.full(n, -0.01)  # Small negative VaR (low risk)
@@ -153,6 +150,7 @@ def extract_evt_features(
     # Rolling EVT fitting
     returns_arr = returns.values
     returns_index = returns.index
+    idx_pos = index.get_indexer(returns_index)
     
     # Tail probability: proportion of returns below threshold
     tail_prob_left = threshold_quantile
@@ -172,8 +170,8 @@ def extract_evt_features(
             if np.std(window_returns) < 1e-8:
                 continue
             
-            df_idx = df.index.get_loc(returns_index[i])
-            if df_idx >= n:
+            df_idx = int(idx_pos[i])
+            if df_idx < 0 or df_idx >= n:
                 continue
             
             # ========== LEFT TAIL (CRASH RISK) - 核心特征 ==========
@@ -340,7 +338,7 @@ def extract_evt_features(
             "evt_es_99_right": es_99_right,
         })
     
-    result = pd.DataFrame(result_dict, index=df.index)
+    result = pd.DataFrame(result_dict, index=index)
     
     # Forward fill NaN values (carry forward last valid estimate)
     # Note: Since we initialize with small default values instead of NaN,
@@ -380,3 +378,26 @@ def extract_evt_features(
     return result
 
 
+def extract_evt_features_from_series(
+    *,
+    close: pd.Series,
+    window: int = 120,
+    threshold_quantile: float = 0.1,
+    min_excesses: int = 10,
+    separate_tails: bool = True,
+    var_confidence: float = 0.99,
+) -> pd.DataFrame:
+    """
+    Narrow-IO EVT entrypoint for the feature DAG.
+
+    Uses the legacy implementation internally, but only ever constructs a slim DF containing `close`,
+    so the pipeline doesn't pass/mutate a wide table.
+    """
+    return _extract_evt_features_from_close(
+        close=close,
+        window=window,
+        threshold_quantile=threshold_quantile,
+        min_excesses=min_excesses,
+        separate_tails=separate_tails,
+        var_confidence=var_confidence,
+    )

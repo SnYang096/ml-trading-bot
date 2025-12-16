@@ -20,8 +20,28 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.features.time_series.utils_volatility_features import (
     extract_volatility_features_from_vp,
-    extract_volume_profile_volatility_features,
+    extract_volume_profile_volatility_features_from_series,
 )
+
+
+# Route B: DF-style entrypoint removed; provide local DF wrapper for tests.
+def extract_volume_profile_volatility_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str = "volume",
+    **kwargs,
+) -> pd.DataFrame:
+    feats = extract_volume_profile_volatility_features_from_series(
+        close=df[price_col],
+        volume=df[volume_col],
+        **kwargs,
+    )
+    out = df.copy()
+    for c in feats.columns:
+        out[c] = feats[c]
+    return out
+
+
 from src.features.time_series.utils_volume_profile import (
     VolumeProfileResult,
     compute_wpt_volume_profile,
@@ -189,6 +209,49 @@ class TestVolumeProfileVolatilityFeatures:
         assert df_features["vp_entropy"].notna().sum() > 0
         assert (df_features["vp_entropy"] >= 0).all()
         assert (df_features["vp_entropy"] <= 1).all()
+
+    def test_narrow_entrypoint_matches_df_entrypoint_close_volume_only(self):
+        """Regression: Series-in entrypoint matches legacy DF entrypoint (close+volume only)."""
+        n_samples = 220
+        dates = pd.date_range("2024-01-01", periods=n_samples, freq="4H")
+        trend = np.linspace(100, 110, n_samples)
+        noise = np.random.randn(n_samples) * 2
+        prices = trend + noise
+        volumes = np.abs(noise) * 100 + 1000
+
+        df = pd.DataFrame({"close": prices, "volume": volumes}, index=dates)
+
+        legacy = extract_volume_profile_volatility_features(
+            df,
+            price_col="close",
+            volume_col="volume",
+            window=80,  # faster
+            wavelet="db4",
+            level=4,
+        )
+        narrow = extract_volume_profile_volatility_features_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            window=80,
+            wavelet="db4",
+            level=4,
+        )
+
+        expected_cols = [
+            "vp_width_ratio",
+            "vp_poc_deviation",
+            "vp_skewness",
+            "vp_entropy",
+            "vp_lv_ratio",
+            "vp_hv_ratio",
+        ]
+        assert list(narrow.columns) == expected_cols
+        for c in expected_cols:
+            a = legacy[c].values
+            b = narrow[c].values
+            assert np.allclose(
+                a, b, rtol=1e-10, atol=1e-12, equal_nan=True
+            ), f"Mismatch in {c}"
 
     def test_volume_profile_features_correlation_with_volatility(self):
         """测试特征与波动率的相关性（模拟数据验证）"""

@@ -424,3 +424,247 @@ def extract_liquidity_features(
         )
     
     return df
+
+
+def compute_liquidity_void_features_from_series(
+    *,
+    close: pd.Series,
+    volume: pd.Series,
+    atr: Optional[pd.Series] = None,
+    lookback_window: int = 20,
+    speed_threshold_multiplier: float = 2.0,
+    volume_quantile: float = 0.2,
+) -> pd.DataFrame:
+    """
+    Narrow-IO liquidity void features (no wide DF mutation).
+
+    Matches `compute_liquidity_void_features` semantics.
+    """
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    vol_s = pd.to_numeric(volume, errors="coerce").astype(float)
+    idx = close_s.index
+    n = len(close_s)
+
+    if atr is None:
+        atr_s = close_s.rolling(window=14).std()
+    else:
+        atr_s = pd.to_numeric(atr, errors="coerce").astype(float).reindex(idx)
+    atr_s = atr_s.clip(lower=1e-8)
+
+    # price speed normalized by ATR ratio
+    price_change = close_s.pct_change()
+    price_speed = price_change.rolling(window=3).mean()
+    price_speed_normalized = price_speed / (atr_s / close_s + 1e-8)
+
+    # volume ratios / low-volume detection
+    volume_ma = vol_s.rolling(window=lookback_window).mean()
+    volume_ratio = vol_s / (volume_ma + 1e-8)
+    volume_quantile_value = vol_s.rolling(window=lookback_window).quantile(volume_quantile)
+    is_low_volume = vol_s < volume_quantile_value
+
+    speed_threshold = price_speed_normalized.rolling(window=lookback_window).mean() * float(
+        speed_threshold_multiplier
+    )
+
+    detected = np.zeros(n, dtype=float)
+    void_speed = np.zeros(n, dtype=float)
+    void_volume_ratio = np.ones(n, dtype=float)
+    retracement_arr = np.zeros(n, dtype=float)
+    risk_arr = np.zeros(n, dtype=float)
+
+    close_vals = close_s.values
+    psn_vals = price_speed_normalized.values
+    st_vals = speed_threshold.values
+    vr_vals = volume_ratio.values
+    low_vals = is_low_volume.values
+
+    for i in range(lookback_window, n):
+        speed_high = bool(psn_vals[i] > st_vals[i]) if np.isfinite(st_vals[i]) else False
+        volume_low = bool(low_vals[i]) or (vr_vals[i] < 0.8 if np.isfinite(vr_vals[i]) else False)
+
+        if speed_high and volume_low:
+            detected[i] = 1.0
+            void_speed[i] = float(psn_vals[i]) if np.isfinite(psn_vals[i]) else 0.0
+            void_volume_ratio[i] = float(vr_vals[i]) if np.isfinite(vr_vals[i]) else 1.0
+
+            if i + 3 < n:
+                current_price = float(close_vals[i])
+                if current_price > 0:
+                    future_prices = close_vals[i + 1 : i + 4]
+                    if future_prices.size > 0:
+                        max_future_price = float(np.nanmax(future_prices))
+                        min_future_price = float(np.nanmin(future_prices))
+                        retracement_up = (max_future_price - current_price) / current_price
+                        retracement_down = (current_price - min_future_price) / current_price
+                        retracement = float(max(retracement_up, retracement_down))
+                        retracement_arr[i] = retracement
+
+                        if retracement > 0.5:
+                            risk_arr[i] = 0.8
+                        elif retracement > 0.3:
+                            risk_arr[i] = 0.5
+                        else:
+                            risk_arr[i] = 0.2
+
+    return pd.DataFrame(
+        {
+            "liquidity_void_detected": detected,
+            "liquidity_void_speed": void_speed,
+            "liquidity_void_volume_ratio": void_volume_ratio,
+            "liquidity_void_retracement": retracement_arr,
+            "liquidity_void_false_breakout_risk": risk_arr,
+        },
+        index=idx,
+    )
+
+
+def compute_wpt_volume_energy_features_from_series(
+    *,
+    close: pd.Series,
+    volume: pd.Series,
+    wavelet: str = "db4",
+    level: int = 4,
+    lookback_window: int = 20,
+) -> pd.DataFrame:
+    """
+    Narrow-IO WPT + Volume energy features (no wide DF mutation).
+
+    Matches `compute_wpt_volume_energy_features` semantics.
+    """
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    vol_s = pd.to_numeric(volume, errors="coerce").astype(float)
+    idx = close_s.index
+    n = len(close_s)
+
+    out = {
+        "wpt_vper_low": np.zeros(n, dtype=float),
+        "wpt_vper_mid": np.zeros(n, dtype=float),
+        "wpt_vper_high": np.zeros(n, dtype=float),
+        "wpt_energy_cascade": np.zeros(n, dtype=float),
+        "wpt_multi_scale_consistency": np.zeros(n, dtype=float),
+        "wpt_breakout_confidence": np.zeros(n, dtype=float),
+        "wpt_false_breakout_risk": np.zeros(n, dtype=float),
+    }
+
+    price = close_s.values
+    vol = vol_s.values
+
+    for i in range(lookback_window, n):
+        window_start = max(0, i - lookback_window)
+        price_window = price[window_start : i + 1]
+        volume_window = vol[window_start : i + 1]
+
+        if len(price_window) < 10:
+            continue
+
+        try:
+            wp_price = pywt.WaveletPacket(
+                data=price_window, wavelet=wavelet, mode="symmetric", maxlevel=level
+            )
+            wp_volume = pywt.WaveletPacket(
+                data=volume_window, wavelet=wavelet, mode="symmetric", maxlevel=level
+            )
+
+            price_energy: Dict[str, float] = {}
+            volume_energy: Dict[str, float] = {}
+
+            for node in wp_price.get_level(level, "natural"):
+                price_energy[node.path] = float(np.sum(node.data ** 2))
+
+            for node in wp_volume.get_level(level, "natural"):
+                volume_energy[node.path] = float(np.sum(node.data ** 2))
+
+            low_freq_paths = ["a" * level]
+            mid_freq_paths = [
+                k for k in price_energy.keys() if k.startswith("aa") and k != "a" * level
+            ]
+            high_freq_paths = [k for k in price_energy.keys() if not k.startswith("aa")]
+
+            price_energy_low = sum(price_energy.get(p, 0.0) for p in low_freq_paths)
+            price_energy_mid = sum(price_energy.get(p, 0.0) for p in mid_freq_paths)
+            price_energy_high = sum(price_energy.get(p, 0.0) for p in high_freq_paths)
+
+            volume_energy_low = sum(volume_energy.get(p, 0.0) for p in low_freq_paths)
+            volume_energy_mid = sum(volume_energy.get(p, 0.0) for p in mid_freq_paths)
+            volume_energy_high = sum(volume_energy.get(p, 0.0) for p in high_freq_paths)
+
+            eps = 1e-8
+            vper_low = volume_energy_low / (price_energy_low + eps)
+            vper_mid = volume_energy_mid / (price_energy_mid + eps)
+            vper_high = volume_energy_high / (price_energy_high + eps)
+
+            out["wpt_vper_low"][i] = vper_low
+            out["wpt_vper_mid"][i] = vper_mid
+            out["wpt_vper_high"][i] = vper_high
+
+            energy_cascade = 0.0
+            total_price_energy = price_energy_low + price_energy_mid + price_energy_high
+            if total_price_energy > 0:
+                energy_ratio_low = price_energy_low / total_price_energy
+                energy_ratio_mid = price_energy_mid / total_price_energy
+                energy_ratio_high = price_energy_high / total_price_energy
+                energy_cascade = (energy_ratio_low + energy_ratio_mid) - energy_ratio_high
+                out["wpt_energy_cascade"][i] = energy_cascade
+
+            # multi-scale consistency
+            if i > 0:
+                prev_price_window = price[max(0, i - lookback_window - 1) : i]
+                if len(prev_price_window) >= 10:
+                    try:
+                        wp_price_prev = pywt.WaveletPacket(
+                            data=prev_price_window,
+                            wavelet=wavelet,
+                            mode="symmetric",
+                            maxlevel=level,
+                        )
+                        prev_price_energy: Dict[str, float] = {}
+                        for node in wp_price_prev.get_level(level, "natural"):
+                            prev_price_energy[node.path] = float(np.sum(node.data ** 2))
+
+                        mid_freq_energy_changes: List[float] = []
+                        for path in mid_freq_paths:
+                            curr_energy = float(price_energy.get(path, 0.0))
+                            prev_energy = float(prev_price_energy.get(path, 0.0))
+                            if prev_energy > 0:
+                                mid_freq_energy_changes.append(
+                                    (curr_energy - prev_energy) / prev_energy
+                                )
+
+                        positive_changes = sum(1 for chg in mid_freq_energy_changes if chg > 0.1)
+                        consistency_score = min(
+                            positive_changes / max(len(mid_freq_paths), 1), 1.0
+                        )
+                        out["wpt_multi_scale_consistency"][i] = consistency_score
+                    except Exception:
+                        pass
+
+            # breakout score
+            if i >= lookback_window * 2:
+                vper_mid_history = out["wpt_vper_mid"][i - lookback_window : i]
+                if vper_mid_history.size > 0 and np.isfinite(vper_mid_history).any():
+                    vper_mid_quantile = (
+                        stats.percentileofscore(vper_mid_history[np.isfinite(vper_mid_history)], vper_mid)
+                        / 100.0
+                    )
+                else:
+                    vper_mid_quantile = 0.5
+            else:
+                vper_mid_quantile = 0.5
+
+            consistency = out["wpt_multi_scale_consistency"][i]
+            breakout_confidence = (energy_cascade + 1) / 2 * 0.4 + vper_mid_quantile * 0.3 + consistency * 0.3
+            out["wpt_breakout_confidence"][i] = breakout_confidence
+
+            if price_energy_high > price_energy_mid * 2 and vper_mid < 0.5:
+                false_breakout_risk = min(breakout_confidence + 0.3, 1.0)
+            else:
+                false_breakout_risk = 1.0 - breakout_confidence
+            out["wpt_false_breakout_risk"][i] = false_breakout_risk
+
+        except Exception:
+            continue
+
+    result = pd.DataFrame(out, index=idx)
+    for col in result.columns:
+        result[col] = result[col].ffill().fillna(0.0)
+    return result

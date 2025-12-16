@@ -163,154 +163,103 @@ def compute_spectrum_features(
     }
 
 
-def extract_spectrum_features(
-    df: pd.DataFrame,
-    price_col: str = "close",
-    volume_col: Optional[str] = None,
-    cvd_col: Optional[str] = None,
+def extract_spectrum_features_from_series(
+    *,
+    close: pd.Series,
+    volume: Optional[pd.Series] = None,
+    cvd: Optional[pd.Series] = None,
     rolling_window: int = 64,
 ) -> pd.DataFrame:
     """
-    从 DataFrame 中提取频谱特征
-    
-    Args:
-        df: DataFrame with price data
-        price_col: Price column name
-        volume_col: Volume column name (optional)
-        cvd_col: CVD column name (optional)
-        rolling_window: Rolling window for spectrum calculation
-    
-    Returns:
-        DataFrame with spectrum features added
+    Narrow-IO spectrum feature entrypoint for the feature DAG.
+
+    - Always returns the full set of spectrum columns (price + optional volume/cvd),
+      leaving optional blocks as NaN if not provided.
+    - Designed to be used with YAML `pass_full_df: false` + `column_mappings`.
     """
-    df = df.copy()
-    
-    # 价格收益率频谱
-    if price_col in df.columns:
-        price_returns = df[price_col].pct_change().fillna(0).values
-        
-        # 滚动频谱特征（5个核心特征）
-        has_dominant_freqs = []
-        spectral_flatness = []
-        high_freq_ratios = []
-        low_freq_ratios = []
-        spectral_entropy = []
-        spectral_centroid = []
-        
-        for i in range(len(df)):
-            if i < rolling_window:
-                has_dominant_freqs.append(0.0)
-                spectral_flatness.append(1.0)
-                high_freq_ratios.append(0.0)
-                low_freq_ratios.append(0.0)
-                spectral_entropy.append(1.0)
-                spectral_centroid.append(0.0)
-            else:
-                window_returns = price_returns[i - rolling_window : i]
-                spec_features = compute_spectrum_features(window_returns)
-                has_dominant_freqs.append(spec_features["has_dominant_freq"])
-                spectral_flatness.append(spec_features["spectral_flatness"])
-                high_freq_ratios.append(spec_features["high_freq_energy_ratio"])
-                low_freq_ratios.append(spec_features["low_freq_energy_ratio"])
-                spectral_entropy.append(spec_features["spectral_entropy"])
-                spectral_centroid.append(spec_features["spectral_centroid"])
-        
-        df["spectrum_price_has_dominant_freq"] = has_dominant_freqs
-        df["spectrum_price_flatness"] = spectral_flatness
-        df["spectrum_price_high_freq_ratio"] = high_freq_ratios
-        df["spectrum_price_low_freq_ratio"] = low_freq_ratios
-        df["spectrum_price_entropy"] = spectral_entropy
-        df["spectrum_price_centroid"] = spectral_centroid
-    
-    # 成交量频谱（滚动窗口）
-    if volume_col and volume_col in df.columns:
-        volume = df[volume_col].values
-        volume_diff = np.diff(volume, prepend=volume[0])
-        
-        df["spectrum_volume_flatness"] = np.nan
-        df["spectrum_volume_high_freq_ratio"] = np.nan
-        df["spectrum_volume_low_freq_ratio"] = np.nan
-        df["spectrum_volume_entropy"] = np.nan
-        df["spectrum_volume_centroid"] = np.nan
-        
-        for i in range(rolling_window, len(df)):
-            window_diff = volume_diff[i - rolling_window : i]
-            spec_features = compute_spectrum_features(window_diff)
-            df.iloc[i, df.columns.get_loc("spectrum_volume_flatness")] = (
-                spec_features["spectral_flatness"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_volume_high_freq_ratio")] = (
-                spec_features["high_freq_energy_ratio"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_volume_low_freq_ratio")] = (
-                spec_features["low_freq_energy_ratio"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_volume_entropy")] = (
-                spec_features["spectral_entropy"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_volume_centroid")] = (
-                spec_features["spectral_centroid"]
-            )
-    
-    # CVD 频谱（滚动窗口）
-    if cvd_col and cvd_col in df.columns:
-        cvd = df[cvd_col].values
-        cvd_diff = np.diff(cvd, prepend=cvd[0])
-        
-        df["spectrum_cvd_flatness"] = np.nan
-        df["spectrum_cvd_high_freq_ratio"] = np.nan
-        df["spectrum_cvd_low_freq_ratio"] = np.nan
-        df["spectrum_cvd_entropy"] = np.nan
-        df["spectrum_cvd_centroid"] = np.nan
-        
-        for i in range(rolling_window, len(df)):
-            window_diff = cvd_diff[i - rolling_window : i]
-            spec_features = compute_spectrum_features(window_diff)
-            df.iloc[i, df.columns.get_loc("spectrum_cvd_flatness")] = (
-                spec_features["spectral_flatness"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_cvd_high_freq_ratio")] = (
-                spec_features["high_freq_energy_ratio"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_cvd_low_freq_ratio")] = (
-                spec_features["low_freq_energy_ratio"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_cvd_entropy")] = (
-                spec_features["spectral_entropy"]
-            )
-            df.iloc[i, df.columns.get_loc("spectrum_cvd_centroid")] = (
-                spec_features["spectral_centroid"]
-            )
-    
-    # 使用 shift(1) 确保时间对齐，只使用历史信息
-    spectrum_cols = [col for col in df.columns if col.startswith("spectrum_")]
-    for col in spectrum_cols:
-        df[col] = df[col].shift(1)
-    
-    # Fill NaN with default values (after shift)
-    if "spectrum_price_has_dominant_freq" in df.columns:
-        df["spectrum_price_has_dominant_freq"] = df["spectrum_price_has_dominant_freq"].fillna(0.0)
-        df["spectrum_price_flatness"] = df["spectrum_price_flatness"].fillna(1.0)
-        df["spectrum_price_high_freq_ratio"] = df["spectrum_price_high_freq_ratio"].fillna(0.0)
-        df["spectrum_price_low_freq_ratio"] = df["spectrum_price_low_freq_ratio"].fillna(0.0)
-        df["spectrum_price_entropy"] = df["spectrum_price_entropy"].fillna(1.0)
-        df["spectrum_price_centroid"] = df["spectrum_price_centroid"].fillna(0.0)
-    
-    if "spectrum_volume_flatness" in df.columns:
-        df["spectrum_volume_flatness"] = df["spectrum_volume_flatness"].fillna(1.0)
-        df["spectrum_volume_high_freq_ratio"] = df["spectrum_volume_high_freq_ratio"].fillna(0.0)
-        df["spectrum_volume_low_freq_ratio"] = df["spectrum_volume_low_freq_ratio"].fillna(0.0)
-        df["spectrum_volume_entropy"] = df["spectrum_volume_entropy"].fillna(1.0)
-        df["spectrum_volume_centroid"] = df["spectrum_volume_centroid"].fillna(0.0)
-    
-    if "spectrum_cvd_flatness" in df.columns:
-        df["spectrum_cvd_flatness"] = df["spectrum_cvd_flatness"].fillna(1.0)
-        df["spectrum_cvd_high_freq_ratio"] = df["spectrum_cvd_high_freq_ratio"].fillna(0.0)
-        df["spectrum_cvd_low_freq_ratio"] = df["spectrum_cvd_low_freq_ratio"].fillna(0.0)
-        df["spectrum_cvd_entropy"] = df["spectrum_cvd_entropy"].fillna(1.0)
-        df["spectrum_cvd_centroid"] = df["spectrum_cvd_centroid"].fillna(0.0)
-    
-    return df
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    n = len(close)
+    idx = close.index
+
+    # Allocate outputs (match extract_spectrum_features defaults)
+    price_has_dom = np.zeros(n, dtype=float)
+    price_flat = np.ones(n, dtype=float)
+    price_high = np.zeros(n, dtype=float)
+    price_low = np.zeros(n, dtype=float)
+    price_ent = np.ones(n, dtype=float)
+    price_cent = np.zeros(n, dtype=float)
+
+    vol_flat = np.full(n, np.nan, dtype=float)
+    vol_high = np.full(n, np.nan, dtype=float)
+    vol_low = np.full(n, np.nan, dtype=float)
+    vol_ent = np.full(n, np.nan, dtype=float)
+    vol_cent = np.full(n, np.nan, dtype=float)
+
+    cvd_flat = np.full(n, np.nan, dtype=float)
+    cvd_high = np.full(n, np.nan, dtype=float)
+    cvd_low = np.full(n, np.nan, dtype=float)
+    cvd_ent = np.full(n, np.nan, dtype=float)
+    cvd_cent = np.full(n, np.nan, dtype=float)
+
+    # Price rolling spectrum
+    price_returns = close.pct_change().fillna(0.0).values
+    for i in range(rolling_window, n):
+        window_returns = price_returns[i - rolling_window : i]
+        spec = compute_spectrum_features(window_returns)
+        price_has_dom[i] = spec["has_dominant_freq"]
+        price_flat[i] = spec["spectral_flatness"]
+        price_high[i] = spec["high_freq_energy_ratio"]
+        price_low[i] = spec["low_freq_energy_ratio"]
+        price_ent[i] = spec["spectral_entropy"]
+        price_cent[i] = spec["spectral_centroid"]
+
+    # Optional: volume rolling spectrum (diff)
+    if volume is not None:
+        volume = pd.to_numeric(volume, errors="coerce").astype(float)
+        v = volume.values
+        v_diff = np.diff(v, prepend=v[0] if len(v) else 0.0)
+        for i in range(rolling_window, n):
+            spec = compute_spectrum_features(v_diff[i - rolling_window : i])
+            vol_flat[i] = spec["spectral_flatness"]
+            vol_high[i] = spec["high_freq_energy_ratio"]
+            vol_low[i] = spec["low_freq_energy_ratio"]
+            vol_ent[i] = spec["spectral_entropy"]
+            vol_cent[i] = spec["spectral_centroid"]
+
+    # Optional: cvd rolling spectrum (diff)
+    if cvd is not None:
+        cvd = pd.to_numeric(cvd, errors="coerce").astype(float)
+        c = cvd.values
+        c_diff = np.diff(c, prepend=c[0] if len(c) else 0.0)
+        for i in range(rolling_window, n):
+            spec = compute_spectrum_features(c_diff[i - rolling_window : i])
+            cvd_flat[i] = spec["spectral_flatness"]
+            cvd_high[i] = spec["high_freq_energy_ratio"]
+            cvd_low[i] = spec["low_freq_energy_ratio"]
+            cvd_ent[i] = spec["spectral_entropy"]
+            cvd_cent[i] = spec["spectral_centroid"]
+
+    return pd.DataFrame(
+        {
+            "spectrum_price_has_dominant_freq": price_has_dom,
+            "spectrum_price_flatness": price_flat,
+            "spectrum_price_high_freq_ratio": price_high,
+            "spectrum_price_low_freq_ratio": price_low,
+            "spectrum_price_entropy": price_ent,
+            "spectrum_price_centroid": price_cent,
+            "spectrum_volume_flatness": vol_flat,
+            "spectrum_volume_high_freq_ratio": vol_high,
+            "spectrum_volume_low_freq_ratio": vol_low,
+            "spectrum_volume_entropy": vol_ent,
+            "spectrum_volume_centroid": vol_cent,
+            "spectrum_cvd_flatness": cvd_flat,
+            "spectrum_cvd_high_freq_ratio": cvd_high,
+            "spectrum_cvd_low_freq_ratio": cvd_low,
+            "spectrum_cvd_entropy": cvd_ent,
+            "spectrum_cvd_centroid": cvd_cent,
+        },
+        index=idx,
+    )
 
 
 def add_spectrum_derived_features(
@@ -418,4 +367,3 @@ def get_strategy_spectrum_features(
     # 返回策略相关的特征
     available_features = [f for f in strategy_features[strategy] if f in df.columns]
     return df[available_features]
-

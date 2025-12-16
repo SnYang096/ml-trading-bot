@@ -18,8 +18,26 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.features.time_series.utils_volatility_features import (
-    extract_volume_profile_volatility_features,
+    extract_volume_profile_volatility_features_from_series,
 )
+
+
+# Route B: DF-style entrypoint removed; provide local DF wrapper for tests.
+def extract_volume_profile_volatility_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str = "volume",
+    **kwargs,
+) -> pd.DataFrame:
+    feats = extract_volume_profile_volatility_features_from_series(
+        close=df[price_col],
+        volume=df[volume_col],
+        **kwargs,
+    )
+    out = df.copy()
+    for c in feats.columns:
+        out[c] = feats[c]
+    return out
 
 
 class TestVolumeProfileVolatilityFutureLeak:

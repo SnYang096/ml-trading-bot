@@ -7,12 +7,19 @@ features:
   # ========================================================================
   atr:
     module: baseline
-    compute_func: BaselineFeatureEngineer._compute_atr
+    compute_func: BaselineFeatureEngineer.compute_atr
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["atr"]
     category: technical_indicator
     description: "Average True Range"
+    compute_params:
+      period: 14
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
   
   rsi:
     module: baseline
@@ -72,13 +79,16 @@ features:
   
   range_ratio_5bar:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_range_ratio_5bar
+    compute_func: compute_range_ratio_5bar_from_series
     dependencies: []
     required_columns: ["high", "low"]
     output_columns: ["range_ratio_5bar"]
     category: volatility
     description: "Short vs long term range ratio (5 vs 20 bar)"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
   
   volatility_reversal_score:
     module: baseline
@@ -92,26 +102,35 @@ features:
   
   price_range_symmetry:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_price_range_symmetry
+    compute_func: compute_price_range_symmetry_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["price_range_symmetry"]
     category: price_structure
     description: "Upper/lower shadow asymmetry score"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       feature_shift: 0
+    column_mappings:
+      high: high
+      low: low
+      close: close
   
   # 影线占比特征（用于交互特征）
   wick_ratios:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_wick_ratios
+    compute_func: compute_wick_ratios_from_series
     dependencies: []
     required_columns: ["high", "low", "close", "open"]
     output_columns: ["wick_upper_ratio", "wick_lower_ratio"]
     category: price_structure
     description: "Upper and lower wick ratios (用于 VPIN × wick 交互特征)"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      open: open
+      high: high
+      low: low
+      close: close
     notes: "上影线占比和下影线占比，用于衡量K线的上下影线长度"
   
   volume_anomaly:
@@ -126,13 +145,17 @@ features:
   
   roc_5:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_roc_5
+    compute_func: compute_roc_5_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["roc_5"]
     category: momentum
     description: "5-bar rate of change z-score"
-    pass_full_df: true
+    compute_params:
+      period: 5
+    pass_full_df: false
+    column_mappings:
+      close: close
   
   trend_r2_20:
     module: baseline
@@ -261,7 +284,7 @@ features:
   # POC 和 HAL 作为独立的基础特征
   poc_hal_features:
     module: baseline
-    compute_func: compute_poc_hal_features
+    compute_func: compute_poc_hal_features_from_series
     dependencies: ["wpt_price_reconstructed"]  # 依赖 WPT 重构价格
     required_columns: ["high", "low", "close", "volume", "wpt_price_reconstructed"]
     output_columns: ["poc", "hal_high", "hal_low", "hal_mid"]
@@ -270,14 +293,20 @@ features:
     compute_params:
       poc_window: 160
       price_col: "wpt_price_reconstructed"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+      wpt_price_reconstructed: wpt_price_reconstructed
     notes: "独立的基础特征，可被其他特征复用，避免重复计算"
   
   sqs_hal_high:
     module: baseline
-    compute_func: compute_sqs_hal_high
-    dependencies: ["atr", "wpt_price_reconstructed", "poc_hal_features"]  # 依赖 POC/HAL 基础特征
-    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed", "poc", "hal_high"]
+    compute_func: compute_sqs_hal_high_from_series
+    dependencies: ["atr", "poc_hal_features"]  # 依赖 POC/HAL 基础特征
+    required_columns: ["high", "low", "close", "volume", "atr", "hal_high"]
     # 注意：poc 和 hal_high 现在来自 poc_hal_features，不再作为副产品
     output_columns: ["sqs_hal_high"]
     category: sr_structure
@@ -286,16 +315,21 @@ features:
       sr_type: "resistance"
       window: 60
       tolerance_factor: 0.5
-      poc_window: 160
-      price_col: "wpt_price_reconstructed"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+      atr: atr
+      hal_high: hal_high
     notes: "基于 WPT 重构价格计算，实现多尺度对齐"
   
   sqs_hal_low:
     module: baseline
-    compute_func: compute_sqs_hal_low
-    dependencies: ["atr", "wpt_price_reconstructed", "poc_hal_features"]  # 依赖 POC/HAL 基础特征
-    required_columns: ["high", "low", "close", "volume", "atr", "wpt_price_reconstructed", "poc", "hal_low"]
+    compute_func: compute_sqs_hal_low_from_series
+    dependencies: ["atr", "poc_hal_features"]  # 依赖 POC/HAL 基础特征
+    required_columns: ["high", "low", "close", "volume", "atr", "hal_low"]
     # 注意：poc 和 hal_low 现在来自 poc_hal_features，不再作为副产品
     output_columns: ["sqs_hal_low"]
     category: sr_structure
@@ -304,14 +338,19 @@ features:
       sr_type: "support"
       window: 60
       tolerance_factor: 0.5
-      poc_window: 160
-      price_col: "wpt_price_reconstructed"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+      atr: atr
+      hal_low: hal_low
     notes: "基于 WPT 重构价格计算，实现多尺度对齐"
   
   sr_strength_max:
     module: baseline
-    compute_func: compute_sr_strength_max
+    compute_func: compute_sr_strength_max_from_series
     # 依赖关系：
     # - atr: 边界强度计算必需
     # - poc_hal_features: 提供 hal_high, hal_low, poc 列（独立的基础特征）
@@ -319,17 +358,23 @@ features:
     # - wpt_price_reconstructed: 用于计算边界（如果 hal_high/hal_low/poc 不存在时的后备方案）
     # 注意：poc, hal_high, hal_low 现在来自 poc_hal_features，不再作为 sqs_hal_high/sqs_hal_low 的副产品
     # compute_sr_strength_max 中的自动修复机制只是防御性措施（defensive programming）
-    dependencies: ["atr", "poc_hal_features", "wpt_price_reconstructed"]
-    required_columns: ["high", "low", "close", "atr", "wpt_price_reconstructed", "poc", "hal_high", "hal_low"]
+    dependencies: ["atr", "poc_hal_features"]
+    required_columns: ["high", "low", "close", "atr", "poc", "hal_high", "hal_low"]
     output_columns: ["sr_strength_max", "dist_to_nearest_sr", "direction_to_nearest_sr"]
     category: sr_structure
     description: "Maximum SR strength across all boundaries (基于 WPT 重构价格)"
     compute_params:
       window: 60
       tolerance_factor: 0.5
-      poc_window: 160  # POC/HAL 计算窗口
-      price_col: "wpt_price_reconstructed"  # 使用 WPT 重构价格
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      atr: atr
+      poc: poc
+      hal_high: hal_high
+      hal_low: hal_low
     notes: |
       所有 SR 边界都基于 WPT 重构价格计算，实现多尺度对齐。
       函数会自动确保 hal_high, hal_low, poc, atr 列存在，即使依赖特征未完全计算。
@@ -381,19 +426,23 @@ features:
   # ========================================================================
   wpt_vpvr:
     module: enhanced
-    compute_func: compute_wpt_vpvr
-    dependencies: ["wpt_price_reconstructed", "atr"]
-    required_columns: ["close", "high", "low", "volume", "atr"]
+    compute_func: compute_wpt_vpvr_from_series
+    dependencies: []
+    required_columns: ["close", "high", "low", "volume"]
     output_columns: ["vpvr_pvp", "vpvr_hvn_count", "vpvr_lvn_count", "vpvr_lvn_distance", "vpvr_volume_density", "vpvr_price_in_lvn"]
     category: liquidity
     description: "WPT 降噪的 VPVR（Volume Profile Visible Range）"
     compute_params:
       wavelet: "db4"
       level: 4
-      vpvr_window: 100
+      window: 100
       bins: 50
-      feature_type: "vpvr"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      volume: volume
     notes: |
       WPT 降噪后的 VPVR 能更清晰地识别关键支撑/阻力位：
       - PVP: Point of Control（最高成交量对应的价格）
@@ -402,9 +451,9 @@ features:
   
   liquidity_void:
     module: enhanced
-    compute_func: extract_liquidity_features
-    dependencies: ["wpt_price_reconstructed", "atr"]
-    required_columns: ["close", "high", "low", "volume", "atr"]
+    compute_func: compute_liquidity_void_features_from_series
+    dependencies: ["atr"]
+    required_columns: ["close", "volume", "atr"]
     output_columns: ["liquidity_void_detected", "liquidity_void_speed", "liquidity_void_volume_ratio", "liquidity_void_retracement", "liquidity_void_false_breakout_risk"]
     category: liquidity
     description: "流动性真空区识别（Liquidity Void / Gap Detection）"
@@ -412,7 +461,11 @@ features:
       lookback_window: 20
       speed_threshold_multiplier: 2.0
       volume_quantile: 0.2
-      feature_type: "void"
+    pass_full_df: false
+    column_mappings:
+      close: close
+      volume: volume
+      atr: atr
     notes: |
       流动性真空区 ≠ 历史低成交量区域，而是当前订单簿深度缺失。
       特征：
@@ -422,8 +475,8 @@ features:
   
   wpt_volume_energy:
     module: enhanced
-    compute_func: extract_liquidity_features
-    dependencies: ["wpt_price_reconstructed", "wpt_cvd_fluctuation"]
+    compute_func: compute_wpt_volume_energy_features_from_series
+    dependencies: []
     required_columns: ["close", "volume"]
     output_columns: ["wpt_vper_low", "wpt_vper_mid", "wpt_vper_high", "wpt_energy_cascade", "wpt_multi_scale_consistency", "wpt_breakout_confidence", "wpt_false_breakout_risk"]
     category: liquidity
@@ -432,7 +485,10 @@ features:
       wavelet: "db4"
       level: 4
       lookback_window: 20
-      feature_type: "energy"
+    pass_full_df: false
+    column_mappings:
+      close: close
+      volume: volume
     notes: |
       WPT + Volume 能量协同分析：
       - VPER: Volume-Price Energy Ratio（量价能量比）
@@ -442,7 +498,7 @@ features:
   
   volume_profile_volatility_features:
     module: enhanced
-    compute_func: extract_volume_profile_volatility_features
+    compute_func: extract_volume_profile_volatility_features_from_series
     dependencies: []
     required_columns: ["close", "volume"]
     output_columns: ["vp_width_ratio", "vp_poc_deviation", "vp_skewness", "vp_entropy", "vp_lv_ratio", "vp_hv_ratio"]
@@ -461,7 +517,10 @@ features:
       - vp_lv_ratio: 低成交量区域比例（LVN）
       - vp_hv_ratio: 高成交量区域比例（HVN）
       这些特征与 vol_zscore、vol_slope_10 结合，可显著提升对"波动率拐点"的识别能力。
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      volume: volume
 
   footprint_basic:
     module: enhanced
@@ -600,7 +659,11 @@ features:
   # ========================================================================
   # 订单流特征（VPIN）
   # ========================================================================
-  vpin_features:
+  # ------------------------------------------------------------------------
+  # Order-flow feature DAG (split vpin_features into sub-blocks + composite)
+  # ------------------------------------------------------------------------
+
+  order_flow_all_features:
     module: enhanced
     compute_func: extract_order_flow_features
     dependencies: []
@@ -610,15 +673,15 @@ features:
       - "vpin"
       - "vpin_signed_imbalance"
       # 多维对齐特征（关键改进：保留峰值信息，避免均值稀释）- 9个
-      - "vpin_last"          # 最新值（反映最新情绪）
-      - "vpin_max"           # 峰值（捕捉极端知情交易，关键！）
-      - "vpin_min"           # 最小值
-      - "vpin_std"           # 波动性（衡量VPIN在K线内的变化）
-      - "vpin_count"         # 事件数（代理流动性，区分高VPIN是突发事件还是持续活跃）
-      - "vpin_skewness"      # 偏度（VPIN分布的偏度，如果偏度为正，说明尾部风险大）
-      - "vpin_trend"         # 趋势（线性回归斜率，斜率为正表示风险在积聚，斜率为负表示风险在释放）
-      - "vpin_signed_imbalance_last"  # Signed imbalance 最新值
-      - "vpin_signed_imbalance_max"   # Signed imbalance 峰值
+      - "vpin_last"
+      - "vpin_max"
+      - "vpin_min"
+      - "vpin_std"
+      - "vpin_count"
+      - "vpin_skewness"
+      - "vpin_trend"
+      - "vpin_signed_imbalance_last"
+      - "vpin_signed_imbalance_max"
       # 滚动统计（6个）
       - "vpin_ma5"
       - "vpin_ma10"
@@ -646,8 +709,7 @@ features:
       # Signed Imbalance Z-score（2个）
       - "vpin_signed_imbalance_zscore_20"
       - "vpin_signed_imbalance_zscore_50"
-      # Trade Clustering 特征（交易聚集性，与 VPIN 互补）
-      # 基础特征（8个）
+      # Trade Clustering（完整 block）
       - "trade_cluster_max_buy_run"
       - "trade_cluster_max_sell_run"
       - "trade_cluster_avg_buy_run"
@@ -655,8 +717,7 @@ features:
       - "trade_cluster_buy_run_count"
       - "trade_cluster_sell_run_count"
       - "trade_cluster_imbalance_ratio"
-      - "trade_cluster_directional_entropy"  # 方向熵（捕捉混乱度）
-      # 原有衍生特征（9个）
+      - "trade_cluster_directional_entropy"
       - "trade_cluster_max_run_ratio"
       - "trade_cluster_avg_run_ratio"
       - "trade_cluster_max_buy_run_ma5"
@@ -671,45 +732,935 @@ features:
       - "trade_cluster_directional_entropy_change"
       - "trade_cluster_directional_entropy_zscore_20"
       - "trade_cluster_directional_entropy_zscore_50"
-      # 新增特征（2024年补充）- 净 Runs 特征（3个）
-      - "trade_cluster_net_runs"              # 净 runs（buy - sell）
-      - "trade_cluster_total_runs"            # 总 runs 数（活跃度）
-      - "trade_cluster_net_runs_ratio"        # 净 runs 比率（标准化）
-      # 新增特征 - 长度比率特征（4个）
-      - "trade_cluster_max_run"               # 最大连续长度（buy 或 sell 中的较大值）
-      - "trade_cluster_buy_sell_max_ratio"    # 买方 vs 卖方最大连续长度比
-      - "trade_cluster_buy_sell_avg_ratio"    # 买方 vs 卖方平均连续长度比
-      - "trade_cluster_avg_run_length"        # 平均连续长度（所有 runs）
-      # 新增特征 - 总长度特征（1个）
-      - "trade_cluster_total_run_length"      # 总连续长度（buy + sell）
-      # 新增特征 - Z-score 特征（8个）
-      - "trade_cluster_imbalance_zscore_20"   # 不平衡比率的 Z-score（20窗口）
-      - "trade_cluster_imbalance_zscore_50"   # 不平衡比率的 Z-score（50窗口）
-      - "trade_cluster_net_runs_zscore_20"    # 净 runs 的 Z-score（20窗口）
-      - "trade_cluster_net_runs_zscore_50"    # 净 runs 的 Z-score（50窗口）
-      - "trade_cluster_max_buy_run_zscore_20" # 最大买单 run 的 Z-score（20窗口）
-      - "trade_cluster_max_buy_run_zscore_50" # 最大买单 run 的 Z-score（50窗口）
-      - "trade_cluster_max_sell_run_zscore_20" # 最大卖单 run 的 Z-score（20窗口）
-      - "trade_cluster_max_sell_run_zscore_50" # 最大卖单 run 的 Z-score（50窗口）
-      # 新增特征 - 移动平均特征（6个）
-      - "trade_cluster_net_runs_ma5"          # 净 runs 的移动平均（5窗口）
-      - "trade_cluster_net_runs_ma10"         # 净 runs 的移动平均（10窗口）
-      - "trade_cluster_net_runs_ma20"         # 净 runs 的移动平均（20窗口）
-      - "trade_cluster_total_runs_ma5"        # 总 runs 的移动平均（5窗口）
-      - "trade_cluster_total_runs_ma10"       # 总 runs 的移动平均（10窗口）
-      - "trade_cluster_total_runs_ma20"       # 总 runs 的移动平均（20窗口）
+      - "trade_cluster_net_runs"
+      - "trade_cluster_total_runs"
+      - "trade_cluster_net_runs_ratio"
+      - "trade_cluster_max_run"
+      - "trade_cluster_buy_sell_max_ratio"
+      - "trade_cluster_buy_sell_avg_ratio"
+      - "trade_cluster_avg_run_length"
+      - "trade_cluster_total_run_length"
+      - "trade_cluster_imbalance_zscore_20"
+      - "trade_cluster_imbalance_zscore_50"
+      - "trade_cluster_net_runs_zscore_20"
+      - "trade_cluster_net_runs_zscore_50"
+      - "trade_cluster_max_buy_run_zscore_20"
+      - "trade_cluster_max_buy_run_zscore_50"
+      - "trade_cluster_max_sell_run_zscore_20"
+      - "trade_cluster_max_sell_run_zscore_50"
+      - "trade_cluster_net_runs_ma5"
+      - "trade_cluster_net_runs_ma10"
+      - "trade_cluster_net_runs_ma20"
+      - "trade_cluster_total_runs_ma5"
+      - "trade_cluster_total_runs_ma10"
+      - "trade_cluster_total_runs_ma20"
     category: order_flow
-    description: "VPIN (Volume-Synchronized Probability of Informed Trading) + Trade Clustering - 完整特征集（67个特征：30个VPIN + 37个Trade Clustering）。关键改进：VPIN对齐时使用多维统计特征（last, max, mean, std, count, skewness, trend），避免峰值信号被均值稀释。VPIN新增2个特征：vpin_skewness（偏度，捕捉尾部风险）和vpin_trend（趋势，捕捉风险积聚/释放）。Trade Clustering 新增20个特征：净runs、长度比、Z-score等，用于捕捉订单流聚集性、极端行为和反转信号。"
+    description: "Order-flow: VPIN + Trade Clustering (full set). This is the heavy base node; downstream selectors split blocks."
     compute_params:
       vpin_n_buckets: 50
       vpin_adaptive: true
-    run_sequential: true  # 强制串行执行：VPIN 需要流式读取大量 tick 数据，并行执行时 pickle/unpickle 大 DataFrame 容易导致 BrokenProcessPool 错误
+    run_sequential: true
     pass_full_df: true
-    notes: |
-      VPIN 用于检测知情交易者行为：
-      - 如果有 tick 数据，使用真实 VPIN（推荐）
-      - 如果有 buy_qty/sell_qty，使用真实买卖量
-      - 否则抛出错误（不支持代理 VPIN）
+
+  vpin_base_aligned_features:
+    module: enhanced
+    compute_func: extract_order_flow_features
+    dependencies: []
+    required_columns: ["open", "close", "high", "low", "volume"]
+    output_columns:
+      - "vpin"
+      - "vpin_signed_imbalance"
+      - "vpin_last"
+      - "vpin_max"
+      - "vpin_min"
+      - "vpin_std"
+      - "vpin_count"
+      - "vpin_skewness"
+      - "vpin_trend"
+      - "vpin_signed_imbalance_last"
+      - "vpin_signed_imbalance_max"
+    category: order_flow
+    description: "VPIN base aligned stats only (ticks→bar对齐 + 多维统计)，不计算滚动/派生列。"
+    compute_params:
+      vpin_n_buckets: 50
+      vpin_adaptive: true
+      include_trade_clustering: false
+      compute_vpin_derived: false
+    run_sequential: true
+    pass_full_df: true
+
+  vpin_derived_features:
+    module: enhanced
+    compute_func: select_order_flow_features
+    dependencies:
+      - vpin_ma_max_features
+      - vpin_change_features
+      - vpin_zscore_features
+      - vpin_quantile_features
+      - vpin_volatility_features
+      - vpin_spike_features
+      - vpin_momentum_features
+      - vpin_signed_zscore_features
+    required_columns:
+      - "vpin_ma5"
+      - "vpin_ma10"
+      - "vpin_ma20"
+      - "vpin_max5"
+      - "vpin_max10"
+      - "vpin_max20"
+      - "vpin_change"
+      - "vpin_change_pct"
+      - "vpin_zscore_20"
+      - "vpin_zscore_50"
+      - "vpin_quantile_rank_20"
+      - "vpin_quantile_rank_50"
+      - "vpin_volatility_10"
+      - "vpin_volatility_20"
+      - "vpin_spike_flag_20"
+      - "vpin_spike_flag_50"
+      - "vpin_momentum"
+      - "vpin_signed_imbalance_zscore_20"
+      - "vpin_signed_imbalance_zscore_50"
+    output_columns:
+      - "vpin_ma5"
+      - "vpin_ma10"
+      - "vpin_ma20"
+      - "vpin_max5"
+      - "vpin_max10"
+      - "vpin_max20"
+      - "vpin_change"
+      - "vpin_change_pct"
+      - "vpin_zscore_20"
+      - "vpin_zscore_50"
+      - "vpin_quantile_rank_20"
+      - "vpin_quantile_rank_50"
+      - "vpin_volatility_10"
+      - "vpin_volatility_20"
+      - "vpin_spike_flag_20"
+      - "vpin_spike_flag_50"
+      - "vpin_momentum"
+      - "vpin_signed_imbalance_zscore_20"
+      - "vpin_signed_imbalance_zscore_50"
+    category: order_flow
+    description: "VPIN derived features (composite) computed from aligned base via sub-nodes (no ticks)."
+    pass_full_df: true
+
+  vpin_ma_max_features:
+    module: enhanced
+    compute_func: compute_vpin_ma_max_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_ma5", "vpin_ma10", "vpin_ma20", "vpin_max5", "vpin_max10", "vpin_max20"]
+    category: order_flow
+    description: "VPIN MA/max rolling stats"
+    pass_full_df: true
+
+  vpin_change_features:
+    module: enhanced
+    compute_func: compute_vpin_change_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_change", "vpin_change_pct"]
+    category: order_flow
+    description: "VPIN change and pct change"
+    pass_full_df: true
+
+  vpin_zscore_features:
+    module: enhanced
+    compute_func: compute_vpin_zscore_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_zscore_20", "vpin_zscore_50"]
+    category: order_flow
+    description: "VPIN z-score features"
+    pass_full_df: true
+
+  vpin_quantile_features:
+    module: enhanced
+    compute_func: compute_vpin_quantile_rank_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_quantile_rank_20", "vpin_quantile_rank_50"]
+    category: order_flow
+    description: "VPIN rolling quantile rank features"
+    pass_full_df: true
+
+  vpin_volatility_features:
+    module: enhanced
+    compute_func: compute_vpin_volatility_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_volatility_10", "vpin_volatility_20"]
+    category: order_flow
+    description: "VPIN rolling volatility features"
+    pass_full_df: true
+
+  vpin_spike_features:
+    module: enhanced
+    compute_func: compute_vpin_spike_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_spike_flag_20", "vpin_spike_flag_50"]
+    category: order_flow
+    description: "VPIN spike flag features (MAD-based)"
+    pass_full_df: true
+
+  vpin_momentum_features:
+    module: enhanced
+    compute_func: compute_vpin_momentum_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin"]
+    output_columns: ["vpin_momentum"]
+    category: order_flow
+    description: "VPIN momentum feature (ma5 - ma20)"
+    pass_full_df: true
+
+  vpin_signed_zscore_features:
+    module: enhanced
+    compute_func: compute_vpin_signed_zscore_features_from_base
+    dependencies: ["vpin_base_aligned_features"]
+    required_columns: ["vpin_signed_imbalance"]
+    output_columns: ["vpin_signed_imbalance_zscore_20", "vpin_signed_imbalance_zscore_50"]
+    category: order_flow
+    description: "Signed imbalance z-score features"
+    pass_full_df: true
+
+  vpin_block_features:
+    module: enhanced
+    compute_func: select_vpin_block_features
+    dependencies: ["vpin_base_aligned_features", "vpin_derived_features"]
+    required_columns:
+      - vpin
+      - vpin_signed_imbalance
+      - vpin_last
+      - vpin_max
+      - vpin_min
+      - vpin_std
+      - vpin_count
+      - vpin_skewness
+      - vpin_trend
+      - vpin_signed_imbalance_last
+      - vpin_signed_imbalance_max
+      - vpin_ma5
+      - vpin_ma10
+      - vpin_ma20
+      - vpin_max5
+      - vpin_max10
+      - vpin_max20
+      - vpin_change
+      - vpin_change_pct
+      - vpin_zscore_20
+      - vpin_zscore_50
+      - vpin_quantile_rank_20
+      - vpin_quantile_rank_50
+      - vpin_volatility_10
+      - vpin_volatility_20
+      - vpin_spike_flag_20
+      - vpin_spike_flag_50
+      - vpin_momentum
+      - vpin_signed_imbalance_zscore_20
+      - vpin_signed_imbalance_zscore_50
+    output_columns:
+      - vpin
+      - vpin_signed_imbalance
+      - vpin_last
+      - vpin_max
+      - vpin_min
+      - vpin_std
+      - vpin_count
+      - vpin_skewness
+      - vpin_trend
+      - vpin_signed_imbalance_last
+      - vpin_signed_imbalance_max
+      - vpin_ma5
+      - vpin_ma10
+      - vpin_ma20
+      - vpin_max5
+      - vpin_max10
+      - vpin_max20
+      - vpin_change
+      - vpin_change_pct
+      - vpin_zscore_20
+      - vpin_zscore_50
+      - vpin_quantile_rank_20
+      - vpin_quantile_rank_50
+      - vpin_volatility_10
+      - vpin_volatility_20
+      - vpin_spike_flag_20
+      - vpin_spike_flag_50
+      - vpin_momentum
+      - vpin_signed_imbalance_zscore_20
+      - vpin_signed_imbalance_zscore_50
+    category: order_flow
+    description: "Order-flow sub-block: VPIN-only features (selected from base)."
+    pass_full_df: true
+
+  trade_cluster_block_features:
+    module: enhanced
+    compute_func: select_trade_cluster_block_features
+    dependencies: ["trade_cluster_base_aligned_features", "trade_cluster_derived_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+      - trade_cluster_buy_run_count
+      - trade_cluster_sell_run_count
+      - trade_cluster_imbalance_ratio
+      - trade_cluster_directional_entropy
+      - trade_cluster_max_run_ratio
+      - trade_cluster_avg_run_ratio
+      - trade_cluster_max_buy_run_ma5
+      - trade_cluster_max_buy_run_ma10
+      - trade_cluster_max_buy_run_ma20
+      - trade_cluster_imbalance_ratio_ma5
+      - trade_cluster_imbalance_ratio_ma10
+      - trade_cluster_imbalance_ratio_ma20
+      - trade_cluster_directional_entropy_ma5
+      - trade_cluster_directional_entropy_ma10
+      - trade_cluster_directional_entropy_ma20
+      - trade_cluster_directional_entropy_change
+      - trade_cluster_directional_entropy_zscore_20
+      - trade_cluster_directional_entropy_zscore_50
+      - trade_cluster_net_runs
+      - trade_cluster_total_runs
+      - trade_cluster_net_runs_ratio
+      - trade_cluster_max_run
+      - trade_cluster_buy_sell_max_ratio
+      - trade_cluster_buy_sell_avg_ratio
+      - trade_cluster_avg_run_length
+      - trade_cluster_total_run_length
+      - trade_cluster_imbalance_zscore_20
+      - trade_cluster_imbalance_zscore_50
+      - trade_cluster_net_runs_zscore_20
+      - trade_cluster_net_runs_zscore_50
+      - trade_cluster_max_buy_run_zscore_20
+      - trade_cluster_max_buy_run_zscore_50
+      - trade_cluster_max_sell_run_zscore_20
+      - trade_cluster_max_sell_run_zscore_50
+      - trade_cluster_net_runs_ma5
+      - trade_cluster_net_runs_ma10
+      - trade_cluster_net_runs_ma20
+      - trade_cluster_total_runs_ma5
+      - trade_cluster_total_runs_ma10
+      - trade_cluster_total_runs_ma20
+    output_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+      - trade_cluster_buy_run_count
+      - trade_cluster_sell_run_count
+      - trade_cluster_imbalance_ratio
+      - trade_cluster_directional_entropy
+      - trade_cluster_max_run_ratio
+      - trade_cluster_avg_run_ratio
+      - trade_cluster_max_buy_run_ma5
+      - trade_cluster_max_buy_run_ma10
+      - trade_cluster_max_buy_run_ma20
+      - trade_cluster_imbalance_ratio_ma5
+      - trade_cluster_imbalance_ratio_ma10
+      - trade_cluster_imbalance_ratio_ma20
+      - trade_cluster_directional_entropy_ma5
+      - trade_cluster_directional_entropy_ma10
+      - trade_cluster_directional_entropy_ma20
+      - trade_cluster_directional_entropy_change
+      - trade_cluster_directional_entropy_zscore_20
+      - trade_cluster_directional_entropy_zscore_50
+      - trade_cluster_net_runs
+      - trade_cluster_total_runs
+      - trade_cluster_net_runs_ratio
+      - trade_cluster_max_run
+      - trade_cluster_buy_sell_max_ratio
+      - trade_cluster_buy_sell_avg_ratio
+      - trade_cluster_avg_run_length
+      - trade_cluster_total_run_length
+      - trade_cluster_imbalance_zscore_20
+      - trade_cluster_imbalance_zscore_50
+      - trade_cluster_net_runs_zscore_20
+      - trade_cluster_net_runs_zscore_50
+      - trade_cluster_max_buy_run_zscore_20
+      - trade_cluster_max_buy_run_zscore_50
+      - trade_cluster_max_sell_run_zscore_20
+      - trade_cluster_max_sell_run_zscore_50
+      - trade_cluster_net_runs_ma5
+      - trade_cluster_net_runs_ma10
+      - trade_cluster_net_runs_ma20
+      - trade_cluster_total_runs_ma5
+      - trade_cluster_total_runs_ma10
+      - trade_cluster_total_runs_ma20
+    category: order_flow
+    description: "Order-flow sub-block: Trade Clustering-only features (selected from base)."
+    pass_full_df: true
+
+  trade_cluster_base_aligned_features:
+    module: enhanced
+    compute_func: extract_trade_clustering_features
+    dependencies: []
+    required_columns: ["open", "close", "high", "low", "volume"]
+    output_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+      - trade_cluster_buy_run_count
+      - trade_cluster_sell_run_count
+      - trade_cluster_imbalance_ratio
+      - trade_cluster_directional_entropy
+    category: order_flow
+    description: "Trade clustering base aligned stats only (ticks→bar对齐 + 8基础列)，不计算派生列。"
+    compute_params:
+      compute_trade_cluster_derived: false
+    run_sequential: true
+    pass_full_df: true
+
+  trade_cluster_derived_features:
+    module: enhanced
+    compute_func: select_order_flow_features
+    dependencies:
+      - trade_cluster_max_run_ratio_features
+      - trade_cluster_buy_sell_max_ratio_features
+      - trade_cluster_avg_run_ratio_features
+      - trade_cluster_buy_sell_avg_ratio_features
+      - trade_cluster_run_length_features
+      - trade_cluster_net_runs_counts_features
+      - trade_cluster_net_runs_ratio_features
+      - trade_cluster_entropy_ma_change_features
+      - trade_cluster_entropy_zscore_features
+      - trade_cluster_max_buy_run_ma_features
+      - trade_cluster_imbalance_ratio_ma_features
+      - trade_cluster_net_runs_ma_features
+      - trade_cluster_total_runs_ma_features
+      - trade_cluster_imbalance_zscore_features
+      - trade_cluster_net_runs_zscore_features
+      - trade_cluster_max_buy_run_zscore_features
+      - trade_cluster_max_sell_run_zscore_features
+    required_columns:
+      - trade_cluster_max_run_ratio
+      - trade_cluster_avg_run_ratio
+      - trade_cluster_max_buy_run_ma5
+      - trade_cluster_max_buy_run_ma10
+      - trade_cluster_max_buy_run_ma20
+      - trade_cluster_imbalance_ratio_ma5
+      - trade_cluster_imbalance_ratio_ma10
+      - trade_cluster_imbalance_ratio_ma20
+      - trade_cluster_directional_entropy_ma5
+      - trade_cluster_directional_entropy_ma10
+      - trade_cluster_directional_entropy_ma20
+      - trade_cluster_directional_entropy_change
+      - trade_cluster_directional_entropy_zscore_20
+      - trade_cluster_directional_entropy_zscore_50
+      - trade_cluster_net_runs
+      - trade_cluster_total_runs
+      - trade_cluster_net_runs_ratio
+      - trade_cluster_max_run
+      - trade_cluster_buy_sell_max_ratio
+      - trade_cluster_buy_sell_avg_ratio
+      - trade_cluster_avg_run_length
+      - trade_cluster_total_run_length
+      - trade_cluster_imbalance_zscore_20
+      - trade_cluster_imbalance_zscore_50
+      - trade_cluster_net_runs_zscore_20
+      - trade_cluster_net_runs_zscore_50
+      - trade_cluster_max_buy_run_zscore_20
+      - trade_cluster_max_buy_run_zscore_50
+      - trade_cluster_max_sell_run_zscore_20
+      - trade_cluster_max_sell_run_zscore_50
+      - trade_cluster_net_runs_ma5
+      - trade_cluster_net_runs_ma10
+      - trade_cluster_net_runs_ma20
+      - trade_cluster_total_runs_ma5
+      - trade_cluster_total_runs_ma10
+      - trade_cluster_total_runs_ma20
+    output_columns:
+      - trade_cluster_max_run_ratio
+      - trade_cluster_avg_run_ratio
+      - trade_cluster_max_buy_run_ma5
+      - trade_cluster_max_buy_run_ma10
+      - trade_cluster_max_buy_run_ma20
+      - trade_cluster_imbalance_ratio_ma5
+      - trade_cluster_imbalance_ratio_ma10
+      - trade_cluster_imbalance_ratio_ma20
+      - trade_cluster_directional_entropy_ma5
+      - trade_cluster_directional_entropy_ma10
+      - trade_cluster_directional_entropy_ma20
+      - trade_cluster_directional_entropy_change
+      - trade_cluster_directional_entropy_zscore_20
+      - trade_cluster_directional_entropy_zscore_50
+      - trade_cluster_net_runs
+      - trade_cluster_total_runs
+      - trade_cluster_net_runs_ratio
+      - trade_cluster_max_run
+      - trade_cluster_buy_sell_max_ratio
+      - trade_cluster_buy_sell_avg_ratio
+      - trade_cluster_avg_run_length
+      - trade_cluster_total_run_length
+      - trade_cluster_imbalance_zscore_20
+      - trade_cluster_imbalance_zscore_50
+      - trade_cluster_net_runs_zscore_20
+      - trade_cluster_net_runs_zscore_50
+      - trade_cluster_max_buy_run_zscore_20
+      - trade_cluster_max_buy_run_zscore_50
+      - trade_cluster_max_sell_run_zscore_20
+      - trade_cluster_max_sell_run_zscore_50
+      - trade_cluster_net_runs_ma5
+      - trade_cluster_net_runs_ma10
+      - trade_cluster_net_runs_ma20
+      - trade_cluster_total_runs_ma5
+      - trade_cluster_total_runs_ma10
+      - trade_cluster_total_runs_ma20
+    category: order_flow
+    description: "Trade clustering derived features (composite) from base aligned (no ticks)."
+    pass_full_df: true
+
+  trade_cluster_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_ratio_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+      - trade_cluster_buy_run_count
+      - trade_cluster_sell_run_count
+    output_columns:
+      - trade_cluster_max_run_ratio
+      - trade_cluster_max_run
+      - trade_cluster_buy_sell_max_ratio
+      - trade_cluster_avg_run_ratio
+      - trade_cluster_buy_sell_avg_ratio
+      - trade_cluster_total_run_length
+      - trade_cluster_avg_run_length
+    category: order_flow
+    description: "Trade clustering ratio/length derived features."
+    pass_full_df: true
+
+  trade_cluster_buy_sell_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_buy_sell_ratio_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+    output_columns:
+      - trade_cluster_max_run_ratio
+      - trade_cluster_max_run
+      - trade_cluster_buy_sell_max_ratio
+      - trade_cluster_avg_run_ratio
+      - trade_cluster_buy_sell_avg_ratio
+    category: order_flow
+    description: "Trade clustering buy/sell ratio-style features (split from ratio_features)."
+    pass_full_df: true
+
+  trade_cluster_max_run_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_max_run_ratio_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+    output_columns:
+      - trade_cluster_max_run_ratio
+      - trade_cluster_max_run
+    category: order_flow
+    description: "Trade clustering max_run_ratio + max_run (atomic)."
+    pass_full_df: true
+
+  trade_cluster_buy_sell_max_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_buy_sell_max_ratio_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+      - trade_cluster_max_sell_run
+    output_columns:
+      - trade_cluster_buy_sell_max_ratio
+    category: order_flow
+    description: "Trade clustering buy/sell max ratio (atomic)."
+    pass_full_df: true
+
+  trade_cluster_avg_run_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_avg_run_ratio_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+    output_columns:
+      - trade_cluster_avg_run_ratio
+    category: order_flow
+    description: "Trade clustering avg_run_ratio (atomic)."
+    pass_full_df: true
+
+  trade_cluster_buy_sell_avg_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_buy_sell_avg_ratio_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+    output_columns:
+      - trade_cluster_buy_sell_avg_ratio
+    category: order_flow
+    description: "Trade clustering buy/sell avg ratio (atomic)."
+    pass_full_df: true
+
+  trade_cluster_run_length_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_run_length_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_avg_buy_run
+      - trade_cluster_avg_sell_run
+      - trade_cluster_buy_run_count
+      - trade_cluster_sell_run_count
+    output_columns:
+      - trade_cluster_total_run_length
+      - trade_cluster_avg_run_length
+    category: order_flow
+    description: "Trade clustering total/avg run length aggregates (split from ratio_features)."
+    pass_full_df: true
+
+  trade_cluster_net_runs_counts_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_net_runs_counts_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_buy_run_count
+      - trade_cluster_sell_run_count
+    output_columns:
+      - trade_cluster_net_runs
+      - trade_cluster_total_runs
+    category: order_flow
+    description: "Trade clustering net_runs + total_runs (atomic)."
+    pass_full_df: true
+
+  trade_cluster_net_runs_ratio_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_net_runs_ratio_features_from_counts
+    dependencies: ["trade_cluster_net_runs_counts_features"]
+    required_columns:
+      - trade_cluster_net_runs
+      - trade_cluster_total_runs
+    output_columns:
+      - trade_cluster_net_runs_ratio
+    category: order_flow
+    description: "Trade clustering net_runs_ratio (atomic)."
+    pass_full_df: true
+
+  trade_cluster_entropy_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_entropy_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_directional_entropy
+    output_columns:
+      - trade_cluster_directional_entropy_ma5
+      - trade_cluster_directional_entropy_ma10
+      - trade_cluster_directional_entropy_ma20
+      - trade_cluster_directional_entropy_change
+      - trade_cluster_directional_entropy_zscore_20
+      - trade_cluster_directional_entropy_zscore_50
+    category: order_flow
+    description: "Trade clustering entropy MA/change/zscore features."
+    pass_full_df: true
+
+  trade_cluster_entropy_ma_change_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_entropy_ma_change_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_directional_entropy
+    output_columns:
+      - trade_cluster_directional_entropy_ma5
+      - trade_cluster_directional_entropy_ma10
+      - trade_cluster_directional_entropy_ma20
+      - trade_cluster_directional_entropy_change
+    category: order_flow
+    description: "Trade clustering entropy MA + change (no zscore)."
+    pass_full_df: true
+
+  trade_cluster_entropy_zscore_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_entropy_zscore_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_directional_entropy
+    output_columns:
+      - trade_cluster_directional_entropy_zscore_20
+      - trade_cluster_directional_entropy_zscore_50
+    category: order_flow
+    description: "Trade clustering entropy zscore (20/50)."
+    pass_full_df: true
+
+  trade_cluster_max_buy_run_ma_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_max_buy_run_ma_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+    output_columns:
+      - trade_cluster_max_buy_run_ma5
+      - trade_cluster_max_buy_run_ma10
+      - trade_cluster_max_buy_run_ma20
+    category: order_flow
+    description: "Trade clustering MA for max_buy_run."
+    pass_full_df: true
+
+  trade_cluster_imbalance_ratio_ma_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_imbalance_ratio_ma_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_imbalance_ratio
+    output_columns:
+      - trade_cluster_imbalance_ratio_ma5
+      - trade_cluster_imbalance_ratio_ma10
+      - trade_cluster_imbalance_ratio_ma20
+    category: order_flow
+    description: "Trade clustering MA for imbalance_ratio."
+    pass_full_df: true
+
+  trade_cluster_net_runs_ma_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_net_runs_ma_features_from_base
+    dependencies: ["trade_cluster_net_runs_counts_features"]
+    required_columns:
+      - trade_cluster_net_runs
+    output_columns:
+      - trade_cluster_net_runs_ma5
+      - trade_cluster_net_runs_ma10
+      - trade_cluster_net_runs_ma20
+    category: order_flow
+    description: "Trade clustering MA for net_runs."
+    pass_full_df: true
+
+  trade_cluster_total_runs_ma_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_total_runs_ma_features_from_base
+    dependencies: ["trade_cluster_net_runs_counts_features"]
+    required_columns:
+      - trade_cluster_total_runs
+    output_columns:
+      - trade_cluster_total_runs_ma5
+      - trade_cluster_total_runs_ma10
+      - trade_cluster_total_runs_ma20
+    category: order_flow
+    description: "Trade clustering MA for total_runs."
+    pass_full_df: true
+
+  trade_cluster_imbalance_zscore_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_imbalance_zscore_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_imbalance_ratio
+    output_columns:
+      - trade_cluster_imbalance_zscore_20
+      - trade_cluster_imbalance_zscore_50
+    category: order_flow
+    description: "Trade clustering imbalance zscore."
+    pass_full_df: true
+
+  trade_cluster_net_runs_zscore_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_net_runs_zscore_features_from_base
+    dependencies: ["trade_cluster_net_runs_counts_features"]
+    required_columns:
+      - trade_cluster_net_runs
+    output_columns:
+      - trade_cluster_net_runs_zscore_20
+      - trade_cluster_net_runs_zscore_50
+    category: order_flow
+    description: "Trade clustering net_runs zscore."
+    pass_full_df: true
+
+  trade_cluster_max_buy_run_zscore_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_max_buy_run_zscore_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_buy_run
+    output_columns:
+      - trade_cluster_max_buy_run_zscore_20
+      - trade_cluster_max_buy_run_zscore_50
+    category: order_flow
+    description: "Trade clustering max_buy_run zscore."
+    pass_full_df: true
+
+  trade_cluster_max_sell_run_zscore_features:
+    module: enhanced
+    compute_func: compute_trade_cluster_max_sell_run_zscore_features_from_base
+    dependencies: ["trade_cluster_base_aligned_features"]
+    required_columns:
+      - trade_cluster_max_sell_run
+    output_columns:
+      - trade_cluster_max_sell_run_zscore_20
+      - trade_cluster_max_sell_run_zscore_50
+    category: order_flow
+    description: "Trade clustering max_sell_run zscore."
+    pass_full_df: true
+
+  vpin_features:
+    module: enhanced
+    compute_func: select_order_flow_features
+    dependencies: ["vpin_block_features", "trade_cluster_block_features"]
+    required_columns:
+      - "vpin"
+      - "vpin_signed_imbalance"
+      - "vpin_last"
+      - "vpin_max"
+      - "vpin_min"
+      - "vpin_std"
+      - "vpin_count"
+      - "vpin_skewness"
+      - "vpin_trend"
+      - "vpin_signed_imbalance_last"
+      - "vpin_signed_imbalance_max"
+      - "vpin_ma5"
+      - "vpin_ma10"
+      - "vpin_ma20"
+      - "vpin_max5"
+      - "vpin_max10"
+      - "vpin_max20"
+      - "vpin_change"
+      - "vpin_change_pct"
+      - "vpin_zscore_20"
+      - "vpin_zscore_50"
+      - "vpin_quantile_rank_20"
+      - "vpin_quantile_rank_50"
+      - "vpin_volatility_10"
+      - "vpin_volatility_20"
+      - "vpin_spike_flag_20"
+      - "vpin_spike_flag_50"
+      - "vpin_momentum"
+      - "vpin_signed_imbalance_zscore_20"
+      - "vpin_signed_imbalance_zscore_50"
+      - "trade_cluster_max_buy_run"
+      - "trade_cluster_max_sell_run"
+      - "trade_cluster_avg_buy_run"
+      - "trade_cluster_avg_sell_run"
+      - "trade_cluster_buy_run_count"
+      - "trade_cluster_sell_run_count"
+      - "trade_cluster_imbalance_ratio"
+      - "trade_cluster_directional_entropy"
+      - "trade_cluster_max_run_ratio"
+      - "trade_cluster_avg_run_ratio"
+      - "trade_cluster_max_buy_run_ma5"
+      - "trade_cluster_max_buy_run_ma10"
+      - "trade_cluster_max_buy_run_ma20"
+      - "trade_cluster_imbalance_ratio_ma5"
+      - "trade_cluster_imbalance_ratio_ma10"
+      - "trade_cluster_imbalance_ratio_ma20"
+      - "trade_cluster_directional_entropy_ma5"
+      - "trade_cluster_directional_entropy_ma10"
+      - "trade_cluster_directional_entropy_ma20"
+      - "trade_cluster_directional_entropy_change"
+      - "trade_cluster_directional_entropy_zscore_20"
+      - "trade_cluster_directional_entropy_zscore_50"
+      - "trade_cluster_net_runs"
+      - "trade_cluster_total_runs"
+      - "trade_cluster_net_runs_ratio"
+      - "trade_cluster_max_run"
+      - "trade_cluster_buy_sell_max_ratio"
+      - "trade_cluster_buy_sell_avg_ratio"
+      - "trade_cluster_avg_run_length"
+      - "trade_cluster_total_run_length"
+      - "trade_cluster_imbalance_zscore_20"
+      - "trade_cluster_imbalance_zscore_50"
+      - "trade_cluster_net_runs_zscore_20"
+      - "trade_cluster_net_runs_zscore_50"
+      - "trade_cluster_max_buy_run_zscore_20"
+      - "trade_cluster_max_buy_run_zscore_50"
+      - "trade_cluster_max_sell_run_zscore_20"
+      - "trade_cluster_max_sell_run_zscore_50"
+      - "trade_cluster_net_runs_ma5"
+      - "trade_cluster_net_runs_ma10"
+      - "trade_cluster_net_runs_ma20"
+      - "trade_cluster_total_runs_ma5"
+      - "trade_cluster_total_runs_ma10"
+      - "trade_cluster_total_runs_ma20"
+    output_columns:
+      - "vpin"
+      - "vpin_signed_imbalance"
+      - "vpin_last"
+      - "vpin_max"
+      - "vpin_min"
+      - "vpin_std"
+      - "vpin_count"
+      - "vpin_skewness"
+      - "vpin_trend"
+      - "vpin_signed_imbalance_last"
+      - "vpin_signed_imbalance_max"
+      - "vpin_ma5"
+      - "vpin_ma10"
+      - "vpin_ma20"
+      - "vpin_max5"
+      - "vpin_max10"
+      - "vpin_max20"
+      - "vpin_change"
+      - "vpin_change_pct"
+      - "vpin_zscore_20"
+      - "vpin_zscore_50"
+      - "vpin_quantile_rank_20"
+      - "vpin_quantile_rank_50"
+      - "vpin_volatility_10"
+      - "vpin_volatility_20"
+      - "vpin_spike_flag_20"
+      - "vpin_spike_flag_50"
+      - "vpin_momentum"
+      - "vpin_signed_imbalance_zscore_20"
+      - "vpin_signed_imbalance_zscore_50"
+      - "trade_cluster_max_buy_run"
+      - "trade_cluster_max_sell_run"
+      - "trade_cluster_avg_buy_run"
+      - "trade_cluster_avg_sell_run"
+      - "trade_cluster_buy_run_count"
+      - "trade_cluster_sell_run_count"
+      - "trade_cluster_imbalance_ratio"
+      - "trade_cluster_directional_entropy"
+      - "trade_cluster_max_run_ratio"
+      - "trade_cluster_avg_run_ratio"
+      - "trade_cluster_max_buy_run_ma5"
+      - "trade_cluster_max_buy_run_ma10"
+      - "trade_cluster_max_buy_run_ma20"
+      - "trade_cluster_imbalance_ratio_ma5"
+      - "trade_cluster_imbalance_ratio_ma10"
+      - "trade_cluster_imbalance_ratio_ma20"
+      - "trade_cluster_directional_entropy_ma5"
+      - "trade_cluster_directional_entropy_ma10"
+      - "trade_cluster_directional_entropy_ma20"
+      - "trade_cluster_directional_entropy_change"
+      - "trade_cluster_directional_entropy_zscore_20"
+      - "trade_cluster_directional_entropy_zscore_50"
+      - "trade_cluster_net_runs"
+      - "trade_cluster_total_runs"
+      - "trade_cluster_net_runs_ratio"
+      - "trade_cluster_max_run"
+      - "trade_cluster_buy_sell_max_ratio"
+      - "trade_cluster_buy_sell_avg_ratio"
+      - "trade_cluster_avg_run_length"
+      - "trade_cluster_total_run_length"
+      - "trade_cluster_imbalance_zscore_20"
+      - "trade_cluster_imbalance_zscore_50"
+      - "trade_cluster_net_runs_zscore_20"
+      - "trade_cluster_net_runs_zscore_50"
+      - "trade_cluster_max_buy_run_zscore_20"
+      - "trade_cluster_max_buy_run_zscore_50"
+      - "trade_cluster_max_sell_run_zscore_20"
+      - "trade_cluster_max_sell_run_zscore_50"
+      - "trade_cluster_net_runs_ma5"
+      - "trade_cluster_net_runs_ma10"
+      - "trade_cluster_net_runs_ma20"
+      - "trade_cluster_total_runs_ma5"
+      - "trade_cluster_total_runs_ma10"
+      - "trade_cluster_total_runs_ma20"
+    category: order_flow
+    description: "Composite feature: keep backward-compatible name `vpin_features` while DAG computes vpin + trade_cluster blocks."
+    pass_full_df: true
       
       特征说明：
       - VPIN 特征（28个）：
@@ -741,7 +1692,7 @@ features:
   # ========================================================================
   garch_features:
     module: enhanced
-    compute_func: extract_garch_features
+    compute_func: extract_garch_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["garch_volatility", "garch_persistence", "garch_leverage_gamma", "garch_alpha", "garch_beta"]
@@ -753,7 +1704,9 @@ features:
       garch_q: 1
       use_gjr: true
       use_figarch: false
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     notes: |
       GARCH 特征用于：
       - garch_volatility: 预测的下一期波动率
@@ -767,15 +1720,62 @@ features:
   # ========================================================================
   extended_volatility_features:
     module: enhanced
-    compute_func: extract_extended_volatility_features
-    dependencies: ["atr"]
-    required_columns: ["close", "atr"]
+    compute_func: select_extended_volatility_features
+    dependencies:
+      - vol_raw_features
+      - vol_atr_features
+      - vol_lag_features
+      - vol_trend_features
+      - vol_ma_features
+      - vol_regime_features
+      - vol_range_features
+      - vol_mom_features
+    required_columns:
+      - vol_raw_5
+      - vol_raw_10
+      - vol_raw_20
+      - vol_raw_60
+      - vol_atr_norm
+      - vol_atr_ma_5
+      - vol_atr_ma_10
+      - vol_atr_ma_20
+      - vol_atr_std_5
+      - vol_atr_std_10
+      - vol_atr_std_20
+      - vol_atr_max_5
+      - vol_atr_max_10
+      - vol_atr_max_20
+      - vol_atr_min_5
+      - vol_atr_min_10
+      - vol_atr_min_20
+      - vol_atr_ratio_20
+      - vol_atr_change
+      - vol_atr_change_abs
+      - vol_lag_1
+      - vol_lag_2
+      - vol_lag_3
+      - vol_slope_5
+      - vol_slope_10
+      - vol_slope_20
+      - vol_accel
+      - vol_ma_5
+      - vol_ma_10
+      - vol_ma_20
+      - vol_ema_5
+      - vol_ema_10
+      - vol_ema_20
+      - vol_zscore
+      - vol_percentile_approx
+      - vol_range_10
+      - vol_range_20
+      - vol_range_pos_10
+      - vol_range_pos_20
+      - vol_mom_3
+      - vol_mom_5
+      - vol_mom_10
     output_columns: ["vol_raw_5", "vol_raw_10", "vol_raw_20", "vol_raw_60", "vol_atr_norm", "vol_atr_ma_5", "vol_atr_ma_10", "vol_atr_ma_20", "vol_atr_std_5", "vol_atr_std_10", "vol_atr_std_20", "vol_atr_max_5", "vol_atr_max_10", "vol_atr_max_20", "vol_atr_min_5", "vol_atr_min_10", "vol_atr_min_20", "vol_atr_ratio_20", "vol_atr_change", "vol_atr_change_abs", "vol_lag_1", "vol_lag_2", "vol_lag_3", "vol_slope_5", "vol_slope_10", "vol_slope_20", "vol_accel", "vol_ma_5", "vol_ma_10", "vol_ma_20", "vol_ema_5", "vol_ema_10", "vol_ema_20", "vol_zscore", "vol_percentile_approx", "vol_range_10", "vol_range_20", "vol_range_pos_10", "vol_range_pos_20", "vol_mom_3", "vol_mom_5", "vol_mom_10"]
     category: volatility
     description: "扩展波动率特征：历史波动率、滞后特征、趋势特征、波动率regime特征（精简滞后特征，只保留1-3期）"
-    compute_params:
-      window: 20
-      lag_periods: [1, 2, 3]  # 精简：只保留短期滞后，降低过拟合风险
     pass_full_df: true
     notes: |
       扩展波动率特征用于提高波动率预测准确性：
@@ -787,6 +1787,134 @@ features:
       - Regime特征：波动率的Z-score和百分位排名
       - 范围特征：波动率的范围和范围比率
       - 动量特征：波动率的变化率
+
+  vol_raw_features:
+    module: enhanced
+    compute_func: compute_vol_raw_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_raw_5", "vol_raw_10", "vol_raw_20", "vol_raw_60"]
+    category: volatility
+    description: "vol_raw_*：多窗口历史波动率（收益率滚动标准差）"
+    compute_params:
+      windows: [5, 10, 20, 60]
+    pass_full_df: false
+    column_mappings:
+      close: close
+
+  vol_atr_features:
+    module: enhanced
+    compute_func: compute_vol_atr_features_from_series
+    dependencies: ["atr"]
+    required_columns: ["close", "atr"]
+    output_columns:
+      - vol_atr_norm
+      - vol_atr_ma_5
+      - vol_atr_ma_10
+      - vol_atr_ma_20
+      - vol_atr_std_5
+      - vol_atr_std_10
+      - vol_atr_std_20
+      - vol_atr_max_5
+      - vol_atr_max_10
+      - vol_atr_max_20
+      - vol_atr_min_5
+      - vol_atr_min_10
+      - vol_atr_min_20
+      - vol_atr_ratio_20
+      - vol_atr_change
+      - vol_atr_change_abs
+    category: volatility
+    description: "vol_atr_*：ATR派生波动率特征"
+    pass_full_df: false
+    column_mappings:
+      close: close
+      atr: atr
+
+  vol_lag_features:
+    module: enhanced
+    compute_func: compute_vol_lag_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_lag_1", "vol_lag_2", "vol_lag_3"]
+    category: volatility
+    description: "vol_lag_*：基础波动率（window=20）的滞后特征"
+    compute_params:
+      window: 20
+      lag_periods: [1, 2, 3]
+    pass_full_df: false
+    column_mappings:
+      close: close
+
+  vol_trend_features:
+    module: enhanced
+    compute_func: compute_vol_trend_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_slope_5", "vol_slope_10", "vol_slope_20", "vol_accel"]
+    category: volatility
+    description: "vol_slope_* / vol_accel：基础波动率趋势与加速度"
+    compute_params:
+      window: 20
+    pass_full_df: false
+    column_mappings:
+      close: close
+
+  vol_ma_features:
+    module: enhanced
+    compute_func: compute_vol_ma_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_ma_5", "vol_ma_10", "vol_ma_20", "vol_ema_5", "vol_ema_10", "vol_ema_20"]
+    category: volatility
+    description: "vol_ma_* / vol_ema_*：基础波动率的MA/EMA"
+    compute_params:
+      window: 20
+    pass_full_df: false
+    column_mappings:
+      close: close
+
+  vol_regime_features:
+    module: enhanced
+    compute_func: compute_vol_regime_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_zscore", "vol_percentile_approx"]
+    category: volatility
+    description: "vol_zscore / vol_percentile_approx：波动率regime特征"
+    compute_params:
+      window: 20
+    pass_full_df: false
+    column_mappings:
+      close: close
+
+  vol_range_features:
+    module: enhanced
+    compute_func: compute_vol_range_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_range_10", "vol_range_20", "vol_range_pos_10", "vol_range_pos_20"]
+    category: volatility
+    description: "vol_range_*：基础波动率的范围与位置"
+    compute_params:
+      window: 20
+    pass_full_df: false
+    column_mappings:
+      close: close
+
+  vol_mom_features:
+    module: enhanced
+    compute_func: compute_vol_mom_features_from_series
+    dependencies: []
+    required_columns: ["close"]
+    output_columns: ["vol_mom_3", "vol_mom_5", "vol_mom_10"]
+    category: volatility
+    description: "vol_mom_*：基础波动率的动量（pct_change）"
+    compute_params:
+      window: 20
+    pass_full_df: false
+    column_mappings:
+      close: close
   
   # ========================================================================
   # DTW 特征（形态匹配）- 改进版
@@ -934,7 +2062,7 @@ features:
   # ========================================================================
   evt_features:
     module: enhanced
-    compute_func: extract_evt_features
+    compute_func: extract_evt_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["evt_tail_shape", "evt_tail_shape_left", "evt_tail_shape_right", "evt_scale", "evt_var_99", "evt_es_99", "evt_scale_left", "evt_var_99_left", "evt_es_99_left", "evt_scale_right", "evt_var_99_right", "evt_es_99_right"]
@@ -946,7 +2074,9 @@ features:
       min_excesses: 10
       separate_tails: true
       var_confidence: 0.99  # 99% VaR/ES
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     notes: |
       EVT 用于尾部风险预警和风险管理（聚焦左尾暴跌风险）：
       
@@ -987,38 +2117,62 @@ features:
   # ========================================================================
   liquidity_void_x_wpt_risk:
     module: enhanced
-    compute_func: compute_liquidity_void_x_wpt_risk
+    compute_func: compute_liquidity_void_x_wpt_risk_from_series
     dependencies: ["liquidity_void", "wpt_volume_energy"]
     required_columns: ["liquidity_void_detected", "wpt_false_breakout_risk"]
     output_columns: ["liquidity_void_x_wpt_risk"]
     category: interaction
     description: "流动性真空 × WPT 假突破风险（SR突破、压缩区突破）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      liquidity_void_detected: liquidity_void_detected
+      wpt_false_breakout_risk: wpt_false_breakout_risk
+
+  liquidity_void_x_vpin:
+    module: enhanced
+    compute_func: compute_liquidity_void_x_vpin_from_series
+    dependencies: ["liquidity_void", "vpin_zscore_features"]
+    required_columns: ["liquidity_void_detected", "vpin_zscore_50"]
+    output_columns: ["liquidity_void_x_vpin"]
+    category: interaction
+    description: "（heavy gate）流动性真空状态 × VPIN zscore (50)；更贴近 microstructure 的“真空”代理"
+    compute_params:
+      clip_vpin: 5.0
+    pass_full_df: false
+    column_mappings:
+      liquidity_void_detected: liquidity_void_detected
+      vpin: vpin_zscore_50
   
   compression_energy_x_ofi_short:
     module: enhanced
-    compute_func: compute_compression_energy_x_ofi_short
+    compute_func: compute_compression_energy_x_ofi_short_from_series
     dependencies: ["wpt_volume_energy"]
     required_columns: ["compression_energy", "ofi_short"]
     output_columns: ["compression_energy_x_ofi_short"]
     category: interaction
     description: "压缩能量 × 订单流强度（压缩区突破）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      compression_energy: compression_energy
+      ofi_short: ofi_short
   
   hurst_x_trend_r2:
     module: enhanced
-    compute_func: compute_hurst_x_trend_r2
+    compute_func: compute_hurst_x_trend_r2_from_series
     # 注意：需要 hurst_price 和 trend_r2_20 特征
     dependencies: ["hurst_price", "trend_r2_20"]
     required_columns: ["hurst_close_rolling", "trend_r2_20"]
     output_columns: ["hurst_x_trend_r2"]
     category: interaction
     description: "Hurst 指数 × 趋势 R²（趋势策略、SR突破）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      hurst_close_rolling: hurst_close_rolling
+      trend_r2_20: trend_r2_20
   
   evt_x_trend_r2:
     module: enhanced
-    compute_func: compute_evt_x_trend_r2
+    compute_func: compute_evt_x_trend_r2_from_series
     # 注意：需要 evt_features 和 trend_r2_20 特征
     # evt_features 输出 evt_tail_shape，trend_r2_20 是独立的 baseline 特征
     dependencies: ["evt_features", "trend_r2_20"]
@@ -1026,190 +2180,218 @@ features:
     output_columns: ["evt_x_trend_r2"]
     category: interaction
     description: "EVT 尾部风险 × 趋势强度（SR反转、趋势策略）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      evt_tail_shape: evt_tail_shape
+      trend_r2_20: trend_r2_20
   
   vpin_x_compression:
     module: enhanced
-    compute_func: compute_vpin_x_compression
+    compute_func: compute_vpin_x_compression_from_series
     dependencies: ["vpin_features", "wpt_volume_energy"]
     required_columns: ["vpin", "compression_energy"]
     output_columns: ["vpin_x_compression"]
     category: interaction
     description: "VPIN × 压缩能量（压缩区突破）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
+      compression_energy: compression_energy
   
   sma_slope_x_price_pos:
     module: enhanced
-    compute_func: compute_sma_slope_x_price_pos
+    compute_func: compute_sma_slope_x_price_pos_from_series
     dependencies: []
     required_columns: ["sma_200_slope", "sma_200", "close"]
     output_columns: ["sma_slope_x_price_pos"]
     category: interaction
     description: "均线斜率 × 价格位置（趋势策略、SR突破）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      sma_200_slope: sma_200_slope
+      sma_200: sma_200
+      close: close
   
   vpin_x_wick_upper:
     module: enhanced
-    compute_func: compute_vpin_x_wick_upper
+    compute_func: compute_vpin_x_wick_upper_from_series
     dependencies: ["vpin_features", "wick_ratios"]
     required_columns: ["vpin", "wick_upper_ratio"]
     output_columns: ["vpin_x_wick_upper"]
     category: interaction
     description: "VPIN × 上影线占比（SR反转策略）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
+      wick_upper_ratio: wick_upper_ratio
     notes: "高 VPIN + 长上影线 = 强卖压，可能反转"
   
   vpin_x_wick_lower:
     module: enhanced
-    compute_func: compute_vpin_x_wick_lower
+    compute_func: compute_vpin_x_wick_lower_from_series
     dependencies: ["vpin_features", "wick_ratios"]
     required_columns: ["vpin", "wick_lower_ratio"]
     output_columns: ["vpin_x_wick_lower"]
     category: interaction
     description: "VPIN × 下影线占比（SR反转策略）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
+      wick_lower_ratio: wick_lower_ratio
     notes: "高 VPIN + 长下影线 = 强买压，可能反转"
   
   # Rank transform 版本（可选，如果需要）
   liquidity_void_x_wpt_risk_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["liquidity_void_x_wpt_risk"]
     required_columns: ["liquidity_void_x_wpt_risk"]
     output_columns: ["liquidity_void_x_wpt_risk_rank"]
     category: interaction
     description: "liquidity_void_x_wpt_risk 的 rank transform 版本"
-    compute_params:
-      interaction_col: "liquidity_void_x_wpt_risk"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: liquidity_void_x_wpt_risk
   
   compression_energy_x_ofi_short_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["compression_energy_x_ofi_short"]
     required_columns: ["compression_energy_x_ofi_short"]
     output_columns: ["compression_energy_x_ofi_short_rank"]
     category: interaction
     description: "compression_energy_x_ofi_short 的 rank transform 版本"
-    compute_params:
-      interaction_col: "compression_energy_x_ofi_short"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: compression_energy_x_ofi_short
   
   hurst_x_trend_r2_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["hurst_x_trend_r2"]
     required_columns: ["hurst_x_trend_r2"]
     output_columns: ["hurst_x_trend_r2_rank"]
     category: interaction
     description: "hurst_x_trend_r2 的 rank transform 版本"
-    compute_params:
-      interaction_col: "hurst_x_trend_r2"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: hurst_x_trend_r2
   
   evt_x_trend_r2_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["evt_x_trend_r2"]
     required_columns: ["evt_x_trend_r2"]
     output_columns: ["evt_x_trend_r2_rank"]
     category: interaction
     description: "evt_x_trend_r2 的 rank transform 版本"
-    compute_params:
-      interaction_col: "evt_x_trend_r2"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: evt_x_trend_r2
   
   vpin_x_compression_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["vpin_x_compression"]
     required_columns: ["vpin_x_compression"]
     output_columns: ["vpin_x_compression_rank"]
     category: interaction
     description: "vpin_x_compression 的 rank transform 版本"
-    compute_params:
-      interaction_col: "vpin_x_compression"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_x_compression
   
   sma_slope_x_price_pos_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["sma_slope_x_price_pos"]
     required_columns: ["sma_slope_x_price_pos"]
     output_columns: ["sma_slope_x_price_pos_rank"]
     category: interaction
     description: "sma_slope_x_price_pos 的 rank transform 版本"
-    compute_params:
-      interaction_col: "sma_slope_x_price_pos"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: sma_slope_x_price_pos
   
   vpin_x_wick_upper_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["vpin_x_wick_upper"]
     required_columns: ["vpin_x_wick_upper"]
     output_columns: ["vpin_x_wick_upper_rank"]
     category: interaction
     description: "vpin_x_wick_upper 的 rank transform 版本"
-    compute_params:
-      interaction_col: "vpin_x_wick_upper"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_x_wick_upper
   
   vpin_x_wick_lower_rank:
     module: enhanced
-    compute_func: apply_rank_transform_to_interaction
+    compute_func: apply_rank_transform_to_interaction_from_series
     dependencies: ["vpin_x_wick_lower"]
     required_columns: ["vpin_x_wick_lower"]
     output_columns: ["vpin_x_wick_lower_rank"]
     category: interaction
     description: "vpin_x_wick_lower 的 rank transform 版本"
-    compute_params:
-      interaction_col: "vpin_x_wick_lower"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_x_wick_lower
   
   # VPIN × Trade Clustering 交叉特征（捕捉订单流不平衡 + 成交聚集性的组合信号）
   vpin_x_trade_cluster_max_buy_run:
     module: enhanced
-    compute_func: compute_vpin_x_trade_cluster_max_buy_run
+    compute_func: compute_vpin_x_trade_cluster_max_buy_run_from_series
     dependencies: ["vpin_features"]
     required_columns: ["vpin", "trade_cluster_max_buy_run"]
     output_columns: ["vpin_x_trade_cluster_max_buy_run"]
     category: interaction
     description: "VPIN × 最大连续买入长度（捕捉高订单流不平衡 + 连续买入聚集）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
     notes: "可能表示知情交易者的策略性连续买入"
   
   vpin_zscore_x_trade_cluster_max_buy_run:
     module: enhanced
-    compute_func: compute_vpin_zscore_x_trade_cluster_max_buy_run
+    compute_func: compute_vpin_zscore_x_trade_cluster_max_buy_run_from_series
     dependencies: ["vpin_features"]
     required_columns: ["vpin_zscore_20", "trade_cluster_max_buy_run"]
     output_columns: ["vpin_zscore_x_trade_cluster_max_buy_run"]
     category: interaction
     description: "VPIN Z-score × 最大连续买入长度（用户建议的交叉项，可能有超加成效应）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin_zscore_20: vpin_zscore_20
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
     notes: "捕捉异常高的订单流不平衡 + 连续买入聚集的组合信号"
   
   vpin_signed_imbalance_x_trade_cluster_imbalance:
     module: enhanced
-    compute_func: compute_vpin_signed_imbalance_x_trade_cluster_imbalance
+    compute_func: compute_vpin_signed_imbalance_x_trade_cluster_imbalance_from_series
     dependencies: ["vpin_features"]
     required_columns: ["vpin_signed_imbalance", "trade_cluster_imbalance_ratio"]
     output_columns: ["vpin_signed_imbalance_x_trade_cluster_imbalance"]
     category: interaction
     description: "VPIN Signed Imbalance × Trade Clustering Imbalance（捕捉方向一致性）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin_signed_imbalance: vpin_signed_imbalance
+      trade_cluster_imbalance_ratio: trade_cluster_imbalance_ratio
     notes: "两者方向一致时，信号更可靠"
   
   vpin_x_trade_cluster_entropy:
     module: enhanced
-    compute_func: compute_vpin_x_trade_cluster_entropy
+    compute_func: compute_vpin_x_trade_cluster_entropy_from_series
     dependencies: ["vpin_features"]
     required_columns: ["vpin", "trade_cluster_directional_entropy"]
     output_columns: ["vpin_x_trade_cluster_entropy"]
     category: interaction
     description: "VPIN × 方向熵（捕捉订单流不平衡 + 成交混乱度）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
+      trade_cluster_directional_entropy: trade_cluster_directional_entropy
     notes: "高 VPIN + 低熵 = 大单主导且有序（知情交易）；高 VPIN + 高熵 = 大单主导但混乱（可能假突破）"
   
   # ========================================================================
@@ -1289,37 +2471,46 @@ features:
   
   atr_ratio:
     module: enhanced
-    compute_func: compute_atr_ratio
+    compute_func: compute_atr_ratio_from_series
     dependencies: ["atr"]
     required_columns: ["atr", "close"]
     output_columns: ["atr_ratio"]
     category: derived
     description: "ATR 比率（两个特征的比值：atr / price）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      atr: atr
+      close: close
   
   bb_width_ratio:
     module: enhanced
-    compute_func: compute_bb_width_ratio
+    compute_func: compute_bb_width_ratio_from_series
     dependencies: ["bb_width"]  # 依赖于 bb_width 特征，它会生成 bb_upper, bb_lower, bb_middle
     required_columns: ["bb_upper", "bb_lower", "bb_middle"]
     output_columns: ["bb_width_ratio"]
     category: derived
     description: "Bollinger Band 宽度比率（多个特征的组合：(upper - lower) / middle）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      bb_upper: bb_upper
+      bb_lower: bb_lower
+      bb_middle: bb_middle
   
   compression_score:
     module: enhanced
-    compute_func: compute_compression_score
+    compute_func: compute_compression_score_from_series
     dependencies: ["bb_width_ratio"]
     required_columns: ["bb_width_ratio"]
     output_columns: ["compression_score"]
     category: derived
     description: "压缩度分数（单个特征的变换：1 / (1 + bb_width_ratio)）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      bb_width_ratio: bb_width_ratio
   
   tbr_ma_5:
     module: enhanced
-    compute_func: compute_tbr_ma
+    compute_func: compute_tbr_ma_from_series
     dependencies: []
     required_columns: ["taker_buy_ratio"]
     output_columns: ["tbr_ma_5"]
@@ -1327,11 +2518,13 @@ features:
     description: "TBR 移动平均（单个特征的滚动变换）"
     compute_params:
       window: 5
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      taker_buy_ratio: taker_buy_ratio
   
   tbr_spike:
     module: enhanced
-    compute_func: compute_tbr_spike
+    compute_func: compute_tbr_spike_from_series
     dependencies: ["tbr_ma_5"]
     required_columns: ["taker_buy_ratio", "tbr_ma_5"]
     output_columns: ["tbr_spike"]
@@ -1339,7 +2532,10 @@ features:
     description: "TBR 突增信号（两个特征的比较：tbr > tbr_ma * threshold）"
     compute_params:
       spike_threshold: 1.5
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      taker_buy_ratio: taker_buy_ratio
+      tbr_ma_5: tbr_ma_5
   
   # ========================================================================
   # Spectrum 特征（无依赖）
@@ -1347,7 +2543,7 @@ features:
   # 基础频谱特征（包含所有列，用于波动率模型等需要全部特征的场景）
   spectrum_features:
     module: enhanced
-    compute_func: extract_spectrum_features
+    compute_func: extract_spectrum_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns:
@@ -1374,17 +2570,16 @@ features:
     description: |
       频谱分析特征（完整版，包含所有列）
       用于波动率模型等需要全部特征的场景
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     compute_params:
       rolling_window: 64
-      price_col: "close"
-      volume_col: null
-      cvd_col: null
 
   # SR 突破策略专用频谱特征（精确选择）
   spectrum_features_sr_breakout:
     module: enhanced
-    compute_func: extract_spectrum_features
+    compute_func: extract_spectrum_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns:
@@ -1394,17 +2589,16 @@ features:
       - "spectrum_price_entropy"          # 辅助：系统有序性
     category: spectrum
     description: "SR 突破策略专用频谱特征（精确选择：high_freq_ratio, flatness, low_freq_ratio, entropy）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     compute_params:
       rolling_window: 64
-      price_col: "close"
-      volume_col: null
-      cvd_col: null
 
   # SR 反转策略专用频谱特征（精确选择）
   spectrum_features_sr_reversal:
     module: enhanced
-    compute_func: extract_spectrum_features
+    compute_func: extract_spectrum_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns:
@@ -1412,17 +2606,16 @@ features:
       - "spectrum_price_entropy"   # 核心：系统有序性，高 entropy = 市场随机，适合反转
     category: spectrum
     description: "SR 反转策略专用频谱特征（精确选择：flatness, entropy）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     compute_params:
       rolling_window: 64
-      price_col: "close"
-      volume_col: null
-      cvd_col: null
 
   # 压缩区突破策略专用频谱特征（精确选择）
   spectrum_features_compression_breakout:
     module: enhanced
-    compute_func: extract_spectrum_features
+    compute_func: extract_spectrum_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns:
@@ -1431,17 +2624,16 @@ features:
       - "spectrum_price_flatness"         # 辅助：压缩期结构识别
     category: spectrum
     description: "压缩区突破策略专用频谱特征（精确选择：high_freq_ratio, low_freq_ratio, flatness）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     compute_params:
       rolling_window: 64
-      price_col: "close"
-      volume_col: null
-      cvd_col: null
 
   # 趋势跟踪策略专用频谱特征（精确选择）
   spectrum_features_trend_following:
     module: enhanced
-    compute_func: extract_spectrum_features
+    compute_func: extract_spectrum_features_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns:
@@ -1450,12 +2642,11 @@ features:
       - "spectrum_price_high_freq_ratio"  # 辅助：噪声水平，用于降权
     category: spectrum
     description: "趋势跟踪策略专用频谱特征（精确选择：low_freq_ratio, flatness, high_freq_ratio）"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      close: close
     compute_params:
       rolling_window: 64
-      price_col: "close"
-      volume_col: null
-      cvd_col: null
 
   # ========================================================================
   # TA-Lib 指标（按需计算单个指标）
@@ -1464,13 +2655,13 @@ features:
 
   sma_5:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["sma_5"]
     category: trend
     description: "Simple Moving Average (5)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SMA"
       timeperiod: 5
@@ -1480,13 +2671,13 @@ features:
 
   sma_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["sma_10"]
     category: trend
     description: "Simple Moving Average (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SMA"
       timeperiod: 10
@@ -1496,13 +2687,13 @@ features:
 
   sma_20:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["sma_20"]
     category: trend
     description: "Simple Moving Average (20)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SMA"
       timeperiod: 20
@@ -1512,13 +2703,13 @@ features:
 
   sma_50:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["sma_50"]
     category: trend
     description: "Simple Moving Average (50)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SMA"
       timeperiod: 50
@@ -1528,13 +2719,13 @@ features:
 
   sma_100:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["sma_100"]
     category: trend
     description: "Simple Moving Average (100)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SMA"
       timeperiod: 100
@@ -1544,13 +2735,13 @@ features:
 
   sma_200:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["sma_200"]
     category: trend
     description: "Simple Moving Average (200)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SMA"
       timeperiod: 200
@@ -1560,13 +2751,13 @@ features:
 
   ema_5:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["ema_5"]
     category: trend
     description: "Exponential Moving Average (5)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "EMA"
       timeperiod: 5
@@ -1576,13 +2767,13 @@ features:
 
   ema_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["ema_10"]
     category: trend
     description: "Exponential Moving Average (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "EMA"
       timeperiod: 10
@@ -1592,13 +2783,13 @@ features:
 
   ema_20:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["ema_20"]
     category: trend
     description: "Exponential Moving Average (20)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "EMA"
       timeperiod: 20
@@ -1608,13 +2799,13 @@ features:
 
   ema_50:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["ema_50"]
     category: trend
     description: "Exponential Moving Average (50)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "EMA"
       timeperiod: 50
@@ -1624,13 +2815,13 @@ features:
 
   ema_100:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["ema_100"]
     category: trend
     description: "Exponential Moving Average (100)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "EMA"
       timeperiod: 100
@@ -1640,13 +2831,13 @@ features:
 
   wma_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["wma_10"]
     category: trend
     description: "Weighted Moving Average (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "WMA"
       timeperiod: 10
@@ -1656,13 +2847,13 @@ features:
 
   wma_20:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["wma_20"]
     category: trend
     description: "Weighted Moving Average (20)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "WMA"
       timeperiod: 20
@@ -1672,13 +2863,13 @@ features:
 
   wma_50:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["wma_50"]
     category: trend
     description: "Weighted Moving Average (50)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "WMA"
       timeperiod: 50
@@ -1688,13 +2879,13 @@ features:
 
   tema_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["tema_10"]
     category: trend
     description: "Triple Exponential Moving Average (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "TEMA"
       timeperiod: 10
@@ -1704,13 +2895,13 @@ features:
 
   tema_20:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["tema_20"]
     category: trend
     description: "Triple Exponential Moving Average (20)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "TEMA"
       timeperiod: 20
@@ -1720,13 +2911,13 @@ features:
 
   tema_30:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["tema_30"]
     category: trend
     description: "Triple Exponential Moving Average (30)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "TEMA"
       timeperiod: 30
@@ -1736,13 +2927,13 @@ features:
 
   kama_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["kama_10"]
     category: trend
     description: "Kaufman Adaptive Moving Average (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "KAMA"
       timeperiod: 10
@@ -1752,13 +2943,13 @@ features:
 
   kama_20:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["kama_20"]
     category: trend
     description: "Kaufman Adaptive Moving Average (20)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "KAMA"
       timeperiod: 20
@@ -1768,13 +2959,13 @@ features:
 
   kama_30:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["kama_30"]
     category: trend
     description: "Kaufman Adaptive Moving Average (30)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "KAMA"
       timeperiod: 30
@@ -1784,13 +2975,13 @@ features:
 
   rsi_7:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["rsi_7"]
     category: momentum
     description: "Relative Strength Index (7)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "RSI"
       timeperiod: 7
@@ -1800,13 +2991,13 @@ features:
 
   rsi_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["rsi_14"]
     category: momentum
     description: "Relative Strength Index (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "RSI"
       timeperiod: 14
@@ -1816,13 +3007,13 @@ features:
 
   rsi_21:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["rsi_21"]
     category: momentum
     description: "Relative Strength Index (21)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "RSI"
       timeperiod: 21
@@ -1832,13 +3023,13 @@ features:
 
   mom_5:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["mom_5"]
     category: momentum
     description: "Momentum (5)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "MOM"
       timeperiod: 5
@@ -1848,13 +3039,13 @@ features:
 
   mom_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["mom_10"]
     category: momentum
     description: "Momentum (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "MOM"
       timeperiod: 10
@@ -1864,13 +3055,13 @@ features:
 
   mom_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["mom_14"]
     category: momentum
     description: "Momentum (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "MOM"
       timeperiod: 14
@@ -1880,13 +3071,13 @@ features:
 
   roc_10:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["roc_10"]
     category: momentum
     description: "Rate of Change (10)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ROC"
       timeperiod: 10
@@ -1896,13 +3087,13 @@ features:
 
   roc_20:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["roc_20"]
     category: momentum
     description: "Rate of Change (20)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ROC"
       timeperiod: 20
@@ -1912,13 +3103,13 @@ features:
 
   ppo:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["ppo"]
     category: momentum
     description: "Percentage Price Oscillator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "PPO"
       fastperiod: 12
@@ -1929,13 +3120,13 @@ features:
 
   trix_15:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["trix_15"]
     category: momentum
     description: "TRIX (15)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "TRIX"
       timeperiod: 15
@@ -1945,13 +3136,13 @@ features:
 
   cmo_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["cmo_14"]
     category: momentum
     description: "Chande Momentum Oscillator (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "CMO"
       timeperiod: 14
@@ -1961,13 +3152,13 @@ features:
 
   willr_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["willr_14"]
     category: momentum
     description: "Williams %R (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "WILLR"
       timeperiod: 14
@@ -1979,13 +3170,13 @@ features:
 
   adx:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["adx"]
     category: trend
     description: "Average Directional Index (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ADX"
       timeperiod: 14
@@ -1997,13 +3188,13 @@ features:
 
   adxr:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["adxr"]
     category: trend
     description: "Average Directional Movement Rating (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ADXR"
       timeperiod: 14
@@ -2015,13 +3206,13 @@ features:
 
   plus_di:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["plus_di"]
     category: trend
     description: "Positive Directional Indicator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "PLUS_DI"
       timeperiod: 14
@@ -2033,13 +3224,13 @@ features:
 
   minus_di:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["minus_di"]
     category: trend
     description: "Negative Directional Indicator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "MINUS_DI"
       timeperiod: 14
@@ -2051,13 +3242,13 @@ features:
 
   sar:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low"]
     output_columns: ["sar"]
     category: trend
     description: "Parabolic SAR"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SAR"
       acceleration: 0.02
@@ -2069,13 +3260,13 @@ features:
 
   sar_ext:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low"]
     output_columns: ["sar_ext"]
     category: trend
     description: "Extended Parabolic SAR"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "SAREXT"
       output_column: "sar_ext"
@@ -2085,13 +3276,13 @@ features:
 
   aroon:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low"]
     output_columns: ["aroon_down", "aroon_up"]
     category: trend
     description: "Aroon oscillator (up/down)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "AROON"
       timeperiod: 14
@@ -2104,13 +3295,13 @@ features:
 
   cci_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["cci_14"]
     category: momentum
     description: "Commodity Channel Index (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "CCI"
       timeperiod: 14
@@ -2122,13 +3313,13 @@ features:
 
   ultosc:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["ultosc"]
     category: momentum
     description: "Ultimate Oscillator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ULTOSC"
       output_column: "ultosc"
@@ -2139,13 +3330,13 @@ features:
 
   stoch:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["stoch_k", "stoch_d"]
     category: momentum
     description: "Stochastic Oscillator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "STOCH"
       fastk_period: 5
@@ -2161,13 +3352,13 @@ features:
 
   stochf:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["stochf_k", "stochf_d"]
     category: momentum
     description: "Fast Stochastic Oscillator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "STOCHF"
       fastk_period: 5
@@ -2182,13 +3373,13 @@ features:
 
   stochrsi:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["stochrsi_k", "stochrsi_d"]
     category: momentum
     description: "Stochastic RSI"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "STOCHRSI"
       timeperiod: 14
@@ -2225,13 +3416,13 @@ features:
 
   macdext:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["macdext", "macdext_signal", "macdext_histogram"]
     category: momentum
     description: "Extended MACD"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "MACDEXT"
       fastperiod: 12
@@ -2246,13 +3437,13 @@ features:
 
   macdfix:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["macdfix", "macdfix_signal", "macdfix_histogram"]
     category: momentum
     description: "Fixed-period MACD"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "MACDFIX"
       signalperiod: 9
@@ -2265,13 +3456,13 @@ features:
 
   bbands:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close"]
     output_columns: ["bb_upper", "bb_middle", "bb_lower"]
     category: volatility
     description: "Bollinger Bands (20,2)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "BBANDS"
       timeperiod: 20
@@ -2286,13 +3477,13 @@ features:
 
   atr_7:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["atr_7"]
     category: volatility
     description: "Average True Range (7)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ATR"
       timeperiod: 7
@@ -2304,13 +3495,13 @@ features:
 
   atr_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["atr_14"]
     category: volatility
     description: "Average True Range (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ATR"
       timeperiod: 14
@@ -2322,13 +3513,13 @@ features:
 
   atr_21:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["atr_21"]
     category: volatility
     description: "Average True Range (21)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ATR"
       timeperiod: 21
@@ -2340,13 +3531,13 @@ features:
 
   natr_14:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["natr_14"]
     category: volatility
     description: "Normalized ATR (14)"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "NATR"
       timeperiod: 14
@@ -2358,13 +3549,13 @@ features:
 
   trange:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["trange"]
     category: volatility
     description: "True Range"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "TRANGE"
       output_column: "trange"
@@ -2375,13 +3566,13 @@ features:
 
   obv:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["close", "volume"]
     output_columns: ["obv"]
     category: volume
     description: "On Balance Volume"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "OBV"
       output_column: "obv"
@@ -2391,13 +3582,13 @@ features:
 
   ad_line:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close", "volume"]
     output_columns: ["ad_line"]
     category: volume
     description: "Accumulation/Distribution Line"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "AD"
       output_column: "ad_line"
@@ -2409,13 +3600,13 @@ features:
 
   adosc:
     module: talib
-    compute_func: compute_talib_indicator
+    compute_func: compute_talib_indicator_from_series
     dependencies: []
     required_columns: ["high", "low", "close", "volume"]
     output_columns: ["adosc"]
     category: volume
     description: "Chaikin Oscillator"
-    pass_full_df: true
+    pass_full_df: false
     compute_params:
       indicator_name: "ADOSC"
       fastperiod: 3

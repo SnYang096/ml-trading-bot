@@ -438,6 +438,7 @@ def extract_order_flow_features(
     vpin_adaptive: bool = True,
     freq: Optional[str] = None,
     include_trade_clustering: bool = True,
+    compute_vpin_derived: bool = True,
     trade_clustering_window: int = 100,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
     vpin_bucket_volume_usd: Optional[float] = None,
@@ -841,132 +842,233 @@ def extract_order_flow_features(
         # 如果 df 没有 datetime index，使用简单映射（不推荐，但保持兼容）
         vpin_series = vpin_series.reindex(df.index).fillna(0.0)
         df["vpin"] = vpin_series
-    # VPIN 的滚动统计
-    for w in [5, 10, 20]:
-        df[f"vpin_ma{w}"] = df["vpin"].rolling(window=w, min_periods=1).mean()
-        df[f"vpin_max{w}"] = df["vpin"].rolling(window=w, min_periods=1).max()
-    # VPIN 变化率（捕捉订单流突增）
-    vpin_base = df["vpin"].replace([np.inf, -np.inf], np.nan)
-    df["vpin_change"] = vpin_base.diff()
-    # 手动 pct_change，加 EPS 避免分母为 0
-    prev = vpin_base.shift(1)
-    df["vpin_change_pct"] = ((vpin_base - prev) / (prev + EPS)).replace([np.inf, -np.inf], np.nan)
-    # 增强特征：Z-score（识别异常高的订单流不平衡）
-    for w in [20, 50]:
-        rolling_mean = df["vpin"].rolling(window=w, min_periods=1).mean()
-        vpin_clean = df["vpin"].replace([np.inf, -np.inf], np.nan)
-        rolling_std = vpin_clean.rolling(window=w, min_periods=1).std()
-        z = (vpin_clean - rolling_mean) / (rolling_std + TOL)
-        df[f"vpin_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
-    # 增强特征：分位数排名（在滚动窗口中的位置，0~1）
-    # 性能优化：使用 scipy.stats.percentileofscore（如果可用）
-    for w in [20, 50]:
-        if HAS_SCIPY:
-            def rolling_quantile_rank(x):
-                """高效计算分位数排名"""
-                if len(x) == 0:
-                    return 0.0
-                # percentileofscore 返回 0~100，需除以 100
-                return percentileofscore(x, x[-1], kind="mean") / 100.0
-            df[f"vpin_quantile_rank_{w}"] = (
-                df["vpin"].rolling(window=w, min_periods=1)
-                .apply(rolling_quantile_rank, raw=True)
-            )
-        else:
-            # fallback：使用原始方法（较慢）
-            df[f"vpin_quantile_rank_{w}"] = (
-                df["vpin"].rolling(window=w, min_periods=1)
-                .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
-            )
-    # 增强特征：VPIN 波动率（衡量订单流稳定性）
-    for w in [10, 20]:
-        vpin_clean = df["vpin"].replace([np.inf, -np.inf], np.nan)
-        vol = vpin_clean.rolling(window=w, min_periods=1).std()
-        df[f"vpin_volatility_{w}"] = vol.replace([np.inf, -np.inf], np.nan)
-    # 增强特征：Spike 标志（VPIN 异常突增）
-    # 性能优化：使用 numba 加速的 MAD 计算（优化版，比 pandas apply 快 100+ 倍）
-    # 优化：同时计算 median 和 mad，避免重复计算
-    for w in [20, 50]:
-        # 优化 MAD 计算：优先使用 numba（极快且正确）
-        # MAD = median(|x - median(x)|)
-        if HAS_NUMBA:
-            # 使用 numba JIT 编译的滚动 MAD（优化版：插入排序维护有序窗口）
-            try:
-                vpin_values = df["vpin"].values
-                # 优化版同时返回 median 和 mad，避免重复计算
-                rolling_median_values, rolling_mad_values = _rolling_mad_numba_optimized(
-                    vpin_values, w
-                )
-                rolling_median = pd.Series(rolling_median_values, index=df.index)
-                rolling_mad = pd.Series(rolling_mad_values, index=df.index)
-                # 将前 window-1 个 NaN 填充为第一个有效值（与 rolling 行为一致）
-                rolling_median = rolling_median.bfill().fillna(0.0)
-                rolling_mad = rolling_mad.bfill().fillna(0.0)
-            except Exception as e:
-                # numba 计算失败，回退到 pandas apply
-                print(f"   ⚠️  Numba MAD calculation failed ({e}), falling back to pandas apply")
-                rolling_median = df["vpin"].rolling(window=w, min_periods=1).median()
-                rolling_mad = (
-                    df["vpin"].rolling(window=w, min_periods=1)
-                    .apply(lambda x: np.median(np.abs(x - np.median(x))), raw=True)
-                )
-        else:
-            # 无 numba：根据窗口大小选择策略
-            rolling_median = df["vpin"].rolling(window=w, min_periods=1).median()
-            if w <= 50:
-                # 小窗口：使用 pandas apply（精确但较慢）
-                rolling_mad = (
-                    df["vpin"].rolling(window=w, min_periods=1)
-                    .apply(lambda x: np.median(np.abs(x - np.median(x))), raw=True)
-                )
-            else:
-                # 大窗口：使用 std 作为近似（更快，牺牲一点鲁棒性）
-                # std ≈ 1.4826 * MAD（对于正态分布）
-                rolling_std = df["vpin"].rolling(window=w, min_periods=1).std()
-                rolling_mad = rolling_std / 1.4826
-        threshold = rolling_median + 2 * rolling_mad
-        df[f"vpin_spike_flag_{w}"] = (df["vpin"] > threshold).astype(int)
-    # 新增特征：VPIN 动量（捕捉不平衡加速）
-    df["vpin_momentum"] = df["vpin_ma5"] - df["vpin_ma20"]
-    # 新增特征：Signed Imbalance Z-score（识别极端买卖压力）
-    if "vpin_signed_imbalance" in df.columns:
-        for w in [20, 50]:
-            vsi_clean = df["vpin_signed_imbalance"].replace([np.inf, -np.inf], np.nan)
-            rolling_mean = vsi_clean.rolling(window=w, min_periods=1).mean()
-            rolling_std = vsi_clean.rolling(window=w, min_periods=1).std()
-            z = (vsi_clean - rolling_mean) / (rolling_std + TOL)
-            df[f"vpin_signed_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    if compute_vpin_derived:
+        vpin_derived = compute_vpin_derived_features_from_base(df)
+        for c in vpin_derived.columns:
+            df[c] = vpin_derived[c]
     # Trade Clustering 特征（与 VPIN 互补）
     # VPIN 关注 volume-bucketed 的净买卖差，Trade Clustering 关注连续同向成交的聚集性
     if include_trade_clustering and ticks is not None and len(ticks) > 0:
         print("   📊 Computing trade clustering features...")
         try:
-            df = extract_trade_clustering_features(
-                df,
+            cluster_features = extract_trade_clustering_features(
+                df=df,
                 ticks=ticks,
                 window_size=trade_clustering_window,
                 freq=freq,
                 monthly_cache_dir=monthly_cache_dir,
                 merge_batch_size=2,
             )
+            for c in cluster_features.columns:
+                df[c] = cluster_features[c]
         except Exception as e:
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
     elif include_trade_clustering and ticks_loader_json:
         # 使用 ticks_loader_json 计算 Trade Clustering
         print("   📊 Computing trade clustering features from tick files...")
         try:
-            df = extract_trade_clustering_features(
-                df,
+            cluster_features = extract_trade_clustering_features(
+                df=df,
                 ticks_loader_json=ticks_loader_json,
                 window_size=trade_clustering_window,
                 freq=freq,
                 monthly_cache_dir=monthly_cache_dir,
                 merge_batch_size=2,
             )
+            for c in cluster_features.columns:
+                df[c] = cluster_features[c]
         except Exception as e:
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
             import traceback
             traceback.print_exc()
+    return df
+
+
+def compute_vpin_derived_features_from_base(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Compute VPIN derived features from already-aligned base columns.
+
+    Required columns:
+    - vpin
+    - vpin_signed_imbalance (optional, for signed z-scores)
+
+    Returns ONLY the derived columns (no mutation of input).
+    """
+    out = pd.DataFrame(index=df.index)
+    for part in [
+        compute_vpin_ma_max_features_from_base,
+        compute_vpin_change_features_from_base,
+        compute_vpin_zscore_features_from_base,
+        compute_vpin_quantile_rank_features_from_base,
+        compute_vpin_volatility_features_from_base,
+        compute_vpin_spike_features_from_base,
+        compute_vpin_signed_zscore_features_from_base,
+    ]:
+        part_df = part(df)
+        for c in part_df.columns:
+            out[c] = part_df[c]
+    # momentum depends on MA features
+    mom_df = compute_vpin_momentum_features_from_base(df)
+    for c in mom_df.columns:
+        out[c] = mom_df[c]
+    return out
+
+
+def compute_vpin_ma_max_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_ma* / vpin_max*."""
+    out = pd.DataFrame(index=df.index)
+    for w in [5, 10, 20]:
+        out[f"vpin_ma{w}"] = df["vpin"].rolling(window=w, min_periods=1).mean()
+        out[f"vpin_max{w}"] = df["vpin"].rolling(window=w, min_periods=1).max()
+    return out
+
+
+def compute_vpin_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_change / vpin_change_pct."""
+    out = pd.DataFrame(index=df.index)
+    vpin_base = df["vpin"].replace([np.inf, -np.inf], np.nan)
+    out["vpin_change"] = vpin_base.diff()
+    prev = vpin_base.shift(1)
+    out["vpin_change_pct"] = ((vpin_base - prev) / (prev + EPS)).replace(
+        [np.inf, -np.inf], np.nan
+    )
+    return out
+
+
+def compute_vpin_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_zscore_20 / vpin_zscore_50."""
+    out = pd.DataFrame(index=df.index)
+    for w in [20, 50]:
+        rolling_mean = df["vpin"].rolling(window=w, min_periods=1).mean()
+        vpin_clean = df["vpin"].replace([np.inf, -np.inf], np.nan)
+        rolling_std = vpin_clean.rolling(window=w, min_periods=1).std()
+        z = (vpin_clean - rolling_mean) / (rolling_std + TOL)
+        out[f"vpin_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_vpin_quantile_rank_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_quantile_rank_20 / vpin_quantile_rank_50."""
+    out = pd.DataFrame(index=df.index)
+    for w in [20, 50]:
+        if HAS_SCIPY:
+            def rolling_quantile_rank(x):
+                if len(x) == 0:
+                    return 0.0
+                return percentileofscore(x, x[-1], kind="mean") / 100.0
+
+            out[f"vpin_quantile_rank_{w}"] = (
+                df["vpin"].rolling(window=w, min_periods=1).apply(
+                    rolling_quantile_rank, raw=True
+                )
+            )
+        else:
+            out[f"vpin_quantile_rank_{w}"] = (
+                df["vpin"]
+                .rolling(window=w, min_periods=1)
+                .apply(lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False)
+            )
+    return out
+
+
+def compute_vpin_volatility_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_volatility_10 / vpin_volatility_20."""
+    out = pd.DataFrame(index=df.index)
+    for w in [10, 20]:
+        vpin_clean = df["vpin"].replace([np.inf, -np.inf], np.nan)
+        vol = vpin_clean.rolling(window=w, min_periods=1).std()
+        out[f"vpin_volatility_{w}"] = vol.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_vpin_spike_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_spike_flag_20 / vpin_spike_flag_50."""
+    out = pd.DataFrame(index=df.index)
+    for w in [20, 50]:
+        if HAS_NUMBA:
+            try:
+                vpin_values = df["vpin"].values
+                rolling_median_values, rolling_mad_values = _rolling_mad_numba_optimized(
+                    vpin_values, w
+                )
+                rolling_median = (
+                    pd.Series(rolling_median_values, index=df.index)
+                    .bfill()
+                    .fillna(0.0)
+                )
+                rolling_mad = (
+                    pd.Series(rolling_mad_values, index=df.index).bfill().fillna(0.0)
+                )
+            except Exception as e:
+                print(
+                    f"   ⚠️  Numba MAD calculation failed ({e}), falling back to pandas apply"
+                )
+                rolling_median = df["vpin"].rolling(window=w, min_periods=1).median()
+                rolling_mad = (
+                    df["vpin"]
+                    .rolling(window=w, min_periods=1)
+                    .apply(lambda x: np.median(np.abs(x - np.median(x))), raw=True)
+                )
+        else:
+            rolling_median = df["vpin"].rolling(window=w, min_periods=1).median()
+            if w <= 50:
+                rolling_mad = (
+                    df["vpin"]
+                    .rolling(window=w, min_periods=1)
+                    .apply(lambda x: np.median(np.abs(x - np.median(x))), raw=True)
+                )
+            else:
+                rolling_std = df["vpin"].rolling(window=w, min_periods=1).std()
+                rolling_mad = rolling_std / 1.4826
+
+        threshold = rolling_median + 2 * rolling_mad
+        out[f"vpin_spike_flag_{w}"] = (df["vpin"] > threshold).astype(int)
+    return out
+
+
+def compute_vpin_momentum_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_momentum (requires ma5/ma20)."""
+    out = pd.DataFrame(index=df.index)
+    ma = compute_vpin_ma_max_features_from_base(df)
+    out["vpin_momentum"] = ma["vpin_ma5"] - ma["vpin_ma20"]
+    return out
+
+
+def compute_vpin_signed_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """vpin_signed_imbalance_zscore_20 / vpin_signed_imbalance_zscore_50."""
+    out = pd.DataFrame(index=df.index)
+    if "vpin_signed_imbalance" not in df.columns:
+        out["vpin_signed_imbalance_zscore_20"] = 0.0
+        out["vpin_signed_imbalance_zscore_50"] = 0.0
+        return out
+    for w in [20, 50]:
+        vsi_clean = df["vpin_signed_imbalance"].replace([np.inf, -np.inf], np.nan)
+        rolling_mean = vsi_clean.rolling(window=w, min_periods=1).mean()
+        rolling_std = vsi_clean.rolling(window=w, min_periods=1).std()
+        z = (vsi_clean - rolling_mean) / (rolling_std + TOL)
+        out[f"vpin_signed_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+# =============================================================================
+# Feature DAG selectors for order-flow (避免策略侧配置爆炸)
+# =============================================================================
+
+
+def select_order_flow_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Composite/pass-through node for order-flow feature DAG."""
+    return df
+
+
+def select_vpin_block_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Pass-through selector: output_columns in YAML will keep only vpin_* block."""
+    return df
+
+
+def select_trade_cluster_block_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Pass-through selector: output_columns in YAML will keep only trade_cluster_* block."""
     return df
 
 
@@ -1233,6 +1335,7 @@ def extract_trade_clustering_features(
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
     merge_batch_size: int = 4,
     persist_monthly: bool = True,
+    compute_trade_cluster_derived: bool = True,
 ) -> pd.DataFrame:
     """
     提取交易聚集性（Trade Clustering）特征并对齐到 K 线
@@ -1247,7 +1350,8 @@ def extract_trade_clustering_features(
     Raises:
         ValueError: 如果没有提供 tick 数据或 tick 数据为空
     """
-    df = df.copy()
+    # IMPORTANT: do NOT copy/mutate potentially wide OHLCV df here.
+    # Return a features-only DataFrame aligned to df.index.
     # 检查 tick 数据
     cluster_series = None
     if ticks is not None and len(ticks) > 0:
@@ -1644,159 +1748,487 @@ def extract_trade_clustering_features(
                 traceback.print_exc()
                 aligned_series = pd.Series(0.0, index=df.index, dtype=float)
             aligned_features[col] = aligned_series
-        # 添加到 df
-        for col, series in aligned_features.items():
-            df[col] = series
+        # Build base features-only result
+        result = pd.DataFrame(aligned_features, index=df.index)
     else:
         # 如果 df 没有 datetime index，使用简单映射
+        result = pd.DataFrame(index=df.index)
         for col in cluster_df.columns:
             if col in cluster_df.columns:
-                df[col] = cluster_df[col].reindex(df.index).fillna(0.0)
+                result[col] = cluster_df[col].reindex(df.index).fillna(0.0)
             else:
-                df[col] = 0.0
-    # 添加衍生特征
+                result[col] = 0.0
+
+    if not compute_trade_cluster_derived:
+        return result
+
+    derived = compute_trade_cluster_derived_features_from_base(result)
+    for c in derived.columns:
+        result[c] = derived[c]
+    return result
+
+
+def compute_trade_cluster_derived_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute all trade_cluster_* derived features from base-aligned columns (no ticks)."""
+    out = pd.DataFrame(index=df.index)
+    # Build derived features using the atomic blocks used by the Feature DAG.
+    # This keeps the "compute_trade_cluster_derived" runtime path consistent with YAML deps.
+    for part in [
+        compute_trade_cluster_max_run_ratio_features_from_base,
+        compute_trade_cluster_buy_sell_max_ratio_features_from_base,
+        compute_trade_cluster_avg_run_ratio_features_from_base,
+        compute_trade_cluster_buy_sell_avg_ratio_features_from_base,
+        compute_trade_cluster_run_length_features_from_base,
+        compute_trade_cluster_entropy_ma_change_features_from_base,
+        compute_trade_cluster_entropy_zscore_features_from_base,
+        compute_trade_cluster_max_buy_run_ma_features_from_base,
+        compute_trade_cluster_imbalance_ratio_ma_features_from_base,
+        compute_trade_cluster_imbalance_zscore_features_from_base,
+        compute_trade_cluster_max_buy_run_zscore_features_from_base,
+        compute_trade_cluster_max_sell_run_zscore_features_from_base,
+    ]:
+        part_df = part(df)
+        for c in part_df.columns:
+            out[c] = part_df[c]
+
+    # net_runs derived blocks need counts present; compute once and reuse
+    counts_df = compute_trade_cluster_net_runs_counts_features_from_base(df)
+    for c in counts_df.columns:
+        out[c] = counts_df[c]
+
+    df_with_counts = pd.concat([df, counts_df], axis=1)
+
+    ratio_df = compute_trade_cluster_net_runs_ratio_features_from_counts(df_with_counts)
+    for c in ratio_df.columns:
+        out[c] = ratio_df[c]
+
+    net_ma_df = compute_trade_cluster_net_runs_ma_features_from_base(df_with_counts)
+    for c in net_ma_df.columns:
+        out[c] = net_ma_df[c]
+
+    total_ma_df = compute_trade_cluster_total_runs_ma_features_from_base(df_with_counts)
+    for c in total_ma_df.columns:
+        out[c] = total_ma_df[c]
+
+    net_z_df = compute_trade_cluster_net_runs_zscore_features_from_base(df_with_counts)
+    for c in net_z_df.columns:
+        out[c] = net_z_df[c]
+    return out
+
+
+def compute_trade_cluster_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Ratios/length aggregates derived from buy/sell runs."""
+    out = pd.DataFrame(index=df.index)
     if "trade_cluster_max_buy_run" in df.columns and "trade_cluster_max_sell_run" in df.columns:
-        # 最大连续长度比率
         total_max = df["trade_cluster_max_buy_run"] + df["trade_cluster_max_sell_run"]
-        df["trade_cluster_max_run_ratio"] = (
-            (df["trade_cluster_max_buy_run"] - df["trade_cluster_max_sell_run"]) / (total_max + TOL)
+        out["trade_cluster_max_run_ratio"] = (
+            (df["trade_cluster_max_buy_run"] - df["trade_cluster_max_sell_run"])
+            / (total_max + TOL)
         )
-        # 最大连续长度（buy 或 sell 中的较大值）
-        df["trade_cluster_max_run"] = df[["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]].max(axis=1)
-        # 买方 vs 卖方最大连续长度比
-        # 检查输入数据是否包含 inf/NaN
+        out["trade_cluster_max_run"] = df[
+            ["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]
+        ].max(axis=1)
         max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
         max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
-        df["trade_cluster_buy_sell_max_ratio"] = (
+        out["trade_cluster_buy_sell_max_ratio"] = (
             max_buy_clean / (max_sell_clean + TOL)
         ).replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_avg_buy_run" in df.columns and "trade_cluster_avg_sell_run" in df.columns:
-        # 平均连续长度比率
         total_avg = df["trade_cluster_avg_buy_run"] + df["trade_cluster_avg_sell_run"]
-        df["trade_cluster_avg_run_ratio"] = (
-            (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"]) / (total_avg + TOL)
+        out["trade_cluster_avg_run_ratio"] = (
+            (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"])
+            / (total_avg + TOL)
         )
-        # 买方 vs 卖方平均连续长度比
-        # 检查输入数据是否包含 inf/NaN
         avg_buy_clean = df["trade_cluster_avg_buy_run"].replace([np.inf, -np.inf], np.nan)
         avg_sell_clean = df["trade_cluster_avg_sell_run"].replace([np.inf, -np.inf], np.nan)
-        df["trade_cluster_buy_sell_avg_ratio"] = (
+        out["trade_cluster_buy_sell_avg_ratio"] = (
             avg_buy_clean / (avg_sell_clean + TOL)
         ).replace([np.inf, -np.inf], np.nan)
-        # 总连续长度（buy + sell）
         if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
-            df["trade_cluster_total_run_length"] = (
-                df["trade_cluster_avg_buy_run"] * df["trade_cluster_buy_run_count"] +
-                df["trade_cluster_avg_sell_run"] * df["trade_cluster_sell_run_count"]
+            out["trade_cluster_total_run_length"] = (
+                df["trade_cluster_avg_buy_run"] * df["trade_cluster_buy_run_count"]
+                + df["trade_cluster_avg_sell_run"] * df["trade_cluster_sell_run_count"]
             )
-            # 平均连续长度（所有 runs）
-            if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
-                total_runs = df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
-                df["trade_cluster_avg_run_length"] = (
-                    df["trade_cluster_total_run_length"] / (total_runs + TOL)
-                )
-    # 净 Runs 特征
+            total_runs = df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
+            out["trade_cluster_avg_run_length"] = out["trade_cluster_total_run_length"] / (
+                total_runs + TOL
+            )
+    return out
+
+
+def compute_trade_cluster_buy_sell_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Split-out ratio-only block:
+    - *_max_run_ratio / *_avg_run_ratio
+    - buy_sell_*_ratio
+    - max_run (largest of max_buy/max_sell)
+    """
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_max_buy_run" in df.columns and "trade_cluster_max_sell_run" in df.columns:
+        total_max = df["trade_cluster_max_buy_run"] + df["trade_cluster_max_sell_run"]
+        out["trade_cluster_max_run_ratio"] = (
+            (df["trade_cluster_max_buy_run"] - df["trade_cluster_max_sell_run"])
+            / (total_max + TOL)
+        )
+        out["trade_cluster_max_run"] = df[
+            ["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]
+        ].max(axis=1)
+        max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
+        max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
+        out["trade_cluster_buy_sell_max_ratio"] = (
+            max_buy_clean / (max_sell_clean + TOL)
+        ).replace([np.inf, -np.inf], np.nan)
+
+    if "trade_cluster_avg_buy_run" in df.columns and "trade_cluster_avg_sell_run" in df.columns:
+        total_avg = df["trade_cluster_avg_buy_run"] + df["trade_cluster_avg_sell_run"]
+        out["trade_cluster_avg_run_ratio"] = (
+            (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"])
+            / (total_avg + TOL)
+        )
+        avg_buy_clean = df["trade_cluster_avg_buy_run"].replace([np.inf, -np.inf], np.nan)
+        avg_sell_clean = df["trade_cluster_avg_sell_run"].replace([np.inf, -np.inf], np.nan)
+        out["trade_cluster_buy_sell_avg_ratio"] = (
+            avg_buy_clean / (avg_sell_clean + TOL)
+        ).replace([np.inf, -np.inf], np.nan)
+
+    return out
+
+
+def compute_trade_cluster_max_run_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """max_run_ratio + max_run (no buy_sell_max_ratio)."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_max_buy_run" not in df.columns or "trade_cluster_max_sell_run" not in df.columns:
+        return out
+    total_max = df["trade_cluster_max_buy_run"] + df["trade_cluster_max_sell_run"]
+    out["trade_cluster_max_run_ratio"] = (
+        (df["trade_cluster_max_buy_run"] - df["trade_cluster_max_sell_run"]) / (total_max + TOL)
+    )
+    out["trade_cluster_max_run"] = df[["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]].max(axis=1)
+    return out
+
+
+def compute_trade_cluster_buy_sell_max_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """buy_sell_max_ratio only."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_max_buy_run" not in df.columns or "trade_cluster_max_sell_run" not in df.columns:
+        return out
+    max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
+    max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
+    out["trade_cluster_buy_sell_max_ratio"] = (max_buy_clean / (max_sell_clean + TOL)).replace(
+        [np.inf, -np.inf], np.nan
+    )
+    return out
+
+
+def compute_trade_cluster_avg_run_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """avg_run_ratio only."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_avg_buy_run" not in df.columns or "trade_cluster_avg_sell_run" not in df.columns:
+        return out
+    total_avg = df["trade_cluster_avg_buy_run"] + df["trade_cluster_avg_sell_run"]
+    out["trade_cluster_avg_run_ratio"] = (
+        (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"]) / (total_avg + TOL)
+    )
+    return out
+
+
+def compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """buy_sell_avg_ratio only."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_avg_buy_run" not in df.columns or "trade_cluster_avg_sell_run" not in df.columns:
+        return out
+    avg_buy_clean = df["trade_cluster_avg_buy_run"].replace([np.inf, -np.inf], np.nan)
+    avg_sell_clean = df["trade_cluster_avg_sell_run"].replace([np.inf, -np.inf], np.nan)
+    out["trade_cluster_buy_sell_avg_ratio"] = (avg_buy_clean / (avg_sell_clean + TOL)).replace(
+        [np.inf, -np.inf], np.nan
+    )
+    return out
+
+
+def compute_trade_cluster_run_length_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Split-out length aggregates:
+    - total_run_length
+    - avg_run_length
+    """
+    out = pd.DataFrame(index=df.index)
+    needed = [
+        "trade_cluster_avg_buy_run",
+        "trade_cluster_avg_sell_run",
+        "trade_cluster_buy_run_count",
+        "trade_cluster_sell_run_count",
+    ]
+    if not all(c in df.columns for c in needed):
+        return out
+    out["trade_cluster_total_run_length"] = (
+        df["trade_cluster_avg_buy_run"] * df["trade_cluster_buy_run_count"]
+        + df["trade_cluster_avg_sell_run"] * df["trade_cluster_sell_run_count"]
+    )
+    total_runs = df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
+    out["trade_cluster_avg_run_length"] = out["trade_cluster_total_run_length"] / (
+        total_runs + TOL
+    )
+    return out
+
+
+def compute_trade_cluster_netruns_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Net/total runs features."""
+    out = pd.DataFrame(index=df.index)
     if "trade_cluster_buy_run_count" in df.columns and "trade_cluster_sell_run_count" in df.columns:
-        # 净 runs（buy - sell）
-        df["trade_cluster_net_runs"] = (
+        out["trade_cluster_net_runs"] = (
             df["trade_cluster_buy_run_count"] - df["trade_cluster_sell_run_count"]
         )
-        # 总 runs 数（衡量活跃度）
-        df["trade_cluster_total_runs"] = (
+        out["trade_cluster_total_runs"] = (
             df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
         )
-        # 净 runs 比率（标准化）
-        df["trade_cluster_net_runs_ratio"] = (
-            df["trade_cluster_net_runs"] / (df["trade_cluster_total_runs"] + TOL)
+        out["trade_cluster_net_runs_ratio"] = out["trade_cluster_net_runs"] / (
+            out["trade_cluster_total_runs"] + TOL
         )
-    # 方向熵的衍生特征
+    return out
+
+
+def compute_trade_cluster_net_runs_counts_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Atomic: net_runs + total_runs (no ratio)."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_buy_run_count" not in df.columns or "trade_cluster_sell_run_count" not in df.columns:
+        return out
+    out["trade_cluster_net_runs"] = df["trade_cluster_buy_run_count"] - df["trade_cluster_sell_run_count"]
+    out["trade_cluster_total_runs"] = df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
+    return out
+
+
+def compute_trade_cluster_net_runs_ratio_features_from_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Atomic: net_runs_ratio from (net_runs, total_runs)."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_net_runs" not in df.columns or "trade_cluster_total_runs" not in df.columns:
+        return out
+    out["trade_cluster_net_runs_ratio"] = df["trade_cluster_net_runs"] / (df["trade_cluster_total_runs"] + TOL)
+    return out
+
+
+def compute_trade_cluster_entropy_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Entropy MA/change + zscores."""
+    out = pd.DataFrame(index=df.index)
     if "trade_cluster_directional_entropy" in df.columns:
-        # 方向熵的移动平均（捕捉混乱度的趋势）
         for w in [5, 10, 20]:
-            df[f"trade_cluster_directional_entropy_ma{w}"] = (
+            out[f"trade_cluster_directional_entropy_ma{w}"] = (
                 df["trade_cluster_directional_entropy"].rolling(window=w, min_periods=1).mean()
             )
-        # 方向熵的变化率（捕捉混乱度的变化）
-        df["trade_cluster_directional_entropy_change"] = (
-            df["trade_cluster_directional_entropy"].diff()
+        out["trade_cluster_directional_entropy_change"] = df["trade_cluster_directional_entropy"].diff()
+        for w in [20, 50]:
+            entropy_clean = df["trade_cluster_directional_entropy"].replace([np.inf, -np.inf], np.nan)
+            rolling_mean = entropy_clean.rolling(window=w, min_periods=1).mean()
+            rolling_std = entropy_clean.rolling(window=w, min_periods=1).std()
+            if (~np.isfinite(rolling_std)).any():
+                rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+            z = (entropy_clean - rolling_mean) / (rolling_std + TOL)
+            out[f"trade_cluster_directional_entropy_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_trade_cluster_entropy_ma_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Entropy moving averages + change (no zscore)."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_directional_entropy" not in df.columns:
+        return out
+    for w in [5, 10, 20]:
+        out[f"trade_cluster_directional_entropy_ma{w}"] = (
+            df["trade_cluster_directional_entropy"].rolling(window=w, min_periods=1).mean()
         )
-    # 方向熵的 Z-score（识别异常混乱或异常聚集）
+    out["trade_cluster_directional_entropy_change"] = df["trade_cluster_directional_entropy"].diff()
+    return out
+
+
+def compute_trade_cluster_entropy_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Entropy zscore only (20/50)."""
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_directional_entropy" not in df.columns:
+        out["trade_cluster_directional_entropy_zscore_20"] = 0.0
+        out["trade_cluster_directional_entropy_zscore_50"] = 0.0
+        return out
     for w in [20, 50]:
-        if "trade_cluster_directional_entropy" not in df.columns:
-            continue
-        # 先清理 inf 值，避免 rolling_std 产生 inf
         entropy_clean = df["trade_cluster_directional_entropy"].replace([np.inf, -np.inf], np.nan)
         rolling_mean = entropy_clean.rolling(window=w, min_periods=1).mean()
         rolling_std = entropy_clean.rolling(window=w, min_periods=1).std()
-        # 检查 rolling_std 是否包含 inf（可能由输入数据中的 inf 或全 NaN 窗口导致）
-        # 静默处理：直接替换 inf 为 NaN，不打印警告（这是预期的数据清理步骤）
         if (~np.isfinite(rolling_std)).any():
             rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
         z = (entropy_clean - rolling_mean) / (rolling_std + TOL)
-        df[f"trade_cluster_directional_entropy_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
-    # 滚动统计
+        out[f"trade_cluster_directional_entropy_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_trade_cluster_rolling_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Rolling MA features for selected trade_cluster series."""
+    out = pd.DataFrame(index=df.index)
     for w in [5, 10, 20]:
         if "trade_cluster_max_buy_run" in df.columns:
-            df[f"trade_cluster_max_buy_run_ma{w}"] = (
+            out[f"trade_cluster_max_buy_run_ma{w}"] = (
                 df["trade_cluster_max_buy_run"].rolling(window=w, min_periods=1).mean()
             )
         if "trade_cluster_imbalance_ratio" in df.columns:
-            df[f"trade_cluster_imbalance_ratio_ma{w}"] = (
+            out[f"trade_cluster_imbalance_ratio_ma{w}"] = (
                 df["trade_cluster_imbalance_ratio"].rolling(window=w, min_periods=1).mean()
             )
         if "trade_cluster_net_runs" in df.columns:
-            df[f"trade_cluster_net_runs_ma{w}"] = (
+            out[f"trade_cluster_net_runs_ma{w}"] = (
                 df["trade_cluster_net_runs"].rolling(window=w, min_periods=1).mean()
             )
         if "trade_cluster_total_runs" in df.columns:
-            df[f"trade_cluster_total_runs_ma{w}"] = (
+            out[f"trade_cluster_total_runs_ma{w}"] = (
                 df["trade_cluster_total_runs"].rolling(window=w, min_periods=1).mean()
             )
-    
-    # Z-score 特征（识别超买/超卖）
+    return out
+
+
+def compute_trade_cluster_max_buy_run_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_max_buy_run" not in df.columns:
+        return out
+    for w in [5, 10, 20]:
+        out[f"trade_cluster_max_buy_run_ma{w}"] = df["trade_cluster_max_buy_run"].rolling(
+            window=w, min_periods=1
+        ).mean()
+    return out
+
+
+def compute_trade_cluster_imbalance_ratio_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_imbalance_ratio" not in df.columns:
+        return out
+    for w in [5, 10, 20]:
+        out[f"trade_cluster_imbalance_ratio_ma{w}"] = df["trade_cluster_imbalance_ratio"].rolling(
+            window=w, min_periods=1
+        ).mean()
+    return out
+
+
+def compute_trade_cluster_net_runs_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_net_runs" not in df.columns:
+        return out
+    for w in [5, 10, 20]:
+        out[f"trade_cluster_net_runs_ma{w}"] = df["trade_cluster_net_runs"].rolling(
+            window=w, min_periods=1
+        ).mean()
+    return out
+
+
+def compute_trade_cluster_total_runs_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_total_runs" not in df.columns:
+        return out
+    for w in [5, 10, 20]:
+        out[f"trade_cluster_total_runs_ma{w}"] = df["trade_cluster_total_runs"].rolling(
+            window=w, min_periods=1
+        ).mean()
+    return out
+
+
+def compute_trade_cluster_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    """Z-score features for imbalance/net_runs/max_buy/max_sell."""
+    out = pd.DataFrame(index=df.index)
     if "trade_cluster_imbalance_ratio" in df.columns:
         for w in [20, 50]:
-            # 先清理 inf 值，避免 rolling_std 产生 inf
             ratio_clean = df["trade_cluster_imbalance_ratio"].replace([np.inf, -np.inf], np.nan)
             rolling_mean = ratio_clean.rolling(window=w, min_periods=1).mean()
             rolling_std = ratio_clean.rolling(window=w, min_periods=1).std()
-            # 检查 rolling_std 是否包含 inf
             if (~np.isfinite(rolling_std)).any():
                 rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
             z = (ratio_clean - rolling_mean) / (rolling_std + TOL)
-            df[f"trade_cluster_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+            out[f"trade_cluster_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_net_runs" in df.columns:
         for w in [20, 50]:
-            # 先清理 inf 值，避免 rolling_std 产生 inf
             net_runs_clean = df["trade_cluster_net_runs"].replace([np.inf, -np.inf], np.nan)
             rolling_mean = net_runs_clean.rolling(window=w, min_periods=1).mean()
             rolling_std = net_runs_clean.rolling(window=w, min_periods=1).std()
-            # 检查 rolling_std 是否包含 inf
             if (~np.isfinite(rolling_std)).any():
                 rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
             z = (net_runs_clean - rolling_mean) / (rolling_std + TOL)
-            df[f"trade_cluster_net_runs_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+            out[f"trade_cluster_net_runs_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_max_buy_run" in df.columns:
         for w in [20, 50]:
-            # 先清理 inf 值，避免 rolling_std 产生 inf
             max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
             rolling_mean = max_buy_clean.rolling(window=w, min_periods=1).mean()
             rolling_std = max_buy_clean.rolling(window=w, min_periods=1).std()
-            # 检查 rolling_std 是否包含 inf
             if (~np.isfinite(rolling_std)).any():
                 rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
             z = (max_buy_clean - rolling_mean) / (rolling_std + TOL)
-            df[f"trade_cluster_max_buy_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+            out[f"trade_cluster_max_buy_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     if "trade_cluster_max_sell_run" in df.columns:
         for w in [20, 50]:
-            # 先清理 inf 值，避免 rolling_std 产生 inf
             max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
             rolling_mean = max_sell_clean.rolling(window=w, min_periods=1).mean()
             rolling_std = max_sell_clean.rolling(window=w, min_periods=1).std()
-            # 检查 rolling_std 是否包含 inf
             if (~np.isfinite(rolling_std)).any():
                 rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
             z = (max_sell_clean - rolling_mean) / (rolling_std + TOL)
-            df[f"trade_cluster_max_sell_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
-    
-    return df
+            out[f"trade_cluster_max_sell_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_trade_cluster_imbalance_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_imbalance_ratio" not in df.columns:
+        out["trade_cluster_imbalance_zscore_20"] = 0.0
+        out["trade_cluster_imbalance_zscore_50"] = 0.0
+        return out
+    for w in [20, 50]:
+        ratio_clean = df["trade_cluster_imbalance_ratio"].replace([np.inf, -np.inf], np.nan)
+        rolling_mean = ratio_clean.rolling(window=w, min_periods=1).mean()
+        rolling_std = ratio_clean.rolling(window=w, min_periods=1).std()
+        if (~np.isfinite(rolling_std)).any():
+            rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+        z = (ratio_clean - rolling_mean) / (rolling_std + TOL)
+        out[f"trade_cluster_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_trade_cluster_net_runs_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_net_runs" not in df.columns:
+        out["trade_cluster_net_runs_zscore_20"] = 0.0
+        out["trade_cluster_net_runs_zscore_50"] = 0.0
+        return out
+    for w in [20, 50]:
+        net_runs_clean = df["trade_cluster_net_runs"].replace([np.inf, -np.inf], np.nan)
+        rolling_mean = net_runs_clean.rolling(window=w, min_periods=1).mean()
+        rolling_std = net_runs_clean.rolling(window=w, min_periods=1).std()
+        if (~np.isfinite(rolling_std)).any():
+            rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+        z = (net_runs_clean - rolling_mean) / (rolling_std + TOL)
+        out[f"trade_cluster_net_runs_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_trade_cluster_max_buy_run_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_max_buy_run" not in df.columns:
+        out["trade_cluster_max_buy_run_zscore_20"] = 0.0
+        out["trade_cluster_max_buy_run_zscore_50"] = 0.0
+        return out
+    for w in [20, 50]:
+        max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
+        rolling_mean = max_buy_clean.rolling(window=w, min_periods=1).mean()
+        rolling_std = max_buy_clean.rolling(window=w, min_periods=1).std()
+        if (~np.isfinite(rolling_std)).any():
+            rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+        z = (max_buy_clean - rolling_mean) / (rolling_std + TOL)
+        out[f"trade_cluster_max_buy_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out
+
+
+def compute_trade_cluster_max_sell_run_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+    if "trade_cluster_max_sell_run" not in df.columns:
+        out["trade_cluster_max_sell_run_zscore_20"] = 0.0
+        out["trade_cluster_max_sell_run_zscore_50"] = 0.0
+        return out
+    for w in [20, 50]:
+        max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
+        rolling_mean = max_sell_clean.rolling(window=w, min_periods=1).mean()
+        rolling_std = max_sell_clean.rolling(window=w, min_periods=1).std()
+        if (~np.isfinite(rolling_std)).any():
+            rolling_std = rolling_std.replace([np.inf, -np.inf], np.nan)
+        z = (max_sell_clean - rolling_mean) / (rolling_std + TOL)
+        out[f"trade_cluster_max_sell_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
+    return out

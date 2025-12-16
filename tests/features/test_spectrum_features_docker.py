@@ -26,8 +26,30 @@ except ImportError as e:
 
 from src.features.time_series.utils_spectrum_features import (
     compute_spectrum_features,
-    extract_spectrum_features,
+    extract_spectrum_features_from_series,
 )
+
+
+# Route B: DF-style entrypoint removed; provide a local DF wrapper.
+def extract_spectrum_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str | None = None,
+    cvd_col: str | None = None,
+    rolling_window: int = 64,
+) -> pd.DataFrame:
+    vol = df[volume_col] if volume_col and volume_col in df.columns else None
+    cvd = df[cvd_col] if cvd_col and cvd_col in df.columns else None
+    feats = extract_spectrum_features_from_series(
+        close=df[price_col],
+        volume=vol,
+        cvd=cvd,
+        rolling_window=rolling_window,
+    )
+    out = df.copy()
+    for c in feats.columns:
+        out[c] = feats[c]
+    return out
 
 
 class TestSpectrumFeatures(unittest.TestCase):
