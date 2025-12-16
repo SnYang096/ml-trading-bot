@@ -764,7 +764,7 @@ features:
 
   vpin_base_aligned_features:
     module: enhanced
-    compute_func: extract_order_flow_features
+    compute_func: compute_vpin_base_aligned_features_from_series
     dependencies: []
     required_columns: ["open", "close", "high", "low", "volume"]
     output_columns:
@@ -787,7 +787,13 @@ features:
       include_trade_clustering: false
       compute_vpin_derived: false
     run_sequential: true
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      open: open
+      close: close
+      high: high
+      low: low
+      volume: volume
 
   vpin_derived_features:
     module: enhanced
@@ -847,83 +853,99 @@ features:
 
   vpin_ma_max_features:
     module: enhanced
-    compute_func: compute_vpin_ma_max_features_from_base
+    compute_func: compute_vpin_ma_max_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_ma5", "vpin_ma10", "vpin_ma20", "vpin_max5", "vpin_max10", "vpin_max20"]
     category: order_flow
     description: "VPIN MA/max rolling stats"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_change_features:
     module: enhanced
-    compute_func: compute_vpin_change_features_from_base
+    compute_func: compute_vpin_change_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_change", "vpin_change_pct"]
     category: order_flow
     description: "VPIN change and pct change"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_zscore_features:
     module: enhanced
-    compute_func: compute_vpin_zscore_features_from_base
+    compute_func: compute_vpin_zscore_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_zscore_20", "vpin_zscore_50"]
     category: order_flow
     description: "VPIN z-score features"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_quantile_features:
     module: enhanced
-    compute_func: compute_vpin_quantile_rank_features_from_base
+    compute_func: compute_vpin_quantile_rank_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_quantile_rank_20", "vpin_quantile_rank_50"]
     category: order_flow
     description: "VPIN rolling quantile rank features"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_volatility_features:
     module: enhanced
-    compute_func: compute_vpin_volatility_features_from_base
+    compute_func: compute_vpin_volatility_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_volatility_10", "vpin_volatility_20"]
     category: order_flow
     description: "VPIN rolling volatility features"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_spike_features:
     module: enhanced
-    compute_func: compute_vpin_spike_features_from_base
+    compute_func: compute_vpin_spike_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_spike_flag_20", "vpin_spike_flag_50"]
     category: order_flow
     description: "VPIN spike flag features (MAD-based)"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_momentum_features:
     module: enhanced
-    compute_func: compute_vpin_momentum_features_from_base
+    compute_func: compute_vpin_momentum_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin"]
     output_columns: ["vpin_momentum"]
     category: order_flow
     description: "VPIN momentum feature (ma5 - ma20)"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin: vpin
 
   vpin_signed_zscore_features:
     module: enhanced
-    compute_func: compute_vpin_signed_zscore_features_from_base
+    compute_func: compute_vpin_signed_zscore_features_from_series
     dependencies: ["vpin_base_aligned_features"]
     required_columns: ["vpin_signed_imbalance"]
     output_columns: ["vpin_signed_imbalance_zscore_20", "vpin_signed_imbalance_zscore_50"]
     category: order_flow
     description: "Signed imbalance z-score features"
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      vpin_signed_imbalance: vpin_signed_imbalance
 
   vpin_block_features:
     module: enhanced
@@ -1095,7 +1117,7 @@ features:
 
   trade_cluster_base_aligned_features:
     module: enhanced
-    compute_func: extract_trade_clustering_features
+    compute_func: compute_trade_cluster_base_aligned_features_from_series
     dependencies: []
     required_columns: ["open", "close", "high", "low", "volume"]
     output_columns:
@@ -1112,7 +1134,13 @@ features:
     compute_params:
       compute_trade_cluster_derived: false
     run_sequential: true
-    pass_full_df: true
+    pass_full_df: false
+    column_mappings:
+      open: open
+      close: close
+      high: high
+      low: low
+      volume: volume
 
   trade_cluster_derived_features:
     module: enhanced
@@ -1215,7 +1243,7 @@ features:
 
   trade_cluster_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_ratio_features_from_base
+    compute_func: compute_trade_cluster_ratio_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1234,11 +1262,11 @@ features:
       - trade_cluster_avg_run_length
     category: order_flow
     description: "Trade clustering ratio/length derived features."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_buy_sell_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_buy_sell_ratio_features_from_base
+    compute_func: compute_trade_cluster_buy_sell_ratio_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1253,11 +1281,11 @@ features:
       - trade_cluster_buy_sell_avg_ratio
     category: order_flow
     description: "Trade clustering buy/sell ratio-style features (split from ratio_features)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_max_run_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_max_run_ratio_features_from_base
+    compute_func: compute_trade_cluster_max_run_ratio_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1267,11 +1295,11 @@ features:
       - trade_cluster_max_run
     category: order_flow
     description: "Trade clustering max_run_ratio + max_run (atomic)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_buy_sell_max_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_buy_sell_max_ratio_features_from_base
+    compute_func: compute_trade_cluster_buy_sell_max_ratio_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1280,11 +1308,11 @@ features:
       - trade_cluster_buy_sell_max_ratio
     category: order_flow
     description: "Trade clustering buy/sell max ratio (atomic)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_avg_run_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_avg_run_ratio_features_from_base
+    compute_func: compute_trade_cluster_avg_run_ratio_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_avg_buy_run
@@ -1293,11 +1321,11 @@ features:
       - trade_cluster_avg_run_ratio
     category: order_flow
     description: "Trade clustering avg_run_ratio (atomic)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_buy_sell_avg_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_buy_sell_avg_ratio_features_from_base
+    compute_func: compute_trade_cluster_buy_sell_avg_ratio_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_avg_buy_run
@@ -1306,11 +1334,11 @@ features:
       - trade_cluster_buy_sell_avg_ratio
     category: order_flow
     description: "Trade clustering buy/sell avg ratio (atomic)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_run_length_features:
     module: enhanced
-    compute_func: compute_trade_cluster_run_length_features_from_base
+    compute_func: compute_trade_cluster_run_length_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_avg_buy_run
@@ -1322,11 +1350,11 @@ features:
       - trade_cluster_avg_run_length
     category: order_flow
     description: "Trade clustering total/avg run length aggregates (split from ratio_features)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_net_runs_counts_features:
     module: enhanced
-    compute_func: compute_trade_cluster_net_runs_counts_features_from_base
+    compute_func: compute_trade_cluster_net_runs_counts_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_buy_run_count
@@ -1336,11 +1364,11 @@ features:
       - trade_cluster_total_runs
     category: order_flow
     description: "Trade clustering net_runs + total_runs (atomic)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_net_runs_ratio_features:
     module: enhanced
-    compute_func: compute_trade_cluster_net_runs_ratio_features_from_counts
+    compute_func: compute_trade_cluster_net_runs_ratio_features_from_series
     dependencies: ["trade_cluster_net_runs_counts_features"]
     required_columns:
       - trade_cluster_net_runs
@@ -1349,11 +1377,11 @@ features:
       - trade_cluster_net_runs_ratio
     category: order_flow
     description: "Trade clustering net_runs_ratio (atomic)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_entropy_features:
     module: enhanced
-    compute_func: compute_trade_cluster_entropy_features_from_base
+    compute_func: compute_trade_cluster_entropy_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_directional_entropy
@@ -1366,11 +1394,11 @@ features:
       - trade_cluster_directional_entropy_zscore_50
     category: order_flow
     description: "Trade clustering entropy MA/change/zscore features."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_entropy_ma_change_features:
     module: enhanced
-    compute_func: compute_trade_cluster_entropy_ma_change_features_from_base
+    compute_func: compute_trade_cluster_entropy_ma_change_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_directional_entropy
@@ -1381,11 +1409,11 @@ features:
       - trade_cluster_directional_entropy_change
     category: order_flow
     description: "Trade clustering entropy MA + change (no zscore)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_entropy_zscore_features:
     module: enhanced
-    compute_func: compute_trade_cluster_entropy_zscore_features_from_base
+    compute_func: compute_trade_cluster_entropy_zscore_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_directional_entropy
@@ -1394,11 +1422,11 @@ features:
       - trade_cluster_directional_entropy_zscore_50
     category: order_flow
     description: "Trade clustering entropy zscore (20/50)."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_max_buy_run_ma_features:
     module: enhanced
-    compute_func: compute_trade_cluster_max_buy_run_ma_features_from_base
+    compute_func: compute_trade_cluster_max_buy_run_ma_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1408,11 +1436,11 @@ features:
       - trade_cluster_max_buy_run_ma20
     category: order_flow
     description: "Trade clustering MA for max_buy_run."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_imbalance_ratio_ma_features:
     module: enhanced
-    compute_func: compute_trade_cluster_imbalance_ratio_ma_features_from_base
+    compute_func: compute_trade_cluster_imbalance_ratio_ma_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_imbalance_ratio
@@ -1422,11 +1450,11 @@ features:
       - trade_cluster_imbalance_ratio_ma20
     category: order_flow
     description: "Trade clustering MA for imbalance_ratio."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_net_runs_ma_features:
     module: enhanced
-    compute_func: compute_trade_cluster_net_runs_ma_features_from_base
+    compute_func: compute_trade_cluster_net_runs_ma_features_from_series
     dependencies: ["trade_cluster_net_runs_counts_features"]
     required_columns:
       - trade_cluster_net_runs
@@ -1436,11 +1464,11 @@ features:
       - trade_cluster_net_runs_ma20
     category: order_flow
     description: "Trade clustering MA for net_runs."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_total_runs_ma_features:
     module: enhanced
-    compute_func: compute_trade_cluster_total_runs_ma_features_from_base
+    compute_func: compute_trade_cluster_total_runs_ma_features_from_series
     dependencies: ["trade_cluster_net_runs_counts_features"]
     required_columns:
       - trade_cluster_total_runs
@@ -1450,11 +1478,11 @@ features:
       - trade_cluster_total_runs_ma20
     category: order_flow
     description: "Trade clustering MA for total_runs."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_imbalance_zscore_features:
     module: enhanced
-    compute_func: compute_trade_cluster_imbalance_zscore_features_from_base
+    compute_func: compute_trade_cluster_imbalance_zscore_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_imbalance_ratio
@@ -1463,11 +1491,11 @@ features:
       - trade_cluster_imbalance_zscore_50
     category: order_flow
     description: "Trade clustering imbalance zscore."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_net_runs_zscore_features:
     module: enhanced
-    compute_func: compute_trade_cluster_net_runs_zscore_features_from_base
+    compute_func: compute_trade_cluster_net_runs_zscore_features_from_series
     dependencies: ["trade_cluster_net_runs_counts_features"]
     required_columns:
       - trade_cluster_net_runs
@@ -1476,11 +1504,11 @@ features:
       - trade_cluster_net_runs_zscore_50
     category: order_flow
     description: "Trade clustering net_runs zscore."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_max_buy_run_zscore_features:
     module: enhanced
-    compute_func: compute_trade_cluster_max_buy_run_zscore_features_from_base
+    compute_func: compute_trade_cluster_max_buy_run_zscore_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_buy_run
@@ -1489,11 +1517,11 @@ features:
       - trade_cluster_max_buy_run_zscore_50
     category: order_flow
     description: "Trade clustering max_buy_run zscore."
-    pass_full_df: true
+    pass_full_df: false
 
   trade_cluster_max_sell_run_zscore_features:
     module: enhanced
-    compute_func: compute_trade_cluster_max_sell_run_zscore_features_from_base
+    compute_func: compute_trade_cluster_max_sell_run_zscore_features_from_series
     dependencies: ["trade_cluster_base_aligned_features"]
     required_columns:
       - trade_cluster_max_sell_run
@@ -1502,7 +1530,7 @@ features:
       - trade_cluster_max_sell_run_zscore_50
     category: order_flow
     description: "Trade clustering max_sell_run zscore."
-    pass_full_df: true
+    pass_full_df: false
 
   vpin_features:
     module: enhanced

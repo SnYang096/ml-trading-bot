@@ -925,6 +925,12 @@ def compute_vpin_ma_max_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def compute_vpin_ma_max_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_ma* / vpin_max*."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_ma_max_features_from_base(df)
+
+
 def compute_vpin_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_change / vpin_change_pct."""
     out = pd.DataFrame(index=df.index)
@@ -937,6 +943,12 @@ def compute_vpin_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def compute_vpin_change_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_change / vpin_change_pct."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_change_features_from_base(df)
+
+
 def compute_vpin_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_zscore_20 / vpin_zscore_50."""
     out = pd.DataFrame(index=df.index)
@@ -947,6 +959,12 @@ def compute_vpin_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
         z = (vpin_clean - rolling_mean) / (rolling_std + TOL)
         out[f"vpin_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     return out
+
+
+def compute_vpin_zscore_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_zscore_20 / vpin_zscore_50."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_zscore_features_from_base(df)
 
 
 def compute_vpin_quantile_rank_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -973,6 +991,12 @@ def compute_vpin_quantile_rank_features_from_base(df: pd.DataFrame) -> pd.DataFr
     return out
 
 
+def compute_vpin_quantile_rank_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_quantile_rank_*."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_quantile_rank_features_from_base(df)
+
+
 def compute_vpin_volatility_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_volatility_10 / vpin_volatility_20."""
     out = pd.DataFrame(index=df.index)
@@ -981,6 +1005,12 @@ def compute_vpin_volatility_features_from_base(df: pd.DataFrame) -> pd.DataFrame
         vol = vpin_clean.rolling(window=w, min_periods=1).std()
         out[f"vpin_volatility_{w}"] = vol.replace([np.inf, -np.inf], np.nan)
     return out
+
+
+def compute_vpin_volatility_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_volatility_*."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_volatility_features_from_base(df)
 
 
 def compute_vpin_spike_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -1028,12 +1058,24 @@ def compute_vpin_spike_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def compute_vpin_spike_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_spike_flag_*."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_spike_features_from_base(df)
+
+
 def compute_vpin_momentum_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_momentum (requires ma5/ma20)."""
     out = pd.DataFrame(index=df.index)
     ma = compute_vpin_ma_max_features_from_base(df)
     out["vpin_momentum"] = ma["vpin_ma5"] - ma["vpin_ma20"]
     return out
+
+
+def compute_vpin_momentum_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_momentum (ma5 - ma20)."""
+    df = pd.DataFrame({"vpin": vpin})
+    return compute_vpin_momentum_features_from_base(df)
 
 
 def compute_vpin_signed_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -1050,6 +1092,14 @@ def compute_vpin_signed_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFr
         z = (vsi_clean - rolling_mean) / (rolling_std + TOL)
         out[f"vpin_signed_imbalance_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     return out
+
+
+def compute_vpin_signed_zscore_features_from_series(
+    *, vpin_signed_imbalance: pd.Series
+) -> pd.DataFrame:
+    """Narrow-IO entrypoint for vpin_signed_imbalance_zscore_*."""
+    df = pd.DataFrame({"vpin_signed_imbalance": vpin_signed_imbalance})
+    return compute_vpin_signed_zscore_features_from_base(df)
 
 
 # =============================================================================
@@ -1070,6 +1120,139 @@ def select_vpin_block_features(df: pd.DataFrame) -> pd.DataFrame:
 def select_trade_cluster_block_features(df: pd.DataFrame) -> pd.DataFrame:
     """Pass-through selector: output_columns in YAML will keep only trade_cluster_* block."""
     return df
+
+
+# =============================================================================
+# Narrow-IO entrypoints for order-flow base aligned blocks
+# =============================================================================
+
+
+_VPIN_BASE_ALIGNED_OUTPUT_COLS: list[str] = [
+    "vpin",
+    "vpin_signed_imbalance",
+    "vpin_last",
+    "vpin_max",
+    "vpin_min",
+    "vpin_std",
+    "vpin_count",
+    "vpin_skewness",
+    "vpin_trend",
+    "vpin_signed_imbalance_last",
+    "vpin_signed_imbalance_max",
+]
+
+
+def compute_vpin_base_aligned_features_from_series(
+    *,
+    open: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+    ticks: Optional[pd.DataFrame] = None,
+    ticks_loader_json: Optional[str] = None,
+    vpin_bucket_volume: Optional[float] = None,
+    vpin_n_buckets: int = 50,
+    vpin_adaptive: bool = True,
+    freq: Optional[str] = None,
+    include_trade_clustering: bool = False,
+    compute_vpin_derived: bool = False,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    vpin_bucket_volume_usd: Optional[float] = None,
+) -> pd.DataFrame:
+    """
+    Narrow-IO VPIN base aligned stats.
+
+    Builds a minimal OHLCV DataFrame internally (to get the bar index), then delegates to
+    `extract_order_flow_features` and returns only the VPIN base output columns.
+    """
+    bar_df = pd.DataFrame(
+        {"open": open, "close": close, "high": high, "low": low, "volume": volume}
+    )
+    out = extract_order_flow_features(
+        bar_df,
+        ticks=ticks,
+        ticks_loader_json=ticks_loader_json,
+        open_col="open",
+        close_col="close",
+        high_col="high",
+        low_col="low",
+        volume_col="volume",
+        vpin_bucket_volume=vpin_bucket_volume,
+        vpin_n_buckets=vpin_n_buckets,
+        vpin_adaptive=vpin_adaptive,
+        freq=freq,
+        include_trade_clustering=include_trade_clustering,
+        compute_vpin_derived=compute_vpin_derived,
+        monthly_cache_dir=monthly_cache_dir,
+        vpin_bucket_volume_usd=vpin_bucket_volume_usd,
+    )
+    # Ensure narrow output (no OHLCV columns).
+    result = pd.DataFrame(index=bar_df.index)
+    for c in _VPIN_BASE_ALIGNED_OUTPUT_COLS:
+        if c in out.columns:
+            result[c] = out[c]
+        else:
+            result[c] = 0.0
+    return result[_VPIN_BASE_ALIGNED_OUTPUT_COLS]
+
+
+_TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS: list[str] = [
+    "trade_cluster_max_buy_run",
+    "trade_cluster_max_sell_run",
+    "trade_cluster_avg_buy_run",
+    "trade_cluster_avg_sell_run",
+    "trade_cluster_buy_run_count",
+    "trade_cluster_sell_run_count",
+    "trade_cluster_imbalance_ratio",
+    "trade_cluster_directional_entropy",
+]
+
+
+def compute_trade_cluster_base_aligned_features_from_series(
+    *,
+    open: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+    ticks: Optional[pd.DataFrame] = None,
+    ticks_loader_json: Optional[str] = None,
+    window_size: int = 100,
+    freq: Optional[str] = None,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    merge_batch_size: int = 4,
+    persist_monthly: bool = True,
+    compute_trade_cluster_derived: bool = False,
+) -> pd.DataFrame:
+    """
+    Narrow-IO Trade Clustering base aligned stats.
+
+    Builds a minimal OHLCV DataFrame internally (to get the bar index), then delegates to
+    `extract_trade_clustering_features` and returns only the base output columns.
+    """
+    bar_df = pd.DataFrame(
+        {"open": open, "close": close, "high": high, "low": low, "volume": volume}
+    )
+    out = extract_trade_clustering_features(
+        bar_df,
+        ticks=ticks,
+        ticks_loader_json=ticks_loader_json,
+        window_size=window_size,
+        freq=freq,
+        monthly_cache_dir=monthly_cache_dir,
+        merge_batch_size=merge_batch_size,
+        persist_monthly=persist_monthly,
+        compute_trade_cluster_derived=compute_trade_cluster_derived,
+    )
+    # Ensure narrow output (and stable column presence).
+    result = pd.DataFrame(index=bar_df.index)
+    for c in _TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS:
+        if c in out.columns:
+            result[c] = out[c]
+        else:
+            result[c] = 0.0
+    return result[_TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS]
 
 
 def compute_trade_clustering_from_ticks(
@@ -1856,6 +2039,28 @@ def compute_trade_cluster_ratio_features_from_base(df: pd.DataFrame) -> pd.DataF
     return out
 
 
+def compute_trade_cluster_ratio_features_from_series(
+    *,
+    trade_cluster_max_buy_run: pd.Series,
+    trade_cluster_max_sell_run: pd.Series,
+    trade_cluster_avg_buy_run: pd.Series,
+    trade_cluster_avg_sell_run: pd.Series,
+    trade_cluster_buy_run_count: pd.Series,
+    trade_cluster_sell_run_count: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_max_buy_run": trade_cluster_max_buy_run,
+            "trade_cluster_max_sell_run": trade_cluster_max_sell_run,
+            "trade_cluster_avg_buy_run": trade_cluster_avg_buy_run,
+            "trade_cluster_avg_sell_run": trade_cluster_avg_sell_run,
+            "trade_cluster_buy_run_count": trade_cluster_buy_run_count,
+            "trade_cluster_sell_run_count": trade_cluster_sell_run_count,
+        }
+    )
+    return compute_trade_cluster_ratio_features_from_base(df)
+
+
 def compute_trade_cluster_buy_sell_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """
     Split-out ratio-only block:
@@ -1894,6 +2099,24 @@ def compute_trade_cluster_buy_sell_ratio_features_from_base(df: pd.DataFrame) ->
     return out
 
 
+def compute_trade_cluster_buy_sell_ratio_features_from_series(
+    *,
+    trade_cluster_max_buy_run: pd.Series,
+    trade_cluster_max_sell_run: pd.Series,
+    trade_cluster_avg_buy_run: pd.Series,
+    trade_cluster_avg_sell_run: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_max_buy_run": trade_cluster_max_buy_run,
+            "trade_cluster_max_sell_run": trade_cluster_max_sell_run,
+            "trade_cluster_avg_buy_run": trade_cluster_avg_buy_run,
+            "trade_cluster_avg_sell_run": trade_cluster_avg_sell_run,
+        }
+    )
+    return compute_trade_cluster_buy_sell_ratio_features_from_base(df)
+
+
 def compute_trade_cluster_max_run_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """max_run_ratio + max_run (no buy_sell_max_ratio)."""
     out = pd.DataFrame(index=df.index)
@@ -1905,6 +2128,20 @@ def compute_trade_cluster_max_run_ratio_features_from_base(df: pd.DataFrame) -> 
     )
     out["trade_cluster_max_run"] = df[["trade_cluster_max_buy_run", "trade_cluster_max_sell_run"]].max(axis=1)
     return out
+
+
+def compute_trade_cluster_max_run_ratio_features_from_series(
+    *,
+    trade_cluster_max_buy_run: pd.Series,
+    trade_cluster_max_sell_run: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_max_buy_run": trade_cluster_max_buy_run,
+            "trade_cluster_max_sell_run": trade_cluster_max_sell_run,
+        }
+    )
+    return compute_trade_cluster_max_run_ratio_features_from_base(df)
 
 
 def compute_trade_cluster_buy_sell_max_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -1920,6 +2157,20 @@ def compute_trade_cluster_buy_sell_max_ratio_features_from_base(df: pd.DataFrame
     return out
 
 
+def compute_trade_cluster_buy_sell_max_ratio_features_from_series(
+    *,
+    trade_cluster_max_buy_run: pd.Series,
+    trade_cluster_max_sell_run: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_max_buy_run": trade_cluster_max_buy_run,
+            "trade_cluster_max_sell_run": trade_cluster_max_sell_run,
+        }
+    )
+    return compute_trade_cluster_buy_sell_max_ratio_features_from_base(df)
+
+
 def compute_trade_cluster_avg_run_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """avg_run_ratio only."""
     out = pd.DataFrame(index=df.index)
@@ -1930,6 +2181,20 @@ def compute_trade_cluster_avg_run_ratio_features_from_base(df: pd.DataFrame) -> 
         (df["trade_cluster_avg_buy_run"] - df["trade_cluster_avg_sell_run"]) / (total_avg + TOL)
     )
     return out
+
+
+def compute_trade_cluster_avg_run_ratio_features_from_series(
+    *,
+    trade_cluster_avg_buy_run: pd.Series,
+    trade_cluster_avg_sell_run: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_avg_buy_run": trade_cluster_avg_buy_run,
+            "trade_cluster_avg_sell_run": trade_cluster_avg_sell_run,
+        }
+    )
+    return compute_trade_cluster_avg_run_ratio_features_from_base(df)
 
 
 def compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -1943,6 +2208,20 @@ def compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df: pd.DataFrame
         [np.inf, -np.inf], np.nan
     )
     return out
+
+
+def compute_trade_cluster_buy_sell_avg_ratio_features_from_series(
+    *,
+    trade_cluster_avg_buy_run: pd.Series,
+    trade_cluster_avg_sell_run: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_avg_buy_run": trade_cluster_avg_buy_run,
+            "trade_cluster_avg_sell_run": trade_cluster_avg_sell_run,
+        }
+    )
+    return compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df)
 
 
 def compute_trade_cluster_run_length_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -1971,6 +2250,24 @@ def compute_trade_cluster_run_length_features_from_base(df: pd.DataFrame) -> pd.
     return out
 
 
+def compute_trade_cluster_run_length_features_from_series(
+    *,
+    trade_cluster_avg_buy_run: pd.Series,
+    trade_cluster_avg_sell_run: pd.Series,
+    trade_cluster_buy_run_count: pd.Series,
+    trade_cluster_sell_run_count: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_avg_buy_run": trade_cluster_avg_buy_run,
+            "trade_cluster_avg_sell_run": trade_cluster_avg_sell_run,
+            "trade_cluster_buy_run_count": trade_cluster_buy_run_count,
+            "trade_cluster_sell_run_count": trade_cluster_sell_run_count,
+        }
+    )
+    return compute_trade_cluster_run_length_features_from_base(df)
+
+
 def compute_trade_cluster_netruns_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Net/total runs features."""
     out = pd.DataFrame(index=df.index)
@@ -1997,6 +2294,20 @@ def compute_trade_cluster_net_runs_counts_features_from_base(df: pd.DataFrame) -
     return out
 
 
+def compute_trade_cluster_net_runs_counts_features_from_series(
+    *,
+    trade_cluster_buy_run_count: pd.Series,
+    trade_cluster_sell_run_count: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_buy_run_count": trade_cluster_buy_run_count,
+            "trade_cluster_sell_run_count": trade_cluster_sell_run_count,
+        }
+    )
+    return compute_trade_cluster_net_runs_counts_features_from_base(df)
+
+
 def compute_trade_cluster_net_runs_ratio_features_from_counts(df: pd.DataFrame) -> pd.DataFrame:
     """Atomic: net_runs_ratio from (net_runs, total_runs)."""
     out = pd.DataFrame(index=df.index)
@@ -2004,6 +2315,20 @@ def compute_trade_cluster_net_runs_ratio_features_from_counts(df: pd.DataFrame) 
         return out
     out["trade_cluster_net_runs_ratio"] = df["trade_cluster_net_runs"] / (df["trade_cluster_total_runs"] + TOL)
     return out
+
+
+def compute_trade_cluster_net_runs_ratio_features_from_series(
+    *,
+    trade_cluster_net_runs: pd.Series,
+    trade_cluster_total_runs: pd.Series,
+) -> pd.DataFrame:
+    df = pd.DataFrame(
+        {
+            "trade_cluster_net_runs": trade_cluster_net_runs,
+            "trade_cluster_total_runs": trade_cluster_total_runs,
+        }
+    )
+    return compute_trade_cluster_net_runs_ratio_features_from_counts(df)
 
 
 def compute_trade_cluster_entropy_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -2026,6 +2351,13 @@ def compute_trade_cluster_entropy_features_from_base(df: pd.DataFrame) -> pd.Dat
     return out
 
 
+def compute_trade_cluster_entropy_features_from_series(
+    *, trade_cluster_directional_entropy: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_directional_entropy": trade_cluster_directional_entropy})
+    return compute_trade_cluster_entropy_features_from_base(df)
+
+
 def compute_trade_cluster_entropy_ma_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Entropy moving averages + change (no zscore)."""
     out = pd.DataFrame(index=df.index)
@@ -2037,6 +2369,13 @@ def compute_trade_cluster_entropy_ma_change_features_from_base(df: pd.DataFrame)
         )
     out["trade_cluster_directional_entropy_change"] = df["trade_cluster_directional_entropy"].diff()
     return out
+
+
+def compute_trade_cluster_entropy_ma_change_features_from_series(
+    *, trade_cluster_directional_entropy: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_directional_entropy": trade_cluster_directional_entropy})
+    return compute_trade_cluster_entropy_ma_change_features_from_base(df)
 
 
 def compute_trade_cluster_entropy_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -2055,6 +2394,13 @@ def compute_trade_cluster_entropy_zscore_features_from_base(df: pd.DataFrame) ->
         z = (entropy_clean - rolling_mean) / (rolling_std + TOL)
         out[f"trade_cluster_directional_entropy_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     return out
+
+
+def compute_trade_cluster_entropy_zscore_features_from_series(
+    *, trade_cluster_directional_entropy: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_directional_entropy": trade_cluster_directional_entropy})
+    return compute_trade_cluster_entropy_zscore_features_from_base(df)
 
 
 def compute_trade_cluster_rolling_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -2091,6 +2437,13 @@ def compute_trade_cluster_max_buy_run_ma_features_from_base(df: pd.DataFrame) ->
     return out
 
 
+def compute_trade_cluster_max_buy_run_ma_features_from_series(
+    *, trade_cluster_max_buy_run: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_max_buy_run": trade_cluster_max_buy_run})
+    return compute_trade_cluster_max_buy_run_ma_features_from_base(df)
+
+
 def compute_trade_cluster_imbalance_ratio_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_imbalance_ratio" not in df.columns:
@@ -2100,6 +2453,13 @@ def compute_trade_cluster_imbalance_ratio_ma_features_from_base(df: pd.DataFrame
             window=w, min_periods=1
         ).mean()
     return out
+
+
+def compute_trade_cluster_imbalance_ratio_ma_features_from_series(
+    *, trade_cluster_imbalance_ratio: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_imbalance_ratio": trade_cluster_imbalance_ratio})
+    return compute_trade_cluster_imbalance_ratio_ma_features_from_base(df)
 
 
 def compute_trade_cluster_net_runs_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -2113,6 +2473,13 @@ def compute_trade_cluster_net_runs_ma_features_from_base(df: pd.DataFrame) -> pd
     return out
 
 
+def compute_trade_cluster_net_runs_ma_features_from_series(
+    *, trade_cluster_net_runs: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_net_runs": trade_cluster_net_runs})
+    return compute_trade_cluster_net_runs_ma_features_from_base(df)
+
+
 def compute_trade_cluster_total_runs_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_total_runs" not in df.columns:
@@ -2122,6 +2489,13 @@ def compute_trade_cluster_total_runs_ma_features_from_base(df: pd.DataFrame) -> 
             window=w, min_periods=1
         ).mean()
     return out
+
+
+def compute_trade_cluster_total_runs_ma_features_from_series(
+    *, trade_cluster_total_runs: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_total_runs": trade_cluster_total_runs})
+    return compute_trade_cluster_total_runs_ma_features_from_base(df)
 
 
 def compute_trade_cluster_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -2183,6 +2557,13 @@ def compute_trade_cluster_imbalance_zscore_features_from_base(df: pd.DataFrame) 
     return out
 
 
+def compute_trade_cluster_imbalance_zscore_features_from_series(
+    *, trade_cluster_imbalance_ratio: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_imbalance_ratio": trade_cluster_imbalance_ratio})
+    return compute_trade_cluster_imbalance_zscore_features_from_base(df)
+
+
 def compute_trade_cluster_net_runs_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_net_runs" not in df.columns:
@@ -2198,6 +2579,13 @@ def compute_trade_cluster_net_runs_zscore_features_from_base(df: pd.DataFrame) -
         z = (net_runs_clean - rolling_mean) / (rolling_std + TOL)
         out[f"trade_cluster_net_runs_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     return out
+
+
+def compute_trade_cluster_net_runs_zscore_features_from_series(
+    *, trade_cluster_net_runs: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_net_runs": trade_cluster_net_runs})
+    return compute_trade_cluster_net_runs_zscore_features_from_base(df)
 
 
 def compute_trade_cluster_max_buy_run_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
@@ -2217,6 +2605,13 @@ def compute_trade_cluster_max_buy_run_zscore_features_from_base(df: pd.DataFrame
     return out
 
 
+def compute_trade_cluster_max_buy_run_zscore_features_from_series(
+    *, trade_cluster_max_buy_run: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_max_buy_run": trade_cluster_max_buy_run})
+    return compute_trade_cluster_max_buy_run_zscore_features_from_base(df)
+
+
 def compute_trade_cluster_max_sell_run_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_max_sell_run" not in df.columns:
@@ -2232,3 +2627,10 @@ def compute_trade_cluster_max_sell_run_zscore_features_from_base(df: pd.DataFram
         z = (max_sell_clean - rolling_mean) / (rolling_std + TOL)
         out[f"trade_cluster_max_sell_run_zscore_{w}"] = z.replace([np.inf, -np.inf], np.nan)
     return out
+
+
+def compute_trade_cluster_max_sell_run_zscore_features_from_series(
+    *, trade_cluster_max_sell_run: pd.Series
+) -> pd.DataFrame:
+    df = pd.DataFrame({"trade_cluster_max_sell_run": trade_cluster_max_sell_run})
+    return compute_trade_cluster_max_sell_run_zscore_features_from_base(df)
