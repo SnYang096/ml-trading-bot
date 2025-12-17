@@ -12,6 +12,11 @@ import numpy as np
 from typing import List, Tuple, Dict, Optional
 
 from src.data_tools.tick_loader import load_tick_data
+from src.data_tools.processors import (
+    Processor,
+    ProcessorChain,
+    get_default_processor_chain,
+)
 
 TIMEFRAME_CACHE_DIR = Path("cache/timeframes")
 TIMEFRAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -303,6 +308,8 @@ class DataHandler:
         self,
         data_path: str,
         tick_data_path: Optional[str] = None,
+        processors: Optional[List[Processor]] = None,
+        use_default_processors: bool = False,
     ):
         """
         Initialize DataHandler.
@@ -310,10 +317,20 @@ class DataHandler:
         Args:
             data_path: Path to OHLCV parquet data directory
             tick_data_path: Path to tick data directory (defaults to data_path)
+            processors: Optional list of processors to apply after loading
+            use_default_processors: If True, use default processor chain
         """
         self.data_path = Path(data_path)
         self.tick_data_path = Path(tick_data_path) if tick_data_path else self.data_path
         self._market_loader = MarketDataLoader(str(self.data_path))
+
+        # Setup processor chain
+        if processors:
+            self._processor_chain = ProcessorChain(processors)
+        elif use_default_processors:
+            self._processor_chain = get_default_processor_chain()
+        else:
+            self._processor_chain = None
 
     def load_ohlcv(
         self,
@@ -404,6 +421,10 @@ class DataHandler:
         if df.index.duplicated().any():
             df = df[~df.index.duplicated(keep="last")]
 
+        # Apply processor chain if configured
+        if self._processor_chain:
+            df = self._processor_chain.process(df)
+
         return df
 
     def load_ticks(
@@ -466,3 +487,29 @@ class DataHandler:
                 df[col] = 0.0
 
         return df
+
+    def process(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Apply the processor chain to a DataFrame.
+
+        Useful for processing data that was loaded separately or
+        for applying processors to feature data.
+
+        Args:
+            df: Input DataFrame
+
+        Returns:
+            Processed DataFrame
+        """
+        if self._processor_chain:
+            return self._processor_chain.process(df)
+        return df
+
+    def set_processors(self, processors: List[Processor]) -> None:
+        """
+        Set a new processor chain.
+
+        Args:
+            processors: List of processors to apply
+        """
+        self._processor_chain = ProcessorChain(processors)
