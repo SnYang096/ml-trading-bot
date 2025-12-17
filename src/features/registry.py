@@ -122,15 +122,48 @@ class FeatureRegistry:
         return self._metadata.get(name)
 
     def import_module(self, module_path: str) -> None:
-        """Import a module to trigger its @register_feature decorators."""
+        """Import a module to trigger its @register_feature decorators.
+        
+        Handles both 'src.features.*' and 'features.*' paths for compatibility
+        with different PYTHONPATH configurations (Docker vs local).
+        """
         if module_path in self._imported_modules:
             return
+        
+        # Try original path first
         try:
             importlib.import_module(module_path)
             self._imported_modules.add(module_path)
             logger.debug(f"Imported feature module: {module_path}")
-        except ImportError as e:
-            logger.warning(f"Failed to import feature module {module_path}: {e}")
+            return
+        except ImportError:
+            pass
+        
+        # If original path starts with 'src.', try without it
+        # (for Docker where PYTHONPATH=/workspace/src)
+        if module_path.startswith("src."):
+            alt_path = module_path[4:]  # Remove 'src.' prefix
+            try:
+                importlib.import_module(alt_path)
+                self._imported_modules.add(module_path)
+                logger.debug(f"Imported feature module: {alt_path} (alt path)")
+                return
+            except ImportError:
+                pass
+        
+        # If path doesn't start with 'src.', try with it
+        # (for local development)
+        else:
+            alt_path = f"src.{module_path}"
+            try:
+                importlib.import_module(alt_path)
+                self._imported_modules.add(module_path)
+                logger.debug(f"Imported feature module: {alt_path} (alt path)")
+                return
+            except ImportError:
+                pass
+        
+        logger.warning(f"Failed to import feature module {module_path}: No module named '{module_path}'")
 
     def clear(self) -> None:
         """Clear all registrations (mainly for testing)."""
@@ -197,6 +230,8 @@ def get_feature_func(name: str) -> Callable:
     """
     Get a feature function by name.
 
+    Automatically calls ensure_features_registered() if needed.
+
     Args:
         name: Feature function name
 
@@ -206,14 +241,16 @@ def get_feature_func(name: str) -> Callable:
     Raises:
         ValueError: If function not found
     """
+    # Auto-register features if not done yet
+    ensure_features_registered()
+    
     func = _registry.get(name)
     if func is not None:
         return func
 
     raise ValueError(
         f"Unknown feature function: '{name}'. "
-        f"Not found in registry ({_registry.count} registered). "
-        f"Call ensure_features_registered() first."
+        f"Not found in registry ({_registry.count} registered)."
     )
 
 
@@ -271,6 +308,8 @@ FEATURE_MODULES = [
     "src.features.loader.talib_feature_wrappers",
     # dl_feature_wrappers.py removed - functions moved to dl_sequence_features.py
     "src.features.time_series.dl_sequence_features",
+    # Selector utils
+    "src.features.loader.selector_utils",
 ]
 
 _features_registered = False

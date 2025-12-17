@@ -68,11 +68,11 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            # 主要训练脚本
+            # Unified CLI (recommended)
+            "mlbot=cli.main:main",
+            
+            # Legacy scripts for backward compatibility
             "train-strategy=scripts.train_strategy_pipeline:main",
-            # 其他常用脚本可以继续添加
-            # "dim-compare=scripts.dimensionality.dim_compare:main",
-            # "rolling-train=scripts.rolling.rolling_train:main",
         ],
     },
 )
