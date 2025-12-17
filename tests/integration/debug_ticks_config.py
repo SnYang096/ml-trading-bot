@@ -20,7 +20,7 @@ from scripts.train_strategy_pipeline import (
     _ensure_ticks_configured,
 )
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.data_tools.data_loader import MarketDataLoader
+from src.data_tools.data_handler import MarketDataLoader
 
 
 def debug_ticks_config(

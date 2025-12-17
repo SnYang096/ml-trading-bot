@@ -18,7 +18,7 @@ import numpy as np
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-from src.data_tools.data_loader import MarketDataLoader
+from src.data_tools.data_handler import MarketDataLoader
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.strategy_config import StrategyConfigLoader
 

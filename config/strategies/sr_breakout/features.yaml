@@ -14,7 +14,7 @@ feature_pipeline:
     - hurst_cvd  # CVD 资金流的持续性（识别假突破）
     # 流动性特征
     - liquidity_void            # 包含: liquidity_void_detected, liquidity_void_speed, liquidity_void_volume_ratio, liquidity_void_retracement, liquidity_void_false_breakout_risk
-    - wpt_vpvr                  # 包含: vpvr_pvp, vpvr_hvn_count, vpvr_lvn_count, vpvr_lvn_distance, vpvr_volume_density, vpvr_price_in_lvn
+    - volume_profile_vpvr       # 包含: vpvr_pvp, vpvr_hvn_count, vpvr_lvn_count, vpvr_lvn_distance, vpvr_volume_density, vpvr_price_in_lvn
     # 频谱特征（精确选择）- 作为"环境传感器"，动态调节突破信号权重
     # 核心逻辑：频谱 ≠ 直接信号，而是"市场可交易性诊断器"
     # 

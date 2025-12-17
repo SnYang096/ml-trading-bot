@@ -623,3 +623,32 @@ def compute_wpt_vpvr_from_series(
     out["vpvr_lvn_distance"] = out["vpvr_lvn_distance"].fillna(0.0)
     out[out_cols] = out[out_cols].fillna(0.0)
     return out[out_cols]
+
+
+def compute_volume_profile_vpvr_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+    window: int = 100,
+    bins: int | str = 50,
+    wavelet: str = "db4",
+    level: int = 4,
+    drop_high_freq: bool = True,
+) -> pd.DataFrame:
+    """
+    Canonical VPVR/volume-profile feature entrypoint (alias of compute_wpt_vpvr_from_series).
+    This exists to avoid having both 'wpt_vpvr' and 'volume profile' concepts in configs.
+    """
+    return compute_wpt_vpvr_from_series(
+        close=close,
+        high=high,
+        low=low,
+        volume=volume,
+        window=window,
+        bins=bins,
+        wavelet=wavelet,
+        level=level,
+        drop_high_freq=drop_high_freq,
+    )

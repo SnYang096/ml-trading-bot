@@ -19,7 +19,7 @@ def check_dtw_nan_reason():
     print("📊 检查 DTW features NaN 的原因...\n")
 
     # 加载数据
-    from src.data_tools.data_loader import MarketDataLoader
+    from src.data_tools.data_handler import MarketDataLoader
 
     loader = MarketDataLoader()
     loader.symbol = "BTCUSDT"

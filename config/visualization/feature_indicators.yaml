@@ -37,7 +37,7 @@ feature_types:
       - "wpt_"
       - "wpt_price_"
       - "wpt_cvd_"
-      - "wpt_vpvr"
+      - "vpvr_"
   
   # Spectral analysis features
   spectral:

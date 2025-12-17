@@ -30,7 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data_tools.data_utils import load_raw_data
+from src.data_tools.data_handler import DataHandler
 from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.strategy_config import StrategyConfigLoader
@@ -85,23 +85,16 @@ def main() -> None:
 
     store = FeatureStore(Path(args.output_dir))
 
+    # Initialize DataHandler for unified data loading
+    data_handler = DataHandler(data_path=args.data_path)
+
     print(f"📂 Loading raw data for {args.symbol}, timeframe={args.timeframe}")
-    df_raw = load_raw_data(
-        data_path=args.data_path, symbol=args.symbol, timeframe=args.timeframe
+    df_raw = data_handler.load_ohlcv(
+        symbol=args.symbol,
+        timeframe=args.timeframe,
     )
     if df_raw.empty:
         raise ValueError("Loaded empty raw DataFrame; check data-path/symbol/timeframe")
-
-    # Ensure datetime index
-    if not isinstance(df_raw.index, pd.DatetimeIndex):
-        for col in ("datetime", "timestamp", "date"):
-            if col in df_raw.columns:
-                df_raw.index = pd.to_datetime(df_raw[col])
-                break
-        if not isinstance(df_raw.index, pd.DatetimeIndex):
-            raise ValueError("Cannot find datetime-like index/column in raw data")
-
-    df_raw = df_raw.sort_index()
 
     feature_loader = StrategyFeatureLoader()
 

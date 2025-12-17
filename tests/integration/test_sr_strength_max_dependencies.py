@@ -18,7 +18,7 @@ import pandas as pd
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-from src.data_tools.data_loader import MarketDataLoader
+from src.data_tools.data_handler import MarketDataLoader
 from src.features.loader.feature_wrappers import compute_sr_strength_max
 from src.features.time_series.baseline_features import BaselineFeatureEngineer
 

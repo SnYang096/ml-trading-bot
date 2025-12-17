@@ -31,7 +31,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from src.data_tools.data_utils import load_raw_data
+from src.data_tools.data_handler import DataHandler
 from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.time_series_model.strategy_config import StrategyConfigLoader
@@ -958,8 +958,10 @@ def train_strategy(
 
     print(f"🔧 Strategy: {strategy_config.name}")
 
-    df_raw = load_raw_data(
-        data_path=args.data_path,
+    # Initialize DataHandler for unified data loading
+    data_handler = DataHandler(data_path=args.data_path)
+
+    df_raw = data_handler.load_ohlcv(
         symbol=args.symbol,
         timeframe=args.timeframe,
     )

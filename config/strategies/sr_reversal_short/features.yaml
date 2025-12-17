@@ -30,7 +30,7 @@ feature_pipeline:
     - hurst_price
     - hurst_cvd  # CVD 资金流的持续性（识别反转信号）
     # VPVR 特征（空间域：流动性聚集区）
-    - wpt_vpvr
+    - volume_profile_vpvr
     # 单根K线 Footprint 特征（POC/HVN/LVN/VAH/VAL + delta/imbalance/skew/exhaustion/divergence）
     - footprint_basic
     # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）

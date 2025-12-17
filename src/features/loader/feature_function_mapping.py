@@ -153,7 +153,10 @@ from src.features.loader.feature_wrappers import (
     compute_footprint_features,
 )
 
-from src.features.time_series.utils_volume_profile import compute_wpt_vpvr_from_series
+from src.features.time_series.utils_volume_profile import (
+    compute_wpt_vpvr_from_series,
+    compute_volume_profile_vpvr_from_series,
+)
 
 # Baseline narrow wrappers (kept in baseline_features.py for readability)
 from src.features.time_series.baseline_features import (
@@ -287,6 +290,7 @@ FEATURE_FUNCTION_MAP: Dict[str, Callable] = {
     "compute_sqs_hal_low_from_series": compute_sqs_hal_low_from_series,
     "compute_sr_strength_max_from_series": compute_sr_strength_max_from_series,
     "compute_wpt_vpvr_from_series": compute_wpt_vpvr_from_series,
+    "compute_volume_profile_vpvr_from_series": compute_volume_profile_vpvr_from_series,
     "compute_unified_volume_profile": compute_unified_volume_profile,  # 新的统一实现
     "compute_footprint_features": compute_footprint_features,
     "compute_liquidity_void_features_from_series": compute_liquidity_void_features_from_series,

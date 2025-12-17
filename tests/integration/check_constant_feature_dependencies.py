@@ -26,7 +26,7 @@ from scripts.train_strategy_pipeline import (
     determine_feature_columns,
 )
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.data_tools.data_loader import MarketDataLoader
+from src.data_tools.data_handler import MarketDataLoader
 
 
 def check_constant_feature_dependencies(

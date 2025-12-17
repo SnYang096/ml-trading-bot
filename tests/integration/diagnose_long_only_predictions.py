@@ -24,7 +24,7 @@ from scripts.train_strategy_pipeline import (
     generate_predictions,
 )
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.data_tools.data_loader import MarketDataLoader
+from src.data_tools.data_handler import MarketDataLoader
 
 
 def diagnose_long_only_strategy(

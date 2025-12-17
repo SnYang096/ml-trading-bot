@@ -449,14 +449,14 @@ features:
   # 流动性特征（依赖 WPT 和基础指标）
   # 核心功能：识别流动性真空区、真假突破、VPVR 分析
   # ========================================================================
-  wpt_vpvr:
+  volume_profile_vpvr:
     module: enhanced
-    compute_func: compute_wpt_vpvr_from_series
+    compute_func: compute_volume_profile_vpvr_from_series
     dependencies: []
     required_columns: ["close", "high", "low", "volume"]
     output_columns: ["vpvr_pvp", "vpvr_hvn_count", "vpvr_lvn_count", "vpvr_lvn_distance", "vpvr_volume_density", "vpvr_price_in_lvn"]
     category: liquidity
-    description: "WPT 降噪的 VPVR（Volume Profile Visible Range）"
+    description: "Canonical VPVR (WPT-denoised volume profile) features"
     compute_params:
       wavelet: "db4"
       level: 4
@@ -468,11 +468,6 @@ features:
       high: high
       low: low
       volume: volume
-    notes: |
-      WPT 降噪后的 VPVR 能更清晰地识别关键支撑/阻力位：
-      - PVP: Point of Control（最高成交量对应的价格）
-      - HVN: High Volume Node（高成交量节点）
-      - LVN: Low Volume Node（低成交量节点，流动性真空区）
   
   liquidity_void:
     module: enhanced

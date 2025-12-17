@@ -27,7 +27,7 @@ from src.features.time_series.utils_order_flow_features import (
 def load_raw_data_simple(symbol, timeframe, data_path, start_date, end_date):
     """使用 MarketDataLoader 加载数据（与训练流程相同）"""
     try:
-        from src.data_tools.data_loader import MarketDataLoader
+        from src.data_tools.data_handler import MarketDataLoader
     except ImportError:
         # 如果导入失败，尝试直接读取并转换 tick 数据
         import pandas as pd
