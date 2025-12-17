@@ -113,3 +113,63 @@ def test_data_handler_ensure_base_columns():
     assert "_symbol" in df_ensured.columns
     assert df_ensured["volume"].dtype in [float, int]
     assert df_ensured["_symbol"].dtype == object
+
+
+@pytest.mark.integration
+def test_data_handler_pipeline_fluent_api():
+    """Test DataHandler.pipeline() fluent API."""
+    import numpy as np
+
+    handler = DataHandler(data_path="dummy")
+
+    # Create sample data with issues
+    df = pd.DataFrame(
+        {
+            "open": [100, 101, 102, 103, 104],
+            "high": [105, 106, 107, 108, 109],
+            "low": [99, 100, 101, 102, 103],
+            "close": [104, 105, 106, 107, 108],
+            "volume": [1000, 2000, 3000, 4000, 5000],
+            "_symbol": ["TEST"] * 5,
+            "feature_a": [1.0, np.nan, 3.0, np.inf, 5.0],
+        },
+        index=pd.date_range("2024-01-01", periods=5, freq="1h"),
+    )
+
+    # Test fluent pipeline
+    result = (
+        handler.pipeline(df)
+        .replace_inf()
+        .fill_na()
+        .validate_quality(print_report=False)
+        .downcast()
+        .result()
+    )
+
+    # Check results
+    assert len(result) == 5
+    assert not np.isinf(result["feature_a"]).any()
+    assert result["feature_a"].dtype == np.float32
+
+
+@pytest.mark.integration
+def test_data_handler_pipeline_with_validation_reports():
+    """Test that pipeline collects validation reports."""
+    import numpy as np
+
+    handler = DataHandler(data_path="dummy")
+
+    df = pd.DataFrame(
+        {
+            "close": np.cumsum(np.random.randn(100)) + 100,
+            "feature": np.random.randn(100),
+        },
+        index=pd.date_range("2024-01-01", periods=100, freq="1h"),
+    )
+
+    pipeline = handler.pipeline(df).validate(quality=True, leakage=False)
+    result = pipeline.result()
+    reports = pipeline.reports()
+
+    assert len(result) == 100
+    assert len(reports) >= 1  # At least quality report

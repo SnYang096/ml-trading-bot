@@ -9,13 +9,19 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 
 from src.data_tools.tick_loader import load_tick_data
 from src.data_tools.processors import (
     Processor,
     ProcessorChain,
+    Pipeline,
     get_default_processor_chain,
+    DataValidator,
+    DataQualityReport,
+    LookaheadLeakageDetector,
+    LookaheadLeakageReport,
+    ResearchValidator,
 )
 
 TIMEFRAME_CACHE_DIR = Path("cache/timeframes")
@@ -338,6 +344,7 @@ class DataHandler:
         timeframe: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        validate: bool = False,
     ) -> pd.DataFrame:
         """
         Load OHLCV data with base columns.
@@ -350,6 +357,7 @@ class DataHandler:
             timeframe: Resampling timeframe (e.g., "15T", "1H", "240T")
             start_date: Start date (YYYY-MM-DD), optional
             end_date: End date (YYYY-MM-DD), optional
+            validate: If True, run data quality validation and print report
 
         Returns:
             DataFrame with OHLCV + base columns, indexed by datetime
@@ -424,6 +432,12 @@ class DataHandler:
         # Apply processor chain if configured
         if self._processor_chain:
             df = self._processor_chain.process(df)
+
+        # Optional validation
+        if validate:
+            validator = DataValidator()
+            report = validator.validate(df)
+            report.print_report()
 
         return df
 
@@ -513,3 +527,157 @@ class DataHandler:
             processors: List of processors to apply
         """
         self._processor_chain = ProcessorChain(processors)
+
+    def pipeline(self, df: pd.DataFrame) -> Pipeline:
+        """
+        Create a Pipeline for fluent data processing.
+
+        This enables chained operations on DataFrames.
+
+        Usage:
+            handler = DataHandler(data_path)
+            df = handler.load_ohlcv(symbol, timeframe)
+
+            # Chain processing and validation
+            result = (handler.pipeline(df)
+                .replace_inf()
+                .fill_na()
+                .validate(quality=True, leakage=True)
+                .downcast()
+                .result()
+            )
+
+            # Or use the shorthand
+            result = (handler.load_and_pipeline(symbol, timeframe)
+                .validate(quality=True)
+                .result()
+            )
+        """
+        return Pipeline(df)
+
+    def load_and_pipeline(
+        self,
+        symbol: str,
+        timeframe: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Pipeline:
+        """
+        Load OHLCV data and return a Pipeline for fluent processing.
+
+        Combines load_ohlcv() and pipeline() for convenience.
+
+        Usage:
+            handler = DataHandler(data_path)
+            result = (handler.load_and_pipeline("BTCUSDT", "240T")
+                .replace_inf()
+                .fill_na()
+                .validate(quality=True, leakage=True)
+                .downcast()
+                .result()
+            )
+        """
+        df = self.load_ohlcv(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+            validate=False,  # Validation will be done in the pipeline
+        )
+        return Pipeline(df)
+
+    # =========================================================================
+    # Validation Methods (legacy, prefer using pipeline().validate())
+    # =========================================================================
+
+    def validate_quality(
+        self,
+        df: pd.DataFrame,
+        print_report: bool = True,
+        **kwargs,
+    ) -> DataQualityReport:
+        """
+        Validate data quality (NaN, inf, outliers, constant columns).
+
+        Args:
+            df: DataFrame to validate
+            print_report: Whether to print the report
+            **kwargs: Additional arguments for DataValidator
+
+        Returns:
+            DataQualityReport with detected issues
+
+        Usage:
+            handler = DataHandler(data_path)
+            df = handler.load_ohlcv(symbol, timeframe)
+            report = handler.validate_quality(df)
+        """
+        validator = DataValidator(**kwargs)
+        report = validator.validate(df)
+        if print_report:
+            report.print_report()
+        return report
+
+    def validate_leakage(
+        self,
+        df: pd.DataFrame,
+        target_col: str = "close",
+        print_report: bool = True,
+        **kwargs,
+    ) -> LookaheadLeakageReport:
+        """
+        Detect potential lookahead (future data) leakage.
+
+        This is critical for research/backtesting to ensure features
+        don't accidentally use future information.
+
+        Args:
+            df: DataFrame with features to validate
+            target_col: Target column for return calculation
+            print_report: Whether to print the report
+            **kwargs: Additional arguments for LookaheadLeakageDetector
+
+        Returns:
+            LookaheadLeakageReport with detected issues
+
+        Usage:
+            handler = DataHandler(data_path)
+            df_features = compute_features(df)
+            report = handler.validate_leakage(df_features)
+            if report.has_critical_issues():
+                raise ValueError("Lookahead leakage detected!")
+        """
+        detector = LookaheadLeakageDetector(**kwargs)
+        report = detector.detect(df, target_col=target_col)
+        if print_report:
+            report.print_report()
+        return report
+
+    def validate_research(
+        self,
+        df: pd.DataFrame,
+        target_col: str = "close",
+        print_report: bool = True,
+        fail_on_critical: bool = True,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Run full research validation suite (quality + leakage detection).
+
+        Args:
+            df: DataFrame to validate
+            target_col: Target column for leakage detection
+            print_report: Whether to print reports
+            fail_on_critical: Return False if critical issues found
+
+        Returns:
+            Tuple of (is_valid, reports_dict)
+
+        Usage:
+            handler = DataHandler(data_path)
+            df_features = compute_features(df)
+            is_valid, reports = handler.validate_research(df_features)
+            if not is_valid:
+                raise ValueError("Research validation failed!")
+        """
+        validator = ResearchValidator(fail_on_critical=fail_on_critical)
+        return validator.validate(df, target_col=target_col, print_report=print_report)
