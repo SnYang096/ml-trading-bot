@@ -4,9 +4,10 @@
 提供基于配置文件的特征加载、并行计算和缓存功能
 """
 
-from src.features.loader.feature_function_mapping import (
-    FEATURE_FUNCTION_MAP,
+from src.features.registry import (
     get_compute_func,
+    get_feature_func,
+    ensure_features_registered,
 )
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.features.loader.parallel_computer import (
@@ -15,10 +16,10 @@ from src.features.loader.parallel_computer import (
 )
 
 __all__ = [
-    "FEATURE_FUNCTION_MAP",
     "get_compute_func",
+    "get_feature_func",
+    "ensure_features_registered",
     "StrategyFeatureLoader",
     "ParallelFeatureComputer",
     "analyze_dependency_levels",
 ]
-

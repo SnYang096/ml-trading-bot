@@ -101,7 +101,8 @@ endif
 	cs-build-panel cs-report cs-train cs-workflow \
 	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
 	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all \
-	docker-build-gpu
+	docker-build-gpu \
+	list-features
 
 start-docker:
 	@bash scripts/start_docker.sh
@@ -114,6 +115,7 @@ help:
 	@echo "  make install-hooks        # Install Git pre-commit hooks (run make format & lint before commit)"
 	@echo "  make format               # Format code with black"
 	@echo "  make lint                 # Lint code with flake8"
+	@echo "  make list-features        # List all registered feature functions (199 features)"
 	@echo ""
 	@echo "Testing commands (run in Docker):"
 	@echo "  make test-wpt-volume-profile        # Test WPT volume profile improvements (pytest format)"
@@ -198,6 +200,18 @@ format:
 
 lint:
 	PYTHONPATH=src $(PYTHON) -m flake8 src/time_series_model/ src/cross_sectional/ src/data_tools/ tests/ scripts/
+
+# ---------------------------------------------------------------------------
+# Feature Registry commands
+# ---------------------------------------------------------------------------
+list-features:
+	@$(PYTHON) scripts/list_features.py
+
+list-features-all:
+	@$(PYTHON) scripts/list_features.py --all
+
+list-features-search:
+	@$(PYTHON) scripts/list_features.py --search $(SEARCH)
 
 PERM_DIR ?= src/diagnostics
 PERM_MODE ?= 664

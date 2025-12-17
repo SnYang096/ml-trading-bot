@@ -85,7 +85,7 @@ def test_parallel_feature_computer_wide_table_merge() -> None:
     # _build_call_args, but we pass our own compute_func explicitly to
     # _compute_and_cache_monthly, so we can reuse any existing name here.
     wide_feature_info: Dict[str, Any] = {
-        "compute_func": "BaselineFeatureEngineer.compute_bb_width_features",
+        "compute_func": "compute_bb_width_features",
         "output_columns": ["bb_width"],
         "dependencies": [],
         "required_columns": ["close"],

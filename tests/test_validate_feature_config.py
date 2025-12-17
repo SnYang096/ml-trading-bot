@@ -44,7 +44,7 @@ class TestFeatureConfig:
 
     def test_derived_features_config(self, feature_dependencies):
         """测试衍生特征配置"""
-        from src.features.loader.feature_function_mapping import get_compute_func
+        from src.features.registry import get_compute_func
 
         features = feature_dependencies.get("features", {})
         derived_features = [
@@ -88,7 +88,7 @@ class TestFeatureConfig:
 
     def test_interaction_features_config(self, feature_dependencies):
         """测试交互特征配置"""
-        from src.features.loader.feature_function_mapping import get_compute_func
+        from src.features.registry import get_compute_func
 
         features = feature_dependencies.get("features", {})
         interaction_features = [

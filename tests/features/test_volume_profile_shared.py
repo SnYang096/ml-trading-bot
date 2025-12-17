@@ -7,7 +7,6 @@ from src.features.time_series.utils_volume_profile import (
     compute_unified_volume_profile_features,
     compute_wpt_vpvr_from_series,
 )
-from src.features.time_series.baseline_features import BaselineFeatureEngineer
 
 
 def test_compute_wpt_volume_profile_basic_histogram_properties():

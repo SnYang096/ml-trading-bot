@@ -21,6 +21,8 @@ from typing import Dict, List, Optional, Tuple
 import pywt
 from scipy import stats
 
+from src.features.registry import register_feature
+
 from .utils_volume_profile import (
     VolumeProfileResult,
     compute_wpt_volume_profile,
@@ -356,6 +358,7 @@ def compute_wpt_volume_energy_features(
     return df
 
 
+@register_feature("extract_liquidity_features", category="liquidity")
 def extract_liquidity_features(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -426,6 +429,7 @@ def extract_liquidity_features(
     return df
 
 
+@register_feature("compute_liquidity_void_features_from_series", category="liquidity")
 def compute_liquidity_void_features_from_series(
     *,
     close: pd.Series,
@@ -518,6 +522,7 @@ def compute_liquidity_void_features_from_series(
     )
 
 
+@register_feature("compute_wpt_volume_energy_features_from_series", category="liquidity")
 def compute_wpt_volume_energy_features_from_series(
     *,
     close: pd.Series,

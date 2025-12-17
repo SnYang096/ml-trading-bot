@@ -14,7 +14,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.features.time_series.baseline_features import BaselineFeatureEngineer
+from src.features.time_series.baseline_features import (
+    compute_rsi,
+    calculate_sqs,
+    _get_sr_boundary_definitions,
+    _compute_boundary_strengths,
+)
 from src.features.time_series.utils_hurst_features import (
     compute_hurst_dfa,
     extract_hurst_features,
@@ -49,8 +54,8 @@ class TestInfRootCauseFixes:
         data.loc[dates[20:25], "volume"] = -np.inf
 
         # 计算 SR 强度特征
-        boundaries = BaselineFeatureEngineer._get_sr_boundary_definitions(data)
-        boundary_strengths = BaselineFeatureEngineer._compute_boundary_strengths(
+        boundaries = _get_sr_boundary_definitions(data)
+        boundary_strengths = _compute_boundary_strengths(
             data,
             boundaries,
             window=60,
@@ -127,7 +132,7 @@ class TestInfRootCauseFixes:
         price_series.iloc[50:55] = -np.inf
 
         # 计算 RSI
-        rsi_series = BaselineFeatureEngineer.compute_rsi(price_series, period=14)
+        rsi_series = compute_rsi(price_series, period=14)
 
         # 检查结果
         # 不应该包含 inf 值
@@ -204,8 +209,8 @@ class TestInfRootCauseFixes:
         data.loc[dates[10], "close"] = 0.0
 
         # 计算 SR 强度特征
-        boundaries = BaselineFeatureEngineer._get_sr_boundary_definitions(data)
-        boundary_strengths = BaselineFeatureEngineer._compute_boundary_strengths(
+        boundaries = _get_sr_boundary_definitions(data)
+        boundary_strengths = _compute_boundary_strengths(
             data,
             boundaries,
             window=60,
@@ -244,7 +249,7 @@ class TestInfRootCauseFixes:
         window_df = data.tail(60)
 
         # 直接测试 calculate_sqs
-        sqs = BaselineFeatureEngineer.calculate_sqs(
+        sqs = calculate_sqs(
             sr_price,
             window_df,
             window=60,

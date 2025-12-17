@@ -189,7 +189,7 @@ def _ensure_ticks_configured(
     tick_required_features: list[str] = []
     try:
         import inspect
-        from src.features.loader.feature_function_mapping import get_compute_func
+        from src.features.registry import get_compute_func
 
         for feat_name in actual_requested:
             if feat_name not in features_cfg:

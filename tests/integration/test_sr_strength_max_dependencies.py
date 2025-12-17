@@ -20,7 +20,9 @@ sys.path.insert(0, str(project_root))
 
 from src.data_tools.data_handler import MarketDataLoader
 from src.features.loader.feature_wrappers import compute_sr_strength_max
-from src.features.time_series.baseline_features import BaselineFeatureEngineer
+from src.features.time_series.baseline_features import (
+    add_poc_hal_dimensionless_features,
+)
 
 
 def test_sr_strength_max_auto_dependencies():
@@ -94,7 +96,7 @@ def test_sr_strength_max_auto_dependencies():
 
     df_test2 = df[["open", "high", "low", "close", "volume"]].copy()
     # 只计算 hal_high
-    df_test2 = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+    df_test2 = add_poc_hal_dimensionless_features(
         df_test2,
         required_features={"hal_high"},
         poc_window=160,

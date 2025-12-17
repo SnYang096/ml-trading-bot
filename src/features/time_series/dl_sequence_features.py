@@ -8,6 +8,8 @@ import pandas as pd
 from typing import Optional, Dict, Tuple, List, Literal
 import warnings
 
+from src.features.registry import register_feature
+
 warnings.filterwarnings("ignore")
 
 # Check for deep learning dependencies
@@ -604,3 +606,89 @@ def add_dl_sequence_features(
 
 # For backward compatibility
 add_transformer_features = add_dl_sequence_features
+
+
+# =============================================================================
+# Registered feature functions for config-driven pipeline
+# =============================================================================
+
+
+@register_feature("compute_dl_sequence_features", category="dl")
+def compute_dl_sequence_features(
+    df: pd.DataFrame,
+    backend: str = "auto",
+    seq_length: int = 120,
+    d_model: int = 64,
+    feature_columns: Optional[List[str]] = None,
+    use_fp16: bool = False,
+    prefix: str = "dl_seq",
+    device: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Compute leak-free deep learning sequence embeddings (Mamba/Transformer).
+
+    Args:
+        df: Input dataframe.
+        backend: 'mamba', 'flash_attention', 'transformer', or 'auto'.
+        seq_length: Sliding window length.
+        d_model: Output embedding dimension.
+        feature_columns: Columns used as model inputs (defaults to OHLCV).
+        use_fp16: Whether to enable FP16 during inference (GPU only).
+        prefix: Feature column prefix (default: dl_seq).
+        device: 'cuda', 'cpu', or None (auto-detect)
+
+    Returns:
+        DataFrame with DL sequence features appended.
+    """
+    result = add_dl_sequence_features(
+        df.copy(),
+        backend=backend,
+        seq_length=seq_length,
+        d_model=d_model,
+        feature_columns=feature_columns,
+        use_fp16=use_fp16,
+        device=device,
+    )
+
+    # Ensure expected columns exist even if DL backend is unavailable
+    expected_cols = [f"{prefix}_f{i}" for i in range(d_model)]
+    for col in expected_cols:
+        if col not in result.columns:
+            result[col] = 0.0
+
+    return result
+
+
+@register_feature("compute_dl_sequence_features_from_series", category="dl")
+def compute_dl_sequence_features_from_series(
+    *,
+    open: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    backend: str = "auto",
+    seq_length: int = 120,
+    d_model: int = 64,
+    feature_columns: Optional[List[str]] = None,
+    use_fp16: bool = False,
+    prefix: str = "dl_seq",
+    device: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Narrow-IO entrypoint for DL sequence embeddings (Series-in, DataFrame-out).
+    Keeps pipeline from passing a wide DF into heavy DL code.
+    """
+    df = pd.DataFrame(
+        {"open": open, "high": high, "low": low, "close": close, "volume": volume}
+    )
+    return compute_dl_sequence_features(
+        df,
+        backend=backend,
+        seq_length=seq_length,
+        d_model=d_model,
+        feature_columns=feature_columns,
+        use_fp16=use_fp16,
+        prefix=prefix,
+        device=device,
+    )

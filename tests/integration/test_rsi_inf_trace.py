@@ -143,12 +143,10 @@ def trace_rsi_through_pipeline():
 
         # 尝试单独计算 RSI 特征
         print(f"\n   🔧 单独计算 RSI 特征...")
-        from src.features.time_series.baseline_features import BaselineFeatureEngineer
+        from src.features.time_series.baseline_features import compute_rsi
 
         # 直接计算 RSI
-        rsi_direct = BaselineFeatureEngineer.compute_rsi(
-            df_train_raw["close"], period=14
-        )
+        rsi_direct = compute_rsi(df_train_raw["close"], period=14)
         status_direct = {
             "inf_count": int(np.isinf(rsi_direct).sum()),
             "nan_count": int(rsi_direct.isna().sum()),

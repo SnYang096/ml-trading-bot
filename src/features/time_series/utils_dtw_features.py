@@ -45,6 +45,8 @@ import pandas as pd
 from typing import Dict, Optional, List, Tuple, Union
 import warnings
 
+from src.features.registry import register_feature
+
 warnings.filterwarnings("ignore")
 
 try:
@@ -282,6 +284,7 @@ def create_dtw_templates(
     return templates
 
 
+@register_feature("extract_dtw_features", category="dtw")
 def extract_dtw_features(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -520,6 +523,7 @@ def extract_dtw_features(
     return result
 
 
+@register_feature("extract_dtw_features_from_series", category="dtw")
 def extract_dtw_features_from_series(
     *,
     close: pd.Series,

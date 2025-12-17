@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import warnings
 
+from src.features.registry import register_feature
+
 warnings.filterwarnings("ignore")
 
 try:
@@ -175,6 +177,7 @@ def _extract_garch_features_from_close(
     return result
 
 
+@register_feature("extract_garch_features_from_series", category="garch")
 def extract_garch_features_from_series(
     *,
     close: pd.Series,

@@ -23,6 +23,8 @@ import numpy as np
 import pandas as pd
 from typing import Optional, Union
 
+from src.features.registry import register_feature
+
 
 def compute_hurst_dfa(
     series: np.ndarray,
@@ -312,6 +314,7 @@ def _auto_adjust_clip_pct(
     return clip_pct
 
 
+@register_feature("extract_hurst_features", category="hurst")
 def extract_hurst_features(
     df: pd.DataFrame,
     price_col: str = "close",

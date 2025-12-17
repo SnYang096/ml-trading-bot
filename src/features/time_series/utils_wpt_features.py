@@ -31,6 +31,8 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 import pywt
 
+from src.features.registry import register_feature
+
 # 性能优化：缓存小波对象（避免重复初始化）
 # 注意：对于4H级别，此优化非必需，但可以略微提升性能
 _WAVELET_CACHE: Dict[str, pywt.Wavelet] = {}
@@ -181,6 +183,7 @@ def wpt_decompose(
     }
 
 
+@register_feature("extract_wpt_features", category="wpt")
 def extract_wpt_features(
     df: pd.DataFrame,
     price_col: str = "close",

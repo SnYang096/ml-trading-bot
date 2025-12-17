@@ -7,7 +7,7 @@ features:
   # ========================================================================
   atr:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_atr
+    compute_func: compute_atr
     dependencies: []
     required_columns: ["high", "low", "close"]
     output_columns: ["atr"]
@@ -23,7 +23,7 @@ features:
   
   rsi:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_rsi
+    compute_func: compute_rsi
     dependencies: []
     required_columns: ["close"]
     output_columns: ["rsi"]
@@ -37,7 +37,7 @@ features:
   
   macd:
     module: baseline
-    compute_func: BaselineFeatureEngineer.compute_macd
+    compute_func: compute_macd
     dependencies: []
     required_columns: ["close"]
     output_columns: ["macd", "macd_signal", "macd_histogram"]

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Union
 
+from src.features.registry import register_feature
 from .utils_dtw_features import (
     create_dtw_templates,
     extract_dtw_features,
@@ -135,6 +136,7 @@ def _extract_single_dtw_template(
 
 
 # 反转相关DTW特征（适合SR Reversal策略）
+@register_feature("extract_dtw_hammer", category="dtw")
 def extract_dtw_hammer(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -153,6 +155,7 @@ def extract_dtw_hammer(
     )
 
 
+@register_feature("extract_dtw_head_shoulder_bottom", category="dtw")
 def extract_dtw_head_shoulder_bottom(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -171,6 +174,7 @@ def extract_dtw_head_shoulder_bottom(
     )
 
 
+@register_feature("extract_dtw_double_bottom", category="dtw")
 def extract_dtw_double_bottom(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -189,6 +193,7 @@ def extract_dtw_double_bottom(
     )
 
 
+@register_feature("extract_dtw_bullish_engulfing", category="dtw")
 def extract_dtw_bullish_engulfing(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -207,6 +212,7 @@ def extract_dtw_bullish_engulfing(
     )
 
 
+@register_feature("extract_dtw_shooting_star", category="dtw")
 def extract_dtw_shooting_star(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -225,6 +231,7 @@ def extract_dtw_shooting_star(
     )
 
 
+@register_feature("extract_dtw_head_shoulder_top", category="dtw")
 def extract_dtw_head_shoulder_top(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -243,6 +250,7 @@ def extract_dtw_head_shoulder_top(
     )
 
 
+@register_feature("extract_dtw_double_top", category="dtw")
 def extract_dtw_double_top(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -261,6 +269,7 @@ def extract_dtw_double_top(
     )
 
 
+@register_feature("extract_dtw_bearish_engulfing", category="dtw")
 def extract_dtw_bearish_engulfing(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -280,6 +289,7 @@ def extract_dtw_bearish_engulfing(
 
 
 # 中继形态DTW特征（适合趋势/压缩突破策略）
+@register_feature("extract_dtw_bull_flag", category="dtw")
 def extract_dtw_bull_flag(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -298,6 +308,7 @@ def extract_dtw_bull_flag(
     )
 
 
+@register_feature("extract_dtw_bear_flag", category="dtw")
 def extract_dtw_bear_flag(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -316,6 +327,7 @@ def extract_dtw_bear_flag(
     )
 
 
+@register_feature("extract_dtw_triangle", category="dtw")
 def extract_dtw_triangle(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -334,6 +346,7 @@ def extract_dtw_triangle(
     )
 
 
+@register_feature("extract_dtw_decline_consolidation", category="dtw")
 def extract_dtw_decline_consolidation(
     df: pd.DataFrame,
     price_col: str = "close",

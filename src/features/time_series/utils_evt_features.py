@@ -23,6 +23,8 @@ EVT (Extreme Value Theory) 特征提取器
 import numpy as np
 import pandas as pd
 from typing import Optional
+
+from src.features.registry import register_feature
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -378,6 +380,7 @@ def _extract_evt_features_from_close(
     return result
 
 
+@register_feature("extract_evt_features_from_series", category="evt")
 def extract_evt_features_from_series(
     *,
     close: pd.Series,

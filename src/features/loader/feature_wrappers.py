@@ -8,7 +8,15 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 
-from src.features.time_series.baseline_features import BaselineFeatureEngineer
+from src.features.registry import register_feature
+
+from src.features.time_series.baseline_features import (
+    add_poc_hal_dimensionless_features,
+    compute_atr,
+    calculate_sqs,
+    _get_sr_boundary_definitions,
+    _compute_boundary_strengths,
+)
 from src.features.time_series.utils_liquidity_features import (
     extract_liquidity_features,
 )
@@ -53,7 +61,7 @@ def compute_poc_hal_features(
         price_col = "wpt_price_reconstructed"
     
     # 计算 POC 和 HAL
-    result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+    result = add_poc_hal_dimensionless_features(
         result,
         required_features={"poc", "hal_high", "hal_low", "hal_mid"},
         poc_window=poc_window,
@@ -94,7 +102,7 @@ def compute_sqs_hal_high(
     
     # 0. 确保 ATR 存在（SQS 计算必需）
     if "atr" not in result.columns:
-        result["atr"] = BaselineFeatureEngineer.compute_atr(
+        result["atr"] = compute_atr(
             result["high"],
             result["low"],
             result["close"],
@@ -110,7 +118,7 @@ def compute_sqs_hal_high(
         price_col = kwargs.get("price_col", None)
         if price_col is None and "wpt_price_reconstructed" in result.columns:
             price_col = "wpt_price_reconstructed"
-        result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        result = add_poc_hal_dimensionless_features(
             result,
             required_features={"hal_high", "poc"},
             poc_window=poc_window,
@@ -152,7 +160,7 @@ def compute_sqs_hal_high(
         
         # 计算 SQS：评估 sr_price 在历史窗口内的质量
         try:
-            sqs = BaselineFeatureEngineer.calculate_sqs(
+            sqs = calculate_sqs(
                 sr_price=sr_price,  # 使用当前时间点的 HAL 价格作为 SR 价格
                 df=hist_df,  # 历史数据窗口，用于评估质量
                 window=min(window, len(hist_df)),
@@ -198,7 +206,7 @@ def compute_sqs_hal_low(
     
     # 0. 确保 ATR 存在（SQS 计算必需）
     if "atr" not in result.columns:
-        result["atr"] = BaselineFeatureEngineer.compute_atr(
+        result["atr"] = compute_atr(
             result["high"],
             result["low"],
             result["close"],
@@ -214,7 +222,7 @@ def compute_sqs_hal_low(
         price_col = kwargs.get("price_col", None)
         if price_col is None and "wpt_price_reconstructed" in result.columns:
             price_col = "wpt_price_reconstructed"
-        result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        result = add_poc_hal_dimensionless_features(
             result,
             required_features={"hal_low", "poc"},
             poc_window=poc_window,
@@ -256,7 +264,7 @@ def compute_sqs_hal_low(
         
         # 计算 SQS：评估 sr_price 在历史窗口内的质量
         try:
-            sqs = BaselineFeatureEngineer.calculate_sqs(
+            sqs = calculate_sqs(
                 sr_price=sr_price,  # 使用当前时间点的 HAL 价格作为 SR 价格
                 df=hist_df,  # 历史数据窗口，用于评估质量
                 window=min(window, len(hist_df)),
@@ -317,7 +325,7 @@ def compute_sr_strength_max(
             price_col = "wpt_price_reconstructed"
         
         # 计算所有边界列（hal_high, hal_low, poc）
-        result = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        result = add_poc_hal_dimensionless_features(
             result,
             required_features={"hal_high", "hal_low", "poc"},
             poc_window=poc_window,
@@ -326,7 +334,7 @@ def compute_sr_strength_max(
     
     # 1. 确保 ATR 存在（边界强度计算必需）
     if "atr" not in result.columns:
-        result["atr"] = BaselineFeatureEngineer.compute_atr(
+        result["atr"] = compute_atr(
             result["high"],
             result["low"],
             result["close"],
@@ -334,7 +342,7 @@ def compute_sr_strength_max(
         )
     
     # 2. 获取边界定义
-    boundaries = BaselineFeatureEngineer._get_sr_boundary_definitions(result)
+    boundaries = _get_sr_boundary_definitions(result)
     
     if not boundaries:
         result["sr_strength_max"] = 0.0
@@ -342,7 +350,7 @@ def compute_sr_strength_max(
     
     # 3. 计算边界强度
     compression_series = result.get("compression_confidence")
-    boundary_strengths = BaselineFeatureEngineer._compute_boundary_strengths(
+    boundary_strengths = _compute_boundary_strengths(
         data=result,
         boundaries=boundaries,
         window=window,
@@ -362,6 +370,7 @@ def compute_sr_strength_max(
     return result
 
 
+@register_feature("compute_footprint_features", category="footprint")
 def compute_footprint_features(
     df: pd.DataFrame,
     ticks: Optional[pd.DataFrame] = None,
@@ -491,6 +500,7 @@ def compute_footprint_features(
     return out
 
 
+@register_feature("compute_unified_volume_profile", category="volume_profile")
 def compute_unified_volume_profile(
     df: pd.DataFrame,
     window: int = 160,

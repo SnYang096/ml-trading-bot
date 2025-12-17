@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 import pywt
 
+from src.features.registry import register_feature
+
 
 def freedman_diaconis_bins(data: np.ndarray, min_bins: int = 10, max_bins: int = 100) -> int:
     """
@@ -501,6 +503,7 @@ def compute_unified_volume_profile_derived_features(
     return df
 
 
+@register_feature("compute_wpt_vpvr_from_series", category="volume_profile")
 def compute_wpt_vpvr_from_series(
     *,
     close: pd.Series,
@@ -625,6 +628,7 @@ def compute_wpt_vpvr_from_series(
     return out[out_cols]
 
 
+@register_feature("compute_volume_profile_vpvr_from_series", category="volume_profile")
 def compute_volume_profile_vpvr_from_series(
     *,
     close: pd.Series,

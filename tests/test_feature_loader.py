@@ -119,7 +119,7 @@ class TestFeatureLoader(unittest.TestCase):
     def test_function_mapping(self):
         """测试函数映射"""
         # 测试存在的函数
-        func = get_compute_func("BaselineFeatureEngineer._compute_atr")
+        func = get_compute_func("_compute_atr")
         self.assertIsNotNone(func)
 
         # 测试不存在的函数
@@ -129,10 +129,10 @@ class TestFeatureLoader(unittest.TestCase):
     def test_basic_feature_computation(self):
         """测试基础特征计算"""
         # 测试 ATR 计算
-        from src.features.time_series.baseline_features import BaselineFeatureEngineer
+        from src.features.time_series.baseline_features import _compute_atr
 
         df = self.test_df.copy()
-        atr_series = BaselineFeatureEngineer._compute_atr(df, window=14)
+        atr_series = _compute_atr(df, window=14)
 
         # _compute_atr 返回 Series，需要添加到 DataFrame
         self.assertIsInstance(atr_series, pd.Series)

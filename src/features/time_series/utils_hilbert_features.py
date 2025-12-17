@@ -25,6 +25,8 @@ import pandas as pd
 from typing import Optional
 from scipy.signal import hilbert
 
+from src.features.registry import register_feature
+
 
 def compute_hilbert_envelope(
     signal: np.ndarray,
@@ -125,6 +127,7 @@ def rolling_quantile_normalize(
     )
 
 
+@register_feature("extract_hilbert_features", category="hilbert")
 def extract_hilbert_features(
     df: pd.DataFrame,
     price_fluctuation_col: str = "wpt_price_fluctuation",

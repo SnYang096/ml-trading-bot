@@ -18,6 +18,8 @@ import pandas as pd
 from typing import Optional, Dict, Any
 from collections import deque
 
+from src.features.registry import register_feature
+
 # 常量定义
 TOL = 1e-10  # 浮点比较容差（用于 volume 比较、时间戳对齐等）
 EPS = 1e-9   # 通用极小量，避免分母为 0 产生 inf
@@ -177,6 +179,7 @@ else:
         raise NotImplementedError("numba is required for _rolling_mad_numba")
 
 
+@register_feature("compute_vpin_from_ticks", category="order_flow")
 def compute_vpin_from_ticks(
     ticks: pd.DataFrame,
     bucket_volume: Optional[float] = None,
@@ -422,6 +425,7 @@ def compute_vpin_from_ticks(
 # 如果只有 OHLCV 数据，请使用 tick 数据或移除 VPIN 特征
 
 
+@register_feature("extract_order_flow_features", category="order_flow")
 def extract_order_flow_features(
     df: pd.DataFrame,
     ticks: Optional[pd.DataFrame] = None,
@@ -884,6 +888,7 @@ def extract_order_flow_features(
     return df
 
 
+@register_feature("compute_vpin_derived_features_from_base", category="order_flow")
 def compute_vpin_derived_features_from_base(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -916,6 +921,7 @@ def compute_vpin_derived_features_from_base(
     return out
 
 
+@register_feature("compute_vpin_ma_max_features_from_base", category="order_flow")
 def compute_vpin_ma_max_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_ma* / vpin_max*."""
     out = pd.DataFrame(index=df.index)
@@ -925,12 +931,14 @@ def compute_vpin_ma_max_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+@register_feature("compute_vpin_ma_max_features_from_series", category="order_flow")
 def compute_vpin_ma_max_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_ma* / vpin_max*."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_ma_max_features_from_base(df)
 
 
+@register_feature("compute_vpin_change_features_from_base", category="order_flow")
 def compute_vpin_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_change / vpin_change_pct."""
     out = pd.DataFrame(index=df.index)
@@ -943,12 +951,14 @@ def compute_vpin_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+@register_feature("compute_vpin_change_features_from_series", category="order_flow")
 def compute_vpin_change_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_change / vpin_change_pct."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_change_features_from_base(df)
 
 
+@register_feature("compute_vpin_zscore_features_from_base", category="order_flow")
 def compute_vpin_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_zscore_20 / vpin_zscore_50."""
     out = pd.DataFrame(index=df.index)
@@ -961,12 +971,14 @@ def compute_vpin_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+@register_feature("compute_vpin_zscore_features_from_series", category="order_flow")
 def compute_vpin_zscore_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_zscore_20 / vpin_zscore_50."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_zscore_features_from_base(df)
 
 
+@register_feature("compute_vpin_quantile_rank_features_from_base", category="order_flow")
 def compute_vpin_quantile_rank_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_quantile_rank_20 / vpin_quantile_rank_50."""
     out = pd.DataFrame(index=df.index)
@@ -991,12 +1003,14 @@ def compute_vpin_quantile_rank_features_from_base(df: pd.DataFrame) -> pd.DataFr
     return out
 
 
+@register_feature("compute_vpin_quantile_rank_features_from_series", category="order_flow")
 def compute_vpin_quantile_rank_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_quantile_rank_*."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_quantile_rank_features_from_base(df)
 
 
+@register_feature("compute_vpin_volatility_features_from_base", category="order_flow")
 def compute_vpin_volatility_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_volatility_10 / vpin_volatility_20."""
     out = pd.DataFrame(index=df.index)
@@ -1007,12 +1021,14 @@ def compute_vpin_volatility_features_from_base(df: pd.DataFrame) -> pd.DataFrame
     return out
 
 
+@register_feature("compute_vpin_volatility_features_from_series", category="order_flow")
 def compute_vpin_volatility_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_volatility_*."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_volatility_features_from_base(df)
 
 
+@register_feature("compute_vpin_spike_features_from_base", category="order_flow")
 def compute_vpin_spike_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_spike_flag_20 / vpin_spike_flag_50."""
     out = pd.DataFrame(index=df.index)
@@ -1058,12 +1074,14 @@ def compute_vpin_spike_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+@register_feature("compute_vpin_spike_features_from_series", category="order_flow")
 def compute_vpin_spike_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_spike_flag_*."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_spike_features_from_base(df)
 
 
+@register_feature("compute_vpin_momentum_features_from_base", category="order_flow")
 def compute_vpin_momentum_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_momentum (requires ma5/ma20)."""
     out = pd.DataFrame(index=df.index)
@@ -1072,12 +1090,14 @@ def compute_vpin_momentum_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+@register_feature("compute_vpin_momentum_features_from_series", category="order_flow")
 def compute_vpin_momentum_features_from_series(*, vpin: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for vpin_momentum (ma5 - ma20)."""
     df = pd.DataFrame({"vpin": vpin})
     return compute_vpin_momentum_features_from_base(df)
 
 
+@register_feature("compute_vpin_signed_zscore_features_from_base", category="order_flow")
 def compute_vpin_signed_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """vpin_signed_imbalance_zscore_20 / vpin_signed_imbalance_zscore_50."""
     out = pd.DataFrame(index=df.index)
@@ -1094,6 +1114,7 @@ def compute_vpin_signed_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFr
     return out
 
 
+@register_feature("compute_vpin_signed_zscore_features_from_series", category="order_flow")
 def compute_vpin_signed_zscore_features_from_series(
     *, vpin_signed_imbalance: pd.Series
 ) -> pd.DataFrame:
@@ -1107,16 +1128,19 @@ def compute_vpin_signed_zscore_features_from_series(
 # =============================================================================
 
 
+@register_feature("select_order_flow_features", category="order_flow")
 def select_order_flow_features(df: pd.DataFrame) -> pd.DataFrame:
     """Composite/pass-through node for order-flow feature DAG."""
     return df
 
 
+@register_feature("select_vpin_block_features", category="order_flow")
 def select_vpin_block_features(df: pd.DataFrame) -> pd.DataFrame:
     """Pass-through selector: output_columns in YAML will keep only vpin_* block."""
     return df
 
 
+@register_feature("select_trade_cluster_block_features", category="order_flow")
 def select_trade_cluster_block_features(df: pd.DataFrame) -> pd.DataFrame:
     """Pass-through selector: output_columns in YAML will keep only trade_cluster_* block."""
     return df
@@ -1142,6 +1166,7 @@ _VPIN_BASE_ALIGNED_OUTPUT_COLS: list[str] = [
 ]
 
 
+@register_feature("compute_vpin_base_aligned_features_from_series", category="order_flow")
 def compute_vpin_base_aligned_features_from_series(
     *,
     open: pd.Series,
@@ -1209,6 +1234,7 @@ _TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS: list[str] = [
 ]
 
 
+@register_feature("compute_trade_cluster_base_aligned_features_from_series", category="order_flow")
 def compute_trade_cluster_base_aligned_features_from_series(
     *,
     open: pd.Series,
@@ -1255,6 +1281,7 @@ def compute_trade_cluster_base_aligned_features_from_series(
     return result[_TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS]
 
 
+@register_feature("compute_trade_clustering_from_ticks", category="order_flow")
 def compute_trade_clustering_from_ticks(
     ticks: pd.DataFrame,
     window_size: int = 100,
@@ -1509,6 +1536,7 @@ def compute_trade_clustering_from_ticks(
     return cluster_df, final_state
 
 
+@register_feature("extract_trade_clustering_features", category="order_flow")
 def extract_trade_clustering_features(
     df: pd.DataFrame,
     ticks: Optional[pd.DataFrame] = None,
@@ -1951,6 +1979,7 @@ def extract_trade_clustering_features(
     return result
 
 
+@register_feature("compute_trade_cluster_derived_features_from_base", category="order_flow")
 def compute_trade_cluster_derived_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Compute all trade_cluster_* derived features from base-aligned columns (no ticks)."""
     out = pd.DataFrame(index=df.index)
@@ -1999,6 +2028,7 @@ def compute_trade_cluster_derived_features_from_base(df: pd.DataFrame) -> pd.Dat
     return out
 
 
+@register_feature("compute_trade_cluster_ratio_features_from_base", category="order_flow")
 def compute_trade_cluster_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Ratios/length aggregates derived from buy/sell runs."""
     out = pd.DataFrame(index=df.index)
@@ -2039,6 +2069,7 @@ def compute_trade_cluster_ratio_features_from_base(df: pd.DataFrame) -> pd.DataF
     return out
 
 
+@register_feature("compute_trade_cluster_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_ratio_features_from_series(
     *,
     trade_cluster_max_buy_run: pd.Series,
@@ -2061,6 +2092,7 @@ def compute_trade_cluster_ratio_features_from_series(
     return compute_trade_cluster_ratio_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_buy_sell_ratio_features_from_base", category="order_flow")
 def compute_trade_cluster_buy_sell_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """
     Split-out ratio-only block:
@@ -2099,6 +2131,7 @@ def compute_trade_cluster_buy_sell_ratio_features_from_base(df: pd.DataFrame) ->
     return out
 
 
+@register_feature("compute_trade_cluster_buy_sell_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_buy_sell_ratio_features_from_series(
     *,
     trade_cluster_max_buy_run: pd.Series,
@@ -2117,6 +2150,7 @@ def compute_trade_cluster_buy_sell_ratio_features_from_series(
     return compute_trade_cluster_buy_sell_ratio_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_max_run_ratio_features_from_base", category="order_flow")
 def compute_trade_cluster_max_run_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """max_run_ratio + max_run (no buy_sell_max_ratio)."""
     out = pd.DataFrame(index=df.index)
@@ -2130,6 +2164,7 @@ def compute_trade_cluster_max_run_ratio_features_from_base(df: pd.DataFrame) -> 
     return out
 
 
+@register_feature("compute_trade_cluster_max_run_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_max_run_ratio_features_from_series(
     *,
     trade_cluster_max_buy_run: pd.Series,
@@ -2144,6 +2179,7 @@ def compute_trade_cluster_max_run_ratio_features_from_series(
     return compute_trade_cluster_max_run_ratio_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_buy_sell_max_ratio_features_from_base", category="order_flow")
 def compute_trade_cluster_buy_sell_max_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """buy_sell_max_ratio only."""
     out = pd.DataFrame(index=df.index)
@@ -2157,6 +2193,7 @@ def compute_trade_cluster_buy_sell_max_ratio_features_from_base(df: pd.DataFrame
     return out
 
 
+@register_feature("compute_trade_cluster_buy_sell_max_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_buy_sell_max_ratio_features_from_series(
     *,
     trade_cluster_max_buy_run: pd.Series,
@@ -2171,6 +2208,7 @@ def compute_trade_cluster_buy_sell_max_ratio_features_from_series(
     return compute_trade_cluster_buy_sell_max_ratio_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_avg_run_ratio_features_from_base", category="order_flow")
 def compute_trade_cluster_avg_run_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """avg_run_ratio only."""
     out = pd.DataFrame(index=df.index)
@@ -2183,6 +2221,7 @@ def compute_trade_cluster_avg_run_ratio_features_from_base(df: pd.DataFrame) -> 
     return out
 
 
+@register_feature("compute_trade_cluster_avg_run_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_avg_run_ratio_features_from_series(
     *,
     trade_cluster_avg_buy_run: pd.Series,
@@ -2197,6 +2236,7 @@ def compute_trade_cluster_avg_run_ratio_features_from_series(
     return compute_trade_cluster_avg_run_ratio_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_buy_sell_avg_ratio_features_from_base", category="order_flow")
 def compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """buy_sell_avg_ratio only."""
     out = pd.DataFrame(index=df.index)
@@ -2210,6 +2250,7 @@ def compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df: pd.DataFrame
     return out
 
 
+@register_feature("compute_trade_cluster_buy_sell_avg_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_buy_sell_avg_ratio_features_from_series(
     *,
     trade_cluster_avg_buy_run: pd.Series,
@@ -2224,6 +2265,7 @@ def compute_trade_cluster_buy_sell_avg_ratio_features_from_series(
     return compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_run_length_features_from_base", category="order_flow")
 def compute_trade_cluster_run_length_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """
     Split-out length aggregates:
@@ -2250,6 +2292,7 @@ def compute_trade_cluster_run_length_features_from_base(df: pd.DataFrame) -> pd.
     return out
 
 
+@register_feature("compute_trade_cluster_run_length_features_from_series", category="order_flow")
 def compute_trade_cluster_run_length_features_from_series(
     *,
     trade_cluster_avg_buy_run: pd.Series,
@@ -2268,6 +2311,7 @@ def compute_trade_cluster_run_length_features_from_series(
     return compute_trade_cluster_run_length_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_netruns_features_from_base", category="order_flow")
 def compute_trade_cluster_netruns_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Net/total runs features."""
     out = pd.DataFrame(index=df.index)
@@ -2284,6 +2328,7 @@ def compute_trade_cluster_netruns_features_from_base(df: pd.DataFrame) -> pd.Dat
     return out
 
 
+@register_feature("compute_trade_cluster_net_runs_counts_features_from_base", category="order_flow")
 def compute_trade_cluster_net_runs_counts_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Atomic: net_runs + total_runs (no ratio)."""
     out = pd.DataFrame(index=df.index)
@@ -2294,6 +2339,7 @@ def compute_trade_cluster_net_runs_counts_features_from_base(df: pd.DataFrame) -
     return out
 
 
+@register_feature("compute_trade_cluster_net_runs_counts_features_from_series", category="order_flow")
 def compute_trade_cluster_net_runs_counts_features_from_series(
     *,
     trade_cluster_buy_run_count: pd.Series,
@@ -2308,6 +2354,7 @@ def compute_trade_cluster_net_runs_counts_features_from_series(
     return compute_trade_cluster_net_runs_counts_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_net_runs_ratio_features_from_counts", category="order_flow")
 def compute_trade_cluster_net_runs_ratio_features_from_counts(df: pd.DataFrame) -> pd.DataFrame:
     """Atomic: net_runs_ratio from (net_runs, total_runs)."""
     out = pd.DataFrame(index=df.index)
@@ -2317,6 +2364,7 @@ def compute_trade_cluster_net_runs_ratio_features_from_counts(df: pd.DataFrame) 
     return out
 
 
+@register_feature("compute_trade_cluster_net_runs_ratio_features_from_series", category="order_flow")
 def compute_trade_cluster_net_runs_ratio_features_from_series(
     *,
     trade_cluster_net_runs: pd.Series,
@@ -2331,6 +2379,7 @@ def compute_trade_cluster_net_runs_ratio_features_from_series(
     return compute_trade_cluster_net_runs_ratio_features_from_counts(df)
 
 
+@register_feature("compute_trade_cluster_entropy_features_from_base", category="order_flow")
 def compute_trade_cluster_entropy_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Entropy MA/change + zscores."""
     out = pd.DataFrame(index=df.index)
@@ -2351,6 +2400,7 @@ def compute_trade_cluster_entropy_features_from_base(df: pd.DataFrame) -> pd.Dat
     return out
 
 
+@register_feature("compute_trade_cluster_entropy_features_from_series", category="order_flow")
 def compute_trade_cluster_entropy_features_from_series(
     *, trade_cluster_directional_entropy: pd.Series
 ) -> pd.DataFrame:
@@ -2358,6 +2408,7 @@ def compute_trade_cluster_entropy_features_from_series(
     return compute_trade_cluster_entropy_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_entropy_ma_change_features_from_base", category="order_flow")
 def compute_trade_cluster_entropy_ma_change_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Entropy moving averages + change (no zscore)."""
     out = pd.DataFrame(index=df.index)
@@ -2371,6 +2422,7 @@ def compute_trade_cluster_entropy_ma_change_features_from_base(df: pd.DataFrame)
     return out
 
 
+@register_feature("compute_trade_cluster_entropy_ma_change_features_from_series", category="order_flow")
 def compute_trade_cluster_entropy_ma_change_features_from_series(
     *, trade_cluster_directional_entropy: pd.Series
 ) -> pd.DataFrame:
@@ -2378,6 +2430,7 @@ def compute_trade_cluster_entropy_ma_change_features_from_series(
     return compute_trade_cluster_entropy_ma_change_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_entropy_zscore_features_from_base", category="order_flow")
 def compute_trade_cluster_entropy_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Entropy zscore only (20/50)."""
     out = pd.DataFrame(index=df.index)
@@ -2396,6 +2449,7 @@ def compute_trade_cluster_entropy_zscore_features_from_base(df: pd.DataFrame) ->
     return out
 
 
+@register_feature("compute_trade_cluster_entropy_zscore_features_from_series", category="order_flow")
 def compute_trade_cluster_entropy_zscore_features_from_series(
     *, trade_cluster_directional_entropy: pd.Series
 ) -> pd.DataFrame:
@@ -2403,6 +2457,7 @@ def compute_trade_cluster_entropy_zscore_features_from_series(
     return compute_trade_cluster_entropy_zscore_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_rolling_ma_features_from_base", category="order_flow")
 def compute_trade_cluster_rolling_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Rolling MA features for selected trade_cluster series."""
     out = pd.DataFrame(index=df.index)
@@ -2426,6 +2481,7 @@ def compute_trade_cluster_rolling_ma_features_from_base(df: pd.DataFrame) -> pd.
     return out
 
 
+@register_feature("compute_trade_cluster_max_buy_run_ma_features_from_base", category="order_flow")
 def compute_trade_cluster_max_buy_run_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_max_buy_run" not in df.columns:
@@ -2437,6 +2493,7 @@ def compute_trade_cluster_max_buy_run_ma_features_from_base(df: pd.DataFrame) ->
     return out
 
 
+@register_feature("compute_trade_cluster_max_buy_run_ma_features_from_series", category="order_flow")
 def compute_trade_cluster_max_buy_run_ma_features_from_series(
     *, trade_cluster_max_buy_run: pd.Series
 ) -> pd.DataFrame:
@@ -2444,6 +2501,7 @@ def compute_trade_cluster_max_buy_run_ma_features_from_series(
     return compute_trade_cluster_max_buy_run_ma_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_imbalance_ratio_ma_features_from_base", category="order_flow")
 def compute_trade_cluster_imbalance_ratio_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_imbalance_ratio" not in df.columns:
@@ -2455,6 +2513,7 @@ def compute_trade_cluster_imbalance_ratio_ma_features_from_base(df: pd.DataFrame
     return out
 
 
+@register_feature("compute_trade_cluster_imbalance_ratio_ma_features_from_series", category="order_flow")
 def compute_trade_cluster_imbalance_ratio_ma_features_from_series(
     *, trade_cluster_imbalance_ratio: pd.Series
 ) -> pd.DataFrame:
@@ -2462,6 +2521,7 @@ def compute_trade_cluster_imbalance_ratio_ma_features_from_series(
     return compute_trade_cluster_imbalance_ratio_ma_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_net_runs_ma_features_from_base", category="order_flow")
 def compute_trade_cluster_net_runs_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_net_runs" not in df.columns:
@@ -2473,6 +2533,7 @@ def compute_trade_cluster_net_runs_ma_features_from_base(df: pd.DataFrame) -> pd
     return out
 
 
+@register_feature("compute_trade_cluster_net_runs_ma_features_from_series", category="order_flow")
 def compute_trade_cluster_net_runs_ma_features_from_series(
     *, trade_cluster_net_runs: pd.Series
 ) -> pd.DataFrame:
@@ -2480,6 +2541,7 @@ def compute_trade_cluster_net_runs_ma_features_from_series(
     return compute_trade_cluster_net_runs_ma_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_total_runs_ma_features_from_base", category="order_flow")
 def compute_trade_cluster_total_runs_ma_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_total_runs" not in df.columns:
@@ -2491,6 +2553,7 @@ def compute_trade_cluster_total_runs_ma_features_from_base(df: pd.DataFrame) -> 
     return out
 
 
+@register_feature("compute_trade_cluster_total_runs_ma_features_from_series", category="order_flow")
 def compute_trade_cluster_total_runs_ma_features_from_series(
     *, trade_cluster_total_runs: pd.Series
 ) -> pd.DataFrame:
@@ -2498,6 +2561,7 @@ def compute_trade_cluster_total_runs_ma_features_from_series(
     return compute_trade_cluster_total_runs_ma_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_zscore_features_from_base", category="order_flow")
 def compute_trade_cluster_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     """Z-score features for imbalance/net_runs/max_buy/max_sell."""
     out = pd.DataFrame(index=df.index)
@@ -2540,6 +2604,7 @@ def compute_trade_cluster_zscore_features_from_base(df: pd.DataFrame) -> pd.Data
     return out
 
 
+@register_feature("compute_trade_cluster_imbalance_zscore_features_from_base", category="order_flow")
 def compute_trade_cluster_imbalance_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_imbalance_ratio" not in df.columns:
@@ -2557,6 +2622,7 @@ def compute_trade_cluster_imbalance_zscore_features_from_base(df: pd.DataFrame) 
     return out
 
 
+@register_feature("compute_trade_cluster_imbalance_zscore_features_from_series", category="order_flow")
 def compute_trade_cluster_imbalance_zscore_features_from_series(
     *, trade_cluster_imbalance_ratio: pd.Series
 ) -> pd.DataFrame:
@@ -2564,6 +2630,7 @@ def compute_trade_cluster_imbalance_zscore_features_from_series(
     return compute_trade_cluster_imbalance_zscore_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_net_runs_zscore_features_from_base", category="order_flow")
 def compute_trade_cluster_net_runs_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_net_runs" not in df.columns:
@@ -2581,6 +2648,7 @@ def compute_trade_cluster_net_runs_zscore_features_from_base(df: pd.DataFrame) -
     return out
 
 
+@register_feature("compute_trade_cluster_net_runs_zscore_features_from_series", category="order_flow")
 def compute_trade_cluster_net_runs_zscore_features_from_series(
     *, trade_cluster_net_runs: pd.Series
 ) -> pd.DataFrame:
@@ -2588,6 +2656,7 @@ def compute_trade_cluster_net_runs_zscore_features_from_series(
     return compute_trade_cluster_net_runs_zscore_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_max_buy_run_zscore_features_from_base", category="order_flow")
 def compute_trade_cluster_max_buy_run_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_max_buy_run" not in df.columns:
@@ -2605,6 +2674,7 @@ def compute_trade_cluster_max_buy_run_zscore_features_from_base(df: pd.DataFrame
     return out
 
 
+@register_feature("compute_trade_cluster_max_buy_run_zscore_features_from_series", category="order_flow")
 def compute_trade_cluster_max_buy_run_zscore_features_from_series(
     *, trade_cluster_max_buy_run: pd.Series
 ) -> pd.DataFrame:
@@ -2612,6 +2682,7 @@ def compute_trade_cluster_max_buy_run_zscore_features_from_series(
     return compute_trade_cluster_max_buy_run_zscore_features_from_base(df)
 
 
+@register_feature("compute_trade_cluster_max_sell_run_zscore_features_from_base", category="order_flow")
 def compute_trade_cluster_max_sell_run_zscore_features_from_base(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_max_sell_run" not in df.columns:
@@ -2629,6 +2700,7 @@ def compute_trade_cluster_max_sell_run_zscore_features_from_base(df: pd.DataFram
     return out
 
 
+@register_feature("compute_trade_cluster_max_sell_run_zscore_features_from_series", category="order_flow")
 def compute_trade_cluster_max_sell_run_zscore_features_from_series(
     *, trade_cluster_max_sell_run: pd.Series
 ) -> pd.DataFrame:

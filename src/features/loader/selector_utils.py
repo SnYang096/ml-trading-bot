@@ -11,7 +11,10 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from src.features.registry import register_feature
 
+
+@register_feature("select_columns_from_series", category="selector")
 def select_columns_from_series(*, output_columns: Optional[list[str]] = None, **series_kwargs) -> pd.DataFrame:
     """
     Assemble a DataFrame from provided Series inputs.

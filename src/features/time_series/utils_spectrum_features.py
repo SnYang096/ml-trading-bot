@@ -27,6 +27,8 @@ import pandas as pd
 from typing import Dict, Optional, List
 from scipy import signal
 
+from src.features.registry import register_feature
+
 
 def compute_spectrum_features(
     signal: np.ndarray,
@@ -163,6 +165,7 @@ def compute_spectrum_features(
     }
 
 
+@register_feature("extract_spectrum_features_from_series", category="spectrum")
 def extract_spectrum_features_from_series(
     *,
     close: pd.Series,

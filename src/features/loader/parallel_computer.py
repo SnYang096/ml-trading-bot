@@ -25,7 +25,7 @@ try:
 except ImportError:
     PSUTIL_AVAILABLE = False
 
-from src.features.loader.feature_function_mapping import get_compute_func
+from src.features.registry import get_compute_func
 
 
 def analyze_dependency_levels(
@@ -107,7 +107,7 @@ def _build_call_args(
 
     # 处理 ticks_loader_json：如果函数需要 ticks 或 ticks_loader_json 参数
     import inspect
-    from src.features.loader.feature_function_mapping import get_compute_func
+    from src.features.registry import get_compute_func
     compute_func_name = feature_info.get("compute_func")
     compute_func = None
     func_sig = None
@@ -258,7 +258,7 @@ def _compute_single_feature_worker_monthly(
         (feature_name, result_df_bytes)
     """
     import pandas as pd
-    from src.features.loader.feature_function_mapping import get_compute_func
+    from src.features.registry import get_compute_func
     from pathlib import Path
     import hashlib
     

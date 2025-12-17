@@ -11,6 +11,8 @@ from typing import Dict, List, Optional
 import pandas as pd
 import talib
 
+from src.features.registry import register_feature
+
 
 def _prepare_inputs(
     df: Optional[pd.DataFrame], kwargs: Dict[str, object]
@@ -47,6 +49,7 @@ def _prepare_inputs(
     return processed, index
 
 
+@register_feature("compute_talib_indicator", category="talib")
 def compute_talib_indicator(
     df: pd.DataFrame,
     indicator_name: str,
@@ -95,6 +98,7 @@ def compute_talib_indicator(
     return result
 
 
+@register_feature("compute_talib_indicator_from_series", category="talib")
 def compute_talib_indicator_from_series(
     *,
     indicator_name: str,
@@ -120,6 +124,7 @@ def compute_talib_indicator_from_series(
     )
 
 
+@register_feature("compute_talib_sma", category="talib")
 def compute_talib_sma(
     df: pd.DataFrame,
     period: int = 20,
@@ -142,6 +147,7 @@ def compute_talib_sma(
     )
 
 
+@register_feature("compute_talib_ema", category="talib")
 def compute_talib_ema(
     df: pd.DataFrame,
     period: int = 20,
@@ -164,6 +170,7 @@ def compute_talib_ema(
     )
 
 
+@register_feature("compute_talib_rsi", category="talib")
 def compute_talib_rsi(
     df: pd.DataFrame,
     period: int = 14,
@@ -186,6 +193,7 @@ def compute_talib_rsi(
     )
 
 
+@register_feature("compute_talib_macd", category="talib")
 def compute_talib_macd(
     df: pd.DataFrame,
     fastperiod: int = 12,

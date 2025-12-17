@@ -75,9 +75,9 @@ def check_dtw_nan_reason():
 
     # 获取 ATR
     if "atr" not in df_features.columns:
-        from src.features.time_series.baseline_features import BaselineFeatureEngineer
+        from src.features.time_series.baseline_features import compute_atr
 
-        df_features["atr"] = BaselineFeatureEngineer.compute_atr(df_features["close"])
+        df_features["atr"] = compute_atr(df_features["close"])
 
     # 计算归一化的 SR 距离
     atr = df_features["atr"].fillna(df_features["atr"].median())

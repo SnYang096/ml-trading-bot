@@ -2,15 +2,23 @@ import numpy as np
 import pandas as pd
 
 from src.features.time_series.baseline_features import (
-    BaselineFeatureEngineer,
+    compute_acceleration_3,
     compute_acceleration_3_from_series,
+    compute_volume_anomaly,
     compute_volume_anomaly_from_series,
+    compute_trend_r2_20,
     compute_trend_r2_20_from_series,
+    compute_trend_r2_50,
     compute_trend_r2_50_from_series,
+    compute_slope_consistency_score,
     compute_slope_consistency_score_from_series,
+    compute_volatility_reversal_score,
     compute_volatility_reversal_score_from_series,
+    compute_atr_percentile,
     compute_atr_percentile_from_series,
+    compute_trend_volatility_alignment,
     compute_trend_volatility_alignment_from_series,
+    compute_compression_to_breakout_prob,
     compute_compression_to_breakout_prob_from_series,
     compute_roc_5_from_series,
 )
@@ -29,32 +37,32 @@ def test_remaining_baseline_series_entrypoints_match_df_versions():
     )
 
     # acceleration_3
-    df_a = BaselineFeatureEngineer.compute_acceleration_3(df.copy(), feature_shift=0)
+    df_a = compute_acceleration_3(df.copy(), feature_shift=0)
     s_a = compute_acceleration_3_from_series(close=close, feature_shift=0)[
         "acceleration_3"
     ]
     assert np.allclose(df_a["acceleration_3"].values, s_a.values, equal_nan=True)
 
     # volume_anomaly
-    df_v = BaselineFeatureEngineer.compute_volume_anomaly(df.copy())
+    df_v = compute_volume_anomaly(df.copy())
     s_v = compute_volume_anomaly_from_series(volume=volume)["volume_anomaly"]
     assert np.allclose(df_v["volume_anomaly"].values, s_v.values, equal_nan=True)
 
     # trend r2
-    df_r2_20 = BaselineFeatureEngineer.compute_trend_r2_20(df.copy(), feature_shift=0)
+    df_r2_20 = compute_trend_r2_20(df.copy(), feature_shift=0)
     s_r2_20 = compute_trend_r2_20_from_series(close=close, feature_shift=0)[
         "trend_r2_20"
     ]
     assert np.allclose(df_r2_20["trend_r2_20"].values, s_r2_20.values, equal_nan=True)
 
-    df_r2_50 = BaselineFeatureEngineer.compute_trend_r2_50(df.copy(), feature_shift=0)
+    df_r2_50 = compute_trend_r2_50(df.copy(), feature_shift=0)
     s_r2_50 = compute_trend_r2_50_from_series(close=close, feature_shift=0)[
         "trend_r2_50"
     ]
     assert np.allclose(df_r2_50["trend_r2_50"].values, s_r2_50.values, equal_nan=True)
 
     # slope consistency
-    df_sc = BaselineFeatureEngineer.compute_slope_consistency_score(df.copy())
+    df_sc = compute_slope_consistency_score(df.copy())
     s_sc = compute_slope_consistency_score_from_series(close=close)[
         "slope_consistency_score"
     ]
@@ -63,7 +71,7 @@ def test_remaining_baseline_series_entrypoints_match_df_versions():
     )
 
     # volatility reversal score
-    df_vrs = BaselineFeatureEngineer.compute_volatility_reversal_score(df.copy())
+    df_vrs = compute_volatility_reversal_score(df.copy())
     s_vrs = compute_volatility_reversal_score_from_series(
         high=high, low=low, close=close
     )["volatility_reversal_score"]
@@ -72,16 +80,14 @@ def test_remaining_baseline_series_entrypoints_match_df_versions():
     )
 
     # atr_percentile
-    df_ap = BaselineFeatureEngineer.compute_atr_percentile(
-        df.copy(), window=288, shift=1
-    )
+    df_ap = compute_atr_percentile(df.copy(), window=288, shift=1)
     s_ap = compute_atr_percentile_from_series(
         high=high, low=low, close=close, window=288, shift=1
     )["atr_percentile"]
     assert np.allclose(df_ap["atr_percentile"].values, s_ap.values, equal_nan=True)
 
     # trend_volatility_alignment (depends on roc_5 + atr_percentile internally)
-    df_tva = BaselineFeatureEngineer.compute_trend_volatility_alignment(
+    df_tva = compute_trend_volatility_alignment(
         df.copy(), feature_shift=0, atr_percentile_window=288
     )
     s_tva = compute_trend_volatility_alignment_from_series(
@@ -99,7 +105,7 @@ def test_remaining_baseline_series_entrypoints_match_df_versions():
     df_cb = pd.DataFrame(
         {"compression_duration": compression_duration, "roc_5": roc_5}, index=idx
     )
-    df_cb2 = BaselineFeatureEngineer.compute_compression_to_breakout_prob(df_cb.copy())
+    df_cb2 = compute_compression_to_breakout_prob(df_cb.copy())
     s_cb = compute_compression_to_breakout_prob_from_series(
         compression_duration=compression_duration, roc_5=roc_5
     )["compression_to_breakout_prob"]

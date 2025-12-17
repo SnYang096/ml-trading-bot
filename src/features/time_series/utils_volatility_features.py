@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Dict
 
+from src.features.registry import register_feature
+
 # 导入 Volume Profile 相关类型
 try:
     from scipy.stats import skew
@@ -36,6 +38,7 @@ from src.features.time_series.utils_volume_profile import (
 )
 
 
+@register_feature("extract_extended_volatility_features", category="volatility")
 def extract_extended_volatility_features(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -226,6 +229,7 @@ def _compute_vol_base(returns: pd.Series, window: int) -> pd.Series:
     return returns.rolling(window=window, min_periods=max(1, window // 2)).std()
 
 
+@register_feature("compute_vol_raw_features_from_series", category="volatility")
 def compute_vol_raw_features_from_series(
     *,
     close: pd.Series,
@@ -241,6 +245,7 @@ def compute_vol_raw_features_from_series(
     return out
 
 
+@register_feature("compute_vol_atr_features_from_series", category="volatility")
 def compute_vol_atr_features_from_series(
     *,
     close: pd.Series,
@@ -269,6 +274,7 @@ def compute_vol_atr_features_from_series(
     return out
 
 
+@register_feature("compute_vol_lag_features_from_series", category="volatility")
 def compute_vol_lag_features_from_series(
     *,
     close: pd.Series,
@@ -286,6 +292,7 @@ def compute_vol_lag_features_from_series(
     return out
 
 
+@register_feature("compute_vol_trend_features_from_series", category="volatility")
 def compute_vol_trend_features_from_series(
     *,
     close: pd.Series,
@@ -301,6 +308,7 @@ def compute_vol_trend_features_from_series(
     return out
 
 
+@register_feature("compute_vol_ma_features_from_series", category="volatility")
 def compute_vol_ma_features_from_series(
     *,
     close: pd.Series,
@@ -316,6 +324,7 @@ def compute_vol_ma_features_from_series(
     return out
 
 
+@register_feature("compute_vol_regime_features_from_series", category="volatility")
 def compute_vol_regime_features_from_series(
     *,
     close: pd.Series,
@@ -346,6 +355,7 @@ def compute_vol_regime_features_from_series(
     return out
 
 
+@register_feature("compute_vol_range_features_from_series", category="volatility")
 def compute_vol_range_features_from_series(
     *,
     close: pd.Series,
@@ -367,6 +377,7 @@ def compute_vol_range_features_from_series(
     return out
 
 
+@register_feature("compute_vol_mom_features_from_series", category="volatility")
 def compute_vol_mom_features_from_series(
     *,
     close: pd.Series,
@@ -381,6 +392,7 @@ def compute_vol_mom_features_from_series(
     return out
 
 
+@register_feature("select_extended_volatility_features", category="volatility")
 def select_extended_volatility_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Composite node for Feature DAG.
@@ -487,6 +499,7 @@ def extract_volatility_features_from_vp(
     }
 
 
+@register_feature("extract_volume_profile_volatility_features_from_series", category="volatility")
 def extract_volume_profile_volatility_features_from_series(
     *,
     close: pd.Series,

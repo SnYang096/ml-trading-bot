@@ -20,7 +20,10 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
+from src.features.registry import register_feature
 
+
+@register_feature("compute_liquidity_void_x_wpt_risk", category="interaction")
 def compute_liquidity_void_x_wpt_risk(
     df: pd.DataFrame,
     liquidity_void_col: str = "liquidity_void_detected",
@@ -42,6 +45,7 @@ def compute_liquidity_void_x_wpt_risk(
     return (state.fillna(0) * momentum.fillna(0)).rename("liquidity_void_x_wpt_risk")
 
 
+@register_feature("compute_liquidity_void_x_wpt_risk_from_series", category="interaction")
 def compute_liquidity_void_x_wpt_risk_from_series(
     *,
     liquidity_void_detected: pd.Series,
@@ -52,6 +56,7 @@ def compute_liquidity_void_x_wpt_risk_from_series(
     return (lv * risk).rename("liquidity_void_x_wpt_risk").to_frame()
 
 
+@register_feature("compute_liquidity_void_x_vpin_from_series", category="interaction")
 def compute_liquidity_void_x_vpin_from_series(
     *,
     liquidity_void_detected: pd.Series,
@@ -80,6 +85,7 @@ def compute_liquidity_void_x_vpin_from_series(
     return out.to_frame()
 
 
+@register_feature("compute_compression_energy_x_ofi_short", category="interaction")
 def compute_compression_energy_x_ofi_short(
     df: pd.DataFrame,
     compression_col: str = "compression_energy",
@@ -101,6 +107,7 @@ def compute_compression_energy_x_ofi_short(
     return (state.fillna(0) * momentum.fillna(0)).rename("compression_energy_x_ofi_short")
 
 
+@register_feature("compute_compression_energy_x_ofi_short_from_series", category="interaction")
 def compute_compression_energy_x_ofi_short_from_series(
     *,
     compression_energy: pd.Series,
@@ -111,6 +118,7 @@ def compute_compression_energy_x_ofi_short_from_series(
     return (ce * ofi).rename("compression_energy_x_ofi_short").to_frame()
 
 
+@register_feature("compute_hurst_x_trend_r2", category="interaction")
 def compute_hurst_x_trend_r2(
     df: pd.DataFrame,
     hurst_col: str = "hurst_close_rolling",
@@ -132,6 +140,7 @@ def compute_hurst_x_trend_r2(
     return (state.fillna(0.5) * momentum.fillna(0)).rename("hurst_x_trend_r2")
 
 
+@register_feature("compute_hurst_x_trend_r2_from_series", category="interaction")
 def compute_hurst_x_trend_r2_from_series(
     *,
     hurst_close_rolling: pd.Series,
@@ -142,6 +151,7 @@ def compute_hurst_x_trend_r2_from_series(
     return (h * r2).rename("hurst_x_trend_r2").to_frame()
 
 
+@register_feature("compute_evt_x_trend_r2", category="interaction")
 def compute_evt_x_trend_r2(
     df: pd.DataFrame,
     evt_col: str = "evt_tail_shape",
@@ -163,6 +173,7 @@ def compute_evt_x_trend_r2(
     return (state.fillna(0.3) * momentum.fillna(0)).rename("evt_x_trend_r2")
 
 
+@register_feature("compute_evt_x_trend_r2_from_series", category="interaction")
 def compute_evt_x_trend_r2_from_series(
     *,
     evt_tail_shape: pd.Series,
@@ -173,6 +184,7 @@ def compute_evt_x_trend_r2_from_series(
     return (evt * r2).rename("evt_x_trend_r2").to_frame()
 
 
+@register_feature("compute_vpin_x_compression", category="interaction")
 def compute_vpin_x_compression(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -194,6 +206,7 @@ def compute_vpin_x_compression(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_compression")
 
 
+@register_feature("compute_vpin_x_compression_from_series", category="interaction")
 def compute_vpin_x_compression_from_series(
     *,
     vpin: pd.Series,
@@ -204,6 +217,7 @@ def compute_vpin_x_compression_from_series(
     return (vp * ce).rename("vpin_x_compression").to_frame()
 
 
+@register_feature("compute_vpin_x_trade_cluster_max_buy_run", category="interaction")
 def compute_vpin_x_trade_cluster_max_buy_run(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -228,6 +242,7 @@ def compute_vpin_x_trade_cluster_max_buy_run(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_trade_cluster_max_buy_run")
 
 
+@register_feature("compute_vpin_x_trade_cluster_max_buy_run_from_series", category="interaction")
 def compute_vpin_x_trade_cluster_max_buy_run_from_series(
     *,
     vpin: pd.Series,
@@ -238,6 +253,7 @@ def compute_vpin_x_trade_cluster_max_buy_run_from_series(
     return (vp * run).rename("vpin_x_trade_cluster_max_buy_run").to_frame()
 
 
+@register_feature("compute_vpin_zscore_x_trade_cluster_max_buy_run", category="interaction")
 def compute_vpin_zscore_x_trade_cluster_max_buy_run(
     df: pd.DataFrame,
     vpin_zscore_col: str = "vpin_zscore_20",
@@ -262,6 +278,7 @@ def compute_vpin_zscore_x_trade_cluster_max_buy_run(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_zscore_x_trade_cluster_max_buy_run")
 
 
+@register_feature("compute_vpin_zscore_x_trade_cluster_max_buy_run_from_series", category="interaction")
 def compute_vpin_zscore_x_trade_cluster_max_buy_run_from_series(
     *,
     vpin_zscore_20: pd.Series,
@@ -272,6 +289,7 @@ def compute_vpin_zscore_x_trade_cluster_max_buy_run_from_series(
     return (vz * run).rename("vpin_zscore_x_trade_cluster_max_buy_run").to_frame()
 
 
+@register_feature("compute_vpin_signed_imbalance_x_trade_cluster_imbalance", category="interaction")
 def compute_vpin_signed_imbalance_x_trade_cluster_imbalance(
     df: pd.DataFrame,
     vpin_signed_col: str = "vpin_signed_imbalance",
@@ -296,6 +314,7 @@ def compute_vpin_signed_imbalance_x_trade_cluster_imbalance(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_signed_imbalance_x_trade_cluster_imbalance")
 
 
+@register_feature("compute_vpin_signed_imbalance_x_trade_cluster_imbalance_from_series", category="interaction")
 def compute_vpin_signed_imbalance_x_trade_cluster_imbalance_from_series(
     *,
     vpin_signed_imbalance: pd.Series,
@@ -306,6 +325,7 @@ def compute_vpin_signed_imbalance_x_trade_cluster_imbalance_from_series(
     return (vp * imb).rename("vpin_signed_imbalance_x_trade_cluster_imbalance").to_frame()
 
 
+@register_feature("compute_vpin_x_trade_cluster_entropy", category="interaction")
 def compute_vpin_x_trade_cluster_entropy(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -331,6 +351,7 @@ def compute_vpin_x_trade_cluster_entropy(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_trade_cluster_entropy")
 
 
+@register_feature("compute_vpin_x_trade_cluster_entropy_from_series", category="interaction")
 def compute_vpin_x_trade_cluster_entropy_from_series(
     *,
     vpin: pd.Series,
@@ -341,6 +362,7 @@ def compute_vpin_x_trade_cluster_entropy_from_series(
     return (vp * ent).rename("vpin_x_trade_cluster_entropy").to_frame()
 
 
+@register_feature("compute_sma_slope_x_price_pos", category="interaction")
 def compute_sma_slope_x_price_pos(
     df: pd.DataFrame,
     sma_slope_col: str = "sma_200_slope",
@@ -368,6 +390,7 @@ def compute_sma_slope_x_price_pos(
     return (state.fillna(0) * price_pos).rename("sma_slope_x_price_pos")
 
 
+@register_feature("compute_sma_slope_x_price_pos_from_series", category="interaction")
 def compute_sma_slope_x_price_pos_from_series(
     *,
     sma_200_slope: pd.Series,
@@ -381,6 +404,7 @@ def compute_sma_slope_x_price_pos_from_series(
     return (slope * price_pos).rename("sma_slope_x_price_pos").to_frame()
 
 
+@register_feature("compute_vpin_x_wick_upper", category="interaction")
 def compute_vpin_x_wick_upper(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -402,6 +426,7 @@ def compute_vpin_x_wick_upper(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_wick_upper")
 
 
+@register_feature("compute_vpin_x_wick_upper_from_series", category="interaction")
 def compute_vpin_x_wick_upper_from_series(
     *,
     vpin: pd.Series,
@@ -412,6 +437,7 @@ def compute_vpin_x_wick_upper_from_series(
     return (vp * wr).rename("vpin_x_wick_upper").to_frame()
 
 
+@register_feature("compute_vpin_x_wick_lower", category="interaction")
 def compute_vpin_x_wick_lower(
     df: pd.DataFrame,
     vpin_col: str = "vpin",
@@ -433,6 +459,7 @@ def compute_vpin_x_wick_lower(
     return (state.fillna(0) * momentum.fillna(0)).rename("vpin_x_wick_lower")
 
 
+@register_feature("compute_vpin_x_wick_lower_from_series", category="interaction")
 def compute_vpin_x_wick_lower_from_series(
     *,
     vpin: pd.Series,
@@ -443,6 +470,7 @@ def compute_vpin_x_wick_lower_from_series(
     return (vp * wr).rename("vpin_x_wick_lower").to_frame()
 
 
+@register_feature("apply_rank_transform_to_interaction", category="interaction")
 def apply_rank_transform_to_interaction(
     df: pd.DataFrame,
     interaction_col: str,
@@ -472,6 +500,7 @@ def apply_rank_transform_to_interaction(
     return rank_series.fillna(0.5).rename(f"{interaction_col}_rank")
 
 
+@register_feature("apply_rank_transform_to_interaction_from_series", category="interaction")
 def apply_rank_transform_to_interaction_from_series(
     *,
     interaction: pd.Series,
@@ -489,6 +518,7 @@ def apply_rank_transform_to_interaction_from_series(
 # 衍生特征（Derived Features）：单个特征的变换或两个特征的其他运算
 # ========================================================================
 
+@register_feature("compute_sr_strength_combined", category="derived")
 def compute_sr_strength_combined(
     df: pd.DataFrame,
     sqs_col: str = "sqs",
@@ -514,12 +544,14 @@ def compute_sr_strength_combined(
     return df[sqs_col].fillna(0.0).rename("sr_strength_combined")
 
 
+@register_feature("compute_sr_strength_combined_from_series", category="derived")
 def compute_sr_strength_combined_from_series(*, sqs: pd.Series) -> pd.DataFrame:
     """Narrow-IO entrypoint for sr_strength_combined."""
     s = pd.to_numeric(sqs, errors="coerce").fillna(0.0).astype(float)
     return s.rename("sr_strength_combined").to_frame()
 
 
+@register_feature("compute_sr_distance_normalized", category="derived")
 def compute_sr_distance_normalized(
     df: pd.DataFrame,
     dist_col: str = "dist_to_nearest_sr",
@@ -550,6 +582,7 @@ def compute_sr_distance_normalized(
     ).fillna(0.0).rename("sr_distance_normalized")
 
 
+@register_feature("compute_sr_distance_normalized_from_series", category="derived")
 def compute_sr_distance_normalized_from_series(
     *, dist_to_nearest_sr: pd.Series, atr: pd.Series
 ) -> pd.DataFrame:
@@ -560,6 +593,7 @@ def compute_sr_distance_normalized_from_series(
     return out.to_frame()
 
 
+@register_feature("compute_dist_to_zz_high", category="derived")
 def compute_dist_to_zz_high(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -590,6 +624,7 @@ def compute_dist_to_zz_high(
     ).fillna(0.0).rename("dist_to_zz_high")
 
 
+@register_feature("compute_dist_to_zz_high_from_series", category="derived")
 def compute_dist_to_zz_high_from_series(
     *, close: pd.Series, zz_high_value: pd.Series
 ) -> pd.DataFrame:
@@ -599,6 +634,7 @@ def compute_dist_to_zz_high_from_series(
     return (c - z).abs().fillna(0.0).rename("dist_to_zz_high").to_frame()
 
 
+@register_feature("compute_dist_to_zz_low", category="derived")
 def compute_dist_to_zz_low(
     df: pd.DataFrame,
     price_col: str = "close",
@@ -629,6 +665,7 @@ def compute_dist_to_zz_low(
     ).fillna(0.0).rename("dist_to_zz_low")
 
 
+@register_feature("compute_dist_to_zz_low_from_series", category="derived")
 def compute_dist_to_zz_low_from_series(
     *, close: pd.Series, zz_low_value: pd.Series
 ) -> pd.DataFrame:
@@ -638,6 +675,7 @@ def compute_dist_to_zz_low_from_series(
     return (c - z).abs().fillna(0.0).rename("dist_to_zz_low").to_frame()
 
 
+@register_feature("compute_dist_to_zz_high_atr", category="derived")
 def compute_dist_to_zz_high_atr(
     df: pd.DataFrame,
     dist_col: str = "dist_to_zz_high",
@@ -668,6 +706,7 @@ def compute_dist_to_zz_high_atr(
     ).fillna(0.0).rename("dist_to_zz_high_atr")
 
 
+@register_feature("compute_dist_to_zz_high_atr_from_series", category="derived")
 def compute_dist_to_zz_high_atr_from_series(
     *, dist_to_zz_high: pd.Series, atr: pd.Series
 ) -> pd.DataFrame:
@@ -677,6 +716,7 @@ def compute_dist_to_zz_high_atr_from_series(
     return (dist / atr_s).fillna(0.0).rename("dist_to_zz_high_atr").to_frame()
 
 
+@register_feature("compute_dist_to_zz_low_atr", category="derived")
 def compute_dist_to_zz_low_atr(
     df: pd.DataFrame,
     dist_col: str = "dist_to_zz_low",
@@ -707,6 +747,7 @@ def compute_dist_to_zz_low_atr(
     ).fillna(0.0).rename("dist_to_zz_low_atr")
 
 
+@register_feature("compute_dist_to_zz_low_atr_from_series", category="derived")
 def compute_dist_to_zz_low_atr_from_series(
     *, dist_to_zz_low: pd.Series, atr: pd.Series
 ) -> pd.DataFrame:
@@ -716,6 +757,7 @@ def compute_dist_to_zz_low_atr_from_series(
     return (dist / atr_s).fillna(0.0).rename("dist_to_zz_low_atr").to_frame()
 
 
+@register_feature("compute_cvd_slope", category="derived")
 def compute_cvd_slope(
     df: pd.DataFrame,
     cvd_col: str = "cvd",
@@ -759,6 +801,7 @@ def compute_cvd_slope(
     )
 
 
+@register_feature("compute_cvd_slope_from_series", category="derived")
 def compute_cvd_slope_from_series(*, cvd: pd.Series, window: int = 5) -> pd.DataFrame:
     """Narrow-IO entrypoint for cvd_slope_{window}."""
     s = pd.to_numeric(cvd, errors="coerce").astype(float)
@@ -781,6 +824,7 @@ def compute_cvd_slope_from_series(*, cvd: pd.Series, window: int = 5) -> pd.Data
     return out.to_frame()
 
 
+@register_feature("compute_atr_ratio", category="derived")
 def compute_atr_ratio(
     df: pd.DataFrame,
     atr_col: str = "atr",
@@ -811,6 +855,7 @@ def compute_atr_ratio(
     ).fillna(0.0).rename("atr_ratio")
 
 
+@register_feature("compute_atr_ratio_from_series", category="derived")
 def compute_atr_ratio_from_series(
     *,
     atr: pd.Series,
@@ -824,6 +869,7 @@ def compute_atr_ratio_from_series(
     )
 
 
+@register_feature("compute_bb_width_ratio", category="derived")
 def compute_bb_width_ratio(
     df: pd.DataFrame,
     bb_upper_col: str = "bb_upper",
@@ -858,6 +904,7 @@ def compute_bb_width_ratio(
     return bb_width.rename("bb_width_ratio")
 
 
+@register_feature("compute_bb_width_ratio_from_series", category="derived")
 def compute_bb_width_ratio_from_series(
     *,
     bb_upper: pd.Series,
@@ -872,6 +919,7 @@ def compute_bb_width_ratio_from_series(
     return out.replace([np.inf, -np.inf], np.nan).fillna(0.0).rename("bb_width_ratio")
 
 
+@register_feature("compute_compression_score", category="derived")
 def compute_compression_score(
     df: pd.DataFrame,
     bb_width_ratio_col: str = "bb_width_ratio",
@@ -908,6 +956,7 @@ def compute_compression_score(
     )
 
 
+@register_feature("compute_compression_score_from_series", category="derived")
 def compute_compression_score_from_series(*, bb_width_ratio: pd.Series) -> pd.Series:
     """Narrow-input compression_score: 1 / (1 + bb_width_ratio)."""
     bb_width_ratio = pd.to_numeric(bb_width_ratio, errors="coerce").astype(float)
@@ -915,6 +964,7 @@ def compute_compression_score_from_series(*, bb_width_ratio: pd.Series) -> pd.Se
     return out.replace([np.inf, -np.inf], np.nan).fillna(0.0).rename("compression_score")
 
 
+@register_feature("compute_tbr_ma", category="derived")
 def compute_tbr_ma(
     df: pd.DataFrame,
     tbr_col: str = "taker_buy_ratio",
@@ -944,6 +994,7 @@ def compute_tbr_ma(
     ).fillna(0.5).rename(f"tbr_ma_{window}")
 
 
+@register_feature("compute_tbr_ma_from_series", category="derived")
 def compute_tbr_ma_from_series(*, taker_buy_ratio: pd.Series, window: int = 5) -> pd.Series:
     """Narrow-input TBR moving average."""
     tbr = pd.to_numeric(taker_buy_ratio, errors="coerce").astype(float)
@@ -951,6 +1002,7 @@ def compute_tbr_ma_from_series(*, taker_buy_ratio: pd.Series, window: int = 5) -
     return out.replace([np.inf, -np.inf], np.nan).fillna(0.5).rename(f"tbr_ma_{window}")
 
 
+@register_feature("compute_tbr_spike", category="derived")
 def compute_tbr_spike(
     df: pd.DataFrame,
     tbr_col: str = "taker_buy_ratio",
@@ -988,6 +1040,7 @@ def compute_tbr_spike(
     return spike.rename("tbr_spike")
 
 
+@register_feature("compute_tbr_spike_from_series", category="derived")
 def compute_tbr_spike_from_series(
     *,
     taker_buy_ratio: pd.Series,

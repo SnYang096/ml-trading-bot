@@ -30,7 +30,10 @@ from src.features.loader.feature_wrappers import (
     compute_sqs_hal_high,
     compute_sqs_hal_low,
 )
-from src.features.time_series.baseline_features import BaselineFeatureEngineer
+from src.features.time_series.baseline_features import (
+    compute_atr,
+    add_poc_hal_dimensionless_features,
+)
 
 
 @pytest.fixture
@@ -173,7 +176,7 @@ class TestSRStrengthMaxDependencyFix:
         df = sample_data.copy()
 
         # 先计算边界列
-        df = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        df = add_poc_hal_dimensionless_features(
             df, required_features={"hal_high", "hal_low", "poc"}
         )
 
@@ -198,9 +201,7 @@ class TestSRStrengthMaxDependencyFix:
         df = sample_data.copy()
 
         # 只计算 hal_high
-        df = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
-            df, required_features={"hal_high"}
-        )
+        df = add_poc_hal_dimensionless_features(df, required_features={"hal_high"})
 
         # 确保 hal_low 和 poc 不存在
         if "hal_low" in df.columns:
@@ -241,10 +242,8 @@ class TestSRStrengthMaxDependencyFix:
         df = sample_data.copy()
 
         # 手动计算所有依赖
-        df["atr"] = BaselineFeatureEngineer.compute_atr(
-            df["high"], df["low"], df["close"], period=14
-        )
-        df = BaselineFeatureEngineer.add_poc_hal_dimensionless_features(
+        df["atr"] = compute_atr(df["high"], df["low"], df["close"], period=14)
+        df = add_poc_hal_dimensionless_features(
             df, required_features={"hal_high", "hal_low", "poc"}
         )
 
