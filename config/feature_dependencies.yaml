@@ -616,6 +616,7 @@ features:
       - liquidity_void_detected
       - liquidity_void_speed
       - liquidity_void_volume_ratio
+      - liquidity_void_price_impact
       - liquidity_void_retracement
       - liquidity_void_false_breakout_risk
     category: liquidity

@@ -4,6 +4,7 @@ from typing import Callable, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.signal import find_peaks
 from scipy.stats import iqr
 
 
@@ -19,6 +20,10 @@ class FootprintConfig:
     price_bin_target_bins: int = 40  # only used when price_bin_method == "fixed_bins"
     value_area_pct: float = 0.7
     tick_size: Optional[float] = None  # optional per-symbol tick size
+    lvn_min_prominence: float = (
+        0.15  # minimum prominence relative to mean volume for local minimum detection
+    )
+    lvn_min_distance: int = 2  # minimum distance between local minima
 
 
 def _auto_price_bin_size(prices: pd.Series, cfg: FootprintConfig) -> float:
@@ -103,6 +108,47 @@ def _value_area_bounds(
     bin_idx_min = min(selected_bins)
     bin_idx_max = max(selected_bins)
     return bin_edges[bin_idx_min], bin_edges[bin_idx_max + 1]
+
+
+def _find_lvn_local_minimum(total_vol: pd.Series, cfg: FootprintConfig) -> int:
+    """Find LVN as local minimum (valley) between high volume regions.
+
+    Uses scipy.signal.find_peaks to detect local minima in volume distribution.
+    If no local minima found, returns POC as fallback.
+    """
+    if len(total_vol) < 3:
+        # Too few bins, return POC
+        return int(total_vol.idxmax())
+
+    volumes = total_vol.values
+    mean_vol = volumes[volumes > 0].mean() if (volumes > 0).any() else volumes.mean()
+
+    if mean_vol <= 0:
+        # No valid volume, return POC
+        return int(total_vol.idxmax())
+
+    # Calculate prominence threshold
+    prominence = mean_vol * cfg.lvn_min_prominence
+
+    # Find local minima by finding peaks in -volumes
+    try:
+        peaks, properties = find_peaks(
+            -volumes,  # Negate to find minima
+            distance=cfg.lvn_min_distance,  # Minimum distance between peaks
+            prominence=prominence,  # Minimum prominence
+        )
+
+        if len(peaks) > 0:
+            # Select the deepest LVN (smallest volume)
+            peak_volumes = volumes[peaks]
+            deepest_idx = peaks[np.argmin(peak_volumes)]
+            return int(deepest_idx)
+    except Exception:
+        # If find_peaks fails, return POC
+        pass
+
+    # If no local minima found, return POC (not global minimum)
+    return int(total_vol.idxmax())
 
 
 def compute_kline_footprint_features(
@@ -205,9 +251,9 @@ def compute_kline_footprint_features(
 
         poc_bin = int(total_vol.idxmax())
         hvn_bin = poc_bin  # align with POC as the highest volume node
-        # LVN: smallest positive volume bin
-        positive_bins = total_vol[total_vol > 0]
-        lvn_bin = int(positive_bins.idxmin()) if not positive_bins.empty else poc_bin
+
+        # LVN: use local_min method (only method supported now)
+        lvn_bin = _find_lvn_local_minimum(total_vol, cfg)
 
         poc_price = (bin_edges[poc_bin] + bin_edges[poc_bin + 1]) / 2
         hvn_price = (bin_edges[hvn_bin] + bin_edges[hvn_bin + 1]) / 2
