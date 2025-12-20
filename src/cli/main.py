@@ -25,6 +25,7 @@ import click
 # Project root detection
 # =============================================================================
 
+
 def get_project_root() -> Path:
     """Get the project root directory."""
     # Try to find project root by looking for setup.py or pyproject.toml
@@ -39,28 +40,76 @@ def get_project_root() -> Path:
 PROJECT_ROOT = get_project_root()
 
 
+def _is_in_docker() -> bool:
+    """Check if running inside a Docker container."""
+    # Check multiple indicators
+    if os.path.exists("/.dockerenv"):
+        return True
+    if os.environ.get("DEV_CONTAINER") == "1":
+        return True
+    if os.environ.get("DOCKER_CONTAINER") == "1":
+        return True
+    # Check if /workspace exists (typical Docker mount point in our setup)
+    if os.path.exists("/workspace") and os.path.isdir("/workspace"):
+        # Additional check: if we're in /workspace and it's a mount point
+        try:
+            import stat
+
+            workspace_stat = os.stat("/workspace")
+            # If /workspace is a mount point, we're likely in Docker
+            if os.path.exists("/proc/mounts"):
+                with open("/proc/mounts", "r") as f:
+                    mounts = f.read()
+                    if "/workspace" in mounts:
+                        return True
+        except (IOError, OSError):
+            pass
+    # Check cgroup (may not exist in all environments)
+    try:
+        if os.path.exists("/proc/self/cgroup"):
+            with open("/proc/self/cgroup", "r") as f:
+                content = f.read()
+                if "docker" in content or "containerd" in content:
+                    return True
+    except (IOError, OSError):
+        pass
+    return False
+
+
 def run_python_module(module: str, args: List[str], docker: bool = False, **kwargs):
     """Run a Python module with optional Docker wrapper."""
-    if docker and not os.environ.get("DEV_CONTAINER"):
+    if docker and not _is_in_docker():
         # Build Docker command
-        docker_image = os.environ.get("DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7")
+        docker_image = os.environ.get(
+            "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7"
+        )
         cmd = [
-            "docker", "run", "--rm", "-it",
-            "--gpus", "all",
-            "-e", "PYTHONPATH=/workspace/src",
-            "-e", "PYTHONUNBUFFERED=1",
-            "-v", f"{PROJECT_ROOT}:/workspace",
-            "-w", "/workspace",
+            "docker",
+            "run",
+            "--rm",
+            "-it",
+            "--gpus",
+            "all",
+            "-e",
+            "PYTHONPATH=/workspace/src",
+            "-e",
+            "PYTHONUNBUFFERED=1",
+            "-v",
+            f"{PROJECT_ROOT}:/workspace",
+            "-w",
+            "/workspace",
             "--shm-size=8gb",
             docker_image,
-            "python3", "-m", module,
+            "python3",
+            "-m",
+            module,
         ] + args
     else:
         cmd = [sys.executable, "-m", module] + args
-    
+
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
-    
+
     click.echo(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT), **kwargs)
     return result.returncode
@@ -68,25 +117,36 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
 
 def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs):
     """Run a Python script with optional Docker wrapper."""
-    if docker and not os.environ.get("DEV_CONTAINER"):
-        docker_image = os.environ.get("DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7")
+    if docker and not _is_in_docker():
+        docker_image = os.environ.get(
+            "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7"
+        )
         cmd = [
-            "docker", "run", "--rm", "-it",
-            "--gpus", "all",
-            "-e", "PYTHONPATH=/workspace:/workspace/src",
-            "-e", "PYTHONUNBUFFERED=1",
-            "-v", f"{PROJECT_ROOT}:/workspace",
-            "-w", "/workspace",
+            "docker",
+            "run",
+            "--rm",
+            "-it",
+            "--gpus",
+            "all",
+            "-e",
+            "PYTHONPATH=/workspace:/workspace/src",
+            "-e",
+            "PYTHONUNBUFFERED=1",
+            "-v",
+            f"{PROJECT_ROOT}:/workspace",
+            "-w",
+            "/workspace",
             "--shm-size=8gb",
             docker_image,
-            "python3", f"/workspace/{script_path}",
+            "python3",
+            f"/workspace/{script_path}",
         ] + args
     else:
         cmd = [sys.executable, str(PROJECT_ROOT / script_path)] + args
-    
+
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
-    
+
     click.echo(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT), **kwargs)
     return result.returncode
@@ -95,6 +155,7 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
 # =============================================================================
 # Main CLI Group
 # =============================================================================
+
 
 @click.group()
 @click.version_option(version="0.0.2", prog_name="mlbot")
@@ -107,6 +168,7 @@ def cli():
 # Features Commands
 # =============================================================================
 
+
 @cli.group()
 def features():
     """Feature registry management commands."""
@@ -114,11 +176,18 @@ def features():
 
 
 @features.command("list")
-@click.option("--all", "-a", "show_all", is_flag=True, help="Show all features with details")
+@click.option(
+    "--all", "-a", "show_all", is_flag=True, help="Show all features with details"
+)
 @click.option("--category", "-c", help="Filter by category (e.g., baseline, orderflow)")
 @click.option("--search", "-s", help="Search for features by name")
 @click.option("--module", "-m", help="Filter by module path")
-def features_list(show_all: bool, category: Optional[str], search: Optional[str], module: Optional[str]):
+def features_list(
+    show_all: bool,
+    category: Optional[str],
+    search: Optional[str],
+    module: Optional[str],
+):
     """List all registered feature functions."""
     args = []
     if show_all:
@@ -129,7 +198,7 @@ def features_list(show_all: bool, category: Optional[str], search: Optional[str]
         args.extend(["--search", search])
     if module:
         args.extend(["--module", module])
-    
+
     sys.exit(run_script("scripts/list_features.py", args))
 
 
@@ -145,6 +214,7 @@ def features_count():
 # Data Commands
 # =============================================================================
 
+
 @cli.group()
 def data():
     """Data download and conversion commands."""
@@ -152,32 +222,47 @@ def data():
 
 
 @data.command("download")
-@click.option("--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols")
+@click.option(
+    "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
+)
 @click.option("--start-year", default="2023", help="Start year")
 @click.option("--start-month", default="1", help="Start month")
 @click.option("--end-year", help="End year (default: current)")
 @click.option("--end-month", help="End month (default: current)")
-@click.option("--data-dir", default="data/agg_data", help="Output directory for ZIP files")
-@click.option("--parquet-dir", default="data/parquet_data", help="Output directory for Parquet")
-def data_download(symbols, start_year, start_month, end_year, end_month, data_dir, parquet_dir):
+@click.option(
+    "--data-dir", default="data/agg_data", help="Output directory for ZIP files"
+)
+@click.option(
+    "--parquet-dir", default="data/parquet_data", help="Output directory for Parquet"
+)
+def data_download(
+    symbols, start_year, start_month, end_year, end_month, data_dir, parquet_dir
+):
     """Download Binance monthly aggTrades data."""
     args = [
-        "--data-dir", data_dir,
-        "--parquet-dir", parquet_dir,
-        "--symbols", *symbols.split(","),
-        "--start-year", start_year,
-        "--start-month", start_month,
+        "--data-dir",
+        data_dir,
+        "--parquet-dir",
+        parquet_dir,
+        "--symbols",
+        *symbols.split(","),
+        "--start-year",
+        start_year,
+        "--start-month",
+        start_month,
     ]
     if end_year:
         args.extend(["--end-year", end_year])
     if end_month:
         args.extend(["--end-month", end_month])
-    
+
     sys.exit(run_script("src/data_tools/download_training_data.py", args))
 
 
 @data.command("convert")
-@click.option("--cleanup/--no-cleanup", default=True, help="Clean up ZIP files after conversion")
+@click.option(
+    "--cleanup/--no-cleanup", default=True, help="Clean up ZIP files after conversion"
+)
 def data_convert(cleanup):
     """Convert downloaded ZIPs to Parquet format."""
     args = ["--cleanup", "yes" if cleanup else "no"]
@@ -185,7 +270,9 @@ def data_convert(cleanup):
 
 
 @data.command("pipeline")
-@click.option("--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols")
+@click.option(
+    "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
+)
 @click.pass_context
 def data_pipeline(ctx, symbols):
     """Download and convert data (full pipeline)."""
@@ -197,6 +284,7 @@ def data_pipeline(ctx, symbols):
 # Train Commands
 # =============================================================================
 
+
 @cli.group()
 def train():
     """Model training commands."""
@@ -205,21 +293,38 @@ def train():
 
 @train.command("sr-reversal")
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
-@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 15T, 60T, 240T)")
-@click.option("--config", "-c", default="config/strategies/sr_reversal", help="Strategy config path")
+@click.option(
+    "--timeframe", "-t", default="240T", help="Timeframe (e.g., 15T, 60T, 240T)"
+)
+@click.option(
+    "--config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config path",
+)
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
-@click.option("--output-root", default="results/strategies/sr_reversal", help="Output directory")
+@click.option(
+    "--output-root", default="results/strategies/sr_reversal", help="Output directory"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def train_sr_reversal(symbol, timeframe, config, data_path, test_size, output_root, docker):
+def train_sr_reversal(
+    symbol, timeframe, config, data_path, test_size, output_root, docker
+):
     """Train SR Reversal model."""
     args = [
-        "--config", f"/workspace/{config}" if docker else config,
-        "--data-path", f"/workspace/{data_path}" if docker else data_path,
-        "--symbol", symbol,
-        "--timeframe", timeframe,
-        "--test-size", test_size,
-        "--output-root", f"/workspace/{output_root}" if docker else output_root,
+        "--config",
+        f"/workspace/{config}" if docker else config,
+        "--data-path",
+        f"/workspace/{data_path}" if docker else data_path,
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--test-size",
+        test_size,
+        "--output-root",
+        f"/workspace/{output_root}" if docker else output_root,
     ]
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
@@ -261,23 +366,42 @@ def train_sr_reversal_short(ctx, symbol, timeframe, docker):
 @train.command("rolling")
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
 @click.option("--timeframe", "-t", default="15T", help="Timeframe")
-@click.option("--config", "-c", default="config/strategies/sr_reversal", help="Strategy config")
+@click.option(
+    "--config", "-c", default="config/strategies/sr_reversal", help="Strategy config"
+)
 @click.option("--initial-train-months", default="3", help="Initial training months")
 @click.option("--min-train-months", default="3", help="Minimum training months")
 @click.option("--start", help="Rolling start date (YYYY-MM-DD)")
 @click.option("--end", help="Rolling end date (YYYY-MM-DD)")
 @click.option("--update-only", is_flag=True, help="Only update existing models")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def train_rolling(symbol, timeframe, config, initial_train_months, min_train_months, start, end, update_only, docker):
+def train_rolling(
+    symbol,
+    timeframe,
+    config,
+    initial_train_months,
+    min_train_months,
+    start,
+    end,
+    update_only,
+    docker,
+):
     """Rolling window training (expanding window)."""
     args = [
-        "--config", f"/workspace/{config}" if docker else config,
-        "--symbol", symbol,
-        "--data-dir", "/workspace/data/parquet_data" if docker else "data/parquet_data",
-        "--timeframe", timeframe,
-        "--initial-train-months", initial_train_months,
-        "--min-train-months", min_train_months,
-        "--output-root", "/workspace/results/rolling" if docker else "results/rolling",
+        "--config",
+        f"/workspace/{config}" if docker else config,
+        "--symbol",
+        symbol,
+        "--data-dir",
+        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "--timeframe",
+        timeframe,
+        "--initial-train-months",
+        initial_train_months,
+        "--min-train-months",
+        min_train_months,
+        "--output-root",
+        "/workspace/results/rolling" if docker else "results/rolling",
     ]
     if start:
         args.extend(["--start", start])
@@ -285,13 +409,20 @@ def train_rolling(symbol, timeframe, config, initial_train_months, min_train_mon
         args.extend(["--end", end])
     if update_only:
         args.append("--update-only")
-    
-    sys.exit(run_script("src/time_series_model/pipeline/rolling/rolling_train.py", args, docker=docker))
+
+    sys.exit(
+        run_script(
+            "src/time_series_model/pipeline/rolling/rolling_train.py",
+            args,
+            docker=docker,
+        )
+    )
 
 
 # =============================================================================
 # Test Commands
 # =============================================================================
+
 
 @cli.group()
 def test():
@@ -309,7 +440,7 @@ def test_unit(verbose, pattern):
         args.append("-v")
     if pattern:
         args.extend(["-k", pattern])
-    
+
     sys.exit(run_python_module("pytest", args))
 
 
@@ -324,7 +455,7 @@ def test_integration(verbose, fast, docker):
         args.append("-v")
     if fast:
         args.extend(["-m", "not slow"])
-    
+
     sys.exit(run_python_module("pytest", args, docker=docker))
 
 
@@ -335,13 +466,14 @@ def test_all(verbose):
     args = ["tests/"]
     if verbose:
         args.append("-v")
-    
+
     sys.exit(run_python_module("pytest", args))
 
 
 # =============================================================================
 # Dev Commands
 # =============================================================================
+
 
 @cli.group()
 def dev():
@@ -360,7 +492,13 @@ def dev_install():
 @dev.command("format")
 def dev_format():
     """Format code with black."""
-    dirs = ["src/time_series_model/", "src/cross_sectional/", "src/data_tools/", "tests/", "scripts/"]
+    dirs = [
+        "src/time_series_model/",
+        "src/cross_sectional/",
+        "src/data_tools/",
+        "tests/",
+        "scripts/",
+    ]
     cmd = [sys.executable, "-m", "black"] + dirs
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     sys.exit(result.returncode)
@@ -369,7 +507,13 @@ def dev_format():
 @dev.command("lint")
 def dev_lint():
     """Lint code with flake8."""
-    dirs = ["src/time_series_model/", "src/cross_sectional/", "src/data_tools/", "tests/", "scripts/"]
+    dirs = [
+        "src/time_series_model/",
+        "src/cross_sectional/",
+        "src/data_tools/",
+        "tests/",
+        "scripts/",
+    ]
     cmd = [sys.executable, "-m", "flake8"] + dirs
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     sys.exit(result.returncode)
@@ -379,26 +523,27 @@ def dev_lint():
 def dev_clean():
     """Clean build artifacts."""
     import shutil
-    
+
     dirs_to_remove = ["build/", "dist/", "*.egg-info/"]
     for d in dirs_to_remove:
         for path in PROJECT_ROOT.glob(d):
             if path.is_dir():
                 shutil.rmtree(path)
                 click.echo(f"Removed: {path}")
-    
+
     # Remove __pycache__ and .pyc files
     for pycache in PROJECT_ROOT.rglob("__pycache__"):
         shutil.rmtree(pycache)
     for pyc in PROJECT_ROOT.rglob("*.pyc"):
         pyc.unlink()
-    
+
     click.echo("✅ Cleaned build artifacts")
 
 
 # =============================================================================
 # Docker Commands
 # =============================================================================
+
 
 @cli.group()
 def docker():
@@ -409,13 +554,22 @@ def docker():
 @docker.command("shell")
 def docker_shell():
     """Open interactive shell in Docker container."""
-    docker_image = os.environ.get("DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7")
+    docker_image = os.environ.get(
+        "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7"
+    )
     cmd = [
-        "docker", "run", "--rm", "-it",
-        "--gpus", "all",
-        "-e", "PYTHONPATH=/workspace/src",
-        "-v", f"{PROJECT_ROOT}:/workspace",
-        "-w", "/workspace",
+        "docker",
+        "run",
+        "--rm",
+        "-it",
+        "--gpus",
+        "all",
+        "-e",
+        "PYTHONPATH=/workspace/src",
+        "-v",
+        f"{PROJECT_ROOT}:/workspace",
+        "-w",
+        "/workspace",
         "--shm-size=8gb",
         docker_image,
         "bash",
@@ -430,7 +584,16 @@ def docker_build():
     """Build Docker image."""
     script = PROJECT_ROOT / "docker" / "build-gpu.sh"
     if script.exists():
-        cmd = ["bash", str(script), "-n", "hansenlovefiona017/lightgbm-runtime", "-t", "v0.0.7", "--no-proxy", "--no-ssh"]
+        cmd = [
+            "bash",
+            str(script),
+            "-n",
+            "hansenlovefiona017/lightgbm-runtime",
+            "-t",
+            "v0.0.7",
+            "--no-proxy",
+            "--no-ssh",
+        ]
         result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
         sys.exit(result.returncode)
     else:
@@ -441,6 +604,7 @@ def docker_build():
 # =============================================================================
 # Analysis Commands
 # =============================================================================
+
 
 @cli.group()
 def analyze():
@@ -455,52 +619,173 @@ def analyze():
 @click.option("--feature-types", default="baseline", help="Feature types to evaluate")
 @click.option("--start-date", help="Start date")
 @click.option("--end-date", help="End date")
-@click.option("--output-dir", default="results/feature_evaluation", help="Output directory")
+@click.option(
+    "--output-dir", default="results/feature_evaluation", help="Output directory"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def analyze_feature_eval(symbol, timeframe, horizon, feature_types, start_date, end_date, output_dir, docker):
+def analyze_feature_eval(
+    symbol, timeframe, horizon, feature_types, start_date, end_date, output_dir, docker
+):
     """Feature type evaluation (IC ranking + top factors)."""
     args = [
-        "--data-path", "/workspace/data/parquet_data" if docker else "data/parquet_data",
-        "--symbol", symbol,
-        "--timeframe", timeframe,
-        "--horizon", horizon,
-        "--feature-types", feature_types,
-        "--output-dir", f"/workspace/{output_dir}" if docker else output_dir,
+        "--data-path",
+        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--horizon",
+        horizon,
+        "--feature-types",
+        feature_types,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
     ]
     if start_date:
         args.extend(["--train-start", start_date])
     if end_date:
         args.extend(["--train-end", end_date])
-    
-    sys.exit(run_python_module("time_series_model.pipeline.training.feature_type_evaluator", args, docker=docker))
+
+    sys.exit(
+        run_python_module(
+            "time_series_model.pipeline.training.feature_type_evaluator",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@analyze.command("factor-eval")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal_long",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option(
+    "--factors",
+    multiple=True,
+    help="Factor columns to evaluate (can specify multiple times). If not specified, uses requested_features from strategy config",
+)
+@click.option("--start-date", help="Start date")
+@click.option("--end-date", help="End date")
+@click.option(
+    "--quantile", type=float, default=0.2, help="Top/Bottom quantile for evaluation"
+)
+@click.option(
+    "--feature-mode",
+    type=click.Choice(["strategy", "only", "append"]),
+    default="strategy",
+    help="How to handle feature pipeline",
+)
+@click.option(
+    "--ic-decay-lags",
+    default="1,3,5,10,20",
+    help="Comma-separated forward bars for IC decay analysis",
+)
+@click.option("--output-dir", default="results/factor_ts_eval", help="Output directory")
+@click.option(
+    "--open-browser",
+    is_flag=True,
+    default=False,
+    help="Automatically open HTML report in browser",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def analyze_factor_eval(
+    strategy_config,
+    symbol,
+    timeframe,
+    factors,
+    start_date,
+    end_date,
+    quantile,
+    feature_mode,
+    ic_decay_lags,
+    output_dir,
+    open_browser,
+    docker,
+):
+    """Time-series factor IC / win-rate evaluation (single asset)."""
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "--timeframe",
+        timeframe,
+        "--quantile",
+        str(quantile),
+        "--feature-mode",
+        feature_mode,
+        "--ic-decay-lags",
+        ic_decay_lags,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+    if factors:
+        args.extend(["--factors"] + list(factors))
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if open_browser:
+        args.append("--open-browser")
+
+    # When running inside Docker (via Makefile), docker=False
+    # When running locally, docker=True will spawn Docker container
+    # The Makefile handles Docker setup, so we just run the module directly
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.factor_ts_eval",
+            args,
+            docker=False,  # Makefile already runs us in Docker, don't nest
+        )
+    )
 
 
 @analyze.command("dim-compare")
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
 @click.option("--timeframe", "-t", default="15T", help="Timeframe")
-@click.option("--config", "-c", default="config/strategies/sr_reversal", help="Strategy config")
+@click.option(
+    "--config", "-c", default="config/strategies/sr_reversal", help="Strategy config"
+)
 @click.option("--start-date", help="Start date")
 @click.option("--end-date", help="End date")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def analyze_dim_compare(symbol, timeframe, config, start_date, end_date, docker):
     """Dimensionality comparison & feature selection."""
     args = [
-        "--config", f"/workspace/{config}" if docker else config,
-        "--symbol", symbol,
-        "--data-path", "/workspace/data/parquet_data" if docker else "data/parquet_data",
-        "--timeframe", timeframe,
+        "--config",
+        f"/workspace/{config}" if docker else config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "--timeframe",
+        timeframe,
     ]
     if start_date:
         args.extend(["--train-start", start_date])
     if end_date:
         args.extend(["--train-end", end_date])
-    
-    sys.exit(run_python_module("src.time_series_model.pipeline.dimensionality.dimensionality_comparison", args, docker=docker))
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.pipeline.dimensionality.dimensionality_comparison",
+            args,
+            docker=docker,
+        )
+    )
 
 
 # =============================================================================
 # Entry Point
 # =============================================================================
+
 
 def main():
     """Main entry point."""
@@ -509,4 +794,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

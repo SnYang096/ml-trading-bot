@@ -20,14 +20,8 @@ feature_pipeline:
     - acceleration_3
     - macd
     - dl_sequence_features
-  post_processors:
-    - module: src.time_series_model.strategies.sr_reversal.features
-      function: build_sr_reversal_features
-      params: {}
-  selector:
-    module: src.time_series_model.strategies.sr_reversal.features
-    function: select_sr_reversal_features
-    params: {}
+  # 注意：post_processors 和 selector 已移除，特征选择通过 YAML 中的精确特征定义完成
+  # 所有特征通过统一的 feature_dependencies.yaml 加载，不需要策略特定的处理函数
   ensure_signal_column:
     name: signal
     default_value: 0

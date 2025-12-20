@@ -395,6 +395,51 @@ class TestLiquidityFeatures:
                             f"平均差异: {mean_diff:.8f}"
                         )
 
+    def test_wpt_breakout_confidence_range(self):
+        """
+        测试修复：wpt_breakout_confidence 应该在 [0, 1] 范围内
+
+        Bug修复：添加 np.clip 确保值不会超出 [0, 1] 范围
+        """
+        df = create_mock_data(n_samples=150, seed=42)
+
+        result = compute_wpt_volume_energy_features(
+            df[["close", "volume"]].copy(),
+            price_col="close",
+            volume_col="volume",
+            wavelet="db2",
+            level=2,
+            lookback_window=20,
+        )
+
+        # 检查 breakout_confidence 是否在 [0, 1] 范围内
+        confidence = result["wpt_breakout_confidence"].dropna()
+        if len(confidence) > 0:
+            assert (
+                confidence.min() >= 0.0
+            ), f"wpt_breakout_confidence 应该 >= 0，最小值: {confidence.min()}"
+            assert (
+                confidence.max() <= 1.0
+            ), f"wpt_breakout_confidence 应该 <= 1，最大值: {confidence.max()}"
+
+        # 测试 narrow-IO 版本
+        narrow_result = compute_wpt_volume_energy_features_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            wavelet="db2",
+            level=2,
+            lookback_window=20,
+        )
+
+        narrow_confidence = narrow_result["wpt_breakout_confidence"].dropna()
+        if len(narrow_confidence) > 0:
+            assert (
+                narrow_confidence.min() >= 0.0
+            ), f"narrow IO wpt_breakout_confidence 应该 >= 0，最小值: {narrow_confidence.min()}"
+            assert (
+                narrow_confidence.max() <= 1.0
+            ), f"narrow IO wpt_breakout_confidence 应该 <= 1，最大值: {narrow_confidence.max()}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

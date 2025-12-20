@@ -1,100 +1,31 @@
 name: sr_reversal
-description: >
-  SR reversal strategy feature pipeline. Focuses on SR strength, liquidity
+description: 'SR reversal strategy feature pipeline. Focuses on SR strength, liquidity
   confirmation, and volatility state using WPT/VPRR/Hilbert derived signals.
 
+  '
 feature_pipeline:
   requested_features:
-    # 基础 SR 特征
-    - sr_strength_max
-    - sqs_hal_high
-    - sqs_hal_low
-    - rsi
-    # WPT 特征（多尺度 SR 结构）
-    - wpt_price_reconstructed  # 包含: wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed
-    - wpt_price_fluctuation    # 包含: wpt_price_energy_low_ratio, wpt_price_energy_mid_ratio, wpt_price_energy_high_ratio
-    - wpt_cvd_fluctuation      # CVD 波动（资金流去趋势）
-    # Hilbert 特征（临时全部移除以排查 inf）
-    # - hilbert_phase
-    # - hilbert_price_env
-    # - hilbert_cvd_env
-    # - hilbert_cvd_price_env_ratio
-    # - hilbert_volume_env
-    # - hilbert_env_price_vol_ratio
-    # - hilbert_triple_divergence
-    # - hilbert_price_env_qnorm
-    # - hilbert_cvd_env_qnorm
-    # Hurst 特征（趋势持续性）
-    - hurst_price
-    - hurst_cvd  # CVD 资金流的持续性（识别反转信号）
-    # VPVR 特征（空间域：流动性聚集区）— 临时移除以排查 inf
-    # - volume_profile_vpvr
-    # 单根K线 Footprint 特征（POC/HVN/LVN/VAH/VAL + delta/imbalance/skew/exhaustion/divergence）
-    # - footprint_basic
-    # 订单流特征（VPIN）- 包含多维统计特征（关键改进：保留峰值信号）
-    # 新增多维特征（自动包含，无需单独添加）：
-    # - vpin: 均值（整体不平衡度，向后兼容）
-    # - vpin_max: 峰值（捕捉极端知情交易，避免峰值被稀释，关键！）
-    # - vpin_last: 最新值（反映最新情绪）
-    # - vpin_min: 最小值
-    # - vpin_std: 标准差（衡量VPIN在K线内的波动性）
-    # - vpin_count: 事件数（代理流动性，区分突发事件vs持续活跃）
-    # - vpin_signed_imbalance_last/max: Signed imbalance 最新值和峰值
-    # 推荐组合：vpin + vpin_max（峰值信号）+ vpin_last（最新情绪）+ vpin_count（流动性）
-    # - vpin_features
-    # GARCH 特征（波动聚集性和杠杆效应）- 波动率预测关键特征
-    # 临时移除存在 inf 的波动率特征（排查用）
-    # - garch_features
-    # 扩展波动率特征（历史波动率、滞后特征、趋势特征）- 提高波动率预测准确性
-    # - extended_volatility_features
-    # 频谱特征（精确选择）- 作为"环境传感器"，动态激活反转信号
-    # 核心逻辑：频谱 ≠ 直接信号，而是"市场可交易性诊断器"
-    # 
-    # 使用方式（参考文档）：
-    # 1. Spectral Flatness ↑ + Spectral Entropy ↑ + 价格近 S/R → 增强反转信号
-    # 2. 在震荡市（高 flatness ≈ 白噪声），价格更可能均值回归
-    # 3. 反转策略天然适合高熵环境（高 entropy → 市场随机，反转胜率↑）
-    # 
-    # 注意：阈值由 LightGBM 模型自动学习，不需要硬编码
-    # 上述阈值说明仅用于理解特征含义，实际使用中模型会根据数据自动学习最优阈值
-    # - spectrum_features_sr_reversal  # 精确选择：flatness, entropy
-    # DTW 形态匹配特征（改进版：多窗口、反向模板、距离归一化）
-    # 专注于反转形态：锤子线、头肩底/顶、双底/顶、吞没形态
-    # 只包含反转形态及其反向模板，用于对比学习
-    # - dtw_features_reversal
-    # EVT 极值理论特征（尾部风险预警）- 用于风险管理/仓位控制，不用于波动率预测
-    # 临时移除 inf 的 EVT 特征（排查用）
-    # - evt_features
-    # 交互特征（状态 × 动量）
-    # - vpin_x_wick_upper        # VPIN × 上影线（SR 反转专用）
-    # - vpin_x_wick_lower        # VPIN × 下影线（SR 反转专用）
-    # - vpin_x_wick_upper_rank   # Rank transform 版本
-    # - vpin_x_wick_lower_rank   # Rank transform 版本
-    # - evt_x_trend_r2  # EVT × 趋势强度（反转信号确认）
-    # VPIN × Trade Clustering 交叉特征（SR 反转策略）
-    # - vpin_signed_imbalance_x_trade_cluster_imbalance  # 方向一致性（反转信号确认）
-    # - vpin_x_trade_cluster_entropy  # VPIN × 方向熵（识别混乱 vs 有序的反转）
-    # 通用组合特征（衍生特征）- 按需选择
-    # - sr_strength_combined  # 需要 sqs 列，暂时注释
-    # 注意：以下特征需要依赖其他特征，暂时注释掉避免依赖错误
-    # - sr_distance_normalized  # 需要 dist_to_nearest_sr
-    # - dist_to_zz_high  # 需要 zz_high_value
-    # - dist_to_zz_low  # 需要 zz_low_value
-    # - dist_to_zz_high_atr  # 需要 dist_to_zz_high
-    # - dist_to_zz_low_atr  # 需要 dist_to_zz_low
-    - cvd_slope_5
-    - atr_ratio
-    # - bb_width_ratio  # 需要 bb_upper, bb_lower, bb_middle
-    # - compression_score  # 需要 bb_width_ratio
-    - tbr_ma_5
-    - tbr_spike
-  # 注意：post_processors 和 selector 已移除，特征选择通过 YAML 中的精确特征定义完成
-  # 所有特征通过统一的 feature_dependencies.yaml 加载，不需要策略特定的处理函数
+  - sr_strength_max_f
+  - sqs_hal_high_f
+  - sqs_hal_low_f
+  - rsi_f
+  - wpt_price_reconstructed_f
+  - wpt_price_fluctuation_f
+  - wpt_cvd_fluctuation_f
+  - hilbert_advanced_f
+  - hurst_price_rolling
+  - hurst_cvd_rolling
+  - cvd_slope_5_f
+  - atr_ratio_f
+  - tbr_ma_5_f
+  - tbr_spike_f
   ensure_signal_column:
     name: signal
     default_value: 0
-  notes: |
-    1. 强调 WPT 低频 POC 与 SR 结构
+  notes: '1. 强调 WPT 低频 POC 与 SR 结构
+
     2. 结合 Hilbert + CVD 做流动性确认
+
     3. 通过 ZigZag/SQS/VPVR 建立 SR 反转上下文
 
+    '

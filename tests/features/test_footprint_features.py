@@ -107,3 +107,55 @@ def test_exhaustion_and_divergence_signals():
     assert res["fp_exhaustion_zscore"].iloc[0] > 1.0  # noticeable spike
     # Divergence flagged (price up, delta_poc negative)
     assert res["fp_delta_divergence"].iloc[0] == 1.0
+
+
+def test_value_area_bounds_fixed_logic():
+    """
+    测试修复后的 Value Area 计算逻辑
+
+    修复前的问题：cum <= value_area_pct 会漏掉刚好超过阈值的 bin
+    修复后：使用 np.searchsorted 正确包含达到阈值的 bin
+    """
+    from src.features.time_series.utils_footprint import _value_area_bounds
+
+    # 创建测试数据：3个 bins，成交量分别为 5, 3, 2（总计10）
+    # 70% 应该是 7，应该包含前两个 bins（5+3=8 >= 7）
+    volume_by_bin = pd.Series({0: 5, 1: 3, 2: 2})
+    bin_edges = np.array([100.0, 100.1, 100.2, 100.3])
+
+    vah, val = _value_area_bounds(
+        volume_by_bin, value_area_pct=0.7, bin_edges=bin_edges
+    )
+
+    # 应该包含前两个 bins（索引 0 和 1）
+    # bin 0: [100.0, 100.1), bin 1: [100.1, 100.2)
+    # VAH 应该是 bin_edges[0] = 100.0
+    # VAL 应该是 bin_edges[2] = 100.2（bin 1 的结束边界）
+    assert vah == 100.0, f"VAH should be 100.0, got {vah}"
+    assert val == 100.2, f"VAL should be 100.2, got {val}"
+
+    # 测试边界情况：70% 应该刚好包含第一个 bin（5 < 7，但包含它以达到至少 POC）
+    vah2, val2 = _value_area_bounds(
+        volume_by_bin, value_area_pct=0.5, bin_edges=bin_edges
+    )
+    # 5 < 5.0 (50% of 10)，但至少应该包含 POC（第一个 bin）
+    assert vah2 == 100.0
+    assert val2 >= 100.1  # 至少包含一个 bin
+
+
+def test_value_area_bounds_edge_cases():
+    """测试 Value Area 边界情况"""
+    from src.features.time_series.utils_footprint import _value_area_bounds
+
+    # 测试空数据
+    empty_vol = pd.Series(dtype=float)
+    bin_edges = np.array([100.0, 100.1, 100.2])
+    vah, val = _value_area_bounds(empty_vol, value_area_pct=0.7, bin_edges=bin_edges)
+    assert np.isnan(vah) and np.isnan(val)
+
+    # 测试单个 bin
+    single_bin = pd.Series({0: 10})
+    bin_edges = np.array([100.0, 100.1])
+    vah, val = _value_area_bounds(single_bin, value_area_pct=0.7, bin_edges=bin_edges)
+    assert vah == 100.0
+    assert val == 100.1

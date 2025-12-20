@@ -31,10 +31,11 @@ from .utils_volume_profile import compute_wpt_volume_profile
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """计算相对强弱指数 (RSI)."""
     series = pd.to_numeric(series, errors="coerce").astype(float)
-    
+
     # 监控：检查输入数据质量
     try:
         from src.features.utils.data_monitor import check_data_quality
+
         check_data_quality(
             pd.DataFrame({"price": series}),
             data_source="RSI_CALC",
@@ -43,7 +44,7 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
         )
     except Exception:
         pass
-    
+
     # 检查输入数据：如果包含 inf/NaN 或全为 0，可能导致 RSI 计算异常
     if series.isna().all() or (series == 0).all():
         return pd.Series(np.nan, index=series.index)
@@ -105,6 +106,19 @@ def compute_atr(
     return pd.Series(atr_values, index=high.index)
 
 
+@register_feature("compute_atr_from_series", category="baseline")
+def compute_atr_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    period: int = 14,
+) -> pd.DataFrame:
+    """Narrow-IO ATR (Average True Range)."""
+    atr = compute_atr(high, low, close, period)
+    return atr.rename("atr").to_frame()
+
+
 @register_feature("compute_zigzag", category="baseline")
 def compute_zigzag(
     high: pd.Series,
@@ -115,7 +129,7 @@ def compute_zigzag(
 ) -> pd.Series | Tuple[pd.Series, pd.Series, pd.Series]:
     """
     计算ZigZag指标（优化版：可同时计算高点和低点）
-    
+
     ✅ 建议：使用 WPT 中高频重构价格（price_col）而非原始价格
     这样可以保留关键拐点，同时去除毛刺噪声。
 
@@ -152,7 +166,7 @@ def compute_zigzag(
         # 使用原始价格
         price_series = None
         last_pivot = high.iloc[0]
-    
+
     trend = None
     try:
         for i in range(1, len(high)):
@@ -165,7 +179,7 @@ def compute_zigzag(
                 # 使用原始价格
                 current_high = high.iloc[i]
                 current_low = low.iloc[i]
-            
+
             if trend is None:
                 if current_high >= last_pivot * (1 + threshold):
                     trend = "up"
@@ -311,7 +325,7 @@ def calculate_sqs(
                 ref_vols = window_df.iloc[pos - volume_lookback : pos]["volume"]
             else:
                 # 数据不足：使用可用数据（至少1根，但不包含当前K线）
-                ref_vols = window_df.iloc[:max(1, pos)]["volume"]
+                ref_vols = window_df.iloc[: max(1, pos)]["volume"]
 
             # 清理 ref_vols 中的 inf/NaN 值，避免影响 avg_vol 计算
             ref_vols_clean = ref_vols.replace([np.inf, -np.inf], np.nan).dropna()
@@ -321,12 +335,12 @@ def calculate_sqs(
                     avg_vol = 1.0
             else:
                 avg_vol = 1.0
-            
+
             current_vol = window_df.loc[idx, "volume"]  # 当前K线成交量（可以使用）
             # 清理 current_vol 中的 inf/NaN 值
             if not np.isfinite(current_vol) or current_vol < 0:
                 current_vol = 0.0
-            
+
             EPS = 1e-10
             vol_ratio = current_vol / (avg_vol + EPS) if avg_vol > 0 else 1.0
             # 确保 vol_ratio 是有限值
@@ -352,7 +366,9 @@ def calculate_sqs(
                         # 使用平方根加权，避免极端值影响过大
                         # 确保 current_atr 是有限正数（前面已检查，这里再次确认）
                         if np.isfinite(current_atr) and current_atr > 0:
-                            weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
+                            weighted_reaction = (reaction / current_atr) * np.sqrt(
+                                vol_factor
+                            )
                             if np.isfinite(weighted_reaction):
                                 reactions.append(weighted_reaction)
                 else:
@@ -372,7 +388,9 @@ def calculate_sqs(
                         # 使用平方根加权，避免极端值影响过大
                         # 确保 current_atr 是有限正数（前面已检查，这里再次确认）
                         if np.isfinite(current_atr) and current_atr > 0:
-                            weighted_reaction = (reaction / current_atr) * np.sqrt(vol_factor)
+                            weighted_reaction = (reaction / current_atr) * np.sqrt(
+                                vol_factor
+                            )
                             if np.isfinite(weighted_reaction):
                                 reactions.append(weighted_reaction)
                 else:
@@ -529,9 +547,7 @@ def calculate_volume_price_confirmation(
                 break
 
     # 综合评分：成交量确认权重 0.6，站稳确认权重 0.4
-    score = 0.6 * (1.0 if vol_confirmed else 0.0) + 0.4 * (
-        1.0 if confirmed else 0.0
-    )
+    score = 0.6 * (1.0 if vol_confirmed else 0.0) + 0.4 * (1.0 if confirmed else 0.0)
 
     return score
 
@@ -749,7 +765,7 @@ def _compute_boundary_strengths(
 ) -> Dict[str, pd.Series]:
     """
     计算每个边界的 SQS 强度，并考虑边界重合与压缩质量
-    
+
     对于 mid 类型的边界（如 poc, ols_mid, vwap），不仅输出加权平均的 base，
     还输出原始分量和上下文特征，让模型学习交互关系：
     - {name}_support_sqs: 支撑方向的 SQS
@@ -778,7 +794,7 @@ def _compute_boundary_strengths(
         sr_type = boundary["type"]
         sr_series = sr_values[name]
         strength = pd.Series(0.0, index=data.index, dtype=float)
-        
+
         # 对于 mid 类型，初始化额外的特征序列
         if sr_type == "mid":
             support_sqs_series = pd.Series(0.0, index=data.index, dtype=float)
@@ -802,14 +818,12 @@ def _compute_boundary_strengths(
                 # 因为它们既可能是支撑也可能是阻力，取决于价格相对位置
                 if sr_type == "mid":
                     # 使用双向测试，自动识别当前市场角色
-                    level_quality = (
-                        evaluate_level_quality_bidirectional(
-                            sr_price,
-                            window_slice,
-                            window=window,
-                            tolerance_factor=tolerance_factor,
-                            use_volume_confirmation=True,
-                        )
+                    level_quality = evaluate_level_quality_bidirectional(
+                        sr_price,
+                        window_slice,
+                        window=window,
+                        tolerance_factor=tolerance_factor,
+                        use_volume_confirmation=True,
                     )
                     # 【关键修复】：对于 mid 类型，使用 support_sqs 和 resistance_sqs 的加权平均
                     # 而不是只选择较大的那个，避免偏向某一方向
@@ -818,12 +832,12 @@ def _compute_boundary_strengths(
                     # - 价格在边界下方且向上走 → 边界作为阻力 → resistance 权重更高
                     support_sqs_val = level_quality.get("support_sqs", 0.0)
                     resistance_sqs_val = level_quality.get("resistance_sqs", 0.0)
-                    
+
                     # 判断价格位置和趋势
                     current_price = data["close"].iloc[i]
                     if not pd.isna(current_price) and not pd.isna(sr_price):
                         price_above = current_price > sr_price
-                        
+
                         # 计算价格趋势（使用最近几根K线的平均变化）
                         lookback_trend = 3  # 使用最近3根K线判断趋势
                         if i >= lookback_trend:
@@ -836,13 +850,17 @@ def _compute_boundary_strengths(
                                     # 如果起始价格接近 0，使用 pct_change 方法
                                     price_trend = recent_prices.pct_change().mean()
                                 else:
-                                    price_trend = (recent_prices.iloc[-1] - recent_prices.iloc[0]) / (start_price + EPS)
+                                    price_trend = (
+                                        recent_prices.iloc[-1] - recent_prices.iloc[0]
+                                    ) / (start_price + EPS)
                                 # 检查结果是否有效
                                 if not np.isfinite(price_trend):
                                     price_trend = 0.0
-                                    print(f"   ⚠️  price_trend is inf/NaN at index {i}, start_price={start_price}")
+                                    print(
+                                        f"   ⚠️  price_trend is inf/NaN at index {i}, start_price={start_price}"
+                                    )
                                 # price_trend > 0 表示上涨，< 0 表示下跌
-                                
+
                                 # 动态权重分配：
                                 # 1. 价格在边界上方且向下走 → 边界作为支撑 → support 权重更高
                                 # 2. 价格在边界下方且向上走 → 边界作为阻力 → resistance 权重更高
@@ -876,12 +894,12 @@ def _compute_boundary_strengths(
                             else:
                                 weight_support = 0.4
                                 weight_resistance = 0.6
-                        
+
                         base = (
                             support_sqs_val * weight_support
                             + resistance_sqs_val * weight_resistance
                         )
-                        
+
                         # 【增强方案】：不仅输出加权平均的 base，还输出原始分量和上下文特征
                         # 让模型自己学习交互关系，而不是依赖预定义的权重
                         support_sqs_series.iloc[i] = support_sqs_val
@@ -921,10 +939,7 @@ def _compute_boundary_strengths(
                     if other["name"] == name:
                         continue
                     other_val = sr_values[other["name"]].iloc[i]
-                    if (
-                        pd.notna(other_val)
-                        and abs(other_val - sr_price) <= tolerance
-                    ):
+                    if pd.notna(other_val) and abs(other_val - sr_price) <= tolerance:
                         cluster_bonus += cluster_weight
 
             compression_bonus = (
@@ -935,14 +950,22 @@ def _compute_boundary_strengths(
 
         # 对于 mid 类型，不仅输出加权平均的 base，还输出原始分量和上下文特征
         if sr_type == "mid":
-            strengths[f"sqs_{name}"] = strength.shift(1).fillna(0.0)  # 保留加权平均的 base
+            strengths[f"sqs_{name}"] = strength.shift(1).fillna(
+                0.0
+            )  # 保留加权平均的 base
             # 输出原始分量和上下文特征，让模型学习交互关系
             strengths[f"{name}_support_sqs"] = support_sqs_series.shift(1).fillna(0.0)
-            strengths[f"{name}_resistance_sqs"] = resistance_sqs_series.shift(1).fillna(0.0)
+            strengths[f"{name}_resistance_sqs"] = resistance_sqs_series.shift(1).fillna(
+                0.0
+            )
             strengths[f"{name}_price_above"] = price_above_series.shift(1).fillna(0.0)
             strengths[f"{name}_trend_down"] = trend_down_series.shift(1).fillna(0.0)
-            strengths[f"{name}_weight_support"] = weight_support_series.shift(1).fillna(0.5)
-            strengths[f"{name}_weight_resistance"] = weight_resistance_series.shift(1).fillna(0.5)
+            strengths[f"{name}_weight_support"] = weight_support_series.shift(1).fillna(
+                0.5
+            )
+            strengths[f"{name}_weight_resistance"] = weight_resistance_series.shift(
+                1
+            ).fillna(0.5)
         else:
             strengths[f"sqs_{name}"] = strength.shift(1).fillna(0.0)
 
@@ -958,63 +981,67 @@ def _compute_breakout_confirmation_and_role_flip(
 ) -> Dict[str, pd.Series]:
     """
     计算突破确认和角色转换特征
-    
+
     包括：
     1. 突破确认概率：基于量价关系判断真伪突破
     2. 角色转换概率：支撑/阻力角色转换的概率
     3. 转换状态显式标记：post_breakout_retest, post_breakdown_retest 等
-    
+
     这些特征帮助模型理解"同一个位置，在不同市场环境下会扮演完全相反的角色"
     """
     if "atr" not in data.columns or not boundaries:
         return {}
-    
+
     features: Dict[str, pd.Series] = {}
     atr_series = data["atr"].ffill()
-    
+
     for boundary in boundaries:
         name = boundary["name"]
         column = boundary["column"]
         sr_type = boundary["type"]
         sr_series = data[column]
-        
+
         # 初始化特征序列
         breakout_confirmation = pd.Series(0.0, index=data.index, dtype=float)
         role_flip_prob = pd.Series(0.0, index=data.index, dtype=float)
         post_breakout_retest = pd.Series(0.0, index=data.index, dtype=float)
         post_breakdown_retest = pd.Series(0.0, index=data.index, dtype=float)
-        
+
         # 记录最近的突破事件（用于检测回踩）
         last_breakout_idx = -1
         last_breakout_direction = 0  # 1=向上突破, -1=向下突破
         last_breakout_price = np.nan
-        
+
         for i in range(lookback + confirmation_bars + max_retest_bars, len(data)):
             sr_price = sr_series.iloc[i]
             if pd.isna(sr_price):
                 continue
-            
+
             current_price = data["close"].iloc[i]
             current_high = data["high"].iloc[i]
             current_low = data["low"].iloc[i]
             current_volume = data["volume"].iloc[i]
-            
+
             # 计算 ATR 用于归一化
             current_atr = atr_series.iloc[i] if not pd.isna(atr_series.iloc[i]) else 1.0
-            
+
             # 1. 检测突破（使用历史数据）
             breakout_idx = i - confirmation_bars - max_retest_bars
             if breakout_idx >= 0:
-                prev_close = data["close"].iloc[breakout_idx - 1] if breakout_idx > 0 else current_price
+                prev_close = (
+                    data["close"].iloc[breakout_idx - 1]
+                    if breakout_idx > 0
+                    else current_price
+                )
                 breakout_close = data["close"].iloc[breakout_idx]
                 breakout_high = data["high"].iloc[breakout_idx]
                 breakout_low = data["low"].iloc[breakout_idx]
                 breakout_volume = data["volume"].iloc[breakout_idx]
-                
+
                 # 检测突破方向
                 detected_breakout = False
                 breakout_direction = 0
-                
+
                 if sr_type == "resistance":
                     if prev_close <= sr_price and breakout_high > sr_price:
                         detected_breakout = True
@@ -1024,98 +1051,149 @@ def _compute_breakout_confirmation_and_role_flip(
                         detected_breakout = True
                         breakout_direction = -1
                 elif sr_type == "mid":
-                    if (prev_close <= sr_price and breakout_close > sr_price) or \
-                       (prev_close >= sr_price and breakout_close < sr_price):
+                    if (prev_close <= sr_price and breakout_close > sr_price) or (
+                        prev_close >= sr_price and breakout_close < sr_price
+                    ):
                         detected_breakout = True
                         breakout_direction = 1 if breakout_close > sr_price else -1
-                
+
                 if detected_breakout:
                     last_breakout_idx = breakout_idx
                     last_breakout_direction = breakout_direction
                     last_breakout_price = sr_price
-                    
+
                     # 计算突破确认概率（基于量价关系）
                     # 使用历史数据计算平均成交量
                     if breakout_idx >= lookback:
-                        avg_vol = data["volume"].iloc[breakout_idx - lookback : breakout_idx].mean()
+                        avg_vol = (
+                            data["volume"]
+                            .iloc[breakout_idx - lookback : breakout_idx]
+                            .mean()
+                        )
                     else:
-                        avg_vol = data["volume"].iloc[:breakout_idx].mean() if breakout_idx > 0 else 1.0
-                    
+                        avg_vol = (
+                            data["volume"].iloc[:breakout_idx].mean()
+                            if breakout_idx > 0
+                            else 1.0
+                        )
+
                     volume_ratio = breakout_volume / avg_vol if avg_vol > 0 else 1.0
-                    
+
                     # 突破幅度（归一化）
-                    breakout_size = abs(breakout_close - sr_price) / current_atr if current_atr > 0 else 0.0
-                    
+                    breakout_size = (
+                        abs(breakout_close - sr_price) / current_atr
+                        if current_atr > 0
+                        else 0.0
+                    )
+
                     # 突破后回踩速度（在 confirmation_bars 内是否回踩）
                     retrace_speed = 0.0
                     if breakout_idx + confirmation_bars < i:
-                        post_breakout_slice = data.iloc[breakout_idx + 1 : breakout_idx + 1 + confirmation_bars]
+                        post_breakout_slice = data.iloc[
+                            breakout_idx + 1 : breakout_idx + 1 + confirmation_bars
+                        ]
                         if len(post_breakout_slice) > 0:
                             if breakout_direction == 1:  # 向上突破
                                 min_after = post_breakout_slice["low"].min()
-                                retrace_pct = (sr_price - min_after) / current_atr if current_atr > 0 else 0.0
-                                retrace_speed = max(0.0, retrace_pct)  # 回踩越深，速度越快
+                                retrace_pct = (
+                                    (sr_price - min_after) / current_atr
+                                    if current_atr > 0
+                                    else 0.0
+                                )
+                                retrace_speed = max(
+                                    0.0, retrace_pct
+                                )  # 回踩越深，速度越快
                             else:  # 向下突破
                                 max_after = post_breakout_slice["high"].max()
-                                retrace_pct = (max_after - sr_price) / current_atr if current_atr > 0 else 0.0
+                                retrace_pct = (
+                                    (max_after - sr_price) / current_atr
+                                    if current_atr > 0
+                                    else 0.0
+                                )
                                 retrace_speed = max(0.0, retrace_pct)
-                    
+
                     # 突破确认概率 = sigmoid(量能验证 * 0.5 + 突破幅度 * 0.3 - 回踩速度 * 0.2)
                     import math
+
                     confirmation_score = (
-                        min(volume_ratio, 3.0) * 0.5 +
-                        min(breakout_size, 2.0) * 0.3 -
-                        min(retrace_speed, 1.5) * 0.2
+                        min(volume_ratio, 3.0) * 0.5
+                        + min(breakout_size, 2.0) * 0.3
+                        - min(retrace_speed, 1.5) * 0.2
                     )
-                    breakout_confirmation.iloc[i] = 1.0 / (1.0 + math.exp(-confirmation_score))  # Sigmoid
-            
+                    breakout_confirmation.iloc[i] = 1.0 / (
+                        1.0 + math.exp(-confirmation_score)
+                    )  # Sigmoid
+
             # 2. 检测回踩（突破后回踩原边界）
             if last_breakout_idx >= 0 and i > last_breakout_idx:
                 # 检查是否回踩到原边界附近（在 ATR 范围内）
                 tolerance = current_atr * 0.5
                 near_original_sr = abs(current_price - last_breakout_price) <= tolerance
-                
+
                 if last_breakout_direction == 1:  # 向上突破后回踩
-                    if near_original_sr and current_low <= last_breakout_price + tolerance:
+                    if (
+                        near_original_sr
+                        and current_low <= last_breakout_price + tolerance
+                    ):
                         post_breakout_retest.iloc[i] = 1.0
                 elif last_breakout_direction == -1:  # 向下突破后回踩
-                    if near_original_sr and current_high >= last_breakout_price - tolerance:
+                    if (
+                        near_original_sr
+                        and current_high >= last_breakout_price - tolerance
+                    ):
                         post_breakdown_retest.iloc[i] = 1.0
-            
+
             # 3. 计算角色转换概率（仅对 mid 类型）
             if sr_type == "mid":
                 # 获取双向 SQS（如果已计算）
                 support_sqs_col = f"{name}_support_sqs"
                 resistance_sqs_col = f"{name}_resistance_sqs"
-                
-                if support_sqs_col in data.columns and resistance_sqs_col in data.columns:
-                    support_sqs = data[support_sqs_col].iloc[i] if i < len(data) else 0.0
-                    resistance_sqs = data[resistance_sqs_col].iloc[i] if i < len(data) else 0.0
-                    
+
+                if (
+                    support_sqs_col in data.columns
+                    and resistance_sqs_col in data.columns
+                ):
+                    support_sqs = (
+                        data[support_sqs_col].iloc[i] if i < len(data) else 0.0
+                    )
+                    resistance_sqs = (
+                        data[resistance_sqs_col].iloc[i] if i < len(data) else 0.0
+                    )
+
                     # 支撑/阻力主导强度差
                     strength_diff = abs(support_sqs - resistance_sqs)
-                    
+
                     # 价格位置（+1=在边界上方，-1=在边界下方）
                     price_position = 1.0 if current_price > sr_price else -1.0
-                    
+
                     # 角色转换临界点（价格突破后回踩原阻力/支撑）
                     flip_zone = 0.0
                     if last_breakout_idx >= 0 and i > last_breakout_idx:
-                        if (last_breakout_direction == 1 and price_position < 0) or \
-                           (last_breakout_direction == -1 and price_position > 0):
+                        if (last_breakout_direction == 1 and price_position < 0) or (
+                            last_breakout_direction == -1 and price_position > 0
+                        ):
                             flip_zone = 1.0
-                    
+
                     # 转换概率 = sigmoid(强度差 * 0.7 + 位置验证 * 1.2)
                     import math
+
                     flip_score = strength_diff * 0.7 + flip_zone * 1.2
-                    role_flip_prob.iloc[i] = 1.0 / (1.0 + math.exp(-flip_score))  # Sigmoid
-        
+                    role_flip_prob.iloc[i] = 1.0 / (
+                        1.0 + math.exp(-flip_score)
+                    )  # Sigmoid
+
         # 保存特征（shift(1) 确保因果性）
-        features[f"{name}_breakout_confirmation"] = breakout_confirmation.shift(1).fillna(0.0)
+        features[f"{name}_breakout_confirmation"] = breakout_confirmation.shift(
+            1
+        ).fillna(0.0)
         features[f"{name}_role_flip_prob"] = role_flip_prob.shift(1).fillna(0.0)
-        features[f"{name}_post_breakout_retest"] = post_breakout_retest.shift(1).fillna(0.0)
-        features[f"{name}_post_breakdown_retest"] = post_breakdown_retest.shift(1).fillna(0.0)
-    
+        features[f"{name}_post_breakout_retest"] = post_breakout_retest.shift(1).fillna(
+            0.0
+        )
+        features[f"{name}_post_breakdown_retest"] = post_breakdown_retest.shift(
+            1
+        ).fillna(0.0)
+
     return features
 
 
@@ -1125,24 +1203,24 @@ def _add_breakout_quality_features(
 ) -> pd.DataFrame:
     """
     添加4类12个核心特征，用于让模型自动学习突破质量判断
-    
+
     整体特征体系设计（共4类12个核心特征）：
-    
+
     A. 结构质量（3个）
     1. sqs - SR测试次数+反应强度+时间衰减（已有）
     2. dist_to_nearest_sr - 当前价距最近SR的距离（已有）
     3. sr_confluence - 是否多个周期SR重合（新增）
-    
+
     B. 突破动能（3个）
     1. vol_ratio - 突破K线量比（已有 volume_ratio）
     2. order_flow_delta - 主动买卖差（新增，基于 delta 或 buy_qty - sell_qty）
     3. breakout_speed - 突破K线实体/影线比（新增）
-    
+
     C. 动能持续性（3个）
     1. follow_through_1 - 第2根K线是否继续新高/新低（新增）
     2. follow_through_2 - 第3根K线是否站稳（新增）
     3. momentum_decay - 突破后3根K线的斜率变化（新增）
-    
+
     D. 市场环境（3个）
     1. compression_score - 布林带宽度 / ATR 比值（已有 compression_confidence）
     2. trend_strength - ADX(14) 或 slope of MA50（新增）
@@ -1150,29 +1228,34 @@ def _add_breakout_quality_features(
     """
     if data.empty:
         return data
-    
+
     # 确保有必要的列
     if "atr" not in data.columns:
         data["atr"] = _compute_atr(data)
-    
+
     # A.3. SR重合度（sr_confluence）
     # 检查是否有多个边界在相近位置（ATR范围内）
     sr_confluence = pd.Series(0.0, index=data.index, dtype=float)
     if boundaries:
         for i in range(len(data)):
             current_price = data["close"].iloc[i]
-            current_atr = data["atr"].iloc[i] if not pd.isna(data["atr"].iloc[i]) else 1.0
+            current_atr = (
+                data["atr"].iloc[i] if not pd.isna(data["atr"].iloc[i]) else 1.0
+            )
             tolerance = current_atr * 0.5
-            
+
             # 收集所有非NaN的边界价格
             nearby_boundaries = []
             for boundary in boundaries:
                 col = boundary["column"]
                 if col in data.columns:
                     sr_price = data[col].iloc[i]
-                    if not pd.isna(sr_price) and abs(sr_price - current_price) <= tolerance * 2:
+                    if (
+                        not pd.isna(sr_price)
+                        and abs(sr_price - current_price) <= tolerance * 2
+                    ):
                         nearby_boundaries.append(sr_price)
-            
+
             # 计算在 tolerance 范围内的边界数量
             if len(nearby_boundaries) >= 2:
                 # 检查有多少个边界在 tolerance 范围内
@@ -1182,16 +1265,16 @@ def _add_breakout_quality_features(
                         if sr1 != sr2 and abs(sr1 - sr2) <= tolerance:
                             count += 1
                 sr_confluence.iloc[i] = min(count / 2.0, 3.0) / 3.0  # 归一化到 [0, 1]
-    
+
     data["sr_confluence"] = sr_confluence.shift(1).fillna(0.0)
-    
+
     # B.2. 订单流差值（order_flow_delta）
     # 注意：如果已经加载了 order_flow features，可以直接使用：
     # - cvd_normalized（单根K线，归一化，等同于 order_flow_delta）
     # - cvd_change_1（单根K线，原始值）
     # - cvd_change_5（5根K线周期）
     # - cvd_change_20（20根K线周期）
-    # 
+    #
     # 这里为了保持特征命名一致性，优先使用 cvd_normalized，如果没有则计算
     if "cvd_normalized" in data.columns:
         # 直接使用已有的 cvd_normalized（单根K线，归一化）
@@ -1224,7 +1307,7 @@ def _add_breakout_quality_features(
     else:
         # 如果没有订单流数据，使用0
         data["order_flow_delta"] = pd.Series(0.0, index=data.index)
-    
+
     # B.3. 突破速度（breakout_speed）
     # 突破K线实体/影线比
     breakout_speed = pd.Series(0.0, index=data.index, dtype=float)
@@ -1233,7 +1316,7 @@ def _add_breakout_quality_features(
         low = data["low"].iloc[i]
         open_price = data["open"].iloc[i]
         close = data["close"].iloc[i]
-        
+
         # 实体大小
         body = abs(close - open_price)
         # 上影线
@@ -1242,23 +1325,23 @@ def _add_breakout_quality_features(
         lower_shadow = min(open_price, close) - low
         # 总影线
         total_shadow = upper_shadow + lower_shadow
-        
+
         # 突破速度 = 实体 / (实体 + 影线)
         if body + total_shadow > 0:
             speed = body / (body + total_shadow)
         else:
             speed = 0.0
-        
+
         breakout_speed.iloc[i] = speed
-    
+
     data["breakout_speed"] = breakout_speed.shift(1).fillna(0.0)
-    
+
     # C. 动能持续性特征
     # 需要检测突破事件，然后计算后续K线的表现
     follow_through_1 = pd.Series(0.0, index=data.index, dtype=float)
     follow_through_2 = pd.Series(0.0, index=data.index, dtype=float)
     momentum_decay = pd.Series(0.0, index=data.index, dtype=float)
-    
+
     # 检测突破事件（相对于最近SR）
     if "dist_to_nearest_sr" in data.columns and len(boundaries) > 0:
         # 找到最近的SR边界
@@ -1274,24 +1357,24 @@ def _add_breakout_quality_features(
                     dist1 = abs(nearest_sr - current_price)
                     dist2 = abs(data[col] - current_price)
                     nearest_sr = np.where(dist2 < dist1, data[col], nearest_sr)
-        
+
         for i in range(3, len(data)):
             if pd.isna(nearest_sr.iloc[i]):
                 continue
-            
+
             sr_price = nearest_sr.iloc[i]
             prev_close = data["close"].iloc[i - 1]
             curr_close = data["close"].iloc[i]
             curr_high = data["high"].iloc[i]
             curr_low = data["low"].iloc[i]
-            
+
             # 检测突破方向
             breakout_direction = 0
             if prev_close <= sr_price and curr_high > sr_price:
                 breakout_direction = 1  # 向上突破
             elif prev_close >= sr_price and curr_low < sr_price:
                 breakout_direction = -1  # 向下突破
-            
+
             if breakout_direction != 0:
                 # C.1. follow_through_1: 第2根K线是否继续新高/新低
                 if i + 1 < len(data):
@@ -1299,21 +1382,29 @@ def _add_breakout_quality_features(
                     next_low = data["low"].iloc[i + 1]
                     if breakout_direction == 1:
                         # 向上突破：第2根K线是否创新高
-                        follow_through_1.iloc[i + 1] = 1.0 if next_high > curr_high else 0.0
+                        follow_through_1.iloc[i + 1] = (
+                            1.0 if next_high > curr_high else 0.0
+                        )
                     else:
                         # 向下突破：第2根K线是否创新低
-                        follow_through_1.iloc[i + 1] = 1.0 if next_low < curr_low else 0.0
-                
+                        follow_through_1.iloc[i + 1] = (
+                            1.0 if next_low < curr_low else 0.0
+                        )
+
                 # C.2. follow_through_2: 第3根K线是否站稳
                 if i + 2 < len(data):
                     third_close = data["close"].iloc[i + 2]
                     if breakout_direction == 1:
                         # 向上突破：第3根K线收盘价是否仍在SR上方
-                        follow_through_2.iloc[i + 2] = 1.0 if third_close > sr_price else 0.0
+                        follow_through_2.iloc[i + 2] = (
+                            1.0 if third_close > sr_price else 0.0
+                        )
                     else:
                         # 向下突破：第3根K线收盘价是否仍在SR下方
-                        follow_through_2.iloc[i + 2] = 1.0 if third_close < sr_price else 0.0
-                
+                        follow_through_2.iloc[i + 2] = (
+                            1.0 if third_close < sr_price else 0.0
+                        )
+
                 # C.3. momentum_decay: 突破后3根K线的斜率变化
                 if i + 3 < len(data):
                     # 计算突破后3根K线的价格变化
@@ -1323,24 +1414,32 @@ def _add_breakout_quality_features(
                         x = np.array([1, 2, 3])
                         y = prices_after
                         slope = np.polyfit(x, y, 1)[0]
-                        
+
                         # 归一化斜率（除以ATR）
-                        current_atr = data["atr"].iloc[i] if not pd.isna(data["atr"].iloc[i]) else 1.0
-                        normalized_slope = slope / current_atr if current_atr > 0 else 0.0
-                        
+                        current_atr = (
+                            data["atr"].iloc[i]
+                            if not pd.isna(data["atr"].iloc[i])
+                            else 1.0
+                        )
+                        normalized_slope = (
+                            slope / current_atr if current_atr > 0 else 0.0
+                        )
+
                         # 动能衰减 = 1 - abs(斜率)（斜率越小，衰减越大）
-                        momentum_decay.iloc[i + 3] = 1.0 - min(abs(normalized_slope), 1.0)
-    
+                        momentum_decay.iloc[i + 3] = 1.0 - min(
+                            abs(normalized_slope), 1.0
+                        )
+
     data["follow_through_1"] = follow_through_1.shift(1).fillna(0.0)
     data["follow_through_2"] = follow_through_2.shift(1).fillna(0.0)
     data["momentum_decay"] = momentum_decay.shift(1).fillna(0.0)
-    
+
     # D.2. 趋势强度（trend_strength）
     # 使用 ADX(14) 或 MA50 斜率
     if "close" in data.columns:
         # 计算 MA50
         ma50 = data["close"].rolling(window=50, min_periods=1).mean()
-        
+
         # 计算 MA50 斜率（使用线性回归）
         trend_strength = pd.Series(0.0, index=data.index, dtype=float)
         for i in range(50, len(data)):
@@ -1351,12 +1450,15 @@ def _add_breakout_quality_features(
                     slope = np.polyfit(x, ma_window, 1)[0]
                     # 归一化斜率（除以当前价格）
                     current_price = data["close"].iloc[i]
-                    normalized_slope = slope / current_price if current_price > 0 else 0.0
+                    normalized_slope = (
+                        slope / current_price if current_price > 0 else 0.0
+                    )
                     trend_strength.iloc[i] = normalized_slope * 100  # 放大100倍便于观察
-        
+
         # 如果可以使用 TA-Lib，优先使用 ADX
         try:
             import talib
+
             high = data["high"].values
             low = data["low"].values
             close = data["close"].values
@@ -1365,9 +1467,9 @@ def _add_breakout_quality_features(
             trend_strength = pd.Series(adx / 100.0, index=data.index)
         except Exception:
             pass  # 如果 TA-Lib 不可用，使用 MA50 斜率
-    
+
     data["trend_strength"] = trend_strength.shift(1).fillna(0.0)
-    
+
     return data
 
 
@@ -1432,20 +1534,18 @@ def _compute_boundary_volume_confirmations(
                 # 【修复】：只使用历史数据 [0, i] 来计算确认
                 # 在时刻 i，我们已经有了 [breakout_check_idx, i] 的数据来确认是否站稳
                 try:
-                    score = (
-                        calculate_volume_price_confirmation(
-                            data.iloc[: i + 1],  # 只使用历史数据，不包含未来
-                            breakout_check_idx,  # 突破发生在 breakout_check_idx
-                            sr_price,
-                            lookback=lookback,
-                            vol_threshold=vol_threshold,
-                            confirmation_bars=confirmation_bars,
-                            sr_type=(
-                                sr_type
-                                if sr_type != "mid"
-                                else ("resistance" if direction == 1 else "support")
-                            ),
-                        )
+                    score = calculate_volume_price_confirmation(
+                        data.iloc[: i + 1],  # 只使用历史数据，不包含未来
+                        breakout_check_idx,  # 突破发生在 breakout_check_idx
+                        sr_price,
+                        lookback=lookback,
+                        vol_threshold=vol_threshold,
+                        confirmation_bars=confirmation_bars,
+                        sr_type=(
+                            sr_type
+                            if sr_type != "mid"
+                            else ("resistance" if direction == 1 else "support")
+                        ),
                     )
                 except Exception:
                     score = 0.0
@@ -1585,8 +1685,7 @@ def _add_price_action_features(
                     avg_vol = data["volume"].iloc[i - 20 : i].mean()
                     if (
                         avg_vol > 0
-                        and data["volume"].iloc[i] / avg_vol
-                        > volume_spike_threshold
+                        and data["volume"].iloc[i] / avg_vol > volume_spike_threshold
                     ):
                         price_reversed_before_sr.iloc[i] = True
         # 应下跌但反弹（距离SR为负，方向为负，但价格上涨）
@@ -1597,8 +1696,7 @@ def _add_price_action_features(
                     avg_vol = data["volume"].iloc[i - 20 : i].mean()
                     if (
                         avg_vol > 0
-                        and data["volume"].iloc[i] / avg_vol
-                        > volume_spike_threshold
+                        and data["volume"].iloc[i] / avg_vol > volume_spike_threshold
                     ):
                         price_reversed_before_sr.iloc[i] = True
 
@@ -1627,17 +1725,13 @@ def _add_price_action_features(
             # 在时刻 i，我们已经有了 [check_idx, i] 的数据来判断
             if i >= check_idx + 1:
                 # 检查从 check_idx + 1 到 i 的收盘价是否回到阻力位下方
-                if (
-                    data["close"].iloc[check_idx + 1 : i + 1] < nearest_sr_price
-                ).any():
+                if (data["close"].iloc[check_idx + 1 : i + 1] < nearest_sr_price).any():
                     fake_breakout.iloc[i] = True
         elif breakout_status.iloc[check_idx] == -1:  # 向下突破
             # 如果后续收盘价回到支撑位上方，可能是假突破
             if i >= check_idx + 1:
                 # 检查从 check_idx + 1 到 i 的收盘价是否回到支撑位上方
-                if (
-                    data["close"].iloc[check_idx + 1 : i + 1] > nearest_sr_price
-                ).any():
+                if (data["close"].iloc[check_idx + 1 : i + 1] > nearest_sr_price).any():
                     fake_breakout.iloc[i] = True
 
     data["fake_breakout"] = fake_breakout.shift(1).fillna(False).astype(int)
@@ -1683,9 +1777,9 @@ def _add_price_action_features(
         and "bb_lower" in data.columns
         and "bb_middle" in data.columns
     ):
-        boll_width = (data["bb_upper"] - data["bb_lower"]) / data[
-            "bb_middle"
-        ].replace(0, np.nan)
+        boll_width = (data["bb_upper"] - data["bb_lower"]) / data["bb_middle"].replace(
+            0, np.nan
+        )
         compression_score = 1.0 / (1.0 + boll_width)
         data["compression_score"] = compression_score.shift(1).fillna(0.0)
     else:
@@ -1704,11 +1798,9 @@ def _add_price_action_features(
     # 标准化距离特征
     data["dist_to_nearest_sr"] = dist_to_sr.shift(1).fillna(0.0)
     data["direction_to_nearest_sr"] = direction_to_sr.shift(1).fillna(0.0)
-    
+
     # 【新增】：添加4类12个核心特征，用于让模型自动学习突破质量判断
-    data = _add_breakout_quality_features(
-        data, boundaries
-    )
+    data = _add_breakout_quality_features(data, boundaries)
 
     return data
 
@@ -1734,9 +1826,7 @@ def compute_bb_width_features(
     df["bb_width"] = width
 
     if "atr" not in df.columns:
-        df["atr"] = compute_atr(
-            df["high"], df["low"], df["close"], period=atr_window
-        )
+        df["atr"] = compute_atr(df["high"], df["low"], df["close"], period=atr_window)
 
     df["bb_width_normalized"] = (
         (width / df["atr"].replace(0, np.nan))
@@ -1773,9 +1863,7 @@ def compute_range_ratio_5bar(df: pd.DataFrame) -> pd.DataFrame:
 def compute_volatility_reversal_score(df: pd.DataFrame) -> pd.DataFrame:
     """ATR 回落 z-score，用于识别波动率反转。"""
     if "atr" not in df.columns:
-        df["atr"] = compute_atr(
-            df["high"], df["low"], df["close"]
-        )
+        df["atr"] = compute_atr(df["high"], df["low"], df["close"])
     atr_mean = df["atr"].rolling(50).mean()
     atr_std = df["atr"].rolling(50).std()
     df["volatility_reversal_score"] = (
@@ -1795,7 +1883,7 @@ def compute_price_range_symmetry(
     low = df["low"].shift(feature_shift)
     close = df["close"].shift(feature_shift)
 
-    numerator = (high - close)
+    numerator = high - close
     denominator = (close - low).replace(0, np.nan)
     raw = (numerator / denominator).replace([np.inf, -np.inf], np.nan).fillna(1.0)
     log_val = np.log1p(np.abs(raw)) * np.sign(raw)
@@ -1829,29 +1917,29 @@ def compute_volume_anomaly(df: pd.DataFrame) -> pd.DataFrame:
 def compute_wick_ratios(df: pd.DataFrame) -> pd.DataFrame:
     """
     计算上影线和下影线占比
-    
+
     Args:
         df: DataFrame with high, low, open, close columns
-        
+
     Returns:
         DataFrame with wick_upper_ratio and wick_lower_ratio columns added
     """
     if "wick_upper_ratio" in df.columns and "wick_lower_ratio" in df.columns:
         return df
-        
+
     result = df.copy()
     range_val = result["high"] - result["low"]
-    
+
     # 上影线 = max(high, close, open) - max(close, open)
     body_high = result[["close", "open"]].max(axis=1)
     upper_wick = result["high"] - body_high
     result["wick_upper_ratio"] = (upper_wick / range_val.replace(0, np.nan)).fillna(0.0)
-    
+
     # 下影线 = min(close, open) - min(low, close, open)
     body_low = result[["close", "open"]].min(axis=1)
     lower_wick = body_low - result["low"]
     result["wick_lower_ratio"] = (lower_wick / range_val.replace(0, np.nan)).fillna(0.0)
-    
+
     return result
 
 
@@ -1900,9 +1988,7 @@ def compute_trend_r2_20(
     feature_shift: int = 0,
 ) -> pd.DataFrame:
     """计算 20 Bar 趋势 R²。"""
-    df["trend_r2_20"] = _trend_r2(
-        df["close"], window=20, lag=feature_shift
-    )
+    df["trend_r2_20"] = _trend_r2(df["close"], window=20, lag=feature_shift)
     return df
 
 
@@ -1913,9 +1999,7 @@ def compute_trend_r2_50(
     feature_shift: int = 0,
 ) -> pd.DataFrame:
     """计算 50 Bar 趋势 R²。"""
-    df["trend_r2_50"] = _trend_r2(
-        df["close"], window=50, lag=feature_shift
-    )
+    df["trend_r2_50"] = _trend_r2(df["close"], window=50, lag=feature_shift)
     return df
 
 
@@ -1945,9 +2029,7 @@ def compute_atr_percentile(
 ) -> pd.DataFrame:
     """ATR 百分位（压缩检测）。"""
     if "atr" not in df.columns:
-        df["atr"] = compute_atr(
-            df["high"], df["low"], df["close"]
-        )
+        df["atr"] = compute_atr(df["high"], df["low"], df["close"])
     if "atr_percentile" in df.columns:
         return df
 
@@ -1982,13 +2064,10 @@ def compute_trend_volatility_alignment(
     if "roc_5" not in df.columns:
         df = compute_roc_5(df)
     if "atr_percentile" not in df.columns:
-        df = compute_atr_percentile(
-            df, window=atr_percentile_window
-        )
-    df["trend_volatility_alignment"] = (
-        np.sign(df["roc_5"].shift(feature_shift)).fillna(0.0)
-        * df["atr_percentile"].fillna(0.0)
-    )
+        df = compute_atr_percentile(df, window=atr_percentile_window)
+    df["trend_volatility_alignment"] = np.sign(df["roc_5"].shift(feature_shift)).fillna(
+        0.0
+    ) * df["atr_percentile"].fillna(0.0)
     return df
 
 
@@ -1997,17 +2076,16 @@ def compute_compression_to_breakout_prob(df: pd.DataFrame) -> pd.DataFrame:
     """压缩持续时间与未来动量的联动。"""
     if "compression_duration" not in df.columns or "roc_5" not in df.columns:
         return df
-    df["compression_to_breakout_prob"] = (
-        df["compression_duration"].fillna(0.0) * df["roc_5"].fillna(0.0)
-    )
+    df["compression_to_breakout_prob"] = df["compression_duration"].fillna(0.0) * df[
+        "roc_5"
+    ].fillna(0.0)
     return df
 
 
 def _compute_atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
     """计算 ATR（内部方法，使用类的静态方法）"""
-    return compute_atr(
-        df["high"], df["low"], df["close"], period=window
-    )
+    return compute_atr(df["high"], df["low"], df["close"], period=window)
+
 
 # ========================================================================
 # 特征添加静态方法
@@ -2050,9 +2128,7 @@ def add_basic_indicators(
     )
     if need_macd and "macd" not in result.columns:
         try:
-            macd_line, signal_line, histogram = (
-                compute_macd(result["close"])
-            )
+            macd_line, signal_line, histogram = compute_macd(result["close"])
             result["macd"] = macd_line
             result["macd_signal"] = signal_line
             result["macd_histogram"] = histogram
@@ -2068,8 +2144,8 @@ def add_basic_indicators(
     )
     if need_bb and "bb_upper" not in result.columns:
         try:
-            upper_band, middle_band, lower_band = (
-                compute_bollinger_bands(result["close"])
+            upper_band, middle_band, lower_band = compute_bollinger_bands(
+                result["close"]
             )
             result["bb_upper"] = upper_band
             result["bb_middle"] = middle_band
@@ -2113,9 +2189,7 @@ def add_basic_indicators(
             price_change_numeric = pd.to_numeric(
                 result["price_change"], errors="coerce"
             ).astype(float)
-            values = talib.STDDEV(
-                price_change_numeric.values, timeperiod=14, nbdev=1
-            )
+            values = talib.STDDEV(price_change_numeric.values, timeperiod=14, nbdev=1)
             # 使用 shift(1) 确保时间对齐，避免使用未来信息
             result["volatility"] = pd.Series(
                 values, index=price_change_numeric.index
@@ -2128,15 +2202,15 @@ def add_basic_indicators(
         or "volume_ratio" in required_features
     ):
         if "volume_sma" not in result.columns:
-            volume_numeric = pd.to_numeric(
-                result["volume"], errors="coerce"
-            ).astype(float)
+            volume_numeric = pd.to_numeric(result["volume"], errors="coerce").astype(
+                float
+            )
             values = talib.SMA(volume_numeric.values, timeperiod=20)
             result["volume_sma"] = pd.Series(values, index=volume_numeric.index)
         if "volume_ratio" not in result.columns:
-            result["volume_ratio"] = result["volume"] / result[
-                "volume_sma"
-            ].replace(0, np.nan)
+            result["volume_ratio"] = result["volume"] / result["volume_sma"].replace(
+                0, np.nan
+            )
 
     return result
 
@@ -2182,23 +2256,17 @@ def add_zigzag_dimensionless_features(
         if required_features and any(
             "zz_" in f or "zigzag" in f for f in required_features
         ):
-            result = ensure_basic_indicators(
-                result, {"zigzag"}
-            )
+            result = ensure_basic_indicators(result, {"zigzag"})
         else:
             return result
 
     # 确保 atr 存在（zz_slope 需要 atr）
     if "atr" not in result.columns:
         if required_features and "zz_slope" in required_features:
-            result = ensure_basic_indicators(
-                result, {"atr"}
-            )
+            result = ensure_basic_indicators(result, {"atr"})
         elif required_features is None:
             # 如果没有指定 required_features，也确保 atr 存在
-            result = ensure_basic_indicators(
-                result, {"atr"}
-            )
+            result = ensure_basic_indicators(result, {"atr"})
 
     close = result["close"].replace(0, np.nan)
 
@@ -2207,7 +2275,7 @@ def add_zigzag_dimensionless_features(
     if "wpt_price_reconstructed" in result.columns:
         # 自动检测 WPT 重构价格（中高频，保留关键拐点）
         price_series = result["wpt_price_reconstructed"]
-    
+
     # 优化：直接计算 zigzag + 高点和低点（一次性完成）
     # 如果 zigzag 已存在，重新计算以确保高点和低点正确（性能影响可忽略）
     zigzag, zz_high, zz_low = compute_zigzag(
@@ -2277,14 +2345,14 @@ def add_zigzag_dimensionless_features(
 
 @register_feature("add_poc_hal_dimensionless_features", category="baseline")
 def add_poc_hal_dimensionless_features(
-    df: pd.DataFrame, 
-    required_features: Optional[set] = None, 
+    df: pd.DataFrame,
+    required_features: Optional[set] = None,
     poc_window: int = 160,
     price_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     添加 POC (Point of Control) 和 HAL (Value Area 70% 价格区间的上下界) 相关的无量纲特征
-    
+
     ✅ 强烈建议：使用 WPT 低频重构价格（price_col='wpt_price_reconstructed'）
     这样可以过滤高频噪声，使 POC/HAL 更接近真实供需平衡点。
 
@@ -2301,7 +2369,7 @@ def add_poc_hal_dimensionless_features(
     - price_to_hal_low_pct: 当前价格到 HAL 低点的相对距离
     - price_to_hal_mid_pct: 当前价格到 HAL 中点的相对距离
     - hal_bandwidth_pct: HAL 带宽（相对）
-    
+
     Args:
         df: 输入 DataFrame
         required_features: 需要的特征集合（可选）
@@ -2315,12 +2383,8 @@ def add_poc_hal_dimensionless_features(
     result = df.copy()
 
     # 检查是否需要计算 POC 或 HAL
-    need_poc = required_features is None or any(
-        "poc" in f for f in required_features
-    )
-    need_hal = required_features is None or any(
-        "hal" in f for f in required_features
-    )
+    need_poc = required_features is None or any("poc" in f for f in required_features)
+    need_hal = required_features is None or any("hal" in f for f in required_features)
 
     if not (need_poc or need_hal):
         return result
@@ -2333,14 +2397,16 @@ def add_poc_hal_dimensionless_features(
     elif "wpt_price_reconstructed" in result.columns:
         # 自动检测 WPT 重构价格
         price_series = result["wpt_price_reconstructed"]
-    
+
     # 计算 POC 和 HAL（一次性计算，避免重复）
     # 优化：如果 poc 列已存在且完整（非 NaN 值 > 50%），跳过计算
     need_compute = False
     if need_poc:
         poc_exists = "poc" in result.columns
         if poc_exists:
-            poc_non_na_ratio = result["poc"].notna().sum() / len(result) if len(result) > 0 else 0
+            poc_non_na_ratio = (
+                result["poc"].notna().sum() / len(result) if len(result) > 0 else 0
+            )
             if poc_non_na_ratio > 0.5:
                 # poc 列已存在且完整，跳过计算
                 need_poc = False
@@ -2359,13 +2425,13 @@ def add_poc_hal_dimensionless_features(
             compute_unified_volume_profile_features,
             compute_unified_volume_profile_derived_features,
         )
-        
+
         result = compute_unified_volume_profile_features(
             result,
             window=poc_window,
             price_series=price_series,
         )
-        
+
         # 映射到旧的特征名称（向后兼容）
         if "vp_poc" in result.columns:
             result["poc"] = result["vp_poc"]
@@ -2422,18 +2488,16 @@ def add_poc_hal_dimensionless_features(
         if "price_to_hal_mid_pct" not in result.columns:
             # 使用 shift(1) 确保时间对齐，避免使用未来信息
             result["price_to_hal_mid_pct"] = (
-                ((hal_mid - close) / close)
-                .replace([np.inf, -np.inf], np.nan)
-                .shift(1)
+                ((hal_mid - close) / close).replace([np.inf, -np.inf], np.nan).shift(1)
             )
 
     # 2. HAL 带宽（相对）
     if required_features is None or "hal_bandwidth_pct" in required_features:
         if "hal_bandwidth_pct" not in result.columns:
             hal_mid_safe = hal_mid.replace(0, np.nan)
-            result["hal_bandwidth_pct"] = (
-                (hal_high - hal_low) / hal_mid_safe
-            ).replace([np.inf, -np.inf], np.nan)
+            result["hal_bandwidth_pct"] = ((hal_high - hal_low) / hal_mid_safe).replace(
+                [np.inf, -np.inf], np.nan
+            )
 
     return result
 
@@ -2448,7 +2512,7 @@ def add_swing_dimensionless_features(
 ) -> pd.DataFrame:
     """
     添加 Swing High/Low 相关的无量纲特征
-    
+
     ✅ 建议：使用 WPT 中频重构价格（price_col='wpt_price_reconstructed'）
     这样可以捕捉中期结构，同时过滤高频噪声。
 
@@ -2456,7 +2520,7 @@ def add_swing_dimensionless_features(
     - swing_high_pct_close: Swing High 相对收盘价的比率
     - swing_low_pct_close: Swing Low 相对收盘价的比率
     - swing_amplitude_pct: Swing 波幅（相对）
-    
+
     Args:
         df: 输入 DataFrame
         required_features: 需要的特征集合（可选）
@@ -2485,18 +2549,18 @@ def add_swing_dimensionless_features(
         if required_features and any("swing" in f for f in required_features):
             if swing_price is not None:
                 # 使用 WPT 重构价格
-                result["roll_high_s"] = (
-                    swing_price.rolling(swing_win_short, min_periods=1).max()
-                )
-                result["roll_low_s"] = (
-                    swing_price.rolling(swing_win_short, min_periods=1).min()
-                )
-                result["roll_high_l"] = (
-                    swing_price.rolling(swing_win_long, min_periods=1).max()
-                )
-                result["roll_low_l"] = (
-                    swing_price.rolling(swing_win_long, min_periods=1).min()
-                )
+                result["roll_high_s"] = swing_price.rolling(
+                    swing_win_short, min_periods=1
+                ).max()
+                result["roll_low_s"] = swing_price.rolling(
+                    swing_win_short, min_periods=1
+                ).min()
+                result["roll_high_l"] = swing_price.rolling(
+                    swing_win_long, min_periods=1
+                ).max()
+                result["roll_low_l"] = swing_price.rolling(
+                    swing_win_long, min_periods=1
+                ).min()
             else:
                 # 使用原始价格
                 result["roll_high_s"] = (
@@ -2662,9 +2726,7 @@ def add_price_volume_relative_features(
     # 3. 成交量异常度
     if required_features is None or "vol_ma_ratio" in required_features:
         if "vol_ma_ratio" not in result.columns:
-            vol_ma = volume.rolling(
-                window=periods_24h, min_periods=periods_24h
-            ).mean()
+            vol_ma = volume.rolling(window=periods_24h, min_periods=periods_24h).mean()
             vol_ma_ratio = (
                 (volume / vol_ma.replace(0, np.nan))
                 .replace([np.inf, -np.inf], np.nan)
@@ -2717,9 +2779,7 @@ def add_common_derived_features(
 
     # 按需计算基础指标
     if needed_basic:
-        result = ensure_basic_indicators(
-            result, needed_basic
-        )
+        result = ensure_basic_indicators(result, needed_basic)
 
     # 只在需要时计算特征
     if not required_features or "returns" in required_features:
@@ -2741,12 +2801,8 @@ def add_common_derived_features(
                 returns_numeric = pd.to_numeric(
                     result["returns"], errors="coerce"
                 ).astype(float)
-                values = talib.STDDEV(
-                    returns_numeric.values, timeperiod=20, nbdev=1
-                )
-                result["volatility"] = pd.Series(
-                    values, index=returns_numeric.index
-                )
+                values = talib.STDDEV(returns_numeric.values, timeperiod=20, nbdev=1)
+                result["volatility"] = pd.Series(values, index=returns_numeric.index)
             else:
                 price_change = close.pct_change()
                 price_change_numeric = pd.to_numeric(
@@ -2824,9 +2880,7 @@ def add_common_derived_features(
             # Check if this specific feature is required
             if required_features is not None:
                 # Check if any zscore variant is requested or this specific one
-                if not any(
-                    f"{feature_prefix}_zscore" in f for f in required_features
-                ):
+                if not any(f"{feature_prefix}_zscore" in f for f in required_features):
                     continue
                 if zscore_col not in required_features and not any(
                     f.startswith(f"{feature_prefix}_zscore")
@@ -2850,9 +2904,7 @@ def add_common_derived_features(
     if required_features is None or any(
         "rsi_zscore" in f for f in required_features or [""]
     ):
-        add_multi_window_zscore(
-            "rsi", "rsi", rolling_zscore_windows, required_features
-        )
+        add_multi_window_zscore("rsi", "rsi", rolling_zscore_windows, required_features)
 
     # 2. MACD 滚动 Z-score（MACD 绝对值随价格变化，Z-score 标准化更优）
     if required_features is None or any(
@@ -2890,9 +2942,7 @@ def add_common_derived_features(
     if required_features is None or any(
         "atr_zscore" in f for f in required_features or [""]
     ):
-        add_multi_window_zscore(
-            "atr", "atr", rolling_zscore_windows, required_features
-        )
+        add_multi_window_zscore("atr", "atr", rolling_zscore_windows, required_features)
 
     # 6. Volume 滚动 Z-score（交易量绝对值与流动性相关，Z-score 捕捉相对变化）
     if required_features is None or any(
@@ -2932,9 +2982,9 @@ def add_common_derived_features(
             if col_name not in result.columns:
                 close_numeric = pd.to_numeric(close, errors="coerce").astype(float)
                 values = talib.SMA(close_numeric.values, timeperiod=window)
-                result[col_name] = pd.Series(
-                    values, index=close_numeric.index
-                ).fillna(close)
+                result[col_name] = pd.Series(values, index=close_numeric.index).fillna(
+                    close
+                )
 
     # SMA/EMA 相对 close 的百分比
     close_safe = close.replace(0, np.nan)
@@ -2983,9 +3033,9 @@ def add_common_derived_features(
     # Volume features
     if not required_features or "volume_sma_20" in required_features:
         if "volume_sma_20" not in result.columns:
-            volume_numeric = pd.to_numeric(
-                result["volume"], errors="coerce"
-            ).astype(float)
+            volume_numeric = pd.to_numeric(result["volume"], errors="coerce").astype(
+                float
+            )
             values = talib.SMA(volume_numeric.values, timeperiod=20)
             result["volume_sma_20"] = pd.Series(
                 values, index=volume_numeric.index
@@ -3054,9 +3104,7 @@ def _rolling_percentile(
         if len(x) < 2 or not np.isfinite(x[-1]):
             return np.nan
         current = x[-1]  # 当前值（如 close[t]），作为"新来的考生"
-        history = x[
-            :-1
-        ]  # ← 关键：只用历史（如 [t-N, t-1]），作为"老考生的成绩分数线"
+        history = x[:-1]  # ← 关键：只用历史（如 [t-N, t-1]），作为"老考生的成绩分数线"
         history = history[np.isfinite(history)]
         if len(history) == 0:
             return np.nan
@@ -3064,9 +3112,9 @@ def _rolling_percentile(
         # 这表示：当前值相对于历史的位置，完全基于历史评估当前状态
         return (history <= current).sum() / float(len(history))
 
-    percentile_series = series.rolling(
-        window=window, min_periods=min_periods
-    ).apply(_percentile, raw=True)
+    percentile_series = series.rolling(window=window, min_periods=min_periods).apply(
+        _percentile, raw=True
+    )
 
     # 【关键修复】：对滚动窗口统计特征强制 shift(1)，确保完全因果
     # 在 t 时刻使用的特征基于 t-1 及之前的数据计算
@@ -3340,7 +3388,9 @@ def compute_roc_5_from_series(
 
 
 @register_feature("compute_acceleration_3_from_series", category="baseline")
-def compute_acceleration_3_from_series(*, close: pd.Series, feature_shift: int = 0) -> pd.DataFrame:
+def compute_acceleration_3_from_series(
+    *, close: pd.Series, feature_shift: int = 0
+) -> pd.DataFrame:
     """Narrow-IO acceleration_3: normalized ROC(3) difference."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
     roc_3 = close.pct_change(3)
@@ -3378,7 +3428,9 @@ def compute_volume_anomaly_from_series(*, volume: pd.Series) -> pd.DataFrame:
 
 
 @register_feature("compute_trend_r2_20_from_series", category="baseline")
-def compute_trend_r2_20_from_series(*, close: pd.Series, feature_shift: int = 0) -> pd.DataFrame:
+def compute_trend_r2_20_from_series(
+    *, close: pd.Series, feature_shift: int = 0
+) -> pd.DataFrame:
     """Narrow-IO 20-bar trend R²."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
     # Match legacy behavior: initial rows can be NaN due to insufficient window.
@@ -3388,7 +3440,9 @@ def compute_trend_r2_20_from_series(*, close: pd.Series, feature_shift: int = 0)
 
 
 @register_feature("compute_trend_r2_50_from_series", category="baseline")
-def compute_trend_r2_50_from_series(*, close: pd.Series, feature_shift: int = 0) -> pd.DataFrame:
+def compute_trend_r2_50_from_series(
+    *, close: pd.Series, feature_shift: int = 0
+) -> pd.DataFrame:
     """Narrow-IO 50-bar trend R²."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
     # Match legacy behavior: initial rows can be NaN due to insufficient window.
@@ -3408,10 +3462,14 @@ def compute_slope_consistency_score_from_series(*, close: pd.Series) -> pd.DataF
     slope20 = np.sign(ema20.diff())
     slope50 = np.sign(ema50.diff())
     out = (
-        (slope10 == slope20).astype(int)
-        + (slope20 == slope50).astype(int)
-        + (slope10 == slope50).astype(int)
-    ).fillna(0).rename("slope_consistency_score")
+        (
+            (slope10 == slope20).astype(int)
+            + (slope20 == slope50).astype(int)
+            + (slope10 == slope50).astype(int)
+        )
+        .fillna(0)
+        .rename("slope_consistency_score")
+    )
     return out.to_frame()
 
 
@@ -3426,8 +3484,10 @@ def compute_volatility_reversal_score_from_series(
     atr = compute_atr(high, low, close)
     atr_mean = atr.rolling(50).mean()
     atr_std = atr.rolling(50).std()
-    out = ((atr - atr_mean) / atr_std.replace(0, np.nan)).fillna(0.0).rename(
-        "volatility_reversal_score"
+    out = (
+        ((atr - atr_mean) / atr_std.replace(0, np.nan))
+        .fillna(0.0)
+        .rename("volatility_reversal_score")
     )
     return out.to_frame()
 
@@ -3453,7 +3513,11 @@ def compute_atr_percentile_from_series(
         current = arr[-1]
         return float(np.mean(arr <= current))
 
-    pct = atr.rolling(window=window, min_periods=window).apply(_percentile, raw=True).fillna(0.5)
+    pct = (
+        atr.rolling(window=window, min_periods=window)
+        .apply(_percentile, raw=True)
+        .fillna(0.5)
+    )
     if shift:
         pct = pct.shift(shift)
     out = pct.clip(0.0, 1.0).fillna(0.5).rename("atr_percentile")
@@ -3475,13 +3539,220 @@ def compute_trend_volatility_alignment_from_series(
     atr_pct = compute_atr_percentile_from_series(
         high=high, low=low, close=close, window=atr_percentile_window, shift=1
     )["atr_percentile"]
-    out = (np.sign(roc_5.shift(feature_shift)).fillna(0.0) * atr_pct.fillna(0.0)).rename(
-        "trend_volatility_alignment"
-    )
+    out = (
+        np.sign(roc_5.shift(feature_shift)).fillna(0.0) * atr_pct.fillna(0.0)
+    ).rename("trend_volatility_alignment")
     return out.to_frame()
 
 
-@register_feature("compute_compression_to_breakout_prob_from_series", category="baseline")
+@register_feature("compute_compression_duration_from_series", category="baseline")
+def compute_compression_duration_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    percentile_window: int = 288,
+    compression_threshold_pct: float = 0.2,
+) -> pd.Series:
+    """
+    计算压缩持续时间（基于 ATR percentile）
+
+    压缩持续时间：连续 bar 数，其中 ATR percentile 低于阈值
+    基于原始 BaselineFeatureEngineer 的实现
+    """
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+
+    # 计算 ATR
+    atr = compute_atr(high, low, close, period=14)
+
+    # 计算 ATR percentile（滚动百分位排名）
+    def _rolling_percentile(series: pd.Series, window: int) -> pd.Series:
+        def _rank(x: np.ndarray) -> float:
+            if len(x) <= 1 or not np.isfinite(x[-1]):
+                return np.nan
+            last = x[-1]
+            arr = x[np.isfinite(x)]
+            if len(arr) == 0:
+                return np.nan
+            return (arr <= last).sum() / float(len(arr))
+
+        return series.rolling(window=window, min_periods=1).apply(_rank, raw=True)
+
+    atr_percentile = _rolling_percentile(atr, window=percentile_window)
+
+    # 压缩持续时间：连续 bar 数，其中 ATR percentile <= threshold
+    threshold = compression_threshold_pct
+    below = (atr_percentile.fillna(0.0) <= threshold).astype(int)
+
+    # Run-length encoding: 计算连续 1 的长度
+    run = np.zeros(len(below), dtype=int)
+    cnt = 0
+    for i, v in enumerate(below.values):
+        if v == 1:
+            cnt += 1
+        else:
+            cnt = 0
+        run[i] = cnt
+
+    out = pd.Series(run, index=close.index, name="compression_duration")
+    return out
+
+
+@register_feature("compute_compression_energy_from_series", category="baseline")
+def compute_compression_energy_from_series(
+    *, wpt_energy_cascade: pd.Series, bb_width_ratio: pd.Series
+) -> pd.Series:
+    """
+    计算压缩能量（结合 WPT 能量和布林带压缩）
+
+    基于原始 BaselineFeatureEngineer 的实现：
+    compression_energy = (1.0 / bb_width) * volume_ratio
+    这里使用 wpt_energy_cascade 替代 volume_ratio，bb_width_ratio 替代 bb_width
+    """
+    wpt_energy = (
+        pd.to_numeric(wpt_energy_cascade, errors="coerce").astype(float).fillna(0.0)
+    )
+    bb_width = pd.to_numeric(bb_width_ratio, errors="coerce").astype(float)
+
+    # 压缩能量 = (1.0 / bb_width_ratio) * wpt_energy_cascade
+    # 注意：bb_width_ratio 越小，压缩越强，所以用 1/bb_width_ratio
+    compression_energy_raw = (1.0 / bb_width.replace(0, np.nan)) * wpt_energy
+    compression_energy_raw = compression_energy_raw.replace(
+        [np.inf, -np.inf], np.nan
+    ).fillna(0)
+
+    # 使用 log 转换避免极端值，然后标准化
+    compression_energy_log = np.log1p(np.abs(compression_energy_raw)) * np.sign(
+        compression_energy_raw
+    )
+    compression_energy_mean = compression_energy_log.rolling(50, min_periods=10).mean()
+    compression_energy_std = compression_energy_log.rolling(50, min_periods=10).std()
+
+    out = (
+        (
+            (compression_energy_log - compression_energy_mean)
+            / compression_energy_std.replace(0, np.nan)
+        )
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0)
+        .clip(-5, 5)
+    )
+
+    out.name = "compression_energy"
+    return out
+
+
+@register_feature("compute_sqs_combined_from_series", category="baseline")
+def compute_sqs_combined_from_series(
+    *, sqs_hal_high: pd.Series, sqs_hal_low: pd.Series
+) -> pd.Series:
+    """
+    组合 sqs_hal_high 和 sqs_hal_low 为通用 SQS
+
+    使用 max 或 mean 组合，这里使用 max（取最强的 SR 质量）
+    """
+    sqs_high = pd.to_numeric(sqs_hal_high, errors="coerce").astype(float).fillna(0.0)
+    sqs_low = pd.to_numeric(sqs_hal_low, errors="coerce").astype(float).fillna(0.0)
+
+    # 使用 max（取最强的 SR 质量）
+    out = pd.Series(
+        np.maximum(sqs_high.values, sqs_low.values), index=sqs_high.index, name="sqs"
+    )
+    return out
+
+
+@register_feature("compute_sma_slope_from_series", category="baseline")
+def compute_sma_slope_from_series(*, sma_200: pd.Series, window: int = 5) -> pd.Series:
+    """
+    计算 SMA 200 斜率（均线变化率）
+
+    使用线性回归计算斜率，归一化到价格水平
+    """
+    sma = pd.to_numeric(sma_200, errors="coerce").astype(float)
+
+    # 计算斜率：使用差分或线性回归
+    # 方法1：简单差分（归一化）
+    sma_diff = sma.diff(window)
+    sma_safe = sma.replace(0, np.nan)
+    slope = (sma_diff / sma_safe).replace([np.inf, -np.inf], np.nan)
+
+    # 方法2：使用线性回归（更稳健，但计算更慢）
+    # 这里使用简单差分，如果需要更稳健可以用线性回归
+
+    out = slope.fillna(0.0)
+    out.name = "sma_200_slope"
+    return out
+
+
+@register_feature("compute_zigzag_high_low_from_series", category="baseline")
+def compute_zigzag_high_low_from_series(
+    *,
+    high: pd.Series,
+    low: pd.Series,
+    threshold: float = 0.05,
+    price_col: Optional[pd.Series] = None,
+) -> pd.DataFrame:
+    """
+    Narrow-IO ZigZag computation that returns zigzag, zz_high_value, and zz_low_value.
+
+    Args:
+        high: 最高价序列
+        low: 最低价序列
+        threshold: 转折阈值（默认 0.05，即 5%）
+        price_col: 可选的价格序列（如 WPT 中高频重构价格）
+
+    Returns:
+        DataFrame with columns: zigzag, zz_high_value, zz_low_value
+    """
+    zigzag, zz_high, zz_low = compute_zigzag(
+        high=high,
+        low=low,
+        threshold=threshold,
+        return_high_low=True,
+        price_col=price_col,
+    )
+    result = pd.DataFrame(
+        {
+            "zigzag": zigzag,
+            "zz_high_value": zz_high,
+            "zz_low_value": zz_low,
+        },
+        index=high.index,
+    )
+    return result
+
+
+@register_feature("compute_ofi_short_from_series", category="baseline")
+def compute_ofi_short_from_series(
+    *, vpin_signed_imbalance: pd.Series, vpin: pd.Series, window: int = 5
+) -> pd.Series:
+    """
+    计算短期订单流不平衡（Order Flow Imbalance Short）
+
+    基于 vpin_signed_imbalance 的短期移动平均或归一化版本
+    """
+    vpin_imb = pd.to_numeric(vpin_signed_imbalance, errors="coerce").astype(float)
+    vpin_val = pd.to_numeric(vpin, errors="coerce").astype(float)
+
+    # 方法1：短期移动平均（捕捉短期趋势）
+    ofi_short_ma = vpin_imb.rolling(window=window, min_periods=1).mean()
+
+    # 方法2：归一化版本（相对于 VPIN 水平）
+    vpin_safe = vpin_val.replace(0, np.nan)
+    ofi_short_norm = (vpin_imb / vpin_safe).replace([np.inf, -np.inf], np.nan)
+
+    # 组合：使用移动平均，但归一化到合理范围
+    # 或者直接使用移动平均
+    out = ofi_short_ma.fillna(0.0)
+    out.name = "ofi_short"
+    return out
+
+
+@register_feature(
+    "compute_compression_to_breakout_prob_from_series", category="baseline"
+)
 def compute_compression_to_breakout_prob_from_series(
     *, compression_duration: pd.Series, roc_5: pd.Series
 ) -> pd.DataFrame:
@@ -3493,19 +3764,27 @@ def compute_compression_to_breakout_prob_from_series(
 
 
 @register_feature("compute_range_ratio_5bar_from_series", category="baseline")
-def compute_range_ratio_5bar_from_series(*, high: pd.Series, low: pd.Series) -> pd.Series:
+def compute_range_ratio_5bar_from_series(
+    *, high: pd.Series, low: pd.Series
+) -> pd.Series:
     """5/20 Bar range ratio z-score (narrow input/output)."""
     high = pd.to_numeric(high, errors="coerce").astype(float)
     low = pd.to_numeric(low, errors="coerce").astype(float)
     hl = high - low
     short_range = hl.rolling(5).mean()
     long_range = hl.rolling(20).mean()
-    ratio = (short_range / long_range.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+    ratio = (short_range / long_range.replace(0, np.nan)).replace(
+        [np.inf, -np.inf], np.nan
+    )
     ratio = ratio.fillna(1.0)
     ratio_log = np.log1p(ratio)
     mean = ratio_log.rolling(50, min_periods=5).mean()
     std = ratio_log.rolling(50, min_periods=5).std()
-    out = ((ratio_log - mean) / std.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out = (
+        ((ratio_log - mean) / std.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
     out.name = "range_ratio_5bar"
     return out
 
@@ -3528,7 +3807,11 @@ def compute_price_range_symmetry_from_series(
     log_val = np.log1p(np.abs(raw)) * np.sign(raw)
     mean = log_val.rolling(50, min_periods=5).mean()
     std = log_val.rolling(50, min_periods=5).std()
-    out = ((log_val - mean) / std.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out = (
+        ((log_val - mean) / std.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
     out.name = "price_range_symmetry"
     return out
 
@@ -3549,11 +3832,21 @@ def compute_wick_ratios_from_series(
     range_val = high - low
     body_high = pd.concat([close, open], axis=1).max(axis=1)
     upper_wick = high - body_high
-    wick_upper_ratio = (upper_wick / range_val.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    wick_upper_ratio = (
+        (upper_wick / range_val.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
     body_low = pd.concat([close, open], axis=1).min(axis=1)
     lower_wick = body_low - low
-    wick_lower_ratio = (lower_wick / range_val.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    return pd.DataFrame({"wick_upper_ratio": wick_upper_ratio, "wick_lower_ratio": wick_lower_ratio})
+    wick_lower_ratio = (
+        (lower_wick / range_val.replace(0, np.nan))
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    return pd.DataFrame(
+        {"wick_upper_ratio": wick_upper_ratio, "wick_lower_ratio": wick_lower_ratio}
+    )
 
 
 @register_feature("compute_poc_hal_features_from_series", category="baseline")
@@ -3580,8 +3873,13 @@ def compute_poc_hal_features_from_series(
         }
     )
     if price_col and price_col not in df.columns:
-        if price_col == "wpt_price_reconstructed" and wpt_price_reconstructed is not None:
-            df[price_col] = pd.to_numeric(wpt_price_reconstructed, errors="coerce").astype(float)
+        if (
+            price_col == "wpt_price_reconstructed"
+            and wpt_price_reconstructed is not None
+        ):
+            df[price_col] = pd.to_numeric(
+                wpt_price_reconstructed, errors="coerce"
+            ).astype(float)
         else:
             # Fallback: use close as price reference if a custom price_col wasn't provided
             df[price_col] = df["close"]
@@ -3771,8 +4069,16 @@ def compute_sr_strength_max_from_series(
 
     out = pd.DataFrame(index=data.index)
     out["sr_strength_max"] = pd.Series(sr_max, index=data.index).astype(float)
-    out["dist_to_nearest_sr"] = pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce").fillna(0.0).astype(float)
-    out["direction_to_nearest_sr"] = pd.to_numeric(data["direction_to_nearest_sr"], errors="coerce").fillna(0.0).astype(float)
+    out["dist_to_nearest_sr"] = (
+        pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce")
+        .fillna(0.0)
+        .astype(float)
+    )
+    out["direction_to_nearest_sr"] = (
+        pd.to_numeric(data["direction_to_nearest_sr"], errors="coerce")
+        .fillna(0.0)
+        .astype(float)
+    )
     return out
 
 

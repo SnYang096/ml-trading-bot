@@ -1,6 +1,5 @@
 """ML Trading Bot CLI - Unified command-line interface."""
 
-from cli.main import cli
+from src.cli.main import cli
 
 __all__ = ["cli"]
-

@@ -305,9 +305,20 @@ def run_feature_pipeline(
     )
     df_features = ensure_signal_column(df_features, pipeline_cfg.ensure_signal)
 
-    for processor in pipeline_cfg.post_processors:
-        func = import_callable(processor.module, processor.function)
-        df_features = func(df_features, **processor.params)
+    # Process post_processors if they exist
+    if pipeline_cfg.post_processors:
+        for processor in pipeline_cfg.post_processors:
+            try:
+                func = import_callable(processor.module, processor.function)
+                df_features = func(df_features, **processor.params)
+            except (ModuleNotFoundError, AttributeError) as e:
+                print(
+                    f"   ⚠️  Warning: Failed to load post-processor {processor.module}.{processor.function}: {e}"
+                )
+                print(
+                    f"   ℹ️  Skipping post-processor. If this is intentional, remove it from the config."
+                )
+                # Continue without this post-processor
 
     return df_features
 

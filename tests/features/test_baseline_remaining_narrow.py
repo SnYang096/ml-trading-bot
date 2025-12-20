@@ -14,6 +14,8 @@ from src.features.time_series.baseline_features import (
     compute_slope_consistency_score_from_series,
     compute_volatility_reversal_score,
     compute_volatility_reversal_score_from_series,
+    compute_atr,
+    compute_atr_from_series,
     compute_atr_percentile,
     compute_atr_percentile_from_series,
     compute_trend_volatility_alignment,
@@ -118,3 +120,36 @@ def test_remaining_baseline_series_entrypoints_match_df_versions():
         raise AssertionError(
             "legacy compute_compression_to_breakout_prob did not create output column"
         )
+
+
+def test_compute_atr_from_series():
+    """
+    测试修复：compute_atr_from_series 函数
+
+    Bug修复：添加了 compute_atr_from_series 函数，返回 DataFrame 格式
+    确保 narrow-IO 模式下能正确工作
+    """
+    idx = pd.date_range("2024-01-01", periods=100, freq="5min")
+    rng = np.random.default_rng(42)
+    close = pd.Series(100 + np.cumsum(rng.normal(0, 0.2, len(idx))), index=idx)
+    high = close + np.abs(rng.normal(0.1, 0.05, len(idx)))
+    low = close - np.abs(rng.normal(0.1, 0.05, len(idx)))
+
+    # 测试 compute_atr_from_series 返回 DataFrame
+    result_df = compute_atr_from_series(high=high, low=low, close=close, period=14)
+
+    # 验证返回类型
+    assert isinstance(result_df, pd.DataFrame), "应该返回 DataFrame"
+    assert "atr" in result_df.columns, "应该包含 'atr' 列"
+    assert len(result_df) == len(idx), "长度应该匹配输入"
+
+    # 验证与原始 compute_atr 的结果一致
+    result_series = compute_atr(high, low, close, period=14)
+    assert np.allclose(
+        result_df["atr"].values, result_series.values, equal_nan=True, rtol=1e-10
+    ), "DataFrame 版本应该与 Series 版本结果一致"
+
+    # 验证数值合理性
+    atr_values = result_df["atr"].dropna()
+    assert len(atr_values) > 0, "应该有有效的 ATR 值"
+    assert (atr_values >= 0).all(), "ATR 应该 >= 0"

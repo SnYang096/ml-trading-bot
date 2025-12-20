@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 
 import numpy as np
 import pandas as pd
@@ -34,7 +36,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--strategy-config", required=True, help="Path to strategy dir")
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--factors", nargs="+", required=True, help="Factor columns")
+    parser.add_argument(
+        "--factors",
+        nargs="+",
+        default=None,
+        help="Factor columns to evaluate. If not specified, will use requested_features from strategy config's features.yaml",
+    )
     parser.add_argument("--data-path", default="data/parquet_data")
     parser.add_argument("--timeframe", default="15T")
     parser.add_argument("--start-date", default=None)
@@ -60,6 +67,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=True,
         help="Generate HTML report (default: True)",
+    )
+    parser.add_argument(
+        "--open-browser",
+        action="store_true",
+        default=False,
+        help="Automatically open HTML report in browser after generation",
     )
     return parser.parse_args()
 
@@ -370,7 +383,56 @@ def compute_factor_metrics(
         print(f"      Available feature columns: {available[:15]}...")
         return metrics, ic_series_df
 
-    valid = df[[factor, target_col]].dropna()
+    # ------------------------------------------------------------------
+    # Strict numeric checks for factor & target
+    # - 因子列：如果大部分都能转成数值，则使用转换后的结果；否则直接标记为 non_numeric_factor
+    # - 目标列：必须是数值列，否则直接报错 non_numeric_target
+    # ------------------------------------------------------------------
+    factor_series = df[factor]
+    target_series = df[target_col]
+
+    # Factor: allow coercion but要求足够高的非 NaN 比例
+    if not pd.api.types.is_numeric_dtype(factor_series):
+        factor_numeric = pd.to_numeric(factor_series, errors="coerce")
+        non_na_ratio = float(factor_numeric.notna().mean())
+        if non_na_ratio < 0.8:
+            metrics["error"] = "non_numeric_factor"
+            metrics["non_na_ratio"] = non_na_ratio
+            sample_values = factor_series.dropna().astype(str).unique().tolist()[:10]
+            metrics["sample_values"] = sample_values
+            print(
+                f"   ❌ Factor '{factor}' is non-numeric (non-NaN ratio after coercion={non_na_ratio:.2f})."
+            )
+            print(f"      Example raw values: {sample_values}")
+            return metrics, ic_series_df
+    else:
+        factor_numeric = pd.to_numeric(factor_series, errors="coerce")
+
+    # Target: should already be numeric; if不是，直接报错
+    if not pd.api.types.is_numeric_dtype(target_series):
+        target_numeric = pd.to_numeric(target_series, errors="coerce")
+        non_na_ratio_tgt = float(target_numeric.notna().mean())
+        if non_na_ratio_tgt < 0.95:
+            metrics["error"] = "non_numeric_target"
+            metrics["non_na_ratio"] = non_na_ratio_tgt
+            sample_values_tgt = (
+                target_series.dropna().astype(str).unique().tolist()[:10]
+            )
+            metrics["sample_values_target"] = sample_values_tgt
+            print(
+                f"   ❌ Target '{target_col}' is non-numeric (non-NaN ratio after coercion={non_na_ratio_tgt:.2f})."
+            )
+            print(f"      Example raw target values: {sample_values_tgt}")
+            return metrics, ic_series_df
+    else:
+        target_numeric = pd.to_numeric(target_series, errors="coerce")
+
+    # Build a numeric-only DataFrame for downstream computations
+    df_numeric = df.copy()
+    df_numeric[factor] = factor_numeric
+    df_numeric[target_col] = target_numeric
+
+    valid = df_numeric[[factor, target_col]].dropna()
     if len(valid) < 50:
         metrics["error"] = "insufficient_samples"
         metrics["n_samples"] = int(len(valid))
@@ -383,7 +445,7 @@ def compute_factor_metrics(
     pearson = np.corrcoef(valid[factor], valid[target_col])[0, 1]
 
     # Rolling IC series for IR calculation
-    ic_series = compute_ic_series(df, factor, target_col, window=60)
+    ic_series = compute_ic_series(df_numeric, factor, target_col, window=60)
     if len(ic_series) > 0:
         metrics["ic_mean"] = float(ic_series.mean())
         metrics["ic_std"] = float(ic_series.std())
@@ -400,7 +462,7 @@ def compute_factor_metrics(
 
     # IC decay analysis
     if ic_decay_lags:
-        decay_metrics = compute_ic_decay(df, factor, target_col, ic_decay_lags)
+        decay_metrics = compute_ic_decay(df_numeric, factor, target_col, ic_decay_lags)
         metrics.update(decay_metrics)
 
     # Quantile analysis
@@ -573,9 +635,17 @@ def generate_html_report(
     symbol: str,
     output_dir: Path,
     ic_decay_lags: List[int],
+    diagnostics: Dict[str, Any] | None = None,
 ) -> Path:
     """Generate comprehensive HTML report."""
     html_path = output_dir / f"ts_eval_{strategy_name}_{symbol}.html"
+
+    diagnostics = diagnostics or {}
+    factor_resolution = diagnostics.get("factor_resolution", {})
+    unknown_factors = factor_resolution.get("unknown_factors", [])
+    missing_feature_outputs = factor_resolution.get("missing_feature_outputs", [])
+    factor_mappings = factor_resolution.get("mappings", {})
+    error_factors = diagnostics.get("error_factors", {})
 
     # Build summary table
     summary_rows = []
@@ -845,7 +915,7 @@ def generate_html_report(
         detailed_html = f"""
         <div class="factor-detail">
             <h3>📊 {factor} - Detailed Metrics</h3>
-            
+
             <div class="metrics-grid">
                 <div class="metric-card">
                     <div class="metric-label">IC Statistics</div>
@@ -854,8 +924,8 @@ def generate_html_report(
                 </div>
                 <div class="metric-card">
                     <div class="metric-label">Best Lag</div>
-                    <div class="metric-value" style="color: {'#4CAF50' if best_ic > 0 else '#f44336'}">{best_lag if best_lag else 'N/A'}</div>
-                    <div>IC: {best_ic:.4f} | Bars forward</div>
+                    <div class="metric-value" style="color: {'#4CAF50' if (best_ic is not None and best_ic > 0) else '#f44336'}">{best_lag if best_lag else 'N/A'}</div>
+                    <div>IC: {best_ic_display} | Bars forward</div>
                 </div>
                 <div class="metric-card">
                     <div class="metric-label">Risk-Adjusted Returns</div>
@@ -868,7 +938,7 @@ def generate_html_report(
                     <div>Long: {metrics.get('avg_return_long', 0.0):.4f} | Short: {metrics.get('avg_return_short', 0.0):.4f}</div>
                 </div>
             </div>
-            
+
             <h4>📉 IC Decay Analysis</h4>
             {chart_html}
         </div>
@@ -1003,7 +1073,7 @@ def generate_html_report(
     <body>
         <div class="container">
             <h1>📊 Time-Series Factor Evaluation Report</h1>
-            
+
             <div class="info-box">
                 <strong>Strategy:</strong> {strategy_name}<br>
                 <strong>Symbol:</strong> {symbol}<br>
@@ -1011,11 +1081,327 @@ def generate_html_report(
                 <strong>Factors Evaluated:</strong> {len(results)}
             </div>
 
+            <h2>🧪 Diagnostics</h2>
+            <div class="info-box">
+                <p>Automatic checks from this run. Use them to identify bad factors, config issues, or data problems.</p>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Non-numeric / invalid factors</div>
+                    <div class="metric-value {'bad' if error_factors else 'good'}">{len(error_factors)}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Unknown factors in config</div>
+                    <div class="metric-value {'bad' if unknown_factors else 'good'}">{len(unknown_factors)}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Features with missing output columns</div>
+                    <div class="metric-value {'warning' if missing_feature_outputs else 'good'}">{len(missing_feature_outputs)}</div>
+                </div>
+            </div>
+
+            <h3>Factor Resolution (Config → DataFrame Columns)</h3>
+            <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>DataFrame Column</th>
+                        <th>Requested As</th>
+                    </tr>
+                </thead>
+                <tbody>
+    """
+
+    # Render factor mappings (limit number of rows for readability)
+    mapping_items = list(sorted(factor_mappings.items()))
+    for col, sources in mapping_items[:200]:
+        html_content += f"""
+                    <tr>
+                        <td><code>{col}</code></td>
+                        <td>{", ".join(sorted(sources))}</td>
+                    </tr>
+        """
+
+    if len(mapping_items) > 200:
+        html_content += f"""
+                    <tr>
+                        <td colspan="2" style="color: #999;">... {len(mapping_items) - 200} more mappings not shown ...</td>
+                    </tr>
+        """
+
+    html_content += """
+                </tbody>
+            </table>
+            </div>
+
+            <h3>Unknown Factors in Config</h3>
+    """
+
+    if unknown_factors:
+        html_content += "<ul>"
+        for f in unknown_factors:
+            html_content += f"<li><code>{f}</code></li>"
+        html_content += "</ul>"
+    else:
+        html_content += "<p>No unknown factors. All requested factors were resolved to DataFrame columns or features.</p>"
+
+    # Missing feature outputs
+    html_content += """
+
+            <h3>Features With Missing Output Columns</h3>
+    """
+    if missing_feature_outputs:
+        html_content += "<ul>"
+        for item in missing_feature_outputs:
+            feature = item.get("feature")
+            expected = item.get("expected", [])
+            html_content += f"<li><code>{feature}</code> &mdash; expected columns not found in DataFrame: {', '.join(expected)}</li>"
+        html_content += "</ul>"
+    else:
+        html_content += "<p>All requested features that were recognized had at least one output column present in the DataFrame.</p>"
+
+    # Error factors (non-numeric, insufficient samples, etc.)
+    html_content += """
+
+            <h3>Problematic Factors (Errors During Evaluation)</h3>
+    """
+
+    if error_factors:
+        html_content += """
+            <table>
+                <thead>
+                    <tr>
+                        <th>Factor</th>
+                        <th>Error Type</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+        for factor, m in error_factors.items():
+            error_type = m.get("error", "unknown")
+            details_parts = []
+            if error_type == "non_numeric_factor":
+                nnr = m.get("non_na_ratio")
+                if nnr is not None:
+                    details_parts.append(f"non-NaN ratio after coercion = {nnr:.2f}")
+                samples = m.get("sample_values") or []
+                if samples:
+                    details_parts.append(
+                        f"sample raw values: {', '.join(map(str, samples[:10]))}"
+                    )
+            elif error_type == "non_numeric_target":
+                nnr = m.get("non_na_ratio")
+                if nnr is not None:
+                    details_parts.append(
+                        f"target non-NaN ratio after coercion = {nnr:.2f}"
+                    )
+                samples = m.get("sample_values_target") or []
+                if samples:
+                    details_parts.append(
+                        f"sample raw target values: {', '.join(map(str, samples[:10]))}"
+                    )
+            elif error_type == "factor_missing":
+                avail = m.get("available_columns") or []
+                if avail:
+                    details_parts.append(
+                        f"first available feature columns: {', '.join(map(str, avail[:15]))}"
+                    )
+            elif error_type == "insufficient_samples":
+                n = m.get("n_samples")
+                if n is not None:
+                    details_parts.append(f"valid samples after cleaning: {n}")
+
+            details = "; ".join(details_parts) if details_parts else ""
+            html_content += f"""
+                    <tr>
+                        <td><code>{factor}</code></td>
+                        <td>{error_type}</td>
+                        <td>{details}</td>
+                    </tr>
+            """
+
+        html_content += """
+                </tbody>
+            </table>
+        """
+    else:
+        html_content += "<p>No evaluation errors. All evaluated factors passed basic numeric and sample-size checks.</p>"
+
+    # ------------------------------------------------------------------
+    # Auto summary of top factors (based on IC IR + Sharpe)
+    # ------------------------------------------------------------------
+
+    # Build a list of factors with valid metrics (no error)
+    ranked_factors = []
+    for factor, m in results.items():
+        if "error" in m:
+            continue
+        ic_ir_val = float(m.get("ic_ir", 0.0) or 0.0)
+        sharpe_val = float(m.get("sharpe_ratio", 0.0) or 0.0)
+        ic_mean_val = float(m.get("ic_mean", 0.0) or 0.0)
+        ic_t_stat = float(m.get("ic_t_stat", 0.0) or 0.0)
+        ic_p_value = float(m.get("ic_p_value", 1.0) or 1.0)
+        ranked_factors.append(
+            {
+                "name": factor,
+                "ic_ir": ic_ir_val,
+                "sharpe": sharpe_val,
+                "ic_mean": ic_mean_val,
+                "ic_t_stat": ic_t_stat,
+                "ic_p_value": ic_p_value,
+            }
+        )
+
+    # Positive alpha candidates: IC Mean > 0, IC t-stat > 1.96 (statistically significant)
+    # Optional: IC IR > 0 or Sharpe > 0 (loose constraint to keep more candidates)
+    top_positive = sorted(
+        [
+            f
+            for f in ranked_factors
+            if f["ic_mean"] > 0
+            and f["ic_t_stat"] > 1.96
+            and (f["ic_ir"] > 0 or f["sharpe"] > 0)
+        ],
+        key=lambda x: (x["ic_ir"], x["sharpe"]),
+        reverse=True,
+    )
+    # No truncation - show all qualified factors
+
+    # Strong negative factors (potentially useful when reversed):
+    # IC Mean < 0, IC t-stat < -1.96 (statistically significant)
+    # Optional: IC IR < 0 or Sharpe < 0
+    top_negative = sorted(
+        [
+            f
+            for f in ranked_factors
+            if f["ic_mean"] < 0
+            and f["ic_t_stat"] < -1.96
+            and (f["ic_ir"] < 0 or f["sharpe"] < 0)
+        ],
+        key=lambda x: (abs(x["ic_ir"]), abs(x["sharpe"])),
+        reverse=True,
+    )
+    # No truncation - show all qualified factors
+
+    html_content += """
+
+            <h2>📊 Auto Summary: Qualified Factors</h2>
+            <div class="info-box">
+                <p><strong>Selection Criteria:</strong></p>
+                <ul>
+                    <li><strong>Positive Alpha Candidates:</strong> IC Mean > 0, IC t-stat > 1.96 (statistically significant), and (IC IR > 0 or Sharpe > 0)</li>
+                    <li><strong>Strong Negative Factors:</strong> IC Mean < 0, IC t-stat < -1.96 (statistically significant), and (IC IR < 0 or Sharpe < 0)</li>
+                </ul>
+                <p><strong>Interpretation:</strong></p>
+                <ul>
+                    <li><strong>IC Mean:</strong> Average predictive power (direction and strength). Positive = higher factor value predicts higher future return.</li>
+                    <li><strong>IC t-stat:</strong> Statistical significance. |t-stat| > 1.96 means p-value < 0.05 (95% confidence). Higher |t-stat| = more reliable signal.</li>
+                    <li><strong>IC IR (Information Ratio):</strong> IC Mean / IC Std. Measures stability of predictive power. Higher = more consistent.</li>
+                    <li><strong>Sharpe Ratio:</strong> Risk-adjusted return of simple long-short strategy. > 1.0 is good, > 0 is acceptable.</li>
+                </ul>
+                <p><strong>Usage:</strong></p>
+                <ul>
+                    <li><strong>Positive factors:</strong> Use directly as long signals. Higher factor value → higher expected return.</li>
+                    <li><strong>Negative factors:</strong> Two options:
+                        <ul>
+                            <li><strong>Reverse:</strong> Multiply by -1 to create a positive signal (high negative factor → low expected return → reverse to get long signal)</li>
+                            <li><strong>Risk filter:</strong> Use as-is to avoid trading when negative factors are extreme (e.g., reduce position size or skip trades)</li>
+                        </ul>
+                    </li>
+                </ul>
+                <p><strong>Note:</strong> All qualified factors are shown below (not limited to top 10). A features.yaml file with all qualified factors has been generated for iterative training.</p>
+            </div>
+
+            <div class="metrics-grid">
+                <div>
+                    <h3>Top Positive Alpha Candidates</h3>
+    """
+
+    if top_positive:
+        html_content += f"""
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Factor</th>
+                                <th>IC Mean</th>
+                                <th>IC t-stat</th>
+                                <th>IC p-value</th>
+                                <th>IC IR</th>
+                                <th>Sharpe</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        """
+        for f in top_positive:
+            html_content += f"""
+                            <tr>
+                                <td><code>{f['name']}</code></td>
+                                <td>{f['ic_mean']:.4f}</td>
+                                <td>{f['ic_t_stat']:.2f}</td>
+                                <td>{f['ic_p_value']:.4f}</td>
+                                <td>{f['ic_ir']:.3f}</td>
+                                <td>{f['sharpe']:.2f}</td>
+                            </tr>
+            """
+        html_content += """
+                        </tbody>
+                    </table>
+        """
+    else:
+        html_content += "<p>No positive-alpha candidates (IC Mean > 0, IC t-stat > 1.96, and (IC IR > 0 or Sharpe > 0)) were found in this run.</p>"
+
+    html_content += """
+                </div>
+                <div>
+                    <h3>Strong Negative Factors (Consider Reversing)</h3>
+    """
+
+    if top_negative:
+        html_content += f"""
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Factor</th>
+                                <th>IC Mean</th>
+                                <th>IC t-stat</th>
+                                <th>IC p-value</th>
+                                <th>IC IR</th>
+                                <th>Sharpe</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        """
+        for f in top_negative:
+            html_content += f"""
+                            <tr>
+                                <td><code>{f['name']}</code></td>
+                                <td>{f['ic_mean']:.4f}</td>
+                                <td>{f['ic_t_stat']:.2f}</td>
+                                <td>{f['ic_p_value']:.4f}</td>
+                                <td>{f['ic_ir']:.3f}</td>
+                                <td>{f['sharpe']:.2f}</td>
+                            </tr>
+            """
+        html_content += """
+                        </tbody>
+                    </table>
+        """
+    else:
+        html_content += "<p>No strong negative factors (IC Mean < 0, IC t-stat < -1.96, and (IC IR < 0 or Sharpe < 0)) were detected.</p>"
+
+    html_content += """
+                </div>
+            </div>
+
+            <!-- Main summary table -->
+
             <h2>📈 Summary Metrics</h2>
             <div class="info-box">
-                <strong>Color Coding:</strong> 
-                <span class="good">Green</span> = Good (IC IR > 0.5, Sharpe > 1.0) | 
-                <span class="warning">Orange</span> = Warning (IC IR > 0, Sharpe > 0) | 
+                <strong>Color Coding:</strong>
+                <span class="good">Green</span> = Good (IC IR > 0.5, Sharpe > 1.0) |
+                <span class="warning">Orange</span> = Warning (IC IR > 0, Sharpe > 0) |
                 <span class="bad">Red</span> = Poor
             </div>
             <div style="overflow-x: auto;">
@@ -1052,13 +1438,22 @@ def generate_html_report(
                     </tr>
                 </thead>
                 <tbody>
-                    {''.join(summary_rows)}
+    """
+
+    # Inject summary rows
+    html_content += "".join(summary_rows)
+
+    html_content += """
                 </tbody>
             </table>
             </div>
-            
-            {''.join(detailed_sections)}
 
+    """
+
+    # Inject detailed sections for each factor
+    html_content += "".join(detailed_sections)
+
+    html_content += """
             <h2>📚 Metrics Explanation</h2>
             <div class="info-box">
                 <h4>IC (Information Coefficient) Metrics:</h4>
@@ -1071,7 +1466,7 @@ def generate_html_report(
                     <li><strong>IC t-stat/p-value:</strong> Statistical significance test of IC (p < 0.05 is significant)</li>
                     <li><strong>IC Lag N:</strong> IC at N bars forward (decay analysis - shows how IC decays over time)</li>
                 </ul>
-                
+
                 <h4>Quantile Analysis:</h4>
                 <ul>
                     <li><strong>Q Spread:</strong> Quantile spread = Long return - Short return (higher is better)</li>
@@ -1079,43 +1474,248 @@ def generate_html_report(
                     <li><strong>Long/Short t-stat:</strong> Statistical significance of quantile returns</li>
                     <li><strong>WR Long/Short:</strong> Win rate of long/short positions</li>
                 </ul>
-                
+
                 <h4>Risk-Adjusted Returns:</h4>
                 <ul>
                     <li><strong>Sharpe Ratio:</strong> (Mean return / Std) * sqrt(252) (higher is better, >1.0 is good)</li>
                     <li><strong>Calmar Ratio:</strong> Total return / Max drawdown (higher is better)</li>
                     <li><strong>Sortino Ratio:</strong> Downside risk-adjusted Sharpe (uses only negative returns)</li>
                 </ul>
-                
+
                 <h4>Factor Characteristics:</h4>
                 <ul>
                     <li><strong>Turnover:</strong> Position change rate (lower = more stable signals)</li>
                     <li><strong>F Autocorr:</strong> Factor autocorrelation (higher = more persistent/stable)</li>
                     <li><strong>Max DD Duration:</strong> Maximum drawdown duration in periods</li>
                 </ul>
+
+                <h4>📝 Using the Generated features.yaml:</h4>
+                <p>This evaluation has generated a <code>features_suggested.yaml</code> file containing all qualified factors (positive + negative).</p>
+                <ol>
+                    <li><strong>Review the qualified factors</strong> in the "Auto Summary" section above</li>
+                    <li><strong>Locate the generated file:</strong> <code>results/factor_ts_eval/{strategy_name}_{symbol}_features_suggested.yaml</code></li>
+                    <li><strong>Replace your strategy's features.yaml:</strong> Copy the generated file to your strategy config directory:
+                        <pre>cp results/factor_ts_eval/{strategy_name}_{symbol}_features_suggested.yaml config/strategies/{strategy_name}/features.yaml</pre>
+                    </li>
+                    <li><strong>Iterative refinement:</strong>
+                        <ul>
+                            <li>Train your model with the new features.yaml</li>
+                            <li>Evaluate performance using <code>ts-strategy-feature-compare</code></li>
+                            <li>Re-run <code>ts-factor-eval</code> to refine factor selection</li>
+                            <li>Repeat until optimal factor combination is found</li>
+                        </ul>
+                    </li>
+                </ol>
+                <p><strong>Tip:</strong> Start with all qualified factors, then use ablation studies (<code>ts-strategy-feature-compare</code>) to identify the optimal subset.</p>
             </div>
 
             <div class="footer">
                 <p>Generated by ts-factor-eval | Time-Series Factor Evaluation Tool</p>
             </div>
         </div>
-        
+
         <script>
             // Initialize all IC decay charts
-            {''.join(chart_scripts)}
         </script>
     </body>
     </html>
     """
 
+    # Inject chart scripts after f-string is defined (since chart_scripts is generated in the loop above)
+    html_content = html_content.replace(
+        "// Initialize all IC decay charts",
+        f"// Initialize all IC decay charts\n            {''.join(chart_scripts)}",
+    )
+
     html_path.write_text(html_content, encoding="utf-8")
-    return html_path
+
+    # Return qualified factors for YAML export
+    qualified_factors = {
+        "positive": [f["name"] for f in top_positive],
+        "negative": [f["name"] for f in top_negative],
+    }
+    return html_path, qualified_factors
+
+
+def export_features_yaml(
+    qualified_factors: Dict[str, List[str]],
+    strategy_name: str,
+    symbol: str,
+    output_dir: Path,
+    strategy_config_path: Path | None = None,
+) -> Path:
+    """Export qualified factors to a features.yaml file that can be used for training."""
+    import yaml
+    from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
+
+    # Combine positive and negative factors (negative factors can be used as-is or reversed)
+    all_factors = qualified_factors["positive"] + qualified_factors["negative"]
+
+    if not all_factors:
+        print("   ⚠️  No qualified factors to export.")
+        return None
+
+    # Map output columns to feature compute function names (with _f suffix)
+    # Some factors are output columns (e.g., bb_lower, bb_middle) that need to be mapped to feature compute functions (e.g., bb_width_f)
+    feature_loader = StrategyFeatureLoader()
+    feature_definitions = feature_loader.feature_deps.get("features", {})
+
+    # Build mapping: output_column -> feature_compute_function_name (with _f suffix)
+    output_to_feature = {}
+    for feat_name, feat_info in feature_definitions.items():
+        output_cols = feat_info.get("output_columns", [])
+        for col in output_cols:
+            if col not in output_to_feature:
+                output_to_feature[col] = feat_name
+
+    # Map factors to feature compute function names (only keep feature compute function names, not output columns)
+    # This ensures the generated YAML only contains feature compute function names that can be loaded
+    mapped_features = set()
+    unmapped_factors = []
+    mapped_outputs = []  # Track which output columns were mapped
+
+    for factor in all_factors:
+        # Check if it's already a feature compute function name (with _f suffix)
+        if factor in feature_definitions:
+            mapped_features.add(factor)
+        # Check if it's an output column - map to source feature compute function
+        elif factor in output_to_feature:
+            source_feature = output_to_feature[factor]
+            mapped_features.add(source_feature)
+            mapped_outputs.append((factor, source_feature))
+        else:
+            # Not found - check if it's an old name (without _f suffix)
+            potential_old_name = factor
+            potential_new_name = f"{factor}_f"
+            if potential_new_name in feature_definitions:
+                # This is an old name without _f suffix - raise error
+                raise ValueError(
+                    f"Feature compute function name must end with '_f' suffix. "
+                    f"Got: '{factor}'. Did you mean '{potential_new_name}'?"
+                )
+            # Not found - keep it anyway (might be a raw column or deprecated feature)
+            unmapped_factors.append(factor)
+            mapped_features.add(factor)
+
+    if mapped_outputs:
+        print(
+            f"   📋 Mapped {len(mapped_outputs)} feature output columns to feature compute functions:"
+        )
+        for output_col, source_feat in sorted(mapped_outputs)[:5]:
+            print(f"      {output_col} → {source_feat}")
+        if len(mapped_outputs) > 5:
+            print(f"      ... and {len(mapped_outputs) - 5} more")
+
+    if unmapped_factors:
+        print(f"   ⚠️  {len(unmapped_factors)} factors not found in feature registry:")
+        for factor in sorted(unmapped_factors)[:10]:
+            print(f"      - {factor}")
+        if len(unmapped_factors) > 10:
+            print(f"      ... and {len(unmapped_factors) - 10} more")
+
+    # Load base strategy config if available to preserve other settings
+    base_config = {}
+    if strategy_config_path and strategy_config_path.exists():
+        try:
+            with open(strategy_config_path, "r", encoding="utf-8") as f:
+                base_config = yaml.safe_load(f) or {}
+        except Exception as e:
+            print(f"   ⚠️  Could not load base strategy config: {e}")
+
+    # Build features.yaml structure
+    features_config = {
+        "name": base_config.get("name", strategy_name),
+        "description": base_config.get(
+            "description",
+            f"Feature pipeline with qualified factors from factor evaluation ({symbol})",
+        ),
+        "feature_pipeline": {
+            "requested_features": sorted(mapped_features),
+            "ensure_signal_column": base_config.get("feature_pipeline", {}).get(
+                "ensure_signal_column",
+                {"name": "signal", "default_value": 0},
+            ),
+        },
+        "notes": f"""
+Auto-generated from factor evaluation results.
+- Positive factors ({len(qualified_factors['positive'])}): Direct alpha signals
+- Negative factors ({len(qualified_factors['negative'])}): Consider reversing (multiply by -1) or use as risk filters
+
+Selection criteria:
+- Positive: IC Mean > 0, IC t-stat > 1.96, (IC IR > 0 or Sharpe > 0)
+- Negative: IC Mean < 0, IC t-stat < -1.96, (IC IR < 0 or Sharpe < 0)
+
+Note: Feature output columns (e.g., bb_lower, bb_middle) have been mapped to their source feature compute functions (e.g., bb_width_f).
+Only feature compute function names (with _f suffix) are included in requested_features for cleaner configuration.
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """.strip(),
+    }
+
+    # Write YAML file
+    yaml_path = output_dir / f"{strategy_name}_{symbol}_features_suggested.yaml"
+    with open(yaml_path, "w", encoding="utf-8") as f:
+        yaml.dump(
+            features_config,
+            f,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+    return yaml_path
 
 
 def main() -> None:
     args = parse_args()
-    loader = StrategyConfigLoader(Path(args.strategy_config))
+    strategy_config_path = Path(args.strategy_config)
+
+    # Support both directory and file paths
+    # If it's a file (e.g., features_all.yaml), use its parent directory as strategy config
+    # and temporarily use that file as features.yaml
+    features_file_override = None
+    if strategy_config_path.is_file():
+        # It's a features.yaml file, extract the directory
+        features_file_override = strategy_config_path
+        strategy_config_dir = strategy_config_path.parent
+        print(f"📁 Detected features file: {features_file_override}")
+        print(f"   Using strategy config directory: {strategy_config_dir}")
+    else:
+        # It's a directory, use default features.yaml
+        strategy_config_dir = strategy_config_path
+
+    loader = StrategyConfigLoader(strategy_config_dir)
     strategy_cfg = loader.load()
+
+    # If a features file was specified, override the features config
+    if features_file_override:
+        import yaml
+
+        with open(features_file_override, "r", encoding="utf-8") as f:
+            features_override = yaml.safe_load(f)
+        # Override the features configuration
+        if "feature_pipeline" in features_override:
+            strategy_cfg.features.requested_features = features_override[
+                "feature_pipeline"
+            ].get("requested_features", [])
+            print(
+                f"   ✅ Loaded {len(strategy_cfg.features.requested_features)} features from {features_file_override.name}"
+            )
+
+    # If factors not specified, use requested_features from strategy config
+    if args.factors is None:
+        strategy_requested = strategy_cfg.features.requested_features or []
+        if not strategy_requested:
+            raise ValueError(
+                f"No factors specified and strategy config '{args.strategy_config}' "
+                f"has no requested_features in features.yaml. "
+                f"Please either specify --factors or add requested_features to the config."
+            )
+        args.factors = strategy_requested
+        print(f"📋 Using factors from strategy config: {len(args.factors)} factors")
+        print(
+            f"   Factors: {', '.join(args.factors[:10])}{'...' if len(args.factors) > 10 else ''}"
+        )
 
     df = prepare_dataset(args, strategy_cfg)
     target_col = strategy_cfg.labels.target_column
@@ -1123,22 +1723,139 @@ def main() -> None:
     # Parse IC decay lags
     ic_decay_lags = [int(x.strip()) for x in args.ic_decay_lags.split(",") if x.strip()]
 
-    results = {}
-    ic_series_data = {}
+    results: Dict[str, Dict[str, float]] = {}
+    ic_series_data: Dict[str, pd.DataFrame] = {}
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # ------------------------------------------------------------------
+    # Resolve factors:
+    # - 如果因子名是 DataFrame 中的列名：直接使用该列
+    # - 如果因子名是特征名（存在于 feature_dependencies.yaml）：
+    #     使用其 output_columns 中「实际存在于 DataFrame」的列
+    # - 同一个列名只计算一次（即使既写了特征名又写了列名）
+    # ------------------------------------------------------------------
+    feature_loader = StrategyFeatureLoader()
+    features_config = feature_loader.feature_deps.get("features", {})
+
+    # Diagnostics containers
+    diagnostics: Dict[str, Any] = {}
+    factor_resolution: Dict[str, Any] = {
+        "mappings": {},  # col_name -> set(sources)
+        "unknown_factors": [],
+        "missing_feature_outputs": [],
+    }
+
+    # col_name -> set(sources)  例如: "hilbert_price_env" <- {"hilbert_phase", "hilbert_price_env"}
+    cols_to_evaluate: Dict[str, set] = {}
+
+    # Build reverse mapping: output_column -> feature_compute_function_name
+    output_to_feature = {}
+    for feat_name, feat_info in features_config.items():
+        output_cols = feat_info.get("output_columns", [])
+        for col in output_cols:
+            if col not in output_to_feature:
+                output_to_feature[col] = feat_name
+
     for factor in args.factors:
+        # 1. Check if it's a DataFrame column
+        if factor in df.columns:
+            cols_to_evaluate.setdefault(factor, set()).add(factor)
+            continue
+
+        # 2. Check if it's a feature compute function name (with _f suffix)
+        if factor in features_config:
+            feature_info = features_config[factor]
+            output_cols = feature_info.get("output_columns", [factor])
+            existing_cols = [c for c in output_cols if c in df.columns]
+
+            if not existing_cols:
+                msg = {
+                    "feature": factor,
+                    "expected": output_cols,
+                }
+                factor_resolution["missing_feature_outputs"].append(msg)
+                print(
+                    f"   ❌ Feature compute function '{factor}' found in config, but none of its output columns "
+                    f"exist in DataFrame. Expected: {output_cols}"
+                )
+                continue
+
+            for col in existing_cols:
+                cols_to_evaluate.setdefault(col, set()).add(factor)
+        # 3. Check if it's a feature output column name (reverse lookup)
+        elif factor in output_to_feature:
+            source_feature = output_to_feature[factor]
+            # Check if this output column exists in DataFrame
+            if factor in df.columns:
+                cols_to_evaluate.setdefault(factor, set()).add(source_feature)
+            else:
+                # Output column doesn't exist in DataFrame
+                feature_info = features_config[source_feature]
+                output_cols = feature_info.get("output_columns", [])
+                msg = {
+                    "feature": source_feature,
+                    "expected": output_cols,
+                }
+                factor_resolution["missing_feature_outputs"].append(msg)
+                print(
+                    f"   ❌ Feature output column '{factor}' (from feature compute function '{source_feature}') "
+                    f"does not exist in DataFrame. Expected output columns: {output_cols}"
+                )
+        else:
+            # 4. Not found - check if it's an old feature name (without _f suffix)
+            potential_old_name = factor
+            potential_new_name = f"{factor}_f"
+            if potential_new_name in features_config:
+                factor_resolution["unknown_factors"].append(factor)
+                print(
+                    f"   ❌ Factor '{factor}' is an old feature compute function name (without '_f' suffix). "
+                    f"Did you mean '{potential_new_name}'? "
+                    f"Or if you want to use the output column, please check if '{factor}' is in the output columns of '{potential_new_name}'."
+                )
+            else:
+                factor_resolution["unknown_factors"].append(factor)
+                print(
+                    f"   ❌ Factor '{factor}' is neither a DataFrame column nor a known feature compute function "
+                    f"(with '_f' suffix) or feature output column in feature_dependencies.yaml"
+                )
+
+    if not cols_to_evaluate:
+        print("   ❌ No valid factors/columns to evaluate. Exiting.")
+        return
+
+    # 打印映射关系，方便调试
+    print("\n   🔍 Factor resolution (config entry -> actual DataFrame columns):")
+    for col, sources in sorted(cols_to_evaluate.items()):
+        print(f"      - {col}: requested as {sorted(sources)}")
+
+    # 保存映射到 diagnostics (convert sets to lists for JSON serialization)
+    factor_resolution["mappings"] = {
+        col: sorted(list(sources)) for col, sources in cols_to_evaluate.items()
+    }
+    diagnostics["factor_resolution"] = factor_resolution
+
+    # 逐列计算指标（每个实际列只计算一次）
+    for col in cols_to_evaluate.keys():
+        if col not in df.columns:
+            # 理论上不会发生，这里仅做保护
+            print(f"   ❌ Column '{col}' not found in DataFrame (skipped).")
+            continue
+
         metrics, ic_series_df = compute_factor_metrics(
-            df, factor, target_col, args.quantile, ic_decay_lags
+            df, col, target_col, args.quantile, ic_decay_lags
         )
-        results[factor] = metrics
+        results[col] = metrics
         if not ic_series_df.empty:
-            ic_series_data[factor] = ic_series_df
+            ic_series_data[col] = ic_series_df
             # Save IC series to CSV
-            ic_csv_path = output_dir / f"ic_series_{factor}_{args.symbol}.csv"
+            ic_csv_path = output_dir / f"ic_series_{col}_{args.symbol}.csv"
             ic_series_df.to_csv(ic_csv_path)
             print(f"   💾 Saved IC series to {ic_csv_path}")
+
+    # Collect error factors for diagnostics
+    error_factors = {f: m for f, m in results.items() if "error" in m}
+    diagnostics["error_factors"] = error_factors
 
     # Save JSON summary
     summary_path = output_dir / f"ts_eval_{strategy_cfg.name}_{args.symbol}.json"
@@ -1149,6 +1866,7 @@ def main() -> None:
                 "symbol": args.symbol,
                 "ic_decay_lags": ic_decay_lags,
                 "results": results,
+                "diagnostics": diagnostics,
             },
             fh,
             indent=2,
@@ -1157,16 +1875,66 @@ def main() -> None:
     print(f"✅ Saved time-series factor evaluation to {summary_path}")
 
     # Generate HTML report
+    qualified_factors = None
     if args.generate_html:
-        html_path = generate_html_report(
+        html_path, qualified_factors = generate_html_report(
             results,
             ic_series_data,
             strategy_cfg.name,
             args.symbol,
             output_dir,
             ic_decay_lags,
+            diagnostics=diagnostics,
         )
         print(f"✅ Generated HTML report: {html_path}")
+
+        # Export features.yaml with qualified factors
+        if qualified_factors:
+            strategy_config_path = Path(args.strategy_config) / "features.yaml"
+            yaml_path = export_features_yaml(
+                qualified_factors,
+                strategy_cfg.name,
+                args.symbol,
+                output_dir,
+                strategy_config_path=strategy_config_path,
+            )
+            if yaml_path:
+                print(f"✅ Exported qualified factors to: {yaml_path}")
+                print(f"   - Positive factors: {len(qualified_factors['positive'])}")
+                print(f"   - Negative factors: {len(qualified_factors['negative'])}")
+                print(
+                    f"   - Total: {len(qualified_factors['positive']) + len(qualified_factors['negative'])}"
+                )
+                print(
+                    f"   💡 You can use this file to replace your strategy's features.yaml for iterative training."
+                )
+
+        # Open in browser if requested (only in non-Docker/local environment)
+        if args.open_browser:
+            # Check if running in Docker (common indicators)
+            in_docker = (
+                os.path.exists("/.dockerenv")
+                or os.environ.get("DOCKER_CONTAINER") == "1"
+                or os.environ.get("DEV_CONTAINER") == "1"
+            )
+
+            if in_docker:
+                print(f"⚠️  Running in Docker - cannot open browser automatically")
+                print(f"   Please open manually: {html_path}")
+                # Try to print a local path if mounted
+                local_path = str(html_path).replace("/workspace/", "")
+                if local_path != str(html_path):
+                    print(f"   Local path (if mounted): {local_path}")
+            else:
+                try:
+                    # Convert to absolute path and use file:// URL
+                    abs_path = html_path.resolve()
+                    file_url = f"file://{abs_path}"
+                    webbrowser.open(file_url)
+                    print(f"🌐 Opened report in browser: {file_url}")
+                except Exception as e:
+                    print(f"⚠️  Could not open browser automatically: {e}")
+                    print(f"   Please open manually: {html_path}")
 
 
 if __name__ == "__main__":

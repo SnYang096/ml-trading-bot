@@ -40,13 +40,21 @@ def _auto_price_bin_size(prices: pd.Series, cfg: FootprintConfig) -> float:
         if iqr_val <= 0 or prices.count() < 2:
             # low variation or too few points; fall back to target_bins
             price_range = prices.max() - prices.min()
-            return float(price_range / max(cfg.price_bin_target_bins, 1)) if price_range > 0 else 1.0
+            return (
+                float(price_range / max(cfg.price_bin_target_bins, 1))
+                if price_range > 0
+                else 1.0
+            )
         bin_width = 2 * iqr_val / (prices.count() ** (1 / 3))
         return float(bin_width) if bin_width > 0 else 1.0
 
     # fixed_bins mode
     price_range = prices.max() - prices.min()
-    return float(price_range / max(cfg.price_bin_target_bins, 1)) if price_range > 0 else 1.0
+    return (
+        float(price_range / max(cfg.price_bin_target_bins, 1))
+        if price_range > 0
+        else 1.0
+    )
 
 
 def _build_bins(prices: pd.Series, bin_width: float) -> np.ndarray:
@@ -62,16 +70,36 @@ def _build_bins(prices: pd.Series, bin_width: float) -> np.ndarray:
     return np.arange(start_edge, end_edge + bin_width, bin_width)
 
 
-def _value_area_bounds(volume_by_bin: pd.Series, value_area_pct: float, bin_edges: np.ndarray) -> Tuple[float, float]:
-    """Compute VAH/VAL that cover `value_area_pct` of volume."""
+def _value_area_bounds(
+    volume_by_bin: pd.Series, value_area_pct: float, bin_edges: np.ndarray
+) -> Tuple[float, float]:
+    """Compute VAH/VAL that cover `value_area_pct` of volume.
+
+    Fixed: Now correctly includes bins up to and including the first bin that reaches value_area_pct.
+    """
     if volume_by_bin.empty or volume_by_bin.sum() <= 0:
         return np.nan, np.nan
     sorted_bins = volume_by_bin.sort_values(ascending=False)
     cum = sorted_bins.cumsum() / sorted_bins.sum()
-    selected_bins = sorted_bins.index[cum <= value_area_pct]
-    # ensure at least the top bin is included
-    if selected_bins.empty:
-        selected_bins = sorted_bins.index[:1]
+
+    # Find the first index where cumulative volume >= value_area_pct
+    cum_array = cum.values
+    # Use 'left' side to find insertion point, then +1 to include that bin
+    insert_pos = np.searchsorted(cum_array, value_area_pct, side="left")
+    # If found position is within array bounds and value >= threshold, include it
+    if insert_pos < len(cum_array) and cum_array[insert_pos] >= value_area_pct:
+        target_idx = insert_pos + 1
+    else:
+        # If no bin reaches threshold, include all bins up to insert_pos
+        target_idx = insert_pos + 1 if insert_pos < len(cum_array) else len(cum_array)
+
+    # Ensure at least the POC (top bin) is included
+    if target_idx == 0:
+        target_idx = 1
+
+    # Select bins from highest volume up to target_idx
+    selected_bins = sorted_bins.index[:target_idx]
+
     bin_idx_min = min(selected_bins)
     bin_idx_max = max(selected_bins)
     return bin_edges[bin_idx_min], bin_edges[bin_idx_max + 1]
@@ -185,12 +213,18 @@ def compute_kline_footprint_features(
         hvn_price = (bin_edges[hvn_bin] + bin_edges[hvn_bin + 1]) / 2
         lvn_price = (bin_edges[lvn_bin] + bin_edges[lvn_bin + 1]) / 2
 
-        vah_price, val_price = _value_area_bounds(total_vol, cfg.value_area_pct, bin_edges)
+        vah_price, val_price = _value_area_bounds(
+            total_vol, cfg.value_area_pct, bin_edges
+        )
 
         delta_poc = delta_vol.loc[poc_bin]
-        imbalance_ratio = (np.maximum(buy_vol, sell_vol) + EPS) / (np.minimum(buy_vol, sell_vol) + EPS)
+        imbalance_ratio = (np.maximum(buy_vol, sell_vol) + EPS) / (
+            np.minimum(buy_vol, sell_vol) + EPS
+        )
         max_imbalance_bin = int(imbalance_ratio.idxmax())
-        max_imbalance_price = (bin_edges[max_imbalance_bin] + bin_edges[max_imbalance_bin + 1]) / 2
+        max_imbalance_price = (
+            bin_edges[max_imbalance_bin] + bin_edges[max_imbalance_bin + 1]
+        ) / 2
         max_imbalance_value = float(imbalance_ratio.loc[max_imbalance_bin])
 
         # Exhaustion spike: largest absolute delta z-score within the bar
@@ -201,7 +235,9 @@ def compute_kline_footprint_features(
             zscores = (abs_delta - abs_mean) / abs_std
             exhaustion_bin = int(zscores.idxmax())
             exhaustion_z = float(zscores.loc[exhaustion_bin])
-            exhaustion_price = (bin_edges[exhaustion_bin] + bin_edges[exhaustion_bin + 1]) / 2
+            exhaustion_price = (
+                bin_edges[exhaustion_bin] + bin_edges[exhaustion_bin + 1]
+            ) / 2
         else:
             exhaustion_bin = poc_bin
             exhaustion_z = 0.0
@@ -236,4 +272,3 @@ def compute_kline_footprint_features(
         )
 
     return pd.DataFrame(result_rows, index=klines.index)
-

@@ -326,8 +326,9 @@ def compute_wpt_volume_energy_features(
             
             # 突破置信度 = (能量下移 + VPER分位数 + 多尺度一致性) / 3
             consistency = df.iloc[i, df.columns.get_loc("wpt_multi_scale_consistency")]
-            breakout_confidence = (
-                (energy_cascade + 1) / 2 * 0.4 + vper_mid_quantile * 0.3 + consistency * 0.3
+            breakout_confidence = np.clip(
+                (energy_cascade + 1) / 2 * 0.4 + vper_mid_quantile * 0.3 + consistency * 0.3,
+                0.0, 1.0
             )
             df.iloc[i, df.columns.get_loc("wpt_breakout_confidence")] = breakout_confidence
             
@@ -657,7 +658,10 @@ def compute_wpt_volume_energy_features_from_series(
                 vper_mid_quantile = 0.5
 
             consistency = out["wpt_multi_scale_consistency"][i]
-            breakout_confidence = (energy_cascade + 1) / 2 * 0.4 + vper_mid_quantile * 0.3 + consistency * 0.3
+            breakout_confidence = np.clip(
+                (energy_cascade + 1) / 2 * 0.4 + vper_mid_quantile * 0.3 + consistency * 0.3,
+                0.0, 1.0
+            )
             out["wpt_breakout_confidence"][i] = breakout_confidence
 
             if price_energy_high > price_energy_mid * 2 and vper_mid < 0.5:

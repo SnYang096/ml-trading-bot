@@ -16,8 +16,7 @@ requirements = []
 if os.path.exists("requirements.txt"):
     with open("requirements.txt", "r", encoding="utf-8") as fh:
         requirements = [
-            line.strip() for line in fh
-            if line.strip() and not line.startswith("#")
+            line.strip() for line in fh if line.strip() and not line.startswith("#")
         ]
 else:
     # Minimal requirements if file doesn't exist
@@ -37,7 +36,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/ml-trading-project",
-    packages=find_packages(where="src") + find_packages(where=".", include=["scripts*"]),
+    packages=find_packages(where="src")
+    + find_packages(where=".", include=["scripts*"]),
     package_dir={
         "": "src",
         "scripts": "scripts",  # scripts 在项目根目录
@@ -69,8 +69,7 @@ setup(
     entry_points={
         "console_scripts": [
             # Unified CLI (recommended)
-            "mlbot=cli.main:main",
-            
+            "mlbot=src.cli.main:main",
             # Legacy scripts for backward compatibility
             "train-strategy=scripts.train_strategy_pipeline:main",
         ],

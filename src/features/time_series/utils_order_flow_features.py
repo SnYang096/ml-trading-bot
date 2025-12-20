@@ -1792,6 +1792,16 @@ def extract_trade_clustering_features(
                         
                         # 立即释放该月的数据
                         del month_ticks
+                    else:
+                        # 没有 tick 数据，跳过该月
+                        print(f"      ⚠️  Skipping {month_start.strftime('%Y-%m')}: No tick data available")
+                except (FileNotFoundError, ValueError) as e:
+                    # 预期的错误：该月没有 tick 数据文件或数据为空，跳过
+                    error_msg = str(e)
+                    if "No tick" in error_msg or "No tick parquet files" in error_msg:
+                        print(f"      ⚠️  Skipping {month_start.strftime('%Y-%m')}: No tick data available")
+                    else:
+                        print(f"      ⚠️  Skipping {month_start.strftime('%Y-%m')}: {error_msg}")
                 except Exception as e:
                     print(f"      ⚠️  Failed to process {month_start.strftime('%Y-%m')}: {e}")
                     import traceback

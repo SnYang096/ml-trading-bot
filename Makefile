@@ -291,41 +291,42 @@ builder-shell:
 # TS factor evaluation
 # ---------------------------------------------------------------------------
 
-TS_FACTOR_STRATEGY ?= config/strategies/factor_ts_simple
-TS_FACTOR_FACTORS ?= rsi atr macd macd_signal macd_histogram
+# TS Factor Evaluation
+# If TS_FACTOR_FACTORS is not specified, factors will be read from strategy config's features.yaml (requested_features)
+# Example: make ts-factor-eval TS_FACTOR_STRATEGY=config/strategies/sr_reversal_long
+# Or: make ts-factor-eval TS_FACTOR_STRATEGY=config/strategies/sr_reversal_long TS_FACTOR_FACTORS='rsi atr macd'
+# To auto-open browser: make ts-factor-eval TS_FACTOR_OPEN_BROWSER=1
+TS_FACTOR_STRATEGY ?= config/strategies/sr_reversal_long
+TS_FACTOR_FACTORS ?=
 TS_FACTOR_SYMBOL ?= BTCUSDT
 TS_FACTOR_TIMEFRAME ?= 240T
-TS_FACTOR_START ?=
-TS_FACTOR_END ?=
+TS_FACTOR_START ?= 2024-01-01
+TS_FACTOR_END ?= 2025-10-31
 TS_FACTOR_QUANTILE ?= 0.2
 TS_FACTOR_OUTPUT_DIR ?= results/factor_ts_eval
 TS_FACTOR_MODE ?= strategy
 TS_FACTOR_IC_DECAY_LAGS ?= 1,3,5,10,20
+TS_FACTOR_OPEN_BROWSER ?= 0
 
 ts-factor-eval:
-	@if [ -z "$(TS_FACTOR_FACTORS)" ]; then \
-		echo "❌ 错误: 必须指定 TS_FACTOR_FACTORS"; \
-		echo "用法: make ts-factor-eval TS_FACTOR_FACTORS='atr sqs_hal_high' TS_FACTOR_STRATEGY=config/strategies/sr_reversal"; \
-		echo "   或者: make ts-factor-eval TS_FACTOR_FACTORS='rsi,macd' (逗号分隔会自动转换)"; \
-		exit 1; \
-	fi
-	@echo "📈 TS 因子评价: $(TS_FACTOR_FACTORS)"
+	@echo "📈 TS 因子评价 (通过 mlbot CLI)"
 	@echo "   策略配置: $(TS_FACTOR_STRATEGY)"
+	@if [ -n "$(TS_FACTOR_FACTORS)" ]; then \
+		echo "   指定因子: $(TS_FACTOR_FACTORS)"; \
+		FACTORS_SPACE=$$(echo "$(TS_FACTOR_FACTORS)" | tr ',' ' '); \
+		FACTORS_ARGS=$$(for f in $$FACTORS_SPACE; do echo " --factors $$f"; done | tr '\n' ' '); \
+	else \
+		echo "   从策略配置读取因子 (features.yaml 中的 requested_features)"; \
+		FACTORS_ARGS=""; \
+	fi
 	@echo "   IC 衰减分析: $(TS_FACTOR_IC_DECAY_LAGS) bars"
-	@# Convert comma-separated factors to space-separated (support both formats)
-	@FACTORS_SPACE=$$(echo "$(TS_FACTOR_FACTORS)" | tr ',' ' '); \
-	$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.factor_ts_eval \
-		--strategy-config /workspace/$(TS_FACTOR_STRATEGY) \
-		--symbol $(TS_FACTOR_SYMBOL) \
-		--factors $$FACTORS_SPACE \
-		--data-path /workspace/$(DATA_DIR) \
-		--timeframe $(TS_FACTOR_TIMEFRAME) \
-		$(if $(TS_FACTOR_START),--start-date $(TS_FACTOR_START),) \
-		$(if $(TS_FACTOR_END),--end-date $(TS_FACTOR_END),) \
-		--quantile $(TS_FACTOR_QUANTILE) \
-		--feature-mode $(TS_FACTOR_MODE) \
-		--ic-decay-lags $(TS_FACTOR_IC_DECAY_LAGS) \
-		--output-dir /workspace/$(TS_FACTOR_OUTPUT_DIR)
+	@if [ "$(TS_FACTOR_OPEN_BROWSER)" = "1" ]; then \
+		echo "   🌐 将自动打开浏览器"; \
+		OPEN_BROWSER_ARG="--open-browser"; \
+	else \
+		OPEN_BROWSER_ARG=""; \
+	fi
+	@$(DOCKER_RUN_NO_TTY) bash -c "export PYTHONPATH=/workspace:/workspace/src && pip install --user -e . > /dev/null 2>&1 && export PATH=\$$HOME/.local/bin:\$$PATH && mlbot analyze factor-eval --strategy-config $(TS_FACTOR_STRATEGY) --symbol $(TS_FACTOR_SYMBOL) $$FACTORS_ARGS --timeframe $(TS_FACTOR_TIMEFRAME) $(if $(TS_FACTOR_START),--start-date $(TS_FACTOR_START),) $(if $(TS_FACTOR_END),--end-date $(TS_FACTOR_END),) --quantile $(TS_FACTOR_QUANTILE) --feature-mode $(TS_FACTOR_MODE) --ic-decay-lags $(TS_FACTOR_IC_DECAY_LAGS) --output-dir $(TS_FACTOR_OUTPUT_DIR) $$OPEN_BROWSER_ARG"
 
 
 
@@ -351,16 +352,16 @@ STRAT_COMPARE_ROLL_MAX ?= 5
 # Ablation Study (消融实验): Compare strategy performance across different feature configurations
 # This command trains the same strategy with different feature sets to evaluate
 # the contribution of each feature group. Use --feature-overrides to specify variants.
-# 
+#
 # Default strategy (bidirectional): config/strategies/sr_reversal (combine_mode: any_success)
 # For long-only: STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_long
 # For short-only: STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_short
-# 
+#
 # Examples:
 #   # Compare bidirectional strategy (default)
 #   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
 #        STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
-#   
+#
 #   # Compare long-only strategy
 #   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_long \
 #        STRAT_COMPARE_OVERRIDES="full=config/strategies/sr_reversal_long/features_full.yaml"
@@ -771,9 +772,9 @@ FEATURE_EVAL_HORIZON ?= 24
 FEATURE_EVAL_TYPES ?= baseline
 FEATURE_EVAL_LEAKAGE_THRESHOLD ?= 0.04
 FEATURE_EVAL_OUTPUT_DIR ?= results/feature_evaluation
-FEATURE_EVAL_START_DATE ?=2023-01-01
-FEATURE_EVAL_END_DATE ?=2025-10-31
-FEATURE_EVAL_TOP_FACTORS_COUNT ?=50
+FEATURE_EVAL_START_DATE ?= 2023-01-01
+FEATURE_EVAL_END_DATE ?= 2025-10-31
+FEATURE_EVAL_TOP_FACTORS_COUNT ?= 50
 FEATURE_EVAL_TOP_FACTORS_IC_THRESHOLD ?= 0.02
 FEATURE_EVAL_TRAIN_ONLY ?= 1
 FEATURE_EVAL_TEST_SIZE ?= 0.15
@@ -1005,6 +1006,11 @@ CS_BUILD_DROPNA ?= 1
 
 cs-build-panel:
 	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
+	@echo "   Timeframe: $(CS_BUILD_TIMEFRAME)"
+	@echo "   Horizon: $(CS_BUILD_HORIZON)"
+	@echo "   Start Date: $(if $(CS_BUILD_START),$(CS_BUILD_START),Not specified)"
+	@echo "   End Date: $(if $(CS_BUILD_END),$(CS_BUILD_END),Not specified)"
+	@echo "   Feature Type: $(CS_BUILD_FEATURE_TYPE)"
 	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
 	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
 	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/generate_panel.py \

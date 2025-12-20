@@ -13,14 +13,14 @@ from src.features.loader.parallel_computer import ParallelFeatureComputer
 class StrategyFeatureLoader:
     """
     基于纯配置文件的特征加载器（支持并行计算和缓存）
-    
+
     特点：
     1. 特征依赖关系在 YAML 中定义
     2. 策略特征集在 YAML 中定义
     3. 自动解析依赖，按需计算
     4. 支持并行计算和缓存
     """
-    
+
     def __init__(
         self,
         feature_deps_path: str = "config/feature_dependencies.yaml",
@@ -33,7 +33,7 @@ class StrategyFeatureLoader:
     ):
         """
         初始化特征加载器
-        
+
         Args:
             feature_deps_path: 特征依赖配置文件路径
             strategy_config_path: 策略配置文件路径（可选，如果文件不存在则不加载）
@@ -49,7 +49,7 @@ class StrategyFeatureLoader:
             self.strategy_config = self._load_yaml_optional(strategy_config_path)
         else:
             self.strategy_config = {}
-        
+
         # 创建并行计算器
         self.computer = ParallelFeatureComputer(
             cache_dir=cache_dir,
@@ -58,54 +58,110 @@ class StrategyFeatureLoader:
             max_workers=max_workers,
             parallel_backend=parallel_backend,
         )
-    
+
     def _load_yaml(self, path: str) -> Dict:
         """加载 YAML 配置文件（必需）"""
         path_obj = Path(path)
         if not path_obj.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
-        
-        with open(path_obj, 'r', encoding='utf-8') as f:
+
+        with open(path_obj, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
-    
+
     def _load_yaml_optional(self, path: str) -> Dict:
         """加载 YAML 配置文件（可选，文件不存在时返回空字典）"""
         path_obj = Path(path)
         if not path_obj.exists():
             return {}
-        
-        with open(path_obj, 'r', encoding='utf-8') as f:
+
+        with open(path_obj, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
-    
+
     def resolve_dependencies(self, requested_features: List[str]) -> List[str]:
         """
         解析特征依赖关系，返回计算顺序（拓扑排序）
-        
+
         Args:
-            requested_features: 请求的特征列表
-        
+            requested_features: 请求的特征列表（可以是特征计算函数名或特征输出列名）
+                - 特征计算函数名必须带 _f 后缀（例如：bb_width_f）
+                - 特征输出列名不需要 _f 后缀（例如：bb_upper）
+
         Returns:
-            computation_order: 计算顺序
+            computation_order: 计算顺序（特征计算函数名，带 _f 后缀）
+
+        Raises:
+            ValueError: 如果请求的特征计算函数名不带 _f 后缀
         """
         features = self.feature_deps.get("features", {})
-        
-        # 1. 收集所有需要的特征（包括依赖）
-        all_needed = set(requested_features)
-        queue = list(requested_features)
-        
+
+        # 1. 验证并收集所有需要的特征（包括依赖）
+        all_needed = set()
+        queue = []
+
+        for item in requested_features:
+            # 首先检查是否是旧名称（不带 _f 后缀但带 _f 的版本存在）
+            # 如果存在带 _f 的版本，说明这是旧的特征计算函数名，必须报错
+            # 即使它也是输出列名，也要报错，强制用户明确使用新名称或输出列名
+            potential_new_name = f"{item}_f"
+            if potential_new_name in features:
+                # 这是旧的特征计算函数名，必须报错
+                raise ValueError(
+                    f"Feature compute function name must end with '_f' suffix. "
+                    f"Got: '{item}'. Did you mean '{potential_new_name}'? "
+                    f"If you want to use the output column, please use '{item}' from '{potential_new_name}' output columns."
+                )
+
+            # 检查是否是特征计算函数名（必须带 _f 后缀）
+            if item in features:
+                if not item.endswith("_f"):
+                    raise ValueError(
+                        f"Feature compute function name must end with '_f' suffix. "
+                        f"Got: '{item}'. Did you mean '{item}_f'?"
+                    )
+                all_needed.add(item)
+                queue.append(item)
+            else:
+                # 可能是输出列名，尝试找到对应的特征
+                found = False
+                for feat_name, feat_info in features.items():
+                    output_cols = feat_info.get("output_columns", [])
+                    if item in output_cols:
+                        if feat_name not in all_needed:
+                            all_needed.add(feat_name)
+                            queue.append(feat_name)
+                        found = True
+                        break
+
+                if not found:
+                    # 如果既不是特征计算函数名也不是输出列名，保留它（可能是原始列或其他）
+                    # 但不会添加到 all_needed 中
+                    pass
+
+        # 2. 收集所有依赖的特征
         while queue:
             feature = queue.pop(0)
             if feature in features:
                 deps = features[feature].get("dependencies", [])
                 for dep in deps:
+                    # 验证依赖特征名必须带 _f 后缀
+                    if dep not in features:
+                        raise ValueError(
+                            f"Dependency '{dep}' not found in feature definitions. "
+                            f"Feature compute function names must end with '_f' suffix."
+                        )
+                    if not dep.endswith("_f"):
+                        raise ValueError(
+                            f"Dependency feature compute function name must end with '_f' suffix. "
+                            f"Got: '{dep}'. Did you mean '{dep}_f'?"
+                        )
                     if dep not in all_needed:
                         all_needed.add(dep)
                         queue.append(dep)
-        
-        # 2. 构建依赖图
+
+        # 3. 构建依赖图
         graph = {f: [] for f in all_needed}
         in_degree = {f: 0 for f in all_needed}
-        
+
         for feature in all_needed:
             if feature in features:
                 deps = features[feature].get("dependencies", [])
@@ -113,11 +169,11 @@ class StrategyFeatureLoader:
                     if dep in all_needed:
                         graph[dep].append(feature)
                         in_degree[feature] += 1
-        
+
         # 3. 拓扑排序
         queue = [f for f in all_needed if in_degree[f] == 0]
         result = []
-        
+
         while queue:
             feature = queue.pop(0)
             result.append(feature)
@@ -125,13 +181,13 @@ class StrategyFeatureLoader:
                 in_degree[neighbor] -= 1
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
-        
+
         # 4. 检查循环依赖
         if len(result) != len(all_needed):
             raise ValueError("Circular dependency detected!")
-        
+
         return result
-    
+
     def load_strategy_features(
         self,
         df: pd.DataFrame,
@@ -141,16 +197,16 @@ class StrategyFeatureLoader:
     ) -> pd.DataFrame:
         """
         为指定策略加载特征（支持并行计算和缓存）
-        
+
         注意：此方法已废弃，推荐使用 load_features_from_requested() 配合目录管理方式。
         此方法仅用于向后兼容，需要 strategy_features.yaml 文件存在。
-        
+
         Args:
             df: 输入 DataFrame
             strategy_name: 策略名称（sr_reversal, sr_breakout, compression_breakout, trend_following）
             fit: 是否拟合（研究阶段=True，实盘阶段=False）
             requested_features_override: 可选的特征列表覆盖
-        
+
         Returns:
             df_with_features: 包含计算特征的 DataFrame
         """
@@ -159,16 +215,16 @@ class StrategyFeatureLoader:
                 f"Strategy config not loaded. "
                 f"Please use load_features_from_requested() with directory-based configs instead."
             )
-        
+
         if strategy_name not in self.strategy_config.get("strategies", {}):
             raise ValueError(
                 f"Unknown strategy: {strategy_name}. "
                 f"Available strategies: {list(self.strategy_config.get('strategies', {}).keys())}"
             )
-        
+
         strategy_config = self.strategy_config["strategies"][strategy_name]
         result_df = df.copy()
-        
+
         requested_features = (
             requested_features_override
             if requested_features_override is not None
@@ -177,31 +233,27 @@ class StrategyFeatureLoader:
         if not requested_features:
             print(f"   ⚠️  No requested features for strategy {strategy_name}")
             return result_df
-        
+
         features = self.feature_deps.get("features", {})
-        
+
         result_df = self.computer.compute_features_parallel(
             result_df,
             features,
             requested_features,
             fit=fit,
         )
-        
+
         # 3. 只返回请求的特征列（以及它们的输出列）
         output_cols = []
         for feature_name in requested_features:
             if feature_name in features:
                 feature_info = features[feature_name]
-                output_cols.extend(
-                    feature_info.get("output_columns", [feature_name])
-                )
-        
+                output_cols.extend(feature_info.get("output_columns", [feature_name]))
+
         # 保留原始列和计算的特征列
-        all_cols = list(df.columns) + [
-            c for c in output_cols if c in result_df.columns
-        ]
+        all_cols = list(df.columns) + [c for c in output_cols if c in result_df.columns]
         return result_df[all_cols]
-    
+
     def load_features_from_requested(
         self,
         df: pd.DataFrame,
@@ -215,7 +267,7 @@ class StrategyFeatureLoader:
     ) -> pd.DataFrame:
         """
         直接根据请求的特征列表加载特征。
-        
+
         Args:
             df: 输入 DataFrame
             requested_features: 特征列表
@@ -237,7 +289,10 @@ class StrategyFeatureLoader:
             and len(result_df) > 0
         ):
             try:
-                from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
+                from src.feature_store.feature_store import (
+                    FeatureStore,
+                    FeatureStoreSpec,
+                )
 
                 store = FeatureStore(feature_store_dir)
                 spec = FeatureStoreSpec(
@@ -245,14 +300,20 @@ class StrategyFeatureLoader:
                     symbol=feature_store_symbol,
                     timeframe=feature_store_timeframe,
                 )
-                df_store = store.read_range(spec, result_df.index.min(), result_df.index.max())
+                df_store = store.read_range(
+                    spec, result_df.index.min(), result_df.index.max()
+                )
                 if not df_store.empty:
                     df_store = df_store.reindex(result_df.index)
                     features_cfg = self.feature_deps.get("features", {})
                     output_cols: List[str] = []
                     for feature_name in requested_features:
                         if feature_name in features_cfg:
-                            output_cols.extend(features_cfg[feature_name].get("output_columns", [feature_name]))
+                            output_cols.extend(
+                                features_cfg[feature_name].get(
+                                    "output_columns", [feature_name]
+                                )
+                            )
 
                     # if store already has all needed outputs, return joined frame
                     if output_cols and all(c in df_store.columns for c in output_cols):
@@ -262,21 +323,27 @@ class StrategyFeatureLoader:
                         return merged
             except Exception:
                 pass
-        
+
         features = self.feature_deps.get("features", {})
-        
+
         # 调试信息：检查需要 ticks 的特征是否配置了 ticks_loader_json
         features_need_ticks = ["vpin_features", "footprint_basic"]
         for feature_name in requested_features:
             if feature_name in features_need_ticks and feature_name in features:
                 compute_params = features[feature_name].get("compute_params", {})
                 if "ticks_loader_json" in compute_params:
-                    print(f"     ✅ {feature_name} has ticks_loader_json in load_features_from_requested")
+                    print(
+                        f"     ✅ {feature_name} has ticks_loader_json in load_features_from_requested"
+                    )
                 else:
-                    print(f"     ⚠️  {feature_name} does NOT have ticks_loader_json in load_features_from_requested")
+                    print(
+                        f"     ⚠️  {feature_name} does NOT have ticks_loader_json in load_features_from_requested"
+                    )
                     print(f"     compute_params keys: {list(compute_params.keys())}")
-                    print(f"     feature_info keys: {list(features[feature_name].keys())}")
-        
+                    print(
+                        f"     feature_info keys: {list(features[feature_name].keys())}"
+                    )
+
         # 确保所有请求特征的 required_columns 都在 DataFrame 中
         # 收集所有需要的 required_columns
         all_required_columns = set()
@@ -285,9 +352,11 @@ class StrategyFeatureLoader:
                 feature_info = features[feature_name]
                 required_columns = feature_info.get("required_columns", [])
                 all_required_columns.update(required_columns)
-        
+
         # 检查缺失的 required_columns 并尝试从原始 df 中获取
-        missing_required = [col for col in all_required_columns if col not in result_df.columns]
+        missing_required = [
+            col for col in all_required_columns if col not in result_df.columns
+        ]
         if missing_required:
             for col in missing_required:
                 if col in df.columns:
@@ -303,46 +372,50 @@ class StrategyFeatureLoader:
                             common_idx = result_df.index.intersection(df.index)
                             if len(common_idx) > 0:
                                 result_df.loc[common_idx, col] = df.loc[common_idx, col]
-        
+
         # Store original indices to filter out any new indices introduced during feature computation
         original_indices = set(df.index)
-        
+
         result_df = self.computer.compute_features_parallel(
             result_df,
             features,
             requested_features,
             fit=fit,
         )
-        
+
         # Filter out any indices that were not in the original input DataFrame
         # This prevents feature computation from introducing overlapping indices
         new_indices = set(result_df.index) - original_indices
         if new_indices:
-            print(f"     ⚠️  Feature computation introduced {len(new_indices)} new indices, filtering them out")
+            print(
+                f"     ⚠️  Feature computation introduced {len(new_indices)} new indices, filtering them out"
+            )
             if len(new_indices) <= 10:
-                print(f"        Examples of new indices: {sorted(list(new_indices))[:5]}")
+                print(
+                    f"        Examples of new indices: {sorted(list(new_indices))[:5]}"
+                )
             result_df = result_df.loc[result_df.index.isin(original_indices)]
-        
+
         # 验证：确保输出索引与输入索引一致
         if not result_df.index.equals(df.index):
             # 尝试重新对齐索引
             result_df = result_df.reindex(df.index)
             print(f"     ℹ️  Reindexed output to match input index (may introduce NaN)")
-        
+
         # 验证：检查数据类型
         # 允许的 object 类型列（这些列本来就是字符串类型，不需要警告）
         allowed_object_columns = {
-            '_symbol',  # 交易对标识符
-            'dtw_best_match_w15',  # DTW 特征：最佳匹配模式（可能是 "none"）
-            'dtw_best_match_w20',
-            'dtw_best_match_w25',
+            "_symbol",  # 交易对标识符
+            "dtw_best_match_w15",  # DTW 特征：最佳匹配模式（可能是 "none"）
+            "dtw_best_match_w20",
+            "dtw_best_match_w25",
         }
         # 允许以这些前缀开头的列
         allowed_object_prefixes = [
-            'dtw_best_match_',  # DTW 匹配模式列
-            '_symbol',  # 符号相关列
+            "dtw_best_match_",  # DTW 匹配模式列
+            "_symbol",  # 符号相关列
         ]
-        
+
         for col in result_df.columns:
             try:
                 # 检查 col 是否是单个列（Series）还是多个列（DataFrame）
@@ -352,37 +425,41 @@ class StrategyFeatureLoader:
                     continue
                 elif isinstance(col_data, pd.Series):
                     # 如果是 Series，检查 dtype
-                    if col_data.dtype == 'object':
+                    if col_data.dtype == "object":
                         # 检查是否在允许列表中
                         if col in allowed_object_columns:
                             continue  # 允许的列，跳过警告
-                        
+
                         # 检查是否匹配允许的前缀
                         is_allowed = False
                         for prefix in allowed_object_prefixes:
                             if col.startswith(prefix):
                                 is_allowed = True
                                 break
-                        
+
                         if is_allowed:
                             continue  # 允许的列，跳过警告
-                        
+
                         # 检查是否有意外的 object 类型（可能是字符串或其他类型）
                         sample_values = col_data.dropna().head(5)
                         if len(sample_values) > 0:
                             first_val = sample_values.iloc[0]
-                            if not isinstance(first_val, (int, float, bool, type(None))):
-                                print(f"     ⚠️  Warning: Column '{col}' has unexpected dtype 'object' with sample value: {first_val}")
+                            if not isinstance(
+                                first_val, (int, float, bool, type(None))
+                            ):
+                                print(
+                                    f"     ⚠️  Warning: Column '{col}' has unexpected dtype 'object' with sample value: {first_val}"
+                                )
             except (KeyError, AttributeError, TypeError) as e:
                 # 如果无法访问列，跳过
                 continue
-        
+
         output_cols = []
         for feature_name in requested_features:
             if feature_name in features:
                 feature_info = features[feature_name]
                 output_cols.extend(feature_info.get("output_columns", [feature_name]))
-        
+
         # Avoid huge allocations from pandas block copies when slicing columns.
         # Also protect against duplicate column names leaking in from upstream merges.
         if result_df.columns.duplicated().any():
@@ -394,21 +471,23 @@ class StrategyFeatureLoader:
 
         # In most cases result_df already contains exactly these columns; avoid an
         # unnecessary copy that can blow up memory.
-        if len(all_cols) == len(result_df.columns) and set(all_cols) == set(result_df.columns):
+        if len(all_cols) == len(result_df.columns) and set(all_cols) == set(
+            result_df.columns
+        ):
             return result_df
 
         return result_df.loc[:, all_cols]
-    
+
     def get_strategy_features(self, strategy_name: str) -> List[str]:
         """
         获取策略的特征列表（包括依赖）
-        
+
         注意：此方法已废弃，推荐使用目录管理方式。
         此方法仅用于向后兼容，需要 strategy_features.yaml 文件存在。
-        
+
         Args:
             strategy_name: 策略名称
-        
+
         Returns:
             feature_list: 特征列表（包括依赖）
         """
@@ -417,15 +496,15 @@ class StrategyFeatureLoader:
                 f"Strategy config not loaded. "
                 f"Please use directory-based configs instead."
             )
-        
+
         if strategy_name not in self.strategy_config.get("strategies", {}):
             raise ValueError(f"Unknown strategy: {strategy_name}")
-        
+
         requested_features = self.strategy_config["strategies"][strategy_name].get(
             "requested_features", []
         )
         return self.resolve_dependencies(requested_features)
-    
+
     def clear_cache(self, memory: bool = True, disk: bool = False):
         """清除缓存"""
         self.computer.clear_cache(memory=memory, disk=disk)
