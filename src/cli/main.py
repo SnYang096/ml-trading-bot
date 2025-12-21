@@ -743,13 +743,15 @@ def analyze_factor_eval(
     docker,
 ):
     """Time-series factor IC / win-rate evaluation (single asset)."""
+    # If already in Docker, don't add /workspace prefix
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--strategy-config",
-        f"/workspace/{strategy_config}" if docker else strategy_config,
+        f"/workspace/{strategy_config}" if use_workspace_prefix else strategy_config,
         "--symbol",
         symbol,
         "--data-path",
-        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "/workspace/data/parquet_data" if use_workspace_prefix else "data/parquet_data",
         "--timeframe",
         timeframe,
         "--quantile",
@@ -759,7 +761,7 @@ def analyze_factor_eval(
         "--ic-decay-lags",
         ic_decay_lags,
         "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
     ]
     if factors:
         args.extend(["--factors"] + list(factors))

@@ -3449,6 +3449,8 @@ features:
     dependencies: []
     required_columns:
       - close
+      - volume
+      - cvd
     output_columns:
       - spectrum_price_has_dominant_freq
       - spectrum_price_flatness
@@ -3475,6 +3477,8 @@ features:
     pass_full_df: false
     column_mappings:
       close: close
+      volume: volume
+      cvd: cvd
     compute_params:
       rolling_window: 64
   spectrum_features_sr_breakout_f:

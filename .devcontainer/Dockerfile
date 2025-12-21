@@ -40,23 +40,31 @@ RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y -b /usr/local/bin &&
     mkdir -p /etc/fish && \
     echo 'eval "$(starship init fish)"' >> /etc/fish/config.fish
 
-# Create dev user to match host user (UID 1000), handle existing UID/GID gracefully
+# Create dev user to match host user (UID 1000), remove ubuntu user if it exists
+# Note: Don't set USER here, let devcontainer.json's remoteUser handle it
 ARG USERNAME=dev
 ARG USER_UID=1000
 ARG USER_GID=1000
 RUN /bin/bash -lc '\
     set -eu; \
+    if id -u ubuntu >/dev/null 2>&1; then \
+    UBUNTU_UID=$(id -u ubuntu); \
+    if [ "${UBUNTU_UID}" = "${USER_UID}" ]; then \
+    echo "Removing ubuntu user (UID ${USER_UID}) to free up UID for ${USERNAME}"; \
+    userdel -r ubuntu 2>/dev/null || userdel ubuntu 2>/dev/null || true; \
+    fi; \
+    fi; \
     EXISTING_GROUP=$(getent group "${USER_GID}" | cut -d: -f1 || true); \
     if [ -z "${EXISTING_GROUP}" ]; then \
     groupadd --gid "${USER_GID}" "${USERNAME}"; \
     else \
-    echo "Group with GID ${USER_GID} already exists: ${EXISTING_GROUP}"; \
+    if [ "${EXISTING_GROUP}" != "${USERNAME}" ]; then \
+    echo "Removing existing group ${EXISTING_GROUP} (GID ${USER_GID})"; \
+    groupdel "${EXISTING_GROUP}" 2>/dev/null || true; \
+    groupadd --gid "${USER_GID}" "${USERNAME}"; \
     fi; \
-    EXISTING_UID_USER=$(getent passwd "${USER_UID}" | cut -d: -f1 || true); \
-    if [ -n "${EXISTING_UID_USER}" ]; then \
-    echo "UID ${USER_UID} already exists (user: ${EXISTING_UID_USER}), creating ${USERNAME} with same UID/GID (non-unique)"; \
-    useradd -o --uid "${USER_UID}" --gid "${USER_GID}" --create-home --shell /bin/bash "${USERNAME}" || true; \
-    elif ! id -u "${USERNAME}" >/dev/null 2>&1; then \
+    fi; \
+    if ! id -u "${USERNAME}" >/dev/null 2>&1; then \
     useradd --uid "${USER_UID}" --gid "${USER_GID}" --create-home --shell /bin/bash "${USERNAME}"; \
     else \
     echo "User ${USERNAME} already exists"; \
@@ -64,6 +72,7 @@ RUN /bin/bash -lc '\
     mkdir -p /etc/sudoers.d; \
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME}; \
     chmod 0440 /etc/sudoers.d/${USERNAME}; \
+    rm -f /etc/sudoers.d/ubuntu 2>/dev/null || true; \
     mkdir -p /workspace; \
     chown -R ${USER_UID}:${USER_GID} /workspace \
     '

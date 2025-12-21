@@ -60,6 +60,7 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return rsi_series
 
 
+@register_feature("compute_rsi_from_series", category="baseline")
 def compute_rsi_from_series(close: pd.Series, period: int = 14) -> pd.DataFrame:
     """Narrow-IO version of RSI calculation that returns DataFrame."""
     rsi_series = compute_rsi(close, period=period)

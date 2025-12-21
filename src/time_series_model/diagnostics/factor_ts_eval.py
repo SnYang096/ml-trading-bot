@@ -1916,9 +1916,26 @@ def export_features_yaml(
         },
         "notes": f"""
 Auto-generated from factor evaluation results.
+
+Factor counts (from HTML report):
 - Positive factors ({len(qualified_factors['positive'])}): Direct alpha signals
 - Negative factors ({len(qualified_factors['negative'])}): Consider reversing (multiply by -1) or use as risk filters
+- Total qualified factors: {len(qualified_factors['positive']) + len(qualified_factors['negative'])}
 - Non-numeric/invalid factors ({len(non_numeric_factors)}): Added for manual verification (placed at the end)
+
+Feature function counts (in this YAML):
+- Qualified feature functions: {len([f for f in mapped_features if f not in non_numeric_mapped])}
+- Non-numeric/invalid feature functions: {len(non_numeric_mapped)}
+- Total feature functions: {len(mapped_features)}
+
+📊 Why the counts differ:
+  The HTML report shows individual factor columns (e.g., "bb_lower", "bb_middle", "bb_upper"), 
+  but these output columns are mapped to their source feature compute functions (e.g., "bb_width_f").
+  When multiple output columns from the same feature function are qualified, they are merged into 
+  a single feature function entry in this YAML file. This is correct behavior - requesting the 
+  feature function once will generate all its output columns.
+
+  - {len(mapped_outputs)} output columns were mapped to {len(set(source_feat for _, source_feat in mapped_outputs))} unique feature functions
 
 Selection criteria:
 - Positive: IC Mean > 0, IC t-stat > 1.96, (IC IR > 0 or Sharpe > 0)

@@ -7,15 +7,13 @@
     "--shm-size=8gb"
   ],
   "mounts": [
-    "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/tmp/host-ssh,type=bind,consistency=cached"
   ],
   "remoteUser": "dev",
   "containerEnv": {
     "DEV_CONTAINER": "1",
     "PYTHONUNBUFFERED": "1",
-    "PYTHONPATH": "/workspace/src",
-    "SSH_AUTH_SOCK": "/ssh-agent"
+    "PYTHONPATH": "/workspace/src"
   },
   "customizations": {
     "vscode": {
@@ -32,5 +30,5 @@
       }
     }
   },
-  "postCreateCommand": "sudo -H pip3 install -e . && if [ -d /tmp/host-ssh ] && [ ! -d $HOME/.ssh ]; then cp -r /tmp/host-ssh $HOME/.ssh && chmod 700 $HOME/.ssh && chmod 600 $HOME/.ssh/* 2>/dev/null || true; fi && mkdir -p $HOME/.ssh && echo -e 'Host *\\n    ForwardAgent yes\\n    IdentityAgent $SSH_AUTH_SOCK\\n    StrictHostKeyChecking no' > $HOME/.ssh/config && chmod 600 $HOME/.ssh/config && mkdir -p $HOME/.config/fish && if ! grep -q 'fish_add_path ~/.local/bin' $HOME/.config/fish/config.fish 2>/dev/null; then echo 'fish_add_path ~/.local/bin' >> $HOME/.config/fish/config.fish; fi && if ! grep -q '\\.local/bin' $HOME/.bashrc 2>/dev/null; then echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> $HOME/.bashrc; fi"
+  "postCreateCommand": "sudo -H pip3 install -e . && if [ -d /tmp/host-ssh ] && [ ! -d $HOME/.ssh ]; then cp -r /tmp/host-ssh $HOME/.ssh && chmod 700 $HOME/.ssh && chmod 600 $HOME/.ssh/* 2>/dev/null || true; fi && mkdir -p $HOME/.ssh && if [ -n \"${SSH_AUTH_SOCK:-}\" ]; then echo -e 'Host *\\n    ForwardAgent yes\\n    IdentityAgent ${SSH_AUTH_SOCK}\\n    StrictHostKeyChecking no' > $HOME/.ssh/config; else echo -e 'Host *\\n    ForwardAgent yes\\n    StrictHostKeyChecking no' > $HOME/.ssh/config; fi && chmod 600 $HOME/.ssh/config && mkdir -p $HOME/.config/fish && if ! grep -q 'fish_add_path ~/.local/bin' $HOME/.config/fish/config.fish 2>/dev/null; then echo 'fish_add_path ~/.local/bin' >> $HOME/.config/fish/config.fish; fi && if ! grep -q '\\.local/bin' $HOME/.bashrc 2>/dev/null; then echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> $HOME/.bashrc; fi"
 }

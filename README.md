@@ -50,7 +50,9 @@ The recommended workflow uses **config-driven architecture** with strategy-speci
 mlbot analyze factor-eval \
   --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
   --symbol BTCUSDT \
-  --timeframe 240T
+  --timeframe 240T \
+  --start-date 2025-01-01 \
+  --end-date 2025-10-31 \
 ```
 
 **Evaluate Specific Factors**:
