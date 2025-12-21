@@ -16,6 +16,37 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr, ttest_1samp, skew, kurtosis
 
+
+def format_pvalue(p_value: float) -> str:
+    """
+    Format p-value for display with proper handling of very small values.
+
+    Args:
+        p_value: P-value to format
+
+    Returns:
+        Formatted string:
+        - If p_value < 0.0001: returns "< 0.0001" (very significant)
+        - If p_value >= 1.0: returns "1.0000" (not significant)
+        - Otherwise: returns formatted with 4 decimal places
+    """
+    if p_value is None or np.isnan(p_value):
+        return "N/A"
+
+    p_value = float(p_value)
+
+    # Very small p-values (highly significant)
+    if p_value < 0.0001:
+        return "< 0.0001"
+
+    # Large p-values (not significant) - cap at 1.0
+    if p_value >= 1.0:
+        return "1.0000"
+
+    # Normal range: display with 4 decimal places
+    return f"{p_value:.4f}"
+
+
 # Ensure project root on sys.path so we can reuse existing modules
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parents[2]  # src/diagnostics -> src -> project root
@@ -73,6 +104,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Automatically open HTML report in browser after generation",
+    )
+    parser.add_argument(
+        "--remove-correlated",
+        action="store_true",
+        default=False,
+        help="Remove highly correlated features (correlation threshold: 0.9)",
+    )
+    parser.add_argument(
+        "--correlation-threshold",
+        type=float,
+        default=0.9,
+        help="Correlation threshold for removing redundant features (default: 0.9)",
+    )
+    parser.add_argument(
+        "--filter-by-best-lag",
+        action="store_true",
+        default=False,
+        help="Filter features by best lag (only keep features with best lag matching target lag)",
+    )
+    parser.add_argument(
+        "--target-lag",
+        type=int,
+        default=None,
+        help="Target lag for filtering (if not specified, will be inferred from label config max_holding_bars)",
+    )
+    parser.add_argument(
+        "--lag-tolerance",
+        type=int,
+        default=5,
+        help="Tolerance for best lag filtering: keep features if |best_lag - target_lag| <= tolerance (default: 5)",
     )
     return parser.parse_args()
 
@@ -526,11 +587,34 @@ def compute_factor_metrics(
     )
 
     # Statistical significance of IC
+    # Note: p-value is NOT related to the sign of IC (positive/negative correlation).
+    # It only measures whether IC is significantly different from 0.
+    # For negative IC (negative correlation), if it's significant, p-value will still be small (< 0.05).
     if len(ic_series) > 1:
-        ic_t_stat, ic_p_value = ttest_1samp(ic_series, 0)
-        metrics["ic_t_stat"] = float(ic_t_stat)
-        metrics["ic_p_value"] = float(ic_p_value)
+        try:
+            ic_t_stat, ic_p_value = ttest_1samp(ic_series, 0)
+            # Handle edge cases: NaN, inf, or invalid values
+            # Note: if std = 0, t-stat will be inf, but p-value will be 0.0 (valid)
+            # We should handle NaN values, but allow inf for t-stat and 0.0 for p-value
+            if np.isnan(ic_t_stat) or np.isnan(ic_p_value):
+                # If t-stat or p-value is NaN, set defaults
+                metrics["ic_t_stat"] = 0.0
+                metrics["ic_p_value"] = 1.0
+            else:
+                metrics["ic_t_stat"] = float(ic_t_stat)
+                # Ensure p-value is valid: if p-value is inf, set to 1.0 (shouldn't happen, but be safe)
+                if np.isinf(ic_p_value):
+                    metrics["ic_p_value"] = 1.0
+                else:
+                    metrics["ic_p_value"] = float(ic_p_value)
+        except Exception as e:
+            # If t-test fails for any reason, set defaults
+            print(f"   ⚠️  Warning: t-test failed for factor '{factor}': {e}")
+            metrics["ic_t_stat"] = 0.0
+            metrics["ic_p_value"] = 1.0
     else:
+        # Cannot perform statistical test with <= 1 samples
+        # Set defaults: ic_t_stat = 0.0 (no significance), p_value = 1.0 (null hypothesis cannot be rejected)
         metrics["ic_t_stat"] = 0.0
         metrics["ic_p_value"] = 1.0
 
@@ -646,6 +730,9 @@ def generate_html_report(
     missing_feature_outputs = factor_resolution.get("missing_feature_outputs", [])
     factor_mappings = factor_resolution.get("mappings", {})
     error_factors = diagnostics.get("error_factors", {})
+    # Get lag_info for best lag display
+    lag_filtering_info = diagnostics.get("best_lag_filtering", {})
+    lag_info = lag_filtering_info.get("lag_info", {})
 
     # Build summary table
     summary_rows = []
@@ -730,7 +817,7 @@ def generate_html_report(
                 <td class="{ic_ir_class}">{metrics.get('ic_ir', 0.0):.4f}</td>
                 <td>{metrics.get('ic_positive_ratio', 0.0):.2%}</td>
                 <td>{metrics.get('ic_t_stat', 0.0):.2f}</td>
-                <td>{metrics.get('ic_p_value', 1.0):.4f}</td>
+                <td>{format_pvalue(metrics.get('ic_p_value', 1.0))}</td>
                 <td class="{best_ic_class}"><strong>{best_lag_display}</strong></td>
                 <td class="{best_ic_class}">{best_ic_display}</td>
                 <td>{metrics.get('quantile_spread', 0.0):.4f}</td>
@@ -1161,6 +1248,81 @@ def generate_html_report(
     else:
         html_content += "<p>All requested features that were recognized had at least one output column present in the DataFrame.</p>"
 
+    # Correlation removal info
+    correlation_removal = (
+        diagnostics.get("correlation_removal") if diagnostics else None
+    )
+    if correlation_removal:
+        html_content += """
+            <h3>Correlation-Based Feature Removal</h3>
+            <p>Removed highly correlated features to reduce redundancy.</p>
+            <ul>
+                <li><strong>Threshold:</strong> {threshold}</li>
+                <li><strong>Kept:</strong> {kept_count} features</li>
+                <li><strong>Removed:</strong> {removed_count} features</li>
+            </ul>
+        """.format(
+            threshold=correlation_removal["threshold"],
+            kept_count=len(correlation_removal["kept"]),
+            removed_count=len(correlation_removal["removed"]),
+        )
+        if correlation_removal.get("removed"):
+            html_content += "<h4>Removed Features:</h4><ul>"
+            removal_reasons = correlation_removal.get("removal_reasons", {})
+            for feat in correlation_removal["removed"][:20]:  # Limit to 20
+                reason = removal_reasons.get(
+                    feat, "Highly correlated with other features"
+                )
+                html_content += f"<li><code>{feat}</code> &mdash; {reason}</li>"
+            html_content += "</ul>"
+            if len(correlation_removal["removed"]) > 20:
+                html_content += (
+                    f"<p>... and {len(correlation_removal['removed']) - 20} more</p>"
+                )
+
+    # Best lag filtering info
+    best_lag_filtering = diagnostics.get("best_lag_filtering") if diagnostics else None
+    if best_lag_filtering:
+        html_content += """
+            <h3>Best Lag Filtering</h3>
+            <p>Filtered features based on their best lag (IC peak horizon).</p>
+            <ul>
+                <li><strong>Target Lag:</strong> {target_lag} bars</li>
+                <li><strong>Tolerance:</strong> ±{tolerance} bars</li>
+                <li><strong>Kept:</strong> {kept_count} features</li>
+                <li><strong>Removed:</strong> {removed_count} features</li>
+            </ul>
+        """.format(
+            target_lag=best_lag_filtering["target_lag"],
+            tolerance=best_lag_filtering["tolerance"],
+            kept_count=len(best_lag_filtering["kept"]),
+            removed_count=len(best_lag_filtering["removed"]),
+        )
+        if best_lag_filtering.get("removed"):
+            html_content += "<h4>Removed Features:</h4><ul>"
+            lag_info = best_lag_filtering.get("lag_info", {})
+            for feat in best_lag_filtering["removed"][:20]:  # Limit to 20
+                info = lag_info.get(feat, {})
+                best_lag = info.get("best_lag", "N/A")
+                best_ic = info.get("best_ic", "N/A")
+                if isinstance(best_ic, (int, float)):
+                    best_ic_str = f"{best_ic:.4f}"
+                else:
+                    best_ic_str = str(best_ic)
+                if (
+                    isinstance(best_lag, (int, float))
+                    and best_lag_filtering["target_lag"] is not None
+                ):
+                    lag_diff = abs(best_lag - best_lag_filtering["target_lag"])
+                else:
+                    lag_diff = "N/A"
+                html_content += f"<li><code>{feat}</code> &mdash; best_lag={best_lag}, best_ic={best_ic_str}, diff={lag_diff}</li>"
+            html_content += "</ul>"
+            if len(best_lag_filtering["removed"]) > 20:
+                html_content += (
+                    f"<p>... and {len(best_lag_filtering['removed']) - 20} more</p>"
+                )
+
     # Error factors (non-numeric, insufficient samples, etc.)
     html_content += """
 
@@ -1243,6 +1405,10 @@ def generate_html_report(
         ic_mean_val = float(m.get("ic_mean", 0.0) or 0.0)
         ic_t_stat = float(m.get("ic_t_stat", 0.0) or 0.0)
         ic_p_value = float(m.get("ic_p_value", 1.0) or 1.0)
+        # Get best lag from lag_info if available
+        best_lag_info = lag_info.get(factor, {})
+        best_lag_val = best_lag_info.get("best_lag")
+
         ranked_factors.append(
             {
                 "name": factor,
@@ -1251,11 +1417,14 @@ def generate_html_report(
                 "ic_mean": ic_mean_val,
                 "ic_t_stat": ic_t_stat,
                 "ic_p_value": ic_p_value,
+                "best_lag": best_lag_val,  # Add best_lag to factor dict
             }
         )
 
     # Positive alpha candidates: IC Mean > 0, IC t-stat > 1.96 (statistically significant)
     # Optional: IC IR > 0 or Sharpe > 0 (loose constraint to keep more candidates)
+    # Note: p-value should be < 0.05 if ic_t_stat > 1.96 (they are consistent)
+    # If p-value = 1.0, it means ic_series length <= 1, which is inconsistent with ic_t_stat > 1.96
     top_positive = sorted(
         [
             f
@@ -1263,6 +1432,9 @@ def generate_html_report(
             if f["ic_mean"] > 0
             and f["ic_t_stat"] > 1.96
             and (f["ic_ir"] > 0 or f["sharpe"] > 0)
+            # Additional check: if ic_t_stat > 1.96, p-value should be < 0.05 (consistent)
+            # Exclude factors with p-value = 1.0 as they indicate data inconsistency
+            and f["ic_p_value"] < 1.0
         ],
         key=lambda x: (x["ic_ir"], x["sharpe"]),
         reverse=True,
@@ -1272,6 +1444,8 @@ def generate_html_report(
     # Strong negative factors (potentially useful when reversed):
     # IC Mean < 0, IC t-stat < -1.96 (statistically significant)
     # Optional: IC IR < 0 or Sharpe < 0
+    # Note: p-value should be < 0.05 if ic_t_stat < -1.96 (they are consistent)
+    # If p-value = 1.0, it means ic_series length <= 1, which is inconsistent with ic_t_stat < -1.96
     top_negative = sorted(
         [
             f
@@ -1279,6 +1453,9 @@ def generate_html_report(
             if f["ic_mean"] < 0
             and f["ic_t_stat"] < -1.96
             and (f["ic_ir"] < 0 or f["sharpe"] < 0)
+            # Additional check: if ic_t_stat < -1.96, p-value should be < 0.05 (consistent)
+            # Exclude factors with p-value = 1.0 as they indicate data inconsistency
+            and f["ic_p_value"] < 1.0
         ],
         key=lambda x: (abs(x["ic_ir"]), abs(x["sharpe"])),
         reverse=True,
@@ -1330,19 +1507,26 @@ def generate_html_report(
                                 <th>IC p-value</th>
                                 <th>IC IR</th>
                                 <th>Sharpe</th>
+                                <th>Best Lag</th>
                             </tr>
                         </thead>
                         <tbody>
         """
         for f in top_positive:
+            best_lag_display = (
+                f"{f.get('best_lag', 'N/A')}"
+                if f.get("best_lag") is not None
+                else "N/A"
+            )
             html_content += f"""
                             <tr>
                                 <td><code>{f['name']}</code></td>
                                 <td>{f['ic_mean']:.4f}</td>
                                 <td>{f['ic_t_stat']:.2f}</td>
-                                <td>{f['ic_p_value']:.4f}</td>
+                                <td>{format_pvalue(f['ic_p_value'])}</td>
                                 <td>{f['ic_ir']:.3f}</td>
                                 <td>{f['sharpe']:.2f}</td>
+                                <td>{best_lag_display}</td>
                             </tr>
             """
         html_content += """
@@ -1369,19 +1553,26 @@ def generate_html_report(
                                 <th>IC p-value</th>
                                 <th>IC IR</th>
                                 <th>Sharpe</th>
+                                <th>Best Lag</th>
                             </tr>
                         </thead>
                         <tbody>
         """
         for f in top_negative:
+            best_lag_display = (
+                f"{f.get('best_lag', 'N/A')}"
+                if f.get("best_lag") is not None
+                else "N/A"
+            )
             html_content += f"""
                             <tr>
                                 <td><code>{f['name']}</code></td>
                                 <td>{f['ic_mean']:.4f}</td>
                                 <td>{f['ic_t_stat']:.2f}</td>
-                                <td>{f['ic_p_value']:.4f}</td>
+                                <td>{format_pvalue(f['ic_p_value'])}</td>
                                 <td>{f['ic_ir']:.3f}</td>
                                 <td>{f['sharpe']:.2f}</td>
+                                <td>{best_lag_display}</td>
                             </tr>
             """
         html_content += """
@@ -1543,6 +1734,7 @@ def export_features_yaml(
     symbol: str,
     output_dir: Path,
     strategy_config_path: Path | None = None,
+    error_factors: Dict[str, Any] | None = None,
 ) -> Path:
     """Export qualified factors to a features.yaml file that can be used for training."""
     import yaml
@@ -1551,9 +1743,63 @@ def export_features_yaml(
     # Combine positive and negative factors (negative factors can be used as-is or reversed)
     all_factors = qualified_factors["positive"] + qualified_factors["negative"]
 
+    # Check if any dl_seq_f* feature is in qualified factors, if so add all dl_seq_f* features
+    dl_seq_features_included = False
+    dl_seq_feature_prefixes = [
+        "dl_seq_f",
+        "dl_sequence",
+    ]  # Common prefixes for deep learning sequence features
+    for factor in all_factors:
+        if any(factor.startswith(prefix) for prefix in dl_seq_feature_prefixes):
+            dl_seq_features_included = True
+            break
+
+    # Add all dl_seq_f* features if any is qualified
+    if dl_seq_features_included:
+        feature_loader_temp = StrategyFeatureLoader()
+        feature_definitions_temp = feature_loader_temp.feature_deps.get("features", {})
+        all_dl_seq_features = [
+            feat_name
+            for feat_name in feature_definitions_temp.keys()
+            if any(feat_name.startswith(prefix) for prefix in dl_seq_feature_prefixes)
+        ]
+        print(
+            f"   📦 Found qualified dl_seq_f* features, adding all {len(all_dl_seq_features)} dl_seq_f* features"
+        )
+        # Add to all_factors but avoid duplicates
+        for dl_seq_feat in all_dl_seq_features:
+            if dl_seq_feat not in all_factors:
+                all_factors.append(dl_seq_feat)
+
     if not all_factors:
         print("   ⚠️  No qualified factors to export.")
         return None
+
+    # Collect non-numeric / invalid factors from error_factors (to be added at the end)
+    # NOTE: These factors failed numeric conversion or had insufficient samples during IC evaluation.
+    # They are included in the YAML for manual review and verification, but should NOT be used
+    # directly in model training without further investigation:
+    #   - non_numeric_factor: May be categorical/string features that need encoding
+    #   - insufficient_samples: May need more data or different evaluation window
+    # These factors are placed at the end of requested_features list for easy identification.
+    non_numeric_factors = []
+    if error_factors is not None:
+        for factor_name, error_info in error_factors.items():
+            error_type = error_info.get("error", "")
+            # Include non-numeric factors and other invalid factors
+            if error_type in ["non_numeric_factor", "insufficient_samples"]:
+                non_numeric_factors.append(factor_name)
+        if non_numeric_factors:
+            print(
+                f"   📋 Adding {len(non_numeric_factors)} non-numeric/invalid factors (will be placed at the end)"
+            )
+            print(
+                f"      ⚠️  WARNING: These factors require manual verification before use in training"
+            )
+
+    # Initialize non_numeric_mapped early to ensure it exists even if error_factors is None or empty
+    # This set will contain feature names that need manual verification before use in training
+    non_numeric_mapped = set()
 
     # Map output columns to feature compute function names (with _f suffix)
     # Some factors are output columns (e.g., bb_lower, bb_middle) that need to be mapped to feature compute functions (e.g., bb_width_f)
@@ -1573,6 +1819,9 @@ def export_features_yaml(
     mapped_features = set()
     unmapped_factors = []
     mapped_outputs = []  # Track which output columns were mapped
+
+    # First, process qualified factors (positive + negative)
+    qualified_factor_names = set(all_factors)
 
     for factor in all_factors:
         # Check if it's already a feature compute function name (with _f suffix)
@@ -1596,6 +1845,28 @@ def export_features_yaml(
             # Not found - keep it anyway (might be a raw column or deprecated feature)
             unmapped_factors.append(factor)
             mapped_features.add(factor)
+
+    # Now add non-numeric/invalid factors at the end (but map them first)
+    # NOTE: These factors require manual verification before use in training.
+    # They are placed at the end of requested_features for easy identification.
+    # See notes section in generated YAML for detailed warning information.
+    if non_numeric_factors:
+        for factor in non_numeric_factors:
+            # Check if it's already a feature compute function name
+            if factor in feature_definitions:
+                non_numeric_mapped.add(factor)
+            # Check if it's an output column - map to source feature
+            elif factor in output_to_feature:
+                source_feature = output_to_feature[factor]
+                non_numeric_mapped.add(source_feature)
+                mapped_outputs.append((factor, source_feature))
+            else:
+                # Not found - keep it anyway (might be a raw column or deprecated feature)
+                unmapped_factors.append(factor)
+                non_numeric_mapped.add(factor)
+
+        # Add non-numeric factors to mapped_features (they will be sorted and placed at the end)
+        mapped_features.update(non_numeric_mapped)
 
     if mapped_outputs:
         print(
@@ -1630,7 +1901,14 @@ def export_features_yaml(
             f"Feature pipeline with qualified factors from factor evaluation ({symbol})",
         ),
         "feature_pipeline": {
-            "requested_features": sorted(mapped_features),
+            "requested_features": (
+                sorted(
+                    [f for f in mapped_features if f not in non_numeric_mapped]
+                )  # Qualified factors first (positive + negative)
+                + sorted(
+                    non_numeric_mapped
+                )  # Non-numeric/invalid factors at the end (⚠️ requires manual verification - see notes)
+            ),
             "ensure_signal_column": base_config.get("feature_pipeline", {}).get(
                 "ensure_signal_column",
                 {"name": "signal", "default_value": 0},
@@ -1640,10 +1918,22 @@ def export_features_yaml(
 Auto-generated from factor evaluation results.
 - Positive factors ({len(qualified_factors['positive'])}): Direct alpha signals
 - Negative factors ({len(qualified_factors['negative'])}): Consider reversing (multiply by -1) or use as risk filters
+- Non-numeric/invalid factors ({len(non_numeric_factors)}): Added for manual verification (placed at the end)
 
 Selection criteria:
 - Positive: IC Mean > 0, IC t-stat > 1.96, (IC IR > 0 or Sharpe > 0)
 - Negative: IC Mean < 0, IC t-stat < -1.96, (IC IR < 0 or Sharpe < 0)
+- Non-numeric/invalid: Factors that failed numeric conversion or had insufficient samples
+
+⚠️  IMPORTANT: Non-numeric/invalid factors require further verification before use:
+  - These factors failed IC evaluation due to non-numeric data or insufficient samples
+  - They may be categorical/string features that need proper encoding
+  - They may need more data or different evaluation parameters
+  - DO NOT use these factors directly in model training without investigation
+  - Review the factor evaluation HTML report for detailed error information
+
+Special handling:
+- dl_seq_f* features: If any dl_seq_f* feature is qualified, all dl_seq_f* features are included
 
 Note: Feature output columns (e.g., bb_lower, bb_middle) have been mapped to their source feature compute functions (e.g., bb_width_f).
 Only feature compute function names (with _f suffix) are included in requested_features for cleaner configuration.
@@ -1757,6 +2047,9 @@ def main() -> None:
             if col not in output_to_feature:
                 output_to_feature[col] = feat_name
 
+    # Track features already reported as missing to avoid duplicates
+    missing_features_reported = set()
+
     for factor in args.factors:
         # 1. Check if it's a DataFrame column
         if factor in df.columns:
@@ -1770,15 +2063,18 @@ def main() -> None:
             existing_cols = [c for c in output_cols if c in df.columns]
 
             if not existing_cols:
-                msg = {
-                    "feature": factor,
-                    "expected": output_cols,
-                }
-                factor_resolution["missing_feature_outputs"].append(msg)
-                print(
-                    f"   ❌ Feature compute function '{factor}' found in config, but none of its output columns "
-                    f"exist in DataFrame. Expected: {output_cols}"
-                )
+                # Only report once per feature
+                if factor not in missing_features_reported:
+                    msg = {
+                        "feature": factor,
+                        "expected": output_cols,
+                    }
+                    factor_resolution["missing_feature_outputs"].append(msg)
+                    missing_features_reported.add(factor)
+                    print(
+                        f"   ❌ Feature compute function '{factor}' found in config, but none of its output columns "
+                        f"exist in DataFrame. Expected: {output_cols}"
+                    )
                 continue
 
             for col in existing_cols:
@@ -1791,17 +2087,20 @@ def main() -> None:
                 cols_to_evaluate.setdefault(factor, set()).add(source_feature)
             else:
                 # Output column doesn't exist in DataFrame
-                feature_info = features_config[source_feature]
-                output_cols = feature_info.get("output_columns", [])
-                msg = {
-                    "feature": source_feature,
-                    "expected": output_cols,
-                }
-                factor_resolution["missing_feature_outputs"].append(msg)
-                print(
-                    f"   ❌ Feature output column '{factor}' (from feature compute function '{source_feature}') "
-                    f"does not exist in DataFrame. Expected output columns: {output_cols}"
-                )
+                # Only report once per feature
+                if source_feature not in missing_features_reported:
+                    feature_info = features_config[source_feature]
+                    output_cols = feature_info.get("output_columns", [])
+                    msg = {
+                        "feature": source_feature,
+                        "expected": output_cols,
+                    }
+                    factor_resolution["missing_feature_outputs"].append(msg)
+                    missing_features_reported.add(source_feature)
+                    print(
+                        f"   ❌ Feature output column '{factor}' (from feature compute function '{source_feature}') "
+                        f"does not exist in DataFrame. Expected output columns: {output_cols}"
+                    )
         else:
             # 4. Not found - check if it's an old feature name (without _f suffix)
             potential_old_name = factor
@@ -1857,6 +2156,249 @@ def main() -> None:
     error_factors = {f: m for f, m in results.items() if "error" in m}
     diagnostics["error_factors"] = error_factors
 
+    # Apply correlation-based removal if requested
+    if args.remove_correlated and len(results) > 1:
+        print(
+            f"\n🔗 Removing highly correlated features (threshold: {args.correlation_threshold})..."
+        )
+        # Get valid factors (non-error, numeric)
+        valid_factors = {
+            col: metrics
+            for col, metrics in results.items()
+            if "error" not in metrics and col in df.columns
+        }
+
+        if len(valid_factors) > 1:
+            # Get factor data for correlation calculation
+            factor_cols = list(valid_factors.keys())
+            factor_df = df[factor_cols].dropna()
+
+            if len(factor_df) > 50:  # Need sufficient samples
+                # Calculate correlation matrix
+                corr_matrix = factor_df.corr().abs()
+
+                # Sort by IC IR (if available) or IC Mean
+                factor_scores = {}
+                for col in factor_cols:
+                    metrics = results[col]
+                    # Use IC IR as priority, fallback to IC Mean
+                    score = (
+                        metrics.get("ic_ir", 0.0)
+                        if metrics.get("ic_ir", 0.0) is not None
+                        else metrics.get("ic_mean", 0.0)
+                    )
+                    factor_scores[col] = abs(score) if score is not None else 0.0
+
+                # Sort by score (descending)
+                sorted_factors = sorted(
+                    factor_cols, key=lambda x: factor_scores.get(x, 0.0), reverse=True
+                )
+
+                # Keep features with low correlation to already selected ones
+                kept_factors = []
+                removed_factors = []
+                removal_reasons = {}
+
+                for factor in sorted_factors:
+                    # Check correlation with already kept factors
+                    should_keep = True
+                    removal_reason = None
+
+                    for kept in kept_factors:
+                        corr = corr_matrix.loc[factor, kept]
+                        if corr >= args.correlation_threshold:
+                            # Factor is highly correlated with a kept factor
+                            # Keep the one with higher score
+                            if factor_scores[factor] <= factor_scores[kept]:
+                                should_keep = False
+                                removal_reason = f"Highly correlated with {kept} (r={corr:.3f}), lower score ({factor_scores[factor]:.4f} vs {factor_scores[kept]:.4f})"
+                                break
+
+                    if should_keep:
+                        kept_factors.append(factor)
+                    else:
+                        removed_factors.append(factor)
+                        if removal_reason:
+                            removal_reasons[factor] = removal_reason
+
+                print(
+                    f"   ✅ Kept {len(kept_factors)} features, removed {len(removed_factors)} redundant features"
+                )
+                if removed_factors:
+                    print(
+                        f"   Removed factors: {', '.join(removed_factors[:10])}{'...' if len(removed_factors) > 10 else ''}"
+                    )
+
+                # Update results to only include kept factors
+                results = {
+                    col: metrics
+                    for col, metrics in results.items()
+                    if col in kept_factors
+                }
+
+                # Save removal info to diagnostics
+                diagnostics["correlation_removal"] = {
+                    "removed": removed_factors,
+                    "kept": kept_factors,
+                    "threshold": args.correlation_threshold,
+                    "removal_reasons": removal_reasons,
+                }
+            else:
+                print(
+                    f"   ⚠️  Insufficient data for correlation analysis (need >50 samples, got {len(factor_df)})"
+                )
+        else:
+            print(
+                f"   ⚠️  Too few valid factors for correlation removal ({len(valid_factors)})"
+            )
+
+    # Always compute best lag info for display in HTML report, even if not filtering
+    # This ensures best lag is shown in "Top Positive Alpha Candidates" and "Strong Negative Factors" tables
+    lag_info = {}
+    for col, metrics in results.items():
+        if "error" in metrics:
+            continue
+
+        # Find best lag
+        best_lag = None
+        best_ic = None
+
+        for lag in ic_decay_lags:
+            ic_val = metrics.get(f"ic_lag_{lag}", None)
+            if ic_val is not None:
+                try:
+                    ic_val_float = float(ic_val)
+                    if not np.isnan(ic_val_float):
+                        if best_ic is None or ic_val_float > best_ic:
+                            best_ic = ic_val_float
+                            best_lag = lag
+                except (ValueError, TypeError):
+                    continue
+
+        # Fallback to rank_ic if no valid lag found
+        if best_lag is None:
+            rank_ic = metrics.get("rank_ic", None)
+            if rank_ic is not None:
+                try:
+                    rank_ic_float = float(rank_ic)
+                    if not np.isnan(rank_ic_float) and rank_ic_float != 0.0:
+                        best_lag = 0  # Current period
+                        best_ic = rank_ic_float
+                except (ValueError, TypeError):
+                    pass
+
+        lag_info[col] = {"best_lag": best_lag, "best_ic": best_ic}
+
+    # Apply best lag filtering if requested or if target_lag is explicitly specified
+    # If user specifies target_lag, it implies they want to filter by best lag
+    should_filter_by_lag = args.filter_by_best_lag or args.target_lag is not None
+
+    if should_filter_by_lag and len(results) > 0:
+        print(f"\n⏱️  Filtering features by best lag...")
+
+        # Determine target lag
+        target_lag = args.target_lag
+        if target_lag is None:
+            # Try to infer from strategy config
+            try:
+                max_holding_bars = strategy_cfg.labels.generator.params.get(
+                    "max_holding_bars", None
+                )
+                if max_holding_bars:
+                    # max_holding_bars 是标签生成时的最大扫描周期（上限）
+                    # 实际持仓周期通常小于这个值（一旦触达止盈/止损就会提前平仓）
+                    # 对于 SR Reversal 策略，典型持仓周期通常是 max_holding_bars 的 30-50%
+                    # 我们使用 40% 作为典型持仓周期的估计
+                    typical_holding_bars = int(max_holding_bars * 0.4)
+                    # 但不要超过 max_holding_bars 的一半，也不要小于 10
+                    target_lag = max(
+                        10, min(typical_holding_bars, max_holding_bars // 2)
+                    )
+                    print(
+                        f"   Inferred target lag from max_holding_bars ({max_holding_bars}): "
+                        f"target_lag={target_lag} (estimated typical holding period = {max_holding_bars} * 0.4)"
+                    )
+                    print(
+                        f"   Note: max_holding_bars is the label generation upper bound, "
+                        f"while target_lag represents typical holding period for feature selection"
+                    )
+                else:
+                    # Default to middle of ic_decay_lags
+                    target_lag = sorted(ic_decay_lags)[len(ic_decay_lags) // 2]
+                    print(
+                        f"   Using default target lag (middle of IC decay lags): {target_lag}"
+                    )
+            except Exception as e:
+                print(f"   ⚠️  Could not infer target lag: {e}, using default: 10")
+                target_lag = 10
+
+        tolerance = args.lag_tolerance
+        print(f"   Target lag: {target_lag}, Tolerance: ±{tolerance}")
+
+        kept_factors = []
+        removed_factors = []
+        # lag_info already computed above, reuse it for filtering
+
+        for col, metrics in results.items():
+            if "error" in metrics:
+                # Keep error factors for reporting
+                kept_factors.append(col)
+                continue
+
+            # Get best lag from pre-computed lag_info
+            best_lag_info = lag_info.get(col, {})
+            best_lag = best_lag_info.get("best_lag")
+
+            # Check if best lag is within tolerance
+            if best_lag is not None:
+                lag_diff = abs(best_lag - target_lag)
+                if lag_diff <= tolerance:
+                    kept_factors.append(col)
+                else:
+                    removed_factors.append((col, best_lag, lag_diff))
+            else:
+                # No valid best lag found, remove it
+                removed_factors.append((col, None, None))
+
+        print(
+            f"   ✅ Kept {len(kept_factors)} features, removed {len(removed_factors)} features"
+        )
+        if removed_factors:
+            removed_display = [
+                (
+                    f"{col} (best_lag={lag})"
+                    if lag is not None
+                    else f"{col} (no valid lag)"
+                )
+                for col, lag, _ in removed_factors[:10]
+            ]
+            print(
+                f"   Removed factors: {', '.join(removed_display)}{'...' if len(removed_factors) > 10 else ''}"
+            )
+
+        # Update results
+        results = {
+            col: metrics for col, metrics in results.items() if col in kept_factors
+        }
+
+        # Save lag filtering info to diagnostics
+        diagnostics["best_lag_filtering"] = {
+            "target_lag": target_lag,
+            "tolerance": tolerance,
+            "kept": kept_factors,
+            "removed": [col for col, _, _ in removed_factors],
+            "lag_info": lag_info,
+        }
+    else:
+        # Even if not filtering, save lag_info to diagnostics for HTML report display
+        diagnostics["best_lag_filtering"] = {
+            "target_lag": None,
+            "tolerance": None,
+            "kept": list(results.keys()),
+            "removed": [],
+            "lag_info": lag_info,
+        }
+
     # Save JSON summary
     summary_path = output_dir / f"ts_eval_{strategy_cfg.name}_{args.symbol}.json"
     with open(summary_path, "w", encoding="utf-8") as fh:
@@ -1891,12 +2433,14 @@ def main() -> None:
         # Export features.yaml with qualified factors
         if qualified_factors:
             strategy_config_path = Path(args.strategy_config) / "features.yaml"
+            error_factors = diagnostics.get("error_factors", {})
             yaml_path = export_features_yaml(
                 qualified_factors,
                 strategy_cfg.name,
                 args.symbol,
                 output_dir,
                 strategy_config_path=strategy_config_path,
+                error_factors=error_factors,
             )
             if yaml_path:
                 print(f"✅ Exported qualified factors to: {yaml_path}")

@@ -692,6 +692,36 @@ def analyze_feature_eval(
     default=False,
     help="Automatically open HTML report in browser",
 )
+@click.option(
+    "--remove-correlated",
+    is_flag=True,
+    default=False,
+    help="Remove highly correlated features",
+)
+@click.option(
+    "--correlation-threshold",
+    type=float,
+    default=0.9,
+    help="Correlation threshold for removing redundant features (default: 0.9)",
+)
+@click.option(
+    "--filter-by-best-lag",
+    is_flag=True,
+    default=False,
+    help="Filter features by best lag (only keep features with best lag matching target lag)",
+)
+@click.option(
+    "--target-lag",
+    type=int,
+    default=None,
+    help="Target lag for filtering (if not specified, will be inferred from label config max_holding_bars)",
+)
+@click.option(
+    "--lag-tolerance",
+    type=int,
+    default=5,
+    help="Tolerance for target lag matching (default: 5)",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def analyze_factor_eval(
     strategy_config,
@@ -705,6 +735,11 @@ def analyze_factor_eval(
     ic_decay_lags,
     output_dir,
     open_browser,
+    remove_correlated,
+    correlation_threshold,
+    filter_by_best_lag,
+    target_lag,
+    lag_tolerance,
     docker,
 ):
     """Time-series factor IC / win-rate evaluation (single asset)."""
@@ -734,6 +769,14 @@ def analyze_factor_eval(
         args.extend(["--end-date", end_date])
     if open_browser:
         args.append("--open-browser")
+    if remove_correlated:
+        args.append("--remove-correlated")
+        args.extend(["--correlation-threshold", str(correlation_threshold)])
+    if filter_by_best_lag or target_lag is not None:
+        args.append("--filter-by-best-lag")
+        if target_lag is not None:
+            args.extend(["--target-lag", str(target_lag)])
+        args.extend(["--lag-tolerance", str(lag_tolerance)])
 
     # When running inside Docker (via Makefile), docker=False
     # When running locally, docker=True will spawn Docker container
@@ -780,6 +823,1170 @@ def analyze_dim_compare(symbol, timeframe, config, start_date, end_date, docker)
             docker=docker,
         )
     )
+
+
+@analyze.command("strategy-feature-compare")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option(
+    "--output-dir",
+    default="results/strategy_compare",
+    help="Output directory",
+)
+@click.option(
+    "--feature-overrides",
+    help="Feature config overrides (format: name=path,name2=path2)",
+)
+@click.option("--run-rolling", is_flag=True, help="Run rolling window evaluation")
+@click.option(
+    "--rolling-train-bars", default="1000", help="Rolling training window size"
+)
+@click.option("--rolling-test-bars", default="200", help="Rolling test window size")
+@click.option("--rolling-step-bars", default="100", help="Rolling step size")
+@click.option("--rolling-max-windows", default="10", help="Maximum rolling windows")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def analyze_strategy_feature_compare(
+    strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    output_dir,
+    feature_overrides,
+    run_rolling,
+    rolling_train_bars,
+    rolling_test_bars,
+    rolling_step_bars,
+    rolling_max_windows,
+    docker,
+):
+    """Ablation Study: Compare multiple feature configs for a strategy."""
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "--timeframe",
+        timeframe,
+        "--test-size",
+        test_size,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+        "--rolling-train-bars",
+        rolling_train_bars,
+        "--rolling-test-bars",
+        rolling_test_bars,
+        "--rolling-step-bars",
+        rolling_step_bars,
+        "--rolling-max-windows",
+        rolling_max_windows,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if feature_overrides:
+        args.extend(["--feature-overrides", feature_overrides])
+    if run_rolling:
+        args.append("--run-rolling")
+
+    sys.exit(
+        run_script(
+            "src/time_series_model/strategies/evaluation/strategy_feature_compare.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@analyze.command("timeframe-comparison")
+@click.option(
+    "--output-dir",
+    default="results/model_comparison",
+    help="Output directory",
+)
+@click.option(
+    "--results-1h",
+    default="results/model_comparison/comparison_results.csv",
+    help="1h timeframe results CSV",
+)
+@click.option(
+    "--results-4h",
+    default="results/model_comparison_240h/comparison_results.csv",
+    help="4h timeframe results CSV",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def analyze_timeframe_comparison(output_dir, results_1h, results_4h, docker):
+    """Generate comprehensive comparison between 1h and 4h timeframes."""
+    args = [
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+        "--results-1h",
+        f"/workspace/{results_1h}" if docker else results_1h,
+        "--results-4h",
+        f"/workspace/{results_4h}" if docker else results_4h,
+    ]
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.generate_timeframe_comparison_report",
+            args,
+            docker=docker,
+        )
+    )
+
+
+# =============================================================================
+# Diagnostic Commands
+# =============================================================================
+
+
+@cli.group()
+def diagnose():
+    """Diagnostic and analysis commands."""
+    pass
+
+
+@diagnose.command("rule-baseline")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option(
+    "--ticks-dir",
+    default="data/parquet_data",
+    help="Tick data directory",
+)
+@click.option(
+    "--ticks-lookback-minutes",
+    default="60",
+    help="VPIN calculation lookback minutes",
+)
+@click.option(
+    "--max-holding-bars",
+    type=int,
+    help="Maximum holding bars (overrides config)",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_rule_baseline(
+    strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    data_path,
+    ticks_dir,
+    ticks_lookback_minutes,
+    max_holding_bars,
+    docker,
+):
+    """Test pure rule-based SR+RR strategy (no ML)."""
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        f"/workspace/{data_path}" if docker else data_path,
+        "--timeframe",
+        timeframe,
+        "--ticks-dir",
+        f"/workspace/{ticks_dir}" if docker else ticks_dir,
+        "--ticks-lookback-minutes",
+        ticks_lookback_minutes,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if max_holding_bars:
+        args.extend(["--max-holding-bars", str(max_holding_bars)])
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.sr_reversal_rule_baseline",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@diagnose.command("test-vpin-thresholds")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_test_vpin_thresholds(
+    strategy_config, symbol, timeframe, start_date, end_date, data_path, docker
+):
+    """Test different VPIN thresholds for SR Reversal."""
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        f"/workspace/{data_path}" if docker else data_path,
+        "--timeframe",
+        timeframe,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.test_vpin_thresholds",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@diagnose.command("ml-volatility")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_ml_volatility(docker):
+    """Analyze ML+Volatility Model Performance Issues."""
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.analyze_ml_volatility_model",
+            [],
+            docker=docker,
+        )
+    )
+
+
+@diagnose.command("dtw-volatility")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_dtw_volatility(docker):
+    """Analyze DTW Features and Volatility Model."""
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.analyze_dtw_and_volatility",
+            [],
+            docker=docker,
+        )
+    )
+
+
+@diagnose.command("model-comparison")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option(
+    "--output-dir",
+    default="results/model_comparison",
+    help="Output directory (will append timeframe)",
+)
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option(
+    "--ticks-dir",
+    default="data/parquet_data",
+    help="Tick data directory",
+)
+@click.option(
+    "--ticks-lookback-minutes",
+    default="60",
+    help="VPIN calculation lookback minutes",
+)
+@click.option(
+    "--rule-params",
+    help="Rule optimization results CSV (optional)",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_model_comparison(
+    strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    output_dir,
+    data_path,
+    ticks_dir,
+    ticks_lookback_minutes,
+    rule_params,
+    docker,
+):
+    """Compare Rule-based vs ML vs ML+Volatility models."""
+    # Append timeframe to output dir
+    output_dir_full = f"{output_dir}/{timeframe}"
+
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        f"/workspace/{data_path}" if docker else data_path,
+        "--timeframe",
+        timeframe,
+        "--test-size",
+        test_size,
+        "--output-dir",
+        f"/workspace/{output_dir_full}" if docker else output_dir_full,
+        "--ticks-dir",
+        f"/workspace/{ticks_dir}" if docker else ticks_dir,
+        "--ticks-lookback-minutes",
+        ticks_lookback_minutes,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if rule_params:
+        args.extend(
+            ["--rule-params", f"/workspace/{rule_params}" if docker else rule_params]
+        )
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.sr_reversal_model_comparison",
+            args,
+            docker=docker,
+        )
+    )
+
+
+# =============================================================================
+# Optimization Commands
+# =============================================================================
+
+
+@cli.group()
+def optimize():
+    """Optimization commands."""
+    pass
+
+
+@optimize.command("rule")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option(
+    "--output-dir",
+    default="results/rule_optimization",
+    help="Output directory",
+)
+@click.option(
+    "--search-type",
+    type=click.Choice(["grid", "random", "optuna"]),
+    default="random",
+    help="Search type",
+)
+@click.option(
+    "--n-trials",
+    default="100",
+    help="Number of optimization trials",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_rule(
+    strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    data_path,
+    output_dir,
+    search_type,
+    n_trials,
+    docker,
+):
+    """Find parameter plateaus for rule-based strategy."""
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        f"/workspace/{data_path}" if docker else data_path,
+        "--timeframe",
+        timeframe,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+        "--search-type",
+        search_type,
+        "--n-trials",
+        n_trials,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.sr_reversal_rule_optimization",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@optimize.command("rule-plateau-charts")
+@click.option(
+    "--results-csv",
+    default="results/rule_optimization/optimization_results.csv",
+    help="Optimization results CSV",
+)
+@click.option(
+    "--report-html",
+    default="results/rule_optimization/optimization_report.html",
+    help="Report HTML file",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_rule_plateau_charts(results_csv, report_html, docker):
+    """Generate rule plateau heatmaps and scatter charts."""
+    args = [
+        "--results-csv",
+        f"/workspace/{results_csv}" if docker else results_csv,
+        "--report-html",
+        f"/workspace/{report_html}" if docker else report_html,
+    ]
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.generate_rule_plateau_charts",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@optimize.command("ml-param-sweep")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal",
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option(
+    "--output-dir",
+    default="results/model_comparison",
+    help="Output directory (will append timeframe)",
+)
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_ml_param_sweep(
+    strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    output_dir,
+    data_path,
+    docker,
+):
+    """Run ML parameter sweep for plateau analysis."""
+    output_dir_full = f"{output_dir}/{timeframe}"
+
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if docker else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        f"/workspace/{data_path}" if docker else data_path,
+        "--timeframe",
+        timeframe,
+        "--test-size",
+        test_size,
+        "--output-dir",
+        f"/workspace/{output_dir_full}" if docker else output_dir_full,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.sr_reversal_ml_parameter_sweep",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@optimize.command("ml-plateau-charts")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option(
+    "--results-csv",
+    help="ML parameter sweep CSV (default: results/model_comparison/{timeframe}/ml_param_sweep.csv)",
+)
+@click.option(
+    "--report-html",
+    help="Report HTML file (default: results/model_comparison/{timeframe}/comparison_report.html)",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_ml_plateau_charts(timeframe, results_csv, report_html, docker):
+    """Generate ML plateau heatmaps and scatter charts."""
+    if not results_csv:
+        results_csv = f"results/model_comparison/{timeframe}/ml_param_sweep.csv"
+    if not report_html:
+        report_html = f"results/model_comparison/{timeframe}/comparison_report.html"
+
+    args = [
+        "--results-csv",
+        f"/workspace/{results_csv}" if docker else results_csv,
+        "--report-html",
+        f"/workspace/{report_html}" if docker else report_html,
+    ]
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.generate_ml_plateau_charts",
+            args,
+            docker=docker,
+        )
+    )
+
+
+# =============================================================================
+# Backtest Commands
+# =============================================================================
+
+
+@cli.group()
+def backtest():
+    """Backtesting commands."""
+    pass
+
+
+@backtest.command("vectorbot")
+@click.option(
+    "--model",
+    help="Model path (optional, if not provided uses default)",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--start", help="Start date (YYYY-MM-DD)")
+@click.option("--end", help="End date (YYYY-MM-DD)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def backtest_vectorbot(model, symbol, start, end, docker):
+    """Run VectorBot risk-managed backtest."""
+    args = []
+    if model:
+        args.extend(["--model", model])
+    args.extend(["--symbol", symbol])
+    if start:
+        args.extend(["--start", start])
+    if end:
+        args.extend(["--end", end])
+
+    sys.exit(
+        run_python_module(
+            "time_series_model.backtesting.vectorbot",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@backtest.command("nautilus")
+@click.option(
+    "--data-dir",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
+def backtest_nautilus(data_dir, symbol, docker):
+    """Run Nautilus Trader backtest."""
+    args = [
+        "--data-dir",
+        data_dir if not docker else f"/workspace/{data_dir}",
+        "--symbol",
+        symbol,
+    ]
+
+    sys.exit(
+        run_python_module(
+            "time_series_model.backtesting.nautilus_dim",
+            args,
+            docker=docker,
+        )
+    )
+
+
+# =============================================================================
+# Cross-Sectional Commands
+# =============================================================================
+
+
+@cli.group()
+def cross_section():
+    """Cross-sectional analysis commands."""
+    pass
+
+
+@cross_section.command("build-panel")
+@click.option("--symbols", "-s", help="Comma-separated symbols (default: from config)")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option(
+    "--output-dir",
+    default="data/cross_sectional_panels",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_build_panel(symbols, start_date, end_date, output_dir, docker):
+    """Generate multi-asset factor panels for CS modelling."""
+    args = [
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+    if symbols:
+        args.extend(["--symbols"] + symbols.split(","))
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/generate_panel.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("report")
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_report(panel_path, output_dir, docker):
+    """Generate Fama-MacBeth + Newey-West + IC/IR markdown report."""
+    args = [
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/run_famacbeth_report.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("train")
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_train(panel_path, output_dir, docker):
+    """Train cross-sectional models (boosting/Fama-MacBeth)."""
+    args = [
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/train_cross_sectional_model.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("catalog")
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-path",
+    default="results/cross_sectional/factor_catalog.json",
+    help="Output catalog JSON path",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_catalog(panel_path, output_path, docker):
+    """Export factor catalog (IC/IR summary)."""
+    args = [
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-path",
+        f"/workspace/{output_path}" if docker else output_path,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/export_factor_catalog.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("select")
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-path",
+    default="results/cross_sectional/selected_factors.json",
+    help="Output selected factors JSON path",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_select(panel_path, output_path, docker):
+    """Auto-select factors using correlation and IC filtering."""
+    args = [
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-path",
+        f"/workspace/{output_path}" if docker else output_path,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/auto_select_factors.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("shap")
+@click.option(
+    "--model-path",
+    default="results/cross_sectional/model.pkl",
+    help="Trained model path",
+)
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional/shap",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_shap(model_path, panel_path, output_dir, docker):
+    """Run SHAP analysis on cross-sectional model."""
+    args = [
+        "--model-path",
+        f"/workspace/{model_path}" if docker else model_path,
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/run_shap_analysis.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("logic-check")
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_logic_check(panel_path, output_dir, docker):
+    """Run factor logic consistency checks."""
+    args = [
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/run_factor_logic_check.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("shap-drift")
+@click.option(
+    "--model-path",
+    default="results/cross_sectional/model.pkl",
+    help="Trained model path",
+)
+@click.option(
+    "--panel-path",
+    default="data/cross_sectional_panels/panel.parquet",
+    help="Panel data path",
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional/shap_drift",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_shap_drift(model_path, panel_path, output_dir, docker):
+    """Monitor SHAP value drift over time."""
+    args = [
+        "--model-path",
+        f"/workspace/{model_path}" if docker else model_path,
+        "--panel-path",
+        f"/workspace/{panel_path}" if docker else panel_path,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/run_shap_drift_monitor.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("factor-eval")
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_factor_eval(symbol, timeframe, start_date, end_date, docker):
+    """Cross-sectional factor evaluation (IC, decay, quantile spread)."""
+    args = []
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.cross_sectional_eval",
+            args,
+            docker=docker,
+        )
+    )
+
+
+# =============================================================================
+# Visualization Commands
+# =============================================================================
+
+
+@cli.group()
+def visualize():
+    """Visualization commands."""
+    pass
+
+
+@visualize.command("feature-indicators")
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option(
+    "--config",
+    default="config/visualization/feature_indicators.yaml",
+    help="Visualization config file",
+)
+@click.option(
+    "--output-dir",
+    default="results/feature_indicators",
+    help="Output directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def visualize_feature_indicators(
+    symbol, timeframe, start_date, end_date, config, output_dir, docker
+):
+    """Generate feature indicators visualization."""
+    args = [
+        "--data-path",
+        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--config",
+        f"/workspace/{config}" if docker else config,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker else output_dir,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    sys.exit(
+        run_script(
+            "src/time_series_model/visualization/feature_indicator_visualizer.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@analyze.command("timeframe-forward-report")
+@click.option(
+    "--symbols",
+    "-s",
+    default="BTCUSDT",
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)",
+)
+@click.option(
+    "--timeframes",
+    default="60T,240T",
+    help="Comma-separated timeframes (e.g., 60T,240T)",
+)
+@click.option(
+    "--forward-bars",
+    default="1,3,5,10,20",
+    help="Comma-separated forward bars (e.g., 1,3,5,10,20)",
+)
+@click.option("--start", help="Start date (YYYY-MM-DD)")
+@click.option("--end", help="End date (YYYY-MM-DD)")
+@click.option(
+    "--data-dir",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option(
+    "--output-dir",
+    default="results/timeframe_analysis",
+    help="Output directory",
+)
+@click.option("--max-lag", default="20", help="Maximum lag")
+@click.option("--min-samples", default="500", help="Minimum samples")
+@click.option("--top-k", default="10", help="Top K features")
+@click.option(
+    "--feature-type",
+    default="baseline",
+    help="Feature type to analyze",
+)
+@click.option("--extra-features", help="Extra feature config path (optional)")
+@click.option("--run-tag", help="Run tag for organizing results (optional)")
+@click.option(
+    "--pearson-threshold",
+    default="0.03",
+    help="Pearson correlation threshold for config generation",
+)
+@click.option(
+    "--pvalue-threshold",
+    default="1e-5",
+    help="P-value threshold for config generation",
+)
+@click.option(
+    "--config-min-samples",
+    default="500",
+    help="Minimum samples for config generation",
+)
+@click.option(
+    "--top-features-per-symbol",
+    default="5",
+    help="Top features per symbol for config generation",
+)
+@click.option(
+    "--top-features-per-group",
+    default="10",
+    help="Top features per group for config generation",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def analyze_timeframe_forward_report(
+    symbols,
+    timeframes,
+    forward_bars,
+    start,
+    end,
+    data_dir,
+    output_dir,
+    max_lag,
+    min_samples,
+    top_k,
+    feature_type,
+    extra_features,
+    run_tag,
+    pearson_threshold,
+    pvalue_threshold,
+    config_min_samples,
+    top_features_per_symbol,
+    top_features_per_group,
+    docker,
+):
+    """Timeframe vs forward-bar correlation analysis."""
+    # Convert comma-separated strings to space-separated for the script
+    symbols_list = symbols.split(",")
+    timeframes_list = timeframes.split(",")
+    forward_bars_list = forward_bars.split(",")
+
+    args = (
+        [
+            "--data-dir",
+            f"/workspace/{data_dir}" if docker else data_dir,
+            "--output-dir",
+            f"/workspace/{output_dir}" if docker else output_dir,
+            "--symbols",
+        ]
+        + symbols_list
+        + [
+            "--timeframes",
+        ]
+        + timeframes_list
+        + [
+            "--forward-bars",
+        ]
+        + forward_bars_list
+        + [
+            "--max-lag",
+            max_lag,
+            "--min-samples",
+            min_samples,
+            "--top-k",
+            top_k,
+            "--feature-type",
+            feature_type,
+        ]
+    )
+    if start:
+        args.extend(["--start", start])
+    if end:
+        args.extend(["--end", end])
+    if extra_features:
+        args.extend(["--extra-features", extra_features])
+    if run_tag:
+        args.extend(["--run-tag", run_tag])
+
+    result = run_python_module(
+        "time_series_model.analysis.timeframe_forward_correlation",
+        args,
+        docker=docker,
+    )
+
+    # If run-tag is provided and first command succeeded, generate config
+    if run_tag and result == 0:
+        details_csv = f"{output_dir}/{run_tag}/timeframe_forward_details.csv"
+        config_output_dir = f"{output_dir}/{run_tag}/config"
+        config_args = [
+            "--details-csv",
+            f"/workspace/{details_csv}" if docker else details_csv,
+            "--output-dir",
+            f"/workspace/{config_output_dir}" if docker else config_output_dir,
+            "--pearson-threshold",
+            pearson_threshold,
+            "--pvalue-threshold",
+            pvalue_threshold,
+            "--min-samples",
+            config_min_samples,
+            "--top-features-per-symbol",
+            top_features_per_symbol,
+            "--top-features-per-group",
+            top_features_per_group,
+        ]
+        run_python_module(
+            "time_series_model.analysis.timeframe_feature_selector",
+            config_args,
+            docker=docker,
+        )
+
+    sys.exit(result)
 
 
 # =============================================================================

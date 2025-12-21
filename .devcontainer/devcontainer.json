@@ -2,11 +2,13 @@
   "name": "ML Trading Dev Container",
   "image": "hansenlovefiona017/ml_trading_bot_devcontainer:latest",
   "runArgs": [
-    "--gpus", "all",
+    "--gpus",
+    "all",
     "--shm-size=8gb"
   ],
   "mounts": [
-    "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind"
+    "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.ssh,target=/home/yin/.ssh-host,type=bind,consistency=cached"
   ],
   "remoteUser": "yin",
   "containerEnv": {
@@ -30,5 +32,5 @@
       }
     }
   },
-  "postCreateCommand": "sudo -H pip3 install -e ."
+  "postCreateCommand": "sudo -H pip3 install -e . && if [ -d /home/yin/.ssh-host ] && [ ! -d /home/yin/.ssh ]; then cp -r /home/yin/.ssh-host /home/yin/.ssh && chmod 700 /home/yin/.ssh && chmod 600 /home/yin/.ssh/* 2>/dev/null || true; fi && mkdir -p /home/yin/.ssh && echo -e 'Host *\\n    ForwardAgent yes\\n    IdentityAgent $SSH_AUTH_SOCK\\n    StrictHostKeyChecking no' > /home/yin/.ssh/config && chmod 600 /home/yin/.ssh/config"
 }

@@ -440,6 +440,89 @@ class TestLiquidityFeatures:
                 narrow_confidence.max() <= 1.0
             ), f"narrow IO wpt_breakout_confidence 应该 <= 1，最大值: {narrow_confidence.max()}"
 
+    def test_price_impact_calculation(self):
+        """
+        测试：liquidity_void_price_impact 计算正确性
+
+        验证 price_impact = (high - low) / volume 的计算逻辑
+        """
+        df = create_mock_data(n_samples=200, seed=42)
+
+        # 创建 high 和 low
+        df["high"] = df["close"] + np.abs(np.random.randn(len(df)) * 0.2)
+        df["low"] = df["close"] - np.abs(np.random.randn(len(df)) * 0.2)
+
+        result = compute_liquidity_void_features_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            high=df["high"],
+            low=df["low"],
+            atr=df["atr"],
+        )
+
+        # 验证 price_impact 列存在
+        assert (
+            "liquidity_void_price_impact" in result.columns
+        ), "应该包含 price_impact 列"
+
+        # 计算期望值
+        expected_price_impact = (df["high"] - df["low"]) / (df["volume"] + 1e-8)
+
+        # 对于检测到流动性真空的点，price_impact 应该等于期望值
+        detected_mask = result["liquidity_void_detected"] == 1.0
+        if detected_mask.sum() > 0:
+            detected_price_impact = result.loc[
+                detected_mask, "liquidity_void_price_impact"
+            ]
+            detected_expected = expected_price_impact[detected_mask]
+
+            # 计算差异（考虑浮点误差）
+            diff = (detected_price_impact - detected_expected).abs()
+            max_diff = diff.max()
+
+            assert (
+                max_diff < 1e-6
+            ), f"检测点的 price_impact 计算不正确，最大差异: {max_diff}"
+
+        # 对于未检测到的点，price_impact 应该为 0.0
+        not_detected_mask = result["liquidity_void_detected"] == 0.0
+        if not_detected_mask.sum() > 0:
+            not_detected_price_impact = result.loc[
+                not_detected_mask, "liquidity_void_price_impact"
+            ]
+            assert (
+                not_detected_price_impact == 0.0
+            ).all(), "未检测到的点的 price_impact 应该为 0.0"
+
+        # 验证 price_impact 值的合理性
+        all_price_impact = result["liquidity_void_price_impact"].dropna()
+        if len(all_price_impact) > 0:
+            assert (
+                all_price_impact >= 0.0
+            ).all(), "price_impact 应该 >= 0（价格范围 / 成交量）"
+
+    def test_price_impact_without_high_low(self):
+        """
+        测试：在没有提供 high/low 时，price_impact 使用估算值
+
+        验证当 high/low 未提供时，代码能正常工作
+        """
+        df = create_mock_data(n_samples=100, seed=42)
+
+        # 不提供 high 和 low
+        result = compute_liquidity_void_features_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            atr=df["atr"],
+        )
+
+        # 应该仍然包含 price_impact 列
+        assert "liquidity_void_price_impact" in result.columns
+
+        # price_impact 应该计算出来（即使使用估算值）
+        price_impact = result["liquidity_void_price_impact"]
+        assert len(price_impact) == len(df), "price_impact 长度应该匹配"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

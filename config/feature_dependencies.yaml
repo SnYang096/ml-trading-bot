@@ -1,7 +1,7 @@
 features:
   atr_f:
     module: baseline
-    compute_func: compute_atr
+    compute_func: compute_atr_from_series
     dependencies: []
     required_columns:
       - high
@@ -20,7 +20,7 @@ features:
       close: close
   rsi_f:
     module: baseline
-    compute_func: compute_rsi
+    compute_func: compute_rsi_from_series
     dependencies: []
     required_columns:
       - close
@@ -32,7 +32,7 @@ features:
       period: 14
     pass_full_df: false
     column_mappings:
-      series: close
+      close: close
   macd_f:
     module: baseline
     compute_func: compute_macd

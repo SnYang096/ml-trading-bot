@@ -307,6 +307,11 @@ TS_FACTOR_OUTPUT_DIR ?= results/factor_ts_eval
 TS_FACTOR_MODE ?= strategy
 TS_FACTOR_IC_DECAY_LAGS ?= 1,3,5,10,20
 TS_FACTOR_OPEN_BROWSER ?= 0
+TS_FACTOR_REMOVE_CORRELATED ?= 0
+TS_FACTOR_CORRELATION_THRESHOLD ?= 0.9
+TS_FACTOR_FILTER_BY_BEST_LAG ?= 0
+TS_FACTOR_TARGET_LAG ?=
+TS_FACTOR_LAG_TOLERANCE ?= 5
 
 ts-factor-eval:
 	@echo "📈 TS 因子评价 (通过 mlbot CLI)"
@@ -326,7 +331,25 @@ ts-factor-eval:
 	else \
 		OPEN_BROWSER_ARG=""; \
 	fi
-	@$(DOCKER_RUN_NO_TTY) bash -c "export PYTHONPATH=/workspace:/workspace/src && pip install --user -e . > /dev/null 2>&1 && export PATH=\$$HOME/.local/bin:\$$PATH && mlbot analyze factor-eval --strategy-config $(TS_FACTOR_STRATEGY) --symbol $(TS_FACTOR_SYMBOL) $$FACTORS_ARGS --timeframe $(TS_FACTOR_TIMEFRAME) $(if $(TS_FACTOR_START),--start-date $(TS_FACTOR_START),) $(if $(TS_FACTOR_END),--end-date $(TS_FACTOR_END),) --quantile $(TS_FACTOR_QUANTILE) --feature-mode $(TS_FACTOR_MODE) --ic-decay-lags $(TS_FACTOR_IC_DECAY_LAGS) --output-dir $(TS_FACTOR_OUTPUT_DIR) $$OPEN_BROWSER_ARG"
+	@if [ "$(TS_FACTOR_REMOVE_CORRELATED)" = "1" ]; then \
+		echo "   🔗 启用相关性去冗余 (阈值: $(TS_FACTOR_CORRELATION_THRESHOLD))"; \
+		REMOVE_CORR_ARG="--remove-correlated --correlation-threshold $(TS_FACTOR_CORRELATION_THRESHOLD)"; \
+	else \
+		REMOVE_CORR_ARG=""; \
+	fi
+	@if [ "$(TS_FACTOR_FILTER_BY_BEST_LAG)" = "1" ] || [ -n "$(TS_FACTOR_TARGET_LAG)" ]; then \
+		echo "   ⏱️  启用 Best Lag 过滤"; \
+		if [ -n "$(TS_FACTOR_TARGET_LAG)" ]; then \
+			echo "      目标 Lag: $(TS_FACTOR_TARGET_LAG), 容差: $(TS_FACTOR_LAG_TOLERANCE)"; \
+			LAG_FILTER_ARG="--target-lag $(TS_FACTOR_TARGET_LAG) --lag-tolerance $(TS_FACTOR_LAG_TOLERANCE)"; \
+		else \
+			echo "      目标 Lag: 自动推断, 容差: $(TS_FACTOR_LAG_TOLERANCE)"; \
+			LAG_FILTER_ARG="--filter-by-best-lag --lag-tolerance $(TS_FACTOR_LAG_TOLERANCE)"; \
+		fi; \
+	else \
+		LAG_FILTER_ARG=""; \
+	fi
+	@$(DOCKER_RUN_NO_TTY) bash -c "export PYTHONPATH=/workspace:/workspace/src && pip install --user -e . > /dev/null 2>&1 && export PATH=\$$HOME/.local/bin:\$$PATH && mlbot analyze factor-eval --strategy-config $(TS_FACTOR_STRATEGY) --symbol $(TS_FACTOR_SYMBOL) $$FACTORS_ARGS --timeframe $(TS_FACTOR_TIMEFRAME) $(if $(TS_FACTOR_START),--start-date $(TS_FACTOR_START),) $(if $(TS_FACTOR_END),--end-date $(TS_FACTOR_END),) --quantile $(TS_FACTOR_QUANTILE) --feature-mode $(TS_FACTOR_MODE) --ic-decay-lags $(TS_FACTOR_IC_DECAY_LAGS) --output-dir $(TS_FACTOR_OUTPUT_DIR) $$OPEN_BROWSER_ARG $$REMOVE_CORR_ARG $$LAG_FILTER_ARG"
 
 
 

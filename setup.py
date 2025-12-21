@@ -69,7 +69,8 @@ setup(
     entry_points={
         "console_scripts": [
             # Unified CLI (recommended)
-            "mlbot=src.cli.main:main",
+            # Note: package_dir sets "" to "src", so we use cli.main, not src.cli.main
+            "mlbot=cli.main:main",
             # Legacy scripts for backward compatibility
             "train-strategy=scripts.train_strategy_pipeline:main",
         ],

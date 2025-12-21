@@ -13,10 +13,17 @@ This repository hosts the production-ready components for the factor research, d
    ```bash
    make install-hooks
    ```
-   This will automatically run `make format` and `make lint` before each commit to ensure code quality.
-4. Verify the install by running the help target:
+   This will automatically run `mlbot dev format` and `mlbot dev lint` before each commit to ensure code quality.
+4. Verify the install by running the help command:
    ```bash
-   make help
+   mlbot --help
+   ```
+   Or see all available commands:
+   ```bash
+   mlbot analyze --help
+   mlbot train --help
+   mlbot diagnose --help
+   mlbot optimize --help
    ```
 
 ## Recommended Usage Flow
@@ -25,10 +32,10 @@ This repository hosts the production-ready components for the factor research, d
 
 The recommended workflow uses **config-driven architecture** with strategy-specific configurations:
 
-1. **Feature Analysis** (`make ts-factor-eval`, `make ts-dim-compare`): Evaluate factors and select optimal features
-2. **Strategy Training** (`make train-strategy`, `make rolling`): Train models using strategy configs
-3. **Ablation Study** (`make ts-strategy-feature-compare`): Compare feature configurations (optional)
-4. **Backtesting** (`make ts-vectorbot-backtest`): Validate strategy performance
+1. **Feature Analysis** (`mlbot analyze factor-eval`, `mlbot analyze dim-compare`): Evaluate factors and select optimal features
+2. **Strategy Training** (`mlbot train sr-reversal`, `mlbot train rolling`): Train models using strategy configs
+3. **Ablation Study** (`mlbot analyze strategy-feature-compare`): Compare feature configurations (optional)
+4. **Backtesting** (`mlbot backtest vectorbot`): Validate strategy performance
 
 **📖 See [完整流程指南](docs/时序模型/完整流程指南.md) for detailed workflow.**
 
@@ -36,22 +43,50 @@ The recommended workflow uses **config-driven architecture** with strategy-speci
 
 #### Step 1: Feature Analysis
 
-**1.1 Evaluate Individual Factors** (Optional):
+**1.1 Evaluate Individual Factors**:
+
+**Basic Usage**:
 ```bash
-make ts-factor-eval \
-  TS_FACTOR_STRATEGY=config/strategies/sr_reversal \
-  TS_FACTOR_FACTORS="atr sqs_hal_high" \
-  TS_FACTOR_SYMBOL=BTCUSDT
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --timeframe 240T
+```
+
+**Evaluate Specific Factors**:
+```bash
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --factors atr sqs_hal_high \
+  --timeframe 240T
+```
+
+**With Advanced Options** (remove correlated, filter by best lag):
+```bash
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2025-01-01 \
+  --end-date 2025-10-31 \
+  --remove-correlated \
+  --correlation-threshold 0.9 \
+  --target-lag 20 \
+  --lag-tolerance 5 \
+  --filter-by-best-lag \
+  --open-browser
 ```
 
 **1.2 Feature Selection (Dimensionality Reduction)**:
 ```bash
 # Config-driven feature selection (three-stage pipeline)
-make ts-dim-compare \
-  DIM_COMPARE_CONFIG=config/strategies/sr_reversal \
-  SYMBOL=BTCUSDT \
-  START_DATE=2024-01-01 \
-  END_DATE=2024-12-31
+mlbot analyze dim-compare \
+  --config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31
 ```
 
 **Output** (in `results/dim_compare/{strategy}_{symbol}_{timestamp}/`):
@@ -66,21 +101,59 @@ make ts-dim-compare \
 #### Step 2: Strategy Training
 
 **2.1 Quick Validation** (Single Training):
+
+**SR Reversal (Bidirectional)**:
 ```bash
-make train-strategy \
-  STRATEGY_CONFIG=config/strategies/sr_reversal \
-  SYMBOL=BTCUSDT \
-  TIMEFRAME=15T
+mlbot train sr-reversal \
+  --config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 15T
+```
+
+**SR Reversal Long-only**:
+```bash
+mlbot train sr-reversal-long \
+  --symbol BTCUSDT \
+  --timeframe 240T
+```
+
+**SR Reversal Short-only**:
+```bash
+mlbot train sr-reversal-short \
+  --symbol BTCUSDT \
+  --timeframe 240T
 ```
 
 **2.2 Production Training** (Rolling Window - Recommended):
 ```bash
 # Expanding window training: each test month uses all previous months
-make rolling \
-  ROLLING_CONFIG=config/strategies/sr_reversal \
-  SYMBOL=BTCUSDT \
-  INITIAL_TRAIN_MONTHS=6 \
-  MIN_TRAIN_MONTHS=3
+mlbot train rolling \
+  --config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --initial-train-months 6 \
+  --min-train-months 3
+```
+
+**With Date Range**:
+```bash
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start 2024-01-01 \
+  --end 2025-10-31 \
+  --initial-train-months 6 \
+  --min-train-months 3
+```
+
+**Update Only (Incremental)**:
+```bash
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --update-only
 ```
 
 **Output**:
@@ -91,31 +164,68 @@ make rolling \
 
 Compare different feature configurations to evaluate feature group contributions:
 
+**Basic Usage**:
 ```bash
-make ts-strategy-feature-compare \
-  STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
-  STRAT_COMPARE_SYMBOL=BTCUSDT \
-  STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 240T
+```
+
+**With Feature Overrides**:
+```bash
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
+  --feature-overrides "baseline=config/features/baseline.yaml full=config/features/full.yaml"
+```
+
+**With Rolling Window Evaluation**:
+```bash
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --run-rolling \
+  --rolling-train-bars 1000 \
+  --rolling-test-bars 200 \
+  --rolling-step-bars 100 \
+  --rolling-max-windows 10
 ```
 
 **📖 See [消融实验说明](docs/时序模型/消融实验说明.md) for details.**
 
 #### Step 4: Backtesting
 
-Rolling update to latest available data using optimal configuration:
+Rolling window training with date range:
 
 ```bash
-DIM_DIR=results/production_dimensionality_20250501_20250731
-
-# Rolling update (automatically detects all available data)
-make auto-rolling-update SYMBOL=BTCUSDT \
-  INITIAL_TRAIN_MONTHS=6 \
-  USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json \
-  USE_AUTOENCODER=$(DIM_DIR)/production_autoencoder.pth \
-  ENCODING_DIM=32
+# Rolling training (expanding window: each test month uses all previous months)
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start 2024-01-01 \
+  --end 2025-10-31 \
+  --initial-train-months 6 \
+  --min-train-months 3
 ```
 
-**Note**: `make rolling` is the recommended approach for all training scenarios, providing better evaluation through expanding window training.
+**Note**: `mlbot train rolling` is the recommended approach for all training scenarios, providing better evaluation through expanding window training.
+
+**With Top Factors** (if you have dimensionality reduction results):
+```bash
+# If you have top_factors.json from dim-compare, you can use it in strategy config
+# Edit your strategy's features.yaml to use the selected features, then:
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --initial-train-months 6
+```
 
 **Output**:
 - `results/auto_rolling_*/monthly_results.csv` - All months' detailed results
@@ -128,44 +238,58 @@ make auto-rolling-update SYMBOL=BTCUSDT \
 Incremental update from last trained month:
 
 ```bash
-# Only update new months (from last position)
-make auto-rolling-update-only SYMBOL=BTCUSDT \
-  OUTPUT=results/auto_rolling_btcusdt_XXX \
-  USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json \
-  USE_AUTOENCODER=$(DIM_DIR)/production_autoencoder.pth \
-  ENCODING_DIM=32
+# Only update new months (from last position) - use --update-only flag
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --update-only
 ```
 
-### One-Command Automation
+This will automatically detect the last trained month and continue from there.
 
-When you already know大概的训练区间，但想把“特征对比 → 正式训练 → 滚动评估”串成一个命令时，可以使用：
+### Complete Workflow Pipeline
+
+For a complete workflow from feature evaluation to rolling training, execute commands in sequence:
 
 ```bash
-# 单资产、单频率（15T）、分类模型、GPU 加速
-make auto-workflow SYMBOLS=BTCUSDT \
-  START_DATE=2025-01-01 END_DATE=2025-04-30 \
-  ROLLING_START=2025-01 ROLLING_END=2025-04 \
-  AUTO_FEATURE_TYPE=baseline \
-  AUTO_FREQS=15T \
-  AUTO_FORWARD_BARS_TRAIN=5 \
-  AUTO_FORWARD_BARS_ROLLING=5 \
-  AUTO_MODEL_TYPE=classification \
-  AUTO_GPU=1 \
-  AUTO_MAX_ITER=1
+# Step 1: Feature evaluation and dimension reduction
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --timeframe 15T \
+  --start-date 2025-01-01 \
+  --end-date 2025-04-30 \
+  --remove-correlated \
+  --target-lag 5
+
+mlbot analyze dim-compare \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 15T \
+  --start-date 2025-01-01 \
+  --end-date 2025-04-30
+
+# Step 2: Quick single model training (optional, for validation)
+mlbot train sr-reversal-long \
+  --symbol BTCUSDT \
+  --timeframe 15T
+
+# Step 3: Rolling window training (main production workflow)
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 15T \
+  --start 2025-01-01 \
+  --end 2025-04-30 \
+  --initial-train-months 3 \
+  --min-train-months 3
 ```
 
-该命令会自动执行：
-
-1. `make ts-dim-compare` 等价的特征对比（生成 `top_factors.json`）
-2. 基于最佳特征调用训练管线（`make train`）
-3. 使用相同配置运行滚动评估（`make rolling`）
-
-并会读取滚动报告的阈值检查，若检测到明显漂移，可通过 `AUTO_MAX_ITER` / `AUTO_RETRY_MONTHS` 启用自动重跑，快速定位新的特征窗口。
-
-> 小贴士  
-> - `AUTO_GPU=1` 会在容器中开启 GPU 训练；若环境无 GPU，可省略。  
-> - `AUTO_MODEL_TYPE=classification` 能跳过量化分位回归阶段，适合做方向预测/快速验证。  
-> - 运行结束后，检查 `results/rolling_*/summary.json` 中的 `monthly_results`。如果输出提示 `drift detected`，说明最新月份未达标，建议重新跑一次 `make auto-workflow` 或手动调整特征/参数。  
+> **Tips**  
+> - Use `--docker` flag (default) to enable GPU training if available  
+> - Review `results/rolling_*/summary.json` for `monthly_results` after training  
+> - If `drift detected` appears in results, consider re-evaluating features or adjusting parameters  
 
 
 ## Data Pipeline
@@ -174,14 +298,32 @@ Before training, ensure you have data:
 
 ```bash
 # Download Binance monthly aggTrades
-make data-download DOWNLOAD_SYMBOLS="BTCUSDT ETHUSDT" \
-  DOWNLOAD_START_YEAR=2021 DOWNLOAD_START_MONTH=1
+mlbot data download \
+  --symbols BTCUSDT,ETHUSDT \
+  --start-year 2021 \
+  --start-month 1
 
 # Convert ZIPs to Parquet (5min OHLC + orderflow)
-make data-convert
+mlbot data convert
 
-# Or run both in one go
-make data-pipeline DOWNLOAD_SYMBOLS="BTCUSDT ETHUSDT"
+# Or run both in one go (full pipeline)
+mlbot data pipeline \
+  --symbols BTCUSDT,ETHUSDT
+```
+
+**More Data Pipeline Examples**:
+
+```bash
+# Download specific date range
+mlbot data download \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --start-year 2024 \
+  --start-month 1 \
+  --end-year 2025 \
+  --end-month 10
+
+# Convert with cleanup (remove ZIP files after conversion)
+mlbot data convert --cleanup
 ```
 
 ## Core Principle
@@ -197,18 +339,18 @@ make data-pipeline DOWNLOAD_SYMBOLS="BTCUSDT ETHUSDT"
 
 ## Command Comparison
 
-| Command | Purpose | When to Use |
-|---------|---------|-------------|
-| `make ts-dim-compare` | Research dimensionality reduction | **Required**: Before any training |
-| `make train` | Train single model | **Optional**: For single evaluation only |
-| `make auto-rolling-update` | Rolling update | **Required**: Main production workflow |
+| Command                     | Purpose                           | When to Use                               |
+| --------------------------- | --------------------------------- | ----------------------------------------- |
+| `mlbot analyze dim-compare` | Research dimensionality reduction | **Recommended**: Before any training      |
+| `mlbot train sr-reversal`   | Train single model                | **Optional**: For single evaluation only  |
+| `mlbot train rolling`       | Rolling window training           | **Recommended**: Main production workflow |
 
 ### Key Points
 
-- `make train`: Trains **one** model for a single time period
-- `make auto-rolling-update`: **Already includes training** - trains **multiple** models (one per month) in a rolling fashion
+- `mlbot train sr-reversal`: Trains **one** model for a single time period
+- `mlbot train rolling`: Trains **multiple** models (one per month) in a rolling/expanding window fashion
 - Both commands train models independently - they do **not** share models
-- **You can skip `make train`** if you only need rolling update functionality
+- **Recommended**: Use `mlbot train rolling` for production as it provides better evaluation through expanding windows
 
 
 ## Workflow Summary
@@ -216,44 +358,133 @@ make data-pipeline DOWNLOAD_SYMBOLS="BTCUSDT ETHUSDT"
 ### Minimal Workflow (2 Commands, Recommended)
 
 ```bash
-# 1. Research (find optimal configuration)
-make ts-dim-compare SYMBOL=BTCUSDT \
-  START_DATE=2025-05-01 END_DATE=2025-07-31 \
-  ENCODING_DIM=32
+# 1. Research (find optimal configuration via feature evaluation)
+mlbot analyze dim-compare \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2025-05-01 \
+  --end-date 2025-07-31
 
-DIM_DIR=results/production_dimensionality_20250501_20250731
-
-# 2. Rolling update (trains all models, from history to latest)
-make auto-rolling-update SYMBOL=BTCUSDT \
-  INITIAL_TRAIN_MONTHS=6 \
-  USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json \
-  USE_AUTOENCODER=$(DIM_DIR)/production_autoencoder.pth \
-  ENCODING_DIM=32
+# 2. Rolling training (trains all models, from history to latest)
+# Note: If you have top_factors.json, update your strategy config to use those features
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start 2024-01-01 \
+  --end 2025-10-31 \
+  --initial-train-months 6 \
+  --min-train-months 3
 ```
 
 ### Full Workflow (3 Commands)
 
 ```bash
-# 1. Research
-make ts-dim-compare SYMBOL=BTCUSDT \
-  START_DATE=2025-05-01 END_DATE=2025-07-31 \
-  ENCODING_DIM=32
+# 1. Research - Feature evaluation and dimension reduction
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
+  --remove-correlated \
+  --target-lag 20
 
-DIM_DIR=results/production_dimensionality_20250501_20250731
+mlbot analyze dim-compare \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2025-05-01 \
+  --end-date 2025-07-31
 
-# 2. Train single model (optional, for evaluation)
-make train SYMBOL=BTCUSDT \
-  START_DATE=2025-01-01 END_DATE=2025-07-31 \
-  USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json \
-  USE_AUTOENCODER=$(DIM_DIR)/production_autoencoder.pth \
-  ENCODING_DIM=32
+# 2. Train single model (optional, for quick evaluation)
+mlbot train sr-reversal-long \
+  --symbol BTCUSDT \
+  --timeframe 240T
 
-# 3. Rolling update (main workflow)
-make auto-rolling-update SYMBOL=BTCUSDT \
-  INITIAL_TRAIN_MONTHS=6 \
-  USE_TOP_FACTORS=$(DIM_DIR)/top_factors.json \
-  USE_AUTOENCODER=$(DIM_DIR)/production_autoencoder.pth \
-  ENCODING_DIM=32
+# 3. Rolling training (main production workflow)
+mlbot train rolling \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start 2024-01-01 \
+  --end 2025-10-31 \
+  --initial-train-months 6 \
+  --min-train-months 3
+```
+
+### Advanced Workflow Examples
+
+**Diagnostic and Optimization Workflow**:
+
+```bash
+# 1. Rule baseline (test pure rule-based strategy)
+mlbot diagnose rule-baseline \
+  --strategy-config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# 2. Rule optimization (find optimal parameters)
+mlbot optimize rule \
+  --strategy-config config/strategies/sr_reversal \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --search-type random \
+  --n-trials 100
+
+# 3. Generate rule plateau charts
+mlbot optimize rule-plateau-charts \
+  --results-csv results/rule_optimization/optimization_results.csv \
+  --report-html results/rule_optimization/optimization_report.html
+
+# 4. ML parameter sweep
+mlbot optimize ml-param-sweep \
+  --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2025-01-01 \
+  --end-date 2025-07-31
+
+# 5. Generate ML plateau charts
+mlbot optimize ml-plateau-charts \
+  --timeframe 240T
+```
+
+**Cross-Sectional Analysis Workflow**:
+
+```bash
+# 1. Build cross-sectional panel
+mlbot cross-section build-panel \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# 2. Generate Fama-MacBeth report
+mlbot cross-section report \
+  --panel-path data/cross_sectional_panels/panel.parquet \
+  --output-dir results/cross_sectional
+
+# 3. Train cross-sectional model
+mlbot cross-section train \
+  --panel-path data/cross_sectional_panels/panel.parquet
+
+# 4. Auto-select factors
+mlbot cross-section select \
+  --panel-path data/cross_sectional_panels/panel.parquet \
+  --output-path results/cross_sectional/selected_factors.json
+
+# 5. SHAP analysis
+mlbot cross-section shap \
+  --model-path results/cross_sectional/model.pkl \
+  --panel-path data/cross_sectional_panels/panel.parquet
+
+# 6. SHAP drift monitoring
+mlbot cross-section shap-drift \
+  --model-path results/cross_sectional/model.pkl \
+  --panel-path data/cross_sectional_panels/panel.parquet
 ```
 
 ## Documentation
@@ -262,67 +493,79 @@ make auto-rolling-update SYMBOL=BTCUSDT \
 - **`docs/simplified_workflow.md`** - Simplified workflow guide
 - **`docs/make_train_vs_dim_compare.md`** - Command comparison guide
 
-## See Also
+## Recent Feature Updates
 
-Run `make help` to see all available commands and their usage.
+### New Features (2024-12-19)
+
+#### 1. Liquidity Void Price Impact
+
+**Feature**: `liquidity_void_f`  
+**New Output Column**: `liquidity_void_price_impact`
+
+Measures price impact (how much price moves per unit volume):
+```
+price_impact = (high - low) / volume
+```
+
+- **Higher values**: Lower liquidity (small volume moves price more)
+- **Lower values**: Higher liquidity (more volume needed to move price)
+
+📖 See [Liquidity Void Price Impact Guide](docs/features/liquidity_void_price_impact_guide.md) for details.
+
+#### 2. LVN Detection Improvements
+
+**Feature**: `footprint_basic_f`  
+**Improvement**: Local minimum detection for LVN (Low Volume Node)
+
+- Uses `scipy.signal.find_peaks` to detect local minima
+- More accurate than global minimum approach
+- Identifies "valleys" between high volume regions
+
+📖 See [LVN Improvements](docs/features/lvn_improvements.md) for details.
+
+#### 3. WPT Enhancements
+
+**Feature**: `wpt_volume_energy_f`  
+**New Options**:
+- `use_log_returns`: Apply WPT to log returns instead of raw price (removes trend bias)
+- `adaptive_window`: ATR-based adaptive window sizing (adapts to volatility)
+
+📖 See [WPT Enhancements](docs/features/wpt_enhancements.md) for details.
+
+## Getting Help
+
+View all available commands:
+```bash
+mlbot --help
+```
+
+View commands for specific categories:
+```bash
+mlbot analyze --help      # Analysis and evaluation commands
+mlbot train --help        # Training commands
+mlbot diagnose --help     # Diagnostic commands
+mlbot optimize --help     # Optimization commands
+mlbot backtest --help     # Backtesting commands
+mlbot cross-section --help # Cross-sectional analysis commands
+mlbot data --help         # Data management commands
+mlbot features --help     # Feature management commands
+mlbot dev --help          # Development commands
+```
+
+See also:
+- [Migration Guide](docs/MIGRATION_GUIDE.md) - Complete guide for migrating from Makefile to mlbot
+- [Makefile vs mlbot](docs/MAKEFILE_VS_MLBOT.md) - Command comparison table
 
 ## 开发环境
 
-开发者 A：用 VS Code 打开项目 → 自动进入 Dev Container → 运行 make train → 直接在容器内高效训练。
-开发者 B：用 Vim/命令行 → 先确保镜像存在 → 运行 make train → Makefile 自动拉起容器完成任务。
+**推荐使用 VS Code Dev Container**：
+1. 用 VS Code 打开项目
+2. 选择 "Reopen in Container"（自动进入 Dev Container）
+3. 在容器内直接运行 `mlbot` 命令（无需通过 Makefile）
 
-# TODOs
-make train
-如需进一步提升，可考虑：
-集成 SHAP 解释性
-支持动态滚动训练窗口
-添加模型版本管理和预测缓存
-整体而言，代码质量高，结构清晰，工程实践成熟。
+**命令行使用**：
+- 在 Dev Container 中：直接使用 `mlbot` 命令
+- 在本地环境：使用 `mlbot` 命令（需要先 `pip install -e .`）
 
-make rolling-multi SYMBOLS="BTCUSDT,ETHUSDT" FREQS="15T,60T,240T" FBS="5" INITIAL_TRAIN_MONTHS=3 MIN_TRAIN_MONTHS=3 ROLLING_START=2021-01 ROLLING_END=2025-10 ROLLING_FEATURE_TYPE=comprehansive
+所有 `mlbot` 命令都支持 `--docker/--no-docker` 选项，可以根据环境自动选择合适的执行方式。
 
-make cs-select \
-  CS_INPUT="results/feature_exports/cs_panel_BTCUSDT_15T_12b_comprehensive_2024-11-01_2025-04-30.parquet" \
-  CS_SELECT_MIN_ASSETS=8 \
-  CS_SELECT_PER_CATEGORY_TOP=2 \
-  CS_SELECT_GLOBAL_TOP=12 \
-  CS_SELECT_IC_THRESHOLD=0.01 \
-  CS_SELECT_IR_THRESHOLD=0.5
-
-make cs-auto \
-  CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
-  CS_BUILD_TIMEFRAME=15T \
-  CS_BUILD_HORIZON=12 \
-  CS_PERIODS_PER_YEAR=auto \
-  CS_AUTO_PER_CATEGORY_TOP=2 \
-  CS_AUTO_GLOBAL_TOP=12 \
-  CS_AUTO_IC_THRESHOLD=0.01 \
-  CS_AUTO_IR_THRESHOLD=0.5
-
-make cs-auto \
-  CS_BUILD_SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT" \
-  CS_BUILD_TIMEFRAME=15T \
-  CS_BUILD_HORIZON=12 \
-  CS_BUILD_START=2024-11-01 \
-  CS_BUILD_END=2025-04-30 \
-  CS_PERIODS_PER_YEAR=auto \
-  CS_AUTO_PER_CATEGORY_TOP=2 \
-  CS_AUTO_GLOBAL_TOP=12 \
-  CS_AUTO_IC_THRESHOLD=0.01 \
-  CS_AUTO_IR_THRESHOLD=0.5 \
-  CS_LOGIC_EXPECTATIONS="configs/factor_expectations.json" \
-  CS_DRIFT_BASELINE="results/cross_sectional/shap_baseline.json"
-
-
-
-
-
-make rolling ROLLING_USE_TOP_FACTORS=results/dim_compare/BTCUSDT-ETHUSDT_baseline-default_grid_search_20251115_161745/best_combination/top_factors.json \
-  ROLLING_FEATURE_TYPE=baseline,default \
-  ROLLING_FREQ=240T \
-  ROLLING_FBS=24
-
-
-make ts-vectorbot-backtest BACKTEST_MODEL=/home/yin/trading/ml_trading_bot/results/rolling_btcusdt_ethusdt_20251115_164429/latest
-
-make factor-test FACTOR_TEST_FACTORS="price_to_zz_high_pct,price_to_poc_pct" FACTOR_TEST_SYMBOL=BTCUSDT,ETHUSDT FACTOR_TEST_FEATURE_TYPE=baseline

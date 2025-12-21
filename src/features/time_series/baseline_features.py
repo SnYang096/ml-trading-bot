@@ -60,6 +60,12 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     return rsi_series
 
 
+def compute_rsi_from_series(close: pd.Series, period: int = 14) -> pd.DataFrame:
+    """Narrow-IO version of RSI calculation that returns DataFrame."""
+    rsi_series = compute_rsi(close, period=period)
+    return rsi_series.rename("rsi").to_frame()
+
+
 @register_feature("compute_macd", category="baseline")
 def compute_macd(
     series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9

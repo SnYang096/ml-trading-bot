@@ -111,10 +111,18 @@ def _adaptive_wpt_window(
 
     price_ma = price.rolling(window=14).mean()
 
+    # Fill NaN values before division to avoid inf
+    price_ma = price_ma.fillna(price.mean() if price.mean() > 0 else 1.0)
+    atr_est = atr_est.fillna(atr_est.mean() if atr_est.mean() > 0 else 0.1)
+
     # Calculate adaptive window: window = max(min_window, int(14 * atr_ma / price_ma))
     # This adapts to volatility: higher volatility -> larger window
     adaptive_window = (14 * atr_est / (price_ma + 1e-8)).clip(
         lower=min_window, upper=max_window
+    )
+    # Replace any remaining inf or NaN with default window
+    adaptive_window = adaptive_window.replace([np.inf, -np.inf], min_window).fillna(
+        min_window
     )
     return adaptive_window.astype(int)
 
