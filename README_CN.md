@@ -59,8 +59,137 @@
 - **控制更细**：多空可以分别设阈值/风控。
 - **一致性更强**：离线回测与生产推理语义一致。
 
+#### SR Reversal 的“标签语义 ↔ 执行语义”约定（非常重要）
+
+SR Reversal（`sr_reversal_long/short`）的核心不是“预测下一根 K 涨跌”，而是：
+**预测一次入场后，在 R/R 规则下能否先到 TP（如 +2R）再到 SL（如 -1R）**。
+因此，我们在代码与配置里刻意做了下面这些约定，保证训练/回测/实盘语义一致：
+
+- **`pred` 的含义**：`pred = P(该方向交易在 max_holding_bars 内按 R/R 规则成功)`  
+  它是“达到 RR 目标的成功概率”，不是“退出概率”。
+- **入场（entry）**：用 `entry_threshold` 做概率门控（例如 `pred >= 0.35` 才允许开仓）。  
+  建议默认用 `entry_mode: cross`，避免 `pred >= threshold` 在连续多根 bar 为 True 时只开一单或造成信号黏连。
+- **出场（exit）**：默认只由 **R/R 执行规则** 产生（TP / SL / 超时 / 期末强平），而不是由 `pred` 触发。  
+  这点很关键：因为 `pred` 与“何时退出”在该标签定义下没有直接关系。
+- **可选：概率阈值退出（仅用于其他策略/实验）**：如果你明确想把 `pred` 当作“趋势/风险状态”，可以显式启用 `exit_mode: threshold`。  
+  但对 SR Reversal 的 RR 标签语义，默认应保持 `exit_mode: none`。
+
+#### 负向因子为什么要“取反”（统一方向）
+
+在因子库长期维护中，我们约定：**特征值越大越偏向看涨（正类）**。  
+对于在 `factor-eval` 里识别出的“强负因子（Strong Negative Factors）”，推荐在入模前取反（乘以 -1），以获得：
+- 更一致的解释与组合（尤其是后续做人为加权/因子打分时）
+- 更少的“方向记忆成本”（不用记哪些因子是反的）
+
+实现方式（单文件、配置驱动）：
+- `mlbot analyze factor-eval` 导出的 `features_suggested.yaml` 会包含 `feature_pipeline.invert_features`
+- 训练入口会读取该列表并在训练/推理时对这些列乘以 -1（保证一致性）
+
 我们仍保留一个轻量的**保险丝**（可选），防止 OOD/噪声 regime 下过度交易：
 `dist_to_nearest_sr / ATR > K  =>  不交易`。
+
+#### 研究 → 实盘 Playbook（时间周期、数据长度、执行“性格”）
+
+这一节的目标是：让你在不同策略之间做 **稳定、可对比** 的研究，然后顺滑推进到 **rolling 训练** 与实盘。
+
+##### 1) 每个策略更推荐的 timeframe
+
+- **SR Reversal（支撑阻力反转/均值回归）**：优先 **4H**（结构更干净、换手更低）。1H 也可以，但噪声更大，通常需要更强过滤器。
+- **SR Breakout（SR 突破）**：**1H–4H**。4H 更稳，1H 样本更多但假突破更多。
+- **Compression Breakout（压缩区突破）**：**1H–4H**。1H 更容易有形态，但确认要更严格。
+- **Trend Following（趋势跟随）**：**4H–1D**。低频更容易在成本后保持稳健。
+
+##### 2) 每个策略需要多长数据？（经验法则）
+
+主要受两点约束：
+- **市场状态**：需要覆盖多个 regime（趋势/震荡、高波动/低波动）。
+- **交易样本**：需要足够多“完成的交易”才能让指标有意义。
+
+以加密市场 **4H** 为例，建议：
+
+| 策略 | 最少建议历史 | 更好 | 原因 |
+|---|---:|---:|---|
+| `sr_reversal_long/short` | 12–18 个月 | 24–36 个月 | 反转强烈依赖 regime，需要足够多“干净/失败”的 SR 触发样本 |
+| `sr_breakout` | 18–24 个月 | 36+ 个月 | 突破在不同波动周期下风格变化大 |
+| `compression_breakout` | 18–24 个月 | 36+ 个月 | 需要足够多“压缩→扩张”事件覆盖多种环境 |
+| `trend_following` | 24–36 个月 | 4–6 年 | 趋势需要长历史覆盖长趋势年与震荡年 |
+
+**切换 timeframe 时，要把“按 bars 的参数”换算成“按时间等价”。**
+例如 4H → 1H，很多以 bars 表示的参数需要约 ×4 才能代表同样的时间长度：
+- `rr.max_holding_bars`、标签持有期、rolling 窗口 bars 等。
+
+##### 3) 多标的训练（推荐，但要可控）
+
+你可以同时扩展时间与标的，但要保持可解释性：
+- **先从 3–8 个高流动性标的开始**（大盘币优先）。
+- **按策略配置训练**，评估时要看 **分标的表现**（不要只看汇总均值）。
+- **成本要按标的真实设定**（费率/滑点），高频方案尤其容易“成本前好看”。
+- 更推荐用 **rolling 训练** 做月度稳定性验证。
+
+##### 4) 策略“性格”：是否加仓 / 多仓位
+
+不同策略不应共享同一套仓位管理规则。
+
+- **SR Reversal（`sr_reversal_*`）**
+  - **一般不加仓**（反转边际脆弱，加仓更容易放大回撤）。
+  - **通常每个标的同一时刻最多 1 笔**（方向固定 long-only/short-only）。
+  - 目标是“更少、更高质量”的交易，避免过度交易。
+
+- **趋势跟随（Trend Following）**
+  - **经常适合加仓**，但必须有严格规则（例如走出 +1R 且信号仍强才允许加一次）。
+  - **通常不使用固定 TP**，更偏向跟踪止损/趋势失效退出。
+
+- **SR Breakout**
+  - **可选加仓**：只在突破确认后加一次（例如站稳/回踩确认），不建议在第一根尖刺上加。
+
+- **Compression Breakout**
+  - **建议先不加仓**：先把 baseline 做稳；如果要加仓，先做“仅一次加仓 + 严格确认”，再重新验证稳定性。
+
+##### 5) 止损止盈：研究阶段先稳定模板
+
+为了让消融/参数对比有意义，执行层先稳定下来：
+- **止损**：倾向 **ATR 止损**（跨波动 regime 更一致）。
+- **止盈**：
+  - **反转/突破类**：RR 风格的固定/部分止盈（例如 +2R）通常合理。
+  - **趋势类**：往往不设硬 TP，使用 trailing / 趋势失效退出。
+- **持有期**：`max_holding_bars` 最好与 **标签定义** 一致。
+  - 如果你改了标签持有期（例如 50→20 bars），特征选择/最佳滞后可能会变化。
+
+##### 6) 研究阶段哪些变量必须固定（保证可复现）
+
+做特征/模型对比时，不要同时改太多变量。建议固定：
+- **timeframe**
+- **标签定义**（RR 参数、持有期）
+- **回测执行语义**（RR 出场 vs 概率出场、成本、滑点）
+- **目标交易频率**（例如“4H SR reversal ~20 笔/年”，然后调阈值去命中它）
+- **标的集合**与评估窗口
+- **rolling 协议**（训练月数、测试月、步长）
+
+一旦 baseline 稳定，再按顺序推进：
+1) `factor-eval`（筛特征）
+2) `strategy-feature-compare`（消融）
+3) `model-comparison`（验证 ML 优于规则）
+4) `train rolling`（生产训练）
+
+##### 7) K 线内部开仓 vs 等 K 线收盘开仓
+
+默认建议：**研究与实盘都用“收盘/下一根 K 开仓”**。
+原因是更容易保证一致性与可复现，也更不容易踩到“回测假设过于乐观/潜在穿越”的坑。
+
+什么时候 K 线内部开仓有意义：
+- **突破/动量**（SR breakout、部分 compression breakout）有时“早入场”会显著影响 R 倍数。
+- **更短周期**（例如 1H 及以下）并且你能更真实地建模执行。
+
+如何让 intrabar 更安全（避免回测过于乐观）：
+- 最好使用 **更低级别的执行数据**（如 1m）或更严格的“bar 内执行模型”，不要假设能拿到 K 线内最优价格。
+- 用保守假设：**next-tick/next-bar 成交**、真实滑点、明确限价/市价规则。
+- 保持与标签一致：如果标签假设 \(t+1\) 进场，不要在回测里偷偷改成“当根 K 内进场”而不重新验证。
+
+按策略的建议：
+- **SR Reversal**：通常 **等收盘确认** 更稳（intrabar 更容易被噪声来回打脸）。
+- **SR Breakout**：在确认逻辑与执行假设足够严格时，可以尝试 intrabar；否则收盘更安全。
+- **Compression Breakout**：先用收盘把 baseline 做稳，再考虑 intrabar。
+- **趋势类**：多数情况下收盘/下一根 K 足够，不一定需要 intrabar。
 
 #### 步骤 0: 验证特征正确性（推荐）
 
@@ -96,7 +225,7 @@ mlbot analyze factor-eval \
   --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
   --symbol BTCUSDT \
   --timeframe 240T \
-  --start-date 2025-01-01 \
+  --start-date 2024-01-01 \
   --end-date 2025-10-31 \
 ```
 
@@ -113,6 +242,7 @@ mlbot analyze factor-eval \
 ```bash
 mlbot analyze factor-eval \
   --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --export-yaml config/strategies/sr_reversal_long/features_suggested.yaml \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2025-01-01 \
@@ -134,8 +264,9 @@ mlbot analyze strategy-feature-compare \
   --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
-  --start-date 2025-01-01 \
+  --start-date 2024-01-01 \
   --end-date 2025-10-31 \
+  --test-size 0.5 \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 ```
 
@@ -151,7 +282,8 @@ mlbot analyze strategy-feature-compare \
   --run-rolling \
   --rolling-train-bars 5000 \
   --rolling-test-bars 1000 \
-  --rolling-max-windows 10
+  --rolling-max-windows 10 \
+   --test-size 0.5 
 ```
 
 **此步骤验证的内容**：
@@ -280,7 +412,9 @@ mlbot train rolling \
 
 ```bash
 # 示例：把 results 目录作为静态站点暴露出来
-python3 -m http.server 8008 --directory results
+mlbot serve-results
+# 或（手动）
+# python3 -m http.server 8008 --directory results
 ```
 
 - 在 Cursor/VS Code 打开 **Ports** 面板，转发/打开端口 `8008`
@@ -288,6 +422,12 @@ python3 -m http.server 8008 --directory results
   - `results/auto_rolling_*/monthly_rolling_report.html`
   - `results/strategy_compare/strategy_feature_compare_report.html`
   - `results/rule_optimization/optimization_report.html`
+
+如果端口 `8008` 已被占用，可以在容器内强制结束占用端口的进程，然后重启服务：
+
+```bash
+mlbot serve-results --force
+```
 
 #### 步骤 6: 定期更新（每周/每月）
 
@@ -326,9 +466,9 @@ mlbot analyze factor-eval \
 mlbot analyze strategy-feature-compare \
   --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
-  --timeframe 15T \
-  --start-date 2025-01-01 \
-  --end-date 2025-04-30 \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 
 # 步骤 3: 模型对比（验证 ML 优于规则）
@@ -454,6 +594,7 @@ mlbot analyze strategy-feature-compare \
   --timeframe 240T \
   --start-date 2024-01-01 \
   --end-date 2025-10-31 \
+  --output-dir results/strategy_compare \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 
 # 步骤 3: 模型对比（验证 ML 优于规则）

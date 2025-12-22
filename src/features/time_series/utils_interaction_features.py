@@ -551,6 +551,25 @@ def compute_sr_strength_combined_from_series(*, sqs: pd.Series) -> pd.DataFrame:
     return s.rename("sr_strength_combined").to_frame()
 
 
+@register_feature(
+    "compute_sr_strength_combined_from_hal_sqs_from_series", category="derived"
+)
+def compute_sr_strength_combined_from_hal_sqs_from_series(
+    *, sqs_hal_high: pd.Series, sqs_hal_low: pd.Series
+) -> pd.DataFrame:
+    """
+    Robust Narrow-IO entrypoint for sr_strength_combined.
+
+    Some pipelines may not materialize an intermediate `sqs` column (combined SQS),
+    but do produce `sqs_hal_high` and `sqs_hal_low`. This function derives the
+    combined strength directly as max(high, low), avoiding hard dependency on `sqs`.
+    """
+    h = pd.to_numeric(sqs_hal_high, errors="coerce").fillna(0.0).astype(float)
+    l = pd.to_numeric(sqs_hal_low, errors="coerce").fillna(0.0).astype(float)
+    out = pd.Series(np.maximum(h.values, l.values), index=h.index, name="sr_strength_combined")
+    return out.to_frame()
+
+
 @register_feature("compute_sr_distance_normalized", category="derived")
 def compute_sr_distance_normalized(
     df: pd.DataFrame,

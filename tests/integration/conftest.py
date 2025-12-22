@@ -19,6 +19,18 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def pytest_collection_modifyitems(config, items):
+    """
+    Automatically mark everything under tests/integration as `integration`.
+
+    This keeps the workflow ergonomic:
+    - Fast dev loop:  pytest -m "not integration"
+    - Integration:    pytest -m integration
+    """
+    for item in items:
+        item.add_marker(pytest.mark.integration)
+
+
 def _write_yaml(path: Path, content: str) -> None:
     """Helper to write YAML file."""
     path.write_text(textwrap.dedent(content), encoding="utf-8")

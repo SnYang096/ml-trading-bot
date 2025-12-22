@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import shutil
 import sys
@@ -53,6 +52,9 @@ from src.data_tools.tick_loader import (
     list_tick_files,
     serialize_tick_loader_params,
 )  # noqa: E402
+from src.time_series_model.strategies.evaluation.reports.strategy_feature_compare_report import (
+    write_strategy_feature_compare_reports,
+)
 
 VENDOR_DIR = PROJECT_ROOT / "vendor"
 if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
@@ -97,6 +99,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=200,
         help="Extra bars before the test split for feature warm-up",
+    )
+    parser.add_argument(
+        "--calibrate-proba",
+        choices=["none", "platt", "isotonic"],
+        default="none",
+        help="Optional probability calibration (binary only).",
     )
     return parser.parse_args()
 
@@ -374,10 +382,136 @@ def execute_single_run(
     variant_name: str = "unknown",
     symbol: Optional[str] = None,
     data_path: Optional[str] = None,
+    calibrate_proba: str = "none",
 ) -> Optional[Dict]:
+    def _to_float_or_none(x: float) -> float | None:
+        try:
+            v = float(x)
+        except Exception:
+            return None
+        return v if np.isfinite(v) else None
+
+    def _build_pred_report(
+        preds_arr: np.ndarray,
+        y_arr: np.ndarray,
+        backtest_params: Dict[str, Any],
+        task_type: str,
+        n_bins: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Build a lightweight, JSON-safe report to answer:
+        - Are predictions near-constant (e.g. ~0.3x)?
+        - Do higher predictions actually imply higher realized win-rate?
+        """
+        preds_1d = np.asarray(preds_arr).reshape(-1)
+        y_1d = np.asarray(y_arr).reshape(-1)
+
+        valid = ~(np.isnan(preds_1d) | np.isnan(y_1d))
+        pv = preds_1d[valid]
+        yv = y_1d[valid]
+
+        report: Dict[str, Any] = {
+            "task_type": str(task_type),
+            "n": int(len(preds_1d)),
+            "n_valid": int(valid.sum()),
+            "n_nan_pred": int(np.isnan(preds_1d).sum()),
+            "n_nan_label": int(np.isnan(y_1d).sum()),
+        }
+
+        if len(pv) == 0:
+            report["note"] = "No valid (pred,label) pairs to analyze."
+            return report
+
+        # Basic distribution stats
+        qs = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]
+        qv = np.quantile(pv, qs)
+        report["pred_stats"] = {
+            "min": _to_float_or_none(pv.min()),
+            "max": _to_float_or_none(pv.max()),
+            "mean": _to_float_or_none(pv.mean()),
+            "std": _to_float_or_none(pv.std()),
+            "quantiles": {
+                str(int(q * 100)): _to_float_or_none(v) for q, v in zip(qs, qv)
+            },
+        }
+
+        # Label base-rate (binary only)
+        if task_type == "binary":
+            # y is expected to be 0/1; still tolerate floats
+            y_bin = (yv >= 0.5).astype(int)
+            report["label_stats"] = {
+                "pos_rate": _to_float_or_none(y_bin.mean()),
+                "pos": int(y_bin.sum()),
+                "neg": int((1 - y_bin).sum()),
+            }
+
+        # Entry gating summary (for direction-fixed probability gating)
+        try:
+            entry_thr = backtest_params.get(
+                "entry_threshold", backtest_params.get("long_entry_threshold", None)
+            )
+            entry_mode = str(backtest_params.get("entry_mode", "level")).lower()
+            if entry_thr is not None:
+                thr = float(entry_thr)
+                entry_raw = pv >= thr
+                if entry_mode == "cross":
+                    prev = np.r_[False, entry_raw[:-1]]
+                    entry = entry_raw & (~prev)
+                else:
+                    entry = entry_raw
+                report["entry_gating"] = {
+                    "entry_threshold": _to_float_or_none(thr),
+                    "entry_mode": entry_mode,
+                    "n_entry_raw": int(entry_raw.sum()),
+                    "n_entry": int(entry.sum()),
+                    "entry_rate_raw": _to_float_or_none(entry_raw.mean()),
+                    "entry_rate": _to_float_or_none(entry.mean()),
+                }
+        except Exception:
+            pass
+
+        # Calibration by quantile bins (binary only)
+        if task_type == "binary" and len(pv) >= max(n_bins, 2):
+            y_bin = (yv >= 0.5).astype(int)
+            # Guard: quantile edges can collapse if pv is near-constant
+            edges = np.unique(np.quantile(pv, np.linspace(0, 1, n_bins + 1)))
+            if len(edges) >= 3:
+                # Make bins; include rightmost
+                bin_ids = np.digitize(pv, edges[1:-1], right=True)
+                bins = []
+                for b in range(len(edges) - 1):
+                    m = bin_ids == b
+                    if not m.any():
+                        continue
+                    bins.append(
+                        {
+                            "bin": int(b),
+                            "n": int(m.sum()),
+                            "pred_mean": _to_float_or_none(pv[m].mean()),
+                            "label_pos_rate": _to_float_or_none(y_bin[m].mean()),
+                            "pred_min": _to_float_or_none(pv[m].min()),
+                            "pred_max": _to_float_or_none(pv[m].max()),
+                        }
+                    )
+                report["calibration_bins"] = bins
+                # Brier score for a single-number sanity-check
+                try:
+                    report["brier"] = _to_float_or_none(
+                        float(np.mean((pv - y_bin) ** 2))
+                    )
+                except Exception:
+                    pass
+            else:
+                report["calibration_note"] = (
+                    "Predictions near-constant; quantile bins collapsed."
+                )
+
+        return report
+
     if df_train_raw.empty or df_test_raw.empty:
-        logger.warning(
-            "Variant %s has empty train/test split (train=%d, test=%d)",
+        logger.error(
+            "Variant %s has empty train/test split (train=%d, test=%d). "
+            "This should not happen if data was loaded correctly. Check data loading logic.",
             variant_name,
             len(df_train_raw),
             len(df_test_raw),
@@ -413,6 +547,18 @@ def execute_single_run(
         pipeline_cfg=strategy_cfg.features,
         fit=False,
     )
+
+    # Debug: Check if OHLCV columns are preserved
+    required_cols = ["high", "low", "open", "close"]
+    missing_train = [c for c in required_cols if c not in df_train_features.columns]
+    missing_test = [c for c in required_cols if c not in df_test_features.columns]
+    if missing_train or missing_test:
+        logger.warning(
+            "Variant %s missing OHLCV columns after feature computation: train=%s, test=%s",
+            variant_name,
+            missing_train,
+            missing_test,
+        )
 
     if test_warmup_bars > 0 and len(df_test_features) > test_warmup_bars:
         df_test_features = df_test_features.iloc[test_warmup_bars:].copy()
@@ -452,11 +598,77 @@ def execute_single_run(
         len(df_test_filtered),
     )
 
+    # ------------------------------------------------------------------
+    # Research-first NaN policy:
+    # - Do NOT drop rows just because feature columns are NaN
+    # - Instead: keep rows, warn when columns have high NaN ratio
+    # - Ignore legacy post_label_filters entries with ensure_feature_non_null (too aggressive for research)
+    #
+    # We also ignore legacy post_label_filters entries with ensure_feature_non_null,
+    # because it's too aggressive for research (it can collapse the test set to a few bars).
+    # ------------------------------------------------------------------
+    NAN_WARN_THRESHOLD = 0.20
+    TOP_N = 20
+
+    def _nan_ratio_report(
+        df_in: pd.DataFrame, cols: List[str], top_n: int = 20
+    ) -> Dict[str, Any]:
+        if df_in is None or df_in.empty or not cols:
+            return {
+                "n_rows": int(len(df_in) if df_in is not None else 0),
+                "warn_threshold": NAN_WARN_THRESHOLD,
+                "top": [],
+            }
+        cols = [c for c in cols if c in df_in.columns]
+        if not cols:
+            return {
+                "n_rows": int(len(df_in)),
+                "warn_threshold": NAN_WARN_THRESHOLD,
+                "top": [],
+            }
+        ratios = df_in[cols].isna().mean(axis=0).sort_values(ascending=False)
+        warn = ratios[ratios >= NAN_WARN_THRESHOLD]
+        top = [
+            {"col": str(c), "nan_ratio": float(v), "nan_count": int(v * len(df_in))}
+            for c, v in warn.head(top_n).items()
+        ]
+        return {
+            "n_rows": int(len(df_in)),
+            "warn_threshold": NAN_WARN_THRESHOLD,
+            "top": top,
+        }
+
+    def _key_feature_cols(df_in: pd.DataFrame, cols: List[str]) -> List[str]:
+        """
+        Default key-feature heuristic:
+        - key = columns with NaN ratio <= threshold on TRAIN
+        This is reported for visibility only; we do NOT drop rows by default.
+        """
+        if df_in is None or df_in.empty:
+            return []
+        cols = [c for c in cols if c in df_in.columns]
+        if not cols:
+            return []
+        ratios = df_in[cols].isna().mean(axis=0)
+        key = [c for c, r in ratios.items() if float(r) <= NAN_WARN_THRESHOLD]
+        return key
+
+    nan_report_train = _nan_ratio_report(df_train_filtered, feature_cols, top_n=TOP_N)
+    nan_report_test = _nan_ratio_report(df_test_filtered, feature_cols, top_n=TOP_N)
+
+    key_cols = _key_feature_cols(df_train_filtered, feature_cols)
+
+    # Apply post-label filters, but ignore ensure_feature_non_null in this command (research-first).
+    post_filters = []
+    for f in strategy_cfg.labels.post_label_filters or []:
+        if isinstance(f, dict) and f.get("ensure_feature_non_null"):
+            continue
+        post_filters.append(f)
     df_train_filtered = strategy_runner.apply_post_label_filters(
-        df_train_filtered, strategy_cfg.labels.post_label_filters, feature_cols
+        df_train_filtered, post_filters, feature_cols
     )
     df_test_filtered = strategy_runner.apply_post_label_filters(
-        df_test_filtered, strategy_cfg.labels.post_label_filters, feature_cols
+        df_test_filtered, post_filters, feature_cols
     )
 
     logger.info(
@@ -468,10 +680,16 @@ def execute_single_run(
 
     if len(df_train_filtered) < 50 or len(df_test_filtered) < 10:
         logger.warning(
-            "Variant %s skipped: insufficient samples after filters (train=%d, test=%d)",
+            "Variant %s skipped: insufficient samples after filters (train=%d, test=%d). "
+            "Raw data: train=%d, test=%d. After label filters: train=%d, test=%d. "
+            "This may indicate feature computation failures or overly aggressive filters.",
             variant_name,
             len(df_train_filtered),
             len(df_test_filtered),
+            len(df_train_raw),
+            len(df_test_raw),
+            len(df_train_features),
+            len(df_test_features),
         )
         return None
 
@@ -492,6 +710,7 @@ def execute_single_run(
 
     X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
     y_test = df_test_filtered[target_col].values
+
     preds = strategy_runner.generate_predictions(
         models=models,
         model_type=model_type,
@@ -499,9 +718,120 @@ def execute_single_run(
         X=X_test,
     )
 
+    # Optional probability calibration (binary only)
+    if calibrate_proba != "none" and task_type == "binary":
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            from sklearn.linear_model import LogisticRegression
+
+            # Fit calibrator on train set predictions vs. labels (held-out CV inside calibrator).
+            X_train_cal = preprocessor.transform(
+                df_train_filtered, feature_cols=used_features
+            )
+            y_train_cal = df_train_filtered[target_col].values
+
+            # Build a lightweight estimator wrapper using the first model if possible
+            base_est = None
+            if model_type == "xgboost":
+                import xgboost as xgb
+
+                # XGBoost: wrap Booster in XGBClassifier
+                if models and len(models) > 0:
+                    base_est = xgb.XGBClassifier()
+                    base_est._Booster = models[0]
+            elif model_type == "catboost":
+                # CatBoost models are already sklearn-compatible
+                base_est = models[0] if models else None
+            elif model_type == "lightgbm":
+                import lightgbm as lgb
+
+                # LightGBM: wrap Booster in LGBMClassifier
+                if models and len(models) > 0:
+                    base_est = lgb.LGBMClassifier()
+                    base_est._Booster = models[0]
+
+            if base_est is not None:
+                method = "isotonic" if calibrate_proba == "isotonic" else "sigmoid"
+                calibrator = CalibratedClassifierCV(base_est, method=method, cv=3)
+                calibrator.fit(X_train_cal, y_train_cal)
+                preds = calibrator.predict_proba(X_test)[:, 1]
+                logger.info(
+                    f"Applied {calibrate_proba} calibration (method={method}) to test predictions"
+                )
+        except Exception as exc:
+            logger.warning(f"Calibration skipped: {exc}")
+
     evaluation_results = strategy_runner.evaluate_predictions(
         preds, y_test, strategy_cfg.evaluation
     )
+
+    # Add AUC (binary) and Rank IC (regression) for model validation
+    additional_metrics = {}
+    if task_type == "binary":
+        # AUC for binary classification
+        try:
+            from sklearn.metrics import roc_auc_score
+
+            # Filter out NaN labels/predictions
+            valid_mask = ~(np.isnan(preds) | np.isnan(y_test))
+            if valid_mask.sum() > 0:
+                auc = roc_auc_score(y_test[valid_mask], preds[valid_mask])
+                additional_metrics["auc"] = float(auc)
+        except Exception as exc:
+            logger.warning(f"AUC calculation skipped: {exc}")
+    elif task_type == "regression":
+        # Rank IC (Spearman correlation) for regression - especially useful for volatility regression
+        try:
+            from scipy.stats import spearmanr
+
+            # Filter out NaN labels/predictions
+            valid_mask = ~(np.isnan(preds) | np.isnan(y_test))
+            if valid_mask.sum() > 1:
+                rank_ic, _ = spearmanr(
+                    preds[valid_mask], y_test[valid_mask], nan_policy="omit"
+                )
+                additional_metrics["rank_ic"] = (
+                    float(rank_ic) if not np.isnan(rank_ic) else 0.0
+                )
+        except Exception as exc:
+            logger.warning(f"Rank IC calculation skipped: {exc}")
+
+    # Merge additional metrics into evaluation_results
+    evaluation_results.update(additional_metrics)
+
+    # Prediction report (distribution + calibration) — stored in diagnostics (not evaluation)
+    try:
+        bt_params = (
+            (strategy_cfg.backtest.params or {}) if strategy_cfg.backtest else {}
+        )
+        pred_report = _build_pred_report(
+            preds_arr=preds,
+            y_arr=y_test,
+            backtest_params=bt_params,
+            task_type=task_type,
+            n_bins=10,
+        )
+    except Exception as exc:  # noqa: BLE001
+        pred_report = {"error": f"pred_report_failed: {exc}"}
+
+    # Feature direction / inversion report — provided by trainer/preprocessor (config-driven).
+    factor_direction: Dict[str, Any] = {
+        "enabled": False,
+        "source": "none",
+        "inverted": [],
+    }
+    try:
+        multipliers = getattr(preprocessor, "feature_multipliers", None)
+        if isinstance(multipliers, dict):
+            inverted = sorted([k for k, v in multipliers.items() if float(v) == -1.0])
+            factor_direction = {
+                "enabled": bool(inverted),
+                "source": "trainer",
+                "inverted": inverted,
+            }
+    except Exception:
+        pass
+
     backtest_results = strategy_runner.run_vectorbt_backtest(
         df_test_filtered,
         preds,
@@ -517,6 +847,12 @@ def execute_single_run(
         float(avg_metric) if avg_metric is not None else float("nan"),
     )
 
+    # Feature pipeline debug stats (per-feature index mismatch etc.)
+    feature_debug = {
+        "train": (df_train_features.attrs.get("feature_debug_stats") or {}),
+        "test": (df_test_features.attrs.get("feature_debug_stats") or {}),
+    }
+
     return {
         "avg_cv_metric": float(avg_metric),
         "evaluation": evaluation_results,
@@ -524,6 +860,20 @@ def execute_single_run(
         "used_features": used_features,
         "n_train": int(len(df_train_filtered)),
         "n_test": int(len(df_test_filtered)),
+        "diagnostics": {
+            "nan_report": {
+                "train": nan_report_train,
+                "test": nan_report_test,
+                "key_feature_policy": {
+                    "threshold": NAN_WARN_THRESHOLD,
+                    "n_key_features": int(len(key_cols)),
+                    "note": "Key features are reported for visibility; rows are not dropped by default.",
+                },
+            },
+            "feature_debug_stats": feature_debug,
+            "pred_report": pred_report,
+            "factor_direction": factor_direction,
+        },
     }
 
 
@@ -552,6 +902,7 @@ def run_rolling_evaluation(
             variant_name=variant_name,
             symbol=params.symbol,
             data_path=params.data_path,
+            calibrate_proba=getattr(params, "calibrate_proba", "none"),
         )
         if result:
             result["window_start"] = str(train_raw.index[0])
@@ -568,21 +919,32 @@ def run_rolling_evaluation(
         for key in eval_keys
     }
     if any(w.get("backtest") for w in windows):
+        # Only aggregate scalar numeric backtest metrics; skip nested/non-numeric fields (e.g. debug dict)
+        def _to_float_or_nan(x: object) -> float:
+            try:
+                v = float(x)  # type: ignore[arg-type]
+            except Exception:
+                return float("nan")
+            return v if np.isfinite(v) else float("nan")
+
         bt_keys = sorted(
-            {k for w in windows if w.get("backtest") for k in w["backtest"].keys()}
+            {
+                k
+                for w in windows
+                if w.get("backtest") and isinstance(w.get("backtest"), dict)
+                for k in w["backtest"].keys()
+                if k != "debug"
+            }
         )
-        aggregate_bt = {
-            key: float(
-                np.nanmean(
-                    [
-                        w["backtest"].get(key, np.nan)
-                        for w in windows
-                        if w.get("backtest")
-                    ]
-                )
-            )
-            for key in bt_keys
-        }
+        aggregate_bt = {}
+        for key in bt_keys:
+            vals = []
+            for w in windows:
+                bt = w.get("backtest")
+                if not isinstance(bt, dict):
+                    continue
+                vals.append(_to_float_or_nan(bt.get(key, np.nan)))
+            aggregate_bt[key] = float(np.nanmean(vals)) if vals else float("nan")
     else:
         aggregate_bt = None
 
@@ -596,678 +958,6 @@ def run_rolling_evaluation(
             "n_windows": len(windows),
         },
     }
-
-
-def summarize_results(results: List[Dict]) -> pd.DataFrame:
-    rows = []
-    for item in results:
-        row = {
-            "variant": item["variant"],
-            "avg_cv_metric": (
-                item["base"]["avg_cv_metric"] if item.get("base") else np.nan
-            ),
-            "n_train": item["base"].get("n_train", 0) if item.get("base") else 0,
-            "n_test": item["base"].get("n_test", 0) if item.get("base") else 0,
-        }
-        evaluation = item["base"].get("evaluation", {}) if item.get("base") else {}
-        for key, value in evaluation.items():
-            row[f"eval_{key}"] = value
-        backtest = item["base"].get("backtest") if item.get("base") else None
-        if backtest:
-            for key, value in backtest.items():
-                # 跳过 debug 等非标量字段，避免污染 summary CSV
-                if key == "debug":
-                    continue
-                row[f"bt_{key}"] = value
-        rows.append(row)
-    return pd.DataFrame(rows)
-
-
-def _sanitize_for_json(obj):
-    """
-    Recursively sanitize objects for strict JSON:
-    - Replace NaN/Infinity/-Infinity with None
-    """
-    if isinstance(obj, float):
-        return obj if np.isfinite(obj) else None
-    if isinstance(obj, dict):
-        return {k: _sanitize_for_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_for_json(v) for v in obj]
-    if isinstance(obj, tuple):
-        return [_sanitize_for_json(v) for v in obj]
-    return obj
-
-
-def generate_html_report(
-    results: List[Dict],
-    summary_df: pd.DataFrame,
-    symbol: str,
-    timeframe: str,
-    test_size: float,
-    output_dir: Path,
-) -> Path:
-    """Generate HTML report comparing strategy variants."""
-
-    def _to_float_or_nan(x: object) -> float:
-        try:
-            v = float(x)  # type: ignore[arg-type]
-        except Exception:
-            return float("nan")
-        return v if np.isfinite(v) else float("nan")
-
-    def _to_float_or_none(x: object) -> Optional[float]:
-        v = _to_float_or_nan(x)
-        return None if np.isnan(v) else v
-
-    # Extract all evaluation and backtest metrics
-    eval_metrics = set()
-    bt_metrics = set()
-    for item in results:
-        if item.get("base") and item["base"].get("evaluation"):
-            eval_metrics.update(item["base"]["evaluation"].keys())
-        if item.get("base") and item["base"].get("backtest"):
-            bt_metrics.update(
-                k for k in item["base"]["backtest"].keys() if k != "debug"
-            )
-
-    eval_metrics = sorted(list(eval_metrics))
-    bt_metrics = sorted(list(bt_metrics))
-
-    # Prepare data for charts
-    variants = [item["variant"] for item in results]
-
-    # Evaluation metrics chart data
-    eval_chart_data = {}
-    for metric in eval_metrics:
-        values = []
-        for item in results:
-            val = item.get("base", {}).get("evaluation", {}).get(metric, 0.0)
-            values.append(_to_float_or_none(val))
-        eval_chart_data[metric] = values
-
-    # Backtest metrics chart data
-    bt_chart_data = {}
-    for metric in bt_metrics:
-        values = []
-        for item in results:
-            val = item.get("base", {}).get("backtest", {}).get(metric, 0.0)
-            values.append(_to_float_or_none(val))
-        bt_chart_data[metric] = values
-
-    # CV metric chart data
-    cv_metrics = []
-    for item in results:
-        val = item.get("base", {}).get("avg_cv_metric", 0.0)
-        v = _to_float_or_nan(val)
-        cv_metrics.append(0.0 if np.isnan(v) else float(v))
-
-    # Find best variant for each metric
-    def find_best_variant(
-        metric_values: List[object], higher_is_better: bool = True
-    ) -> int:
-        """Find index of best variant. Returns -1 if all are invalid."""
-        valid_values: List[tuple[int, float]] = []
-        for i, raw in enumerate(metric_values):
-            v = _to_float_or_nan(raw)
-            if np.isnan(v) or v == 0.0:
-                continue
-            valid_values.append((i, v))
-        if not valid_values:
-            return -1
-        if higher_is_better:
-            return max(valid_values, key=lambda x: x[1])[0]
-        else:
-            return min(valid_values, key=lambda x: x[1])[0]
-
-    # Generate summary table HTML
-    table_rows = []
-    for idx, item in enumerate(results):
-        variant = item["variant"]
-        base = item.get("base", {})
-
-        # Determine row color based on performance
-        row_class = ""
-        if base:
-            cv_val = base.get("avg_cv_metric", 0.0)
-            if cv_val and not np.isnan(cv_val):
-                best_cv_idx = find_best_variant(cv_metrics)
-                if best_cv_idx == idx:
-                    row_class = "best-row"
-
-        cells = [f'<td class="{row_class}"><strong>{variant}</strong></td>']
-
-        # CV metric
-        cv_val = base.get("avg_cv_metric", np.nan) if base else np.nan
-        cv_num = _to_float_or_nan(cv_val)
-        cv_display = f"{cv_num:.4f}" if not np.isnan(cv_num) else "N/A"
-        cells.append(f'<td class="{row_class}">{cv_display}</td>')
-
-        # Evaluation metrics
-        eval_data = base.get("evaluation", {}) if base else {}
-        for metric in eval_metrics:
-            val = eval_data.get(metric, np.nan)
-            val_num = _to_float_or_nan(val)
-            val_display = f"{val_num:.4f}" if not np.isnan(val_num) else "N/A"
-            best_idx = find_best_variant(eval_chart_data.get(metric, []))
-            cell_class = row_class
-            if best_idx == idx:
-                cell_class = "best-cell"
-            cells.append(f'<td class="{cell_class}">{val_display}</td>')
-
-        # Backtest metrics
-        bt_data = base.get("backtest", {}) if base else {}
-        for metric in bt_metrics:
-            val = bt_data.get(metric, np.nan)
-            val_num = _to_float_or_nan(val)
-            if metric in ["total_return_pct", "sharpe"]:
-                val_display = f"{val_num:.2f}" if not np.isnan(val_num) else "N/A"
-            elif metric == "max_drawdown_pct":
-                val_display = f"{val_num:.2f}%" if not np.isnan(val_num) else "N/A"
-            else:
-                val_display = f"{val_num:.4f}" if not np.isnan(val_num) else "N/A"
-            best_idx = find_best_variant(
-                bt_chart_data.get(metric, []),
-                higher_is_better=(metric != "max_drawdown_pct"),
-            )
-            cell_class = row_class
-            if best_idx == idx:
-                cell_class = "best-cell"
-            cells.append(f'<td class="{cell_class}">{val_display}</td>')
-
-        # Sample sizes
-        n_train = base.get("n_train", 0) if base else 0
-        n_test = base.get("n_test", 0) if base else 0
-        cells.append(f'<td class="{row_class}">{n_train}</td>')
-        cells.append(f'<td class="{row_class}">{n_test}</td>')
-
-        table_rows.append(f"<tr>{''.join(cells)}</tr>")
-
-    # Table header
-    header_cells = ["<th>Variant</th>", "<th>CV Metric</th>"]
-    for metric in eval_metrics:
-        header_cells.append(f"<th>Eval: {metric}</th>")
-    for metric in bt_metrics:
-        header_cells.append(f"<th>BT: {metric}</th>")
-    header_cells.extend(["<th>Train Samples</th>", "<th>Test Samples</th>"])
-    table_header = f"<tr>{''.join(header_cells)}</tr>"
-
-    # Generate chart scripts
-    chart_scripts = []
-
-    # CV Metric chart
-    if cv_metrics:
-        chart_scripts.append(
-            f"""
-        // CV Metric Comparison
-        const ctx_cv = document.getElementById('cvChart');
-        if (ctx_cv) {{
-            new Chart(ctx_cv, {{
-                type: 'bar',
-                data: {{
-                    labels: {json.dumps(variants)},
-                    datasets: [{{
-                        label: 'CV Metric',
-                        data: {json.dumps(cv_metrics)},
-                        backgroundColor: 'rgba(33, 150, 243, 0.6)',
-                        borderColor: 'rgb(33, 150, 243)',
-                        borderWidth: 2
-                    }}]
-                }},
-                options: {{
-                    responsive: true,
-                    plugins: {{
-                        title: {{
-                            display: true,
-                            text: 'Cross-Validation Metric Comparison',
-                            font: {{ size: 16, weight: 'bold' }}
-                        }},
-                        legend: {{ display: false }}
-                    }},
-                    scales: {{
-                        y: {{
-                            title: {{ display: true, text: 'CV Metric Value' }},
-                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }}
-                        }}
-                    }}
-                }}
-            }});
-        }}
-        """
-        )
-
-    # Evaluation metrics chart
-    if eval_metrics:
-        datasets = []
-        colors = [
-            ("rgba(33, 150, 243, 0.6)", "rgb(33, 150, 243)"),
-            ("rgba(76, 175, 80, 0.6)", "rgb(76, 175, 80)"),
-            ("rgba(255, 152, 0, 0.6)", "rgb(255, 152, 0)"),
-            ("rgba(156, 39, 176, 0.6)", "rgb(156, 39, 176)"),
-            ("rgba(244, 67, 54, 0.6)", "rgb(244, 67, 54)"),
-        ]
-        for idx, metric in enumerate(eval_metrics):
-            color_idx = idx % len(colors)
-            bg_color, border_color = colors[color_idx]
-            datasets.append(
-                f"""{{
-                label: '{metric}',
-                data: {json.dumps(eval_chart_data[metric])},
-                backgroundColor: '{bg_color}',
-                borderColor: '{border_color}',
-                borderWidth: 2
-            }}"""
-            )
-
-        chart_scripts.append(
-            f"""
-        // Evaluation Metrics Comparison
-        const ctx_eval = document.getElementById('evalChart');
-        if (ctx_eval) {{
-            new Chart(ctx_eval, {{
-                type: 'bar',
-                data: {{
-                    labels: {json.dumps(variants)},
-                    datasets: [{','.join(datasets)}]
-                }},
-                options: {{
-                    responsive: true,
-                    plugins: {{
-                        title: {{
-                            display: true,
-                            text: 'Evaluation Metrics Comparison',
-                            font: {{ size: 16, weight: 'bold' }}
-                        }},
-                        legend: {{ display: true, position: 'top' }}
-                    }},
-                    scales: {{
-                        y: {{
-                            title: {{ display: true, text: 'Metric Value' }},
-                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }}
-                        }}
-                    }}
-                }}
-            }});
-        }}
-        """
-        )
-
-    # Backtest metrics chart
-    if bt_metrics:
-        datasets = []
-        colors = [
-            ("rgba(33, 150, 243, 0.6)", "rgb(33, 150, 243)"),
-            ("rgba(76, 175, 80, 0.6)", "rgb(76, 175, 80)"),
-            ("rgba(255, 152, 0, 0.6)", "rgb(255, 152, 0)"),
-            ("rgba(156, 39, 176, 0.6)", "rgb(156, 39, 176)"),
-            ("rgba(244, 67, 54, 0.6)", "rgb(244, 67, 54)"),
-        ]
-        for idx, metric in enumerate(bt_metrics):
-            color_idx = idx % len(colors)
-            bg_color, border_color = colors[color_idx]
-            datasets.append(
-                f"""{{
-                label: '{metric}',
-                data: {json.dumps(bt_chart_data[metric])},
-                backgroundColor: '{bg_color}',
-                borderColor: '{border_color}',
-                borderWidth: 2
-            }}"""
-            )
-
-        chart_scripts.append(
-            f"""
-        // Backtest Metrics Comparison
-        const ctx_bt = document.getElementById('btChart');
-        if (ctx_bt) {{
-            new Chart(ctx_bt, {{
-                type: 'bar',
-                data: {{
-                    labels: {json.dumps(variants)},
-                    datasets: [{','.join(datasets)}]
-                }},
-                options: {{
-                    responsive: true,
-                    plugins: {{
-                        title: {{
-                            display: true,
-                            text: 'Backtest Metrics Comparison',
-                            font: {{ size: 16, weight: 'bold' }}
-                        }},
-                        legend: {{ display: true, position: 'top' }}
-                    }},
-                    scales: {{
-                        y: {{
-                            title: {{ display: true, text: 'Metric Value' }},
-                            grid: {{ color: 'rgba(0, 0, 0, 0.05)' }}
-                        }}
-                    }}
-                }}
-            }});
-        }}
-        """
-        )
-
-    # ---------------------------------------------------------------------
-    # Optional detailed debug report (signals & trades per variant)
-    # ---------------------------------------------------------------------
-    debug_sections: List[str] = []
-    for item in results:
-        variant = item["variant"]
-        base = item.get("base", {})
-        bt_data = base.get("backtest", {}) if base else {}
-        debug_data = bt_data.get("debug") if isinstance(bt_data, dict) else None
-        if not debug_data:
-            continue
-
-        # Summary
-        summary = debug_data.get("summary", {})
-        trades_meta = debug_data.get("trades_meta", {})
-        returns_stats = debug_data.get("returns_stats", {})
-
-        section_parts: List[str] = []
-        section_parts.append(f'<h2 id="variant-{variant}">Variant: {variant}</h2>')
-        section_parts.append("<div class='info-box'><ul>")
-        if summary:
-            section_parts.append(
-                f"<li><strong>Total Return:</strong> {summary.get('total_return_pct', 0.0):.2f}%</li>"
-            )
-            section_parts.append(
-                f"<li><strong>Sharpe:</strong> {summary.get('sharpe', 0.0):.2f}</li>"
-            )
-            section_parts.append(
-                f"<li><strong>Max DD:</strong> {summary.get('max_drawdown_pct', 0.0):.2f}%</li>"
-            )
-            section_parts.append(
-                f"<li><strong>Win Rate:</strong> {summary.get('win_rate_pct', 0.0):.2f}%</li>"
-            )
-        if trades_meta:
-            section_parts.append(
-                f"<li><strong>Trades:</strong> {trades_meta.get('n_trades', 0)} "
-                f"(wins={trades_meta.get('n_win', 0)}, "
-                f"win_rate_manual={trades_meta.get('win_rate_manual', 0.0):.2f}%)</li>"
-            )
-        if returns_stats:
-            section_parts.append(
-                f"<li><strong>Returns mean/std:</strong> "
-                f"{returns_stats.get('mean', 0.0):.3e} / "
-                f"{returns_stats.get('std', 0.0):.3e}</li>"
-            )
-        section_parts.append("</ul></div>")
-
-        # Helper to render table from list[dict]
-        def build_table(records: List[Dict[str, Any]], title: str) -> str:
-            if not records:
-                return f"<h3>{title}</h3><p>No records.</p>"
-            cols = list(records[0].keys())
-            header = "".join(f"<th>{c}</th>" for c in cols)
-            rows_html = []
-            for row in records:
-                cells = "".join(f"<td>{row.get(c, '')}</td>" for c in cols)
-                rows_html.append(f"<tr>{cells}</tr>")
-            return (
-                f"<h3>{title}</h3>"
-                "<div class='table-wrapper'><table>"
-                f"<thead><tr>{header}</tr></thead>"
-                f"<tbody>{''.join(rows_html)}</tbody>"
-                "</table></div>"
-            )
-
-        signals = debug_data.get("signals") or []
-        trades = debug_data.get("trades") or []
-        section_parts.append(build_table(signals, "Entry Signals (sample)"))
-        section_parts.append(build_table(trades, "Trades (sample)"))
-
-        debug_sections.append("".join(section_parts))
-
-    if debug_sections:
-        debug_html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>Strategy Feature Debug Details: {symbol}</title>
-            <style>
-                body {{
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    margin: 20px;
-                    background-color: #f5f5f5;
-                }}
-                .container {{
-                    max-width: 95%;
-                    width: 100%;
-                    margin: 0 auto;
-                    background: white;
-                    padding: 30px;
-                    border-radius: 8px;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }}
-                h1 {{
-                    color: #333;
-                    border-bottom: 3px solid #4CAF50;
-                    padding-bottom: 10px;
-                }}
-                h2 {{
-                    color: #555;
-                    margin-top: 30px;
-                    border-left: 4px solid #2196F3;
-                    padding-left: 10px;
-                }}
-                .table-wrapper {{
-                    width: 100%;
-                    overflow-x: auto;
-                }}
-                table {{
-                    width: 100%;
-                    min-width: 900px;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                    font-size: 12px;
-                }}
-                th, td {{
-                    white-space: nowrap;
-                    padding: 6px 8px;
-                    text-align: left;
-                    border-bottom: 1px solid #ddd;
-                }}
-                th {{
-                    background-color: #2196F3;
-                    color: white;
-                    font-weight: 600;
-                    position: sticky;
-                    top: 0;
-                    z-index: 2;
-                }}
-                .info-box {{
-                    background: #e3f2fd;
-                    border-left: 4px solid #2196F3;
-                    padding: 15px;
-                    margin: 20px 0;
-                    border-radius: 4px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Strategy Feature Debug Details</h1>
-                <p>This page shows sample signals and trades for each variant where backtest.debug is enabled.</p>
-                {''.join(debug_sections)}
-            </div>
-        </body>
-        </html>
-        """
-        debug_path = output_dir / "strategy_feature_compare_debug.html"
-        with open(debug_path, "w", encoding="utf-8") as fh:
-            fh.write(debug_html)
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Strategy Feature Comparison: {symbol}</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-        <style>
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                margin: 20px;
-                background-color: #f5f5f5;
-            }}
-            .container {{
-                max-width: 95%;
-                width: 100%;
-                margin: 0 auto;
-                background: white;
-                padding: 30px;
-                border-radius: 8px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }}
-            h1 {{
-                color: #333;
-                border-bottom: 3px solid #4CAF50;
-                padding-bottom: 10px;
-            }}
-            h2 {{
-                color: #555;
-                margin-top: 30px;
-                border-left: 4px solid #2196F3;
-                padding-left: 10px;
-            }}
-            .table-wrapper {{
-                width: 100%;
-                overflow-x: auto;
-            }}
-            table {{
-                width: 100%;
-                min-width: 900px;
-                border-collapse: collapse;
-                margin: 20px 0;
-                font-size: 13px;
-            }}
-            th, td {{
-                white-space: nowrap;
-                padding: 8px 10px;
-                text-align: left;
-            }}
-            th {{
-                background-color: #2196F3;
-                color: white;
-                padding: 12px;
-                font-weight: 600;
-                position: sticky;
-                top: 0;
-                z-index: 2;
-            }}
-            td {{
-                padding: 10px;
-                border-bottom: 1px solid #ddd;
-            }}
-            tr:hover {{
-                background-color: #f5f5f5;
-            }}
-            .best-row {{
-                background-color: #e8f5e9 !important;
-            }}
-            .best-cell {{
-                background-color: #c8e6c9 !important;
-                font-weight: bold;
-            }}
-            .chart-container {{
-                margin: 30px 0;
-                padding: 20px;
-                background: #f9f9f9;
-                border-radius: 8px;
-                height: 400px;
-            }}
-            .info-box {{
-                background: #e3f2fd;
-                border-left: 4px solid #2196F3;
-                padding: 15px;
-                margin: 20px 0;
-                border-radius: 4px;
-            }}
-            .metrics-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 15px;
-                margin: 20px 0;
-            }}
-            .metric-card {{
-                background: #f8f9fa;
-                border-left: 4px solid #4CAF50;
-                padding: 15px;
-                border-radius: 4px;
-            }}
-            .metric-label {{
-                font-size: 12px;
-                color: #666;
-                text-transform: uppercase;
-            }}
-            .metric-value {{
-                font-size: 24px;
-                font-weight: bold;
-                color: #333;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🆚 Strategy Feature Comparison Report</h1>
-            
-            <div class="info-box">
-                <strong>Configuration:</strong><br>
-                Symbol: {symbol} | Timeframe: {timeframe} | Test Size: {test_size:.1%}<br>
-                Variants Compared: {len(variants)}<br>
-                Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}<br>
-                Debug Details: <a href="strategy_feature_compare_debug.html" target="_blank">Open detailed signals & trades</a> (only for variants with backtest.debug enabled)
-            </div>
-            
-            <h2>📊 Summary Table</h2>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        {table_header}
-                    </thead>
-                    <tbody>
-                        {''.join(table_rows)}
-                    </tbody>
-                </table>
-            </div>
-            
-            <h2>📈 Performance Charts</h2>
-            
-            <h3>Cross-Validation Metric</h3>
-            <div class="chart-container">
-                <canvas id="cvChart"></canvas>
-            </div>
-            
-            {f'<h3>Evaluation Metrics</h3><div class="chart-container"><canvas id="evalChart"></canvas></div>' if eval_metrics else ''}
-            
-            {f'<h3>Backtest Metrics</h3><div class="chart-container"><canvas id="btChart"></canvas></div>' if bt_metrics else ''}
-            
-            <h2>📝 Notes</h2>
-            <div class="info-box">
-                <ul>
-                    <li><strong>Best Performance:</strong> Highlighted in green</li>
-                    <li><strong>CV Metric:</strong> Average cross-validation score</li>
-                    <li><strong>Evaluation Metrics:</strong> Model performance on test set (e.g., correlation, rank IC)</li>
-                    <li><strong>Backtest Metrics:</strong> Simulated trading performance (e.g., Sharpe ratio, total return, max drawdown)</li>
-                </ul>
-            </div>
-        </div>
-        
-        <script>
-            {''.join(chart_scripts)}
-        </script>
-    </body>
-    </html>
-    """
-
-    html_path = output_dir / "strategy_feature_compare_report.html"
-    with open(html_path, "w", encoding="utf-8") as fh:
-        fh.write(html_content)
-
-    return html_path
 
 
 def main() -> None:
@@ -1307,21 +997,45 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Report ranges (best-effort)
+    def _range_str(df: pd.DataFrame) -> Optional[Tuple[str, str]]:
+        try:
+            if df is None or df.empty:
+                return None
+            start = df.index[0]
+            end = df.index[-1]
+            return (str(start), str(end))
+        except Exception:
+            return None
+
+    train_range = _range_str(df_train_raw)
+    test_range = _range_str(df_test_raw)
+
     comparison_results = []
     try:
         for variant in variants:
-            loader = StrategyConfigLoader(variant.config_dir)
-            strategy_cfg = loader.load()
-            logger.info("Running variant %s ...", variant.name)
-            base_result = execute_single_run(
-                strategy_cfg,
-                df_train_raw,
-                df_test_raw,
-                test_warmup_bars=test_warmup,
-                variant_name=variant.name,
-                symbol=args.symbol,
-                data_path=args.data_path,
-            )
+            try:
+                loader = StrategyConfigLoader(variant.config_dir)
+                strategy_cfg = loader.load()
+                logger.info("Running variant %s ...", variant.name)
+                base_result = execute_single_run(
+                    strategy_cfg,
+                    df_train_raw,
+                    df_test_raw,
+                    test_warmup_bars=test_warmup,
+                    variant_name=variant.name,
+                    symbol=args.symbol,
+                    data_path=args.data_path,
+                    calibrate_proba=args.calibrate_proba,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Variant %s failed with exception: %s",
+                    variant.name,
+                    exc,
+                    exc_info=True,
+                )
+                base_result = None
             rolling_result = None
             if args.run_rolling:
                 logger.info(
@@ -1343,43 +1057,27 @@ def main() -> None:
         for temp_dir in temp_dirs:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    summary_df = summarize_results(comparison_results)
-    summary_csv = output_dir / "strategy_feature_compare_summary.csv"
-    # Replace non-finite numbers before exporting.
-    summary_df_clean = summary_df.replace([np.inf, -np.inf], np.nan)
-    summary_df_clean.to_csv(summary_csv, index=False)
-
-    detailed_json = output_dir / "strategy_feature_compare_summary.json"
-    with open(detailed_json, "w", encoding="utf-8") as fh:
-        safe_results = _sanitize_for_json(comparison_results)
-        json.dump(
-            {
-                "symbol": args.symbol,
-                "timeframe": args.timeframe,
-                "test_size": args.test_size,
-                "start_date": args.start_date,
-                "end_date": args.end_date,
-                "results": safe_results,
-            },
-            fh,
-            indent=2,
-            default=str,
-            allow_nan=False,
-        )
-
-    print(f"✅ Saved summary CSV to {summary_csv}")
-    print(f"✅ Saved summary JSON to {detailed_json}")
-
-    # Generate HTML report
-    html_path = generate_html_report(
-        comparison_results,
-        summary_df_clean,
-        args.symbol,
-        args.timeframe,
-        args.test_size,
-        output_dir,
+    paths = write_strategy_feature_compare_reports(
+        comparison_results=comparison_results,
+        symbol=args.symbol,
+        timeframe=args.timeframe,
+        test_size=args.test_size,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        train_range=train_range,
+        test_range=test_range,
+        test_warmup_bars=int(test_warmup),
+        output_dir=output_dir,
+        base_variant="base",
     )
-    print(f"✅ Saved HTML report to {html_path}")
+    print(f"✅ Saved summary CSV to {paths['summary_csv']}")
+    print(f"✅ Saved summary+ CSV to {paths['summary_plus_csv']}")
+    if paths.get("rolling_windows_csv") and paths["rolling_windows_csv"].exists():
+        print(f"✅ Saved rolling windows CSV to {paths['rolling_windows_csv']}")
+    if paths.get("rolling_monthly_csv") and paths["rolling_monthly_csv"].exists():
+        print(f"✅ Saved rolling monthly CSV to {paths['rolling_monthly_csv']}")
+    print(f"✅ Saved summary JSON to {paths['detailed_json']}")
+    print(f"✅ Saved HTML report to {paths['html_report']}")
 
 
 if __name__ == "__main__":

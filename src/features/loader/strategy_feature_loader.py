@@ -101,14 +101,21 @@ class StrategyFeatureLoader:
         for item in requested_features:
             # 首先检查是否是旧名称（不带 _f 后缀但带 _f 的版本存在）
             # 如果存在带 _f 的版本，说明这是旧的特征计算函数名，必须报错
-            # 即使它也是输出列名，也要报错，强制用户明确使用新名称或输出列名
             potential_new_name = f"{item}_f"
             if potential_new_name in features:
-                # 这是旧的特征计算函数名，必须报错
+                # If `item` is an output column of `{item}_f`, treat it as an output-column request.
+                # This keeps the API user-friendly (tests and some callers request output columns).
+                output_cols = features.get(potential_new_name, {}).get("output_columns", [])
+                if item in output_cols:
+                    if potential_new_name not in all_needed:
+                        all_needed.add(potential_new_name)
+                        queue.append(potential_new_name)
+                    continue
+
+                # Otherwise, this is likely an old compute-function name and should error.
                 raise ValueError(
                     f"Feature compute function name must end with '_f' suffix. "
-                    f"Got: '{item}'. Did you mean '{potential_new_name}'? "
-                    f"If you want to use the output column, please use '{item}' from '{potential_new_name}' output columns."
+                    f"Got: '{item}'. Did you mean '{potential_new_name}'?"
                 )
 
             # 检查是否是特征计算函数名（必须带 _f 后缀）
@@ -242,6 +249,12 @@ class StrategyFeatureLoader:
             requested_features,
             fit=fit,
         )
+
+        # Attach debug stats for downstream diagnostics (e.g. feature-induced index drift)
+        try:
+            result_df.attrs["feature_debug_stats"] = self.computer.drain_debug_stats()
+        except Exception:
+            pass
 
         # 3. 只返回请求的特征列（以及它们的输出列）
         output_cols = []
@@ -394,13 +407,24 @@ class StrategyFeatureLoader:
                 print(
                     f"        Examples of new indices: {sorted(list(new_indices))[:5]}"
                 )
+            # Filter to original indices, but preserve all columns
             result_df = result_df.loc[result_df.index.isin(original_indices)]
 
         # 验证：确保输出索引与输入索引一致
         if not result_df.index.equals(df.index):
             # 尝试重新对齐索引
-            result_df = result_df.reindex(df.index)
-            print(f"     ℹ️  Reindexed output to match input index (may introduce NaN)")
+            # Use merge/join instead of reindex to preserve values when indices overlap
+            # First, try to align by intersection
+            common_idx = result_df.index.intersection(df.index)
+            if len(common_idx) > 0:
+                # Keep the aligned subset
+                result_df_aligned = result_df.loc[common_idx].copy()
+                # Reindex to full original index (will introduce NaN for missing rows, but preserve existing values)
+                result_df = result_df_aligned.reindex(df.index)
+            else:
+                # No common indices, use reindex (will create all NaN, but at least structure is correct)
+                result_df = result_df.reindex(df.index)
+            print(f"     ℹ️  Reindexed output to match input index (may introduce NaN for missing rows)")
 
         # 验证：检查数据类型
         # 允许的 object 类型列（这些列本来就是字符串类型，不需要警告）

@@ -787,6 +787,10 @@ def run_vectorbt_backtest(
         entry_threshold = params.get(
             "entry_threshold", params.get("long_entry_threshold", 0.6)
         )
+        # Exit semantics:
+        # - For RR-based labels/strategies, pred is "probability of achieving RR", NOT an exit signal.
+        # - Therefore, probability-threshold exits are opt-in only via exit_mode="threshold".
+        exit_mode = str(params.get("exit_mode", "none")).lower()  # none|threshold
         exit_threshold = params.get(
             "exit_threshold", params.get("long_exit_threshold", 0.4)
         )
@@ -797,117 +801,54 @@ def run_vectorbt_backtest(
 
         preds_series = pd.Series(preds, index=index)
 
-        # ------------------------------------------------------------------
-        # SR Reversal compatibility: auto-generate "signal" when required
-        #
-        # Many SR reversal workflows set:
-        # - use_signal_direction=True (direction from signal)
-        # - use_rr_exit=True (exit from R/R simulation)
-        #
-        # However, config-driven feature pipelines often only "ensure" a signal
-        # column exists (default 0) and do NOT compute it.
-        # In that case, we would get zero trades.
-        #
-        # model-comparison scripts explicitly generate SR reversal signals using
-        # _generate_sr_reversal_signals(). Do the same here as a safe fallback.
-        # ------------------------------------------------------------------
-        if use_signal_direction:
-            need_autogen = False
-            if signal_col not in df.columns:
-                need_autogen = True
+        # 默认行为：仅根据预测得分构造多空信号（A 策略）
+        if strategy_direction == "long_only":
+            # Direction-fixed probability gating (success proba for long trades)
+            long_entries_raw = preds_series >= entry_threshold
+            # 上穿触发（edge-trigger）：只在从 <threshold 到 >=threshold 的那一根开仓
+            entry_mode = str(params.get("entry_mode", "cross")).lower()
+            if entry_mode == "cross":
+                long_entries = long_entries_raw & (
+                    ~long_entries_raw.shift(1).fillna(False)
+                )
             else:
-                try:
-                    sig = df[signal_col].fillna(0).astype(float)
-                    need_autogen = (sig != 0).sum() == 0
-                except Exception:
-                    need_autogen = True
-
-            if need_autogen:
-                # Only attempt SR signal generation when we have the required OHLC columns.
-                required = {"close", "high", "low"}
-                if required.issubset(df.columns):
-                    try:
-                        from src.time_series_model.strategies.labels.sr_reversal_label import (
-                            SRSignalConfig,
-                            _ensure_atr,
-                            _generate_sr_reversal_signals,
-                        )
-
-                        df = df.copy()
-                        atr_series = _ensure_atr(
-                            df,
-                            atr_col=params.get("atr_col", "atr"),
-                            price_col="close",
-                            high_col="high",
-                            low_col="low",
-                            atr_window=int(params.get("rr", {}).get("atr_window", 14)),
-                        )
-                        df[params.get("atr_col", "atr")] = atr_series
-
-                        sr_params = params.get("sr_signal", {}) or {}
-                        sr_cfg = (
-                            SRSignalConfig(**sr_params)
-                            if isinstance(sr_params, dict)
-                            else SRSignalConfig()
-                        )
-                        auto_signals = _generate_sr_reversal_signals(
-                            df,
-                            price_col="close",
-                            high_col="high",
-                            low_col="low",
-                            atr_series=atr_series,
-                            cfg=sr_cfg,
-                        )
-                        df[signal_col] = auto_signals
-                        if debug:
-                            n_sig = int((pd.Series(auto_signals).fillna(0) != 0).sum())
-                            print(
-                                f"   ℹ️  Auto-generated SR reversal signals for backtest: {n_sig} non-zero signals"
-                            )
-                    except Exception as exc:  # noqa: BLE001
-                        if debug:
-                            print(f"   ⚠️  Failed to auto-generate SR signals: {exc}")
-
-        if use_signal_direction and signal_col in df.columns:
-            # SR reversal 等策略：方向由 signal 决定，preds 只控制"是否参与这笔 SR 反转交易"
-            signal_series = df[signal_col].fillna(0).astype(float)
-
-            base_long_entries = preds_series >= long_entry
-            base_short_entries = preds_series <= short_entry
-
-            # 根据策略方向过滤信号
-            if strategy_direction == "long_only":
-                long_entries = (signal_series > 0) & base_long_entries
-                short_entries = pd.Series(False, index=index)  # 不做空
-            elif strategy_direction == "short_only":
-                long_entries = pd.Series(False, index=index)  # 不做多
-                short_entries = (signal_series < 0) & base_short_entries
-            else:  # both
-                long_entries = (signal_series > 0) & base_long_entries
-                short_entries = (signal_series < 0) & base_short_entries
-
-            # 初始情形下仍保留概率退出，后续可被 RR 逻辑覆盖
+                long_entries = long_entries_raw
+            long_exits = (
+                (preds_series <= exit_threshold)
+                if exit_mode == "threshold"
+                else pd.Series(False, index=index)
+            )
+            short_entries = pd.Series(False, index=index)  # 不做空
+            short_exits = pd.Series(False, index=index)
+        elif strategy_direction == "short_only":
+            long_entries = pd.Series(False, index=index)  # 不做多
+            long_exits = pd.Series(False, index=index)
+            short_entries_raw = preds_series >= entry_threshold
+            entry_mode = str(params.get("entry_mode", "cross")).lower()
+            if entry_mode == "cross":
+                short_entries = short_entries_raw & (
+                    ~short_entries_raw.shift(1).fillna(False)
+                )
+            else:
+                short_entries = short_entries_raw
+            short_exits = (
+                (preds_series <= exit_threshold)
+                if exit_mode == "threshold"
+                else pd.Series(False, index=index)
+            )
+        else:  # both
+            # 保留 legacy 双向阈值逻辑（不建议与 A 策略混用）
+            long_entries = preds_series >= long_entry
             long_exits = preds_series <= long_exit
+            short_entries = preds_series <= short_entry
             short_exits = preds_series >= short_exit
-        else:
-            # 默认行为：仅根据预测得分构造多空信号
-            if strategy_direction == "long_only":
-                # Direction-fixed probability gating (success proba for long trades)
-                long_entries = preds_series >= entry_threshold
-                long_exits = preds_series <= exit_threshold
-                short_entries = pd.Series(False, index=index)  # 不做空
-                short_exits = pd.Series(False, index=index)
-            elif strategy_direction == "short_only":
-                long_entries = pd.Series(False, index=index)  # 不做多
-                long_exits = pd.Series(False, index=index)
-                # Direction-fixed probability gating (success proba for short trades)
-                short_entries = preds_series >= entry_threshold
-                short_exits = preds_series <= exit_threshold
-            else:  # both
-                long_entries = preds_series >= long_entry
-                long_exits = preds_series <= long_exit
-                short_entries = preds_series <= short_entry
-                short_exits = preds_series >= short_exit
+
+        # Critical: never allow exit on the same bar as entry (vectorbt may treat it as "no trade")
+        try:
+            long_exits = long_exits & (~long_entries)
+            short_exits = short_exits & (~short_entries)
+        except Exception:
+            pass
 
         # Apply SR fuse mask (if enabled)
         if sr_fuse_enabled:
@@ -920,9 +861,7 @@ def run_vectorbt_backtest(
                     "price": price,
                     "pred": preds_series,
                     "long_entry": long_entries,
-                    "long_exit": long_exits,
                     "short_entry": short_entries,
-                    "short_exit": short_exits,
                 }
             )
 
@@ -971,6 +910,90 @@ def run_vectorbt_backtest(
         # 用 RR 逻辑产生的 exits 覆盖概率退出
         long_exits = long_exits_rr.reindex(index).fillna(False)
         short_exits = short_exits_rr.reindex(index).fillna(False)
+
+    # ------------------------------------------------------------------
+    # Resolve entry/exit conflicts
+    #
+    # If entries are "level" signals (e.g. pred >= threshold) they can be True
+    # on almost every bar. When exits are also True on many bars (RR exits),
+    # vectorbt will see entry & exit on the same bar. Depending on conflict
+    # handling, this can collapse into a single long-running trade.
+    #
+    # Opt-in via params to keep backward compatibility.
+    # ------------------------------------------------------------------
+    conflict_mode = str(params.get("entry_exit_conflict", "none")).lower()
+    if conflict_mode in {"block_entry_on_exit", "prefer_exit"}:
+        long_entries = (long_entries.astype(bool) & (~long_exits.astype(bool))).astype(
+            bool
+        )
+        short_entries = (
+            short_entries.astype(bool) & (~short_exits.astype(bool))
+        ).astype(bool)
+
+    # ------------------------------------------------------------------
+    # A 策略：max_holding_bars 强制平仓 + 期末强平
+    # - 避免持仓跨越数月导致 “Status=Open”
+    # - 避免每根K“想开仓”造成 rr_signal 近似全1
+    # ------------------------------------------------------------------
+    max_holding_bars = params.get("max_holding_bars", None)
+    force_close_on_end = bool(params.get("force_close_on_end", True))
+    if max_holding_bars is not None:
+        try:
+            max_holding_bars = int(max_holding_bars)
+        except Exception:
+            max_holding_bars = None
+
+    if max_holding_bars is not None and max_holding_bars > 0:
+        # single-position state machine: open on entry; close on exit_threshold OR timeout
+        long_entries = long_entries.fillna(False).astype(bool)
+        short_entries = short_entries.fillna(False).astype(bool)
+        long_exits = long_exits.fillna(False).astype(bool)
+        short_exits = short_exits.fillna(False).astype(bool)
+
+        in_long = False
+        in_short = False
+        entry_i_long = -1
+        entry_i_short = -1
+
+        for i in range(len(index)):
+            # entries only when flat
+            if not in_long and not in_short:
+                if bool(long_entries.iloc[i]):
+                    in_long = True
+                    entry_i_long = i
+                    # never exit on entry bar
+                    long_exits.iloc[i] = False
+                elif bool(short_entries.iloc[i]):
+                    in_short = True
+                    entry_i_short = i
+                    short_exits.iloc[i] = False
+
+            # exit rules (do not exit on the same bar as entry)
+            if in_long:
+                held = i - entry_i_long
+                if held >= 1 and (bool(long_exits.iloc[i]) or held >= max_holding_bars):
+                    long_exits.iloc[i] = True
+                    in_long = False
+                    entry_i_long = -1
+            if in_short:
+                held = i - entry_i_short
+                if held >= 1 and (
+                    bool(short_exits.iloc[i]) or held >= max_holding_bars
+                ):
+                    short_exits.iloc[i] = True
+                    in_short = False
+                    entry_i_short = -1
+
+        if force_close_on_end and len(index) > 0:
+            # force close any remaining open position on the final bar
+            if in_long:
+                long_exits.iloc[-1] = True
+            if in_short:
+                short_exits.iloc[-1] = True
+
+        # Re-apply safety: no same-bar exit
+        long_exits = long_exits & (~long_entries)
+        short_exits = short_exits & (~short_entries)
 
     # Determine frequency for vectorbt metrics (REQUIRED for proper metrics calculation)
     freq = params.get("freq", None)
@@ -1383,6 +1406,19 @@ def train_strategy(
     target_col = trainer_params.pop("target_col", strategy_config.labels.target_column)
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
+
+    # Single-source-of-truth: propagate invert_features from features.yaml into trainer model_params.
+    # This keeps training/inference consistent without needing a separate direction config file.
+    try:
+        inv = getattr(strategy_config.features, "invert_features", None)
+        if isinstance(inv, list) and inv:
+            mp = trainer_params.get("model_params") or {}
+            if isinstance(mp, dict):
+                mp = dict(mp)
+                mp["invert_features"] = inv
+                trainer_params["model_params"] = mp
+    except Exception:
+        pass
 
     print(
         f"\n   🚀 Training model ({model_type}, task={task_type}) "

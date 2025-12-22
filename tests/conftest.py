@@ -22,6 +22,19 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def pytest_collection_modifyitems(config, items):
+    """
+    Auto-mark known heavy tests as `slow` so they can be skipped in fast dev loops.
+
+    Usage:
+      pytest -m "not slow and not integration"
+    """
+    for item in items:
+        # Heaviest suite: advanced features (DTW/EVT/GARCH/etc.)
+        if "tests/features/test_advanced_features.py" in str(item.fspath):
+            item.add_marker(pytest.mark.slow)
+
+
 @pytest.fixture
 def sample_data():
     """创建样本数据用于测试"""
@@ -73,6 +86,7 @@ def strategy_config():
     """加载策略配置 fixture"""
     from src.time_series_model.strategy_config import StrategyConfigLoader
 
-    strategy_dir = PROJECT_ROOT / "config" / "strategies" / "sr_reversal"
+    # sr_reversal 已被删除；默认使用 long-only 策略配置
+    strategy_dir = PROJECT_ROOT / "config" / "strategies" / "sr_reversal_long"
     config_loader = StrategyConfigLoader(strategy_dir)
     return config_loader.load()

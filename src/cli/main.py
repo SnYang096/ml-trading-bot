@@ -6,7 +6,8 @@ This CLI replaces the Makefile for cross-platform compatibility.
 Usage:
     mlbot --help                    # Show all commands
     mlbot features list             # List registered features
-    mlbot train sr-reversal         # Train SR reversal model
+    mlbot train sr-reversal-long    # Train SR Reversal Long-only model
+    mlbot train sr-reversal-short   # Train SR Reversal Short-only model
     mlbot data download             # Download Binance data
 """
 
@@ -15,6 +16,8 @@ from __future__ import annotations
 import os
 import sys
 import subprocess
+import time
+import socket
 from pathlib import Path
 from typing import Optional, List
 
@@ -166,6 +169,176 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
 def cli():
     """ML Trading Bot - Unified CLI for training, data, and feature management."""
     pass
+
+
+# =============================================================================
+# Local Serving Commands (HTML reports, etc.)
+# =============================================================================
+
+
+def _port_is_in_use(port: int, bind: str = "0.0.0.0") -> bool:
+    """Best-effort check whether (bind, port) is already bound by another process."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((bind, int(port)))
+        return False
+    except OSError:
+        return True
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def _find_listening_pids(port: int) -> List[int]:
+    """Find process IDs listening on a TCP port (best-effort; requires psutil)."""
+    try:
+        import psutil  # type: ignore
+    except Exception:
+        return []
+
+    pids = set()
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            if not conn.laddr:
+                continue
+            if int(conn.laddr.port) != int(port):
+                continue
+            # Only consider listeners
+            if getattr(conn, "status", None) != getattr(psutil, "CONN_LISTEN", "LISTEN"):
+                continue
+            if conn.pid:
+                pids.add(int(conn.pid))
+    except Exception:
+        # If psutil can't enumerate, just return empty and let caller handle
+        return []
+
+    return sorted(pids)
+
+
+def _kill_pids(pids: List[int], timeout_s: float = 2.0) -> List[int]:
+    """Terminate (then kill) PIDs. Returns the list of PIDs actually killed."""
+    if not pids:
+        return []
+
+    try:
+        import psutil  # type: ignore
+    except Exception:
+        return []
+
+    killed: List[int] = []
+    procs = []
+    for pid in pids:
+        if pid == os.getpid():
+            continue
+        try:
+            procs.append(psutil.Process(pid))
+        except Exception:
+            continue
+
+    # First: terminate
+    for p in procs:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+
+    gone, alive = psutil.wait_procs(procs, timeout=timeout_s)
+    for p in gone:
+        killed.append(p.pid)
+
+    # Escalate: kill
+    for p in alive:
+        try:
+            p.kill()
+        except Exception:
+            pass
+    gone2, _alive2 = psutil.wait_procs(alive, timeout=timeout_s)
+    for p in gone2:
+        killed.append(p.pid)
+
+    return sorted(set(killed))
+
+
+@cli.command("serve-results")
+@click.option("--port", "-p", type=int, default=8008, show_default=True, help="Port")
+@click.option(
+    "--dir",
+    "-d",
+    "directory",
+    default="results",
+    show_default=True,
+    help="Directory to serve",
+)
+@click.option(
+    "--bind",
+    default="0.0.0.0",
+    show_default=True,
+    help="Bind address (use 0.0.0.0 for devcontainer port forwarding)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="If port is in use, kill the process listening on the port and retry",
+)
+def serve_results(port: int, directory: str, bind: str, force: bool) -> None:
+    """Serve the results/ directory via a local static server (HTML reports)."""
+    port = int(port)
+    directory_path = (PROJECT_ROOT / directory).resolve()
+    if not directory_path.exists():
+        raise click.ClickException(f"Directory not found: {directory_path}")
+
+    if _port_is_in_use(port, bind=bind):
+        if not force:
+            raise click.ClickException(
+                f"Port {port} is already in use. "
+                f"Use --force to kill the owning process, or choose another port with --port."
+            )
+
+        pids = _find_listening_pids(port)
+        if not pids:
+            raise click.ClickException(
+                f"Port {port} is in use but failed to identify owning PID(s). "
+                f"Try another port (e.g. --port {port + 1})."
+            )
+
+        click.echo(f"⚠️  Port {port} in use by PID(s): {pids}. Killing (--force)...")
+        killed = _kill_pids(pids)
+        if not killed:
+            raise click.ClickException(
+                f"Failed to kill process(es) on port {port}: {pids}"
+            )
+
+        # Wait briefly for socket to release
+        for _ in range(20):
+            if not _port_is_in_use(port, bind=bind):
+                break
+            time.sleep(0.1)
+        if _port_is_in_use(port, bind=bind):
+            raise click.ClickException(
+                f"Port {port} still in use after killing {killed}. Try another port."
+            )
+
+    url = f"http://localhost:{port}/"
+    click.echo(f"🌐 Serving {directory_path} on {bind}:{port}")
+    click.echo(f"   Open: {url}")
+    click.echo("   (In devcontainer: forward the port in the Ports panel.)")
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "http.server",
+        str(port),
+        "--directory",
+        str(directory_path),
+        "--bind",
+        str(bind),
+    ]
+    # Foreground (Ctrl+C to stop)
+    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+    sys.exit(result.returncode)
 
 
 # =============================================================================
@@ -701,6 +874,11 @@ def analyze_feature_eval(
     help="Automatically open HTML report in browser",
 )
 @click.option(
+    "--export-yaml",
+    default=None,
+    help="Write the exported features.yaml (with invert_features) to this path",
+)
+@click.option(
     "--remove-correlated",
     is_flag=True,
     default=False,
@@ -743,6 +921,7 @@ def analyze_factor_eval(
     ic_decay_lags,
     output_dir,
     open_browser,
+    export_yaml,
     remove_correlated,
     correlation_threshold,
     filter_by_best_lag,
@@ -787,6 +966,8 @@ def analyze_factor_eval(
         if target_lag is not None:
             args.extend(["--target-lag", str(target_lag)])
         args.extend(["--lag-tolerance", str(lag_tolerance)])
+    if export_yaml:
+        args.extend(["--export-yaml", export_yaml])
 
     # When running inside Docker (via Makefile), docker=False
     # When running locally, docker=True will spawn Docker container
@@ -826,6 +1007,12 @@ def analyze_factor_eval(
 @click.option("--rolling-test-bars", default="200", help="Rolling test window size")
 @click.option("--rolling-step-bars", default="100", help="Rolling step size")
 @click.option("--rolling-max-windows", default="10", help="Maximum rolling windows")
+@click.option(
+    "--calibrate-proba",
+    type=click.Choice(["none", "platt", "isotonic"], case_sensitive=False),
+    default="none",
+    help="Probability calibration method (none/platt/isotonic)",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def analyze_strategy_feature_compare(
     strategy_config,
@@ -841,6 +1028,7 @@ def analyze_strategy_feature_compare(
     rolling_test_bars,
     rolling_step_bars,
     rolling_max_windows,
+    calibrate_proba,
     docker,
 ):
     """Ablation Study: Compare multiple feature configs for a strategy."""
@@ -879,6 +1067,8 @@ def analyze_strategy_feature_compare(
         args.extend(override_list)
     if run_rolling:
         args.append("--run-rolling")
+    if calibrate_proba and calibrate_proba != "none":
+        args.extend(["--calibrate-proba", calibrate_proba])
 
     sys.exit(
         run_script(

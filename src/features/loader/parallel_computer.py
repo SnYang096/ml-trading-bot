@@ -11,6 +11,7 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import hashlib
+import os
 import pickle
 import os
 import gc
@@ -795,6 +796,10 @@ class ParallelFeatureComputer:
         # 内存缓存
         self.memory_cache = {}
 
+        # Debug stats (last run). Callers can drain via drain_debug_stats().
+        # - index_mismatch: feature_name -> {"extra": int, "missing": int}
+        self._debug_stats: Dict[str, Any] = {"index_mismatch": {}}
+
         # 缓存版本控制（用于失效旧缓存）
         # 当特征计算逻辑改变时，更新此版本号以失效旧缓存
         # v5: 改进错误处理和流程验证，添加索引对齐检查
@@ -816,6 +821,43 @@ class ParallelFeatureComputer:
             self._check_and_cleanup_old_cache()
         else:
             self.monthly_cache_dir = None
+
+    def drain_debug_stats(self) -> Dict[str, Any]:
+        """Return and reset debug stats from the last compute_features_parallel run."""
+        out = self._debug_stats
+        self._debug_stats = {"index_mismatch": {}}
+        return out
+
+    def _record_index_mismatch(
+        self, feature_name: str, result_idx: "pd.Index", base_idx: "pd.Index"
+    ) -> None:
+        try:
+            extra = int(len(result_idx.difference(base_idx)))
+            missing = int(len(base_idx.difference(result_idx)))
+        except Exception:
+            return
+        if extra == 0 and missing == 0:
+            return
+        self._debug_stats.setdefault("index_mismatch", {})[feature_name] = {
+            "extra": extra,
+            "missing": missing,
+        }
+
+    def _align_to_base_index(self, feature_name: str, obj: Any, base_idx: "pd.Index") -> Any:
+        """
+        Force feature outputs to align to the input index to avoid index drift.
+        Records mismatches for diagnostics.
+        """
+        try:
+            if isinstance(obj, pd.DataFrame):
+                self._record_index_mismatch(feature_name, obj.index, base_idx)
+                return obj if obj.index.equals(base_idx) else obj.reindex(base_idx)
+            if isinstance(obj, pd.Series):
+                self._record_index_mismatch(feature_name, obj.index, base_idx)
+                return obj if obj.index.equals(base_idx) else obj.reindex(base_idx)
+        except Exception:
+            return obj
+        return obj
 
     def _get_df_hash(self, df: pd.DataFrame) -> str:
         """生成 DataFrame 哈希（仅用于调试，不再用于缓存键）"""
@@ -1083,31 +1125,77 @@ class ParallelFeatureComputer:
             except Exception:
                 pass
 
+        # Allow forcing monthly split for debugging / cache visibility.
+        # Useful when you want explicit "💾 Using monthly cache ..." logs.
+        if str(os.getenv("FEATURE_FORCE_MONTHLY_SPLIT", "")).strip().lower() in {"1", "true", "yes", "y"}:
+            use_monthly_split = True
+            print("     🧩 FEATURE_FORCE_MONTHLY_SPLIT=1 -> forcing monthly split", flush=True)
+
         # 按月份拆分（如果启用）
         if use_monthly_split:
             monthly_dfs = self._split_df_by_month(df)
             if len(monthly_dfs) <= 1:
-                # 无法按月拆分，使用全量计算
+                # 无法按月拆分，使用全量计算（仍然写入/读取 monthly cache 的 "all" 键）
+                monthly_cache_key = self._get_monthly_cache_key(
+                    feature_name, "all", compute_params, feature_info
+                )
+                cached_all = self._load_monthly_cache(monthly_cache_key)
+                if cached_all is not None:
+                    return cached_all
+
                 call_args, call_kwargs = _build_call_args(
                     feature_info, df, ticks_loader_json
                 )
+                # Debug: Check atr_f parameters in full-data path
+                if feature_name == "atr_f":
+                    print(f"       🔍 DEBUG atr_f (full-data): df shape={df.shape}, columns={list(df.columns)[:10]}")
+                    print(f"       🔍 DEBUG atr_f (full-data): call_kwargs keys={list(call_kwargs.keys())}")
+                    for col in ["high", "low", "close"]:
+                        if col in call_kwargs:
+                            s = call_kwargs[col]
+                            print(f"       🔍 DEBUG atr_f (full-data): {col} length={len(s)}, NaN={s.isna().sum()}, sample={s.head(3).tolist() if len(s) > 0 else 'empty'}")
                 full_result = compute_func(*call_args, **call_kwargs)
+                # Debug: Check atr_f result in full-data path
+                if feature_name == "atr_f":
+                    if isinstance(full_result, pd.DataFrame) and "atr" in full_result.columns:
+                        print(f"       🔍 DEBUG atr_f (full-data) result: ATR NaN={full_result['atr'].isna().sum()}/{len(full_result)}, non-NaN={(~full_result['atr'].isna()).sum()}")
+                    elif isinstance(full_result, pd.Series):
+                        print(f"       🔍 DEBUG atr_f (full-data) result: Series NaN={full_result.isna().sum()}/{len(full_result)}, non-NaN={(~full_result.isna()).sum()}")
                 # 即使不按月拆分，也只返回 output_columns 中定义的列，避免宽表合并
                 output_cols = feature_info.get("output_columns", [feature_name])
                 if not output_cols:
                     output_cols = [feature_name]
                 if isinstance(full_result, pd.DataFrame):
                     cols = [c for c in output_cols if c in full_result.columns]
-                    return full_result[cols] if cols else pd.DataFrame(index=df.index)
+                    if cols:
+                        # Preserve the original result's index and values, then reindex to df.index
+                        out = full_result[cols].copy()
+                        # Only reindex if indices don't match (to preserve values)
+                        if not out.index.equals(df.index):
+                            # Reindex to df.index, which may introduce NaN for missing rows
+                            out = out.reindex(df.index)
+                    else:
+                        out = pd.DataFrame(index=df.index)
+                    # Debug: Check atr_f output after filtering columns
+                    if feature_name == "atr_f":
+                        if "atr" in out.columns:
+                            print(f"       🔍 DEBUG atr_f (full-data) after filter: ATR NaN={out['atr'].isna().sum()}/{len(out)}, non-NaN={(~out['atr'].isna()).sum()}")
+                            print(f"       🔍 DEBUG atr_f: full_result index={full_result.index.min()} to {full_result.index.max()}, df index={df.index.min()} to {df.index.max()}")
+                    self._save_monthly_cache(monthly_cache_key, out)
+                    return out
                 if isinstance(full_result, pd.Series):
                     name = full_result.name or feature_name
-                    return (
+                    out = (
                         pd.DataFrame({name: full_result}, index=df.index)
                         if name in output_cols
                         else pd.DataFrame(index=df.index)
                     )
+                    self._save_monthly_cache(monthly_cache_key, out)
+                    return out
                 # Fallback: wrap scalar/array
-                return pd.DataFrame({feature_name: full_result}, index=df.index)
+                out = pd.DataFrame({feature_name: full_result}, index=df.index)
+                self._save_monthly_cache(monthly_cache_key, out)
+                return out
         else:
             # 不使用按月拆分，直接全量计算
             monthly_dfs = {"all": df}
@@ -1116,7 +1204,14 @@ class ParallelFeatureComputer:
         monthly_results = {}
         for month_key, month_df in monthly_dfs.items():
             if month_key == "all":
-                # 无法按月拆分或禁用按月拆分，使用全量计算
+                # 无法按月拆分或禁用按月拆分，使用全量计算（但不要错过缓存）
+                monthly_cache_key = self._get_monthly_cache_key(
+                    feature_name, "all", compute_params, feature_info
+                )
+                cached_all = self._load_monthly_cache(monthly_cache_key)
+                if cached_all is not None:
+                    return cached_all
+
                 call_args, call_kwargs = _build_call_args(
                     feature_info, df, ticks_loader_json
                 )
@@ -1127,14 +1222,18 @@ class ParallelFeatureComputer:
                     output_cols = [feature_name]
                 if isinstance(full_result, pd.DataFrame):
                     cols = [c for c in output_cols if c in full_result.columns]
-                    return full_result[cols] if cols else pd.DataFrame(index=df.index)
+                    out = full_result[cols] if cols else pd.DataFrame(index=df.index)
+                    self._save_monthly_cache(monthly_cache_key, out)
+                    return out
                 if isinstance(full_result, pd.Series):
                     name = full_result.name or feature_name
-                    return (
+                    out = (
                         pd.DataFrame({name: full_result}, index=df.index)
                         if name in output_cols
                         else pd.DataFrame(index=df.index)
                     )
+                    self._save_monthly_cache(monthly_cache_key, out)
+                    return out
                 if isinstance(full_result, tuple):
                     # Handle tuple returns (e.g., MACD returns 3 Series)
                     # Convert tuple to DataFrame with output_cols as column names
@@ -1145,7 +1244,9 @@ class ParallelFeatureComputer:
                             if isinstance(series, pd.Series)
                         }
                         if result_dict:
-                            return pd.DataFrame(result_dict, index=df.index)
+                            out = pd.DataFrame(result_dict, index=df.index)
+                            self._save_monthly_cache(monthly_cache_key, out)
+                            return out
                     # Fallback: use first series index if available
                     if full_result and isinstance(full_result[0], pd.Series):
                         index = full_result[0].index
@@ -1160,7 +1261,7 @@ class ParallelFeatureComputer:
                         }
                         return pd.DataFrame(result_dict, index=index)
                     # Last resort: create DataFrame with available columns
-                    return pd.DataFrame(
+                    out = pd.DataFrame(
                         {
                             (
                                 output_cols[i]
@@ -1172,7 +1273,11 @@ class ParallelFeatureComputer:
                         },
                         index=df.index,
                     )
-                return pd.DataFrame({feature_name: full_result}, index=df.index)
+                    self._save_monthly_cache(monthly_cache_key, out)
+                    return out
+                out = pd.DataFrame({feature_name: full_result}, index=df.index)
+                self._save_monthly_cache(monthly_cache_key, out)
+                return out
 
             # 检查缓存
             monthly_cache_key = self._get_monthly_cache_key(
@@ -1213,7 +1318,21 @@ class ParallelFeatureComputer:
                 call_args, call_kwargs = _build_call_args(
                     feature_info, month_df, ticks_loader_json
                 )
+                # Debug: Check atr_f parameters
+                if feature_name == "atr_f":
+                    print(f"       🔍 DEBUG atr_f: month_df shape={month_df.shape}, columns={list(month_df.columns)[:10]}")
+                    print(f"       🔍 DEBUG atr_f: call_kwargs keys={list(call_kwargs.keys())}")
+                    for col in ["high", "low", "close"]:
+                        if col in call_kwargs:
+                            s = call_kwargs[col]
+                            print(f"       🔍 DEBUG atr_f: {col} length={len(s)}, NaN={s.isna().sum()}, sample={s.head(3).tolist() if len(s) > 0 else 'empty'}")
                 month_result = compute_func(*call_args, **call_kwargs)
+                # Debug: Check atr_f result
+                if feature_name == "atr_f":
+                    if isinstance(month_result, pd.DataFrame) and "atr" in month_result.columns:
+                        print(f"       🔍 DEBUG atr_f result: ATR NaN={month_result['atr'].isna().sum()}/{len(month_result)}, non-NaN={(~month_result['atr'].isna()).sum()}")
+                    elif isinstance(month_result, pd.Series):
+                        print(f"       🔍 DEBUG atr_f result: Series NaN={month_result.isna().sum()}/{len(month_result)}, non-NaN={(~month_result.isna()).sum()}")
 
                 # 处理计算结果的重复列名
                 if (
@@ -1392,6 +1511,7 @@ class ParallelFeatureComputer:
         )
 
         result_df = df.copy()
+        base_index = result_df.index
         df_hash = self._get_df_hash(result_df)
 
         # Memory cache is only valid for the exact same index. In this project we reuse the
@@ -1543,6 +1663,9 @@ class ParallelFeatureComputer:
                         cached_result = None
 
                     if cached_result is not None:
+                        cached_result = self._align_to_base_index(
+                            feature_name, cached_result, base_index
+                        )
                         # 验证cache数据质量
                         self._validate_cache_quality(
                             cached_result, feature_name, cache_type="memory"
@@ -1567,11 +1690,15 @@ class ParallelFeatureComputer:
 
                             # 添加新列
                             if new_cols:
+                                # Ensure both DataFrames are aligned to base_index before concat
+                                # This prevents index expansion when indices don't match
+                                cached_aligned = cached_result[new_cols].reindex(base_index)
+                                result_df_aligned = result_df.reindex(base_index)
                                 result_df = pd.concat(
-                                    [result_df, cached_result[new_cols]], axis=1
+                                    [result_df_aligned, cached_aligned], axis=1
                                 )
                                 # 释放临时对象
-                                del cached_result
+                                del cached_result, cached_aligned, result_df_aligned
                                 import gc
 
                                 gc.collect()
@@ -1702,6 +1829,9 @@ class ParallelFeatureComputer:
                         self._validate_cache_quality(
                             combined_result, feature_name, cache_type="monthly"
                         )
+                        combined_result = self._align_to_base_index(
+                            feature_name, combined_result, base_index
+                        )
                         self.memory_cache[feature_name] = combined_result
                         # 合并到result_df
                         if isinstance(combined_result, pd.DataFrame):
@@ -1731,11 +1861,15 @@ class ParallelFeatureComputer:
 
                             # 添加新列
                             if new_cols:
+                                # Ensure both DataFrames are aligned to base_index before concat
+                                # This prevents index expansion when indices don't match
+                                combined_aligned = combined_result[new_cols].reindex(base_index)
+                                result_df_aligned = result_df.reindex(base_index)
                                 result_df = pd.concat(
-                                    [result_df, combined_result[new_cols]], axis=1
+                                    [result_df_aligned, combined_aligned], axis=1
                                 )
                                 # 释放临时对象
-                                del combined_result
+                                del combined_result, combined_aligned, result_df_aligned
                                 import gc
 
                                 gc.collect()
@@ -1852,11 +1986,14 @@ class ParallelFeatureComputer:
 
                                 # 添加新列
                                 if new_cols:
+                                    # Ensure both DataFrames are aligned to base_index before concat
+                                    feature_aligned = feature_df[new_cols].reindex(base_index)
+                                    result_df_aligned = result_df.reindex(base_index)
                                     result_df = pd.concat(
-                                        [result_df, feature_df[new_cols]], axis=1
+                                        [result_df_aligned, feature_aligned], axis=1
                                     )
                                     # 释放临时对象
-                                    del feature_df
+                                    del feature_df, feature_aligned, result_df_aligned
                                     import gc
 
                                     gc.collect()
@@ -1897,10 +2034,14 @@ class ParallelFeatureComputer:
 
                             # 添加新列
                             if new_cols:
+                                # Ensure both DataFrames are aligned to base_index before concat
+                                feature_aligned = feature_result[new_cols].reindex(base_index)
+                                result_df_aligned = result_df.reindex(base_index)
                                 result_df = pd.concat(
-                                    [result_df, feature_result[new_cols]], axis=1
+                                    [result_df_aligned, feature_aligned], axis=1
                                 )
                                 # 不要在这里 del feature_result：后面还要做质量校验/可能存内存缓存
+                                del feature_aligned, result_df_aligned
                         # 如果返回的是 Series，添加到 DataFrame
                         elif isinstance(feature_result, pd.Series):
                             output_cols = feature_info.get(
@@ -1914,6 +2055,11 @@ class ParallelFeatureComputer:
                             if col_name not in result_df.columns:
                                 result_df[col_name] = feature_result
                             computed_result_for_cache = feature_result
+
+                        # Always align computed outputs to the input index to avoid index drift.
+                        computed_result_for_cache = self._align_to_base_index(
+                            feature_name, computed_result_for_cache, base_index
+                        )
 
                         # 验证新计算的特征质量
                         self._validate_cache_quality(
@@ -1975,6 +2121,9 @@ class ParallelFeatureComputer:
                         flush=True,
                     )
                     feature_df = pickle.loads(result_df_bytes)
+                    feature_df = self._align_to_base_index(
+                        feature_name, feature_df, base_index
+                    )
 
                     # 打印 feature_df 的详细信息
                     if isinstance(feature_df, pd.DataFrame):
@@ -2037,14 +2186,17 @@ class ParallelFeatureComputer:
                             print(
                                 f"        ➕ Adding {len(new_cols)} new columns: {new_cols[:10]}..."
                             )
+                            # Ensure both DataFrames are aligned to base_index before concat
+                            feature_aligned = feature_df[new_cols].reindex(base_index)
+                            result_df_aligned = result_df.reindex(base_index)
                             result_df = pd.concat(
-                                [result_df, feature_df[new_cols]], axis=1
+                                [result_df_aligned, feature_aligned], axis=1
                             )
                             print(
                                 f"        ✅ result_df columns after merge: {len(result_df.columns)}"
                             )
                             # 释放临时对象
-                            del feature_df
+                            del feature_df, feature_aligned, result_df_aligned
                             import gc
 
                             gc.collect()

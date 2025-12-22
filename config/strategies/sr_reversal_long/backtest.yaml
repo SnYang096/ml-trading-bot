@@ -5,13 +5,23 @@ backtest:
     # Direction-fixed probability gating:
     # - sr_reversal_long is long_only => `pred` is P(success of a long trade)
     # - enter when pred >= entry_threshold
-    entry_threshold: 0.2
+    entry_threshold: 0.35
+    # Entry mode:
+    # - level: allow entry as long as pred >= threshold (useful when crossings are rare)
+    # - cross: only on rising edge from <threshold to >=threshold
+    entry_mode: level
+    # Resolve entry/exit same-bar conflicts (common with level entries + RR exits)
+    # - none: legacy behavior
+    # - block_entry_on_exit: mask entries on exit bars so exits can take effect
+    entry_exit_conflict: block_entry_on_exit
+    max_holding_bars: 50
+    force_close_on_end: true
     initial_cash: 10000
     fee: 0.0004
     slippage: 0.0001
     freq: "4H"
-    use_signal_direction: false  # long_only: direction is fixed by strategy config (labels.combine_mode)
-    use_rr_exit: true            # exits strictly follow 1R/2R simulation
+    # Keep RR exits ON (primary exit mechanism)
+    use_rr_exit: true
     rr:
       max_holding_bars: 50       # 与 compute_sr_reversal_label 默认一致
       stop_loss_r: 1.0
@@ -21,7 +31,7 @@ backtest:
       entry_price_col: open
     # Optional safety fuse: when too far from SR (normalized by ATR), do not trade.
     sr_fuse:
-      enabled: true
+      enabled: false
       dist_col: dist_to_nearest_sr
       atr_col: atr
       max_dist_atr: 6.0

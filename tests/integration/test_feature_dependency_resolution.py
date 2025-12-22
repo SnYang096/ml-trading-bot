@@ -39,15 +39,16 @@ def test_dependency_resolution_order():
     print(f"   计算顺序: {computation_order}")
 
     # 验证依赖在 sr_strength_max 之前
-    sr_strength_idx = computation_order.index("sr_strength_max")
-    deps = ["atr", "sqs_hal_high", "sqs_hal_low", "wpt_price_reconstructed"]
+    # resolve_dependencies returns compute function names (with `_f` suffix)
+    sr_strength_idx = computation_order.index("sr_strength_max_f")
+    deps = ["atr_f", "poc_hal_features_f", "wpt_price_reconstructed_f"]
 
     for dep in deps:
         if dep in computation_order:
             dep_idx = computation_order.index(dep)
-            assert dep_idx < sr_strength_idx, f"{dep} 应该在 sr_strength_max 之前计算"
+            assert dep_idx < sr_strength_idx, f"{dep} 应该在 sr_strength_max_f 之前计算"
             print(
-                f"   ✅ {dep} (位置 {dep_idx}) 在 sr_strength_max (位置 {sr_strength_idx}) 之前"
+                f"   ✅ {dep} (位置 {dep_idx}) 在 sr_strength_max_f (位置 {sr_strength_idx}) 之前"
             )
 
     print(f"\n   ✅ 依赖顺序正确")

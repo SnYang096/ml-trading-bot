@@ -1254,6 +1254,14 @@ test-integration-fast:
 	@echo "🔬 Running fast integration tests (excluding slow tests)..."
 	$(DOCKER_RUN_NO_TTY) pytest tests/integration/ -v -m "not slow"
 
+test-fast:
+	@echo "🧪 Running fast tests (exclude slow + integration)..."
+	pytest -q -m "not slow and not integration"
+
+test-all:
+	@echo "🧪 Running full test suite..."
+	pytest -q
+
 test-integration-example:
 	@echo "🔬 Running integration test examples (environment setup)..."
 	$(DOCKER_RUN_NO_TTY) pytest tests/integration/test_example.py -v

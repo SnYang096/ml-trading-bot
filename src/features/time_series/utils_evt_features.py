@@ -133,14 +133,14 @@ def _extract_evt_features_from_close(
         if separate_tails:
             cols.extend(
                 [
-                    "evt_tail_shape_right",
-                    "evt_scale_right",
-                    "evt_var_99_right",
-                    "evt_es_99_right",
+                "evt_tail_shape_right",
+                "evt_scale_right",
+                "evt_var_99_right",
+                "evt_es_99_right",
                 ]
             )
         out = pd.DataFrame(index=index, columns=cols, dtype=float)
-
+    
         # For extremely short series (unit-test edge case), return a constant "safe" value.
         # For larger chunks that still don't have enough history (common in streaming chunking),
         # leave as NaN so callers can drop/ignore these rows.

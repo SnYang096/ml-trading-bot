@@ -25,6 +25,9 @@ class ModuleFunctionConfig:
 @dataclass
 class FeaturePipelineConfig:
     requested_features: List[str] = field(default_factory=list)
+    # Optional: output-column names to multiply by -1 BEFORE training/inference.
+    # Used to align negative-direction factors into a consistent "higher = more bullish" convention.
+    invert_features: List[str] = field(default_factory=list)
     post_processors: List[ModuleFunctionConfig] = field(default_factory=list)
     selector: Optional[ModuleFunctionConfig] = None
     ensure_signal: Optional[Dict[str, Any]] = None
@@ -160,6 +163,7 @@ class StrategyConfigLoader:
     def _parse_feature_config(self, data: Dict[str, Any]) -> FeaturePipelineConfig:
         pipeline = data.get("feature_pipeline", {})
         requested = pipeline.get("requested_features", []) or []
+        invert_features = pipeline.get("invert_features", []) or []
         post_processors = [
             self._parse_module_function(entry)
             for entry in pipeline.get("post_processors", []) or []
@@ -172,6 +176,9 @@ class StrategyConfigLoader:
         ensure_signal = pipeline.get("ensure_signal_column")
         return FeaturePipelineConfig(
             requested_features=requested,
+            invert_features=(
+                invert_features if isinstance(invert_features, list) else []
+            ),
             post_processors=post_processors,
             selector=selector,
             ensure_signal=ensure_signal,

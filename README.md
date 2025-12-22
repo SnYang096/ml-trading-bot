@@ -62,6 +62,111 @@ This replaces the old **bidirectional** config (`sr_reversal/`, `combine_mode: a
 We still keep a lightweight **safety fuse** (optional) to prevent over-trading in OOD/noisy regimes:
 `dist_to_nearest_sr / ATR > K  =>  no trade`.
 
+#### Research → Production Playbook (Timeframe, Data Length, Execution “Personality”)
+
+This section is a practical guide for running **stable, comparable research** across strategies, and then safely pushing a configuration to **rolling training** and live deployment.
+
+##### 1) Recommended timeframe per strategy
+
+- **SR Reversal (mean reversion / reversal at SR)**: prefer **4H** (cleaner structure, low churn). 1H is possible but noisier and usually needs stronger filters.
+- **SR Breakout**: **1H–4H**. 4H is steadier; 1H gives more samples but higher false-breakout rate.
+- **Compression Breakout**: **1H–4H**. Often works well at 1H for more setups, but needs strict confirmation.
+- **Trend Following**: **4H–1D**. Lower frequency tends to be more robust under costs.
+
+##### 2) How much data do you need? (rule of thumb)
+
+Two constraints matter:
+- **Market regimes**: you need multiple regimes (trend, chop, high vol, low vol).
+- **Trade count**: you need enough completed trades to make any metric meaningful.
+
+For crypto on **4H**, the following is a good starting point:
+
+| Strategy | Recommended history (minimum) | Better | Why |
+|---|---:|---:|---|
+| `sr_reversal_long/short` | 12–18 months | 24–36 months | Reversals are regime-sensitive; need enough “failed vs clean” SR touches |
+| `sr_breakout` | 18–24 months | 36+ months | Breakouts change character across volatility cycles |
+| `compression_breakout` | 18–24 months | 36+ months | Needs many compression→expansion events across regimes |
+| `trend_following` | 24–36 months | 4–6 years | Trend strategies need long history to cover extended trends + mean-reverting years |
+
+**When you change timeframe, convert bar-based parameters to time-based equivalents.**
+Example: from 4H → 1H, a parameter in “bars” should be multiplied by ~4 to represent the same wall-clock duration:
+- `rr.max_holding_bars`, label holding horizon, rolling window sizes, etc.
+
+##### 3) Multi-symbol training (recommended, but keep it controlled)
+
+You can increase both time and symbols, but do it in a way that preserves interpretability:
+- **Start with a small, liquid universe** (e.g., 3–8 large caps).
+- **Train per strategy config**, then evaluate **per-symbol** (don’t only look at pooled averages).
+- **Keep costs realistic per symbol** (fees/slippage), because higher-frequency variants can look good before costs.
+- Prefer **rolling training** to validate that the strategy generalizes month-by-month.
+
+##### 4) Strategy “personality”: pyramiding / multiple positions
+
+Different strategies should not share the same position management rules.
+
+- **SR Reversal (`sr_reversal_*`)**
+  - **Pyramiding**: generally **NO** (reversal edges are fragile; adding often increases drawdown).
+  - **Max concurrent positions**: typically **1 per symbol** (direction-fixed long-only / short-only).
+  - **Goal**: fewer, higher-quality trades; avoid overtrading.
+
+- **Trend Following**
+  - **Pyramiding**: often **YES**, but only under strict rules (e.g., add after price moves +1R and signal remains strong).
+  - **Profit taking**: often **NO fixed TP**; trend strategies typically rely on trailing exits / stop logic.
+
+- **SR Breakout**
+  - **Pyramiding**: **sometimes** (e.g., allow 1 add-on after breakout confirms, not immediately at the first spike).
+  - Good practice: add only when breakout holds (retest/confirmation), not on the initial impulse.
+
+- **Compression Breakout**
+  - **Pyramiding**: usually **NO** at first. Start without adding to keep the research clean.
+  - If you later add pyramiding, do it with a single add-on and strict confirmation, then re-validate stability.
+
+##### 5) Stops & exits: keep a stable template during research
+
+To make ablation / parameter comparisons meaningful, stabilize execution first:
+- **Stop loss**: prefer **ATR-based** (consistent across volatility regimes).
+- **Take profit**:
+  - For **SR Reversal / Breakouts**: RR-style partial/fixed TP is reasonable (e.g., +2R).
+  - For **Trend Following**: often avoid a hard TP; use trailing stops / trend invalidation exits.
+- **Holding horizon**: `max_holding_bars` should be consistent with your **label definition**.
+  - If you change label horizon (e.g., from 50 bars to 20 bars), expect feature selection / best-lag behavior to change.
+
+##### 6) What to keep fixed (to make research reproducible)
+
+When comparing features / models, **do not change everything at once**. Keep these fixed:
+- **Timeframe**
+- **Label definition** (RR settings, holding horizon)
+- **Backtest execution semantics** (RR exits vs probability exits, costs, slippage)
+- **Trade frequency target** (e.g., “~20 trades/year on 4H SR reversal”), then tune thresholds to hit it
+- **Universe** (symbols) and evaluation windows
+- **Rolling protocol** (train months, test months, and step size)
+
+Once you have a stable baseline, you can safely run:
+1) `factor-eval` (select features)
+2) `strategy-feature-compare` (ablation)
+3) `model-comparison`
+4) `train rolling` (production training)
+
+##### 7) Intrabar entries (within the candle) vs close-of-bar entries
+
+Default recommendation: **enter on bar close** for research and production consistency.
+It is simpler, more reproducible, and avoids subtle look-ahead / execution assumption bugs.
+
+When intrabar entries can make sense:
+- **Breakout / momentum** styles (SR breakout, some compression breakout) where earlier entry materially improves R-multiple.
+- **Shorter timeframes** (e.g., 1H and below), and only if you can model execution honestly.
+
+How to do intrabar safely (avoid overly-optimistic backtests):
+- Use a **lower timeframe execution feed** (e.g., 1m) or a **bar-within-bar** model; don’t assume you can enter at the best price inside the candle.
+- Use conservative assumptions: **next-tick/next-bar entry**, realistic slippage, and explicit order type rules.
+- Keep entry/exit rules consistent with labels; if labels assume \(t+1\) entry, don’t silently switch to “within-bar” entry without re-validating.
+
+Strategy guidance:
+- **SR Reversal**: usually **close-of-bar** (needs confirmation; intrabar tends to increase whipsaw).
+- **SR Breakout**: can be **intrabar** if you have confirmation logic and realistic execution; otherwise close-of-bar is safer.
+- **Compression Breakout**: start with **close-of-bar**; move to intrabar only after the baseline is stable.
+- **Trend Following**: typically **close-of-bar** (or next-bar) with pyramiding rules; intrabar is rarely necessary.
+
 #### Step 0: Verify Feature Correctness (Recommended)
 
 Before starting feature evaluation, run tests to verify that features are computed correctly and don't use future data:
@@ -280,7 +385,9 @@ If you are running inside a Dev Container, `--open-browser` may not open the rep
 
 ```bash
 # Example: serve rolling reports directory
-python3 -m http.server 8008 --directory results
+mlbot serve-results
+# or (manual)
+# python3 -m http.server 8008 --directory results
 ```
 
 - In Cursor/VS Code, open the **Ports** panel and forward/open port `8008`.
@@ -288,6 +395,12 @@ python3 -m http.server 8008 --directory results
   - `results/auto_rolling_*/monthly_rolling_report.html`
   - `results/strategy_compare/strategy_feature_compare_report.html`
   - `results/rule_optimization/optimization_report.html`
+
+If port `8008` is already in use, you can force-kill the owning process inside the container:
+
+```bash
+mlbot serve-results --force
+```
 
 #### Step 6: Periodic Updates (Weekly/Monthly)
 

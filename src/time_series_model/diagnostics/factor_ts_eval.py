@@ -10,7 +10,7 @@ import sys
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -106,6 +106,17 @@ def parse_args() -> argparse.Namespace:
         help="Automatically open HTML report in browser after generation",
     )
     parser.add_argument(
+        "--export-yaml",
+        type=str,
+        default=None,
+        help=(
+            "Write the exported features.yaml to PATH (instead of the default output path). "
+            "The exported YAML includes BOTH requested_features and feature_pipeline.invert_features "
+            "(from strong negative factors), so no separate direction file is needed. "
+            "(requires --generate-html so qualified factors are computed)."
+        ),
+    )
+    parser.add_argument(
         "--remove-correlated",
         action="store_true",
         default=False,
@@ -136,6 +147,17 @@ def parse_args() -> argparse.Namespace:
         help="Tolerance for best lag filtering: keep features if |best_lag - target_lag| <= tolerance (default: 5)",
     )
     return parser.parse_args()
+
+
+def _invert_features_from_negative(
+    qualified_factors: Dict[str, List[str]],
+) -> List[str]:
+    neg = (qualified_factors or {}).get("negative") or []
+    out: List[str] = []
+    for name in neg:
+        if isinstance(name, str) and name.strip():
+            out.append(name.strip())
+    return sorted(set(out))
 
 
 def _compute_requested_features(
@@ -1735,6 +1757,8 @@ def export_features_yaml(
     output_dir: Path,
     strategy_config_path: Path | None = None,
     error_factors: Dict[str, Any] | None = None,
+    output_path: Path | None = None,
+    invert_features: List[str] | None = None,
 ) -> Path:
     """Export qualified factors to a features.yaml file that can be used for training."""
     import yaml
@@ -1909,6 +1933,14 @@ def export_features_yaml(
                     non_numeric_mapped
                 )  # Non-numeric/invalid factors at the end (⚠️ requires manual verification - see notes)
             ),
+            # Optional: output-column names to multiply by -1 BEFORE training/inference.
+            # These come from "Strong Negative Factors (Consider Reversing)" in the report.
+            # NOTE: requested_features are compute functions; invert_features are output columns.
+            **(
+                {"invert_features": sorted(set(invert_features))}
+                if invert_features
+                else {}
+            ),
             "ensure_signal_column": base_config.get("feature_pipeline", {}).get(
                 "ensure_signal_column",
                 {"name": "signal", "default_value": 0},
@@ -1960,7 +1992,11 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     }
 
     # Write YAML file
-    yaml_path = output_dir / f"{strategy_name}_{symbol}_features_suggested.yaml"
+    yaml_path = (
+        Path(output_path)
+        if output_path is not None
+        else (output_dir / f"{strategy_name}_{symbol}_features_suggested.yaml")
+    )
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(
             features_config,
@@ -2455,6 +2491,7 @@ def main() -> None:
         if qualified_factors:
             strategy_config_path = Path(args.strategy_config) / "features.yaml"
             error_factors = diagnostics.get("error_factors", {})
+            invert_features = _invert_features_from_negative(qualified_factors)
             yaml_path = export_features_yaml(
                 qualified_factors,
                 strategy_cfg.name,
@@ -2462,6 +2499,8 @@ def main() -> None:
                 output_dir,
                 strategy_config_path=strategy_config_path,
                 error_factors=error_factors,
+                output_path=Path(args.export_yaml) if args.export_yaml else None,
+                invert_features=invert_features,
             )
             if yaml_path:
                 print(f"✅ Exported qualified factors to: {yaml_path}")
@@ -2472,6 +2511,12 @@ def main() -> None:
                 )
                 print(
                     f"   💡 You can use this file to replace your strategy's features.yaml for iterative training."
+                )
+
+            if args.export_yaml:
+                print(
+                    "   ✅ Included feature_pipeline.invert_features in the exported YAML "
+                    f"(n={len(invert_features)})"
                 )
 
         # Open in browser if requested (only in non-Docker/local environment)

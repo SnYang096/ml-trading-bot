@@ -295,6 +295,7 @@ features:
     compute_func: compute_compression_energy_from_series
     dependencies:
       - wpt_volume_energy_f
+      - bb_width_ratio_f
     required_columns:
       - wpt_energy_cascade
       - bb_width_ratio
@@ -415,6 +416,37 @@ features:
       volume: volume
       wpt_price_reconstructed: wpt_price_reconstructed
     notes: 独立的基础特征，可被其他特征复用，避免重复计算
+
+  # -------------------------------------------------------------------------
+  # Baseline-only variants (close-based, no WPT dependency)
+  # Use these when you want the entire dependency closure to stay "baseline".
+  # -------------------------------------------------------------------------
+  poc_hal_features_close_f:
+    module: baseline
+    compute_func: compute_poc_hal_features_from_series
+    dependencies: []
+    required_columns:
+      - high
+      - low
+      - close
+      - volume
+    output_columns:
+      - poc
+      - hal_high
+      - hal_low
+      - hal_mid
+    category: sr_structure
+    description: POC/HAL 基础特征（close-based baseline，无 WPT 依赖）
+    compute_params:
+      poc_window: 160
+      price_col: close
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      volume: volume
+    notes: 用 close 作为价格参考，适合 baseline-only 流程（不引入 WPT）。
   sqs_hal_high_f:
     module: baseline
     compute_func: compute_sqs_hal_high_from_series
@@ -529,6 +561,40 @@ features:
       函数会自动确保 hal_high, hal_low, poc, atr 列存在，即使依赖特征未完全计算。
 
       "
+
+  sr_strength_max_close_f:
+    module: baseline
+    compute_func: compute_sr_strength_max_from_series
+    dependencies:
+      - atr_f
+      - poc_hal_features_close_f
+    required_columns:
+      - high
+      - low
+      - close
+      - atr
+      - poc
+      - hal_high
+      - hal_low
+    output_columns:
+      - sr_strength_max
+      - dist_to_nearest_sr
+      - direction_to_nearest_sr
+    category: sr_structure
+    description: Maximum SR strength (close-based baseline，无 WPT 依赖)
+    compute_params:
+      window: 60
+      tolerance_factor: 0.5
+    pass_full_df: false
+    column_mappings:
+      high: high
+      low: low
+      close: close
+      atr: atr
+      poc: poc
+      hal_high: hal_high
+      hal_low: hal_low
+    notes: baseline-only 版本：通过 poc_hal_features_close_f 生成 POC/HAL，从而不引入 WPT。
   wpt_price_fluctuation_f:
     module: enhanced
     compute_func: extract_wpt_features
@@ -2935,7 +3001,8 @@ features:
     module: enhanced
     compute_func: compute_compression_energy_x_ofi_short_from_series
     dependencies:
-      - wpt_volume_energy_f
+      - compression_energy_f
+      - ofi_short_f
     required_columns:
       - compression_energy
       - ofi_short
@@ -2986,7 +3053,7 @@ features:
     compute_func: compute_vpin_x_compression_from_series
     dependencies:
       - vpin_features_f
-      - wpt_volume_energy_f
+      - compression_energy_f
     required_columns:
       - vpin
       - compression_energy
@@ -3235,22 +3302,26 @@ features:
     notes: 高 VPIN + 低熵 = 大单主导且有序（知情交易）；高 VPIN + 高熵 = 大单主导但混乱（可能假突破）
   sr_strength_combined_f:
     module: enhanced
-    compute_func: compute_sr_strength_combined_from_series
-    dependencies: []
+    compute_func: compute_sr_strength_combined_from_hal_sqs_from_series
+    dependencies:
+      - sqs_hal_high_f
+      - sqs_hal_low_f
     required_columns:
-      - sqs
+      - sqs_hal_high
+      - sqs_hal_low
     output_columns:
       - sr_strength_combined
     category: derived
     description: SR 强度组合特征（单个特征的简单映射）
     pass_full_df: false
     column_mappings:
-      sqs: sqs
+      sqs_hal_high: sqs_hal_high
+      sqs_hal_low: sqs_hal_low
   sr_distance_normalized_f:
     module: enhanced
     compute_func: compute_sr_distance_normalized_from_series
     dependencies:
-      - atr_f
+      - sr_strength_max_close_f
     required_columns:
       - dist_to_nearest_sr
       - atr

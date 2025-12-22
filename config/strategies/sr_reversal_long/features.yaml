@@ -1,31 +1,35 @@
 name: sr_reversal
-description: 'SR reversal strategy feature pipeline. Focuses on SR strength, liquidity
-  confirmation, and volatility state using WPT/VPRR/Hilbert derived signals.
+description: 'SR reversal strategy feature pipeline (baseline / minimal).
 
+  This file is intentionally kept small for ablation/baseline runs.
+  The previous richer feature set has been preserved in features_full.yaml.
   '
 feature_pipeline:
   requested_features:
-  - sr_strength_max_f
-  - sqs_hal_high_f
-  - sqs_hal_low_f
+  # Baseline-only feature set (keep this list strictly in baseline_features.py)
+  - atr_f
   - rsi_f
-  - wpt_price_reconstructed_f
-  - wpt_price_fluctuation_f
-  - wpt_cvd_fluctuation_f
-  - hilbert_advanced_f
-  - hurst_price_rolling
-  - hurst_cvd_rolling
-  - cvd_slope_5_f
-  - atr_ratio_f
-  - tbr_ma_5_f
-  - tbr_spike_f
+  - macd_f
+  - bbands_f
+  - bb_width_f
+  - roc_5_f
+  - acceleration_3_f
+  - trend_r2_20_f
+  - trend_r2_50_f
+  - atr_percentile_f
+  - range_ratio_5bar_f
+  - price_range_symmetry_f
+  - wick_ratios_f
+  - volume_anomaly_f
+  # SR structure (baseline compute funcs; may pull dependencies like POC/HAL)
+  - sr_strength_max_close_f
   ensure_signal_column:
     name: signal
     default_value: 0
-  notes: '1. 强调 WPT 低频 POC 与 SR 结构
+  notes: 'Baseline set:
 
-    2. 结合 Hilbert + CVD 做流动性确认
+    - Baseline-only: indicators + simple structure features (no WPT/Hilbert/DTW/VPIN/etc in requested_features)
+    - Use this as the baseline for ablation / sanity checks
 
-    3. 通过 ZigZag/SQS/VPVR 建立 SR 反转上下文
-
+    Tip: use features_full.yaml when you want the richer WPT/Hilbert/Hurst set.
     '

@@ -22,6 +22,7 @@ class TestCLI:
         assert "features" in result.output
         assert "train" in result.output
         assert "data" in result.output
+        assert "serve-results" in result.output
 
     def test_cli_version(self, runner):
         """Test that CLI shows version."""
@@ -64,16 +65,18 @@ class TestTrainCommands:
         """Test train group help."""
         result = runner.invoke(cli, ["train", "--help"])
         assert result.exit_code == 0
-        assert "sr-reversal" in result.output
+        assert "sr-reversal-long" in result.output
+        assert "sr-reversal-short" in result.output
         assert "rolling" in result.output
 
-    def test_train_sr_reversal_help(self, runner):
-        """Test sr-reversal train help."""
-        result = runner.invoke(cli, ["train", "sr-reversal", "--help"])
+    def test_train_sr_reversal_long_help(self, runner):
+        """Test sr-reversal-long train help."""
+        result = runner.invoke(cli, ["train", "sr-reversal-long", "--help"])
         assert result.exit_code == 0
         assert "--symbol" in result.output
         assert "--timeframe" in result.output
-        assert "--config" in result.output
+        # training entrypoints are config-driven via default strategy config; this command takes data path instead
+        assert "--data-path" in result.output
 
 
 class TestDataCommands:
@@ -114,6 +117,19 @@ class TestDevCommands:
         assert "format" in result.output
         assert "lint" in result.output
         assert "clean" in result.output
+
+
+class TestServeResults:
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    def test_serve_results_help(self, runner):
+        result = runner.invoke(cli, ["serve-results", "--help"])
+        assert result.exit_code == 0
+        assert "--port" in result.output
+        assert "--dir" in result.output
+        assert "--force" in result.output
 
 
 class TestProjectRoot:

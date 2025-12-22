@@ -87,25 +87,25 @@ class TestFeatureLoader(unittest.TestCase):
     def test_dependency_resolution(self):
         """测试依赖解析"""
         # 测试简单依赖
-        requested = ["sr_strength_max"]
+        # 使用 feature function 名称（*_f），而不是 output column 名称
+        requested = ["sr_strength_max_f"]
         resolved = self.loader.resolve_dependencies(requested)
 
-        # sr_strength_max 依赖 atr, sqs_hal_high, sqs_hal_low
-        # sqs_hal_high 和 sqs_hal_low 依赖 atr
-        self.assertIn("atr", resolved)
-        self.assertIn("sqs_hal_high", resolved)
-        self.assertIn("sqs_hal_low", resolved)
-        self.assertIn("sr_strength_max", resolved)
+        # sr_strength_max_f 依赖 atr_f + poc_hal_features_f（后者依赖 WPT 重构价格）
+        self.assertIn("atr_f", resolved)
+        self.assertIn("poc_hal_features_f", resolved)
+        self.assertIn("sr_strength_max_f", resolved)
 
-        # 检查顺序：atr 应该在 sqs_hal_high 之前
-        atr_idx = resolved.index("atr")
-        sqs_hal_high_idx = resolved.index("sqs_hal_high")
-        self.assertLess(atr_idx, sqs_hal_high_idx)
+        # 检查顺序：依赖应当先于目标特征
+        self.assertLess(resolved.index("atr_f"), resolved.index("sr_strength_max_f"))
+        self.assertLess(
+            resolved.index("poc_hal_features_f"), resolved.index("sr_strength_max_f")
+        )
 
     def test_dependency_levels(self):
         """测试依赖层级分析"""
         features = self.loader.feature_deps["features"]
-        requested = ["sr_strength_max", "hilbert_phase"]
+        requested = ["sr_strength_max_f", "hilbert_phase_f"]
 
         levels = analyze_dependency_levels(features, requested)
 
@@ -114,12 +114,13 @@ class TestFeatureLoader(unittest.TestCase):
 
         # 层级 0 应该包含无依赖的特征
         if 0 in levels:
-            self.assertIn("atr", levels[0])
+            # atr_f 本身无依赖（level 0）
+            self.assertIn("atr_f", levels[0])
 
     def test_function_mapping(self):
         """测试函数映射"""
         # 测试存在的函数
-        func = get_compute_func("_compute_atr")
+        func = get_compute_func("compute_atr_from_series")
         self.assertIsNotNone(func)
 
         # 测试不存在的函数
@@ -128,16 +129,19 @@ class TestFeatureLoader(unittest.TestCase):
 
     def test_basic_feature_computation(self):
         """测试基础特征计算"""
-        # 测试 ATR 计算
-        from src.features.time_series.baseline_features import _compute_atr
+        # 测试 ATR 计算（narrow-IO 入口）
+        from src.features.time_series.baseline_features import compute_atr_from_series
 
         df = self.test_df.copy()
-        atr_series = _compute_atr(df, window=14)
+        atr_df = compute_atr_from_series(
+            high=df["high"], low=df["low"], close=df["close"], period=14
+        )
 
-        # _compute_atr 返回 Series，需要添加到 DataFrame
-        self.assertIsInstance(atr_series, pd.Series)
-        self.assertEqual(len(atr_series), len(df))
-        self.assertFalse(atr_series.isna().all())  # 不应该全是 NaN
+        # compute_atr_from_series 返回 DataFrame（单列 atr）
+        self.assertIsInstance(atr_df, pd.DataFrame)
+        self.assertIn("atr", atr_df.columns)
+        self.assertEqual(len(atr_df), len(df))
+        self.assertFalse(atr_df["atr"].isna().all())  # 不应该全是 NaN
 
     def test_sr_reversal_features(self):
         """测试 SR Reversal 策略特征加载（使用目录管理方式）"""
@@ -416,7 +420,7 @@ class TestFeatureLoader(unittest.TestCase):
                     "requested_features", []
                 )
             else:
-                requested_features = ["atr", "rsi"]
+                requested_features = ["atr_f", "rsi_f"]
 
         # 第一次计算（应该写入缓存）
         result_df1 = self.loader.load_features_from_requested(
@@ -455,7 +459,7 @@ class TestFeatureLoader(unittest.TestCase):
                     "requested_features", []
                 )
             else:
-                requested_features = ["atr", "rsi"]
+                requested_features = ["atr_f", "rsi_f"]
 
         # 解析依赖关系
         features = self.loader.resolve_dependencies(requested_features)
@@ -464,15 +468,15 @@ class TestFeatureLoader(unittest.TestCase):
         self.assertGreater(len(features), 0)
 
         # 应该包含请求的特征和依赖
-        if "sr_strength_max" in requested_features:
-            self.assertIn("sr_strength_max", features)
-        self.assertIn("atr", features)  # 依赖特征
+        if "sr_strength_max_f" in requested_features:
+            self.assertIn("sr_strength_max_f", features)
+        self.assertIn("atr_f", features)  # 依赖特征
 
     def test_parallel_computation(self):
         """测试并行计算"""
         df = self.test_df.copy()
         features = self.loader.feature_deps["features"]
-        requested = ["atr", "rsi"]  # 两个无依赖的特征，可以并行计算
+        requested = ["atr_f", "rsi_f"]  # 两个无依赖的特征，可以并行计算
 
         computer = ParallelFeatureComputer(
             cache_dir=self.temp_cache_dir,

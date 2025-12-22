@@ -82,6 +82,7 @@ class VectorBTBacktest(BaseBacktest):
             long_exit = params.get("long_exit_threshold", 0.4)
             short_entry = params.get("short_entry_threshold", 0.4)
             short_exit = params.get("short_exit_threshold", 0.6)
+            exit_mode = str(params.get("exit_mode", "none")).lower()  # none|threshold
 
             preds_series = pd.Series(predictions, index=index)
 
@@ -104,20 +105,36 @@ class VectorBTBacktest(BaseBacktest):
                     short_entries = (signal_series < 0) & base_short_entries
 
                 # 初始的概率退出，后续可能被 RR 覆盖
-                long_exits = preds_series <= long_exit
-                short_exits = preds_series >= short_exit
+                long_exits = (
+                    (preds_series <= long_exit)
+                    if exit_mode == "threshold"
+                    else pd.Series(False, index=index)
+                )
+                short_exits = (
+                    (preds_series >= short_exit)
+                    if exit_mode == "threshold"
+                    else pd.Series(False, index=index)
+                )
             else:
                 # 仅根据预测得分构造多空信号
                 if strategy_direction == "long_only":
                     long_entries = preds_series >= long_entry
-                    long_exits = preds_series <= long_exit
+                    long_exits = (
+                        (preds_series <= long_exit)
+                        if exit_mode == "threshold"
+                        else pd.Series(False, index=index)
+                    )
                     short_entries = pd.Series(False, index=index)  # 不做空
                     short_exits = pd.Series(False, index=index)
                 elif strategy_direction == "short_only":
                     long_entries = pd.Series(False, index=index)  # 不做多
                     long_exits = pd.Series(False, index=index)
                     short_entries = preds_series <= short_entry
-                    short_exits = preds_series >= short_exit
+                    short_exits = (
+                        (preds_series >= short_exit)
+                        if exit_mode == "threshold"
+                        else pd.Series(False, index=index)
+                    )
                 else:  # both
                     long_entries = preds_series >= long_entry
                     long_exits = preds_series <= long_exit
@@ -130,9 +147,7 @@ class VectorBTBacktest(BaseBacktest):
                         "price": price,
                         "pred": preds_series,
                         "long_entry": long_entries,
-                        "long_exit": long_exits,
                         "short_entry": short_entries,
-                        "short_exit": short_exits,
                     }
                 )
 
@@ -312,13 +327,37 @@ class VectorBTBacktest(BaseBacktest):
 
             if "debug_signals" in locals():
                 entry_mask = long_entries | short_entries
-                signals_sample = (
+                entries_df = (
                     debug_signals[entry_mask]
-                    .head(200)
                     .reset_index()
                     .rename(columns={"index": "timestamp"})
                 )
-                debug_payload["signals"] = signals_sample.to_dict(orient="records")
+
+                # Keep both head and tail samples to avoid "stops early" confusion.
+                max_rows = int(params.get("debug_signals_max_rows", 200) or 200)
+                max_rows = max(1, max_rows)
+                mode = str(params.get("debug_signals_sample", "head_tail")).lower()
+
+                if len(entries_df) <= max_rows:
+                    debug_payload["signals"] = entries_df.to_dict(orient="records")
+                else:
+                    if mode in {"tail", "last"}:
+                        debug_payload["signals_tail"] = entries_df.tail(
+                            max_rows
+                        ).to_dict(orient="records")
+                    elif mode in {"head", "first"}:
+                        debug_payload["signals_head"] = entries_df.head(
+                            max_rows
+                        ).to_dict(orient="records")
+                    else:
+                        head_n = max_rows // 2
+                        tail_n = max_rows - head_n
+                        debug_payload["signals_head"] = entries_df.head(head_n).to_dict(
+                            orient="records"
+                        )
+                        debug_payload["signals_tail"] = entries_df.tail(tail_n).to_dict(
+                            orient="records"
+                        )
 
             try:
                 returns = portfolio.returns()
