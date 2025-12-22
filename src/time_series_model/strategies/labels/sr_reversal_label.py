@@ -352,6 +352,68 @@ def compute_sr_reversal_label_full_scan(
     return combined.where(~timeout_mask, np.nan)
 
 
+def compute_sr_reversal_label(
+    df: pd.DataFrame,
+    signal_col: str = "signal",
+    price_col: str = "close",
+    high_col: str = "high",
+    low_col: str = "low",
+    atr_col: str = "atr",
+    atr_window: int = 14,
+    max_holding_bars: int = 50,
+    stop_loss_r: float = 1.0,
+    take_profit_r: float = 2.0,
+    entry_offset: int = 1,
+    entry_price_col: str = "open",
+    auto_generate_signals: bool = True,
+    sr_signal_cfg: Optional[SRSignalConfig] = None,
+) -> pd.Series:
+    """
+    Backward-compatible SR Reversal label generator (signal-based).
+
+    This function exists for older tests/diagnostics that define a sparse `signal`
+    series (+1 long, -1 short) and want a binary RR label at the signal timestamp:
+    TP-first => 1.0, SL-first => 0.0, timeout => NaN.
+
+    New training should prefer `compute_sr_reversal_label_full_scan`, which does not
+    depend on a precomputed signal and generates labels for every bar.
+    """
+    work_df = df.copy()
+
+    # Ensure ATR exists (required by RR simulation)
+    atr_series = _ensure_atr(work_df, atr_col, price_col, high_col, low_col, atr_window)
+    work_df[atr_col] = atr_series
+
+    if auto_generate_signals:
+        if {price_col, high_col, low_col}.issubset(work_df.columns):
+            cfg = sr_signal_cfg if sr_signal_cfg is not None else SRSignalConfig()
+            signals = _generate_sr_reversal_signals(
+                work_df,
+                price_col=price_col,
+                high_col=high_col,
+                low_col=low_col,
+                atr_series=atr_series,
+                cfg=cfg,
+            )
+            work_df[signal_col] = signals
+
+    # Delegate to the unified RR label generator
+    return compute_rr_label(
+        work_df,
+        signal_col=signal_col,
+        price_col=price_col,
+        atr_col=atr_col,
+        atr_window=atr_window,
+        rr_ratio=take_profit_r / stop_loss_r if stop_loss_r != 0 else take_profit_r,
+        max_holding_bars=max_holding_bars,
+        stop_loss_r=stop_loss_r,
+        take_profit_r=take_profit_r,
+        use_continuous_label=False,
+        entry_price_col=entry_price_col,
+        entry_offset=entry_offset,
+    )
+
+
 # NOTE: _apply_env_overrides function removed - no longer used
 # Label generation now uses compute_sr_reversal_label_full_scan which does NOT
 # use signal filtering. Diagnostic scripts create SRSignalConfig() directly.

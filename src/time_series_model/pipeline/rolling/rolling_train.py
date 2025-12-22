@@ -265,7 +265,7 @@ def train_single_month(
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
 
-    models, avg_metric, cv_results, used_features = trainer_func(
+    models, avg_metric, cv_results, used_features, preprocessor = trainer_func(
         df_train_filtered,
         feature_cols=feature_cols,
         target_col=target_col,
@@ -276,7 +276,7 @@ def train_single_month(
 
     # Evaluate on test set
     print(f"\n6. Evaluating on test set...")
-    X_test = df_test_filtered[used_features].values
+    X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
     y_test = df_test_filtered[target_col].values
 
     preds = generate_predictions(
@@ -342,7 +342,7 @@ def main() -> None:
         "--config",
         type=str,
         required=True,
-        help="Path to strategy config directory (e.g., config/strategies/sr_reversal)",
+        help="Path to strategy config directory (e.g., config/strategies/sr_reversal_long)",
     )
     parser.add_argument(
         "--symbol",

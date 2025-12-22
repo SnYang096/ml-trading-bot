@@ -145,7 +145,11 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
         cmd = [sys.executable, str(PROJECT_ROOT / script_path)] + args
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    # Ensure PYTHONPATH includes project root for src imports
+    pythonpath_parts = [str(PROJECT_ROOT / "src")]
+    if "PYTHONPATH" in env:
+        pythonpath_parts.insert(0, env["PYTHONPATH"])
+    env["PYTHONPATH"] = ":".join(pythonpath_parts)
 
     click.echo(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT), **kwargs)
@@ -291,32 +295,15 @@ def train():
     pass
 
 
-@train.command("sr-reversal")
-@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
-@click.option(
-    "--timeframe", "-t", default="240T", help="Timeframe (e.g., 15T, 60T, 240T)"
-)
-@click.option(
-    "--config",
-    "-c",
-    default="config/strategies/sr_reversal",
-    help="Strategy config path",
-)
-@click.option("--data-path", default="data/parquet_data", help="Data directory")
-@click.option("--test-size", default="0.15", help="Test set ratio")
-@click.option(
-    "--output-root", default="results/strategies/sr_reversal", help="Output directory"
-)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def train_sr_reversal(
-    symbol, timeframe, config, data_path, test_size, output_root, docker
-):
-    """Train SR Reversal model."""
+def _train_strategy_pipeline(symbol, timeframe, config, data_path, test_size, output_root, docker):
+    """Shared implementation for strategy training (train_strategy_pipeline.py)."""
+    # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--config",
-        f"/workspace/{config}" if docker else config,
+        f"/workspace/{config}" if use_workspace_prefix else config,
         "--data-path",
-        f"/workspace/{data_path}" if docker else data_path,
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
         "--symbol",
         symbol,
         "--timeframe",
@@ -324,41 +311,59 @@ def train_sr_reversal(
         "--test-size",
         test_size,
         "--output-root",
-        f"/workspace/{output_root}" if docker else output_root,
+        f"/workspace/{output_root}" if use_workspace_prefix else output_root,
     ]
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
 @train.command("sr-reversal-long")
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
-@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option(
+    "--timeframe", "-t", default="240T", help="Timeframe (e.g., 15T, 60T, 240T)"
+)
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option(
+    "--output-root",
+    default="results/strategies/sr_reversal_long",
+    help="Output directory",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-@click.pass_context
-def train_sr_reversal_long(ctx, symbol, timeframe, docker):
-    """Train SR Reversal Long-only model."""
-    ctx.invoke(
-        train_sr_reversal,
+def train_sr_reversal_long(symbol, timeframe, data_path, test_size, output_root, docker):
+    """Train SR Reversal Long-only model (direction-fixed)."""
+    _train_strategy_pipeline(
         symbol=symbol,
         timeframe=timeframe,
         config="config/strategies/sr_reversal_long",
-        output_root="results/strategies/sr_reversal_long",
+        data_path=data_path,
+        test_size=test_size,
+        output_root=output_root,
         docker=docker,
     )
 
 
 @train.command("sr-reversal-short")
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
-@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option(
+    "--timeframe", "-t", default="240T", help="Timeframe (e.g., 15T, 60T, 240T)"
+)
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option(
+    "--output-root",
+    default="results/strategies/sr_reversal_short",
+    help="Output directory",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-@click.pass_context
-def train_sr_reversal_short(ctx, symbol, timeframe, docker):
-    """Train SR Reversal Short-only model."""
-    ctx.invoke(
-        train_sr_reversal,
+def train_sr_reversal_short(symbol, timeframe, data_path, test_size, output_root, docker):
+    """Train SR Reversal Short-only model (direction-fixed)."""
+    _train_strategy_pipeline(
         symbol=symbol,
         timeframe=timeframe,
         config="config/strategies/sr_reversal_short",
-        output_root="results/strategies/sr_reversal_short",
+        data_path=data_path,
+        test_size=test_size,
+        output_root=output_root,
         docker=docker,
     )
 
@@ -367,7 +372,10 @@ def train_sr_reversal_short(ctx, symbol, timeframe, docker):
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
 @click.option("--timeframe", "-t", default="15T", help="Timeframe")
 @click.option(
-    "--config", "-c", default="config/strategies/sr_reversal", help="Strategy config"
+    "--config",
+    "-c",
+    default="config/strategies/sr_reversal_long",
+    help="Strategy config (direction-fixed; train long/short separately)",
 )
 @click.option("--initial-train-months", default="3", help="Initial training months")
 @click.option("--min-train-months", default="3", help="Minimum training months")
@@ -790,48 +798,11 @@ def analyze_factor_eval(
             docker=False,  # Makefile already runs us in Docker, don't nest
         )
     )
-
-
-@analyze.command("dim-compare")
-@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
-@click.option("--timeframe", "-t", default="15T", help="Timeframe")
-@click.option(
-    "--config", "-c", default="config/strategies/sr_reversal", help="Strategy config"
-)
-@click.option("--start-date", help="Start date")
-@click.option("--end-date", help="End date")
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def analyze_dim_compare(symbol, timeframe, config, start_date, end_date, docker):
-    """Dimensionality comparison & feature selection."""
-    args = [
-        "--config",
-        f"/workspace/{config}" if docker else config,
-        "--symbol",
-        symbol,
-        "--data-path",
-        "/workspace/data/parquet_data" if docker else "data/parquet_data",
-        "--timeframe",
-        timeframe,
-    ]
-    if start_date:
-        args.extend(["--train-start", start_date])
-    if end_date:
-        args.extend(["--train-end", end_date])
-
-    sys.exit(
-        run_python_module(
-            "src.time_series_model.pipeline.dimensionality.dimensionality_comparison",
-            args,
-            docker=docker,
-        )
-    )
-
-
 @analyze.command("strategy-feature-compare")
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/sr_reversal",
+    default="config/strategies/sr_reversal_long",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -873,19 +844,21 @@ def analyze_strategy_feature_compare(
     docker,
 ):
     """Ablation Study: Compare multiple feature configs for a strategy."""
+    # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--strategy-config",
-        f"/workspace/{strategy_config}" if docker else strategy_config,
+        f"/workspace/{strategy_config}" if use_workspace_prefix else strategy_config,
         "--symbol",
         symbol,
         "--data-path",
-        "/workspace/data/parquet_data" if docker else "data/parquet_data",
+        "/workspace/data/parquet_data" if use_workspace_prefix else "data/parquet_data",
         "--timeframe",
         timeframe,
         "--test-size",
         test_size,
         "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
         "--rolling-train-bars",
         rolling_train_bars,
         "--rolling-test-bars",
@@ -900,7 +873,10 @@ def analyze_strategy_feature_compare(
     if end_date:
         args.extend(["--end-date", end_date])
     if feature_overrides:
-        args.extend(["--feature-overrides", feature_overrides])
+        # Split by whitespace to support multiple overrides
+        override_list = feature_overrides.split()
+        args.append("--feature-overrides")
+        args.extend(override_list)
     if run_rolling:
         args.append("--run-rolling")
 
@@ -965,7 +941,7 @@ def diagnose():
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/sr_reversal",
+    default="config/strategies/sr_reversal_long",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -1040,7 +1016,7 @@ def diagnose_rule_baseline(
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/sr_reversal",
+    default="config/strategies/sr_reversal_long",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -1111,7 +1087,7 @@ def diagnose_dtw_volatility(docker):
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/sr_reversal",
+    default="config/strategies/sr_reversal_long",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -1213,7 +1189,7 @@ def optimize():
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/sr_reversal",
+    default="config/strategies/sr_reversal_long",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
@@ -1319,7 +1295,7 @@ def optimize_rule_plateau_charts(results_csv, report_html, docker):
 @click.option(
     "--strategy-config",
     "-c",
-    default="config/strategies/sr_reversal",
+    default="config/strategies/sr_reversal_long",
     help="Strategy config directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")

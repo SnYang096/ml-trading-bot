@@ -11,8 +11,8 @@ import pytest
 import pandas as pd
 import numpy as np
 
-# Register custom pytest markers
-pytest_plugins = []
+# NOTE: Do not define `pytest_plugins` in non-top-level conftest files.
+# Pytest treats it as global and errors (pytest>=8).
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:

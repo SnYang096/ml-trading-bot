@@ -152,7 +152,7 @@ class TestFeatureLoader(unittest.TestCase):
             from src.time_series_model.strategy_config import StrategyConfigLoader
             import yaml
 
-            strategy_dir = Path("config/strategies/sr_reversal")
+            strategy_dir = Path("config/strategies/sr_reversal_long")
             if strategy_dir.exists():
                 config_loader = StrategyConfigLoader(strategy_dir)
                 strategy_config = config_loader.load()
@@ -401,7 +401,7 @@ class TestFeatureLoader(unittest.TestCase):
         from src.time_series_model.strategy_config import StrategyConfigLoader
         import yaml
 
-        strategy_dir = Path("config/strategies/sr_reversal")
+        strategy_dir = Path("config/strategies/sr_reversal_long")
         if strategy_dir.exists():
             config_loader = StrategyConfigLoader(strategy_dir)
             strategy_config = config_loader.load()
@@ -440,7 +440,7 @@ class TestFeatureLoader(unittest.TestCase):
         from src.time_series_model.strategy_config import StrategyConfigLoader
         import yaml
 
-        strategy_dir = Path("config/strategies/sr_reversal")
+        strategy_dir = Path("config/strategies/sr_reversal_long")
         if strategy_dir.exists():
             config_loader = StrategyConfigLoader(strategy_dir)
             strategy_config = config_loader.load()

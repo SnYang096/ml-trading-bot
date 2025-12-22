@@ -2151,6 +2151,10 @@ def main() -> None:
     }
     diagnostics["factor_resolution"] = factor_resolution
 
+    # Create subdirectory for IC series CSV files
+    ic_series_dir = output_dir / "ic_series"
+    ic_series_dir.mkdir(parents=True, exist_ok=True)
+
     # 逐列计算指标（每个实际列只计算一次）
     for col in cols_to_evaluate.keys():
         if col not in df.columns:
@@ -2164,8 +2168,8 @@ def main() -> None:
         results[col] = metrics
         if not ic_series_df.empty:
             ic_series_data[col] = ic_series_df
-            # Save IC series to CSV
-            ic_csv_path = output_dir / f"ic_series_{col}_{args.symbol}.csv"
+            # Save IC series to CSV in subdirectory
+            ic_csv_path = ic_series_dir / f"ic_series_{col}_{args.symbol}.csv"
             ic_series_df.to_csv(ic_csv_path)
             print(f"   💾 Saved IC series to {ic_csv_path}")
 

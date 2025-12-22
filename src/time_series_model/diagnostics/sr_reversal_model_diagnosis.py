@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy-config",
         type=str,
-        default="config/strategies/sr_reversal",
+        default="config/strategies/sr_reversal_long",
         help="Path to SR reversal strategy config directory.",
     )
     parser.add_argument("--symbol", type=str, required=True)
@@ -193,7 +193,7 @@ def main() -> None:
     )
 
     print(f"\n🤖 Training model with {len(feature_cols)} features...")
-    models, avg_metric, cv_results, used_features = trainer_func(
+    models, avg_metric, cv_results, used_features, preprocessor = trainer_func(
         df_train_filtered,
         feature_cols=feature_cols,
         target_col=target_col_param,
@@ -202,7 +202,7 @@ def main() -> None:
     print(f"   ✅ CV metric: {avg_metric:.4f}")
 
     # Generate predictions on test set
-    X_test = df_test_filtered[used_features].values
+    X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
     y_test = df_test_filtered[target_col].values
     preds = strategy_runner.generate_predictions(
         models=models,

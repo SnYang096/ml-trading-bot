@@ -65,8 +65,8 @@ def _extract_garch_features_from_close(
     # Calculate returns
     returns = close.pct_change().dropna()
     
-    if len(returns) < window + 10:
-        # Not enough data
+    if len(returns) <= window:
+        # Not enough data to fit at least one rolling window
         return pd.DataFrame(index=index, columns=cols).fillna(0.0)
     
     # Initialize result arrays
@@ -117,7 +117,8 @@ def _extract_garch_features_from_close(
                 beta = res.params.get("beta[1]", 0.0)
                 garch_alpha[df_idx] = alpha
                 garch_beta[df_idx] = beta
-                persistence[df_idx] = alpha + beta
+                # Persistence should be non-negative; numerical estimation can produce tiny negatives.
+                persistence[df_idx] = max(float(alpha + beta), 0.0)
             
             # Fit GJR-GARCH for leverage effect
             if use_gjr:
@@ -134,7 +135,9 @@ def _extract_garch_features_from_close(
                     gamma = res_gjr.params.get("gamma[1]", 0.0)
                     
                     if df_idx < n:
-                        leverage_gamma[df_idx] = gamma
+                        # Leverage effect coefficient is expected to be non-negative in most formulations;
+                        # clip small negative estimates to 0 for stability/consistency.
+                        leverage_gamma[df_idx] = max(float(gamma), 0.0)
                 except Exception:
                     # GJR fitting failed, skip
                     pass
@@ -170,9 +173,18 @@ def _extract_garch_features_from_close(
         },
         index=index,
     )
-    
-    # Forward fill NaN values (use last valid value)
-    result = result.ffill().fillna(0.0)
+
+    # IMPORTANT:
+    # - Keep `garch_volatility` NaN where the fit fails, so streaming-vs-batch comparisons
+    #   can drop those points instead of propagating stale values via ffill.
+    # - For parameter-like columns, forward-fill provides stable outputs for downstream usage.
+    param_cols = ["garch_persistence", "garch_leverage_gamma", "garch_alpha", "garch_beta"]
+    result[param_cols] = result[param_cols].ffill().fillna(0.0)
+
+    # Final safety: keep semantically non-negative columns non-negative
+    for col in ("garch_volatility", "garch_persistence", "garch_leverage_gamma"):
+        if col in result.columns:
+            result[col] = result[col].clip(lower=0.0)
     
     return result
 

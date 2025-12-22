@@ -9,7 +9,6 @@
 | Makefile 命令     | mlbot 等价命令               | 状态     | 说明              |
 | ----------------- | ---------------------------- | -------- | ----------------- |
 | `ts-factor-eval`  | `mlbot analyze factor-eval`  | ✅ 已使用 | 单因子 IC/IR 评估 |
-| `ts-dim-compare`  | `mlbot analyze dim-compare`  | ⚠️ 可迁移 | 特征降维和筛选    |
 | `ts-feature-eval` | `mlbot analyze feature-eval` | ⚠️ 可迁移 | 特征类型评估      |
 
 ### 模型训练
@@ -100,8 +99,7 @@
 
 ### 优先迁移的命令（高频使用）
 
-1. **`ts-dim-compare`** → `mlbot analyze dim-compare`
-2. **`ts-feature-eval`** → `mlbot analyze feature-eval`
+1. **`ts-feature-eval`** → `mlbot analyze feature-eval`
 3. **`ts-sr-reversal-*`** → `mlbot train sr-reversal-*`
 4. **`rolling`** → `mlbot train rolling`
 
@@ -119,12 +117,6 @@ mlbot analyze factor-eval \
   --end-date 2025-10-31 \
   --target-lag 20 \
   --lag-tolerance 5
-
-# 特征降维
-mlbot analyze dim-compare \
-  --config config/strategies/sr_reversal_long \
-  --symbol BTCUSDT \
-  --timeframe 240T
 
 # 模型训练
 mlbot train sr-reversal-long \

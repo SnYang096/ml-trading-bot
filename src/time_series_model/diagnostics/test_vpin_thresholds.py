@@ -5,6 +5,15 @@
 测试多个 VPIN 阈值组合，找出最优参数
 """
 
+"""
+NOTE FOR PYTEST:
+This file is a *diagnostic script*, not a pytest test module.
+Pytest may try to collect it because its filename starts with `test_`.
+We explicitly disable collection via `__test__ = False`.
+"""
+
+__test__ = False  # pytest: ignore this module
+
 import argparse
 import sys
 from pathlib import Path
@@ -139,7 +148,7 @@ def main():
         description="Test different VPIN thresholds for SR Reversal baseline"
     )
     parser.add_argument(
-        "--strategy-config", type=str, default="config/strategies/sr_reversal"
+        "--strategy-config", type=str, default="config/strategies/sr_reversal_long"
     )
     parser.add_argument("--symbol", type=str, required=True)
     parser.add_argument("--data-path", type=str, default="data/parquet_data")

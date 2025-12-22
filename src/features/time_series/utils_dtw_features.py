@@ -508,17 +508,16 @@ def extract_dtw_features(
                 result.loc[df.index[i], min_col] = min_dist
                 result.loc[df.index[i], match_col] = best_match
         
-        # Forward fill NaN values for this window
-        window_cols = [col for col in result.columns if window_suffix in col]
-        if window_cols:
-            result[window_cols] = result[window_cols].fillna(method="ffill")
-    
-    # Fill remaining NaN with default values
+        # NOTE:
+        # Do NOT forward-fill DTW distances across time.
+        # DTW is window-based; when there is insufficient history (e.g., at the start of a chunk
+        # in streaming inference), the distance should remain NaN so callers can drop/ignore it.
+        # Forward-filling makes streaming-vs-batch comparisons inconsistent.
+
+    # Fill only categorical match columns. Keep numeric distance columns as NaN if not computed.
     for col in result.columns:
         if "best_match" in col:
             result[col] = result[col].fillna("none")
-        else:
-            result[col] = result[col].fillna(1.0)
     
     return result
 

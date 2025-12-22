@@ -82,11 +82,7 @@ class TestGlobalNormalization:
         排除 utils_normalization.py（该文件包含警示文案）。
         """
         src_dir = PROJECT_ROOT / "src"
-        allowlist = {
-            Path(
-                "src/time_series_model/pipeline/dimensionality/dimensionality_comparison.py"
-            ),
-        }
+        allowlist = set()
         offenders = []
 
         for path in src_dir.rglob("*.py"):

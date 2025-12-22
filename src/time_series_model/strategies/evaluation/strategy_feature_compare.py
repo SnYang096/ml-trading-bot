@@ -156,9 +156,44 @@ def build_variants(
             variant_name = Path(entry).stem
             override_path = entry
         variant_name = variant_name.strip()
-        override_path = Path(override_path).resolve()
+        override_path = override_path.strip()
+
+        # Resolve path relative to base_dir if not absolute
+        override_path = Path(override_path)
+        if not override_path.is_absolute():
+            # Try relative to base_dir first
+            candidate_path = base_dir / override_path
+            if candidate_path.exists():
+                override_path = candidate_path.resolve()
+            else:
+                # Fall back to current working directory
+                fallback_path = Path.cwd() / override_path
+                if fallback_path.exists():
+                    override_path = fallback_path.resolve()
+                else:
+                    override_path = override_path.resolve()
+
         if not override_path.exists():
-            raise FileNotFoundError(f"Override file not found: {override_path}")
+            # Provide more helpful error message with attempted paths
+            attempted_paths = [
+                (
+                    str(base_dir / override_path.name)
+                    if not override_path.is_absolute()
+                    else None
+                ),
+                (
+                    str(Path.cwd() / override_path.name)
+                    if not override_path.is_absolute()
+                    else None
+                ),
+                str(override_path),
+            ]
+            attempted_paths = [p for p in attempted_paths if p]
+            raise FileNotFoundError(
+                f"Override file not found: {override_path} (resolved from '{entry}'). "
+                f"Tried paths: {', '.join(attempted_paths)}. "
+                f"Base dir: {base_dir}"
+            )
 
         temp_dir = Path(tempfile.mkdtemp(prefix=f"strategy_variant_{variant_name}_"))
         shutil.copytree(base_dir, temp_dir, dirs_exist_ok=True)
@@ -448,14 +483,14 @@ def execute_single_run(
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
 
-    models, avg_metric, cv_results, used_features = trainer_func(
+    models, avg_metric, cv_results, used_features, preprocessor = trainer_func(
         df_train_filtered,
         feature_cols=feature_cols,
         target_col=target_col,
         **trainer_params,
     )
 
-    X_test = df_test_filtered[used_features].values
+    X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
     y_test = df_test_filtered[target_col].values
     preds = strategy_runner.generate_predictions(
         models=models,
@@ -468,7 +503,11 @@ def execute_single_run(
         preds, y_test, strategy_cfg.evaluation
     )
     backtest_results = strategy_runner.run_vectorbt_backtest(
-        df_test_filtered, preds, strategy_cfg.backtest, task_type
+        df_test_filtered,
+        preds,
+        strategy_cfg.backtest,
+        task_type,
+        strategy_config=strategy_cfg,
     )
 
     logger.info(
@@ -584,6 +623,22 @@ def summarize_results(results: List[Dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _sanitize_for_json(obj):
+    """
+    Recursively sanitize objects for strict JSON:
+    - Replace NaN/Infinity/-Infinity with None
+    """
+    if isinstance(obj, float):
+        return obj if np.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
+
+
 def generate_html_report(
     results: List[Dict],
     summary_df: pd.DataFrame,
@@ -593,6 +648,17 @@ def generate_html_report(
     output_dir: Path,
 ) -> Path:
     """Generate HTML report comparing strategy variants."""
+
+    def _to_float_or_nan(x: object) -> float:
+        try:
+            v = float(x)  # type: ignore[arg-type]
+        except Exception:
+            return float("nan")
+        return v if np.isfinite(v) else float("nan")
+
+    def _to_float_or_none(x: object) -> Optional[float]:
+        v = _to_float_or_nan(x)
+        return None if np.isnan(v) else v
 
     # Extract all evaluation and backtest metrics
     eval_metrics = set()
@@ -617,9 +683,7 @@ def generate_html_report(
         values = []
         for item in results:
             val = item.get("base", {}).get("evaluation", {}).get(metric, 0.0)
-            if val is None or np.isnan(val):
-                val = 0.0
-            values.append(float(val))
+            values.append(_to_float_or_none(val))
         eval_chart_data[metric] = values
 
     # Backtest metrics chart data
@@ -628,27 +692,27 @@ def generate_html_report(
         values = []
         for item in results:
             val = item.get("base", {}).get("backtest", {}).get(metric, 0.0)
-            if val is None or (isinstance(val, float) and np.isnan(val)):
-                val = 0.0
-            values.append(float(val))
+            values.append(_to_float_or_none(val))
         bt_chart_data[metric] = values
 
     # CV metric chart data
     cv_metrics = []
     for item in results:
         val = item.get("base", {}).get("avg_cv_metric", 0.0)
-        if val is None or np.isnan(val):
-            val = 0.0
-        cv_metrics.append(float(val))
+        v = _to_float_or_nan(val)
+        cv_metrics.append(0.0 if np.isnan(v) else float(v))
 
     # Find best variant for each metric
     def find_best_variant(
-        metric_values: List[float], higher_is_better: bool = True
+        metric_values: List[object], higher_is_better: bool = True
     ) -> int:
         """Find index of best variant. Returns -1 if all are invalid."""
-        valid_values = [
-            (i, v) for i, v in enumerate(metric_values) if v != 0.0 and not np.isnan(v)
-        ]
+        valid_values: List[tuple[int, float]] = []
+        for i, raw in enumerate(metric_values):
+            v = _to_float_or_nan(raw)
+            if np.isnan(v) or v == 0.0:
+                continue
+            valid_values.append((i, v))
         if not valid_values:
             return -1
         if higher_is_better:
@@ -675,18 +739,16 @@ def generate_html_report(
 
         # CV metric
         cv_val = base.get("avg_cv_metric", np.nan) if base else np.nan
-        cv_display = (
-            f"{cv_val:.4f}" if cv_val is not None and not np.isnan(cv_val) else "N/A"
-        )
+        cv_num = _to_float_or_nan(cv_val)
+        cv_display = f"{cv_num:.4f}" if not np.isnan(cv_num) else "N/A"
         cells.append(f'<td class="{row_class}">{cv_display}</td>')
 
         # Evaluation metrics
         eval_data = base.get("evaluation", {}) if base else {}
         for metric in eval_metrics:
             val = eval_data.get(metric, np.nan)
-            val_display = (
-                f"{val:.4f}" if val is not None and not np.isnan(val) else "N/A"
-            )
+            val_num = _to_float_or_nan(val)
+            val_display = f"{val_num:.4f}" if not np.isnan(val_num) else "N/A"
             best_idx = find_best_variant(eval_chart_data.get(metric, []))
             cell_class = row_class
             if best_idx == idx:
@@ -697,18 +759,13 @@ def generate_html_report(
         bt_data = base.get("backtest", {}) if base else {}
         for metric in bt_metrics:
             val = bt_data.get(metric, np.nan)
+            val_num = _to_float_or_nan(val)
             if metric in ["total_return_pct", "sharpe"]:
-                val_display = (
-                    f"{val:.2f}" if val is not None and not np.isnan(val) else "N/A"
-                )
+                val_display = f"{val_num:.2f}" if not np.isnan(val_num) else "N/A"
             elif metric == "max_drawdown_pct":
-                val_display = (
-                    f"{val:.2f}%" if val is not None and not np.isnan(val) else "N/A"
-                )
+                val_display = f"{val_num:.2f}%" if not np.isnan(val_num) else "N/A"
             else:
-                val_display = (
-                    f"{val:.4f}" if val is not None and not np.isnan(val) else "N/A"
-                )
+                val_display = f"{val_num:.4f}" if not np.isnan(val_num) else "N/A"
             best_idx = find_best_variant(
                 bt_chart_data.get(metric, []),
                 higher_is_better=(metric != "max_drawdown_pct"),
@@ -1288,10 +1345,13 @@ def main() -> None:
 
     summary_df = summarize_results(comparison_results)
     summary_csv = output_dir / "strategy_feature_compare_summary.csv"
-    summary_df.to_csv(summary_csv, index=False)
+    # Replace non-finite numbers before exporting.
+    summary_df_clean = summary_df.replace([np.inf, -np.inf], np.nan)
+    summary_df_clean.to_csv(summary_csv, index=False)
 
     detailed_json = output_dir / "strategy_feature_compare_summary.json"
     with open(detailed_json, "w", encoding="utf-8") as fh:
+        safe_results = _sanitize_for_json(comparison_results)
         json.dump(
             {
                 "symbol": args.symbol,
@@ -1299,11 +1359,12 @@ def main() -> None:
                 "test_size": args.test_size,
                 "start_date": args.start_date,
                 "end_date": args.end_date,
-                "results": comparison_results,
+                "results": safe_results,
             },
             fh,
             indent=2,
             default=str,
+            allow_nan=False,
         )
 
     print(f"✅ Saved summary CSV to {summary_csv}")
@@ -1312,7 +1373,7 @@ def main() -> None:
     # Generate HTML report
     html_path = generate_html_report(
         comparison_results,
-        summary_df,
+        summary_df_clean,
         args.symbol,
         args.timeframe,
         args.test_size,

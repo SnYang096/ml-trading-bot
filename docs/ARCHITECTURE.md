@@ -351,11 +351,11 @@ make ts-ml-plateau-charts \
 
 **输出**: Parameter plateau charts 添加到对比报告中
 
-#### 阶段 5: 自动化降维 (Dimensionality Reduction) - 可选
+#### 阶段 5: 特征选择 (Feature Selection) - 可选
 
-如果特征数量仍然过多，可以使用 `ts-dim-compare` 进行自动化降维：
+如果特征数量仍然过多，可以使用 `mlbot analyze factor-eval` 的 `--remove-correlated` 和 `--filter-by-best-lag` 选项进行特征选择：
 
-**三阶段流程**:
+**特征选择方法**:
 
 1. **Stage 1**: Missing/stability filter
    - 移除缺失率 > 20% 的特征
@@ -473,7 +473,7 @@ make ts-strategy-feature-compare \
 
 ---
 
-#### 3. `ts-dim-compare` - 自动化降维
+#### 3. `mlbot analyze factor-eval` (with `--remove-correlated`) - 特征选择
 
 **评估粒度**: **特征集合的整体优化**
 
@@ -521,11 +521,13 @@ make ts-strategy-feature-compare \
 
 **示例**:
 ```bash
-make ts-dim-compare \
-  DIM_COMPARE_CONFIG=config/strategies/sr_reversal_long \
-  SYMBOL=BTCUSDT \
-  START_DATE=2024-01-01 \
-  END_DATE=2024-12-31
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --remove-correlated \
+  --filter-by-best-lag
 ```
 
 ---
@@ -542,9 +544,9 @@ make ts-dim-compare \
    - 适用于：已经初步筛选后的特征组合优化
    - 目标：验证特征组合对模型性能的实际影响
 
-3. **`ts-dim-compare`**: 自动化特征精简
+3. **`mlbot analyze factor-eval` (with `--remove-correlated`)**: 特征选择
    - 适用于：特征数量仍然过多的最终精简
-   - 目标：将特征数量控制到合理范围（30-50）
+   - 目标：将特征数量控制到合理范围（通过相关性筛选）
 
 #### 典型使用流程：
 
@@ -555,8 +557,8 @@ make ts-dim-compare \
 阶段 2: ts-strategy-feature-compare
   ↓ (对比不同特征配置，找出最优组合)
   
-阶段 3: ts-dim-compare (可选)
-  ↓ (如果特征仍然过多，自动化精简)
+阶段 3: factor-eval with --remove-correlated (可选)
+  ↓ (如果特征仍然过多，通过相关性筛选)
   
 最终特征列表
 ```

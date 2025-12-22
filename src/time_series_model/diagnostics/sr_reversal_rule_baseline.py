@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy-config",
         type=str,
-        default="config/strategies/sr_reversal",
+        default="config/strategies/sr_reversal_long",
         help="Path to SR reversal strategy config directory.",
     )
     parser.add_argument("--symbol", type=str, required=True)

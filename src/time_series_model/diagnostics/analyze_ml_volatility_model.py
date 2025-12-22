@@ -44,7 +44,7 @@ def analyze_ml_volatility_model():
 
     # 加载特征
     print("🔧 Loading features...")
-    cfg_dir = Path("config/strategies/sr_reversal").resolve()
+    cfg_dir = Path("config/strategies/sr_reversal_long").resolve()
     strategy_cfg_loader = StrategyConfigLoader(cfg_dir)
     strategy_cfg = strategy_cfg_loader.load()
 

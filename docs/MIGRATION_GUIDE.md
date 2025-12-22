@@ -9,7 +9,6 @@
 | Makefile 命令 | mlbot 命令 | 说明 |
 |--------------|-----------|------|
 | `ts-factor-eval` | `mlbot analyze factor-eval` | 因子评估 |
-| `ts-dim-compare` | `mlbot analyze dim-compare` | 特征降维 |
 | `ts-feature-eval` | `mlbot analyze feature-eval` | 特征类型评估 |
 | `ts-strategy-feature-compare` | `mlbot analyze strategy-feature-compare` | 特征配置对比 |
 | `ts-timeframe-comparison` | `mlbot analyze timeframe-comparison` | 时间框架对比 |
@@ -35,7 +34,7 @@
 | `cs-shap-drift` | `mlbot cross-section shap-drift` | SHAP 漂移监控 |
 | `cs-factor-eval` | `mlbot cross-section factor-eval` | 因子评估 |
 | `feature-indicators` | `mlbot visualize feature-indicators` | 特征指标可视化 |
-| `ts-sr-reversal` | `mlbot train sr-reversal` | SR Reversal 训练 |
+| `ts-sr-reversal` | `mlbot train sr-reversal-long` | SR Reversal Long 训练（方向固定，推荐） |
 | `ts-sr-reversal-long` | `mlbot train sr-reversal-long` | SR Reversal Long 训练 |
 | `ts-sr-reversal-short` | `mlbot train sr-reversal-short` | SR Reversal Short 训练 |
 | `rolling` | `mlbot train rolling` | 滚动窗口训练 |
@@ -102,7 +101,7 @@ mlbot analyze strategy-feature-compare \
 **Makefile**:
 ```bash
 make ts-sr-reversal-rule-baseline \
-  SR_BASELINE_CONFIG=config/strategies/sr_reversal \
+  SR_BASELINE_CONFIG=config/strategies/sr_reversal_long \
   SR_BASELINE_SYMBOL=BTCUSDT \
   SR_BASELINE_TIMEFRAME=240T \
   SR_BASELINE_START=2024-01-01 \
@@ -112,7 +111,7 @@ make ts-sr-reversal-rule-baseline \
 **mlbot**:
 ```bash
 mlbot diagnose rule-baseline \
-  --strategy-config config/strategies/sr_reversal \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
@@ -124,7 +123,7 @@ mlbot diagnose rule-baseline \
 **Makefile**:
 ```bash
 make ts-sr-reversal-rule-optimization \
-  SR_OPT_CONFIG=config/strategies/sr_reversal \
+  SR_OPT_CONFIG=config/strategies/sr_reversal_long \
   SR_OPT_SYMBOL=BTCUSDT \
   SR_OPT_TIMEFRAME=240T \
   SR_OPT_START=2024-01-01 \
@@ -136,7 +135,7 @@ make ts-sr-reversal-rule-optimization \
 **mlbot**:
 ```bash
 mlbot optimize rule \
-  --strategy-config config/strategies/sr_reversal \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
@@ -150,7 +149,7 @@ mlbot optimize rule \
 **Makefile**:
 ```bash
 make ts-sr-reversal-model-comparison \
-  SR_COMP_CONFIG=config/strategies/sr_reversal \
+  SR_COMP_CONFIG=config/strategies/sr_reversal_long \
   SR_COMP_SYMBOL=BTCUSDT \
   SR_COMP_TIMEFRAME=240T \
   SR_COMP_START=2025-01-01 \
@@ -160,7 +159,7 @@ make ts-sr-reversal-model-comparison \
 **mlbot**:
 ```bash
 mlbot diagnose model-comparison \
-  --strategy-config config/strategies/sr_reversal \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2025-01-01 \

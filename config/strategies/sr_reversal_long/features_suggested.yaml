@@ -1,0 +1,54 @@
+name: sr_reversal
+description: Feature pipeline with qualified factors from factor evaluation (BTCUSDT)
+feature_pipeline:
+  requested_features:
+  - aroon_f
+  - dist_to_zz_high_f
+  - dl_sequence_features_f
+  - extended_volatility_features_f
+  - garch_features_f
+  - hilbert_phase_f
+  - minus_di_f
+  - order_flow_all_features_f
+  - price_range_symmetry_f
+  - stochrsi_f
+  - volume_profile_volatility_features_f
+  - volume_profile_vpvr_f
+  - vpin_x_trade_cluster_max_buy_run_f
+  - wick_ratios_f
+  - wpt_volatility_features_f
+  - wpt_volume_energy_f
+  - dtw_features_breakout_f
+  - dtw_features_f
+  - dtw_features_reversal_f
+  - dtw_features_trend_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+notes: "Auto-generated from factor evaluation results.\n\nFactor counts (from HTML\
+  \ report):\n- Positive factors (28): Direct alpha signals\n- Negative factors (26):\
+  \ Consider reversing (multiply by -1) or use as risk filters\n- Total qualified\
+  \ factors: 54\n- Non-numeric/invalid factors (9): Added for manual verification\
+  \ (placed at the end)\n\nFeature function counts (in this YAML):\n- Qualified feature\
+  \ functions: 16\n- Non-numeric/invalid feature functions: 4\n- Total feature functions:\
+  \ 20\n\n\U0001F4CA Why the counts differ:\n  The HTML report shows individual factor\
+  \ columns (e.g., \"bb_lower\", \"bb_middle\", \"bb_upper\"), \n  but these output\
+  \ columns are mapped to their source feature compute functions (e.g., \"bb_width_f\"\
+  ).\n  When multiple output columns from the same feature function are qualified,\
+  \ they are merged into \n  a single feature function entry in this YAML file. This\
+  \ is correct behavior - requesting the \n  feature function once will generate all\
+  \ its output columns.\n\n  - 63 output columns were mapped to 20 unique feature\
+  \ functions\n\nSelection criteria:\n- Positive: IC Mean > 0, IC t-stat > 1.96, (IC\
+  \ IR > 0 or Sharpe > 0)\n- Negative: IC Mean < 0, IC t-stat < -1.96, (IC IR < 0\
+  \ or Sharpe < 0)\n- Non-numeric/invalid: Factors that failed numeric conversion\
+  \ or had insufficient samples\n\n⚠️  IMPORTANT: Non-numeric/invalid factors require\
+  \ further verification before use:\n  - These factors failed IC evaluation due to\
+  \ non-numeric data or insufficient samples\n  - They may be categorical/string features\
+  \ that need proper encoding\n  - They may need more data or different evaluation\
+  \ parameters\n  - DO NOT use these factors directly in model training without investigation\n\
+  \  - Review the factor evaluation HTML report for detailed error information\n\n\
+  Special handling:\n- dl_seq_f* features: If any dl_seq_f* feature is qualified,\
+  \ all dl_seq_f* features are included\n\nNote: Feature output columns (e.g., bb_lower,\
+  \ bb_middle) have been mapped to their source feature compute functions (e.g., bb_width_f).\n\
+  Only feature compute function names (with _f suffix) are included in requested_features\
+  \ for cleaner configuration.\n\nGenerated: 2025-12-21 07:05:39"

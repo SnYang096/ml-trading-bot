@@ -293,9 +293,11 @@ make ts-ml-plateau-charts SR_COMP_TIMEFRAME=240T
 **目标**: 如果特征数量仍然过多，使用自动化方法进一步精简
 
 ```bash
-make ts-dim-compare \
-  DIM_COMPARE_CONFIG=config/strategies/sr_reversal_long \
-  SYMBOL=BTCUSDT \
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --remove-correlated \
+  --filter-by-best-lag \
   START_DATE=2024-01-01 \
   END_DATE=2024-12-31 \
   ENCODING_DIM=32
@@ -318,8 +320,8 @@ make ts-dim-compare \
 **注意**: 这一步通常在手动筛选之后使用，作为最终的特征精简。
 
 **输出**:
-- `results/dim_compare/{strategy}_{symbol}_{timestamp}/top_factors.json` - 选中的特征列表
-- `results/dim_compare/{strategy}_{symbol}_{timestamp}/results.json` - 详细结果
+- `results/factor_ts_eval/.../features_suggested.yaml` - 选中的特征列表（YAML格式）
+- `results/factor_ts_eval/.../factor_evaluation_report.html` - 详细评估报告
 
 ---
 
@@ -376,10 +378,12 @@ make ts-ml-plateau-charts SR_COMP_TIMEFRAME=240T
 # ============================================
 # 阶段 5: (可选) 自动化降维
 # ============================================
-# 如果特征数量仍然过多，使用自动化降维
-make ts-dim-compare \
-  DIM_COMPARE_CONFIG=config/strategies/sr_reversal_long \
-  SYMBOL=BTCUSDT \
+# 如果特征数量仍然过多，使用特征选择
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
+  --symbol BTCUSDT \
+  --remove-correlated \
+  --filter-by-best-lag \
   START_DATE=2024-01-01 \
   END_DATE=2024-12-31
 
@@ -496,7 +500,7 @@ make rolling \
 make rolling \
   ROLLING_CONFIG=config/strategies/sr_reversal_long \
   SYMBOL=BTCUSDT \
-  USE_TOP_FACTORS=results/dim_compare/.../top_factors.json \
+  # Use features_suggested.yaml from factor-eval results
   ...
 ```
 

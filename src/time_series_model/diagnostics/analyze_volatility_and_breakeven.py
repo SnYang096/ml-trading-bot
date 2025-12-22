@@ -314,7 +314,7 @@ def main():
     parser.add_argument(
         "--config-dir",
         type=str,
-        default="config/strategies/sr_reversal",
+        default="config/strategies/sr_reversal_long",
         help="Strategy config directory",
     )
 

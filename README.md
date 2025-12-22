@@ -32,14 +32,59 @@ This repository hosts the production-ready components for the factor research, d
 
 The recommended workflow uses **config-driven architecture** with strategy-specific configurations:
 
-1. **Feature Analysis** (`mlbot analyze factor-eval`, `mlbot analyze dim-compare`): Evaluate factors and select optimal features
-2. **Strategy Training** (`mlbot train sr-reversal`, `mlbot train rolling`): Train models using strategy configs
+1. **Feature Analysis** (`mlbot analyze factor-eval`): Evaluate factors and select optimal features
+2. **Strategy Training** (`mlbot train sr-reversal-long`, `mlbot train sr-reversal-short`, `mlbot train rolling`): Train models using strategy configs
 3. **Ablation Study** (`mlbot analyze strategy-feature-compare`): Compare feature configurations (optional)
 4. **Backtesting** (`mlbot backtest vectorbot`): Validate strategy performance
 
-**📖 See [完整流程指南](docs/时序模型/完整流程指南.md) for detailed workflow.**
+**📖 See [完整流程指南](docs/时序模型/完整流程指南.md) (Chinese) for detailed workflow.**
 
 ### Step-by-Step Workflow
+
+#### Why SR Reversal is split into Long/Short (and why `sr_reversal/` was removed)
+
+We intentionally use **two direction-fixed strategies**:
+- `sr_reversal_long`: long-only, binary label = “a long trade opened at \(t+1\) hits +2R before -1R”
+- `sr_reversal_short`: short-only, binary label = “a short trade opened at \(t+1\) hits +2R before -1R”
+
+This replaces the old **bidirectional** config (`sr_reversal/`, `combine_mode: any_success`) which mixed long/short outcomes into a single label.
+
+**Key differences in label semantics**:
+- **Old (`any_success`)**: for each bar, evaluate both a hypothetical long and a hypothetical short; label can become “success if either direction would have worked”. This makes `pred` harder to interpret as a trade probability for a specific direction, and often pushes execution to rely on a separate “direction source” (e.g., `signal`).
+- **New (`long_only` / `short_only`)**: the label matches exactly one action. `pred` becomes a clean **probability of success for that direction**, so thresholding is stable and comparable across backtest/live.
+
+**Why the split is better**:
+- **Cleaner target**: `predict_proba` directly represents “probability this long/short trade succeeds under the RR definition”.
+- **Simpler execution**: direction comes from the strategy itself (no `use_signal_direction`, no `signal` required).
+- **Better control**: tune thresholds/risk separately for long vs short.
+- **Consistency**: same semantics in offline backtests and production inference.
+
+We still keep a lightweight **safety fuse** (optional) to prevent over-trading in OOD/noisy regimes:
+`dist_to_nearest_sr / ATR > K  =>  no trade`.
+
+#### Step 0: Verify Feature Correctness (Recommended)
+
+Before starting feature evaluation, run tests to verify that features are computed correctly and don't use future data:
+
+**Quick Test** (Key Features Only):
+```bash
+make test-key-features-all
+```
+
+**Comprehensive Test** (All Features):
+```bash
+make test-all-features-comprehensive
+```
+
+**What These Tests Verify**:
+- ✅ No future data leakage (features at time t only use data ≤ t)
+- ✅ Multi-asset normalization (features are comparable across different assets)
+- ✅ Streaming vs batch consistency (production inference matches training)
+- ✅ No global normalization (prevents look-ahead bias)
+
+**Note**: These tests should pass before proceeding to feature evaluation. If tests fail, fix the issues before training models.
+
+**📖 See [测试运行说明](docs/测试运行说明.md) for more details.**
 
 #### Step 1: Feature Analysis
 
@@ -58,7 +103,7 @@ mlbot analyze factor-eval \
 **Evaluate Specific Factors**:
 ```bash
 mlbot analyze factor-eval \
-  --strategy-config config/strategies/sr_reversal \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --factors atr sqs_hal_high \
   --timeframe 240T
@@ -80,57 +125,103 @@ mlbot analyze factor-eval \
   --open-browser
 ```
 
-**1.2 Feature Selection (Dimensionality Reduction)**:
+#### Step 2: Feature Ablation Study (Required)
+
+Compare different feature configurations to validate feature selection:
+
 ```bash
-# Config-driven feature selection (three-stage pipeline)
-mlbot analyze dim-compare \
-  --config config/strategies/sr_reversal \
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
-  --end-date 2024-12-31
+  --end-date 2025-10-31 \
+  --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 ```
 
-**Output** (in `results/dim_compare/{strategy}_{symbol}_{timestamp}/`):
-- `top_factors.json` - Selected top features (for use in rolling training)
-- `results.json` - Performance comparison (before vs after reduction)
-
-**Three-Stage Pipeline**:
-1. **Stage 1**: Missing/stability filter (removes >20% missing or low variance)
-2. **Stage 2**: IC ranking (selects top features by Information Coefficient)
-3. **Stage 3**: Correlation-based selection (removes redundant features)
-
-#### Step 2: Strategy Training
-
-**2.1 Quick Validation** (Single Training):
-
-**SR Reversal (Bidirectional)**:
+**With Rolling Windows** (More Robust):
 ```bash
-mlbot train sr-reversal \
-  --config config/strategies/sr_reversal \
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
-  --timeframe 15T
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
+  --feature-overrides "original=features_all.yaml selected=features_suggested.yaml" \
+  --run-rolling \
+  --rolling-train-bars 5000 \
+  --rolling-test-bars 1000 \
+  --rolling-max-windows 10
 ```
+
+**What This Validates**:
+- Selected features perform better than all features
+- Feature selection improves model generalization
+- Feature ablation shows meaningful differences
+
+**Note**: This step is **required** before proceeding to rolling training.
+
+#### Step 3: Model Comparison (Required)
+
+Verify that ML models outperform rule-based strategies:
+
+```bash
+mlbot diagnose model-comparison \
+  --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+```
+
+**What This Compares**:
+- Rule-based baseline (pure rule strategy)
+- ML model (XGBoost/LightGBM)
+- ML + Volatility model
+
+**What This Validates**:
+- ML model significantly outperforms rules
+- ML model provides stable returns
+- ML model has reasonable trade frequency
+
+**Note**: This step is **required** before proceeding to rolling training.
+
+#### Step 4: Strategy Training (Optional - For Debugging)
+
+**⚠️ Optional**: Single training is only for debugging or quick configuration testing. For production, proceed directly to Step 5 (Rolling Training) after completing Steps 2 and 3.
+
+**4.1 Quick Validation** (Single Training):
 
 **SR Reversal Long-only**:
 ```bash
 mlbot train sr-reversal-long \
   --symbol BTCUSDT \
-  --timeframe 240T
+  --timeframe 240T \
+  --start-date 2025-01-01 \
+  --end-date 2025-10-31 \
 ```
 
 **SR Reversal Short-only**:
 ```bash
 mlbot train sr-reversal-short \
   --symbol BTCUSDT \
-  --timeframe 240T
+  --timeframe 240T \
+  --start-date 2025-01-01 \
+  --end-date 2025-10-31 \
 ```
 
-**2.2 Production Training** (Rolling Window - Recommended):
+#### Step 5: Production Training (Rolling Window - Recommended)
 ```bash
 # Expanding window training: each test month uses all previous months
 mlbot train rolling \
-  --config config/strategies/sr_reversal \
+  --config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --initial-train-months 6 \
+  --min-train-months 3
+
+mlbot train rolling \
+  --config config/strategies/sr_reversal_short \
   --symbol BTCUSDT \
   --timeframe 240T \
   --initial-train-months 6 \
@@ -162,65 +253,11 @@ mlbot train rolling \
 - `results/rolling/{strategy}/{month}/model.pkl` - Models for each month
 - `results/rolling/{strategy}/monthly_results.json` - Aggregated results
 
-#### Step 3: Ablation Study (Optional)
+**Note**: Only proceed to rolling training after completing Steps 2 (feature ablation) and Step 3 (model comparison) to ensure features and model architecture are validated.
 
-Compare different feature configurations to evaluate feature group contributions:
-
-**Basic Usage**:
+**With Selected Features** (if you have feature selection results):
 ```bash
-mlbot analyze strategy-feature-compare \
-  --strategy-config config/strategies/sr_reversal \
-  --symbol BTCUSDT \
-  --timeframe 240T
-```
-
-**With Feature Overrides**:
-```bash
-mlbot analyze strategy-feature-compare \
-  --strategy-config config/strategies/sr_reversal \
-  --symbol BTCUSDT \
-  --timeframe 240T \
-  --start-date 2024-01-01 \
-  --end-date 2025-10-31 \
-  --feature-overrides "baseline=config/features/baseline.yaml full=config/features/full.yaml"
-```
-
-**With Rolling Window Evaluation**:
-```bash
-mlbot analyze strategy-feature-compare \
-  --strategy-config config/strategies/sr_reversal_long \
-  --symbol BTCUSDT \
-  --timeframe 240T \
-  --run-rolling \
-  --rolling-train-bars 1000 \
-  --rolling-test-bars 200 \
-  --rolling-step-bars 100 \
-  --rolling-max-windows 10
-```
-
-**📖 See [消融实验说明](docs/时序模型/消融实验说明.md) for details.**
-
-#### Step 4: Backtesting
-
-Rolling window training with date range:
-
-```bash
-# Rolling training (expanding window: each test month uses all previous months)
-mlbot train rolling \
-  --config config/strategies/sr_reversal_long \
-  --symbol BTCUSDT \
-  --timeframe 240T \
-  --start 2024-01-01 \
-  --end 2025-10-31 \
-  --initial-train-months 6 \
-  --min-train-months 3
-```
-
-**Note**: `mlbot train rolling` is the recommended approach for all training scenarios, providing better evaluation through expanding window training.
-
-**With Top Factors** (if you have dimensionality reduction results):
-```bash
-# If you have top_factors.json from dim-compare, you can use it in strategy config
+# If you have features_suggested.yaml from factor-eval, update your strategy config to use it
 # Edit your strategy's features.yaml to use the selected features, then:
 mlbot train rolling \
   --config config/strategies/sr_reversal_long \
@@ -235,7 +272,24 @@ mlbot train rolling \
 - `results/auto_rolling_*/monthly_rolling_report.html` - HTML report
 - `results/auto_rolling_*/model_YYYY-MM.txt` - Model for each month
 
-#### Step 4: Periodic Updates (Weekly/Monthly)
+#### Viewing HTML Reports in a Dev Container (Cursor / VS Code)
+
+If you are running inside a Dev Container, `--open-browser` may not open the report automatically. Use one of these approaches:
+
+**Option A: Local static server + Port forwarding** (works reliably)
+
+```bash
+# Example: serve rolling reports directory
+python3 -m http.server 8008 --directory results
+```
+
+- In Cursor/VS Code, open the **Ports** panel and forward/open port `8008`.
+- Open the report in your local browser, e.g.:
+  - `results/auto_rolling_*/monthly_rolling_report.html`
+  - `results/strategy_compare/strategy_feature_compare_report.html`
+  - `results/rule_optimization/optimization_report.html`
+
+#### Step 6: Periodic Updates (Weekly/Monthly)
 
 Incremental update from last trained month:
 
@@ -255,7 +309,10 @@ This will automatically detect the last trained month and continue from there.
 For a complete workflow from feature evaluation to rolling training, execute commands in sequence:
 
 ```bash
-# Step 1: Feature evaluation and dimension reduction
+# Step 0: Verify feature correctness (recommended)
+make test-key-features-all
+
+# Step 1: Feature evaluation and selection
 mlbot analyze factor-eval \
   --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
   --symbol BTCUSDT \
@@ -265,19 +322,24 @@ mlbot analyze factor-eval \
   --remove-correlated \
   --target-lag 5
 
-mlbot analyze dim-compare \
-  --config config/strategies/sr_reversal_long \
+# Step 2: Feature ablation study (validate feature selection)
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 15T \
+  --start-date 2025-01-01 \
+  --end-date 2025-04-30 \
+  --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
+
+# Step 3: Model comparison (verify ML outperforms rules)
+mlbot diagnose model-comparison \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 15T \
   --start-date 2025-01-01 \
   --end-date 2025-04-30
 
-# Step 2: Quick single model training (optional, for validation)
-mlbot train sr-reversal-long \
-  --symbol BTCUSDT \
-  --timeframe 15T
-
-# Step 3: Rolling window training (main production workflow)
+# Step 5: Rolling window training (main production workflow)
 mlbot train rolling \
   --config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
@@ -343,33 +405,67 @@ mlbot data convert --cleanup
 
 | Command                     | Purpose                           | When to Use                               |
 | --------------------------- | --------------------------------- | ----------------------------------------- |
-| `mlbot analyze dim-compare` | Research dimensionality reduction | **Recommended**: Before any training      |
-| `mlbot train sr-reversal`   | Train single model                | **Optional**: For single evaluation only  |
+| `mlbot analyze factor-eval` | Factor evaluation & selection     | **Recommended**: Primary feature selection method |
+| `mlbot train sr-reversal-long/short` | Train single model (direction-fixed) | **Optional**: Debugging / quick checks only |
 | `mlbot train rolling`       | Rolling window training           | **Recommended**: Main production workflow |
 
 ### Key Points
 
-- `mlbot train sr-reversal`: Trains **one** model for a single time period
+- **Workflow Order**: Always follow Steps 0 → 1 → 2 → 3 → 5 in sequence
+  - Step 0: Verify feature correctness (recommended)
+  - Step 1: Feature evaluation (`factor-eval`)
+  - Step 2: Feature ablation study (`strategy-feature-compare`) - **Required**
+  - Step 3: Model comparison (`model-comparison`) - **Required**
+  - Step 5: Rolling training (`rolling`) - **Only after validation**
+
+- `mlbot train sr-reversal-long/short`: Trains **one** model for a single time period (direction-fixed)
+  - **Not recommended** for production evaluation
+  - Use only for debugging or quick configuration testing
+
 - `mlbot train rolling`: Trains **multiple** models (one per month) in a rolling/expanding window fashion
-- Both commands train models independently - they do **not** share models
-- **Recommended**: Use `mlbot train rolling` for production as it provides better evaluation through expanding windows
+  - **Required** for production deployment
+  - Provides better evaluation through expanding windows
+  - Only use after validating features (Step 2) and model performance (Step 3)
+  - Step 4 (single training) is optional and only for debugging
 
 
 ## Workflow Summary
 
-### Minimal Workflow (2 Commands, Recommended)
+### Minimal Workflow (5 Steps, Recommended)
 
 ```bash
-# 1. Research (find optimal configuration via feature evaluation)
-mlbot analyze dim-compare \
-  --config config/strategies/sr_reversal_long \
+# Step 0: Verify feature correctness (recommended before starting)
+make test-key-features-all
+
+# Step 1: Feature evaluation and selection
+mlbot analyze factor-eval \
+  --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
   --symbol BTCUSDT \
   --timeframe 240T \
-  --start-date 2025-05-01 \
-  --end-date 2025-07-31
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
+  --remove-correlated \
+  --filter-by-best-lag
 
-# 2. Rolling training (trains all models, from history to latest)
-# Note: If you have top_factors.json, update your strategy config to use those features
+# Step 2: Feature ablation study (validate feature selection)
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
+  --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
+
+# Step 3: Model comparison (verify ML outperforms rules)
+mlbot diagnose model-comparison \
+  --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# Step 4: Rolling training (only after validation)
+# Note: If you have features_suggested.yaml from factor-eval, update your strategy config to use it
 mlbot train rolling \
   --config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
@@ -380,10 +476,13 @@ mlbot train rolling \
   --min-train-months 3
 ```
 
-### Full Workflow (3 Commands)
+### Full Workflow (5 Steps with All Options)
 
 ```bash
-# 1. Research - Feature evaluation and dimension reduction
+# Step 0: Verify feature correctness (recommended)
+make test-all-features-comprehensive
+
+# Step 1: Feature evaluation (generates features_suggested.yaml with selected features)
 mlbot analyze factor-eval \
   --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
   --symbol BTCUSDT \
@@ -391,21 +490,31 @@ mlbot analyze factor-eval \
   --start-date 2024-01-01 \
   --end-date 2025-10-31 \
   --remove-correlated \
-  --target-lag 20
+  --target-lag 20 \
+  --filter-by-best-lag
 
-mlbot analyze dim-compare \
-  --config config/strategies/sr_reversal_long \
+# Step 2: Feature ablation study (compare original vs selected features)
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
-  --start-date 2025-05-01 \
-  --end-date 2025-07-31
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31 \
+  --feature-overrides "original=features_all.yaml selected=features_suggested.yaml" \
+  --run-rolling \
+  --rolling-train-bars 5000 \
+  --rolling-test-bars 1000 \
+  --rolling-max-windows 10
 
-# 2. Train single model (optional, for quick evaluation)
-mlbot train sr-reversal-long \
+# Step 3: Model comparison (verify ML outperforms rules)
+mlbot diagnose model-comparison \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
-  --timeframe 240T
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
 
-# 3. Rolling training (main production workflow)
+# Step 4: Rolling training (main production workflow - only after validation)
 mlbot train rolling \
   --config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
@@ -423,7 +532,7 @@ mlbot train rolling \
 ```bash
 # 1. Rule baseline (test pure rule-based strategy)
 mlbot diagnose rule-baseline \
-  --strategy-config config/strategies/sr_reversal \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
@@ -431,7 +540,7 @@ mlbot diagnose rule-baseline \
 
 # 2. Rule optimization (find optimal parameters)
 mlbot optimize rule \
-  --strategy-config config/strategies/sr_reversal \
+  --strategy-config config/strategies/sr_reversal_long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --search-type random \
@@ -493,7 +602,6 @@ mlbot cross-section shap-drift \
 
 - **`docs/workflow_research_to_production.md`** - Complete workflow documentation
 - **`docs/simplified_workflow.md`** - Simplified workflow guide
-- **`docs/make_train_vs_dim_compare.md`** - Command comparison guide
 
 ## Recent Feature Updates
 
@@ -558,16 +666,16 @@ See also:
 - [Migration Guide](docs/MIGRATION_GUIDE.md) - Complete guide for migrating from Makefile to mlbot
 - [Makefile vs mlbot](docs/MAKEFILE_VS_MLBOT.md) - Command comparison table
 
-## 开发环境
+## Development Environment
 
-**推荐使用 VS Code Dev Container**：
-1. 用 VS Code 打开项目
-2. 选择 "Reopen in Container"（自动进入 Dev Container）
-3. 在容器内直接运行 `mlbot` 命令（无需通过 Makefile）
+**Recommended: VS Code Dev Container**:
+1. Open the project in VS Code
+2. Select "Reopen in Container" (automatically enters Dev Container)
+3. Run `mlbot` commands directly in the container (no Makefile needed)
 
-**命令行使用**：
-- 在 Dev Container 中：直接使用 `mlbot` 命令
-- 在本地环境：使用 `mlbot` 命令（需要先 `pip install -e .`）
+**Command Line Usage**:
+- In Dev Container: Use `mlbot` commands directly
+- In local environment: Use `mlbot` commands (requires `pip install -e .` first)
 
-所有 `mlbot` 命令都支持 `--docker/--no-docker` 选项，可以根据环境自动选择合适的执行方式。
+All `mlbot` commands support `--docker/--no-docker` options to automatically select the appropriate execution method based on the environment.
 

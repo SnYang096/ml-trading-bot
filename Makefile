@@ -94,7 +94,7 @@ endif
 	data-download data-convert data-pipeline \
 	train train-quantile tune-q50-params rolling rolling-multi rolling-update-only \
 	ts-vectorbot-backtest ts-nautilus-backtest \
-	ts-dim-compare ts-feature-eval ts-factor-eval ts-timeframe-forward-report \
+	ts-feature-eval ts-factor-eval ts-timeframe-forward-report \
 	ts-strategy-feature-compare feature-indicators \
 	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
@@ -130,7 +130,6 @@ help:
 	@echo "  make test-complex-features-comprehensive # Test all complex features (GARCH, EVT, Hurst, Spectrum, DTW, Extended Volatility)"
 	@echo "  make test-all-features-comprehensive # Test all features comprehensively"
 	@echo "  make test-integration               # Run integration tests (full data pipeline)"
-	@echo "  make test-integration-dim-compare   # Test dimensionality comparison integration"
 	@echo "  make test-integration-fast          # Run fast integration tests (exclude slow)"
 	@echo "  make test-optuna                   # Test Optuna threshold optimization (in Docker)"
 	@echo "  make test-optuna-joint              # Test Optuna joint optimization (in Docker)"
@@ -171,7 +170,7 @@ help:
 	@echo "    make ts-trend-following # Trend Following model training (LightGBM Regression)"
 	@echo "    make ts-feature-eval    # Time-series feature IC / leakage evaluation"
 	@echo "    make ts-factor-eval     # Time-series factor IC / win-rate evaluation (single asset)"
-	@echo "    make ts-dim-compare     # Dimensionality comparison & top factor selection"
+	@echo ""
 	@echo "    make ts-timeframe-forward-report # Timeframe vs forward-bar correlation analysis"
 	@echo "    make ts-strategy-feature-compare # Ablation Study: Compare multiple feature configs for a strategy"
 	@echo "    make ts-vectorbot-backtest # Run VectorBot risk-managed backtest"
@@ -357,7 +356,7 @@ ts-factor-eval:
 # Strategy feature comparison
 # ---------------------------------------------------------------------------
 
-STRAT_COMPARE_CONFIG ?= config/strategies/sr_reversal
+STRAT_COMPARE_CONFIG ?= config/strategies/sr_reversal_long
 STRAT_COMPARE_DATA_PATH ?= $(DATA_DIR)
 STRAT_COMPARE_SYMBOL ?= BTCUSDT
 STRAT_COMPARE_TIMEFRAME ?= 240T
@@ -376,18 +375,16 @@ STRAT_COMPARE_ROLL_MAX ?= 5
 # This command trains the same strategy with different feature sets to evaluate
 # the contribution of each feature group. Use --feature-overrides to specify variants.
 #
-# Default strategy (bidirectional): config/strategies/sr_reversal (combine_mode: any_success)
-# For long-only: STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_long
+# Default strategy: config/strategies/sr_reversal_long (direction-fixed)
 # For short-only: STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_short
 #
 # Examples:
-#   # Compare bidirectional strategy (default)
-#   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal \
-#        STRAT_COMPARE_OVERRIDES="baseline=config/features/baseline.yaml full=config/features/full.yaml"
-#
-#   # Compare long-only strategy
+#   # Compare long-only strategy (default)
 #   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_long \
 #        STRAT_COMPARE_OVERRIDES="full=config/strategies/sr_reversal_long/features_full.yaml"
+#   # Compare short-only strategy
+#   make ts-strategy-feature-compare STRAT_COMPARE_CONFIG=config/strategies/sr_reversal_short \
+#        STRAT_COMPARE_OVERRIDES="full=config/strategies/sr_reversal_short/features_full.yaml"
 
 ts-strategy-feature-compare:
 	@echo "🆚 Ablation Study: Comparing feature variants for $(STRAT_COMPARE_CONFIG)"
@@ -412,7 +409,7 @@ ts-strategy-feature-compare:
 # - Too few SR signals (feature/rule issue)
 # - Poor baseline edge (SR definition issue)
 # - Model/threshold being too conservative (ML issue)
-SR_BASELINE_CONFIG ?= config/strategies/sr_reversal
+SR_BASELINE_CONFIG ?= config/strategies/sr_reversal_long
 SR_BASELINE_SYMBOL ?= BTCUSDT
 SR_BASELINE_DATA_PATH ?= $(DATA_DIR)
 SR_BASELINE_TIMEFRAME ?= 240T
@@ -461,7 +458,7 @@ ts-test-vpin-thresholds:
 
 
 # SR Reversal Rule Optimization: Find parameter plateaus and compare with ML model
-SR_OPT_CONFIG ?= config/strategies/sr_reversal
+SR_OPT_CONFIG ?= config/strategies/sr_reversal_long
 SR_OPT_SYMBOL ?= BTCUSDT
 SR_OPT_DATA_PATH ?= $(DATA_DIR)
 SR_OPT_TIMEFRAME ?= 240T
@@ -537,7 +534,7 @@ ts-timeframe-comparison:
 
 # SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility
 # Output structure: results/model_comparison/{timeframe}/ (e.g., results/model_comparison/240T/, results/model_comparison/60T/)
-SR_COMP_CONFIG ?= config/strategies/sr_reversal
+SR_COMP_CONFIG ?= config/strategies/sr_reversal_long
 SR_COMP_SYMBOL ?= BTCUSDT
 SR_COMP_DATA_PATH ?= $(DATA_DIR)
 SR_COMP_TIMEFRAME ?= 240T
@@ -643,31 +640,7 @@ timeframe-forward-report:
 # Dimensionality: Three-stage feature selection (before vs after reduction)
 # ---------------------------------------------------------------------------
 
-DIM_COMPARE_ARGS ?=
 HORIZONS ?= 24
-DIM_COMPARE_CONFIG ?= config/strategies/sr_reversal
-DIM_COMPARE_TIMEFRAME ?= 15T
-
-# Config-driven dimensionality comparison: Three-stage feature selection
-# Stage 1: Missing/stability filter → Stage 2: IC ranking → Stage 3: Correlation-based selection
-# Outputs top_factors.json for use in rolling training
-ts-dim-compare:
-	@if [ -z "$(DIM_COMPARE_CONFIG)" ]; then \
-		echo "❌ 错误: 必须指定 DIM_COMPARE_CONFIG"; \
-		echo "用法: make ts-dim-compare DIM_COMPARE_CONFIG=config/strategies/sr_reversal SYMBOL=BTCUSDT"; \
-		exit 1; \
-	fi
-	@echo "🔬 Config-Driven Dimensionality Comparison"
-	@echo "   策略配置: $(DIM_COMPARE_CONFIG)"
-	@echo "   交易对: $(SYMBOL)"
-	@echo "   时间周期: $(DIM_COMPARE_TIMEFRAME)"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.pipeline.dimensionality.dimensionality_comparison \
-		--config /workspace/$(DIM_COMPARE_CONFIG) \
-		--symbol $(SYMBOL) \
-		--data-path /workspace/$(DATA_DIR) \
-		--timeframe $(DIM_COMPARE_TIMEFRAME) \
-		$(if $(START_DATE),--train-start $(START_DATE)) \
-		$(if $(END_DATE),--train-end $(END_DATE))
 
 # ---------------------------------------------------------------------------
 # Feature Indicators Visualization
@@ -720,7 +693,7 @@ PARAMS_FILE ?=
 
 FORWARD_BARS ?= 3
 
-ROLLING_CONFIG ?= config/strategies/sr_reversal
+ROLLING_CONFIG ?= config/strategies/sr_reversal_long
 ROLLING_TIMEFRAME ?= 15T
 ROLLING_UPDATE_ONLY ?= false
 
@@ -729,7 +702,7 @@ ROLLING_UPDATE_ONLY ?= false
 rolling:
 	@if [ -z "$(ROLLING_CONFIG)" ]; then \
 		echo "❌ 错误: 必须指定 ROLLING_CONFIG"; \
-		echo "用法: make rolling ROLLING_CONFIG=config/strategies/sr_reversal SYMBOL=BTCUSDT"; \
+		echo "用法: make rolling ROLLING_CONFIG=config/strategies/sr_reversal_long SYMBOL=BTCUSDT"; \
 		exit 1; \
 	fi
 	@echo "🔄 Config-Driven Rolling Training"
@@ -834,14 +807,14 @@ feature-eval:
 
 
 # SR Reversal Model Training
-SR_REVERSAL_CONFIG ?= config/strategies/sr_reversal
+SR_REVERSAL_CONFIG ?= config/strategies/sr_reversal_long
 SR_REVERSAL_SYMBOL ?= $(SYMBOL)
 SR_REVERSAL_TIMEFRAME ?= 240T
 SR_REVERSAL_TEST_SIZE ?= 0.15
-SR_REVERSAL_OUTPUT_ROOT ?= results/strategies/sr_reversal
+SR_REVERSAL_OUTPUT_ROOT ?= results/strategies/sr_reversal_long
 # Note: SR signal thresholds removed - labels now use full scan mode (compute_sr_reversal_label_full_scan)
 # Model will learn to filter signals based on features, not pre-filtered labels
-SR_SR_OPTUNA_STRATEGY ?= config/strategies/sr_reversal
+SR_SR_OPTUNA_STRATEGY ?= config/strategies/sr_reversal_long
 SR_SR_OPTUNA_SYMBOL ?= $(SR_REVERSAL_SYMBOL)
 SR_SR_OPTUNA_TIMEFRAME ?= $(SR_REVERSAL_TIMEFRAME)
 SR_SR_OPTUNA_START ?=
@@ -1276,10 +1249,6 @@ test-integration:
 	@echo "🔬 Running integration tests (full data pipeline)..."
 	@echo "   This includes: dimensionality comparison, feature engineering, etc."
 	$(DOCKER_RUN_NO_TTY) pytest tests/integration/ -v
-
-test-integration-dim-compare:
-	@echo "🔬 Running dimensionality comparison integration tests..."
-	$(DOCKER_RUN_NO_TTY) pytest tests/integration/test_dimensionality_comparison_integration.py -v
 
 test-integration-fast:
 	@echo "🔬 Running fast integration tests (excluding slow tests)..."

@@ -15,7 +15,7 @@ IMPORTANT: This is different from strategy_trainer.py:
 - strategy_trainer.py: Low-level model training function (XGBoost/CatBoost/LightGBM CV only)
 
 Usage:
-    python scripts/train_strategy_pipeline.py --config config/strategies/sr_reversal --symbol BTCUSDT
+    python scripts/train_strategy_pipeline.py --config config/strategies/sr_reversal_long --symbol BTCUSDT
 """
 
 from __future__ import annotations
@@ -27,6 +27,15 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import sys
+
+# Allow running this script directly without installing the project package.
+# (So `import src.*` works when executed from the repo root.)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+VENDOR_DIR = PROJECT_ROOT / "vendor"
+if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
+    sys.path.insert(0, str(VENDOR_DIR))
 
 import numpy as np
 import pandas as pd
@@ -67,11 +76,6 @@ BASE_DATA_COLUMNS = {
     "cvd",
 }
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-VENDOR_DIR = PROJECT_ROOT / "vendor"
-if VENDOR_DIR.exists():
-    sys.path.insert(0, str(VENDOR_DIR))
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -110,6 +114,19 @@ def discover_strategy_dirs(
     for subdir in sorted(p for p in config_path.iterdir() if p.is_dir()):
         if not (subdir / "features.yaml").exists():
             continue
+        # Skip deprecated strategies unless explicitly selected
+        if not selected:
+            meta_path = subdir / "meta.yaml"
+            if meta_path.exists():
+                try:
+                    import yaml
+
+                    meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+                    if isinstance(meta, dict) and meta.get("deprecated") is True:
+                        continue
+                except Exception:
+                    # If meta.yaml can't be parsed, do not block discovery.
+                    pass
         if selected and subdir.name not in selected:
             continue
         strategies.append(subdir)
@@ -233,7 +250,7 @@ def _ensure_ticks_configured(
         if not tick_files:
             raise ValueError(
                 f"Tick data files not found for {symbol} in time range {start_ts} to {end_ts}. "
-                f"Required for features: {requested_need_ticks}. "
+                f"Required for features: {tick_required_features}. "
                 f"Please ensure tick data files exist in {data_path}"
             )
 
@@ -653,6 +670,81 @@ def run_vectorbt_backtest(
     signal_col = params.get("signal_col", "signal")
     use_rr_exit = bool(params.get("use_rr_exit", False))
 
+    # Optional safety fuse: block entries when too far from SR (OOD/overtrade guard)
+    # Implemented as a mask applied to entries before RR exits / vectorbt portfolio.
+    sr_fuse_cfg = params.get("sr_fuse", {}) or {}
+    sr_fuse_enabled = bool(sr_fuse_cfg.get("enabled", False))
+    sr_fuse_mask = pd.Series(True, index=df.index)
+    if sr_fuse_enabled:
+        dist_col = sr_fuse_cfg.get("dist_col", "dist_to_nearest_sr")
+        atr_col = sr_fuse_cfg.get("atr_col", params.get("atr_col", "atr"))
+        max_dist_atr = float(sr_fuse_cfg.get("max_dist_atr", 6.0))
+        on_missing = str(sr_fuse_cfg.get("on_missing", "skip")).lower()  # skip|block
+
+        have_dist = dist_col in df.columns
+        have_atr = atr_col in df.columns
+
+        if not have_dist and on_missing == "block":
+            sr_fuse_mask = pd.Series(False, index=df.index)
+            if debug:
+                print(
+                    f"   ⚠️  SR fuse enabled but '{dist_col}' missing; blocking all entries (on_missing=block)"
+                )
+        else:
+            # Ensure ATR if needed and possible (uses RR atr_window if provided)
+            if not have_atr:
+                try:
+                    from src.time_series_model.strategies.labels.sr_reversal_label import (
+                        _ensure_atr,
+                    )
+
+                    rr_atr_window = int(
+                        (params.get("rr", {}) or {}).get("atr_window", 14)
+                    )
+                    atr_series = _ensure_atr(
+                        df.copy(),
+                        atr_col=atr_col,
+                        price_col="close",
+                        high_col="high",
+                        low_col="low",
+                        atr_window=rr_atr_window,
+                    )
+                    df = df.copy()
+                    df[atr_col] = atr_series
+                    have_atr = True
+                    if debug:
+                        print(f"   ℹ️  SR fuse: computed missing ATR column '{atr_col}'")
+                except Exception as exc:  # noqa: BLE001
+                    if on_missing == "block":
+                        sr_fuse_mask = pd.Series(False, index=df.index)
+                        if debug:
+                            print(
+                                f"   ⚠️  SR fuse enabled but cannot compute ATR; blocking all entries: {exc}"
+                            )
+                    else:
+                        if debug:
+                            print(
+                                f"   ⚠️  SR fuse enabled but cannot compute ATR; skipping fuse: {exc}"
+                            )
+                        sr_fuse_enabled = False
+
+            if sr_fuse_enabled and have_dist and have_atr:
+                dist = pd.to_numeric(df[dist_col], errors="coerce").abs()
+                atr = (
+                    pd.to_numeric(df[atr_col], errors="coerce")
+                    .replace(0.0, np.nan)
+                    .abs()
+                )
+                dist_atr = dist / atr
+                sr_fuse_mask = (dist_atr <= max_dist_atr).fillna(
+                    False if on_missing == "block" else True
+                )
+                if debug:
+                    blocked = int((~sr_fuse_mask).sum())
+                    print(
+                        f"   ℹ️  SR fuse active: max_dist_atr={max_dist_atr}, blocked={blocked}/{len(sr_fuse_mask)}"
+                    )
+
     # 确定策略方向：从配置或策略名称推断
     strategy_direction = params.get(
         "strategy_direction", None
@@ -688,12 +780,93 @@ def run_vectorbt_backtest(
         short_entries = pd.Series(class_preds == short_class, index=index)
         short_exits = pd.Series(class_preds == neutral_class, index=index)
     else:
-        long_entry = params.get("long_entry_threshold", 0.6)
-        long_exit = params.get("long_exit_threshold", 0.4)
+        # For binary probability outputs:
+        # - If strategy is direction-fixed (long_only or short_only) we treat `preds` as
+        #   "success probability for THAT direction" => enter when preds >= entry_threshold.
+        # - If strategy_direction == both, keep legacy behavior with separate long/short thresholds.
+        entry_threshold = params.get(
+            "entry_threshold", params.get("long_entry_threshold", 0.6)
+        )
+        exit_threshold = params.get(
+            "exit_threshold", params.get("long_exit_threshold", 0.4)
+        )
+        long_entry = params.get("long_entry_threshold", entry_threshold)
+        long_exit = params.get("long_exit_threshold", exit_threshold)
         short_entry = params.get("short_entry_threshold", 0.4)
         short_exit = params.get("short_exit_threshold", 0.6)
 
         preds_series = pd.Series(preds, index=index)
+
+        # ------------------------------------------------------------------
+        # SR Reversal compatibility: auto-generate "signal" when required
+        #
+        # Many SR reversal workflows set:
+        # - use_signal_direction=True (direction from signal)
+        # - use_rr_exit=True (exit from R/R simulation)
+        #
+        # However, config-driven feature pipelines often only "ensure" a signal
+        # column exists (default 0) and do NOT compute it.
+        # In that case, we would get zero trades.
+        #
+        # model-comparison scripts explicitly generate SR reversal signals using
+        # _generate_sr_reversal_signals(). Do the same here as a safe fallback.
+        # ------------------------------------------------------------------
+        if use_signal_direction:
+            need_autogen = False
+            if signal_col not in df.columns:
+                need_autogen = True
+            else:
+                try:
+                    sig = df[signal_col].fillna(0).astype(float)
+                    need_autogen = (sig != 0).sum() == 0
+                except Exception:
+                    need_autogen = True
+
+            if need_autogen:
+                # Only attempt SR signal generation when we have the required OHLC columns.
+                required = {"close", "high", "low"}
+                if required.issubset(df.columns):
+                    try:
+                        from src.time_series_model.strategies.labels.sr_reversal_label import (
+                            SRSignalConfig,
+                            _ensure_atr,
+                            _generate_sr_reversal_signals,
+                        )
+
+                        df = df.copy()
+                        atr_series = _ensure_atr(
+                            df,
+                            atr_col=params.get("atr_col", "atr"),
+                            price_col="close",
+                            high_col="high",
+                            low_col="low",
+                            atr_window=int(params.get("rr", {}).get("atr_window", 14)),
+                        )
+                        df[params.get("atr_col", "atr")] = atr_series
+
+                        sr_params = params.get("sr_signal", {}) or {}
+                        sr_cfg = (
+                            SRSignalConfig(**sr_params)
+                            if isinstance(sr_params, dict)
+                            else SRSignalConfig()
+                        )
+                        auto_signals = _generate_sr_reversal_signals(
+                            df,
+                            price_col="close",
+                            high_col="high",
+                            low_col="low",
+                            atr_series=atr_series,
+                            cfg=sr_cfg,
+                        )
+                        df[signal_col] = auto_signals
+                        if debug:
+                            n_sig = int((pd.Series(auto_signals).fillna(0) != 0).sum())
+                            print(
+                                f"   ℹ️  Auto-generated SR reversal signals for backtest: {n_sig} non-zero signals"
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        if debug:
+                            print(f"   ⚠️  Failed to auto-generate SR signals: {exc}")
 
         if use_signal_direction and signal_col in df.columns:
             # SR reversal 等策略：方向由 signal 决定，preds 只控制"是否参与这笔 SR 反转交易"
@@ -719,20 +892,27 @@ def run_vectorbt_backtest(
         else:
             # 默认行为：仅根据预测得分构造多空信号
             if strategy_direction == "long_only":
-                long_entries = preds_series >= long_entry
-                long_exits = preds_series <= long_exit
+                # Direction-fixed probability gating (success proba for long trades)
+                long_entries = preds_series >= entry_threshold
+                long_exits = preds_series <= exit_threshold
                 short_entries = pd.Series(False, index=index)  # 不做空
                 short_exits = pd.Series(False, index=index)
             elif strategy_direction == "short_only":
                 long_entries = pd.Series(False, index=index)  # 不做多
                 long_exits = pd.Series(False, index=index)
-                short_entries = preds_series <= short_entry
-                short_exits = preds_series >= short_exit
+                # Direction-fixed probability gating (success proba for short trades)
+                short_entries = preds_series >= entry_threshold
+                short_exits = preds_series <= exit_threshold
             else:  # both
                 long_entries = preds_series >= long_entry
                 long_exits = preds_series <= long_exit
                 short_entries = preds_series <= short_entry
                 short_exits = preds_series >= short_exit
+
+        # Apply SR fuse mask (if enabled)
+        if sr_fuse_enabled:
+            long_entries = long_entries & sr_fuse_mask
+            short_entries = short_entries & sr_fuse_mask
 
         if debug:
             debug_signals = pd.DataFrame(
@@ -748,9 +928,15 @@ def run_vectorbt_backtest(
 
     # 如果启用 RR 驱动的平仓逻辑，则重写 exits/short_exits（与 compute_rr_label 保持一致）
     if use_rr_exit:
-        if not use_signal_direction:
+        # RR exits only require that we can infer direction for selected entries.
+        # - If use_signal_direction=True, direction comes from signal (possibly gated by preds)
+        # - If direction-fixed (long_only/short_only), direction comes from strategy_direction
+        if (not use_signal_direction) and (
+            strategy_direction not in {"long_only", "short_only"}
+        ):
             raise ValueError(
-                "use_rr_exit=True 要求 use_signal_direction=True，以确保方向由 signal 决定"
+                "use_rr_exit=True requires either use_signal_direction=True OR a direction-fixed strategy "
+                "(strategy_direction=long_only/short_only)."
             )
 
         rr_params = params.get("rr", {})
@@ -832,6 +1018,13 @@ def run_vectorbt_backtest(
         print(f"   ⚠️  Backtest failed: {exc}")
         return None
 
+    # If there are no trades, vectorbt stats can return inf/NaN (e.g., Sharpe = inf when std=0).
+    # Return a consistent payload and keep Sharpe/drawdown/win_rate as NaN to indicate "N/A".
+    try:
+        trade_count = int(portfolio.trades.count())
+    except Exception:
+        trade_count = 0
+
     stats = portfolio.stats()
 
     debug_payload: Dict[str, Any] | None = None
@@ -842,25 +1035,18 @@ def run_vectorbt_backtest(
         except Exception:
             trades = None
 
-        # 组装 debug summary，供日志和 HTML 使用
-        total_return_pct = float(stats.get("Total Return [%]", 0.0))
-        sharpe_ratio = float(stats.get("Sharpe Ratio", 0.0))
-        max_dd_pct = float(stats.get("Max Drawdown [%]", 0.0))
-        win_rate_pct = float(stats.get("Win Rate [%]", 0.0))
-
+        # Summary snapshot (may contain NaN/inf; downstream reports should sanitize)
         debug_payload["summary"] = {
-            "total_return_pct": total_return_pct,
-            "sharpe": sharpe_ratio,
-            "max_drawdown_pct": max_dd_pct,
-            "win_rate_pct": win_rate_pct,
+            "total_return_pct": float(stats.get("Total Return [%]", 0.0)),
+            "sharpe": float(stats.get("Sharpe Ratio", 0.0)),
+            "max_drawdown_pct": float(stats.get("Max Drawdown [%]", 0.0)),
+            "win_rate_pct": float(stats.get("Win Rate [%]", 0.0)),
         }
 
         if trades is not None and not trades.empty:
             n_trades = int(len(trades))
             n_win = int((trades["PnL"] > 0).sum())
             win_rate_manual = 100.0 * n_win / n_trades
-
-            # 为 HTML 导出部分 trades（避免太大），按时间排序
             trades_sample = (
                 trades.sort_values("Entry Timestamp").head(200).reset_index(drop=True)
             )
@@ -871,7 +1057,6 @@ def run_vectorbt_backtest(
                 "win_rate_manual": win_rate_manual,
             }
 
-        # 存储部分信号行（仅非多分类情形下）
         if "debug_signals" in locals():
             entry_mask = long_entries | short_entries
             if strategy_direction == "long_only":
@@ -888,23 +1073,34 @@ def run_vectorbt_backtest(
             )
             debug_payload["signals"] = signals_sample.to_dict(orient="records")
 
-        # returns 统计
         try:
             returns = portfolio.returns()
-            mean_ret = float(returns.mean())
-            std_ret = float(returns.std())
             debug_payload["returns_stats"] = {
-                "mean": mean_ret,
-                "std": std_ret,
+                "mean": float(returns.mean()),
+                "std": float(returns.std()),
             }
         except Exception:
             pass
+
+    if trade_count == 0:
+        print(
+            "   ⚠️  Backtest produced no trades; metrics like Sharpe/WinRate/Drawdown are N/A."
+        )
+        return {
+            "total_return_pct": float(stats.get("Total Return [%]", 0.0)),
+            "sharpe": float("nan"),
+            "max_drawdown_pct": float("nan"),
+            "win_rate": float("nan"),
+            "total_trades": 0,
+            **({"debug": debug_payload} if debug_payload is not None else {}),
+        }
 
     result: Dict[str, Any] = {
         "total_return_pct": float(stats.get("Total Return [%]", 0.0)),
         "sharpe": float(stats.get("Sharpe Ratio", 0.0)),
         "max_drawdown_pct": float(stats.get("Max Drawdown [%]", 0.0)),
         "win_rate": float(stats.get("Win Rate [%]", 0.0)),
+        "total_trades": int(stats.get("Total Trades", trade_count)),
     }
 
     if debug_payload is not None:
@@ -1192,7 +1388,7 @@ def train_strategy(
         f"\n   🚀 Training model ({model_type}, task={task_type}) "
         f"on {len(df_train_filtered)} samples, {len(feature_cols)} features"
     )
-    models, avg_metric, cv_results, used_features = trainer_func(
+    models, avg_metric, cv_results, used_features, preprocessor = trainer_func(
         df_train_filtered,
         feature_cols=feature_cols,
         target_col=target_col,
@@ -1226,7 +1422,7 @@ def train_strategy(
             print("   ⚠️  Volatility model training failed or skipped")
         print("=" * 80 + "\n")
 
-    X_test = df_test_filtered[used_features].values
+    X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
     y_test = df_test_filtered[target_col].values
 
     print(f"   ▶️ Generating predictions on test set ({len(df_test_filtered)} samples)")

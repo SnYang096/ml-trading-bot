@@ -64,7 +64,6 @@ pytest tests/integration/test_dimensionality_comparison_integration.py -v
 pytest tests/integration/test_dimensionality_comparison_integration.py::TestDimensionalityComparisonIntegration -v
 
 # 运行特定测试方法
-pytest tests/integration/test_dimensionality_comparison_integration.py::TestDimensionalityComparisonIntegration::test_run_dim_compare_basic -v
 ```
 
 ### 在 Docker 中运行

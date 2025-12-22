@@ -2,16 +2,16 @@ backtest:
   enabled: true
   params:
     price_col: close
-    long_entry_threshold: 0.6
-    long_exit_threshold: 0.45
-    short_entry_threshold: 0.4
-    short_exit_threshold: 0.55
+    # Direction-fixed probability gating:
+    # - sr_reversal_short is short_only => `pred` is P(success of a short trade)
+    # - enter when pred >= entry_threshold
+    entry_threshold: 0.6
     initial_cash: 10000
     fee: 0.0004
     slippage: 0.0001
     freq: "4H"
-    use_signal_direction: true   # SR Reversal：方向由 signal 决定
-    use_rr_exit: true            # SR Reversal：平仓完全走 1R/2R 逻辑
+    use_signal_direction: false  # short_only: direction is fixed by strategy config (labels.combine_mode)
+    use_rr_exit: true            # exits strictly follow 1R/2R simulation
     rr:
       max_holding_bars: 50       # 与 compute_sr_reversal_label 默认一致
       stop_loss_r: 1.0
@@ -19,5 +19,11 @@ backtest:
       atr_window: 14
       entry_offset: 1
       entry_price_col: open
-    signal_col: signal           # 默认就是 signal，可改名
+    # Optional safety fuse: when too far from SR (normalized by ATR), do not trade.
+    sr_fuse:
+      enabled: true
+      dist_col: dist_to_nearest_sr
+      atr_col: atr
+      max_dist_atr: 6.0
+      on_missing: skip   # skip|block
     debug: true

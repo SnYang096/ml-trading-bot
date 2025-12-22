@@ -58,16 +58,16 @@ def _run_and_assert_no_inf(requested_features, expected_prefixes=None):
 
 
 def test_hilbert_cvd_env_no_inf():
-    # hilbert_cvd_* are outputs of hilbert_advanced
+    # hilbert_cvd_* are outputs of hilbert_advanced_f
     _run_and_assert_no_inf(
-        ["hilbert_advanced"],
+        ["hilbert_advanced_f"],
         expected_prefixes=["hilbert_cvd_env", "hilbert_cvd_price_env_ratio"],
     )
 
 
 def test_garch_and_extended_vol_no_inf():
-    _run_and_assert_no_inf(["garch_features", "extended_volatility_features"])
+    _run_and_assert_no_inf(["garch_features_f", "extended_volatility_features_f"])
 
 
 def test_evt_features_no_inf():
-    _run_and_assert_no_inf(["evt_features"])
+    _run_and_assert_no_inf(["evt_features_f"])

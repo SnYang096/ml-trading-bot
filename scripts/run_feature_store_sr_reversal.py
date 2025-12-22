@@ -11,7 +11,7 @@ Usage:
     python scripts/run_feature_store_sr_reversal.py \\
         --symbol BTCUSDT \\
         --timeframe 15T \\
-        --strategy-config config/strategies/sr_reversal \\
+        --strategy-config config/strategies/sr_reversal_long \\
         --data-path data/parquet_data \\
         --output-dir feature_store/sr_reversal
 """
@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strategy-config",
         type=str,
-        default="config/strategies/sr_reversal",
+        default="config/strategies/sr_reversal_long",
         help="Path to strategy config directory (with features.yaml)",
     )
     parser.add_argument(

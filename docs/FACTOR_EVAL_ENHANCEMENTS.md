@@ -213,15 +213,7 @@ make ts-factor-eval \
 - **适用场景**：长期策略、趋势跟踪
 - **使用建议**：可以保留，但要注意与 `max_holding_bars` 的匹配
 
-## 6. 与 ts-dim-compare 的关系
-
-本次更新将 `ts-dim-compare` 中的相关性去冗余功能迁移到了 `ts-factor-eval`，使得：
-
-- ✅ 在因子评估阶段就可以去除冗余特征
-- ✅ 工作流更清晰：`ts-factor-eval` → `ts-strategy-feature-compare`
-- ✅ `ts-dim-compare` 可以专注于批量统计筛选（如果需要）
-
-## 7. 修复的问题
+## 6. 修复的问题
 
 ### 修复缺失输出列问题
 
