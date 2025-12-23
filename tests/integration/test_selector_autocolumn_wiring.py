@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.features.loader.parallel_computer import _build_call_args
+from src.features.loader.feature_computer import _build_call_args
 
 
 def test_selector_autowires_required_columns_when_no_column_mappings():

@@ -11,7 +11,7 @@ from src.features.registry import (
 )
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
 from src.features.loader.feature_computer import FeatureComputer
-from src.features.loader.parallel_computer import analyze_dependency_levels
+from src.features.loader.feature_computer import analyze_dependency_levels
 
 __all__ = [
     "get_compute_func",

@@ -356,12 +356,29 @@ RUN echo "📦 Installing PyTorch ${PYTORCH_VERSION} (cu128) - matching builder 
     else \
     echo "🌐 Local nvidia-cudnn wheel not found, will be downloaded as dependency"; \
     fi && \
-    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+    (pip3 install --retries=5 --timeout=3600 --progress-bar off \
     --find-links /tmp/local-wheels \
     torchvision==${TORCHVISION_VERSION} \
     torchaudio==${TORCHAUDIO_VERSION} \
+    --index-url ${PYTORCH_INDEX_URL} || \
+    (echo "⚠️  直接安装失败，尝试使用 --no-deps 安装..." && \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
+    --find-links /tmp/local-wheels \
+    --no-deps \
+    torchvision==${TORCHVISION_VERSION} \
+    torchaudio==${TORCHAUDIO_VERSION} \
+    --index-url ${PYTORCH_INDEX_URL} && \
+    echo "📦 Installing torchvision/torchaudio dependencies..." && \
+    pip3 install --retries=5 --timeout=3600 --progress-bar off \
     --index-url ${PYTORCH_INDEX_URL} \
-    && python3 -c "import torch; print('✅ PyTorch (runtime):', torch.__version__, '| CUDA可用:', torch.cuda.is_available(), '| CUDA版本:', torch.version.cuda)"
+    sympy>=1.13.3 \
+    networkx>=2.5.1 \
+    jinja2 \
+    fsspec>=0.8.5 \
+    nvidia-cuda-nvrtc-cu12==12.8.93 \
+    nvidia-cuda-runtime-cu12==12.8.90 \
+    nvidia-cuda-cupti-cu12==12.8.90)) && \
+    python3 -c "import torch; print('✅ PyTorch (runtime):', torch.__version__, '| CUDA可用:', torch.cuda.is_available(), '| CUDA版本:', torch.version.cuda)"
 
 # ============================================================================
 # 安装 numba + shap（与 numpy 1.26.4 兼容）

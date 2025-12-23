@@ -7,8 +7,9 @@
 ## 核心组件
 
 1. **feature_function_mapping.py**: 特征计算函数映射表
-2. **parallel_computer.py**: 并行特征计算器
-3. **strategy_feature_loader.py**: 策略特征加载器
+2. **feature_computer_impl.py**: 特征计算器（顺序执行 + 缓存）
+3. **feature_computer.py**: FeatureComputer 的公共导入接口
+4. **strategy_feature_loader.py**: 策略特征加载器
 
 ## 配置文件
 
@@ -30,8 +31,7 @@ loader = StrategyFeatureLoader(
     cache_dir="cache/features",
     use_disk_cache=True,
     use_memory_cache=True,
-    max_workers=4,
-    parallel_backend="process",
+    # 注意：max_workers 和 parallel_backend 参数已废弃（现为顺序执行）
 )
 
 # 研究阶段
@@ -86,11 +86,11 @@ strategies:
 
 ## 性能优化
 
-- **并行计算**: 按依赖层级并行计算，充分利用多核 CPU
-- **内存缓存**: 同一会话内快速复用
-- **磁盘缓存**: 跨会话持久化，避免重复计算
+- **顺序执行**: 特征按依赖层级顺序计算（已移除并行，避免大 DataFrame 序列化开销）
+- **内存缓存**: 同一 DataFrame 签名内快速复用（基于 `(df_signature, feature_name)` 键）
+- **磁盘缓存**: 跨会话持久化，支持按月增量计算，避免重复计算
 
-预计性能提升：**2-10倍**（取决于特征数量和 CPU 核心数）
+性能主要依赖磁盘/月度缓存，内存缓存作为补充加速。
 
 ## 注意事项
 
