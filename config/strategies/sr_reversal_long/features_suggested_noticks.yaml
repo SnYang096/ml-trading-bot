@@ -10,6 +10,8 @@ feature_pipeline:
   - hilbert_phase_f
   - minus_di_f
   - price_range_symmetry_f
+  - sr_strength_max_close_f
+  - poc_hal_features_close_f
   - sqs_hal_high_f
   - sqs_hal_low_f
   - sr_strength_combined_f

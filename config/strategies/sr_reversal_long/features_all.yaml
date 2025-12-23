@@ -374,6 +374,8 @@ feature_pipeline:
   - plus_di_f
   - poc
   - poc_hal_features_f
+  - poc_hal_features_close_f
+  - sr_strength_max_close_f
   - ppo_f
   - price_range_symmetry_f
   - range_ratio_5bar_f

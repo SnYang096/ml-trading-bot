@@ -1697,6 +1697,13 @@ features:
       - trade_cluster_avg_sell_run
       - trade_cluster_buy_run_count
       - trade_cluster_sell_run_count
+    column_mappings:
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
+      trade_cluster_max_sell_run: trade_cluster_max_sell_run
+      trade_cluster_avg_buy_run: trade_cluster_avg_buy_run
+      trade_cluster_avg_sell_run: trade_cluster_avg_sell_run
+      trade_cluster_buy_run_count: trade_cluster_buy_run_count
+      trade_cluster_sell_run_count: trade_cluster_sell_run_count
     output_columns:
       - trade_cluster_max_run_ratio
       - trade_cluster_max_run
@@ -1718,6 +1725,11 @@ features:
       - trade_cluster_max_sell_run
       - trade_cluster_avg_buy_run
       - trade_cluster_avg_sell_run
+    column_mappings:
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
+      trade_cluster_max_sell_run: trade_cluster_max_sell_run
+      trade_cluster_avg_buy_run: trade_cluster_avg_buy_run
+      trade_cluster_avg_sell_run: trade_cluster_avg_sell_run
     output_columns:
       - trade_cluster_max_run_ratio
       - trade_cluster_max_run
@@ -1735,6 +1747,9 @@ features:
     required_columns:
       - trade_cluster_max_buy_run
       - trade_cluster_max_sell_run
+    column_mappings:
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
+      trade_cluster_max_sell_run: trade_cluster_max_sell_run
     output_columns:
       - trade_cluster_max_run_ratio
       - trade_cluster_max_run
@@ -1749,6 +1764,9 @@ features:
     required_columns:
       - trade_cluster_max_buy_run
       - trade_cluster_max_sell_run
+    column_mappings:
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
+      trade_cluster_max_sell_run: trade_cluster_max_sell_run
     output_columns:
       - trade_cluster_buy_sell_max_ratio
     category: order_flow
@@ -1762,6 +1780,9 @@ features:
     required_columns:
       - trade_cluster_avg_buy_run
       - trade_cluster_avg_sell_run
+    column_mappings:
+      trade_cluster_avg_buy_run: trade_cluster_avg_buy_run
+      trade_cluster_avg_sell_run: trade_cluster_avg_sell_run
     output_columns:
       - trade_cluster_avg_run_ratio
     category: order_flow
@@ -1775,6 +1796,9 @@ features:
     required_columns:
       - trade_cluster_avg_buy_run
       - trade_cluster_avg_sell_run
+    column_mappings:
+      trade_cluster_avg_buy_run: trade_cluster_avg_buy_run
+      trade_cluster_avg_sell_run: trade_cluster_avg_sell_run
     output_columns:
       - trade_cluster_buy_sell_avg_ratio
     category: order_flow
@@ -1790,6 +1814,11 @@ features:
       - trade_cluster_avg_sell_run
       - trade_cluster_buy_run_count
       - trade_cluster_sell_run_count
+    column_mappings:
+      trade_cluster_avg_buy_run: trade_cluster_avg_buy_run
+      trade_cluster_avg_sell_run: trade_cluster_avg_sell_run
+      trade_cluster_buy_run_count: trade_cluster_buy_run_count
+      trade_cluster_sell_run_count: trade_cluster_sell_run_count
     output_columns:
       - trade_cluster_total_run_length
       - trade_cluster_avg_run_length
@@ -1804,6 +1833,9 @@ features:
     required_columns:
       - trade_cluster_buy_run_count
       - trade_cluster_sell_run_count
+    column_mappings:
+      trade_cluster_buy_run_count: trade_cluster_buy_run_count
+      trade_cluster_sell_run_count: trade_cluster_sell_run_count
     output_columns:
       - trade_cluster_net_runs
       - trade_cluster_total_runs
@@ -1818,6 +1850,9 @@ features:
     required_columns:
       - trade_cluster_net_runs
       - trade_cluster_total_runs
+    column_mappings:
+      trade_cluster_net_runs: trade_cluster_net_runs
+      trade_cluster_total_runs: trade_cluster_total_runs
     output_columns:
       - trade_cluster_net_runs_ratio
     category: order_flow
@@ -1830,6 +1865,8 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_directional_entropy
+    column_mappings:
+      trade_cluster_directional_entropy: trade_cluster_directional_entropy
     output_columns:
       - trade_cluster_directional_entropy_ma5
       - trade_cluster_directional_entropy_ma10
@@ -1847,6 +1884,8 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_directional_entropy
+    column_mappings:
+      trade_cluster_directional_entropy: trade_cluster_directional_entropy
     output_columns:
       - trade_cluster_directional_entropy_ma5
       - trade_cluster_directional_entropy_ma10
@@ -1862,12 +1901,16 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_directional_entropy
+    column_mappings:
+      trade_cluster_directional_entropy: trade_cluster_directional_entropy
     output_columns:
       - trade_cluster_directional_entropy_zscore_20
       - trade_cluster_directional_entropy_zscore_50
     category: order_flow
     description: Trade clustering entropy zscore (20/50).
     pass_full_df: false
+    column_mappings:
+      trade_cluster_directional_entropy: trade_cluster_directional_entropy
   trade_cluster_max_buy_run_ma_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_max_buy_run_ma_features_from_series
@@ -1875,6 +1918,8 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_max_buy_run
+    column_mappings:
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
     output_columns:
       - trade_cluster_max_buy_run_ma5
       - trade_cluster_max_buy_run_ma10
@@ -1889,6 +1934,8 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_imbalance_ratio
+    column_mappings:
+      trade_cluster_imbalance_ratio: trade_cluster_imbalance_ratio
     output_columns:
       - trade_cluster_imbalance_ratio_ma5
       - trade_cluster_imbalance_ratio_ma10
@@ -1903,6 +1950,8 @@ features:
       - trade_cluster_net_runs_counts_features_f
     required_columns:
       - trade_cluster_net_runs
+    column_mappings:
+      trade_cluster_net_runs: trade_cluster_net_runs
     output_columns:
       - trade_cluster_net_runs_ma5
       - trade_cluster_net_runs_ma10
@@ -1917,6 +1966,8 @@ features:
       - trade_cluster_net_runs_counts_features_f
     required_columns:
       - trade_cluster_total_runs
+    column_mappings:
+      trade_cluster_total_runs: trade_cluster_total_runs
     output_columns:
       - trade_cluster_total_runs_ma5
       - trade_cluster_total_runs_ma10
@@ -1931,6 +1982,8 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_imbalance_ratio
+    column_mappings:
+      trade_cluster_imbalance_ratio: trade_cluster_imbalance_ratio
     output_columns:
       - trade_cluster_imbalance_zscore_20
       - trade_cluster_imbalance_zscore_50
@@ -1944,6 +1997,8 @@ features:
       - trade_cluster_net_runs_counts_features_f
     required_columns:
       - trade_cluster_net_runs
+    column_mappings:
+      trade_cluster_net_runs: trade_cluster_net_runs
     output_columns:
       - trade_cluster_net_runs_zscore_20
       - trade_cluster_net_runs_zscore_50
@@ -1963,6 +2018,8 @@ features:
     category: order_flow
     description: Trade clustering max_buy_run zscore.
     pass_full_df: false
+    column_mappings:
+      trade_cluster_max_buy_run: trade_cluster_max_buy_run
   trade_cluster_max_sell_run_zscore_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_max_sell_run_zscore_features_from_series
@@ -1970,6 +2027,8 @@ features:
       - trade_cluster_base_aligned_features_f
     required_columns:
       - trade_cluster_max_sell_run
+    column_mappings:
+      trade_cluster_max_sell_run: trade_cluster_max_sell_run
     output_columns:
       - trade_cluster_max_sell_run_zscore_20
       - trade_cluster_max_sell_run_zscore_50
@@ -2472,7 +2531,7 @@ features:
     module: enhanced
     compute_func: extract_dtw_features_from_series
     dependencies:
-      - sr_strength_max_f
+      - sr_strength_max_close_f
     required_columns:
       - close
       - dist_to_nearest_sr
@@ -2588,11 +2647,13 @@ features:
     module: enhanced
     compute_func: extract_dtw_features_from_series
     dependencies:
-      - sr_strength_max_f
+      - sr_strength_max_close_f
     required_columns:
-      - close
       - dist_to_nearest_sr
-      - atr
+      - close
+    column_mappings:
+      dist_to_nearest_sr: dist_to_nearest_sr
+      close: close
     output_columns:
       - dtw_hammer_dist_w15
       - dtw_hammer_inverse_dist_w15
@@ -2693,7 +2754,7 @@ features:
     module: enhanced
     compute_func: extract_dtw_features_from_series
     dependencies:
-      - sr_strength_max_f
+      - sr_strength_max_close_f
     required_columns:
       - close
       - dist_to_nearest_sr

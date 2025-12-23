@@ -875,8 +875,20 @@ class FeatureComputer:
                 f"({psutil.virtual_memory().percent:.1f}%)"
             )
 
-            for feature_name in level_features:
+            # 在同一层内做一个简单的拓扑顺序：优先计算依赖已完成的特征
+            pending = list(level_features)
+            safeguard = len(pending) * 2  # 防止意外死循环
+            while pending and safeguard > 0:
+                feature_name = pending.pop(0)
+                safeguard -= 1
+
                 if feature_name in computed_features:
+                    continue
+
+                # 如果依赖未满足，放到队尾，等待依赖先计算
+                deps = features.get(feature_name, {}).get("dependencies", [])
+                if any(dep not in computed_features for dep in deps):
+                    pending.append(feature_name)
                     continue
 
                 feature_info = features[feature_name]

@@ -6,7 +6,7 @@ label_generator:
   function: compute_sr_reversal_label_full_scan
   params:
     max_holding_bars: 50
-    take_profit_r: 2.0
+    take_profit_r: 4.0
     stop_loss_r: 1.0
     combine_mode: long_only
 
