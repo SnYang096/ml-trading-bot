@@ -452,7 +452,7 @@ features:
     compute_func: compute_sqs_hal_high_from_series
     dependencies:
       - atr_f
-      - poc_hal_features_f
+      - poc_hal_features_close_f
     required_columns:
       - high
       - low
@@ -482,7 +482,7 @@ features:
     compute_func: compute_sqs_hal_low_from_series
     dependencies:
       - atr_f
-      - poc_hal_features_f
+      - poc_hal_features_close_f
     required_columns:
       - high
       - low
@@ -1573,8 +1573,9 @@ features:
     description: Trade clustering base aligned stats only (ticks→bar对齐 + 8基础列)，不计算派生列。
     compute_params:
       compute_trade_cluster_derived: false
-      ticks_dir: data/parquet_data # tick 数据目录，用于自动生成 ticks_loader_json
-      lookback_minutes: 60 # 回看分钟数，用于扩展时间范围
+      # 下面两个配置仅用于自动生成 ticks_loader_json，不会作为函数参数传入：
+      ticks_dir: data/parquet_data
+      lookback_minutes: 60
       # ticks_loader_json: 如果为 null，将根据 DataFrame 的时间范围自动生成
     run_sequential: true
     pass_full_df: false

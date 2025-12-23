@@ -339,28 +339,39 @@ class StrategyFeatureLoader:
 
         features = self.feature_deps.get("features", {})
 
-        # 调试信息：检查需要 ticks 的特征是否配置了 ticks_loader_json
-        features_need_ticks = ["vpin_features", "footprint_basic"]
-        for feature_name in requested_features:
-            if feature_name in features_need_ticks and feature_name in features:
-                compute_params = features[feature_name].get("compute_params", {})
-                if "ticks_loader_json" in compute_params:
-                    print(
-                        f"     ✅ {feature_name} has ticks_loader_json in load_features_from_requested"
-                    )
-                else:
-                    print(
-                        f"     ⚠️  {feature_name} does NOT have ticks_loader_json in load_features_from_requested"
-                    )
-                    print(f"     compute_params keys: {list(compute_params.keys())}")
-                    print(
-                        f"     feature_info keys: {list(features[feature_name].keys())}"
-                    )
+        # 将 output column 名（如 dtw_shooting_star_dist_w15）自动映射回对应的特征函数
+        # 例如：如果某列在某个 feature 的 output_columns 中，则用该 feature 名替换。
+        output_col_to_feature: Dict[str, str] = {}
+        for feat_name, feat_info in features.items():
+            for col in feat_info.get("output_columns", [feat_name]):
+                output_col_to_feature[col] = feat_name
+
+        actual_requested: List[str] = []
+        for name in requested_features:
+            if name in features:
+                actual_requested.append(name)
+            elif name in output_col_to_feature:
+                parent = output_col_to_feature[name]
+                if parent not in actual_requested:
+                    actual_requested.append(parent)
+            else:
+                # 保留未知名称（可能是上游已存在的列，如 'atr' 等）
+                actual_requested.append(name)
+
+        # 去重但保持顺序
+        seen = set()
+        dedup_requested: List[str] = []
+        for name in actual_requested:
+            if name in seen:
+                continue
+            seen.add(name)
+            dedup_requested.append(name)
+        actual_requested = dedup_requested
 
         # 确保所有请求特征的 required_columns 都在 DataFrame 中
         # 收集所有需要的 required_columns
         all_required_columns = set()
-        for feature_name in requested_features:
+        for feature_name in actual_requested:
             if feature_name in features:
                 feature_info = features[feature_name]
                 required_columns = feature_info.get("required_columns", [])
@@ -392,7 +403,7 @@ class StrategyFeatureLoader:
         result_df = self.computer.compute_features_parallel(
             result_df,
             features,
-            requested_features,
+            actual_requested,
             fit=fit,
         )
 

@@ -17,6 +17,7 @@ import os
 import pickle
 import os
 import gc
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple, Any
 import pandas as pd
@@ -97,31 +98,148 @@ def _build_call_args(
     Returns:
         (args, kwargs): 调用参数元组和关键字参数字典
     """
-    compute_params = feature_info.get("compute_params", {})
-    required_columns = feature_info.get("required_columns", [])
+    compute_params = feature_info.get("compute_params", {}) or {}
+    column_mappings = feature_info.get("column_mappings", {}) or {}
+
+    # 获取 compute_func 以检查函数签名
+    from src.features.registry import get_compute_func
+    compute_func_name = feature_info.get("compute_func", feature_name)
+    func_sig = None
+    try:
+        compute_func = get_compute_func(compute_func_name)
+        import inspect
+        func_sig = inspect.signature(compute_func)
+        first_param = list(func_sig.parameters.values())[0] if func_sig.parameters else None
+        # 如果第一个参数是 'df' 且没有显式配置 positional_params，自动添加
+        auto_df_positional = (
+            first_param is not None
+            and first_param.name == "df"
+            and first_param.kind != inspect.Parameter.KEYWORD_ONLY
+            and "positional_params" not in feature_info
+        )
+    except Exception:
+        auto_df_positional = False
+        compute_func = None
 
     # 构建位置参数（按顺序）
     args = []
-    for param_name in feature_info.get("positional_params", []):
-        if param_name == "df":
-            args.append(df)
-        elif param_name in df.columns:
-            args.append(df[param_name])
-        elif param_name in compute_params:
-            args.append(compute_params[param_name])
-        else:
-            raise KeyError(
-                f"Column '{param_name}' required for parameter '{param_name}' not found in DataFrame"
-            )
+    positional_params = feature_info.get("positional_params", [])
+    if auto_df_positional:
+        # 自动检测：如果函数第一个参数是 df，且没有显式配置，自动添加
+        args.append(df)
+    else:
+        for param_name in positional_params:
+            if param_name == "df":
+                args.append(df)
+            elif param_name in df.columns:
+                args.append(df[param_name])
+            elif param_name in compute_params:
+                args.append(compute_params[param_name])
+            else:
+                raise KeyError(
+                    f"Column '{param_name}' required for parameter '{param_name}' not found in DataFrame"
+                )
 
-    # 构建关键字参数
-    kwargs = {}
+    # 构建关键字参数（来自 compute_params）
+    # 排除非函数参数的配置项（如 ticks_dir, lookback_minutes，这些只用于自动生成 ticks_loader_json）
+    excluded_params = {"ticks_dir", "lookback_minutes"}
+    kwargs: Dict[str, Any] = {}
     for param_name, param_value in compute_params.items():
+        if param_name in excluded_params:
+            # 跳过这些配置项，它们不是函数参数
+            continue
         if param_name not in feature_info.get("positional_params", []):
-            if isinstance(param_value, str) and param_value in df.columns:
+            # 对于 compute_params，我们保持保守策略：大多数字符串参数是枚举/配置，
+            # 而不是列名（如 price_col="close"），真正的列映射由 column_mappings 处理。
+            # 只有当参数名本身就是列名时，才从 DataFrame 提取对应列。
+            if isinstance(param_value, str) and param_name in df.columns:
                 kwargs[param_name] = df[param_name]
             else:
                 kwargs[param_name] = param_value
+
+    # 自动生成 ticks_loader_json（如果函数需要 ticks_loader_json/ticks，且未显式提供）
+    try:
+        needs_ticks_loader = False
+        if func_sig is not None:
+            needs_ticks_loader = (
+                "ticks_loader_json" in func_sig.parameters
+                or "ticks" in func_sig.parameters
+            )
+        if needs_ticks_loader:
+            tlj = compute_params.get("ticks_loader_json")
+            if tlj is None and isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+                # 尝试自动生成：调用 list_tick_files 获取 tick 文件列表，再序列化
+                from src.data_tools.tick_loader import (
+                    list_tick_files,
+                    serialize_tick_loader_params,
+                )
+
+                ticks_dir = compute_params.get("ticks_dir", "data/parquet_data")
+                lookback_minutes = compute_params.get("lookback_minutes", 60)
+                start_ts = str(df.index.min())
+                end_ts = str(df.index.max())
+
+                symbol = None
+                if "_symbol" in df.columns:
+                    sym_series = df["_symbol"].dropna()
+                    if len(sym_series) > 0:
+                        symbol = str(sym_series.iloc[0])
+                elif "symbol" in df.columns:
+                    sym_series = df["symbol"].dropna()
+                    if len(sym_series) > 0:
+                        symbol = str(sym_series.iloc[0])
+
+                try:
+                    tick_files = list_tick_files(
+                        symbol=symbol or "",
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        ticks_dir=ticks_dir,
+                        lookback_minutes=lookback_minutes,
+                    )
+                    if tick_files:
+                        tlj_obj = {
+                            "symbol": symbol or "",
+                            "tick_files": tick_files,
+                            "start_ts": start_ts,
+                            "end_ts": end_ts,
+                            "lookback_minutes": lookback_minutes,
+                        }
+                        tlj = serialize_tick_loader_params(tlj_obj)
+                except Exception:
+                    tlj = None
+
+            if tlj is not None:
+                kwargs["ticks_loader_json"] = tlj
+    except Exception:
+        pass
+
+    # 处理 column_mappings：将 DataFrame 指定列注入到函数参数
+    for param_name, source in column_mappings.items():
+        if isinstance(source, str):
+            col_name = source
+            if col_name not in df.columns:
+                raise KeyError(
+                    f"Column '{col_name}' required for parameter '{param_name}' not "
+                    f"found in DataFrame when building call args for feature "
+                    f"'{feature_name}'"
+                )
+            kwargs[param_name] = df[col_name]
+        elif isinstance(source, list):
+            missing = [col for col in source if col not in df.columns]
+            if missing:
+                raise KeyError(
+                    f"Columns {missing} required for parameter '{param_name}' not "
+                    f"found in DataFrame when building call args for feature "
+                    f"'{feature_name}'"
+                )
+            # 对于多列映射，按列名子 DataFrame 传入
+            kwargs[param_name] = df[source]
+        else:
+            raise ValueError(
+                f"Unsupported column mapping type for parameter '{param_name}': "
+                f"{type(source)}"
+            )
 
     return (tuple(args), kwargs)
 
@@ -260,7 +378,16 @@ class FeatureComputer:
 
         # Debug stats (last run). Callers can drain via drain_debug_stats().
         # - index_mismatch: feature_name -> {"extra": int, "missing": int}
-        self._debug_stats: Dict[str, Any] = {"index_mismatch": {}}
+        # - cache_hits: {"memory": int, "monthly": int, "memory_features": List[str], "monthly_features": List[str]}
+        self._debug_stats: Dict[str, Any] = {
+            "index_mismatch": {},
+            "cache_hits": {
+                "memory": 0,
+                "monthly": 0,
+                "memory_features": [],
+                "monthly_features": [],
+            },
+        }
 
         # 缓存版本控制（用于失效旧缓存）
         # 当特征计算逻辑改变时，更新此版本号以失效旧缓存
@@ -291,7 +418,15 @@ class FeatureComputer:
     def drain_debug_stats(self) -> Dict[str, Any]:
         """Return and reset debug stats from the last compute_features_parallel run."""
         stats = self._debug_stats.copy()
-        self._debug_stats = {"index_mismatch": {}}
+        self._debug_stats = {
+            "index_mismatch": {},
+            "cache_hits": {
+                "memory": 0,
+                "monthly": 0,
+                "memory_features": [],
+                "monthly_features": [],
+            },
+        }
         return stats
 
     def _get_df_hash(self, df: pd.DataFrame) -> str:
@@ -484,6 +619,9 @@ class FeatureComputer:
                 )
                 monthly_results[month_str] = cached_result
                 cached_months += 1
+                # 记录月度缓存命中（每个特征只记录一次）
+                if feature_name not in self._debug_stats["cache_hits"]["monthly_features"]:
+                    self._debug_stats["cache_hits"]["monthly_features"].append(feature_name)
             else:
                 # 计算特征
                 print(f"       🔸 Computing {feature_name} for {month_str}...")
@@ -640,8 +778,10 @@ class FeatureComputer:
         # 打印缓存统计
         if cached_months > 0 or computed_months > 0:
             print(
-                f"       💾 Used {cached_months} cached months, computed {computed_months} new months"
+                f"       💾 [monthly] Used {cached_months} cached months, computed {computed_months} new months"
             )
+            # 更新月度缓存命中总数（按月份数累加）
+            self._debug_stats["cache_hits"]["monthly"] += cached_months
 
         return result_df
 
@@ -740,10 +880,16 @@ class FeatureComputer:
                     continue
 
                 feature_info = features[feature_name]
-                compute_func = get_compute_func(feature_name)
+                # 优先使用 feature_dependencies.yaml 中显式配置的 compute_func，
+                # 否则退回到以 feature_name 作为注册名（兼容旧配置）。
+                compute_func_name = feature_info.get("compute_func", feature_name)
+                compute_func = get_compute_func(compute_func_name)
 
                 if compute_func is None:
-                    print(f"     ⚠️  Skipping {feature_name}: compute function not found")
+                    print(
+                        f"     ⚠️  Skipping {feature_name}: compute function "
+                        f"'{compute_func_name}' not found in registry"
+                    )
                     continue
 
                 # 检查内存缓存：使用 (df_signature, feature_name) 作为键
@@ -753,9 +899,13 @@ class FeatureComputer:
                     cache_key = (current_df_sig, feature_name)
                     if cache_key in self.memory_cache:
                         print(
-                            f"     💾 Using memory cache for {feature_name} "
+                            f"     💾 [memory] Using memory cache for {feature_name} "
                             f"(df_sig={current_df_sig[0][:8]}...)"
                         )
+                        # 记录内存缓存命中
+                        self._debug_stats["cache_hits"]["memory"] += 1
+                        if feature_name not in self._debug_stats["cache_hits"]["memory_features"]:
+                            self._debug_stats["cache_hits"]["memory_features"].append(feature_name)
                         cached_result = self.memory_cache[cache_key]
 
                         # SAFETY: cached results must match current index; otherwise it will
@@ -829,20 +979,20 @@ class FeatureComputer:
                         available_gb = (
                             psutil.virtual_memory().available / 1024**3
                         )
-                        if len(df) < 10000 or available_gb > 10:
+                        if len(result_df) < 10000 or available_gb > 10:
                             print(
-                                f"     ⚡ Using full-data computation (memory: {available_gb:.1f}GB available, data: {len(df)} rows)"
+                                f"     ⚡ Using full-data computation (memory: {available_gb:.1f}GB available, data: {len(result_df)} rows)"
                             )
                             # 直接计算全量数据（不使用月度缓存）
                             call_args, call_kwargs = _build_call_args(
-                                feature_info, df, feature_name
+                                feature_info, result_df, feature_name
                             )
                             combined_result = compute_func(*call_args, **call_kwargs)
                         else:
                             # 使用月度缓存
                             combined_result = self._compute_and_cache_monthly(
                                 feature_name,
-                                df,
+                                result_df,
                                 compute_params,
                                 feature_info,
                                 compute_func,
@@ -851,7 +1001,7 @@ class FeatureComputer:
                         # 使用月度缓存
                         combined_result = self._compute_and_cache_monthly(
                             feature_name,
-                            df,
+                            result_df,
                             compute_params,
                             feature_info,
                             compute_func,
@@ -907,7 +1057,7 @@ class FeatureComputer:
                 else:
                     # 不使用月度缓存，直接计算
                     call_args, call_kwargs = _build_call_args(
-                        feature_info, df, feature_name
+                        feature_info, result_df, feature_name
                     )
                     computed_result = compute_func(*call_args, **call_kwargs)
 

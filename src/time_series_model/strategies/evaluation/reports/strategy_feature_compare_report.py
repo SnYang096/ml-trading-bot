@@ -520,6 +520,65 @@ def _build_debug_report_html(
                     f"<li><strong>note:</strong> {str(kpol.get('note','')).strip() or 'N/A'}</li>"
                     "</ul></div>"
                 )
+
+            # Cache hit statistics
+            fdbg_train = (diagnostics.get("feature_debug_stats") or {}).get(
+                "train"
+            ) or {}
+            fdbg_test = (diagnostics.get("feature_debug_stats") or {}).get("test") or {}
+            cache_hits_train = (
+                (fdbg_train.get("cache_hits") or {})
+                if isinstance(fdbg_train, dict)
+                else {}
+            )
+            cache_hits_test = (
+                (fdbg_test.get("cache_hits") or {})
+                if isinstance(fdbg_test, dict)
+                else {}
+            )
+
+            # Aggregate cache hits across train/test
+            total_memory_hits = int(cache_hits_train.get("memory", 0) or 0) + int(
+                cache_hits_test.get("memory", 0) or 0
+            )
+            total_monthly_hits = int(cache_hits_train.get("monthly", 0) or 0) + int(
+                cache_hits_test.get("monthly", 0) or 0
+            )
+            memory_features = list(
+                set(
+                    (cache_hits_train.get("memory_features") or [])
+                    + (cache_hits_test.get("memory_features") or [])
+                )
+            )
+            monthly_features = list(
+                set(
+                    (cache_hits_train.get("monthly_features") or [])
+                    + (cache_hits_test.get("monthly_features") or [])
+                )
+            )
+
+            if (
+                total_memory_hits > 0
+                or total_monthly_hits > 0
+                or memory_features
+                or monthly_features
+            ):
+                section_parts.append("<h3>💾 Cache Hit Statistics</h3>")
+                section_parts.append(
+                    "<div class='info-box'>"
+                    "<p><strong>Cache Performance Summary:</strong></p>"
+                    "<ul>"
+                    f"<li><strong>Memory cache hits:</strong> {total_memory_hits} feature(s) "
+                    f"({len(memory_features)} unique: {', '.join(memory_features[:10])}"
+                    f"{'...' if len(memory_features) > 10 else ''})</li>"
+                    f"<li><strong>Monthly cache hits:</strong> {total_monthly_hits} month(s) "
+                    f"({len(monthly_features)} unique features: {', '.join(monthly_features[:10])}"
+                    f"{'...' if len(monthly_features) > 10 else ''})</li>"
+                    "<li><strong>Note:</strong> Memory cache = same-run reuse (zero I/O). "
+                    "Monthly cache = cross-run reuse (disk I/O). Both are beneficial for performance.</li>"
+                    "</ul>"
+                    "</div>"
+                )
         except Exception:
             pass
 
