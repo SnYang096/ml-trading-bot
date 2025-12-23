@@ -1,14 +1,16 @@
 """
-并行特征计算器
+特征计算器（顺序 + 缓存）
 
-支持：
-1. 按依赖层级并行计算
-2. 内存缓存
-3. 磁盘缓存
+当前实现**强制顺序执行**特征计算，并依赖：
+- 内存缓存（同一 DataFrame 签名内复用）
+- 磁盘缓存 / monthly 缓存（跨运行复用，支持按月增量）
+
+说明：
+- 文件名 `parallel_computer.py` 属于历史遗留（旧并行实现已移除）。
+- 为了减少复杂度与大 DataFrame 序列化/复制风险，已移除多进程/多线程执行路径。
 """
 
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import hashlib
 import os
@@ -352,22 +354,15 @@ def _compute_single_feature_worker_monthly(
     ticks_loader_json: Optional[str] = None,
 ) -> Tuple[str, bytes]:
     """
-    工作进程函数：按月计算单个特征
+    Legacy parallel worker (DEPRECATED).
 
-    Args:
-        feature_name: 特征名
-        feature_info: 特征配置信息
-        df_bytes: DataFrame 的 pickle 字节
-        fit: 是否拟合
-        monthly_cache_dir: 按月缓存目录
-
-    Returns:
-        (feature_name, result_df_bytes)
+    This project intentionally runs feature computation sequentially and relies on
+    disk/monthly caches for performance and reproducibility. Multi-process / multi-thread
+    execution paths were removed to reduce complexity and avoid large-DataFrame pickling/copy hazards.
     """
-    import pandas as pd
-    from src.features.registry import get_compute_func
-    from pathlib import Path
-    import hashlib
+    raise RuntimeError(
+        "_compute_single_feature_worker_monthly is deprecated; feature computation is sequential-only."
+    )
 
     # 反序列化 DataFrame
     df = pickle.loads(df_bytes)
@@ -699,7 +694,7 @@ def _compute_single_feature_worker_monthly(
     return (feature_name, pickle.dumps(result_df))
 
 
-class ParallelFeatureComputer:
+class FeatureComputer:
     """
     并行特征计算器
 
@@ -715,9 +710,9 @@ class ParallelFeatureComputer:
         use_disk_cache: bool = True,
         use_memory_cache: bool = True,
         max_workers: Optional[int] = None,
-        parallel_backend: str = "process",  # "process", "thread"
+        parallel_backend: str = "process",  # deprecated (sequential-only)
         use_monthly_cache: bool = True,  # 是否使用按月缓存
-        enable_parallel: bool = False,  # default sequential for stability/unified live flow
+        enable_parallel: bool = False,  # deprecated (sequential-only)
     ):
         """
         Args:
@@ -736,62 +731,14 @@ class ParallelFeatureComputer:
         self.use_memory_cache = use_memory_cache
         self.use_monthly_cache = use_monthly_cache
 
-        # Default: run feature-level execution sequentially to avoid wide-DF pickling/copies
-        # (better aligned with live trading feature update flow).
-        enable_parallel_env = os.environ.get("ENABLE_FEATURE_PARALLEL", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        force_single_process = os.environ.get("FORCE_SINGLE_PROCESS", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        self.enable_parallel = (
-            enable_parallel
-            or enable_parallel_env
-            or (max_workers is not None and max_workers > 1)
-        )
-
-        if not self.enable_parallel:
-            # Fully sequential mode at feature level (no executor, no pickling df)
-            self.max_workers = 1
-            self.parallel_backend = "sequential"
-            self.executor = None
-            self._print_memory_info()
-            print(
-                "   🔧 Feature-level parallelism disabled (default). Running sequentially."
-            )
-        else:
-            # Parallel mode: decide workers (still supports FORCE_SINGLE_PROCESS)
-            if max_workers is None:
-                if force_single_process:
-                    print("   🔧 Force single-process mode (FORCE_SINGLE_PROCESS=1)")
-                    self.max_workers = 1
-                else:
-                    self._print_memory_info()
-                    self.max_workers = self._calculate_optimal_workers()
-            else:
-                self.max_workers = max_workers
-                self._print_memory_info()
-                print(f"   🔧 Using {self.max_workers} worker(s) (manually specified)")
-            self.parallel_backend = parallel_backend
-            # If only 1 worker, don't start a pool (still sequential)
-            if self.max_workers == 1 and parallel_backend == "process":
-                print(
-                    "   🔧 Detected single-worker process backend; "
-                    "disabling ProcessPoolExecutor and running features sequentially "
-                    "in the main process to reduce memory usage."
-                )
-                self.executor = None
-            else:
-                if parallel_backend == "process":
-                    self.executor = ProcessPoolExecutor(max_workers=self.max_workers)
-                elif parallel_backend == "thread":
-                    self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
-                else:
-                    self.executor = None
+        # Simplified design: always run sequentially at the feature level.
+        # Performance is achieved via disk/monthly caches rather than process/thread pools.
+        self.enable_parallel = False
+        self.max_workers = 1
+        self.parallel_backend = "sequential"
+        self.executor = None
+        self._print_memory_info()
+        print("   🔧 Feature-level parallelism disabled. Running sequentially.")
 
         # 内存缓存
         self.memory_cache = {}
@@ -802,12 +749,12 @@ class ParallelFeatureComputer:
 
         # 缓存版本控制（用于失效旧缓存）
         # 当特征计算逻辑改变时，更新此版本号以失效旧缓存
-        # v5: 改进错误处理和流程验证，添加索引对齐检查
-        self.cache_version = "v5"
+        # v6: monthly cache key includes a per-DF signature to avoid cross-run collisions
+        self.cache_version = "v6"
 
         # 在初始化完成后再次打印内存信息（确保可见）
         print("=" * 60)
-        print("🔧 ParallelFeatureComputer Initialized")
+        print("🔧 FeatureComputer Initialized")
         self._print_memory_info()
         print(f"   🔧 Workers: {self.max_workers}, Backend: {self.parallel_backend}")
         print("=" * 60)
@@ -988,12 +935,38 @@ class ParallelFeatureComputer:
 
         return monthly_dfs
 
+    @staticmethod
+    def _get_df_signature(df: pd.DataFrame) -> str:
+        """
+        Build a cheap but robust signature for monthly cache keys.
+        Purpose: prevent collisions across symbols/timeframes/ranges that share the same month_key.
+        """
+        if df is None or df.empty:
+            return "EMPTY"
+        try:
+            start_meta = str(df.index[0])
+            end_meta = str(df.index[-1])
+            n = len(df)
+            cols = ",".join(list(df.columns))
+            cols_sig = hashlib.md5(cols.encode()).hexdigest()[:10]
+            # Include a tiny sample of values (if present) to further reduce collisions
+            extra_parts = []
+            for c in ("close", "volume"):
+                if c in df.columns and n > 0:
+                    extra_parts.append(f"{c}0={df[c].iloc[0]}")
+                    extra_parts.append(f"{c}1={df[c].iloc[-1]}")
+            extra = "|".join(extra_parts)
+            return f"{start_meta}|{end_meta}|n={n}|cols={cols_sig}|{extra}"
+        except Exception:
+            return "NO_SIG"
+
     def _get_monthly_cache_key(
         self,
         feature_name: str,
         month_key: str,
         params: Dict,
         feature_info: Optional[Dict] = None,
+        df_sig: str = "",
     ) -> str:
         """生成按月缓存的键"""
         params_str = str(sorted(params.items()))
@@ -1003,8 +976,11 @@ class ParallelFeatureComputer:
             output_cols_str = str(sorted(output_cols))
         # 使用实例的缓存版本（而不是硬编码）
         # v5: 改进错误处理和流程验证，添加索引对齐检查
-        code_version = getattr(self, "cache_version", "v5")
-        key_str = f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_{code_version}"
+        code_version = getattr(self, "cache_version", "v6")
+        key_str = (
+            f"{feature_name}_monthly_{month_key}_{params_str}_{output_cols_str}_"
+            f"{df_sig}_{code_version}"
+        )
         return hashlib.md5(key_str.encode()).hexdigest()
 
     def _load_monthly_cache(self, cache_key: str) -> Optional[pd.DataFrame | pd.Series]:
@@ -1063,7 +1039,11 @@ class ParallelFeatureComputer:
                 return None
 
             monthly_cache_key = self._get_monthly_cache_key(
-                feature_name, month_key, compute_params, feature_info
+                feature_name,
+                month_key,
+                compute_params,
+                feature_info,
+                df_sig=self._get_df_signature(month_df),
             )
             cached_result = self._load_monthly_cache(monthly_cache_key)
 
@@ -1137,7 +1117,11 @@ class ParallelFeatureComputer:
             if len(monthly_dfs) <= 1:
                 # 无法按月拆分，使用全量计算（仍然写入/读取 monthly cache 的 "all" 键）
                 monthly_cache_key = self._get_monthly_cache_key(
-                    feature_name, "all", compute_params, feature_info
+                    feature_name,
+                    "all",
+                    compute_params,
+                    feature_info,
+                    df_sig=self._get_df_signature(df),
                 )
                 cached_all = self._load_monthly_cache(monthly_cache_key)
                 if cached_all is not None:
@@ -1206,7 +1190,11 @@ class ParallelFeatureComputer:
             if month_key == "all":
                 # 无法按月拆分或禁用按月拆分，使用全量计算（但不要错过缓存）
                 monthly_cache_key = self._get_monthly_cache_key(
-                    feature_name, "all", compute_params, feature_info
+                    feature_name,
+                    "all",
+                    compute_params,
+                    feature_info,
+                    df_sig=self._get_df_signature(df),
                 )
                 cached_all = self._load_monthly_cache(monthly_cache_key)
                 if cached_all is not None:
@@ -1281,7 +1269,11 @@ class ParallelFeatureComputer:
 
             # 检查缓存
             monthly_cache_key = self._get_monthly_cache_key(
-                feature_name, month_key, compute_params, feature_info
+                feature_name,
+                month_key,
+                compute_params,
+                feature_info,
+                df_sig=self._get_df_signature(month_df),
             )
             cached_result = self._load_monthly_cache(monthly_cache_key)
 
@@ -1627,7 +1619,7 @@ class ParallelFeatureComputer:
         for level in sorted(levels.keys()):
             level_features = levels[level]
             print(
-                f"   🔄 Level {level}: Computing {len(level_features)} features in parallel..."
+                f"   🔄 Level {level}: Computing {len(level_features)} features sequentially..."
             )
 
             # 记录内存使用情况（在每层开始前）
@@ -1884,37 +1876,13 @@ class ParallelFeatureComputer:
                     print(f"     ✅ {feature_name}: done via monthly cache", flush=True)
                     continue
 
-                run_sequential = (
-                    feature_info.get("run_sequential", False) or not self.executor
+                # Sequential-only: always compute in-process.
+                print(
+                    f"     🔸 Running {feature_name} sequentially (monthly)",
+                    flush=True,
                 )
-
-                # 提交任务
-                if not run_sequential:
-                    # 并行计算：按月计算并缓存
-                    print(
-                        f"     🔸 Computing {feature_name} in parallel (monthly)...",
-                        flush=True,
-                    )
-                    df_bytes = pickle.dumps(result_df)
-                    # 从 compute_params 中获取 ticks_loader_json
-                    ticks_loader_json = compute_params.get("ticks_loader_json")
-                    future = self.executor.submit(
-                        _compute_single_feature_worker_monthly,
-                        feature_name,
-                        feature_info,
-                        df_bytes,
-                        fit,
-                        str(self.monthly_cache_dir) if self.monthly_cache_dir else None,
-                        ticks_loader_json,
-                    )
-                    futures.append(future)
-                else:
-                    print(
-                        f"     🔸 Running {feature_name} sequentially (monthly)",
-                        flush=True,
-                    )
-                    # 串行计算（或被标记为顺序执行）：按月计算并缓存
-                    try:
+                # 串行计算：按月计算并缓存
+                try:
                         compute_func_name = feature_info["compute_func"]
                         compute_func = get_compute_func(compute_func_name)
 
@@ -2073,35 +2041,35 @@ class ParallelFeatureComputer:
                             self.memory_cache[feature_name] = computed_result_for_cache
 
                         print(f"     ✅ Computed {feature_name}")
-                    except Exception as e:
-                        print(f"     ❌ Error computing {feature_name}: {e}")
-                        import traceback
+                except Exception as e:
+                    print(f"     ❌ Error computing {feature_name}: {e}")
+                    import traceback
 
-                        # 提供更详细的错误信息
-                        error_type = type(e).__name__
-                        error_msg = str(e)
-                        print(f"        Error type: {error_type}")
-                        print(f"        Error message: {error_msg}")
-                        # 打印完整的堆栈跟踪
-                        print(f"        Full traceback:")
-                        traceback.print_exc()
-                        # 如果是特征计算相关的错误，提供诊断信息
-                        if (
-                            "ticks_loader_json" in error_msg.lower()
-                            or "tick" in error_msg.lower()
-                        ):
-                            print(
-                                f"        💡 Tip: This might be related to tick data loading. "
-                                f"Check if ticks_loader_json is properly configured."
-                            )
-                        elif (
-                            "required_columns" in error_msg.lower()
-                            or "column" in error_msg.lower()
-                        ):
-                            print(
-                                f"        💡 Tip: This might be related to missing columns. "
-                                f"Check if all required_columns are present in the input DataFrame."
-                            )
+                    # 提供更详细的错误信息
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    print(f"        Error type: {error_type}")
+                    print(f"        Error message: {error_msg}")
+                    # 打印完整的堆栈跟踪
+                    print(f"        Full traceback:")
+                    traceback.print_exc()
+                    # 如果是特征计算相关的错误，提供诊断信息
+                    if (
+                        "ticks_loader_json" in error_msg.lower()
+                        or "tick" in error_msg.lower()
+                    ):
+                        print(
+                            f"        💡 Tip: This might be related to tick data loading. "
+                            f"Check if ticks_loader_json is properly configured."
+                        )
+                    elif (
+                        "required_columns" in error_msg.lower()
+                        or "column" in error_msg.lower()
+                    ):
+                        print(
+                            f"        💡 Tip: This might be related to missing columns. "
+                            f"Check if all required_columns are present in the input DataFrame."
+                        )
 
             # 等待所有任务完成（分批处理，避免内存峰值）
             completed_count = 0
@@ -2112,147 +2080,9 @@ class ParallelFeatureComputer:
                     flush=True,
                 )
 
-            for future in as_completed(futures):
-                try:
-                    feature_name, result_df_bytes = future.result()
-                    completed_count += 1
-                    print(
-                        f"     📦 Received result for {feature_name} ({completed_count}/{total_futures})...",
-                        flush=True,
-                    )
-                    feature_df = pickle.loads(result_df_bytes)
-                    feature_df = self._align_to_base_index(
-                        feature_name, feature_df, base_index
-                    )
-
-                    # 打印 feature_df 的详细信息
-                    if isinstance(feature_df, pd.DataFrame):
-                        print(
-                            f"        📊 feature_df shape: {feature_df.shape}, columns: {len(feature_df.columns)}"
-                        )
-                        print(
-                            f"        📋 feature_df columns: {list(feature_df.columns)[:15]}..."
-                        )
-                        if feature_df.columns.duplicated().any():
-                            dup_cols = feature_df.columns[
-                                feature_df.columns.duplicated()
-                            ].tolist()
-                            print(
-                                f"        ⚠️  feature_df has duplicate columns: {dup_cols}"
-                            )
-                    elif isinstance(feature_df, pd.Series):
-                        print(
-                            f"        📊 feature_df is Series, length: {len(feature_df)}, name: {feature_df.name}"
-                        )
-
-                    # 每完成 5 个特征，检查一次内存并清理
-                    if completed_count % 5 == 0:
-                        self._cleanup_memory()
-
-                    # 合并结果
-                    # 如果 feature_df 是 DataFrame，合并新列
-                    if isinstance(feature_df, pd.DataFrame):
-                        # 处理重复列名：如果有重复列，保留第一个
-                        if feature_df.columns.duplicated().any():
-                            dup_cols = feature_df.columns[
-                                feature_df.columns.duplicated()
-                            ].tolist()
-                            print(
-                                f"        🔧 Removing duplicate columns from feature_df: {dup_cols}"
-                            )
-                            feature_df = feature_df.loc[
-                                :, ~feature_df.columns.duplicated()
-                            ]
-
-                        print(
-                            f"        📋 result_df columns before merge: {len(result_df.columns)}"
-                        )
-                        new_cols = [
-                            c for c in feature_df.columns if c not in result_df.columns
-                        ]
-                        existing_cols = [
-                            c for c in feature_df.columns if c in result_df.columns
-                        ]
-
-                        # 处理已存在的列：直接丢弃新列（重名的应该是一样的，不需要合并）
-                        if existing_cols:
-                            print(
-                                f"        ⏭️  Skipping {len(existing_cols)} existing columns (dropping duplicates): {existing_cols[:10]}..."
-                            )
-                            # 直接跳过，不合并（节省内存和时间）
-
-                        # 添加新列
-                        if new_cols:
-                            print(
-                                f"        ➕ Adding {len(new_cols)} new columns: {new_cols[:10]}..."
-                            )
-                            # Ensure both DataFrames are aligned to base_index before concat
-                            feature_aligned = feature_df[new_cols].reindex(base_index)
-                            result_df_aligned = result_df.reindex(base_index)
-                            result_df = pd.concat(
-                                [result_df_aligned, feature_aligned], axis=1
-                            )
-                            print(
-                                f"        ✅ result_df columns after merge: {len(result_df.columns)}"
-                            )
-                            # 释放临时对象
-                            del feature_df, feature_aligned, result_df_aligned
-                            import gc
-
-                            gc.collect()
-                        elif existing_cols:
-                            print(
-                                f"        ✅ Merged existing columns using combine_first"
-                            )
-                        else:
-                            print(f"        ℹ️  No new columns to add")
-                    # 如果 feature_df 是 Series，添加到 DataFrame
-                    elif isinstance(feature_df, pd.Series):
-                        if feature_df.name and feature_df.name not in result_df.columns:
-                            result_df[feature_df.name] = feature_df
-                        elif feature_name not in result_df.columns:
-                            result_df[feature_name] = feature_df
-
-                    # 验证并行计算的特征质量
-                    self._validate_cache_quality(
-                        feature_df, feature_name, cache_type="computed"
-                    )
-
-                    # 保存内存缓存
-                    if self.use_memory_cache:
-                        self.memory_cache[feature_name] = feature_df
-
-                    print(f"     ✅ Computed {feature_name}")
-                except Exception as e:
-                    print(f"     ❌ Error in parallel computation: {e}")
-                    import traceback
-
-                    print(f"        Error type: {type(e).__name__}")
-                    print(f"        Error message: {str(e)}")
-                    print(f"        Feature: {feature_name}")
-                    # 打印 feature_df 的信息（如果可用）
-                    try:
-                        if "feature_df" in locals():
-                            if isinstance(feature_df, pd.DataFrame):
-                                print(f"        feature_df shape: {feature_df.shape}")
-                                print(
-                                    f"        feature_df columns: {list(feature_df.columns)[:20]}..."
-                                )
-                                if feature_df.columns.duplicated().any():
-                                    dup_cols = feature_df.columns[
-                                        feature_df.columns.duplicated()
-                                    ].tolist()
-                                    print(
-                                        f"        feature_df duplicate columns: {dup_cols}"
-                                    )
-                            elif isinstance(feature_df, pd.Series):
-                                print(
-                                    f"        feature_df is Series, length: {len(feature_df)}, name: {feature_df.name}"
-                                )
-                    except Exception:
-                        pass
-                    print(f"        Full traceback:")
-                    traceback.print_exc()
+            # Sequential-only: no futures to wait for (feature-level parallelism removed).
+            for _future in []:
+                pass
 
             # 每层完成后清理内存
             self._cleanup_memory()
@@ -2477,8 +2307,4 @@ class ParallelFeatureComputer:
 
     def __del__(self):
         """清理资源"""
-        if hasattr(self, "executor") and self.executor:
-            try:
-                self.executor.shutdown(wait=True)  # ensure executor cleaned up
-            except Exception:
-                pass  # 忽略清理时的错误
+        return

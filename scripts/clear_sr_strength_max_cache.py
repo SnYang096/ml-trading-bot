@@ -15,7 +15,7 @@ import pickle
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
-from src.features.loader.parallel_computer import ParallelFeatureComputer
+from src.features.loader.feature_computer import FeatureComputer
 
 
 def clear_sr_strength_max_cache():

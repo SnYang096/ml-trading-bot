@@ -40,9 +40,9 @@ def check_dtw_nan_reason():
     features_config = feature_loader.get_features_config()
 
     # 需要先计算 sr_strength_max 来获得 dist_to_nearest_sr
-    from src.features.loader.parallel_computer import ParallelFeatureComputer
+    from src.features.loader.feature_computer import FeatureComputer
 
-    computer = ParallelFeatureComputer(
+    computer = FeatureComputer(
         use_monthly_cache=True,
         use_memory_cache=True,
     )

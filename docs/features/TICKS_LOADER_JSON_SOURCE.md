@@ -150,10 +150,10 @@ def _build_call_args(feature_info, df, ticks_loader_json=None, all_features=None
 
 ### 方案 3：在并行计算器中共享
 
-在 `ParallelFeatureComputer` 中维护一个全局的 `ticks_loader_json`：
+在 `FeatureComputer` 中维护一个全局的 `ticks_loader_json`：
 
 ```python
-class ParallelFeatureComputer:
+class FeatureComputer:
     def __init__(self, ...):
         self.ticks_loader_json = None  # 全局共享
     

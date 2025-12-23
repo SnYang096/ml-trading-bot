@@ -110,9 +110,9 @@ def test_vpin_ticks_configuration():
 
     # 尝试计算 VPIN 特征
     try:
-        from src.features.loader.parallel_computer import ParallelFeatureComputer
+        from src.features.loader.feature_computer import FeatureComputer
 
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir="cache/features",
             use_disk_cache=False,  # 禁用磁盘缓存以便测试
             use_memory_cache=False,  # 禁用内存缓存以便测试
@@ -282,7 +282,7 @@ def test_strategy_feature_compare_flow():
     print(f"  使用 feature_loader.load_features_from_requested")
 
     try:
-        from src.features.loader.parallel_computer import ParallelFeatureComputer
+        from src.features.loader.feature_computer import FeatureComputer
 
         # 检查 feature_loader 的 computer 是否使用相同的配置
         print(

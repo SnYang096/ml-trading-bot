@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.features.loader.parallel_computer import ParallelFeatureComputer  # noqa: E402
+from src.features.loader.feature_computer import FeatureComputer  # noqa: E402
 
 
 def test_volume_profile_vpvr_smoke_and_narrow() -> None:
@@ -40,12 +40,10 @@ def test_volume_profile_vpvr_smoke_and_narrow() -> None:
     cfg = yaml.safe_load(Path("config/feature_dependencies.yaml").read_text())
     features = cfg["features"]
 
-    pfc = ParallelFeatureComputer(
+    pfc = FeatureComputer(
         cache_dir=None,
         use_disk_cache=False,
         use_memory_cache=False,
-        max_workers=1,
-        parallel_backend="thread",
         use_monthly_cache=False,
     )
 

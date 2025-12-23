@@ -1,7 +1,7 @@
 """
 Lightweight integration checks for:
 
-1. ParallelFeatureComputer wide-table handling:
+1. FeatureComputer wide-table handling:
    - Ensure that only output_columns are materialized/merged even if the
      underlying compute_func returns many extra columns.
 
@@ -26,7 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.features.loader.parallel_computer import ParallelFeatureComputer  # type: ignore  # noqa: E402
+from src.features.loader.feature_computer import FeatureComputer  # type: ignore  # noqa: E402
 
 
 def _dummy_compute_wide_feature(df: pd.DataFrame) -> pd.DataFrame:
@@ -47,7 +47,7 @@ def _dummy_compute_wide_feature(df: pd.DataFrame) -> pd.DataFrame:
 def _dummy_compute_ratio(df: pd.DataFrame) -> pd.DataFrame:
     """
     Second-stage feature that depends on bb_width and again returns a wide
-    DataFrame. The ParallelFeatureComputer must keep only bb_width_ratio.
+    DataFrame. The FeatureComputer must keep only bb_width_ratio.
     """
     out = pd.DataFrame(index=df.index)
     if "bb_width" in df.columns:
@@ -57,7 +57,7 @@ def _dummy_compute_ratio(df: pd.DataFrame) -> pd.DataFrame:
         out["bb_width_ratio"] = (bw / close).fillna(0.0)
     else:
         out["bb_width_ratio"] = 0.0
-    # add some junk columns that should be dropped by ParallelFeatureComputer
+    # add some junk columns that should be dropped by FeatureComputer
     out["junk_a"] = 1.0
     out["junk_b"] = 2.0
     return out
@@ -71,7 +71,7 @@ def test_parallel_feature_computer_wide_table_merge() -> None:
     - Define two fake features:
         * wide_bb_width: returns [bb_width] + many extra columns.
         * bb_width_ratio: depends on wide_bb_width, returns [bb_width_ratio]+junk.
-    - Wire them through ParallelFeatureComputer._compute_and_cache_monthly
+    - Wire them through FeatureComputer._compute_and_cache_monthly
       and ensure that:
         * The merged result for wide_bb_width only has ['bb_width'].
         * The merged result for bb_width_ratio only has ['bb_width_ratio'].
@@ -80,7 +80,7 @@ def test_parallel_feature_computer_wide_table_merge() -> None:
     idx = pd.date_range("2024-01-01", periods=40, freq="D")
     df = pd.DataFrame({"close": (100 + pd.Series(range(40))).astype(float)}, index=idx)
 
-    # Minimal feature metadata as ParallelFeatureComputer expects
+    # Minimal feature metadata as FeatureComputer expects
     # Note: compute_func name must exist in feature_function_mapping for
     # _build_call_args, but we pass our own compute_func explicitly to
     # _compute_and_cache_monthly, so we can reuse any existing name here.
@@ -101,13 +101,11 @@ def test_parallel_feature_computer_wide_table_merge() -> None:
         "pass_full_df": True,
     }
 
-    # Instantiate ParallelFeatureComputer with in-memory / no disk cache
-    pfc = ParallelFeatureComputer(
+    # Instantiate FeatureComputer (sequential-only) with in-memory / no disk cache
+    pfc = FeatureComputer(
         cache_dir=None,
         use_disk_cache=False,
         use_memory_cache=False,
-        max_workers=1,
-        parallel_backend="thread",
         use_monthly_cache=True,
     )
 
@@ -140,7 +138,7 @@ def test_parallel_feature_computer_wide_table_merge() -> None:
         f"got columns={list(ratio_result.columns)}"
     )
 
-    print("✅ ParallelFeatureComputer wide-table merge test passed.")
+    print("✅ FeatureComputer wide-table merge test passed.")
 
 
 if __name__ == "__main__":

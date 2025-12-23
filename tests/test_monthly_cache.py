@@ -18,7 +18,7 @@ import tempfile
 import shutil
 from datetime import datetime, timedelta
 
-from src.features.loader.parallel_computer import ParallelFeatureComputer
+from src.features.loader.feature_computer import FeatureComputer
 from src.data_tools.tick_loader import (
     compute_vpin_from_cached_ticks,
     _get_monthly_vpin_cache_key,
@@ -69,7 +69,7 @@ class TestMonthlyCacheBasic:
 
     def test_split_df_by_month(self, sample_monthly_data):
         """测试按月份拆分DataFrame"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(tempfile.mkdtemp()), use_monthly_cache=True
         )
 
@@ -89,7 +89,7 @@ class TestMonthlyCacheBasic:
 
     def test_monthly_cache_key_generation(self, temp_cache_dir):
         """测试按月缓存键生成"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(temp_cache_dir), use_monthly_cache=True
         )
 
@@ -102,6 +102,12 @@ class TestMonthlyCacheBasic:
         key4 = computer._get_monthly_cache_key(
             "rsi", "2024-01", {"window": 30}, feature_info
         )
+        key5 = computer._get_monthly_cache_key(
+            "rsi", "2024-01", params, feature_info, df_sig="DATASET_A"
+        )
+        key6 = computer._get_monthly_cache_key(
+            "rsi", "2024-01", params, feature_info, df_sig="DATASET_B"
+        )
 
         # 相同参数应该生成相同的键
         assert key1 == key2
@@ -112,9 +118,12 @@ class TestMonthlyCacheBasic:
         # 不同参数应该生成不同的键
         assert key1 != key4
 
+        # 不同数据集签名（df_sig）应该生成不同的键（防止跨运行/月度缓存污染）
+        assert key5 != key6
+
     def test_save_and_load_monthly_cache(self, temp_cache_dir):
         """测试按月缓存的保存和加载"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(temp_cache_dir), use_monthly_cache=True
         )
 
@@ -141,7 +150,7 @@ class TestMonthlyCacheBasic:
 
     def test_try_monthly_cache_all_cached(self, temp_cache_dir, sample_monthly_data):
         """测试所有月份都有缓存的情况"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(temp_cache_dir), use_monthly_cache=True
         )
 
@@ -181,7 +190,7 @@ class TestMonthlyCacheBasic:
         self, temp_cache_dir, sample_monthly_data
     ):
         """测试部分月份有缓存的情况（应该返回None，使用全量计算）"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(temp_cache_dir), use_monthly_cache=True
         )
 
@@ -312,7 +321,7 @@ class TestMonthlyCacheIntegration:
 
     def test_compute_and_cache_monthly(self, temp_cache_dir, sample_monthly_data):
         """测试按月计算并缓存"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(temp_cache_dir), use_monthly_cache=True
         )
 
@@ -342,7 +351,11 @@ class TestMonthlyCacheIntegration:
         for month_key in monthly_dfs.keys():
             if month_key != "all":
                 cache_key = computer._get_monthly_cache_key(
-                    "simple_feature", month_key, compute_params, feature_info
+                    "simple_feature",
+                    month_key,
+                    compute_params,
+                    feature_info,
+                    df_sig=computer._get_df_signature(monthly_dfs[month_key]),
                 )
                 cache_file = computer.monthly_cache_dir / f"{cache_key}.pkl"
                 assert cache_file.exists()
@@ -361,7 +374,7 @@ class TestMonthlyCacheIntegration:
 
     def test_incremental_computation_new_month(self, temp_cache_dir):
         """测试新增月份时的增量计算"""
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=str(temp_cache_dir), use_monthly_cache=True
         )
 

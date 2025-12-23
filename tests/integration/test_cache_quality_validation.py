@@ -9,13 +9,13 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.features.loader.parallel_computer import ParallelFeatureComputer
+from src.features.loader.feature_computer import FeatureComputer
 
 
 def test_validate_cache_quality():
     """测试数据质量验证功能"""
 
-    computer = ParallelFeatureComputer()
+    computer = FeatureComputer()
 
     # 测试1: 正常数据（少量NaN，正常）
     print("\n=== 测试1: 正常数据 ===")

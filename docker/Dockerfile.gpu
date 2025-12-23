@@ -5,7 +5,7 @@
 #   - Base: NVIDIA CUDA 12.8.1 + cuDNN + Ubuntu 24.04
 #   - Python: 3.12 (Ubuntu 24.04 默认)
 #   - CUDA: 12.8.1
-# 
+#
 # 核心包版本（所有包基于 numpy 1.26.4）:
 #   - numpy:        1.26.4  (核心基准)/
 #   - scipy:        1.11.4
@@ -19,12 +19,12 @@
 #   - LightGBM:     GPU版本 (从源码编译)
 #   - PyTorch:      2.9.0 (CUDA 12.8/cu128，builder 和 runtime 一致)
 #   - mamba-ssm:    latest (深度学习加速库，基于 PyTorch 2.9.0 编译)
-# 
+#
 # 多阶段构建优势:
 #   - 分离编译环境和运行环境
 #   - 最终镜像不包含 gcc, cmake 等编译工具
 #   - 显著减小镜像体积
-# 
+#
 # 优化特性:
 #   - Git 重试机制（3次重试）
 #   - 详细的进度反馈
@@ -264,6 +264,7 @@ RUN echo "📦 Installing runtime dependencies..." && \
     python3 \
     python3-venv \
     python3-pip \
+    python-is-python3 \
     wget \
     ca-certificates \
     ocl-icd-libopencl1 \
@@ -433,6 +434,7 @@ RUN if [ -n "$(ls -A /tmp/local-wheels/xgboost-*.whl 2>/dev/null)" ]; then \
     pip3 install --timeout=1800 --retries=10 --no-build-isolation \
     --find-links /tmp/local-wheels \
     /tmp/local-wheels/xgboost-*.whl && \
+    python3 -c "import xgboost as xgb; print('✅ xgboost:', xgb.__version__); bi=getattr(xgb,'build_info',None); print('✅ xgboost build_info:', bi() if bi else None)" && \
     echo "✅ Local xgboost installed"; \
     else \
     echo "🌐 Local xgboost wheel not found, will download from PyPI"; \
@@ -461,7 +463,6 @@ RUN echo "📦 Installing project dependencies..." && \
     tabulate==0.9.0 \
     psutil \
     catboost \
-    xgboost \
     arch \
     vectorbt \
     pytest \
@@ -515,12 +516,13 @@ RUN echo "📦 Installing data science libraries..." && \
     pip3 install --no-cache-dir --timeout=600 \
     numpy==1.26.4 \
     pandas==2.1.4 \
-    pyarrow \
+    pyarrow==15.0.2 \
+    polars==0.20.31 \
     scipy==1.11.4 \
     scikit-learn==1.3.2 \
     pyyaml==6.0.2 \
     websockets==12.0 \
-    && python3 -c "import pandas as pd, pyarrow, yaml, websockets; print('✅ pandas:', pd.__version__, '| pyarrow:', pyarrow.__version__, '| pyyaml:', yaml.__version__, '| websockets:', websockets.__version__)"
+    && python3 -c "import pandas as pd, pyarrow, polars as pl, yaml, websockets; print('✅ pandas:', pd.__version__, '| pyarrow:', pyarrow.__version__, '| polars:', pl.__version__, '| pyyaml:', yaml.__version__, '| websockets:', websockets.__version__)"
 
 # ============================================================================
 # 安装深度学习加速库

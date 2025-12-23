@@ -126,7 +126,7 @@ def main() -> None:
             f"symbol={args.symbol}"
         )
         # NOTE: fit=True for each month is fine here because the underlying
-        # feature_loader/ParallelFeatureComputer already uses monthly cache.
+        # feature_loader/FeatureComputer already uses monthly cache.
         df_feats = feature_loader.load_features_from_requested(
             df_month,
             requested_features=requested,

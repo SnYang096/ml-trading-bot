@@ -23,7 +23,7 @@ sys.path.insert(0, str(project_root))
 
 from src.features.loader import (
     StrategyFeatureLoader,
-    ParallelFeatureComputer,
+    FeatureComputer,
     analyze_dependency_levels,
     get_compute_func,
 )
@@ -472,19 +472,20 @@ class TestFeatureLoader(unittest.TestCase):
             self.assertIn("sr_strength_max_f", features)
         self.assertIn("atr_f", features)  # 依赖特征
 
-    def test_parallel_computation(self):
-        """测试并行计算"""
+    def test_feature_computation_sequential(self):
+        """测试特征计算（顺序执行）"""
         df = self.test_df.copy()
         features = self.loader.feature_deps["features"]
         requested = ["atr_f", "rsi_f"]  # 两个无依赖的特征，可以并行计算
 
-        computer = ParallelFeatureComputer(
+        computer = FeatureComputer(
             cache_dir=self.temp_cache_dir,
             use_disk_cache=False,
             use_memory_cache=True,
-            max_workers=2,
-            parallel_backend="process",
         )
+        # sequential-only invariant
+        self.assertIsNone(getattr(computer, "executor", None))
+        self.assertEqual(getattr(computer, "parallel_backend", ""), "sequential")
 
         try:
             result_df = computer.compute_features_parallel(

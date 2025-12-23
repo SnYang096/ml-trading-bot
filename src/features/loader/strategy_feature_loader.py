@@ -7,7 +7,7 @@ import pandas as pd
 from typing import List, Dict, Optional
 from pathlib import Path
 
-from src.features.loader.parallel_computer import ParallelFeatureComputer
+from src.features.loader.feature_computer import FeatureComputer
 
 
 class StrategyFeatureLoader:
@@ -51,7 +51,7 @@ class StrategyFeatureLoader:
             self.strategy_config = {}
 
         # 创建并行计算器
-        self.computer = ParallelFeatureComputer(
+        self.computer = FeatureComputer(
             cache_dir=cache_dir,
             use_disk_cache=use_disk_cache,
             use_memory_cache=use_memory_cache,

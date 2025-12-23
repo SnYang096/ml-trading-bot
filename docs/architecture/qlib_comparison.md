@@ -27,7 +27,7 @@
 |------|---------|------|
 | 特征定义 | YAML + Python 函数 | Expression DSL (`$close/Ref($close,1)-1`) |
 | 依赖管理 | `feature_dependencies.yaml` DAG | Expression 自动解析依赖 |
-| 计算引擎 | `ParallelFeatureComputer` | `ExpressionProvider` |
+| 计算引擎 | `FeatureComputer` | `ExpressionProvider` |
 | 缓存 | 月度 Parquet + Memory cache | `DatasetCache` |
 
 **当前优势**：

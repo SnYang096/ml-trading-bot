@@ -8,7 +8,7 @@
 ```
 requested_features (YAML) 
   → StrategyFeatureLoader.load_features_from_requested()
-    → ParallelFeatureComputer.compute_features_parallel()
+    → FeatureComputer.compute_features_parallel()
       → 自动解析依赖 → 按层级分组 → 每层并行计算 → 缓存
   → post_processors (可选，如 build_sr_reversal_features)
 ```
@@ -179,7 +179,7 @@ feature_pipeline:
 - ✅ 自动缓存（内存+磁盘）
 - ✅ 自动依赖解析
 
-### 方案 B：让 post_processor 也能利用 ParallelFeatureComputer
+### 方案 B：让 post_processor 也能利用 FeatureComputer
 
 如果不想改配置文件，可以让 `build_sr_reversal_features` 内部也使用并行计算：
 
