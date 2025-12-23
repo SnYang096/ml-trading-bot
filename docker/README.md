@@ -11,14 +11,14 @@
 ./docker/build-gpu.sh
 
 # 指定镜像名称和标签
-./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.6 --no-ssh
+./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.8 --no-ssh --no-proxy
 
 # 使用代理构建
 # 注意：脚本会自动修复代理地址（127.0.0.1 -> Docker 网桥 IP，以便容器访问宿主机代理）
 HTTP_PROXY=http://127.0.0.1:7897 \
 HTTPS_PROXY=http://127.0.0.1:7897 \
 NO_PROXY=localhost,127.0.0.1 \
-./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.6 --no-ssh
+./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.8 --no-ssh
 
 # Clash TUN 模式用户注意：
 # 1. 如果配置了很多 DIRECT 规则（如 docker.io, ubuntu.com 等），可能不需要代理

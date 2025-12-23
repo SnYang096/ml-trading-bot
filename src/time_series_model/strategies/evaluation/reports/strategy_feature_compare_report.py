@@ -383,7 +383,11 @@ def _build_html_table(headers: List[str], rows: List[List[str]]) -> str:
 
 
 def _build_debug_report_html(
-    results: List[Dict[str, Any]], symbol: str
+    results: List[Dict[str, Any]],
+    symbol: str,
+    timeframe: Optional[str] = None,
+    train_range: Optional[Tuple[str, str]] = None,
+    test_range: Optional[Tuple[str, str]] = None,
 ) -> Optional[str]:
     debug_sections: List[str] = []
     for item in results:
@@ -531,28 +535,61 @@ def _build_debug_report_html(
     if not debug_sections:
         return None
 
+    # Build title with context
+    title_parts = [f"Strategy Feature Debug Details: {symbol}"]
+    if timeframe:
+        title_parts.append(f"TF={timeframe}")
+    title_str = " | ".join(title_parts)
+
+    # Build header info box
+    header_info = []
+    header_info.append(f"<strong>Symbol:</strong> {symbol}")
+    if timeframe:
+        header_info.append(f"<strong>Timeframe:</strong> {timeframe}")
+    if train_range:
+        header_info.append(
+            f"<strong>Train Range:</strong> {train_range[0]} → {train_range[1]}"
+        )
+    if test_range:
+        header_info.append(
+            f"<strong>Test Range:</strong> {test_range[0]} → {test_range[1]}"
+        )
+    header_info.append(f"<strong>Variants:</strong> {len(debug_sections)}")
+    header_info.append(
+        f"<strong>Generated:</strong> {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
     return f"""
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Strategy Feature Debug Details: {symbol}</title>
+  <title>{title_str}</title>
   <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background-color: #f5f5f5; }}
     .container {{ max-width: 95%; width: 100%; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-    h1 {{ color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; }}
+    h1 {{ color: #333; border-bottom: 3px solid #4CAF50; padding-bottom: 10px; margin-bottom: 20px; }}
     h2 {{ color: #555; margin-top: 30px; border-left: 4px solid #2196F3; padding-left: 10px; }}
+    h3 {{ color: #666; margin-top: 20px; }}
     .table-wrapper {{ width: 100%; overflow-x: auto; }}
     table {{ width: 100%; min-width: 900px; border-collapse: collapse; margin: 20px 0; font-size: 12px; }}
     th, td {{ white-space: nowrap; padding: 6px 8px; text-align: left; border-bottom: 1px solid #ddd; }}
     th {{ background-color: #2196F3; color: white; font-weight: 600; position: sticky; top: 0; z-index: 2; }}
     .info-box {{ background: #e3f2fd; border-left: 4px solid #2196F3; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+    .header-info {{ background: #f0f7ff; border: 1px solid #2196F3; padding: 15px; margin-bottom: 20px; border-radius: 4px; }}
+    .header-info ul {{ margin: 0; padding-left: 20px; }}
+    .header-info li {{ margin: 5px 0; }}
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Strategy Feature Debug Details</h1>
-    <p>This page shows sample signals and trades for each variant where <code>backtest.debug</code> is enabled.</p>
+    <h1>{title_str}</h1>
+    <div class="header-info">
+      <ul>
+        {''.join(f'<li>{item}</li>' for item in header_info)}
+      </ul>
+    </div>
+    <p>This page shows sample signals, trades, and diagnostic information for each variant where <code>backtest.debug</code> is enabled.</p>
     {''.join(debug_sections)}
   </div>
 </body>
@@ -1211,7 +1248,13 @@ def write_strategy_feature_compare_reports(
         )
 
     # Debug report (optional)
-    debug_html = _build_debug_report_html(comparison_results, symbol=symbol)
+    debug_html = _build_debug_report_html(
+        comparison_results,
+        symbol=symbol,
+        timeframe=timeframe,
+        train_range=train_range,
+        test_range=test_range,
+    )
     debug_path = output_dir / "strategy_feature_compare_debug.html"
     if debug_html:
         with open(debug_path, "w", encoding="utf-8") as fh:

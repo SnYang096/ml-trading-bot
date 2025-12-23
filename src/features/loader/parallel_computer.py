@@ -740,8 +740,9 @@ class FeatureComputer:
         self._print_memory_info()
         print("   🔧 Feature-level parallelism disabled. Running sequentially.")
 
-        # 内存缓存
-        self.memory_cache = {}
+        # 内存缓存：使用 (df_signature, feature_name) 作为键，而不是全局清空
+        # 这样即使 DataFrame 切换，相同 DataFrame 签名的特征结果仍可复用
+        self.memory_cache = {}  # key: (df_sig_tuple, feature_name), value: cached result
 
         # Debug stats (last run). Callers can drain via drain_debug_stats().
         # - index_mismatch: feature_name -> {"extra": int, "missing": int}
@@ -1506,30 +1507,23 @@ class FeatureComputer:
         base_index = result_df.index
         df_hash = self._get_df_hash(result_df)
 
-        # Memory cache is only valid for the exact same index. In this project we reuse the
-        # same StrategyFeatureLoader across train/test/volatility passes, so the in-memory
-        # cache can frequently hold results from a different index. Instead of repeatedly
-        # "hit then mismatch then recompute", proactively clear cache when the df signature changes.
+        # Memory cache key: use (df_signature, feature_name) instead of global clearing.
+        # This allows cross-variant reuse when the same DataFrame signature is encountered.
+        # We still track the current signature for logging/debugging purposes.
+        current_df_sig = None
         if self.use_memory_cache:
             try:
-                current_sig = (
+                current_df_sig = (
                     df_hash,
                     len(result_df),
                     str(result_df.index.min()) if len(result_df) else "EMPTY",
                     str(result_df.index.max()) if len(result_df) else "EMPTY",
                 )
-                prev_sig = getattr(self, "_memory_cache_sig", None)
-                if prev_sig is not None and prev_sig != current_sig:
-                    if self.memory_cache:
-                        print(
-                            f"   🧹 Clearing memory cache due to df index change "
-                            f"(prev={prev_sig[0]}, current={current_sig[0]})"
-                        )
-                    self.memory_cache.clear()
-                self._memory_cache_sig = current_sig
+                # Store current signature for potential future use (e.g., cache size limits)
+                self._current_df_sig = current_df_sig
             except Exception:
-                # If anything goes wrong, be conservative: clear cache to prevent index blowups.
-                self.memory_cache.clear()
+                # If signature calculation fails, disable memory cache for this call
+                current_df_sig = None
 
         # 1.5. 确保所有请求特征的 required_columns 都在 DataFrame 中
         # 收集所有需要的 required_columns
@@ -1635,10 +1629,17 @@ class FeatureComputer:
                     )
                     continue
 
-                # 检查内存缓存
-                if self.use_memory_cache and feature_name in self.memory_cache:
-                    print(f"     💾 Using memory cache for {feature_name}")
-                    cached_result = self.memory_cache[feature_name]
+                # 检查内存缓存：使用 (df_signature, feature_name) 作为键
+                cache_key = None
+                cached_result = None
+                if self.use_memory_cache and current_df_sig is not None:
+                    cache_key = (current_df_sig, feature_name)
+                    if cache_key in self.memory_cache:
+                        print(
+                            f"     💾 Using memory cache for {feature_name} "
+                            f"(df_sig={current_df_sig[0][:8]}...)"
+                        )
+                        cached_result = self.memory_cache[cache_key]
 
                     # SAFETY: cached results must match current index; otherwise it will
                     # explode the index (train/test/volatility mix) and can cause huge memory use.
@@ -1824,7 +1825,10 @@ class FeatureComputer:
                         combined_result = self._align_to_base_index(
                             feature_name, combined_result, base_index
                         )
-                        self.memory_cache[feature_name] = combined_result
+                        # Store in memory cache with (df_signature, feature_name) key
+                        if self.use_memory_cache and current_df_sig is not None:
+                            cache_key = (current_df_sig, feature_name)
+                            self.memory_cache[cache_key] = combined_result
                         # 合并到result_df
                         if isinstance(combined_result, pd.DataFrame):
                             # 处理重复列名：如果有重复列，保留第一个
@@ -2037,8 +2041,9 @@ class FeatureComputer:
                         )
 
                         # 保存内存缓存
-                        if self.use_memory_cache:
-                            self.memory_cache[feature_name] = computed_result_for_cache
+                        if self.use_memory_cache and current_df_sig is not None:
+                            cache_key = (current_df_sig, feature_name)
+                            self.memory_cache[cache_key] = computed_result_for_cache
 
                         print(f"     ✅ Computed {feature_name}")
                 except Exception as e:

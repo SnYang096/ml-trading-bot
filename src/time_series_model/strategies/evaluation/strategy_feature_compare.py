@@ -383,6 +383,7 @@ def execute_single_run(
     symbol: Optional[str] = None,
     data_path: Optional[str] = None,
     calibrate_proba: str = "none",
+    feature_loader: Optional[StrategyFeatureLoader] = None,
 ) -> Optional[Dict]:
     def _to_float_or_none(x: float) -> float | None:
         try:
@@ -525,7 +526,10 @@ def execute_single_run(
         len(df_test_raw),
     )
 
-    feature_loader = StrategyFeatureLoader()
+    # Use shared feature_loader if provided (for cross-variant memory cache reuse),
+    # otherwise create a new one (backward compatibility).
+    if feature_loader is None:
+        feature_loader = StrategyFeatureLoader()
 
     # Configure tick loader if needed (for VPIN features)
     # This project is based on tick data, so tick files must be available
@@ -882,6 +886,7 @@ def run_rolling_evaluation(
     df_raw: pd.DataFrame,
     params: argparse.Namespace,
     variant_name: str = "unknown",
+    feature_loader: Optional[StrategyFeatureLoader] = None,
 ) -> Optional[Dict]:
     train_size = params.rolling_train_bars
     test_size = params.rolling_test_bars
@@ -903,6 +908,7 @@ def run_rolling_evaluation(
             symbol=params.symbol,
             data_path=params.data_path,
             calibrate_proba=getattr(params, "calibrate_proba", "none"),
+            feature_loader=feature_loader,
         )
         if result:
             result["window_start"] = str(train_raw.index[0])
@@ -1011,6 +1017,13 @@ def main() -> None:
     train_range = _range_str(df_train_raw)
     test_range = _range_str(df_test_raw)
 
+    # Create a shared StrategyFeatureLoader to enable cross-variant memory cache reuse.
+    # This significantly speeds up multi-variant comparisons when features overlap.
+    shared_feature_loader = StrategyFeatureLoader()
+    logger.info(
+        "Created shared StrategyFeatureLoader for cross-variant memory cache reuse"
+    )
+
     comparison_results = []
     try:
         for variant in variants:
@@ -1027,6 +1040,7 @@ def main() -> None:
                     symbol=args.symbol,
                     data_path=args.data_path,
                     calibrate_proba=args.calibrate_proba,
+                    feature_loader=shared_feature_loader,
                 )
             except Exception as exc:
                 logger.error(
@@ -1044,7 +1058,11 @@ def main() -> None:
                     args.rolling_max_windows,
                 )
                 rolling_result = run_rolling_evaluation(
-                    strategy_cfg, df_raw, args, variant_name=variant.name
+                    strategy_cfg,
+                    df_raw,
+                    args,
+                    variant_name=variant.name,
+                    feature_loader=shared_feature_loader,
                 )
             comparison_results.append(
                 {

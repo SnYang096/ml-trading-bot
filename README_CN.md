@@ -268,6 +268,9 @@ mlbot analyze strategy-feature-compare \
   --end-date 2025-10-31 \
   --test-size 0.5 \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
+
+
+mlbot analyze strategy-feature-compare --strategy-config config/strategies/sr_reversal_long --symbol BTCUSDT --timeframe 240T --start-date 2024-01-01 --end-date 2025-10-31 --feature-overrides "all=features_all.yaml suggested_noticks=features_suggested_noticks.yaml suggested=features_suggested.yaml" --test-size 0.5 --output-dir results/strategy_compare_4variants --rolling-max-windows 0
 ```
 
 **使用滚动窗口**（更稳健）：
