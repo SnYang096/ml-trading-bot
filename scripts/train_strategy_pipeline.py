@@ -519,12 +519,20 @@ def drop_inf_rows(df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
         return df
     dedup_cols = list(dict.fromkeys(feature_cols))
     result = df.copy()
+    # Only numeric columns can contain +/-inf in a meaningful way.
+    # Some feature pipelines may include non-numeric columns (e.g. DTW match labels).
+    numeric_cols = (
+        result[dedup_cols].select_dtypes(include=[np.number]).columns.tolist()
+    )
+    if not numeric_cols:
+        return result
+
     # 只替换 inf，保留 NaN（NaN 可能是正常的，如数据不足）
-    subset = result[dedup_cols].replace([np.inf, -np.inf], np.nan)
-    for col in dedup_cols:
+    subset = result[numeric_cols].replace([np.inf, -np.inf], np.nan)
+    for col in numeric_cols:
         result[col] = subset[col]
     # 只检查 inf，不检查 NaN（因为 NaN 可能是正常的）
-    inf_mask = np.isinf(result[dedup_cols])
+    inf_mask = np.isinf(result[numeric_cols])
     has_inf = inf_mask.any(axis=1)
     finite_mask = ~has_inf
     dropped = len(result) - finite_mask.sum()
@@ -627,6 +635,29 @@ def evaluate_predictions(
                 threshold = params.get("threshold", 0.5)
                 pred_class = (preds >= threshold).astype(int)
             score = float((pred_class == y_true).mean())
+        elif metric_type == "regression_mae":
+            # Mean Absolute Error for regression tasks
+            valid_mask = ~(np.isnan(preds) & ~np.isnan(y_true))
+            if valid_mask.sum() > 0:
+                score = float(np.mean(np.abs(preds[valid_mask] - y_true[valid_mask])))
+            else:
+                score = 0.0
+        elif metric_type == "regression_mse":
+            # Mean Squared Error for regression tasks
+            valid_mask = ~(np.isnan(preds) & ~np.isnan(y_true))
+            if valid_mask.sum() > 0:
+                score = float(np.mean((preds[valid_mask] - y_true[valid_mask]) ** 2))
+            else:
+                score = 0.0
+        elif metric_type == "regression_rmse":
+            # Root Mean Squared Error for regression tasks
+            valid_mask = ~(np.isnan(preds) & ~np.isnan(y_true))
+            if valid_mask.sum() > 0:
+                score = float(
+                    np.sqrt(np.mean((preds[valid_mask] - y_true[valid_mask]) ** 2))
+                )
+            else:
+                score = 0.0
         else:
             raise ValueError(f"Unsupported evaluation metric type: {metric_type}")
 
@@ -769,7 +800,50 @@ def run_vectorbt_backtest(
     elif strategy_direction is None:
         strategy_direction = "both"  # 默认双向
 
-    if task_type == "multiclass" and preds.ndim == 2:
+    if task_type == "regression":
+        # For regression tasks (e.g., continuous RR prediction), use top quantile selection
+        preds_series = pd.Series(preds, index=index)
+        top_quantile = params.get("top_quantile", 0.1)  # Default: top 10%
+        quantile_threshold = preds_series.quantile(1 - top_quantile)
+
+        if strategy_direction == "long_only":
+            long_entries_raw = preds_series >= quantile_threshold
+            entry_mode = str(params.get("entry_mode", "level")).lower()
+            if entry_mode == "cross":
+                long_entries = long_entries_raw & (
+                    ~long_entries_raw.shift(1).fillna(False)
+                )
+            else:
+                long_entries = long_entries_raw
+            long_exits = pd.Series(False, index=index)  # Exits handled by RR logic
+            short_entries = pd.Series(False, index=index)
+            short_exits = pd.Series(False, index=index)
+        elif strategy_direction == "short_only":
+            long_entries = pd.Series(False, index=index)
+            long_exits = pd.Series(False, index=index)
+            # For short, we want LOW predictions (negative RR or low positive RR)
+            bottom_quantile = params.get("bottom_quantile", 0.1)
+            quantile_threshold_short = preds_series.quantile(bottom_quantile)
+            short_entries_raw = preds_series <= quantile_threshold_short
+            entry_mode = str(params.get("entry_mode", "level")).lower()
+            if entry_mode == "cross":
+                short_entries = short_entries_raw & (
+                    ~short_entries_raw.shift(1).fillna(False)
+                )
+            else:
+                short_entries = short_entries_raw
+            short_exits = pd.Series(False, index=index)  # Exits handled by RR logic
+        else:  # both
+            # For both directions, use top quantile for long, bottom quantile for short
+            top_quantile_long = params.get("top_quantile", 0.1)
+            bottom_quantile_short = params.get("bottom_quantile", 0.1)
+            quantile_threshold_long = preds_series.quantile(1 - top_quantile_long)
+            quantile_threshold_short = preds_series.quantile(bottom_quantile_short)
+            long_entries = preds_series >= quantile_threshold_long
+            short_entries = preds_series <= quantile_threshold_short
+            long_exits = pd.Series(False, index=index)
+            short_exits = pd.Series(False, index=index)
+    elif task_type == "multiclass" and preds.ndim == 2:
         class_preds = np.argmax(preds, axis=1)
         multi_cfg = params.get("multiclass", {})
         long_class = multi_cfg.get("long_class", 2)
@@ -1352,9 +1426,14 @@ def train_strategy(
     def _debug_inf(df: pd.DataFrame, name: str):
         if not feature_cols:
             return
+        numeric_cols = (
+            df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
+        )
+        if not numeric_cols:
+            return
         # 正确区分 inf 和 NaN：只检查真正的 inf/-inf，不包括 NaN
         # 注意：np.isfinite() 对 NaN 也返回 False，所以不能用来检查 inf
-        inf_mask = np.isinf(df[feature_cols])
+        inf_mask = np.isinf(df[numeric_cols])
         if inf_mask.any().any():
             # 统计每列 inf/-inf 数量
             col_counts = inf_mask.sum().sort_values(ascending=False)

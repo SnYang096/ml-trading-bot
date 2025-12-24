@@ -1,0 +1,14 @@
+evaluation:
+  metrics:
+    - name: test_correlation
+      type: correlation
+      params:
+        method: pearson
+        target_col: rr_label
+    - name: test_mae
+      type: regression_mae
+      params:
+        target_col: rr_label
+  save_details: true
+  results_file: evaluation.json
+

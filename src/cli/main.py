@@ -1328,21 +1328,24 @@ def diagnose_model_comparison(
     # Append timeframe to output dir
     output_dir_full = f"{output_dir}/{timeframe}"
 
+    # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
+    use_workspace_prefix = docker and not _is_in_docker()
+
     args = [
         "--strategy-config",
-        f"/workspace/{strategy_config}" if docker else strategy_config,
+        f"/workspace/{strategy_config}" if use_workspace_prefix else strategy_config,
         "--symbol",
         symbol,
         "--data-path",
-        f"/workspace/{data_path}" if docker else data_path,
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
         "--timeframe",
         timeframe,
         "--test-size",
         test_size,
         "--output-dir",
-        f"/workspace/{output_dir_full}" if docker else output_dir_full,
+        f"/workspace/{output_dir_full}" if use_workspace_prefix else output_dir_full,
         "--ticks-dir",
-        f"/workspace/{ticks_dir}" if docker else ticks_dir,
+        f"/workspace/{ticks_dir}" if use_workspace_prefix else ticks_dir,
         "--ticks-lookback-minutes",
         ticks_lookback_minutes,
     ]
@@ -1352,7 +1355,7 @@ def diagnose_model_comparison(
         args.extend(["--end-date", end_date])
     if rule_params:
         args.extend(
-            ["--rule-params", f"/workspace/{rule_params}" if docker else rule_params]
+            ["--rule-params", f"/workspace/{rule_params}" if use_workspace_prefix else rule_params]
         )
 
     sys.exit(

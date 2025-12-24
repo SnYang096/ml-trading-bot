@@ -1,0 +1,52 @@
+name: sr_reversal_rr_reg_long_weighted
+description: 'SR reversal strategy feature pipeline (baseline / minimal).
+
+  This file is intentionally kept small for ablation/baseline runs. The previous richer
+  feature set has been preserved in features_full.yaml. '
+feature_pipeline:
+  requested_features:
+  - atr_f
+  - atr_percentile_f
+  - bb_width_f
+  - range_ratio_5bar_f
+  - roc_5_f
+  - rsi_f
+  - sr_strength_max_close_f
+  - trend_r2_20_f
+  - volume_anomaly_f
+  - wick_ratios_f
+  invert_features:
+  - dist_to_nearest_sr
+  - range_ratio_5bar
+  - rsi
+  - volume_anomaly
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+notes: "Auto-generated from factor evaluation results.\n\nFactor counts (from HTML\
+  \ report):\n- Positive factors (9): Direct alpha signals\n- Negative factors (4):\
+  \ Consider reversing (multiply by -1) or use as risk filters\n- Total qualified\
+  \ factors: 13\n- Non-numeric/invalid factors (0): Added for manual verification\
+  \ (placed at the end)\n\nFeature function counts (in this YAML):\n- Qualified feature\
+  \ functions: 10\n- Non-numeric/invalid feature functions: 0\n- Total feature functions:\
+  \ 10\n\n\U0001F4CA Why the counts differ:\n  The HTML report shows individual factor\
+  \ columns (e.g., \"bb_lower\", \"bb_middle\", \"bb_upper\"), \n  but these output\
+  \ columns are mapped to their source feature compute functions (e.g., \"bb_width_f\"\
+  ).\n  When multiple output columns from the same feature function are qualified,\
+  \ they are merged into \n  a single feature function entry in this YAML file. This\
+  \ is correct behavior - requesting the \n  feature function once will generate all\
+  \ its output columns.\n\n  - 13 output columns were mapped to 10 unique feature\
+  \ functions\n\nSelection criteria:\n- Positive: IC Mean > 0, IC t-stat > 1.96, (IC\
+  \ IR > 0 or Sharpe > 0)\n- Negative: IC Mean < 0, IC t-stat < -1.96, (IC IR < 0\
+  \ or Sharpe < 0)\n- Non-numeric/invalid: Factors that failed numeric conversion\
+  \ or had insufficient samples\n\n⚠️  IMPORTANT: Non-numeric/invalid factors require\
+  \ further verification before use:\n  - These factors failed IC evaluation due to\
+  \ non-numeric data or insufficient samples\n  - They may be categorical/string features\
+  \ that need proper encoding\n  - They may need more data or different evaluation\
+  \ parameters\n  - DO NOT use these factors directly in model training without investigation\n\
+  \  - Review the factor evaluation HTML report for detailed error information\n\n\
+  Special handling:\n- dl_seq_f* features: If any dl_seq_f* feature is qualified,\
+  \ all dl_seq_f* features are included\n\nNote: Feature output columns (e.g., bb_lower,\
+  \ bb_middle) have been mapped to their source feature compute functions (e.g., bb_width_f).\n\
+  Only feature compute function names (with _f suffix) are included in requested_features\
+  \ for cleaner configuration.\n\nGenerated: 2025-12-24 07:46:40"

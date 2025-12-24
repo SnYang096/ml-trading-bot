@@ -1,0 +1,15 @@
+strategy:
+  name: sr_reversal_long_weighted
+  description: >
+    Long-only SR reversal variant with sample weights: full-scan labels, model learns when long entries
+    reach +2R before -1R without pre-filtering signals. Uses result_based_rr weight strategy
+    to focus on high-quality signals (triple resonance).
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - sample_weights
+    - result_based_rr
+  owner: quant_team
+

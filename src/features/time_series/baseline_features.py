@@ -1357,13 +1357,16 @@ def _add_breakout_quality_features(
             col = boundary["column"]
             if col in data.columns:
                 if nearest_sr.isna().all():
-                    nearest_sr = data[col]
+                    nearest_sr = data[col].copy()
                 else:
                     # 选择距离当前价格更近的边界
                     current_price = data["close"]
                     dist1 = abs(nearest_sr - current_price)
                     dist2 = abs(data[col] - current_price)
-                    nearest_sr = np.where(dist2 < dist1, data[col], nearest_sr)
+                    nearest_sr = pd.Series(
+                        np.where(dist2 < dist1, data[col], nearest_sr),
+                        index=data.index
+                    )
 
         for i in range(3, len(data)):
             if pd.isna(nearest_sr.iloc[i]):
@@ -4073,6 +4076,16 @@ def compute_sr_strength_max_from_series(
         if isinstance(s, pd.Series):
             v = pd.to_numeric(s, errors="coerce").fillna(0.0).values
             sr_max = np.maximum(sr_max, v)
+
+    # 【关键修复】：调用 _add_price_action_features 来更新 dist_to_nearest_sr
+    # 因为 _compute_boundary_strengths 只计算 SQS 强度，不计算距离
+    # 确保必要的列存在（narrow-IO 接口可能没有 open 列）
+    if "open" not in data.columns:
+        data["open"] = data["close"]  # 使用 close 作为默认值
+    if "volume" not in data.columns:
+        data["volume"] = pd.Series(0.0, index=data.index)  # 使用默认值
+    
+    data = _add_price_action_features(data, boundaries, compression_series=None)
 
     out = pd.DataFrame(index=data.index)
     out["sr_strength_max"] = pd.Series(sr_max, index=data.index).astype(float)

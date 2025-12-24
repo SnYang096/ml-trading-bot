@@ -1,4 +1,4 @@
-name: sr_reversal_long
+name: sr_reversal_long_weighted
 description: 'SR reversal strategy feature pipeline (baseline / minimal).
 
   This file is intentionally kept small for ablation/baseline runs.
@@ -22,9 +22,6 @@ feature_pipeline:
   - wick_ratios_f
   - volume_anomaly_f
   # SR structure (baseline compute funcs; may pull dependencies like POC/HAL)
-  - poc_hal_features_close_f
-  - sqs_hal_high_f
-  - sqs_hal_low_f
   - sr_strength_max_close_f
   ensure_signal_column:
     name: signal

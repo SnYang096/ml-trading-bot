@@ -1137,3 +1137,85 @@ def extract_interaction_features(
             df[f"{col}_rank"] = apply_rank_transform_to_interaction(df, col, groupby_col)
     
     return df
+
+
+@register_feature("compute_is_near_sr", category="derived")
+def compute_is_near_sr(
+    df: pd.DataFrame,
+    dist_col: str = "dist_to_nearest_sr",
+    atr_col: str = "atr",
+    price_col: str = "close",
+    dist_atr_mult: float = 1.5,
+) -> pd.Series:
+    """
+    计算是否在SR附近的布尔列。
+    
+    基于 dist_to_nearest_sr 和 ATR，判断当前价格是否在SR附近（距离 <= dist_atr_mult * ATR）。
+    
+    注意：dist_to_nearest_sr 是相对百分比（如 0.05 表示 5%），需要转换为绝对价格距离后再与 ATR 比较。
+    
+    Args:
+        df: DataFrame with base features
+        dist_col: Distance to nearest SR column (default: "dist_to_nearest_sr")
+        atr_col: ATR column (default: "atr")
+        price_col: Price column for converting percentage to absolute distance (default: "close")
+        dist_atr_mult: Distance threshold in ATR multiples (default: 1.5)
+    
+    Returns:
+        Series with is_near_sr (boolean)
+    
+    Raises:
+        ValueError: 如果依赖列不存在
+    """
+    missing_cols = [c for c in [dist_col, atr_col, price_col] if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Required columns {missing_cols} not found for is_near_sr. "
+            f"Available columns: {list(df.columns)[:20]}..."
+        )
+    
+    # dist_to_nearest_sr 是相对百分比（如 0.05 表示 5%）
+    dist_to_sr_pct = df[dist_col].abs()
+    atr = df[atr_col].fillna(df[atr_col].median())
+    price = df[price_col]
+    
+    # 将百分比距离转换为绝对价格距离
+    # 例如：dist_to_sr = 0.05 (5%), price = 100 -> abs_distance = 5
+    abs_distance = dist_to_sr_pct * price
+    
+    # 计算归一化距离（单位：ATR）
+    # 例如：abs_distance = 5, atr = 10 -> dist_normalized = 0.5 ATR
+    dist_normalized = abs_distance / (atr + 1e-8)
+    
+    # 判断是否在SR附近
+    is_near = dist_normalized <= dist_atr_mult
+    
+    return is_near.fillna(False).astype(bool).rename("is_near_sr")
+
+
+@register_feature("compute_is_near_sr_from_series", category="derived")
+def compute_is_near_sr_from_series(
+    *,
+    dist_to_nearest_sr: pd.Series,
+    atr: pd.Series,
+    close: pd.Series,
+    dist_atr_mult: float = 1.5,
+) -> pd.DataFrame:
+    """
+    Narrow-IO entrypoint for is_near_sr.
+    
+    注意：dist_to_nearest_sr 是相对百分比，需要转换为绝对价格距离后再与 ATR 比较。
+    """
+    dist_pct = pd.to_numeric(dist_to_nearest_sr, errors="coerce").abs()
+    atr_s = pd.to_numeric(atr, errors="coerce").fillna(atr.median())
+    price = pd.to_numeric(close, errors="coerce")
+    
+    # 将百分比距离转换为绝对价格距离
+    abs_distance = dist_pct * price
+    
+    # 计算归一化距离（单位：ATR）
+    dist_normalized = abs_distance / (atr_s + 1e-8)
+    
+    # 判断是否在SR附近
+    is_near = (dist_normalized <= dist_atr_mult).fillna(False).astype(bool)
+    return is_near.rename("is_near_sr").to_frame()

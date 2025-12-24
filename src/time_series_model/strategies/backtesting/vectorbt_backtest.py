@@ -77,6 +77,51 @@ class VectorBTBacktest(BaseBacktest):
             long_exits = pd.Series(class_preds == neutral_class, index=index)
             short_entries = pd.Series(class_preds == short_class, index=index)
             short_exits = pd.Series(class_preds == neutral_class, index=index)
+        elif str(task_type).lower() == "regression":
+            # Regression: use top-quantile gating on predicted values.
+            preds_series = pd.Series(predictions, index=index)
+
+            top_quantile = float(params.get("top_quantile", 0.1))
+            top_quantile = min(max(top_quantile, 0.0), 1.0)
+            entry_mode = str(params.get("entry_mode", "level")).lower()  # level|cross
+
+            # Long entries: top N% predicted values.
+            quantile_threshold = float(preds_series.quantile(1 - top_quantile))
+            entry_raw = preds_series >= quantile_threshold
+            if entry_mode == "cross":
+                prev = entry_raw.shift(1).fillna(False)
+                long_entries = entry_raw & (~prev)
+            else:
+                long_entries = entry_raw
+
+            # Default: regression is direction-fixed by config; keep shorts disabled unless explicitly both.
+            if strategy_direction == "both":
+                # Optional: allow bottom-quantile shorts for bi-directional regression strategies.
+                bottom_quantile = float(params.get("bottom_quantile", top_quantile))
+                bottom_quantile = min(max(bottom_quantile, 0.0), 1.0)
+                short_thr = float(preds_series.quantile(bottom_quantile))
+                short_raw = preds_series <= short_thr
+                if entry_mode == "cross":
+                    prev_s = short_raw.shift(1).fillna(False)
+                    short_entries = short_raw & (~prev_s)
+                else:
+                    short_entries = short_raw
+            else:
+                short_entries = pd.Series(False, index=index)
+
+            # Exits will be handled by RR exits when enabled; otherwise, no explicit exits by default.
+            long_exits = pd.Series(False, index=index)
+            short_exits = pd.Series(False, index=index)
+
+            if debug:
+                debug_signals = pd.DataFrame(
+                    {
+                        "price": price,
+                        "pred": preds_series,
+                        "long_entry": long_entries,
+                        "short_entry": short_entries,
+                    }
+                )
         else:
             long_entry = params.get("long_entry_threshold", 0.6)
             long_exit = params.get("long_exit_threshold", 0.4)
@@ -163,9 +208,11 @@ class VectorBTBacktest(BaseBacktest):
 
         # RR 退出逻辑：使用与标签一致的 simulate_rr_exits
         if use_rr_exit:
-            if not use_signal_direction:
+            # 对于 long_only/short_only 策略，方向是固定的，不需要 use_signal_direction
+            # 对于 both 策略，需要 use_signal_direction 来确定方向
+            if strategy_direction == "both" and not use_signal_direction:
                 raise ValueError(
-                    "use_rr_exit=True requires use_signal_direction=True so direction is defined by signal"
+                    "use_rr_exit=True with strategy_direction='both' requires use_signal_direction=True so direction is defined by signal"
                 )
 
             rr_params = params.get("rr", {})

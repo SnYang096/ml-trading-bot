@@ -1,0 +1,39 @@
+backtest:
+  enabled: true
+  params:
+    price_col: close
+    # For regression tasks (continuous RR prediction), use top quantile selection:
+    # - Select top N% of predicted RR values as entry signals
+    # - This is more adaptive than fixed thresholds and naturally adjusts to market conditions
+    top_quantile: 0.1  # Top 10% of predicted RR values (more selective)
+    # Entry mode:
+    # - level: allow entry as long as pred >= quantile threshold (useful when crossings are rare)
+    # - cross: only on rising edge from <threshold to >=threshold
+    entry_mode: cross
+    # Resolve entry/exit same-bar conflicts (common with level entries + RR exits)
+    # - none: legacy behavior
+    # - block_entry_on_exit: mask entries on exit bars so exits can take effect
+    entry_exit_conflict: block_entry_on_exit
+    max_holding_bars: 50
+    force_close_on_end: true
+    initial_cash: 10000
+    fee: 0.0004
+    slippage: 0.0001
+    freq: "4H"
+    # Keep RR exits ON (primary exit mechanism)
+    use_rr_exit: true
+    rr:
+      max_holding_bars: 50       # 与 compute_sr_reversal_label 默认一致
+      stop_loss_r: 1.0
+      take_profit_r: 2.0
+      atr_window: 14
+      entry_offset: 1
+      entry_price_col: open
+    # Optional safety fuse: when too far from SR (normalized by ATR), do not trade.
+    sr_fuse:
+      enabled: false
+      dist_col: dist_to_nearest_sr
+      atr_col: atr
+      max_dist_atr: 6.0
+      on_missing: skip   # skip|block
+    debug: true

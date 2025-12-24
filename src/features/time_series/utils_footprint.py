@@ -185,15 +185,33 @@ def compute_kline_footprint_features(
     if missing:
         raise ValueError(f"ticks missing required columns: {missing}")
 
+    # Ensure tick index is sorted for efficient slicing.
+    # (Some parquet sources may not be strictly monotonic.)
+    if not ticks.index.is_monotonic_increasing:
+        ticks = ticks.sort_index()
+
     result_rows = []
     tick_index = ticks.index
+    tick_times = tick_index.values  # numpy datetime64 array for fast searchsorted
 
     for _, row in klines.iterrows():
         start_ts = row[open_col]
         end_ts = row[close_col]
-        # select ticks in [start_ts, end_ts)
-        mask = (tick_index >= start_ts) & (tick_index < end_ts)
-        bar_ticks = ticks.loc[mask]
+        # select ticks in [start_ts, end_ts) using searchsorted (much faster than boolean masks)
+        # Convert to numpy datetime64 for consistent comparisons
+        try:
+            start64 = np.datetime64(start_ts)
+            end64 = np.datetime64(end_ts)
+        except Exception:
+            start64 = np.datetime64(pd.to_datetime(start_ts))
+            end64 = np.datetime64(pd.to_datetime(end_ts))
+
+        left = int(np.searchsorted(tick_times, start64, side="left"))
+        right = int(np.searchsorted(tick_times, end64, side="left"))
+        if right <= left:
+            bar_ticks = ticks.iloc[0:0]
+        else:
+            bar_ticks = ticks.iloc[left:right]
         if bar_ticks.empty:
             result_rows.append(
                 {

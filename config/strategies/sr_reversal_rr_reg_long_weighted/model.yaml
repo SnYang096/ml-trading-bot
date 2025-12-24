@@ -1,19 +1,20 @@
-name: sr_reversal_long
+name: sr_reversal_rr_reg_long_weighted
 
 trainer:
   module: src.time_series_model.strategies.models.strategy_trainer
   function: train_strategy_model
   params:
     model_type: lightgbm
-    task_type: binary
-    target_col: label
+    task_type: regression
+    target_col: rr_label
+    weight_col: sample_weight  # 使用标签生成函数计算的样本权重
     n_splits: 5
     tscv_gap: 24
     use_gpu: true
     model_params:
-      num_leaves: 64
-      learning_rate: 0.05
-      n_estimators: 600
+      num_leaves: 128
+      learning_rate: 0.03
+      n_estimators: 800
       subsample: 0.8
       colsample_bytree: 0.8
       random_state: 42
