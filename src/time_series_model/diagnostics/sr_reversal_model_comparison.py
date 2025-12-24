@@ -86,13 +86,13 @@ def _timeframe_to_minutes(tf: str) -> Optional[int]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="SR Reversal Model Comparison: Rule-based vs ML vs ML+Volatility"
+        description="Strategy Model Comparison: Compare different strategy configurations (labels, backtest, stop-loss/take-profit, features)"
     )
     parser.add_argument(
         "--strategy-config",
         type=str,
         required=True,
-        help="Path to strategy config directory",
+        help="Comma-separated list of strategy config directories (e.g., 'sr_reversal_long,sr_reversal_long_vol')",
     )
     parser.add_argument(
         "--symbol",
@@ -156,16 +156,21 @@ def parse_args() -> argparse.Namespace:
         help="Extra minutes of tick history to load before/after the data window.",
     )
     parser.add_argument(
-        "--volatility-model-path",
+        "--rule-based-entry",
         type=str,
         default=None,
-        help="Path to pre-trained volatility model (.pkl file). If provided, will load instead of training.",
+        help="Python module path for rule-based strategy entry point (e.g., 'src.time_series_model.strategies.rules.sr_reversal_rule.evaluate_rule_based'). If not provided, uses default SR reversal rule.",
     )
     parser.add_argument(
         "--output-root",
         type=str,
         default=None,
         help="Root directory for model outputs. Used to auto-detect volatility model if --volatility-model-path not provided.",
+    )
+    parser.add_argument(
+        "--test-low-threshold",
+        action="store_true",
+        help="Test with low threshold (0.25) to verify breakeven stop effect",
     )
     return parser.parse_args()
 
@@ -179,12 +184,47 @@ def train_ml_model(
     """训练ML分类模型"""
     print("   🤖 Training ML classification model...")
 
+    # 计算类别不平衡比例，用于设置 scale_pos_weight
+    pos_count = int(y_train.sum())
+    neg_count = int(len(y_train) - pos_count)
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+    print(
+        f"   📊 Class distribution: positive={pos_count} ({pos_count/len(y_train):.2%}), "
+        f"negative={neg_count} ({neg_count/len(y_train):.2%})"
+    )
+    print(f"   📊 scale_pos_weight: {scale_pos_weight:.2f}")
+
     try:
-        model = LightGBMTrainer(model_type="classification", use_gpu=True)
+        # 使用改进的参数：添加 scale_pos_weight 处理类别不平衡
+        # ✅ 固定随机种子以确保可重复性
+        model = LightGBMTrainer(
+            model_type="classification",
+            use_gpu=True,
+            params={
+                "objective": "binary",
+                "metric": "binary_logloss",
+                "boosting_type": "gbdt",
+                "num_leaves": 31,
+                "learning_rate": 0.05,
+                "feature_fraction": 0.9,
+                "bagging_fraction": 0.8,
+                "bagging_freq": 5,
+                "min_data_in_leaf": 20,
+                "lambda_l1": 0.5,
+                "lambda_l2": 1.0,
+                "scale_pos_weight": scale_pos_weight,  # 处理类别不平衡
+                "random_state": 42,  # ✅ 固定随机种子
+                "bagging_seed": 42,  # ✅ 固定bagging随机种子
+                "feature_fraction_seed": 42,  # ✅ 固定特征采样随机种子
+                "data_random_seed": 42,  # ✅ 固定数据随机种子
+                "verbose": -1,
+            },
+        )
+        # ✅ 增加CV折数到10以提高稳定性（对于3102样本，10折更稳定）
         metrics, _ = model.train(
             X_train,
             y_train,
-            n_splits=5,
+            n_splits=10,  # ✅ 从5增加到10
             use_time_series_cv=True,
             groups=None,
             auto_tune_params=False,
@@ -206,6 +246,10 @@ def train_ml_model(
             "feature_fraction": 0.9,
             "bagging_fraction": 0.8,
             "bagging_freq": 5,
+            "random_state": 42,  # ✅ 固定随机种子
+            "bagging_seed": 42,  # ✅ 固定bagging随机种子
+            "feature_fraction_seed": 42,  # ✅ 固定特征采样随机种子
+            "data_random_seed": 42,  # ✅ 固定数据随机种子
             "verbose": -1,
         }
         model = lgb.train(params, train_data, num_boost_round=100)
@@ -390,10 +434,23 @@ def train_volatility_model(
         if model_params:
             model.params = model_params
 
+        # ✅ 确保波动率模型也固定随机种子
+        if "random_state" not in model.params:
+            model.params["random_state"] = 42
+        if "bagging_seed" not in model.params:
+            model.params["bagging_seed"] = 42
+        if "feature_fraction_seed" not in model.params:
+            model.params["feature_fraction_seed"] = 42
+        if "data_random_seed" not in model.params:
+            model.params["data_random_seed"] = 42
+
+        # ✅ 增加CV折数到10以提高稳定性
+        effective_n_splits = max(10, n_splits) if n_splits < 10 else n_splits
+
         metrics, _ = model.train(
             X_train_vol,
             y_vol_train,
-            n_splits=n_splits,
+            n_splits=effective_n_splits,  # ✅ 使用10折或配置的值
             use_time_series_cv=True,
             groups=None,
             auto_tune_params=auto_tune_params,
@@ -428,8 +485,22 @@ def train_volatility_model(
                 "feature_fraction": 0.9,
                 "bagging_fraction": 0.8,
                 "bagging_freq": 5,
+                "random_state": 42,  # ✅ 固定随机种子
+                "bagging_seed": 42,  # ✅ 固定bagging随机种子
+                "feature_fraction_seed": 42,  # ✅ 固定特征采样随机种子
+                "data_random_seed": 42,  # ✅ 固定数据随机种子
                 "verbose": -1,
             }
+
+        # ✅ 确保所有随机种子都已设置
+        if "random_state" not in params:
+            params["random_state"] = 42
+        if "bagging_seed" not in params:
+            params["bagging_seed"] = 42
+        if "feature_fraction_seed" not in params:
+            params["feature_fraction_seed"] = 42
+        if "data_random_seed" not in params:
+            params["data_random_seed"] = 42
 
         model = lgb.train(params, train_data, num_boost_round=100)
 
@@ -623,11 +694,31 @@ def evaluate_rule_based(
     mask_valid_breakeven = (auto_signals != 0) & details_breakeven["label"].notna()
     if mask_valid_breakeven.sum() > 0:
         details_valid = details_breakeven[mask_valid_breakeven]
+        # ✅ 添加调试信息
+        if "final_result" in details_valid.columns:
+            final_result_counts = details_valid["final_result"].value_counts()
+            print(f"   🔍 Debug: final_result distribution:")
+            for result, count in final_result_counts.items():
+                print(f"      {result}: {count}")
+        else:
+            print(f"   ⚠️  'final_result' column not found in details_breakeven")
+            print(f"   🔍 Available columns: {details_valid.columns.tolist()}")
+
         n_breakeven_win = int((details_valid["final_result"] == "breakeven_win").sum())
-        n_loss_total = int(
+        n_breakeven_loss = int(
             (details_valid["final_result"] == "breakeven_loss").sum()
-            + (details_valid["final_result"] == "loss").sum()
         )
+        n_loss = int((details_valid["final_result"] == "loss").sum())
+        n_win = int((details_valid["final_result"] == "win").sum())
+        n_loss_total = n_breakeven_loss + n_loss
+
+        print(f"   🔍 Debug: Breakeven breakdown:")
+        print(f"      breakeven_win: {n_breakeven_win}")
+        print(f"      breakeven_loss: {n_breakeven_loss}")
+        print(f"      loss: {n_loss}")
+        print(f"      win: {n_win}")
+        print(f"      total_loss: {n_loss_total}")
+
         breakeven_rate = (
             n_breakeven_win / (n_breakeven_win + n_loss_total)
             if (n_breakeven_win + n_loss_total) > 0
@@ -635,6 +726,9 @@ def evaluate_rule_based(
         )
     else:
         breakeven_rate = 0.0
+        print(
+            f"   ⚠️  No valid breakeven samples (mask_valid_breakeven.sum()={mask_valid_breakeven.sum()})"
+        )
 
     # 计算R
     stop_loss_r = params.get("stop_loss_r", 1.0)
@@ -768,7 +862,7 @@ def evaluate_ml_model(
             f"      Mean prediction (on signals): {np.mean(preds_proba[auto_signals != 0]):.4f}"
         )
 
-    # 计算RR标签
+    # 计算RR标签（启用保本止损）
     labels = compute_rr_label(
         df_features.copy(),
         signal_col="signal",
@@ -781,7 +875,27 @@ def evaluate_ml_model(
         use_continuous_label=False,
         entry_price_col="open",
         entry_offset=1,
-        use_breakeven_stop=False,
+        use_breakeven_stop=True,  # 启用保本止损
+    )
+
+    # 使用保本止损计算保本率（需要详细信息）
+    from src.time_series_model.pipeline.training.label_utils import (
+        compute_rr_label_with_details,
+    )
+
+    details_breakeven = compute_rr_label_with_details(
+        df_features.copy(),
+        signal_col="signal",
+        price_col="close",
+        atr_col="atr",
+        atr_window=14,
+        max_holding_bars=params.get("max_holding_bars", 50),
+        stop_loss_r=params.get("stop_loss_r", 1.0),
+        take_profit_r=params.get("take_profit_r", 2.0),
+        use_continuous_label=False,
+        entry_price_col="open",
+        entry_offset=1,
+        use_breakeven_stop=True,  # 启用保本止损
     )
 
     # 统计指标
@@ -805,17 +919,70 @@ def evaluate_ml_model(
         }
     )
 
+    # 计算保本率
+    mask_valid_breakeven = (ml_signals != 0) & details_breakeven["label"].notna()
+    breakeven_rate = 0.0
+    if mask_valid_breakeven.sum() > 0:
+        details_valid = details_breakeven[mask_valid_breakeven]
+        # ✅ 添加调试信息
+        if "final_result" in details_valid.columns:
+            final_result_counts = details_valid["final_result"].value_counts()
+            print(f"   🔍 Debug: final_result distribution (ML model):")
+            for result, count in final_result_counts.items():
+                print(f"      {result}: {count}")
+
+        n_breakeven_win = int((details_valid["final_result"] == "breakeven_win").sum())
+        n_breakeven_loss = int(
+            (details_valid["final_result"] == "breakeven_loss").sum()
+        )
+        n_loss = int((details_valid["final_result"] == "loss").sum())
+        n_win = int((details_valid["final_result"] == "win").sum())
+        n_loss_total = n_breakeven_loss + n_loss
+
+        print(f"   🔍 Debug: Breakeven breakdown (ML model):")
+        print(f"      breakeven_win: {n_breakeven_win}")
+        print(f"      breakeven_loss: {n_breakeven_loss}")
+        print(f"      loss: {n_loss}")
+        print(f"      win: {n_win}")
+        print(f"      total_loss: {n_loss_total}")
+
+        breakeven_rate = (
+            n_breakeven_win / (n_breakeven_win + n_loss_total)
+            if (n_breakeven_win + n_loss_total) > 0
+            else 0.0
+        )
+    else:
+        print(
+            f"   ⚠️  No valid breakeven samples for ML model (mask_valid_breakeven.sum()={mask_valid_breakeven.sum()})"
+        )
+
     n_win = int((df_trades["label"] == 1.0).sum())
     win_rate = n_win / n_trades if n_trades > 0 else 0.0
 
-    # 计算R
+    # 计算R（考虑保本止损）
     stop_loss_r = params.get("stop_loss_r", 1.0)
     take_profit_r = params.get("take_profit_r", 2.0)
-    realized_r = np.where(
-        df_trades["label"].values == 1.0,
-        take_profit_r,
-        -stop_loss_r,
-    )
+
+    # 对于保本止损的交易，需要从details中获取实际R值
+    if mask_valid_breakeven.sum() > 0:
+        details_valid = details_breakeven[mask_valid_breakeven]
+        # 使用details中的realized_rr（如果可用）
+        if "realized_rr" in details_valid.columns:
+            realized_r = details_valid["realized_rr"].values
+        else:
+            # 回退到简单计算
+            realized_r = np.where(
+                df_trades["label"].values == 1.0,
+                take_profit_r,
+                -stop_loss_r,
+            )
+    else:
+        realized_r = np.where(
+            df_trades["label"].values == 1.0,
+            take_profit_r,
+            -stop_loss_r,
+        )
+
     total_r = float(realized_r.sum())  # Total R = 所有交易的R总和（成功+失败）
     avg_r = float(realized_r.mean())
 
@@ -833,7 +1000,7 @@ def evaluate_ml_model(
     return {
         "n_trades": n_trades,
         "win_rate": win_rate,
-        "breakeven_rate": 0.0,  # ML模型暂不支持保本率
+        "breakeven_rate": breakeven_rate,  # 启用保本止损后计算保本率
         "total_r": total_r,
         "avg_r": avg_r,
         "sharpe_ratio": sharpe_ratio,
@@ -1395,11 +1562,306 @@ def generate_comparison_report(
     print(f"   ✅ Comparison report saved to {output_path}")
 
 
+def run_single_strategy_comparison(
+    strategy_config_path: str,
+    df_raw_train: pd.DataFrame,
+    df_raw_test: pd.DataFrame,
+    feature_loader: StrategyFeatureLoader,
+    tick_loader_json: Optional[str],
+    args: argparse.Namespace,
+    rule_based_entry: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    运行单个策略配置的完整比较流程
+
+    Returns:
+        Dict containing:
+        - strategy_name: 策略名称
+        - rule_results: 规则类策略结果
+        - ml_results: ML模型结果
+        - ml_vol_results: ML+波动率模型结果（如果启用）
+        - config_info: 配置信息（标签、回测、止损止盈、特征等）
+    """
+    strategy_name = Path(strategy_config_path).name
+    print(f"\n{'='*80}")
+    print(f"📊 Processing Strategy: {strategy_name}")
+    print(f"{'='*80}")
+
+    # Load strategy config
+    cfg_dir = Path(strategy_config_path).resolve()
+    if not cfg_dir.exists():
+        raise FileNotFoundError(f"Strategy config not found: {cfg_dir}")
+
+    strategy_cfg_loader = StrategyConfigLoader(cfg_dir)
+    strategy_cfg = strategy_cfg_loader.load()
+
+    # Load features for this strategy
+    print(f"   🔧 Loading features for {strategy_name}...")
+    df_train = strategy_runner.run_feature_pipeline(
+        df_raw_train,
+        feature_loader=feature_loader,
+        pipeline_cfg=strategy_cfg.features,
+        fit=True,
+    )
+    df_test = strategy_runner.run_feature_pipeline(
+        df_raw_test,
+        feature_loader=feature_loader,
+        pipeline_cfg=strategy_cfg.features,
+        fit=False,
+    )
+
+    # Ensure ATR exists
+    atr_train = _ensure_atr(df_train)
+    atr_test = _ensure_atr(df_test)
+    if "atr" not in df_train.columns:
+        df_train["atr"] = atr_train
+    if "atr" not in df_test.columns:
+        df_test["atr"] = atr_test
+
+    # Extract config info
+    config_info = {
+        "strategy_name": strategy_name,
+        "label_config": {
+            "target_column": strategy_cfg.labels.target_column,
+            "generator": f"{strategy_cfg.labels.generator.module}.{strategy_cfg.labels.generator.function}",
+            "params": dict(strategy_cfg.labels.generator.params or {}),
+        },
+        "backtest_config": {
+            "params": dict(strategy_cfg.backtest.params or {}),
+        },
+        "model_config": {
+            "task_type": strategy_cfg.model.trainer.params.get("task_type", "binary"),
+            "volatility_model_enabled": (
+                strategy_cfg.model.volatility_model.enabled
+                if strategy_cfg.model.volatility_model
+                else False
+            ),
+        },
+        "features": {
+            "count": (
+                len(strategy_cfg.features.requested_features)
+                if strategy_cfg.features.requested_features
+                else 0
+            ),
+            "list": (
+                strategy_cfg.features.requested_features[:10]
+                if strategy_cfg.features.requested_features
+                else []
+            ),  # First 10
+        },
+    }
+
+    # Evaluate rule-based strategy (if entry point provided)
+    rule_results = None
+    if rule_based_entry:
+        print(f"\n   📋 Evaluating Rule-Based Strategy (using {rule_based_entry})...")
+        try:
+            from scripts.train_strategy_pipeline import import_callable
+
+            rule_func = import_callable(*rule_based_entry.rsplit(".", 1))
+            # Extract rule params from backtest config
+            rule_params = dict(strategy_cfg.backtest.params.get("rr", {}))
+            rule_params.update(
+                {
+                    "stop_loss_r": rule_params.get("stop_loss_r", 1.0),
+                    "take_profit_r": rule_params.get("take_profit_r", 2.0),
+                    "max_holding_bars": rule_params.get("max_holding_bars", 50),
+                }
+            )
+            rule_results = rule_func(df_test.copy(), atr_test, rule_params)
+        except Exception as e:
+            print(f"   ⚠️  Rule-based evaluation failed: {e}")
+            rule_results = {
+                "n_trades": 0,
+                "win_rate": 0.0,
+                "breakeven_rate": 0.0,
+                "total_r": 0.0,
+                "sharpe_ratio": 0.0,
+            }
+
+    # Train ML model
+    print(f"\n   🤖 Training ML Model...")
+    # Generate labels using strategy config
+    from scripts.train_strategy_pipeline import import_callable
+
+    label_func = import_callable(
+        strategy_cfg.labels.generator.module,
+        strategy_cfg.labels.generator.function,
+    )
+    label_params = dict(strategy_cfg.labels.generator.params or {})
+    label_params.pop("signal_col", None)  # Remove signal_col if present
+
+    train_labels_raw = label_func(df_train.copy(), **label_params)
+    test_labels_raw = label_func(df_test.copy(), **label_params)
+
+    # Handle label return type (Series or DataFrame)
+    target_col = strategy_cfg.labels.target_column
+    if isinstance(train_labels_raw, pd.DataFrame):
+        train_labels = (
+            train_labels_raw[target_col]
+            if target_col in train_labels_raw.columns
+            else train_labels_raw.iloc[:, 0]
+        )
+    else:
+        train_labels = train_labels_raw
+
+    if isinstance(test_labels_raw, pd.DataFrame):
+        test_labels = (
+            test_labels_raw[target_col]
+            if target_col in test_labels_raw.columns
+            else test_labels_raw.iloc[:, 0]
+        )
+    else:
+        test_labels = test_labels_raw
+
+    # Prepare features
+    feature_cols = strategy_runner.determine_feature_columns(
+        df_train, strategy_cfg.features
+    )
+    X_train = df_train[feature_cols].fillna(0)
+    X_test = df_test[feature_cols].fillna(0)
+
+    task_type = strategy_cfg.model.trainer.params.get("task_type", "binary")
+    if task_type == "binary":
+        y_train = train_labels.fillna(0).astype(int)
+        y_test = test_labels.fillna(0).astype(int)
+    else:
+        y_train = train_labels.fillna(
+            train_labels.median() if train_labels.notna().any() else 0.0
+        )
+        y_test = test_labels.fillna(
+            test_labels.median() if test_labels.notna().any() else 0.0
+        )
+
+    # Train model
+    ml_model, ml_metrics = train_ml_model(X_train, y_train, X_test, y_test)
+
+    # Evaluate ML model
+    print(f"\n   📊 Evaluating ML Model...")
+    # Use strategy config for backtesting
+    preds = (
+        ml_model.predict_proba(X_test)[:, 1]
+        if hasattr(ml_model, "predict_proba")
+        else ml_model.predict(X_test)
+    )
+    ml_results = strategy_runner.run_backtest_with_strategy(
+        df_test,
+        preds,
+        strategy_cfg,
+        task_type=strategy_cfg.model.trainer.params.get("task_type", "binary"),
+        vol_model=None,  # ML model only, no volatility model
+    ) or {
+        "n_trades": 0,
+        "win_rate": 0.0,
+        "breakeven_rate": 0.0,
+        "total_r": 0.0,
+        "sharpe_ratio": 0.0,
+    }
+
+    # Train and evaluate volatility model (if enabled)
+    ml_vol_results = None
+    if (
+        strategy_cfg.model.volatility_model
+        and strategy_cfg.model.volatility_model.enabled
+    ):
+        print(f"\n   📈 Training Volatility Model...")
+        # Generate volatility labels
+        target_col = strategy_cfg.model.volatility_model.target_column
+        if target_col not in df_train.columns:
+            from src.time_series_model.pipeline.training.volatility_model_config import (
+                load_volatility_model_config,
+            )
+
+            vol_config = load_volatility_model_config(
+                strategy_cfg.model.volatility_model.config_path
+            )
+            horizon = vol_config.get("prediction", {}).get("horizon", 10)
+            df_train[target_col] = future_volatility_label(
+                df_train["close"], horizon=horizon
+            )
+            df_test[target_col] = future_volatility_label(
+                df_test["close"], horizon=horizon
+            )
+
+        y_vol_train = df_train[target_col]
+        y_vol_test = df_test[target_col]
+
+        vol_model, vol_metrics = train_volatility_model(
+            X_train,
+            y_vol_train,
+            X_test,
+            y_vol_test,
+            config_path=strategy_cfg.model.volatility_model.config_path,
+            feature_loader=feature_loader,
+            original_df_train=df_train,
+            original_df_test=df_test,
+        )
+        if vol_model:
+            print(f"   📊 Evaluating ML + Volatility Model...")
+            ml_vol_results = evaluate_ml_volatility_model(
+                df_test,
+                atr_test,
+                ml_model,
+                vol_model,
+                dict(strategy_cfg.backtest.params.get("rr", {})),
+                threshold=0.5,
+            )
+
+    return {
+        "strategy_name": strategy_name,
+        "config_info": config_info,
+        "rule_results": rule_results,
+        "ml_results": ml_results,
+        "ml_vol_results": ml_vol_results,
+        "ml_metrics": ml_metrics,
+    }
+
+
 def main() -> None:
     args = parse_args()
 
-    # Load data
-    print("📊 Loading data...")
+    # ✅ 固定所有随机种子以确保可重复性
+    import numpy as np
+    import random
+
+    np.random.seed(42)
+    random.seed(42)
+    # 设置pandas的随机种子（如果使用）
+    try:
+        import pandas as pd
+
+        # pandas 2.0+ 使用 numpy 的随机数生成器，所以已经通过 np.random.seed(42) 固定
+    except ImportError:
+        pass
+
+    # Parse multiple strategy configs
+    strategy_configs_raw = [
+        s.strip() for s in args.strategy_config.split(",") if s.strip()
+    ]
+    if not strategy_configs_raw:
+        raise ValueError("No strategy configs provided")
+
+    # Resolve strategy config paths (support both relative and absolute paths)
+    strategy_configs = []
+    base_config_dir = Path("config/strategies")
+    for cfg in strategy_configs_raw:
+        # Try as relative path first (from config/strategies/)
+        cfg_path = base_config_dir / cfg
+        if not cfg_path.exists():
+            # Try as absolute path
+            cfg_path = Path(cfg)
+            if not cfg_path.exists():
+                raise FileNotFoundError(
+                    f"Strategy config not found: {cfg} (tried {base_config_dir / cfg} and {cfg_path})"
+                )
+        strategy_configs.append(str(cfg_path.resolve()))
+
+    print(f"📋 Comparing {len(strategy_configs)} strategy configurations:")
+    for i, cfg in enumerate(strategy_configs, 1):
+        print(f"   {i}. {Path(cfg).name}")
+
+    # Load data (shared across all strategies)
+    print("\n📊 Loading data...")
     df_raw = load_raw_data(
         data_path=args.data_path,
         symbol=args.symbol,
@@ -1408,11 +1870,195 @@ def main() -> None:
         end_date=args.end_date,
     )
 
-    # Load features
-    print("🔧 Loading features...")
-    cfg_dir = Path(args.strategy_config).resolve()
-    strategy_cfg_loader = StrategyConfigLoader(cfg_dir)
-    strategy_cfg = strategy_cfg_loader.load()
+    # ✅ 确保数据按时间顺序排序（避免随机性）
+    if not df_raw.empty:
+        df_raw = df_raw.sort_index()
+        print(f"   ✅ Data sorted by index (time order)")
+
+    # Split data
+    split_idx = int(len(df_raw) * (1 - args.test_size))
+    train_end_idx = df_raw.index[split_idx - 1] if split_idx > 0 else df_raw.index[0]
+    df_raw_train = df_raw.loc[df_raw.index <= train_end_idx].copy()
+    df_raw_test = df_raw.loc[df_raw.index > train_end_idx].copy()
+    print(f"   📊 Data split: train={len(df_raw_train)}, test={len(df_raw_test)}")
+
+    # Configure tick loader (shared)
+    if df_raw.empty:
+        raise ValueError("No bars available for tick-loader configuration.")
+    tick_loader_json = build_tick_loader_payload(
+        symbol=args.symbol.upper(),
+        start_ts=df_raw.index.min().isoformat(),
+        end_ts=df_raw.index.max().isoformat(),
+        ticks_dir=args.ticks_dir,
+        lookback_minutes=args.ticks_lookback_minutes,
+    )
+
+    feature_loader = StrategyFeatureLoader()
+    if tick_loader_json:
+        vpin_feature = feature_loader.feature_deps.get("features", {}).get(
+            "vpin_features"
+        )
+        if vpin_feature is not None:
+            vpin_feature.setdefault("compute_params", {})[
+                "ticks_loader_json"
+            ] = tick_loader_json
+
+    # Parse rule-based entry point
+    rule_based_entry = args.rule_based_entry
+
+    # Run comparison for each strategy
+    all_results = []
+    for strategy_config_path in strategy_configs:
+        try:
+            result = run_single_strategy_comparison(
+                strategy_config_path,
+                df_raw_train,
+                df_raw_test,
+                feature_loader,
+                tick_loader_json,
+                args,
+                rule_based_entry=rule_based_entry,
+            )
+            all_results.append(result)
+        except Exception as e:
+            print(f"   ❌ Failed to process {strategy_config_path}: {e}")
+            import traceback
+
+            traceback.print_exc()
+            continue
+
+    # Generate comparison report
+    print("\n" + "=" * 80)
+    print("📊 Generating Comparison Report")
+    print("=" * 80)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    generate_multi_strategy_comparison_report(
+        all_results, output_dir / "comparison_report.html"
+    )
+
+    # Save results to CSV
+    save_comparison_results_csv(all_results, output_dir / "comparison_results.csv")
+
+    print(f"\n✅ Comparison complete!")
+    print(f"   Results saved to {output_dir}")
+
+
+def generate_multi_strategy_comparison_report(
+    all_results: List[Dict[str, Any]],
+    output_path: Path,
+) -> None:
+    """生成多策略对比报告"""
+    # TODO: Implement comprehensive comparison report
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Strategy Comparison Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background-color: #4CAF50; color: white; }}
+        tr:nth-child(even) {{ background-color: #f2f2f2; }}
+    </style>
+</head>
+<body>
+    <h1>Strategy Comparison Report</h1>
+    <p>Comparing {len(all_results)} strategy configurations</p>
+    <h2>Results Summary</h2>
+    <table>
+        <tr>
+            <th>Strategy</th>
+            <th>ML Trades</th>
+            <th>ML Win Rate</th>
+            <th>ML Total R</th>
+            <th>ML Sharpe</th>
+            <th>ML+Vol Trades</th>
+            <th>ML+Vol Win Rate</th>
+            <th>ML+Vol Total R</th>
+            <th>ML+Vol Sharpe</th>
+        </tr>
+"""
+    for result in all_results:
+        ml = result.get("ml_results", {})
+        ml_vol = result.get("ml_vol_results", {})
+        html_content += f"""
+        <tr>
+            <td>{result['strategy_name']}</td>
+            <td>{ml.get('n_trades', 0)}</td>
+            <td>{ml.get('win_rate', 0.0):.2%}</td>
+            <td>{ml.get('total_r', 0.0):.2f}</td>
+            <td>{ml.get('sharpe_ratio', 0.0):.2f}</td>
+            <td>{ml_vol.get('n_trades', 0) if ml_vol else 0}</td>
+            <td>{ml_vol.get('win_rate', 0.0):.2% if ml_vol else 'N/A'}</td>
+            <td>{ml_vol.get('total_r', 0.0):.2f if ml_vol else 'N/A'}</td>
+            <td>{ml_vol.get('sharpe_ratio', 0.0):.2f if ml_vol else 'N/A'}</td>
+        </tr>
+"""
+    html_content += """
+    </table>
+</body>
+</html>
+"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    print(f"   ✅ Comparison report saved to {output_path}")
+
+
+def save_comparison_results_csv(
+    all_results: List[Dict[str, Any]],
+    output_path: Path,
+) -> None:
+    """保存对比结果到CSV（包含配置信息）"""
+    rows = []
+    for result in all_results:
+        ml = result.get("ml_results", {})
+        ml_vol = result.get("ml_vol_results", {})
+        config_info = result.get("config_info", {})
+        label_cfg = config_info.get("label_config", {})
+        backtest_cfg = config_info.get("backtest_config", {})
+        model_cfg = config_info.get("model_config", {})
+        features_cfg = config_info.get("features", {})
+        rr_params = backtest_cfg.get("params", {}).get("rr", {})
+
+        rows.append(
+            {
+                "Strategy": result["strategy_name"],
+                "Label_Generator": label_cfg.get("generator", "N/A"),
+                "Label_Target": label_cfg.get("target_column", "N/A"),
+                "Task_Type": model_cfg.get("task_type", "N/A"),
+                "Volatility_Model": (
+                    "Enabled"
+                    if model_cfg.get("volatility_model_enabled")
+                    else "Disabled"
+                ),
+                "Stop_Loss_R": rr_params.get("stop_loss_r", "N/A"),
+                "Take_Profit_R": rr_params.get("take_profit_r", "N/A"),
+                "Max_Holding_Bars": rr_params.get("max_holding_bars", "N/A"),
+                "Breakeven_Stop": (
+                    "Enabled" if rr_params.get("use_breakeven_stop") else "Disabled"
+                ),
+                "Feature_Count": features_cfg.get("count", 0),
+                "ML_Trades": ml.get("n_trades", 0),
+                "ML_Win_Rate": ml.get("win_rate", 0.0),
+                "ML_Breakeven_Rate": ml.get("breakeven_rate", 0.0),
+                "ML_Total_R": ml.get("total_r", 0.0),
+                "ML_Sharpe": ml.get("sharpe_ratio", 0.0),
+                "ML_Vol_Trades": ml_vol.get("n_trades", 0) if ml_vol else 0,
+                "ML_Vol_Win_Rate": ml_vol.get("win_rate", 0.0) if ml_vol else 0.0,
+                "ML_Vol_Breakeven_Rate": (
+                    ml_vol.get("breakeven_rate", 0.0) if ml_vol else 0.0
+                ),
+                "ML_Vol_Total_R": ml_vol.get("total_r", 0.0) if ml_vol else 0.0,
+                "ML_Vol_Sharpe": ml_vol.get("sharpe_ratio", 0.0) if ml_vol else 0.0,
+            }
+        )
+    df = pd.DataFrame(rows)
+    df.to_csv(output_path, index=False)
+    print(f"   ✅ Results CSV saved to {output_path}")
 
     # Always configure tick loader for VPIN (required for all timeframes)
     if df_raw.empty:
@@ -1626,59 +2272,99 @@ def main() -> None:
     if "atr" not in df_test.columns:
         df_test["atr"] = atr_test
 
-    # Load optimized rule parameters
+    # ✅ 从策略配置中读取参数（替代硬编码）
+    # 优先使用优化后的参数（如果提供），否则使用配置中的默认值
+    rule_params = {}
+
+    # 从 backtest 配置中读取 RR 参数
+    if strategy_cfg.backtest and strategy_cfg.backtest.params:
+        backtest_params = strategy_cfg.backtest.params
+        rr_params = backtest_params.get("rr", {})
+        rule_params.update(
+            {
+                "stop_loss_r": float(rr_params.get("stop_loss_r", 1.0)),
+                "take_profit_r": float(rr_params.get("take_profit_r", 2.0)),
+                "max_holding_bars": int(rr_params.get("max_holding_bars", 50)),
+            }
+        )
+
+    # 从 labels 配置中读取参数（如果 backtest 中没有）
+    if strategy_cfg.labels and strategy_cfg.labels.generator.params:
+        label_params = strategy_cfg.labels.generator.params
+        if "stop_loss_r" not in rule_params:
+            rule_params["stop_loss_r"] = float(label_params.get("stop_loss_r", 1.0))
+        if "take_profit_r" not in rule_params:
+            rule_params["take_profit_r"] = float(label_params.get("take_profit_r", 2.0))
+        if "max_holding_bars" not in rule_params:
+            rule_params["max_holding_bars"] = int(
+                label_params.get("max_holding_bars", 50)
+            )
+
+    # 设置默认值（如果配置中没有）
+    rule_params.setdefault("sr_strength_min", 0.3)
+    rule_params.setdefault("sqs_min", 0.7)
+    rule_params.setdefault("touch_distance_atr", 1.5)
+    rule_params.setdefault("stop_loss_r", 1.0)
+    rule_params.setdefault("take_profit_r", 2.0)
+    rule_params.setdefault("max_holding_bars", 50)
+    rule_params.setdefault("use_vpin_filter", False)
+
+    # 如果提供了优化后的参数文件，优先使用（覆盖配置中的值）
     if args.rule_params and Path(args.rule_params).exists():
         # Try to load from CSV (optimization results)
         try:
             results_df = pd.read_csv(args.rule_params)
             if len(results_df) > 0:
                 best_row = results_df.loc[results_df["total_r"].idxmax()]
-                rule_params = {
-                    "sr_strength_min": float(best_row.get("sr_strength_min", 0.3)),
-                    "sqs_min": float(best_row.get("sqs_min", 0.7)),
-                    "touch_distance_atr": float(
-                        best_row.get("touch_distance_atr", 1.5)
-                    ),
-                    "stop_loss_r": float(best_row.get("stop_loss_r", 1.25)),
-                    "take_profit_r": float(best_row.get("take_profit_r", 3.0)),
-                    "max_holding_bars": int(best_row.get("max_holding_bars", 72)),
-                    "use_vpin_filter": bool(best_row.get("use_vpin_filter", False)),
-                    "min_vpin": (
-                        float(best_row.get("min_vpin", 0.4))
-                        if best_row.get("use_vpin_filter", False)
-                        else None
-                    ),
-                    "max_vpin": (
-                        float(best_row.get("max_vpin", 0.6))
-                        if best_row.get("use_vpin_filter", False)
-                        else None
-                    ),
-                }
-            else:
-                raise ValueError("Empty results file")
+                rule_params.update(
+                    {
+                        "sr_strength_min": float(
+                            best_row.get(
+                                "sr_strength_min",
+                                rule_params.get("sr_strength_min", 0.3),
+                            )
+                        ),
+                        "sqs_min": float(
+                            best_row.get("sqs_min", rule_params.get("sqs_min", 0.7))
+                        ),
+                        "touch_distance_atr": float(
+                            best_row.get(
+                                "touch_distance_atr",
+                                rule_params.get("touch_distance_atr", 1.5),
+                            )
+                        ),
+                        "stop_loss_r": float(
+                            best_row.get(
+                                "stop_loss_r", rule_params.get("stop_loss_r", 1.25)
+                            )
+                        ),
+                        "take_profit_r": float(
+                            best_row.get(
+                                "take_profit_r", rule_params.get("take_profit_r", 3.0)
+                            )
+                        ),
+                        "max_holding_bars": int(
+                            best_row.get(
+                                "max_holding_bars",
+                                rule_params.get("max_holding_bars", 72),
+                            )
+                        ),
+                        "use_vpin_filter": bool(best_row.get("use_vpin_filter", False)),
+                        "min_vpin": (
+                            float(best_row.get("min_vpin", 0.4))
+                            if best_row.get("use_vpin_filter", False)
+                            else None
+                        ),
+                        "max_vpin": (
+                            float(best_row.get("max_vpin", 0.6))
+                            if best_row.get("use_vpin_filter", False)
+                            else None
+                        ),
+                    }
+                )
         except Exception as e:
             print(f"   ⚠️ Could not load rule params from {args.rule_params}: {e}")
-            print("   Using default optimized parameters...")
-            rule_params = {
-                "sr_strength_min": 0.3,
-                "sqs_min": 0.7,
-                "touch_distance_atr": 1.5,
-                "stop_loss_r": 1.25,
-                "take_profit_r": 3.0,
-                "max_holding_bars": 72,
-                "use_vpin_filter": False,
-            }
-    else:
-        # Use default optimized parameters from previous run
-        rule_params = {
-            "sr_strength_min": 0.3,
-            "sqs_min": 0.7,
-            "touch_distance_atr": 1.5,
-            "stop_loss_r": 1.25,
-            "take_profit_r": 3.0,
-            "max_holding_bars": 72,
-            "use_vpin_filter": False,
-        }
+            print("   Using parameters from strategy config...")
 
     print("\n" + "=" * 60)
     print("1️⃣ Evaluating Rule-Based Strategy")
@@ -1791,20 +2477,62 @@ def main() -> None:
     if missing_cols:
         print(f"   ⚠️  Missing required columns for label computation: {missing_cols}")
 
-    train_labels = compute_rr_label(
-        df_train.copy(),
-        signal_col="signal",
-        price_col="close",
-        atr_col="atr",
-        atr_window=14,
-        max_holding_bars=rule_params.get("max_holding_bars", 50),
-        stop_loss_r=rule_params.get("stop_loss_r", 1.0),
-        take_profit_r=rule_params.get("take_profit_r", 2.0),
-        use_continuous_label=False,
-        entry_price_col="open",
-        entry_offset=1,
-        use_breakeven_stop=False,
+    # ✅ 使用配置中的标签生成函数（替代硬编码 compute_rr_label）
+    from scripts.train_strategy_pipeline import import_callable
+
+    label_func = import_callable(
+        strategy_cfg.labels.generator.module,
+        strategy_cfg.labels.generator.function,
     )
+    target_col = strategy_cfg.labels.target_column
+
+    # 生成标签（使用配置中的参数）
+    label_params = dict(strategy_cfg.labels.generator.params or {})
+    # 确保必要的参数存在（向后兼容）
+    # compute_sr_reversal_label_full_scan 不需要 signal_col，它会自动生成信号
+    # 移除可能存在的 signal_col 参数（如果配置中有）
+    label_params.pop("signal_col", None)
+    if "price_col" not in label_params:
+        label_params["price_col"] = "close"
+    if "atr_col" not in label_params:
+        label_params["atr_col"] = "atr"
+
+    try:
+        train_labels = label_func(df_train.copy(), **label_params)
+    except TypeError as e:
+        # 如果参数不匹配，尝试移除不支持的参数
+        print(f"   ⚠️  Label function parameter error: {e}")
+        print(f"   🔧 Trying with minimal parameters...")
+        # 只保留函数签名中明确支持的参数
+        minimal_params = {
+            "price_col": label_params.get("price_col", "close"),
+            "atr_col": label_params.get("atr_col", "atr"),
+        }
+        # 添加其他可能需要的参数（如果函数支持）
+        for key in [
+            "max_holding_bars",
+            "stop_loss_r",
+            "take_profit_r",
+            "combine_mode",
+            "high_col",
+            "low_col",
+            "atr_window",
+            "dist_to_sr_col",
+            "dist_atr_mult",
+            "sr_mask_col",
+        ]:
+            if key in label_params:
+                minimal_params[key] = label_params[key]
+        train_labels = label_func(df_train.copy(), **minimal_params)
+
+    # compute_sr_reversal_label_full_scan 返回的是 Series，直接使用
+    if not isinstance(train_labels, pd.Series):
+        raise ValueError(
+            f"Label function should return pd.Series, got {type(train_labels)}"
+        )
+
+    # 确保索引对齐
+    train_labels = train_labels.reindex(df_train.index)
 
     # Debug: Check label computation result
     print(
@@ -1939,6 +2667,26 @@ def main() -> None:
     vol_model = None
     vol_metrics = None
 
+    # ✅ 检查是否应该训练波动率模型
+    # 优先级：命令行参数 > 策略配置
+    should_train_vol_model = False
+    if args.enable_volatility_model is not None:
+        # 命令行参数明确指定
+        should_train_vol_model = args.enable_volatility_model
+        print(
+            f"   📋 Volatility model training: {should_train_vol_model} (from command line)"
+        )
+    elif strategy_cfg.model and strategy_cfg.model.volatility_model:
+        # 使用策略配置
+        should_train_vol_model = strategy_cfg.model.volatility_model.enabled
+        print(
+            f"   📋 Volatility model training: {should_train_vol_model} (from strategy config)"
+        )
+    else:
+        # 默认不训练（向后兼容）
+        should_train_vol_model = False
+        print(f"   📋 Volatility model training: {should_train_vol_model} (default)")
+
     # Try to load pre-trained model
     vol_model_path = args.volatility_model_path
     if not vol_model_path and args.output_root:
@@ -1981,9 +2729,27 @@ def main() -> None:
             print(f"   🔄 Falling back to training...")
             vol_model_path = None
 
-    # Train if not loaded
-    if not vol_model:
+    # Train if not loaded and enabled
+    if not vol_model and should_train_vol_model:
         print("   🔄 Training volatility model...")
+
+        # ✅ 确定波动率模型配置路径
+        vol_config_path = args.volatility_model_config
+        if not vol_config_path:
+            # 优先使用策略配置中的路径
+            if (
+                strategy_cfg.model
+                and strategy_cfg.model.volatility_model
+                and strategy_cfg.model.volatility_model.config_path
+            ):
+                vol_config_path = strategy_cfg.model.volatility_model.config_path
+                print(
+                    f"   📋 Using volatility model config from strategy: {vol_config_path}"
+                )
+            else:
+                # 使用默认配置
+                vol_config_path = None
+                print(f"   📋 Using default volatility model config")
         # Ensure tick_loader_json is configured for volatility model feature computation
         if tick_loader_json and feature_loader:
             # Update VPIN feature config in feature_deps
@@ -2016,10 +2782,17 @@ def main() -> None:
             y_vol_train_valid,
             X_train_valid,
             y_vol_train_valid,
+            config_path=vol_config_path,  # ✅ 使用配置路径
             feature_loader=feature_loader,  # 传入feature_loader以计算缺失特征
             original_df_train=df_train,  # Pass original dataframe with base columns
             original_df_test=df_test,  # Pass original dataframe with base columns
         )
+    elif not should_train_vol_model:
+        print(
+            "   ⏭️  Skipping volatility model training (disabled in config or command line)"
+        )
+        vol_model = None
+        vol_metrics = None
 
     # Evaluate ML model
     print("\n" + "=" * 60)
@@ -2027,22 +2800,96 @@ def main() -> None:
     print("=" * 60)
     # 根据训练时的预测分布，动态调整阈值
     # 如果模型预测值都很低，使用更低的阈值（例如使用训练集预测的90分位数）
-    if hasattr(ml_model, "predict_proba") and len(X_train_valid) > 0:
-        train_preds_sample = ml_model.predict_proba(
-            X_train_valid.head(min(500, len(X_train_valid)))
-        )
-        if len(train_preds_sample.shape) > 1:
-            train_preds_sample = train_preds_sample[:, 1]
-            suggested_threshold = min(
-                0.5, max(0.15, np.percentile(train_preds_sample, 90))
-            )
-            print(
-                f"   💡 Suggested threshold based on training predictions (90th percentile): {suggested_threshold:.3f}"
-            )
-        else:
+    suggested_threshold = 0.5  # 默认值
+    if len(X_train_valid) > 0:
+        try:
+            # 尝试使用 predict_proba 方法
+            if hasattr(ml_model, "predict_proba"):
+                train_preds_sample = ml_model.predict_proba(
+                    X_train_valid.head(min(500, len(X_train_valid)))
+                )
+            # 如果没有 predict_proba，尝试使用 predict 方法（LightGBMTrainer 的 predict 返回概率）
+            elif hasattr(ml_model, "predict"):
+                train_preds_sample = ml_model.predict(
+                    X_train_valid.head(min(500, len(X_train_valid)))
+                )
+                # 如果是分类任务，predict 返回的是概率（单列），需要转换为 (n_samples, 2) 格式
+                if (
+                    ml_model.model_type == "classification"
+                    and train_preds_sample.ndim == 1
+                ):
+                    train_preds_sample = np.column_stack(
+                        [1 - train_preds_sample, train_preds_sample]
+                    )
+            else:
+                print("   ⚠️  Model does not have predict_proba or predict method")
+                train_preds_sample = None
+
+            if train_preds_sample is not None:
+                if len(train_preds_sample.shape) > 1:
+                    train_preds_sample = train_preds_sample[:, 1]
+                # 计算90分位数并设置阈值
+                percentile_90 = np.percentile(train_preds_sample, 90)
+                suggested_threshold = min(0.5, max(0.15, percentile_90))
+                print(
+                    f"   💡 Suggested threshold based on training predictions (90th percentile): {suggested_threshold:.3f}"
+                )
+                print(
+                    f"      Training predictions stats: min={np.min(train_preds_sample):.4f}, "
+                    f"max={np.max(train_preds_sample):.4f}, mean={np.mean(train_preds_sample):.4f}, "
+                    f"median={np.median(train_preds_sample):.4f}"
+                )
+        except Exception as e:
+            print(f"   ⚠️  Failed to compute dynamic threshold: {e}")
             suggested_threshold = 0.5
-    else:
-        suggested_threshold = 0.5
+
+    # 如果动态阈值仍然太高（>0.3），使用更低的阈值进行测试
+    if suggested_threshold > 0.3:
+        # 使用训练集预测的中位数或25分位数作为阈值
+        try:
+            if len(X_train_valid) > 0:
+                if hasattr(ml_model, "predict_proba"):
+                    train_preds_sample = ml_model.predict_proba(
+                        X_train_valid.head(min(500, len(X_train_valid)))
+                    )
+                elif hasattr(ml_model, "predict"):
+                    train_preds_sample = ml_model.predict(
+                        X_train_valid.head(min(500, len(X_train_valid)))
+                    )
+                    if (
+                        ml_model.model_type == "classification"
+                        and train_preds_sample.ndim == 1
+                    ):
+                        train_preds_sample = np.column_stack(
+                            [1 - train_preds_sample, train_preds_sample]
+                        )
+
+                if train_preds_sample is not None:
+                    if len(train_preds_sample.shape) > 1:
+                        train_preds_sample = train_preds_sample[:, 1]
+                    # 使用中位数或75分位数作为阈值（更保守）
+                    alternative_threshold = min(
+                        0.3, max(0.15, np.percentile(train_preds_sample, 75))
+                    )
+                    if alternative_threshold < suggested_threshold:
+                        print(
+                            f"   💡 Using alternative threshold (75th percentile): {alternative_threshold:.3f} "
+                            f"(original: {suggested_threshold:.3f})"
+                        )
+                        suggested_threshold = alternative_threshold
+        except Exception:
+            pass
+
+    # 如果动态阈值仍然太高，自动使用更低的阈值（0.25 或 0.3）
+    # 这样可以确保即使模型预测值很低，也能产生一些交易来验证保本止损效果
+    if suggested_threshold > 0.3:
+        # 自动降低阈值到 0.25，确保有交易可以测试保本止损
+        auto_low_threshold = 0.25
+        print(
+            f"   🧪 Auto-lowering threshold to {auto_low_threshold:.2f} "
+            f"(original: {suggested_threshold:.3f}) to ensure trades for breakeven stop testing"
+        )
+        suggested_threshold = auto_low_threshold
 
     ml_results = evaluate_ml_model(
         df_test,
@@ -2053,6 +2900,7 @@ def main() -> None:
     )
     print(f"   Trades: {int(ml_results['n_trades'])}")
     print(f"   Win Rate: {ml_results['win_rate']:.2%}")
+    print(f"   Breakeven Rate: {ml_results.get('breakeven_rate', 0.0):.2%}")
     print(f"   Total R: {ml_results['total_r']:.2f}")
     print(f"   Sharpe: {ml_results['sharpe_ratio']:.2f}")
 
@@ -2060,18 +2908,29 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("6️⃣ Evaluating ML + Volatility Model")
     print("=" * 60)
-    ml_vol_results = evaluate_ml_volatility_model(
-        df_test,
-        atr_test,
-        ml_model,
-        vol_model,
-        rule_params,
-        threshold=0.5,
-    )
-    print(f"   Trades: {int(ml_vol_results['n_trades'])}")
-    print(f"   Win Rate: {ml_vol_results['win_rate']:.2%}")
-    print(f"   Total R: {ml_vol_results['total_r']:.2f}")
-    print(f"   Sharpe: {ml_vol_results['sharpe_ratio']:.2f}")
+    if vol_model:
+        ml_vol_results = evaluate_ml_volatility_model(
+            df_test,
+            atr_test,
+            ml_model,
+            vol_model,
+            rule_params,
+            threshold=0.5,
+        )
+        print(f"   Trades: {int(ml_vol_results['n_trades'])}")
+        print(f"   Win Rate: {ml_vol_results['win_rate']:.2%}")
+        print(f"   Breakeven Rate: {ml_vol_results.get('breakeven_rate', 0.0):.2%}")
+        print(f"   Total R: {ml_vol_results['total_r']:.2f}")
+        print(f"   Sharpe: {ml_vol_results['sharpe_ratio']:.2f}")
+    else:
+        print("   ⏭️  Skipped (volatility model not available)")
+        ml_vol_results = {
+            "n_trades": 0,
+            "win_rate": 0.0,
+            "breakeven_rate": 0.0,
+            "total_r": 0.0,
+            "sharpe_ratio": 0.0,
+        }
 
     # Generate comparison report
     print("\n" + "=" * 60)

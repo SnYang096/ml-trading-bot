@@ -200,11 +200,42 @@ def prepare_volatility_model_data(
     # 优先使用传入的 original_df，否则使用 X
     original_X = original_df.copy() if original_df is not None else X.copy()
 
+    # ✅ 确保基础 OHLCV 列存在于 X_processed 中（特征计算需要这些列）
+    base_columns = ["open", "high", "low", "close", "volume"]
+    for col in base_columns:
+        if col not in X_processed.columns and col in original_X.columns:
+            # 确保索引对齐
+            if len(X_processed) > 0:
+                try:
+                    X_processed[col] = original_X[col].reindex(X_processed.index)
+                except Exception:
+                    if len(original_X) == len(X_processed):
+                        X_processed[col] = original_X[col].values
+            else:
+                X_processed[col] = original_X[col]
+
     def _compute_feature(feature_name: str) -> None:
         nonlocal X_processed
         if not feature_loader or not feature_name:
             return
         try:
+            # ✅ 首先确保基础 OHLCV 列存在于 X_processed 中
+            # 这些列是特征计算的基础，即使不在 required_columns 中也需要
+            base_columns = ["open", "high", "low", "close", "volume"]
+            for col in base_columns:
+                if col not in X_processed.columns and col in original_X.columns:
+                    # 确保索引对齐
+                    if len(X_processed) > 0:
+                        try:
+                            X_processed[col] = original_X[col].reindex(
+                                X_processed.index
+                            )
+                        except Exception:
+                            if len(original_X) == len(X_processed):
+                                X_processed[col] = original_X[col].values
+                    else:
+                        X_processed[col] = original_X[col]
+
             # 确保 required_columns 存在于 DataFrame 中
             # 从 feature_dependencies.yaml 中获取 required_columns
             features_cfg = feature_loader.feature_deps.get("features", {})
@@ -253,12 +284,33 @@ def prepare_volatility_model_data(
             # 注意：feature_loader 应该是从外部传入的，已经配置好的实例
             # 在调用 load_features_from_requested 之前，确保所有 required_columns 都在 X_processed 中
             # 这样 load_features_from_requested 中的检查也能找到它们
-            X_processed = feature_loader.load_features_from_requested(
+            result_df = feature_loader.load_features_from_requested(
                 X_processed,
                 requested_features=[feature_name],
                 fit=True,
             )
-            print(f"   ✅ Computed missing feature: {feature_name}")
+            # ✅ 确保新计算的列被添加到 X_processed 中
+            # 使用 merge 或直接赋值来添加新列
+            new_cols = [
+                col for col in result_df.columns if col not in X_processed.columns
+            ]
+            if new_cols:
+                # 确保索引对齐
+                for col in new_cols:
+                    if col in result_df.columns:
+                        X_processed[col] = result_df[col].reindex(X_processed.index)
+            # 如果 result_df 有更多列，也更新现有列（以防计算过程中值发生变化）
+            common_cols = [
+                col for col in result_df.columns if col in X_processed.columns
+            ]
+            if common_cols:
+                for col in common_cols:
+                    X_processed[col] = result_df[col].reindex(X_processed.index)
+
+            print(
+                f"   ✅ Computed missing feature: {feature_name}"
+                + (f" (added columns: {new_cols})" if new_cols else "")
+            )
 
             # 清理内存（每个特征计算后）
             gc.collect()

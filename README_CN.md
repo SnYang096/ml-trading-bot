@@ -298,8 +298,9 @@ mlbot analyze strategy-feature-compare \
 
 #### 步骤 3: 模型对比（必需）
 
-验证 ML 模型优于基于规则的策略：
+验证 ML 模型优于基于规则的策略，并比较不同策略配置的差异：
 
+**基本用法（单个策略配置）**：
 ```bash
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
@@ -309,15 +310,42 @@ mlbot diagnose model-comparison \
   --end-date 2025-10-31
 ```
 
+**多策略配置对比（推荐）**：
+比较不同策略配置（标签、回测、止损止盈、特征差异）：
+
+```bash
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2023-01-01 \
+  --end-date 2025-10-31
+```
+
+**参数说明**：
+- `--strategy-config`: 逗号分隔的策略配置列表（支持相对路径，如 `sr_reversal_long`，或绝对路径）
+- `--rule-based-entry`: （可选）指定 rule-based 策略的代码入口点，用于生成规则基线对比
+
 **此步骤对比的内容**：
-- 基于规则的基线（纯规则策略）
+- 基于规则的基线（纯规则策略，如果提供了 `--rule-based-entry`）
 - ML 模型（XGBoost/LightGBM）
-- ML + 波动率模型
+- ML + 波动率模型（如果策略配置中启用了波动率模型）
+
+**对比报告包含**：
+- 性能指标：交易数、胜率、保本率、Total R、Sharpe 比率
+- 配置差异：标签生成器、任务类型、止损止盈参数、特征数量
+- 多策略横向对比表格
+
+**与 `strategy-feature-compare` 的区别**：
+- `model-comparison`: 需要复制配置（比较不同策略配置，如不同的标签、回测、止损止盈设置）
+- `strategy-feature-compare`: 不需要复制配置（同一目录不同特征配置，用于特征消融研究）
 
 **此步骤验证的内容**：
 - ML 模型显著优于规则
 - ML 模型提供稳定的收益
 - ML 模型具有合理的交易频率
+- 不同策略配置的性能差异
 
 **注意**：在进行滚动训练之前，此步骤是**必需的**。
 
@@ -475,8 +503,18 @@ mlbot analyze strategy-feature-compare \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 
 # 步骤 3: 模型对比（验证 ML 优于规则）
+# 单个策略配置
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 15T \
+  --start-date 2025-01-01 \
+  --end-date 2025-04-30
+
+# 多策略配置对比（推荐）
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 15T \
   --start-date 2025-01-01 \
@@ -601,8 +639,18 @@ mlbot analyze strategy-feature-compare \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 
 # 步骤 3: 模型对比（验证 ML 优于规则）
+# 单个策略配置
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# 多策略配置对比（推荐）
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
@@ -651,8 +699,18 @@ mlbot analyze strategy-feature-compare \
   --rolling-max-windows 10
 
 # 步骤 3: 模型对比（验证 ML 优于规则）
+# 单个策略配置
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# 多策略配置对比（推荐）
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \

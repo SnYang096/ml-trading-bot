@@ -959,8 +959,10 @@ def run_vectorbt_backtest(
         rr_atr_window = int(rr_params.get("atr_window", 14))
         rr_entry_offset = int(rr_params.get("entry_offset", 1))
         rr_entry_price_col = rr_params.get("entry_price_col", None)
+        # ✅ 支持 breakeven stop（从配置中读取，默认 False 以保持向后兼容）
+        rr_use_breakeven_stop = bool(rr_params.get("use_breakeven_stop", False))
 
-        # 构造仅包含“被模型选中的 SR 信号”的方向列：1=多，-1=空
+        # 构造仅包含"被模型选中的 SR 信号"的方向列：1=多，-1=空
         rr_signal = pd.Series(0.0, index=index)
         rr_signal[long_entries] = 1.0
         rr_signal[short_entries] = -1.0
@@ -979,6 +981,7 @@ def run_vectorbt_backtest(
             take_profit_r=rr_take_profit_r,
             entry_price_col=rr_entry_price_col,
             entry_offset=rr_entry_offset,
+            use_breakeven_stop=rr_use_breakeven_stop,  # ✅ 传递 breakeven 参数
         )
 
         # 用 RR 逻辑产生的 exits 覆盖概率退出
@@ -1556,6 +1559,71 @@ def train_strategy(
 
     for metric_name, score in evaluation_results.items():
         print(f"   ✅ {metric_name}: {score:.4f}")
+
+    # Optionally persist minimal artifacts so we can replay backtests quickly
+    # without retraining/recomputing features (useful for parameter sweeps like sr_fuse/breakeven).
+    try:
+        backtest_params = getattr(strategy_config, "backtest", None)
+        bt_params = (
+            getattr(backtest_params, "params", None) if backtest_params else None
+        )
+        bt_params = bt_params or {}
+        save_artifacts = bool(bt_params.get("save_artifacts", False))
+        if save_artifacts:
+
+            price_col = str(bt_params.get("price_col", "close"))
+            high_col = str(bt_params.get("high_col", "high"))
+            low_col = str(bt_params.get("low_col", "low"))
+            atr_col = str(bt_params.get("atr_col", "atr"))
+            signal_col = str(bt_params.get("signal_col", "signal"))
+            use_signal_direction = bool(bt_params.get("use_signal_direction", False))
+
+            rr_cfg = bt_params.get("rr", {}) or {}
+            rr_entry_price_col = rr_cfg.get("entry_price_col", None)
+
+            sr_fuse_cfg = bt_params.get("sr_fuse", {}) or {}
+            sr_dist_col = str(sr_fuse_cfg.get("dist_col", "dist_to_nearest_sr"))
+            sr_atr_col = str(sr_fuse_cfg.get("atr_col", atr_col))
+
+            needed_cols = {
+                price_col,
+                high_col,
+                low_col,
+                atr_col,
+                sr_dist_col,
+                sr_atr_col,
+            }
+            if rr_entry_price_col:
+                needed_cols.add(str(rr_entry_price_col))
+            if use_signal_direction:
+                needed_cols.add(signal_col)
+
+            cols_exist = [c for c in needed_cols if c in df_test_filtered.columns]
+            df_bt = df_test_filtered[cols_exist].copy()
+
+            # Preserve the datetime index in parquet for exact alignment
+            bt_df_path = output_dir / "backtest_df_test.parquet"
+            df_bt.to_parquet(bt_df_path)
+
+            bt_pred_path = output_dir / "backtest_preds.npy"
+            np.save(bt_pred_path, np.asarray(preds, dtype=float))
+
+            bt_meta_path = output_dir / "backtest_artifacts_meta.json"
+            meta = {
+                "task_type": task_type,
+                "model_type": model_type,
+                "n_test_samples": int(len(df_test_filtered)),
+                "saved_columns": cols_exist,
+                "backtest_params": bt_params,
+            }
+            with open(bt_meta_path, "w", encoding="utf-8") as fh:
+                json.dump(meta, fh, indent=2, default=str)
+
+            print(
+                f"   💾 Backtest artifacts saved: {bt_df_path.name}, {bt_pred_path.name}"
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ⚠️  Failed to save backtest artifacts: {exc}")
 
     results = {
         "strategy": strategy_config.name,

@@ -596,22 +596,32 @@ def compute_rr_label_with_details(
                 break
 
         # 计算标签和最终结果
-        if hit_tp_flag and (
+        # ✅ 修复：优先判断 breakeven 情况
+        if breakeven_activated_flag:
+            # 如果触发了 breakeven stop，止损在入场价，不会亏
+            if hit_tp_flag:
+                # 保本后盈利
+                labels.iloc[i] = 1.0
+                final_result.iloc[i] = "breakeven_win"
+            elif hit_sl_flag:
+                # 保本后亏损（价格回到入场价以下/以上，触达保本止损）
+                labels.iloc[i] = 0.0
+                final_result.iloc[i] = "breakeven_loss"
+            else:
+                # 超时，但没有触达止损（止损在入场价，不会亏）
+                labels.iloc[i] = 0.0  # 超时算失败，但不会亏
+                final_result.iloc[i] = "breakeven_win"  # 保本，不会亏
+        elif hit_tp_flag and (
             not hit_sl_flag
             or (tp_bar is not None and sl_bar is not None and tp_bar < sl_bar)
         ):
+            # 没有触发 breakeven stop，直接盈利
             labels.iloc[i] = 1.0
             final_result.iloc[i] = "win"
         else:
+            # 没有触发 breakeven stop，直接亏损
             labels.iloc[i] = 0.0
-            if breakeven_activated_flag and hit_sl_flag:
-                # 保本止损触发，但最终亏损（可能是保本止损后价格继续下跌）
-                final_result.iloc[i] = "breakeven_loss"
-            elif breakeven_activated_flag and not hit_sl_flag:
-                # 保本止损触发，但没有亏损（保本+胜利）
-                final_result.iloc[i] = "breakeven_win"
-            else:
-                final_result.iloc[i] = "loss"
+            final_result.iloc[i] = "loss"
 
         breakeven_activated.iloc[i] = breakeven_activated_flag
         hit_tp.iloc[i] = hit_tp_flag

@@ -18,6 +18,93 @@ from src.time_series_model.pipeline.training.label_utils import simulate_rr_exit
 class VectorBTBacktest(BaseBacktest):
     """使用 vectorbt 的通用回测实现。"""
 
+    def _apply_sr_fuse(
+        self,
+        *,
+        df: pd.DataFrame,
+        price: pd.Series,
+        long_entries: pd.Series,
+        short_entries: pd.Series,
+        params: Dict[str, Any],
+    ) -> tuple[pd.Series, pd.Series, Optional[pd.Series]]:
+        """
+        Optional SR safety fuse (distance gate):
+        - If enabled: block entries when price is too far from nearest SR.
+        - dist_col is assumed to be a relative distance (pct of price) by default,
+          aligned with dist_to_nearest_sr semantics in our feature pipeline.
+        - Normalization: (abs(dist_pct) * price) / atr <= max_dist_atr
+        """
+        cfg = (
+            (params.get("sr_fuse") or {})
+            if isinstance(params.get("sr_fuse"), dict)
+            else {}
+        )
+        enabled = bool(cfg.get("enabled", False))
+        if not enabled:
+            return long_entries, short_entries, None
+
+        dist_col = str(cfg.get("dist_col", "dist_to_nearest_sr"))
+        atr_col = str(cfg.get("atr_col", "atr"))
+        max_dist_atr = float(cfg.get("max_dist_atr", 1.5))
+        on_missing = str(cfg.get("on_missing", "skip")).lower()  # skip|block
+
+        # If required columns are missing, fail "closed" (block entries) by default.
+        if dist_col not in df.columns:
+            if on_missing in {"skip", "block"}:
+                print(
+                    f"   ⚠️  sr_fuse enabled but dist_col='{dist_col}' missing -> blocking entries"
+                )
+                return (
+                    long_entries & False,
+                    short_entries & False,
+                    pd.Series(False, index=df.index),
+                )
+            return long_entries, short_entries, None
+
+        # ATR: must exist or be derived
+        if atr_col in df.columns:
+            atr = pd.to_numeric(df[atr_col], errors="coerce").astype(float)
+        else:
+            # Derive ATR quickly if possible; otherwise fallback to 1.0
+            high_col = params.get("high_col", "high")
+            low_col = params.get("low_col", "low")
+            close_col = params.get("price_col", "close")
+            if all(c in df.columns for c in (high_col, low_col, close_col)):
+                high = pd.to_numeric(df[high_col], errors="coerce").astype(float)
+                low = pd.to_numeric(df[low_col], errors="coerce").astype(float)
+                close = pd.to_numeric(df[close_col], errors="coerce").astype(float)
+                tr = pd.concat(
+                    [
+                        high - low,
+                        (high - close.shift(1)).abs(),
+                        (low - close.shift(1)).abs(),
+                    ],
+                    axis=1,
+                ).max(axis=1)
+                atr_window = int((params.get("rr") or {}).get("atr_window", 14))
+                atr = tr.rolling(window=atr_window, min_periods=1).mean()
+            else:
+                atr = pd.Series(1.0, index=df.index)
+
+        dist_raw = pd.to_numeric(df[dist_col], errors="coerce").abs().astype(float)
+        price_s = pd.to_numeric(price, errors="coerce").astype(float)
+
+        # Heuristic: dist_to_nearest_sr is typically a fraction (<1). Treat as pct when small.
+        q95 = float(dist_raw.dropna().quantile(0.95)) if dist_raw.notna().any() else 0.0
+        dist_is_pct = bool(cfg.get("dist_is_pct", q95 <= 2.0))
+
+        if dist_is_pct:
+            abs_dist = dist_raw * price_s
+        else:
+            abs_dist = dist_raw
+
+        norm_dist_atr = abs_dist / (atr + 1e-8)
+        fuse_ok = (norm_dist_atr <= max_dist_atr).fillna(False).astype(bool)
+
+        long_entries = long_entries & fuse_ok
+        short_entries = short_entries & fuse_ok
+        return long_entries, short_entries, fuse_ok
+
     def run(
         self,
         df: pd.DataFrame,
@@ -113,6 +200,15 @@ class VectorBTBacktest(BaseBacktest):
             long_exits = pd.Series(False, index=index)
             short_exits = pd.Series(False, index=index)
 
+            # Optional SR fuse gate (distance to SR)
+            long_entries, short_entries, sr_fuse_ok = self._apply_sr_fuse(
+                df=df,
+                price=price,
+                long_entries=long_entries,
+                short_entries=short_entries,
+                params=params,
+            )
+
             if debug:
                 debug_signals = pd.DataFrame(
                     {
@@ -120,6 +216,7 @@ class VectorBTBacktest(BaseBacktest):
                         "pred": preds_series,
                         "long_entry": long_entries,
                         "short_entry": short_entries,
+                        "sr_fuse_ok": sr_fuse_ok if sr_fuse_ok is not None else True,
                     }
                 )
         else:
@@ -222,6 +319,7 @@ class VectorBTBacktest(BaseBacktest):
             rr_atr_window = int(rr_params.get("atr_window", 14))
             rr_entry_offset = int(rr_params.get("entry_offset", 1))
             rr_entry_price_col = rr_params.get("entry_price_col", None)
+            rr_use_breakeven_stop = bool(rr_params.get("use_breakeven_stop", False))
 
             # 构造仅包含被模型选中的信号方向列：1=多，-1=空
             rr_signal = pd.Series(0.0, index=index)
@@ -242,6 +340,7 @@ class VectorBTBacktest(BaseBacktest):
                 take_profit_r=rr_take_profit_r,
                 entry_price_col=rr_entry_price_col,
                 entry_offset=rr_entry_offset,
+                use_breakeven_stop=rr_use_breakeven_stop,
             )
 
             long_exits = long_exits_rr.reindex(index).fillna(False)

@@ -41,7 +41,7 @@ trainer:
 volatility_features:
   groups:
     - name: garch
-      feature_name: garch_features
+      feature_name: garch_features_f
       required: true
       columns:
         - garch_volatility
@@ -51,7 +51,7 @@ volatility_features:
         - garch_beta
 
     - name: extended_volatility
-      feature_name: extended_volatility_features
+      feature_name: extended_volatility_features_f
       required: true
       columns:
         # 1. Multi-scale historical volatility (raw volatility)
@@ -120,7 +120,7 @@ volatility_features:
     #     - vpin_volatility_20
 
     - name: spectrum_volatility
-      feature_name: spectrum_features
+      feature_name: spectrum_features_f
       required: false
       columns:
         # 用于波动率预测的核心频谱特征（Strategy 3: Volatility Forecasting）
@@ -144,7 +144,7 @@ volatility_features:
 
     - name: wpt_volatility
       # 使用专门的特征名，更优雅且可复用
-      feature_name: wpt_volatility_features  # 在 feature_dependencies.yaml 中定义
+      feature_name: wpt_volatility_features_f  # 在 feature_dependencies.yaml 中定义
       required: false
       # 注意：增强特征（wpt_price_high_energy_ratio, wpt_price_fluct_l1_l2_ratio, wpt_vhph_sync）
       # 会通过 enhance_wpt_vol_features 函数自动生成（在 volume_profile_volatility_features 中调用）
@@ -200,14 +200,14 @@ volatility_features:
         # 注意：这些特征与 vol_zscore、vol_slope_10 结合，可显著提升对"波动率拐点"的识别能力
 
     - name: compression_optional
-      feature_name: bb_width
+      feature_name: bb_width_f
       required: false
       columns:
         - bb_width
         - bb_width_normalized
 
     - name: compression_ratio_optional
-      feature_name: bb_width_ratio
+      feature_name: bb_width_ratio_f
       required: false
       columns:
         - bb_width_ratio

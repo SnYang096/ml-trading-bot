@@ -1,0 +1,23 @@
+name: sr_reversal_long
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.sr_reversal_label
+  function: compute_sr_reversal_label_full_scan
+  params:
+    max_holding_bars: 50
+    take_profit_r: 2.0
+    stop_loss_r: 1.0
+    combine_mode: long_only
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters:
+  # Temporarily disable strict feature non-null filtering to keep more samples.
+  []
+
+notes: |
+  标签：TP 先于 SL → 1.0；SL 先于 TP → 0.0；超时 → NaN。
+

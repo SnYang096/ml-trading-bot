@@ -21,10 +21,10 @@ backtest:
       entry_price_col: open
       use_breakeven_stop: false
     sr_fuse:
-      enabled: true
+      enabled: false
       dist_col: dist_to_nearest_sr
       atr_col: atr
-      max_dist_atr: 3.0
+      max_dist_atr: 1.5
       dist_is_pct: true
       on_missing: skip
     # Persist df_test+preds to disk so we can replay backtests (sr_fuse/breakeven sweeps)

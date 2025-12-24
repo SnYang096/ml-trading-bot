@@ -1309,6 +1309,11 @@ def diagnose_dtw_volatility(docker):
     "--rule-params",
     help="Rule optimization results CSV (optional)",
 )
+@click.option(
+    "--rule-based-entry",
+    default=None,
+    help="Python module path for rule-based strategy entry point",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_model_comparison(
     strategy_config,
@@ -1322,6 +1327,7 @@ def diagnose_model_comparison(
     ticks_dir,
     ticks_lookback_minutes,
     rule_params,
+    rule_based_entry,
     docker,
 ):
     """Compare Rule-based vs ML vs ML+Volatility models."""
@@ -1357,6 +1363,8 @@ def diagnose_model_comparison(
         args.extend(
             ["--rule-params", f"/workspace/{rule_params}" if use_workspace_prefix else rule_params]
         )
+    if rule_based_entry:
+        args.extend(["--rule-based-entry", rule_based_entry])
 
     sys.exit(
         run_python_module(

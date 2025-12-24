@@ -268,8 +268,9 @@ mlbot analyze strategy-feature-compare \
 
 #### Step 3: Model Comparison (Required)
 
-Verify that ML models outperform rule-based strategies:
+Verify that ML models outperform rule-based strategies and compare different strategy configurations:
 
+**Basic Usage (Single Strategy Config)**:
 ```bash
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
@@ -279,15 +280,42 @@ mlbot diagnose model-comparison \
   --end-date 2025-10-31
 ```
 
+**Multi-Strategy Comparison (Recommended)**:
+Compare different strategy configurations (labels, backtest, stop-loss/take-profit, features):
+
+```bash
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+```
+
+**Parameters**:
+- `--strategy-config`: Comma-separated list of strategy configs (supports relative paths like `sr_reversal_long` or absolute paths)
+- `--rule-based-entry`: (Optional) Python module path for rule-based strategy entry point, used to generate rule baseline comparison
+
 **What This Compares**:
-- Rule-based baseline (pure rule strategy)
+- Rule-based baseline (pure rule strategy, if `--rule-based-entry` is provided)
 - ML model (XGBoost/LightGBM)
-- ML + Volatility model
+- ML + Volatility Model (if volatility model is enabled in strategy config)
+
+**Comparison Report Includes**:
+- Performance metrics: trades, win rate, breakeven rate, Total R, Sharpe ratio
+- Configuration differences: label generator, task type, stop-loss/take-profit parameters, feature count
+- Multi-strategy side-by-side comparison table
+
+**Difference from `strategy-feature-compare`**:
+- `model-comparison`: Requires copying configs (compares different strategy configs, e.g., different labels, backtest, stop-loss/take-profit settings)
+- `strategy-feature-compare`: No config copying needed (same directory with different feature configs, for feature ablation studies)
 
 **What This Validates**:
 - ML model significantly outperforms rules
 - ML model provides stable returns
 - ML model has reasonable trade frequency
+- Performance differences between different strategy configurations
 
 **Note**: This step is **required** before proceeding to rolling training.
 
@@ -445,8 +473,18 @@ mlbot analyze strategy-feature-compare \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 
 # Step 3: Model comparison (verify ML outperforms rules)
+# Single strategy config
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 15T \
+  --start-date 2025-01-01 \
+  --end-date 2025-04-30
+
+# Multi-strategy comparison (recommended)
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 15T \
   --start-date 2025-01-01 \
@@ -570,8 +608,18 @@ mlbot analyze strategy-feature-compare \
   --feature-overrides "original=features_all.yaml selected=features_suggested.yaml"
 
 # Step 3: Model comparison (verify ML outperforms rules)
+# Single strategy config
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# Multi-strategy comparison (recommended)
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
@@ -620,8 +668,18 @@ mlbot analyze strategy-feature-compare \
   --rolling-max-windows 10
 
 # Step 3: Model comparison (verify ML outperforms rules)
+# Single strategy config
 mlbot diagnose model-comparison \
   --strategy-config config/strategies/sr_reversal_long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2025-10-31
+
+# Multi-strategy comparison (recommended)
+mlbot diagnose model-comparison \
+  --strategy-config sr_reversal_long,sr_reversal_long_vol,sr_reversal_rr_reg_long \
+  --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
