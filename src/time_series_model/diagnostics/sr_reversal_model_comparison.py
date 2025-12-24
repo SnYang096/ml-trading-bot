@@ -501,6 +501,46 @@ def evaluate_rule_based(
         ),
     )
 
+    # 调试：检查信号生成所需的列
+    print(f"   🔍 Debug: Checking required columns for signal generation...")
+    print(f"      sr_strength_max exists: {'sr_strength_max' in df_features.columns}")
+    print(f"      sqs_hal_high exists: {'sqs_hal_high' in df_features.columns}")
+    print(f"      sqs_hal_low exists: {'sqs_hal_low' in df_features.columns}")
+    print(f"      poc exists: {'poc' in df_features.columns}")
+    print(f"      hal_high exists: {'hal_high' in df_features.columns}")
+    print(f"      hal_low exists: {'hal_low' in df_features.columns}")
+
+    if "sr_strength_max" in df_features.columns:
+        sr_stats = df_features["sr_strength_max"].describe()
+        print(
+            f"      sr_strength_max stats: mean={sr_stats['mean']:.3f}, max={sr_stats['max']:.3f}, min={sr_stats['min']:.3f}, non-null={df_features['sr_strength_max'].notna().sum()}/{len(df_features)}"
+        )
+        print(
+            f"      sr_strength_max >= {sr_cfg.min_sr_strength}: {(df_features['sr_strength_max'] >= sr_cfg.min_sr_strength).sum()} samples"
+        )
+    if "sqs_hal_high" in df_features.columns:
+        sqs_high_stats = df_features["sqs_hal_high"].describe()
+        print(
+            f"      sqs_hal_high stats: mean={sqs_high_stats['mean']:.3f}, max={sqs_high_stats['max']:.3f}, min={sqs_high_stats['min']:.3f}, non-null={df_features['sqs_hal_high'].notna().sum()}/{len(df_features)}"
+        )
+        print(
+            f"      sqs_hal_high >= {sr_cfg.min_resistance_score}: {(df_features['sqs_hal_high'] >= sr_cfg.min_resistance_score).sum()} samples"
+        )
+    if "sqs_hal_low" in df_features.columns:
+        sqs_low_stats = df_features["sqs_hal_low"].describe()
+        print(
+            f"      sqs_hal_low stats: mean={sqs_low_stats['mean']:.3f}, max={sqs_low_stats['max']:.3f}, min={sqs_low_stats['min']:.3f}, non-null={df_features['sqs_hal_low'].notna().sum()}/{len(df_features)}"
+        )
+        print(
+            f"      sqs_hal_low >= {sr_cfg.min_support_score}: {(df_features['sqs_hal_low'] >= sr_cfg.min_support_score).sum()} samples"
+        )
+
+    print(f"   🔍 Signal generation config:")
+    print(f"      min_sr_strength: {sr_cfg.min_sr_strength}")
+    print(f"      min_support_score: {sr_cfg.min_support_score}")
+    print(f"      min_resistance_score: {sr_cfg.min_resistance_score}")
+    print(f"      tolerance_mult: {sr_cfg.tolerance_mult}")
+
     # 生成信号
     auto_signals = _generate_sr_reversal_signals(
         df_features,
@@ -511,6 +551,15 @@ def evaluate_rule_based(
         cfg=sr_cfg,
     )
     df_features["signal"] = auto_signals
+
+    n_signals = int((auto_signals != 0).sum())
+    print(f"   📊 Generated {n_signals} signals (out of {len(df_features)} samples)")
+    if n_signals > 0:
+        signal_indices = auto_signals[auto_signals != 0].index[:5]
+        print(f"      First 5 signal timestamps: {signal_indices.tolist()}")
+        print(
+            f"      Signal values: {auto_signals[auto_signals != 0].head(5).tolist()}"
+        )
 
     # 计算RR标签（标准版本和保本版本）
     labels_standard = compute_rr_label(
@@ -667,6 +716,18 @@ def evaluate_ml_model(
             :, 1
         ]  # Binary classification: get positive class probability
 
+    # 调试：检查预测分布
+    print(f"   🔍 Debug: ML model predictions stats:")
+    print(f"      Shape: {preds_proba.shape}")
+    print(f"      Mean: {np.mean(preds_proba):.4f}")
+    print(f"      Median: {np.median(preds_proba):.4f}")
+    print(f"      Min: {np.min(preds_proba):.4f}")
+    print(f"      Max: {np.max(preds_proba):.4f}")
+    print(f"      Std: {np.std(preds_proba):.4f}")
+    print(f"      >= {threshold}: {(preds_proba >= threshold).sum()} samples")
+    print(f"      >= 0.3: {(preds_proba >= 0.3).sum()} samples")
+    print(f"      >= 0.2: {(preds_proba >= 0.2).sum()} samples")
+
     # 生成SR信号（规则类）
     sqs_min = params.get("sqs_min", 0.5)
     sr_cfg = SRSignalConfig(
@@ -693,6 +754,19 @@ def evaluate_ml_model(
         0,
     )
     df_features["signal"] = ml_signals
+
+    # 调试：检查ML信号生成
+    n_auto_signals = int((auto_signals != 0).sum())
+    n_ml_signals = int((ml_signals != 0).sum())
+    print(f"   🔍 Debug: Signal filtering:")
+    print(f"      Rule-based signals: {n_auto_signals}")
+    print(f"      After ML filter (threshold={threshold}): {n_ml_signals}")
+    if n_auto_signals > 0 and n_ml_signals == 0:
+        print(f"      ⚠️  All rule-based signals filtered out by ML threshold!")
+        print(f"      Max prediction: {np.max(preds_proba[auto_signals != 0]):.4f}")
+        print(
+            f"      Mean prediction (on signals): {np.mean(preds_proba[auto_signals != 0]):.4f}"
+        )
 
     # 计算RR标签
     labels = compute_rr_label(
@@ -1631,6 +1705,43 @@ def main() -> None:
         use_vpin_filter=rule_params.get("use_vpin_filter", False),
     )
 
+    # 调试：检查训练集的特征列
+    print(f"   🔍 Debug: Checking required columns for training signal generation...")
+    print(f"      sr_strength_max exists: {'sr_strength_max' in df_train.columns}")
+    print(f"      sqs_hal_high exists: {'sqs_hal_high' in df_train.columns}")
+    print(f"      sqs_hal_low exists: {'sqs_hal_low' in df_train.columns}")
+
+    if "sr_strength_max" in df_train.columns:
+        sr_stats = df_train["sr_strength_max"].describe()
+        print(
+            f"      sr_strength_max stats: mean={sr_stats['mean']:.3f}, max={sr_stats['max']:.3f}, min={sr_stats['min']:.3f}, non-null={df_train['sr_strength_max'].notna().sum()}/{len(df_train)}"
+        )
+        print(
+            f"      sr_strength_max >= {sr_cfg.min_sr_strength}: {(df_train['sr_strength_max'] >= sr_cfg.min_sr_strength).sum()} samples"
+        )
+    if "sqs_hal_high" in df_train.columns:
+        sqs_high_stats = df_train["sqs_hal_high"].describe()
+        print(
+            f"      sqs_hal_high stats: mean={sqs_high_stats['mean']:.3f}, max={sqs_high_stats['max']:.3f}, min={sqs_high_stats['min']:.3f}, non-null={df_train['sqs_hal_high'].notna().sum()}/{len(df_train)}"
+        )
+        print(
+            f"      sqs_hal_high >= {sr_cfg.min_resistance_score}: {(df_train['sqs_hal_high'] >= sr_cfg.min_resistance_score).sum()} samples"
+        )
+    if "sqs_hal_low" in df_train.columns:
+        sqs_low_stats = df_train["sqs_hal_low"].describe()
+        print(
+            f"      sqs_hal_low stats: mean={sqs_low_stats['mean']:.3f}, max={sqs_low_stats['max']:.3f}, min={sqs_low_stats['min']:.3f}, non-null={df_train['sqs_hal_low'].notna().sum()}/{len(df_train)}"
+        )
+        print(
+            f"      sqs_hal_low >= {sr_cfg.min_support_score}: {(df_train['sqs_hal_low'] >= sr_cfg.min_support_score).sum()} samples"
+        )
+
+    print(f"   🔍 Signal generation config:")
+    print(f"      min_sr_strength: {sr_cfg.min_sr_strength}")
+    print(f"      min_support_score: {sr_cfg.min_support_score}")
+    print(f"      min_resistance_score: {sr_cfg.min_resistance_score}")
+    print(f"      tolerance_mult: {sr_cfg.tolerance_mult}")
+
     train_signals = _generate_sr_reversal_signals(
         df_train,
         price_col="close",
@@ -1646,6 +1757,12 @@ def main() -> None:
     print(
         f"   📊 Generated {n_signals} signals in training set (out of {len(df_train)} samples)"
     )
+    if n_signals > 0:
+        signal_indices = train_signals[train_signals != 0].index[:5]
+        print(f"      First 5 signal timestamps: {signal_indices.tolist()}")
+        print(
+            f"      Signal values: {train_signals[train_signals != 0].head(5).tolist()}"
+        )
 
     # Compute labels
     # Debug: Check df_train before label computation
@@ -1908,12 +2025,31 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("5️⃣ Evaluating ML Model")
     print("=" * 60)
+    # 根据训练时的预测分布，动态调整阈值
+    # 如果模型预测值都很低，使用更低的阈值（例如使用训练集预测的90分位数）
+    if hasattr(ml_model, "predict_proba") and len(X_train_valid) > 0:
+        train_preds_sample = ml_model.predict_proba(
+            X_train_valid.head(min(500, len(X_train_valid)))
+        )
+        if len(train_preds_sample.shape) > 1:
+            train_preds_sample = train_preds_sample[:, 1]
+            suggested_threshold = min(
+                0.5, max(0.15, np.percentile(train_preds_sample, 90))
+            )
+            print(
+                f"   💡 Suggested threshold based on training predictions (90th percentile): {suggested_threshold:.3f}"
+            )
+        else:
+            suggested_threshold = 0.5
+    else:
+        suggested_threshold = 0.5
+
     ml_results = evaluate_ml_model(
         df_test,
         atr_test,
         ml_model,
         rule_params,
-        threshold=0.5,
+        threshold=suggested_threshold,  # 使用动态阈值
     )
     print(f"   Trades: {int(ml_results['n_trades'])}")
     print(f"   Win Rate: {ml_results['win_rate']:.2%}")
