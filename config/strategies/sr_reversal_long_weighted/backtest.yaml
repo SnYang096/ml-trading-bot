@@ -5,7 +5,9 @@ backtest:
     # Direction-fixed probability gating:
     # - sr_reversal_long is long_only => `pred` is P(success of a long trade)
     # - enter when pred >= entry_threshold
-    entry_threshold: 0.35
+    # SR-filtered + weighted binary model predictions are often less "confident" (lower absolute probs).
+    # Use a lower threshold to ensure enough trades for meaningful Sharpe evaluation.
+    entry_threshold: 0.24
     # Entry mode:
     # - level: allow entry as long as pred >= threshold (useful when crossings are rare)
     # - cross: only on rising edge from <threshold to >=threshold
@@ -31,9 +33,10 @@ backtest:
       entry_price_col: open
     # Optional safety fuse: when too far from SR (normalized by ATR), do not trade.
     sr_fuse:
-      enabled: false
+      enabled: true
       dist_col: dist_to_nearest_sr
       atr_col: atr
-      max_dist_atr: 6.0
+      max_dist_atr: 3.0
+      dist_is_pct: true
       on_missing: skip   # skip|block
     debug: true

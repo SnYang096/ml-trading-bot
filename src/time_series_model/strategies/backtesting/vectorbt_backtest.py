@@ -48,18 +48,23 @@ class VectorBTBacktest(BaseBacktest):
         max_dist_atr = float(cfg.get("max_dist_atr", 1.5))
         on_missing = str(cfg.get("on_missing", "skip")).lower()  # skip|block
 
-        # If required columns are missing, fail "closed" (block entries) by default.
+        # If required columns are missing:
+        # - on_missing=skip: ignore sr_fuse (do not block entries)
+        # - on_missing=block: block entries (fail closed)
         if dist_col not in df.columns:
-            if on_missing in {"skip", "block"}:
+            if on_missing in {"skip", "ignore"}:
                 print(
-                    f"   ⚠️  sr_fuse enabled but dist_col='{dist_col}' missing -> blocking entries"
+                    f"   ⚠️  sr_fuse enabled but dist_col='{dist_col}' missing -> skipping fuse"
                 )
-                return (
-                    long_entries & False,
-                    short_entries & False,
-                    pd.Series(False, index=df.index),
-                )
-            return long_entries, short_entries, None
+                return long_entries, short_entries, None
+            print(
+                f"   ⚠️  sr_fuse enabled but dist_col='{dist_col}' missing -> blocking entries"
+            )
+            return (
+                long_entries & False,
+                short_entries & False,
+                pd.Series(False, index=df.index),
+            )
 
         # ATR: must exist or be derived
         if atr_col in df.columns:
@@ -220,11 +225,17 @@ class VectorBTBacktest(BaseBacktest):
                     }
                 )
         else:
+            # Backward/UX-friendly aliases:
+            # Many strategy yamls use `entry_threshold` for direction-fixed binary strategies.
+            entry_threshold = params.get("entry_threshold", None)
+            entry_quantile = params.get("entry_quantile", None)  # e.g. 0.9 means q90
+
             long_entry = params.get("long_entry_threshold", 0.6)
             long_exit = params.get("long_exit_threshold", 0.4)
             short_entry = params.get("short_entry_threshold", 0.4)
             short_exit = params.get("short_exit_threshold", 0.6)
             exit_mode = str(params.get("exit_mode", "none")).lower()  # none|threshold
+            entry_mode = str(params.get("entry_mode", "level")).lower()  # level|cross
 
             preds_series = pd.Series(predictions, index=index)
 
@@ -260,7 +271,22 @@ class VectorBTBacktest(BaseBacktest):
             else:
                 # 仅根据预测得分构造多空信号
                 if strategy_direction == "long_only":
-                    long_entries = preds_series >= long_entry
+                    if entry_quantile is not None:
+                        q = float(entry_quantile)
+                        q = min(max(q, 0.0), 1.0)
+                        thr = float(preds_series.quantile(q))
+                    else:
+                        if entry_threshold is not None:
+                            long_entry = float(entry_threshold)
+                        thr = float(long_entry)
+
+                    entry_raw = preds_series >= thr
+                    if entry_mode == "cross":
+                        prev = entry_raw.shift(1).fillna(False)
+                        long_entries = entry_raw & (~prev)
+                    else:
+                        long_entries = entry_raw
+
                     long_exits = (
                         (preds_series <= long_exit)
                         if exit_mode == "threshold"
@@ -269,9 +295,24 @@ class VectorBTBacktest(BaseBacktest):
                     short_entries = pd.Series(False, index=index)  # 不做空
                     short_exits = pd.Series(False, index=index)
                 elif strategy_direction == "short_only":
+                    # Direction-fixed short-only: pred is P(success of a SHORT trade), so entry is preds >= threshold.
+                    if entry_quantile is not None:
+                        q = float(entry_quantile)
+                        q = min(max(q, 0.0), 1.0)
+                        thr = float(preds_series.quantile(q))
+                    else:
+                        if entry_threshold is not None:
+                            short_entry = float(entry_threshold)
+                        thr = float(short_entry)
+
                     long_entries = pd.Series(False, index=index)  # 不做多
                     long_exits = pd.Series(False, index=index)
-                    short_entries = preds_series <= short_entry
+                    entry_raw = preds_series >= thr
+                    if entry_mode == "cross":
+                        prev = entry_raw.shift(1).fillna(False)
+                        short_entries = entry_raw & (~prev)
+                    else:
+                        short_entries = entry_raw
                     short_exits = (
                         (preds_series >= short_exit)
                         if exit_mode == "threshold"
@@ -320,6 +361,13 @@ class VectorBTBacktest(BaseBacktest):
             rr_entry_offset = int(rr_params.get("entry_offset", 1))
             rr_entry_price_col = rr_params.get("entry_price_col", None)
             rr_use_breakeven_stop = bool(rr_params.get("use_breakeven_stop", False))
+            rr_use_time_exit = bool(rr_params.get("use_time_exit", True))
+            rr_use_trailing_stop = bool(rr_params.get("use_trailing_stop", False))
+            rr_trailing_atr_mult = float(rr_params.get("trailing_atr_mult", 1.0))
+
+            # If time-exit is disabled, set a very large horizon but rely on force_close_on_end.
+            if not rr_use_time_exit:
+                rr_max_holding_bars = max(rr_max_holding_bars, len(df) + 10)
 
             # 构造仅包含被模型选中的信号方向列：1=多，-1=空
             rr_signal = pd.Series(0.0, index=index)
@@ -341,6 +389,9 @@ class VectorBTBacktest(BaseBacktest):
                 entry_price_col=rr_entry_price_col,
                 entry_offset=rr_entry_offset,
                 use_breakeven_stop=rr_use_breakeven_stop,
+                use_time_exit=rr_use_time_exit,
+                use_trailing_stop=rr_use_trailing_stop,
+                trailing_atr_mult=rr_trailing_atr_mult,
             )
 
             long_exits = long_exits_rr.reindex(index).fillna(False)

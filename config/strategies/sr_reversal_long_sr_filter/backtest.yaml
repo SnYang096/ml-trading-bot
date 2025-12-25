@@ -2,7 +2,9 @@ backtest:
   enabled: true
   params:
     price_col: close
-    entry_threshold: 0.35
+    # SR-filtered binary model predictions are often less "confident" (lower absolute probs).
+    # Use a lower threshold to ensure enough trades for meaningful Sharpe evaluation.
+    entry_threshold: 0.24
     entry_mode: level
     entry_exit_conflict: block_entry_on_exit
     max_holding_bars: 50
@@ -20,10 +22,11 @@ backtest:
       entry_offset: 1
       entry_price_col: open
     sr_fuse:
-      enabled: false
+      enabled: true
       dist_col: dist_to_nearest_sr
       atr_col: atr
-      max_dist_atr: 6.0
+      max_dist_atr: 3.0
+      dist_is_pct: true
       on_missing: skip
     debug: true
 

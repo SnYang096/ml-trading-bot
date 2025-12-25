@@ -136,6 +136,10 @@ def parse_args() -> argparse.Namespace:
         default="results/model_comparison",
         help="Output directory for results",
     )
+    # NOTE: We intentionally do not expose a pipeline flag here.
+    # If multiple strategy configs are provided, we auto-run the main train/backtest pipeline and emit:
+    # - strategy_pipeline_metrics.csv
+    # - comparison_report.html (embedding the table)
     parser.add_argument(
         "--rule-params",
         type=str,
@@ -173,6 +177,133 @@ def parse_args() -> argparse.Namespace:
         help="Test with low threshold (0.25) to verify breakeven stop effect",
     )
     return parser.parse_args()
+
+
+def run_train_pipeline_multi_strategy(args: argparse.Namespace) -> None:
+    """
+    Run scripts/train_strategy_pipeline.py for each strategy config and export a unified metrics table.
+
+    Output columns match the table we use in discussions:
+    strategy | task | train | CV | corr | return% | Sharpe | DD% | trades
+    """
+    import subprocess
+    import os
+    import json
+
+    strategies = [
+        s.strip() for s in (args.strategy_config or "").split(",") if s.strip()
+    ]
+    if not strategies:
+        raise ValueError("No strategies provided in --strategy-config")
+
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_root = out_dir / "train_pipeline_runs"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    env = dict(os.environ)
+    if args.start_date:
+        env["TRAIN_START_DATE"] = args.start_date
+    if args.end_date:
+        env["TRAIN_END_DATE"] = args.end_date
+
+    rows: list[dict[str, Any]] = []
+    for name in strategies:
+        cfg_dir = Path("config/strategies") / name
+        cmd = [
+            sys.executable,
+            "scripts/train_strategy_pipeline.py",
+            "--config",
+            str(cfg_dir),
+            "--symbol",
+            args.symbol,
+            "--timeframe",
+            args.timeframe,
+            "--test-size",
+            str(args.test_size),
+            "--output-root",
+            str(out_root),
+            "--data-path",
+            args.data_path,
+        ]
+        print(f"\n{'='*80}")
+        print(f"🚀 Train pipeline: {name}")
+        print(f"{'='*80}")
+        subprocess.run(cmd, check=True, env=env)
+
+        results_path = out_root / name / "results.json"
+        if not results_path.exists():
+            raise FileNotFoundError(f"Missing results.json for {name}: {results_path}")
+        d = json.loads(results_path.read_text(encoding="utf-8"))
+        bt = d.get("backtest", {}) or {}
+        ev = d.get("evaluation", {}) or {}
+        rows.append(
+            {
+                "strategy": name,
+                "task": d.get("task_type"),
+                "train": d.get("n_train_samples"),
+                "CV": d.get("avg_cv_metric"),
+                "corr": ev.get("test_correlation") or ev.get("pearson_correlation"),
+                "return%": bt.get("total_return_pct"),
+                "Sharpe": bt.get("sharpe"),
+                "DD%": bt.get("max_drawdown_pct"),
+                "trades": bt.get("total_trades"),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    csv_path = out_dir / "strategy_pipeline_metrics.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"\n✅ Saved: {csv_path}")
+    try:
+        print(df.to_string(index=False))
+    except Exception:
+        pass
+
+    # Write an HTML report that embeds the same table (so users can open comparison_report.html directly).
+    html_path = out_dir / "comparison_report.html"
+    try:
+
+        def _fmt(x):
+            if isinstance(x, (int, float, np.floating, np.integer)):
+                if np.isnan(x):
+                    return "NaN"
+                return f"{float(x):.4f}"
+            return str(x)
+
+        table_html = df.to_html(index=False, formatters={c: _fmt for c in df.columns})
+        html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Strategy Comparison</title>
+  <style>
+    body {{ font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding: 16px; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; }}
+    th {{ background: #f6f6f6; text-align: left; }}
+    td {{ text-align: right; }}
+    td:first-child {{ text-align: left; }}
+    code {{ background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }}
+  </style>
+</head>
+<body>
+  <h2>Strategy Comparison (train_strategy_pipeline)</h2>
+  <p>
+    symbol=<code>{args.symbol}</code>,
+    timeframe=<code>{args.timeframe}</code>,
+    start=<code>{args.start_date or ""}</code>,
+    end=<code>{args.end_date or ""}</code>,
+    test_size=<code>{args.test_size}</code>
+  </p>
+  <p>CSV: <code>{csv_path.name}</code></p>
+  {table_html}
+</body>
+</html>"""
+        html_path.write_text(html, encoding="utf-8")
+        print(f"✅ Saved: {html_path}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️  Failed to write comparison_report.html: {exc}")
 
 
 def train_ml_model(
@@ -1087,17 +1218,41 @@ def evaluate_ml_volatility_model(
     print(f"      Max: {np.max(pred_vol_relative):.6f}")
     print(f"      Median: {np.median(pred_vol_relative):.6f}")
 
-    # 检查ATR的分布
-    atr_values = atr_series.values
+    # 检查ATR的分布（确保索引对齐）
+    atr_aligned = atr_series.reindex(df_features.index, fill_value=np.nan)
+    atr_values = atr_aligned.values
+    # 过滤 NaN 值进行统计
+    atr_valid = atr_values[~np.isnan(atr_values)]
     print(f"   📊 ATR stats:")
-    print(f"      Mean: {np.mean(atr_values):.2f}")
-    print(f"      Std: {np.std(atr_values):.2f}")
-    print(f"      Min: {np.min(atr_values):.2f}")
-    print(f"      Max: {np.max(atr_values):.2f}")
-    print(f"      Median: {np.median(atr_values):.2f}")
+    if len(atr_valid) > 0:
+        print(f"      Mean: {np.mean(atr_valid):.2f}")
+        print(f"      Std: {np.std(atr_valid):.2f}")
+        print(f"      Min: {np.min(atr_valid):.2f}")
+        print(f"      Max: {np.max(atr_valid):.2f}")
+        print(f"      Median: {np.median(atr_valid):.2f}")
+    else:
+        print(f"      ⚠️  All ATR values are NaN!")
+        # 尝试从 df_features 中获取 ATR
+        if "atr" in df_features.columns:
+            atr_values = df_features["atr"].values
+            atr_valid = atr_values[~np.isnan(atr_values)]
+            if len(atr_valid) > 0:
+                print(f"      Using ATR from df_features:")
+                print(f"      Mean: {np.mean(atr_valid):.2f}")
+                print(f"      Std: {np.std(atr_valid):.2f}")
+                print(f"      Min: {np.min(atr_valid):.2f}")
+                print(f"      Max: {np.max(atr_valid):.2f}")
+                print(f"      Median: {np.median(atr_valid):.2f}")
+                atr_values = df_features["atr"].values
+            else:
+                print(f"      ⚠️  ATR column in df_features also has all NaN values!")
 
-    # 检查预测波动率（绝对）与ATR的比率
-    vol_atr_ratio = pred_vol / (atr_values + 1e-8)
+    # 检查预测波动率（绝对）与ATR的比率（确保使用对齐后的 ATR）
+    if "atr" in df_features.columns:
+        atr_for_ratio = df_features["atr"].values
+    else:
+        atr_for_ratio = atr_values
+    vol_atr_ratio = pred_vol / (atr_for_ratio + 1e-8)
     print(f"   📊 Predicted Vol (absolute) / ATR ratio:")
     print(f"      Mean: {np.mean(vol_atr_ratio):.3f}")
     print(f"      Std: {np.std(vol_atr_ratio):.3f}")
@@ -1611,8 +1766,22 @@ def run_single_strategy_comparison(
     )
 
     # Ensure ATR exists
-    atr_train = _ensure_atr(df_train)
-    atr_test = _ensure_atr(df_test)
+    atr_train = _ensure_atr(
+        df_train,
+        atr_col="atr",
+        price_col="close",
+        high_col="high",
+        low_col="low",
+        atr_window=14,
+    )
+    atr_test = _ensure_atr(
+        df_test,
+        atr_col="atr",
+        price_col="close",
+        high_col="high",
+        low_col="low",
+        atr_window=14,
+    )
     if "atr" not in df_train.columns:
         df_train["atr"] = atr_train
     if "atr" not in df_test.columns:
@@ -1820,6 +1989,16 @@ def run_single_strategy_comparison(
 def main() -> None:
     args = parse_args()
 
+    # Auto behavior:
+    # - Multiple strategy configs => run the main train/backtest pipeline and emit unified table + HTML.
+    # - Single strategy config => run the legacy diagnostic (rule vs ML vs ML+vol).
+    strategy_count = len(
+        [s.strip() for s in (args.strategy_config or "").split(",") if s.strip()]
+    )
+    if strategy_count > 1:
+        run_train_pipeline_multi_strategy(args)
+        return
+
     # ✅ 固定所有随机种子以确保可重复性
     import numpy as np
     import random
@@ -1982,19 +2161,22 @@ def generate_multi_strategy_comparison_report(
         </tr>
 """
     for result in all_results:
-        ml = result.get("ml_results", {})
-        ml_vol = result.get("ml_vol_results", {})
+        ml = result.get("ml_results", {}) or {}
+        ml_vol = result.get(
+            "ml_vol_results"
+        )  # Can be None if volatility model not enabled
+        ml_vol_dict = ml_vol if isinstance(ml_vol, dict) else {}
         html_content += f"""
         <tr>
-            <td>{result['strategy_name']}</td>
+            <td>{result.get('strategy_name', 'Unknown')}</td>
             <td>{ml.get('n_trades', 0)}</td>
             <td>{ml.get('win_rate', 0.0):.2%}</td>
             <td>{ml.get('total_r', 0.0):.2f}</td>
             <td>{ml.get('sharpe_ratio', 0.0):.2f}</td>
-            <td>{ml_vol.get('n_trades', 0) if ml_vol else 0}</td>
-            <td>{ml_vol.get('win_rate', 0.0):.2% if ml_vol else 'N/A'}</td>
-            <td>{ml_vol.get('total_r', 0.0):.2f if ml_vol else 'N/A'}</td>
-            <td>{ml_vol.get('sharpe_ratio', 0.0):.2f if ml_vol else 'N/A'}</td>
+            <td>{ml_vol_dict.get('n_trades', 0) if ml_vol_dict else 0}</td>
+            <td>{ml_vol_dict.get('win_rate', 0.0):.2% if ml_vol_dict else 'N/A'}</td>
+            <td>{ml_vol_dict.get('total_r', 0.0):.2f if ml_vol_dict else 'N/A'}</td>
+            <td>{ml_vol_dict.get('sharpe_ratio', 0.0):.2f if ml_vol_dict else 'N/A'}</td>
         </tr>
 """
     html_content += """
@@ -2015,8 +2197,9 @@ def save_comparison_results_csv(
     """保存对比结果到CSV（包含配置信息）"""
     rows = []
     for result in all_results:
-        ml = result.get("ml_results", {})
-        ml_vol = result.get("ml_vol_results", {})
+        ml = result.get("ml_results", {}) or {}
+        ml_vol_raw = result.get("ml_vol_results")
+        ml_vol = ml_vol_raw if isinstance(ml_vol_raw, dict) else {}
         config_info = result.get("config_info", {})
         label_cfg = config_info.get("label_config", {})
         backtest_cfg = config_info.get("backtest_config", {})

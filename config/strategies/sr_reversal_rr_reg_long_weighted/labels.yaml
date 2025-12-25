@@ -23,8 +23,10 @@ label_generator:
     
     # 权重策略配置
     weight_config:
-      # 逻辑分模式：triple_resonance（三重共振）
-      logic_mode: triple_resonance
+      # 逻辑分模式：
+      # - triple_resonance 更“窄”，容易过拟合/降低泛化（回测可能反而弱）
+      # - none 更“软”，让 RR 结果主导权重（更稳更泛化）
+      logic_mode: none
       
       # 三重共振逻辑分配置
       vpin_col: vpin
@@ -34,7 +36,7 @@ label_generator:
       sr_strength_col: sr_strength_max
       sr_strength_threshold: 0.5
       logic_base: 1.0      # 基础逻辑分
-      logic_boost: 1.5     # 三重共振时的加成
+      logic_boost: 1.0     # logic_mode=none 时无效，保留为默认
       
       # 对于回归任务，可以直接使用计算好的 RR 值（通过 rr_col 指定）
       # 如果未指定 rr_col，会自动使用计算好的 rr_label
@@ -45,7 +47,8 @@ label_generator:
       medium_rr_threshold: 1.0  # 中等RR阈值（1.0 <= RR < high_rr_threshold）
       high_rr_threshold: 2.0    # 高RR阈值（RR >= 2.0 时使用高权重）
       high_rr_boost: 2.0        # 高RR加成倍数（RR >= 2.0 时权重 = log(1+RR) * high_rr_boost，盈利样本优先）
-      loss_weight: 0.0          # 亏损样本的权重（RR < medium_rr_threshold）— 直接忽略
+      # 关键：不要把亏损样本权重设为 0（会导致“有效样本骤减”，回归排序容易失真）
+      loss_weight: 0.15
       min_total_weight: 1e-6    # 防止所有权重为0导致训练失败
       normalize_weights: true   # 归一化权重
 

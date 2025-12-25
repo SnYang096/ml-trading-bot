@@ -24,6 +24,7 @@ backtest:
       enabled: true
       dist_col: dist_to_nearest_sr
       atr_col: atr
-      max_dist_atr: 6.0
+      max_dist_atr: 3.0
+      dist_is_pct: true
       on_missing: skip   # skip|block
     debug: true

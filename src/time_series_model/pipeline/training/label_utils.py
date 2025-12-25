@@ -849,6 +849,9 @@ def simulate_rr_exits(
     entry_price_col: Optional[str] = None,
     entry_offset: int = 0,
     use_breakeven_stop: bool = False,  # 新增参数：是否使用保本止损
+    use_time_exit: bool = True,  # 新增参数：是否启用“最长持仓”超时平仓
+    use_trailing_stop: bool = False,  # 新增参数：是否启用 ATR 移动止损
+    trailing_atr_mult: float = 1.0,  # 新增参数：移动止损距离（ATR 倍数）
 ) -> tuple[pd.Series, pd.Series]:
     """
     使用与 compute_rr_label 相同的 R/R 扫描逻辑，返回每笔交易的平仓位置。
@@ -925,7 +928,12 @@ def simulate_rr_exits(
     low_arr = work_df[low_col].values
 
     min_future = max(entry_offset, 1)
-    max_i = len(work_df) - max_holding_bars - min_future
+    # If time-exit is disabled, allow entries all the way to the end (we'll force-close at dataset end).
+    max_i = (
+        len(work_df) - max_holding_bars - min_future
+        if use_time_exit
+        else len(work_df) - min_future
+    )
 
     for i in range(max_i):
         signal = signals_arr[i]
@@ -954,7 +962,11 @@ def simulate_rr_exits(
         breakeven_activated = False
 
         scan_start = i + max(entry_offset, 1)
-        end_idx = min(scan_start + max_holding_bars, len(work_df))
+        end_idx = (
+            min(scan_start + max_holding_bars, len(work_df))
+            if use_time_exit
+            else len(work_df)
+        )
 
         exit_idx = None
         hit_tp = False
@@ -963,6 +975,20 @@ def simulate_rr_exits(
         for j in range(scan_start, end_idx):
             high = high_arr[j]
             low = low_arr[j]
+            atr_j = atr_arr[j]
+
+            # ATR trailing stop: move stop in the direction of profit, never loosen it.
+            # Long: stop = max(stop, high - trailing_atr_mult * atr)
+            # Short: stop = min(stop, low + trailing_atr_mult * atr)
+            if use_trailing_stop and (not pd.isna(atr_j)) and atr_j > 0:
+                if signal > 0:
+                    cand = high - float(trailing_atr_mult) * atr_j
+                    if cand > stop_loss:
+                        stop_loss = cand
+                else:
+                    cand = low + float(trailing_atr_mult) * atr_j
+                    if cand < stop_loss:
+                        stop_loss = cand
 
             if signal > 0:
                 if (

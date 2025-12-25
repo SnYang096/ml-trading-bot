@@ -13,12 +13,15 @@ Trade Clustering 与 VPIN 互补：
 
 from __future__ import annotations
 
+import logging
 import numpy as np
 import pandas as pd
 from typing import Optional, Dict, Any
 from collections import deque
 
 from src.features.registry import register_feature
+
+logger = logging.getLogger(__name__)
 
 # 常量定义
 TOL = 1e-10  # 浮点比较容差（用于 volume 比较、时间戳对齐等）
@@ -1260,6 +1263,10 @@ def compute_trade_cluster_base_aligned_features_from_series(
     bar_df = pd.DataFrame(
         {"open": open, "close": close, "high": high, "low": low, "volume": volume}
     )
+    # Defensive: downstream alignment relies on a unique bar index.
+    # In rare cases (data stitching / timezone issues), the index may contain duplicates.
+    if bar_df.index.has_duplicates:
+        bar_df = bar_df[~bar_df.index.duplicated(keep="last")]
     out = extract_trade_clustering_features(
         bar_df,
         ticks=ticks,
@@ -1275,7 +1282,11 @@ def compute_trade_cluster_base_aligned_features_from_series(
     result = pd.DataFrame(index=bar_df.index)
     for c in _TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS:
         if c in out.columns:
-            result[c] = out[c]
+            s = out[c]
+            # Avoid "cannot reindex on an axis with duplicate labels"
+            if getattr(s.index, "has_duplicates", False):
+                s = s[~s.index.duplicated(keep="last")]
+            result[c] = s.reindex(bar_df.index)
         else:
             result[c] = 0.0
     return result[_TRADE_CLUSTER_BASE_ALIGNED_OUTPUT_COLS]
@@ -1853,23 +1864,115 @@ def extract_trade_clustering_features(
                     )
                 cluster_results.clear()
 
-        # 如已落盘，则分批读回并拼接，控制内存峰值
-        if persist_monthly and cluster_paths:
-            print(f"      📊 Loading and merging {len(cluster_paths)} persisted months of trade clustering results...")
+        # 如已落盘：不要把所有月份拼成一个超大 tick-level DF（会 OOM）。
+        # 直接“流式对齐到 K 线”并累计（sum/count），最后再求均值。
+        if persist_monthly and cluster_paths and isinstance(df.index, pd.DatetimeIndex):
+            # Infer freq/td early for alignment.
+            if freq is None:
+                freq = pd.infer_freq(df.index)
+                if freq is None and len(df.index) > 1:
+                    time_diff = df.index[1] - df.index[0]
+                    freq_td = pd.Timedelta(time_diff)
+                elif freq is None:
+                    freq_td = pd.Timedelta(minutes=1)
+                else:
+                    freq_td = pd.to_timedelta(freq)
+            else:
+                freq_td = pd.to_timedelta(freq)
+
+            print(
+                f"      📊 Streaming-aligning {len(cluster_paths)} persisted months of trade clustering results...",
+                flush=True,
+            )
             cluster_paths = sorted(cluster_paths)
+            n_bars = len(df.index)
+            kline_starts = df.index.values
+            kline_ends = (df.index + freq_td).values
+
+            sums: dict[str, np.ndarray] = {}
+            counts: dict[str, np.ndarray] = {}
+
+            # process in small batches to amortize parquet overhead
             step = merge_batch_size or 1
             for i in range(0, len(cluster_paths), step):
                 batch_files = cluster_paths[i : i + step]
-                batch_dfs = [pd.read_parquet(p) for p in batch_files]
-                batch_df = pd.concat(batch_dfs, axis=0).sort_index()
-                if cluster_df_accum is None:
-                    cluster_df_accum = batch_df
-                else:
-                    cluster_df_accum = (
-                        pd.concat([cluster_df_accum, batch_df], axis=0)
-                        .sort_index()
+                for p in batch_files:
+                    try:
+                        month_df = pd.read_parquet(p)
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to read parquet file {p}: {e}. Skipping...")
+                        try:
+                            import os
+
+                            os.remove(p)
+                            logger.info(f"   🗑️  Removed corrupted cache file: {p}")
+                        except Exception:
+                            pass
+                        continue
+
+                    if month_df is None or month_df.empty:
+                        continue
+
+                    # Ensure datetime index + unique labels
+                    if not isinstance(month_df.index, pd.DatetimeIndex):
+                        try:
+                            month_df.index = pd.to_datetime(month_df.index)
+                        except Exception:
+                            continue
+                    if month_df.index.has_duplicates:
+                        month_df = month_df[~month_df.index.duplicated(keep="last")]
+
+                    # Map tick-times to bar indices once per month
+                    feature_times = month_df.index.values
+                    pos = np.searchsorted(kline_starts, feature_times, side="right")
+                    idx = pos - 1
+                    valid_mask = (idx >= 0) & (idx < n_bars) & (
+                        feature_times < kline_ends[idx]
                     )
-                del batch_dfs, batch_df
+                    if not valid_mask.any():
+                        continue
+                    valid_idx = idx[valid_mask].astype(np.int64, copy=False)
+
+                    # Accumulate for each column
+                    for col in month_df.columns:
+                        vals = pd.to_numeric(month_df[col], errors="coerce").to_numpy(dtype=float)
+                        v = vals[valid_mask]
+                        if np.all(np.isnan(v)):
+                            continue
+                        v = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+
+                        if col not in sums:
+                            sums[col] = np.zeros(n_bars, dtype=float)
+                            counts[col] = np.zeros(n_bars, dtype=np.int64)
+                        sums[col] += np.bincount(valid_idx, weights=v, minlength=n_bars)
+                        # Count only non-NaN originals
+                        cnt = np.bincount(valid_idx, weights=(~np.isnan(vals[valid_mask])).astype(np.int64), minlength=n_bars)
+                        counts[col] += cnt.astype(np.int64, copy=False)
+
+                    del month_df
+
+            aligned = pd.DataFrame(index=df.index)
+            for col, ssum in sums.items():
+                cc = counts.get(col)
+                if cc is None:
+                    continue
+                out = np.zeros(n_bars, dtype=float)
+                nz = cc > 0
+                out[nz] = ssum[nz] / cc[nz]
+                aligned[col] = out
+
+            # If nothing aligned, fall back to zeros (keep contract).
+            if aligned.empty:
+                aligned = pd.DataFrame(index=df.index)
+
+            result = aligned
+            if not compute_trade_cluster_derived:
+                return result
+
+            derived = compute_trade_cluster_derived_features_from_base(result)
+            for c in derived.columns:
+                result[c] = derived[c]
+            return result
 
         # 如果既无在内存的累积结果，又没有任何落盘文件，记录警告并返回原 df
         if cluster_df_accum is None and not cluster_paths:
