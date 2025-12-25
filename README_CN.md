@@ -300,6 +300,10 @@ mlbot analyze strategy-feature-compare \
 
 验证 ML 模型优于基于规则的策略，并比较不同策略配置的差异：
 
+**推荐先读实验协议（强烈建议）**：
+- `docs/strategies/SR_REVERSAL_EXPERIMENT_PROTOCOL.md`（为什么要做可复现 + 多 seed 统计；如何从 MVP 逐步回填特征，再回到 SR/权重/ticks 主线）
+  - ✅ 最新主线配置：`config/strategies/sr_reversal_rr_reg_long_mainline`（回归：SR-filter=1.5 + weights(lw=0.05, boost=1.5)）
+
 **基本用法（单个策略配置）**：
 ```bash
 mlbot diagnose model-comparison \
@@ -713,7 +717,7 @@ mlbot diagnose model-comparison \
   --rule-based-entry src.time_series_model.diagnostics.sr_reversal_model_comparison.evaluate_rule_based \
   --symbol BTCUSDT \
   --timeframe 240T \
-  --start-date 2024-01-01 \
+  --start-date 2023-01-01 \
   --end-date 2025-10-31
 
 # 步骤 4: 滚动训练（主要生产工作流 - 仅在验证后）
@@ -804,6 +808,76 @@ mlbot cross-section shap-drift \
 
 - **`docs/workflow_research_to_production.md`** - 完整工作流文档
 - **`docs/simplified_workflow.md`** - 简化工作流指南
+- **`docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`** - NN 多头底座（路径原语）+ Router 解耦升级方案（生产级）
+
+## 快速跑通：NN 多头底座 → Rule(3-action) → RL(e2e)
+
+下面是一套 **最小可跑** 的端到端链路（支持多 symbol）：
+
+- **目标**：训练/推理 NN 多头（path primitives）→ 生成 `mode`（NO_TRADE/MEAN/TREND）→ 组装 RL/BC logs（含 `ret_mean/ret_trend`）→ 一键跑 shadow/counterfactual/fsm。
+- **核心产物**：
+  - `preds_*.parquet`：包含 `pred_dir_prob/pred_mfe_atr/pred_mae_atr/pred_t_to_mfe`（回归头通常是 log1p 空间）
+  - `mode_3action.parquet`：包含 `mode`（NO_TRADE/MEAN/TREND）
+  - `logs_3action.parquet`：包含 `symbol,timestamp,mode,head_*,drawdown,ret_mean,ret_trend`
+  - `results/rl/e2e/*`：shadow report / counterfactual report / fsm decision
+
+### 1) 训练 NN 多头（可选：你已经有模型就跳过）
+
+```bash
+mlbot nnmultihead train \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --config config/nnmultihead/path_primitives_4h_80h_min \
+  --epochs 10 \
+  --output-dir results/nnmultihead \
+  --no-docker
+```
+
+### 2) NN 多头推理（多 symbol 输出目录）
+
+```bash
+mlbot nnmultihead predict \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --config config/nnmultihead/path_primitives_4h_80h_min \
+  --model results/nnmultihead/.../model.pt \
+  --output results/nnmultihead/preds_multi \
+  --no-docker
+```
+
+### 3) 纯规则 Router：从 heads 生成 3-action `mode`
+
+```bash
+mlbot rule mode-3action \
+  --preds results/nnmultihead/preds_multi \
+  --model results/nnmultihead/.../model.pt \
+  --output results/rule/mode_3action.parquet \
+  --no-docker
+```
+
+### 4) 组装 RL/BC logs（把真实 close 转成 ret_mean/ret_trend，并合并 heads + mode）
+
+```bash
+mlbot rl build-logs-3action \
+  --preds results/nnmultihead/preds_multi \
+  --mode results/rule/mode_3action.parquet \
+  --model results/nnmultihead/.../model.pt \
+  --data-path data/parquet_data \
+  --timeframe 240T \
+  --output results/rl/logs_3action.parquet \
+  --no-docker
+```
+
+### 5) 一键跑 RL(e2e)：shadow → counterfactual → fsm
+
+```bash
+mlbot rl run-e2e-3action \
+  --logs results/rl/logs_3action.parquet \
+  --out results/rl/e2e \
+  --no-docker
+```
 
 ## 获取帮助
 

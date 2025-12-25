@@ -21,6 +21,9 @@ class TestCLI:
         assert "ML Trading Bot" in result.output
         assert "features" in result.output
         assert "train" in result.output
+        assert "nnmultihead" in result.output
+        assert "rule" in result.output
+        assert "rl" in result.output
         assert "data" in result.output
         assert "serve-results" in result.output
 
@@ -68,6 +71,20 @@ class TestTrainCommands:
         assert "sr-reversal-long" in result.output
         assert "sr-reversal-short" in result.output
         assert "rolling" in result.output
+
+
+class TestRLCommands:
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    def test_rl_help(self, runner):
+        result = runner.invoke(cli, ["rl", "--help"])
+        assert result.exit_code == 0
+        assert "shadow-eval-3action" in result.output
+        assert "counterfactual-eval-3action" in result.output
+        assert "fsm-decide" in result.output
+        assert "run-e2e-3action" in result.output
 
     def test_train_sr_reversal_long_help(self, runner):
         """Test sr-reversal-long train help."""

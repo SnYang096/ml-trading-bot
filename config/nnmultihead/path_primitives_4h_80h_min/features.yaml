@@ -1,0 +1,52 @@
+name: nnmultihead_path_primitives_4h_80h_min
+description: |
+  NN multi-head base (path primitives) - minimal feature pipeline (20-50 features) for first run.
+  Goal: strategy-agnostic market state features (avoid SR-specific handcrafted features).
+
+feature_pipeline:
+  requested_features:
+    # --- Core volatility / range ---
+    - atr_f
+    - atr_percentile_f
+    - range_ratio_5bar_f
+    - price_range_symmetry_f
+    - wick_ratios_f
+
+    # --- Basic momentum / trend ---
+    - roc_5_f
+    - acceleration_3_f
+    - trend_r2_20_f
+    - trend_r2_50_f
+    - slope_consistency_score_f
+    - trend_volatility_alignment_f
+    - volatility_reversal_score_f
+
+    # --- Common indicators ---
+    - rsi_f
+    - macd_f
+    - bbands_f
+    - bb_width_f
+
+    # --- Moving averages (shape / regime proxies) ---
+    - sma_10_f
+    - sma_20_f
+    - sma_50_f
+    - sma_200_f
+    - ema_10_f
+    - ema_20_f
+    - ema_50_f
+    - ema_100_f
+
+    # --- Compression (generic, not tied to a named strategy) ---
+    - compression_duration_f
+    - compression_energy_f
+    - compression_to_breakout_prob_f
+
+    # --- Volume / participation (kline-level only; no ticks required) ---
+    - volume_anomaly_f
+
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+
+

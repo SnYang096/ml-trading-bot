@@ -1,0 +1,14 @@
+name: sr_reversal_rr_reg_long_kline_core
+description: "Regression staged ablation: CORE kline-only features (macd/rsi/sma/atr/roc/mom)"
+feature_pipeline:
+  requested_features:
+    - macd_f
+    - rsi_f
+    - sma_200_f
+    - atr_f
+    - roc_5_f
+    - mom_10_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+

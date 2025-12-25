@@ -2,7 +2,7 @@ backtest:
   enabled: true
   params:
     price_col: close
-    top_quantile: 0.1
+    top_quantile: 0.05
     entry_mode: cross
     entry_exit_conflict: block_entry_on_exit
     max_holding_bars: 50
@@ -20,8 +20,11 @@ backtest:
       entry_offset: 1
       entry_price_col: open
       use_breakeven_stop: false
+      use_time_exit: false
+      use_trailing_stop: true
+      trailing_atr_mult: 1.0
     sr_fuse:
-      enabled: true
+      enabled: false
       dist_col: dist_to_nearest_sr
       atr_col: atr
       max_dist_atr: 3.0

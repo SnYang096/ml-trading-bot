@@ -773,6 +773,7 @@ mlbot cross-section shap-drift \
 
 - **`docs/workflow_research_to_production.md`** - Complete workflow documentation
 - **`docs/simplified_workflow.md`** - Simplified workflow guide
+- **`docs/strategies/SR_REVERSAL_EXPERIMENT_PROTOCOL.md`** - SR Reversal experiment protocol (deterministic runs + multi-seed stats + mainline selection)
 
 ## Recent Feature Updates
 

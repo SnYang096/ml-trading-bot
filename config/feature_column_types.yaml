@@ -35,6 +35,7 @@ column_types:
   
   # Asset symbol (categorical)
   _symbol: categorical
+  symbol: categorical
   
   # By default, all other columns are numeric
   # If a column is not listed here, it will be treated as numeric

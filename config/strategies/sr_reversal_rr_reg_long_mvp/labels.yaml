@@ -1,0 +1,21 @@
+name: sr_reversal_rr_reg_long_mvp
+target_column: rr_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.sr_reversal_label
+  function: compute_sr_reversal_rr_continuous_label
+  params:
+    max_holding_bars: 50
+    take_profit_r: 2.0
+    stop_loss_r: 1.0
+    combine_mode: long_only
+
+filters:
+  - column: rr_label
+    notna: true
+
+post_label_filters: []
+
+notes: |
+  MVP regression: full-scan continuous RR label, kline-only features for determinism tests.
+

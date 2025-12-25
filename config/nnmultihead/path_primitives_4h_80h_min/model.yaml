@@ -1,0 +1,10 @@
+name: nnmultihead_path_primitives_4h_80h_min
+
+# Note: For nnmultihead training, we use scripts/train_path_primitives_mlp.py directly.
+# This trainer entry exists only to satisfy the generic config loader schema.
+trainer:
+  module: src.time_series_model.models.nn.path_primitives_trainer
+  function: train_path_primitives_mlp
+  params: {}
+
+

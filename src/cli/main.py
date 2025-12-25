@@ -468,6 +468,504 @@ def train():
     pass
 
 
+@cli.group()
+def nnmultihead():
+    """NN multi-head base model (path primitives) commands."""
+    pass
+
+
+@cli.group()
+def rule():
+    """Rule router commands (3-action: NO_TRADE/MEAN/TREND)."""
+    pass
+
+
+@cli.group()
+def rl():
+    """RL-ready router tooling (3-action BC/shadow/counterfactual/FSM) using logs."""
+    pass
+
+
+@rl.command("build-logs-3action")
+@click.option("--preds", "preds_path", required=True, help="Preds file/dir from nnmultihead predict (preds_*.parquet)")
+@click.option("--mode", "mode_path", default=None, help="Optional mode file/dir from mlbot rule mode-3action")
+@click.option("--symbols", "-s", default=None, help="Optional symbols filter (comma-separated). If omitted, infer from preds.")
+@click.option("--data-path", default="data/parquet_data", help="Raw data directory")
+@click.option("--timeframe", default="240T", help="Timeframe (must match preds)")
+@click.option("--start-date", default=None)
+@click.option("--end-date", default=None)
+@click.option("--model", "model_path", default=None, help="Optional model.pt to infer preds_in_log1p")
+@click.option("--preds-in-log1p", type=click.Choice(["yes", "no"]), default=None, help="Override preds space (yes=log1p)")
+@click.option("--returns-source", type=click.Choice(["momentum_proxy", "rr_execution"]), default="momentum_proxy", help="How to build ret_mean/ret_trend")
+@click.option("--momentum-lookback", type=int, default=5, help="Lookback for momentum proxy used in ret_mean/ret_trend")
+@click.option("--output", "output_path", required=True, help="Output logs path (.parquet/.csv)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_build_logs_3action(
+    preds_path,
+    mode_path,
+    symbols,
+    data_path,
+    timeframe,
+    start_date,
+    end_date,
+    model_path,
+    preds_in_log1p,
+    returns_source,
+    momentum_lookback,
+    output_path,
+    docker,
+):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds_path}" if use_workspace_prefix else preds_path,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        str(timeframe),
+        "--output",
+        f"/workspace/{output_path}" if use_workspace_prefix else output_path,
+        "--momentum-lookback",
+        str(int(momentum_lookback)),
+        "--returns-source",
+        str(returns_source),
+    ]
+    if mode_path:
+        args.extend(["--mode", f"/workspace/{mode_path}" if use_workspace_prefix else mode_path])
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
+    if start_date:
+        args.extend(["--start-date", str(start_date)])
+    if end_date:
+        args.extend(["--end-date", str(end_date)])
+    if model_path:
+        args.extend(["--model", f"/workspace/{model_path}" if use_workspace_prefix else model_path])
+    if preds_in_log1p:
+        args.extend(["--preds-in-log1p", str(preds_in_log1p)])
+
+    sys.exit(run_script("scripts/rl_build_logs_3action.py", args, docker=docker))
+
+
+@rule.command("mode-3action")
+@click.option("--preds", required=True, help="Preds file (.parquet/.csv) or directory of per-symbol preds_*.parquet")
+@click.option("--model", "model_path", default=None, help="Optional model.pt to infer whether preds are log1p targets")
+@click.option("--preds-in-log1p", type=click.Choice(["yes", "no"]), default=None, help="Override preds space (yes=log1p)")
+@click.option("--output", "output_path", required=True, help="Output path (.parquet or .csv)")
+@click.option("--mfe-min", type=float, default=None)
+@click.option("--eff-min", type=float, default=None)
+@click.option("--dir-conf-trend-min", type=float, default=None)
+@click.option("--mfe-trend-min", type=float, default=None)
+@click.option("--ttm-trend-min", type=float, default=None)
+@click.option("--eff-mean-min", type=float, default=None)
+@click.option("--ttm-mean-max", type=float, default=None)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_mode_3action(
+    preds,
+    model_path,
+    preds_in_log1p,
+    output_path,
+    mfe_min,
+    eff_min,
+    dir_conf_trend_min,
+    mfe_trend_min,
+    ttm_trend_min,
+    eff_mean_min,
+    ttm_mean_max,
+    docker,
+):
+    """Generate mode labels (NO_TRADE/MEAN/TREND) from nnmultihead heads."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds}" if use_workspace_prefix else preds,
+        "--output",
+        f"/workspace/{output_path}" if use_workspace_prefix else output_path,
+    ]
+    if model_path:
+        args.extend(["--model", f"/workspace/{model_path}" if use_workspace_prefix else model_path])
+    if preds_in_log1p:
+        args.extend(["--preds-in-log1p", preds_in_log1p])
+    # thresholds
+    if mfe_min is not None:
+        args.extend(["--mfe-min", str(mfe_min)])
+    if eff_min is not None:
+        args.extend(["--eff-min", str(eff_min)])
+    if dir_conf_trend_min is not None:
+        args.extend(["--dir-conf-trend-min", str(dir_conf_trend_min)])
+    if mfe_trend_min is not None:
+        args.extend(["--mfe-trend-min", str(mfe_trend_min)])
+    if ttm_trend_min is not None:
+        args.extend(["--ttm-trend-min", str(ttm_trend_min)])
+    if eff_mean_min is not None:
+        args.extend(["--eff-mean-min", str(eff_mean_min)])
+    if ttm_mean_max is not None:
+        args.extend(["--ttm-mean-max", str(ttm_mean_max)])
+
+    sys.exit(run_script("scripts/rule_mode_3action.py", args, docker=docker))
+
+
+@rl.command("shadow-eval-3action")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with columns: symbol,timestamp,mode,head_*")
+@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (metrics/report).")
+@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--train_ratio",
+        str(float(train_ratio)),
+    ]
+    sys.exit(run_script("scripts/rl_shadow_eval_3action.py", args, docker=docker))
+
+
+@rl.command("counterfactual-eval-3action")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with mode + ret_mean/ret_trend + head_*")
+@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (metrics/report).")
+@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option("--entry-delay", type=int, default=0, help="Entry delay steps for sim.")
+@click.option("--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit.")
+@click.option("--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure.")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_counterfactual_eval_3action(
+    logs_path,
+    out_dir,
+    train_ratio,
+    entry_delay,
+    cost_per_turnover,
+    slippage_bps,
+    docker,
+):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--train_ratio",
+        str(float(train_ratio)),
+        "--entry_delay",
+        str(int(entry_delay)),
+        "--cost_per_turnover",
+        str(float(cost_per_turnover)),
+        "--slippage_bps",
+        str(float(slippage_bps)),
+    ]
+    sys.exit(run_script("scripts/rl_counterfactual_eval_3action.py", args, docker=docker))
+
+
+@rl.command("fsm-decide")
+@click.option("--metrics", "metrics_path", required=True, help="metrics.json produced by counterfactual-eval-3action")
+@click.option("--state", default="RL_CANDIDATE", help="Initial FSM state: RULE/RL_CANDIDATE/RL_ACTIVE/RL_SUSPENDED")
+@click.option("--promote-days", type=int, default=10, help="Consecutive ok windows required to promote.")
+@click.option("--cooldown-days", type=int, default=20, help="Cooldown windows after suspension.")
+@click.option("--out", "out_path", default=None, help="Optional path to write decision json.")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_fsm_decide(metrics_path, state, promote_days, cooldown_days, out_path, docker):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--metrics",
+        f"/workspace/{metrics_path}" if use_workspace_prefix else metrics_path,
+        "--state",
+        str(state),
+        "--promote_days",
+        str(int(promote_days)),
+        "--cooldown_days",
+        str(int(cooldown_days)),
+    ]
+    if out_path:
+        args.extend(["--out", f"/workspace/{out_path}" if use_workspace_prefix else out_path])
+    sys.exit(run_script("scripts/rl_fsm_decide.py", args, docker=docker))
+
+
+@rl.command("run-e2e-3action")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with mode + heads (+ ret_mean/ret_trend for counterfactual).")
+@click.option("--out", "out_dir", required=True, help="Output directory root. Will create shadow/ counterfactual/ fsm_decision.json")
+@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option("--entry-delay", type=int, default=0, help="Entry delay steps for sim.")
+@click.option("--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit.")
+@click.option("--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure.")
+@click.option("--fsm-state", default="RL_CANDIDATE", help="Initial FSM state.")
+@click.option("--promote-days", type=int, default=10)
+@click.option("--cooldown-days", type=int, default=20)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_run_e2e_3action(
+    logs_path,
+    out_dir,
+    train_ratio,
+    entry_delay,
+    cost_per_turnover,
+    slippage_bps,
+    fsm_state,
+    promote_days,
+    cooldown_days,
+    docker,
+):
+    """
+    Convenience wrapper:
+      1) shadow-eval-3action -> {out}/shadow
+      2) counterfactual-eval-3action -> {out}/counterfactual
+      3) fsm-decide -> {out}/fsm_decision.json
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    logs_arg = f"/workspace/{logs_path}" if use_workspace_prefix else logs_path
+    out_root = f"/workspace/{out_dir}" if use_workspace_prefix else out_dir
+    shadow_out = f"{out_root}/shadow"
+    cf_out = f"{out_root}/counterfactual"
+    fsm_out = f"{out_root}/fsm_decision.json"
+
+    rc = run_script(
+        "scripts/rl_shadow_eval_3action.py",
+        ["--logs", logs_arg, "--out", shadow_out, "--train_ratio", str(float(train_ratio))],
+        docker=docker,
+    )
+    if rc != 0:
+        sys.exit(rc)
+
+    rc = run_script(
+        "scripts/rl_counterfactual_eval_3action.py",
+        [
+            "--logs",
+            logs_arg,
+            "--out",
+            cf_out,
+            "--train_ratio",
+            str(float(train_ratio)),
+            "--entry_delay",
+            str(int(entry_delay)),
+            "--cost_per_turnover",
+            str(float(cost_per_turnover)),
+            "--slippage_bps",
+            str(float(slippage_bps)),
+        ],
+        docker=docker,
+    )
+    if rc != 0:
+        sys.exit(rc)
+
+    metrics_path = f"{cf_out}/metrics.json"
+    rc = run_script(
+        "scripts/rl_fsm_decide.py",
+        [
+            "--metrics",
+            metrics_path,
+            "--state",
+            str(fsm_state),
+            "--promote_days",
+            str(int(promote_days)),
+            "--cooldown_days",
+            str(int(cooldown_days)),
+            "--out",
+            fsm_out,
+        ],
+        docker=docker,
+    )
+    sys.exit(rc)
+
+@nnmultihead.command("train")
+@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option(
+    "--config",
+    "-c",
+    default="config/nnmultihead/path_primitives_4h_80h_min",
+    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+)
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
+@click.option("--horizon-hours", type=float, default=80.0, help="Future horizon in hours (e.g., 80H)")
+@click.option("--bar-hours", type=float, default=4.0, help="Bar duration in hours (4H => 4)")
+@click.option("--epochs", type=int, default=30, help="Training epochs")
+@click.option("--batch-size", type=int, default=512, help="Batch size")
+@click.option("--lr", type=float, default=2e-4, help="Learning rate")
+@click.option("--hidden", type=int, default=256, help="MLP hidden size")
+@click.option("--depth", type=int, default=2, help="MLP depth")
+@click.option("--dropout", type=float, default=0.1, help="Dropout")
+@click.option("--device", default=None, help="cpu|cuda (default auto)")
+@click.option(
+    "--output-dir",
+    default="results/nnmultihead",
+    help="Output root directory for artifacts",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_train(
+    symbols,
+    timeframe,
+    data_path,
+    config,
+    start_date,
+    end_date,
+    horizon_hours,
+    bar_hours,
+    epochs,
+    batch_size,
+    lr,
+    hidden,
+    depth,
+    dropout,
+    device,
+    output_dir,
+    docker,
+):
+    """Train NN multi-head path primitives MLP and save report.html artifacts."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--symbols",
+        symbols,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        timeframe,
+        "--horizon-hours",
+        str(horizon_hours),
+        "--bar-hours",
+        str(bar_hours),
+        "--epochs",
+        str(epochs),
+        "--batch-size",
+        str(batch_size),
+        "--lr",
+        str(lr),
+        "--hidden",
+        str(hidden),
+        "--depth",
+        str(depth),
+        "--dropout",
+        str(dropout),
+        "--output-dir",
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if device:
+        args.extend(["--device", device])
+
+    sys.exit(run_script("scripts/train_path_primitives_mlp.py", args, docker=docker))
+
+
+@nnmultihead.command("predict")
+@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option(
+    "--config",
+    "-c",
+    default="config/nnmultihead/path_primitives_4h_80h_min",
+    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+)
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
+@click.option("--model", "model_path", required=True, help="Path to model.pt produced by nnmultihead train")
+@click.option("--output", "output_path", required=True, help="Output path (.parquet or .csv)")
+@click.option("--device", default=None, help="cpu|cuda (default auto)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_predict(
+    symbols,
+    timeframe,
+    data_path,
+    config,
+    start_date,
+    end_date,
+    model_path,
+    output_path,
+    device,
+    docker,
+):
+    """Run inference and save heads/preds for downstream Router/RL."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--symbols",
+        symbols,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        timeframe,
+        "--model",
+        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        "--output",
+        f"/workspace/{output_path}" if use_workspace_prefix else output_path,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if device:
+        args.extend(["--device", device])
+
+    sys.exit(run_script("scripts/predict_path_primitives_mlp.py", args, docker=docker))
+
+
+@nnmultihead.command("eval")
+@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option(
+    "--config",
+    "-c",
+    default="config/nnmultihead/path_primitives_4h_80h_min",
+    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+)
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
+@click.option("--model", "model_path", required=True, help="Path to model.pt produced by nnmultihead train")
+@click.option("--horizon-hours", type=float, default=80.0, help="Future horizon in hours (e.g., 80H)")
+@click.option("--bar-hours", type=float, default=4.0, help="Bar duration in hours (4H => 4)")
+@click.option("--device", default=None, help="cpu|cuda (default auto)")
+@click.option("--output-dir", default="results/nnmultihead_eval", help="Output directory for eval artifacts")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_eval(
+    symbols,
+    timeframe,
+    data_path,
+    config,
+    start_date,
+    end_date,
+    model_path,
+    horizon_hours,
+    bar_hours,
+    device,
+    output_dir,
+    docker,
+):
+    """Evaluate a trained nnmultihead model and generate report.html artifacts."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--symbols",
+        symbols,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        timeframe,
+        "--model",
+        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        "--horizon-hours",
+        str(horizon_hours),
+        "--bar-hours",
+        str(bar_hours),
+        "--output-dir",
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if device:
+        args.extend(["--device", device])
+
+    sys.exit(run_script("scripts/evaluate_path_primitives_mlp.py", args, docker=docker))
+
 def _train_strategy_pipeline(symbol, timeframe, config, data_path, test_size, output_root, docker):
     """Shared implementation for strategy training (train_strategy_pipeline.py)."""
     # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
@@ -1285,6 +1783,7 @@ def diagnose_dtw_volatility(docker):
 @click.option("--start-date", help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", help="End date (YYYY-MM-DD)")
 @click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option("--seed", default="42", help="Random seed (forwarded to train pipeline)")
 @click.option(
     "--output-dir",
     default="results/model_comparison",
@@ -1322,6 +1821,7 @@ def diagnose_model_comparison(
     start_date,
     end_date,
     test_size,
+    seed,
     output_dir,
     data_path,
     ticks_dir,
@@ -1348,6 +1848,8 @@ def diagnose_model_comparison(
         timeframe,
         "--test-size",
         test_size,
+        "--seed",
+        seed,
         "--output-dir",
         f"/workspace/{output_dir_full}" if use_workspace_prefix else output_dir_full,
         "--ticks-dir",

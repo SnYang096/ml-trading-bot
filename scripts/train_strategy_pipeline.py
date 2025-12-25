@@ -87,11 +87,27 @@ def parse_args() -> argparse.Namespace:
         default="config/strategies",
         help="Path to strategy config directory or root containing multiple strategies",
     )
-    parser.add_argument("--symbol", type=str, required=True, help="Symbol to train on")
+    parser.add_argument(
+        "--symbol",
+        type=str,
+        required=True,
+        help="Symbol to train on. Supports comma-separated symbols for pooled multi-symbol training (e.g. BTCUSDT,ETHUSDT).",
+    )
     parser.add_argument("--data-path", type=str, default="data/parquet_data")
     parser.add_argument("--timeframe", type=str, default="15T")
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument("--output-root", type=str, default="results/strategies")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Global random seed for reproducible training/backtests.",
+    )
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Force single-threaded deterministic training (slower but reproducible).",
+    )
     parser.add_argument(
         "--strategy",
         type=str,
@@ -1268,39 +1284,64 @@ def train_strategy(
     # Initialize DataHandler for unified data loading
     data_handler = DataHandler(data_path=args.data_path)
 
-    df_raw = data_handler.load_ohlcv(
-        symbol=args.symbol,
-        timeframe=args.timeframe,
-    )
+    symbol_list = [s.strip() for s in str(args.symbol).split(",") if s.strip()]
+    is_multi_symbol = len(symbol_list) > 1
+
+    def _crop_df_by_env_dates(df_in: pd.DataFrame) -> pd.DataFrame:
+        # Optional date cropping to align with available tick data or focus window
+        start_override = os.getenv("TRAIN_START_DATE")
+        end_override = os.getenv("TRAIN_END_DATE")
+        if not (start_override or end_override) or df_in.empty:
+            return df_in
+        dt_idx = None
+        for col in ("datetime", "timestamp", "date"):
+            if col in df_in.columns:
+                dt_idx = pd.to_datetime(df_in[col])
+                break
+        if dt_idx is None and isinstance(df_in.index, pd.DatetimeIndex):
+            dt_idx = df_in.index
+        if dt_idx is None:
+            return df_in
+        mask = pd.Series(True, index=df_in.index)
+        if start_override:
+            mask &= dt_idx >= pd.to_datetime(start_override)
+        if end_override:
+            mask &= dt_idx <= pd.to_datetime(end_override)
+        df_out = df_in.loc[mask]
+        print(
+            f"   ℹ️  Cropped data to [{start_override or '-inf'}, {end_override or '+inf'}], rows={len(df_out)}"
+        )
+        return df_out
+
+    if not is_multi_symbol:
+        df_raw = data_handler.load_ohlcv(
+            symbol=args.symbol,
+            timeframe=args.timeframe,
+        )
+        df_raw = _crop_df_by_env_dates(df_raw)
+    else:
+        # IMPORTANT: do NOT rely on DataHandler multi-symbol mode because it de-duplicates datetime
+        # indices after concat, which would drop rows for other symbols. Load symbols one-by-one.
+        raw_parts: list[pd.DataFrame] = []
+        for sym in symbol_list:
+            df_sym = data_handler.load_ohlcv(symbol=sym, timeframe=args.timeframe)
+            df_sym = _crop_df_by_env_dates(df_sym)
+            if df_sym is None or df_sym.empty:
+                continue
+            # Ensure explicit symbol columns for downstream grouping/ticks inference
+            df_sym["_symbol"] = sym
+            df_sym["symbol"] = sym
+            raw_parts.append(df_sym)
+        if not raw_parts:
+            raise ValueError(f"No data found for symbol(s): {symbol_list}")
+        df_raw = pd.concat(raw_parts, axis=0)
+        # Keep duplicates (multiple symbols share timestamps); downstream we reset index after features.
+        df_raw = df_raw.sort_index()
 
     # 监控源数据质量
     from src.features.utils.data_monitor import check_source_data_quality
 
     source_quality = check_source_data_quality(df_raw, args.data_path)
-
-    # Optional date cropping to align with available tick data or focus window
-    start_override = os.getenv("TRAIN_START_DATE")
-    end_override = os.getenv("TRAIN_END_DATE")
-    if start_override or end_override:
-        dt_idx = None
-        if not df_raw.empty:
-            for col in ("datetime", "timestamp", "date"):
-                if col in df_raw.columns:
-                    dt_idx = pd.to_datetime(df_raw[col])
-                    break
-            if dt_idx is None and isinstance(df_raw.index, pd.DatetimeIndex):
-                dt_idx = df_raw.index
-
-        if dt_idx is not None:
-            mask = pd.Series(True, index=df_raw.index)
-            if start_override:
-                mask &= dt_idx >= pd.to_datetime(start_override)
-            if end_override:
-                mask &= dt_idx <= pd.to_datetime(end_override)
-            df_raw = df_raw.loc[mask]
-            print(
-                f"   ℹ️  Cropped data to [{start_override or '-inf'}, {end_override or '+inf'}], rows={len(df_raw)}"
-            )
 
     # Configure VPIN tick loader if tick data is available
     datetime_col = next(
@@ -1323,14 +1364,51 @@ def train_strategy(
             )
             # 获取请求的特征列表
             requested_features = strategy_config.features.requested_features
-            _ensure_ticks_configured(
-                feature_loader,
-                symbol=args.symbol,
-                data_path=args.data_path,
-                start_ts=start_ts,
-                end_ts=end_ts,
-                requested_features=requested_features,
-            )
+            if not is_multi_symbol:
+                _ensure_ticks_configured(
+                    feature_loader,
+                    symbol=args.symbol,
+                    data_path=args.data_path,
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    requested_features=requested_features,
+                )
+            else:
+                # Configure ticks per symbol (needed for tick-derived features)
+                for sym in symbol_list:
+                    df_sym = (
+                        df_raw[df_raw.get("_symbol", sym) == sym]
+                        if "_symbol" in df_raw.columns
+                        else df_raw
+                    )
+                    if df_sym.empty:
+                        continue
+                    dtc = next(
+                        (
+                            c
+                            for c in ("datetime", "timestamp", "date")
+                            if c in df_sym.columns
+                        ),
+                        None,
+                    )
+                    if dtc:
+                        dts = pd.to_datetime(df_sym[dtc])
+                    elif isinstance(df_sym.index, pd.DatetimeIndex):
+                        dts = df_sym.index
+                    else:
+                        continue
+                    if len(dts) == 0:
+                        continue
+                    st = dts.min().strftime("%Y-%m-%d %H:%M:%S")
+                    et = dts.max().strftime("%Y-%m-%d %H:%M:%S")
+                    _ensure_ticks_configured(
+                        feature_loader,
+                        symbol=sym,
+                        data_path=args.data_path,
+                        start_ts=st,
+                        end_ts=et,
+                        requested_features=requested_features,
+                    )
         else:
             raise ValueError(
                 "No datetime/timestamp found in dataframe; cannot configure ticks"
@@ -1338,9 +1416,27 @@ def train_strategy(
     else:
         raise ValueError("Empty dataframe; cannot configure ticks")
 
-    split_idx = int(len(df_raw) * (1 - args.test_size))
-    df_train_raw = df_raw.iloc[:split_idx].copy()
-    df_test_raw = df_raw.iloc[split_idx:].copy()
+    if not is_multi_symbol:
+        split_idx = int(len(df_raw) * (1 - args.test_size))
+        df_train_raw = df_raw.iloc[:split_idx].copy()
+        df_test_raw = df_raw.iloc[split_idx:].copy()
+    else:
+        # Split per symbol to keep chronology within each asset, then pool.
+        train_parts: list[pd.DataFrame] = []
+        test_parts: list[pd.DataFrame] = []
+        for sym in symbol_list:
+            df_sym = (
+                df_raw[df_raw["_symbol"] == sym].sort_index()
+                if "_symbol" in df_raw.columns
+                else df_raw
+            )
+            if df_sym.empty:
+                continue
+            split_idx = int(len(df_sym) * (1 - args.test_size))
+            train_parts.append(df_sym.iloc[:split_idx].copy())
+            test_parts.append(df_sym.iloc[split_idx:].copy())
+        df_train_raw = pd.concat(train_parts, axis=0).sort_index()
+        df_test_raw = pd.concat(test_parts, axis=0).sort_index()
 
     print(f"   ✅ Samples - Train: {len(df_train_raw)}, " f"Test: {len(df_test_raw)}")
 
@@ -1365,29 +1461,89 @@ def train_strategy(
 
     requested = strategy_config.features.requested_features
     print(f"\n   ▶️ Feature pipeline (train) start: {len(requested)} requested features")
-    df_train_features = run_feature_pipeline(
-        df_train_raw,
-        feature_loader=feature_loader,
-        pipeline_cfg=strategy_config.features,
-        fit=True,
-    )
-    print(
-        f"   ✅ Feature pipeline (train) done: rows={len(df_train_features)}, cols={len(df_train_features.columns)}"
-    )
-    print(f"   ▶️ Feature pipeline (test) start")
-    df_test_features = run_feature_pipeline(
-        df_test_raw,
-        feature_loader=feature_loader,
-        pipeline_cfg=strategy_config.features,
-        fit=False,
-    )
-    print(
-        f"   ✅ Feature pipeline (test) done: rows={len(df_test_features)}, cols={len(df_test_features.columns)}\n"
-    )
+    if not is_multi_symbol:
+        df_train_features = run_feature_pipeline(
+            df_train_raw,
+            feature_loader=feature_loader,
+            pipeline_cfg=strategy_config.features,
+            fit=True,
+        )
+        print(
+            f"   ✅ Feature pipeline (train) done: rows={len(df_train_features)}, cols={len(df_train_features.columns)}"
+        )
+        print(f"   ▶️ Feature pipeline (test) start")
+        df_test_features = run_feature_pipeline(
+            df_test_raw,
+            feature_loader=feature_loader,
+            pipeline_cfg=strategy_config.features,
+            fit=False,
+        )
+        print(
+            f"   ✅ Feature pipeline (test) done: rows={len(df_test_features)}, cols={len(df_test_features.columns)}\n"
+        )
+    else:
+        # Compute features per symbol (avoids duplicate datetime index issues) then pool.
+        train_feat_parts: list[pd.DataFrame] = []
+        test_feat_parts: list[pd.DataFrame] = []
+        for sym in symbol_list:
+            df_tr = df_train_raw[df_train_raw["_symbol"] == sym].sort_index()
+            df_te = df_test_raw[df_test_raw["_symbol"] == sym].sort_index()
+            if df_tr.empty or df_te.empty:
+                continue
+            feat_tr = run_feature_pipeline(
+                df_tr,
+                feature_loader=feature_loader,
+                pipeline_cfg=strategy_config.features,
+                fit=True,
+            )
+            feat_te = run_feature_pipeline(
+                df_te,
+                feature_loader=feature_loader,
+                pipeline_cfg=strategy_config.features,
+                fit=False,
+            )
+            # Ensure grouping columns are present post-feature-pipeline
+            feat_tr["_symbol"] = sym
+            feat_tr["symbol"] = sym
+            feat_te["_symbol"] = sym
+            feat_te["symbol"] = sym
+            if isinstance(feat_tr.index, pd.DatetimeIndex):
+                feat_tr["datetime"] = feat_tr.index
+            if isinstance(feat_te.index, pd.DatetimeIndex):
+                feat_te["datetime"] = feat_te.index
+            train_feat_parts.append(feat_tr.reset_index(drop=True))
+            test_feat_parts.append(feat_te.reset_index(drop=True))
+        df_train_features = pd.concat(train_feat_parts, axis=0, ignore_index=True)
+        df_test_features = pd.concat(test_feat_parts, axis=0, ignore_index=True)
+        # Stable order for TSCV and backtests
+        sort_cols = [
+            c for c in ["datetime", "_symbol"] if c in df_train_features.columns
+        ]
+        if sort_cols:
+            df_train_features = df_train_features.sort_values(sort_cols).reset_index(
+                drop=True
+            )
+        sort_cols = [
+            c for c in ["datetime", "_symbol"] if c in df_test_features.columns
+        ]
+        if sort_cols:
+            df_test_features = df_test_features.sort_values(sort_cols).reset_index(
+                drop=True
+            )
+        print(
+            f"   ✅ Feature pipeline (train/test) pooled: train_rows={len(df_train_features)}, test_rows={len(df_test_features)}, cols={len(df_train_features.columns)}\n"
+        )
 
     feature_cols = determine_feature_columns(
         df_train_features, strategy_config.features
     )
+    # Multi-symbol pooled training: optionally include symbol as a categorical feature.
+    # Prefer `_symbol` (already configured as categorical in config/feature_column_types.yaml).
+    if is_multi_symbol:
+        if "_symbol" in df_train_features.columns and "_symbol" not in feature_cols:
+            feature_cols = list(feature_cols) + ["_symbol"]
+        elif "symbol" in df_train_features.columns and "symbol" not in feature_cols:
+            feature_cols = list(feature_cols) + ["symbol"]
     print(f"   ✅ Candidate features: {len(feature_cols)}")
 
     # Label generation
@@ -1396,12 +1552,22 @@ def train_strategy(
         strategy_config.labels.generator.function,
     )
 
+    # Label generation
+    # NOTE: Some label generators (e.g., *_with_weights) attach `sample_weight` to the input df.
+    # We call them on a temporary copy to avoid accidental feature mutation, but we propagate
+    # `sample_weight` back if present so training can consume it.
+    _train_tmp = df_train_features.copy()
+    _test_tmp = df_test_features.copy()
     df_train_features[strategy_config.labels.target_column] = label_func(
-        df_train_features.copy(), **strategy_config.labels.generator.params
+        _train_tmp, **strategy_config.labels.generator.params
     )
     df_test_features[strategy_config.labels.target_column] = label_func(
-        df_test_features.copy(), **strategy_config.labels.generator.params
+        _test_tmp, **strategy_config.labels.generator.params
     )
+    if "sample_weight" in _train_tmp.columns:
+        df_train_features["sample_weight"] = _train_tmp["sample_weight"]
+    if "sample_weight" in _test_tmp.columns:
+        df_test_features["sample_weight"] = _test_tmp["sample_weight"]
     train_labels = df_train_features[strategy_config.labels.target_column]
     test_labels = df_test_features[strategy_config.labels.target_column]
     print(
@@ -1500,6 +1666,30 @@ def train_strategy(
                 mp["invert_features"] = inv
                 trainer_params["model_params"] = mp
     except Exception:
+        pass
+
+    # Seed plumbing: make `--seed` actually control model RNG (so multi-seed sweeps are meaningful,
+    # and same-seed runs are stable). We intentionally override YAML seeds here.
+    try:
+        seed_int = int(getattr(args, "seed", 42))
+        mp0 = trainer_params.get("model_params") or {}
+        if isinstance(mp0, dict):
+            mp = dict(mp0)
+            mt = str(model_type).lower()
+            if mt == "lightgbm":
+                mp["seed"] = seed_int
+                mp["feature_fraction_seed"] = seed_int
+                mp["bagging_seed"] = seed_int
+                mp["data_random_seed"] = seed_int
+                mp["drop_seed"] = seed_int
+            elif mt == "xgboost":
+                mp["random_state"] = seed_int
+                mp["seed"] = seed_int
+            elif mt == "catboost":
+                mp["random_seed"] = seed_int
+            trainer_params["model_params"] = mp
+    except Exception:
+        # Never fail training due to seed plumbing.
         pass
 
     print(
@@ -1649,16 +1839,69 @@ def train_strategy(
         results["volatility_model"] = {"trained": False}
 
     print(f"\n   ▶️ Running backtest on test set")
-    backtest_results = run_backtest_with_strategy(
-        df_test_filtered,
-        preds,
-        strategy_config,
-        task_type=task_type,
-        vol_model=vol_model,  # Pass volatility model to backtest
-    )
-    if backtest_results:
-        results["backtest"] = backtest_results
-        print(f"   ✅ Backtest completed")
+    if not is_multi_symbol or "_symbol" not in df_test_filtered.columns:
+        backtest_results = run_backtest_with_strategy(
+            df_test_filtered,
+            preds,
+            strategy_config,
+            task_type=task_type,
+            vol_model=vol_model,  # Pass volatility model to backtest
+        )
+        if backtest_results:
+            results["backtest"] = backtest_results
+            print(f"   ✅ Backtest completed")
+    else:
+        # Run per-symbol backtests (pooling assets into one backtest is meaningless).
+        bt_by_symbol: dict[str, Any] = {}
+        for sym in symbol_list:
+            mask = (df_test_filtered["_symbol"] == sym).to_numpy()
+            if mask.sum() == 0:
+                continue
+            df_sym = df_test_filtered.loc[mask].copy()
+            preds_sym = np.asarray(preds)[mask]
+            bt = run_backtest_with_strategy(
+                df_sym,
+                preds_sym,
+                strategy_config,
+                task_type=task_type,
+                vol_model=vol_model,
+            )
+            if bt:
+                bt_by_symbol[sym] = bt
+        if bt_by_symbol:
+            results["backtest_by_symbol"] = bt_by_symbol
+            # Also provide an overall summary (equal-weight mean across symbols)
+            try:
+                rets = [
+                    v.get("total_return_pct")
+                    for v in bt_by_symbol.values()
+                    if v.get("total_return_pct") is not None
+                ]
+                sharps = [
+                    v.get("sharpe")
+                    for v in bt_by_symbol.values()
+                    if v.get("sharpe") is not None
+                ]
+                dds = [
+                    v.get("max_drawdown_pct")
+                    for v in bt_by_symbol.values()
+                    if v.get("max_drawdown_pct") is not None
+                ]
+                trades = [
+                    v.get("total_trades")
+                    for v in bt_by_symbol.values()
+                    if v.get("total_trades") is not None
+                ]
+                results["backtest"] = {
+                    "total_return_pct": float(np.mean(rets)) if rets else None,
+                    "sharpe": float(np.mean(sharps)) if sharps else None,
+                    "max_drawdown_pct": float(np.max(dds)) if dds else None,
+                    "total_trades": int(np.sum(trades)) if trades else None,
+                    "aggregate_mode": "multi_symbol_equal_weight_mean_return_sharpe_max_dd_sum_trades",
+                }
+            except Exception:
+                pass
+            print(f"   ✅ Backtest completed (per symbol): {list(bt_by_symbol.keys())}")
 
     output_cfg = strategy_config.model.output
     if output_cfg.get("save_results", True):
@@ -1679,6 +1922,46 @@ def train_strategy(
 
 def main():
     args = parse_args()
+
+    # Reproducibility: fix RNG seeds as early as possible.
+    try:
+        import random
+
+        np.random.seed(int(args.seed))
+        random.seed(int(args.seed))
+    except Exception:
+        pass
+
+    # Determinism knobs: best-effort (helps a lot for LightGBM + numpy reductions).
+    # Setting these inside the process still affects libraries that read env at runtime.
+    if bool(getattr(args, "deterministic", False)):
+        # IMPORTANT: override (not setdefault) so repeated runs are consistent even if
+        # the parent process exported thread env vars.
+        os.environ["MLBOT_DETERMINISTIC"] = "1"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+    # Optional torch determinism for DL features (best effort; some CUDA ops can still be non-deterministic).
+    try:
+        import torch  # type: ignore
+
+        torch.manual_seed(int(args.seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(args.seed))
+        try:
+            torch.use_deterministic_algorithms(True)
+        except Exception:
+            pass
+        try:
+            torch.backends.cudnn.deterministic = True  # type: ignore[attr-defined]
+            torch.backends.cudnn.benchmark = False  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    except Exception:
+        pass
     config_path = Path(args.config)
     selected = (
         [s.strip() for s in args.strategy.split(",") if s.strip()]

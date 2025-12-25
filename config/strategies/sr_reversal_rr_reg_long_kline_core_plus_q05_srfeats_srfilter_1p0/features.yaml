@@ -1,0 +1,25 @@
+name: sr_reversal_rr_reg_long_kline_core_plus_q05_srfeats_srfilter_1p0
+description: "CORE+ (kline) + minimal SR distance features; SR-filtered labels (dist<=1.0 ATR)"
+feature_pipeline:
+  requested_features:
+    - macd_f
+    - rsi_f
+    - sma_200_f
+    - atr_f
+    - roc_5_f
+    - mom_10_f
+    - bbands_f
+    - bb_width_f
+    - trend_r2_20_f
+    - trend_r2_50_f
+    - acceleration_3_f
+    - wick_ratios_f
+    - price_range_symmetry_f
+    - poc_hal_features_close_f
+    - sqs_hal_high_f
+    - sqs_hal_low_f
+    - sr_strength_max_close_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+

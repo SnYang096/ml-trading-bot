@@ -131,6 +131,12 @@ def parse_args() -> argparse.Namespace:
         help="Test set size (0.0-1.0)",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed forwarded to train_strategy_pipeline for reproducible runs.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=str,
         default="results/model_comparison",
@@ -221,6 +227,9 @@ def run_train_pipeline_multi_strategy(args: argparse.Namespace) -> None:
             args.timeframe,
             "--test-size",
             str(args.test_size),
+            "--seed",
+            str(int(getattr(args, "seed", 42))),
+            "--deterministic",
             "--output-root",
             str(out_root),
             "--data-path",
@@ -271,6 +280,29 @@ def run_train_pipeline_multi_strategy(args: argparse.Namespace) -> None:
                 return f"{float(x):.4f}"
             return str(x)
 
+        # Pick a "best" strategy for this single run (heuristic):
+        # - Prefer highest Sharpe
+        # - Require some minimum trades so Sharpe isn't meaningless
+        min_trades = 10
+        best_reason = ""
+        best_name = None
+        try:
+            df2 = df.copy()
+            if "trades" in df2.columns:
+                df2 = df2[df2["trades"].fillna(0) >= min_trades]
+            if not df2.empty and "Sharpe" in df2.columns:
+                best_row = df2.sort_values(
+                    ["Sharpe", "return%"], ascending=[False, False]
+                ).iloc[0]
+                best_name = str(best_row.get("strategy", ""))
+                best_reason = (
+                    f"Chosen by highest Sharpe (min_trades={min_trades}). "
+                    f"Sharpe={_fmt(best_row.get('Sharpe'))}, return%={_fmt(best_row.get('return%'))}, "
+                    f"DD%={_fmt(best_row.get('DD%'))}, trades={best_row.get('trades')}."
+                )
+        except Exception:
+            pass
+
         table_html = df.to_html(index=False, formatters={c: _fmt for c in df.columns})
         html = f"""<!doctype html>
 <html>
@@ -296,6 +328,11 @@ def run_train_pipeline_multi_strategy(args: argparse.Namespace) -> None:
     end=<code>{args.end_date or ""}</code>,
     test_size=<code>{args.test_size}</code>
   </p>
+  <div style="background:#f8f9fa;border:1px solid #e0e0e0;padding:10px;border-radius:6px;margin:12px 0;">
+    <div><b>How to read:</b> This is a <b>single-run</b> comparison. For robust conclusions, use multi-seed / multi-symbol sweep (see <code>docs/strategies/SR_REVERSAL_EXPERIMENT_PROTOCOL.md</code>).</div>
+    <div style="margin-top:6px;"><b>Heuristic best (this run):</b> <code>{best_name or "N/A"}</code></div>
+    <div><b>Why:</b> {best_reason or "Not enough trades or missing metrics to rank."}</div>
+  </div>
   <p>CSV: <code>{csv_path.name}</code></p>
   {table_html}
 </body>
