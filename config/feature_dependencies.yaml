@@ -1550,6 +1550,40 @@ features:
       "Order-flow sub-block: Trade Clustering-only features (selected from
       base)."
     pass_full_df: false
+
+  trade_cluster_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_trade_cluster_semantic_scores_from_series
+    dependencies:
+      - atr_f
+    required_columns:
+      - open
+      - high
+      - low
+      - close
+      - volume
+      - atr
+    output_columns:
+      - trade_cluster_flow_intensity
+      - trade_cluster_exhaustion_score
+      - trade_cluster_absorption_score
+    category: order_flow
+    description: "TradeCluster semantics: exhaustion (reversal-friendly) vs absorption (breakout-friendly). Returns only semantic columns."
+    compute_params:
+      window_size: 100
+      ma_window: 20
+      disp_atr_threshold: 0.5
+      use_range_disp: true
+      activity_clip: 3.0
+      monthly_cache_dir: cache/features/monthly
+    pass_full_df: false
+    column_mappings:
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+      atr: atr
   trade_cluster_base_aligned_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_base_aligned_features_from_series
@@ -3059,6 +3093,29 @@ features:
     column_mappings:
       liquidity_void_detected: liquidity_void_detected
       vpin: vpin_zscore_50
+
+  exhaustion_at_liquidity_void_f:
+    module: enhanced
+    compute_func: compute_exhaustion_at_liquidity_void_from_series
+    dependencies:
+      - liquidity_void_f
+      - trade_cluster_semantic_scores_f
+    required_columns:
+      - trade_cluster_exhaustion_score
+      - liquidity_void_detected
+      - liquidity_void_false_breakout_risk
+    output_columns:
+      - exhaustion_at_liquidity_void
+    category: interaction
+    description: "Semantic interaction: trade_cluster_exhaustion_score × liquidity_void (optionally × false_breakout_risk)"
+    compute_params:
+      use_risk: true
+      clip_score: 1.0
+    pass_full_df: false
+    column_mappings:
+      trade_cluster_exhaustion_score: trade_cluster_exhaustion_score
+      liquidity_void_detected: liquidity_void_detected
+      liquidity_void_false_breakout_risk: liquidity_void_false_breakout_risk
   compression_energy_x_ofi_short_f:
     module: enhanced
     compute_func: compute_compression_energy_x_ofi_short_from_series

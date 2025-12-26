@@ -1,0 +1,19 @@
+strategy:
+  name: sr_reversal_rr_reg_long_limit_wall_proxy
+  description: >
+    Proxy "limit-order wall / rejection" without L2: SR strength + SQS + wick + volume-profile + WPT false-breakout
+    + liquidity-void + DTW reversal patterns (near SR). All other configs match sr_reversal_rr_reg_long.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+    - ablation
+    - proxy
+    - liquidity
+    - volume_profile
+    - pattern
+  owner: quant_team
+
+

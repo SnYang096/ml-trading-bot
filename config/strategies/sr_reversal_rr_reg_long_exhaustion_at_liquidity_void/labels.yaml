@@ -1,0 +1,32 @@
+name: sr_reversal_rr_reg_long_exhaustion_at_liquidity_void
+target_column: rr_label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.sr_reversal_label
+  function: compute_sr_reversal_rr_continuous_label_with_weights
+  params:
+    max_holding_bars: 50
+    take_profit_r: 2.0
+    stop_loss_r: 1.0
+    # SR filter (label-side): keep only samples near SR
+    dist_to_sr_col: dist_to_nearest_sr
+    dist_atr_mult: 1.5
+    combine_mode: long_only
+    # Weights (training-only)
+    compute_weights: true
+    weight_strategy: result_based_rr
+    weight_config:
+      logic_mode: none
+      loss_weight: 0.05
+      medium_rr_threshold: 1.0
+      high_rr_threshold: 2.0
+      high_rr_boost: 1.5
+
+filters:
+  - column: rr_label
+    notna: true
+
+post_label_filters:
+  []
+
+

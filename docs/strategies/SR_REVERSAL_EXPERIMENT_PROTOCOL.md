@@ -55,6 +55,8 @@
 
 ## 5. 实验流程（推荐顺序）
 
+> 相关设计文档（建议配合阅读）：`docs/strategies/SEMANTIC_FEATURES_4_SCENARIOS.md`
+
 ### 5.1 Step A：MVP（3 个 K 线特征）先打通并验证稳定
 目的：建立“最小可用、可复现”的基线，然后再逐步加回特征组。
 
@@ -212,6 +214,118 @@ python3 scripts/run_model_comparison_seed_sweep.py \
   - trades≈ **16.8**
 
 结论：在当前回归主线上，“标签侧 SR 过滤”带来**更稳定的正期望**（均值更高、方差更小、回撤更低），是目前最值得继续推进的方向。
+
+### 10.X Orderflow 分组消融（BTCUSDT）：TradeCluster 明显拖累反转，CVD 接近中性
+目的：解释“为什么加 orderflow 后 Sharpe 下降”，并定位到底是哪一组 orderflow 在拖累反转策略。
+
+协议：
+- symbol：`BTCUSDT`
+- timeframe：`240T`
+- window：`2023-01-01 ~ 2025-10-31`
+- test-size：`0.3`
+- seeds：`1,2,3,4,5`
+- 其他配置：完全固定（同一 label/backtest/model），**只改 `features.yaml` 的 orderflow 子组**
+
+策略（A/B 对照）：
+- baseline：`sr_reversal_rr_reg_long`
+- VPIN-only：`sr_reversal_rr_reg_long_of_vpin`（仅加 `vpin_derived_features_f`）
+- TradeCluster-only：`sr_reversal_rr_reg_long_of_trade_cluster`（仅加 `trade_cluster_block_features_f`）
+- CVD-only：`sr_reversal_rr_reg_long_of_cvd`（仅加 bar-level CVD 相关特征：`cvd_slope_5_f/hurst_cvd_f/wpt_cvd_fluctuation_f`）
+- full orderflow：`sr_reversal_rr_reg_long_orderflow`（orderflow 全量：VPIN + TradeCluster）
+
+命令（可复现）：
+```bash
+python3 scripts/run_model_comparison_seed_sweep.py \
+  --strategies sr_reversal_rr_reg_long,sr_reversal_rr_reg_long_of_vpin,sr_reversal_rr_reg_long_of_trade_cluster,sr_reversal_rr_reg_long_of_cvd,sr_reversal_rr_reg_long_orderflow \
+  --symbols BTCUSDT --timeframe 240T \
+  --start-date 2023-01-01 --end-date 2025-10-31 \
+  --test-size 0.3 --seeds 1,2,3,4,5 \
+  --output-dir results/model_comparison/seed_sweep_orderflow_ablation_btc_v2_seedwired \
+  --no-docker
+```
+
+结果摘要（mean over seeds）：
+- baseline：Sharpe≈ **1.84**，return%≈ **11.64**
+- CVD-only：Sharpe≈ **1.72**，return%≈ **10.86**（接近中性）
+- VPIN-only：Sharpe≈ **1.33**，return%≈ **8.28**（偏负）
+- TradeCluster-only：Sharpe≈ **0.82**，return%≈ **4.75**（显著负）
+- full orderflow：Sharpe≈ **0.90**，return%≈ **5.12**（整体被 TradeCluster 拉低）
+
+结论：
+- 对“SR 附近反转”这一类任务：**TradeCluster 特征高度可疑**（更像突破/延续类信息），会显著伤害 Sharpe。
+- VPIN 在该窗口下也偏负，需要更细分（例如只留 spike/zscore，或改成“触发型 gate”）。
+- **CVD-only 更接近中性**（至少没有明显拖累），更可能作为反转的辅助确认项，而不是主驱动。
+
+### 10.Z TradeCluster 语义化（BTCUSDT）：raw 为负，semantic 可转正
+动机：不要直接喂 `trade_cluster_*` 原始统计量（容易学到“趋势仍强”），而是转成“路径语义”：
+- **Exhaustion（衰竭）**：放量/聚集，但价格位移不大（Effort without progress）→ 反转友好
+- **Absorption（吸收）**：放量/聚集，且价格位移很大 → 突破/延续友好
+
+实现（新增 feature node）：
+- `trade_cluster_semantic_scores_f`（输出三列）：
+  - `trade_cluster_flow_intensity`
+  - `trade_cluster_exhaustion_score`
+  - `trade_cluster_absorption_score`
+（代码：`src/features/time_series/utils_order_flow_features.py`）
+
+协议：
+- symbol：`BTCUSDT`
+- timeframe：`240T`
+- window：`2023-01-01 ~ 2025-10-31`
+- test-size：`0.3`
+- seeds：`1,2,3,4,5`
+
+策略对照：
+- baseline：`sr_reversal_rr_reg_long`
+- raw trade cluster：`sr_reversal_rr_reg_long_of_trade_cluster`
+- semantic trade cluster：`sr_reversal_rr_reg_long_trade_cluster_semantic`
+- liquidity void：`sr_reversal_rr_reg_long_liquidity_void`
+
+结果摘要（mean over seeds）：
+- baseline：Sharpe≈ **1.61**，return%≈ **9.90**
+- raw trade cluster：Sharpe≈ **0.56**，return%≈ **3.57**（明显拖累）
+- semantic trade cluster：Sharpe≈ **2.00**，return%≈ **13.15**（显著转正，且 corr_mean 更高）
+- liquidity void：Sharpe≈ **2.05**，return%≈ **13.05**
+
+结论：
+- 这次假设成立：**TradeCluster raw 的负面主要来自“语义混杂”**，语义化后可以把信息拆出来，对反转不再致命。
+- 下一步建议：把 `disp_atr_threshold / ma_window / window_size` 做小范围 sweep，并在 ETH 上复核一致性。
+
+### 10.Y “限价墙/难突破”非 L2 代理特征（BTCUSDT）：组合版不稳定且均值接近 0
+动机：没有 L2 订单簿（深度/挂单）数据时，用可获得的代理特征模拟“限价单墙/拒绝/难突破”。
+
+我们构造了一组 proxy 特征（在 `sr_reversal_rr_reg_long` 基础上增量添加）：
+- SR 结构/质量：`sr_strength_max_close_f`, `sqs_f`, `sqs_hal_*`
+- 蜡烛“拒绝”代理：`wick_ratios_f`
+- Volume Profile：`volume_profile_vpvr_f`, `volume_profile_volatility_features_f`
+- WPT 假突破风险：`wpt_volume_energy_f`（`wpt_false_breakout_risk` 等）
+- Liquidity void：`liquidity_void_f`
+- 形态匹配（DTW，近 SR 才算）：`dtw_features_reversal_f`
+
+协议：
+- symbol：`BTCUSDT`
+- timeframe：`240T`
+- window：`2023-01-01 ~ 2025-10-31`
+- test-size：`0.3`
+- seeds：`1,2,3,4,5`
+
+策略对照：
+- baseline：`sr_reversal_rr_reg_long`
+- liquidity void：`sr_reversal_rr_reg_long_liquidity_void`
+- limit-wall proxy bundle：`sr_reversal_rr_reg_long_limit_wall_proxy`
+
+结果摘要（mean over seeds）：
+- baseline：Sharpe≈ **1.99**，return%≈ **12.63**
+- liquidity void：Sharpe≈ **1.87**，return%≈ **12.62**（依旧正、较稳）
+- limit-wall proxy bundle：Sharpe≈ **-0.01**，return%≈ **-0.36**（std 很大、DD% 高）
+
+结论：
+- 这一大包 proxy 特征**组合后对回测不友好**（均值接近 0 且方差/回撤偏大），不建议直接作为主线。
+- 下一步如果要继续探索“限价墙/拒绝”，建议拆成更小的 A/B：
+  - 仅加 `volume_profile_*`（不含 DTW/WPT）
+  - 仅加 `wpt_volume_energy_f`
+  - 仅加 `dtw_features_reversal_f`（并确认依赖包与缺失率）
+  逐个 seed sweep，定位到底是哪一块在拉跨。
 
 ### 10.3 SR filter 强度 sweep（dist_atr_mult）：推荐 1.5
 我们对同一套回归主线（`kline_core_plus_q05` + SR 距离特征）做了 label-side SR filter 的强度 sweep：

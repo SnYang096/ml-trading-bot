@@ -85,6 +85,42 @@ def compute_liquidity_void_x_vpin_from_series(
     return out.to_frame()
 
 
+@register_feature("compute_exhaustion_at_liquidity_void_from_series", category="interaction")
+def compute_exhaustion_at_liquidity_void_from_series(
+    *,
+    trade_cluster_exhaustion_score: pd.Series,
+    liquidity_void_detected: pd.Series,
+    liquidity_void_false_breakout_risk: Optional[pd.Series] = None,
+    use_risk: bool = True,
+    clip_score: float = 1.0,
+) -> pd.DataFrame:
+    """
+    Composite semantic: Exhaustion-at-Liquidity-Void
+
+    Intuition:
+    - liquidity_void_detected indicates a "low resistance path" / sweep-like episode (proxy without L2)
+    - trade_cluster_exhaustion_score indicates "effort without progress" (reversal-friendly)
+    - optional: weight by liquidity_void_false_breakout_risk to focus on quick-reversal voids
+
+    Returns:
+      DataFrame with one column: exhaustion_at_liquidity_void (0..~1 after clipping)
+    """
+    ex = pd.to_numeric(trade_cluster_exhaustion_score, errors="coerce").fillna(0.0).astype(float)
+    lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0.0).astype(float)
+    out = ex * lv
+    if use_risk and liquidity_void_false_breakout_risk is not None:
+        risk = (
+            pd.to_numeric(liquidity_void_false_breakout_risk, errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+            .clip(lower=0.0, upper=1.0)
+        )
+        out = out * risk
+    if clip_score is not None and float(clip_score) > 0:
+        out = out.clip(lower=0.0, upper=float(clip_score)) / float(clip_score)
+    return out.rename("exhaustion_at_liquidity_void").to_frame()
+
+
 @register_feature("compute_compression_energy_x_ofi_short", category="interaction")
 def compute_compression_energy_x_ofi_short(
     df: pd.DataFrame,

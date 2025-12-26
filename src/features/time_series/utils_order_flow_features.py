@@ -1150,6 +1150,114 @@ def select_trade_cluster_block_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =============================================================================
+# TradeCluster → semantic signals (for reversal/breakout separation)
+# =============================================================================
+
+@register_feature("compute_trade_cluster_semantic_scores_from_series", category="order_flow")
+def compute_trade_cluster_semantic_scores_from_series(
+    *,
+    open: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    volume: pd.Series,
+    atr: pd.Series,
+    ticks: Optional[pd.DataFrame] = None,
+    ticks_loader_json: Optional[str] = None,
+    window_size: int = 100,
+    ma_window: int = 20,
+    disp_atr_threshold: float = 0.5,
+    use_range_disp: bool = True,
+    activity_clip: float = 3.0,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
+) -> pd.DataFrame:
+    """
+    Turn trade-cluster raw stats into *path semantics*:
+
+    - Exhaustion Score (reversal-friendly):
+        "high flow intensity but low price displacement"
+    - Absorption Score (breakout-friendly):
+        "high flow intensity and high price displacement"
+
+    Why:
+    Raw trade-cluster stats often proxy "trend is still strong" and can be negative for reversals.
+    These semantics try to separate:
+      - absorption/continuation (high flow + large displacement)
+      - exhaustion/reversal (high flow + small displacement, i.e. effort without progress)
+
+    Notes:
+    - This feature *requires ticks* (same as trade clustering), but only returns the semantic columns,
+      so strategies won't accidentally train on the full raw trade_cluster_* block.
+    - All computations are per-bar; no future leakage.
+    """
+    # Base trade-cluster stats (ticks → bar aligned)
+    base = compute_trade_cluster_base_aligned_features_from_series(
+        open=open,
+        close=close,
+        high=high,
+        low=low,
+        volume=volume,
+        ticks=ticks,
+        ticks_loader_json=ticks_loader_json,
+        window_size=int(window_size),
+        freq=None,
+        monthly_cache_dir=monthly_cache_dir,
+        merge_batch_size=4,
+        persist_monthly=True,
+        compute_trade_cluster_derived=False,
+    )
+
+    idx = base.index
+    eps = 1e-8
+
+    # Activity proxy: total runs (buy/sell) per bar and its rolling baseline
+    buy_cnt = pd.to_numeric(base.get("trade_cluster_buy_run_count"), errors="coerce").fillna(0.0)
+    sell_cnt = pd.to_numeric(base.get("trade_cluster_sell_run_count"), errors="coerce").fillna(0.0)
+    total_runs = (buy_cnt + sell_cnt).astype(float)
+    total_runs_ma = total_runs.rolling(window=int(ma_window), min_periods=max(3, int(ma_window // 4))).mean()
+    activity_ratio = (total_runs / (total_runs_ma + eps)).clip(lower=0.0, upper=float(activity_clip))
+    activity_norm = (activity_ratio / float(activity_clip)).fillna(0.0)
+
+    # Directional flow intensity (0..1-ish): imbalance and "low entropy"
+    imbalance_ratio = pd.to_numeric(base.get("trade_cluster_imbalance_ratio"), errors="coerce").fillna(0.0).astype(float)
+    directional_entropy = pd.to_numeric(base.get("trade_cluster_directional_entropy"), errors="coerce").fillna(1.0).astype(float)
+    # net_runs_ratio ∈ [-1, 1]
+    net_runs_ratio = ((buy_cnt - sell_cnt) / (total_runs + eps)).fillna(0.0).astype(float)
+    # entropy_gate: low entropy => more one-sided flow (closer to 1)
+    entropy_gate = (1.0 - directional_entropy.clip(lower=0.0, upper=1.0)).fillna(0.0)
+    base_flow = (0.6 * net_runs_ratio.abs() + 0.4 * imbalance_ratio.abs()).clip(lower=0.0, upper=1.0)
+    flow_intensity = (base_flow * entropy_gate * activity_norm).clip(lower=0.0, upper=1.0).fillna(0.0)
+
+    # Price displacement (ATR-normalized)
+    o = pd.to_numeric(open, errors="coerce").reindex(idx).astype(float)
+    c = pd.to_numeric(close, errors="coerce").reindex(idx).astype(float)
+    h = pd.to_numeric(high, errors="coerce").reindex(idx).astype(float)
+    l = pd.to_numeric(low, errors="coerce").reindex(idx).astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").reindex(idx).astype(float).clip(lower=eps)
+
+    if bool(use_range_disp):
+        disp = (h - l).abs()
+    else:
+        disp = (c - o).abs()
+    disp_atr = (disp / atr_s).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+
+    disp_thr = float(disp_atr_threshold) if float(disp_atr_threshold) > 0 else 0.5
+    disp_norm = (disp_atr / disp_thr).clip(lower=0.0, upper=1.0).fillna(0.0)
+
+    absorption = (flow_intensity * disp_norm).rename("trade_cluster_absorption_score")
+    exhaustion = (flow_intensity * (1.0 - disp_norm)).rename("trade_cluster_exhaustion_score")
+
+    out = pd.DataFrame(
+        {
+            "trade_cluster_flow_intensity": flow_intensity.astype(float),
+            "trade_cluster_exhaustion_score": exhaustion.astype(float),
+            "trade_cluster_absorption_score": absorption.astype(float),
+        },
+        index=idx,
+    )
+    return out
+
+# =============================================================================
 # Narrow-IO entrypoints for order-flow base aligned blocks
 # =============================================================================
 

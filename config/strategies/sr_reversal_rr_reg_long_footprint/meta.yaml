@@ -1,0 +1,17 @@
+strategy:
+  name: sr_reversal_rr_reg_long_footprint
+  description: >
+    Ablation: sr_reversal_rr_reg_long + footprint_basic_f only (ticks-based).
+    All other configs (label/backtest/model) match sr_reversal_rr_reg_long.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+    - footprint
+    - ticks
+    - ablation
+  owner: quant_team
+
+

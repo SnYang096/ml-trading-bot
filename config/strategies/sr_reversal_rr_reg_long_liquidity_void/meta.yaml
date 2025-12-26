@@ -1,0 +1,16 @@
+strategy:
+  name: sr_reversal_rr_reg_long_liquidity_void
+  description: >
+    Ablation: sr_reversal_rr_reg_long + liquidity_void_* features only (no ticks/L2).
+    All other configs (label/backtest/model) match sr_reversal_rr_reg_long.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+    - liquidity
+    - ablation
+  owner: quant_team
+
+

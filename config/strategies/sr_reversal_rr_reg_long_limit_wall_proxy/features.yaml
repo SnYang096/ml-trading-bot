@@ -1,0 +1,46 @@
+name: sr_reversal_rr_reg_long_limit_wall_proxy
+description: "Proxy limit-wall/rejection without L2: SR+SQS+wick+VPVR/WPT+liquidity_void+DTW reversal patterns"
+feature_pipeline:
+  requested_features:
+  # Mainline (kline + minimal SR-distance features)
+  - macd_f
+  - rsi_f
+  - sma_200_f
+  - atr_f
+  - roc_5_f
+  - mom_10_f
+  - bbands_f
+  - bb_width_f
+  - trend_r2_20_f
+  - trend_r2_50_f
+  - acceleration_3_f
+  - wick_ratios_f
+  - price_range_symmetry_f
+  # SR structure / quality (already used by mainline; keep explicit)
+  - poc_hal_features_close_f
+  - sqs_hal_high_f
+  - sqs_hal_low_f
+  - sqs_f
+  - sr_strength_max_close_f
+  # "Limit wall" proxies without L2:
+  # - Volume profile (HVN/LVN/POC deviation, entropy, skewness)
+  - volume_profile_vpvr_f
+  - volume_profile_volatility_features_f
+  # - WPT false-breakout risk (proxy for rejection / hard-to-break zones)
+  - wpt_volume_energy_f
+  # - Liquidity void (proxy for sweep / void / sudden depth withdrawal)
+  - liquidity_void_f
+  # - Reversal candle/pattern proxies near SR (DTW distances + best-match)
+  #   Note: requires dtaidistance installed; computed only near SR for efficiency.
+  - dtw_features_reversal_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+notes: |
+  This strategy is identical to sr_reversal_rr_reg_long except it adds a bundle of non-L2 proxies:
+  - volume profile (HVN/LVN/POC/entropy/skew)
+  - WPT false-breakout risk
+  - liquidity void
+  - DTW reversal-pattern distances near SR
+
+
