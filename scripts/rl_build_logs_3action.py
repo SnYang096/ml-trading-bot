@@ -15,6 +15,7 @@ Produces a single logs file with columns required by:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -31,6 +32,9 @@ from src.time_series_model.rl.build_logs_3action import (
     BuildLogs3ActionConfig,
     build_logs_3action,
 )  # noqa: E402
+from src.time_series_model.rl.execution_returns_vectorbt import (  # noqa: E402
+    VectorBTExecutionReturnsConfig,
+)
 
 
 def _read_any(path: Path) -> pd.DataFrame:
@@ -96,8 +100,36 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--returns-source",
         default="momentum_proxy",
-        choices=["momentum_proxy", "rr_execution"],
+        choices=["momentum_proxy", "rr_execution", "vectorbt_execution"],
         help="How to build ret_mean/ret_trend (momentum_proxy fallback or rr_execution).",
+    )
+    ap.add_argument("--vbt-top-quantile", type=float, default=0.05)
+    ap.add_argument("--vbt-bottom-quantile", type=float, default=0.05)
+    ap.add_argument("--vbt-entry-mode", default="cross", choices=["level", "cross"])
+    ap.add_argument("--vbt-fee", type=float, default=0.0004)
+    ap.add_argument("--vbt-slippage", type=float, default=0.0001)
+    ap.add_argument(
+        "--vbt-freq", default="4H", help="vectorbt freq string, e.g. 4H/1H/15T"
+    )
+    ap.add_argument(
+        "--symbol-profiles-json",
+        default=None,
+        help='Optional per-symbol market profile mapping JSON, e.g. {"BTCUSDT":"btc","DOGEUSDT":"meme"}',
+    )
+    ap.add_argument(
+        "--default-profile",
+        default="standard",
+        help="Default market profile when symbol not in mapping.",
+    )
+    ap.add_argument(
+        "--rr-profile-overrides-json",
+        default=None,
+        help='Optional RR profile overrides JSON: {"meme":{"max_holding_bars":12,"take_profit_r":2.5}}',
+    )
+    ap.add_argument(
+        "--vbt-profile-overrides-json",
+        default=None,
+        help='Optional vectorbt profile overrides JSON: {"btc":{"fee":0.0002,"slippage":0.00005}}',
     )
     ap.add_argument(
         "--momentum-lookback",
@@ -163,10 +195,38 @@ def main() -> None:
         if args.symbols:
             mode_df = mode_df[mode_df["symbol"].isin(set(symbols))]
 
+    symbol_profiles = (
+        json.loads(str(args.symbol_profiles_json))
+        if args.symbol_profiles_json
+        else None
+    )
+    rr_profile_overrides = (
+        json.loads(str(args.rr_profile_overrides_json))
+        if args.rr_profile_overrides_json
+        else None
+    )
+    vbt_profile_overrides = (
+        json.loads(str(args.vbt_profile_overrides_json))
+        if args.vbt_profile_overrides_json
+        else None
+    )
+
     cfg = BuildLogs3ActionConfig(
         momentum_lookback=int(args.momentum_lookback),
         preds_in_log1p=bool(preds_in_log1p),
         returns_source=str(args.returns_source),
+        vbt_returns_cfg=VectorBTExecutionReturnsConfig(
+            top_quantile=float(args.vbt_top_quantile),
+            bottom_quantile=float(args.vbt_bottom_quantile),
+            entry_mode=str(args.vbt_entry_mode),
+            fee=float(args.vbt_fee),
+            slippage=float(args.vbt_slippage),
+            freq=str(args.vbt_freq) if args.vbt_freq else None,
+        ),
+        symbol_profiles=symbol_profiles,
+        default_profile=str(args.default_profile),
+        rr_profile_overrides=rr_profile_overrides,
+        vbt_profile_overrides=vbt_profile_overrides,
     )
     logs = build_logs_3action(preds_df, raw_df=raw, cfg=cfg, mode_df=mode_df)
 

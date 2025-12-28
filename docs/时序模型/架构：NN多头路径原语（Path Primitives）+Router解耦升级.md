@@ -109,6 +109,364 @@ Portfolio Construction
 
 - ✅ 生产系统：Router/Execution/Risk/RL/Shadow/Fallback 的“能上线能回退”闭环
 
+---
+
+### 2.2 面向数字货币（Binance/Hyperliquid）实盘的数据与标的选择建议（4H 框架）
+
+> 目标：在你明确“主框架是 4H”且磁盘有 2TB 的前提下，把数据采集/聚合/建模/执行的分工做成可控闭环：**信号足够、不过拟合、可扩展、可回退**。
+
+#### 2.2.1 做多少个标的合适？（从“样本密度”而不是“币圈热度”出发）
+
+- **建议起步**：**20～50 个永续合约（USDT perp/主要币）**  
+  - 目的不是“覆盖全市场”，而是保证 4H 任务在多 symbol 上能获得足够多的 regime 切换样本（趋势/震荡/噪音）。
+  - 少于 ~10 个标的时，4H 上很容易出现“样本不足 → 评估方差很大 → 你会被偶然性误导”。
+- **上限建议（第一阶段）**：**100～200 个**  
+  - 再往上会遇到两个现实问题：  
+    - **数据质量差异**（小币交易制度/跳点/爆量/上币下币）导致 label/执行口径不稳  
+    - **BTC beta 过强**（很多币高度相关）导致“看起来样本多，但信息增量有限”
+
+#### 2.2.2 “信号会不会都一样？是不是都在等 BTC 行情？”
+
+这是币圈的常态风险：**相关性上升时，跨标的 alpha 很容易坍塌成 BTC beta**。工程上建议把它当作一等公民处理：
+
+- **你不需要因此减少标的数量**，而是需要把“相关性坍塌”变成可诊断信号：
+  - Router 层：统计 `P(action)`、JS divergence、action→reward 映射是否跨标的一致（你已经有 `mlbot rl router diagnose`）。
+  - 执行层：对不同 `market_profile` 做专门化（你已经能在 build-logs 里按 profile 覆盖 RR/fee/slippage）。
+- **如何选币更不容易“全跟 BTC”**（第一阶段实用策略）：
+  - **按“交易制度/微结构”分组**：高流动主流（BTC/ETH/SOL） vs 中流动（L2/DeFi） vs 高跳跃（meme）  
+  - 每组各取一些，保证 Router 看到的“结构分布”更丰富，而不是 50 个相关币。
+
+#### 2.2.3 Tick 数据要聚合到 100ms / 1s / 1min 还是别的？
+
+你主框架是 **4H**，所以核心原则是 **频率分离（Frequency Separation）**：
+
+- **Router/NN Path Primitives 的训练与决策频率**：4H（或 1H→4H 的多尺度，但最终动作是 4H）  
+- **Execution 的频率**：秒级～分钟级（用于控制滑点/冲击/挂单成交/止损止盈的实现）  
+- **Order/撮合层**：更高频（你不需要把它“端到端学习”，只需要稳定的执行控制）
+
+因此建议：
+
+- **如果你的第一阶段目标是“把 4H 决策系统打穿”**：  
+  - Tick 聚合到 **1s 或 5s** 足够（用于：成交量/冲击/短期波动 proxy、以及执行成本模型的参数化）。  
+  - **不建议 100ms 起步**：成本很高、噪音更重、且对 4H Router 的边际收益通常低（更多是在做微观结构/做市问题）。
+- **如果你明确要做“执行优化/挂单/滑点建模”**（第二阶段）：  
+  - 才考虑 100ms 或更细，并把它限制在 Execution 模块内部（不要污染 Router/Path Primitives 的 feature contract）。
+- **1min 聚合**：适合做一些稳健的微结构 proxy（成交量、VWAP 偏离、短期 realized vol），但对“精确执行路径”会偏粗。
+
+一个很实用的折中：  
+> **存 tick 原始数据（压缩），日常计算用 1s bar，做 execution 诊断/回放时再下钻到 tick。**
+
+#### 2.2.4 先打穿数字货币，还是先开阔别的市场？
+
+**建议先打穿数字货币**，理由是工程闭环更快：
+
+- 数据获取、杠杆/永续机制、Funding、极端波动、跳跃过程，都更“能逼出系统工程问题”
+- Router/Execution/kill-switch/chaos-test 这些能力在币圈更容易被迫补齐，补齐后迁移到别的市场更稳
+
+什么时候值得开别的市场（第二阶段信号）：
+
+- 你发现 Router 在币圈长期处于“同质化 regime”（比如长期只有 NO_TRADE 或只跟 BTC）  
+- 或者你已经可以用 `shadow/counterfactual/fsm/exec-control` 稳定上线，想用跨市场检验 regime invariance
+
+#### 2.2.4.1 Binance / OKX / Hyperliquid / dYdX / Synthetix：哪个平台更适合本系统？
+
+你的系统关键约束是：**4H 方向类决策（NO/MEAN/TREND）+ 可控 Execution + 可审计评估口径**。因此平台选择的排序标准不是“谁最酷”，而是：
+
+- **流动性与成交可预测性**（滑点/冲击更可控）
+- **数据可得性与稳定性**（历史数据、tick/成交/盘口的获取难度与一致性）
+- **永续合约机制**（funding、杠杆、强平与风控约束的可建模性）
+- **工程复杂度/合规与账户门槛**（API/KYC/额度/风控）
+
+对比（面向“先打穿闭环”的阶段 0/1）：
+
+- **Binance（CEX）**
+  - **适合**：最容易做“可成交、可规模化”的基准环境；深度与成交质量通常更好，便于校准 Execution 成本模型。
+  - **代价**：需要处理账户/KYC/风控限制；数据接口规则可能变化，需要做稳健的数据落盘与重放。另一个常见担忧是 API 限频：对你这种 **4H 决策系统** 来说，下单频率本来很低，限频通常不构成瓶颈；需要重点工程化的是**行情/成交数据的订阅与落盘**（而不是高频下单）。
+
+- **OKX（CEX）**
+  - **适合**：作为 Binance 的互证/冗余来源（同类 CEX 机制），可用于验证“不是某一家交易所特性导致的假象”。
+  - **代价**：与 Binance 类似，需要工程化处理 API 稳定性与权限/KYC 约束。
+
+- **Hyperliquid（链上/近 CEX 体验的 perp）**
+  - **适合**：你要做“可审计、可重放”的链上执行研究时很有价值；也适合做第二阶段的跨平台稳健性验证（regime invariance + 执行假设一致性）。
+  - **阶段 0 不作为首选的核心原因**：你阶段 0 的目标是“先打穿 4H 决策闭环并校准执行口径”，CEX 往往更容易提供一个**成交与成本结构更稳定的基准环境**。Hyperliquid 的执行/成本结构与 CEX 差异更大（延迟、极端行情可用性、撮合与费用结构），更适合放在阶段 1 做“跨平台稳健性验证”，而不是一开始就把系统工程难度抬高。
+
+- **dYdX（链上/订单簿 perp）**
+  - **适合**：和 Hyperliquid 类似，可用于做“链上订单簿 perp”场景的对比验证。
+  - **代价**：生态与微结构可能与 CEX 不同；如果你的目标是尽快打穿闭环，通常不如先从 CEX 起步省事。
+
+- **Synthetix（合成资产/机制更偏借贷与衍生品协议）**
+  - **适合**：如果你要做的是“合成资产机制/流动性池/特定协议机制”的策略研究。
+  - **不太适合（阶段 0/1）**：它的交易风格与订单簿永续不同，很多问题从“执行控制”变成“协议机制风险”，会分散你在 4H 方向类系统上的主线注意力。
+
+推荐路径（务实）：
+
+- **阶段 0（先打穿闭环）**：优先选 **Binance 或 OKX（二选一）** 作为主战场（流动性与执行可控性最好）。  
+- **阶段 1（稳健性验证）**：再把 **Hyperliquid / dYdX** 作为“跨平台压力测试与可迁移性验证”。  
+- **阶段 2（扩展交易风格）**：当你要做 carry/基差/协议机制类策略时，再考虑 Synthetix 这类平台。
+
+#### 2.2.5 树模型 / NN 路径原语 / CS / PCM（执行与组合）怎么配合？（一张“角色分工表”）
+
+你可以把系统拆成两条互补链路：**结构决策链（Router）** 与 **横截面链（CS）**，最后由 **PCM/仓位组合模块** 合成最终风险暴露。
+
+**(A) NN 路径原语（Path Primitives）链：负责“结构状态与机会”**
+
+- 输入：4H features（含你定义的 Feature Contract）
+- 输出：`dir/mfe/mae/ttm/(persistence)` 等路径原语 heads
+- Router：把 heads → `mode ∈ {NO,MEAN,TREND}`
+- Execution：在给定 mode 下执行（RR/止损止盈/最长持仓/滑点成本模型），并产出 `ret_mean/ret_trend` 作为一致口径的执行回报
+- RL/BC：只在 Router 层学习“什么时候用哪个 mode”，并由 Shadow/Counterfactual/FSM/Exec-Control 上线
+
+**(B) 树模型策略链：负责“具体策略/特征选择/可解释 alpha”**
+
+- 你现有的 `config/strategies/*`（例如 `sr_reversal_rr_reg_long`）属于 **策略级配置**：  
+  - 它描述的是“某个策略如何选特征、如何打分、如何回测/执行”，不是路径原语任务本身  
+  - 它可以继续独立存在（你也明确要求不改动树模型工作流）
+- 树模型更适合做：  
+  - 具体策略的 score（例如某种 SR 反转信号）  
+  - 更强的特征选择与非线性拟合（在固定的策略语义下）
+
+**(C) CS（cross-sectional）链：负责“多标的择优与组合构建”**
+
+- 当你同时交易 N 个标的时，CS 解决的是：  
+  - “在同一个时刻，哪些标的更值得开仓/更值得分配风险预算？”  
+- CS 可以吃两类输入：  
+  - 树模型的策略 score（强策略语义）  
+  - NN path primitives 的“机会质量指标”（例如 trendiness/efficiency 等派生量）
+
+**(D) PCM（Position/Capital Manager）：负责“把多个信号变成一条可控的仓位路径”**
+
+- PCM 是生产系统的关键：  
+  - 它接收 Router mode（结构决策）、CS 排名/权重（横截面）、以及风险约束  
+  - 输出最终的目标仓位/杠杆/分配（并对接 Execution）
+- 你可以把 PCM 当作“组合控制器”：  
+  - Router 决定 **是否/以什么行为模式参与市场**  
+  - CS 决定 **参与哪些标的、权重怎么分**  
+  - Execution 决定 **怎么成交/怎么退出**  
+
+一句话总结协作方式：
+
+> **NN path primitives 给“结构与机会”，树模型给“策略化 alpha”，CS 做“多标的择优”，PCM 做“风险可控的仓位路径”，Execution 做“可解释的成交与退出”，最后用 Shadow/Counterfactual/FSM/Exec-Control 保证上线安全。**
+
+##### 2.2.5.1 分阶段落地建议（避免“系统太多套而拖死”）
+
+你担心“多套系统会不会太麻烦”，结论是：**第一阶段就应该只上线一套主链路**，其它都当作对比与审计工具。
+
+- **阶段 0（最推荐起步：一套主链路 + 可回退）**
+  - **主链路**：`NN path primitives → Rule Router(3-action) → Execution(统一) → Risk/仓位 → 实盘/回测`
+  - **目的**：先把 **数据→特征→heads→mode→执行→风控→监控→回退** 的闭环打穿
+  - **树模型角色**：先作为 **对比基线**（离线/影子/反事实评估），用于回答“NN-Router 这套值不值”
+
+- **阶段 1（仍然只上线一套，但开始做“替换验证”）**
+  - 仍只允许一个决策源控制真实资金（避免左右互搏）
+  - 新方法（树模型策略 / BC / offline RL / embedding specialization）全部先走：
+    - `shadow-eval`（行为稳定性）
+    - `counterfactual-eval`（同一执行口径下的收益对比）
+    - `fsm-decide` + `exec-control`（上线闸门与 kill-switch）
+
+- **阶段 2（需要时再引入 PCM 融合，多套信号“共存但不打架”）**
+  - 只有当你明确需要“多策略/多信号同时参与”时，才让 PCM 做组合与分配
+  - PCM 的约束要写死：**单一仓位路径、单一风险预算、冲突解决规则明确（例如 mode=NO 时全禁）**
+
+一句话：
+
+> **先用一套（Rule Router）跑通生产系统，再用树模型/BC/RL 做可比较的对照实验；当且仅当你确定“需要多信号协同”时，才把 PCM 融合引入上线。**
+
+##### 2.2.5.2 先上线 NN 还是树模型？（务实决策表 + 推荐路径）
+
+你问的本质是“**先上线哪条链路能更快、更安全地形成可迭代闭环**”。这不是信仰之争，而是工程与风险管理问题。
+
+**决策优先级（从上到下）**：
+
+1. **上线安全闭环是否齐全**：是否具备可回退、可解释、可审计（shadow/counterfactual/fsm/exec-control 类能力）
+2. **评估口径是否固定**：同一份数据、同一套执行假设下，能否稳定复现并比较（避免“各说各话”）
+3. **样本覆盖是否够**：walk-forward 下是否稳定（不是单次回测曲线漂亮）
+4. **迭代速度**：你能不能每周/每天稳定地产出一轮“训练→评估→上线闸门→结论”
+
+**推荐的务实结论**：
+
+- 如果**现在 NN 链路更完善（命令齐、报告齐、能做对照与回退）**，但策略阈值/执行参数还在调：  
+  - ✅ 更推荐 **先把 NN 的“Rule Router + Execution”上线**（阶段 0）  
+  - 树模型先作为对比基线（阶段 0/1），用同一套评估口径证明“是否值得替换/并存”
+- 如果**树模型已经有稳定的策略与执行回测**，且你能快速做出“上线安全壳”（回退开关、风控、监控），而 NN 还没跑通：  
+  - ✅ 可以先用树模型上线  
+  - 但要求你把“评估口径/执行口径/上线闸门”对齐到统一标准（见下一小节），否则后续切 NN 会推翻工程
+
+一个很明确的原则：
+
+> **先上线“能形成稳定闭环并可回退”的那一套，而不是先上线“理论上更强”的那一套。**
+
+##### 2.2.5.3 NN 流程更完善时：树模型要不要对齐流程？（最小对齐，不改树模型工作流）
+
+你提到“NN 流程更完善，树模型还需要对齐流程吗”，结论是：
+
+> **树模型不需要强行改训练/回测工作流（你也明确不希望改），但必须做最小对齐：对齐‘数据切分’、对齐‘执行口径’、对齐‘评估与上线闸门’。**
+
+**为什么必须最小对齐**（否则会出现工程灾难）：
+
+- 不对齐评估口径：你无法判断“树模型更强/NN 更强”到底是策略更强还是回测假设更宽松
+- 不对齐执行口径：你会在实盘发现“回测 Sharpe 很好，但成交/滑点/退出完全不是一回事”
+- 不对齐上线闸门：你没法做到“先影子验证→再小仓位→触发就回退”
+
+**最小对齐清单（推荐落地方式）**：
+
+- **对齐数据切分（Walk-forward）**  
+  - 不要求树模型改算法，但要求它使用同一套 `train/test` 时间切分（按 symbol 时间序，不泄漏）
+- **对齐执行口径（Execution-as-a-Service）**  
+  - 不要求树模型改信号，但它的信号必须通过同一套 Execution 假设产生可比较的 step-returns  
+  - 工程实现上可以有两种轻量方式：
+    - 树模型策略输出 → 转成 `mode/action` → 送入同一个 Router-level simulator（共享成本/滑点/风控），得到 equity/Sharpe
+    - 或者树模型输出自己的 step-returns，但必须声明并冻结成本/滑点/退出假设（并能被审计）
+- **对齐上线闸门（共享一套 gate）**  
+  - 不管是 NN 还是树模型，最终都要经过：  
+    - `shadow-eval`（行为/稳定性）  
+    - `counterfactual-eval`（同一执行口径下的收益对比）  
+    - `fsm-decide`（上线/回退状态机）  
+    - `exec-control`（invariants/kill-switch/chaos-test）
+
+**工程上推荐的态度**（最省事）：
+
+- 让 NN 这套“完善的评估/闸门工具链”成为统一标准（系统的“裁判”）
+- 树模型继续按原工作流产出信号/回测，但增加一个“适配层”把它接入统一裁判
+
+一句话：
+
+> **树模型不必改流程，但必须能被同一套裁判衡量与约束；否则你后面会发现‘体系不兼容’，切换成本比重写还高。**
+
+##### 2.2.5.4 两种“规则”的区别（避免讨论时混淆）
+
+你提到的“规则”在本仓库里其实有两类，层级不同、用途也不同：
+
+- **Rule Router（结构决策规则）**：例如 `mlbot rule mode-3action`  
+  - 输入：NN 多头 heads（dir/mfe/mae/ttm…）  
+  - 输出：`mode ∈ {NO_TRADE, MEAN, TREND}`  
+  - 角色：**结构状态/行为模式决策的可解释 baseline**（属于 Router 层）
+
+- **策略规则 baseline（策略语义规则）**：例如 SR reversal 的 rule baseline（用于 `sr_reversal_model_comparison` 这类对比）  
+  - 输入：策略语义特征（SR/流动性/成交结构等）  
+  - 输出：某个策略家族的 entry/exit/仓位路径（或它的回测/执行表现）  
+  - 角色：**某个策略语义的 baseline / 可解释对照**（属于“策略/执行一体化”的策略层）
+
+结论：  
+> Rule Router 不是“替代策略规则”，它是在更上层回答“现在用哪种行为模式更合理”；策略规则是在更下层回答“SR reversal 这一类策略具体怎么做”。  
+
+##### 2.2.5.5 我们更推荐的最终落地路线（NN → RL；规则/树模型作为裁判与探针）
+
+你理解得对：从“生产系统的可扩展性/可监控性/可回退性”角度，本架构更推荐的终局形态是：
+
+- **主干（Production Backbone）**：`NN path primitives → Router(mode=NO/MEAN/TREND) → Execution(统一) → Risk/仓位`  
+  - 好处：结构抽象更通用，跨市场迁移更容易；head 退化与策略假设失效能被诊断；Execution 可专业化但 Router 保持共享。
+
+- **进化层（Optimization Layer）**：在主干稳定后，再引入 **BC / Offline RL** 去优化 Router 的决策边界与权衡（Sharpe/DD/Tail/Turnover），并且必须经过 Shadow/Counterfactual/FSM/Exec-Control 上线。
+
+- **规则/树模型（Baseline & Probe）**：继续保留且非常重要，但主要用途是：
+  - **对比基线**：同一执行口径下衡量 NN/RL 的增量价值（避免“自嗨”）
+  - **alpha/特征有效性验证工具**：快速验证某组特征/某个策略语义是否在某个 market_profile 有信息增量
+  - **回退/备份方案**：当 NN/RL 出现未知退化时，策略规则或树模型可以作为“可解释的 fallback”（由 FSM/运营策略选择是否启用）
+
+务实提醒：  
+> 这并不意味着“树模型不能上线”。阶段 0 你完全可以 tree-first 上线；但从长期来看，**让 NN primitives + Router 成为统一决策骨架**，更符合你要的“少模型、可复用、可控执行”的系统范式。
+
+##### 2.2.5.5.1 校准提醒：市场原语更“先进”，但不是免费午餐（生命线是口径/契约/裁判）
+
+当你从“策略模型”升级为“路径原语底座”时，确实会减少对“某个策略怎么训练/怎么选特征”的纠结；但要避免走到另一个极端：**觉得原语足够本质，所以可以不再严肃对齐口径与流程**。
+
+原语系统能否长期稳定，往往取决于三条“生产级生命线”（这比树模型训练技巧更重要）：
+
+- **口径一致性（labels ↔ execution）**：entry 定义、horizon、ATR 标准化、以及与回测/实盘的执行假设一致，否则 head 学到的是“错口径未来”。
+- **Feature Contract + Missingness Policy**：必须显式写清 `minimal_required/optional_blocks/missingness`，保证训练与推理分布一致，避免自举偏差（self-bootstrapping bias）。
+- **固定裁判（fixed evaluation / gates）**：rolling/conditional 指标 + shadow/counterfactual/fsm/exec-control，明确“是 head 退化还是 Router 假设失效”，并可回退。
+
+一句话：
+
+> **先进的底座让策略逻辑更可复用，但它要求口径/契约/裁判更严格，否则先进性会被数据泄漏与口径漂移吞掉。**
+
+##### 2.2.5.6 “四个策略树模型覆盖所有 regime”是否可行？（可行，但你等价于在做一个隐式 Router）
+
+你提到一个很现实的方案：例如同事上线 4 个策略树模型（`sr_reversal`/trend/breakout/…），在不同 regime 下由“哪个策略更该出手”来覆盖各种情况。这个方案**在逻辑上可行**，但要清楚它的真实工程含义与代价。
+
+**(1) `sr_reversal` 在 trend regime 下是亏还是不交易？取决于“它是不是 event-driven”**
+
+- 如果你的 `sr_reversal` 树模型是 **事件驱动/强 gating** 的（只在 SR 附近、结构满足时才给高分）：  
+  - 在 trend regime（缺少反转结构）时，它通常会 **score 很低 → 不开仓**，这是“保命”的正确形态。
+- 如果它是 **全时刻预测型**（每根 bar 都输出预测收益/方向）：  
+  - 很容易在 trend regime 也持续产生信号，导致 **逆势交易 → 亏损**（尤其当特征在 regime shift 下不稳时）。
+
+结论：  
+> 树模型能否“保命”，不是“树模型 vs NN”的问题，而是你有没有把它做成 **event-driven + 可审计 gating**。
+
+**(2) 4 个策略树模型 + 选择器，本质上等价于一个 Router（只是 Router 被隐式写进了系统）**
+
+只要你需要回答“当前该不该交易、该用哪个策略、分配多少风险”，你就在做 Router，只是实现方式有两种：
+
+- **显式 Router（本架构推荐）**：先做 `mode ∈ {NO/MEAN/TREND}`，再让 Execution 专业化  
+- **隐式 Router（四策略方案）**：让 4 个策略模型各自输出信号，然后由“选择器/分配器”决定谁上场
+
+工程差别在于：显式 Router 的状态与动作更可监控/可 gate；隐式 Router 更容易变成“策略之间互相打架/切换成本爆炸”，需要更多额外规则来稳定它。
+
+**(3) 维护成本为什么会变成乘法（你直觉是对的）**
+
+当你按 market_profile 分组（HighCap/Alt/Meme…）时，四策略方案的模型数量通常近似：
+
+\[
+\text{models} \approx \text{profiles} \times \text{strategies}
+\]
+
+例如 3 个 profile × 4 个策略 = 12 套模型（还不含不同版本/feature blocks/timeframes）。
+
+这不是“训练麻烦”这么简单，更关键的是：
+
+- **评估与上线闸门要做 12 份**（否则无法知道哪个坏了）
+- **执行口径要统一**（否则无法公平比较哪个策略该被选）
+- **线上漂移诊断更难**（坏的是策略模型？还是选择器？还是执行假设？）
+
+**(4) 什么时候四策略方案是合理的？**
+
+- 你已经有成熟的策略库（规则/树模型都很稳），并且有清晰的选择器逻辑与强风控  
+- 你愿意接受模型数量与维护成本增长（并有自动化实验与监控体系支撑）
+
+**(5) 本架构的务实建议（不否定四策略，但更推荐渐进式）**
+
+- 阶段 0/1：先用 **NN primitives + Rule Router(3-action)** 把“结构决策”显式化，再把树模型当 baseline/probe  
+- 阶段 2：如果你确实需要多策略共存，再把“策略选择器”显式化为 PCM/Allocator，并用同一套 gate 管住切换与成本
+
+##### 2.2.5.7 “Router 只有 3 个 action 是否包含所有策略？”（方向正确，但要明确边界）
+
+你把“策略只是对结构的解释层（Router）”理解为：Router 只需要 `NO/MEAN/TREND` 三种动作，就能覆盖所有策略——这个方向在“**做方向类（directional）交易决策系统**”里基本成立，但需要加上两个边界条件：
+
+- **三动作覆盖的是“行为原语/风险形态”，不是所有交易风格的全集**  
+  - 对大多数**方向类**策略（SR reversal / breakout / compression breakout / trend-follow）来说，确实都能被解释为：  
+    - 该不该交易（NO）  
+    - 偏均值回归（MEAN）  
+    - 偏趋势跟随（TREND）
+- **不在三动作里表达的维度，要由 Router 的“连续控制量”或 Execution/Risk/PCM 承担**  
+  - 例如：仓位大小、杠杆预算、是否降杠杆/去风险、是否允许加仓/分批、是否做 carry/funding/基差、是否做跨品种相对价值等。
+
+因此更严谨的说法是：
+
+> **`NO/MEAN/TREND` 是一个高性价比的“最小可用动作空间”（适合先打穿生产闭环），它覆盖了绝大多数方向类策略的结构核心；当你要表达更复杂的风险维度时，不是立刻扩大动作到几十类，而是把额外维度放到 PCM/Execution 的参数化与风控约束里，或在必要时把 action 扩展为（mode, risk_budget）这样的二维动作。**
+
+进一步把“覆盖不了的交易风格”说清楚（便于你决策是否要扩 action space）：
+
+- **覆盖不了的不是“某个策略名称”，而是“决策对象不同”**  
+  3-action 的决策对象是“**方向类风险形态**”（做/不做、偏均值回归/偏趋势），因此天然覆盖方向类策略族；但当你的策略在优化的不是“方向风险形态”，它就不在 3-action 的表达域里。
+
+- **典型覆盖不了的类别（需要额外维度/不同 action space）**：
+  - **做市/流动性提供（Market Making）**：核心是 inventory 风险、报价宽度、挂单层级与撤单节奏；不是 MEAN/TREND 二分能描述的。
+  - **价差/相对价值（Spread / Pair / StatArb）**：决策对象是多腿组合（A-B），需要表达“long A short B”的结构，而不是单标的的 MEAN/TREND。
+  - **carry / funding / basis（资金费率/基差）**：收益驱动来自持仓 carry（正/负 funding、现货-永续基差），核心控制变量是持仓与对冲结构，不是简单方向模式。
+  - **波动率交易（Options / Volatility）**：决策对象是 vega/gamma/theta 等风险敞口；“趋势/均值”只描述标的方向，不足以描述波动率维度。
+  - **组合层风险预算/对冲（Portfolio Hedging）**：决策对象是全组合的净敞口、相关性与风险预算分配（例如对冲 beta、限制 sector/cluster 暴露），不是单标的三分类能表达的。
+  - **超高频执行/微结构套利**：决策对象是订单簿状态与成交概率，属于 Order/Execution 层（频率更高、状态更细）。
+
+- **如果你只做数字货币 4H 方向类交易：3-action 基本够用**  
+  因为你的主战场是“是否参与/押哪种方向类形态”，而不是做市或多腿套利。
+
+- **当你确实遇到“3-action 不够表达”的需求，推荐的扩展顺序（避免动作爆炸）**：
+  - **优先扩连续控制量（不扩离散 action）**：在 PCM/Execution/Risk 增加 `risk_budget/leverage/position_size/hedge_ratio` 等连续控制。
+  - **再扩成二维动作**：例如 `action = (mode ∈ {NO,MEAN,TREND}, risk_bucket ∈ {low,mid,high})`，仍然保持动作数量可控。
+  - **最后才考虑新增离散模式**：例如加一个 `CARRY` 或 `HEDGE`，但必须配套“评估口径/执行口径/上线闸门”一起冻结，否则会带来新一轮不可比。
+
 
 ### 3. 总体架构（“市场建模”与“策略决策”分层）
 
@@ -299,7 +657,11 @@ MLP + short Mamba（8–16 bars，只影响 1–2 个 head）
   - 固定 label 口径（entry、horizon_bars、ATR 归一、mask）
 
 - **Phase 2：多 Router 复用**
-  - SR/Breakout/Compression/Trend 的 gating 与 score/仓位函数落地
+  - 以 **3-action（NO/MEAN/TREND）** 为唯一动作空间，把“策略家族”降维成可复用的 **gating + score + 执行模板**：
+    - **NO_TRADE**：定义不交易的结构 veto（噪音/高不确定性/成本不可控），并落到上线闸门（shadow/counterfactual/fsm/exec-control）
+    - **MEAN**：把 SR reversal / compression fade 等“均值回归类”策略的条件表达为 gating/score（不引入策略专用 head）
+    - **TREND**：把 breakout / compression breakout / trend-follow 等“趋势类”策略的条件表达为 gating/score
+  - Execution/Risk 不做 alpha，只按 action 选择少量执行模板并可按 `market_profile` 参数化（避免规则爆炸）
 
 - **Phase 3：监控与 SOP**
   - rolling head health + conditional diagnostics + router PnL
@@ -487,8 +849,8 @@ date | asset | features... | dir_y | mfe_atr | mae_atr | t_to_mfe | (persistence
 
 **Action（建议）**：只允许“策略管理动作”，避免直接下单
 
-- 开关类：启用/禁用某 Router（SR/Breakout/Trend/Compression）
-- 倍数类：每个 Router 的 `capital_multiplier`（例如 0.0~1.5）
+- 开关类：启用/禁用某 **mode**（NO/MEAN/TREND 中的 MEAN 与 TREND；NO 相当于全禁）
+- 倍数类：对 **mode** 的 `capital_multiplier`（例如 `mult_mean`, `mult_trend` ∈ [0.0, 1.5]），而不是对“SR/Breakout/Compression”等策略名分别调参
 - 风险预算：上调/下调 `risk_budget` 或 `max_position_cap`
 - 保护动作：进入“暂停交易/降频/降杠杆”模式（非常重要）
 
@@ -533,10 +895,27 @@ RL 上线前必须具备：
 
 本节强调一个工程事实：
 
-> 你现在最该做的是把 Router 做成 **RL-ready 的决策管理器（Policy over strategies）**，  
+> 你现在最该做的是把 Router 做成 **RL-ready 的决策管理器（Policy over modes）**（NO/MEAN/TREND），  
 > 但在规则/树 Router 稳定跑起来之前，**不要急着上 RL**。
 
 其核心是：**冻结接口（state/action/reward 的边界）**，先用规则/树实现同接口，积累可回放日志。
+
+##### 12.7.0 BC vs Offline RL：区别与关系（先把概念讲清楚）
+
+- **BC（Behavior Cloning，行为克隆）**：监督学习/模仿学习  
+  - 数据形式：`(s_t, a_t)`（来自规则/人工/旧系统）  
+  - 目标：让策略 \(\pi_\theta(s)\) 复现专家动作 \(a\)，通常就是分类/回归  
+  - 特点：**稳定、样本效率高、上线可控**；但上限受“专家策略”限制（会继承专家偏差）
+
+- **Offline RL（离线强化学习）**：在固定数据集上优化长期 reward  
+  - 数据形式：`(s_t, a_t, r_t, s_{t+1})`（trajectory）  
+  - 目标：最大化长期目标（Sharpe/DD/Tail/Turnover 等），在同一执行口径下学习“更好的决策边界”  
+  - 特点：**有机会超越规则**，但更容易不稳定/学坏，因此必须配套 shadow/counterfactual/fsm/exec-control
+
+两者关系（本系统最推荐的组合）：
+
+> **先 BC 得到一个“安全基线 policy”，再用 Offline RL 在 BC 附近做保守微调**（例如 IQL/TD3+BC）。  
+> 这样 RL 不是从 0 探索，而是在“不会乱飞”的邻域里优化目标函数。
 
 ##### 12.7.1 Router State 设计（建议 15–25 维，不要更高）
 
@@ -544,6 +923,13 @@ State 的设计原则：
 
 - **state = 已压缩的市场 + 系统状态**
 - 不要把高维特征直接塞进 Router（否则 RL/树都会变成“噪声放大器”）
+
+补充：Router state 与 NN 模型输入不是一回事（层级不同）：
+
+- **NN 多头的输入**：高维 features（可上百维），用于预测 path primitives heads（学“市场结构”）
+- **Router/BC/RL 的 state**：低维“决策摘要”（15–25 维），用于决定 `NO/MEAN/TREND` 与风险预算（学“如何管理决策”）
+
+允许并且推荐的“重复”是：把 **heads（dir/mfe/mae/ttm）** 放进 Router state；但不建议把 NN 的全部高维原始特征直接复用到 Router state。
 
 推荐分块：
 
@@ -554,12 +940,12 @@ State 的设计原则：
   - `t_to_mfe ∈ R+`
   - （可选）`persistence ∈ [0,1]`
 
-- **B. 策略适配度（Strategy Fitness，RL 成败关键）**
-  - `sr_fitness`
-  - `breakout_fitness`
-  - `trend_fitness`
-  - 形态建议：EMA/rolling window 的 hit-rate / payoff / risk-adjusted proxy（可 clip/normalize）
-  - 注意：fitness **不是即时 PnL**，而是“近期稳定性指标”
+- **B. 模式适配度（Mode Fitness，RL 成败关键）**
+  - `mean_fitness`：近期 MEAN 模式在该 symbol/profile 下的稳定性 proxy（hit-rate / payoff / risk-adjusted）
+  - `trend_fitness`：近期 TREND 模式的稳定性 proxy
+  - `no_trade_risk`（或 `noise_level`）：近期“交易不划算/成本不可控/噪音过大”的 proxy（越高越应该 NO_TRADE）
+  - 形态建议：EMA/rolling window 统计 + clip/normalize
+  - 注意：fitness **不是即时 PnL**，而是“近期稳定性指标”（用于避免抖动与过拟合）
 
 - **C. 风险与系统状态**
   - `rolling_vol`（realized vol）
@@ -576,7 +962,7 @@ State 的设计原则：
 ```text
 state = [
   dir, mfe, mae, t_to_mfe,
-  sr_fitness, breakout_fitness, trend_fitness,
+  mean_fitness, trend_fitness, no_trade_risk,
   rolling_vol, dd_ratio, trade_density, leverage_util,
   trendiness, range_ratio
 ]
@@ -588,17 +974,20 @@ state = [
 
 > 动作空间一旦过大，RL 必死；规则/树也会难以稳定。
 
-推荐动作集（三选一，按稳健程度排序）：
+推荐动作集（三选一，按稳健程度排序；与 3-action Router 对齐）：
 
-- **方案 A（推荐）策略权重分配（连续）**
-  - `action = [w_sr, w_breakout, w_trend]`，每个 `∈ [0,1]`，并归一化（sum=1 或 clip 后再 normalize）
+- **方案 A（最推荐）二维动作：`(mode, risk_budget)`**
+  - `mode ∈ {NO_TRADE, MEAN, TREND}`
+  - `risk_budget ∈ {low, mid, high}`（或连续 `risk_multiplier ∈ [0.5, 1.5]`）
+  - 好处：动作仍然很小，但能表达“同一 mode 下的去风险/加风险”
 
-- **方案 B（更保守）策略开关（离散）**
-  - `enable_sr / enable_breakout / enable_trend`（可理解为 Router 层 veto/enable）
+- **方案 B（更保守）只输出 mode（离散三分类）**
+  - `action = mode ∈ {NO_TRADE, MEAN, TREND}`
+  - 适用于阶段 0/1：先把“什么时候 NO/MEAN/TREND”学稳
 
-- **方案 C（最稳）只控风险倍数（连续）**
+- **方案 C（最稳）只控风险倍数（连续），不改 mode**
   - `risk_multiplier ∈ [0.5, 1.5]`
-  - RL 只调全局风险，不参与策略选择
+  - mode 仍由规则/树 Router 给出；RL 只做“保命式风险管理”
 
 重要红线（写死到系统规范）：
 
@@ -623,7 +1012,7 @@ reward = ΔPnL
   - `penalty_turnover = -γ * turnover`（或交易次数/换手）
   - `penalty_cost = -c * cost`
 - **多样性/防塌缩约束（可选）**
-  - `penalty_collapse = -η * collapse_metric(w_sr, w_breakout, w_trend)`
+  - `penalty_collapse = -η * collapse_metric(P(mode) 或 mode_entropy)`（避免长期塌缩成单一 mode）
 
 总 reward：
 
@@ -636,7 +1025,7 @@ reward = r_base - penalty_dd - penalty_turnover - penalty_cost - penalty_collaps
 ##### 12.7.4 什么时候 RL 不该学（比“该学”更重要）
 
 - 规则/树 Router 还跑不稳（RL 只会放大噪声）
-- 决策步样本不足（例如 4H * 3 年只有 ~6500 steps，远低于 RL 所需）
+- 决策步样本不足（例如 4H * 3 年单 symbol 只有 ~6500 steps；RL/BC 需要的是 **transitions 总量**与 **regime 覆盖**，见 12.8）
 - state/action/reward 未冻结（会学到“当期 regime 的幻觉”）
 
 “该学”的最小前提：
@@ -678,27 +1067,31 @@ steps_per_symbol ≈ 3 × 365 × 6 ≈ 6500
 
 经验下限（能活的量级，不是理想值）：
 
-- Online RL：通常需要 ≥ 1e6 steps（不建议在该系统形态上做）
-- Offline RL（无 BC）：~1e5 steps
-- **Offline RL + BC（推荐）**：**3e4–5e4 steps**
-- Rule→RL 微调：~2e4 steps 也可能 work（但要强约束与严格 OOS）
+- **BC（行为克隆）**：通常 **5e4–2e5 transitions** 量级就能稳定（前提：label 质量可以、类别不极度失衡）
+- **Offline RL（IQL/CQL/TD3+BC 这类）**：通常希望 **2e5–1e6+ transitions**，并且更依赖 action 覆盖与多 regime 覆盖（比“单次回测曲线好看”更重要）
+- Online RL：通常需要 ≥ 1e6 steps，且对线上环境/探索代价敏感（不建议在该系统形态上做）
 
 反推 symbol 数（4H、3 年）：
 
-- RL 从 0 学（不推荐）：`1e5 / 6500 ≈ 15–16` 个 symbol（仍偏勉强）
-- **Rule Router → RL 微调（推荐路径）**：`3e4 / 6500 ≈ 5` 个 symbol（可行）
-- 建议区间：**8–12 个 symbol**（覆盖不同 micro-regime，减少资产“性格记忆”）
+- 仅做 BC：`5e4 / 6500 ≈ 8` 个 symbol（可用起步）
+- Offline RL（更稳）：`2e5 / 6500 ≈ 31` 个 symbol（更建议 20–50 起步，分组覆盖 HighCap/Alt/Meme）
 
 重要认知：
 
 > RL Router 不需要 asset-specific alpha；它学的是“在什么 state 下更该用哪种策略组合”。  
 > 因此 symbol 越多通常越利于泛化（前提是 state/action 固定、日志口径一致）。
 
+但也要注意“多 symbol ≠ 线性有效样本”：
+
+- 高相关阶段（全跟 BTC）会让有效样本打折（信息增量有限）
+- 需要确保 **NO/MEAN/TREND 的 action 覆盖**都足够，否则离线 RL 会学成“永远某一个 mode”
+- 最好按 `market_profile` 分组取样，提升 regime 多样性，而不是堆很多同质化币
+
 ---
 
 #### 12.9 Rule Router → RL Router 的接口（先用规则跑，未来可替换）
 
-把 Router 抽象成统一接口：输入 state，输出 action（策略权重/开关/风险倍数）。
+把 Router 抽象成统一接口：输入 state，输出 action（**mode + 风险预算/倍数**），从而与 3-action（NO/MEAN/TREND）对齐。
 
 ```python
 class Router:
@@ -717,13 +1110,15 @@ class RuleRouter(Router):
         mae = state["mae"]
         ttm = state["t_to_mfe"]
 
-        w_sr = float(dir_ < -0.5 and mfe / max(mae, 1e-6) > 1.2 and ttm < 20)
-        w_trend = float(dir_ > 0.6 and mae < 1.0 and ttm > 40)
-        w_breakout = float(abs(dir_) > 0.7 and mfe > 1.3)
+        eff = mfe / max(mae, 1e-6)
+        mean_ok = (dir_ < -0.4) and (eff > 1.2) and (ttm < 20)
+        trend_ok = (dir_ > 0.4) and (eff > 1.1) and (ttm >= 12)
 
-        w = {"sr": w_sr, "trend": w_trend, "breakout": w_breakout}
-        s = sum(w.values())
-        return {k: (v / s if s > 0 else 0.0) for k, v in w.items()}
+        if trend_ok:
+            return {"mode": "TREND", "risk_multiplier": 1.0}
+        if mean_ok:
+            return {"mode": "MEAN", "risk_multiplier": 0.8}
+        return {"mode": "NO_TRADE", "risk_multiplier": 0.0}
 ```
 
 RL Router（未来替换，TS/PCM/Execution 不改）：
@@ -749,10 +1144,10 @@ class RLRouter(Router):
 transition = {
   "state": {
     "dir": float, "mfe": float, "mae": float, "t_to_mfe": float,
-    "sr_fitness": float, "trend_fitness": float, "breakout_fitness": float,
+    "mean_fitness": float, "trend_fitness": float, "no_trade_risk": float,
     "rolling_vol": float, "dd_ratio": float, "trade_density": float, "leverage_util": float,
   },
-  "action": {"w_sr": float, "w_trend": float, "w_breakout": float},
+  "action": {"mode": str, "risk_multiplier": float},
   "reward": float,
   "next_state": dict,
   "done": bool,
@@ -807,6 +1202,20 @@ Rule Router 回测/实盘（行为策略） → 记录 (s,a,r,s') → 合并多 
 
 本节说明如何把 **BC（行为克隆）+ Offline RL** 放进当前 **TS + Router** 架构里，并给出可直接落地的工程建议。
 
+##### 12.12.0（先讲目的）为什么仓库里会有一组看起来“很多”的 RL/BC 命令？
+
+这不是为了“马上上 RL”，而是为了把 Router 层做成一个**可比较、可回退、可上线门控**的决策系统：把“训练方法”当作可插拔实现（Rule / BC / Offline RL / Tree policy…），但**评估口径与上线安全闭环保持一致**。
+
+你会看到命令分成 5 类角色（同一个闭环的不同环节）：
+
+- **Rule baseline（可解释锚点）**：先用规则 Router 给出一个稳定 baseline（也是 BC 的监督标签来源），系统永远有可回退选项。
+- **Logs 标准化（统一接口）**：把数据固定成 `(state, action, counterfactual_returns)` 的 logs schema（多 symbol 合并后可复用），让不同训练方法吃同一份输入。
+- **Shadow eval（不影响实盘的行为评估）**：新 policy 先在影子环境里跑，主要验证“行为稳定性/是否学歪”，避免直接上真执行造成不可逆损失。
+- **Counterfactual eval（公平的反事实 A/B）**：在**同一条市场路径**、同一套 `ret_mean/ret_trend`（同成本/约束）下，对比 Rule policy vs 新 policy 的收益/风险指标（Sharpe/DD/Turnover…），避免“换了执行假设/换了数据窗口”的伪提升。
+- **FSM gate（上线/回退的可审计闸门）**：把“是否允许从 RULE→CANDIDATE→ACTIVE 或回退”的决策固化成状态机规则与产物（决策可落盘、可复盘、可自动化）。
+
+因此，这组命令的工程目的就是：**支持多种训练手段的公平比较 + 安全上线**，而不是让系统被某一种范式绑死。
+
 ##### 12.12.1 BC 是什么（一句话）
 
 **Behavior Cloning（BC）= 用监督学习模仿一个已有的好策略**。
@@ -842,15 +1251,14 @@ BC **不是学交易 alpha**，而是学 **Router 的决策管理逻辑**：
 
 ```text
 action ∈ {
-  0: OFF / OBSERVE
-  1: TS_FAST
-  2: TS_SLOW
-  3: REDUCE_RISK
-  4: DEFENSIVE
+  0: NO_TRADE
+  1: MEAN
+  2: TREND
+  3: DEFENSIVE   # 保护动作：强制降风险/暂停一段时间（可选）
 }
 ```
 
-也可采用更“连续”的 action（如 `w_sr/w_trend/w_breakout`），但 BC 在离散 action 上更稳定、解释性更好。
+也可采用更“连续”的 action（如 `risk_multiplier` 或 `risk_budget`），但 BC 在离散 action 上更稳定、解释性更好。若需要同时表达 mode 与风险，可把 `(mode, risk_bucket)` 做成小规模离散组合（例如 3×3=9 类），仍然远小于“策略路由器”式的大动作空间。
 
 ##### 12.12.5 State 设计：BC/RL 共用同一 state（为平滑升级做准备）
 
@@ -1010,6 +1418,13 @@ reward_t =
 ##### 12.12.14 Reward 权重（λ）不是“调参”，而是“风险偏好声明”：推荐初始化区间
 
 不同资金规模/风险容忍度对应不同权重区间。下表给的是 **“第一次上线（或 shadow A/B）”** 的可用初始化建议（请配合 walk-forward 做微调）：
+
+先澄清一个容易误读的点：这里的 \( \lambda \) 不是“承受力”，而是 **reward 里惩罚项的权重**。  
+**\(\lambda\) 越大 ⇒ 系统越保守（更怕回撤/尾部/频繁切换/换手成本） ⇒ 需要更强的结构信号才会出手。**  
+所以表格里“大资金/对外资金 \(\lambda\) 更高”不是“更弱”，而是因为：
+
+- 对外资金/大规模通常有更强的 **回撤约束、流动性约束、合规/风控约束**（不能靠“赌波动”活）
+- 大规模更容易受 **冲击成本/滑点/换手**惩罚（同样的策略，小资金可做，大资金会被摩擦吃掉）
 
 | 场景（单策略账户规模） | λ_dd | λ_tail | λ_switch | λ_turnover |
 | --- | --- | --- | --- | --- |
@@ -1642,6 +2057,69 @@ raw `TradeCluster_*` 只是一个强度/聚类数字：
 - 如果你观察到“Liquidity Void（无阻力路径）”在反转里更关键，那么可以测试“加乘语义”：  
   - `exhaustion_at_liquidity_void = exhaustion * liquidity_void_score`  
   用同样的分组 ablation + 条件切片去验收：它是否在 `near_sr` 且 `liquidity_void` 桶里显著更稳。
+
+###### 13.5.1.5（必须补齐）Feature Contract + Missingness Policy：保证训练-推理一致，避免“自举偏差”
+
+在统一底座/Router/Execution 解耦的范式下，**特征“缺失（missingness）”不是实现细节，而是任务定义的一部分**。如果不把它写进契约（contract），你会得到最危险的结果：**回测/离线训练很好，线上真实推理时分布悄悄变了**。
+
+**什么是 missingness？**
+
+- 不是只有 NaN：还包括“整块特征不可用”（例如 ticks-heavy block 因数据缺失/成本/延迟无法计算）。
+- 也包括“执行层依赖字段缺失”导致的行为变化（你已有实例：`sr_fuse.on_missing: skip` 本质就是一条 missingness policy）。
+
+**Feature Contract 必须显式声明三件事：**
+
+- **minimal_required（永远可得）**：用于条件判断/对齐/归一化的最小字段集合（例如 `close/atr/dist_to_nearest_sr/trend_r2_20/compression_score`）。  
+  没有它们，Router 的 conditional slices、Execution 的安全壳、以及线上二阶段特征触发都无法稳定复现。
+- **optional_blocks（可选且可能整块缺）**：高成本或不稳定数据源的特征块（ticks/orderflow/profile/语义块等），允许按“成本/可观测条件”触发计算。
+- **missingness policy（缺失时怎么做）**：缺字段/缺块时的处理规则，必须在训练与线上保持一致。常见可选项：  
+  - `drop/skip`：缺失则丢样本/跳过该 bar（会改变交易频率/样本分布）  
+  - `impute`：补值（必须配合 mask，否则模型会把补值当真信号）  
+  - `mask`：提供 `feature_available_mask`（告诉模型“这个块缺了”）  
+  - `block_dropout(train)`：训练期随机丢块，逼模型学习“缺块也能工作”，对齐线上按预算不算某些块的现实
+
+**为什么禁止“按 action 选特征”？（自举偏差）**
+
+action 是模型输出（或 Router 的决定）。如果你先用 cheap features 得到 action，再决定是否计算 expensive features，然后再用它们更新决策，就形成了“决策 → 特征可用性”的反馈回路。训练数据分布通常不包含这条回路 ⇒ 线上会出现系统性偏差。
+
+**这和“树模型里按策略选择有效特征”一样吗？（不一样）**
+
+- 树模型里常见的做法是：**一个策略 = 一套固定特征集合**（例如 `sr_reversal_rr_reg_long` 的 `features.yaml`）。  
+  这里的 “strategy” 在一次回测/线上运行中是常量，所以特征集合也是常量：  
+  \(\text{strategy} \rightarrow \text{features}\) 是**静态映射**，不会被模型输出反过来影响。
+- 我们禁止的是：**让模型输出（action/mode）决定“下一步能看到哪些特征”**。  
+  这会形成 \(\text{features} \rightarrow \text{action} \rightarrow \text{features}\) 的**动态闭环**，导致训练-推理分布不一致（自举偏差）。
+
+**一个具体例子（错误做法：按 action 触发特征）**
+
+假设你线上为了省成本做二阶段特征：
+
+```text
+Stage0: 只算 cheap features -> Router 输出 action0
+if action0 == NO_TRADE:
+    不算 ticks-heavy blocks（省钱）
+else:
+    计算 ticks-heavy blocks -> Router 再输出 action1（最终下单）
+```
+
+看似合理，但它隐含了一个“选择性观测”问题：
+
+- 当 Router 初判为 `NO_TRADE` 时，你永远看不到 ticks-heavy 信息；但这些信息在某些样本里可能恰恰会把 `NO_TRADE` 改成 `MEAN/TREND`。  
+- 于是你线上实际执行的是一个**被 action0 裁剪过信息**的策略（信息集不同），而离线训练/回测通常假设“所有样本都能拿到完整特征”或“缺失是随机的”。  
+- 结果是：线上 action 分布、触发交易的样本集合、以及后续收益统计都会系统性偏移（这就是自举偏差/反馈回路）。
+
+**正确做法（按可观测条件/成本预算触发，而非按 action）**
+
+- 用 **可观测且与模型输出无关**的条件来触发 Stage1，例如：
+  - 数据可用性：是否有 ticks 文件/延迟预算是否足够
+  - 市场状态：`near_sr`、`compression_high`、`trend_high`（这些是 Stage0 的条件变量，不是 Router 决策）
+  - 频率预算：每 N 根 bar 允许算一次 ticks-heavy blocks
+- 并且把“缺块”显式编码进输入（`feature_available_mask`），训练期用 `block_dropout` 对齐线上“有时不算/算不到”的现实。
+
+**正确的二阶段特征计算（按成本/可观测条件，而非 action）**
+
+- Stage 0（cheap）：只算 minimal_required → 得到 `near_sr/trendiness/compression` 等条件变量
+- Stage 1（optional）：当“可观测条件 + 成本预算”满足时再计算 optional_blocks，并通过 missingness policy + mask/dropout 保证训练-推理一致
 
 #### 13.6 Execution 控制论：为什么“经验调参”不是老式规则算法（防打架）
 

@@ -43,6 +43,23 @@ def test_active_suspends_on_hard_dd() -> None:
     assert out["cooldown_left_days"] == 2
 
 
+def test_active_suspends_on_hard_sharpe_drop() -> None:
+    fsm = FallbackFSM(cfg=GateConfig(sharpe_ratio_min=0.9, cooldown_days=2))
+    fsm.state = RouterControlState.RL_ACTIVE
+
+    inp = GateInputs(
+        max_dd_rule=0.2,
+        max_dd_rl=0.2,
+        switch_rate_rule=0.1,
+        switch_rate_rl=0.1,
+        sharpe_rule=2.0,
+        sharpe_rl=1.0,  # < 1.8 triggers hard_sharpe
+    )
+    out = fsm.step(inp)
+    assert out["state"] == RouterControlState.RL_SUSPENDED.value
+    assert bool(out["gates"]["hard_sharpe"]) is True
+
+
 def test_suspended_returns_to_candidate_after_cooldown() -> None:
     fsm = FallbackFSM(cfg=GateConfig(cooldown_days=2, promote_min_days=2))
     fsm.state = RouterControlState.RL_SUSPENDED

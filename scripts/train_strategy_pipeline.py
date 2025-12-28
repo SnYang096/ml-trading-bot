@@ -1642,6 +1642,38 @@ def train_strategy(
         f"   ✅ Valid samples after filtering - "
         f"Train: {len(df_train_filtered)}, Test: {len(df_test_filtered)}"
     )
+
+    # ------------------------------------------------------------------
+    # Diagnostics snapshot (always persisted to results.json later)
+    # - label distribution: catch "label too sparse" / mapping issues
+    # - prediction distribution: catch collapsed models / overly strict entry gates
+    # - entry/exit counts: provided by backtest payload (we also compute a quick summary)
+    # ------------------------------------------------------------------
+    def _value_counts_safe(s: pd.Series) -> dict:
+        try:
+            vc = s.value_counts(dropna=True).to_dict()
+            return {str(k): int(v) for k, v in vc.items()}
+        except Exception:
+            return {}
+
+    diagnostics_payload: dict = {
+        "labels": {
+            "target_col": None,  # filled after target_col resolved
+            "task_type": None,  # filled after task_type resolved
+            "train": {
+                "n": int(len(df_train_filtered)),
+                "value_counts": _value_counts_safe(
+                    df_train_filtered[strategy_config.labels.target_column]
+                ),
+            },
+            "test": {
+                "n": int(len(df_test_filtered)),
+                "value_counts": _value_counts_safe(
+                    df_test_filtered[strategy_config.labels.target_column]
+                ),
+            },
+        }
+    }
     if len(df_train_filtered) < 50:
         print("   ⚠️  Not enough samples to train, skipping strategy.")
         return
@@ -1654,6 +1686,8 @@ def train_strategy(
     target_col = trainer_params.pop("target_col", strategy_config.labels.target_column)
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
+    diagnostics_payload["labels"]["target_col"] = str(target_col)
+    diagnostics_payload["labels"]["task_type"] = str(task_type)
 
     # Single-source-of-truth: propagate invert_features from features.yaml into trainer model_params.
     # This keeps training/inference consistent without needing a separate direction config file.
@@ -1741,6 +1775,43 @@ def train_strategy(
         X=X_test,
     )
 
+    # Prediction diagnostics (saved in results.json)
+    pred_diag: dict = {"task_type": str(task_type)}
+    try:
+        if (
+            str(task_type).lower() == "multiclass"
+            and isinstance(preds, np.ndarray)
+            and preds.ndim == 2
+        ):
+            cls = np.argmax(preds, axis=1)
+            pred_diag["shape"] = [int(x) for x in preds.shape]
+            pred_diag["class_counts"] = {
+                str(k): int(v)
+                for k, v in pd.Series(cls).value_counts().to_dict().items()
+            }
+        else:
+            arr = np.asarray(preds).astype(float)
+            pred_diag["shape"] = list(arr.shape)
+            flat = arr.reshape(-1)
+            flat = flat[np.isfinite(flat)]
+            if flat.size:
+                s = pd.Series(flat)
+                pred_diag["summary"] = {
+                    "min": float(s.min()),
+                    "max": float(s.max()),
+                    "mean": float(s.mean()),
+                    "std": float(s.std()),
+                    "q25": float(s.quantile(0.25)),
+                    "q50": float(s.quantile(0.50)),
+                    "q75": float(s.quantile(0.75)),
+                    "q90": float(s.quantile(0.90)),
+                    "q95": float(s.quantile(0.95)),
+                    "q99": float(s.quantile(0.99)),
+                }
+    except Exception:
+        pred_diag["error"] = "pred_diag_failed"
+    diagnostics_payload["predictions"] = pred_diag
+
     evaluation_results = evaluate_predictions(
         preds,
         y_test,
@@ -1824,6 +1895,7 @@ def train_strategy(
         "n_train_samples": len(df_train_filtered),
         "n_test_samples": len(df_test_filtered),
         "evaluation": evaluation_results,
+        "diagnostics": diagnostics_payload,
     }
 
     # Add volatility model results if trained

@@ -43,6 +43,15 @@ def main() -> None:
         default=20,
         help="Cooldown windows after suspension.",
     )
+    # Gate thresholds (optional; defaults mirror GateConfig)
+    ap.add_argument("--dd_ratio_max", type=float, default=1.2)
+    ap.add_argument("--switch_ratio_max", type=float, default=2.0)
+    ap.add_argument("--pnl_dd_margin", type=float, default=0.15)
+    ap.add_argument("--sharpe_ratio_min", type=float, default=0.8)
+    ap.add_argument("--sharpe_min_abs", type=float, default=None)
+    ap.add_argument("--sortino_ratio_min", type=float, default=0.8)
+    ap.add_argument("--sortino_min_abs", type=float, default=None)
+    ap.add_argument("--ann_vol_ratio_max", type=float, default=2.0)
     ap.add_argument("--out", default=None, help="Optional path to write decision json.")
     args = ap.parse_args()
 
@@ -61,12 +70,30 @@ def main() -> None:
         switch_rate_rl=float(m.get("pred_avg_switch_rate", 0.0)),
         pnl_dd_rule=pnl_dd_rule,
         pnl_dd_rl=pnl_dd_rl,
+        sharpe_rule=m.get("rule_sharpe_mean", None),
+        sharpe_rl=m.get("pred_sharpe_mean", None),
+        sortino_rule=m.get("rule_sortino_mean", None),
+        sortino_rl=m.get("pred_sortino_mean", None),
+        ann_vol_rule=m.get("rule_ann_vol_mean", None),
+        ann_vol_rl=m.get("pred_ann_vol_mean", None),
     )
 
     fsm = FallbackFSM(
         cfg=GateConfig(
             promote_min_days=int(args.promote_days),
             cooldown_days=int(args.cooldown_days),
+            dd_ratio_max=float(args.dd_ratio_max),
+            switch_ratio_max=float(args.switch_ratio_max),
+            pnl_dd_margin=float(args.pnl_dd_margin),
+            sharpe_ratio_min=float(args.sharpe_ratio_min),
+            sharpe_min_abs=(
+                None if args.sharpe_min_abs is None else float(args.sharpe_min_abs)
+            ),
+            sortino_ratio_min=float(args.sortino_ratio_min),
+            sortino_min_abs=(
+                None if args.sortino_min_abs is None else float(args.sortino_min_abs)
+            ),
+            ann_vol_ratio_max=float(args.ann_vol_ratio_max),
         )
     )
     fsm.state = RouterControlState(str(args.state))

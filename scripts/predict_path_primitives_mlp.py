@@ -40,6 +40,10 @@ from src.time_series_model.models.nn.path_primitives_model import (
 from src.time_series_model.models.nn.path_primitives_reporting import (
     predict_path_primitives,
 )  # noqa: E402
+from src.time_series_model.models.nn.feature_contract import (  # noqa: E402
+    load_feature_contract,
+    validate_minimal_required_cols,
+)
 from scripts.train_strategy_pipeline import (
     run_feature_pipeline,
     determine_feature_columns,
@@ -95,6 +99,7 @@ def main() -> None:
         out_root.parent.mkdir(parents=True, exist_ok=True)
 
     feature_loader = StrategyFeatureLoader()
+    contract = load_feature_contract(cfg_dir)
     for sym in symbols:
         df_raw = load_raw_data(
             data_path=args.data_path,
@@ -117,6 +122,10 @@ def main() -> None:
         if "symbol" not in df_features.columns:
             df_features["symbol"] = sym
         feature_cols = determine_feature_columns(df_features, cfg.features)
+        if contract is not None:
+            validate_minimal_required_cols(
+                available_columns=df_features.columns.tolist(), contract=contract
+            )
 
         preds = predict_path_primitives(
             model=model,

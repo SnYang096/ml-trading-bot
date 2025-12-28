@@ -486,6 +486,163 @@ def rl():
     pass
 
 
+@rl.group("exec")
+def rl_exec():
+    """Execution control tooling (invariants/kill-switch/chaos) on Router logs."""
+    pass
+
+
+@rl_exec.command("control-check")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet (symbol,timestamp,mode,ret_mean,ret_trend,...)")
+@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (report/metrics/csv).")
+@click.option("--entry-delay", type=int, default=1)
+@click.option("--cost-per-turnover", type=float, default=0.0002)
+@click.option("--slippage-bps", type=float, default=0.0)
+@click.option("--max-dd", type=float, default=0.35)
+@click.option("--max-turnover-mean", type=float, default=0.35)
+@click.option("--max-turnover-p95", type=float, default=1.0)
+@click.option("--max-cost-mean", type=float, default=0.002)
+@click.option("--max-cost-p95", type=float, default=0.01)
+@click.option("--max-nan-ratio", type=float, default=0.001)
+@click.option("--max-abs-return", type=float, default=0.5)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_exec_control_check(
+    logs_path,
+    out_dir,
+    entry_delay,
+    cost_per_turnover,
+    slippage_bps,
+    max_dd,
+    max_turnover_mean,
+    max_turnover_p95,
+    max_cost_mean,
+    max_cost_p95,
+    max_nan_ratio,
+    max_abs_return,
+    docker,
+):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--entry-delay",
+        str(int(entry_delay)),
+        "--cost-per-turnover",
+        str(float(cost_per_turnover)),
+        "--slippage-bps",
+        str(float(slippage_bps)),
+        "--max-dd",
+        str(float(max_dd)),
+        "--max-turnover-mean",
+        str(float(max_turnover_mean)),
+        "--max-turnover-p95",
+        str(float(max_turnover_p95)),
+        "--max-cost-mean",
+        str(float(max_cost_mean)),
+        "--max-cost-p95",
+        str(float(max_cost_p95)),
+        "--max-nan-ratio",
+        str(float(max_nan_ratio)),
+        "--max-abs-return",
+        str(float(max_abs_return)),
+    ]
+    sys.exit(run_script("scripts/rl_exec_control_check.py", args, docker=docker))
+
+
+@rl_exec.command("chaos-test")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet")
+@click.option("--out", "out_dir", required=True, help="Output directory root (baseline/chaos).")
+@click.option("--seed", type=int, default=0)
+@click.option("--nan-ratio", type=float, default=0.0)
+@click.option("--return-scale", type=float, default=1.0)
+@click.option("--slippage-bps", type=float, default=0.0)
+@click.option("--cost-per-turnover", type=float, default=0.0002)
+@click.option("--entry-delay", type=int, default=1)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_exec_chaos_test(
+    logs_path,
+    out_dir,
+    seed,
+    nan_ratio,
+    return_scale,
+    slippage_bps,
+    cost_per_turnover,
+    entry_delay,
+    docker,
+):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--seed",
+        str(int(seed)),
+        "--nan-ratio",
+        str(float(nan_ratio)),
+        "--return-scale",
+        str(float(return_scale)),
+        "--slippage-bps",
+        str(float(slippage_bps)),
+        "--cost-per-turnover",
+        str(float(cost_per_turnover)),
+        "--entry-delay",
+        str(int(entry_delay)),
+    ]
+    sys.exit(run_script("scripts/rl_exec_chaos_test.py", args, docker=docker))
+
+
+@rl.group("router")
+def rl_router():
+    """Router diagnostics utilities (multi-symbol, drift, consistency)."""
+    pass
+
+
+@rl_router.command("diagnose")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet (symbol,timestamp,mode,ret_mean,ret_trend,...)")
+@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (report/metrics/csv).")
+@click.option("--rolling-window", type=int, default=300, help="Rolling window (steps) for drift metrics.")
+@click.option("--rolling-min-periods", type=int, default=60, help="Min periods for rolling drift metrics.")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_router_diagnose(logs_path, out_dir, rolling_window, rolling_min_periods, docker):
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--rolling-window",
+        str(int(rolling_window)),
+        "--rolling-min-periods",
+        str(int(rolling_min_periods)),
+    ]
+    sys.exit(run_script("scripts/rl_router_diagnose.py", args, docker=docker))
+
+
+@rl_router.command("embed-eval")
+@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with mode + ret_mean/ret_trend + head_*")
+@click.option("--out", "out_dir", required=True, help="Output directory root for A/B artifacts.")
+@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option("--regime-buckets", type=int, default=4, help="Number of regime buckets for one-hot embedding.")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker):
+    """A/B eval: BC baseline vs +regime(one-hot) embedding."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--train_ratio",
+        str(float(train_ratio)),
+        "--regime-buckets",
+        str(int(regime_buckets)),
+    ]
+    sys.exit(run_script("scripts/rl_router_embed_eval.py", args, docker=docker))
+
+
 @rl.command("build-logs-3action")
 @click.option("--preds", "preds_path", required=True, help="Preds file/dir from nnmultihead predict (preds_*.parquet)")
 @click.option("--mode", "mode_path", default=None, help="Optional mode file/dir from mlbot rule mode-3action")
@@ -496,8 +653,23 @@ def rl():
 @click.option("--end-date", default=None)
 @click.option("--model", "model_path", default=None, help="Optional model.pt to infer preds_in_log1p")
 @click.option("--preds-in-log1p", type=click.Choice(["yes", "no"]), default=None, help="Override preds space (yes=log1p)")
-@click.option("--returns-source", type=click.Choice(["momentum_proxy", "rr_execution"]), default="momentum_proxy", help="How to build ret_mean/ret_trend")
+@click.option(
+    "--returns-source",
+    type=click.Choice(["momentum_proxy", "rr_execution", "vectorbt_execution"]),
+    default="momentum_proxy",
+    help="How to build ret_mean/ret_trend",
+)
 @click.option("--momentum-lookback", type=int, default=5, help="Lookback for momentum proxy used in ret_mean/ret_trend")
+@click.option("--vbt-top-quantile", type=float, default=0.05, help="vectorbt: top quantile for long entries (regression score)")
+@click.option("--vbt-bottom-quantile", type=float, default=0.05, help="vectorbt: bottom quantile for short entries (regression score)")
+@click.option("--vbt-entry-mode", type=click.Choice(["level", "cross"]), default="cross", help="vectorbt: entry mode")
+@click.option("--vbt-fee", type=float, default=0.0004, help="vectorbt: fee per trade (fraction)")
+@click.option("--vbt-slippage", type=float, default=0.0001, help="vectorbt: slippage (fraction)")
+@click.option("--vbt-freq", default="4H", help="vectorbt: freq string, e.g. 4H/1H/15T")
+@click.option("--symbol-profiles-json", default=None, help='Per-symbol profile mapping JSON, e.g. {"BTCUSDT":"btc","DOGEUSDT":"meme"}')
+@click.option("--default-profile", default="standard", help="Default market profile.")
+@click.option("--rr-profile-overrides-json", default=None, help='RR profile overrides JSON, e.g. {"meme":{"take_profit_r":2.5}}')
+@click.option("--vbt-profile-overrides-json", default=None, help='vectorbt profile overrides JSON, e.g. {"btc":{"fee":0.0002}}')
 @click.option("--output", "output_path", required=True, help="Output logs path (.parquet/.csv)")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_build_logs_3action(
@@ -512,6 +684,16 @@ def rl_build_logs_3action(
     preds_in_log1p,
     returns_source,
     momentum_lookback,
+    vbt_top_quantile,
+    vbt_bottom_quantile,
+    vbt_entry_mode,
+    vbt_fee,
+    vbt_slippage,
+    vbt_freq,
+    symbol_profiles_json,
+    default_profile,
+    rr_profile_overrides_json,
+    vbt_profile_overrides_json,
     output_path,
     docker,
 ):
@@ -529,7 +711,27 @@ def rl_build_logs_3action(
         str(int(momentum_lookback)),
         "--returns-source",
         str(returns_source),
+        "--vbt-top-quantile",
+        str(float(vbt_top_quantile)),
+        "--vbt-bottom-quantile",
+        str(float(vbt_bottom_quantile)),
+        "--vbt-entry-mode",
+        str(vbt_entry_mode),
+        "--vbt-fee",
+        str(float(vbt_fee)),
+        "--vbt-slippage",
+        str(float(vbt_slippage)),
+        "--vbt-freq",
+        str(vbt_freq),
+        "--default-profile",
+        str(default_profile),
     ]
+    if symbol_profiles_json:
+        args.extend(["--symbol-profiles-json", str(symbol_profiles_json)])
+    if rr_profile_overrides_json:
+        args.extend(["--rr-profile-overrides-json", str(rr_profile_overrides_json)])
+    if vbt_profile_overrides_json:
+        args.extend(["--vbt-profile-overrides-json", str(vbt_profile_overrides_json)])
     if mode_path:
         args.extend(["--mode", f"/workspace/{mode_path}" if use_workspace_prefix else mode_path])
     if symbols:
@@ -662,9 +864,32 @@ def rl_counterfactual_eval_3action(
 @click.option("--state", default="RL_CANDIDATE", help="Initial FSM state: RULE/RL_CANDIDATE/RL_ACTIVE/RL_SUSPENDED")
 @click.option("--promote-days", type=int, default=10, help="Consecutive ok windows required to promote.")
 @click.option("--cooldown-days", type=int, default=20, help="Cooldown windows after suspension.")
+@click.option("--dd-ratio-max", type=float, default=1.2, help="Hard gate: dd_RL > dd_Rule * dd_ratio_max")
+@click.option("--switch-ratio-max", type=float, default=2.0, help="Hard gate: switch_RL > switch_Rule * switch_ratio_max")
+@click.option("--pnl-dd-margin", type=float, default=0.15, help="Drift gate: (PnL/DD)_RL < (PnL/DD)_Rule * (1 - margin)")
+@click.option("--sharpe-ratio-min", type=float, default=0.8, help="Hard gate: sharpe_RL < sharpe_Rule * sharpe_ratio_min")
+@click.option("--sharpe-min-abs", type=float, default=None, help="Hard gate: sharpe_RL < sharpe_min_abs (optional)")
+@click.option("--sortino-ratio-min", type=float, default=0.8, help="Hard gate: sortino_RL < sortino_Rule * sortino_ratio_min")
+@click.option("--sortino-min-abs", type=float, default=None, help="Hard gate: sortino_RL < sortino_min_abs (optional)")
+@click.option("--ann-vol-ratio-max", type=float, default=2.0, help="Hard gate: ann_vol_RL > ann_vol_Rule * ann_vol_ratio_max")
 @click.option("--out", "out_path", default=None, help="Optional path to write decision json.")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def rl_fsm_decide(metrics_path, state, promote_days, cooldown_days, out_path, docker):
+def rl_fsm_decide(
+    metrics_path,
+    state,
+    promote_days,
+    cooldown_days,
+    dd_ratio_max,
+    switch_ratio_max,
+    pnl_dd_margin,
+    sharpe_ratio_min,
+    sharpe_min_abs,
+    sortino_ratio_min,
+    sortino_min_abs,
+    ann_vol_ratio_max,
+    out_path,
+    docker,
+):
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--metrics",
@@ -675,7 +900,23 @@ def rl_fsm_decide(metrics_path, state, promote_days, cooldown_days, out_path, do
         str(int(promote_days)),
         "--cooldown_days",
         str(int(cooldown_days)),
+        "--dd_ratio_max",
+        str(float(dd_ratio_max)),
+        "--switch_ratio_max",
+        str(float(switch_ratio_max)),
+        "--pnl_dd_margin",
+        str(float(pnl_dd_margin)),
+        "--sharpe_ratio_min",
+        str(float(sharpe_ratio_min)),
+        "--sortino_ratio_min",
+        str(float(sortino_ratio_min)),
+        "--ann_vol_ratio_max",
+        str(float(ann_vol_ratio_max)),
     ]
+    if sharpe_min_abs is not None:
+        args.extend(["--sharpe_min_abs", str(float(sharpe_min_abs))])
+    if sortino_min_abs is not None:
+        args.extend(["--sortino_min_abs", str(float(sortino_min_abs))])
     if out_path:
         args.extend(["--out", f"/workspace/{out_path}" if use_workspace_prefix else out_path])
     sys.exit(run_script("scripts/rl_fsm_decide.py", args, docker=docker))

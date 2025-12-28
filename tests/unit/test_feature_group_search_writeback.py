@@ -168,7 +168,9 @@ def test_writeback_features_yaml_creates_suggested_file(tmp_path):
     obj = fgs._load_yaml(out_path)
     assert obj["name"].endswith("__suggested")
     assert obj["feature_pipeline"]["requested_features"] == ["a_f", "b_f"]
-    assert obj["feature_pipeline"]["invert_features"] == ["a_f"]
+    # invert_features are OUTPUT column names to multiply by -1 (not requested feature functions),
+    # so we must not prune them by requested_features.
+    assert obj["feature_pipeline"]["invert_features"] == ["a_f", "zzz_unused"]
     assert obj["feature_group_search"]["selected_groups"] == ["g1"]
 
 

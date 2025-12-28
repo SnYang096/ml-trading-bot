@@ -1,0 +1,48 @@
+feature_contract:
+  # ---------------------------------------------------------------------------
+  # Feature Contract (nnmultihead only)
+  #
+  # Purpose:
+  # - Make training/inference assumptions explicit and auditable.
+  # - Allow future "two-stage feature computation" by cost/observability gating,
+  #   WITHOUT selecting features by action (avoid self-bootstrapping bias).
+  #
+  # Note:
+  # - This file is consumed ONLY by nnmultihead scripts.
+  # - It does NOT affect the tree-model strategy pipeline.
+  # ---------------------------------------------------------------------------
+
+  minimal_required_cols:
+    # Basic OHLCV fields (data pipeline invariant)
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - atr
+
+    # Conditional slice / regime proxies (if present; used in reports/slicing)
+    # These may be produced by requested_features, but we declare them explicitly
+    # so missingness becomes visible.
+    - trend_r2_20
+    - compression_score
+
+    # SR distance is used by the near_sr conditional metrics (optional but recommended).
+    # If you don't have SR features in this config, the scripts will not hard-require it.
+    # - dist_to_nearest_sr
+
+  optional_blocks:
+    # High-cost / non-guaranteed blocks (examples)
+    - ticks_orderflow_semantic_blocks
+    - volume_profile_semantic_blocks
+    - trade_cluster_semantic_blocks
+
+  missingness_policy:
+    # Policy for missing optional blocks during inference.
+    # options: "skip" | "impute" | "mask"
+    # - skip: treat missing blocks as unavailable; model must be trained to tolerate it
+    # - mask: provide feature_available_mask (future upgrade) and/or block dropout in training
+    # - impute: fill missing with constants (should be paired with masks to avoid leakage)
+    optional_blocks_on_missing: skip
+
+

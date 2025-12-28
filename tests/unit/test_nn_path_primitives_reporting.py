@@ -54,14 +54,21 @@ def test_reporting_saves_artifacts(tmp_path) -> None:
         cfg=train_cfg,
         save_path=str(tmp_path / "model.pt"),
     )
-    metrics, df_eval = evaluate_model_on_df(
+    metrics, df_eval, extra = evaluate_model_on_df(
         model=model, df_features=df, feature_cols=["f1", "f2"], label_cfg=label_cfg
     )
     # conditional metrics should exist when near_sr mask is non-empty
     assert "near_sr__rate" in metrics
     assert metrics["near_sr__rate"] > 0.0
+    # rolling IC artifacts should exist (tail preview)
+    assert isinstance(extra, dict)
+    assert "rolling_ic" in extra
+    assert "preview_by_slice" in (extra["rolling_ic"] or {})
+    assert "global" in (extra["rolling_ic"]["preview_by_slice"] or {})
 
     out_dir = tmp_path / "artifacts"
+    if isinstance(extra, dict) and extra.get("rolling_ic") is not None:
+        meta["rolling_ic"] = extra.get("rolling_ic")
     save_train_artifacts(
         out_dir=str(out_dir),
         model_path=str(tmp_path / "model.pt"),

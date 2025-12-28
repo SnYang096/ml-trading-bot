@@ -83,13 +83,26 @@ def _writeback_features_yaml(
     fp["requested_features"] = list(requested_features)
 
     # Write back only the final invert_features, not an unbounded candidate list.
-    # If `invert_candidates` is provided, we treat it as "candidate invert list" and prune by final features.
+    # NOTE:
+    # - feature_pipeline.requested_features are *feature compute functions* (e.g. "..._f")
+    # - feature_pipeline.invert_features are *output column names* to multiply by -1 before training/inference.
+    #
+    # Therefore we must NOT prune invert_features by requested_features (different namespaces).
+    # It's safe to keep extra entries: the trainer only applies inversion to columns that
+    # are actually present in the selected feature columns.
     inv_cand = invert_candidates
     if inv_cand is None:
         inv_cand = fp.get("invert_features") or []
     inv_cand = [str(x).strip() for x in (inv_cand or []) if str(x).strip()]
-    req_set = set(requested_features)
-    fp["invert_features"] = [f for f in inv_cand if f in req_set]
+    # Deduplicate but preserve order (stable writeback)
+    seen = set()
+    inv_final = []
+    for name in inv_cand:
+        if name in seen:
+            continue
+        seen.add(name)
+        inv_final.append(name)
+    fp["invert_features"] = inv_final
 
     base_obj["feature_pipeline"] = fp
 

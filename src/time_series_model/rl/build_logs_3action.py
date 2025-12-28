@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, fields, replace
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,10 @@ from src.time_series_model.rule.router_3action import (
 from src.time_series_model.rl.execution_returns_rr import (
     RRExecutionReturnsConfig,
     compute_rr_execution_mode_returns,
+)
+from src.time_series_model.rl.execution_returns_vectorbt import (
+    VectorBTExecutionReturnsConfig,
+    compute_vectorbt_execution_mode_returns,
 )
 
 
@@ -53,6 +57,7 @@ class BuildLogs3ActionConfig:
 
     # market state
     drawdown_col: str = "drawdown"
+    market_profile_col: str = "market_profile"
 
     # how to compute direction proxy for ret_mean/ret_trend (uses only past prices)
     momentum_lookback: int = 5
@@ -60,8 +65,19 @@ class BuildLogs3ActionConfig:
     # how to compute ret_mean/ret_trend
     # - "momentum_proxy": past-momentum sign * next return (fallback)
     # - "rr_execution": RR/ATR single-position execution simulator (uses OHLC, no vectorbt)
+    # - "vectorbt_execution": vectorbt + RR exits (portfolio returns), for parity with backtest mechanics
     returns_source: str = "momentum_proxy"
     rr_returns_cfg: RRExecutionReturnsConfig = RRExecutionReturnsConfig()
+    vbt_returns_cfg: VectorBTExecutionReturnsConfig = VectorBTExecutionReturnsConfig()
+
+    # Optional per-symbol execution specialization.
+    # Example:
+    #   symbol_profiles={"BTCUSDT":"btc","DOGEUSDT":"meme"}, default_profile="standard"
+    #   rr_profile_overrides={"meme":{"max_holding_bars":12,"take_profit_r":2.5}}
+    symbol_profiles: Optional[Dict[str, str]] = None
+    default_profile: str = "standard"
+    rr_profile_overrides: Optional[Dict[str, Dict[str, float]]] = None
+    vbt_profile_overrides: Optional[Dict[str, Dict[str, float]]] = None
 
     # If preds are in log1p space (typical), inverse-transform regression heads to ATR units / bars.
     preds_in_log1p: bool = True
@@ -81,6 +97,23 @@ def _ensure_timestamp_column(df: pd.DataFrame, *, ts_col: str) -> pd.DataFrame:
     out = df.copy()
     out[ts_col] = np.arange(len(out), dtype=int)
     return out
+
+
+def _apply_overrides_to_dataclass(
+    cfg_obj: Any, overrides: Optional[Dict[str, Any]]
+) -> Any:
+    """
+    Safely apply a dict of overrides to a frozen dataclass via `dataclasses.replace`.
+    Unknown keys are ignored.
+    """
+    if not overrides:
+        return cfg_obj
+    allowed = {f.name for f in fields(cfg_obj)}
+    kwargs: Dict[str, Any] = {}
+    for k, v in dict(overrides).items():
+        if k in allowed:
+            kwargs[k] = v
+    return replace(cfg_obj, **kwargs) if kwargs else cfg_obj
 
 
 def _inverse_log1p(x: pd.Series) -> pd.Series:
@@ -172,20 +205,39 @@ def build_logs_3action(
         raise ValueError(f"raw_df missing close column '{cfg.close_col}'")
 
     raw_cols = [cfg.close_col]
-    if str(cfg.returns_source).lower() in {"rr_execution", "rr"}:
+    if str(cfg.returns_source).lower() in {
+        "rr_execution",
+        "rr",
+        "vectorbt_execution",
+        "vbt",
+    }:
         # Need OHLC (and optional atr) for RR execution simulator
-        for c in [
-            cfg.rr_returns_cfg.open_col,
-            cfg.rr_returns_cfg.high_col,
-            cfg.rr_returns_cfg.low_col,
-        ]:
+        # For vectorbt_execution, the RR simulator uses the same OHLC requirements.
+        open_c = (
+            cfg.vbt_returns_cfg.open_col
+            if str(cfg.returns_source).lower() in {"vectorbt_execution", "vbt"}
+            else cfg.rr_returns_cfg.open_col
+        )
+        high_c = (
+            cfg.vbt_returns_cfg.high_col
+            if str(cfg.returns_source).lower() in {"vectorbt_execution", "vbt"}
+            else cfg.rr_returns_cfg.high_col
+        )
+        low_c = (
+            cfg.vbt_returns_cfg.low_col
+            if str(cfg.returns_source).lower() in {"vectorbt_execution", "vbt"}
+            else cfg.rr_returns_cfg.low_col
+        )
+        for c in [open_c, high_c, low_c]:
             if c not in raw_cols:
                 raw_cols.append(c)
-        if (
-            cfg.rr_returns_cfg.atr_col in raw_keyed.columns
-            and cfg.rr_returns_cfg.atr_col not in raw_cols
-        ):
-            raw_cols.append(cfg.rr_returns_cfg.atr_col)
+        atr_c = (
+            cfg.vbt_returns_cfg.atr_col
+            if str(cfg.returns_source).lower() in {"vectorbt_execution", "vbt"}
+            else cfg.rr_returns_cfg.atr_col
+        )
+        if atr_c in raw_keyed.columns and atr_c not in raw_cols:
+            raw_cols.append(atr_c)
 
     # Join in a way that avoids column overlap (preds outputs already include OHLC in many cases).
     joined = preds_keyed.join(mode_keyed[["mode"]], how="inner")
@@ -240,6 +292,17 @@ def build_logs_3action(
         cfg.close_col
     ].transform(_compute_market_drawdown)
 
+    # Per-row market_profile (for execution specialization; default 'standard')
+    if cfg.symbol_profiles:
+        mp = (
+            joined[cfg.symbol_col]
+            .astype(str)
+            .map({str(k): str(v) for k, v in cfg.symbol_profiles.items()})
+        )
+        joined[cfg.market_profile_col] = mp.fillna(str(cfg.default_profile)).astype(str)
+    else:
+        joined[cfg.market_profile_col] = str(cfg.default_profile)
+
     src = str(cfg.returns_source).lower()
     if src in {"momentum_proxy", "momentum", "proxy"}:
         joined[cfg.ret_mean_col] = joined.groupby(cfg.symbol_col, sort=False)[
@@ -253,12 +316,38 @@ def build_logs_3action(
             lambda s: _compute_mode_returns(s, lookback=int(cfg.momentum_lookback))[1]
         )
     elif src in {"rr_execution", "rr"}:
-        # RR execution simulator expects head_* and OHLC columns to exist
-        ret_mean, ret_trend = compute_rr_execution_mode_returns(
-            joined, cfg=cfg.rr_returns_cfg
-        )
-        joined[cfg.ret_mean_col] = ret_mean.values
-        joined[cfg.ret_trend_col] = ret_trend.values
+        # RR execution simulator expects head_* and OHLC columns to exist.
+        # Optional: specialize per symbol -> profile overrides.
+        out_mean = pd.Series(0.0, index=joined.index, dtype=float)
+        out_trend = pd.Series(0.0, index=joined.index, dtype=float)
+        for sym, g in joined.groupby(cfg.symbol_col, sort=False):
+            profile = str(g[cfg.market_profile_col].iloc[0])
+            rr_over = (cfg.rr_profile_overrides or {}).get(profile, None)
+            rr_cfg = _apply_overrides_to_dataclass(cfg.rr_returns_cfg, rr_over)
+            rm, rt = compute_rr_execution_mode_returns(g, cfg=rr_cfg)
+            out_mean.loc[g.index] = rm.values
+            out_trend.loc[g.index] = rt.values
+        joined[cfg.ret_mean_col] = out_mean.values
+        joined[cfg.ret_trend_col] = out_trend.values
+    elif src in {"vectorbt_execution", "vbt"}:
+        # vectorbt execution: produces portfolio returns series for each mode.
+        # Optional: specialize per symbol -> profile overrides.
+        out_mean = pd.Series(0.0, index=joined.index, dtype=float)
+        out_trend = pd.Series(0.0, index=joined.index, dtype=float)
+        for sym, g in joined.groupby(cfg.symbol_col, sort=False):
+            profile = str(g[cfg.market_profile_col].iloc[0])
+            vbt_over = (cfg.vbt_profile_overrides or {}).get(profile, None)
+            vbt_cfg = _apply_overrides_to_dataclass(cfg.vbt_returns_cfg, vbt_over)
+            rm, rt, _m = compute_vectorbt_execution_mode_returns(
+                g,
+                cfg=vbt_cfg,
+                out_mean_col=cfg.ret_mean_col,
+                out_trend_col=cfg.ret_trend_col,
+            )
+            out_mean.loc[g.index] = rm.values
+            out_trend.loc[g.index] = rt.values
+        joined[cfg.ret_mean_col] = out_mean.values
+        joined[cfg.ret_trend_col] = out_trend.values
     else:
         raise ValueError(f"Unknown returns_source: {cfg.returns_source}")
 
@@ -267,6 +356,7 @@ def build_logs_3action(
         [
             cfg.symbol_col,
             cfg.timestamp_col,
+            cfg.market_profile_col,
             "mode",
             cfg.head_dir_score_col,
             cfg.head_mfe_col,
@@ -280,6 +370,7 @@ def build_logs_3action(
 
     # Ensure types
     out["mode"] = out["mode"].astype(str)
+    out[cfg.market_profile_col] = out[cfg.market_profile_col].astype(str)
     for c in [
         cfg.head_dir_score_col,
         cfg.head_mfe_col,

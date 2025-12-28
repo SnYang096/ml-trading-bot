@@ -18,6 +18,82 @@ from src.time_series_model.pipeline.training.label_utils import simulate_rr_exit
 class VectorBTBacktest(BaseBacktest):
     """使用 vectorbt 的通用回测实现。"""
 
+    def _apply_max_holding_bars(
+        self,
+        *,
+        index: pd.Index,
+        long_entries: pd.Series,
+        short_entries: pd.Series,
+        long_exits: pd.Series,
+        short_exits: pd.Series,
+        max_holding_bars: int,
+        allow_flip: bool = False,
+    ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+        """
+        Enforce a single-position state machine with:
+        - max_holding_bars time exit
+        - optional flip (exit current + enter opposite) when allow_flip=True
+        """
+        if max_holding_bars <= 0:
+            return long_entries, short_entries, long_exits, short_exits
+
+        le = long_entries.fillna(False).astype(bool).copy()
+        se = short_entries.fillna(False).astype(bool).copy()
+        lx = long_exits.fillna(False).astype(bool).copy()
+        sx = short_exits.fillna(False).astype(bool).copy()
+
+        in_long = False
+        in_short = False
+        entry_i_long = -1
+        entry_i_short = -1
+
+        for i in range(len(index)):
+            # entries only when flat (unless allow_flip)
+            if not in_long and not in_short:
+                if bool(le.iloc[i]):
+                    in_long = True
+                    entry_i_long = i
+                    lx.iloc[i] = False  # never exit on entry bar
+                elif bool(se.iloc[i]):
+                    in_short = True
+                    entry_i_short = i
+                    sx.iloc[i] = False
+
+            # optional flip on opposite signal
+            if allow_flip:
+                if in_long and bool(se.iloc[i]) and i - entry_i_long >= 1:
+                    lx.iloc[i] = True
+                    in_long = False
+                    entry_i_long = -1
+                    # enter opposite on next bar to avoid same-bar exit/entry ambiguity
+                    if i + 1 < len(index):
+                        se.iloc[i + 1] = True
+                if in_short and bool(le.iloc[i]) and i - entry_i_short >= 1:
+                    sx.iloc[i] = True
+                    in_short = False
+                    entry_i_short = -1
+                    if i + 1 < len(index):
+                        le.iloc[i + 1] = True
+
+            # time exit
+            if in_long:
+                held = i - entry_i_long
+                if held >= 1 and (bool(lx.iloc[i]) or held >= max_holding_bars):
+                    lx.iloc[i] = True
+                    in_long = False
+                    entry_i_long = -1
+            if in_short:
+                held = i - entry_i_short
+                if held >= 1 and (bool(sx.iloc[i]) or held >= max_holding_bars):
+                    sx.iloc[i] = True
+                    in_short = False
+                    entry_i_short = -1
+
+        # no same-bar exit
+        lx = lx & (~le)
+        sx = sx & (~se)
+        return le, se, lx, sx
+
     def _apply_sr_fuse(
         self,
         *,
@@ -169,6 +245,22 @@ class VectorBTBacktest(BaseBacktest):
             long_exits = pd.Series(class_preds == neutral_class, index=index)
             short_entries = pd.Series(class_preds == short_class, index=index)
             short_exits = pd.Series(class_preds == neutral_class, index=index)
+
+            # Structural fix: enforce time-exit so "no neutral predicted" won't hold forever.
+            # Default to 50 bars if not specified (can be overridden in backtest.yaml).
+            max_holding_bars = int(params.get("max_holding_bars", 50))
+            allow_flip = bool(params.get("allow_flip", False))
+            long_entries, short_entries, long_exits, short_exits = (
+                self._apply_max_holding_bars(
+                    index=index,
+                    long_entries=long_entries,
+                    short_entries=short_entries,
+                    long_exits=long_exits,
+                    short_exits=short_exits,
+                    max_holding_bars=max_holding_bars,
+                    allow_flip=allow_flip,
+                )
+            )
         elif str(task_type).lower() == "regression":
             # Regression: use top-quantile gating on predicted values.
             preds_series = pd.Series(predictions, index=index)
@@ -397,6 +489,17 @@ class VectorBTBacktest(BaseBacktest):
             long_exits = long_exits_rr.reindex(index).fillna(False)
             short_exits = short_exits_rr.reindex(index).fillna(False)
 
+        # Diagnostics: entry/exit counts (always returned)
+        diag = {
+            "entries_exits": {
+                "long_entries": int(long_entries.sum()),
+                "short_entries": int(short_entries.sum()),
+                "long_exits": int(long_exits.sum()),
+                "short_exits": int(short_exits.sum()),
+                "total_entries": int((long_entries | short_entries).sum()),
+            }
+        }
+
         # 频率：用于 vectorbt 计算年化指标
         freq = params.get("freq", None)
         if freq is None:
@@ -438,56 +541,20 @@ class VectorBTBacktest(BaseBacktest):
             print(f"   ⚠️  Backtest failed: {exc}")
             return None
 
-        # 如果没有任何交易或记录，直接返回 None，避免 stats 触发越界
+        # If there are no trades, return a stable payload (do NOT return None),
+        # so downstream (feature-group-search) can still record "0 trades" explicitly.
         if portfolio.wrapper.index.size == 0 or portfolio.trades.count() == 0:
-            # 添加调试信息
-            print("   ⚠️  Backtest skipped: no trades or empty portfolio index.")
-            if debug:
-                print(f"      Debug info:")
-                print(f"        - strategy_direction: {strategy_direction}")
-                print(f"        - long_entries sum: {long_entries.sum()}")
-                if strategy_direction != "long_only":
-                    print(f"        - short_entries sum: {short_entries.sum()}")
-                print(
-                    f"        - total entries: {(long_entries | short_entries).sum()}"
-                )
-                if use_signal_direction and signal_col in df.columns:
-                    signal_series = df[signal_col].fillna(0).astype(float)
-                    print(f"        - signal > 0 count: {(signal_series > 0).sum()}")
-                    if strategy_direction != "long_only":
-                        print(
-                            f"        - signal < 0 count: {(signal_series < 0).sum()}"
-                        )
-                    print(f"        - signal == 0 count: {(signal_series == 0).sum()}")
-                    print(
-                        f"        - signal range: [{signal_series.min():.2f}, {signal_series.max():.2f}]"
-                    )
-                preds_series = pd.Series(predictions, index=index)
-                if strategy_direction != "short_only":
-                    print(
-                        f"        - predictions >= {long_entry} (long): {(preds_series >= long_entry).sum()}"
-                    )
-                if strategy_direction != "long_only":
-                    print(
-                        f"        - predictions <= {short_entry} (short): {(preds_series <= short_entry).sum()}"
-                    )
-                # 打印预测值分布
-                valid_preds = preds_series[~pd.isna(preds_series)]
-                if len(valid_preds) > 0:
-                    print(f"        - predictions distribution:")
-                    print(f"          min: {valid_preds.min():.4f}")
-                    print(f"          max: {valid_preds.max():.4f}")
-                    print(f"          mean: {valid_preds.mean():.4f}")
-                    print(f"          median: {valid_preds.median():.4f}")
-                    print(f"          std: {valid_preds.std():.4f}")
-                    print(f"          q25: {valid_preds.quantile(0.25):.4f}")
-                    print(f"          q75: {valid_preds.quantile(0.75):.4f}")
-                    print(f"          q90: {valid_preds.quantile(0.90):.4f}")
-                    print(f"          q95: {valid_preds.quantile(0.95):.4f}")
-                    print(f"          q99: {valid_preds.quantile(0.99):.4f}")
-                else:
-                    print(f"        - predictions: all NaN")
-            return None
+            print(
+                "   ⚠️  Backtest produced no trades; metrics like Sharpe/WinRate/Drawdown are N/A."
+            )
+            return {
+                "total_return_pct": 0.0,
+                "sharpe": float("nan"),
+                "max_drawdown_pct": float("nan"),
+                "win_rate": float("nan"),
+                "total_trades": 0,
+                "diagnostics": diag,
+            }
 
         stats = portfolio.stats()
 
@@ -498,6 +565,8 @@ class VectorBTBacktest(BaseBacktest):
             "win_rate": float(stats.get("Win Rate [%]", 0.0)),
             "total_trades": int(stats.get("Total Trades", 0)),
         }
+
+        result["diagnostics"] = diag
 
         if debug:
             debug_payload: Dict[str, Any] = {}

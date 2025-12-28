@@ -63,3 +63,19 @@ def test_counterfactual_eval_smoke(tmp_path) -> None:
     assert len(per_symbol) == 2
     assert (tmp_path / "cf" / "report.html").exists()
     assert (tmp_path / "cf" / "metrics.json").exists()
+    # Newly added production-grade metrics
+    for k in [
+        "rule_sharpe_mean",
+        "pred_sharpe_mean",
+        "rule_sortino_mean",
+        "pred_sortino_mean",
+        "rule_ann_return_mean",
+        "pred_ann_return_mean",
+        "rule_ann_vol_mean",
+        "pred_ann_vol_mean",
+        "rule_score",
+        "pred_score",
+    ]:
+        assert k in metrics
+        assert metrics[k] == metrics[k]  # not NaN
+    assert isinstance(metrics.get("score_formula"), str)

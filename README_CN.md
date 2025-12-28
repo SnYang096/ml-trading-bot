@@ -830,6 +830,121 @@ mlbot cross-section shap-drift \
   - `logs_3action.parquet`：包含 `symbol,timestamp,mode,head_*,drawdown,ret_mean,ret_trend`
   - `results/rl/e2e/*`：shadow report / counterfactual report / fsm decision
 
+### 命令解释（为什么叫 `counterfactual-eval-3action`？各命令在链路中是什么角色？）
+
+这里的命名是“把研究假设写进命令名”，避免误用：
+
+- **`3action`**：表示 Router 的动作空间是 3 个离散动作：`NO_TRADE / MEAN / TREND`（这是 Router 层的“结构原语动作”，不是具体的开平仓微观执行细节）。
+- **`counterfactual`（反事实）**：表示用**同一条市场路径**、同一套 `ret_mean/ret_trend`（以及相同成本/约束）去对比两套策略/政策（Rule vs BC/RL）。  
+  直觉：我们不让新策略真的去“改变市场/改变成交”，而是问一个反事实问题：  
+  > “在同样的行情和同样的执行回报假设下，如果当时用的是 BC/RL 的 mode，会发生什么？”
+
+下面按命令解释“输入/输出/用途”：
+
+#### 1) `mlbot nnmultihead train`
+
+- **用途**：训练 NN 多头路径原语模型（输出 heads，例如 `dir/mfe/mae/ttm`）。
+- **输入**：raw 数据 + `config/nnmultihead/...`（特征与训练配置）。
+- **输出**：`model.pt` + `report.html` + `metrics.json`（训练与评估产物）。
+
+#### 2) `mlbot nnmultihead predict`
+
+- **用途**：用训练好的 NN 多头模型推理，产出每个 symbol 的预测 heads。
+- **输入**：`model.pt` + raw 数据 + nnmultihead config。
+- **输出**：单 symbol 时输出一个 parquet；多 symbol 时输出一个目录 `preds_multi/`，其中包含 `preds_<SYMBOL>.parquet`。
+
+#### 3) `mlbot rule mode-3action`
+
+- **用途**：纯规则 Router（只看 heads）把预测映射成 `mode ∈ {NO_TRADE, MEAN, TREND}`，作为“可解释 baseline”与 BC 的监督信号来源。
+- **输入**：`preds_*.parquet`（或 preds 目录）+（可选）`model.pt` 用于推断 preds 是否在 log1p 空间。
+- **输出**：`mode_3action.parquet`（含 `symbol,timestamp,mode`）。
+
+#### 4) `mlbot rl build-logs-3action`
+
+- **用途**：组装 RL/BC 训练日志（logs），把 `heads + mode + ret_mean/ret_trend` 合到同一张表里。
+- **输入**：
+  - `preds`：NN heads 预测
+  - `mode`：rule router 输出的 mode（监督 label）
+  - raw 数据（用于把 close 等转换成 mode 对应的“下一步执行回报”序列）
+- **输出**：`logs_3action.parquet`（要求至少包含 `symbol,timestamp,mode,head_*,drawdown,ret_mean,ret_trend`）。
+
+补充：`ret_mean/ret_trend` 的来源与执行口径（`--returns-source`）：
+
+- **`momentum_proxy`**：纯价格动量近似（最弱，但无依赖，用于兜底）
+- **`rr_execution`**：不依赖 vectorbt 的 RR/ATR 执行模拟器（更贴近“止损/止盈/最长持仓”等执行语义）
+- **`vectorbt_execution`**：用 vectorbt + RR exits 生成 portfolio step-returns（用于与回测口径对齐）
+
+补充：Execution 专门化（同一 action 在不同市场用不同执行参数）：
+
+- `--symbol-profiles-json`：为每个 symbol 指定 `market_profile`（会写入 logs 的 `market_profile` 列，便于审计）
+- `--rr-profile-overrides-json` / `--vbt-profile-overrides-json`：针对不同 profile 覆盖 RR/fee/slippage/holding 等参数
+
+示例（按 symbol → profile 给 RR 参数做差异化）：
+
+```bash
+mlbot rl build-logs-3action \
+  --preds results/nnmultihead/preds_multi \
+  --mode results/rule/mode_3action.parquet \
+  --model results/nnmultihead/.../model.pt \
+  --data-path data/parquet_data \
+  --timeframe 240T \
+  --returns-source rr_execution \
+  --symbol-profiles-json '{"BTCUSDT":"btc","DOGEUSDT":"meme"}' \
+  --rr-profile-overrides-json '{"meme":{"max_holding_bars":12,"take_profit_r":2.5},"btc":{"max_holding_bars":24,"take_profit_r":2.0}}' \
+  --output results/rl/logs_3action.parquet \
+  --no-docker
+```
+
+#### 5) `mlbot rl shadow-eval-3action`
+
+- **用途**：训练一个 BC(3-action) policy，并在 test 段做“影子评估”（shadow）：主要看它能否在不影响真实交易的情况下稳定复现 rule mode（例如 accuracy/混淆矩阵等）。
+- **输入**：`logs_3action.parquet`（不要求必须包含 ret_*，因为它更多是“行为一致性评估”）。
+- **输出**：`shadow_report.html` + `metrics.json`。
+
+#### 6) `mlbot rl counterfactual-eval-3action`
+
+- **用途**：反事实 A/B：在 **同一份 logs** 上，把 Rule policy 的 mode 序列与 BC policy 的 mode 序列分别送进同一个 Router-level 模拟器（用 `ret_mean/ret_trend` 作为执行层回报代理），得到两条 equity 曲线并对比（Sharpe/Sortino/年化/回撤等）。
+- **输入**：`logs_3action.parquet`（必须包含 `ret_mean/ret_trend`）。
+- **输出**：`report.html` + `metrics.json` + `per_symbol.csv`。
+
+#### 7) `mlbot rl fsm-decide`
+
+- **用途**：根据 `counterfactual-eval-3action` 输出的 `metrics.json`，用 FSM gate 决定是否从 RULE → RL_CANDIDATE → RL_ACTIVE（或进入 RL_SUSPENDED），用于上线/回退的工程化阈值控制。
+- **输入**：`metrics.json`。
+- **输出**：`fsm_decision.json`（可落盘）。
+
+#### 8) `mlbot rl run-e2e-3action`
+
+- **用途**：一键串联：`shadow-eval-3action` → `counterfactual-eval-3action` → `fsm-decide`。
+- **输入**：`logs_3action.parquet`。
+- **输出**：`{out}/shadow/*`、`{out}/counterfactual/*`、`{out}/fsm_decision.json`。
+
+#### 9) `mlbot rl exec control-check` / `mlbot rl exec chaos-test`（Execution 控制/安全壳）
+
+这两个命令属于“执行控制层”的工程化工具：它们不产 alpha，只做 **invariants + kill-switch + 压测**，避免上线时因为数据/成本/切换异常导致系统失控。
+
+**`mlbot rl exec control-check`**
+
+- **用途**：对 logs 做执行层一致性检查（NaN/极端 returns、turnover/cost、DD），并输出 `kill_switch`（建议是否强制 NO_TRADE）。
+- **输入**：`logs_3action.parquet`（至少含 `symbol,timestamp,mode,ret_mean,ret_trend`）
+- **输出**：`report.html` + `metrics.json` + `per_symbol.csv`
+
+**`mlbot rl exec chaos-test`**
+
+- **用途**：对同一份 logs 做 baseline vs chaos 对比（注入 NaN / 放大 returns / 提高成本等），验证 kill-switch 是否按预期触发。
+- **输出目录**：`{out}/baseline/*` 与 `{out}/chaos/*`
+
+示例（对 logs 注入 2% NaN 并放大 returns）：  
+
+```bash
+mlbot rl exec chaos-test \
+  --logs results/rl/logs_3action.parquet \
+  --out results/rl/exec_chaos \
+  --nan-ratio 0.02 \
+  --return-scale 3.0 \
+  --no-docker
+```
+
 ### 1) 训练 NN 多头（可选：你已经有模型就跳过）
 
 ```bash

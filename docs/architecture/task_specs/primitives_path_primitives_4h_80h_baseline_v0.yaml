@@ -1,0 +1,31 @@
+task_id: primitives_path_primitives_4h_80h_baseline_v0
+family: primitives
+description: >
+  Baseline TaskSpec for the same primitives task, intended as a lightweight reference:
+  global metrics only, no conditional slices and no rolling IC/ICIR requirements.
+
+data:
+  timeframe: 240T
+  bar_hours: 4
+
+labels:
+  horizon_hours: 80
+  horizon_bars: 20
+  entry_offset: 1
+
+outputs:
+  heads:
+    - dir_logit
+    - mfe_atr
+    - mae_atr
+    - t_to_mfe
+
+evaluation:
+  rolling_ic:
+    enabled: false
+  conditional_slices: []
+
+config_binding:
+  nnmultihead_config_dir: config/nnmultihead/path_primitives_4h_80h_min
+
+

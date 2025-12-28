@@ -28,6 +28,17 @@ class GateConfig:
         2.0  # switch_rate_RL > switch_rate_Rule * switch_ratio_max
     )
 
+    # Hard: risk-adjusted performance deterioration (optional but recommended)
+    sharpe_ratio_min: float = 0.8  # sharpe_RL < sharpe_Rule * sharpe_ratio_min
+    sharpe_min_abs: Optional[float] = (
+        None  # if set: sharpe_RL < sharpe_min_abs triggers hard
+    )
+    sortino_ratio_min: float = 0.8
+    sortino_min_abs: Optional[float] = None
+
+    # Hard: realized volatility blow-up (optional)
+    ann_vol_ratio_max: float = 2.0  # vol_RL > vol_Rule * ann_vol_ratio_max
+
     # Drift gate on efficiency (slow variable)
     pnl_dd_margin: float = 0.15  # (PnL/DD)_RL < (PnL/DD)_Rule * (1 - pnl_dd_margin)
 
@@ -57,6 +68,14 @@ class GateInputs:
     # Efficiency
     pnl_dd_rule: Optional[float] = None
     pnl_dd_rl: Optional[float] = None
+
+    # Risk-adjusted performance (optional)
+    sharpe_rule: Optional[float] = None
+    sharpe_rl: Optional[float] = None
+    sortino_rule: Optional[float] = None
+    sortino_rl: Optional[float] = None
+    ann_vol_rule: Optional[float] = None
+    ann_vol_rl: Optional[float] = None
 
 
 def evaluate_gates(inp: GateInputs, *, cfg: GateConfig) -> Tuple[bool, Dict[str, bool]]:
@@ -88,7 +107,49 @@ def evaluate_gates(inp: GateInputs, *, cfg: GateConfig) -> Tuple[bool, Dict[str,
         )
     flags["hard_switch"] = bool(switch_bad)
 
-    hard_triggered = bool(dd_bad or tail_bad or switch_bad)
+    # Hard: Sharpe / Sortino deterioration (optional)
+    sharpe_bad = False
+    if inp.sharpe_rl is not None:
+        if cfg.sharpe_min_abs is not None:
+            sharpe_bad = float(inp.sharpe_rl) < float(cfg.sharpe_min_abs)
+        if (
+            (not sharpe_bad)
+            and inp.sharpe_rule is not None
+            and float(inp.sharpe_rule) != 0.0
+        ):
+            sharpe_bad = float(inp.sharpe_rl) < float(inp.sharpe_rule) * float(
+                cfg.sharpe_ratio_min
+            )
+    flags["hard_sharpe"] = bool(sharpe_bad)
+
+    sortino_bad = False
+    if inp.sortino_rl is not None:
+        if cfg.sortino_min_abs is not None:
+            sortino_bad = float(inp.sortino_rl) < float(cfg.sortino_min_abs)
+        if (
+            (not sortino_bad)
+            and inp.sortino_rule is not None
+            and float(inp.sortino_rule) != 0.0
+        ):
+            sortino_bad = float(inp.sortino_rl) < float(inp.sortino_rule) * float(
+                cfg.sortino_ratio_min
+            )
+    flags["hard_sortino"] = bool(sortino_bad)
+
+    vol_bad = False
+    if (
+        inp.ann_vol_rule is not None
+        and inp.ann_vol_rl is not None
+        and float(inp.ann_vol_rule) > 0
+    ):
+        vol_bad = float(inp.ann_vol_rl) > float(inp.ann_vol_rule) * float(
+            cfg.ann_vol_ratio_max
+        )
+    flags["hard_vol"] = bool(vol_bad)
+
+    hard_triggered = bool(
+        dd_bad or tail_bad or switch_bad or sharpe_bad or sortino_bad or vol_bad
+    )
     flags["hard_triggered"] = hard_triggered
 
     # Drift gate (slow): pnl/dd efficiency drop (optional)

@@ -46,6 +46,11 @@ from src.time_series_model.models.nn.path_primitives_reporting import (
     evaluate_model_on_df,
     save_train_artifacts,
 )  # noqa: E402
+from src.time_series_model.models.nn.feature_contract import (  # noqa: E402
+    load_feature_contract,
+    validate_minimal_required_cols,
+)
+from src.time_series_model.tasks import make_primitives_task_id  # noqa: E402
 from scripts.train_strategy_pipeline import (
     run_feature_pipeline,
     determine_feature_columns,
@@ -116,6 +121,13 @@ def main() -> None:
     df_features = pd.concat(feats_all, axis=0, ignore_index=False)
     feature_cols = determine_feature_columns(df_features, cfg.features)
 
+    # nnmultihead-only: feature contract (does not affect tree pipeline)
+    contract = load_feature_contract(cfg_dir)
+    if contract is not None:
+        validate_minimal_required_cols(
+            available_columns=df_features.columns.tolist(), contract=contract
+        )
+
     payload = torch.load(args.model, map_location="cpu")
     if "model" not in payload:
         raise ValueError("Invalid model payload: missing 'model' key")
@@ -135,7 +147,7 @@ def main() -> None:
         atr_col="atr",
     )
 
-    metrics, df_eval = evaluate_model_on_df(
+    metrics, df_eval, extra = evaluate_model_on_df(
         model=model,
         df_features=df_features,
         feature_cols=feature_cols,
@@ -157,6 +169,20 @@ def main() -> None:
             "bar_hours": float(args.bar_hours),
         },
     }
+    meta["task_id"] = make_primitives_task_id(
+        config_dir=cfg_dir,
+        timeframe=str(args.timeframe),
+        horizon_hours=float(args.horizon_hours),
+        bar_hours=float(args.bar_hours),
+        version="v1",
+    )
+    meta["task_spec_hint"] = (
+        "docs/architecture/task_specs/primitives_path_primitives_4h_80h_v1.yaml"
+    )
+    if isinstance(extra, dict) and extra.get("rolling_ic") is not None:
+        meta["rolling_ic"] = extra.get("rolling_ic")
+    if contract is not None:
+        meta["feature_contract"] = contract.to_dict()
 
     save_train_artifacts(
         out_dir=str(out_dir),

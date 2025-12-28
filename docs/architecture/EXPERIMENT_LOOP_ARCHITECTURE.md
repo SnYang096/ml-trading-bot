@@ -462,6 +462,24 @@ mlbot diagnose feature-group-search \
 - **Layer B（搜索/定型）**：保持当前固定切分 + TS-CV + multi-seed（快）。
 - **确认阶段（confirm）**：对最终 shortlist（例如 top 1–3 配置）再跑更严格的 rolling/walk-forward OOS，检查跨窗口稳定性与概念漂移敏感性。
 
+### 5.2.3 Execution 约束（你刚确认的最佳实践）
+- **compression_breakout**：保持单仓位（不 pyramiding），启用 `use_rr_exit`；可选开启 `rr.use_trailing_stop=true`（用于突破后锁定利润）。
+- **trend_following**：pyramiding + trailing 属于执行层升级（Layer C/Execution），不建议混进 Layer B 特征搜索默认流程；建议在最终 shortlist 上单独做确认与调参。
+
+#### 5.2.3.1 trailing 会不会提升 Sharpe？为什么不放进 Layer B 默认？
+- **会影响 Sharpe**：trailing stop 改变的是“退出分布”（让盈利单更容易锁住、让回撤更小），在很多 breakout/趋势类策略里确实可能提升 Sharpe。
+- **但它不等价**：加了 trailing 之后，回测结果通常**不会**与“不加 trailing”相同；甚至会改变“哪个特征组合更好”的排序（因为特征→预测→持仓路径变了）。
+- **所以不放进 Layer B 默认**：Layer B 的目标是“在固定的执行/回测规则下”找稳定的特征组合。如果把 trailing/pyramiding 混进去，会把特征选择和执行调参缠在一起，搜索空间爆炸、结论难复现。
+- **正确节奏**：
+  - Layer B：固定执行（默认不启用 trailing/pyramiding），先把特征组合定型。
+  - Confirm / Execution（Layer C+）：对 shortlist 再打开 `rr.use_trailing_stop`（或 pyramiding）做增益验证，属于执行层优化。
+
+#### 那为什么我还在 compression_breakout 里“支持” use_trailing_stop？
+我建议的是“**可选支持**”，而且默认是 `false`。原因是：
+- breakout 的实盘执行里，trailing 是常见的风控/锁利机制；你最终很可能会想验证它是否提升稳健性。
+- 把它作为 **可选开关**放在 backtest.yaml，便于你在 confirm 阶段用同一套特征/模型快速切换对比；
+  但在 Layer B 搜索阶段，我们保持默认关闭，避免污染特征选择过程。
+
 工业化升级方向（算法层，不一定一次上）：
 - **SFFS**：允许 forward + backward（减少局部最优）
 - **Beam search**：每步保留 top-K 组合，捕捉协同效应
