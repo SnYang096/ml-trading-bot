@@ -1877,6 +1877,177 @@ def diagnose_model_comparison(
     )
 
 
+@diagnose.command("feature-group-search")
+@click.option(
+    "--base-strategy-config",
+    "-c",
+    required=True,
+    help="Base strategy config directory (single strategy). The tool will create temp variants.",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.3", help="Test set ratio")
+@click.option("--seeds", default="1,2,3", help="Comma-separated seeds")
+@click.option("--objective", default="Sharpe_mean", help="Objective metric (e.g. Sharpe_mean)")
+@click.option("--min-trades", default="10", help="Min trades_mean constraint")
+@click.option("--max-steps", default="6", help="Max greedy steps")
+@click.option(
+    "--groups-json",
+    default=None,
+    help="Optional JSON file path overriding default feature groups.",
+)
+@click.option(
+    "--groups-yaml",
+    default=None,
+    help="Optional YAML file path overriding default feature groups.",
+)
+@click.option(
+    "--pool-b-yaml",
+    default=None,
+    help=(
+        "Optional Pool B YAML exported by factor-eval (features_pool_b.yaml). "
+        "If provided, the tool will auto-generate extra singleton groups for any "
+        "feature_pipeline.requested_features not already present in groups."
+    ),
+)
+@click.option(
+    "--feature-blacklist",
+    default="",
+    help="Comma-separated requested_feature nodes to exclude from BOTH base and candidate groups.",
+)
+@click.option(
+    "--base-features-yaml",
+    default=None,
+    help="Optional YAML list file path for base requested_features (default empty).",
+)
+@click.option(
+    "--writeback-yaml",
+    default=None,
+    help="Optional output path to write a features_suggested.yaml (requested_features=final_features) with provenance metadata.",
+)
+@click.option(
+    "--invert-candidates-yaml",
+    default=None,
+    help=(
+        "Optional YAML path providing invert candidates. Accepts either a YAML list, or a full "
+        "features config containing feature_pipeline.invert_features. On writeback, the tool "
+        "will set invert_features = invert_candidates ∩ final_requested_features."
+    ),
+)
+@click.option(
+    "--output-dir",
+    default="results/feature_group_search",
+    help="Output directory",
+)
+@click.option("--deterministic/--non-deterministic", default=True, help="Deterministic training")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_feature_group_search(
+    base_strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    seeds,
+    objective,
+    min_trades,
+    max_steps,
+    groups_json,
+    groups_yaml,
+    pool_b_yaml,
+    feature_blacklist,
+    base_features_yaml,
+    writeback_yaml,
+    invert_candidates_yaml,
+    output_dir,
+    deterministic,
+    docker,
+):
+    """Greedy forward selection over feature groups for one base strategy."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--base-strategy-config",
+        f"/workspace/{base_strategy_config}" if use_workspace_prefix else base_strategy_config,
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--test-size",
+        str(test_size),
+        "--seeds",
+        str(seeds),
+        "--objective",
+        str(objective),
+        "--min-trades",
+        str(min_trades),
+        "--max-steps",
+        str(max_steps),
+        "--output-dir",
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+        "--no-docker",
+    ]
+    if deterministic:
+        args.append("--deterministic")
+    if groups_json:
+        args.extend(
+            [
+                "--groups-json",
+                f"/workspace/{groups_json}" if use_workspace_prefix else groups_json,
+            ]
+        )
+    if groups_yaml:
+        args.extend(
+            [
+                "--groups-yaml",
+                f"/workspace/{groups_yaml}" if use_workspace_prefix else groups_yaml,
+            ]
+        )
+    if pool_b_yaml:
+        args.extend(
+            [
+                "--pool-b-yaml",
+                f"/workspace/{pool_b_yaml}" if use_workspace_prefix else pool_b_yaml,
+            ]
+        )
+    if feature_blacklist:
+        args.extend(["--feature-blacklist", str(feature_blacklist)])
+    if base_features_yaml:
+        args.extend(
+            [
+                "--base-features-yaml",
+                f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
+            ]
+        )
+    if writeback_yaml:
+        args.extend(
+            [
+                "--writeback-yaml",
+                f"/workspace/{writeback_yaml}" if use_workspace_prefix else writeback_yaml,
+            ]
+        )
+    if invert_candidates_yaml:
+        args.extend(
+            [
+                "--invert-candidates-yaml",
+                f"/workspace/{invert_candidates_yaml}" if use_workspace_prefix else invert_candidates_yaml,
+            ]
+        )
+
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.feature_group_search",
+            args,
+            docker=docker,
+        )
+    )
+
+
 # =============================================================================
 # Optimization Commands
 # =============================================================================

@@ -92,8 +92,14 @@ class StrategyConfigLoader:
     REQUIRED_FILES = ("features.yaml", "labels.yaml", "model.yaml")
     OPTIONAL_FILES = ("evaluation.yaml", "backtest.yaml", "meta.yaml")
 
-    def __init__(self, config_dir: Path | str) -> None:
+    def __init__(
+        self,
+        config_dir: Path | str,
+        *,
+        strict_name_match: bool = False,
+    ) -> None:
         self.config_dir = Path(config_dir)
+        self.strict_name_match = bool(strict_name_match)
         if not self.config_dir.exists() or not self.config_dir.is_dir():
             raise FileNotFoundError(f"Config directory not found: {self.config_dir}")
 
@@ -136,18 +142,45 @@ class StrategyConfigLoader:
             else {}
         )
 
-        name = (
+        # ------------------------------------------------------------------
+        # Strategy ID convention:
+        # - The strategy "ID" is ALWAYS the directory name: config/strategies/<dir_name>
+        # - YAML `name:` fields are treated as optional "declared name" (display-only).
+        #   If declared_name != dir_name, we warn (or error in strict mode) to catch drift.
+        # This avoids having to keep `name:` duplicated across features/labels/model YAMLs.
+        # ------------------------------------------------------------------
+        dir_name = self.config_dir.name
+        declared_name = (
             features_data.get("name")
             or labels_data.get("name")
             or model_data.get("name")
-            or self.config_dir.name
         )
+        if declared_name and declared_name != dir_name:
+            msg = (
+                f"Strategy name mismatch: directory='{dir_name}' but YAML declared name='{declared_name}'. "
+                f"Convention: strategy id is the directory name. "
+                f"Either rename the directory or update YAML name fields (or remove them)."
+            )
+            if self.strict_name_match:
+                raise ValueError(msg)
+            print(f"   ⚠️  {msg}")
+
+        name = dir_name
 
         feature_cfg = self._parse_feature_config(features_data)
         label_cfg = self._parse_label_config(labels_data)
         model_cfg = self._parse_model_config(model_data)
         evaluation_cfg = self._parse_evaluation_config(evaluation_data)
         backtest_cfg = self._parse_backtest_config(backtest_data)
+
+        meta = meta_data.get("strategy", meta_data)
+        if declared_name and declared_name != dir_name:
+            # Preserve for debugging / UI display if needed.
+            try:
+                meta = dict(meta)
+            except Exception:
+                meta = {"meta": meta}
+            meta["declared_name"] = declared_name
 
         return StrategyConfig(
             name=name,
@@ -157,7 +190,7 @@ class StrategyConfigLoader:
             model=model_cfg,
             evaluation=evaluation_cfg,
             backtest=backtest_cfg,
-            meta=meta_data.get("strategy", meta_data),
+            meta=meta,
         )
 
     def _parse_feature_config(self, data: Dict[str, Any]) -> FeaturePipelineConfig:

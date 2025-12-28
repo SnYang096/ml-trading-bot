@@ -1,4 +1,4 @@
-name: sr_breakout
+name: sr_reversal_rr_reg_long_cvd_divergence_semantic
 
 trainer:
   module: src.time_series_model.strategies.models.strategy_trainer
@@ -6,19 +6,17 @@ trainer:
   params:
     model_type: lightgbm
     task_type: regression
-    target_col: label
+    target_col: rr_label
+    weight_col: sample_weight
     n_splits: 5
     tscv_gap: 24
-    use_gpu: true
+    use_gpu: false
     model_params:
-      # Keep Layer C simple for now: use LightGBM everywhere; tune later.
       num_leaves: 63
-      max_depth: -1
       learning_rate: 0.05
-      n_estimators: 800
-      feature_fraction: 0.8
-      bagging_fraction: 0.8
-      bagging_freq: 5
+      n_estimators: 600
+      subsample: 0.8
+      colsample_bytree: 0.8
       seed: 42
 
 prediction:
@@ -29,9 +27,9 @@ output:
   save_results: true
   filename: results.json
 
-# Optional: Volatility model for position sizing and risk management
 volatility_model:
   enabled: false
   config_path: null
   target_column: future_volatility
+
 

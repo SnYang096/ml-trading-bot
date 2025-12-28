@@ -160,6 +160,32 @@ features:
       low: low
       close: close
     notes: 上影线占比和下影线占比，用于衡量K线的上下影线长度
+
+  wick_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_wick_scene_semantic_scores_from_series
+    dependencies:
+      - wick_ratios_f
+      - compression_score_f
+      - trend_r2_20_f
+    required_columns:
+      - wick_upper_ratio
+      - wick_lower_ratio
+      - compression_score
+      - trend_r2_20
+    output_columns:
+      - wick_compression_score
+      - wick_ignition_score
+      - wick_absorption_score
+      - wick_exhaustion_score
+    category: interaction
+    description: "Wick-based scene semantics (0..1): compression/ignition/absorption/exhaustion."
+    pass_full_df: false
+    column_mappings:
+      wick_upper_ratio: wick_upper_ratio
+      wick_lower_ratio: wick_lower_ratio
+      compression_score: compression_score
+      trend_r2_20: trend_r2_20
   volume_anomaly_f:
     module: baseline
     compute_func: compute_volume_anomaly_from_series
@@ -743,6 +769,74 @@ features:
       - 真假突破评分: 基于多尺度能量和 VPER 的综合评分
 
       "
+
+  wpt_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_wpt_scene_semantic_scores_from_series
+    dependencies:
+      - wpt_volume_energy_f
+      - compression_score_f
+      - trend_r2_20_f
+    required_columns:
+      - wpt_breakout_confidence
+      - wpt_false_breakout_risk
+      - wpt_multi_scale_consistency
+      - wpt_energy_cascade
+      - compression_score
+      - trend_r2_20
+    output_columns:
+      - wpt_compression_score
+      - wpt_ignition_score
+      - wpt_absorption_score
+      - wpt_exhaustion_score
+    category: interaction
+    description: "WPT scene semantics: compression/ignition/absorption/exhaustion (0..1), using WPT+compression+trend context."
+    pass_full_df: false
+    column_mappings:
+      wpt_breakout_confidence: wpt_breakout_confidence
+      wpt_false_breakout_risk: wpt_false_breakout_risk
+      wpt_multi_scale_consistency: wpt_multi_scale_consistency
+      wpt_energy_cascade: wpt_energy_cascade
+      compression_score: compression_score
+      trend_r2_20: trend_r2_20
+
+  liquidity_void_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_liquidity_void_scene_semantic_scores_from_series
+    dependencies:
+      - liquidity_void_f
+      - wpt_volume_energy_f
+      - compression_score_f
+      - trend_r2_20_f
+    required_columns:
+      - liquidity_void_detected
+      - liquidity_void_speed
+      - liquidity_void_price_impact
+      - liquidity_void_retracement
+      - liquidity_void_false_breakout_risk
+      - wpt_breakout_confidence
+      - compression_score
+      - trend_r2_20
+    output_columns:
+      - liquidity_void_compression_score
+      - liquidity_void_ignition_score
+      - liquidity_void_absorption_score
+      - liquidity_void_exhaustion_score
+    category: interaction
+    description: "LiquidityVoid scene semantics: compression/ignition/absorption/exhaustion (0..1), using void+WPT+compression+trend context."
+    compute_params:
+      speed_scale: 3.0
+      impact_scale: 3.0
+    pass_full_df: false
+    column_mappings:
+      liquidity_void_detected: liquidity_void_detected
+      liquidity_void_speed: liquidity_void_speed
+      liquidity_void_price_impact: liquidity_void_price_impact
+      liquidity_void_retracement: liquidity_void_retracement
+      liquidity_void_false_breakout_risk: liquidity_void_false_breakout_risk
+      wpt_breakout_confidence: wpt_breakout_confidence
+      compression_score: compression_score
+      trend_r2_20: trend_r2_20
   volume_profile_volatility_features_f:
     module: enhanced
     compute_func: extract_volume_profile_volatility_features_from_series
@@ -784,6 +878,38 @@ features:
     column_mappings:
       close: close
       volume: volume
+
+  volume_profile_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_volume_profile_scene_semantic_scores_from_series
+    dependencies:
+      - volume_profile_volatility_features_f
+      - trend_r2_20_f
+    required_columns:
+      - vp_width_ratio
+      - vp_poc_deviation
+      - vp_entropy
+      - vp_lv_ratio
+      - vp_hv_ratio
+      - trend_r2_20
+    output_columns:
+      - vp_compression_score
+      - vp_ignition_score
+      - vp_absorption_score
+      - vp_exhaustion_score
+    category: interaction
+    description: "Volume-profile scene semantics: compression/ignition/absorption/exhaustion (0..1)."
+    compute_params:
+      entropy_scale: 2.0
+      poc_dev_scale: 2.0
+    pass_full_df: false
+    column_mappings:
+      vp_width_ratio: vp_width_ratio
+      vp_poc_deviation: vp_poc_deviation
+      vp_entropy: vp_entropy
+      vp_lv_ratio: vp_lv_ratio
+      vp_hv_ratio: vp_hv_ratio
+      trend_r2_20: trend_r2_20
   footprint_basic_f:
     module: enhanced
     compute_func: compute_footprint_features
@@ -829,6 +955,82 @@ features:
       - 无 tick 的 K 线返回 NaN。
 
       "
+
+  fp_imbalance_exhaustion_f:
+    module: enhanced
+    compute_func: compute_fp_imbalance_exhaustion_from_series
+    dependencies:
+      - footprint_basic_f
+      - atr_f
+      - sr_strength_max_close_f
+    required_columns:
+      - fp_max_imbalance_ratio
+      - close
+      - high
+      - low
+      - atr
+      - dist_to_nearest_sr
+    output_columns:
+      - fp_imbalance_exhaustion_score
+    category: interaction
+    description: "Footprint imbalance semantic (reversal-friendly): high imbalance + low displacement near SR."
+    compute_params:
+      imb_threshold: 3.0
+      imb_clip: 8.0
+      disp_atr_threshold: 0.5
+      sr_prox_atr: 1.5
+    pass_full_df: false
+    column_mappings:
+      fp_max_imbalance_ratio: fp_max_imbalance_ratio
+      close: close
+      high: high
+      low: low
+      atr: atr
+      dist_to_nearest_sr: dist_to_nearest_sr
+
+  fp_imbalance_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_fp_imbalance_scene_semantic_scores_from_series
+    dependencies:
+      - footprint_basic_f
+      - atr_f
+      - sr_strength_max_close_f
+      - compression_score_f
+      - volume_anomaly_f
+      - trend_r2_20_f
+    required_columns:
+      - fp_max_imbalance_ratio
+      - close
+      - high
+      - low
+      - atr
+      - dist_to_nearest_sr
+      - compression_score
+      - volume_anomaly
+      - trend_r2_20
+    output_columns:
+      - fp_imbalance_compression_score
+      - fp_imbalance_ignition_score
+      - fp_imbalance_absorption_score
+      - fp_imbalance_exhaustion_scene_score
+    category: interaction
+    description: "Footprint max-imbalance scene semantics: compression/ignition/absorption/exhaustion (0..1), with SR+compression+volume+trend context."
+    compute_params:
+      imb_threshold: 3.0
+      imb_clip: 8.0
+      disp_atr_threshold: 0.5
+      sr_prox_atr: 1.5
+    pass_full_df: false
+    column_mappings:
+      fp_max_imbalance_ratio: fp_max_imbalance_ratio
+      close: close
+      high: high
+      low: low
+      atr: atr
+      dist_to_nearest_sr: dist_to_nearest_sr
+      compression_score: compression_score
+      volume_anomaly: volume_anomaly
+      trend_r2_20: trend_r2_20
   hilbert_phase_f:
     module: enhanced
     compute_func: extract_hilbert_features
@@ -1584,6 +1786,37 @@ features:
       close: close
       volume: volume
       atr: atr
+
+  trade_cluster_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_trade_cluster_scene_semantic_scores_from_series
+    dependencies:
+      - trade_cluster_semantic_scores_f
+      - compression_score_f
+      - volume_anomaly_f
+      - trend_r2_20_f
+    required_columns:
+      - trade_cluster_flow_intensity
+      - trade_cluster_absorption_score
+      - trade_cluster_exhaustion_score
+      - compression_score
+      - volume_anomaly
+      - trend_r2_20
+    output_columns:
+      - trade_cluster_compression_score
+      - trade_cluster_ignition_score
+      - trade_cluster_absorption_scene_score
+      - trade_cluster_exhaustion_scene_score
+    category: interaction
+    description: "TradeCluster scene semantics built on top of TradeCluster semantic scores (adds compression/ignition variants)."
+    pass_full_df: false
+    column_mappings:
+      trade_cluster_flow_intensity: trade_cluster_flow_intensity
+      trade_cluster_absorption_score: trade_cluster_absorption_score
+      trade_cluster_exhaustion_score: trade_cluster_exhaustion_score
+      compression_score: compression_score
+      volume_anomaly: volume_anomaly
+      trend_r2_20: trend_r2_20
   trade_cluster_base_aligned_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_base_aligned_features_from_series
@@ -3116,6 +3349,147 @@ features:
       trade_cluster_exhaustion_score: trade_cluster_exhaustion_score
       liquidity_void_detected: liquidity_void_detected
       liquidity_void_false_breakout_risk: liquidity_void_false_breakout_risk
+
+  vpin_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_vpin_semantic_scores_from_series
+    dependencies:
+      - vpin_zscore_features_f
+      - vpin_signed_zscore_features_f
+      - atr_f
+      - sr_strength_max_close_f
+    required_columns:
+      - vpin_zscore_50
+      - vpin_signed_imbalance_zscore_50
+      - open
+      - close
+      - high
+      - low
+      - atr
+      - dist_to_nearest_sr
+    output_columns:
+      - vpin_stress_score
+      - vpin_directional_pressure
+      - vpin_exhaustion_score
+    category: interaction
+    description: "VPIN semantics: stress, directional pressure, exhaustion (high stress + low displacement, SR-weighted)."
+    compute_params:
+      clip_z: 5.0
+      disp_atr_threshold: 0.5
+      use_range_disp: true
+      sr_prox_atr: 1.5
+    pass_full_df: false
+    column_mappings:
+      vpin_zscore_50: vpin_zscore_50
+      vpin_signed_imbalance_zscore_50: vpin_signed_imbalance_zscore_50
+      open: open
+      close: close
+      high: high
+      low: low
+      atr: atr
+      dist_to_nearest_sr: dist_to_nearest_sr
+
+  vpin_scene_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_vpin_scene_semantic_scores_from_series
+    dependencies:
+      - vpin_zscore_features_f
+      - vpin_signed_zscore_features_f
+      - atr_f
+      - sr_strength_max_close_f
+      - compression_score_f
+      - volume_anomaly_f
+      - trend_r2_20_f
+    required_columns:
+      - vpin_zscore_50
+      - vpin_signed_imbalance_zscore_50
+      - open
+      - close
+      - high
+      - low
+      - atr
+      - dist_to_nearest_sr
+      - compression_score
+      - volume_anomaly
+      - trend_r2_20
+    output_columns:
+      - vpin_compression_score
+      - vpin_ignition_score
+      - vpin_absorption_score
+      - vpin_exhaustion_scene_score
+    category: interaction
+    description: "VPIN scene semantics: compression/ignition/absorption/exhaustion (0..1), with SR+compression+volume+trend context."
+    compute_params:
+      clip_z: 5.0
+      disp_atr_threshold: 0.5
+      sr_prox_atr: 1.5
+    pass_full_df: false
+    column_mappings:
+      vpin_zscore_50: vpin_zscore_50
+      vpin_signed_imbalance_zscore_50: vpin_signed_imbalance_zscore_50
+      open: open
+      close: close
+      high: high
+      low: low
+      atr: atr
+      dist_to_nearest_sr: dist_to_nearest_sr
+      compression_score: compression_score
+      volume_anomaly: volume_anomaly
+      trend_r2_20: trend_r2_20
+
+  tbr_imbalance_semantic_scores_f:
+    module: enhanced
+    compute_func: compute_tbr_imbalance_semantic_scores_from_series
+    dependencies:
+      - compression_score_f
+      - atr_f
+    required_columns:
+      - taker_buy_ratio
+      - compression_score
+      - open
+      - close
+      - high
+      - low
+      - atr
+    output_columns:
+      - imbalance_ratio
+      - imbalance_exhaustion_score
+    category: interaction
+    description: "Imbalance semantics (bar-level) using taker_buy_ratio + compression + low displacement."
+    compute_params:
+      clip_imb: 1.0
+      disp_atr_threshold: 0.5
+      use_range_disp: true
+    pass_full_df: false
+    column_mappings:
+      taker_buy_ratio: taker_buy_ratio
+      compression_score: compression_score
+      open: open
+      close: close
+      high: high
+      low: low
+      atr: atr
+
+  cvd_divergence_f:
+    module: enhanced
+    compute_func: compute_cvd_divergence_from_series
+    dependencies: []
+    required_columns:
+      - close
+      - cvd
+    output_columns:
+      - cvd_bullish_divergence
+      - cvd_bearish_divergence
+      - cvd_divergence_strength
+    category: interaction
+    description: "CVD divergence semantic: price extremes vs CVD extremes (bull/bear divergence + strength)."
+    compute_params:
+      window: 50
+      eps_pct: 0.001
+    pass_full_df: false
+    column_mappings:
+      close: close
+      cvd: cvd
   compression_energy_x_ofi_short_f:
     module: enhanced
     compute_func: compute_compression_energy_x_ofi_short_from_series

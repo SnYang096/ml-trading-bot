@@ -1,0 +1,16 @@
+strategy:
+  name: sr_reversal_rr_reg_long_fp_imbalance_semantic
+  description: >
+    Footprint imbalance semantic (fp_imbalance_exhaustion_score) on top of SR reversal mainline.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+    - order_flow
+    - footprint
+    - semantic
+  owner: quant_team
+
+

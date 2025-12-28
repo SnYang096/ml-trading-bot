@@ -86,6 +86,9 @@ def parse_args() -> argparse.Namespace:
         default="strategy",
         help="How to handle feature pipeline: use strategy defaults, only requested factors, or append requested factors.",
     )
+    # Default output dir is dynamically resolved at runtime:
+    # if user keeps the legacy default ("results/factor_ts_eval"), we will redirect to:
+    #   results/pools/<strategy_name>/pool_b
     parser.add_argument("--output-dir", default="results/factor_ts_eval")
     parser.add_argument(
         "--ic-decay-lags",
@@ -147,6 +150,17 @@ def parse_args() -> argparse.Namespace:
         help="Tolerance for best lag filtering: keep features if |best_lag - target_lag| <= tolerance (default: 5)",
     )
     return parser.parse_args()
+
+
+def _default_pool_b_dir(strategy_dir_name: str) -> Path:
+    # Convention: Pool B artifacts live under results/pools/<strategy_dir_name>/pool_b
+    # We use the strategy DIRECTORY name (config/strategies/<dir_name>) as the stable identifier.
+    return Path("results") / "pools" / str(strategy_dir_name) / "pool_b"
+
+
+def _default_pool_b_yaml_path(strategy_dir_name: str) -> Path:
+    # Convention: Pool B YAML is always named features_pool_b.yaml
+    return _default_pool_b_dir(strategy_dir_name) / "features_pool_b.yaml"
 
 
 def _invert_features_from_negative(
@@ -2029,6 +2043,20 @@ def main() -> None:
 
     loader = StrategyConfigLoader(strategy_config_dir)
     strategy_cfg = loader.load()
+
+    # ------------------------------------------------------------------
+    # Convention-by-default:
+    # - If user did not override --output-dir (i.e., kept legacy default),
+    #   redirect outputs to results/pools/<strategy_name>/pool_b
+    # - If user did not set --export-yaml, default export path to:
+    #   results/pools/<strategy_name>/pool_b/features_pool_b.yaml
+    # ------------------------------------------------------------------
+    legacy_default_out = "results/factor_ts_eval"
+    strategy_dir_id = strategy_config_dir.name
+    if str(args.output_dir) == legacy_default_out:
+        args.output_dir = str(_default_pool_b_dir(strategy_dir_id))
+    if args.export_yaml is None:
+        args.export_yaml = str(_default_pool_b_yaml_path(strategy_dir_id))
 
     # If a features file was specified, override the features config
     if features_file_override:

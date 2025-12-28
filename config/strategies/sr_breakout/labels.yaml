@@ -8,6 +8,11 @@ label_generator:
     signal_col: signal
     max_holding_bars: 50
     max_rr: 3.0
+    # Allow pipeline to run even when no external sparse signal is provided.
+    # This generates a simple directional signal based on short-horizon price change (ATR-normalized).
+    auto_generate_signals: true
+    signal_horizon: 1
+    signal_threshold_atr: 0.0
 
 filters:
   - column: label

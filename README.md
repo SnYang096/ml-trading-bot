@@ -39,6 +39,15 @@ The recommended workflow uses **config-driven architecture** with strategy-speci
 
 **📖 See [完整流程指南](docs/时序模型/完整流程指南.md) (Chinese) for detailed workflow.**
 
+### Architecture entry points (recommended reading)
+
+- **Industrial Experiment Loop (Layer A/B/C, TaskSpec, Filter→Wrapper, stability rules)**: `docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
+- **NN Multi-head Path Primitives + Router→Execution (NO/MEAN/TREND) architecture**: `docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
+
+Quick mental model:
+- **PolicyTask (direct entry)**: train a model that directly produces trade signals; fastest research loop.
+- **PrimitivesTask (router primitives → execution)**: train a shared “path primitives” router (dir/mfe/mae/t) and let Execution map it to actions under strict safety constraints; more reusable and often more stable long-term.
+
 ### Step-by-Step Workflow
 
 #### Why SR Reversal is split into Long/Short (and why `sr_reversal/` was removed)

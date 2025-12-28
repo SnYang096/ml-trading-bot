@@ -1,0 +1,32 @@
+name: sr_reversal_rr_reg_long_cvd_divergence_semantic
+description: "Mainline + CVD divergence semantic (bull/bear + strength)"
+feature_pipeline:
+  requested_features:
+  # Mainline (kline + minimal SR-distance features)
+  - macd_f
+  - rsi_f
+  - sma_200_f
+  - atr_f
+  - roc_5_f
+  - mom_10_f
+  - bbands_f
+  - bb_width_f
+  - trend_r2_20_f
+  - trend_r2_50_f
+  - acceleration_3_f
+  - wick_ratios_f
+  - price_range_symmetry_f
+  - poc_hal_features_close_f
+  - sqs_hal_high_f
+  - sqs_hal_low_f
+  - sr_strength_max_close_f
+  # semantic divergence (bar-level)
+  - cvd_divergence_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+notes: |
+  CVD divergence is intended as an exhaustion/backing-off signal:
+  price at extremes but CVD fails to confirm.
+
+

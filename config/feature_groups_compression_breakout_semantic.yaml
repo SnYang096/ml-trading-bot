@@ -1,0 +1,27 @@
+# Feature-group-search candidate groups for Compression Breakout.
+#
+# Base strategy already includes WPT + Spectrum + compression interactions and some ticks blocks.
+# We test incremental scene semantic blocks for robustness / regime alignment.
+groups:
+  vpin_scene:
+    - vpin_scene_semantic_scores_f
+
+  liquidity_void_scene:
+    - liquidity_void_scene_semantic_scores_f
+
+  wpt_scene:
+    - wpt_scene_semantic_scores_f
+
+  volume_profile_scene:
+    - volume_profile_scene_semantic_scores_f
+
+  wick_scene:
+    - wick_scene_semantic_scores_f
+
+  trade_cluster_scene:
+    - trade_cluster_scene_semantic_scores_f
+
+  fp_scene:
+    - fp_imbalance_scene_semantic_scores_f
+
+

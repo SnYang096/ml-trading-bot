@@ -26,6 +26,11 @@ def compute_sr_breakout_label(
     max_holding_bars: int = 50,  # 只是寻找上限，实际会动态检查
     max_rr: float = 3.0,
     stop_loss_r: float = 1.0,
+    # If the strategy config doesn't provide sparse breakout signals, we can auto-generate
+    # a simple directional signal so the label pipeline can run.
+    auto_generate_signals: bool = False,
+    signal_horizon: int = 1,
+    signal_threshold_atr: float = 0.0,
 ) -> pd.Series:
     """
     计算 SR 突破策略的连续标签（实现 R/R，动态检查）
@@ -45,40 +50,67 @@ def compute_sr_breakout_label(
     Returns:
         Series with continuous R/R labels (0 to max_rr, NaN for no signal)
     """
-    if signal_col not in df.columns:
-        return pd.Series(np.nan, index=df.index)
+    # Ensure ATR exists early (used both by auto-signal generation and RR normalization)
+    work_df = df.copy()
 
-    # Ensure ATR exists
-    if atr_col not in df.columns:
-        if "high" in df.columns and "low" in df.columns and price_col in df.columns:
+    if atr_col not in work_df.columns:
+        if (
+            "high" in work_df.columns
+            and "low" in work_df.columns
+            and price_col in work_df.columns
+        ):
             try:
                 import talib
 
-                high = df["high"].values
-                low = df["low"].values
-                close = df[price_col].values
+                high = work_df["high"].values
+                low = work_df["low"].values
+                close = work_df[price_col].values
                 atr_values = talib.ATR(high, low, close, timeperiod=atr_window)
-                df[atr_col] = pd.Series(atr_values, index=df.index)
+                work_df[atr_col] = pd.Series(atr_values, index=work_df.index)
             except ImportError:
                 tr = np.maximum(
-                    df["high"] - df["low"],
+                    work_df["high"] - work_df["low"],
                     np.maximum(
-                        abs(df["high"] - df[price_col].shift(1)),
-                        abs(df["low"] - df[price_col].shift(1)),
+                        abs(work_df["high"] - work_df[price_col].shift(1)),
+                        abs(work_df["low"] - work_df[price_col].shift(1)),
                     ),
                 )
-                df[atr_col] = tr.rolling(window=atr_window, min_periods=1).mean()
+                work_df[atr_col] = tr.rolling(window=atr_window, min_periods=1).mean()
         else:
-            if price_col in df.columns:
-                df[atr_col] = df[price_col].rolling(window=atr_window).std()
+            if price_col in work_df.columns:
+                work_df[atr_col] = work_df[price_col].rolling(window=atr_window).std()
             else:
                 return pd.Series(np.nan, index=df.index)
 
-    signals = df[signal_col].values
-    atr_arr = df[atr_col].values
-    high_arr = df[high_col].values
-    low_arr = df[low_col].values
-    price_arr = df[price_col].values
+    # Auto-generate signal if missing or effectively empty
+    if (signal_col not in work_df.columns) or (
+        auto_generate_signals
+        and (
+            work_df.get(signal_col, pd.Series(0, index=work_df.index))
+            .fillna(0)
+            .abs()
+            .sum()
+            == 0
+        )
+    ):
+        if not auto_generate_signals:
+            return pd.Series(np.nan, index=work_df.index)
+
+        h = max(int(signal_horizon), 1)
+        future = work_df[price_col].shift(-h)
+        delta = future - work_df[price_col]
+        atr_series = work_df[atr_col].replace(0, np.nan)
+        thr = float(signal_threshold_atr) * atr_series
+        sig = pd.Series(0.0, index=work_df.index)
+        sig[delta > thr] = 1.0
+        sig[delta < -thr] = -1.0
+        work_df[signal_col] = sig
+
+    signals = work_df[signal_col].values
+    atr_arr = work_df[atr_col].values
+    high_arr = work_df[high_col].values
+    low_arr = work_df[low_col].values
+    price_arr = work_df[price_col].values
 
     labels = np.full(len(df), np.nan, dtype=float)
 

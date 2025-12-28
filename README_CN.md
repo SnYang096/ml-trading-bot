@@ -39,6 +39,15 @@
 
 **📖 详细工作流请参见 [完整流程指南](docs/时序模型/完整流程指南.md)。**
 
+### 架构入口（建议先读）
+
+- **工业化 Experiment Loop（Layer A/B/C、TaskSpec、Filter→Wrapper、稳定性证据口径）**：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
+- **NN 多头 Path Primitives + Router→Execution（NO/MEAN/TREND）**：`docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
+
+快速心智模型：
+- **PolicyTask（直接开仓）**：模型直接输出开仓信号/分数，研究闭环最快（常见于树模型）。
+- **PrimitivesTask（路径原语→执行）**：先训练共享 Router（dir/mfe/mae/t），再由 Execution 在强 safety 约束下映射到 NO/MEAN/TREND；复用性更强、长期更稳。
+
 ### 分步工作流
 
 #### 为什么 SR Reversal 要拆成 Long/Short（以及为什么移除了 `sr_reversal/`）

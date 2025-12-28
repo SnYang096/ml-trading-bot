@@ -56,6 +56,8 @@
 ## 5. 实验流程（推荐顺序）
 
 > 相关设计文档（建议配合阅读）：`docs/strategies/SEMANTIC_FEATURES_4_SCENARIOS.md`
+> 语义化模板库（可复用）：`docs/strategies/ORDERFLOW_SEMANTIC_MAPPING_TEMPLATES.md`
+> 研究系统架构（Experiment Loop / Layer A-B-C / TaskSpec）：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 
 ### 5.1 Step A：MVP（3 个 K 线特征）先打通并验证稳定
 目的：建立“最小可用、可复现”的基线，然后再逐步加回特征组。
@@ -119,6 +121,80 @@ python3 scripts/run_model_comparison_seed_sweep.py \
 随后只扫一个维度（例如回归扫 `top_quantile=0.05/0.08/0.1`）并跑 seed sweep。
 
 ---
+
+## 5.5 Layer A（必须先固定）：SR Reversal 的主线/基线 Task（label + sample）
+
+> 目的：后续所有“特征迭代/消融/搜索”必须复用同一套 Layer A（否则结论不可比较）。
+
+当前 SR Reversal（回归 rr）推荐固定两套候选：
+
+| Task | 策略目录 | 说明 | 用途 |
+|---|---|---|---|
+| baseline | `config/strategies/sr_reversal_rr_reg_long` | 稳定的 kline+SR-distance 特征基线（不含 ticks） | 对照 |
+| mainline | `config/strategies/sr_reversal_rr_reg_long_mainline` | **SR-filter labels + sample weights**（当前主线） | 主线 |
+
+### 固定命令模板：seed sweep（强制可复现）
+
+```bash
+python3 scripts/run_model_comparison_seed_sweep.py \
+  --strategies sr_reversal_rr_reg_long,sr_reversal_rr_reg_long_mainline \
+  --symbols BTCUSDT --timeframe 240T \
+  --start-date 2023-01-01 --end-date 2025-10-31 \
+  --test-size 0.3 --seeds 1,2,3,4,5 \
+  --output-dir results/model_comparison/seed_sweep_sr_reversal_layer_a \
+  --no-docker
+```
+
+> 约定：Layer B（features）只允许在 `mainline` 上做增量；Layer C（model/params）需要另开章节，不要混在 feature search 中。
+
+---
+
+## 5.6 YAML 工件约定（Pool B / Base Pool / Pool A Suggested）
+
+> 目的：让“候选池（filter）→ 组合验证（wrapper）→ 写回配置（suggested）”完全可追溯、可复用。
+
+### Pool B（Filter 输出：候选池 YAML）
+
+- **默认生成位置（factor-eval）**：`results/factor_ts_eval/{strategy_name}_{symbol}_features_suggested.yaml`
+- **推荐归档位置**：`results/pools/<strategy_name>/pool_b/features_pool_b.yaml`
+- **语义**：
+  - `feature_pipeline.requested_features`：候选特征（很多）
+  - `feature_pipeline.invert_features`：候选反向清单（很多；此阶段不是最终定型）
+
+### Base Pool（Wrapper 起点：默认就是策略主线 features.yaml）
+
+- **默认 base pool 文件**：`config/strategies/<strategy_name>/features.yaml`
+- **默认 base pool 字段**：`feature_pipeline.requested_features`
+- **可选覆盖**：`mlbot diagnose feature-group-search --base-features-yaml <yaml_list>`
+
+### Pool A Suggested（Wrapper 输出：建议 YAML）
+
+- **实验记录输出目录**：`results/feature_group_search/<run_name>/`
+  - `feature_group_search_result.json`
+  - `feature_group_search_candidates.csv`
+  - `feature_group_search_report.html`
+- **写回建议 YAML**：`config/strategies/<strategy_name>/features_suggested.yaml`
+  - `invert_features` 会自动裁剪为：`invert_candidates ∩ final_requested_features`
+
+示例命令（从主线 features.yaml 出发，叠加候选组并写回 suggested）：
+
+```bash
+mlbot diagnose feature-group-search \
+  -c config/strategies/sr_reversal_rr_reg_long_mainline \
+  -s BTCUSDT -t 240T \
+  --start-date 2023-01-01 --end-date 2025-10-31 \
+  --test-size 0.3 --seeds 1,2,3,4,5 \
+  --groups-yaml config/feature_groups_sr_reversal_semantic.yaml \
+  --invert-candidates-yaml results/pools/sr_reversal_rr_reg_long_mainline/pool_b/features_pool_b.yaml \
+  --writeback-yaml config/strategies/sr_reversal_rr_reg_long_mainline/features_suggested.yaml \
+  --output-dir results/feature_group_search/sr_reversal_rr_reg_long_mainline__search \
+  --deterministic --no-docker
+```
+
+> `features_suggested.yaml` 里会额外包含一个顶层字段 `feature_group_search`，用于记录：
+> baseline / stop_reason / selected_groups / final_features / groups_source 等审计信息。  
+> 训练不会读取这部分（只读取 `feature_pipeline.*`），因此你可以安全地整文件 copy 到 `features.yaml` 使用。  
+> 详细字段解释见：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md` 的 “如何解读 feature_group_search 元数据” 小节。
 
 ## 6. 何时回到 SR/weights/ticks 主线？
 当 kline-only 的赢家配置满足：
@@ -291,6 +367,37 @@ python3 scripts/run_model_comparison_seed_sweep.py \
 - 这次假设成立：**TradeCluster raw 的负面主要来自“语义混杂”**，语义化后可以把信息拆出来，对反转不再致命。
 - 下一步建议：把 `disp_atr_threshold / ma_window / window_size` 做小范围 sweep，并在 ETH 上复核一致性。
 
+### 10.AA VPIN / Imbalance 语义化（BTCUSDT）：VPIN_semantic 显著正面，Imbalance_semantic 较弱
+目的：验证“VPIN/Imbalance raw 异义 → 语义化后对齐反转逻辑”的可迁移性（继 TradeCluster 之后的第二组/第三组 orderflow 语义化）。
+
+实现（新增 feature nodes）：
+- `vpin_semantic_scores_f`：`vpin_stress_score`, `vpin_directional_pressure`, `vpin_exhaustion_score`
+- `tbr_imbalance_semantic_scores_f`：`imbalance_ratio`, `imbalance_exhaustion_score`（bar-level，用 `taker_buy_ratio` 近似不平衡）
+
+协议：
+- symbol：`BTCUSDT`
+- timeframe：`240T`
+- window：`2023-01-01 ~ 2025-10-31`
+- test-size：`0.3`
+- seeds：`1,2,3,4,5`
+
+策略对照：
+- liquidity void：`sr_reversal_rr_reg_long_liquidity_void`
+- trade cluster semantic：`sr_reversal_rr_reg_long_trade_cluster_semantic`
+- vpin semantic：`sr_reversal_rr_reg_long_vpin_semantic`
+- imbalance semantic：`sr_reversal_rr_reg_long_imbalance_semantic`
+
+结果摘要（mean over seeds）：
+- **vpin semantic**：Sharpe≈ **2.15**，return%≈ **13.82**（trades≈15.8，DD%≈4.20）
+- **trade cluster semantic**：Sharpe≈ **2.02**，return%≈ **13.40**（DD%≈5.12）
+- **imbalance semantic (TBR)**：Sharpe≈ **1.49**，return%≈ **9.35**
+- **liquidity void**：Sharpe≈ **1.43**，return%≈ **9.26**（该组在本次 sweep 下方差较大：Sharpe_std≈0.93）
+
+结论：
+- 在该窗口/参数下，**VPIN 的语义化版本是当前最强的 orderflow 语义信号之一**（均值 Sharpe/return% 领先）。
+- `taker_buy_ratio` 作为 imbalance proxy 的语义化效果一般：可能需要换成更“微观”的不平衡原料（例如 ticks footprint 的 imbalance / delta divergence）或加上 SR/压缩 gating。
+- liquidity_void 在单次 seed 上可以很强，但方差偏大；建议后续在 ETH 上复核，或与 “void + exhaustion” 组合做稳定性对比。
+
 ### 10.Y “限价墙/难突破”非 L2 代理特征（BTCUSDT）：组合版不稳定且均值接近 0
 动机：没有 L2 订单簿（深度/挂单）数据时，用可获得的代理特征模拟“限价单墙/拒绝/难突破”。
 
@@ -397,5 +504,22 @@ python3 scripts/run_model_comparison_seed_sweep.py \
 - **mainline**：return% mean≈ **15.01**（std≈1.85），Sharpe mean≈ **2.29**（std≈0.28），DD% mean≈ **4.12**
 
 结论：在该窗口与协议下，**mainline 在收益与 Sharpe 的均值上显著更优，且方差更小**；代价是 DD% 略有上升。
+
+---
+
+### 10.AB 语义化特征（SR Reversal）“有没有意义？”快速结论表
+
+> 口径：BTCUSDT / 240T / 2023-01-01~2025-10-31 / test_size=0.3；除非特别说明，均为 seeds=1..5 的 mean。
+
+| 特征组/策略 | 结论（对 SR Reversal） | 证据（mean 级别） |
+|---|---|---|
+| raw TradeCluster（`trade_cluster_block_features_f`） | **显著负面**（更像突破/延续信号） | Sharpe≈0.56（见 10.Z） |
+| TradeCluster semantic（`trade_cluster_semantic_scores_f`） | **显著正面**（Exhaustion/Absorption 解耦后转正） | Sharpe≈2.00（见 10.Z） |
+| VPIN semantic（`vpin_semantic_scores_f`） | **显著正面**（当前最强 orderflow 语义之一） | Sharpe≈2.15（见 10.AA） |
+| Imbalance semantic（`tbr_imbalance_semantic_scores_f`） | **较弱/接近中性**（proxy 可能不够微观） | Sharpe≈1.49（见 10.AA） |
+| Liquidity void（`liquidity_void_f`） | **可能正面但方差偏大**（单次 seed 很强但稳定性需复核） | Sharpe≈1.43 且 std≈0.93（见 10.AA 注释） |
+| “限价墙代理 bundle”（VPVR+WPT+DTW+…） | **组合版不稳定且均值接近 0**（不建议直接上主线） | Sharpe≈-0.01（见 10.Y） |
+
+> 说明：上表回答“有没有意义”；但“最优组合是什么”需要做组合搜索（而不是单组 ablation），这也是 `mlbot diagnose feature-group-search` 的目标。
 
 

@@ -1,0 +1,16 @@
+strategy:
+  name: sr_reversal_rr_reg_long_vpin_semantic
+  description: >
+    VPIN semantic features (stress/pressure/exhaustion) on top of SR reversal regression mainline.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+    - order_flow
+    - semantic
+    - vpin
+  owner: quant_team
+
+

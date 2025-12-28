@@ -1,0 +1,15 @@
+strategy:
+  name: sr_reversal_rr_reg_long_cvd_divergence_semantic
+  description: >
+    CVD divergence semantic features on top of SR reversal mainline (no ticks required if cvd exists).
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+    - semantic
+    - cvd
+  owner: quant_team
+
+

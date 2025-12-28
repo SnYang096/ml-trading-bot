@@ -121,6 +121,714 @@ def compute_exhaustion_at_liquidity_void_from_series(
     return out.rename("exhaustion_at_liquidity_void").to_frame()
 
 
+@register_feature("compute_vpin_semantic_scores_from_series", category="interaction")
+def compute_vpin_semantic_scores_from_series(
+    *,
+    vpin_zscore_50: pd.Series,
+    vpin_signed_imbalance_zscore_50: pd.Series,
+    open: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    clip_z: float = 5.0,
+    disp_atr_threshold: float = 0.5,
+    use_range_disp: bool = True,
+    sr_prox_atr: float = 1.5,
+) -> pd.DataFrame:
+    """
+    VPIN semantic mapping (reversal-aware):
+
+    - vpin_stress_score: |z| clipped and normalized to [0,1]
+    - vpin_directional_pressure: signed z clipped to [-1,1]
+    - vpin_exhaustion_score: high stress + low displacement (effort without progress),
+      optionally weighted by SR proximity.
+    """
+    eps = 1e-8
+    clip_z = float(clip_z) if float(clip_z) > 0 else 5.0
+    disp_thr = float(disp_atr_threshold) if float(disp_atr_threshold) > 0 else 0.5
+
+    z = pd.to_numeric(vpin_zscore_50, errors="coerce").astype(float).fillna(0.0)
+    z_signed = (
+        pd.to_numeric(vpin_signed_imbalance_zscore_50, errors="coerce")
+        .astype(float)
+        .fillna(0.0)
+    )
+
+    vpin_stress = (z.abs().clip(0.0, clip_z) / clip_z).rename("vpin_stress_score")
+    vpin_pressure = (z_signed.clip(-clip_z, clip_z) / clip_z).rename(
+        "vpin_directional_pressure"
+    )
+
+    o = pd.to_numeric(open, errors="coerce").astype(float)
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).fillna(atr.median()).clip(lower=eps)
+
+    if bool(use_range_disp):
+        disp = (h - l).abs()
+    else:
+        disp = (c - o).abs()
+    disp_atr = (disp / atr_s).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+    disp_norm = (disp_atr / disp_thr).clip(0.0, 1.0)
+
+    sr_weight = 1.0
+    if dist_to_nearest_sr is not None:
+        # dist_to_nearest_sr is pct; convert to ATR multiples: |dist|*price/atr
+        dist_pct = pd.to_numeric(dist_to_nearest_sr, errors="coerce").abs().astype(float)
+        abs_dist = dist_pct * c
+        dist_atr = (abs_dist / (atr_s + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        sr_thr = float(sr_prox_atr) if float(sr_prox_atr) > 0 else 1.5
+        sr_weight = (1.0 - (dist_atr / sr_thr).clip(0.0, 1.0)).fillna(0.0)
+
+    vpin_exhaustion = (vpin_stress * (1.0 - disp_norm) * sr_weight).rename(
+        "vpin_exhaustion_score"
+    )
+
+    return pd.DataFrame(
+        {
+            "vpin_stress_score": vpin_stress,
+            "vpin_directional_pressure": vpin_pressure,
+            "vpin_exhaustion_score": vpin_exhaustion,
+        }
+    )
+
+
+@register_feature("compute_vpin_scene_semantic_scores_from_series", category="interaction")
+def compute_vpin_scene_semantic_scores_from_series(
+    *,
+    vpin_zscore_50: pd.Series,
+    vpin_signed_imbalance_zscore_50: pd.Series,
+    open: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    # Context (optional, but strongly recommended)
+    compression_score: Optional[pd.Series] = None,
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    volume_anomaly: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+    # Params
+    clip_z: float = 5.0,
+    disp_atr_threshold: float = 0.5,
+    sr_prox_atr: float = 1.5,
+) -> pd.DataFrame:
+    """
+    VPIN multi-scene semantic mapping (Compression / Ignition / Absorption / Exhaustion).
+
+    Goal: keep *raw* VPIN stats out of the model and feed scene-aligned scores instead.
+
+    Outputs (all ~0..1):
+    - vpin_compression_score: high stress + low displacement + high compression (pressure building)
+    - vpin_ignition_score: high stress + high displacement (+ volume spike gate if provided)
+    - vpin_absorption_score: high stress + low displacement, weighted by SR proximity (near SR)
+    - vpin_exhaustion_scene_score: absorption-like but further weighted by (1 - trend_r2_20) if provided
+    """
+    eps = 1e-8
+    clip_z = float(clip_z) if float(clip_z) > 0 else 5.0
+    disp_thr = float(disp_atr_threshold) if float(disp_atr_threshold) > 0 else 0.5
+    sr_thr = float(sr_prox_atr) if float(sr_prox_atr) > 0 else 1.5
+
+    z = pd.to_numeric(vpin_zscore_50, errors="coerce").astype(float).fillna(0.0)
+    z_signed = (
+        pd.to_numeric(vpin_signed_imbalance_zscore_50, errors="coerce")
+        .astype(float)
+        .fillna(0.0)
+    )
+    stress = (z.abs().clip(0.0, clip_z) / clip_z).clip(0.0, 1.0)
+    _pressure = (z_signed.clip(-clip_z, clip_z) / clip_z).clip(-1.0, 1.0)
+
+    o = pd.to_numeric(open, errors="coerce").astype(float)
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).fillna(atr.median()).clip(lower=eps)
+
+    disp_atr = ((h - l).abs() / atr_s).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+    disp_norm = (disp_atr / disp_thr).clip(0.0, 1.0)
+    low_disp = (1.0 - disp_norm).clip(0.0, 1.0)
+    high_disp = disp_norm
+
+    comp_gate = 0.0
+    if compression_score is not None:
+        comp_gate = (
+            pd.to_numeric(compression_score, errors="coerce")
+            .astype(float)
+            .fillna(0.0)
+            .clip(0.0, 1.0)
+        )
+
+    sr_weight = 1.0
+    if dist_to_nearest_sr is not None:
+        # dist_to_nearest_sr is pct; convert to ATR multiples: |dist|*price/atr
+        dist_pct = pd.to_numeric(dist_to_nearest_sr, errors="coerce").abs().astype(float)
+        abs_dist = dist_pct * c
+        dist_atr = (abs_dist / (atr_s + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        sr_weight = (1.0 - (dist_atr / sr_thr).clip(0.0, 1.0)).fillna(0.0)
+
+    vol_gate = 1.0
+    if volume_anomaly is not None:
+        # volume_anomaly is z-like; map [-3,3] -> [0,1]
+        va = pd.to_numeric(volume_anomaly, errors="coerce").astype(float).fillna(0.0).clip(-3.0, 3.0)
+        vol_gate = ((va + 3.0) / 6.0).clip(0.0, 1.0)
+
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").astype(float).fillna(0.0).clip(0.0, 1.0)
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    vpin_compression = (stress * low_disp * comp_gate).rename("vpin_compression_score")
+    vpin_ignition = (stress * high_disp * vol_gate).rename("vpin_ignition_score")
+    vpin_absorption = (stress * low_disp * sr_weight).rename("vpin_absorption_score")
+    vpin_exhaustion_scene = (vpin_absorption * trend_end_gate).rename("vpin_exhaustion_scene_score")
+
+    return pd.DataFrame(
+        {
+            "vpin_compression_score": vpin_compression,
+            "vpin_ignition_score": vpin_ignition,
+            "vpin_absorption_score": vpin_absorption,
+            "vpin_exhaustion_scene_score": vpin_exhaustion_scene,
+        }
+    )
+
+
+@register_feature("compute_tbr_imbalance_semantic_scores_from_series", category="interaction")
+def compute_tbr_imbalance_semantic_scores_from_series(
+    *,
+    taker_buy_ratio: pd.Series,
+    compression_score: Optional[pd.Series],
+    open: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    clip_imb: float = 1.0,
+    disp_atr_threshold: float = 0.5,
+    use_range_disp: bool = True,
+) -> pd.DataFrame:
+    """
+    Bar-level imbalance semantic mapping using taker_buy_ratio (0..1):
+
+    - imbalance_ratio: (tbr-0.5)*2 in [-1,1]
+    - imbalance_exhaustion_score: |imbalance| high but displacement low, gated by compression_score
+    """
+    eps = 1e-8
+    disp_thr = float(disp_atr_threshold) if float(disp_atr_threshold) > 0 else 0.5
+    clip_imb = float(clip_imb) if float(clip_imb) > 0 else 1.0
+
+    tbr = pd.to_numeric(taker_buy_ratio, errors="coerce").astype(float).fillna(0.5)
+    imb = ((tbr - 0.5) * 2.0).clip(-clip_imb, clip_imb) / clip_imb
+    imb = imb.rename("imbalance_ratio")
+
+    o = pd.to_numeric(open, errors="coerce").astype(float)
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).fillna(atr.median()).clip(lower=eps)
+
+    if bool(use_range_disp):
+        disp = (h - l).abs()
+    else:
+        disp = (c - o).abs()
+    disp_atr = (disp / atr_s).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+    disp_norm = (disp_atr / disp_thr).clip(0.0, 1.0)
+
+    if compression_score is None:
+        comp_gate = 0.5
+    else:
+        comp_gate = (
+            pd.to_numeric(compression_score, errors="coerce")
+            .astype(float)
+            .fillna(0.0)
+            .clip(0.0, 1.0)
+        )
+
+    imb_exhaust = (imb.abs() * (1.0 - disp_norm) * comp_gate).rename(
+        "imbalance_exhaustion_score"
+    )
+
+    return pd.DataFrame(
+        {
+            "imbalance_ratio": imb,
+            "imbalance_exhaustion_score": imb_exhaust,
+        }
+    )
+
+
+@register_feature("compute_fp_imbalance_exhaustion_from_series", category="interaction")
+def compute_fp_imbalance_exhaustion_from_series(
+    *,
+    fp_max_imbalance_ratio: pd.Series,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    imb_threshold: float = 3.0,
+    imb_clip: float = 8.0,
+    disp_atr_threshold: float = 0.5,
+    sr_prox_atr: float = 1.5,
+) -> pd.DataFrame:
+    """
+    Footprint imbalance → exhaustion semantic (reversal-friendly).
+
+    Intuition:
+    - fp_max_imbalance_ratio is often trend/continuation when taken raw.
+    - Near SR, if imbalance is high but displacement is low → absorption/exhaustion → reversal-friendly.
+
+    score = imb_strength * (1 - disp_norm) * sr_weight
+      - imb_strength: normalize/clipped (>=imb_threshold gives positive strength)
+      - disp_norm: clip((|high-low|/ATR)/disp_atr_threshold, 0..1)
+      - sr_weight (optional): 1 - clip(dist_atr/sr_prox_atr, 0..1)
+    """
+    eps = 1e-8
+    imb_thr = float(imb_threshold) if float(imb_threshold) > 0 else 3.0
+    imb_clip_v = float(imb_clip) if float(imb_clip) > imb_thr else max(imb_thr + 1.0, 8.0)
+    disp_thr = float(disp_atr_threshold) if float(disp_atr_threshold) > 0 else 0.5
+
+    imb = pd.to_numeric(fp_max_imbalance_ratio, errors="coerce").astype(float).fillna(0.0)
+    imb = imb.clip(lower=0.0, upper=imb_clip_v)
+    imb_strength = ((imb - imb_thr) / (imb_clip_v - imb_thr + eps)).clip(0.0, 1.0)
+
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).fillna(atr.median()).clip(lower=eps)
+
+    disp_atr = ((h - l).abs() / atr_s).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+    disp_norm = (disp_atr / disp_thr).clip(0.0, 1.0)
+
+    sr_weight = 1.0
+    if dist_to_nearest_sr is not None:
+        dist_pct = pd.to_numeric(dist_to_nearest_sr, errors="coerce").abs().astype(float)
+        abs_dist = dist_pct * c
+        dist_atr = (abs_dist / (atr_s + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        sr_thr = float(sr_prox_atr) if float(sr_prox_atr) > 0 else 1.5
+        sr_weight = (1.0 - (dist_atr / sr_thr).clip(0.0, 1.0)).fillna(0.0)
+
+    out = (imb_strength * (1.0 - disp_norm) * sr_weight).rename("fp_imbalance_exhaustion_score")
+    return out.to_frame()
+
+
+@register_feature("compute_fp_imbalance_scene_semantic_scores_from_series", category="interaction")
+def compute_fp_imbalance_scene_semantic_scores_from_series(
+    *,
+    fp_max_imbalance_ratio: pd.Series,
+    open: Optional[pd.Series] = None,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    atr: pd.Series,
+    # Context (optional, but recommended)
+    compression_score: Optional[pd.Series] = None,
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    volume_anomaly: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+    # Params
+    imb_threshold: float = 3.0,
+    imb_clip: float = 8.0,
+    disp_atr_threshold: float = 0.5,
+    sr_prox_atr: float = 1.5,
+) -> pd.DataFrame:
+    """
+    Footprint max-imbalance multi-scene semantic mapping:
+
+    - fp_imbalance_compression_score: high imbalance + low displacement + high compression
+    - fp_imbalance_ignition_score: high imbalance + high displacement (+ volume spike gate if provided) (+ SR weight if provided)
+    - fp_imbalance_absorption_score: high imbalance + low displacement near SR
+    - fp_imbalance_exhaustion_scene_score: absorption-like but weighted by (1 - trend_r2_20) if provided
+    """
+    eps = 1e-8
+    imb_thr = float(imb_threshold) if float(imb_threshold) > 0 else 3.0
+    imb_clip_v = float(imb_clip) if float(imb_clip) > imb_thr else max(imb_thr + 1.0, 8.0)
+    disp_thr = float(disp_atr_threshold) if float(disp_atr_threshold) > 0 else 0.5
+    sr_thr = float(sr_prox_atr) if float(sr_prox_atr) > 0 else 1.5
+
+    imb = pd.to_numeric(fp_max_imbalance_ratio, errors="coerce").astype(float).fillna(0.0)
+    imb = imb.clip(lower=0.0, upper=imb_clip_v)
+    imb_strength = ((imb - imb_thr) / (imb_clip_v - imb_thr + eps)).clip(0.0, 1.0)
+
+    c = pd.to_numeric(close, errors="coerce").astype(float)
+    h = pd.to_numeric(high, errors="coerce").astype(float)
+    l = pd.to_numeric(low, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).fillna(atr.median()).clip(lower=eps)
+
+    disp_atr = ((h - l).abs() / atr_s).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+    disp_norm = (disp_atr / disp_thr).clip(0.0, 1.0)
+    low_disp = (1.0 - disp_norm).clip(0.0, 1.0)
+    high_disp = disp_norm
+
+    comp_gate = 0.0
+    if compression_score is not None:
+        comp_gate = (
+            pd.to_numeric(compression_score, errors="coerce")
+            .astype(float)
+            .fillna(0.0)
+            .clip(0.0, 1.0)
+        )
+
+    sr_weight = 1.0
+    if dist_to_nearest_sr is not None:
+        dist_pct = pd.to_numeric(dist_to_nearest_sr, errors="coerce").abs().astype(float)
+        abs_dist = dist_pct * c
+        dist_atr = (abs_dist / (atr_s + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        sr_weight = (1.0 - (dist_atr / sr_thr).clip(0.0, 1.0)).fillna(0.0)
+
+    vol_gate = 1.0
+    if volume_anomaly is not None:
+        va = pd.to_numeric(volume_anomaly, errors="coerce").astype(float).fillna(0.0).clip(-3.0, 3.0)
+        vol_gate = ((va + 3.0) / 6.0).clip(0.0, 1.0)
+
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").astype(float).fillna(0.0).clip(0.0, 1.0)
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    fp_compression = (imb_strength * low_disp * comp_gate).rename("fp_imbalance_compression_score")
+    fp_ignition = (imb_strength * high_disp * vol_gate * sr_weight).rename("fp_imbalance_ignition_score")
+    fp_absorption = (imb_strength * low_disp * sr_weight).rename("fp_imbalance_absorption_score")
+    fp_exhaustion_scene = (fp_absorption * trend_end_gate).rename("fp_imbalance_exhaustion_scene_score")
+
+    return pd.DataFrame(
+        {
+            "fp_imbalance_compression_score": fp_compression,
+            "fp_imbalance_ignition_score": fp_ignition,
+            "fp_imbalance_absorption_score": fp_absorption,
+            "fp_imbalance_exhaustion_scene_score": fp_exhaustion_scene,
+        }
+    )
+
+
+@register_feature("compute_trade_cluster_scene_semantic_scores_from_series", category="interaction")
+def compute_trade_cluster_scene_semantic_scores_from_series(
+    *,
+    trade_cluster_flow_intensity: pd.Series,
+    trade_cluster_absorption_score: pd.Series,
+    trade_cluster_exhaustion_score: pd.Series,
+    compression_score: Optional[pd.Series] = None,
+    volume_anomaly: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+) -> pd.DataFrame:
+    """
+    TradeCluster scene semantics built *on top of* existing TradeCluster semantic scores.
+
+    This avoids feeding raw trade_cluster_* stats and reuses:
+      - trade_cluster_absorption_score  (breakout/continuation-friendly)
+      - trade_cluster_exhaustion_score  (reversal-friendly)
+      - trade_cluster_flow_intensity    (activity/one-sidedness proxy)
+
+    Outputs (0..1):
+      - trade_cluster_compression_score
+      - trade_cluster_ignition_score
+      - trade_cluster_absorption_scene_score
+      - trade_cluster_exhaustion_scene_score
+    """
+    flow = pd.to_numeric(trade_cluster_flow_intensity, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    absorp = pd.to_numeric(trade_cluster_absorption_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    exhaust = pd.to_numeric(trade_cluster_exhaustion_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    comp_gate = 0.0
+    if compression_score is not None:
+        comp_gate = pd.to_numeric(compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    vol_gate = 1.0
+    if volume_anomaly is not None:
+        va = pd.to_numeric(volume_anomaly, errors="coerce").fillna(0.0).astype(float).clip(-3.0, 3.0)
+        vol_gate = ((va + 3.0) / 6.0).clip(0.0, 1.0)
+
+    trend_gate = 1.0
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+        trend_gate = r2
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    # Compression: "effort without progress" during compression regime
+    tc_compression = (exhaust * comp_gate).rename("trade_cluster_compression_score")
+    # Ignition: absorption + activity + volume gate
+    tc_ignition = (absorp * flow * vol_gate).clip(0.0, 1.0).rename("trade_cluster_ignition_score")
+    # Absorption/Continuation: emphasize trend regime
+    tc_absorption_scene = (absorp * trend_gate).rename("trade_cluster_absorption_scene_score")
+    # Exhaustion/Reversal: emphasize trend ending
+    tc_exhaustion_scene = (exhaust * trend_end_gate).rename("trade_cluster_exhaustion_scene_score")
+
+    return pd.DataFrame(
+        {
+            "trade_cluster_compression_score": tc_compression,
+            "trade_cluster_ignition_score": tc_ignition,
+            "trade_cluster_absorption_scene_score": tc_absorption_scene,
+            "trade_cluster_exhaustion_scene_score": tc_exhaustion_scene,
+        }
+    )
+
+
+@register_feature("compute_liquidity_void_scene_semantic_scores_from_series", category="interaction")
+def compute_liquidity_void_scene_semantic_scores_from_series(
+    *,
+    liquidity_void_detected: pd.Series,
+    liquidity_void_speed: pd.Series,
+    liquidity_void_price_impact: pd.Series,
+    liquidity_void_retracement: pd.Series,
+    liquidity_void_false_breakout_risk: pd.Series,
+    wpt_breakout_confidence: Optional[pd.Series] = None,
+    compression_score: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+    speed_scale: float = 3.0,
+    impact_scale: float = 3.0,
+) -> pd.DataFrame:
+    """
+    LiquidityVoid scene semantics (0..1) built from liquidity_void_* base features:
+      - compression: void detected + compression regime
+      - ignition: fast sweep with low fakeout risk (optionally reinforced by WPT breakout confidence)
+      - absorption/continuation: void detected + low retracement + trend regime
+      - exhaustion/fakeout: void detected + high fakeout risk + retracement
+    """
+    lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    speed = pd.to_numeric(liquidity_void_speed, errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
+    impact = pd.to_numeric(liquidity_void_price_impact, errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
+    retr = pd.to_numeric(liquidity_void_retracement, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    fake = pd.to_numeric(liquidity_void_false_breakout_risk, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    s_scale = float(speed_scale) if float(speed_scale) > 0 else 3.0
+    i_scale = float(impact_scale) if float(impact_scale) > 0 else 3.0
+    speed_norm = (speed / s_scale).clip(0.0, 1.0)
+    impact_norm = (impact / i_scale).clip(0.0, 1.0)
+
+    comp_gate = 0.0
+    if compression_score is not None:
+        comp_gate = pd.to_numeric(compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    trend_gate = 1.0
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+        trend_gate = r2
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    wpt_gate = 1.0
+    if wpt_breakout_confidence is not None:
+        wpt_gate = pd.to_numeric(wpt_breakout_confidence, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    lv_compression = (lv * comp_gate).rename("liquidity_void_compression_score")
+    lv_ignition = (lv * speed_norm * impact_norm * (1.0 - fake) * wpt_gate).rename("liquidity_void_ignition_score")
+    lv_absorption = (lv * (1.0 - retr) * (1.0 - fake) * trend_gate).rename("liquidity_void_absorption_score")
+    lv_exhaustion = (lv * retr * fake * trend_end_gate).rename("liquidity_void_exhaustion_score")
+
+    return pd.DataFrame(
+        {
+            "liquidity_void_compression_score": lv_compression,
+            "liquidity_void_ignition_score": lv_ignition,
+            "liquidity_void_absorption_score": lv_absorption,
+            "liquidity_void_exhaustion_score": lv_exhaustion,
+        }
+    )
+
+
+@register_feature("compute_wpt_scene_semantic_scores_from_series", category="interaction")
+def compute_wpt_scene_semantic_scores_from_series(
+    *,
+    wpt_breakout_confidence: pd.Series,
+    wpt_false_breakout_risk: pd.Series,
+    wpt_multi_scale_consistency: pd.Series,
+    wpt_energy_cascade: pd.Series,
+    compression_score: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+) -> pd.DataFrame:
+    """
+    WPT scene semantics (0..1):
+      - compression: high compression_score + high multi-scale consistency + *not yet* igniting
+      - ignition: breakout confidence gated by low false-breakout risk
+      - absorption/continuation: ignition * energy cascade (trend-strength proxy)
+      - exhaustion: false-breakout risk, emphasized when trend_r2 is low (trend ending)
+    """
+    bc = pd.to_numeric(wpt_breakout_confidence, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    fr = pd.to_numeric(wpt_false_breakout_risk, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    ms = pd.to_numeric(wpt_multi_scale_consistency, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    ec = pd.to_numeric(wpt_energy_cascade, errors="coerce").fillna(0.0).astype(float)
+    # energy cascade is often in [-1,1] like; map positive to [0,1]
+    ec_pos = ((ec + 1.0) / 2.0).clip(0.0, 1.0)
+
+    comp_gate = 0.0
+    if compression_score is not None:
+        comp_gate = pd.to_numeric(compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    wpt_compression = (comp_gate * ms * (1.0 - bc)).clip(0.0, 1.0).rename("wpt_compression_score")
+    wpt_ignition = (bc * (1.0 - fr)).clip(0.0, 1.0).rename("wpt_ignition_score")
+    wpt_absorption = (wpt_ignition * ec_pos).clip(0.0, 1.0).rename("wpt_absorption_score")
+    wpt_exhaustion = (fr * trend_end_gate).clip(0.0, 1.0).rename("wpt_exhaustion_score")
+
+    return pd.DataFrame(
+        {
+            "wpt_compression_score": wpt_compression,
+            "wpt_ignition_score": wpt_ignition,
+            "wpt_absorption_score": wpt_absorption,
+            "wpt_exhaustion_score": wpt_exhaustion,
+        }
+    )
+
+
+@register_feature("compute_volume_profile_scene_semantic_scores_from_series", category="interaction")
+def compute_volume_profile_scene_semantic_scores_from_series(
+    *,
+    vp_width_ratio: pd.Series,
+    vp_poc_deviation: pd.Series,
+    vp_entropy: pd.Series,
+    vp_lv_ratio: pd.Series,
+    vp_hv_ratio: pd.Series,
+    trend_r2_20: Optional[pd.Series] = None,
+    entropy_scale: float = 2.0,
+    poc_dev_scale: float = 2.0,
+) -> pd.DataFrame:
+    """
+    Volume-profile scene semantics (0..1) derived from VPVR/VP features:
+      - compression: narrow value area + low entropy (consensus + tight)
+      - ignition: leaving value (POC deviation) + LV ratio (thin zone traversal proxy)
+      - absorption/continuation: low entropy + wide/accepted value area + trend regime
+      - exhaustion: high HV ratio (wall/acceptance) + trend ending
+    """
+    width = pd.to_numeric(vp_width_ratio, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    poc_dev = pd.to_numeric(vp_poc_deviation, errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
+    ent = pd.to_numeric(vp_entropy, errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
+    lv = pd.to_numeric(vp_lv_ratio, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    hv = pd.to_numeric(vp_hv_ratio, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    e_scale = float(entropy_scale) if float(entropy_scale) > 0 else 2.0
+    d_scale = float(poc_dev_scale) if float(poc_dev_scale) > 0 else 2.0
+    ent_norm = (ent / e_scale).clip(0.0, 1.0)
+    poc_norm = (poc_dev / d_scale).clip(0.0, 1.0)
+
+    trend_gate = 1.0
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+        trend_gate = r2
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    vp_compression = ((1.0 - width) * (1.0 - ent_norm)).clip(0.0, 1.0).rename("vp_compression_score")
+    vp_ignition = (poc_norm * lv).clip(0.0, 1.0).rename("vp_ignition_score")
+    vp_absorption = ((1.0 - ent_norm) * width * trend_gate).clip(0.0, 1.0).rename("vp_absorption_score")
+    vp_exhaustion = (hv * trend_end_gate).clip(0.0, 1.0).rename("vp_exhaustion_score")
+
+    return pd.DataFrame(
+        {
+            "vp_compression_score": vp_compression,
+            "vp_ignition_score": vp_ignition,
+            "vp_absorption_score": vp_absorption,
+            "vp_exhaustion_score": vp_exhaustion,
+        }
+    )
+
+
+@register_feature("compute_wick_scene_semantic_scores_from_series", category="interaction")
+def compute_wick_scene_semantic_scores_from_series(
+    *,
+    wick_upper_ratio: pd.Series,
+    wick_lower_ratio: pd.Series,
+    compression_score: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+) -> pd.DataFrame:
+    """
+    Wick-based scene semantics (0..1).
+
+    This is a cheap proxy (no ticks) for rejection/failed breakouts:
+      - compression: small wicks + compression regime (quiet)
+      - ignition: small wicks + trend regime (clean impulse)
+      - absorption/continuation: small wicks + trend regime (follow-through)
+      - exhaustion: large wicks + trend ending (rejection)
+    """
+    wu = pd.to_numeric(wick_upper_ratio, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    wl = pd.to_numeric(wick_lower_ratio, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    rej = pd.concat([wu, wl], axis=1).max(axis=1).clip(0.0, 1.0)
+    calm = (1.0 - rej).clip(0.0, 1.0)
+
+    comp_gate = 0.0
+    if compression_score is not None:
+        comp_gate = pd.to_numeric(compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+
+    trend_gate = 1.0
+    trend_end_gate = 1.0
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+        trend_gate = r2
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+
+    wick_compression = (calm * comp_gate).rename("wick_compression_score")
+    wick_ignition = (calm * trend_gate).rename("wick_ignition_score")
+    wick_absorption = (calm * trend_gate).rename("wick_absorption_score")
+    wick_exhaustion = (rej * trend_end_gate).rename("wick_exhaustion_score")
+
+    return pd.DataFrame(
+        {
+            "wick_compression_score": wick_compression,
+            "wick_ignition_score": wick_ignition,
+            "wick_absorption_score": wick_absorption,
+            "wick_exhaustion_score": wick_exhaustion,
+        }
+    )
+
+
+@register_feature("compute_cvd_divergence_from_series", category="interaction")
+def compute_cvd_divergence_from_series(
+    *,
+    close: pd.Series,
+    cvd: pd.Series,
+    window: int = 50,
+    eps_pct: float = 0.001,
+) -> pd.DataFrame:
+    """
+    CVD divergence semantic (reversal-friendly):
+
+    - bullish_divergence: price makes (near) new low but CVD does NOT make new low
+    - bearish_divergence: price makes (near) new high but CVD does NOT make new high
+
+    Returns three columns:
+    - cvd_bullish_divergence (0/1)
+    - cvd_bearish_divergence (0/1)
+    - cvd_divergence_strength (0..1) simple strength proxy
+    """
+    w = int(window) if int(window) > 5 else 50
+    price = pd.to_numeric(close, errors="coerce").astype(float)
+    cvd_s = pd.to_numeric(cvd, errors="coerce").astype(float)
+
+    roll_min_p = price.rolling(window=w, min_periods=max(10, w // 3)).min()
+    roll_max_p = price.rolling(window=w, min_periods=max(10, w // 3)).max()
+    roll_min_c = cvd_s.rolling(window=w, min_periods=max(10, w // 3)).min()
+    roll_max_c = cvd_s.rolling(window=w, min_periods=max(10, w // 3)).max()
+
+    eps = float(eps_pct) if float(eps_pct) > 0 else 0.001
+    near_new_low = price <= (roll_min_p * (1.0 + eps))
+    near_new_high = price >= (roll_max_p * (1.0 - eps))
+
+    # Divergence condition: price at extreme but CVD not at corresponding extreme
+    cvd_not_new_low = cvd_s > (roll_min_c * (1.0 + eps))
+    cvd_not_new_high = cvd_s < (roll_max_c * (1.0 - eps))
+
+    bull = (near_new_low & cvd_not_new_low).fillna(False).astype(float).rename("cvd_bullish_divergence")
+    bear = (near_new_high & cvd_not_new_high).fillna(False).astype(float).rename("cvd_bearish_divergence")
+
+    # Strength proxy: normalized gap between current CVD and rolling extreme when divergence triggers
+    denom = (roll_max_c - roll_min_c).replace(0.0, np.nan)
+    bull_gap = ((cvd_s - roll_min_c) / denom).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(0.0, 1.0)
+    bear_gap = ((roll_max_c - cvd_s) / denom).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(0.0, 1.0)
+    strength = (bull * bull_gap + bear * bear_gap).rename("cvd_divergence_strength")
+
+    return pd.DataFrame(
+        {
+            "cvd_bullish_divergence": bull,
+            "cvd_bearish_divergence": bear,
+            "cvd_divergence_strength": strength,
+        }
+    )
+
+
 @register_feature("compute_compression_energy_x_ofi_short", category="interaction")
 def compute_compression_energy_x_ofi_short(
     df: pd.DataFrame,
