@@ -93,13 +93,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    args = parse_args()
+    cfg_dir = Path(args.config).resolve()
     if (
         isinstance(args.features_store_layer, str)
         and args.features_store_layer.upper() == "AUTO"
     ):
         args.features_store_layer = default_layer_from_config(cfg_dir)
-    args = parse_args()
-    cfg_dir = Path(args.config).resolve()
     loader = StrategyConfigLoader(cfg_dir)
     cfg = loader.load()
 

@@ -984,7 +984,6 @@ mlbot train sr-reversal-long \
   --symbol BTCUSDT \
   --timeframe 240T \
   --data-path data/parquet_data \
-  --use-feature-store \
   --feature-store-dir feature_store \
   --feature-store-layer AUTO \
   --no-docker
@@ -998,7 +997,6 @@ mlbot nnmultihead train \
   --timeframe 240T \
   --data-path data/parquet_data \
   --config config/nnmultihead/path_primitives_4h_80h_min \
-  --use-feature-store \
   --feature-store-root feature_store \
   --feature-store-layer AUTO \
   --epochs 10 \
@@ -1014,7 +1012,6 @@ mlbot nnmultihead predict \
   --timeframe 240T \
   --data-path data/parquet_data \
   --config config/nnmultihead/path_primitives_4h_80h_min \
-  --use-feature-store \
   --feature-store-root feature_store \
   --feature-store-layer AUTO \
   --model results/nnmultihead/.../model.pt \

@@ -247,10 +247,11 @@ def _build_call_args(
 def _get_monthly_cache_key(
     feature_name: str,
     month_key: str,
-    df_sig: str,
     cache_version: str,
     fit: bool,
     compute_params: Dict,
+    *,
+    data_id: str = "unknown",
 ) -> str:
     """
     生成月度缓存键
@@ -266,16 +267,29 @@ def _get_monthly_cache_key(
     Returns:
         cache_key: 缓存键字符串
     """
-    # 构建参数签名（用于区分不同的参数配置）
-    params_sig = hashlib.md5(
-        str(sorted(compute_params.items())).encode()
-    ).hexdigest()[:8]
+    # Build a stable param signature.
+    # IMPORTANT: strip volatile runtime params (e.g. ticks_loader_json) that would
+    # destroy cache hit-rate across processes/runs for the same month.
+    volatile_keys = {
+        "ticks_loader_json",
+        "ticks_dir",
+        "lookback_minutes",
+    }
+    stable_items = []
+    try:
+        for k, v in sorted((compute_params or {}).items()):
+            if k in volatile_keys:
+                continue
+            stable_items.append((k, v))
+    except Exception:
+        stable_items = []
+    params_sig = hashlib.md5(str(stable_items).encode()).hexdigest()[:8]
 
     # 构建缓存键
     key_parts = [
         feature_name,
         month_key,
-        df_sig[:16],  # 使用前16个字符
+        data_id,
         cache_version,
         "fit" if fit else "predict",
         params_sig,
@@ -580,8 +594,30 @@ class FeatureComputer:
             result = compute_func(*call_args, **call_kwargs)
             return result
 
-        # 获取 DataFrame 签名（用于区分不同的数据集）
-        df_sig = self._get_df_signature(df)
+        # Stable dataset id for cache keys.
+        # Goal: cache should hit across runs even if caller passes a larger warmup window,
+        # as long as the per-month slice is identical for the same symbol/timeframe.
+        sym = None
+        try:
+            if "_symbol" in df.columns:
+                uniq = pd.Series(df["_symbol"]).dropna().astype(str).unique().tolist()
+                if len(uniq) == 1:
+                    sym = uniq[0]
+                elif len(uniq) > 1:
+                    sym = "multi_" + hashlib.md5(
+                        ("|".join(sorted(uniq))).encode()
+                    ).hexdigest()[:8]
+            if sym is None and "symbol" in df.columns:
+                uniq = pd.Series(df["symbol"]).dropna().astype(str).unique().tolist()
+                if len(uniq) == 1:
+                    sym = uniq[0]
+                elif len(uniq) > 1:
+                    sym = "multi_" + hashlib.md5(
+                        ("|".join(sorted(uniq))).encode()
+                    ).hexdigest()[:8]
+        except Exception:
+            sym = None
+        data_id = f"sym={sym or 'unknown'}"
 
         # 按月分组
         monthly_groups = df.groupby(pd.Grouper(freq="M"))
@@ -601,10 +637,10 @@ class FeatureComputer:
             monthly_cache_key = _get_monthly_cache_key(
                 feature_name=feature_name,
                 month_key=month_str,
-                df_sig=df_sig,
                 cache_version=self.cache_version,
                 fit=True,  # 月度缓存不区分 fit/predict
                 compute_params=compute_params,
+                data_id=data_id,
             )
 
             # 尝试加载缓存
@@ -986,38 +1022,16 @@ class FeatureComputer:
                 if self.use_monthly_cache and self.monthly_cache_dir:
                     # 使用月度缓存计算
                     print(f"     🔸 Running {feature_name} sequentially (monthly)")
-                    # 检查内存是否足够
-                    if self.max_workers == 1 and PSUTIL_AVAILABLE:
-                        available_gb = (
-                            psutil.virtual_memory().available / 1024**3
-                        )
-                        if len(result_df) < 10000 or available_gb > 10:
-                            print(
-                                f"     ⚡ Using full-data computation (memory: {available_gb:.1f}GB available, data: {len(result_df)} rows)"
-                            )
-                            # 直接计算全量数据（不使用月度缓存）
-                            call_args, call_kwargs = _build_call_args(
-                                feature_info, result_df, feature_name
-                            )
-                            combined_result = compute_func(*call_args, **call_kwargs)
-                        else:
-                            # 使用月度缓存
-                            combined_result = self._compute_and_cache_monthly(
-                                feature_name,
-                                result_df,
-                                compute_params,
-                                feature_info,
-                                compute_func,
-                            )
-                    else:
-                        # 使用月度缓存
-                        combined_result = self._compute_and_cache_monthly(
-                            feature_name,
-                            result_df,
-                            compute_params,
-                            feature_info,
-                            compute_func,
-                        )
+                    # Always use monthly cache path (even for small DataFrames).
+                    # Rationale: the goal of monthly caching is cross-run reuse; bypassing it
+                    # destroys cache hit-rate in multi-seed / multi-step workflows.
+                    combined_result = self._compute_and_cache_monthly(
+                        feature_name,
+                        result_df,
+                        compute_params,
+                        feature_info,
+                        compute_func,
+                    )
 
                     # 验证合并后的cache数据质量
                     self._validate_cache_quality(

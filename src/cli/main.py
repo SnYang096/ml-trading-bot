@@ -1090,14 +1090,9 @@ def rl_run_e2e_3action(
 @click.option("--dropout", type=float, default=0.1, help="Dropout")
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
 @click.option(
-    "--use-feature-store/--no-feature-store",
-    default=False,
-    help="Use FeatureStore (monthly) for features. Default is OFF because nnmultihead already reuses FeatureComputer monthly cache (compute-on-demand).",
-)
-@click.option(
     "--feature-store-layer",
     default="AUTO",
-    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config). Used only if --use-feature-store is enabled.",
+    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config).",
 )
 @click.option(
     "--feature-store-root",
@@ -1126,7 +1121,6 @@ def nnmultihead_train(
     depth,
     dropout,
     device,
-    use_feature_store,
     feature_store_layer,
     feature_store_root,
     output_dir,
@@ -1168,16 +1162,15 @@ def nnmultihead_train(
         args.extend(["--end-date", end_date])
     if device:
         args.extend(["--device", device])
-    if use_feature_store:
-        args.extend(["--features-store-layer", feature_store_layer])
-        args.extend(
-            [
-                "--features-store-root",
-                f"/workspace/{feature_store_root}"
-                if use_workspace_prefix
-                else feature_store_root,
-            ]
-        )
+    # Always use FeatureStore (monthly) for nnmultihead (fast + consistent).
+    # NOTE: underlying scripts use '--features-store-layer/--features-store-root'.
+    args.extend(["--features-store-layer", feature_store_layer])
+    args.extend(
+        [
+            "--features-store-root",
+            f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        ]
+    )
 
     sys.exit(run_script("scripts/train_path_primitives_mlp.py", args, docker=docker))
 
@@ -1198,14 +1191,9 @@ def nnmultihead_train(
 @click.option("--output", "output_path", required=True, help="Output path (.parquet or .csv)")
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
 @click.option(
-    "--use-feature-store/--no-feature-store",
-    default=False,
-    help="Use FeatureStore (monthly) for features. Default is OFF because nnmultihead already reuses FeatureComputer monthly cache (compute-on-demand).",
-)
-@click.option(
     "--feature-store-layer",
     default="AUTO",
-    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config). Used only if --use-feature-store is enabled.",
+    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config).",
 )
 @click.option(
     "--feature-store-root",
@@ -1223,7 +1211,6 @@ def nnmultihead_predict(
     model_path,
     output_path,
     device,
-    use_feature_store,
     feature_store_layer,
     feature_store_root,
     docker,
@@ -1250,16 +1237,14 @@ def nnmultihead_predict(
         args.extend(["--end-date", end_date])
     if device:
         args.extend(["--device", device])
-    if use_feature_store:
-        args.extend(["--features-store-layer", feature_store_layer])
-        args.extend(
-            [
-                "--features-store-root",
-                f"/workspace/{feature_store_root}"
-                if use_workspace_prefix
-                else feature_store_root,
-            ]
-        )
+    # Always use FeatureStore (monthly) for nnmultihead (fast + consistent).
+    args.extend(["--features-store-layer", feature_store_layer])
+    args.extend(
+        [
+            "--features-store-root",
+            f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        ]
+    )
 
     sys.exit(run_script("scripts/predict_path_primitives_mlp.py", args, docker=docker))
 
@@ -1411,7 +1396,6 @@ def _train_strategy_pipeline(
     output_root,
     docker,
     *,
-    use_feature_store: bool,
     feature_store_dir: str,
     feature_store_layer: str,
 ):
@@ -1432,18 +1416,16 @@ def _train_strategy_pipeline(
         "--output-root",
         f"/workspace/{output_root}" if use_workspace_prefix else output_root,
     ]
-    if use_feature_store:
-        args.extend(["--use-feature-store"])
-        args.extend(
-            [
-                "--feature-store-dir",
-                f"/workspace/{feature_store_dir}"
-                if use_workspace_prefix
-                else feature_store_dir,
-                "--feature-store-layer",
-                feature_store_layer,
-            ]
-        )
+    # FeatureStore is always enabled by train_strategy_pipeline.py.
+    # We keep feature-store-dir/layer so users can override location/layer if needed.
+    args.extend(
+        [
+            "--feature-store-dir",
+            f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
+            "--feature-store-layer",
+            feature_store_layer,
+        ]
+    )
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
@@ -1454,7 +1436,6 @@ def _train_strategy_pipeline(
 )
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
-@click.option("--use-feature-store", is_flag=True, help="Prefer FeatureStore wide-table for features (fallback to compute).")
 @click.option("--feature-store-dir", default="feature_store")
 @click.option("--feature-store-layer", default="AUTO")
 @click.option(
@@ -1464,7 +1445,7 @@ def _train_strategy_pipeline(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def train_sr_reversal_long(
-    symbol, timeframe, data_path, test_size, use_feature_store, feature_store_dir, feature_store_layer, output_root, docker
+    symbol, timeframe, data_path, test_size, feature_store_dir, feature_store_layer, output_root, docker
 ):
     """Train SR Reversal Long-only model (direction-fixed)."""
     _train_strategy_pipeline(
@@ -1475,7 +1456,6 @@ def train_sr_reversal_long(
         test_size=test_size,
         output_root=output_root,
         docker=docker,
-        use_feature_store=bool(use_feature_store),
         feature_store_dir=str(feature_store_dir),
         feature_store_layer=str(feature_store_layer),
     )
@@ -1488,7 +1468,6 @@ def train_sr_reversal_long(
 )
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
-@click.option("--use-feature-store", is_flag=True, help="Prefer FeatureStore wide-table for features (fallback to compute).")
 @click.option("--feature-store-dir", default="feature_store")
 @click.option("--feature-store-layer", default="AUTO")
 @click.option(
@@ -1498,7 +1477,7 @@ def train_sr_reversal_long(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def train_sr_reversal_short(
-    symbol, timeframe, data_path, test_size, use_feature_store, feature_store_dir, feature_store_layer, output_root, docker
+    symbol, timeframe, data_path, test_size, feature_store_dir, feature_store_layer, output_root, docker
 ):
     """Train SR Reversal Short-only model (direction-fixed)."""
     _train_strategy_pipeline(
@@ -1509,7 +1488,6 @@ def train_sr_reversal_short(
         test_size=test_size,
         output_root=output_root,
         docker=docker,
-        use_feature_store=bool(use_feature_store),
         feature_store_dir=str(feature_store_dir),
         feature_store_layer=str(feature_store_layer),
     )

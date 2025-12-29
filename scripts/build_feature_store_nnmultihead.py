@@ -95,6 +95,7 @@ def main() -> None:
         raise ValueError("No symbols provided.")
 
     feature_loader = StrategyFeatureLoader()
+    feature_cache_version = getattr(feature_loader.computer, "cache_version", None)
     feature_cols_union: List[str] = []
 
     for sym in symbols:
@@ -188,6 +189,7 @@ def main() -> None:
                     "config_dir": str(cfg_dir),
                     "warmup_months": warmup_months,
                     "warmup_bars": warmup_bars,
+                    "feature_cache_version": feature_cache_version,
                 },
             )
 

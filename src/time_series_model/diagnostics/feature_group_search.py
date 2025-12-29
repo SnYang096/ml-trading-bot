@@ -203,6 +203,28 @@ def _run_one_seed(
     if cfg.deterministic:
         args.append("--deterministic")
 
+    # Performance: enable FeatureStore (wide table) so multi-seed and multi-step searches
+    # don't re-compute features from scratch for every run.
+    #
+    # IMPORTANT: Use a stable layer derived from the BASE strategy dir (not the tmp variant dir),
+    # so different candidate combinations share the same FeatureStore dataset and can incrementally
+    # fill missing columns (without clobbering existing ones).
+    try:
+        from src.feature_store.layer_naming import default_layer_from_config
+
+        fs_layer = default_layer_from_config(cfg.base_strategy_dir)
+        args.extend(
+            [
+                "--feature-store-dir",
+                "feature_store",
+                "--feature-store-layer",
+                str(fs_layer),
+            ]
+        )
+    except Exception:
+        # Never fail the search due to optional perf optimization.
+        pass
+
     cmd = ["python3", "scripts/train_strategy_pipeline.py"] + args
     env = os.environ.copy()
     # Train pipeline supports optional cropping via env vars.

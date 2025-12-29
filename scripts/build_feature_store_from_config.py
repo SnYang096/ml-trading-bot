@@ -77,6 +77,7 @@ def main() -> None:
 
     # IMPORTANT: disable FeatureComputer's own monthly cache so warmup context can flow across month boundaries.
     feature_loader = StrategyFeatureLoader(use_monthly_cache=False)
+    feature_cache_version = getattr(feature_loader.computer, "cache_version", None)
     requested = cfg.features.requested_features
 
     for sym in symbols:
@@ -147,6 +148,7 @@ def main() -> None:
                     "warmup_months": warmup_months,
                     "warmup_bars": warmup_bars,
                     "requested_features": requested,
+                    "feature_cache_version": feature_cache_version,
                 },
             )
         print("✅ Saved FeatureStore:", spec)

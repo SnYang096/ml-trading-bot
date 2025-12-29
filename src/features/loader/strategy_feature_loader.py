@@ -578,6 +578,9 @@ class StrategyFeatureLoader:
                             base_columns=base_cols,
                             feature_columns=feat_cols,
                             overwrite=overwrite,
+                            # When we need to fill missing columns, merge into existing month partition
+                            # instead of clobbering previously materialized columns.
+                            merge_existing=True,
                             metadata={
                                 "auto_materialized": True,
                                 "feature_cache_version": getattr(

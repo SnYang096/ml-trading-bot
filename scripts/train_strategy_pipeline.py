@@ -98,11 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframe", type=str, default="15T")
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument("--output-root", type=str, default="results/strategies")
-    parser.add_argument(
-        "--use-feature-store",
-        action="store_true",
-        help="Try reading required feature columns from FeatureStore first (fallback to compute if missing).",
-    )
+    # FeatureStore is always enabled for tree training (read-first + auto materialize on miss).
     parser.add_argument(
         "--feature-store-dir",
         type=str,
@@ -1316,16 +1312,14 @@ def train_strategy(
     symbol_list = [s.strip() for s in str(args.symbol).split(",") if s.strip()]
     is_multi_symbol = len(symbol_list) > 1
 
-    fs_dir = None
-    fs_layer = None
-    if getattr(args, "use_feature_store", False):
-        fs_dir = str(getattr(args, "feature_store_dir", "feature_store"))
-        raw_layer = str(getattr(args, "feature_store_layer", "AUTO"))
-        fs_layer = (
-            default_layer_from_config(config_dir)
-            if raw_layer.upper() == "AUTO"
-            else raw_layer
-        )
+    # FeatureStore is always enabled (read-first + auto materialize on miss).
+    fs_dir = str(getattr(args, "feature_store_dir", "feature_store"))
+    raw_layer = str(getattr(args, "feature_store_layer", "AUTO"))
+    fs_layer = (
+        default_layer_from_config(config_dir)
+        if raw_layer.upper() == "AUTO"
+        else raw_layer
+    )
 
     def _crop_df_by_env_dates(df_in: pd.DataFrame) -> pd.DataFrame:
         # Optional date cropping to align with available tick data or focus window
