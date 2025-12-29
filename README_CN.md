@@ -945,6 +945,51 @@ mlbot rl exec chaos-test \
   --no-docker
 ```
 
+### 0)（推荐）先构建 FeatureStore 宽表库：一次算好特征，后续训练/回测直接读（尤其含 ticks）
+
+FeatureStore 是 **按月分区的“特征宽表”**（不是 `cache/features/*` 的计算缓存）。构建一次后：
+- tree 策略训练可优先从 FeatureStore 取特征（缺列再回退到计算+缓存）
+- nnmultihead 训练/推理可直接读 FeatureStore（不重复跑 feature pipeline）
+
+示例（对 nnmultihead 的 config 生成 FeatureStore；`--layer AUTO` 会根据 config 内容生成稳定 id）：
+
+```bash
+mlbot feature-store build \
+  --config config/nnmultihead/path_primitives_4h_80h_min \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --root feature_store \
+  --layer AUTO \
+  --no-docker
+```
+
+示例（对树模型策略 config 生成 FeatureStore）：
+
+```bash
+mlbot feature-store build \
+  --config config/strategies/sr_reversal_long \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --root feature_store \
+  --layer AUTO \
+  --no-docker
+```
+
+tree 训练优先读 FeatureStore（缺列回退到计算缓存）：
+
+```bash
+mlbot train sr-reversal-long \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --data-path data/parquet_data \
+  --use-feature-store \
+  --feature-store-dir feature_store \
+  --feature-store-layer AUTO \
+  --no-docker
+```
+
 ### 1) 训练 NN 多头（可选：你已经有模型就跳过）
 
 ```bash
@@ -953,6 +998,9 @@ mlbot nnmultihead train \
   --timeframe 240T \
   --data-path data/parquet_data \
   --config config/nnmultihead/path_primitives_4h_80h_min \
+  --use-feature-store \
+  --feature-store-root feature_store \
+  --feature-store-layer AUTO \
   --epochs 10 \
   --output-dir results/nnmultihead \
   --no-docker
@@ -966,6 +1014,9 @@ mlbot nnmultihead predict \
   --timeframe 240T \
   --data-path data/parquet_data \
   --config config/nnmultihead/path_primitives_4h_80h_min \
+  --use-feature-store \
+  --feature-store-root feature_store \
+  --feature-store-layer AUTO \
   --model results/nnmultihead/.../model.pt \
   --output results/nnmultihead/preds_multi \
   --no-docker

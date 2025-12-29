@@ -28,6 +28,7 @@ class StrategyFeatureLoader:
         cache_dir: Optional[str] = "cache/features",
         use_disk_cache: bool = True,
         use_memory_cache: bool = True,
+        use_monthly_cache: bool = True,
         max_workers: Optional[int] = None,
         parallel_backend: str = "process",
     ):
@@ -55,6 +56,7 @@ class StrategyFeatureLoader:
             cache_dir=cache_dir,
             use_disk_cache=use_disk_cache,
             use_memory_cache=use_memory_cache,
+            use_monthly_cache=use_monthly_cache,
             max_workers=max_workers,
             parallel_backend=parallel_backend,
         )
@@ -293,6 +295,8 @@ class StrategyFeatureLoader:
 
         # Optional (Plan B): load from FeatureStore if available.
         # This is best-effort and opt-in; fallback to compute if anything is missing.
+        store = None
+        spec = None
         if (
             feature_store_dir
             and feature_store_layer
@@ -313,6 +317,29 @@ class StrategyFeatureLoader:
                     symbol=feature_store_symbol,
                     timeframe=feature_store_timeframe,
                 )
+                # Version gate: if FeatureComputer cache_version changed, treat existing FeatureStore partitions as stale.
+                expected_cache_version = getattr(self.computer, "cache_version", None)
+                months = pd.period_range(
+                    start=result_df.index.min(), end=result_df.index.max(), freq="M"
+                )
+                stale = False
+                if expected_cache_version is not None:
+                    for p in months:
+                        month = f"{p.year:04d}-{p.month:02d}"
+                        if not store.has_month(spec, month):
+                            continue
+                        try:
+                            meta = store.read_month_meta(spec, month)
+                            md = meta.get("metadata", {}) or {}
+                            if md.get("feature_cache_version") != expected_cache_version:
+                                stale = True
+                                break
+                        except Exception:
+                            stale = True
+                            break
+
+                if stale:
+                    raise ValueError("stale feature store month partition(s)")
                 df_store = store.read_range(
                     spec, result_df.index.min(), result_df.index.max()
                 )
@@ -494,6 +521,73 @@ class StrategyFeatureLoader:
             if feature_name in features:
                 feature_info = features[feature_name]
                 output_cols.extend(feature_info.get("output_columns", [feature_name]))
+
+        # Auto materialize FeatureStore (wide table) when FeatureStore args were provided:
+        # - try read -> if missing -> compute (using FeatureComputer caches) -> write monthly partitions
+        if (
+            store is not None
+            and spec is not None
+            and output_cols
+            and isinstance(result_df.index, pd.DatetimeIndex)
+            and len(result_df) > 0
+        ):
+            try:
+                # Base columns to persist (only keep what exists)
+                base_cols = [
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "_symbol",
+                    "symbol",
+                    "datetime",
+                    "timestamp",
+                    "date",
+                ]
+                base_cols = [c for c in base_cols if c in result_df.columns]
+                feat_cols = [c for c in output_cols if c in result_df.columns]
+
+                if base_cols and feat_cols:
+                    df_sorted = result_df.sort_index()
+                    for period, df_month in df_sorted.groupby(pd.Grouper(freq="M")):
+                        if df_month.empty:
+                            continue
+                        month_str = period.strftime("%Y-%m")
+                        overwrite = False
+                        if store.has_month(spec, month_str):
+                            # If existing partition is missing any required feature cols, overwrite to fill.
+                            try:
+                                _ = store.read_month(spec, month_str, columns=feat_cols)
+                            except Exception:
+                                overwrite = True
+                            # If existing partition was built with a different FeatureComputer cache_version, overwrite.
+                            try:
+                                meta = store.read_month_meta(spec, month_str)
+                                md = meta.get("metadata", {}) or {}
+                                if md.get("feature_cache_version") != getattr(
+                                    self.computer, "cache_version", None
+                                ):
+                                    overwrite = True
+                            except Exception:
+                                overwrite = True
+                        store.write_month(
+                            spec,
+                            month_str,
+                            df_month,
+                            base_columns=base_cols,
+                            feature_columns=feat_cols,
+                            overwrite=overwrite,
+                            metadata={
+                                "auto_materialized": True,
+                                "feature_cache_version": getattr(
+                                    self.computer, "cache_version", None
+                                ),
+                            },
+                        )
+            except Exception:
+                # Never break the caller if FeatureStore materialization fails.
+                pass
 
         # Avoid huge allocations from pandas block copies when slicing columns.
         # Also protect against duplicate column names leaking in from upstream merges.

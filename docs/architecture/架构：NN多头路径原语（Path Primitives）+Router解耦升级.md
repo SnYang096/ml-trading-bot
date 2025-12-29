@@ -205,6 +205,54 @@ Portfolio Construction
 - **阶段 1（稳健性验证）**：再把 **Hyperliquid / dYdX** 作为“跨平台压力测试与可迁移性验证”。  
 - **阶段 2（扩展交易风格）**：当你要做 carry/基差/协议机制类策略时，再考虑 Synthetix 这类平台。
 
+#### 2.2.4.2 回测用 VectorBT 还是 NautilusTrader？（研究效率 vs 执行一致性）
+
+你的担心很真实：**“研究回测快”** 与 **“实盘一致性强”** 往往是一对 trade-off。建议按阶段拆分，而不是二选一。
+
+- **VectorBT（向量化回测）更适合：研究/迭代/扫参**
+  - 优点：速度快、易批量跑、适合做 walk-forward 与参数 sweep；与向量化特征工程天然契合。
+  - 风险：如果你把执行细节（撮合/部分成交/延迟/滑点/订单生命周期）简化得过头，会出现“回测很美、实盘翻车”。
+
+- **NautilusTrader（事件驱动/撮合一致性）更适合：上线前验证/影子/实盘同逻辑**
+  - 优点：框架目标就是“回测与实盘一致”，适合做最终的执行一致性验收（尤其是订单生命周期、风控、异常处理）。
+  - 风险：性能与工程复杂度更高；如果你把大量向量化特征全搬到实时流式计算，会拖垮系统或引入大量工程成本。
+
+**务实结论（最推荐的生产路线）**：
+
+- **阶段 0（先打穿闭环）**：继续用 **VectorBT** 做主回测/调参/对比（快）  
+  - 同时把 execution 假设写死（成本/滑点/RR/最长持仓/入场延迟），并用 `exec-control` 做 invariants 检查。
+- **阶段 1（上线前验收）**：引入 **NautilusTrader 作为“最终一致性裁判”**  
+  - 不要求把所有特征都实时流式算：  
+    - **可选方案 A（最省事）**：离线预计算 features/heads（或最小必要指标）→ 按 bar 喂给 Nautilus 的策略执行层（只做决策与下单）  
+    - **可选方案 B（更一致）**：只把“少量必须实时”的执行相关指标做增量计算，其余仍离线
+
+一句话：  
+> **VectorBT = 研究与迭代发动机；NautilusTrader = 上线前执行一致性验收台。**
+
+#### 2.2.4.3 数据源与下单 API：官方 vs 第三方（AllTicks 等）怎么选？
+
+你现在是 **4H 决策频率**，所以首要原则是：先把“闭环跑通 + 口径固定 + 上线闸门”建立起来，再升级数据与执行基础设施。
+
+- **行情/历史数据**
+  - **阶段 0/1 推荐**：优先用 **交易所官方数据源**（Binance/OKX 的 K 线/成交/聚合数据）  
+    - 4H 系统对“毫秒级盘口历史”依赖不强，官方数据通常足够支撑原语/Router 的研究与上线。
+  - **什么时候需要 AllTicks 这类第三方**：  
+    - 你要做更细的 execution 校准（盘口冲击/滑点分布、极端行情可用性）  
+    - 或者你需要更高质量/更长历史/更稳定的 tick/订单簿数据用于一致性回放  
+  - 现实经验：第三方的价值更多在 **数据完整性/统一格式/历史深度**，而不是“策略必需”。
+
+- **下单 API**
+  - **对你这种 4H 频率**：一般 **直接用官方下单 API 足够**（限频不构成瓶颈，重点是可靠性与风控）  
+  - 第三方下单/聚合 API 可能带来：
+    - 优点：更统一的接口、部分容灾与路由能力  
+    - 风险：引入额外信任与故障域（第三方挂了你就挂）、费用与可控性下降
+
+推荐路径（务实）：
+
+- **阶段 0**：官方行情 + 官方下单，先跑通闭环（最少依赖）  
+- **阶段 1**：如果执行校准成为瓶颈，再上第三方 tick/订单簿历史（用于校准与回放）  
+- **阶段 2**：只有当你需要跨交易所路由/容灾/多账户复杂执行时，再评估第三方执行/订单路由服务
+
 #### 2.2.5 树模型 / NN 路径原语 / CS / PCM（执行与组合）怎么配合？（一张“角色分工表”）
 
 你可以把系统拆成两条互补链路：**结构决策链（Router）** 与 **横截面链（CS）**，最后由 **PCM/仓位组合模块** 合成最终风险暴露。
@@ -666,6 +714,55 @@ MLP + short Mamba（8–16 bars，只影响 1–2 个 head）
 - **Phase 3：监控与 SOP**
   - rolling head health + conditional diagnostics + router PnL
   - retrain/调 Router 的自动化触发逻辑（分级告警）
+
+---
+
+### 10.1 特征计算与训练/推理解耦（强烈推荐：先算特征，再训练/再 RL）
+
+在包含 tick 特征的情况下，系统的主要瓶颈往往是 **特征计算（CPU/IO）** 而不是 GPU 训练本身。因此建议把流程拆成可缓存、可重放的两步，并且 **复用树模型已经实现的 FeatureStore（月分区）机制**，避免出现两套互不兼容的“特征落盘格式”：
+
+- **Step A：Feature Store（批处理，推荐用 monthly 分区）**  
+  - 目标：把 `features.yaml` 对应的特征（含 ticks 聚合）**离线算好并落盘**  
+  - **推荐产物（与树模型一致）**：`{root}/{layer}/{symbol}/{timeframe}/{YYYY-MM}.parquet`（按月分区，易增量，ticks 月切分复用）  
+  - 兼容产物（备用） ：`features_<SYMBOL>.parquet`（flat 单文件/按 symbol 文件）
+  - 命令（建议）：`python scripts/build_feature_store_nnmultihead.py --output-format monthly --layer nnmultihead_v1 ...`
+  - **重要：不要用 flat**  
+    - tick/滚动/状态型特征在月初会依赖“上个月末的 state”（warmup），flat/一次性拼接既可能 **口径错误**，也容易在多 symbol 时 **内存爆掉**  
+    - 因此 nnmultihead 的 feature store 默认也应复用树模型的 **月分区 FeatureStore**（并在每个月计算时加入 `warmup_bars`，再裁剪落盘）
+
+- **Step B：Training / Predict / RL（轻量重复迭代）**  
+  - 训练/推理直接读取 Feature Store，不再重复 tick 级计算  
+  - nnmultihead train/predict 支持两种读取方式：
+    - flat：`--features-path <dir-or-file>`
+    - **monthly FeatureStore**：`--features-path <feature_store_root> --features-store-layer <layer>`
+
+#### 10.1.1 FeatureStore 的版本失效策略（对齐 FeatureComputer cache_version）
+
+- **FeatureComputer** 通过 `cache_version`（例如 v6）失效 `cache/features/*` 的计算缓存。
+- **FeatureStore** 是“宽表成品库”，默认不会因为 `cache_version` 变化而自动全量重建。
+- 我们在 FeatureStore 的每个月分区 `*.meta.json` 中记录了 `feature_cache_version`：
+  - 当 `cache_version` 改变时，读取 FeatureStore 会将该月分区视为 **stale**，自动回退到 FeatureComputer 重新计算并覆盖写回该月分区（仅在启用 feature_store_dir/layer/symbol/timeframe 时生效）。
+  - 这确保了：**一旦你 bump cache_version，旧 FeatureStore 不会悄悄被继续使用**。
+
+补充说明：`layer` 是干什么的？（FeatureStore 宽表库的 dataset id）
+
+- **`layer` 本质上是 FeatureStore 的“特征数据集版本 id / 切片标签”**（不是模型的一部分）
+  - 例如：`heavy_v1` / `base_v1` / `nnmultihead_v1` / `nnmultihead_v2`
+- **推荐用法（默认）**：用 **AUTO**（由 `config_dir` 内的 `features.yaml` 等内容派生），让 FeatureStore 与“特征配置”强绑定。  
+  - 这样“同一份特征配置 + 同一份数据”会落到同一个 layer，复用最大。
+- **手工版本号（可选）**：当你需要强制失效/对照实验时，显式传 `heavy_v6/base_v6` 这类名字即可（作为“统一重算开关”）。
+- 什么时候需要显式改（或 bump `heavy_v6 -> heavy_v7`）：
+  - 特征口径升级（如 ticks 口径/缺失策略变化）想保留旧版本对照
+  - ablation（同一任务做多套特征集合对比）
+  - 多市场 profile（将来可做 `nnmultihead_highcap_v1` / `nnmultihead_meme_v1` 等）
+  - RL/BC 的 logs 构建仍建议复用：`preds + mode + ret_*` 的统一口径（可重复回放）
+
+为什么这样做更合理：
+
+- tick 特征计算一次后可复用（训练/扫参/回放不会反复烧 CPU/IO）
+- 训练与 RL 迭代更快（一天预算内更容易跑更多 symbols/更多 ablation）
+- Feature Contract 更易审计：Feature Store 的 schema 与 missingness 一旦固化，训练-推理一致性更强
+
 
 ---
 

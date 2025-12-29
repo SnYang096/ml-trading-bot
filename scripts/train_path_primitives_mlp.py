@@ -56,6 +56,7 @@ from scripts.train_strategy_pipeline import (  # noqa: E402
     run_feature_pipeline,
     determine_feature_columns,
 )
+from src.feature_store.layer_naming import default_layer_from_config  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,6 +73,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timeframe", default="240T")
     p.add_argument("--start-date", default=None)
     p.add_argument("--end-date", default=None)
+    p.add_argument(
+        "--features-path",
+        default=None,
+        help="Optional precomputed features file/dir (features_*.parquet). If provided, skip feature pipeline.",
+    )
+    p.add_argument(
+        "--features-store-layer",
+        default=None,
+        help="If set, treat --features-path as FeatureStore root and read monthly partitions from this layer.",
+    )
+    p.add_argument(
+        "--features-store-root",
+        default="feature_store",
+        help="Default FeatureStore root (used when --features-store-layer is set and --features-path is not).",
+    )
 
     # Horizon
     p.add_argument(
@@ -102,6 +118,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    if (
+        isinstance(args.features_store_layer, str)
+        and args.features_store_layer.upper() == "AUTO"
+    ):
+        args.features_store_layer = default_layer_from_config(cfg_dir)
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
     loader = StrategyConfigLoader(cfg_dir)
@@ -111,33 +132,76 @@ def main() -> None:
     if not symbols:
         raise ValueError("No symbols provided.")
 
-    feature_loader = StrategyFeatureLoader()
-    feats_all = []
-    for sym in symbols:
-        df_raw = load_raw_data(
-            data_path=args.data_path,
-            symbol=sym,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            timeframe=args.timeframe,
-        )
-        if df_raw.empty:
-            raise ValueError(f"No raw data loaded for symbol={sym}")
-        # Ensure symbol column exists for grouping
-        if "symbol" not in df_raw.columns:
-            df_raw["symbol"] = sym
-        df_features_sym = run_feature_pipeline(
-            df_raw,
-            feature_loader=feature_loader,
-            pipeline_cfg=strategy_cfg.features,
-            fit=True,
-        )
-        # Keep symbol column after pipeline
-        if "symbol" not in df_features_sym.columns:
-            df_features_sym["symbol"] = sym
-        feats_all.append(df_features_sym)
+    if (args.features_store_layer is not None) and (args.features_path is None):
+        args.features_path = str(args.features_store_root)
 
-    df_features = pd.concat(feats_all, axis=0, ignore_index=False)
+    if args.features_path and args.features_store_layer:
+        # Read from the same monthly FeatureStore format used by tree pipelines.
+        from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
+
+        store = FeatureStore(str(args.features_path))
+        parts = []
+        for sym in symbols:
+            spec = FeatureStoreSpec(
+                layer=str(args.features_store_layer),
+                symbol=str(sym),
+                timeframe=str(args.timeframe),
+            )
+            # If no explicit date range is provided, read a wide default range.
+            # (FeatureStore will only load existing months.)
+            start = (
+                pd.Timestamp(args.start_date)
+                if args.start_date
+                else pd.Timestamp("1970-01-01")
+            )
+            end = (
+                pd.Timestamp(args.end_date)
+                if args.end_date
+                else pd.Timestamp("2100-01-01")
+            )
+            df_sym = store.read_range(spec, start=start, end=end)
+            if df_sym.empty:
+                raise ValueError(
+                    f"Empty FeatureStore read for symbol={sym}, layer={args.features_store_layer}"
+                )
+            if "symbol" not in df_sym.columns:
+                df_sym = df_sym.copy()
+                df_sym["symbol"] = sym
+            parts.append(df_sym)
+        df_features = pd.concat(parts, axis=0, ignore_index=False)
+    elif args.features_path:
+        from src.time_series_model.models.nn.feature_store_io import load_feature_store
+
+        df_features = load_feature_store(str(args.features_path))
+    else:
+        feature_loader = StrategyFeatureLoader()
+        feats_all = []
+        for sym in symbols:
+            df_raw = load_raw_data(
+                data_path=args.data_path,
+                symbol=sym,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                timeframe=args.timeframe,
+            )
+            if df_raw.empty:
+                raise ValueError(f"No raw data loaded for symbol={sym}")
+            # Ensure symbol column exists for grouping
+            if "symbol" not in df_raw.columns:
+                df_raw["symbol"] = sym
+            df_features_sym = run_feature_pipeline(
+                df_raw,
+                feature_loader=feature_loader,
+                pipeline_cfg=strategy_cfg.features,
+                fit=True,
+            )
+            # Keep symbol column after pipeline
+            if "symbol" not in df_features_sym.columns:
+                df_features_sym["symbol"] = sym
+            feats_all.append(df_features_sym)
+
+        df_features = pd.concat(feats_all, axis=0, ignore_index=False)
+
     feature_cols = determine_feature_columns(df_features, strategy_cfg.features)
 
     # nnmultihead-only: feature contract (does not affect tree pipeline)

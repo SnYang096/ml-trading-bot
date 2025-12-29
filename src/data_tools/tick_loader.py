@@ -580,6 +580,7 @@ def compute_vpin_from_cached_ticks(
     lookback_minutes: int = 60,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
     bucket_volume_usd: Optional[float] = None,
+    max_preload_months: int = 6,
 ) -> pd.Series:
     """
     从tick文件计算VPIN，支持按月缓存
@@ -727,7 +728,9 @@ def compute_vpin_from_cached_ticks(
         # 向前查找前几个月，直到收集到足够的 buckets
         preload_month = start_month - pd.offsets.MonthBegin(1)
         preload_attempts = 0
-        max_preload_attempts = 6  # 最多向前查找6个月
+        max_preload_attempts = max(
+            0, int(max_preload_months)
+        )  # 最多向前查找 N 个月（可配置）
 
         while (
             len(recent_buckets) < n_buckets and preload_attempts < max_preload_attempts

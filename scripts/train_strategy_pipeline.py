@@ -43,6 +43,7 @@ import pandas as pd
 from src.data_tools.data_handler import DataHandler
 from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
+from src.feature_store.layer_naming import default_layer_from_config
 from src.time_series_model.strategy_config import StrategyConfigLoader
 from src.time_series_model.pipeline.training.label_utils import (
     simulate_rr_exits,
@@ -97,6 +98,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframe", type=str, default="15T")
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument("--output-root", type=str, default="results/strategies")
+    parser.add_argument(
+        "--use-feature-store",
+        action="store_true",
+        help="Try reading required feature columns from FeatureStore first (fallback to compute if missing).",
+    )
+    parser.add_argument(
+        "--feature-store-dir",
+        type=str,
+        default="feature_store",
+        help="FeatureStore root dir (default: feature_store).",
+    )
+    parser.add_argument(
+        "--feature-store-layer",
+        type=str,
+        default="AUTO",
+        help="FeatureStore layer (dataset id). Default=AUTO (derived from config content).",
+    )
     parser.add_argument(
         "--seed",
         type=int,
@@ -332,9 +350,20 @@ def run_feature_pipeline(
     feature_loader: StrategyFeatureLoader,
     pipeline_cfg,
     fit: bool,
+    *,
+    feature_store_dir: str | None = None,
+    feature_store_layer: str | None = None,
+    feature_store_symbol: str | None = None,
+    feature_store_timeframe: str | None = None,
 ) -> pd.DataFrame:
     df_features = feature_loader.load_features_from_requested(
-        df, pipeline_cfg.requested_features, fit=fit
+        df,
+        pipeline_cfg.requested_features,
+        fit=fit,
+        feature_store_dir=feature_store_dir,
+        feature_store_layer=feature_store_layer,
+        feature_store_symbol=feature_store_symbol,
+        feature_store_timeframe=feature_store_timeframe,
     )
     df_features = ensure_signal_column(df_features, pipeline_cfg.ensure_signal)
 
@@ -1287,6 +1316,17 @@ def train_strategy(
     symbol_list = [s.strip() for s in str(args.symbol).split(",") if s.strip()]
     is_multi_symbol = len(symbol_list) > 1
 
+    fs_dir = None
+    fs_layer = None
+    if getattr(args, "use_feature_store", False):
+        fs_dir = str(getattr(args, "feature_store_dir", "feature_store"))
+        raw_layer = str(getattr(args, "feature_store_layer", "AUTO"))
+        fs_layer = (
+            default_layer_from_config(config_dir)
+            if raw_layer.upper() == "AUTO"
+            else raw_layer
+        )
+
     def _crop_df_by_env_dates(df_in: pd.DataFrame) -> pd.DataFrame:
         # Optional date cropping to align with available tick data or focus window
         start_override = os.getenv("TRAIN_START_DATE")
@@ -1461,12 +1501,17 @@ def train_strategy(
 
     requested = strategy_config.features.requested_features
     print(f"\n   ▶️ Feature pipeline (train) start: {len(requested)} requested features")
+
     if not is_multi_symbol:
         df_train_features = run_feature_pipeline(
             df_train_raw,
             feature_loader=feature_loader,
             pipeline_cfg=strategy_config.features,
             fit=True,
+            feature_store_dir=fs_dir,
+            feature_store_layer=fs_layer,
+            feature_store_symbol=str(args.symbol),
+            feature_store_timeframe=str(args.timeframe),
         )
         print(
             f"   ✅ Feature pipeline (train) done: rows={len(df_train_features)}, cols={len(df_train_features.columns)}"
@@ -1477,6 +1522,10 @@ def train_strategy(
             feature_loader=feature_loader,
             pipeline_cfg=strategy_config.features,
             fit=False,
+            feature_store_dir=fs_dir,
+            feature_store_layer=fs_layer,
+            feature_store_symbol=str(args.symbol),
+            feature_store_timeframe=str(args.timeframe),
         )
         print(
             f"   ✅ Feature pipeline (test) done: rows={len(df_test_features)}, cols={len(df_test_features.columns)}\n"
@@ -1495,12 +1544,20 @@ def train_strategy(
                 feature_loader=feature_loader,
                 pipeline_cfg=strategy_config.features,
                 fit=True,
+                feature_store_dir=fs_dir,
+                feature_store_layer=fs_layer,
+                feature_store_symbol=str(sym),
+                feature_store_timeframe=str(args.timeframe),
             )
             feat_te = run_feature_pipeline(
                 df_te,
                 feature_loader=feature_loader,
                 pipeline_cfg=strategy_config.features,
                 fit=False,
+                feature_store_dir=fs_dir,
+                feature_store_layer=fs_layer,
+                feature_store_symbol=str(sym),
+                feature_store_timeframe=str(args.timeframe),
             )
             # Ensure grouping columns are present post-feature-pipeline
             feat_tr["_symbol"] = sym

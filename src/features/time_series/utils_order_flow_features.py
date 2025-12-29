@@ -449,6 +449,7 @@ def extract_order_flow_features(
     trade_clustering_window: int = 100,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
     vpin_bucket_volume_usd: Optional[float] = None,
+    vpin_max_preload_months: int = 6,
 ) -> pd.DataFrame:
     """
     提取订单流特征（VPIN 等）
@@ -505,6 +506,7 @@ def extract_order_flow_features(
             lookback_minutes=loader_params.get("lookback_minutes", 60),
             monthly_cache_dir=monthly_cache_dir,
             bucket_volume_usd=vpin_bucket_volume_usd,
+            max_preload_months=int(vpin_max_preload_months),
         )
     else:
         # 如果没有tick数据，直接抛出错误并退出

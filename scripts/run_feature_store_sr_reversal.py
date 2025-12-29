@@ -73,6 +73,19 @@ def parse_args() -> argparse.Namespace:
         default="heavy_v1",
         help="FeatureStore layer name (e.g. base_v1, heavy_v1)",
     )
+    parser.add_argument(
+        "--warmup-months",
+        type=int,
+        default=0,
+        help="Warmup calendar months to prepend when computing each month, then trim before writing. "
+        "Helps stateful/ticks/rolling features at month boundaries.",
+    )
+    parser.add_argument(
+        "--warmup-bars",
+        type=int,
+        default=0,
+        help="Optional warmup by bars (fallback). If warmup-months > 0, bars is ignored.",
+    )
     return parser.parse_args()
 
 
@@ -98,6 +111,7 @@ def main() -> None:
 
     feature_loader = StrategyFeatureLoader()
 
+    df_raw = df_raw.sort_index()
     # Incremental by month: only compute features for months not yet materialized.
     monthly_groups = df_raw.groupby(pd.Grouper(freq="M"))
     requested = strategy_config.features.requested_features
@@ -125,13 +139,31 @@ def main() -> None:
             f"\n   🚀 Computing features for {month_str}: rows={len(df_month)}, "
             f"symbol={args.symbol}"
         )
-        # NOTE: fit=True for each month is fine here because the underlying
-        # feature_loader/FeatureComputer already uses monthly cache.
-        df_feats = feature_loader.load_features_from_requested(
-            df_month,
-            requested_features=requested,
-            fit=True,
+        month_start = df_month.index.min()
+        month_end = df_month.index.max()
+        warmup_months = max(0, int(args.warmup_months))
+        warmup_bars = max(0, int(args.warmup_bars))
+        if warmup_months > 0:
+            start_ts = pd.Timestamp(month_start) - pd.DateOffset(months=warmup_months)
+            df_window = df_raw.loc[
+                (df_raw.index >= start_ts) & (df_raw.index <= month_end)
+            ]
+        elif warmup_bars > 0:
+            pos_end = df_raw.index.searchsorted(month_start, side="left")
+            pos_start = max(0, pos_end - warmup_bars)
+            df_window = df_raw.iloc[pos_start:].loc[:month_end]
+        else:
+            df_window = df_raw.loc[
+                (df_raw.index >= month_start) & (df_raw.index <= month_end)
+            ]
+
+        df_feats_window = feature_loader.load_features_from_requested(
+            df_window, requested_features=requested, fit=True
         )
+        df_feats = df_feats_window.loc[
+            (df_feats_window.index >= month_start)
+            & (df_feats_window.index <= month_end)
+        ]
         # Keep computed columns; store can also trim columns if needed.
         print(
             f"   ✅ Features for {month_str} computed: rows={len(df_feats)}, "
@@ -144,7 +176,11 @@ def main() -> None:
             base_columns=base_cols,
             feature_columns=None,
             overwrite=False,
-            metadata={"requested_features": requested},
+            metadata={
+                "requested_features": requested,
+                "warmup_months": warmup_months,
+                "warmup_bars": warmup_bars,
+            },
         )
         print(
             f"   💾 Saved features to store: {spec.layer}/{spec.symbol}/{spec.timeframe}/{month_str}"

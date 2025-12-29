@@ -474,6 +474,68 @@ def nnmultihead():
     pass
 
 
+@cli.group("feature-store")
+def feature_store():
+    """Shared FeatureStore (monthly partitioned) commands."""
+    pass
+
+
+@feature_store.command("build")
+@click.option("--config", "-c", required=True, help="Config directory containing features.yaml (tree or nn).")
+@click.option("--symbols", "-s", required=True, help="Comma-separated symbols.")
+@click.option("--timeframe", "-t", required=True, help="Timeframe (e.g., 240T).")
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
+@click.option("--root", "feature_store_root", default="feature_store", help="FeatureStore root dir.")
+@click.option(
+    "--layer",
+    default="AUTO",
+    help="FeatureStore layer (dataset id). Default=AUTO (derived from config content). "
+    "You can pass a versioned name like heavy_v6/base_v6 for manual invalidation/rebuild.",
+)
+@click.option("--warmup-months", type=int, default=0, help="Warmup calendar months (optional).")
+@click.option("--warmup-bars", type=int, default=0, help="Fallback warmup by bars if warmup-months=0.")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def feature_store_build(
+    config,
+    symbols,
+    timeframe,
+    data_path,
+    start_date,
+    end_date,
+    feature_store_root,
+    layer,
+    warmup_months,
+    warmup_bars,
+    docker,
+):
+    """Build monthly FeatureStore from a config directory (shared infra for tree+nn)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--root",
+        f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        "--warmup-months",
+        str(int(warmup_months)),
+        "--warmup-bars",
+        str(int(warmup_bars)),
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    args.extend(["--layer", layer])
+    sys.exit(run_script("scripts/build_feature_store_from_config.py", args, docker=docker))
+
+
 @cli.group()
 def rule():
     """Rule router commands (3-action: NO_TRADE/MEAN/TREND)."""
@@ -1028,6 +1090,21 @@ def rl_run_e2e_3action(
 @click.option("--dropout", type=float, default=0.1, help="Dropout")
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
 @click.option(
+    "--use-feature-store/--no-feature-store",
+    default=False,
+    help="Use FeatureStore (monthly) for features. Default is OFF because nnmultihead already reuses FeatureComputer monthly cache (compute-on-demand).",
+)
+@click.option(
+    "--feature-store-layer",
+    default="AUTO",
+    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config). Used only if --use-feature-store is enabled.",
+)
+@click.option(
+    "--feature-store-root",
+    default="feature_store",
+    help="FeatureStore root dir (default: feature_store). Usually no need to change.",
+)
+@click.option(
     "--output-dir",
     default="results/nnmultihead",
     help="Output root directory for artifacts",
@@ -1049,6 +1126,9 @@ def nnmultihead_train(
     depth,
     dropout,
     device,
+    use_feature_store,
+    feature_store_layer,
+    feature_store_root,
     output_dir,
     docker,
 ):
@@ -1088,6 +1168,16 @@ def nnmultihead_train(
         args.extend(["--end-date", end_date])
     if device:
         args.extend(["--device", device])
+    if use_feature_store:
+        args.extend(["--features-store-layer", feature_store_layer])
+        args.extend(
+            [
+                "--features-store-root",
+                f"/workspace/{feature_store_root}"
+                if use_workspace_prefix
+                else feature_store_root,
+            ]
+        )
 
     sys.exit(run_script("scripts/train_path_primitives_mlp.py", args, docker=docker))
 
@@ -1107,6 +1197,21 @@ def nnmultihead_train(
 @click.option("--model", "model_path", required=True, help="Path to model.pt produced by nnmultihead train")
 @click.option("--output", "output_path", required=True, help="Output path (.parquet or .csv)")
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
+@click.option(
+    "--use-feature-store/--no-feature-store",
+    default=False,
+    help="Use FeatureStore (monthly) for features. Default is OFF because nnmultihead already reuses FeatureComputer monthly cache (compute-on-demand).",
+)
+@click.option(
+    "--feature-store-layer",
+    default="AUTO",
+    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config). Used only if --use-feature-store is enabled.",
+)
+@click.option(
+    "--feature-store-root",
+    default="feature_store",
+    help="FeatureStore root dir (default: feature_store). Usually no need to change.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_predict(
     symbols,
@@ -1118,6 +1223,9 @@ def nnmultihead_predict(
     model_path,
     output_path,
     device,
+    use_feature_store,
+    feature_store_layer,
+    feature_store_root,
     docker,
 ):
     """Run inference and save heads/preds for downstream Router/RL."""
@@ -1142,8 +1250,95 @@ def nnmultihead_predict(
         args.extend(["--end-date", end_date])
     if device:
         args.extend(["--device", device])
+    if use_feature_store:
+        args.extend(["--features-store-layer", feature_store_layer])
+        args.extend(
+            [
+                "--features-store-root",
+                f"/workspace/{feature_store_root}"
+                if use_workspace_prefix
+                else feature_store_root,
+            ]
+        )
 
     sys.exit(run_script("scripts/predict_path_primitives_mlp.py", args, docker=docker))
+
+
+@nnmultihead.command("build-feature-store")
+@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
+@click.option("--data-path", default="data/parquet_data", help="Data directory")
+@click.option(
+    "--config",
+    "-c",
+    default="config/nnmultihead/path_primitives_4h_80h_min",
+    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+)
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
+@click.option(
+    "--feature-store-root",
+    default="feature_store",
+    help="FeatureStore root dir (default: feature_store).",
+)
+@click.option(
+    "--layer",
+    default="nnmultihead_v1",
+    help="FeatureStore layer name for nnmultihead features.",
+)
+@click.option(
+    "--warmup-bars",
+    type=int,
+    default=512,
+    help="Warmup bars to prepend when computing each month (stateful/ticks features).",
+)
+@click.option(
+    "--warmup-months",
+    type=int,
+    default=1,
+    help="Warmup calendar months to prepend when computing each month (recommended).",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_build_feature_store(
+    symbols,
+    timeframe,
+    data_path,
+    config,
+    start_date,
+    end_date,
+    feature_store_root,
+    layer,
+    warmup_bars,
+    warmup_months,
+    docker,
+):
+    """Build monthly FeatureStore for nnmultihead features (shared infra; default path works for tree+nn)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--symbols",
+        symbols,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        timeframe,
+        "--output-dir",
+        f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        "--output-format",
+        "monthly",
+        "--layer",
+        layer,
+        "--warmup-bars",
+        str(int(warmup_bars)),
+        "--warmup-months",
+        str(int(warmup_months)),
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    sys.exit(run_script("scripts/build_feature_store_nnmultihead.py", args, docker=docker))
 
 
 @nnmultihead.command("eval")
@@ -1207,7 +1402,19 @@ def nnmultihead_eval(
 
     sys.exit(run_script("scripts/evaluate_path_primitives_mlp.py", args, docker=docker))
 
-def _train_strategy_pipeline(symbol, timeframe, config, data_path, test_size, output_root, docker):
+def _train_strategy_pipeline(
+    symbol,
+    timeframe,
+    config,
+    data_path,
+    test_size,
+    output_root,
+    docker,
+    *,
+    use_feature_store: bool,
+    feature_store_dir: str,
+    feature_store_layer: str,
+):
     """Shared implementation for strategy training (train_strategy_pipeline.py)."""
     # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
     use_workspace_prefix = docker and not _is_in_docker()
@@ -1225,6 +1432,18 @@ def _train_strategy_pipeline(symbol, timeframe, config, data_path, test_size, ou
         "--output-root",
         f"/workspace/{output_root}" if use_workspace_prefix else output_root,
     ]
+    if use_feature_store:
+        args.extend(["--use-feature-store"])
+        args.extend(
+            [
+                "--feature-store-dir",
+                f"/workspace/{feature_store_dir}"
+                if use_workspace_prefix
+                else feature_store_dir,
+                "--feature-store-layer",
+                feature_store_layer,
+            ]
+        )
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
@@ -1235,13 +1454,18 @@ def _train_strategy_pipeline(symbol, timeframe, config, data_path, test_size, ou
 )
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option("--use-feature-store", is_flag=True, help="Prefer FeatureStore wide-table for features (fallback to compute).")
+@click.option("--feature-store-dir", default="feature_store")
+@click.option("--feature-store-layer", default="AUTO")
 @click.option(
     "--output-root",
     default="results/strategies/sr_reversal_long",
     help="Output directory",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def train_sr_reversal_long(symbol, timeframe, data_path, test_size, output_root, docker):
+def train_sr_reversal_long(
+    symbol, timeframe, data_path, test_size, use_feature_store, feature_store_dir, feature_store_layer, output_root, docker
+):
     """Train SR Reversal Long-only model (direction-fixed)."""
     _train_strategy_pipeline(
         symbol=symbol,
@@ -1251,6 +1475,9 @@ def train_sr_reversal_long(symbol, timeframe, data_path, test_size, output_root,
         test_size=test_size,
         output_root=output_root,
         docker=docker,
+        use_feature_store=bool(use_feature_store),
+        feature_store_dir=str(feature_store_dir),
+        feature_store_layer=str(feature_store_layer),
     )
 
 
@@ -1261,13 +1488,18 @@ def train_sr_reversal_long(symbol, timeframe, data_path, test_size, output_root,
 )
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option("--use-feature-store", is_flag=True, help="Prefer FeatureStore wide-table for features (fallback to compute).")
+@click.option("--feature-store-dir", default="feature_store")
+@click.option("--feature-store-layer", default="AUTO")
 @click.option(
     "--output-root",
     default="results/strategies/sr_reversal_short",
     help="Output directory",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def train_sr_reversal_short(symbol, timeframe, data_path, test_size, output_root, docker):
+def train_sr_reversal_short(
+    symbol, timeframe, data_path, test_size, use_feature_store, feature_store_dir, feature_store_layer, output_root, docker
+):
     """Train SR Reversal Short-only model (direction-fixed)."""
     _train_strategy_pipeline(
         symbol=symbol,
@@ -1277,6 +1509,9 @@ def train_sr_reversal_short(symbol, timeframe, data_path, test_size, output_root
         test_size=test_size,
         output_root=output_root,
         docker=docker,
+        use_feature_store=bool(use_feature_store),
+        feature_store_dir=str(feature_store_dir),
+        feature_store_layer=str(feature_store_layer),
     )
 
 

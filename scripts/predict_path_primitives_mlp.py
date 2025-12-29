@@ -48,6 +48,7 @@ from scripts.train_strategy_pipeline import (
     run_feature_pipeline,
     determine_feature_columns,
 )  # noqa: E402
+from src.feature_store.layer_naming import default_layer_from_config  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +66,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start-date", default=None)
     p.add_argument("--end-date", default=None)
     p.add_argument(
+        "--features-path",
+        default=None,
+        help="Optional precomputed features file/dir (features_*.parquet). If provided, skip feature pipeline.",
+    )
+    p.add_argument(
+        "--features-store-layer",
+        default=None,
+        help="If set, treat --features-path as FeatureStore root and read monthly partitions from this layer.",
+    )
+    p.add_argument(
+        "--features-store-root",
+        default="feature_store",
+        help="Default FeatureStore root (used when --features-store-layer is set and --features-path is not).",
+    )
+    p.add_argument(
         "--model", required=True, help="Path to model.pt produced by nnmultihead train"
     )
     p.add_argument(
@@ -77,6 +93,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    if (
+        isinstance(args.features_store_layer, str)
+        and args.features_store_layer.upper() == "AUTO"
+    ):
+        args.features_store_layer = default_layer_from_config(cfg_dir)
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
     loader = StrategyConfigLoader(cfg_dir)
@@ -100,53 +121,134 @@ def main() -> None:
 
     feature_loader = StrategyFeatureLoader()
     contract = load_feature_contract(cfg_dir)
-    for sym in symbols:
-        df_raw = load_raw_data(
-            data_path=args.data_path,
-            symbol=sym,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            timeframe=args.timeframe,
-        )
-        if df_raw.empty:
-            raise ValueError(f"No raw data loaded for symbol={sym}")
-        if "symbol" not in df_raw.columns:
-            df_raw["symbol"] = sym
 
-        df_features = run_feature_pipeline(
-            df_raw,
-            feature_loader=feature_loader,
-            pipeline_cfg=cfg.features,
-            fit=False,
-        )
-        if "symbol" not in df_features.columns:
-            df_features["symbol"] = sym
-        feature_cols = determine_feature_columns(df_features, cfg.features)
-        if contract is not None:
-            validate_minimal_required_cols(
-                available_columns=df_features.columns.tolist(), contract=contract
+    if (args.features_store_layer is not None) and (args.features_path is None):
+        args.features_path = str(args.features_store_root)
+
+    if args.features_path and args.features_store_layer:
+        from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
+
+        store = FeatureStore(str(args.features_path))
+        for sym in symbols:
+            spec = FeatureStoreSpec(
+                layer=str(args.features_store_layer),
+                symbol=str(sym),
+                timeframe=str(args.timeframe),
             )
+            start = (
+                pd.Timestamp(args.start_date)
+                if args.start_date
+                else pd.Timestamp("1970-01-01")
+            )
+            end = (
+                pd.Timestamp(args.end_date)
+                if args.end_date
+                else pd.Timestamp("2100-01-01")
+            )
+            df_features = store.read_range(spec, start=start, end=end)
+            if df_features.empty:
+                raise ValueError(
+                    f"No FeatureStore data found for symbol={sym} in {args.features_path}"
+                )
+            if "symbol" not in df_features.columns:
+                df_features = df_features.copy()
+                df_features["symbol"] = sym
+            feature_cols = determine_feature_columns(df_features, cfg.features)
+            if contract is not None:
+                validate_minimal_required_cols(
+                    available_columns=df_features.columns.tolist(), contract=contract
+                )
+            preds = predict_path_primitives(
+                model=model,
+                df=df_features,
+                feature_cols=feature_cols,
+                device=args.device,
+                fill_nan_value=0.0,
+            )
+            out = df_features.join(preds)
+            out_path = out_root / f"preds_{sym}.parquet" if multi else out_root
+            if (not multi) and out_path.suffix.lower() != ".parquet":
+                out.to_csv(out_path, index=True)
+            else:
+                out.to_parquet(out_path, index=True)
+            print("✅ Saved preds to:", out_path)
+    elif args.features_path:
+        from src.time_series_model.models.nn.feature_store_io import load_feature_store
 
-        preds = predict_path_primitives(
-            model=model,
-            df=df_features,
-            feature_cols=feature_cols,
-            device=args.device,
-            fill_nan_value=0.0,
-        )
-        out = df_features.join(preds)
+        df_all = load_feature_store(str(args.features_path))
+        for sym in symbols:
+            df_features = df_all[df_all["symbol"].astype(str) == str(sym)].copy()
+            if df_features.empty:
+                raise ValueError(
+                    f"No precomputed features found for symbol={sym} in {args.features_path}"
+                )
+            feature_cols = determine_feature_columns(df_features, cfg.features)
+            if contract is not None:
+                validate_minimal_required_cols(
+                    available_columns=df_features.columns.tolist(), contract=contract
+                )
+            preds = predict_path_primitives(
+                model=model,
+                df=df_features,
+                feature_cols=feature_cols,
+                device=args.device,
+                fill_nan_value=0.0,
+            )
+            out = df_features.join(preds)
+            out_path = out_root / f"preds_{sym}.parquet" if multi else out_root
+            if (not multi) and out_path.suffix.lower() != ".parquet":
+                out.to_csv(out_path, index=True)
+            else:
+                out.to_parquet(out_path, index=True)
+            print("✅ Saved preds to:", out_path)
+    else:
+        for sym in symbols:
+            df_raw = load_raw_data(
+                data_path=args.data_path,
+                symbol=sym,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                timeframe=args.timeframe,
+            )
+            if df_raw.empty:
+                raise ValueError(f"No raw data loaded for symbol={sym}")
+            if "symbol" not in df_raw.columns:
+                df_raw["symbol"] = sym
 
-        if multi:
-            # For multi-symbol, always save per-symbol parquet for stability.
-            out_path = out_root / f"preds_{sym}.parquet"
-            out.to_parquet(out_path, index=True)
-        else:
-            out_path = out_root
-            if out_path.suffix.lower() == ".parquet":
+            df_features = run_feature_pipeline(
+                df_raw,
+                feature_loader=feature_loader,
+                pipeline_cfg=cfg.features,
+                fit=False,
+            )
+            if "symbol" not in df_features.columns:
+                df_features["symbol"] = sym
+            feature_cols = determine_feature_columns(df_features, cfg.features)
+            if contract is not None:
+                validate_minimal_required_cols(
+                    available_columns=df_features.columns.tolist(), contract=contract
+                )
+
+            preds = predict_path_primitives(
+                model=model,
+                df=df_features,
+                feature_cols=feature_cols,
+                device=args.device,
+                fill_nan_value=0.0,
+            )
+            out = df_features.join(preds)
+
+            if multi:
+                # For multi-symbol, always save per-symbol parquet for stability.
+                out_path = out_root / f"preds_{sym}.parquet"
                 out.to_parquet(out_path, index=True)
             else:
-                out.to_csv(out_path, index=True)
-        print("✅ Saved preds to:", out_path)
+                out_path = out_root
+                if out_path.suffix.lower() == ".parquet":
+                    out.to_parquet(out_path, index=True)
+                else:
+                    out.to_csv(out_path, index=True)
+            print("✅ Saved preds to:", out_path)
 
 
 if __name__ == "__main__":
