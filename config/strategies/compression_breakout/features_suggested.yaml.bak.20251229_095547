@@ -23,8 +23,6 @@ feature_pipeline:
   - vpin_zscore_x_trade_cluster_max_buy_run_f
   - vpin_x_trade_cluster_entropy_f
   - dtw_features_compression_f
-  - vpin_scene_semantic_scores_f
-  - wpt_scene_semantic_scores_f
   ensure_signal_column:
     name: signal
     default_value: 0
@@ -39,10 +37,8 @@ feature_group_search:
   - 3
   - 4
   - 5
-  selected_groups:
-  - vpin_scene
-  - wpt_scene
-  stop_reason: no_improvement
+  selected_groups: []
+  stop_reason: no_valid_candidates
   base_features:
   - atr_f
   - wpt_price_reconstructed_f
@@ -81,8 +77,6 @@ feature_group_search:
   - vpin_zscore_x_trade_cluster_max_buy_run_f
   - vpin_x_trade_cluster_entropy_f
   - dtw_features_compression_f
-  - vpin_scene_semantic_scores_f
-  - wpt_scene_semantic_scores_f
   groups_source: groups_yaml:auto:config/feature_groups_compression_breakout_semantic.yaml
   groups_yaml_auto: true
   pool_b_yaml: null
