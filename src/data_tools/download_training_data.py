@@ -475,6 +475,11 @@ def main():
     )
     parser.add_argument("--end-month", type=int, default=9, help="结束月份 (默认: 9)")
     parser.add_argument("--summary", action="store_true", help="只显示已下载文件的摘要")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="非交互模式：跳过确认提示，直接执行下载。",
+    )
 
     args = parser.parse_args()
 
@@ -488,13 +493,31 @@ def main():
         downloader.print_summary()
     else:
         # 执行下载
-        downloader.download_all(
-            start_year=args.start_year,
-            start_month=args.start_month,
-            end_year=args.end_year,
-            end_month=args.end_month,
-            symbols=args.symbols,
-        )
+        # 执行下载（支持非交互模式）
+        if args.yes:
+            # Monkey patch: avoid blocking input() in download_all
+            import builtins
+
+            old_input = builtins.input
+            builtins.input = lambda *_args, **_kwargs: "y"
+            try:
+                downloader.download_all(
+                    start_year=args.start_year,
+                    start_month=args.start_month,
+                    end_year=args.end_year,
+                    end_month=args.end_month,
+                    symbols=args.symbols,
+                )
+            finally:
+                builtins.input = old_input
+        else:
+            downloader.download_all(
+                start_year=args.start_year,
+                start_month=args.start_month,
+                end_year=args.end_year,
+                end_month=args.end_month,
+                symbols=args.symbols,
+            )
 
         # 显示最终摘要
         downloader.print_summary()

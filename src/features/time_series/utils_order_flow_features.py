@@ -1765,14 +1765,13 @@ def extract_trade_clustering_features(
                         pass
         
         while current_month <= end_month:
+            # IMPORTANT: compute/cache by FULL month boundaries.
+            # This keeps caching stable across different [start_ts, end_ts] windows (train/test splits,
+            # warmup differences, multi-seed runs). Partial-month computation makes `initial_state`
+            # depend on the caller's window, causing persistent "state mismatch, recomputing" behavior
+            # and blowing up runtime for tick-heavy features.
             month_start = current_month
             month_end = (current_month + pd.DateOffset(months=1)) - pd.Timedelta(seconds=1)
-            
-            # 调整边界
-            if current_month == (start_ts - pd.Timedelta(minutes=lookback_minutes)).replace(day=1, hour=0, minute=0, second=0, microsecond=0):
-                month_start = start_ts - pd.Timedelta(minutes=lookback_minutes)
-            if month_end > end_ts:
-                month_end = end_ts
             
             # 优化：类似 VPIN，如果 state 为 None，尝试从前一个月加载状态
             # 找到该月的 tick 文件
@@ -1855,10 +1854,20 @@ def extract_trade_clustering_features(
                             state = cached_state  # 使用缓存的 state
                             cached_result = None  # 继续到计算逻辑
                     else:
-                        # 使用了标准缓存，但 state 不为空，需要重新计算
-                        print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (state mismatch, recomputing)...")
-                        state = cached_state  # 使用缓存的 state（但需要重新计算 DataFrame）
-                        cached_result = None  # 继续到计算逻辑
+                        # 使用了标准缓存，但 state 不为空。
+                        # Speed-first policy: if standard cache includes DataFrame, reuse it instead of recomputing ticks.
+                        if month_cluster_df is not None:
+                            cluster_results.append(month_cluster_df)
+                            cached_count += 1
+                            state = cached_state
+                            print(
+                                f"      ⚠️  Loaded {month_start.strftime('%Y-%m')} (cached, standard; state mismatch accepted): "
+                                f"{len(month_cluster_df)} features"
+                            )
+                        else:
+                            print(f"      ✅ Computing {month_start.strftime('%Y-%m')} (state mismatch, recomputing)...")
+                            state = cached_state  # 使用缓存的 state（但需要重新计算 DataFrame）
+                            cached_result = None  # 继续到计算逻辑
             
             if cached_result is None:
                 # 计算该月
@@ -1898,12 +1907,11 @@ def extract_trade_clustering_features(
                         print(f"      ✅ Computed {month_start.strftime('%Y-%m')}: {len(month_cluster_df)} features")
                         
                         # 保存缓存
-                        # 标准缓存：只保存 final_state（优化：不保存 DataFrame，节省存储空间）
+                        # 标准缓存：保存 DataFrame + final_state（speed-first; disk is cheap, ticks are expensive）
                         if cache_dir and month_files:
                             if standard_cache_key is not None:
-                                # 只保存 state（标准缓存）
                                 _save_monthly_trade_clustering_cache(
-                                    cache_dir, standard_cache_key, (None, state)  # DataFrame 为 None，只保存 state
+                                    cache_dir, standard_cache_key, (month_cluster_df, state)
                                 )
                             # 状态缓存：保存完整结果（DataFrame + state）
                             if state_cache_key is not None and state_cache_key != standard_cache_key:

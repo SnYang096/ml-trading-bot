@@ -18,6 +18,7 @@ import pickle
 import os
 import gc
 import json
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple, Any
 import pandas as pd
@@ -401,6 +402,10 @@ class FeatureComputer:
                 "memory_features": [],
                 "monthly_features": [],
             },
+            "perf": {
+                "per_feature": {},  # feature_name -> {"seconds": float, "source": str}
+                "slow_features": [],  # list of {"feature": str, "seconds": float, "source": str}
+            },
         }
 
         # 缓存版本控制（用于失效旧缓存）
@@ -440,6 +445,7 @@ class FeatureComputer:
                 "memory_features": [],
                 "monthly_features": [],
             },
+            "perf": {"per_feature": {}, "slow_features": []},
         }
         return stats
 
@@ -943,6 +949,7 @@ class FeatureComputer:
                 # 检查内存缓存：使用 (df_signature, feature_name) 作为键
                 cache_key = None
                 cached_result = None
+                t0 = time.perf_counter()
                 if self.use_memory_cache and current_df_sig is not None:
                     cache_key = (current_df_sig, feature_name)
                     if cache_key in self.memory_cache:
@@ -1012,6 +1019,11 @@ class FeatureComputer:
                                     result_df[cached_result.name] = cached_aligned
 
                             computed_features.add(feature_name)
+                            dt = float(time.perf_counter() - t0)
+                            self._debug_stats["perf"]["per_feature"][feature_name] = {
+                                "seconds": dt,
+                                "source": "memory",
+                            }
                             continue
 
                 # 如果没有缓存，计算特征
@@ -1080,6 +1092,11 @@ class FeatureComputer:
                         if combined_result.name not in result_df.columns:
                             combined_aligned = combined_result.reindex(base_index)
                             result_df[combined_result.name] = combined_aligned
+                    dt = float(time.perf_counter() - t0)
+                    self._debug_stats["perf"]["per_feature"][feature_name] = {
+                        "seconds": dt,
+                        "source": "monthly",
+                    }
                 else:
                     # 不使用月度缓存，直接计算
                     call_args, call_kwargs = _build_call_args(
@@ -1120,8 +1137,30 @@ class FeatureComputer:
                         if computed_result.name not in result_df.columns:
                             computed_aligned = computed_result.reindex(base_index)
                             result_df[computed_result.name] = computed_aligned
+                    dt = float(time.perf_counter() - t0)
+                    self._debug_stats["perf"]["per_feature"][feature_name] = {
+                        "seconds": dt,
+                        "source": "computed",
+                    }
 
                 print(f"     ✅ Computed {feature_name}")
+                # Simple "alarm" for very slow features (usually tick-heavy or cache-miss).
+                try:
+                    dt_val = float(self._debug_stats["perf"]["per_feature"][feature_name]["seconds"])
+                    if dt_val >= 30.0:
+                        self._debug_stats["perf"]["slow_features"].append(
+                            {
+                                "feature": feature_name,
+                                "seconds": dt_val,
+                                "source": self._debug_stats["perf"]["per_feature"][feature_name]["source"],
+                            }
+                        )
+                        print(
+                            f"     ⚠️  SLOW feature: {feature_name} took {dt_val:.1f}s "
+                            f"(source={self._debug_stats['perf']['per_feature'][feature_name]['source']})"
+                        )
+                except Exception:
+                    pass
                 computed_features.add(feature_name)
 
             print(

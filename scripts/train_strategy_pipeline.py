@@ -1507,6 +1507,9 @@ def train_strategy(
             feature_store_symbol=str(args.symbol),
             feature_store_timeframe=str(args.timeframe),
         )
+        feature_debug_stats_train = (
+            getattr(df_train_features, "attrs", {}).get("feature_debug_stats") or {}
+        )
         print(
             f"   ✅ Feature pipeline (train) done: rows={len(df_train_features)}, cols={len(df_train_features.columns)}"
         )
@@ -1520,6 +1523,9 @@ def train_strategy(
             feature_store_layer=fs_layer,
             feature_store_symbol=str(args.symbol),
             feature_store_timeframe=str(args.timeframe),
+        )
+        feature_debug_stats_test = (
+            getattr(df_test_features, "attrs", {}).get("feature_debug_stats") or {}
         )
         print(
             f"   ✅ Feature pipeline (test) done: rows={len(df_test_features)}, cols={len(df_test_features.columns)}\n"
@@ -1566,6 +1572,8 @@ def train_strategy(
             test_feat_parts.append(feat_te.reset_index(drop=True))
         df_train_features = pd.concat(train_feat_parts, axis=0, ignore_index=True)
         df_test_features = pd.concat(test_feat_parts, axis=0, ignore_index=True)
+        feature_debug_stats_train = {}
+        feature_debug_stats_test = {}
         # Stable order for TSCV and backtests
         sort_cols = [
             c for c in ["datetime", "_symbol"] if c in df_train_features.columns
@@ -1725,6 +1733,14 @@ def train_strategy(
             },
         }
     }
+    # Feature compute performance/cache diagnostics (best-effort)
+    try:
+        diagnostics_payload["features"] = {
+            "train": feature_debug_stats_train,
+            "test": feature_debug_stats_test,
+        }
+    except Exception:
+        pass
     if len(df_train_filtered) < 50:
         print("   ⚠️  Not enough samples to train, skipping strategy.")
         return

@@ -11,6 +11,9 @@ backtest:
     max_holding_bars: 50
     # Prefer RR-consistent exits for multiclass as well (time-exit included).
     use_rr_exit: true
+    # When using RR exits with direction='both' (default), direction must be defined by signal.
+    # For multiclass models, entries already encode long/short via predicted class.
+    use_signal_direction: true
     rr:
       atr_window: 14
       max_holding_bars: 50

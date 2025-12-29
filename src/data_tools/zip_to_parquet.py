@@ -393,12 +393,13 @@ def main():
     base_dir = current_file.parents[2]  # src/data_tools -> src -> project root
     input_dir = args.input_dir or str(base_dir / "data" / "agg_data")
     output_dir = args.output_dir or str(base_dir / "data" / "parquet_data")
-    backup_dir = args.backup_dir or str(base_dir / "data" / "backup_zip")
+    backup_dir = args.backup_dir  # default: disabled (avoid disk blowups)
 
     print(f"📂 Base directory: {base_dir}")
     print(f"📂 Input directory: {input_dir}")
     print(f"📂 Output directory: {output_dir}")
-    print(f"📂 Backup directory: {backup_dir}")
+    if backup_dir:
+        print(f"📂 Backup directory: {backup_dir}")
     print()
 
     # 检查输入目录
@@ -453,7 +454,8 @@ def main():
 
     print(f"\n🎉 Data conversion complete!")
     print(f"   Output directory: {output_dir}")
-    print(f"   Backup directory: {backup_dir}")
+    if backup_dir:
+        print(f"   Backup directory: {backup_dir}")
     print(f"   Ready for fast processing!")
 
 

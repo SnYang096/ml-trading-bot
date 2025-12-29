@@ -28,7 +28,10 @@ from src.features.time_series.utils_order_flow_features import (
     compute_trade_clustering_from_ticks,
     extract_trade_clustering_features,
 )
-from src.data_tools.tick_loader import deserialize_tick_loader_params
+from src.data_tools.tick_loader import (
+    deserialize_tick_loader_params,
+    serialize_tick_loader_params,
+)
 
 
 @pytest.fixture
@@ -145,6 +148,144 @@ def sample_ohlcv():
 
 class TestTradeClusteringMonthlyStreaming:
     """测试 Trade Clustering 按月流式计算"""
+
+    def test_monthly_cache_granularity_no_partial_month_poisoning(
+        self, monkeypatch, capsys
+    ):
+        """
+        Regression test:
+        - Previously: first-month partial range (start_ts - lookback) poisoned the carried state,
+          causing persistent "state mismatch, recomputing" and preventing month-level cache reuse.
+        - Now: compute/cache by full month boundaries so second run can reuse the state-cache month
+          and avoid re-loading the second month's ticks.
+        """
+        tmp_root = Path(tempfile.mkdtemp(prefix="tc_cache_granularity_"))
+        try:
+            ticks_dir = tmp_root / "ticks"
+            cache_dir = tmp_root / "cache"
+            ticks_dir.mkdir(parents=True, exist_ok=True)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            symbol = "BTCUSDT"
+
+            # Create tiny synthetic monthly tick parquet files (naming must match tick_loader expectations).
+            # Note: we only need a subset of the month; loader filters by time range.
+            def _write_month(month_str: str, start: str, periods: int):
+                ts = pd.date_range(start=start, periods=periods, freq="1min")
+                df = pd.DataFrame(
+                    {
+                        "timestamp": ts,
+                        "price": 50000 + np.linspace(0, 10, len(ts)),
+                        "volume": np.ones(len(ts)),
+                        "side": np.where(np.arange(len(ts)) % 2 == 0, 1, -1),
+                    }
+                )
+                (ticks_dir / f"{symbol}_{month_str}.parquet").parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+                df.to_parquet(ticks_dir / f"{symbol}_{month_str}.parquet", index=False)
+
+            _write_month("2024-01", start="2024-01-31 22:00:00", periods=600)
+            _write_month("2024-02", start="2024-02-01 00:00:00", periods=600)
+
+            # Minimal OHLCV bars to align output to.
+            bar_index = pd.date_range("2024-02-01 00:00:00", periods=24, freq="1H")
+            ohlcv = pd.DataFrame(
+                {
+                    "open": 50000.0,
+                    "high": 50010.0,
+                    "low": 49990.0,
+                    "close": 50005.0,
+                    "volume": 1000.0,
+                },
+                index=bar_index,
+            )
+
+            # Count load_tick_data calls to ensure cache reuse.
+            from src.features.time_series import utils_order_flow_features as uof
+
+            call_count = {"n": 0}
+            real_load = uof.load_tick_data
+
+            def _counting_load_tick_data(*args, **kwargs):
+                call_count["n"] += 1
+                return real_load(*args, **kwargs)
+
+            monkeypatch.setattr(uof, "load_tick_data", _counting_load_tick_data)
+
+            def _payload(start_ts: str, end_ts: str, lookback_minutes: int = 90) -> str:
+                tick_files = [
+                    str(ticks_dir / f"{symbol}_2024-01.parquet"),
+                    str(ticks_dir / f"{symbol}_2024-02.parquet"),
+                ]
+                return serialize_tick_loader_params(
+                    {
+                        "symbol": symbol,
+                        "tick_files": tick_files,
+                        "start_ts": start_ts,
+                        "end_ts": end_ts,
+                        "lookback_minutes": lookback_minutes,
+                    }
+                )
+
+            # Run #1: start inside Feb but lookback crosses into Jan → includes Jan+Feb months.
+            call_count["n"] = 0
+            out1 = extract_trade_clustering_features(
+                ohlcv,
+                ticks=None,
+                ticks_loader_json=_payload(
+                    start_ts="2024-02-01 00:30:00", end_ts="2024-02-02 00:30:00"
+                ),
+                window_size=50,
+                freq="1H",
+                monthly_cache_dir=str(cache_dir),
+                persist_monthly=True,
+                compute_trade_cluster_derived=False,
+            )
+            assert not out1.empty
+            # Expect two months computed/loaded at least once on first run.
+            assert call_count["n"] >= 2
+
+            # Run #2: slightly different start_ts (still crosses month boundary).
+            # With the fix, we must NOT hit "state mismatch, recomputing" and should avoid
+            # re-loading Feb ticks due to state-cache reuse.
+            call_count["n"] = 0
+            out2 = extract_trade_clustering_features(
+                ohlcv,
+                ticks=None,
+                ticks_loader_json=_payload(
+                    start_ts="2024-02-01 00:10:00", end_ts="2024-02-02 00:30:00"
+                ),
+                window_size=50,
+                freq="1H",
+                monthly_cache_dir=str(cache_dir),
+                persist_monthly=True,
+                compute_trade_cluster_derived=False,
+            )
+            assert not out2.empty
+            captured = capsys.readouterr().out
+            assert "state mismatch, recomputing" not in captured
+            # We expect only the first month (Jan) to potentially re-load ticks; Feb should be cache-hit.
+            assert call_count["n"] <= 1
+
+            # Run #3: identical window, after speed-first cache policy (standard cache stores DF),
+            # we should not need to load any month ticks at all.
+            call_count["n"] = 0
+            _ = extract_trade_clustering_features(
+                ohlcv,
+                ticks=None,
+                ticks_loader_json=_payload(
+                    start_ts="2024-02-01 00:30:00", end_ts="2024-02-02 00:30:00"
+                ),
+                window_size=50,
+                freq="1H",
+                monthly_cache_dir=str(cache_dir),
+                persist_monthly=True,
+                compute_trade_cluster_derived=False,
+            )
+            assert call_count["n"] == 0
+        finally:
+            shutil.rmtree(tmp_root, ignore_errors=True)
 
     def test_state_passing_basic(self, sample_ticks_single_month):
         """测试状态传递的基本功能"""

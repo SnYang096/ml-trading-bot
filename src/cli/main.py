@@ -42,6 +42,11 @@ def get_project_root() -> Path:
 
 PROJECT_ROOT = get_project_root()
 
+# Ensure repo root is importable so `import src.*` works when running `mlbot --no-docker`
+# from arbitrary working directories / environments.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 
 def _is_in_docker() -> bool:
     """Check if running inside a Docker container."""
@@ -402,6 +407,21 @@ def data():
 @click.option(
     "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
 )
+@click.option(
+    "--universe-config",
+    default=None,
+    help="YAML universe config (if set, overrides --symbols). Example: config/download/crypto_4h_token_universe_groups.yaml",
+)
+@click.option(
+    "--universe-set",
+    default="starter_a",
+    help="universe_sets key inside universe config (e.g. starter_a/expanded_b).",
+)
+@click.option(
+    "--universe-groups",
+    default=None,
+    help="Optional comma-separated groups to include (e.g. highcap,alt,meme). Default: all groups in the set.",
+)
 @click.option("--start-year", default="2023", help="Start year")
 @click.option("--start-month", default="1", help="Start month")
 @click.option("--end-year", help="End year (default: current)")
@@ -412,10 +432,33 @@ def data():
 @click.option(
     "--parquet-dir", default="data/parquet_data", help="Output directory for Parquet"
 )
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_download(
-    symbols, start_year, start_month, end_year, end_month, data_dir, parquet_dir
+    symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
+    start_year,
+    start_month,
+    end_year,
+    end_month,
+    data_dir,
+    parquet_dir,
+    docker,
 ):
     """Download Binance monthly aggTrades data."""
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(universe_set=str(universe_set), groups=groups)
+        symbols = ",".join(resolved)
+
     args = [
         "--data-dir",
         data_dir,
@@ -427,6 +470,7 @@ def data_download(
         start_year,
         "--start-month",
         start_month,
+        "--yes",
     ]
     if end_year:
         args.extend(["--end-year", end_year])
@@ -440,21 +484,91 @@ def data_download(
 @click.option(
     "--cleanup/--no-cleanup", default=True, help="Clean up ZIP files after conversion"
 )
-def data_convert(cleanup):
+@click.option("--input-dir", default=None, help="ZIP input directory (default: data/agg_data)")
+@click.option("--output-dir", default=None, help="Parquet output directory (default: data/parquet_data)")
+@click.option(
+    "--backup-dir",
+    default=None,
+    help="Optional backup directory for ZIPs (default: disabled; avoid disk blowups).",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def data_convert(cleanup, input_dir, output_dir, backup_dir, docker):
     """Convert downloaded ZIPs to Parquet format."""
     args = ["--cleanup", "yes" if cleanup else "no"]
-    sys.exit(run_python_module("src.data_tools.zip_to_parquet", args))
+    if input_dir:
+        args.extend(["--input-dir", input_dir])
+    if output_dir:
+        args.extend(["--output-dir", output_dir])
+    if backup_dir:
+        args.extend(["--backup-dir", backup_dir])
+    sys.exit(run_python_module("src.data_tools.zip_to_parquet", args, docker=docker))
 
 
 @data.command("pipeline")
 @click.option(
     "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
 )
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
 @click.pass_context
-def data_pipeline(ctx, symbols):
+def data_pipeline(ctx, symbols, docker):
     """Download and convert data (full pipeline)."""
-    ctx.invoke(data_download, symbols=symbols)
-    ctx.invoke(data_convert)
+    ctx.invoke(data_download, symbols=symbols, docker=docker)
+    ctx.invoke(data_convert, docker=docker)
+
+
+@data.command("pipeline-universe")
+@click.option(
+    "--universe-config",
+    default="config/download/crypto_4h_token_universe_groups.yaml",
+    help="Universe YAML config to drive download+convert.",
+)
+@click.option("--universe-set", default="starter_a")
+@click.option("--universe-groups", default=None)
+@click.option("--start-year", default="2023")
+@click.option("--start-month", default="1")
+@click.option("--end-year", default=None)
+@click.option("--end-month", default=None)
+@click.option("--data-dir", default="data/agg_data")
+@click.option("--parquet-dir", default="data/parquet_data")
+@click.option("--cleanup/--no-cleanup", default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def data_pipeline_universe(
+    universe_config,
+    universe_set,
+    universe_groups,
+    start_year,
+    start_month,
+    end_year,
+    end_month,
+    data_dir,
+    parquet_dir,
+    cleanup,
+    docker,
+):
+    """Download+convert using universe config (non-interactive)."""
+    ctx = click.get_current_context()
+    ctx.invoke(
+        data_download,
+        symbols="",
+        universe_config=universe_config,
+        universe_set=universe_set,
+        universe_groups=universe_groups,
+        start_year=start_year,
+        start_month=start_month,
+        end_year=end_year,
+        end_month=end_month,
+        data_dir=data_dir,
+        parquet_dir=parquet_dir,
+        docker=docker,
+    )
+    ctx.invoke(
+        data_convert,
+        cleanup=cleanup,
+        input_dir=data_dir,
+        output_dir=parquet_dir,
+        backup_dir=None,
+        docker=docker,
+    )
 
 
 # =============================================================================

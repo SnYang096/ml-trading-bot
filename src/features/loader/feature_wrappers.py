@@ -382,6 +382,8 @@ def compute_footprint_features(
     price_bin_target_bins: int = 40,
     value_area_pct: float = 0.7,
     tick_size: float = None,
+    monthly_cache_dir: Optional[str] = "cache/features/monthly",
+    persist_monthly: bool = True,
 ) -> pd.DataFrame:
     """
     Compute single-bar footprint features and merge back to the kline DataFrame.
@@ -406,30 +408,139 @@ def compute_footprint_features(
     # 检查 ticks 数据
     if ticks is None or len(ticks) == 0:
         if ticks_loader_json:
-            # 从 ticks_loader_json 加载 ticks 数据
-            from src.data_tools.tick_loader import deserialize_tick_loader_params, load_tick_data
+            # From ticks_loader_json: use monthly on-disk cache to avoid reloading ticks and re-computing
+            # footprint for each seed/step.
+            import hashlib
+            import json
+            from pathlib import Path
+
+            from src.data_tools.tick_loader import (
+                deserialize_tick_loader_params,
+                load_tick_data,
+            )
+
             loader_params = deserialize_tick_loader_params(ticks_loader_json)
-            # 根据 df 的时间范围加载 ticks
-            if isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
-                start_ts = df.index.min().strftime("%Y-%m-%d %H:%M:%S")
-                end_ts = df.index.max().strftime("%Y-%m-%d %H:%M:%S")
-                ticks_dir = loader_params.get("ticks_dir")
-                if not ticks_dir:
-                    tick_files = loader_params.get("tick_files", [])
-                    if tick_files:
-                        from pathlib import Path
-                        ticks_dir = str(Path(tick_files[0]).parent)
-                    else:
-                        ticks_dir = "data/parquet_data"
-                ticks = load_tick_data(
-                    symbol=loader_params["symbol"],
-                    start_ts=start_ts,
-                    end_ts=end_ts,
-                    ticks_dir=ticks_dir,
-                    lookback_minutes=loader_params.get("lookback_minutes", 60),
+            if not (isinstance(df.index, pd.DatetimeIndex) and len(df) > 0):
+                raise ValueError(
+                    "DataFrame must have DatetimeIndex to load ticks from ticks_loader_json"
                 )
-            else:
-                raise ValueError("DataFrame must have DatetimeIndex to load ticks from ticks_loader_json")
+
+            symbol = str(loader_params["symbol"]).upper()
+            lookback_minutes = int(loader_params.get("lookback_minutes", 60))
+            ticks_dir = loader_params.get("ticks_dir")
+            if not ticks_dir:
+                tick_files = loader_params.get("tick_files", [])
+                if tick_files:
+                    ticks_dir = str(Path(tick_files[0]).parent)
+                else:
+                    ticks_dir = "data/parquet_data"
+
+            # Ensure open_time/close_time exist for downstream per-bar slicing.
+            local_df = df
+            created_time_cols = False
+            if open_col not in local_df.columns or close_col not in local_df.columns:
+                local_df = local_df.copy()
+                created_time_cols = True
+                local_df[open_col] = local_df.index
+                if len(local_df) > 1:
+                    time_delta = local_df.index[1] - local_df.index[0]
+                    local_df[close_col] = local_df.index + time_delta
+                else:
+                    local_df[close_col] = local_df.index + pd.Timedelta(hours=4)
+
+            # Monthly cache key: safe across seeds/steps for the same date range.
+            # We include a lightweight bar-index signature to avoid incorrect reuse if the caller
+            # changes the bar set within the same month.
+            cache_root = Path(monthly_cache_dir) if monthly_cache_dir else None
+            cache_params = {
+                "price_bin_size": price_bin_size,
+                "price_bin_method": price_bin_method,
+                "price_bin_target_bins": int(price_bin_target_bins),
+                "value_area_pct": float(value_area_pct),
+                "tick_size": tick_size,
+            }
+            params_sig = hashlib.md5(
+                json.dumps(cache_params, sort_keys=True, default=str).encode()
+            ).hexdigest()[:12]
+
+            fp_parts: list[pd.DataFrame] = []
+            # Group bars by calendar month (bar index).
+            for period, df_month in local_df.groupby(pd.Grouper(freq="M")):
+                if df_month.empty:
+                    continue
+                month_str = period.strftime("%Y-%m")
+                idx_sig = hashlib.md5(
+                    (str(df_month.index.min()) + str(df_month.index.max()) + str(len(df_month))).encode()
+                ).hexdigest()[:12]
+                cache_path = None
+                if cache_root and persist_monthly:
+                    cache_path = (
+                        cache_root
+                        / "footprint"
+                        / symbol
+                        / f"{symbol}_{month_str}_fp_{params_sig}_{idx_sig}.parquet"
+                    )
+                cached_fp = None
+                if cache_path and cache_path.exists():
+                    try:
+                        cached_fp = pd.read_parquet(cache_path)
+                        if isinstance(cached_fp.index, pd.DatetimeIndex) and len(cached_fp) > 0:
+                            cached_fp = cached_fp.reindex(df_month.index)
+                    except Exception:
+                        cached_fp = None
+
+                if cached_fp is None:
+                    # Load ticks only for this month span (with lookback padding to be safe).
+                    start_ts = df_month[open_col].min().strftime("%Y-%m-%d %H:%M:%S")
+                    end_ts = df_month[close_col].max().strftime("%Y-%m-%d %H:%M:%S")
+                    month_ticks = load_tick_data(
+                        symbol=symbol,
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        ticks_dir=ticks_dir,
+                        lookback_minutes=lookback_minutes,
+                    )
+
+                    cfg = FootprintConfig(
+                        price_bin_size=price_bin_size,
+                        price_bin_method=price_bin_method,
+                        price_bin_target_bins=price_bin_target_bins,
+                        value_area_pct=value_area_pct,
+                        tick_size=tick_size,
+                    )
+                    fp_df = compute_kline_footprint_features(
+                        ticks=month_ticks,
+                        klines=df_month,
+                        open_col=open_col,
+                        close_col=close_col,
+                        cfg=cfg,
+                    )
+                    cached_fp = fp_df
+                    if cache_path:
+                        try:
+                            cache_path.parent.mkdir(parents=True, exist_ok=True)
+                            cached_fp.to_parquet(cache_path)
+                        except Exception:
+                            pass
+
+                fp_parts.append(cached_fp)
+
+            # Merge per-month footprint features back to original df.
+            fp_all = (
+                pd.concat(fp_parts, axis=0).sort_index()
+                if fp_parts
+                else pd.DataFrame(index=local_df.index)
+            )
+            out = df.copy()
+            for col in fp_all.columns:
+                out[col] = fp_all[col].reindex(df.index)
+            # Drop temporary open_time/close_time if we created them.
+            if created_time_cols:
+                if open_col in out.columns and open_col not in df.columns:
+                    out = out.drop(columns=[open_col])
+                if close_col in out.columns and close_col not in df.columns:
+                    out = out.drop(columns=[close_col])
+            return out
         else:
             raise ValueError(
                 "Footprint calculation requires tick data. "

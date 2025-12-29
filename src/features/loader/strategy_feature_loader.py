@@ -434,6 +434,13 @@ class StrategyFeatureLoader:
             fit=fit,
         )
 
+        # Attach debug stats for downstream diagnostics & performance monitoring.
+        # This includes cache hit info and per-feature timings.
+        try:
+            result_df.attrs["feature_debug_stats"] = self.computer.drain_debug_stats()
+        except Exception:
+            pass
+
         # Filter out any indices that were not in the original input DataFrame
         # This prevents feature computation from introducing overlapping indices
         new_indices = set(result_df.index) - original_indices
