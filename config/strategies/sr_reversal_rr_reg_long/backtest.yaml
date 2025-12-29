@@ -3,6 +3,11 @@ backtest:
   params:
     price_col: close
     top_quantile: 0.05
+    # No-lookahead quantile threshold:
+    # - expanding: threshold at time t is computed from predictions up to t-1
+    # - rolling: use a rolling window up to t-1 (set quantile_window)
+    quantile_mode: expanding
+    quantile_min_periods: 50
     entry_mode: cross
     entry_exit_conflict: block_entry_on_exit
     max_holding_bars: 50

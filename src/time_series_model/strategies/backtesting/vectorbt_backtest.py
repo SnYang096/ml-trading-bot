@@ -18,6 +18,173 @@ from src.time_series_model.pipeline.training.label_utils import simulate_rr_exit
 class VectorBTBacktest(BaseBacktest):
     """使用 vectorbt 的通用回测实现。"""
 
+    @staticmethod
+    def _quantile_threshold_series(
+        series: pd.Series,
+        *,
+        q: float,
+        mode: str = "expanding",
+        window: int | None = None,
+        min_periods: int = 50,
+        train_threshold: float | None = None,
+    ) -> pd.Series:
+        """
+        Build a (potentially time-varying) quantile threshold series without lookahead.
+
+        - full: single global quantile over the full series (LOOKAHEAD; kept for compatibility)
+        - expanding: expanding quantile using only history up to t-1 (no lookahead)
+        - rolling: rolling quantile using only last `window` points up to t-1 (no lookahead)
+        - train: fixed threshold provided by training calibration (no lookahead)
+        """
+        s = series.astype(float)
+        qv = min(max(float(q), 0.0), 1.0)
+        m = str(mode or "expanding").lower().strip()
+
+        if m in ("train", "train_calibrated", "train_fixed"):
+            if train_threshold is None:
+                raise ValueError("quantile_mode=train requires train_threshold")
+            return pd.Series(float(train_threshold), index=s.index)
+
+        if m in ("full", "global", "leaky"):
+            thr = (
+                float(s.dropna().quantile(qv)) if s.dropna().shape[0] else float("nan")
+            )
+            return pd.Series(thr, index=s.index)
+
+        mp = int(min_periods) if min_periods is not None else 50
+        mp = max(mp, 1)
+
+        if m in ("expanding", "causal", "expanding_causal"):
+            return s.expanding(min_periods=mp).quantile(qv).shift(1)
+
+        if m in ("rolling", "rolling_causal"):
+            w = int(window) if window is not None else 200
+            w = max(w, 1)
+            return s.rolling(window=w, min_periods=mp).quantile(qv).shift(1)
+
+        raise ValueError(f"Unknown quantile_mode: {mode}")
+
+    @staticmethod
+    def _multiclass_entries_from_proba(
+        *,
+        proba: np.ndarray,
+        index: pd.Index,
+        long_class: int,
+        short_class: int,
+        neutral_class: int,
+        entry_mode: str = "argmax",
+        entry_threshold: float | None = None,
+        long_entry_threshold: float | None = None,
+        short_entry_threshold: float | None = None,
+        entry_quantile: float | None = None,
+        long_entry_quantile: float | None = None,
+        short_entry_quantile: float | None = None,
+        quantile_mode: str = "expanding",
+        quantile_window: int | None = None,
+        quantile_min_periods: int = 50,
+        long_train_threshold: float | None = None,
+        short_train_threshold: float | None = None,
+    ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+        """
+        Build entries/exits for multiclass models.
+
+        Modes:
+        - argmax (default): enter when argmax == long/short, exit when argmax == neutral.
+        - prob_threshold: enter when P(long/short) >= entry_threshold. Exits are set to False here,
+          because RR exits (when enabled) should handle exits consistently.
+        - prob_quantile: enter when P(long/short) is in the top quantile (e.g. q90) of its own distribution
+          over the backtest window. Exits are set to False here (RR exits should handle exits).
+        """
+        if proba.ndim != 2:
+            raise ValueError("proba must be 2D (n_samples, n_classes)")
+        n_classes = int(proba.shape[1])
+        for c in (long_class, short_class, neutral_class):
+            if not (0 <= int(c) < n_classes):
+                raise ValueError(
+                    f"class index out of range: {c} (n_classes={n_classes})"
+                )
+
+        mode = str(entry_mode or "argmax").lower().strip()
+        if mode == "argmax":
+            class_preds = np.argmax(proba, axis=1)
+            long_entries = pd.Series(class_preds == int(long_class), index=index)
+            short_entries = pd.Series(class_preds == int(short_class), index=index)
+            long_exits = pd.Series(class_preds == int(neutral_class), index=index)
+            short_exits = pd.Series(class_preds == int(neutral_class), index=index)
+            return long_entries, short_entries, long_exits, short_exits
+
+        if mode in ("prob_threshold", "threshold", "proba_threshold"):
+            thr_long = (
+                entry_threshold
+                if long_entry_threshold is None
+                else long_entry_threshold
+            )
+            thr_short = (
+                entry_threshold
+                if short_entry_threshold is None
+                else short_entry_threshold
+            )
+            thr_long = 0.5 if thr_long is None else float(thr_long)
+            thr_short = 0.5 if thr_short is None else float(thr_short)
+            thr_long = min(max(thr_long, 0.0), 1.0)
+            thr_short = min(max(thr_short, 0.0), 1.0)
+            long_p = pd.Series(proba[:, int(long_class)], index=index)
+            short_p = pd.Series(proba[:, int(short_class)], index=index)
+            long_entries = long_p >= thr_long
+            short_entries = short_p >= thr_short
+            both = long_entries & short_entries
+            if bool(both.any()):
+                pick_long = long_p >= short_p
+                long_entries = long_entries & (~both | pick_long)
+                short_entries = short_entries & (~both | ~pick_long)
+            long_exits = pd.Series(False, index=index)
+            short_exits = pd.Series(False, index=index)
+            return long_entries, short_entries, long_exits, short_exits
+
+        if mode in ("prob_quantile", "quantile", "proba_quantile"):
+            long_p = pd.Series(proba[:, int(long_class)], index=index)
+            short_p = pd.Series(proba[:, int(short_class)], index=index)
+            q_long = (
+                entry_quantile if long_entry_quantile is None else long_entry_quantile
+            )
+            q_short = (
+                entry_quantile if short_entry_quantile is None else short_entry_quantile
+            )
+            if q_long is None or q_short is None:
+                raise ValueError(
+                    "prob_quantile requires entry_quantile (or both long_entry_quantile and short_entry_quantile)"
+                )
+            q_long = min(max(float(q_long), 0.0), 1.0)
+            q_short = min(max(float(q_short), 0.0), 1.0)
+            thr_long_s = VectorBTBacktest._quantile_threshold_series(
+                long_p,
+                q=q_long,
+                mode=str(quantile_mode),
+                window=quantile_window,
+                min_periods=int(quantile_min_periods),
+                train_threshold=long_train_threshold,
+            )
+            thr_short_s = VectorBTBacktest._quantile_threshold_series(
+                short_p,
+                q=q_short,
+                mode=str(quantile_mode),
+                window=quantile_window,
+                min_periods=int(quantile_min_periods),
+                train_threshold=short_train_threshold,
+            )
+            long_entries = (long_p >= thr_long_s).fillna(False)
+            short_entries = (short_p >= thr_short_s).fillna(False)
+            both = long_entries & short_entries
+            if bool(both.any()):
+                pick_long = long_p >= short_p
+                long_entries = long_entries & (~both | pick_long)
+                short_entries = short_entries & (~both | ~pick_long)
+            long_exits = pd.Series(False, index=index)
+            short_exits = pd.Series(False, index=index)
+            return long_entries, short_entries, long_exits, short_exits
+
+        raise ValueError(f"Unknown multiclass entry_mode: {entry_mode}")
+
     def _apply_max_holding_bars(
         self,
         *,
@@ -170,9 +337,9 @@ class VectorBTBacktest(BaseBacktest):
         dist_raw = pd.to_numeric(df[dist_col], errors="coerce").abs().astype(float)
         price_s = pd.to_numeric(price, errors="coerce").astype(float)
 
-        # Heuristic: dist_to_nearest_sr is typically a fraction (<1). Treat as pct when small.
-        q95 = float(dist_raw.dropna().quantile(0.95)) if dist_raw.notna().any() else 0.0
-        dist_is_pct = bool(cfg.get("dist_is_pct", q95 <= 2.0))
+        # dist_to_nearest_sr in our feature pipeline is a relative distance (pct of price).
+        # Avoid "auto-detect" based on full-window quantiles (would be a form of lookahead).
+        dist_is_pct = bool(cfg.get("dist_is_pct", True))
 
         if dist_is_pct:
             abs_dist = dist_raw * price_s
@@ -236,15 +403,43 @@ class VectorBTBacktest(BaseBacktest):
                 strategy_direction = "both"  # 默认双向
 
         if task_type == "multiclass" and predictions.ndim == 2:
-            class_preds = np.argmax(predictions, axis=1)
             multi_cfg = params.get("multiclass", {})
             long_class = multi_cfg.get("long_class", 2)
             short_class = multi_cfg.get("short_class", 0)
             neutral_class = multi_cfg.get("neutral_class", 1)
-            long_entries = pd.Series(class_preds == long_class, index=index)
-            long_exits = pd.Series(class_preds == neutral_class, index=index)
-            short_entries = pd.Series(class_preds == short_class, index=index)
-            short_exits = pd.Series(class_preds == neutral_class, index=index)
+            entry_mode = multi_cfg.get("entry_mode", "argmax")
+            entry_threshold = multi_cfg.get("entry_threshold", None)
+            long_entry_threshold = multi_cfg.get("long_entry_threshold", None)
+            short_entry_threshold = multi_cfg.get("short_entry_threshold", None)
+            entry_quantile = multi_cfg.get("entry_quantile", None)
+            long_entry_quantile = multi_cfg.get("long_entry_quantile", None)
+            short_entry_quantile = multi_cfg.get("short_entry_quantile", None)
+            quantile_mode = multi_cfg.get("quantile_mode", "expanding")
+            quantile_window = multi_cfg.get("quantile_window", None)
+            quantile_min_periods = multi_cfg.get("quantile_min_periods", 50)
+            long_train_threshold = multi_cfg.get("long_train_threshold", None)
+            short_train_threshold = multi_cfg.get("short_train_threshold", None)
+            long_entries, short_entries, long_exits, short_exits = (
+                self._multiclass_entries_from_proba(
+                    proba=predictions,
+                    index=index,
+                    long_class=int(long_class),
+                    short_class=int(short_class),
+                    neutral_class=int(neutral_class),
+                    entry_mode=str(entry_mode),
+                    entry_threshold=entry_threshold,
+                    long_entry_threshold=long_entry_threshold,
+                    short_entry_threshold=short_entry_threshold,
+                    entry_quantile=entry_quantile,
+                    long_entry_quantile=long_entry_quantile,
+                    short_entry_quantile=short_entry_quantile,
+                    quantile_mode=str(quantile_mode),
+                    quantile_window=quantile_window,
+                    quantile_min_periods=int(quantile_min_periods),
+                    long_train_threshold=long_train_threshold,
+                    short_train_threshold=short_train_threshold,
+                )
+            )
 
             # Structural fix: enforce time-exit so "no neutral predicted" won't hold forever.
             # Default to 50 bars if not specified (can be overridden in backtest.yaml).
@@ -268,10 +463,20 @@ class VectorBTBacktest(BaseBacktest):
             top_quantile = float(params.get("top_quantile", 0.1))
             top_quantile = min(max(top_quantile, 0.0), 1.0)
             entry_mode = str(params.get("entry_mode", "level")).lower()  # level|cross
+            quantile_mode = str(params.get("quantile_mode", "expanding"))
+            quantile_window = params.get("quantile_window", None)
+            quantile_min_periods = int(params.get("quantile_min_periods", 50))
 
             # Long entries: top N% predicted values.
-            quantile_threshold = float(preds_series.quantile(1 - top_quantile))
-            entry_raw = preds_series >= quantile_threshold
+            thr_s = self._quantile_threshold_series(
+                preds_series,
+                q=1.0 - top_quantile,
+                mode=quantile_mode,
+                window=quantile_window,
+                min_periods=quantile_min_periods,
+                train_threshold=params.get("train_entry_threshold", None),
+            )
+            entry_raw = (preds_series >= thr_s).fillna(False)
             if entry_mode == "cross":
                 prev = entry_raw.shift(1).fillna(False)
                 long_entries = entry_raw & (~prev)
@@ -283,8 +488,15 @@ class VectorBTBacktest(BaseBacktest):
                 # Optional: allow bottom-quantile shorts for bi-directional regression strategies.
                 bottom_quantile = float(params.get("bottom_quantile", top_quantile))
                 bottom_quantile = min(max(bottom_quantile, 0.0), 1.0)
-                short_thr = float(preds_series.quantile(bottom_quantile))
-                short_raw = preds_series <= short_thr
+                short_thr_s = self._quantile_threshold_series(
+                    preds_series,
+                    q=bottom_quantile,
+                    mode=quantile_mode,
+                    window=quantile_window,
+                    min_periods=quantile_min_periods,
+                    train_threshold=params.get("train_short_threshold", None),
+                )
+                short_raw = (preds_series <= short_thr_s).fillna(False)
                 if entry_mode == "cross":
                     prev_s = short_raw.shift(1).fillna(False)
                     short_entries = short_raw & (~prev_s)
@@ -366,13 +578,20 @@ class VectorBTBacktest(BaseBacktest):
                     if entry_quantile is not None:
                         q = float(entry_quantile)
                         q = min(max(q, 0.0), 1.0)
-                        thr = float(preds_series.quantile(q))
+                        thr_s = self._quantile_threshold_series(
+                            preds_series,
+                            q=q,
+                            mode=str(params.get("quantile_mode", "expanding")),
+                            window=params.get("quantile_window", None),
+                            min_periods=int(params.get("quantile_min_periods", 50)),
+                            train_threshold=params.get("train_entry_threshold", None),
+                        )
                     else:
                         if entry_threshold is not None:
                             long_entry = float(entry_threshold)
-                        thr = float(long_entry)
+                        thr_s = pd.Series(float(long_entry), index=index)
 
-                    entry_raw = preds_series >= thr
+                    entry_raw = (preds_series >= thr_s).fillna(False)
                     if entry_mode == "cross":
                         prev = entry_raw.shift(1).fillna(False)
                         long_entries = entry_raw & (~prev)
@@ -391,15 +610,22 @@ class VectorBTBacktest(BaseBacktest):
                     if entry_quantile is not None:
                         q = float(entry_quantile)
                         q = min(max(q, 0.0), 1.0)
-                        thr = float(preds_series.quantile(q))
+                        thr_s = self._quantile_threshold_series(
+                            preds_series,
+                            q=q,
+                            mode=str(params.get("quantile_mode", "expanding")),
+                            window=params.get("quantile_window", None),
+                            min_periods=int(params.get("quantile_min_periods", 50)),
+                            train_threshold=params.get("train_entry_threshold", None),
+                        )
                     else:
                         if entry_threshold is not None:
                             short_entry = float(entry_threshold)
-                        thr = float(short_entry)
+                        thr_s = pd.Series(float(short_entry), index=index)
 
                     long_entries = pd.Series(False, index=index)  # 不做多
                     long_exits = pd.Series(False, index=index)
-                    entry_raw = preds_series >= thr
+                    entry_raw = (preds_series >= thr_s).fillna(False)
                     if entry_mode == "cross":
                         prev = entry_raw.shift(1).fillna(False)
                         short_entries = entry_raw & (~prev)

@@ -32,6 +32,7 @@ feature_pipeline:
   - vpin_signed_imbalance_x_trade_cluster_imbalance_f
   - vpin_x_trade_cluster_entropy_f
   - dtw_features_trend_f
+  - liquidity_void_scene_semantic_scores_f
   invert_features: []
 feature_group_search:
   base_strategy_dir: config/strategies/trend_following
@@ -39,11 +40,8 @@ feature_group_search:
   min_trades: 10
   seeds:
   - 1
-  - 2
-  - 3
-  - 4
-  - 5
-  selected_groups: []
+  selected_groups:
+  - liquidity_void_scene
   stop_reason: no_improvement
   base_features:
   - wpt_price_reconstructed_f
@@ -101,8 +99,6 @@ feature_group_search:
   - vpin_signed_imbalance_x_trade_cluster_imbalance_f
   - vpin_x_trade_cluster_entropy_f
   - dtw_features_trend_f
-  groups_source: groups_yaml:auto:config/feature_groups_trend_following_semantic.yaml
-  groups_yaml_auto: true
-  pool_b_yaml: null
-  pool_b_merged_singletons: false
+  - liquidity_void_scene_semantic_scores_f
+  groups_source: config/feature_groups_trend_following_semantic.yaml
   feature_blacklist: []

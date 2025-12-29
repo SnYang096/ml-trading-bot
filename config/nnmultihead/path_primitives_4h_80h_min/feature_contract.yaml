@@ -32,10 +32,20 @@ feature_contract:
     # - dist_to_nearest_sr
 
   optional_blocks:
-    # High-cost / non-guaranteed blocks (examples)
-    - ticks_orderflow_semantic_blocks
-    - volume_profile_semantic_blocks
-    - trade_cluster_semantic_blocks
+    # High-cost / non-guaranteed blocks.
+    #
+    # New format: block_name -> list of column patterns (fnmatch).
+    # These patterns will be resolved against `feature_cols` at train/predict time.
+    #
+    # IMPORTANT: keep patterns conservative to avoid accidentally pulling in core columns.
+    ticks_orderflow_semantic_blocks:
+      - "*vpin*"
+    volume_profile_semantic_blocks:
+      - "*vp_*"
+      - "*volume_profile*"
+    trade_cluster_semantic_blocks:
+      - "*trade_cluster*"
+      - "*TradeCluster*"
 
   missingness_policy:
     # Policy for missing optional blocks during inference.
@@ -44,5 +54,10 @@ feature_contract:
     # - mask: provide feature_available_mask (future upgrade) and/or block dropout in training
     # - impute: fill missing with constants (should be paired with masks to avoid leakage)
     optional_blocks_on_missing: skip
+    # If true and optional blocks are resolved, append per-block availability mask to model input.
+    append_block_mask: true
+    # During training only: randomly zero-out available blocks to make the model robust to block on/off.
+    # Start small; tune later.
+    block_dropout_p: 0.05
 
 

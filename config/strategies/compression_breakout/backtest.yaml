@@ -7,6 +7,13 @@ backtest:
       long_class: 2
       short_class: 0
       neutral_class: 1
+      # Speed/robustness: avoid "predict all neutral => 0 trades" in highly imbalanced labels.
+      # Use probability-threshold entries; exits are handled by RR (time-exit/SL/TP).
+      entry_mode: prob_quantile
+      entry_quantile: 0.90
+      # No-lookahead quantile threshold (computed from proba history up to t-1)
+      quantile_mode: expanding
+      quantile_min_periods: 50
     # Structural safety: never hold forever if "neutral" is rarely predicted.
     max_holding_bars: 50
     # Prefer RR-consistent exits for multiclass as well (time-exit included).

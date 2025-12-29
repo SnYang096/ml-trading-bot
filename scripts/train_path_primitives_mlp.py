@@ -51,6 +51,9 @@ from src.time_series_model.models.nn.feature_contract import (  # noqa: E402
     load_feature_contract,
     validate_minimal_required_cols,
 )
+from src.time_series_model.models.nn.path_primitives_dataset import (  # noqa: E402
+    resolve_block_cols_by_name,
+)
 from src.time_series_model.tasks import make_primitives_task_id  # noqa: E402
 from scripts.train_strategy_pipeline import (  # noqa: E402
     run_feature_pipeline,
@@ -211,6 +214,25 @@ def main() -> None:
             available_columns=df_features.columns.tolist(), contract=contract
         )
 
+    # Optional: block mask + block dropout for "optional blocks" robustness
+    block_cols_by_name = None
+    append_block_mask = False
+    block_dropout_p = 0.0
+    if contract is not None:
+        append_block_mask = bool(
+            contract.missingness_policy.get("append_block_mask", False)
+        )
+        block_dropout_p = float(
+            contract.missingness_policy.get("block_dropout_p", 0.0) or 0.0
+        )
+        block_cols_by_name = resolve_block_cols_by_name(
+            feature_cols,
+            optional_blocks=contract.optional_blocks,
+        )
+        # Only append mask if we actually resolved at least one block to columns
+        if not block_cols_by_name:
+            append_block_mask = False
+
     # Horizon conversion
     horizon_bars = int(round(float(args.horizon_hours) / float(args.bar_hours)))
     if horizon_bars <= 0:
@@ -248,6 +270,9 @@ def main() -> None:
         cfg=train_cfg,
         save_path=model_path,
         group_col="symbol" if len(symbols) > 1 else None,
+        block_cols_by_name=block_cols_by_name,
+        append_block_mask=append_block_mask,
+        block_dropout_p=block_dropout_p,
     )
     # nnmultihead-only bookkeeping: stable task_id (does not affect tree pipeline)
     meta["task_id"] = make_primitives_task_id(
@@ -262,6 +287,7 @@ def main() -> None:
     )
     if contract is not None:
         meta["feature_contract"] = contract.to_dict()
+        meta["block_cols_by_name"] = block_cols_by_name or {}
 
     # Evaluate on the same df (phase-1 sanity). For true OOS, use rolling_train integration later.
     metrics, df_eval, extra = evaluate_model_on_df(
@@ -270,6 +296,8 @@ def main() -> None:
         feature_cols=feature_cols,
         label_cfg=label_cfg,
         group_col="symbol" if len(symbols) > 1 else None,
+        block_cols_by_name=block_cols_by_name,
+        append_block_mask=append_block_mask,
     )
     # Attach rolling IC preview (report artifact) to meta so report.html can render it.
     if isinstance(extra, dict) and extra.get("rolling_ic") is not None:

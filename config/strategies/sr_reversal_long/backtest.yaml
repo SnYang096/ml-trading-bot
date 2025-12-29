@@ -7,6 +7,11 @@ backtest:
     # - enter when pred is in the top quantile (dynamic threshold on test set preds)
     #   q90 = only take the top 10% most confident bars
     entry_quantile: 0.9
+    # No-lookahead quantile threshold:
+    # - expanding: threshold at time t is computed from predictions up to t-1
+    # - rolling: use a rolling window up to t-1
+    quantile_mode: expanding
+    quantile_min_periods: 50
     # Entry mode:
     # - level: allow entry as long as pred >= threshold (useful when crossings are rare)
     # - cross: only on rising edge from <threshold to >=threshold

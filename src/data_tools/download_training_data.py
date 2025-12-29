@@ -41,6 +41,30 @@ class BinanceMultiSymbolDownloader:
         # Binance数据基础URL
         self.base_url = "https://data.binance.vision/data/futures/um/monthly/aggTrades"
 
+        # Reusable HTTP session (better resilience for large ZIP downloads)
+        self.session = requests.Session()
+        try:
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            retry = Retry(
+                total=5,
+                connect=5,
+                read=5,
+                backoff_factor=1.0,
+                status_forcelist=(429, 500, 502, 503, 504),
+                allowed_methods=frozenset(["GET"]),
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(
+                max_retries=retry, pool_connections=10, pool_maxsize=10
+            )
+            self.session.mount("https://", adapter)
+            self.session.mount("http://", adapter)
+        except Exception:
+            # If retry tooling is unavailable, fall back to plain Session.
+            pass
+
         # 支持的交易对
         self.symbols = {
             "BTCUSDT": "Bitcoin",
@@ -183,6 +207,7 @@ class BinanceMultiSymbolDownloader:
         """下载单个文件"""
         filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
         file_path = self.data_dir / filename
+        tmp_path = file_path.with_suffix(file_path.suffix + ".part")
         url = f"{self.base_url}/{symbol}/{filename}"
 
         for attempt in range(retry_times):
@@ -192,29 +217,51 @@ class BinanceMultiSymbolDownloader:
                     end=" ",
                 )
 
-                # 发送请求
-                response = requests.get(url, timeout=timeout, stream=True)
+                # Resume support: keep partial download as .part and continue via Range.
+                existing = tmp_path.stat().st_size if tmp_path.exists() else 0
+                headers = {"Accept-Encoding": "identity"}
+                if existing > 0:
+                    headers["Range"] = f"bytes={existing}-"
+
+                # 发送请求（use Session + retries）
+                response = self.session.get(
+                    url, timeout=(10, timeout), stream=True, headers=headers
+                )
                 response.raise_for_status()
 
                 # 获取文件大小
-                total_size = int(response.headers.get("content-length", 0))
+                content_len = int(response.headers.get("content-length", 0))
+                total_size = (
+                    int(response.headers.get("content-range", "").split("/")[-1] or 0)
+                    if response.headers.get("content-range")
+                    else 0
+                )
+                if total_size <= 0:
+                    total_size = content_len + existing if content_len > 0 else 0
+
+                # If server ignored Range and returned full content, restart.
+                if existing > 0 and response.status_code == 200:
+                    existing = 0
+                    if tmp_path.exists():
+                        tmp_path.unlink()
 
                 # 下载文件
-                downloaded_size = 0
-                chunk_size = 8192
-
-                with open(file_path, "wb") as f:
+                chunk_size = 1024 * 256  # 256KB
+                mode = "ab" if existing > 0 else "wb"
+                with open(tmp_path, mode) as f:
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
                             f.write(chunk)
-                            downloaded_size += len(chunk)
 
                 # 验证下载
-                final_size = file_path.stat().st_size
+                final_size = tmp_path.stat().st_size
                 size_mb = final_size / 1024 / 1024
 
                 if total_size > 0 and final_size != total_size:
                     raise Exception(f"文件大小不匹配: {final_size} != {total_size}")
+
+                # Atomically move into place
+                tmp_path.replace(file_path)
 
                 print(f"✅ ({size_mb:.1f}MB)")
                 self.stats["downloaded"] += 1
@@ -231,9 +278,12 @@ class BinanceMultiSymbolDownloader:
             except Exception as e:
                 print(f"❌ {str(e)}")
 
-            # 删除不完整的文件
-            if file_path.exists():
-                file_path.unlink()
+            # Keep .part for resume, but remove any zero-byte temp
+            try:
+                if tmp_path.exists() and tmp_path.stat().st_size == 0:
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
             # 等待后重试
             if attempt < retry_times - 1:
