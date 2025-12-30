@@ -276,6 +276,10 @@ def get_registry() -> FeatureRegistry:
 FEATURE_MODULES = [
     # Baseline features
     "src.features.time_series.baseline_features",
+    # Market-cap / cross-sectional normalization features
+    "src.features.time_series.market_cap_features",
+    # Funding rate features
+    "src.features.time_series.funding_rate_features",
     # Order flow features
     "src.features.time_series.utils_order_flow_features",
     # Volatility features

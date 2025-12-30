@@ -1,6 +1,9 @@
 backtest:
   enabled: true
   params:
+    # Required for vectorbt annualized metrics (Sharpe, etc).
+    # Keep it consistent with your training timeframe (e.g., 240T => 4H).
+    freq: 4H
     price_col: close
     long_entry_threshold: 0.55
     long_exit_threshold: 0.45

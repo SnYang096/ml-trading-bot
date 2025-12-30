@@ -956,6 +956,77 @@ features:
 
       "
 
+  market_cap_normalized_orderflow_f:
+    module: market_cap
+    compute_func: compute_market_cap_normalized_orderflow_from_df
+    dependencies: []
+    required_columns:
+      - close
+      - volume
+    output_columns:
+      - market_cap_usd
+      - dollar_volume_over_mcap
+      - turnover_over_mcap
+      - net_buy_usd_over_mcap
+      - abs_net_buy_usd_over_mcap
+    category: market_cap
+    description: "Market-cap normalized flow proxies (for multi-symbol robustness)."
+    pass_full_df: true
+    compute_params:
+      market_cap_dir: data/market_cap
+      min_market_cap_usd: 10000000.0
+      on_missing_market_cap: nan
+      # Keep in sync with config/data/market_cap.yaml.cache_version if you want manual invalidation.
+      node_cache_version: v1
+
+  funding_rate_features_f:
+    module: funding_rate
+    compute_func: compute_funding_rate_features_from_df
+    dependencies: []
+    required_columns: []
+    output_columns:
+      - funding_rate
+      - funding_rate_abs
+      - funding_rate_change_1
+      - funding_rate_zscore_50
+      - funding_rate_abs_zscore_50
+    category: order_flow
+    description: "Funding-rate features aligned to bar timestamps (Binance futures fundingRate)."
+    pass_full_df: true
+    compute_params:
+      funding_rate_dir: data/funding_rate/parquet
+      on_missing: nan
+      # Manual invalidation knob (part of cache key); bump when data schema or join logic changes.
+      node_cache_version: v1
+      z_window: 50
+      z_min_periods: 20
+
+  funding_scene_semantic_scores_f:
+    module: funding_rate
+    compute_func: compute_funding_scene_semantic_scores_from_df
+    dependencies:
+      - funding_rate_features_f
+      - compression_score_f
+      - trend_r2_20_f
+    required_columns:
+      - funding_rate_abs_zscore_50
+      - compression_score
+      - trend_r2_20
+    output_columns:
+      - funding_compression_score
+      - funding_ignition_score
+      - funding_absorption_score
+      - funding_exhaustion_scene_score
+    category: interaction
+    description: "Funding-rate scene semantics: compression/ignition/absorption/exhaustion (0..1), gated by trend+compression."
+    pass_full_df: true
+    compute_params:
+      funding_z_col: funding_rate_abs_zscore_50
+      compression_col: compression_score
+      trend_col: trend_r2_20
+      z_shift: 1.0
+      z_scale: 1.0
+
   fp_imbalance_exhaustion_f:
     module: enhanced
     compute_func: compute_fp_imbalance_exhaustion_from_series

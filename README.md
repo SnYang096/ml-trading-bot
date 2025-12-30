@@ -550,6 +550,96 @@ mlbot data download \
 mlbot data convert --cleanup
 ```
 
+### Extended data: Market Cap (CoinGecko) and Funding Rate (Binance)
+
+These datasets are used for **feature engineering** (e.g., market-cap normalization for orderflow signals, funding-rate features). They do not replace the core OHLCV / aggTrades pipeline above.
+
+#### 1) Market cap snapshots (CoinGecko)
+
+- **Prerequisite**: set API key via env var (do NOT commit it):
+
+```bash
+export COINGECKO_API_KEY='...'
+```
+
+- **Update the full universe** (by default, symbols are loaded from the universe YAML referenced by `config/data/market_cap.yaml`):
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --no-docker
+```
+
+- **Update a small set of symbols** (debugging):
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --symbols BTCUSDT,ETHUSDT \
+  --no-docker
+```
+
+- **Skip already-fresh snapshots** (recommended):
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --max-age-days 7 \
+  --no-docker
+```
+
+- **Force re-download**:
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --force \
+  --no-docker
+```
+
+- **Default storage**:
+  - `data/market_cap/<SYMBOL>.parquet`
+  - `data/market_cap/market_cap_manifest.json`
+
+#### 2) Funding rate (Binance monthly ZIP → Parquet)
+
+- **Download using universe config**:
+
+```bash
+mlbot data download-funding-rate \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-set starter_a \
+  --start-year 2024 \
+  --start-month 1 \
+  --no-docker
+```
+
+- **Progress + skip cached months** (default behavior: skip existing parquet first, otherwise skip existing ZIP):
+
+```bash
+mlbot data download-funding-rate \
+  --symbols BTCUSDT,ETHUSDT \
+  --start-year 2024 \
+  --start-month 1 \
+  --progress-every 10 \
+  --no-docker
+```
+
+- **Force re-download**:
+
+```bash
+mlbot data download-funding-rate \
+  --symbols BTCUSDT,ETHUSDT \
+  --start-year 2024 \
+  --start-month 1 \
+  --force \
+  --no-docker
+```
+
+- **Default storage**:
+  - ZIP: `data/funding_rate/zip/`
+  - Parquet: `data/funding_rate/parquet/`
+
 ## Core Principle
 
 **All production training should use dimensionality-reduced features** (Top-K + Autoencoder), not the original 482 features.

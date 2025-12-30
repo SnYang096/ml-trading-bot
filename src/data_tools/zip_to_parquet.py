@@ -25,7 +25,12 @@ class DataConverter:
     """数据转换器：将 Binance aggTrades ZIP → 原始 tick Parquet"""
 
     def __init__(
-        self, input_dir: str, output_dir: str, backup_dir: Optional[str] = None
+        self,
+        input_dir: str,
+        output_dir: str,
+        backup_dir: Optional[str] = None,
+        *,
+        force: bool = False,
     ):
         """
         初始化数据转换器
@@ -38,6 +43,7 @@ class DataConverter:
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.backup_dir = backup_dir
+        self.force = bool(force)
         os.makedirs(self.output_dir, exist_ok=True)
         if self.backup_dir:
             os.makedirs(self.backup_dir, exist_ok=True)
@@ -137,6 +143,20 @@ class DataConverter:
                     zip_file, normalized_symbol
                 )
 
+                # Skip if already converted and not forcing re-convert
+                if (
+                    (not self.force)
+                    and os.path.exists(output_file)
+                    and os.path.getsize(output_file) > 0
+                ):
+                    logger.info(f"Skip (already converted): {output_file}")
+                    return {
+                        "original_file": zip_file,
+                        "output_file": output_file,
+                        "skipped": True,
+                        "symbol": symbol,
+                    }
+
                 df_ticks.to_parquet(output_file, compression="snappy", index=False)
                 logger.info(f"Saved tick parquet: {output_file}")
 
@@ -155,6 +175,7 @@ class DataConverter:
                     "end_date": df_ticks["timestamp"].max().strftime("%Y-%m-%d"),
                     "shape": df_ticks.shape,
                     "symbol": symbol,
+                    "skipped": False,
                 }
 
         except Exception as e:
@@ -289,6 +310,7 @@ class DataConverter:
         logger.info(f"Found {len(zip_files)} files to convert")
 
         converted_files: List[Dict] = []
+        skipped_files: List[Dict] = []
         failed_files: List[str] = []
 
         total_files = len(zip_files)
@@ -307,8 +329,12 @@ class DataConverter:
 
             result = self.convert_zip_to_parquet(zip_file)
             if result:
-                converted_files.append(result)
-                print(f"{progress_prefix} ✅ Success: {file_name}")
+                if bool(result.get("skipped")):
+                    skipped_files.append(result)
+                    print(f"{progress_prefix} ⏩ Skip (already converted): {file_name}")
+                else:
+                    converted_files.append(result)
+                    print(f"{progress_prefix} ✅ Success: {file_name}")
             else:
                 failed_files.append(zip_file)
                 print(f"{progress_prefix} ❌ Failed: {file_name}")
@@ -319,6 +345,7 @@ class DataConverter:
 
         return {
             "converted_files": converted_files,
+            "skipped_files": skipped_files,
             "failed_files": failed_files,
             "total_files": len(zip_files),
         }
@@ -378,6 +405,11 @@ def main():
         default="yes",
         help="Delete converted ZIPs without prompt (default: yes)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-convert even if output parquet already exists.",
+    )
     args = parser.parse_args()
 
     # 设置日志
@@ -410,7 +442,7 @@ def main():
         return
 
     # 创建转换器
-    converter = DataConverter(input_dir, output_dir, backup_dir)
+    converter = DataConverter(input_dir, output_dir, backup_dir, force=bool(args.force))
 
     # 转换所有文件
     results = converter.convert_all_files()
@@ -419,6 +451,7 @@ def main():
     print(f"\n📊 Conversion Results:")
     print(f"   Total files: {results['total_files']}")
     print(f"   Converted: {len(results['converted_files'])}")
+    print(f"   Skipped: {len(results.get('skipped_files', []))}")
     print(f"   Failed: {len(results['failed_files'])}")
 
     if results["converted_files"]:

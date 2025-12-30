@@ -25,6 +25,10 @@ universe_sets:
         - TRX
         - TON
         - ATOM
+        - ETC
+        - FIL
+        - XLM
+        - XTZ
       alt:
         - NEAR
         - APT
@@ -41,29 +45,8 @@ universe_sets:
         - MANA
         - SAND
         - RUNE
-        - RNDR
         - STX
         - ICP
-      meme:
-        - DOGE
-        - SHIB
-        - PEPE
-        - WIF
-        - BONK
-        - FLOKI
-        - BOME
-        - BRETT
-
-  expanded_b:
-    note: "扩展候选（随交易所永续可用性变化，建议以可交易+成交量稳定过滤）"
-    groups:
-      highcap:
-        - ETC
-        - FIL
-        - XLM
-        - XTZ
-        - EOS
-      alt:
         - DYDX
         - GMX
         - LDO
@@ -79,6 +62,14 @@ universe_sets:
         - ZK
         - STRK
       meme:
+        - DOGE
+        - SHIB
+        - PEPE
+        - WIF
+        - BONK
+        - FLOKI
+        - BOME
+        - BRETT
         - POPCAT
         - MEW
         - PONKE

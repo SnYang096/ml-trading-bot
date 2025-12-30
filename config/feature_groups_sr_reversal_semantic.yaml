@@ -34,4 +34,10 @@ groups:
   fp_scene:
     - fp_imbalance_scene_semantic_scores_f
 
+  market_cap_norm:
+    - market_cap_normalized_orderflow_f
+
+  funding_scene:
+    - funding_scene_semantic_scores_f
+
 

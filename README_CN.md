@@ -584,6 +584,96 @@ mlbot data download \
 mlbot data convert --cleanup
 ```
 
+### 扩展数据：市值（Market Cap）与资金费率（Funding Rate）
+
+这些数据主要用于 **特征工程**（例如市值归一化的订单流特征、资金费率/持仓相关特征），不会替代主 K 线/成交数据。
+
+#### 1) 市值快照（CoinGecko）
+
+- **前置要求**：在环境变量中设置 API Key（不要写进仓库）：
+
+```bash
+export COINGECKO_API_KEY='...'
+```
+
+- **更新全量 universe（默认会从 universe YAML 自动读 symbols）**：
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --no-docker
+```
+
+- **只更新指定 symbols（调试用）**：
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --symbols BTCUSDT,ETHUSDT \
+  --no-docker
+```
+
+- **跳过已下载且仍“新鲜”的 snapshot**（建议默认使用，避免重复打 API）：
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --max-age-days 7 \
+  --no-docker
+```
+
+- **强制重拉**（无视缓存）：
+
+```bash
+mlbot data update-market-cap \
+  --config config/data/market_cap.yaml \
+  --force \
+  --no-docker
+```
+
+- **结果存储位置**（默认）：
+  - `data/market_cap/<SYMBOL>.parquet`
+  - `data/market_cap/market_cap_manifest.json`
+
+#### 2) Binance 资金费率（按月 ZIP → Parquet）
+
+- **下载（支持 universe）**：
+
+```bash
+mlbot data download-funding-rate \
+  --universe-config config/download/crypto_4h_token_universe_groups.yaml \
+  --universe-set starter_a \
+  --start-year 2024 \
+  --start-month 1 \
+  --no-docker
+```
+
+- **进度显示 + 跳过已下载**（默认会跳过：优先 parquet，其次 zip）：
+
+```bash
+mlbot data download-funding-rate \
+  --symbols BTCUSDT,ETHUSDT \
+  --start-year 2024 \
+  --start-month 1 \
+  --progress-every 10 \
+  --no-docker
+```
+
+- **强制重下**：
+
+```bash
+mlbot data download-funding-rate \
+  --symbols BTCUSDT,ETHUSDT \
+  --start-year 2024 \
+  --start-month 1 \
+  --force \
+  --no-docker
+```
+
+- **结果存储位置**（默认）：
+  - ZIP：`data/funding_rate/zip/`
+  - Parquet：`data/funding_rate/parquet/`
+
 ## 核心原则
 
 **所有生产训练都应使用降维特征**（Top-K + Autoencoder），而不是原始的 482 个特征。

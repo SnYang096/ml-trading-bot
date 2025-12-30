@@ -479,6 +479,118 @@ def data_download(
 
     sys.exit(run_script("src/data_tools/download_training_data.py", args))
 
+@data.command("download-funding-rate")
+@click.option("--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols")
+@click.option(
+    "--universe-config",
+    default=None,
+    help="YAML universe config (if set, overrides --symbols). Example: config/download/crypto_4h_token_universe_groups.yaml",
+)
+@click.option("--universe-set", default="starter_a")
+@click.option("--universe-groups", default=None)
+@click.option("--start-year", default="2023", help="Start year")
+@click.option("--start-month", default="1", help="Start month")
+@click.option("--end-year", help="End year (default: current)")
+@click.option("--end-month", help="End month (default: current)")
+@click.option("--data-dir", default="data/funding_rate/zip", help="Output directory for fundingRate ZIP files")
+@click.option("--parquet-dir", default="data/funding_rate/parquet", help="Output directory for fundingRate Parquet")
+@click.option("--sleep-sec", type=float, default=0.2, show_default=True, help="Sleep between requests (rate-limit friendly)")
+@click.option("--progress-every", type=int, default=25, show_default=True, help="Print progress every N tasks (0 disables)")
+@click.option("--force/--no-force", default=False, show_default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def data_download_funding_rate(
+    symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
+    start_year,
+    start_month,
+    end_year,
+    end_month,
+    data_dir,
+    parquet_dir,
+    sleep_sec,
+    progress_every,
+    force,
+    docker,
+):
+    """Download Binance monthly fundingRate data."""
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(universe_set=str(universe_set), groups=groups)
+        symbols = ",".join(resolved)
+
+    args = [
+        "--data-dir",
+        data_dir,
+        "--parquet-dir",
+        parquet_dir,
+        "--symbols",
+        *[s for s in symbols.split(",") if s.strip()],
+        "--start-year",
+        str(start_year),
+        "--start-month",
+        str(start_month),
+        "--sleep-sec",
+        str(sleep_sec),
+        "--progress-every",
+        str(progress_every),
+    ]
+    if force:
+        args.append("--force")
+    if end_year:
+        args.extend(["--end-year", str(end_year)])
+    if end_month:
+        args.extend(["--end-month", str(end_month)])
+
+    sys.exit(run_script("src/data_tools/download_funding_rate.py", args))
+
+@data.command("update-market-cap")
+@click.option("--config", default="config/data/market_cap.yaml", show_default=True)
+@click.option("--symbols", default="", help="Optional comma-separated symbols (default: universe+config)")
+@click.option("--output-dir", default="", help="Override output dir (default: config.data_dir)")
+@click.option("--write-manifest/--no-write-manifest", default=True, show_default=True)
+@click.option("--force/--no-force", default=False, show_default=True)
+@click.option("--max-age-days", type=int, default=1, show_default=True)
+@click.option("--sleep-sec", type=float, default=0.1, show_default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def data_update_market_cap(
+    config,
+    symbols,
+    output_dir,
+    write_manifest,
+    force,
+    max_age_days,
+    sleep_sec,
+    docker,
+):
+    """Update market cap snapshots (static) or series (daily) per config, with skip-on-fresh behavior."""
+    args = [
+        "--config",
+        config,
+        "--max-age-days",
+        str(max_age_days),
+        "--sleep-sec",
+        str(sleep_sec),
+    ]
+    if symbols:
+        args.extend(["--symbols", symbols])
+    if output_dir:
+        args.extend(["--output-dir", output_dir])
+    if write_manifest:
+        args.append("--write-manifest")
+    if force:
+        args.append("--force")
+
+    sys.exit(run_script("scripts/update_market_cap.py", args))
+
 
 @data.command("convert")
 @click.option(
@@ -491,8 +603,9 @@ def data_download(
     default=None,
     help="Optional backup directory for ZIPs (default: disabled; avoid disk blowups).",
 )
+@click.option("--force/--no-force", default=False, show_default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def data_convert(cleanup, input_dir, output_dir, backup_dir, docker):
+def data_convert(cleanup, input_dir, output_dir, backup_dir, force, docker):
     """Convert downloaded ZIPs to Parquet format."""
     args = ["--cleanup", "yes" if cleanup else "no"]
     if input_dir:
@@ -501,6 +614,8 @@ def data_convert(cleanup, input_dir, output_dir, backup_dir, docker):
         args.extend(["--output-dir", output_dir])
     if backup_dir:
         args.extend(["--backup-dir", backup_dir])
+    if force:
+        args.append("--force")
     sys.exit(run_python_module("src.data_tools.zip_to_parquet", args, docker=docker))
 
 
@@ -567,6 +682,7 @@ def data_pipeline_universe(
         input_dir=data_dir,
         output_dir=parquet_dir,
         backup_dir=None,
+        force=False,
         docker=docker,
     )
 
