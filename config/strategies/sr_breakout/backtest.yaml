@@ -4,6 +4,15 @@ backtest:
     # Required for vectorbt annualized metrics (Sharpe, etc).
     # Keep it consistent with your training timeframe (e.g., 240T => 4H).
     freq: 4H
+    # Regression strategies MUST have exits; use RR execution to generate exits + time-exit.
+    use_rr_exit: true
+    # sr_breakout is a bi-directional strategy by default; RR execution needs signal direction.
+    use_signal_direction: true
+    rr:
+      atr_col: atr
+      max_holding_bars: 50
+      stop_loss_r: 1.0
+      take_profit_r: 2.0
     price_col: close
     long_entry_threshold: 0.55
     long_exit_threshold: 0.45

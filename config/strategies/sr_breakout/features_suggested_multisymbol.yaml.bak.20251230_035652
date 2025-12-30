@@ -28,8 +28,6 @@ feature_pipeline:
   - vpin_zscore_x_trade_cluster_max_buy_run_f
   - vpin_signed_imbalance_x_trade_cluster_imbalance_f
   - dtw_features_breakout_f
-  - wpt_scene_semantic_scores_f
-  - market_cap_normalized_orderflow_f
   ensure_signal_column:
     name: signal
     default_value: 0
@@ -44,10 +42,8 @@ feature_group_search:
   - 3
   - 4
   - 5
-  selected_groups:
-  - wpt_scene
-  - market_cap_norm
-  stop_reason: no_improvement
+  selected_groups: []
+  stop_reason: no_valid_candidates
   base_features:
   - wpt_price_reconstructed_f
   - wpt_price_fluctuation_f
@@ -96,8 +92,6 @@ feature_group_search:
   - vpin_zscore_x_trade_cluster_max_buy_run_f
   - vpin_signed_imbalance_x_trade_cluster_imbalance_f
   - dtw_features_breakout_f
-  - wpt_scene_semantic_scores_f
-  - market_cap_normalized_orderflow_f
   groups_source: groups_yaml:auto:config/feature_groups_sr_breakout_semantic.yaml
   groups_yaml_auto: true
   pool_b_yaml: null

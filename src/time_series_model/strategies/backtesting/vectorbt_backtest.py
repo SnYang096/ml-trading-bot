@@ -261,6 +261,102 @@ class VectorBTBacktest(BaseBacktest):
         sx = sx & (~se)
         return le, se, lx, sx
 
+    def _apply_trailing_atr_stop(
+        self,
+        *,
+        df: pd.DataFrame,
+        index: pd.Index,
+        price: pd.Series,
+        long_entries: pd.Series,
+        short_entries: pd.Series,
+        long_exits: pd.Series,
+        short_exits: pd.Series,
+        atr_col: str,
+        atr_window: int,
+        trailing_atr_mult: float,
+    ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+        """
+        Apply a bar-level ATR trailing stop.
+
+        - Long: stop = max(stop, price - mult * atr); trigger if low <= stop
+        - Short: stop = min(stop, price + mult * atr); trigger if high >= stop
+        - Never exit on entry bar.
+        """
+        if len(index) == 0:
+            return long_entries, short_entries, long_exits, short_exits
+
+        high_col = "high"
+        low_col = "low"
+        if high_col not in df.columns or low_col not in df.columns:
+            return long_entries, short_entries, long_exits, short_exits
+
+        # Ensure ATR exists (fallback to TR rolling mean)
+        if atr_col not in df.columns:
+            tr = pd.concat(
+                [
+                    df[high_col] - df[low_col],
+                    (df[high_col] - price.shift(1)).abs(),
+                    (df[low_col] - price.shift(1)).abs(),
+                ],
+                axis=1,
+            ).max(axis=1)
+            atr = tr.rolling(window=int(atr_window), min_periods=1).mean()
+        else:
+            atr = pd.to_numeric(df[atr_col], errors="coerce").fillna(0.0)
+
+        mult = float(trailing_atr_mult)
+        high = pd.to_numeric(df[high_col], errors="coerce")
+        low = pd.to_numeric(df[low_col], errors="coerce")
+
+        le = long_entries.fillna(False).astype(bool).copy()
+        se = short_entries.fillna(False).astype(bool).copy()
+        lx = long_exits.fillna(False).astype(bool).copy()
+        sx = short_exits.fillna(False).astype(bool).copy()
+
+        in_long = False
+        in_short = False
+        entry_i_long = -1
+        entry_i_short = -1
+        trail_long = float("nan")
+        trail_short = float("nan")
+
+        for i in range(len(index)):
+            # entries only when flat
+            if not in_long and not in_short:
+                if bool(le.iloc[i]):
+                    in_long = True
+                    entry_i_long = i
+                    trail_long = float(price.iloc[i] - mult * atr.iloc[i])
+                    lx.iloc[i] = False
+                elif bool(se.iloc[i]):
+                    in_short = True
+                    entry_i_short = i
+                    trail_short = float(price.iloc[i] + mult * atr.iloc[i])
+                    sx.iloc[i] = False
+
+            if in_long and i > entry_i_long:
+                trail_long = max(trail_long, float(price.iloc[i] - mult * atr.iloc[i]))
+                if pd.notna(low.iloc[i]) and float(low.iloc[i]) <= float(trail_long):
+                    lx.iloc[i] = True
+                    in_long = False
+                    entry_i_long = -1
+                    trail_long = float("nan")
+
+            if in_short and i > entry_i_short:
+                trail_short = min(
+                    trail_short, float(price.iloc[i] + mult * atr.iloc[i])
+                )
+                if pd.notna(high.iloc[i]) and float(high.iloc[i]) >= float(trail_short):
+                    sx.iloc[i] = True
+                    in_short = False
+                    entry_i_short = -1
+                    trail_short = float("nan")
+
+        # no same-bar exit
+        lx = lx & (~le)
+        sx = sx & (~se)
+        return le, se, lx, sx
+
     def _apply_sr_fuse(
         self,
         *,
@@ -518,6 +614,42 @@ class VectorBTBacktest(BaseBacktest):
                 params=params,
             )
 
+            # Layer C+ (optional): trailing stop / time-exit for regression strategies.
+            # Defaults are OFF to keep Layer B feature-search comparable.
+            if bool(params.get("use_trailing_stop", False)):
+                atr_col = str(params.get("atr_col", "atr"))
+                atr_window = int(params.get("atr_window", 14))
+                trailing_atr_mult = float(params.get("trailing_atr_mult", 2.0))
+                long_entries, short_entries, long_exits, short_exits = (
+                    self._apply_trailing_atr_stop(
+                        df=df,
+                        index=index,
+                        price=price,
+                        long_entries=long_entries,
+                        short_entries=short_entries,
+                        long_exits=long_exits,
+                        short_exits=short_exits,
+                        atr_col=atr_col,
+                        atr_window=atr_window,
+                        trailing_atr_mult=trailing_atr_mult,
+                    )
+                )
+
+            max_hold = int(params.get("max_holding_bars", 0) or 0)
+            if max_hold > 0:
+                allow_flip = bool(params.get("allow_flip", False))
+                long_entries, short_entries, long_exits, short_exits = (
+                    self._apply_max_holding_bars(
+                        index=index,
+                        long_entries=long_entries,
+                        short_entries=short_entries,
+                        long_exits=long_exits,
+                        short_exits=short_exits,
+                        max_holding_bars=max_hold,
+                        allow_flip=allow_flip,
+                    )
+                )
+
             if debug:
                 debug_signals = pd.DataFrame(
                     {
@@ -751,6 +883,12 @@ class VectorBTBacktest(BaseBacktest):
 
         try:
             # Some vectorbt versions don't support size_short; use size only
+            pyramiding_cfg = params.get("pyramiding", {}) or {}
+            accumulate = (
+                pyramiding_cfg.get("accumulate", False)
+                if pyramiding_cfg.get("enabled", False)
+                else False
+            )
             portfolio = vbt.Portfolio.from_signals(
                 price,
                 entries=long_entries,
@@ -762,6 +900,7 @@ class VectorBTBacktest(BaseBacktest):
                 slippage=slippage,
                 freq=freq,
                 size=long_size,
+                accumulate=accumulate,
             )
         except Exception as exc:  # noqa: BLE001
             print(f"   ⚠️  Backtest failed: {exc}")

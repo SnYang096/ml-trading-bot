@@ -537,9 +537,45 @@ mlbot diagnose feature-group-search \
 - **Layer B（搜索/定型）**：保持当前固定切分 + TS-CV + multi-seed（快）。
 - **确认阶段（confirm）**：对最终 shortlist（例如 top 1–3 配置）再跑更严格的 rolling/walk-forward OOS，检查跨窗口稳定性与概念漂移敏感性。
 
+### 5.2.2.1 Confirm 阶段：为什么仍需要“确认性 A/B”（即使已经做了 feature-group-search）？
+
+`feature-group-search` 的定位是：在固定 Task/回测口径下，用 greedy 方式从“组”里选出一个看起来最优的组合。  
+但它**不是最终结论本身**。Confirm 阶段仍建议做**确认性 A/B**，原因是：
+
+- **防止“偶然收益”**：贪心搜索会做多次比较，容易在噪声里捡到一次“看起来更好”的组合。
+- **防止“协变量污染”**：某个组的提升可能来自执行/阈值/样本切分等细节变化，而不是特征本身的稳定增益。
+- **让结论可复盘**：A/B 报告能明确写出“比谁好、好多少、在哪些 slice 上好”，便于团队复用与回滚。
+
+#### A/B 应该怎么做（工业化模板）
+
+最小推荐 3 个对照（同一策略、同一时间窗、同一 seeds 集合）：
+
+- **A0 baseline**：base features（不加任何候选组）
+- **A1 suggested**：`feature-group-search` 输出的最终 `features_suggested.yaml`
+- **A2 isolate（可选但强烈建议）**：只加“最后一步被选中的那一组”（或你最想验证的那一组）
+
+并固定：
+- **同一 TaskSpec（label + sample + split）**
+- **同一回测/执行语义**（RR exits、阈值、成本、time-exit、trailing 等都不变）
+- **同一 multi-seed 集合**（例如 1..5）
+
+判定标准（建议写入报告）：
+- **均值提升**：`Sharpe_mean` / `Return_mean` 的提升是否显著（同时看 std）
+- **交易约束**：`trades_mean >= min_trades` 是否满足；以及 trades 的稳定性（不要只靠单 seed）
+- **尾部/回撤**：是否是靠极少数交易堆出来（看 per-seed 分布 + equity/DD）
+- **slice 证据（推荐）**：near_sr / compression_high / trend_high 等关键 slice 上是否一致受益
+
+结论写法（建议统一格式）：
+- “A1 vs A0：Sharpe_mean +X（std=Y），trades_mean +N；5/5 seeds 为正增益；关键 slice：……”
+- “A2 vs A0：增益主要来自 group=XXX（或主要不是来自它）”
+
 ### 5.2.3 Execution 约束（你刚确认的最佳实践）
 - **compression_breakout**：保持单仓位（不 pyramiding），启用 `use_rr_exit`；可选开启 `rr.use_trailing_stop=true`（用于突破后锁定利润）。
 - **trend_following**：pyramiding + trailing 属于执行层升级（Layer C/Execution），不建议混进 Layer B 特征搜索默认流程；建议在最终 shortlist 上单独做确认与调参。
+  - 工程落地（已支持为可选开关）：在 `config/strategies/trend_following/backtest.yaml` 里显式开启
+    - `use_trailing_stop: true` + `trailing_atr_mult`
+    - `max_holding_bars: N`（time-exit）
+    - `pyramiding.enabled: true`（vectorbt accumulate）
 
 #### 5.2.3.1 trailing 会不会提升 Sharpe？为什么不放进 Layer B 默认？
 - **会影响 Sharpe**：trailing stop 改变的是“退出分布”（让盈利单更容易锁住、让回撤更小），在很多 breakout/趋势类策略里确实可能提升 Sharpe。

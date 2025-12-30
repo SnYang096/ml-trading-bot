@@ -21,3 +21,22 @@ backtest:
       atr_window: 14
       max_size_cap: 10
 
+    # ------------------------------
+    # Layer C+ (可选，默认关闭；不影响 Layer B 特征搜索的默认口径)
+    # ------------------------------
+    # 结构性 time-exit：持仓超过 N 根 bar 强制平仓（默认 0 = 不启用）
+    max_holding_bars: 0
+    allow_flip: false
+
+    # 轻量 ATR trailing stop（默认 false = 不启用）
+    use_trailing_stop: false
+    trailing_atr_mult: 2.0
+    atr_col: atr
+    atr_window: 14
+
+    # 可选：加仓/累积（vectorbt accumulate；默认关闭）
+    pyramiding:
+      enabled: false
+      # bool 或 "addonly"/"removeonly"（取决于 vectorbt 版本）
+      accumulate: true
+

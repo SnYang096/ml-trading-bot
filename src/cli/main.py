@@ -403,6 +403,74 @@ def data():
     pass
 
 
+def _data_download_impl(
+    *,
+    symbols: str,
+    universe_config: Optional[str],
+    universe_set: str,
+    universe_groups: Optional[str],
+    start_year: str,
+    start_month: str,
+    end_year: Optional[str],
+    end_month: Optional[str],
+    data_dir: str,
+    parquet_dir: str,
+    docker: bool,
+) -> int:
+    if universe_config:
+        from src.data_tools.universe_config import load_universe_config
+
+        cfg = load_universe_config(universe_config)
+        groups = (
+            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
+            if universe_groups
+            else None
+        )
+        resolved = cfg.resolve_symbols_usdt(universe_set=str(universe_set), groups=groups)
+        symbols = ",".join(resolved)
+
+    args = [
+        "--data-dir",
+        data_dir,
+        "--parquet-dir",
+        parquet_dir,
+        "--symbols",
+        *[s for s in symbols.split(",") if s.strip()],
+        "--start-year",
+        str(start_year),
+        "--start-month",
+        str(start_month),
+        "--yes",
+    ]
+    if end_year:
+        args.extend(["--end-year", str(end_year)])
+    if end_month:
+        args.extend(["--end-month", str(end_month)])
+
+    return run_script("src/data_tools/download_training_data.py", args, docker=docker)
+
+
+def _data_convert_impl(
+    *,
+    cleanup: bool,
+    input_dir: Optional[str],
+    output_dir: Optional[str],
+    backup_dir: Optional[str],
+    force: bool,
+    docker: bool,
+) -> int:
+    args = ["--cleanup", "yes" if cleanup else "no"]
+    if input_dir:
+        args.extend(["--input-dir", input_dir])
+    if output_dir:
+        args.extend(["--output-dir", output_dir])
+    if backup_dir:
+        args.extend(["--backup-dir", backup_dir])
+    if force:
+        args.append("--force")
+    return run_python_module("src.data_tools.zip_to_parquet", args, docker=docker)
+
+
 @data.command("download")
 @click.option(
     "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
@@ -447,37 +515,20 @@ def data_download(
     docker,
 ):
     """Download Binance monthly aggTrades data."""
-    if universe_config:
-        from src.data_tools.universe_config import load_universe_config
-
-        cfg = load_universe_config(universe_config)
-        groups = (
-            [g.strip() for g in str(universe_groups).split(",") if g.strip()]
-            if universe_groups
-            else None
-        )
-        resolved = cfg.resolve_symbols_usdt(universe_set=str(universe_set), groups=groups)
-        symbols = ",".join(resolved)
-
-    args = [
-        "--data-dir",
-        data_dir,
-        "--parquet-dir",
-        parquet_dir,
-        "--symbols",
-        *symbols.split(","),
-        "--start-year",
-        start_year,
-        "--start-month",
-        start_month,
-        "--yes",
-    ]
-    if end_year:
-        args.extend(["--end-year", end_year])
-    if end_month:
-        args.extend(["--end-month", end_month])
-
-    sys.exit(run_script("src/data_tools/download_training_data.py", args))
+    code = _data_download_impl(
+        symbols=symbols,
+        universe_config=universe_config,
+        universe_set=universe_set,
+        universe_groups=universe_groups,
+        start_year=start_year,
+        start_month=start_month,
+        end_year=end_year,
+        end_month=end_month,
+        data_dir=data_dir,
+        parquet_dir=parquet_dir,
+        docker=docker,
+    )
+    sys.exit(code)
 
 @data.command("download-funding-rate")
 @click.option("--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols")
@@ -607,16 +658,15 @@ def data_update_market_cap(
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_convert(cleanup, input_dir, output_dir, backup_dir, force, docker):
     """Convert downloaded ZIPs to Parquet format."""
-    args = ["--cleanup", "yes" if cleanup else "no"]
-    if input_dir:
-        args.extend(["--input-dir", input_dir])
-    if output_dir:
-        args.extend(["--output-dir", output_dir])
-    if backup_dir:
-        args.extend(["--backup-dir", backup_dir])
-    if force:
-        args.append("--force")
-    sys.exit(run_python_module("src.data_tools.zip_to_parquet", args, docker=docker))
+    code = _data_convert_impl(
+        cleanup=cleanup,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        backup_dir=backup_dir,
+        force=force,
+        docker=docker,
+    )
+    sys.exit(code)
 
 
 @data.command("pipeline")
@@ -627,8 +677,30 @@ def data_convert(cleanup, input_dir, output_dir, backup_dir, force, docker):
 @click.pass_context
 def data_pipeline(ctx, symbols, docker):
     """Download and convert data (full pipeline)."""
-    ctx.invoke(data_download, symbols=symbols, docker=docker)
-    ctx.invoke(data_convert, docker=docker)
+    code = _data_download_impl(
+        symbols=symbols,
+        universe_config=None,
+        universe_set="starter_a",
+        universe_groups=None,
+        start_year="2023",
+        start_month="1",
+        end_year=None,
+        end_month=None,
+        data_dir="data/agg_data",
+        parquet_dir="data/parquet_data",
+        docker=docker,
+    )
+    if code != 0:
+        sys.exit(code)
+    code = _data_convert_impl(
+        cleanup=True,
+        input_dir=None,
+        output_dir=None,
+        backup_dir=None,
+        force=False,
+        docker=docker,
+    )
+    sys.exit(code)
 
 
 @data.command("pipeline-universe")
@@ -661,9 +733,7 @@ def data_pipeline_universe(
     docker,
 ):
     """Download+convert using universe config (non-interactive)."""
-    ctx = click.get_current_context()
-    ctx.invoke(
-        data_download,
+    code = _data_download_impl(
         symbols="",
         universe_config=universe_config,
         universe_set=universe_set,
@@ -676,8 +746,9 @@ def data_pipeline_universe(
         parquet_dir=parquet_dir,
         docker=docker,
     )
-    ctx.invoke(
-        data_convert,
+    if code != 0:
+        sys.exit(code)
+    code = _data_convert_impl(
         cleanup=cleanup,
         input_dir=data_dir,
         output_dir=parquet_dir,
@@ -685,6 +756,7 @@ def data_pipeline_universe(
         force=False,
         docker=docker,
     )
+    sys.exit(code)
 
 
 # =============================================================================
@@ -2460,7 +2532,92 @@ def diagnose_dtw_volatility(docker):
     "--strategy-config",
     "-c",
     default="config/strategies/sr_reversal_long",
-    help="Strategy config directory",
+    help="Comma-separated strategy config directories (strategy-agnostic).",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option("--start-date", help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.15", help="Test set ratio")
+@click.option("--seed", default="42", help="Random seed (forwarded to train pipeline)")
+@click.option(
+    "--deterministic",
+    is_flag=True,
+    default=False,
+    help="Force deterministic training (slower but reproducible).",
+)
+@click.option(
+    "--output-dir",
+    default="results/model_comparison",
+    help="Output directory (will append timeframe)",
+)
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    help="Data directory",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_model_comparison(
+    strategy_config,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    seed,
+    deterministic,
+    output_dir,
+    data_path,
+    docker,
+):
+    """Compare multiple strategy configs under identical settings (strategy-agnostic)."""
+    # Append timeframe to output dir
+    output_dir_full = f"{output_dir}/{timeframe}"
+
+    # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
+    use_workspace_prefix = docker and not _is_in_docker()
+
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if use_workspace_prefix else strategy_config,
+        "--symbol",
+        symbol,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        timeframe,
+        "--test-size",
+        test_size,
+        "--seed",
+        seed,
+        "--output-dir",
+        f"/workspace/{output_dir_full}" if use_workspace_prefix else output_dir_full,
+    ]
+    if deterministic:
+        args.append("--deterministic")
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+
+    # Note: previously this command was SR-reversal-specific. It is now strategy-agnostic:
+    # it runs the unified train pipeline for each strategy config and summarizes results.
+    # (The legacy SR reversal comparison remains available as diagnose sr-reversal-model-comparison.)
+    sys.exit(
+        run_python_module(
+            "src.time_series_model.diagnostics.strategy_model_comparison",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@diagnose.command("sr-reversal-model-comparison")
+@click.option(
+    "--strategy-config",
+    "-c",
+    default="config/strategies/sr_reversal_long",
+    help="Strategy config directory (SR reversal family)",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
 @click.option("--timeframe", "-t", default="240T", help="Timeframe")
@@ -2498,7 +2655,7 @@ def diagnose_dtw_volatility(docker):
     help="Python module path for rule-based strategy entry point",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def diagnose_model_comparison(
+def diagnose_sr_reversal_model_comparison(
     strategy_config,
     symbol,
     timeframe,
@@ -2514,11 +2671,8 @@ def diagnose_model_comparison(
     rule_based_entry,
     docker,
 ):
-    """Compare Rule-based vs ML vs ML+Volatility models."""
-    # Append timeframe to output dir
+    """Legacy SR-reversal-specific model comparison (kept for backward compatibility)."""
     output_dir_full = f"{output_dir}/{timeframe}"
-
-    # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
     use_workspace_prefix = docker and not _is_in_docker()
 
     args = [
@@ -2547,7 +2701,10 @@ def diagnose_model_comparison(
         args.extend(["--end-date", end_date])
     if rule_params:
         args.extend(
-            ["--rule-params", f"/workspace/{rule_params}" if use_workspace_prefix else rule_params]
+            [
+                "--rule-params",
+                f"/workspace/{rule_params}" if use_workspace_prefix else rule_params,
+            ]
         )
     if rule_based_entry:
         args.extend(["--rule-based-entry", rule_based_entry])
