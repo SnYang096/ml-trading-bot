@@ -1,4 +1,6 @@
-name: nnmultihead_path_primitives_4h_80h_min
+# Note: Strategy ID is the directory name (path_primitives_4h_80h_min).
+# The 'name' field is optional and only for display purposes.
+# Removed to avoid warning about name mismatch.
 
 # Note: For nnmultihead training, we use scripts/train_path_primitives_mlp.py directly.
 # This trainer entry exists only to satisfy the generic config loader schema.

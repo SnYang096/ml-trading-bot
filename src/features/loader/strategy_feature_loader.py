@@ -474,7 +474,8 @@ class StrategyFeatureLoader:
         # 验证：检查数据类型
         # 允许的 object 类型列（这些列本来就是字符串类型，不需要警告）
         allowed_object_columns = {
-            "_symbol",  # 交易对标识符
+            "_symbol",  # 交易对标识符（带下划线）
+            "symbol",  # 交易对标识符（不带下划线）
             "dtw_best_match_w15",  # DTW 特征：最佳匹配模式（可能是 "none"）
             "dtw_best_match_w20",
             "dtw_best_match_w25",

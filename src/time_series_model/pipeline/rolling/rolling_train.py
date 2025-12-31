@@ -311,15 +311,47 @@ def train_single_month(
             )
             print(f"   ✅ Sharpe: {backtest_results.get('sharpe', 0):.4f}")
 
-    # Save model
+    # Save model and preprocessor
     output_dir = Path(args.output_root) / strategy_config.name / test_file["month_str"]
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = output_dir / "model.pkl"
     import joblib
 
+    model_path = output_dir / "model.pkl"
     joblib.dump(models, model_path)
     print(f"   ✅ Model saved to {model_path}")
+
+    preprocessor_path = output_dir / "preprocessor.pkl"
+    joblib.dump(preprocessor, preprocessor_path)
+    print(f"   ✅ Preprocessor saved to {preprocessor_path}")
+
+    # Optionally save as ModelArtifact (unified format)
+    try:
+        from src.time_series_model.strategies.models.model_artifact import ModelArtifact
+
+        artifact = ModelArtifact(
+            model=models,
+            preprocessor=preprocessor,
+            used_features=used_features,
+            feature_config=(
+                strategy_config.features.__dict__
+                if hasattr(strategy_config.features, "__dict__")
+                else None
+            ),
+            metadata={
+                "strategy": strategy_config.name,
+                "model_type": model_type,
+                "task_type": task_type,
+                "test_month": test_file["month_str"],
+                "train_months": [f["month_str"] for f in train_files],
+                "cv_metric": float(avg_metric),
+            },
+        )
+        artifact.save(output_dir)
+        print(f"   ✅ ModelArtifact saved (unified format)")
+    except Exception as exc:  # noqa: BLE001
+        # Fallback: continue with individual saves if ModelArtifact fails
+        print(f"   ⚠️  ModelArtifact save failed (using individual saves): {exc}")
 
     return {
         "test_month": test_file["month_str"],

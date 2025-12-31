@@ -15,11 +15,21 @@
 
 ## 配置（Feature Contract）
 
-位置：`config/nnmultihead/<task>/feature_contract.yaml`
+位置：`config/nnmultihead/<task>/features.yaml`（已合并，推荐）
+
+> **注意**：`feature_contract` 现在合并到 `features.yaml` 中，作为 `feature_pipeline` 的同级字段。  
+> 如果存在独立的 `feature_contract.yaml`，代码仍会读取（向后兼容），但推荐使用合并格式。
 
 示例（节选）：
 
 ```yaml
+# features.yaml
+feature_pipeline:
+  requested_features:
+    - atr_f
+    - trend_r2_20_f
+    # ... 所有特征都会被计算
+
 feature_contract:
   minimal_required_cols:
     - open

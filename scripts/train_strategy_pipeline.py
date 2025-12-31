@@ -2050,10 +2050,45 @@ def train_strategy(
             json.dump(results, fh, indent=2, default=str)
         print(f"   💾 Results saved to {results_file}")
 
+        # Save preprocessor (required for inference consistency)
+        import joblib
+
+        preprocessor_path = output_dir / "preprocessor.pkl"
+        joblib.dump(preprocessor, preprocessor_path)
+        print(f"   💾 Preprocessor saved to {preprocessor_path}")
+
+        # Optionally save as ModelArtifact (unified format)
+        try:
+            from src.time_series_model.strategies.models.model_artifact import (
+                ModelArtifact,
+            )
+
+            artifact = ModelArtifact(
+                model=models,
+                preprocessor=preprocessor,
+                used_features=used_features,
+                feature_config=(
+                    strategy_config.features.__dict__
+                    if hasattr(strategy_config.features, "__dict__")
+                    else None
+                ),
+                metadata={
+                    "strategy": strategy_config.name,
+                    "model_type": model_type,
+                    "task_type": task_type,
+                    "avg_cv_metric": float(avg_metric),
+                    "n_train_samples": len(df_train_filtered),
+                    "n_test_samples": len(df_test_filtered),
+                },
+            )
+            artifact.save(output_dir)
+            print(f"   ✅ ModelArtifact saved (unified format)")
+        except Exception as exc:  # noqa: BLE001
+            # Fallback: continue with individual saves if ModelArtifact fails
+            print(f"   ⚠️  ModelArtifact save failed (using individual saves): {exc}")
+
         # Save volatility model if trained
         if vol_model:
-            import joblib
-
             vol_model_file = output_dir / "volatility_model.pkl"
             joblib.dump(vol_model, vol_model_file)
             print(f"   💾 Volatility model saved to {vol_model_file}")

@@ -16,6 +16,6 @@
 - `data`：timeframe、bar_hours 等“数据口径”
 - `labels`：horizon、entry_offset 等“任务定义”
 - `evaluation`：rolling IC/ICIR、conditional slices（near_sr/trend_high/compression_high）
-- `feature_contract`：引用 nnmultihead config 下的 `feature_contract.yaml`（可选）
+- `feature_contract`：引用 nnmultihead config 下的 `features.yaml` 中的 `feature_contract` 字段（可选，已合并）
 
 

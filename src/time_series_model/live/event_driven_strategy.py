@@ -41,6 +41,7 @@ from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
 from src.time_series_model.strategy_config import StrategyConfigLoader
+from src.time_series_model.strategies.models import ModelArtifact
 
 
 class EventDrivenStrategy(Strategy):
@@ -99,6 +100,9 @@ class EventDrivenStrategy(Strategy):
         # 状态管理
         self.strategy_config = None
         self.model = None
+        self.model_artifact: Optional[ModelArtifact] = (
+            None  # 使用 ModelArtifact 统一管理
+        )
         self.last_order_time_ns: Optional[int] = None
 
         # 时间框架特征缓存
@@ -118,17 +122,41 @@ class EventDrivenStrategy(Strategy):
             self.strategy_config = config_loader.load()
             self.log.info(f"✅ Loaded strategy config: {self.strategy_name}")
 
-            # 2. 加载模型
+            # 2. 加载模型（优先使用 ModelArtifact）
             if self.model_path:
-                self.model = self._load_model(self.model_path)
-                self.log.info(f"✅ Loaded model from {self.model_path}")
-            else:
-                default_model_path = Path("models") / self.strategy_name / "model.pkl"
-                if default_model_path.exists():
-                    self.model = self._load_model(str(default_model_path))
-                    self.log.info(f"✅ Loaded model from {default_model_path}")
+                model_dir = Path(self.model_path)
+                # 检查是否是 ModelArtifact 目录（包含 model_artifact_metadata.json）
+                if (model_dir / "model_artifact_metadata.json").exists():
+                    self.model_artifact = ModelArtifact.load(model_dir)
+                    self.model = self.model_artifact.model
+                    self.log.info(f"✅ Loaded ModelArtifact from {self.model_path}")
+                    self.log.info(
+                        f"   Features: {len(self.model_artifact.used_features)}"
+                    )
                 else:
-                    self.log.warning("⚠️ No model found. Using rule-based signals.")
+                    # 兼容旧格式：只加载 model.pkl
+                    self.model = self._load_model(self.model_path)
+                    self.log.info(
+                        f"✅ Loaded model (legacy format) from {self.model_path}"
+                    )
+            else:
+                # 尝试默认路径
+                default_model_dir = Path("results") / self.strategy_name
+                if (default_model_dir / "model_artifact_metadata.json").exists():
+                    self.model_artifact = ModelArtifact.load(default_model_dir)
+                    self.model = self.model_artifact.model
+                    self.log.info(f"✅ Loaded ModelArtifact from {default_model_dir}")
+                else:
+                    default_model_path = (
+                        Path("models") / self.strategy_name / "model.pkl"
+                    )
+                    if default_model_path.exists():
+                        self.model = self._load_model(str(default_model_path))
+                        self.log.info(
+                            f"✅ Loaded model (legacy format) from {default_model_path}"
+                        )
+                    else:
+                        self.log.warning("⚠️ No model found. Using rule-based signals.")
 
             # 3. 订阅市场数据
             for timeframe, bar_type in self.bar_types.items():
@@ -297,13 +325,29 @@ class EventDrivenStrategy(Strategy):
                 if feature_vector is None:
                     return False, {}
 
-                # 模型预测
-                if hasattr(self.model, "predict_proba"):
-                    prediction = self.model.predict([feature_vector])[0]
-                    probability = self.model.predict_proba([feature_vector])[0]
+                # 模型预测（使用 ModelArtifact 或直接使用 model）
+                if self.model_artifact is not None:
+                    # 使用 ModelArtifact 进行预测（自动使用 preprocessor）
+                    # 合并所有特征
+                    all_feature_dict = {**all_features, **orderflow_features}
+                    feature_df = pd.DataFrame([all_feature_dict])
+                    predictions = self.model_artifact.predict(feature_df)
+                    prediction = predictions[0] if len(predictions) > 0 else 0
+                    # 尝试获取概率（如果模型支持）
+                    if hasattr(self.model_artifact.model, "predict_proba"):
+                        X = self.model_artifact.preprocessor.transform(feature_df)
+                        proba = self.model_artifact.model.predict_proba(X)
+                        probability = proba[0] if len(proba) > 0 else None
+                    else:
+                        probability = None
                 else:
-                    prediction = self.model.predict([feature_vector])[0]
-                    probability = None
+                    # 兼容旧格式：直接使用 model
+                    if hasattr(self.model, "predict_proba"):
+                        prediction = self.model.predict([feature_vector])[0]
+                        probability = self.model.predict_proba([feature_vector])[0]
+                    else:
+                        prediction = self.model.predict([feature_vector])[0]
+                        probability = None
 
                 # 根据预测生成信号
                 if prediction == 1:

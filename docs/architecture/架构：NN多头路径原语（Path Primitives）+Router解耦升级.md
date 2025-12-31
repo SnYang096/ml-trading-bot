@@ -274,6 +274,152 @@ Portfolio Construction
   - 具体策略的 score（例如某种 SR 反转信号）  
   - 更强的特征选择与非线性拟合（在固定的策略语义下）
 
+**为什么不用树模型训练路径原语？**
+
+虽然树模型（LightGBM/XGBoost/CatBoost）可以做 multi-output 回归，但用树模型训练路径原语有以下问题：
+
+1. **架构不匹配：树模型更适合策略级预测，而不是原语级预测**
+   - **树模型**：训练时已经学了“什么时候 entry/exit、什么特征组合有效”，输出的是**策略信号**（例如 `sr_reversal_long` 的 entry/exit 概率）
+   - **路径原语**：需要输出**通用的路径描述**（dir/mfe/mae/ttm），不绑定具体策略，需要 Router 层解释
+   - 如果用树模型训练路径原语，相当于“让树模型既学原语又学策略”，违背了“原语与策略解耦”的设计原则
+
+2. **复用性差：树模型通常按策略训练，难以跨策略复用**
+   - **树模型**：每个策略（`sr_reversal`/`sr_breakout`/`trend`）通常需要**独立的模型和特征选择**，难以共享
+   - **NN 路径原语**：一个 shared trunk + multiple heads 可以**跨策略复用**，新增策略只需要加 Router，不需要重训底座
+   - 如果用树模型训练路径原语，每个策略都要训练一套原语模型，失去了“统一底座”的优势
+
+3. **输出特性不匹配：路径原语需要连续值，树模型更适合离散/规则化输出**
+   - **路径原语**：`mfe_atr`/`mae_atr`/`t_to_mfe` 都是**连续值**，需要平滑的回归输出
+   - **树模型**：虽然可以做回归，但输出是**分段常数**（基于特征空间的划分），对连续值的平滑性不如 NN
+   - 树模型的输出更适合**策略信号**（entry/exit 阈值、离散的仓位等级），而不是**路径原语**（连续的未来路径描述）
+
+4. **Shared representation 的优势：NN 的 shared trunk 更适合学习通用表征**
+
+   **原理说明**：
+   
+   - **NN 路径原语**：shared trunk 学习**通用的市场表征**，multiple heads 学习不同的路径原语，可以共享底层特征表示
+   - **树模型**：虽然可以做 multi-output，但每个输出都是**独立的树结构**，难以共享底层表征
+   - 路径原语（dir/mfe/mae/ttm）之间存在**语义关联**（例如 mfe 和 mae 都依赖方向预测），NN 的 shared trunk 可以更好地捕捉这些关联
+
+   **代码示例（NN shared trunk + multiple heads）**：
+   
+   ```python
+   # src/time_series_model/models/nn/path_primitives_model.py
+   class MultiHeadPathPrimitivesMLP(nn.Module):
+       def __init__(self, cfg):
+           # Shared trunk（共享表征层）
+           self.backbone = nn.Sequential(
+               nn.Linear(d_in, hidden),
+               nn.ReLU(),
+               nn.Dropout(dropout),
+               nn.Linear(hidden, hidden),
+               nn.ReLU(),
+           )
+           
+           # Multiple heads（共享同一个 backbone 的输出）
+           self.dir_logit = nn.Linear(hidden, 1)      # 方向预测
+           self.mfe = nn.Linear(hidden, 1)            # 最大有利偏移
+           self.mae = nn.Linear(hidden, 1)            # 最大不利偏移
+           self.t_to_mfe = nn.Linear(hidden, 1)       # 到达 MFE 的时间
+       
+       def forward(self, x):
+           # 所有 heads 共享同一个表征 h
+           h = self.backbone(x)  # 通用市场表征
+           
+           return {
+               "dir_logit": self.dir_logit(h),    # 基于 h 预测方向
+               "mfe_atr": F.softplus(self.mfe(h)), # 基于 h 预测 MFE
+               "mae_atr": F.softplus(self.mae(h)), # 基于 h 预测 MAE
+               "t_to_mfe": F.softplus(self.t_to_mfe(h)), # 基于 h 预测时间
+           }
+   ```
+
+   **架构对比图**：
+   
+   ```
+   ┌─────────────────────────────────────────────────────────┐
+   │ NN 路径原语（Shared Trunk + Multiple Heads）            │
+   └─────────────────────────────────────────────────────────┘
+   
+   输入特征 (x: [batch, d_in])
+         ↓
+   ┌─────────────────┐
+   │  Shared Trunk   │  ← 学习通用市场表征
+   │  (backbone)     │     - 捕捉特征之间的非线性关系
+   │  [d_in→hidden]  │     - 提取跨原语的共同模式
+   └─────────────────┘
+         ↓
+   共享表征 (h: [batch, hidden])
+         ↓
+   ┌──────┬──────┬──────┬──────────┐
+   │ dir  │ mfe  │ mae  │ t_to_mfe │  ← 多个 heads 共享 h
+   │ head │ head │ head │   head   │     每个 head 学习不同的原语
+   └──────┴──────┴──────┴──────────┘
+         ↓      ↓      ↓       ↓
+      dir_logit mfe  mae  t_to_mfe
+   
+   优势：
+   - 所有 heads 共享底层表征，可以捕捉原语之间的语义关联
+   - 例如：mfe 和 mae 都依赖方向预测，shared trunk 可以学习"方向→偏移"的共同模式
+   - 训练时，所有 heads 的梯度都会更新 shared trunk，促进表征学习
+   
+   ┌─────────────────────────────────────────────────────────┐
+   │ 树模型（Multi-output，但每个输出独立）                  │
+   └─────────────────────────────────────────────────────────┘
+   
+   输入特征 (x: [batch, d_in])
+         ↓
+   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+   │ Tree for │  │ Tree for │  │ Tree for │  │ Tree for │
+   │   dir    │  │   mfe    │  │   mae    │  │ t_to_mfe │
+   └──────────┘  └──────────┘  └──────────┘  └──────────┘
+         ↓            ↓            ↓            ↓
+      dir_pred    mfe_pred    mae_pred    t_to_mfe_pred
+   
+   劣势：
+   - 每个输出都是独立的树结构，无法共享底层表征
+   - 无法捕捉原语之间的语义关联（例如 mfe 和 mae 都依赖方向）
+   - 每个树都需要独立学习特征选择和非线性关系，计算和存储成本高
+   ```
+
+   **语义关联示例**：
+   
+   路径原语之间存在**强语义关联**，NN 的 shared trunk 可以更好地捕捉这些关联：
+   
+   - **dir 和 mfe/mae 的关联**：如果方向预测是"上涨"，那么 mfe（最大有利偏移）更可能出现在"向上"的方向，mae（最大不利偏移）更可能出现在"向下"的方向
+   - **mfe 和 t_to_mfe 的关联**：如果 mfe 很大，通常意味着趋势很强，t_to_mfe（到达 MFE 的时间）可能更短（快速到达高点）
+   - **mfe 和 mae 的关联**：如果 mfe 很大但 mae 很小，说明趋势很强且回撤很小（效率高）；如果 mfe 和 mae 都很大，说明波动大但方向性不强
+   
+   **训练时的梯度共享**：
+   
+   ```python
+   # 训练时，所有 heads 的损失都会反向传播到 shared trunk
+   loss = (
+       loss_dir(pred_dir, true_dir) +      # dir head 的梯度
+       loss_mfe(pred_mfe, true_mfe) +      # mfe head 的梯度
+       loss_mae(pred_mae, true_mae) +      # mae head 的梯度
+       loss_ttm(pred_ttm, true_ttm)        # t_to_mfe head 的梯度
+   )
+   
+   # 反向传播时，所有 heads 的梯度都会更新 shared trunk
+   loss.backward()  # 所有 heads 的梯度都会流回 backbone
+   ```
+   
+   这意味着：
+   - **shared trunk 会学习对所有原语都有用的通用表征**
+   - **如果某个原语（例如 dir）学得好，其他原语（例如 mfe/mae）也会受益**
+   - **树模型无法做到这一点**：每个树的训练是独立的，无法共享表征
+
+5. **训练目标不同：树模型更适合策略级目标，NN 更适合原语级目标**
+   - **树模型**：训练目标通常是**策略收益/Sharpe/win_rate**（策略级目标），需要策略语义特征
+   - **NN 路径原语**：训练目标是**路径原语标签**（dir/mfe/mae/ttm），不绑定策略，只需要通用的市场特征
+   - 如果用树模型训练路径原语，需要把“路径原语标签”当作目标，但树模型的优势（特征选择、策略级非线性拟合）就发挥不出来了
+
+**总结**：
+- **树模型**：更适合做**策略级预测**（直接输出策略信号），训练目标是策略收益，输出是策略信号
+- **NN 路径原语**：更适合做**原语级预测**（输出通用路径描述），训练目标是路径原语标签，输出是路径原语，需要 Router 层解释
+- **两者分工明确**：树模型做策略 alpha，NN 路径原语做结构状态与机会，最后由 Router/Execution 统一决策
+
 **(C) CS（cross-sectional）链：负责“多标的择优与组合构建”**
 
 - 当你同时交易 N 个标的时，CS 解决的是：  

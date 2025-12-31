@@ -1,49 +1,94 @@
-name: nnmultihead_path_primitives_4h_80h_min
+# Note: Strategy ID is the directory name (path_primitives_4h_80h_min).
+# The 'name' field is optional and only for display purposes.
+# Removed to avoid warning about name mismatch.
 description: |
   NN multi-head base (path primitives) - minimal feature pipeline (20-50 features) for first run.
   Goal: strategy-agnostic market state features (avoid SR-specific handcrafted features).
 
 feature_pipeline:
   requested_features:
-    # --- Core volatility / range ---
-    - atr_f
-    - atr_percentile_f
-    - range_ratio_5bar_f
-    - price_range_symmetry_f
-    - wick_ratios_f
+    # New structured format: classify features as required vs optional_blocks
+    # All features will be computed, but optional_blocks will be masked during training
+    # to make the model robust to missing feature blocks during inference.
+    
+    required:
+      # --- Core volatility / range ---
+      - atr_f
+      - atr_percentile_f
+      - range_ratio_5bar_f
+      - price_range_symmetry_f
+      - wick_ratios_f
 
-    # --- Basic momentum / trend ---
-    - roc_5_f
-    - acceleration_3_f
-    - trend_r2_20_f
-    - trend_r2_50_f
-    - slope_consistency_score_f
-    - trend_volatility_alignment_f
-    - volatility_reversal_score_f
+      # --- Basic momentum / trend ---
+      - roc_5_f
+      - acceleration_3_f
+      - trend_r2_20_f
+      - trend_r2_50_f
+      - slope_consistency_score_f
+      - trend_volatility_alignment_f
+      - volatility_reversal_score_f
 
-    # --- Common indicators ---
-    - rsi_f
-    - macd_f
-    - bbands_f
-    - bb_width_f
+      # --- Common indicators ---
+      - rsi_f
+      - macd_f
+      - bbands_f
+      - bb_width_f
 
-    # --- Moving averages (shape / regime proxies) ---
-    - sma_10_f
-    - sma_20_f
-    - sma_50_f
-    - sma_200_f
-    - ema_10_f
-    - ema_20_f
-    - ema_50_f
-    - ema_100_f
+      # --- Moving averages (shape / regime proxies) ---
+      # For 4H timeframe:
+      # - SMA 10: 1.7 days (short-term trend)
+      # - SMA 20: 3.3 days (short-medium term)
+      # - SMA 50: 8.3 days (medium-term trend)
+      # - SMA 100: 16.7 days (long-term trend, alternative to SMA 200)
+      # - SMA 200: 33.3 days (too long for 4H, removed to avoid high NaN ratio)
+      - sma_10_f
+      - sma_20_f
+      - sma_50_f
+      - sma_100_f
+      - ema_10_f
+      - ema_20_f
+      - ema_50_f
+      - ema_100_f
 
-    # --- Compression (generic, not tied to a named strategy) ---
-    - compression_duration_f
-    - compression_energy_f
-    - compression_to_breakout_prob_f
+      # --- Compression (generic, not tied to a named strategy) ---
+      - compression_duration_f
+      - compression_energy_f
+      - compression_to_breakout_prob_f
 
-    # --- Volume / participation (kline-level only; no ticks required) ---
-    - volume_anomaly_f
+      # --- Volume / participation (kline-level only; no ticks required) ---
+      - volume_anomaly_f
+
+    optional_blocks:
+      # High-cost / non-guaranteed blocks.
+      # These features will be computed, but can be masked during training/inference.
+      # Block names are semantic groupings for block-dropout/mask.
+      
+      ticks_orderflow_semantic_blocks:
+        # Order flow features (require tick data)
+        - vpin_base_aligned_features_f
+        - vpin_derived_features_f
+      
+      volume_profile_semantic_blocks:
+        # Volume profile features (require tick data)
+        - volume_profile_vpvr_f
+        - volume_profile_volatility_features_f
+      
+      trade_cluster_semantic_blocks:
+        # Trade cluster features (require tick data)
+        - trade_cluster_block_features_f
+
+  missingness_policy:
+    # Policy for missing optional blocks during inference.
+    # options: "skip" | "impute" | "mask"
+    # - skip: treat missing blocks as unavailable; model must be trained to tolerate it
+    # - mask: provide feature_available_mask (future upgrade) and/or block dropout in training
+    # - impute: fill missing with constants (should be paired with masks to avoid leakage)
+    optional_blocks_on_missing: skip
+    # If true and optional blocks are resolved, append per-block availability mask to model input.
+    append_block_mask: true
+    # During training only: randomly zero-out available blocks to make the model robust to block on/off.
+    # Start small; tune later.
+    block_dropout_p: 0.05
 
   ensure_signal_column:
     name: signal

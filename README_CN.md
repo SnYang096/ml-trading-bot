@@ -106,6 +106,8 @@ make test-key-features-all
 
 ### 步骤 1：因子筛选（Filter，生成 Pool B）
 
+> **注意**：`features_all.yaml` 只包含原始特征，不包含语义特征。语义特征通过 `config/feature_groups_<strategy>_semantic.yaml` 单独管理。
+
 ```bash
 mlbot analyze factor-eval \
   --strategy-config config/strategies/sr_reversal_long/features_all.yaml \
@@ -113,9 +115,16 @@ mlbot analyze factor-eval \
   --timeframe 240T \
   --start-date 2024-01-01 \
   --end-date 2025-10-31 \
+  --output-dir results/pools/sr_reversal_long/pool_b \
+  --export-yaml results/pools/sr_reversal_long/pool_b/features_pool_b.yaml \
   --remove-correlated \
-  --filter-by-best-lag
+  --filter-by-best-lag \
+  --no-docker
 ```
+
+**说明**：
+- Pool B 包含经过 IC/IR 筛选的原始特征（DTW、EVT、GARCH、Hilbert 等）
+- 语义特征不在这里评估，而是通过语义 groups 管理
 
 ### 步骤 2：特征组合搜索（Wrapper 主力，feature-group-search）
 
@@ -130,6 +139,8 @@ mlbot diagnose feature-group-search \
   --objective Sharpe_mean \
   --min-trades 10 \
   --max-steps 6 \
+  --groups-yaml config/feature_groups_sr_reversal_semantic.yaml \
+  --pool-b-yaml results/pools/sr_reversal_long/pool_b/features_pool_b.yaml \
   --deterministic \
   --writeback-yaml config/strategies/sr_reversal_long/features_suggested.yaml \
   --output-dir results/feature_group_search/sr_reversal_long_best_combo \
@@ -142,9 +153,15 @@ mlbot diagnose feature-group-search \
   - 否则 `config/feature_groups.yaml`
   - 再否则才回退到内置默认组
 - **Pool B 如何参与**：`feature-group-search` 会自动读取 `factor-eval` 的 Pool B 输出（默认约定在 `results/pools/<strategy_dir>/pool_b/`），把其中“候选特征”**当作单特征组（singleton groups）**加入候选池，与语义 groups 一起竞争。
+- **职责分离**：
+  - **Pool B**：发现未被语义化的有效原始特征（数据驱动，经过 IC/IR 筛选）
+  - **语义 groups**：提供经过语义化的特征（人工筛选，经过语义化）
+  - 两者互补，一起竞争，找到最佳组合
 - **搜索算法**：**Greedy Forward Selection（贪心前向）**  
   先跑 **baseline（只用 base features）**，然后每一步把“当前已选组合 + 某个候选组”都跑一遍 multi-seed，选择能让 `--objective`（如 `Sharpe_mean`）提升最多的那个组加入；若**没有任何组能严格提升**，就停止（并记录 stop_reason）。
 - **为什么不会组合爆炸**：它不是穷举所有组合，而是每一步只做一次“加一组”的比较；复杂度大致是 \(O(\text{steps} \times \text{groups} \times \text{seeds})\)。
+
+> **详细工作流**：参考 `docs/strategies/RECOMMENDED_FEATURE_WORKFLOW.md`
 - **产物**：
   - HTML 报告（含 baseline/stop_reason/每步候选评分与被拒原因）
   - `features_suggested.yaml`（可写回，含 provenance 元数据）

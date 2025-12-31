@@ -119,8 +119,12 @@ class StrategyConfigLoader:
             for fname in self.OPTIONAL_FILES
             if not (self.config_dir / fname).exists()
         ]
-        for fname in missing_optional:
-            print(f"   ⚠️  Optional config '{fname}' not found in {self.config_dir}")
+        # Only warn if in verbose mode or if this is a tree model config (not nnmultihead)
+        # nnmultihead configs don't need these optional files, so suppress warnings
+        is_nnmultihead = "nnmultihead" in str(self.config_dir)
+        if missing_optional and not is_nnmultihead:
+            for fname in missing_optional:
+                print(f"   ⚠️  Optional config '{fname}' not found in {self.config_dir}")
 
         features_data = _load_yaml_file(self.config_dir / "features.yaml")
         labels_data = _load_yaml_file(self.config_dir / "labels.yaml")
@@ -196,6 +200,19 @@ class StrategyConfigLoader:
     def _parse_feature_config(self, data: Dict[str, Any]) -> FeaturePipelineConfig:
         pipeline = data.get("feature_pipeline", {})
         requested = pipeline.get("requested_features", []) or []
+
+        # Support new structured format: requested_features = {required: [...], optional_blocks: {...}}
+        # Flatten to a single list for backward compatibility with tree models
+        if isinstance(requested, dict):
+            required_list = requested.get("required") or []
+            optional_blocks_dict = requested.get("optional_blocks") or {}
+            # Flatten: combine required + all optional_blocks features into a single list
+            flattened = list(required_list)
+            for block_features in optional_blocks_dict.values():
+                if isinstance(block_features, list):
+                    flattened.extend(block_features)
+            requested = flattened
+
         invert_features = pipeline.get("invert_features", []) or []
         post_processors = [
             self._parse_module_function(entry)

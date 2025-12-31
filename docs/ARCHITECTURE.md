@@ -115,8 +115,14 @@ ML Trading Bot 是一个基于机器学习的量化交易系统，采用**事件
 
 **核心组件**:
 
-- **Strategy Trainer** (`training/strategy_trainer.py`): 策略训练器
-- **Rolling Trainer** (`training/rolling_trainer.py`): 滚动训练
+- **Strategy Trainer** (`strategies/models/strategy_trainer.py`): 策略训练器
+  - `FeaturePreprocessor`: 特征预处理（数值转换、分类编码、NaN/Inf 处理）
+  - `train_strategy_model()`: 模型训练函数（支持 XGBoost/LightGBM/CatBoost）
+- **ModelArtifact** (`strategies/models/model_artifact.py`): 模型部署工件统一管理
+  - 封装模型、预处理器、特征列表、特征配置、元数据
+  - 提供统一的保存/加载接口，确保训练和部署的一致性
+  - 支持单模型和集成模型（模型列表）
+- **Rolling Trainer** (`pipeline/rolling/rolling_train.py`): 滚动训练
 - **Model Evaluator** (`diagnostics/`): 模型评估工具
 
 **支持的模型**:
@@ -124,6 +130,48 @@ ML Trading Bot 是一个基于机器学习的量化交易系统，采用**事件
 - XGBoost (回归/分类)
 - LightGBM (回归/分类)
 - CatBoost (回归/多分类)
+
+**模型部署工件 (ModelArtifact)**:
+
+`ModelArtifact` 类统一管理模型部署所需的所有组件，确保训练和部署的一致性：
+
+```python
+from src.time_series_model.strategies.models import ModelArtifact
+
+# 保存模型工件
+artifact = ModelArtifact(
+    model=trained_model,
+    preprocessor=preprocessor,
+    used_features=["feature1", "feature2", ...],
+    feature_config={"requested_features": [...]},
+    metadata={"strategy": "sr_reversal", "model_type": "lightgbm", ...}
+)
+artifact.save(output_dir)
+
+# 加载模型工件
+loaded_artifact = ModelArtifact.load(output_dir)
+
+# 使用模型工件进行预测
+predictions = loaded_artifact.predict(df)
+```
+
+**工件包含的组件**:
+
+1. **model**: 训练好的模型（`.pkl` 文件）
+2. **preprocessor**: `FeaturePreprocessor` 对象（`.pkl` 文件）
+   - 确保特征转换逻辑与训练时一致
+   - 处理数值转换、分类编码、NaN/Inf
+3. **used_features**: 模型实际使用的特征列表（`used_features.json`）
+4. **feature_config**: 特征配置（`feature_config.json`，可选）
+5. **metadata**: 元数据（`model_artifact_metadata.json`）
+   - 策略名称、模型类型、任务类型
+   - 训练样本数、CV 指标等
+
+**使用场景**:
+
+- **训练阶段**: `train_strategy_pipeline.py` 和 `rolling_train.py` 自动保存 ModelArtifact
+- **上线前回测**: Nautilus Trader 事件驱动回测加载 ModelArtifact 确保一致性
+- **实盘部署**: 加载 ModelArtifact 进行实时预测
 
 ### 4. 策略执行模块
 
@@ -155,13 +203,13 @@ ML Trading Bot 是一个基于机器学习的量化交易系统，采用**事件
    ↓
 3. 生成标签 (Label Generator)
    ↓
-4. 数据预处理 (Normalization, Feature Selection)
+4. 数据预处理 (FeaturePreprocessor: 数值转换、分类编码、NaN/Inf 处理)
    ↓
 5. 模型训练 (Strategy Trainer)
    ↓
 6. 模型评估 (Model Evaluator)
    ↓
-7. 模型保存 (Model Storage)
+7. 模型保存 (ModelArtifact: model + preprocessor + used_features + feature_config + metadata)
 ```
 
 ### 预测数据流
@@ -171,9 +219,9 @@ ML Trading Bot 是一个基于机器学习的量化交易系统，采用**事件
    ↓
 2. 增量特征计算 (Incremental Feature Computer)
    ↓
-3. 特征预处理
+3. 特征预处理 (使用 ModelArtifact.preprocessor 确保一致性)
    ↓
-4. 模型预测 (Model Predictor)
+4. 模型预测 (使用 ModelArtifact.model 和 ModelArtifact.predict())
    ↓
 5. 信号生成 (Signal Generator)
    ↓

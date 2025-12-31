@@ -784,7 +784,28 @@ def feature_store():
 
 @feature_store.command("build")
 @click.option("--config", "-c", required=True, help="Config directory containing features.yaml (tree or nn).")
-@click.option("--symbols", "-s", required=True, help="Comma-separated symbols.")
+@click.option(
+    "--symbols",
+    "-s",
+    default=None,
+    help="Comma-separated symbols. If not provided, use --universe-config to load all symbols.",
+)
+@click.option(
+    "--universe-config",
+    default=None,
+    help="Path to universe config YAML (e.g., config/download/crypto_4h_token_universe_groups.yaml). "
+    "If provided and --symbols is not set, will load all symbols from the config.",
+)
+@click.option(
+    "--universe-set",
+    default="starter_a",
+    help="Universe set name to use from universe config (default: starter_a).",
+)
+@click.option(
+    "--universe-groups",
+    default=None,
+    help="Comma-separated groups to include (e.g., 'highcap,alt'). If not specified, includes all groups.",
+)
 @click.option("--timeframe", "-t", required=True, help="Timeframe (e.g., 240T).")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
@@ -802,6 +823,9 @@ def feature_store():
 def feature_store_build(
     config,
     symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
     timeframe,
     data_path,
     start_date,
@@ -817,8 +841,6 @@ def feature_store_build(
     args = [
         "--config",
         f"/workspace/{config}" if use_workspace_prefix else config,
-        "--symbols",
-        symbols,
         "--timeframe",
         timeframe,
         "--data-path",
@@ -830,6 +852,18 @@ def feature_store_build(
         "--warmup-bars",
         str(int(warmup_bars)),
     ]
+    if symbols:
+        args.extend(["--symbols", symbols])
+    if universe_config:
+        args.extend(
+            [
+                "--universe-config",
+                f"/workspace/{universe_config}" if use_workspace_prefix else universe_config,
+            ]
+        )
+        args.extend(["--universe-set", universe_set])
+        if universe_groups:
+            args.extend(["--universe-groups", universe_groups])
     if start_date:
         args.extend(["--start-date", start_date])
     if end_date:

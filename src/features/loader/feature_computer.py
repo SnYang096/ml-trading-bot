@@ -899,10 +899,25 @@ class FeatureComputer:
                     f"Please ensure these columns exist in the input DataFrame."
                 )
             # feature_missing 会在依赖计算时自动解决，这里只警告
+            # Suppress warning if there are too many missing columns (likely all will be computed via dependencies)
+            # Only warn if there are few missing columns (might indicate a real issue)
+            # Also suppress if missing columns are all from optional_blocks (expected to be missing sometimes)
             if feature_missing:
-                print(
-                    f"   ⚠️  Missing feature columns (will be computed via dependencies): {feature_missing[:10]}..."
-                )
+                # Check if missing columns are mostly from optional blocks (vpin, trade_cluster, etc.)
+                optional_block_patterns = ['vpin', 'trade_cluster', 'volume_profile', 'vp_']
+                is_mostly_optional = sum(
+                    1 for col in feature_missing[:20] 
+                    if any(pattern in col.lower() for pattern in optional_block_patterns)
+                ) >= len(feature_missing[:20]) * 0.7  # 70% are optional block features
+                
+                if not is_mostly_optional and len(feature_missing) <= 20:
+                    print(
+                        f"   ⚠️  Missing feature columns (will be computed via dependencies): {feature_missing[:10]}..."
+                    )
+                # If mostly optional blocks or too many missing, suppress warning (expected behavior)
+            elif feature_missing and len(feature_missing) > 20:
+                # Too many missing columns, likely all will be computed - suppress verbose warning
+                pass
 
         # 2. 分析依赖层级
         levels = analyze_dependency_levels(features, requested_features)

@@ -1,20 +1,24 @@
 name: sr_reversal_rr_reg_long
-description: "Regression mainline (best-known): CORE+ kline + minimal SR-distance features (stable, no ticks)"
+description: "Regression mainline (best-known): kline_core + vpin_scene + minimal SR-distance features (stable, no ticks)"
 feature_pipeline:
   requested_features:
+  # kline_core group (from feature-group-search best config)
   - macd_f
   - rsi_f
   - sma_200_f
   - atr_f
+  - trend_r2_20_f
+  - bb_width_f
+  - wick_ratios_f
+  # Additional kline features (from original config)
   - roc_5_f
   - mom_10_f
   - bbands_f
-  - bb_width_f
-  - trend_r2_20_f
   - trend_r2_50_f
   - acceleration_3_f
-  - wick_ratios_f
   - price_range_symmetry_f
+  # vpin_scene group (from feature-group-search best config)
+  - vpin_scene_semantic_scores_f
   # Minimal SR-distance features (needed for dist_to_nearest_sr)
   - poc_hal_features_close_f
   - sqs_hal_high_f
@@ -25,4 +29,7 @@ feature_pipeline:
     default_value: 0
 notes: |
   Best-known regression mainline feature set (stable, no ticks).
-  If you want the full factor-eval feature pool again, keep a separate strategy dir to avoid mixing experiments.
+  Updated with best features from feature-group-search:
+  - kline_core: macd_f, rsi_f, sma_200_f, atr_f, trend_r2_20_f, bb_width_f, wick_ratios_f
+  - vpin_scene: vpin_scene_semantic_scores_f
+  Expected Sharpe: ~1.85 (from feature-group-search results)
