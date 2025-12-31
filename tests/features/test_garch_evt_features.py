@@ -714,6 +714,157 @@ class TestGARCHAndEVTIntegration(unittest.TestCase):
 
         print("  ✅ GARCH 和 EVT 特征互补性验证通过")
 
+    def test_normalization_multi_asset(self):
+        """
+        测试：多资产归一化测试 ⭐⭐⭐⭐
+
+        验证：
+        - 不同价格水平的资产，GARCH/EVT 特征应该在相似范围内
+        - 波动率特征应该对价格水平不敏感（使用收益率）
+        """
+        print("\n" + "=" * 70)
+        print("测试：多资产归一化测试")
+        print("=" * 70)
+
+        np.random.seed(42)
+        n = 400
+
+        # 不同价格水平的资产（相同的 GARCH 过程）
+        assets = {
+            "BTCUSDT": 50000,
+            "ETHUSDT": 3000,
+            "SOLUSDT": 100,
+        }
+
+        # 生成共同的 GARCH 过程
+        omega, alpha, beta = 0.0001, 0.1, 0.85
+        returns = np.zeros(n)
+        volatility = np.zeros(n)
+        volatility[0] = np.sqrt(omega / (1 - alpha - beta))
+        returns[0] = np.random.randn() * volatility[0]
+
+        for i in range(1, n):
+            volatility[i] = np.sqrt(
+                omega + alpha * returns[i - 1] ** 2 + beta * volatility[i - 1] ** 2
+            )
+            returns[i] = np.random.randn() * volatility[i]
+
+        results_garch = {}
+        results_evt = {}
+        for symbol, base_price in assets.items():
+            price = base_price * np.exp(np.cumsum(returns))
+            df = pd.DataFrame({"close": price})
+
+            garch_result = extract_garch_features(df, window=60)
+            evt_result = extract_evt_features(df, window=120)
+
+            results_garch[symbol] = garch_result
+            results_evt[symbol] = evt_result
+
+        # 比较不同资产的 GARCH 波动率分布
+        garch_stats = {}
+        for symbol, result in results_garch.items():
+            vol = result["garch_volatility"].dropna()
+            if len(vol) > 0:
+                garch_stats[symbol] = {
+                    "mean": vol.mean(),
+                    "std": vol.std(),
+                }
+                print(
+                    f"  {symbol} GARCH vol: mean={vol.mean():.6f}, std={vol.std():.6f}"
+                )
+
+        # 不同价格水平的资产，GARCH 均值应该接近（因为过程相同）
+        if len(garch_stats) >= 2:
+            means = [s["mean"] for s in garch_stats.values()]
+            mean_diff = max(means) - min(means)
+            print(f"  GARCH 均值差异: {mean_diff:.6f}")
+            # GARCH 使用收益率，对价格水平不敏感
+            self.assertLess(
+                mean_diff,
+                0.01,
+                f"不同价格水平资产的 GARCH 均值差异应该较小，实际: {mean_diff:.6f}",
+            )
+
+        print("  ✅ 多资产归一化测试通过")
+
+    def test_streaming_vs_batch_consistency(self):
+        """
+        测试：流式 vs 批量一致性测试 ⭐⭐⭐⭐
+
+        验证：
+        - 分块计算与批量计算结果在重叠区域应该一致
+        - GARCH/EVT 使用滚动窗口，边界处可能有差异
+        """
+        print("\n" + "=" * 70)
+        print("测试：流式 vs 批量一致性测试")
+        print("=" * 70)
+
+        np.random.seed(42)
+        n = 400
+        window = 60
+
+        # 创建测试数据
+        returns = np.random.randn(n) * 0.02
+        price = 100 * np.exp(np.cumsum(returns))
+        df = pd.DataFrame({"close": price})
+
+        # 批量计算
+        batch_result = extract_garch_features(df, window=window)
+        batch_vol = batch_result["garch_volatility"]
+
+        # 分块计算（模拟流式）
+        chunk_size = 150
+        overlap = window + 20
+
+        streaming_vol = pd.Series(index=df.index, dtype=float)
+        for start in range(0, n, chunk_size - overlap):
+            end = min(start + chunk_size, n)
+            chunk_df = df.iloc[start:end].copy()
+
+            if len(chunk_df) < window + 10:
+                continue
+
+            chunk_result = extract_garch_features(chunk_df, window=window)
+
+            # 只取非重叠部分
+            if start == 0:
+                valid_start = 0
+            else:
+                valid_start = overlap
+
+            chunk_vol = chunk_result["garch_volatility"]
+            for i, idx in enumerate(chunk_df.index[valid_start:]):
+                if idx in streaming_vol.index and i + valid_start < len(chunk_vol):
+                    streaming_vol.loc[idx] = chunk_vol.iloc[i + valid_start]
+
+        # 比较批量和流式结果
+        valid_idx = batch_vol.dropna().index.intersection(streaming_vol.dropna().index)
+        if len(valid_idx) > 50:
+            diff = (batch_vol.loc[valid_idx] - streaming_vol.loc[valid_idx]).abs()
+            max_diff = diff.max()
+            mean_diff = diff.mean()
+
+            print(f"  有效比较点数: {len(valid_idx)}")
+            print(f"  最大差异: {max_diff:.6f}")
+            print(f"  平均差异: {mean_diff:.6f}")
+
+            # GARCH 是状态依赖的，边界处可能有差异
+            # 检查大部分数据一致
+            consistent_ratio = (diff < 0.01).mean()
+            print(f"  一致性比例 (diff<0.01): {consistent_ratio:.2%}")
+
+            # 允许边界效应，检查大部分一致
+            self.assertGreater(
+                consistent_ratio,
+                0.7,
+                f"大部分数据应该一致，实际一致比例: {consistent_ratio:.2%}",
+            )
+        else:
+            print(f"  ⚠️  有效比较点数不足: {len(valid_idx)}")
+
+        print("  ✅ 流式 vs 批量一致性测试通过")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -677,6 +677,95 @@ class TestHilbertFeaturesImproved(unittest.TestCase):
 
         print("  ✅ 性能测试通过")
 
+    def test_streaming_vs_batch_consistency(self):
+        """
+        测试 10：流式 vs 批量一致性测试 ⭐⭐⭐⭐
+
+        验证：
+        - 分块计算与批量计算结果在重叠区域应该一致
+        - Hilbert 变换使用滚动窗口，边界处可能有差异
+        """
+        print("\n" + "=" * 70)
+        print("测试 10：流式 vs 批量一致性测试")
+        print("=" * 70)
+
+        # 创建测试数据
+        df = self.create_base_data(500)
+        window = 64
+
+        # 批量计算
+        batch_result = extract_hilbert_features(
+            df,
+            price_fluctuation_col="wpt_price_fluctuation",
+            cvd_fluctuation_col="wpt_cvd_fluctuation",
+            volume_col="volume",
+            window=window,
+            ema_span=10,
+        )
+
+        # 选择一个关键输出列进行比较
+        batch_phase = batch_result["hilbert_price_env"]
+
+        # 分块计算（模拟流式）
+        chunk_size = 200
+        overlap = window + 20
+
+        streaming_phase = pd.Series(index=df.index, dtype=float)
+        for start in range(0, len(df), chunk_size - overlap):
+            end = min(start + chunk_size, len(df))
+            chunk_df = df.iloc[start:end].copy()
+
+            if len(chunk_df) < window + 10:
+                continue
+
+            chunk_result = extract_hilbert_features(
+                chunk_df,
+                price_fluctuation_col="wpt_price_fluctuation",
+                cvd_fluctuation_col="wpt_cvd_fluctuation",
+                volume_col="volume",
+                window=window,
+                ema_span=10,
+            )
+
+            # 只取非重叠部分
+            if start == 0:
+                valid_start = 0
+            else:
+                valid_start = overlap
+
+            chunk_phase = chunk_result["hilbert_price_env"]
+            for i, idx in enumerate(chunk_df.index[valid_start:]):
+                if idx in streaming_phase.index and i + valid_start < len(chunk_phase):
+                    streaming_phase.loc[idx] = chunk_phase.iloc[i + valid_start]
+
+        # 比较批量和流式结果
+        valid_idx = batch_phase.dropna().index.intersection(
+            streaming_phase.dropna().index
+        )
+        if len(valid_idx) > 50:
+            diff = (batch_phase.loc[valid_idx] - streaming_phase.loc[valid_idx]).abs()
+            max_diff = diff.max()
+            mean_diff = diff.mean()
+
+            print(f"  有效比较点数: {len(valid_idx)}")
+            print(f"  最大差异: {max_diff:.6f}")
+            print(f"  平均差异: {mean_diff:.6f}")
+
+            # Hilbert 相位在 [-π, π]，允许较大的差异（边界效应）
+            # 检查大部分数据一致
+            consistent_ratio = (diff < 0.5).mean()
+            print(f"  一致性比例 (diff<0.5): {consistent_ratio:.2%}")
+
+            self.assertGreater(
+                consistent_ratio,
+                0.8,
+                f"大部分数据应该一致，实际一致比例: {consistent_ratio:.2%}",
+            )
+        else:
+            print(f"  ⚠️  有效比较点数不足: {len(valid_idx)}")
+
+        print("  ✅ 流式 vs 批量一致性测试通过")
+
 
 def run_tests():
     """运行所有测试"""

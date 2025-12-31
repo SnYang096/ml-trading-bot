@@ -659,6 +659,15 @@ class FeatureComputer:
                 self._validate_cache_quality(
                     cached_result, feature_name, cache_type="monthly"
                 )
+                # Handle cached tuple results (e.g., old cache format for macd_f)
+                output_cols = feature_info.get("output_columns", [feature_name])
+                if not output_cols:
+                    output_cols = [feature_name]
+                if isinstance(cached_result, tuple) and len(cached_result) == len(output_cols):
+                    # Convert cached tuple to DataFrame (same as new computation)
+                    cached_result = pd.DataFrame(
+                        {col: series for col, series in zip(output_cols, cached_result)}
+                    )
                 monthly_results[month_str] = cached_result
                 cached_months += 1
                 # 记录月度缓存命中（每个特征只记录一次）
@@ -671,6 +680,12 @@ class FeatureComputer:
                     feature_info, df_month, feature_name
                 )
                 month_result = compute_func(*call_args, **call_kwargs)
+                
+                # Debug: check return type for macd_f
+                if feature_name == "macd_f":
+                    print(f"       🔍 DEBUG macd_f: compute_func returned type: {type(month_result)}")
+                    if isinstance(month_result, tuple):
+                        print(f"       🔍 DEBUG macd_f: tuple length: {len(month_result)}")
 
                 # 处理计算结果的重复列名
                 if (
@@ -686,7 +701,24 @@ class FeatureComputer:
                 if not output_cols:
                     output_cols = [feature_name]
 
-                if isinstance(month_result, pd.DataFrame):
+                # Handle tuple return values (e.g., compute_macd returns Tuple[Series, Series, Series])
+                if isinstance(month_result, tuple):
+                    # Convert tuple of Series to DataFrame using output_columns
+                    if len(month_result) == len(output_cols):
+                        month_result = pd.DataFrame(
+                            {col: series for col, series in zip(output_cols, month_result)}
+                        )
+                        # Debug: verify conversion worked
+                        if feature_name == "macd_f":
+                            print(f"       🔍 DEBUG macd_f: Converted tuple to DataFrame with columns: {list(month_result.columns)}")
+                    else:
+                        # Fallback: use default names if output_cols length doesn't match
+                        month_result = pd.DataFrame(
+                            {f"{feature_name}_{i}": series for i, series in enumerate(month_result)}
+                        )
+                        if feature_name == "macd_f":
+                            print(f"       🔍 DEBUG macd_f: Fallback conversion, columns: {list(month_result.columns)}, output_cols: {output_cols}")
+                elif isinstance(month_result, pd.DataFrame):
                     # 只保留 output_columns 中定义的列
                     result_cols = [
                         col for col in output_cols if col in month_result.columns
@@ -784,6 +816,9 @@ class FeatureComputer:
                             # 确保列顺序一致
                             month_result = month_result[result_cols].copy()
                         else:
+                            # Debug: if no columns match, check what columns we have
+                            if feature_name == "macd_f":
+                                print(f"       🔍 DEBUG macd_f merge: month {month_key} has columns {list(month_result.columns)}, expected {output_cols}")
                             month_result = pd.DataFrame(index=month_result.index)
                     aligned_results.append(month_result)
 
@@ -796,7 +831,13 @@ class FeatureComputer:
                 ]
                 if result_cols:
                     result_df = result_df[result_cols].copy()
+                    # Debug: verify MACD columns are present after merge
+                    if feature_name == "macd_f":
+                        print(f"       🔍 DEBUG macd_f: After merge, result_df has columns: {list(result_df.columns)}")
                 else:
+                    # Debug: if no columns match, check what we have
+                    if feature_name == "macd_f":
+                        print(f"       🔍 DEBUG macd_f: No matching columns! result_df has: {list(result_df.columns)}, expected: {output_cols}")
                     result_df = pd.DataFrame(index=result_df.index)
             elif isinstance(list(monthly_results.values())[0], pd.Series):
                 # 合并 Series
@@ -1118,6 +1159,21 @@ class FeatureComputer:
                         feature_info, result_df, feature_name
                     )
                     computed_result = compute_func(*call_args, **call_kwargs)
+
+                    # Handle tuple return values (e.g., compute_macd returns Tuple[Series, Series, Series])
+                    output_cols = feature_info.get("output_columns", [feature_name])
+                    if not output_cols:
+                        output_cols = [feature_name]
+                    if isinstance(computed_result, tuple):
+                        if len(computed_result) == len(output_cols):
+                            computed_result = pd.DataFrame(
+                                {col: series for col, series in zip(output_cols, computed_result)}
+                            )
+                        else:
+                            # Fallback: use default names if output_cols length doesn't match
+                            computed_result = pd.DataFrame(
+                                {f"{feature_name}_{i}": series for i, series in enumerate(computed_result)}
+                            )
 
                     # 对齐到基础索引
                     computed_result = self._align_to_base_index(

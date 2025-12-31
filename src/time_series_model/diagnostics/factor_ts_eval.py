@@ -376,9 +376,18 @@ def prepare_dataset(args: argparse.Namespace, strategy_cfg) -> pd.DataFrame:
     df_filtered = strategy_runner.apply_filters(
         df_features, strategy_cfg.labels.filters
     )
+    # For factor-eval, ignore ensure_feature_non_null filter (too aggressive for research)
+    # This allows evaluation of factors even when some features have NaN values
+    # The factor-eval will check each factor individually for sufficient samples
+    post_label_filters_for_eval = [
+        f
+        for f in strategy_cfg.labels.post_label_filters
+        if not (isinstance(f, dict) and f.get("ensure_feature_non_null"))
+        and f != "ensure_feature_non_null"
+    ]
     df_filtered = strategy_runner.apply_post_label_filters(
         df_filtered,
-        strategy_cfg.labels.post_label_filters,
+        post_label_filters_for_eval,
         list(df_filtered.columns),
     )
     return df_filtered
@@ -533,6 +542,22 @@ def compute_factor_metrics(
     if len(valid) < 50:
         metrics["error"] = "insufficient_samples"
         metrics["n_samples"] = int(len(valid))
+        # Debug: Add detailed info for first few factors with zero samples
+        if len(valid) == 0:
+            factor_non_null = factor_numeric.notna().sum()
+            target_non_null = target_numeric.notna().sum()
+            # Use a module-level counter to limit debug output
+            if not hasattr(compute_factor_metrics, "_debug_count"):
+                compute_factor_metrics._debug_count = 0
+            if compute_factor_metrics._debug_count < 5:
+                print(f"   ⚠️  Factor '{factor}': valid samples = 0")
+                print(
+                    f"      factor_non_null after numeric conversion: {factor_non_null} / {len(df)}"
+                )
+                print(
+                    f"      target_non_null after numeric conversion: {target_non_null} / {len(df)}"
+                )
+                compute_factor_metrics._debug_count += 1
         return metrics, ic_series_df
 
     # Basic IC metrics
@@ -2058,19 +2083,49 @@ def main() -> None:
     if args.export_yaml is None:
         args.export_yaml = str(_default_pool_b_yaml_path(strategy_dir_id))
 
-    # If a features file was specified, override the features config
+    # If a features file was specified, directly override the features config
+    # features_all.yaml should be self-contained with all dependencies included
     if features_file_override:
         import yaml
+        from src.time_series_model.strategy_config import FeaturePipelineConfig
 
         with open(features_file_override, "r", encoding="utf-8") as f:
             features_override = yaml.safe_load(f)
-        # Override the features configuration
+
+        # Directly override strategy_cfg.features with features_all.yaml content
         if "feature_pipeline" in features_override:
-            strategy_cfg.features.requested_features = features_override[
-                "feature_pipeline"
-            ].get("requested_features", [])
+            override_requested = features_override["feature_pipeline"].get(
+                "requested_features", []
+            )
+
+            # Create new FeaturePipelineConfig from override file
+            strategy_cfg.features = FeaturePipelineConfig(
+                requested_features=override_requested,
+                invert_features=features_override["feature_pipeline"].get(
+                    "invert_features", []
+                ),
+                post_processors=[],  # features_all.yaml typically doesn't have post_processors
+                selector=None,
+                ensure_signal=features_override["feature_pipeline"].get(
+                    "ensure_signal_column",
+                    strategy_cfg.features.ensure_signal,
+                ),
+            )
+
             print(
-                f"   ✅ Loaded {len(strategy_cfg.features.requested_features)} features from {features_file_override.name}"
+                f"   ✅ Overridden features config with {features_file_override.name}"
+            )
+            print(
+                f"      Using {len(override_requested)} features (self-contained, all dependencies included)"
+            )
+            print(
+                f"      Note: features_all.yaml should be self-contained and not require features.yaml"
+            )
+
+            # Set factors to use the overridden features
+            args.factors = None  # Will use strategy_cfg.features.requested_features
+            args.feature_mode = (
+                "strategy"  # Use strategy mode (features_all.yaml is self-contained)
             )
 
     # If factors not specified, use requested_features from strategy config
@@ -2090,6 +2145,47 @@ def main() -> None:
 
     df = prepare_dataset(args, strategy_cfg)
     target_col = strategy_cfg.labels.target_column
+
+    # Debug: Check dataset after prepare_dataset
+    print(f"\n📊 Dataset after prepare_dataset:")
+    print(f"   Shape: {df.shape}")
+    if target_col in df.columns:
+        label_non_null = df[target_col].notna().sum()
+        print(f"   Label ({target_col}) non-null: {label_non_null} / {len(df)}")
+        if label_non_null == 0:
+            print(f"   ⚠️  WARNING: Label column is all NaN!")
+    else:
+        print(f"   ❌ ERROR: Label column '{target_col}' not found in DataFrame!")
+
+    # Check feature columns
+    feature_cols = [
+        c
+        for c in df.columns
+        if c
+        not in [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "timestamp",
+            "_symbol",
+            "signal",
+            target_col,
+        ]
+    ]
+    if feature_cols:
+        sample_feature = feature_cols[0] if feature_cols else None
+        if sample_feature:
+            feat_non_null = df[sample_feature].notna().sum()
+            print(
+                f"   Sample feature ({sample_feature}) non-null: {feat_non_null} / {len(df)}"
+            )
+            if target_col in df.columns:
+                valid_samples = df[[sample_feature, target_col]].dropna()
+                print(
+                    f"   Joint valid samples ({sample_feature} + {target_col}): {len(valid_samples)}"
+                )
 
     # Parse IC decay lags
     ic_decay_lags = [int(x.strip()) for x in args.ic_decay_lags.split(",") if x.strip()]

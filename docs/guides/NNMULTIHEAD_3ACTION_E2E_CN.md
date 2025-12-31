@@ -313,8 +313,8 @@ mlbot feature-store build \
   --config config/nnmultihead/path_primitives_4h_80h_min \
   --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
-  --start-date 2021-01-01 \
-  --end-date 2025-04-30 \
+  --start-date 2023-01-01 \
+  --end-date 2025-10-30 \
   --no-docker
 
 # 训练时也用同样的时间范围

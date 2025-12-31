@@ -478,6 +478,152 @@ class TestHurstFeaturesImproved(unittest.TestCase):
 
         print("  ✅ 边界情况处理验证通过")
 
+    def test_normalization_multi_asset(self):
+        """
+        测试 8：多资产归一化测试 ⭐⭐⭐⭐
+
+        验证：
+        - 不同价格水平的资产，Hurst 特征应该在相似范围内
+        - Hurst 指数本身是归一化的（0-1），应该对价格水平不敏感
+        """
+        print("\n" + "=" * 70)
+        print("测试 8：多资产归一化测试")
+        print("=" * 70)
+
+        np.random.seed(42)
+        n = 500
+
+        # 不同价格水平的资产（但相同的随机过程）
+        assets = {
+            "BTCUSDT": 50000,  # 高价格
+            "ETHUSDT": 3000,  # 中等价格
+            "SOLUSDT": 100,  # 低价格
+        }
+
+        results = {}
+        for symbol, base_price in assets.items():
+            # 使用相同的趋势过程，只是价格水平不同
+            returns = np.random.randn(n) * 0.01
+            for i in range(1, n):
+                returns[i] += 0.3 * returns[i - 1]  # 持续性
+            price = base_price * np.exp(np.cumsum(returns))
+
+            df = pd.DataFrame(
+                {
+                    "close": price,
+                    "volume": 1000 + 200 * np.abs(np.random.randn(n)),
+                }
+            )
+
+            result = extract_hurst_features(
+                df, price_col="close", rolling_window=50, update_freq=5
+            )
+            results[symbol] = result
+
+        # 比较不同资产的 Hurst 值分布
+        hurst_stats = {}
+        for symbol, result in results.items():
+            hurst = result["hurst_price_rolling"].dropna()
+            if len(hurst) > 0:
+                hurst_stats[symbol] = {
+                    "mean": hurst.mean(),
+                    "std": hurst.std(),
+                    "min": hurst.min(),
+                    "max": hurst.max(),
+                }
+                print(f"  {symbol}: mean={hurst.mean():.4f}, std={hurst.std():.4f}")
+
+        # 不同价格水平的资产，Hurst 均值应该接近（因为过程相同）
+        if len(hurst_stats) >= 2:
+            means = [s["mean"] for s in hurst_stats.values()]
+            mean_diff = max(means) - min(means)
+            print(f"  均值差异: {mean_diff:.4f}")
+            # Hurst 指数应该对价格水平不敏感
+            self.assertLess(
+                mean_diff,
+                0.15,
+                f"不同价格水平资产的 Hurst 均值差异应该较小，实际: {mean_diff:.4f}",
+            )
+
+        print("  ✅ 多资产归一化测试通过")
+
+    def test_streaming_vs_batch_consistency(self):
+        """
+        测试 9：流式 vs 批量一致性测试 ⭐⭐⭐⭐
+
+        验证：
+        - 分块计算与批量计算结果在重叠区域应该一致
+        - 注意：Hurst 使用滚动窗口，边界处可能有差异
+        """
+        print("\n" + "=" * 70)
+        print("测试 9：流式 vs 批量一致性测试")
+        print("=" * 70)
+
+        np.random.seed(42)
+        n = 500
+        rolling_window = 50
+
+        # 创建测试数据
+        df = self.create_trend_data(n)
+
+        # 批量计算
+        batch_result = extract_hurst_features(
+            df, price_col="close", rolling_window=rolling_window, update_freq=5
+        )
+        batch_hurst = batch_result["hurst_price_rolling"]
+
+        # 分块计算（模拟流式）
+        chunk_size = 200
+        overlap = rolling_window + 10  # 确保有足够的重叠
+
+        streaming_hurst = pd.Series(index=df.index, dtype=float)
+        for start in range(0, n, chunk_size - overlap):
+            end = min(start + chunk_size, n)
+            chunk_df = df.iloc[start:end].copy()
+
+            if len(chunk_df) < rolling_window + 10:
+                continue
+
+            chunk_result = extract_hurst_features(
+                chunk_df,
+                price_col="close",
+                rolling_window=rolling_window,
+                update_freq=5,
+            )
+
+            # 只取非重叠部分（除了第一个 chunk）
+            if start == 0:
+                valid_start = 0
+            else:
+                valid_start = overlap
+
+            chunk_hurst = chunk_result["hurst_price_rolling"]
+            for i, idx in enumerate(chunk_df.index[valid_start:]):
+                if idx in streaming_hurst.index and i + valid_start < len(chunk_hurst):
+                    streaming_hurst.loc[idx] = chunk_hurst.iloc[i + valid_start]
+
+        # 比较批量和流式结果
+        valid_idx = batch_hurst.dropna().index.intersection(
+            streaming_hurst.dropna().index
+        )
+        if len(valid_idx) > 0:
+            diff = (batch_hurst.loc[valid_idx] - streaming_hurst.loc[valid_idx]).abs()
+            max_diff = diff.max()
+            mean_diff = diff.mean()
+
+            print(f"  有效比较点数: {len(valid_idx)}")
+            print(f"  最大差异: {max_diff:.6f}")
+            print(f"  平均差异: {mean_diff:.6f}")
+
+            # Hurst 计算涉及回归，允许较大的数值差异
+            self.assertLess(
+                max_diff, 0.1, f"流式与批量计算差异应该较小，最大差异: {max_diff:.6f}"
+            )
+        else:
+            print("  ⚠️  没有有效的比较点")
+
+        print("  ✅ 流式 vs 批量一致性测试通过")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

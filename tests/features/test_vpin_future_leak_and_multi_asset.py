@@ -356,6 +356,127 @@ class TestVPINMultiAsset:
         print("  ✅ 多资产可比性验证通过：VPIN 值不依赖于价格水平")
 
 
+class TestVPINStreamingVsBatch:
+    """VPIN 流式 vs 批量一致性测试"""
+
+    def create_test_data(self, n_samples=500):
+        """创建测试数据"""
+        np.random.seed(42)
+        timestamps = pd.date_range("2024-01-01 00:00:00", periods=n_samples, freq="1T")
+
+        # 生成价格（随机游走）
+        prices = 50000 + np.cumsum(np.random.randn(n_samples) * 50)
+
+        df = pd.DataFrame(
+            {
+                "open": prices + np.random.randn(n_samples) * 10,
+                "high": prices + np.abs(np.random.randn(n_samples) * 20),
+                "low": prices - np.abs(np.random.randn(n_samples) * 20),
+                "close": prices,
+                "volume": np.random.uniform(100, 1000, n_samples),
+            },
+            index=timestamps,
+        )
+
+        # 生成 tick 数据
+        tick_timestamps = pd.date_range(timestamps[0], timestamps[-1], freq="1S")[
+            : n_samples * 10
+        ]  # 每根K线10个tick
+
+        tick_prices = []
+        tick_volumes = []
+        tick_sides = []
+
+        for i in range(len(df)):
+            kline_price = df.iloc[i]["close"]
+            for j in range(10):
+                tick_prices.append(kline_price + np.random.randn() * 5)
+                tick_volumes.append(np.random.uniform(0.1, 10.0))
+                tick_sides.append(np.random.choice([1, -1]))
+
+        ticks = pd.DataFrame(
+            {
+                "price": tick_prices[: len(tick_timestamps)],
+                "volume": tick_volumes[: len(tick_timestamps)],
+                "side": tick_sides[: len(tick_timestamps)],
+            },
+            index=tick_timestamps[: len(tick_prices)],
+        )
+
+        return df, ticks
+
+    def test_streaming_vs_batch_consistency(self):
+        """
+        测试：流式 vs 批量一致性 ⭐⭐⭐⭐
+        对生产部署至关重要：生产环境往往是流式推理，而训练是批量计算
+        """
+        print("\n" + "=" * 70)
+        print("测试：VPIN 流式 vs 批量一致性")
+        print("=" * 70)
+
+        df, ticks = self.create_test_data(500)
+
+        # 批量计算（一次性计算所有数据）
+        batch_result = extract_order_flow_features(
+            df,
+            ticks=ticks,
+            vpin_n_buckets=50,
+            vpin_adaptive=True,
+        )
+
+        # 流式计算（分块处理，模拟在线推理）
+        chunk_size = 100
+        streaming_results = []
+
+        for i in range(0, len(df), chunk_size):
+            chunk_df = df.iloc[i : i + chunk_size].copy()
+            # 获取对应的 tick 数据
+            chunk_start = chunk_df.index[0]
+            chunk_end = chunk_df.index[-1]
+            chunk_ticks = ticks[
+                (ticks.index >= chunk_start) & (ticks.index <= chunk_end)
+            ]
+
+            if len(chunk_ticks) > 0:
+                chunk_result = extract_order_flow_features(
+                    chunk_df,
+                    ticks=chunk_ticks,
+                    vpin_n_buckets=50,
+                    vpin_adaptive=True,
+                )
+                streaming_results.append(chunk_result)
+
+        if len(streaming_results) > 0:
+            streaming_result = pd.concat(streaming_results, axis=0)
+
+            # 比较关键特征
+            key_col = "vpin"
+            if key_col in batch_result.columns and key_col in streaming_result.columns:
+                batch_vals = batch_result[key_col].dropna()
+                stream_vals = streaming_result[key_col].dropna()
+
+                # 找到共同索引
+                common_idx = batch_vals.index.intersection(stream_vals.index)
+                if len(common_idx) > 10:  # 至少需要10个数据点
+                    diff = (
+                        batch_vals.loc[common_idx] - stream_vals.loc[common_idx]
+                    ).abs()
+                    max_diff = diff.max()
+                    mean_diff = diff.mean()
+
+                    print(f"  共同索引数: {len(common_idx)}")
+                    print(f"  最大差异: {max_diff:.8f}")
+                    print(f"  平均差异: {mean_diff:.8f}")
+
+                    # 允许一定的数值误差（由于分块计算可能导致边界处理略有不同）
+                    assert max_diff < 0.1, (
+                        f"流式与批量计算不一致，最大差异: {max_diff:.8f}, "
+                        f"平均差异: {mean_diff:.8f}"
+                    )
+
+                    print("  ✅ 流式 vs 批量一致性验证通过")
+
+
 if __name__ == "__main__":
     # 运行测试
     test_future = TestVPINFutureLeak()
@@ -365,6 +486,9 @@ if __name__ == "__main__":
     test_multi = TestVPINMultiAsset()
     test_multi.test_multi_asset_vpin_comparability()
 
+    test_streaming = TestVPINStreamingVsBatch()
+    test_streaming.test_streaming_vs_batch_consistency()
+
     print("\n" + "=" * 70)
-    print("✅ 所有 VPIN 未来数据泄露和多资产归一化测试通过")
+    print("✅ 所有 VPIN 测试通过（未来数据泄露、多资产归一化、流式vs批量一致性）")
     print("=" * 70)

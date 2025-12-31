@@ -544,6 +544,123 @@ def _normalize_groups(obj: object) -> Dict[str, List[str]]:
     return out
 
 
+def _expand_semantic_groups_to_singletons(
+    groups: Dict[str, List[str]],
+    feature_deps_path: str = "config/feature_dependencies.yaml",
+) -> Dict[str, List[str]]:
+    """
+    Expand semantic groups into singleton groups (one per output column).
+
+    For each feature node in groups, if it has multiple output_columns,
+    create a singleton group for each output column.
+
+    This allows fine-grained selection of semantic scores (e.g., ignition vs exhaustion)
+    which may have opposite effects on the strategy.
+
+    Example:
+        Input: {"trade_cluster_scene": ["trade_cluster_scene_semantic_scores_f"]}
+        Output: {
+            "trade_cluster_scene__compression": ["trade_cluster_compression_score"],
+            "trade_cluster_scene__ignition": ["trade_cluster_ignition_score"],
+            "trade_cluster_scene__absorption": ["trade_cluster_absorption_scene_score"],
+            "trade_cluster_scene__exhaustion": ["trade_cluster_exhaustion_scene_score"],
+        }
+
+    Note: The feature node itself is still required as a dependency, but we only
+    select specific output columns for training.
+    """
+    import yaml
+    from pathlib import Path
+
+    # Load feature dependencies
+    deps_path = Path(feature_deps_path)
+    if not deps_path.exists():
+        print(f"   ⚠️  Feature dependencies file not found: {deps_path}")
+        print(f"      Keeping semantic groups as-is (no expansion)")
+        return groups
+
+    with open(deps_path, "r", encoding="utf-8") as f:
+        feature_deps = yaml.safe_load(f)
+    features = feature_deps.get("features", {})
+
+    expanded = {}
+    expanded_count = 0
+
+    for group_name, feature_nodes in groups.items():
+        for node in feature_nodes:
+            if node not in features:
+                # Keep as-is if not found in feature_deps
+                key = f"{group_name}__{node}"
+                if key not in expanded:
+                    expanded[key] = [node]
+                continue
+
+            output_cols = features[node].get("output_columns", [])
+            if len(output_cols) <= 1:
+                # Single output or no output_columns defined, keep as-is
+                key = f"{group_name}__{node}"
+                if key not in expanded:
+                    expanded[key] = [node]
+            else:
+                # Multiple outputs: create singleton for each output column
+                # Note: The feature node itself is still required for dependency resolution,
+                # but we request specific output columns by name (feature loader will handle this)
+                for col in output_cols:
+                    # Extract semantic name from column
+                    # e.g., "trade_cluster_ignition_score" -> "ignition"
+                    # e.g., "vpin_compression_score" -> "compression"
+                    semantic_name = col
+                    # Try to extract a cleaner name
+                    if "_score" in col:
+                        # Remove common prefixes and suffixes
+                        parts = (
+                            col.replace("_score", "").replace("_scene", "").split("_")
+                        )
+                        # Find the semantic part (usually the last meaningful word)
+                        if len(parts) >= 2:
+                            # e.g., ["trade", "cluster", "ignition"] -> "ignition"
+                            # e.g., ["vpin", "compression"] -> "compression"
+                            # Skip common prefixes
+                            skip_words = {
+                                "trade",
+                                "cluster",
+                                "vpin",
+                                "wpt",
+                                "funding",
+                                "fp",
+                                "wick",
+                                "volume",
+                                "profile",
+                                "liquidity",
+                                "void",
+                            }
+                            for part in reversed(parts):
+                                if part not in skip_words and len(part) > 3:
+                                    semantic_name = part
+                                    break
+                            else:
+                                semantic_name = parts[-1]
+
+                    key = f"{group_name}__{semantic_name}"
+                    # Ensure unique key
+                    original_key = key
+                    i = 2
+                    while key in expanded:
+                        key = f"{original_key}__{i}"
+                        i += 1
+
+                    # Store as output column name (feature loader will resolve to the feature node)
+                    # The feature loader's resolve_dependencies will map output columns back to feature nodes
+                    expanded[key] = [col]
+                    expanded_count += 1
+
+    if expanded_count > 0:
+        print(f"   ✅ Expanded {expanded_count} semantic groups to singleton groups")
+        print(f"      Total groups: {len(expanded)} (was {len(groups)})")
+
+    return expanded
+
+
 def _apply_feature_blacklist(
     *,
     base_features: List[str],
@@ -604,6 +721,17 @@ def _parse_args() -> argparse.Namespace:
         "--writeback-yaml",
         default=None,
         help="Optional output path to write a features_suggested.yaml (requested_features=final_features) with provenance metadata.",
+    )
+    p.add_argument(
+        "--expand-semantic-singletons",
+        action="store_true",
+        default=False,
+        help=(
+            "If True, expand semantic groups into singleton groups (one per output column). "
+            "This allows fine-grained selection of semantic scores (e.g., ignition vs exhaustion) "
+            "which may have opposite effects on the strategy. "
+            "Default: False (keep semantic groups as-is for backward compatibility)."
+        ),
     )
     p.add_argument(
         "--invert-candidates-yaml",
@@ -702,6 +830,11 @@ def main() -> None:
         groups_yaml=args.groups_yaml,
     )
 
+    # Optional: expand semantic groups to singletons (one per output column)
+    # This allows fine-grained selection of semantic scores (e.g., ignition vs exhaustion)
+    if args.expand_semantic_singletons:
+        groups = _expand_semantic_groups_to_singletons(groups)
+
     # Convention-by-default:
     # If user didn't pass pool-b-yaml / invert-candidates-yaml, try the conventional location
     # derived from the base strategy directory name:
@@ -758,12 +891,39 @@ def main() -> None:
         if not isinstance(base_features, list):
             raise ValueError("base-features-yaml must be a YAML list")
     else:
-        # Default base = base strategy's current requested_features.
-        # This matches the mental model: "start from what I'm currently using, then add candidate groups".
-        base_cfg = _load_yaml(base_dir / "features.yaml")
-        fp = base_cfg.get("feature_pipeline") if isinstance(base_cfg, dict) else None
-        req = fp.get("requested_features") if isinstance(fp, dict) else None
-        base_features = req if isinstance(req, list) else []
+        # When using Pool B and/or semantic groups, base_features should be empty
+        # This allows feature-group-search to start from scratch and find optimal combinations
+        # Only use features.yaml as base if neither Pool B nor semantic groups are provided
+        has_pool_b = args.pool_b_yaml is not None
+        has_semantic_groups = (
+            args.groups_yaml is not None
+            or (
+                Path("config") / f"feature_groups_{base_dir.name}_semantic.yaml"
+            ).exists()
+            or (Path("config") / "feature_groups.yaml").exists()
+        )
+
+        if has_pool_b or has_semantic_groups:
+            # Start from empty base when using Pool B or semantic groups
+            # This ensures we're finding optimal combinations from scratch
+            base_features = []
+            print(
+                f"   📋 Using empty base_features (starting from scratch) "
+                f"because Pool B or semantic groups are provided"
+            )
+        else:
+            # Default base = base strategy's current requested_features.
+            # This matches the mental model: "start from what I'm currently using, then add candidate groups".
+            base_cfg = _load_yaml(base_dir / "features.yaml")
+            fp = (
+                base_cfg.get("feature_pipeline") if isinstance(base_cfg, dict) else None
+            )
+            req = fp.get("requested_features") if isinstance(fp, dict) else None
+            base_features = req if isinstance(req, list) else []
+            print(
+                f"   📋 Using base_features from {base_dir / 'features.yaml'} "
+                f"(no Pool B or semantic groups provided)"
+            )
 
     blacklist = [s.strip() for s in str(args.feature_blacklist).split(",") if s.strip()]
     base_features, groups = _apply_feature_blacklist(

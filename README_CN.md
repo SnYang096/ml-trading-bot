@@ -162,6 +162,15 @@ mlbot diagnose feature-group-search \
 - **为什么不会组合爆炸**：它不是穷举所有组合，而是每一步只做一次“加一组”的比较；复杂度大致是 \(O(\text{steps} \times \text{groups} \times \text{seeds})\)。
 
 > **详细工作流**：参考 `docs/strategies/RECOMMENDED_FEATURE_WORKFLOW.md`
+
+**Semantic groups 单例展开（可选）**：
+- 默认情况下，semantic groups 作为整体选择（如 `trade_cluster_scene: [trade_cluster_scene_semantic_scores_f]`）
+- 但同一个 semantic feature node 可能包含多个语义（如 compression/ignition/absorption/exhaustion），这些语义可能对策略有相反的作用
+- 使用 `--expand-semantic-singletons` 可以将 semantic groups 展开为单例（每个输出列单独作为一个候选组）
+- 这样可以选择更精细的语义（例如只选择 `ignition` 而不选择 `exhaustion`）
+- **注意**：展开后候选组数量增加，评估时间可能增加（但语义特征数量通常较少，影响有限）
+- 详细说明：参考 `docs/strategies/SEMANTIC_GROUPS_SINGLETON_EXPANSION.md`
+
 - **产物**：
   - HTML 报告（含 baseline/stop_reason/每步候选评分与被拒原因）
   - `features_suggested.yaml`（可写回，含 provenance 元数据）
@@ -386,6 +395,43 @@ mlbot backtest nautilus \
 ---
 
 ## 文档入口（建议先读）
+
+### 核心工作流文档
+
+- **推荐特征工作流**：`docs/strategies/RECOMMENDED_FEATURE_WORKFLOW.md`
+  - Pool B（数学/数值特征的"海选池"）vs Semantic 特征（人类可理解的语义因子）
+  - 完整的三阶段工作流：生成 Pool B → 准备语义 groups → feature-group-search
+  - 强调：Semantic 特征需要人类维护，从 Pool B 深度加工而来
+
+- **特征工作流修复总结**：`docs/strategies/FEATURES_ALL_SELF_CONTAINED_FIX.md`
+  - `features_all.yaml` 自包含修复
+  - `factor-eval` 和 `feature-group-search` 的正确使用方式
+
+- **最佳特征配置汇总**：`docs/strategies/BEST_FEATURE_CONFIGURATIONS.md`
+  - 各策略的最佳特征配置
+  - Pool B 与语义特征的关系说明
+
+- **Semantic groups 单例展开**：`docs/strategies/SEMANTIC_GROUPS_SINGLETON_EXPANSION.md`
+  - 为什么需要展开 semantic groups 为单例
+  - 性能分析和优化建议
+  - 实现方案和使用方式
+
+- **Factor-Eval 输出分析**：`docs/strategies/FACTOR_EVAL_OUTPUT_ANALYSIS.md`
+  - factor-eval 的筛选标准和阈值
+  - 经验输出特征数量（50-150 个）
+  - 优化建议
+
+- **树模型对相反特征的处理**：`docs/strategies/TREE_MODEL_OPPOSITE_FEATURES.md`
+  - 树模型能否自动处理相反特征
+  - 不展开 semantic groups 的效果分析
+  - 推荐策略
+
+- **项目 TODO List**：`docs/TODO_LIST.md`
+  - 所有待完成任务的详细说明
+  - 按优先级和类别组织
+  - 包含任务作用、命令示例、预期结果等
+
+### 架构文档
 
 - **系统架构图**：`docs/ARCHITECTURE.md`（包含完整的架构层次图）
 

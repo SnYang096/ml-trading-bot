@@ -59,7 +59,7 @@ from scripts.train_strategy_pipeline import (  # noqa: E402
     run_feature_pipeline,
     determine_feature_columns,
 )
-from src.feature_store.layer_naming import default_layer_from_config  # noqa: E402
+from src.feature_store.layer_naming import resolve_layer_name  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,13 +121,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    if (
-        isinstance(args.features_store_layer, str)
-        and args.features_store_layer.upper() == "AUTO"
-    ):
-        args.features_store_layer = default_layer_from_config(cfg_dir)
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
+
+    # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
+    args.features_store_layer = resolve_layer_name(args.features_store_layer, cfg_dir)
+
     loader = StrategyConfigLoader(cfg_dir)
     strategy_cfg = loader.load()
 

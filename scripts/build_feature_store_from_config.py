@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
 from src.data_tools.universe_config import load_universe_config  # noqa: E402
 from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec  # noqa: E402
-from src.feature_store.layer_naming import default_layer_from_config  # noqa: E402
+from src.feature_store.layer_naming import resolve_layer_name  # noqa: E402
 from src.features.loader.strategy_feature_loader import (
     StrategyFeatureLoader,
 )  # noqa: E402
@@ -66,8 +66,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--root", default="feature_store", help="FeatureStore root dir.")
     p.add_argument(
         "--layer",
-        default="AUTO",
-        help="FeatureStore layer (dataset id). Default=AUTO (derived from config content). "
+        default=None,
+        help="FeatureStore layer (dataset id). If not specified, auto-generated from config content. "
         "You can pass a versioned name like heavy_v6 for manual invalidation.",
     )
     p.add_argument("--warmup-months", type=int, default=1)
@@ -115,11 +115,8 @@ def main() -> None:
     root = Path(args.root).resolve()
     store = FeatureStore(root)
 
-    layer = (
-        default_layer_from_config(cfg_dir)
-        if str(args.layer).upper() == "AUTO"
-        else str(args.layer)
-    )
+    # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
+    layer = resolve_layer_name(args.layer, cfg_dir)
     warmup_months = max(0, int(args.warmup_months))
     warmup_bars = max(0, int(args.warmup_bars))
 
@@ -248,12 +245,17 @@ def main() -> None:
                         & (df_feats_window.index <= month_end)
                     ]
 
+                    # Extract feature columns (all columns except base columns)
+                    feature_cols = [
+                        c for c in df_feats_month.columns if c not in base_cols
+                    ]
+
                     store.write_month(
                         spec,
                         month_str,
                         df_feats_month,
                         base_columns=base_cols,
-                        feature_columns=None,
+                        feature_columns=feature_cols,
                         overwrite=False,
                         metadata={
                             "config_dir": str(cfg_dir),

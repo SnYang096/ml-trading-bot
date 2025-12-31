@@ -813,8 +813,8 @@ def feature_store():
 @click.option("--root", "feature_store_root", default="feature_store", help="FeatureStore root dir.")
 @click.option(
     "--layer",
-    default="AUTO",
-    help="FeatureStore layer (dataset id). Default=AUTO (derived from config content). "
+    default=None,
+    help="FeatureStore layer (dataset id). If not specified, auto-generated from config content. "
     "You can pass a versioned name like heavy_v6/base_v6 for manual invalidation/rebuild.",
 )
 @click.option("--warmup-months", type=int, default=0, help="Warmup calendar months (optional).")
@@ -868,7 +868,9 @@ def feature_store_build(
         args.extend(["--start-date", start_date])
     if end_date:
         args.extend(["--end-date", end_date])
-    args.extend(["--layer", layer])
+    # Only pass --layer if explicitly provided (None means auto-generate in script)
+    if layer is not None:
+        args.extend(["--layer", layer])
     sys.exit(run_script("scripts/build_feature_store_from_config.py", args, docker=docker))
 
 
@@ -1427,8 +1429,8 @@ def rl_run_e2e_3action(
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
 @click.option(
     "--feature-store-layer",
-    default="AUTO",
-    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config).",
+    default=None,
+    help="FeatureStore layer name (e.g. heavy_v6). If not specified, auto-generated from config hash.",
 )
 @click.option(
     "--feature-store-root",
@@ -1463,6 +1465,8 @@ def nnmultihead_train(
     docker,
 ):
     """Train NN multi-head path primitives MLP and save report.html artifacts."""
+    # Note: Layer name auto-generation is handled by the script itself.
+    # CLI just passes the parameter as-is (None = auto-generate).
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--config",
@@ -1500,7 +1504,9 @@ def nnmultihead_train(
         args.extend(["--device", device])
     # Always use FeatureStore (monthly) for nnmultihead (fast + consistent).
     # NOTE: underlying scripts use '--features-store-layer/--features-store-root'.
-    args.extend(["--features-store-layer", feature_store_layer])
+    # Only pass --features-store-layer if explicitly provided (None means auto-generate in script)
+    if feature_store_layer is not None:
+        args.extend(["--features-store-layer", feature_store_layer])
     args.extend(
         [
             "--features-store-root",
@@ -1528,8 +1534,8 @@ def nnmultihead_train(
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
 @click.option(
     "--feature-store-layer",
-    default="AUTO",
-    help="FeatureStore layer name, e.g. heavy_v6 or AUTO (derived from config).",
+    default=None,
+    help="FeatureStore layer name (e.g. heavy_v6). If not specified, auto-generated from config hash.",
 )
 @click.option(
     "--feature-store-root",
@@ -1552,6 +1558,8 @@ def nnmultihead_predict(
     docker,
 ):
     """Run inference and save heads/preds for downstream Router/RL."""
+    # Note: Layer name auto-generation is handled by the script itself.
+    # CLI just passes the parameter as-is (None = auto-generate).
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--config",
@@ -1574,7 +1582,9 @@ def nnmultihead_predict(
     if device:
         args.extend(["--device", device])
     # Always use FeatureStore (monthly) for nnmultihead (fast + consistent).
-    args.extend(["--features-store-layer", feature_store_layer])
+    # Only pass --features-store-layer if explicitly provided (None means auto-generate in script)
+    if feature_store_layer is not None:
+        args.extend(["--features-store-layer", feature_store_layer])
     args.extend(
         [
             "--features-store-root",
@@ -1733,7 +1743,7 @@ def _train_strategy_pipeline(
     docker,
     *,
     feature_store_dir: str,
-    feature_store_layer: str,
+    feature_store_layer: str | None,
 ):
     """Shared implementation for strategy training (train_strategy_pipeline.py)."""
     # Only add /workspace prefix if we're launching a new Docker container (not already inside one)
@@ -1758,10 +1768,11 @@ def _train_strategy_pipeline(
         [
             "--feature-store-dir",
             f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
-            "--feature-store-layer",
-            feature_store_layer,
         ]
     )
+    # Only pass --feature-store-layer if explicitly provided (None means auto-generate in script)
+    if feature_store_layer is not None:
+        args.extend(["--feature-store-layer", feature_store_layer])
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
@@ -1773,7 +1784,7 @@ def _train_strategy_pipeline(
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
 @click.option("--feature-store-dir", default="feature_store")
-@click.option("--feature-store-layer", default="AUTO")
+@click.option("--feature-store-layer", default=None)
 @click.option(
     "--output-root",
     default="results/strategies/sr_reversal_long",
@@ -1793,7 +1804,7 @@ def train_sr_reversal_long(
         output_root=output_root,
         docker=docker,
         feature_store_dir=str(feature_store_dir),
-        feature_store_layer=str(feature_store_layer),
+        feature_store_layer=feature_store_layer,  # None means auto-generate in script
     )
 
 
@@ -1805,7 +1816,7 @@ def train_sr_reversal_long(
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--test-size", default="0.15", help="Test set ratio")
 @click.option("--feature-store-dir", default="feature_store")
-@click.option("--feature-store-layer", default="AUTO")
+@click.option("--feature-store-layer", default=None)
 @click.option(
     "--output-root",
     default="results/strategies/sr_reversal_short",
@@ -1825,7 +1836,7 @@ def train_sr_reversal_short(
         output_root=output_root,
         docker=docker,
         feature_store_dir=str(feature_store_dir),
-        feature_store_layer=str(feature_store_layer),
+        feature_store_layer=feature_store_layer,  # None means auto-generate in script
     )
 
 
@@ -2812,6 +2823,16 @@ def diagnose_sr_reversal_model_comparison(
     ),
 )
 @click.option(
+    "--expand-semantic-singletons",
+    is_flag=True,
+    default=False,
+    help=(
+        "Expand semantic feature nodes (e.g., vpin_scene_semantic_scores_f) into singleton groups, "
+        "one per output column (e.g., vpin_compression_scene_score, vpin_ignition_scene_score). "
+        "This allows fine-grained selection of individual semantic scores."
+    ),
+)
+@click.option(
     "--output-dir",
     default="results/feature_group_search",
     help="Output directory",
@@ -2836,6 +2857,7 @@ def diagnose_feature_group_search(
     base_features_yaml,
     writeback_yaml,
     invert_candidates_yaml,
+    expand_semantic_singletons,
     output_dir,
     deterministic,
     docker,
@@ -2913,6 +2935,8 @@ def diagnose_feature_group_search(
                 f"/workspace/{invert_candidates_yaml}" if use_workspace_prefix else invert_candidates_yaml,
             ]
         )
+    if expand_semantic_singletons:
+        args.append("--expand-semantic-singletons")
 
     sys.exit(
         run_python_module(

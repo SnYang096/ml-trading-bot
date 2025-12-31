@@ -337,6 +337,98 @@ class TestWPTMultiAsset:
         print("  ✅ 多资产可比性验证通过：WPT 能量比不依赖于价格水平")
 
 
+class TestWPTStreamingVsBatch:
+    """WPT 流式 vs 批量一致性测试"""
+
+    def create_test_data(self, n_samples=500):
+        """创建测试数据"""
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=n_samples, freq="4H")
+
+        # 生成价格（随机游走）
+        prices = 100 + np.cumsum(np.random.randn(n_samples) * 0.5)
+
+        df = pd.DataFrame(
+            {
+                "open": prices + np.random.randn(n_samples) * 0.1,
+                "high": prices + np.abs(np.random.randn(n_samples) * 0.2),
+                "low": prices - np.abs(np.random.randn(n_samples) * 0.2),
+                "close": prices,
+                "volume": np.random.uniform(1000, 10000, n_samples),
+            },
+            index=dates,
+        )
+
+        return df
+
+    def test_streaming_vs_batch_consistency(self):
+        """
+        测试：流式 vs 批量一致性 ⭐⭐⭐⭐
+        对生产部署至关重要：生产环境往往是流式推理，而训练是批量计算
+        """
+        print("\n" + "=" * 70)
+        print("测试：WPT 流式 vs 批量一致性")
+        print("=" * 70)
+
+        df = self.create_test_data(500)
+        window = 100
+
+        # 批量计算（一次性计算所有数据）
+        batch_result = extract_wpt_features(
+            df,
+            price_col="close",
+            volume_col="volume",
+            window=window,
+            update_step=1,
+        )
+
+        # 流式计算（逐行模拟，每次只处理到当前时间点）
+        streaming_results = []
+        for i in range(window, len(df)):
+            df_stream = df.iloc[: i + 1].copy()
+            stream_result = extract_wpt_features(
+                df_stream,
+                price_col="close",
+                volume_col="volume",
+                window=window,
+                update_step=1,
+            )
+            if len(stream_result) > 0:
+                # 取最后一行（当前时间点的特征）
+                streaming_results.append(stream_result.iloc[-1])
+
+        if len(streaming_results) > 0:
+            streaming_df = pd.DataFrame(streaming_results)
+            streaming_df.index = df.index[window:][: len(streaming_df)]
+
+            # 比较关键特征
+            key_col = "wpt_price_trend"
+            if key_col in batch_result.columns and key_col in streaming_df.columns:
+                batch_vals = batch_result[key_col].iloc[window:].dropna()
+                stream_vals = streaming_df[key_col].dropna()
+
+                # 找到共同索引
+                common_idx = batch_vals.index.intersection(stream_vals.index)
+                if len(common_idx) > 10:  # 至少需要10个数据点
+                    diff = (
+                        batch_vals.loc[common_idx] - stream_vals.loc[common_idx]
+                    ).abs()
+                    max_diff = diff.max()
+                    mean_diff = diff.mean()
+
+                    print(f"  共同索引数: {len(common_idx)}")
+                    print(f"  最大差异: {max_diff:.8f}")
+                    print(f"  平均差异: {mean_diff:.8f}")
+
+                    # 允许一定的数值误差（由于滚动窗口计算的微小差异）
+                    assert max_diff < 1e-5, (
+                        f"流式与批量计算不一致，最大差异: {max_diff:.8f}, "
+                        f"平均差异: {mean_diff:.8f}"
+                    )
+
+                    print("  ✅ 流式 vs 批量一致性验证通过")
+
+
 if __name__ == "__main__":
     # 运行测试
     test_future = TestWPTFutureLeak()
@@ -347,6 +439,9 @@ if __name__ == "__main__":
     test_multi = TestWPTMultiAsset()
     test_multi.test_multi_asset_wpt_comparability()
 
+    test_streaming = TestWPTStreamingVsBatch()
+    test_streaming.test_streaming_vs_batch_consistency()
+
     print("\n" + "=" * 70)
-    print("✅ 所有 WPT 未来数据泄露和多资产归一化测试通过")
+    print("✅ 所有 WPT 测试通过（未来数据泄露、多资产归一化、流式vs批量一致性）")
     print("=" * 70)

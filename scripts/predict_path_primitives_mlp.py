@@ -48,7 +48,7 @@ from scripts.train_strategy_pipeline import (
     run_feature_pipeline,
     determine_feature_columns,
 )  # noqa: E402
-from src.feature_store.layer_naming import default_layer_from_config  # noqa: E402
+from src.feature_store.layer_naming import resolve_layer_name  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,11 +95,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
-    if (
-        isinstance(args.features_store_layer, str)
-        and args.features_store_layer.upper() == "AUTO"
-    ):
-        args.features_store_layer = default_layer_from_config(cfg_dir)
+
+    # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
+    args.features_store_layer = resolve_layer_name(args.features_store_layer, cfg_dir)
+
     loader = StrategyConfigLoader(cfg_dir)
     cfg = loader.load()
 
@@ -111,6 +110,10 @@ def main() -> None:
     if "model" not in payload:
         raise ValueError("Invalid model payload: missing 'model' key")
     model = MultiHeadPathPrimitivesMLP.from_export(payload["model"])
+
+    # Get feature columns from model metadata (for consistency with training)
+    model_meta = payload.get("meta", {})
+    model_feature_cols = model_meta.get("feature_cols", None)
 
     out_root = Path(args.output)
     multi = len(symbols) > 1
@@ -153,10 +156,29 @@ def main() -> None:
             if "symbol" not in df_features.columns:
                 df_features = df_features.copy()
                 df_features["symbol"] = sym
-            feature_cols = determine_feature_columns(df_features, cfg.features)
+            # Use feature columns from model metadata for consistency with training
+            if model_feature_cols is not None:
+                feature_cols = model_feature_cols
+            else:
+                feature_cols = determine_feature_columns(df_features, cfg.features)
             if contract is not None:
                 validate_minimal_required_cols(
                     available_columns=df_features.columns.tolist(), contract=contract
+                )
+            # Resolve block_cols_by_name for block mask if needed
+            block_cols_by_name = None
+            append_block_mask = False
+            if contract is not None and contract.optional_blocks:
+                from src.time_series_model.models.nn.path_primitives_dataset import (
+                    resolve_block_cols_by_name,
+                )
+
+                block_cols_by_name = resolve_block_cols_by_name(
+                    feature_cols,
+                    optional_blocks=contract.optional_blocks,
+                )
+                append_block_mask = contract.missingness_policy.get(
+                    "append_block_mask", False
                 )
             preds = predict_path_primitives(
                 model=model,
@@ -164,6 +186,8 @@ def main() -> None:
                 feature_cols=feature_cols,
                 device=args.device,
                 fill_nan_value=0.0,
+                block_cols_by_name=block_cols_by_name,
+                append_block_mask=append_block_mask,
             )
             out = df_features.join(preds)
             out_path = out_root / f"preds_{sym}.parquet" if multi else out_root

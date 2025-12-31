@@ -43,7 +43,7 @@ import pandas as pd
 from src.data_tools.data_handler import DataHandler
 from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
 from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
-from src.feature_store.layer_naming import default_layer_from_config
+from src.feature_store.layer_naming import resolve_layer_name
 from src.time_series_model.strategy_config import StrategyConfigLoader
 from src.time_series_model.pipeline.training.label_utils import (
     simulate_rr_exits,
@@ -108,8 +108,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-store-layer",
         type=str,
-        default="AUTO",
-        help="FeatureStore layer (dataset id). Default=AUTO (derived from config content).",
+        default=None,
+        help="FeatureStore layer (dataset id). If not specified, auto-generated from config content.",
     )
     parser.add_argument(
         "--seed",
@@ -1314,12 +1314,9 @@ def train_strategy(
 
     # FeatureStore is always enabled (read-first + auto materialize on miss).
     fs_dir = str(getattr(args, "feature_store_dir", "feature_store"))
-    raw_layer = str(getattr(args, "feature_store_layer", "AUTO"))
-    fs_layer = (
-        default_layer_from_config(config_dir)
-        if raw_layer.upper() == "AUTO"
-        else raw_layer
-    )
+    raw_layer = getattr(args, "feature_store_layer", None)
+    # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
+    fs_layer = resolve_layer_name(raw_layer, config_dir)
 
     def _crop_df_by_env_dates(df_in: pd.DataFrame) -> pd.DataFrame:
         # Optional date cropping to align with available tick data or focus window
