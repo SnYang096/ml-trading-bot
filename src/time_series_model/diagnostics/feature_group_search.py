@@ -883,47 +883,43 @@ def main() -> None:
                 key = f"{key}__{i}"
             groups[key] = [f]
 
+    # Resolve base_features: these are "must-have" features required by label generator / backtest
+    # They are NOT part of the optimization; they always stay in the feature set.
+    #
+    # Priority:
+    #   1) --base-features-yaml (explicit)
+    #   2) <strategy_dir>/features_base.yaml (convention)
+    #   3) [] (empty, may cause label generation to fail if strategy requires specific features)
+
+    base_features_path = None
     if args.base_features_yaml:
+        base_features_path = Path(args.base_features_yaml)
+    else:
+        # Auto-detect features_base.yaml in strategy directory
+        conventional_base = base_dir / "features_base.yaml"
+        if conventional_base.exists():
+            base_features_path = conventional_base
+
+    if base_features_path and base_features_path.exists():
         base_features = (
-            yaml.safe_load(Path(args.base_features_yaml).read_text(encoding="utf-8"))
-            or []
+            yaml.safe_load(base_features_path.read_text(encoding="utf-8")) or []
         )
         if not isinstance(base_features, list):
-            raise ValueError("base-features-yaml must be a YAML list")
-    else:
-        # When using Pool B and/or semantic groups, base_features should be empty
-        # This allows feature-group-search to start from scratch and find optimal combinations
-        # Only use features.yaml as base if neither Pool B nor semantic groups are provided
-        has_pool_b = args.pool_b_yaml is not None
-        has_semantic_groups = (
-            args.groups_yaml is not None
-            or (
-                Path("config") / f"feature_groups_{base_dir.name}_semantic.yaml"
-            ).exists()
-            or (Path("config") / "feature_groups.yaml").exists()
+            raise ValueError(
+                f"base-features-yaml ({base_features_path}) must be a YAML list"
+            )
+        print(
+            f"   📋 Using base_features from {base_features_path} "
+            f"({len(base_features)} features required by label/backtest)"
         )
-
-        if has_pool_b or has_semantic_groups:
-            # Start from empty base when using Pool B or semantic groups
-            # This ensures we're finding optimal combinations from scratch
-            base_features = []
-            print(
-                f"   📋 Using empty base_features (starting from scratch) "
-                f"because Pool B or semantic groups are provided"
-            )
-        else:
-            # Default base = base strategy's current requested_features.
-            # This matches the mental model: "start from what I'm currently using, then add candidate groups".
-            base_cfg = _load_yaml(base_dir / "features.yaml")
-            fp = (
-                base_cfg.get("feature_pipeline") if isinstance(base_cfg, dict) else None
-            )
-            req = fp.get("requested_features") if isinstance(fp, dict) else None
-            base_features = req if isinstance(req, list) else []
-            print(
-                f"   📋 Using base_features from {base_dir / 'features.yaml'} "
-                f"(no Pool B or semantic groups provided)"
-            )
+    else:
+        # No base features specified - start from empty
+        # This may cause issues if label generator requires specific features!
+        base_features = []
+        print(
+            f"   ⚠️ No base_features specified (starting from scratch). "
+            f"If label generation fails, create {base_dir / 'features_base.yaml'}"
+        )
 
     blacklist = [s.strip() for s in str(args.feature_blacklist).split(",") if s.strip()]
     base_features, groups = _apply_feature_blacklist(

@@ -73,4 +73,13 @@ groups:
   trade_cluster_scene:
     - trade_cluster_scene_semantic_scores_f
 
+  # DTW 形态特征组
+  dtw_reversal:
+    - dtw_features_reversal_f
 
+  dtw_trend:
+    - dtw_features_trend_f
+
+  # DTW 语义化场景（新增）
+  dtw_scene:
+    - dtw_scene_semantic_scores_f

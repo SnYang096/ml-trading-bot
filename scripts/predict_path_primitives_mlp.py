@@ -111,9 +111,12 @@ def main() -> None:
         raise ValueError("Invalid model payload: missing 'model' key")
     model = MultiHeadPathPrimitivesMLP.from_export(payload["model"])
 
-    # Get feature columns from model metadata (for consistency with training)
+    # Get feature columns and scaler from model metadata (for consistency with training)
     model_meta = payload.get("meta", {})
     model_feature_cols = model_meta.get("feature_cols", None)
+    feature_scaler = model_meta.get("feature_scaler", None)
+    if feature_scaler is not None:
+        print(f"✓ Loaded feature scaler from model (will apply z-score normalization)")
 
     out_root = Path(args.output)
     multi = len(symbols) > 1
@@ -188,6 +191,7 @@ def main() -> None:
                 fill_nan_value=0.0,
                 block_cols_by_name=block_cols_by_name,
                 append_block_mask=append_block_mask,
+                feature_scaler=feature_scaler,
             )
             out = df_features.join(preds)
             out_path = out_root / f"preds_{sym}.parquet" if multi else out_root
@@ -217,6 +221,7 @@ def main() -> None:
                 feature_cols=feature_cols,
                 device=args.device,
                 fill_nan_value=0.0,
+                feature_scaler=feature_scaler,
             )
             out = df_features.join(preds)
             out_path = out_root / f"preds_{sym}.parquet" if multi else out_root
@@ -259,6 +264,7 @@ def main() -> None:
                 feature_cols=feature_cols,
                 device=args.device,
                 fill_nan_value=0.0,
+                feature_scaler=feature_scaler,
             )
             out = df_features.join(preds)
 

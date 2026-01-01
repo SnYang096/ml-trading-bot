@@ -1,0 +1,7 @@
+# Trend Following 策略的基础特征（feature-group-search 必需）
+# 这些特征是标签生成器和回测所必需的，不参与搜索优化
+
+# 标签生成器只需要 close 列（OHLCV 基础数据），无额外依赖
+# 但回测可能需要 ATR 计算止损
+- atr_f                        # ATR (回测必需)
+

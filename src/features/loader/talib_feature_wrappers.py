@@ -104,6 +104,7 @@ def compute_talib_indicator_from_series(
     indicator_name: str,
     output_column: Optional[str] = None,
     output_columns: Optional[List[str]] = None,
+    normalize_mode: Optional[str] = None,
     **kwargs,
 ) -> pd.DataFrame:
     """
@@ -111,17 +112,72 @@ def compute_talib_indicator_from_series(
 
     Feature pipeline can call this with `pass_full_df: false` + `column_mappings`
     so only required Series are passed (no wide DataFrame).
+    
+    Args:
+        normalize_mode: Optional normalization mode:
+            - "position": (close - indicator) / close, for MA indicators (SMA/EMA/TEMA/KAMA)
+            - "atr": indicator / ATR, for price-based indicators (requires high/low/close)
+            - "change_ratio": pct_change / rolling_std, for cumulative indicators (OBV/AD)
+            - "relative_close": indicator / close, for price-level indicators (MACDext/MACDfix/MOM)
+            - "return_pct": indicator / close.shift(1), for raw difference-style momentum
+            - None: no normalization (default, for backward compatibility)
     """
+    # Extract close series for normalization (if needed)
+    close_series = kwargs.get('real')
+    if close_series is None:
+        close_series = kwargs.get('close')
+    
     # Infer index from provided Series/DataFrame args, then call the canonical implementation.
     _, index = _prepare_inputs(None, kwargs)
     df = pd.DataFrame(index=index)
-    return compute_talib_indicator(
+    result = compute_talib_indicator(
         df,
         indicator_name,
         output_column=output_column,
         output_columns=output_columns,
         **kwargs,
     )
+    
+    # Apply normalization if specified (column-wise, supports multi-output indicators)
+    if normalize_mode is not None and close_series is not None:
+        close_safe = pd.to_numeric(close_series, errors='coerce').replace(0, pd.NA)
+        target_cols = output_columns or result.columns
+
+        def _normalize_series(series: pd.Series) -> pd.Series:
+            if normalize_mode == "position":
+                return (close_safe - series) / close_safe
+            if normalize_mode == "atr":
+                high = kwargs.get('high')
+                low = kwargs.get('low')
+                close = kwargs.get('close') or close_series
+                if high is None or low is None or close is None:
+                    return series
+                import talib
+                atr = pd.Series(
+                    talib.ATR(
+                        pd.to_numeric(high, errors='coerce').values,
+                        pd.to_numeric(low, errors='coerce').values,
+                        pd.to_numeric(close, errors='coerce').values,
+                        timeperiod=14,
+                    ),
+                    index=index,
+                ).replace(0, pd.NA)
+                return series / atr
+            if normalize_mode == "change_ratio":
+                change = series.diff()
+                rolling_std = change.rolling(window=20, min_periods=5).std().replace(0, pd.NA)
+                return change / rolling_std
+            if normalize_mode == "relative_close":
+                return series / close_safe
+            if normalize_mode == "return_pct":
+                return series / close_safe.shift(1)
+            return series
+
+        for col in target_cols:
+            if col in result.columns:
+                result[col] = _normalize_series(result[col])
+    
+    return result
 
 
 @register_feature("compute_talib_sma", category="talib")

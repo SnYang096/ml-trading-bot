@@ -80,6 +80,22 @@ mlbot analyze factor-eval \
   3. 实现语义特征计算函数
   4. 添加到 `config/feature_groups_<strategy>_semantic.yaml`
 
+### 阶段 2.5: 准备基础特征（标签/回测必需）
+
+某些策略的标签生成器或回测器依赖特定特征（如 `dist_to_nearest_sr`、`atr`）。
+这些特征是**必需的**，不参与优化搜索。
+
+**创建 `features_base.yaml`**（会被自动检测）：
+
+```yaml
+# config/strategies/<strategy>/features_base.yaml
+# 标签生成器依赖的特征（必需！否则标签生成会失败）
+- poc_hal_features_close_f     # 输出 dist_to_nearest_sr (SR Reversal 标签必需)
+- atr_f                        # ATR (标签计算 + 回测必需)
+
+# 注意：cvd_features_f 等策略信号特征不是必需的，它们应该参与优化竞争
+```
+
 ### 阶段 3: 运行 feature-group-search（同时使用 Pool B 和语义 groups）
 
 ```bash
@@ -102,6 +118,7 @@ mlbot diagnose feature-group-search \
 ```
 
 **说明**：
+- `features_base.yaml`：**自动检测**（标签/回测依赖的必需特征，不参与优化）
 - `--groups-yaml`：指定语义 groups（经过人工筛选的语义特征）
 - `--pool-b-yaml`：指定 Pool B（经过 IC/IR 筛选的原始特征）
 - feature-group-search 会将 Pool B 中未在语义 groups 中的特征转换为 singleton groups

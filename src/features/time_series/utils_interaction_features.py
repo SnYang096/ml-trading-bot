@@ -1963,3 +1963,145 @@ def compute_is_near_sr_from_series(
     # 判断是否在SR附近
     is_near = (dist_normalized <= dist_atr_mult).fillna(False).astype(bool)
     return is_near.rename("is_near_sr").to_frame()
+
+
+# =============================================================================
+# DTW Scene Semantic Scores
+# =============================================================================
+
+@register_feature("compute_dtw_scene_semantic_scores_from_series", category="interaction")
+def compute_dtw_scene_semantic_scores_from_series(
+    *,
+    # DTW 反转形态（看涨）
+    dtw_hammer_dist_w15: Optional[pd.Series] = None,
+    dtw_head_shoulder_bottom_dist_w15: Optional[pd.Series] = None,
+    dtw_double_bottom_dist_w15: Optional[pd.Series] = None,
+    dtw_bullish_engulfing_dist_w15: Optional[pd.Series] = None,
+    # DTW 反转形态（看跌）
+    dtw_shooting_star_dist_w15: Optional[pd.Series] = None,
+    dtw_head_shoulder_top_dist_w15: Optional[pd.Series] = None,
+    dtw_double_top_dist_w15: Optional[pd.Series] = None,
+    dtw_bearish_engulfing_dist_w15: Optional[pd.Series] = None,
+    # DTW 趋势形态
+    dtw_bull_flag_dist_w25: Optional[pd.Series] = None,
+    dtw_bear_flag_dist_w25: Optional[pd.Series] = None,
+    dtw_triangle_dist_w25: Optional[pd.Series] = None,
+    # 上下文
+    compression_score: Optional[pd.Series] = None,
+    trend_r2_20: Optional[pd.Series] = None,
+    dist_to_nearest_sr: Optional[pd.Series] = None,
+    # 参数
+    dist_scale: float = 0.5,  # DTW距离归一化尺度
+    sr_prox_threshold: float = 0.02,  # SR接近阈值（百分比）
+) -> pd.DataFrame:
+    """
+    DTW Pattern Scene Semantic Scores (0..1).
+    
+    将 DTW 距离转换为语义场景分数：
+    - dtw_reversal_bullish_score: 看涨反转形态匹配度（适用于 SR 反转做多）
+    - dtw_reversal_bearish_score: 看跌反转形态匹配度（适用于 SR 反转做空）
+    - dtw_continuation_bullish_score: 看涨延续形态匹配度（适用于趋势跟踪做多）
+    - dtw_continuation_bearish_score: 看跌延续形态匹配度（适用于趋势跟踪做空）
+    - dtw_compression_score: 压缩待突破形态（三角形 + 压缩上下文）
+    - dtw_exhaustion_score: 衰竭形态（顶/底 + 趋势衰减）
+    
+    设计原理：
+    - DTW距离越小 = 匹配度越高 = 分数越高
+    - 使用 exp(-dist / scale) 将距离转换为 (0,1] 分数
+    - 结合上下文（compression、trend、SR接近度）进行门控
+    """
+    eps = 1e-8
+    scale = max(float(dist_scale), 0.1)
+    sr_thr = max(float(sr_prox_threshold), 0.001)
+    
+    def dist_to_score(dist_series: Optional[pd.Series]) -> pd.Series:
+        """将DTW距离转换为匹配度分数 (0,1]"""
+        if dist_series is None:
+            return pd.Series(0.0, index=pd.RangeIndex(1))
+        d = pd.to_numeric(dist_series, errors="coerce").fillna(1.0).astype(float)
+        # exp(-dist/scale): dist=0 -> 1.0, dist=scale -> ~0.37, dist=2*scale -> ~0.14
+        return np.exp(-d.clip(0.0) / scale).clip(0.0, 1.0)
+    
+    # 获取索引（从任意非空序列）
+    idx = None
+    for s in [dtw_hammer_dist_w15, dtw_bull_flag_dist_w25, compression_score, trend_r2_20]:
+        if s is not None:
+            idx = s.index
+            break
+    if idx is None:
+        idx = pd.RangeIndex(1)
+    
+    # ============ 反转形态（看涨）============
+    bullish_reversal_patterns = [
+        dist_to_score(dtw_hammer_dist_w15),
+        dist_to_score(dtw_head_shoulder_bottom_dist_w15),
+        dist_to_score(dtw_double_bottom_dist_w15),
+        dist_to_score(dtw_bullish_engulfing_dist_w15),
+    ]
+    # 取最大值（最匹配的形态）
+    bullish_rev = pd.concat([s.reindex(idx).fillna(0.0) for s in bullish_reversal_patterns], axis=1).max(axis=1)
+    
+    # ============ 反转形态（看跌）============
+    bearish_reversal_patterns = [
+        dist_to_score(dtw_shooting_star_dist_w15),
+        dist_to_score(dtw_head_shoulder_top_dist_w15),
+        dist_to_score(dtw_double_top_dist_w15),
+        dist_to_score(dtw_bearish_engulfing_dist_w15),
+    ]
+    bearish_rev = pd.concat([s.reindex(idx).fillna(0.0) for s in bearish_reversal_patterns], axis=1).max(axis=1)
+    
+    # ============ 趋势延续形态 ============
+    bull_cont = dist_to_score(dtw_bull_flag_dist_w25).reindex(idx).fillna(0.0)
+    bear_cont = dist_to_score(dtw_bear_flag_dist_w25).reindex(idx).fillna(0.0)
+    triangle = dist_to_score(dtw_triangle_dist_w25).reindex(idx).fillna(0.0)
+    
+    # ============ 上下文门控 ============
+    # SR接近度门控（反转形态需要接近SR）
+    sr_gate = 1.0
+    if dist_to_nearest_sr is not None:
+        sr_dist = pd.to_numeric(dist_to_nearest_sr, errors="coerce").abs().reindex(idx).fillna(1.0)
+        # 距离越小，gate越高
+        sr_gate = np.exp(-sr_dist / sr_thr).clip(0.0, 1.0)
+    
+    # 压缩度门控（三角形需要压缩上下文）
+    comp_gate = 0.5  # 默认中性
+    if compression_score is not None:
+        comp_gate = pd.to_numeric(compression_score, errors="coerce").reindex(idx).fillna(0.5).clip(0.0, 1.0)
+    
+    # 趋势门控（延续形态需要趋势上下文）
+    trend_gate = 0.5
+    trend_end_gate = 0.5
+    if trend_r2_20 is not None:
+        r2 = pd.to_numeric(trend_r2_20, errors="coerce").reindex(idx).fillna(0.5).clip(0.0, 1.0)
+        trend_gate = r2
+        trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
+    
+    # ============ 组装语义分数 ============
+    # 反转形态：强调SR接近 + 趋势衰减
+    dtw_rev_bull = (bullish_rev * sr_gate * (0.5 + 0.5 * trend_end_gate)).clip(0.0, 1.0)
+    dtw_rev_bear = (bearish_rev * sr_gate * (0.5 + 0.5 * trend_end_gate)).clip(0.0, 1.0)
+    
+    # 延续形态：强调趋势上下文
+    dtw_cont_bull = (bull_cont * (0.5 + 0.5 * trend_gate)).clip(0.0, 1.0)
+    dtw_cont_bear = (bear_cont * (0.5 + 0.5 * trend_gate)).clip(0.0, 1.0)
+    
+    # 压缩形态：三角形 + 压缩上下文
+    dtw_compression = (triangle * (0.5 + 0.5 * comp_gate)).clip(0.0, 1.0)
+    
+    # 衰竭形态：顶/底 + 趋势衰减
+    tops_bottoms = pd.concat([
+        dist_to_score(dtw_head_shoulder_top_dist_w15).reindex(idx).fillna(0.0),
+        dist_to_score(dtw_head_shoulder_bottom_dist_w15).reindex(idx).fillna(0.0),
+        dist_to_score(dtw_double_top_dist_w15).reindex(idx).fillna(0.0),
+        dist_to_score(dtw_double_bottom_dist_w15).reindex(idx).fillna(0.0),
+    ], axis=1).max(axis=1)
+    dtw_exhaustion = (tops_bottoms * trend_end_gate).clip(0.0, 1.0)
+    
+    return pd.DataFrame({
+        "dtw_reversal_bullish_score": dtw_rev_bull,
+        "dtw_reversal_bearish_score": dtw_rev_bear,
+        "dtw_continuation_bullish_score": dtw_cont_bull,
+        "dtw_continuation_bearish_score": dtw_cont_bear,
+        "dtw_compression_score": dtw_compression,
+        "dtw_exhaustion_score": dtw_exhaustion,
+    })

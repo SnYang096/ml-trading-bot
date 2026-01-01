@@ -1962,6 +1962,36 @@ def train_strategy(
         "diagnostics": diagnostics_payload,
     }
 
+    # ========================================
+    # Extract column-level feature importance
+    # ========================================
+    try:
+        model = models[0] if isinstance(models, list) else models
+        feature_importance = {}
+        if hasattr(model, "feature_importance"):
+            # LightGBM
+            importances = model.feature_importance(importance_type="gain")
+            feature_importance = {
+                feat: float(imp) for feat, imp in zip(used_features, importances)
+            }
+        elif hasattr(model, "feature_importances_"):
+            # XGBoost, sklearn tree models
+            importances = model.feature_importances_
+            feature_importance = {
+                feat: float(imp) for feat, imp in zip(used_features, importances)
+            }
+        if feature_importance:
+            # Sort by importance (descending)
+            sorted_importance = dict(
+                sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+            )
+            results["feature_importance"] = sorted_importance
+            print(
+                f"   📊 Feature importance extracted ({len(sorted_importance)} columns)"
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"   ⚠️  Failed to extract feature importance: {exc}")
+
     # Add volatility model results if trained
     if vol_model and vol_metrics:
         results["volatility_model"] = {

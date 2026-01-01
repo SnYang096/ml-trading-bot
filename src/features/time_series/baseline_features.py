@@ -84,6 +84,43 @@ def compute_macd(
     )
 
 
+@register_feature("compute_macd_from_series", category="baseline")
+def compute_macd_from_series(
+    *,
+    series: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    atr_period: int = 14,
+) -> pd.DataFrame:
+    """Narrow-IO MACD, normalized by ATR.
+    
+    Returns:
+        DataFrame with macd, macd_signal, macd_histogram, all normalized by ATR.
+        This makes MACD cross-asset comparable.
+        Typical range: [-3, 3] after normalization.
+    """
+    macd_line, signal_line, histogram = compute_macd(series, fast, slow, signal)
+    atr = compute_atr(high, low, close, atr_period)
+    
+    # Normalize by ATR
+    eps = 1e-8
+    atr_safe = atr.replace(0, np.nan).fillna(eps)
+    
+    macd_norm = (macd_line / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    signal_norm = (signal_line / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    hist_norm = (histogram / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    
+    return pd.DataFrame({
+        "macd": macd_norm,
+        "macd_signal": signal_norm,
+        "macd_histogram": hist_norm,
+    })
+
+
 @register_feature("compute_bollinger_bands", category="baseline")
 def compute_bollinger_bands(
     series: pd.Series, period: int = 20, std_dev: int = 2
@@ -121,9 +158,18 @@ def compute_atr_from_series(
     close: pd.Series,
     period: int = 14,
 ) -> pd.DataFrame:
-    """Narrow-IO ATR (Average True Range)."""
-    atr = compute_atr(high, low, close, period)
-    return atr.rename("atr").to_frame()
+    """Narrow-IO ATR (Average True Range), normalized by close price.
+    
+    Returns:
+        DataFrame with 'atr' column normalized as atr / close.
+        This makes ATR cross-asset comparable (e.g., BTC vs ETH).
+        Typical range: [0.001, 0.1] for crypto assets.
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr_raw = compute_atr(high, low, close, period)
+    # Normalize by close price for cross-asset comparability
+    atr_norm = (atr_raw / close.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return atr_norm.rename("atr").to_frame()
 
 
 @register_feature("compute_zigzag", category="baseline")
@@ -3361,16 +3407,36 @@ def compute_bb_width_features_from_series(
 ) -> pd.DataFrame:
     """
     Narrow-input / narrow-output BB width computation for the feature pipeline.
-
+    
+    Returns only normalized features (no raw price levels):
+    - bb_width_normalized: BB width / ATR (cross-asset comparable, ~[0, 5])
+    - bb_position: (close - bb_lower) / (bb_upper - bb_lower) (bounded [0, 1])
+    
     Used with YAML `pass_full_df: false` + `column_mappings` to avoid passing/mutating
     a wide DataFrame.
     """
-    df = pd.DataFrame({"close": close, "high": high, "low": low})
-    out = compute_bb_width_features(
-        df, period=period, std_dev=std_dev, atr_window=atr_window
-    )
-    keep = ["bb_upper", "bb_middle", "bb_lower", "bb_width", "bb_width_normalized"]
-    return out[keep] if all(c in out.columns for c in keep) else out
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    
+    # Compute Bollinger Bands
+    upper, middle, lower = compute_bollinger_bands(close, period=period, std_dev=std_dev)
+    
+    # Compute ATR for normalization
+    atr = compute_atr(high, low, close, period=atr_window)
+    
+    # BB width normalized by ATR
+    width = (upper - lower).abs()
+    bb_width_norm = (width / atr.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    
+    # BB position: where is close within the band? 0=lower, 1=upper
+    bb_range = (upper - lower).replace(0, np.nan)
+    bb_position = ((close - lower) / bb_range).replace([np.inf, -np.inf], np.nan).fillna(0.5).clip(0.0, 1.0)
+    
+    return pd.DataFrame({
+        "bb_width_normalized": bb_width_norm,
+        "bb_position": bb_position,
+    })
 
 
 @register_feature("compute_roc_5_from_series", category="baseline")
@@ -3696,6 +3762,84 @@ def compute_sma_slope_from_series(*, sma_200: pd.Series, window: int = 5) -> pd.
     return out
 
 
+@register_feature("compute_sma_position_from_series", category="baseline")
+def compute_sma_position_from_series(
+    *,
+    close: pd.Series,
+    sma_200: pd.Series,
+) -> pd.DataFrame:
+    """
+    计算价格相对于 SMA 200 的归一化位置
+    
+    归一化方式: (close - sma_200) / close
+    - 正值：价格在 SMA 上方（多头趋势）
+    - 负值：价格在 SMA 下方（空头趋势）
+    - 范围通常在 [-0.3, 0.3] 之间
+    
+    这个归一化方式使得不同价格水平的资产可以直接比较：
+    - BTC: close=50000, sma_200=48000 → position = (50000-48000)/50000 = 0.04
+    - ETH: close=3000, sma_200=2880 → position = (3000-2880)/3000 = 0.04
+    
+    两者都表示"价格比 SMA 高 4%"，可以直接比较。
+    
+    Returns:
+        DataFrame with column: sma_200_position
+    """
+    close_clean = pd.to_numeric(close, errors="coerce").astype(float)
+    sma_clean = pd.to_numeric(sma_200, errors="coerce").astype(float)
+    
+    # 避免除以零
+    close_safe = close_clean.replace(0, np.nan)
+    
+    # (close - sma_200) / close
+    position = (close_clean - sma_clean) / close_safe
+    
+    # 清理极端值
+    position = position.replace([np.inf, -np.inf], np.nan)
+    position = position.clip(-1.0, 1.0)  # 限制在 [-1, 1] 范围内
+    position = position.fillna(0.0)
+    
+    return pd.DataFrame({"sma_200_position": position}, index=close.index)
+
+
+@register_feature("compute_volume_ratio_from_series", category="baseline")
+def compute_volume_ratio_from_series(
+    *,
+    volume: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """
+    计算成交量相对于均值的归一化比率
+    
+    归一化方式: volume / rolling_mean_volume
+    - 值 = 1.0：成交量等于均值
+    - 值 > 1.0：成交量高于均值（放量）
+    - 值 < 1.0：成交量低于均值（缩量）
+    
+    这个归一化方式使得不同资产的成交量可以直接比较。
+    
+    Returns:
+        DataFrame with column: volume_ratio
+    """
+    vol = pd.to_numeric(volume, errors="coerce").astype(float)
+    
+    # 滚动均值（因果性：只使用历史数据）
+    rolling_mean = vol.rolling(window=window, min_periods=1).mean()
+    
+    # 避免除以零
+    rolling_mean_safe = rolling_mean.replace(0, np.nan)
+    
+    # volume / rolling_mean
+    ratio = vol / rolling_mean_safe
+    
+    # 清理极端值
+    ratio = ratio.replace([np.inf, -np.inf], np.nan)
+    ratio = ratio.clip(0.0, 10.0)  # 限制在 [0, 10] 范围内
+    ratio = ratio.fillna(1.0)  # 默认为 1.0（等于均值）
+    
+    return pd.DataFrame({"volume_ratio": ratio}, index=volume.index)
+
+
 @register_feature("compute_zigzag_high_low_from_series", category="baseline")
 def compute_zigzag_high_low_from_series(
     *,
@@ -3868,20 +4012,33 @@ def compute_poc_hal_features_from_series(
     volume: pd.Series,
     wpt_price_reconstructed: pd.Series | None = None,
     poc_window: int = 160,
+    atr_period: int = 14,
     price_col: str = "wpt_price_reconstructed",
 ) -> pd.DataFrame:
     """
-    Narrow-IO POC/HAL computation.
-    Returns only: poc, hal_high, hal_low, hal_mid
+    Narrow-IO POC/HAL computation with normalized outputs.
+    
+    Returns normalized features (distance from close / ATR):
+    - poc: (poc_raw - close) / ATR, typical range [-3, 3]
+    - hal_high: (hal_high_raw - close) / ATR
+    - hal_low: (hal_low_raw - close) / ATR
+    - hal_mid: (hal_mid_raw - close) / ATR
+    
+    These normalized values represent "how many ATRs away" the SR level is,
+    making them cross-asset comparable.
     """
-    df = pd.DataFrame(
-        {
-            "high": pd.to_numeric(high, errors="coerce").astype(float),
-            "low": pd.to_numeric(low, errors="coerce").astype(float),
-            "close": pd.to_numeric(close, errors="coerce").astype(float),
-            "volume": pd.to_numeric(volume, errors="coerce").astype(float),
-        }
-    )
+    high_s = pd.to_numeric(high, errors="coerce").astype(float)
+    low_s = pd.to_numeric(low, errors="coerce").astype(float)
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    volume_s = pd.to_numeric(volume, errors="coerce").astype(float)
+    
+    df = pd.DataFrame({
+        "high": high_s,
+        "low": low_s,
+        "close": close_s,
+        "volume": volume_s,
+    })
+    
     if price_col and price_col not in df.columns:
         if (
             price_col == "wpt_price_reconstructed"
@@ -3900,8 +4057,24 @@ def compute_poc_hal_features_from_series(
         poc_window=poc_window,
         price_col=price_col,
     )
-    keep = ["poc", "hal_high", "hal_low", "hal_mid"]
-    return out[keep].reindex(index=df.index)
+    
+    # Compute ATR for normalization
+    atr = compute_atr(high_s, low_s, close_s, period=atr_period)
+    atr_safe = atr.replace(0, np.nan).fillna(1e-8)
+    
+    # Normalize: (level - close) / ATR
+    eps = 1e-8
+    poc_norm = ((out["poc"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    hal_high_norm = ((out["hal_high"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    hal_low_norm = ((out["hal_low"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    hal_mid_norm = ((out["hal_mid"] - close_s) / (atr_safe + eps)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    
+    return pd.DataFrame({
+        "poc": poc_norm,
+        "hal_high": hal_high_norm,
+        "hal_low": hal_low_norm,
+        "hal_mid": hal_mid_norm,
+    }).reindex(index=df.index)
 
 
 @register_feature("compute_sqs_from_sr_price_series", category="baseline")
@@ -4035,16 +4208,36 @@ def compute_sr_strength_max_from_series(
 ) -> pd.DataFrame:
     """
     Narrow-IO SR strength computation (returns only declared outputs).
+    
+    Returns normalized features:
+    - sr_strength_max: already [0, 1] bounded (SQS strength)
+    - dist_to_nearest_sr: normalized by ATR (how many ATRs away), typical [-3, 3]
+    - direction_to_nearest_sr: -1 (below) or +1 (above), already normalized
+    
+    Note: poc, hal_high, hal_low inputs are expected to be normalized (from close / ATR).
+    We need to "un-normalize" them to compute distances, then normalize the output.
     """
+    high_s = pd.to_numeric(high, errors="coerce").astype(float)
+    low_s = pd.to_numeric(low, errors="coerce").astype(float)
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float)
+    
+    # Note: poc, hal_high, hal_low are now normalized inputs (distance / ATR)
+    # We need to convert them back to price levels for internal computation
+    # normalized = (price - close) / atr => price = normalized * atr + close
+    poc_raw = pd.to_numeric(poc, errors="coerce").astype(float) * atr_s + close_s
+    hal_high_raw = pd.to_numeric(hal_high, errors="coerce").astype(float) * atr_s + close_s
+    hal_low_raw = pd.to_numeric(hal_low, errors="coerce").astype(float) * atr_s + close_s
+    
     data = pd.DataFrame(
         {
-            "high": pd.to_numeric(high, errors="coerce").astype(float),
-            "low": pd.to_numeric(low, errors="coerce").astype(float),
-            "close": pd.to_numeric(close, errors="coerce").astype(float),
-            "atr": pd.to_numeric(atr, errors="coerce").astype(float),
-            "poc": pd.to_numeric(poc, errors="coerce").astype(float),
-            "hal_high": pd.to_numeric(hal_high, errors="coerce").astype(float),
-            "hal_low": pd.to_numeric(hal_low, errors="coerce").astype(float),
+            "high": high_s,
+            "low": low_s,
+            "close": close_s,
+            "atr": atr_s,
+            "poc": poc_raw,
+            "hal_high": hal_high_raw,
+            "hal_low": hal_low_raw,
             # seed columns so _compute_boundary_strengths also produces them
             "dist_to_nearest_sr": 0.0,
             "direction_to_nearest_sr": 0.0,
@@ -4087,13 +4280,17 @@ def compute_sr_strength_max_from_series(
     
     data = _add_price_action_features(data, boundaries, compression_series=None)
 
+    # Normalize dist_to_nearest_sr by ATR
+    # dist_to_nearest_sr is a percentage (dist / close), convert to ATR multiples
+    dist_raw = pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce").fillna(0.0).astype(float)
+    # dist_raw is (sr_price - close) / close = pct distance
+    # We want: (sr_price - close) / atr = dist_raw * close / atr
+    atr_safe = atr_s.replace(0, np.nan).fillna(1e-8)
+    dist_norm = (dist_raw * close_s / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
     out = pd.DataFrame(index=data.index)
     out["sr_strength_max"] = pd.Series(sr_max, index=data.index).astype(float)
-    out["dist_to_nearest_sr"] = (
-        pd.to_numeric(data["dist_to_nearest_sr"], errors="coerce")
-        .fillna(0.0)
-        .astype(float)
-    )
+    out["dist_to_nearest_sr"] = dist_norm
     out["direction_to_nearest_sr"] = (
         pd.to_numeric(data["direction_to_nearest_sr"], errors="coerce")
         .fillna(0.0)

@@ -1,0 +1,7 @@
+# SR Reversal Short 策略的基础特征（feature-group-search 必需）
+# 这些特征是标签生成器和回测所必需的，不参与搜索优化
+
+# 标签生成器依赖
+- poc_hal_features_close_f     # 输出 dist_to_nearest_sr (SR 过滤必需)
+- atr_f                        # ATR (标签计算 + 回测必需)
+

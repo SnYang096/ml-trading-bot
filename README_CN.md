@@ -435,6 +435,17 @@ mlbot backtest nautilus \
 
 - **系统架构图**：`docs/ARCHITECTURE.md`（包含完整的架构层次图）
 
+- **特征列表与归一化状态**：`docs/architecture/FEATURE_CATALOG.md`
+  - 全部 208 个特征节点的归一化状态
+  - 归一化方法说明（ATR 归一化、百分比归一化、相似度转换等）
+  - 按类别分组的特征列表
+  - 树模型 vs NN 模型的使用建议
+
+- **特征归一化策略**：`docs/architecture/FEATURE_NORMALIZATION_POLICY.md`
+  - Phase 1/2/3 归一化实现进度
+  - 跨资产可比性验证
+  - 因果性归一化方法（避免未来泄露）
+
 - **工业化 Experiment Loop（Layer A/B/C、TaskSpec、Filter→Wrapper、稳定性口径）**：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 - **NN 多头 Path Primitives + Router→Execution（NO/MEAN/TREND）**：`docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
 - **研究 Playbook（标签/执行一致性、timeframe、仓位管理）**：`docs/guides/RESEARCH_PLAYBOOK_CN.md`

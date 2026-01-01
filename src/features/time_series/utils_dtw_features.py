@@ -483,11 +483,20 @@ def extract_dtw_features(
                     if normalize_distance:
                         distance = distance / np.sqrt(window_size)
                     
-                    # Store distance
+                    # Convert distance to similarity score [0, 1] using exp(-dist/scale)
+                    # This makes the feature more interpretable:
+                    # - similarity = 1.0: perfect match
+                    # - similarity = 0.0: no match
+                    # The scale parameter controls the decay rate
+                    similarity_scale = 0.5  # Can be tuned
+                    similarity = np.exp(-distance / similarity_scale)
+                    
+                    # Store similarity score (not raw distance)
+                    # This is the normalized, cross-asset comparable version
                     col_name = f"dtw_{template_name}_dist{window_suffix}"
                     if col_name not in result.columns:
                         result[col_name] = np.nan
-                    result.loc[df.index[i], col_name] = distance
+                    result.loc[df.index[i], col_name] = similarity
                     
                     # Track minimum
                     if distance < min_dist:
@@ -498,14 +507,17 @@ def extract_dtw_features(
                     # Skip failed DTW computations
                     continue
             
-            # Store minimum distance and best match
+            # Store minimum distance (as similarity score) and best match
             if min_dist < np.inf:
+                # Convert min_dist to similarity score as well
+                min_similarity = np.exp(-min_dist / 0.5)  # Same scale as individual patterns
+                
                 min_col = f"dtw_min_dist{window_suffix}"
                 match_col = f"dtw_best_match{window_suffix}"
                 if min_col not in result.columns:
                     result[min_col] = np.nan
                     result[match_col] = None
-                result.loc[df.index[i], min_col] = min_dist
+                result.loc[df.index[i], min_col] = min_similarity
                 result.loc[df.index[i], match_col] = best_match
         
         # NOTE:

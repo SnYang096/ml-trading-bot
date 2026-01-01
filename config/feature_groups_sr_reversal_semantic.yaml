@@ -40,4 +40,6 @@ groups:
   funding_scene:
     - funding_scene_semantic_scores_f
 
-
+  # DTW 语义化场景组（新增）
+  dtw_scene:
+    - dtw_scene_semantic_scores_f

@@ -128,6 +128,8 @@ def test_compute_atr_from_series():
 
     Bug修复：添加了 compute_atr_from_series 函数，返回 DataFrame 格式
     确保 narrow-IO 模式下能正确工作
+
+    注意：ATR 现在返回归一化值 (atr / close)，典型范围 [0.001, 0.1]
     """
     idx = pd.date_range("2024-01-01", periods=100, freq="5min")
     rng = np.random.default_rng(42)
@@ -143,13 +145,30 @@ def test_compute_atr_from_series():
     assert "atr" in result_df.columns, "应该包含 'atr' 列"
     assert len(result_df) == len(idx), "长度应该匹配输入"
 
-    # 验证与原始 compute_atr 的结果一致
-    result_series = compute_atr(high, low, close, period=14)
-    assert np.allclose(
-        result_df["atr"].values, result_series.values, equal_nan=True, rtol=1e-10
-    ), "DataFrame 版本应该与 Series 版本结果一致"
-
-    # 验证数值合理性
+    # 验证归一化后的 ATR (atr / close)
+    # 原始 ATR 除以 close 后，应该是一个小的比率
     atr_values = result_df["atr"].dropna()
     assert len(atr_values) > 0, "应该有有效的 ATR 值"
-    assert (atr_values >= 0).all(), "ATR 应该 >= 0"
+    assert (atr_values >= 0).all(), "归一化 ATR 应该 >= 0"
+
+    # 归一化后的典型范围检查
+    # 对于正常波动的资产，atr/close 通常在 [0.001, 0.1] 范围内
+    assert (
+        atr_values.max() < 0.5
+    ), f"归一化 ATR 应该 < 0.5，实际 max={atr_values.max():.4f}"
+    assert (
+        atr_values.mean() < 0.1
+    ), f"归一化 ATR 均值应该 < 0.1，实际 mean={atr_values.mean():.4f}"
+
+    # 验证与原始 compute_atr 的归一化关系
+    raw_atr = compute_atr(high, low, close, period=14)
+    expected_norm = (raw_atr / close).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    # 检查归一化正确性
+    valid_mask = ~np.isnan(result_df["atr"].values) & ~np.isnan(expected_norm.values)
+    if valid_mask.sum() > 0:
+        assert np.allclose(
+            result_df["atr"].values[valid_mask],
+            expected_norm.values[valid_mask],
+            rtol=1e-6,
+        ), "归一化 ATR 应该等于 raw_atr / close"

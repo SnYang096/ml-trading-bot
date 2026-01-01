@@ -5,6 +5,11 @@ description: 'Trend-following strategy leveraging WPT trend, Hurst persistence, 
   '
 feature_pipeline:
   requested_features:
+  # Core kline features (required for feature-group-search)
+  - macd_f
+  - sma_200_f
+  - trend_r2_20_f
+  # Strategy-specific features
   - wpt_price_reconstructed_f
   - wpt_price_fluctuation_f
   - wpt_cvd_fluctuation_f

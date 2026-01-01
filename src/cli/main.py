@@ -3229,6 +3229,159 @@ def backtest_nautilus(data_dir, symbol, docker):
     )
 
 
+@backtest.command("strategy")
+@click.option(
+    "--strategy",
+    "-c",
+    required=True,
+    help="Strategy name (matches config/strategies/<name>)",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 60T, 240T)")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--model-path", help="Path to trained model file")
+@click.option("--data-path", help="Path to feature data file (Parquet)")
+@click.option(
+    "--output-dir",
+    default="results/backtest",
+    help="Output directory for results",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["vectorized", "event-driven"]),
+    default="vectorized",
+    help="Backtest mode (vectorized is faster, event-driven is more realistic)",
+)
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
+def backtest_strategy(
+    strategy,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    model_path,
+    data_path,
+    output_dir,
+    mode,
+    docker,
+):
+    """
+    Run strategy backtest with trained model.
+
+    Example:
+        mlbot backtest strategy -c sr_reversal_rr_reg_long -s BTCUSDT \\
+            --start-date 2024-01-01 --end-date 2024-12-31 --no-docker
+    """
+    args = [
+        "--strategy", strategy,
+        "--symbol", symbol,
+        "--timeframe", timeframe,
+        "--start-date", start_date,
+        "--end-date", end_date,
+        "--mode", mode,
+        "--output-dir", output_dir if not docker else f"/workspace/{output_dir}",
+    ]
+    if model_path:
+        args.extend(["--model-path", model_path if not docker else f"/workspace/{model_path}"])
+    if data_path:
+        args.extend(["--data-path", data_path if not docker else f"/workspace/{data_path}"])
+
+    sys.exit(
+        run_python_module(
+            "time_series_model.backtesting.nautilus_backtest_runner",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@backtest.command("visualize")
+@click.option(
+    "--strategy",
+    "-c",
+    required=True,
+    help="Strategy name (matches config/strategies/<name>)",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option("--data-path", required=True, help="Path to OHLCV parquet file")
+@click.option("--trades-path", required=True, help="Path to trades JSON file")
+@click.option("--model-path", help="Path to ModelArtifact directory (for SHAP)")
+@click.option(
+    "--output-path",
+    default="results/backtest/report.html",
+    help="Output HTML report path",
+)
+def backtest_visualize(strategy, symbol, data_path, trades_path, model_path, output_path):
+    """
+    Generate interactive backtest visualization report.
+    
+    Creates an HTML report with:
+    - Candlestick chart with trade markers
+    - Trade list with PnL and exit reasons
+    - SHAP feature importance (if model provided)
+    
+    Example:
+        mlbot backtest visualize -c sr_reversal_rr_reg_long \\
+            --data-path data/parquet_data/BTCUSDT/combined.parquet \\
+            --trades-path results/backtest/sr_reversal/trades.json \\
+            --model-path models/sr_reversal_rr_reg_long
+    """
+    from pathlib import Path
+    import json
+    import pandas as pd
+    
+    print(f"\n📊 Generating Backtest Visualization Report")
+    print(f"   Strategy: {strategy}")
+    print(f"   Symbol: {symbol}")
+    print(f"   Data: {data_path}")
+    print(f"   Trades: {trades_path}")
+    
+    try:
+        from src.time_series_model.visualization.backtest_visualizer import BacktestVisualizer
+        
+        # Load OHLCV data
+        ohlcv_df = pd.read_parquet(data_path)
+        
+        # Load trades
+        with open(trades_path) as f:
+            trades_data = json.load(f)
+        
+        # Handle different trade formats
+        if isinstance(trades_data, dict):
+            trades = trades_data.get("trades", [])
+        else:
+            trades = trades_data
+        
+        # Load model artifact if provided
+        model_artifact = None
+        if model_path:
+            try:
+                from src.time_series_model.strategies.models.model_artifact import ModelArtifact
+                model_artifact = ModelArtifact.load(Path(model_path))
+                print(f"   ✅ Loaded ModelArtifact: {model_path}")
+            except Exception as e:
+                print(f"   ⚠️ Failed to load model: {e}")
+        
+        # Generate report
+        visualizer = BacktestVisualizer(
+            ohlcv_df=ohlcv_df,
+            trades=trades,
+            model_artifact=model_artifact,
+            strategy_name=strategy,
+            symbol=symbol,
+        )
+        
+        report_path = visualizer.generate_report(output_path)
+        print(f"\n✅ Report generated: {report_path}")
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 # =============================================================================
 # Cross-Sectional Commands
 # =============================================================================

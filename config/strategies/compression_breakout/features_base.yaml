@@ -1,0 +1,7 @@
+# Compression Breakout 策略的基础特征（feature-group-search 必需）
+# 这些特征是标签生成器和回测所必需的，不参与搜索优化
+
+# 标签生成器依赖
+- compression_duration_f       # 输出 compression_score (标签生成必需)
+- atr_f                        # ATR (回测必需)
+

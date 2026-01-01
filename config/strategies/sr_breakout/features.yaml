@@ -5,6 +5,13 @@ description: 'SR breakout strategy focusing on breakout quality, momentum persis
   '
 feature_pipeline:
   requested_features:
+  # Core kline features (required for feature-group-search)
+  - macd_f
+  - rsi_f
+  - sma_200_f
+  - atr_f
+  - trend_r2_20_f
+  # Strategy-specific features
   - wpt_price_reconstructed_f
   - wpt_price_fluctuation_f
   - wpt_volume_energy_f

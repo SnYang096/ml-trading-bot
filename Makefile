@@ -753,6 +753,51 @@ nautilus-backtest:
 	@$(MAKE) ts-nautilus-backtest
 
 # ---------------------------------------------------------------------------
+# Strategy Backtest (Vectorized/Event-Driven)
+# ---------------------------------------------------------------------------
+BACKTEST_STRATEGY ?= sr_reversal_rr_reg_long
+BACKTEST_SYMBOL ?= BTCUSDT
+BACKTEST_TIMEFRAME ?= 240T
+BACKTEST_START ?= 2024-01-01
+BACKTEST_END ?= 2024-12-31
+BACKTEST_MODE ?= vectorized
+BACKTEST_MODEL_PATH ?=
+BACKTEST_DATA_PATH ?=
+BACKTEST_OUTPUT_DIR ?= results/backtest
+
+backtest-strategy:
+	@echo "🚀 Running Strategy Backtest..."
+	@echo "   Strategy: $(BACKTEST_STRATEGY)"
+	@echo "   Symbol: $(BACKTEST_SYMBOL)"
+	@echo "   Timeframe: $(BACKTEST_TIMEFRAME)"
+	@echo "   Period: $(BACKTEST_START) ~ $(BACKTEST_END)"
+	@echo "   Mode: $(BACKTEST_MODE)"
+	mlbot backtest strategy \
+		--strategy $(BACKTEST_STRATEGY) \
+		--symbol $(BACKTEST_SYMBOL) \
+		--timeframe $(BACKTEST_TIMEFRAME) \
+		--start-date $(BACKTEST_START) \
+		--end-date $(BACKTEST_END) \
+		--mode $(BACKTEST_MODE) \
+		--output-dir $(BACKTEST_OUTPUT_DIR) \
+		$(if $(BACKTEST_MODEL_PATH),--model-path $(BACKTEST_MODEL_PATH),) \
+		$(if $(BACKTEST_DATA_PATH),--data-path $(BACKTEST_DATA_PATH),) \
+		--no-docker
+
+# Shortcuts for each strategy
+backtest-sr-reversal:
+	@$(MAKE) backtest-strategy BACKTEST_STRATEGY=sr_reversal_rr_reg_long
+
+backtest-sr-breakout:
+	@$(MAKE) backtest-strategy BACKTEST_STRATEGY=sr_breakout
+
+backtest-compression:
+	@$(MAKE) backtest-strategy BACKTEST_STRATEGY=compression_breakout
+
+backtest-trend:
+	@$(MAKE) backtest-strategy BACKTEST_STRATEGY=trend_following
+
+# ---------------------------------------------------------------------------
 # Rank IC Regression Training (Standalone)
 # ---------------------------------------------------------------------------
 

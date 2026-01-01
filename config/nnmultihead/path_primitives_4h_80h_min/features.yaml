@@ -2,8 +2,12 @@
 # The 'name' field is optional and only for display purposes.
 # Removed to avoid warning about name mismatch.
 description: |
-  NN multi-head base (path primitives) - minimal feature pipeline (20-50 features) for first run.
-  Goal: strategy-agnostic market state features (avoid SR-specific handcrafted features).
+  NN multi-head base (path primitives) - 仅使用已归一化特征
+  
+  特征归一化策略：
+  - NN 模型对尺度敏感，必须使用归一化特征
+  - 原始价格类特征（close, ema, macd等）已被替换为归一化版本
+  - 详见 docs/architecture/FEATURE_NORMALIZATION_POLICY.md
 
 feature_pipeline:
   requested_features:
@@ -12,86 +16,88 @@ feature_pipeline:
     # to make the model robust to missing feature blocks during inference.
     
     required:
-      # --- Core volatility / range ---
-      - atr_f
-      - atr_percentile_f
-      - range_ratio_5bar_f
-      - price_range_symmetry_f
-      - wick_ratios_f
+      # === 已归一化的核心特征 ===
+      
+      # --- 波动率/范围 (归一化) ---
+      - atr_percentile_f        # 替代 atr，范围 [0,1]
+      - range_ratio_5bar_f      # 比率，小数值
+      - price_range_symmetry_f  # 比率
+      - wick_ratios_f           # 比率 [0,1]
 
-      # --- Basic momentum / trend ---
-      - roc_5_f
-      - acceleration_3_f
-      - trend_r2_20_f
-      - trend_r2_50_f
-      - slope_consistency_score_f
+      # --- 动量/趋势 (小数值，天然归一化) ---
+      - roc_5_f                 # 收益率，小数值
+      - acceleration_3_f        # 二阶导，小数值
+      - trend_r2_20_f           # R², [0,1]
+      - trend_r2_50_f           # R², [0,1]
+      - slope_consistency_score_f  # 比率
       - trend_volatility_alignment_f
       - volatility_reversal_score_f
 
-      # --- Common indicators ---
-      - rsi_f
-      - macd_f
-      - bbands_f
-      - bb_width_f
+      # --- 技术指标 (已归一化) ---
+      - rsi_f                   # [0, 100]
+      - bb_width_f              # 输出包含 bb_width_normalized
+      # macd 替换为 macd_histogram（差值，量级较小）
 
-      # --- Moving averages (shape / regime proxies) ---
-      # For 4H timeframe:
-      # - SMA 10: 1.7 days (short-term trend)
-      # - SMA 20: 3.3 days (short-medium term)
-      # - SMA 50: 8.3 days (medium-term trend)
-      # - SMA 100: 16.7 days (long-term trend, alternative to SMA 200)
-      # - SMA 200: 33.3 days (too long for 4H, removed to avoid high NaN ratio)
-      - sma_10_f
-      - sma_20_f
-      - sma_50_f
-      - sma_100_f
-      - ema_10_f
-      - ema_20_f
-      - ema_50_f
-      - ema_100_f
-
-      # --- Compression (generic, not tied to a named strategy) ---
+      # --- 压缩特征 ---
       - compression_duration_f
-      - compression_energy_f
       - compression_to_breakout_prob_f
 
-      # --- Volume / participation (kline-level only; no ticks required) ---
-      - volume_anomaly_f
+      # --- 成交量 ---
+      - volume_anomaly_f        # 异常值指标
 
     optional_blocks:
-      # High-cost / non-guaranteed blocks.
-      # These features will be computed, but can be masked during training/inference.
-      # Block names are semantic groupings for block-dropout/mask.
+      # === 可选特征块（训练时会随机 mask 以增强鲁棒性）===
       
-      ticks_orderflow_semantic_blocks:
-        # Order flow features (require tick data)
+      vpin_block:
         - vpin_base_aligned_features_f
         - vpin_derived_features_f
       
-      volume_profile_semantic_blocks:
-        # Volume profile features (require tick data)
-        - volume_profile_vpvr_f
-        - volume_profile_volatility_features_f
+      trade_cluster_block:
+        - trade_cluster_base_aligned_features_f
+        - trade_cluster_imbalance_ratio_ma_features_f
+        - trade_cluster_entropy_ma_change_features_f
+        - trade_cluster_max_buy_run_ma_features_f
+        - trade_cluster_max_buy_run_zscore_features_f
+        - trade_cluster_max_run_ratio_features_f
+        - trade_cluster_net_runs_ratio_features_f
+        - trade_cluster_net_runs_ma_features_f
+        - trade_cluster_net_runs_zscore_features_f
+        - trade_cluster_total_runs_ma_features_f
       
-      trade_cluster_semantic_blocks:
-        # Trade cluster features (require tick data)
-        - trade_cluster_block_features_f
+      volume_profile_block:
+        - volume_profile_volatility_features_f
+        - volume_profile_vpvr_f
+
+  timeframe: 4H
+  data_path: data/parquet_data
+
+# Feature contract (合并自 feature_contract.yaml)
+feature_contract:
+  minimal_required_cols:
+    # 基于上面 required 特征的输出列
+    - atr_percentile
+    - range_ratio_5bar
+    - price_range_symmetry
+    - wick_upper_ratio
+    - wick_lower_ratio
+    - roc_5
+    - acceleration_3
+    - trend_r2_20
+    - trend_r2_50
+    - slope_consistency_score
+    - trend_volatility_alignment
+    - volatility_reversal_score
+    - rsi
+    - bb_width_normalized
+    - compression_duration
+    - compression_to_breakout_prob
+    - volume_anomaly
+
+  optional_blocks:
+    vpin_block: "*vpin*"
+    trade_cluster_block: "trade_cluster_*"
+    volume_profile_block: "vp_*"
 
   missingness_policy:
-    # Policy for missing optional blocks during inference.
-    # options: "skip" | "impute" | "mask"
-    # - skip: treat missing blocks as unavailable; model must be trained to tolerate it
-    # - mask: provide feature_available_mask (future upgrade) and/or block dropout in training
-    # - impute: fill missing with constants (should be paired with masks to avoid leakage)
-    optional_blocks_on_missing: skip
-    # If true and optional blocks are resolved, append per-block availability mask to model input.
     append_block_mask: true
-    # During training only: randomly zero-out available blocks to make the model robust to block on/off.
-    # Start small; tune later.
     block_dropout_p: 0.05
-
-  ensure_signal_column:
-    name: signal
-    default_value: 0
-
-
