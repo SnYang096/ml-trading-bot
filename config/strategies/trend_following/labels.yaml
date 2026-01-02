@@ -15,5 +15,5 @@ filters:
     notna: true
 
 post_label_filters:
-  - ensure_feature_non_null: true
+  # NOTE: `ensure_feature_non_null` was deprecated (no-op). Keep post_label_filters empty for now.
 

@@ -31,6 +31,7 @@ class StrategyFeatureLoader:
         use_monthly_cache: bool = True,
         max_workers: Optional[int] = None,
         parallel_backend: str = "process",
+        normalization_contract_mode: str = "warn",  # "warn" | "error"
     ):
         """
         初始化特征加载器
@@ -45,6 +46,23 @@ class StrategyFeatureLoader:
             parallel_backend: 并行后端（process/thread）
         """
         self.feature_deps = self._load_yaml(feature_deps_path)
+
+        # Normalization contract (config-level): prevent drift between "declared normalized"
+        # and actually specified normalization methods.
+        #
+        # Default is warn for ergonomics; CI/tests should enforce via mode="error".
+        try:
+            from src.features.normalization.feature_contract import (
+                validate_feature_dependencies_normalization,
+            )
+
+            validate_feature_dependencies_normalization(
+                self.feature_deps, mode=normalization_contract_mode
+            )
+        except Exception as e:
+            if normalization_contract_mode == "error":
+                raise
+            print(f"   ⚠️  Normalization contract warning: {e}")
         # 可选加载策略配置（用于向后兼容）
         if strategy_config_path is not None:
             self.strategy_config = self._load_yaml_optional(strategy_config_path)
@@ -382,8 +400,12 @@ class StrategyFeatureLoader:
                 if parent not in actual_requested:
                     actual_requested.append(parent)
             else:
-                # 保留未知名称（可能是上游已存在的列，如 'atr' 等）
-                actual_requested.append(name)
+                # Unknown name: only keep it if it's already a column in the input.
+                # Otherwise, skip it (treat as invalid feature id) to avoid KeyError downstream.
+                if name in result_df.columns or name in df.columns:
+                    actual_requested.append(name)
+                else:
+                    print(f"   ⚠️  Unknown feature '{name}' (not in deps and not in df columns); skipping.")
 
         # 去重但保持顺序
         seen = set()

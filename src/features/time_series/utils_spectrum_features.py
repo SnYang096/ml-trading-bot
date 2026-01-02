@@ -25,13 +25,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from typing import Dict, Optional, List
-from scipy import signal
+from scipy import signal as sp_signal
 
 from src.features.registry import register_feature
 
 
 def compute_spectrum_features(
-    signal: np.ndarray,
+    x: np.ndarray,
     fs: float = 1.0,
     nperseg: Optional[int] = None,
 ) -> Dict[str, float]:
@@ -53,7 +53,7 @@ def compute_spectrum_features(
         - spectral_centroid: 频谱重心（Hz），能量集中在低频还是高频
     """
     # 提高最小长度要求，确保 Welch 方法有意义
-    if len(signal) < 8:
+    if len(x) < 8:
         return {
             "has_dominant_freq": 0.0,
             "spectral_flatness": 1.0,
@@ -66,10 +66,10 @@ def compute_spectrum_features(
     # 动态设置 nperseg，确保在合理范围内
     # 要求：8 <= nperseg <= min(len(signal), 64)
     if nperseg is None:
-        nperseg = min(max(8, len(signal) // 2), 64)
+        nperseg = min(max(8, len(x) // 2), 64)
     
     # 确保 nperseg 不超过信号长度，且至少为 4（Welch 最小要求）
-    nperseg = min(nperseg, len(signal))
+    nperseg = min(nperseg, len(x))
     if nperseg < 4:
         # 信号太短，返回默认值
         return {
@@ -83,7 +83,7 @@ def compute_spectrum_features(
     
     # Welch's method (更稳健的功率谱估计)
     try:
-        freqs, psd = signal.welch(signal, fs=fs, nperseg=nperseg, scaling='density')
+        freqs, psd = sp_signal.welch(x, fs=fs, nperseg=nperseg, scaling="density")
     except Exception:
         # 异常时返回默认值
         return {
@@ -157,11 +157,13 @@ def compute_spectrum_features(
     
     return {
         "has_dominant_freq": has_dominant_freq,
-        "spectral_flatness": float(spectral_flatness),
-        "high_freq_energy_ratio": float(high_freq_energy_ratio),
-        "low_freq_energy_ratio": float(low_freq_energy_ratio),
-        "spectral_entropy": float(spectral_entropy),
-        "spectral_centroid": float(spectral_centroid),
+        # Clamp all bounded/statistical outputs defensively for NN stability.
+        "spectral_flatness": float(np.clip(spectral_flatness, 0.0, 1.0)),
+        "high_freq_energy_ratio": float(np.clip(high_freq_energy_ratio, 0.0, 1.0)),
+        "low_freq_energy_ratio": float(np.clip(low_freq_energy_ratio, 0.0, 1.0)),
+        "spectral_entropy": float(np.clip(spectral_entropy, 0.0, 1.0)),
+        # centroid is in Hz and depends on fs; keep as-is (unitless in bar-time scale only if fs fixed).
+        "spectral_centroid": float(np.clip(spectral_centroid, 0.0, fs / 2 if fs > 0 else 0.5)),
     }
 
 

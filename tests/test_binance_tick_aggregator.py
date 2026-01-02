@@ -276,8 +276,7 @@ class TestBinanceTickAggregator:
         timestamps = [agg["timestamp"] for agg in aggregator.completed_aggregates]
         assert timestamps[:4] == [1000, 1100, 1200, 1300]  # 前4个窗口
 
-    @pytest.mark.asyncio
-    async def test_flush_aggregates(self, aggregator, questdb_client):
+    def test_flush_aggregates(self, aggregator, questdb_client):
         """测试刷新聚合数据"""
         # 添加一些完成的聚合数据
         aggregator.completed_aggregates = [
@@ -321,8 +320,8 @@ class TestBinanceTickAggregator:
             },
         ]
 
-        # 刷新数据
-        await aggregator._flush_aggregates()
+        # 刷新数据（不依赖 pytest-asyncio/anyio）
+        asyncio.run(aggregator._flush_aggregates())
 
         # 检查是否调用了插入方法
         assert questdb_client.insert_calls == 1
@@ -386,13 +385,12 @@ class TestBinanceTickAggregator:
         assert len(aggregator.aggregation_buffer) == 0
         assert len(aggregator.completed_aggregates) == 0
 
-    @pytest.mark.anyio
-    async def test_flush_empty_aggregates(self, aggregator, questdb_client):
+    def test_flush_empty_aggregates(self, aggregator, questdb_client):
         """测试刷新空聚合数据"""
         # 没有完成的聚合数据
         aggregator.completed_aggregates = []
 
-        await aggregator._flush_aggregates()
+        asyncio.run(aggregator._flush_aggregates())
 
         # 不应该调用插入方法
         assert questdb_client.insert_calls == 0
@@ -479,8 +477,7 @@ class TestBinanceTickAggregator:
         assert completed["sell_ratio"] == pytest.approx(0.2 / 0.6, rel=1e-6)
         assert completed["delta"] == 0.2  # 0.4 - 0.2
 
-    @pytest.mark.anyio
-    async def test_simulate_websocket_messages(self, aggregator, questdb_client):
+    def test_simulate_websocket_messages(self, aggregator, questdb_client):
         """模拟 WebSocket 消息处理"""
         # 模拟币安 WebSocket 消息
         messages = [
@@ -523,12 +520,14 @@ class TestBinanceTickAggregator:
         ]
 
         # 处理消息
+        last_ts = None
         for msg in messages:
             data = json.loads(msg)
             if data.get("e") != "trade":
                 continue
 
             timestamp_ms = int(data.get("T") or data.get("E"))
+            last_ts = timestamp_ms
             tick_data = {
                 "ts_ms": timestamp_ms,
                 "symbol": data.get("s", aggregator.symbol),
@@ -541,8 +540,13 @@ class TestBinanceTickAggregator:
             aggregator._aggregate_tick(tick_data)
             aggregator._finalize_completed_windows(timestamp_ms)
 
-        # 刷新数据
-        await aggregator._flush_aggregates()
+        # Finalize the last (current) window by advancing time one full window.
+        # Otherwise the last window_end == current_window_end would not be considered "completed".
+        if last_ts is not None:
+            aggregator._finalize_completed_windows(last_ts + aggregator.aggregation_ms)
+
+        # 刷新数据（不依赖 pytest-asyncio/anyio）
+        asyncio.run(aggregator._flush_aggregates())
 
         # 检查结果
         assert questdb_client.insert_calls == 1
@@ -552,14 +556,14 @@ class TestBinanceTickAggregator:
 
         # 检查第一个窗口
         window1 = df[df["timestamp_ms"] == 1000].iloc[0]
-        assert window1["volume"] == 0.3  # 0.1 + 0.2
+        assert window1["volume"] == pytest.approx(0.3, rel=1e-9)  # 0.1 + 0.2
         assert window1["buy_volume"] == 0.1
-        assert window1["sell_volume"] == 0.2
+        assert window1["sell_volume"] == pytest.approx(0.2, rel=1e-9)
 
         # 检查第二个窗口
         window2 = df[df["timestamp_ms"] == 1100].iloc[0]
-        assert window2["volume"] == 0.3
-        assert window2["buy_volume"] == 0.3
+        assert window2["volume"] == pytest.approx(0.3, rel=1e-9)
+        assert window2["buy_volume"] == pytest.approx(0.3, rel=1e-9)
 
 
 if __name__ == "__main__":

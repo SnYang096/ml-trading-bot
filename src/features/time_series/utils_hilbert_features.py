@@ -145,6 +145,10 @@ def extract_hilbert_features(
     quantile_window: int = 252,
     use_volume_fusion: bool = False,
     vol_detrend_window: int = 20,
+    # Contract-focused output normalization:
+    # If enabled, we will compute rolling quantile normalization for envelope-like columns
+    # and overwrite the base envelope outputs to make them cross-asset comparable.
+    replace_env_with_qnorm: bool = False,
 ) -> pd.DataFrame:
     """
     从 DataFrame 中提取 Hilbert 包络特征（滚动窗口 + EMA 平滑，无数据泄露）
@@ -382,6 +386,8 @@ def extract_hilbert_features(
         
         # 避免除零，使用安全除法
         ratio = cvd_env / price_env.replace(0, np.nan)
+        # Guard against inf/-inf from degenerate envelopes (flat price / tiny denominators)
+        ratio = ratio.replace([np.inf, -np.inf], np.nan).fillna(0.0)
         df["hilbert_cvd_price_env_ratio"] = ratio
     
     # 2. 包络斜率（波动加速/减速）
@@ -393,6 +399,17 @@ def extract_hilbert_features(
     if "hilbert_cvd_env" in df.columns:
         cvd_env = df["hilbert_cvd_env"]
         df["hilbert_cvd_env_slope"] = cvd_env.diff()
+
+    # Final safety: never output inf values for downstream consumers/tests
+    for col in [
+        "hilbert_price_env",
+        "hilbert_cvd_env",
+        "hilbert_cvd_price_env_ratio",
+        "hilbert_price_env_slope",
+        "hilbert_cvd_env_slope",
+    ]:
+        if col in df.columns:
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
     
     # ========== 分位数标准化（跨品种可比）==========
     if use_quantile_normalize:
@@ -405,6 +422,15 @@ def extract_hilbert_features(
             df["hilbert_cvd_env_qnorm"] = rolling_quantile_normalize(
                 df["hilbert_cvd_env"], window=quantile_window
             )
+
+    # Optional: overwrite base envelope outputs with their quantile-normalized versions.
+    # This keeps column names stable for downstream strategy configs while enforcing
+    # cross-asset comparability (rank transformation).
+    if bool(replace_env_with_qnorm):
+        if "hilbert_price_env_qnorm" in df.columns:
+            df["hilbert_price_env"] = df["hilbert_price_env_qnorm"]
+        if "hilbert_cvd_env_qnorm" in df.columns:
+            df["hilbert_cvd_env"] = df["hilbert_cvd_env_qnorm"]
     
     # ========== 成交量包络融合 ==========
     if use_volume_fusion and volume_col and volume_col in df.columns:
@@ -459,6 +485,14 @@ def extract_hilbert_features(
             for idx, val in vol_env_smoothed.items():
                 if idx < len(df):
                     df.iloc[idx, df.columns.get_loc("hilbert_volume_env")] = val
+
+            # If we are enforcing rank-based normalization, quantile-normalize volume envelope too.
+            if bool(use_quantile_normalize):
+                df["hilbert_volume_env_qnorm"] = rolling_quantile_normalize(
+                    df["hilbert_volume_env"], window=quantile_window
+                )
+                if bool(replace_env_with_qnorm):
+                    df["hilbert_volume_env"] = df["hilbert_volume_env_qnorm"]
             
             # 计算价格/成交量包络比
             if "hilbert_price_env" in df.columns:
@@ -490,6 +524,41 @@ def extract_hilbert_features(
                     df["hilbert_triple_divergence"] = (
                         (price_new_high & cvd_not_high & vol_declining).astype(float)
                     )
+
+    # ------------------------------------------------------------------
+    # If we replaced envelopes with quantile-normalized values, refresh the
+    # derived features so they are consistent with the final envelope series.
+    # Also apply safe transforms for ratio-like outputs to avoid extreme spikes.
+    # ------------------------------------------------------------------
+    if bool(replace_env_with_qnorm):
+        eps = 1e-8
+
+        def _robust_rolling_z(v: pd.Series, window: int, min_periods: int = 10) -> pd.Series:
+            v = pd.to_numeric(v, errors="coerce").astype(float)
+            med = v.rolling(window=window, min_periods=min_periods).median()
+            q25 = v.rolling(window=window, min_periods=min_periods).quantile(0.25)
+            q75 = v.rolling(window=window, min_periods=min_periods).quantile(0.75)
+            iqr = (q75 - q25).replace(0, np.nan)
+            z = (v - med) / (iqr + eps)
+            return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        # Ratio (CVD/Price env): use log-ratio then robust rolling scaling.
+        if "hilbert_cvd_env" in df.columns and "hilbert_price_env" in df.columns:
+            price_env = pd.to_numeric(df["hilbert_price_env"], errors="coerce").astype(float).fillna(0.0)
+            cvd_env = pd.to_numeric(df["hilbert_cvd_env"], errors="coerce").astype(float).fillna(0.0)
+            log_ratio = np.log((cvd_env + eps) / (price_env + eps))
+            df["hilbert_cvd_price_env_ratio"] = _robust_rolling_z(log_ratio, window=int(quantile_window))
+
+            # Slopes on normalized envelope (bounded diffs)
+            df["hilbert_price_env_slope"] = price_env.diff().clip(-1.0, 1.0)
+            df["hilbert_cvd_env_slope"] = cvd_env.diff().clip(-1.0, 1.0)
+
+        # Price/Volume env ratio: log-ratio then robust scaling (only when fusion exists)
+        if "hilbert_env_price_vol_ratio" in df.columns and "hilbert_volume_env" in df.columns and "hilbert_price_env" in df.columns:
+            price_env = pd.to_numeric(df["hilbert_price_env"], errors="coerce").astype(float).fillna(0.0)
+            vol_env = pd.to_numeric(df["hilbert_volume_env"], errors="coerce").astype(float).fillna(0.0)
+            log_ratio = np.log((price_env + eps) / (vol_env + eps))
+            df["hilbert_env_price_vol_ratio"] = _robust_rolling_z(log_ratio, window=int(quantile_window))
     
     # 使用 shift(1) 确保时间对齐，只使用历史信息
     # 注意：shift(1) 后，NaN 表示历史数据不足，不应 fillna(0.0)

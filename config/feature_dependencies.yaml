@@ -74,6 +74,46 @@ features:
       feature_shift: 0
     column_mappings:
       close: close
+  path_curvature_f:
+    module: baseline
+    compute_func: compute_path_curvature_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - path_curvature
+    category: price_structure
+    description: Path curvature (turning intensity) computed on returns; log1p + rolling z-score (causal, cross-asset comparable)
+    pass_full_df: false
+    compute_params:
+      smooth_window: 5
+      window: 5
+      z_window: 200
+      min_periods: 50
+      normalized: true
+      output_normalization_map:
+        path_curvature: zscore_rolling
+    column_mappings:
+      close: close
+  volatility_cone_position_f:
+    module: baseline
+    compute_func: compute_volatility_cone_position_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - volatility_cone_position
+    category: volatility
+    description: Volatility cone position = percentile rank of rolling vol within lookback window (causal; bounded [0,1])
+    pass_full_df: false
+    compute_params:
+      window: 20
+      lookback_days: 252
+      normalized: true
+      output_normalization_map:
+        volatility_cone_position: bounded_0_1
+    column_mappings:
+      close: close
   bb_width_f:
     module: baseline
     compute_func: compute_bb_width_features_from_series
@@ -105,6 +145,10 @@ features:
     category: volatility
     description: Short vs long term range ratio (5 vs 20 bar)
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        range_ratio_5bar: zscore_rolling
     column_mappings:
       high: high
       low: low
@@ -121,6 +165,10 @@ features:
     category: volatility
     description: ATR mean-reversion z-score
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        volatility_reversal_score: zscore_rolling
     column_mappings:
       high: high
       low: low
@@ -136,10 +184,12 @@ features:
     output_columns:
     - price_range_symmetry
     category: price_structure
-    description: Upper/lower shadow asymmetry score
+    description: Upper/lower shadow asymmetry score (rolling z-score; normalized/unitless)
     pass_full_df: false
     compute_params:
       feature_shift: 0
+      output_normalization: zscore_rolling
+      normalized: true
     column_mappings:
       high: high
       low: low
@@ -157,8 +207,11 @@ features:
     - wick_upper_ratio
     - wick_lower_ratio
     category: price_structure
-    description: Upper and lower wick ratios (用于 VPIN × wick 交互特征)
+    description: Upper and lower wick ratios in [0,1] (normalized/unitless;用于 VPIN × wick 交互特征)
     pass_full_df: false
+    compute_params:
+      output_normalization: bounded_0_1
+      normalized: true
     column_mappings:
       open: open
       high: high
@@ -185,6 +238,13 @@ features:
     category: interaction
     description: 'Wick-based scene semantics (0..1): compression/ignition/absorption/exhaustion.'
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        wick_compression_score: bounded_0_1
+        wick_ignition_score: bounded_0_1
+        wick_absorption_score: bounded_0_1
+        wick_exhaustion_score: bounded_0_1
     column_mappings:
       wick_upper_ratio: wick_upper_ratio
       wick_lower_ratio: wick_lower_ratio
@@ -199,8 +259,11 @@ features:
     output_columns:
     - volume_anomaly
     category: liquidity
-    description: Volume anomaly z-score (EWM based)
+    description: Volume anomaly z-score (EWM+rolling; normalized/unitless)
     pass_full_df: false
+    compute_params:
+      output_normalization: zscore_rolling
+      normalized: true
     column_mappings:
       volume: volume
   roc_5_f:
@@ -212,9 +275,14 @@ features:
     output_columns:
     - roc_5
     category: momentum
-    description: 5-bar rate of change z-score
+    description: 5-bar rate of change z-score (normalized/unitless)
     compute_params:
       period: 5
+      z_window: 50
+      min_periods: 5
+      clip_quantile: 0.01
+      output_normalization: zscore_rolling
+      normalized: true
     pass_full_df: false
     column_mappings:
       close: close
@@ -227,10 +295,12 @@ features:
     output_columns:
     - trend_r2_20
     category: trend
-    description: 20-bar trend R² (log price)
+    description: 20-bar trend R² (log price) in [0,1] (normalized/unitless)
     pass_full_df: false
     compute_params:
       feature_shift: 0
+      output_normalization: bounded_0_1
+      normalized: true
     column_mappings:
       close: close
   trend_r2_50_f:
@@ -246,6 +316,8 @@ features:
     pass_full_df: false
     compute_params:
       feature_shift: 0
+      output_normalization: bounded_0_1
+      normalized: true
     column_mappings:
       close: close
   slope_consistency_score_f:
@@ -259,6 +331,10 @@ features:
     category: trend
     description: EMA slope agreement (10/20/50)
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        slope_consistency_score: bounded_0_1
     column_mappings:
       close: close
   atr_percentile_f:
@@ -277,6 +353,9 @@ features:
     compute_params:
       window: 288
       shift: 1
+      normalized: true
+      output_normalization_map:
+        atr_percentile: bounded_0_1
     column_mappings:
       high: high
       low: low
@@ -296,6 +375,9 @@ features:
     pass_full_df: false
     compute_params:
       feature_shift: 0
+      normalized: true
+      output_normalization_map:
+        trend_volatility_alignment: bounded_-1_1
     column_mappings:
       close: close
       high: high
@@ -316,6 +398,9 @@ features:
     compute_params:
       percentile_window: 288
       compression_threshold_pct: 0.2
+      normalized: true
+      output_normalization_map:
+        compression_duration: bounded_0_1
     column_mappings:
       high: high
       low: low
@@ -356,6 +441,10 @@ features:
     column_mappings:
       compression_duration: compression_duration
       roc_5: roc_5
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        compression_to_breakout_prob: bounded_0_1
   wpt_price_reconstructed_f:
     module: enhanced
     compute_func: extract_wpt_features
@@ -385,7 +474,7 @@ features:
       '
   wpt_volatility_features_f:
     module: enhanced
-    compute_func: extract_wpt_features
+    compute_func: extract_wpt_volatility_features_normalized
     dependencies: []
     required_columns:
     - close
@@ -410,6 +499,18 @@ features:
       level: 4
       window: 100
       return_reconstructed_price: false
+      normalized: true
+      output_normalization_map:
+        wpt_price_trend: unitless
+        wpt_price_fluctuation: unitless
+        wpt_price_reconstructed: unitless
+        wpt_price_energy_low_ratio: bounded_0_1
+        wpt_price_energy_mid_ratio: bounded_0_1
+        wpt_price_energy_high_ratio: bounded_0_1
+        wpt_price_energy_mid_low_ratio: log_robust_rolling
+        wpt_volume_energy_low_ratio: bounded_0_1
+        wpt_cvd_energy_low_ratio: bounded_0_1
+        wpt_vper: log1p_robust_rolling
     notes: '用于波动率模型的 WPT 特征集合。
 
       包含价格、成交量、CVD 的能量比特征和 VPER（体积-价格能量比）。
@@ -499,6 +600,9 @@ features:
       sr_type: resistance
       window: 60
       tolerance_factor: 0.5
+      normalized: true
+      output_normalization_map:
+        sqs_hal_high: unitless
     pass_full_df: false
     column_mappings:
       high: high
@@ -529,6 +633,9 @@ features:
       sr_type: support
       window: 60
       tolerance_factor: 0.5
+      normalized: true
+      output_normalization_map:
+        sqs_hal_low: unitless
     pass_full_df: false
     column_mappings:
       high: high
@@ -634,7 +741,7 @@ features:
     notes: baseline-only 版本：通过 poc_hal_features_close_f 生成 POC/HAL，从而不引入 WPT。输出已归一化。
   wpt_price_fluctuation_f:
     module: enhanced
-    compute_func: extract_wpt_features
+    compute_func: extract_wpt_price_features_normalized
     dependencies: []
     required_columns:
     - close
@@ -649,6 +756,13 @@ features:
     compute_params:
       wavelet: db4
       level: 4
+      normalized: true
+      output_normalization_map:
+        wpt_price_fluctuation: unitless
+        wpt_price_trend: unitless
+        wpt_price_energy_low_ratio: bounded_0_1
+        wpt_price_energy_mid_ratio: bounded_0_1
+        wpt_price_energy_high_ratio: bounded_0_1
     notes: 'WPT 过滤高频噪音，提高 POC/HAL 等 SR 特征的识别准确性。
 
       注意：此特征与 wpt_price_reconstructed 都输出 wpt_price_fluctuation 和 wpt_price_trend，
@@ -709,6 +823,37 @@ features:
       high: high
       low: low
       volume: volume
+  # Backward-compatible alias (some integration tests/configs refer to the non-suffixed name)
+  volume_profile_vpvr:
+    module: enhanced
+    compute_func: compute_volume_profile_vpvr_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - high
+    - low
+    - volume
+    output_columns:
+    - vpvr_pvp
+    - vpvr_hvn_count
+    - vpvr_lvn_count
+    - vpvr_lvn_distance
+    - vpvr_volume_density
+    - vpvr_price_in_lvn
+    category: liquidity
+    description: Alias of volume_profile_vpvr_f (normalized/unitless)
+    compute_params:
+      wavelet: db4
+      level: 4
+      window: 100
+      bins: 50
+      normalized: true
+    pass_full_df: false
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      volume: volume
   liquidity_void_f:
     module: enhanced
     compute_func: compute_liquidity_void_features_from_series
@@ -731,6 +876,17 @@ features:
       lookback_window: 20
       speed_threshold_multiplier: 2.0
       volume_quantile: 0.2
+      normalized: true
+      output_normalization_map:
+        liquidity_void_detected: bounded_0_1
+        # speed is "pct-change / (ATR/close)" => unitless; can be heavy-tailed but cross-asset comparable
+        liquidity_void_speed: unitless
+        liquidity_void_volume_ratio: volume_ratio
+        # price_impact = (high-low)/volume => scale-heavy; treat as long-tail, robust rolling
+        liquidity_void_price_impact: log1p_robust_rolling
+        # retracement is pct over 3 bars => typically [0,1] but can exceed 1 in extreme; keep bounded-ish
+        liquidity_void_retracement: bounded_0_1
+        liquidity_void_false_breakout_risk: bounded_0_1
     pass_full_df: false
     column_mappings:
       close: close
@@ -808,6 +964,13 @@ features:
     description: 'WPT scene semantics: compression/ignition/absorption/exhaustion
       (0..1), using WPT+compression+trend context.'
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        wpt_compression_score: bounded_0_1
+        wpt_ignition_score: bounded_0_1
+        wpt_absorption_score: bounded_0_1
+        wpt_exhaustion_score: bounded_0_1
     column_mappings:
       wpt_breakout_confidence: wpt_breakout_confidence
       wpt_false_breakout_risk: wpt_false_breakout_risk
@@ -843,6 +1006,12 @@ features:
     compute_params:
       speed_scale: 3.0
       impact_scale: 3.0
+      normalized: true
+      output_normalization_map:
+        liquidity_void_compression_score: bounded_0_1
+        liquidity_void_ignition_score: bounded_0_1
+        liquidity_void_absorption_score: bounded_0_1
+        liquidity_void_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       liquidity_void_detected: liquidity_void_detected
@@ -868,11 +1037,19 @@ features:
     - vp_lv_ratio
     - vp_hv_ratio
     category: volatility
-    description: Volume Profile 波动率特征（从 WPT 降噪后的 Volume Profile 提取）
+    description: Volume Profile 波动率特征（从 WPT 降噪后的 Volume Profile 提取；normalized/unitless）
     compute_params:
       window: 100
       wavelet: db4
       level: 4
+      output_normalization_map:
+        vp_width_ratio: bounded_0_1
+        vp_poc_deviation: bounded_-1_1
+        vp_skewness: tanh
+        vp_entropy: bounded_0_1
+        vp_lv_ratio: bounded_0_1
+        vp_hv_ratio: bounded_0_1
+      normalized: true
     notes: 'Volume Profile 波动率特征：
 
       - vp_width_ratio: Value Area Width / Full Range（市场共识强度）
@@ -918,6 +1095,12 @@ features:
     compute_params:
       entropy_scale: 2.0
       poc_dev_scale: 2.0
+      normalized: true
+      output_normalization_map:
+        vp_compression_score: bounded_0_1
+        vp_ignition_score: bounded_0_1
+        vp_absorption_score: bounded_0_1
+        vp_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       vp_width_ratio: vp_width_ratio
@@ -959,6 +1142,24 @@ features:
       value_area_pct: 0.7
       price_bin_size: null
       tick_size: null
+      normalized: true
+      output_normalization_map:
+        # price-like levels -> ATR-distance (cross-asset comparable)
+        fp_poc: atr_distance
+        fp_hvn: atr_distance
+        fp_lvn: atr_distance
+        fp_vah: atr_distance
+        fp_val: atr_distance
+        fp_max_imbalance_price: atr_distance
+        fp_exhaustion_price: atr_distance
+        # long-tail flow -> log1p + rolling robust scaling (median/IQR)
+        fp_delta_poc: log1p_robust_rolling
+        fp_max_imbalance_ratio: log1p_robust_rolling
+        # bounded transforms for stability
+        fp_volume_skew: tanh
+        fp_delta_skew: tanh
+        fp_exhaustion_zscore: zscore_inbar
+        fp_delta_divergence: bounded_0_1
     notes: '- 需要 ticks 数据：columns [''price'',''volume'',''side'']，DatetimeIndex；通过调用时传入
       ticks（不可从 df 推断）。
 
@@ -1010,6 +1211,13 @@ features:
       node_cache_version: v1
       z_window: 50
       z_min_periods: 20
+      normalized: true
+      output_normalization_map:
+        funding_rate: unitless
+        funding_rate_abs: unitless
+        funding_rate_change_1: unitless
+        funding_rate_zscore_50: zscore_rolling
+        funding_rate_abs_zscore_50: zscore_rolling
   funding_scene_semantic_scores_f:
     module: funding_rate
     compute_func: compute_funding_scene_semantic_scores_from_df
@@ -1036,6 +1244,12 @@ features:
       trend_col: trend_r2_20
       z_shift: 1.0
       z_scale: 1.0
+      normalized: true
+      output_normalization_map:
+        funding_compression_score: bounded_0_1
+        funding_ignition_score: bounded_0_1
+        funding_absorption_score: bounded_0_1
+        funding_exhaustion_scene_score: bounded_0_1
   fp_imbalance_exhaustion_f:
     module: enhanced
     compute_func: compute_fp_imbalance_exhaustion_from_series
@@ -1060,6 +1274,9 @@ features:
       imb_clip: 8.0
       disp_atr_threshold: 0.5
       sr_prox_atr: 1.5
+      normalized: true
+      output_normalization_map:
+        fp_imbalance_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       fp_max_imbalance_ratio: fp_max_imbalance_ratio
@@ -1101,6 +1318,12 @@ features:
       imb_clip: 8.0
       disp_atr_threshold: 0.5
       sr_prox_atr: 1.5
+      normalized: true
+      output_normalization_map:
+        fp_imbalance_compression_score: bounded_0_1
+        fp_imbalance_ignition_score: bounded_0_1
+        fp_imbalance_absorption_score: bounded_0_1
+        fp_imbalance_exhaustion_scene_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       fp_max_imbalance_ratio: fp_max_imbalance_ratio
@@ -1129,6 +1352,18 @@ features:
     - hilbert_cvd_env_slope
     category: hilbert
     description: Hilbert envelope analysis (改进版：只提取包络，EMA 平滑，无未来信息)
+    compute_params:
+      # Use rolling rank transformation for cross-asset comparability and stable NN inputs
+      use_quantile_normalize: true
+      quantile_window: 252
+      replace_env_with_qnorm: true
+      normalized: true
+      output_normalization_map:
+        hilbert_price_env: rank_rolling
+        hilbert_cvd_env: rank_rolling
+        hilbert_cvd_price_env_ratio: log_robust_rolling
+        hilbert_price_env_slope: bounded_-1_1
+        hilbert_cvd_env_slope: bounded_-1_1
     notes: 'Hilbert 包络特征工程的关键要点：
 
       1. 只提取 Hilbert 包络（envelope）作为特征，放弃瞬时相位和频率
@@ -1173,6 +1408,19 @@ features:
       use_quantile_normalize: true
       quantile_window: 252
       use_volume_fusion: true
+      replace_env_with_qnorm: true
+      normalized: true
+      output_normalization_map:
+        hilbert_price_env: rank_rolling
+        hilbert_cvd_env: rank_rolling
+        hilbert_cvd_price_env_ratio: log_robust_rolling
+        hilbert_price_env_slope: bounded_-1_1
+        hilbert_cvd_env_slope: bounded_-1_1
+        hilbert_price_env_qnorm: rank_rolling
+        hilbert_cvd_env_qnorm: rank_rolling
+        hilbert_volume_env: rank_rolling
+        hilbert_env_price_vol_ratio: log_robust_rolling
+        hilbert_triple_divergence: bounded_0_1
     notes: '高级功能：
 
       1. 分位数标准化：跨品种可比，支持多品种统一模型
@@ -1431,6 +1679,8 @@ features:
     description: 'Order-flow: VPIN + Trade Clustering (full set). This is the heavy
       base node; downstream selectors split blocks.'
     pass_full_df: false
+    compute_params:
+      normalized: true
   ofi_short_f:
     module: enhanced
     compute_func: compute_ofi_short_from_series
@@ -1603,6 +1853,11 @@ features:
     pass_full_df: false
     column_mappings:
       vpin: vpin
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        vpin_zscore_20: zscore_rolling
+        vpin_zscore_50: zscore_rolling
   vpin_quantile_features_f:
     module: enhanced
     compute_func: compute_vpin_quantile_rank_features_from_series
@@ -1689,6 +1944,11 @@ features:
     pass_full_df: false
     column_mappings:
       vpin_signed_imbalance: vpin_signed_imbalance
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        vpin_signed_imbalance_zscore_20: zscore_rolling
+        vpin_signed_imbalance_zscore_50: zscore_rolling
   vpin_block_features_f:
     module: enhanced
     compute_func: select_columns_from_series
@@ -1760,6 +2020,8 @@ features:
     category: order_flow
     description: 'Order-flow sub-block: VPIN-only features (selected from base).'
     pass_full_df: false
+    compute_params:
+      normalized: true
   trade_cluster_block_features_f:
     module: enhanced
     compute_func: select_columns_from_series
@@ -1860,6 +2122,8 @@ features:
     description: 'Order-flow sub-block: Trade Clustering-only features (selected from
       base).'
     pass_full_df: false
+    compute_params:
+      normalized: true
   trade_cluster_semantic_scores_f:
     module: enhanced
     compute_func: compute_trade_cluster_semantic_scores_from_series
@@ -1886,6 +2150,11 @@ features:
       use_range_disp: true
       activity_clip: 3.0
       monthly_cache_dir: cache/features/monthly
+      normalized: true
+      output_normalization_map:
+        trade_cluster_flow_intensity: bounded_0_1
+        trade_cluster_exhaustion_score: bounded_0_1
+        trade_cluster_absorption_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       open: open
@@ -1918,6 +2187,13 @@ features:
     description: TradeCluster scene semantics built on top of TradeCluster semantic
       scores (adds compression/ignition variants).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_compression_score: bounded_0_1
+        trade_cluster_ignition_score: bounded_0_1
+        trade_cluster_absorption_scene_score: bounded_0_1
+        trade_cluster_exhaustion_scene_score: bounded_0_1
     column_mappings:
       trade_cluster_flow_intensity: trade_cluster_flow_intensity
       trade_cluster_absorption_score: trade_cluster_absorption_score
@@ -1950,6 +2226,16 @@ features:
       compute_trade_cluster_derived: false
       ticks_dir: data/parquet_data
       lookback_minutes: 60
+      normalized: true
+      output_normalization_map:
+        trade_cluster_max_buy_run: bounded_0_1
+        trade_cluster_max_sell_run: bounded_0_1
+        trade_cluster_avg_buy_run: bounded_0_1
+        trade_cluster_avg_sell_run: bounded_0_1
+        trade_cluster_buy_run_count: bounded_0_1
+        trade_cluster_sell_run_count: bounded_0_1
+        trade_cluster_imbalance_ratio: bounded_-1_1
+        trade_cluster_directional_entropy: bounded_0_1
     run_sequential: true
     pass_full_df: false
     column_mappings:
@@ -2057,6 +2343,8 @@ features:
     description: Trade clustering derived features (composite) from base aligned (no
       ticks).
     pass_full_df: false
+    compute_params:
+      normalized: true
   trade_cluster_ratio_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_ratio_features_from_series
@@ -2087,6 +2375,16 @@ features:
     category: order_flow
     description: Trade clustering ratio/length derived features.
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_max_run_ratio: bounded_-1_1
+        trade_cluster_max_run: log1p_robust_rolling
+        trade_cluster_buy_sell_max_ratio: log_robust_rolling
+        trade_cluster_avg_run_ratio: bounded_-1_1
+        trade_cluster_buy_sell_avg_ratio: log_robust_rolling
+        trade_cluster_total_run_length: log1p_robust_rolling
+        trade_cluster_avg_run_length: log1p_robust_rolling
   trade_cluster_buy_sell_ratio_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_buy_sell_ratio_features_from_series
@@ -2111,6 +2409,14 @@ features:
     category: order_flow
     description: Trade clustering buy/sell ratio-style features (split from ratio_features).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_max_run_ratio: bounded_-1_1
+        trade_cluster_max_run: log1p_robust_rolling
+        trade_cluster_buy_sell_max_ratio: log_robust_rolling
+        trade_cluster_avg_run_ratio: bounded_-1_1
+        trade_cluster_buy_sell_avg_ratio: log_robust_rolling
   trade_cluster_max_run_ratio_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_max_run_ratio_features_from_series
@@ -2128,6 +2434,11 @@ features:
     category: order_flow
     description: Trade clustering max_run_ratio + max_run (atomic).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_max_run_ratio: bounded_-1_1
+        trade_cluster_max_run: bounded_0_1
   trade_cluster_buy_sell_max_ratio_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_buy_sell_max_ratio_features_from_series
@@ -2144,6 +2455,10 @@ features:
     category: order_flow
     description: Trade clustering buy/sell max ratio (atomic).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_buy_sell_max_ratio: log_robust_rolling
   trade_cluster_avg_run_ratio_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_avg_run_ratio_features_from_series
@@ -2160,6 +2475,10 @@ features:
     category: order_flow
     description: Trade clustering avg_run_ratio (atomic).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_avg_run_ratio: bounded_-1_1
   trade_cluster_buy_sell_avg_ratio_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_buy_sell_avg_ratio_features_from_series
@@ -2176,6 +2495,10 @@ features:
     category: order_flow
     description: Trade clustering buy/sell avg ratio (atomic).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_buy_sell_avg_ratio: log_robust_rolling
   trade_cluster_run_length_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_run_length_features_from_series
@@ -2197,6 +2520,11 @@ features:
     category: order_flow
     description: Trade clustering total/avg run length aggregates (split from ratio_features).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_total_run_length: bounded_0_1
+        trade_cluster_avg_run_length: bounded_0_1
   trade_cluster_net_runs_counts_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_net_runs_counts_features_from_series
@@ -2233,6 +2561,10 @@ features:
     category: order_flow
     description: Trade clustering net_runs_ratio (atomic).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_net_runs_ratio: bounded_-1_1
   trade_cluster_entropy_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_entropy_features_from_series
@@ -2252,6 +2584,8 @@ features:
     category: order_flow
     description: Trade clustering entropy MA/change/zscore features.
     pass_full_df: false
+    compute_params:
+      normalized: true
   trade_cluster_entropy_ma_change_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_entropy_ma_change_features_from_series
@@ -2269,6 +2603,13 @@ features:
     category: order_flow
     description: Trade clustering entropy MA + change (no zscore).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_directional_entropy_ma5: bounded_0_1
+        trade_cluster_directional_entropy_ma10: bounded_0_1
+        trade_cluster_directional_entropy_ma20: bounded_0_1
+        trade_cluster_directional_entropy_change: bounded_-1_1
   trade_cluster_entropy_zscore_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_entropy_zscore_features_from_series
@@ -2284,6 +2625,11 @@ features:
     category: order_flow
     description: Trade clustering entropy zscore (20/50).
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_directional_entropy_zscore_20: zscore_rolling
+        trade_cluster_directional_entropy_zscore_50: zscore_rolling
   trade_cluster_max_buy_run_ma_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_max_buy_run_ma_features_from_series
@@ -2319,6 +2665,12 @@ features:
     category: order_flow
     description: Trade clustering MA for imbalance_ratio.
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_imbalance_ratio_ma5: bounded_-1_1
+        trade_cluster_imbalance_ratio_ma10: bounded_-1_1
+        trade_cluster_imbalance_ratio_ma20: bounded_-1_1
   trade_cluster_net_runs_ma_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_net_runs_ma_features_from_series
@@ -2372,6 +2724,11 @@ features:
     category: order_flow
     description: Trade clustering imbalance zscore.
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_imbalance_zscore_20: zscore_rolling
+        trade_cluster_imbalance_zscore_50: zscore_rolling
   trade_cluster_net_runs_zscore_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_net_runs_zscore_features_from_series
@@ -2387,6 +2744,11 @@ features:
     category: order_flow
     description: Trade clustering net_runs zscore.
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_net_runs_zscore_20: zscore_rolling
+        trade_cluster_net_runs_zscore_50: zscore_rolling
   trade_cluster_max_buy_run_zscore_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_max_buy_run_zscore_features_from_series
@@ -2402,6 +2764,11 @@ features:
     pass_full_df: false
     column_mappings:
       trade_cluster_max_buy_run: trade_cluster_max_buy_run
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_max_buy_run_zscore_20: zscore_rolling
+        trade_cluster_max_buy_run_zscore_50: zscore_rolling
   trade_cluster_max_sell_run_zscore_features_f:
     module: enhanced
     compute_func: compute_trade_cluster_max_sell_run_zscore_features_from_series
@@ -2417,6 +2784,11 @@ features:
     category: order_flow
     description: Trade clustering max_sell_run zscore.
     pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        trade_cluster_max_sell_run_zscore_20: zscore_rolling
+        trade_cluster_max_sell_run_zscore_50: zscore_rolling
   vpin_features_f:
     module: enhanced
     compute_func: select_order_flow_features
@@ -2589,6 +2961,8 @@ features:
       相同，entropy 也能区分不同的模式
 
       所有策略建议全部加载，由模型自动选择有用特征。'
+    compute_params:
+      normalized: true
   garch_features_f:
     module: enhanced
     compute_func: extract_garch_features_from_series
@@ -2724,6 +3098,51 @@ features:
     - vol_mom_3
     - vol_mom_5
     - vol_mom_10
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        vol_raw_5: unitless
+        vol_raw_10: unitless
+        vol_raw_20: unitless
+        vol_raw_60: unitless
+        vol_atr_norm: unitless
+        vol_atr_ma_5: unitless
+        vol_atr_ma_10: unitless
+        vol_atr_ma_20: unitless
+        vol_atr_std_5: unitless
+        vol_atr_std_10: unitless
+        vol_atr_std_20: unitless
+        vol_atr_max_5: unitless
+        vol_atr_max_10: unitless
+        vol_atr_max_20: unitless
+        vol_atr_min_5: unitless
+        vol_atr_min_10: unitless
+        vol_atr_min_20: unitless
+        vol_atr_ratio_20: unitless
+        vol_atr_change: unitless
+        vol_atr_change_abs: unitless
+        vol_lag_1: unitless
+        vol_lag_2: unitless
+        vol_lag_3: unitless
+        vol_slope_5: unitless
+        vol_slope_10: unitless
+        vol_slope_20: unitless
+        vol_accel: unitless
+        vol_ma_5: unitless
+        vol_ma_10: unitless
+        vol_ma_20: unitless
+        vol_ema_5: unitless
+        vol_ema_10: unitless
+        vol_ema_20: unitless
+        vol_zscore: zscore_rolling
+        vol_percentile_approx: bounded_0_1
+        vol_range_10: unitless
+        vol_range_20: unitless
+        vol_range_pos_10: bounded_0_1
+        vol_range_pos_20: bounded_0_1
+        vol_mom_3: unitless
+        vol_mom_5: unitless
+        vol_mom_10: unitless
     category: volatility
     description: 扩展波动率特征：历史波动率、滞后特征、趋势特征、波动率regime特征（精简滞后特征，只保留1-3期）
     pass_full_df: false
@@ -2765,6 +3184,7 @@ features:
       - 10
       - 20
       - 60
+      normalized: true
     pass_full_df: false
     column_mappings:
       close: close
@@ -2796,6 +3216,8 @@ features:
     category: volatility
     description: vol_atr_*：ATR派生波动率特征
     pass_full_df: false
+    compute_params:
+      normalized: true
     column_mappings:
       close: close
       atr: atr
@@ -2874,6 +3296,10 @@ features:
     description: vol_zscore / vol_percentile_approx：波动率regime特征
     compute_params:
       window: 20
+      normalized: true
+      output_normalization_map:
+        vol_zscore: zscore_rolling
+        vol_percentile_approx: bounded_0_1
     pass_full_df: false
     column_mappings:
       close: close
@@ -3409,6 +3835,14 @@ features:
     compute_params:
       dist_scale: 0.5
       sr_prox_threshold: 0.02
+      normalized: true
+      output_normalization_map:
+        dtw_reversal_bullish_score: bounded_0_1
+        dtw_reversal_bearish_score: bounded_0_1
+        dtw_continuation_bullish_score: bounded_0_1
+        dtw_continuation_bearish_score: bounded_0_1
+        dtw_compression_score: bounded_0_1
+        dtw_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       dtw_hammer_dist_w15: dtw_hammer_dist_w15
@@ -3506,6 +3940,9 @@ features:
     description: （heavy gate）流动性真空状态 × VPIN zscore (50)；更贴近 microstructure 的“真空”代理
     compute_params:
       clip_vpin: 5.0
+      normalized: true
+      output_normalization_map:
+        liquidity_void_x_vpin: unitless
     pass_full_df: false
     column_mappings:
       liquidity_void_detected: liquidity_void_detected
@@ -3528,6 +3965,9 @@ features:
     compute_params:
       use_risk: true
       clip_score: 1.0
+      normalized: true
+      output_normalization_map:
+        exhaustion_at_liquidity_void: bounded_0_1
     pass_full_df: false
     column_mappings:
       trade_cluster_exhaustion_score: trade_cluster_exhaustion_score
@@ -3562,6 +4002,11 @@ features:
       disp_atr_threshold: 0.5
       use_range_disp: true
       sr_prox_atr: 1.5
+      normalized: true
+      output_normalization_map:
+        vpin_stress_score: bounded_0_1
+        vpin_directional_pressure: bounded_0_1
+        vpin_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       vpin_zscore_50: vpin_zscore_50
@@ -3607,6 +4052,12 @@ features:
       clip_z: 5.0
       disp_atr_threshold: 0.5
       sr_prox_atr: 1.5
+      normalized: true
+      output_normalization_map:
+        vpin_compression_score: bounded_0_1
+        vpin_ignition_score: bounded_0_1
+        vpin_absorption_score: bounded_0_1
+        vpin_exhaustion_scene_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       vpin_zscore_50: vpin_zscore_50
@@ -3644,6 +4095,10 @@ features:
       clip_imb: 1.0
       disp_atr_threshold: 0.5
       use_range_disp: true
+      normalized: true
+      output_normalization_map:
+        imbalance_ratio: bounded_-1_1
+        imbalance_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
       taker_buy_ratio: taker_buy_ratio
@@ -3711,6 +4166,10 @@ features:
     column_mappings:
       hurst_close_rolling: hurst_price_rolling
       trend_r2_20: trend_r2_20
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        hurst_x_trend_r2: bounded_0_1
   evt_x_trend_r2_f:
     module: enhanced
     compute_func: compute_evt_x_trend_r2_from_series
@@ -3728,6 +4187,12 @@ features:
     column_mappings:
       evt_tail_shape: evt_tail_shape
       trend_r2_20: trend_r2_20
+    compute_params:
+      # EVT tail shape is typically positive-ish; we treat interaction as non-negative score-like proxy.
+      # Kept unitless; if EVT tail can go negative, this should be relaxed to unitless.
+      normalized: true
+      output_normalization_map:
+        evt_x_trend_r2: unitless
   vpin_x_compression_f:
     module: enhanced
     compute_func: compute_vpin_x_compression_from_series
@@ -3854,6 +4319,10 @@ features:
     pass_full_df: false
     column_mappings:
       interaction: hurst_x_trend_r2
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        hurst_x_trend_r2_rank: bounded_0_1
   evt_x_trend_r2_rank_f:
     module: enhanced
     compute_func: apply_rank_transform_to_interaction_from_series
@@ -3868,6 +4337,10 @@ features:
     pass_full_df: false
     column_mappings:
       interaction: evt_x_trend_r2
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        evt_x_trend_r2_rank: bounded_0_1
   vpin_x_compression_rank_f:
     module: enhanced
     compute_func: apply_rank_transform_to_interaction_from_series
@@ -3969,6 +4442,10 @@ features:
       vpin_zscore_20: vpin_zscore_20
       trade_cluster_max_buy_run: trade_cluster_max_buy_run
     notes: 捕捉异常高的订单流不平衡 + 连续买入聚集的组合信号
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        vpin_zscore_x_trade_cluster_max_buy_run: unitless
   vpin_signed_imbalance_x_trade_cluster_imbalance_f:
     module: enhanced
     compute_func: compute_vpin_signed_imbalance_x_trade_cluster_imbalance_from_series
@@ -4043,6 +4520,10 @@ features:
     column_mappings:
       dist_to_nearest_sr: dist_to_nearest_sr
       atr: atr
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        sr_distance_normalized: unitless
   zigzag_high_low_f:
     module: baseline
     compute_func: compute_zigzag_high_low_from_series
@@ -4118,6 +4599,10 @@ features:
     column_mappings:
       dist_to_zz_high: dist_to_zz_high
       atr: atr
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        dist_to_zz_high_atr: unitless
   dist_to_zz_low_atr_f:
     module: enhanced
     compute_func: compute_dist_to_zz_low_atr_from_series
@@ -4171,24 +4656,30 @@ features:
     column_mappings:
       atr: atr
       close: close
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        atr_ratio: unitless
   bb_width_ratio_f:
     module: enhanced
-    compute_func: compute_bb_width_ratio_from_series
-    dependencies:
-    - bb_width_f
+    compute_func: compute_bb_width_ratio_from_price_from_series
+    dependencies: []
     required_columns:
-    - bb_upper
-    - bb_lower
-    - bb_middle
+    - close
     output_columns:
     - bb_width_ratio
     category: derived
-    description: Bollinger Band 宽度比率（多个特征的组合：(upper - lower) / middle）
+    description: Bollinger Band 宽度比率（(upper - lower) / middle；normalized/unitless）
     pass_full_df: false
+    compute_params:
+      output_normalization: relative_middle
+      normalized: true
+      timeperiod: 20
+      nbdevup: 2.0
+      nbdevdn: 2.0
+      matype: 0
     column_mappings:
-      bb_upper: bb_upper
-      bb_lower: bb_lower
-      bb_middle: bb_middle
+      close: close
   compression_score_f:
     module: enhanced
     compute_func: compute_compression_score_from_series
@@ -4199,8 +4690,11 @@ features:
     output_columns:
     - compression_score
     category: derived
-    description: 压缩度分数（单个特征的变换：1 / (1 + bb_width_ratio)）
+    description: 压缩度分数（1 / (1 + bb_width_ratio)；bounded 0..1；normalized/unitless）
     pass_full_df: false
+    compute_params:
+      output_normalization: bounded_0_1
+      normalized: true
     column_mappings:
       bb_width_ratio: bb_width_ratio
   tbr_ma_5_f:
@@ -4276,6 +4770,24 @@ features:
       cvd: cvd
     compute_params:
       rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_price_has_dominant_freq: bounded_0_1
+        spectrum_price_flatness: bounded_0_1
+        spectrum_price_high_freq_ratio: bounded_0_1
+        spectrum_price_low_freq_ratio: bounded_0_1
+        spectrum_price_entropy: bounded_0_1
+        spectrum_price_centroid: unitless
+        spectrum_volume_flatness: bounded_0_1
+        spectrum_volume_high_freq_ratio: bounded_0_1
+        spectrum_volume_low_freq_ratio: bounded_0_1
+        spectrum_volume_entropy: bounded_0_1
+        spectrum_volume_centroid: unitless
+        spectrum_cvd_flatness: bounded_0_1
+        spectrum_cvd_high_freq_ratio: bounded_0_1
+        spectrum_cvd_low_freq_ratio: bounded_0_1
+        spectrum_cvd_entropy: bounded_0_1
+        spectrum_cvd_centroid: unitless
   spectrum_features_sr_breakout_f:
     module: enhanced
     compute_func: extract_spectrum_features_from_series
@@ -4294,6 +4806,12 @@ features:
       close: close
     compute_params:
       rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_price_high_freq_ratio: bounded_0_1
+        spectrum_price_flatness: bounded_0_1
+        spectrum_price_low_freq_ratio: bounded_0_1
+        spectrum_price_entropy: bounded_0_1
   spectrum_features_sr_reversal_f:
     module: enhanced
     compute_func: extract_spectrum_features_from_series
@@ -4329,6 +4847,11 @@ features:
       close: close
     compute_params:
       rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_price_high_freq_ratio: bounded_0_1
+        spectrum_price_low_freq_ratio: bounded_0_1
+        spectrum_price_flatness: bounded_0_1
   spectrum_features_trend_following_f:
     module: enhanced
     compute_func: extract_spectrum_features_from_series
@@ -4346,6 +4869,11 @@ features:
       close: close
     compute_params:
       rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_price_low_freq_ratio: bounded_0_1
+        spectrum_price_flatness: bounded_0_1
+        spectrum_price_high_freq_ratio: bounded_0_1
   sma_5_f:
     module: talib
     compute_func: compute_talib_indicator_from_series
@@ -4501,6 +5029,10 @@ features:
     column_mappings:
       close: close
       sma_200: sma_200
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        sma_200_position: bounded_-1_1
   volume_ratio_f:
     module: baseline
     compute_func: compute_volume_ratio_from_series
@@ -4522,6 +5054,9 @@ features:
     pass_full_df: false
     compute_params:
       window: 20
+      normalized: true
+      output_normalization_map:
+        volume_ratio: volume_ratio
     column_mappings:
       volume: volume
   ema_5_f:
@@ -4802,6 +5337,9 @@ features:
       indicator_name: RSI
       timeperiod: 7
       output_column: rsi_7
+      normalized: true
+      output_normalization_map:
+        rsi_7: bounded_0_100
     column_mappings:
       real: close
   rsi_14_f:
@@ -4819,6 +5357,9 @@ features:
       indicator_name: RSI
       timeperiod: 14
       output_column: rsi_14
+      normalized: true
+      output_normalization_map:
+        rsi_14: bounded_0_100
     column_mappings:
       real: close
   rsi_21_f:
@@ -4836,6 +5377,9 @@ features:
       indicator_name: RSI
       timeperiod: 21
       output_column: rsi_21
+      normalized: true
+      output_normalization_map:
+        rsi_21: bounded_0_100
     column_mappings:
       real: close
   mom_5_f:
@@ -5000,6 +5544,9 @@ features:
       indicator_name: WILLR
       timeperiod: 14
       output_column: willr_14
+      normalized: true
+      output_normalization_map:
+        willr_14: unitless
     column_mappings:
       high: high
       low: low
@@ -5271,6 +5818,10 @@ features:
       output_columns:
       - stochrsi_k
       - stochrsi_d
+      normalized: true
+      output_normalization_map:
+        stochrsi_k: bounded_0_100
+        stochrsi_d: bounded_0_100
     column_mappings:
       real: close
   macdext_f:
@@ -5616,6 +6167,7 @@ features:
       - close
       - volume
       prefix: dl_seq
+      output_normalization: tanh
       normalized: true
     column_mappings:
       open: open

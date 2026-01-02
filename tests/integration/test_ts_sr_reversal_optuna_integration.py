@@ -43,13 +43,15 @@ class TestTSRReversalOptunaIntegration:
         # 创建 mock trial
         trial = MagicMock(spec=optuna.Trial)
         trial.number = 0
+        fixed = {
+            "long_entry_threshold": 0.6,
+            "long_exit_threshold": 0.3,
+            "short_entry_threshold": 0.3,
+            "short_exit_threshold": 0.7,
+        }
+        # Optuna suggest_float signature is (name, low, high, **kwargs)
         trial.suggest_float = MagicMock(
-            side_effect={
-                "long_entry_threshold": 0.6,
-                "long_exit_threshold": 0.3,
-                "short_entry_threshold": 0.3,
-                "short_exit_threshold": 0.7,
-            }.get
+            side_effect=lambda name, low, high, **kwargs: fixed[name]
         )
         trial.set_user_attr = MagicMock()
 
@@ -96,13 +98,14 @@ class TestTSRReversalOptunaIntegration:
 
         # 创建 mock trial
         trial = MagicMock(spec=optuna.Trial)
+        fixed = {
+            "long_entry_threshold": 0.65,
+            "long_exit_threshold": 0.35,
+            "short_entry_threshold": 0.35,
+            "short_exit_threshold": 0.65,
+        }
         trial.suggest_float = MagicMock(
-            side_effect={
-                "long_entry_threshold": 0.65,
-                "long_exit_threshold": 0.35,
-                "short_entry_threshold": 0.35,
-                "short_exit_threshold": 0.65,
-            }.get
+            side_effect=lambda name, low, high, **kwargs: fixed[name]
         )
 
         # 获取阈值参数
@@ -197,6 +200,9 @@ class TestTSRReversalOptunaIntegration:
 
         # 验证 user_attrs 被设置
         for trial in study.trials:
+            # Some trials may be pruned if sampled thresholds are invalid; only assert on completed ones.
+            if trial.state != optuna.trial.TrialState.COMPLETE:
+                continue
             assert "threshold_params" in trial.user_attrs
             assert "long_entry_threshold" in trial.user_attrs["threshold_params"]
             assert "short_exit_threshold" in trial.user_attrs["threshold_params"]
@@ -302,7 +308,8 @@ class TestTSRReversalOptunaIntegration:
             # 验证 CSV 内容
             loaded_df = pd.read_csv(trials_csv)
             assert len(loaded_df) == 3  # 3 trials
-            assert "long_entry_threshold" in loaded_df.columns
+            # Optuna uses 'params_' prefix for parameter columns in trials_dataframe()
+            assert "params_long_entry_threshold" in loaded_df.columns
 
     def test_no_environment_variables_used(self):
         """测试不再使用环境变量（验证旧代码已移除）"""
@@ -323,7 +330,15 @@ class TestTSRReversalOptunaIntegration:
 
         # 验证 sample_params 返回字典而不是元组
         trial = MagicMock(spec=optuna.Trial)
-        trial.suggest_float = MagicMock(return_value=0.5)
+        fixed = {
+            "long_entry_threshold": 0.6,
+            "long_exit_threshold": 0.4,
+            "short_entry_threshold": 0.4,
+            "short_exit_threshold": 0.6,
+        }
+        trial.suggest_float = MagicMock(
+            side_effect=lambda name, low, high, **kwargs: fixed[name]
+        )
 
         params = ts_sr_reversal_optuna.sample_params(trial)
 

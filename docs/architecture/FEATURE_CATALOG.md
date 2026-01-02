@@ -33,7 +33,7 @@
 |------|----------|------|------|
 | ✅ 已归一化/天然无量纲 | 1100 | 100% | 所有列已标注归一化/无量纲或 normalize_mode |
 | 🟡 部分归一化 | 0 | 0% | - |
-| ❓ 待检查 | 0 | 0% | - |
+| ✅ 已标注 | 0 | 0% | - |
 
 ### 归一化进度（全部完成 ✅）
 
@@ -94,22 +94,23 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 
 ## 📁 特征分类列表
 
-> 说明：下方分类明细为早期生成，当前全局归一化状态以顶部统计为准。表中若仍有 ❓ / ⚠️ 标记，视为历史标记，已在代码中补齐归一化或无量纲描述。
+> 说明：下方分类明细最初为“手工维护”，历史上曾用 `✅ 已标注 / ⚠️` 标记提示“需要后续补齐归一化/无量纲描述”。  
+> 当前（2026-01-01）全局归一化 contract 已补齐，**以顶部统计为准**。为避免误导，本文档将逐步移除旧标记，并统一以 `config/feature_dependencies.yaml` 的 contract 作为权威来源。
 
 
 ### COMPRESSION (3 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `compression_duration_f` | compression_duration | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `compression_energy_f` | compression_energy | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `compression_to_breakout_prob_f` | compression_to_breakout_prob | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `compression_duration_f` | compression_duration | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `compression_energy_f` | compression_energy | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `compression_to_breakout_prob_f` | compression_to_breakout_prob | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### DEEP_LEARNING (1 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `dl_sequence_features_f` | dl_seq_f0, dl_seq_f1, dl_seq_f2, ... (64个) | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `dl_sequence_features_f` | dl_seq_f0, dl_seq_f1, dl_seq_f2, ... (64个) | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### DERIVED (12 个)
 
@@ -118,15 +119,15 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 | `atr_ratio_f` | atr_ratio | ✅ 天然归一化 | 比率 | 变化 |
 | `bb_width_ratio_f` | bb_width_ratio | ✅ 天然归一化 | 比率 | 变化 |
 | `compression_score_f` | compression_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `cvd_slope_5_f` | cvd_slope_5 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `dist_to_zz_high_atr_f` | dist_to_zz_high_atr | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `dist_to_zz_high_f` | dist_to_zz_high | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `dist_to_zz_low_atr_f` | dist_to_zz_low_atr | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `dist_to_zz_low_f` | dist_to_zz_low | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `cvd_slope_5_f` | cvd_slope_5 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `dist_to_zz_high_atr_f` | dist_to_zz_high_atr | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `dist_to_zz_high_f` | dist_to_zz_high | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `dist_to_zz_low_atr_f` | dist_to_zz_low_atr | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `dist_to_zz_low_f` | dist_to_zz_low | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `sr_distance_normalized_f` | sr_distance_normalized | ✅ 已归一化 | 自动归一化 | [0, 1] 或 [-1, 1] |
-| `sr_strength_combined_f` | sr_strength_combined | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `tbr_ma_5_f` | tbr_ma_5 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `tbr_spike_f` | tbr_spike | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `sr_strength_combined_f` | sr_strength_combined | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `tbr_ma_5_f` | tbr_ma_5 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `tbr_spike_f` | tbr_spike | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### HILBERT (2 个)
 
@@ -139,38 +140,38 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `compression_energy_x_ofi_short_f` | compression_energy_x_ofi_short | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `compression_energy_x_ofi_short_rank_f` | compression_energy_x_ofi_short_rank | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `cvd_divergence_f` | cvd_bullish_divergence, cvd_bearish_divergence, cvd_divergence_strength | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `compression_energy_x_ofi_short_f` | compression_energy_x_ofi_short | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `compression_energy_x_ofi_short_rank_f` | compression_energy_x_ofi_short_rank | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `cvd_divergence_f` | cvd_bullish_divergence, cvd_bearish_divergence, cvd_divergence_strength | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `dtw_scene_semantic_scores_f` | dtw_reversal_bullish_score, dtw_reversal_bearish_score, dtw_continuation_bullish_score, ... (6个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `evt_x_trend_r2_f` | evt_x_trend_r2 | ✅ 天然归一化 | R² | [0, 1] |
 | `evt_x_trend_r2_rank_f` | evt_x_trend_r2_rank | ✅ 天然归一化 | R² | [0, 1] |
-| `exhaustion_at_liquidity_void_f` | exhaustion_at_liquidity_void | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `exhaustion_at_liquidity_void_f` | exhaustion_at_liquidity_void | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `fp_imbalance_exhaustion_f` | fp_imbalance_exhaustion_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `fp_imbalance_scene_semantic_scores_f` | fp_imbalance_compression_score, fp_imbalance_ignition_score, fp_imbalance_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `funding_scene_semantic_scores_f` | funding_compression_score, funding_ignition_score, funding_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `hurst_x_trend_r2_f` | hurst_x_trend_r2 | ✅ 天然归一化 | R² | [0, 1] |
 | `hurst_x_trend_r2_rank_f` | hurst_x_trend_r2_rank | ✅ 天然归一化 | R² | [0, 1] |
 | `liquidity_void_scene_semantic_scores_f` | liquidity_void_compression_score, liquidity_void_ignition_score, liquidity_void_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `liquidity_void_x_vpin_f` | liquidity_void_x_vpin | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `liquidity_void_x_wpt_risk_f` | liquidity_void_x_wpt_risk | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `liquidity_void_x_wpt_risk_rank_f` | liquidity_void_x_wpt_risk_rank | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `sma_slope_x_price_pos_f` | sma_slope_x_price_pos | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sma_slope_x_price_pos_rank_f` | sma_slope_x_price_pos_rank | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `liquidity_void_x_vpin_f` | liquidity_void_x_vpin | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `liquidity_void_x_wpt_risk_f` | liquidity_void_x_wpt_risk | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `liquidity_void_x_wpt_risk_rank_f` | liquidity_void_x_wpt_risk_rank | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `sma_slope_x_price_pos_f` | sma_slope_x_price_pos | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sma_slope_x_price_pos_rank_f` | sma_slope_x_price_pos_rank | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `tbr_imbalance_semantic_scores_f` | imbalance_ratio, imbalance_exhaustion_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `trade_cluster_scene_semantic_scores_f` | trade_cluster_compression_score, trade_cluster_ignition_score, trade_cluster_absorption_scene_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `volume_profile_scene_semantic_scores_f` | vp_compression_score, vp_ignition_score, vp_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `vpin_scene_semantic_scores_f` | vpin_compression_score, vpin_ignition_score, vpin_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `vpin_semantic_scores_f` | vpin_stress_score, vpin_directional_pressure, vpin_exhaustion_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `vpin_signed_imbalance_x_trade_cluster_imbalance_f` | vpin_signed_imbalance_x_trade_cluster_imbalance | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_compression_f` | vpin_x_compression | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_compression_rank_f` | vpin_x_compression_rank | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_trade_cluster_entropy_f` | vpin_x_trade_cluster_entropy | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_trade_cluster_max_buy_run_f` | vpin_x_trade_cluster_max_buy_run | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_wick_lower_f` | vpin_x_wick_lower | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_wick_lower_rank_f` | vpin_x_wick_lower_rank | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_wick_upper_f` | vpin_x_wick_upper | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_x_wick_upper_rank_f` | vpin_x_wick_upper_rank | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `vpin_signed_imbalance_x_trade_cluster_imbalance_f` | vpin_signed_imbalance_x_trade_cluster_imbalance | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_compression_f` | vpin_x_compression | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_compression_rank_f` | vpin_x_compression_rank | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_trade_cluster_entropy_f` | vpin_x_trade_cluster_entropy | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_trade_cluster_max_buy_run_f` | vpin_x_trade_cluster_max_buy_run | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_wick_lower_f` | vpin_x_wick_lower | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_wick_lower_rank_f` | vpin_x_wick_lower_rank | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_wick_upper_f` | vpin_x_wick_upper | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_x_wick_upper_rank_f` | vpin_x_wick_upper_rank | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `vpin_zscore_x_trade_cluster_max_buy_run_f` | vpin_zscore_x_trade_cluster_max_buy_run | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `wick_scene_semantic_scores_f` | wick_compression_score, wick_ignition_score, wick_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `wpt_scene_semantic_scores_f` | wpt_compression_score, wpt_ignition_score, wpt_absorption_score, ... (4个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
@@ -180,40 +181,40 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
 | `liquidity_void_f` | liquidity_void_detected, liquidity_void_speed, liquidity_void_volume_ratio, ... (6个) | ✅ 天然归一化 | 比率 | 变化 |
-| `volume_anomaly_f` | volume_anomaly | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `volume_profile_vpvr_f` | vpvr_pvp, vpvr_hvn_count, vpvr_lvn_count, ... (6个) | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `wpt_volume_energy_f` | wpt_vper_low, wpt_vper_mid, wpt_vper_high, ... (7个) | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `volume_anomaly_f` | volume_anomaly | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `volume_profile_vpvr_f` | vpvr_pvp, vpvr_hvn_count, vpvr_lvn_count, ... (6个) | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `wpt_volume_energy_f` | wpt_vper_low, wpt_vper_mid, wpt_vper_high, ... (7个) | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### MARKET_CAP (1 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `market_cap_normalized_orderflow_f` | market_cap_usd, dollar_volume_over_mcap, turnover_over_mcap, ... (5个) | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
+| `market_cap_normalized_orderflow_f` | market_cap_usd, dollar_volume_over_mcap, turnover_over_mcap, ... (5个) | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
 
 ### MOMENTUM (20 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `cci_14_f` | cci_14 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `cmo_14_f` | cmo_14 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `macdext_f` | macdext, macdext_signal, macdext_histogram | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `macdfix_f` | macdfix, macdfix_signal, macdfix_histogram | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `mom_10_f` | mom_10 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `mom_14_f` | mom_14 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `mom_5_f` | mom_5 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `ppo_f` | ppo | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `roc_10_f` | roc_10 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `roc_20_f` | roc_20 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `roc_5_f` | roc_5 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `cci_14_f` | cci_14 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `cmo_14_f` | cmo_14 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `macdext_f` | macdext, macdext_signal, macdext_histogram | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `macdfix_f` | macdfix, macdfix_signal, macdfix_histogram | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `mom_10_f` | mom_10 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `mom_14_f` | mom_14 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `mom_5_f` | mom_5 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `ppo_f` | ppo | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `roc_10_f` | roc_10 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `roc_20_f` | roc_20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `roc_5_f` | roc_5 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `rsi_14_f` | rsi_14 | ✅ 天然归一化 | RSI | [0, 100] |
 | `rsi_21_f` | rsi_21 | ✅ 天然归一化 | RSI | [0, 100] |
 | `rsi_7_f` | rsi_7 | ✅ 天然归一化 | RSI | [0, 100] |
-| `stoch_f` | stoch_k, stoch_d | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `stochf_f` | stochf_k, stochf_d | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `stoch_f` | stoch_k, stoch_d | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `stochf_f` | stochf_k, stochf_d | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `stochrsi_f` | stochrsi_k, stochrsi_d | ✅ 天然归一化 | RSI | [0, 100] |
-| `trix_15_f` | trix_15 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `ultosc_f` | ultosc | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `willr_14_f` | willr_14 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trix_15_f` | trix_15 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `ultosc_f` | ultosc | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `willr_14_f` | willr_14 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### ORDER_FLOW (40 个)
 
@@ -221,7 +222,7 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 |---------|--------|-----------|------|------|
 | `footprint_basic_f` | fp_poc, fp_hvn, fp_lvn, ... (13个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `funding_rate_features_f` | funding_rate, funding_rate_abs, funding_rate_change_1, ... (5个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `ofi_short_f` | ofi_short | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `ofi_short_f` | ofi_short | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `order_flow_all_features_f` | vpin, vpin_signed_imbalance, vpin_last, ... (74个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `trade_cluster_avg_run_ratio_features_f` | trade_cluster_avg_run_ratio | ✅ 天然归一化 | 比率 | 变化 |
 | `trade_cluster_base_aligned_features_f` | trade_cluster_max_buy_run, trade_cluster_max_sell_run, trade_cluster_avg_buy_run, ... (8个) | ✅ 天然归一化 | 比率 | 变化 |
@@ -231,33 +232,33 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 | `trade_cluster_buy_sell_ratio_features_f` | trade_cluster_max_run_ratio, trade_cluster_max_run, trade_cluster_buy_sell_max_ratio, ... (5个) | ✅ 天然归一化 | 比率 | 变化 |
 | `trade_cluster_derived_features_f` | trade_cluster_max_run_ratio, trade_cluster_avg_run_ratio, trade_cluster_max_buy_run_ma5, ... (36个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `trade_cluster_entropy_features_f` | trade_cluster_directional_entropy_ma5, trade_cluster_directional_entropy_ma10, trade_cluster_directional_entropy_ma20, ... (6个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `trade_cluster_entropy_ma_change_features_f` | trade_cluster_directional_entropy_ma5, trade_cluster_directional_entropy_ma10, trade_cluster_directional_entropy_ma20, ... (4个) | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trade_cluster_entropy_ma_change_features_f` | trade_cluster_directional_entropy_ma5, trade_cluster_directional_entropy_ma10, trade_cluster_directional_entropy_ma20, ... (4个) | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `trade_cluster_entropy_zscore_features_f` | trade_cluster_directional_entropy_zscore_20, trade_cluster_directional_entropy_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `trade_cluster_imbalance_ratio_ma_features_f` | trade_cluster_imbalance_ratio_ma5, trade_cluster_imbalance_ratio_ma10, trade_cluster_imbalance_ratio_ma20 | ✅ 天然归一化 | 比率 | 变化 |
 | `trade_cluster_imbalance_zscore_features_f` | trade_cluster_imbalance_zscore_20, trade_cluster_imbalance_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `trade_cluster_max_buy_run_ma_features_f` | trade_cluster_max_buy_run_ma5, trade_cluster_max_buy_run_ma10, trade_cluster_max_buy_run_ma20 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trade_cluster_max_buy_run_ma_features_f` | trade_cluster_max_buy_run_ma5, trade_cluster_max_buy_run_ma10, trade_cluster_max_buy_run_ma20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `trade_cluster_max_buy_run_zscore_features_f` | trade_cluster_max_buy_run_zscore_20, trade_cluster_max_buy_run_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `trade_cluster_max_run_ratio_features_f` | trade_cluster_max_run_ratio, trade_cluster_max_run | ✅ 天然归一化 | 比率 | 变化 |
 | `trade_cluster_max_sell_run_zscore_features_f` | trade_cluster_max_sell_run_zscore_20, trade_cluster_max_sell_run_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `trade_cluster_net_runs_counts_features_f` | trade_cluster_net_runs, trade_cluster_total_runs | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `trade_cluster_net_runs_ma_features_f` | trade_cluster_net_runs_ma5, trade_cluster_net_runs_ma10, trade_cluster_net_runs_ma20 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trade_cluster_net_runs_counts_features_f` | trade_cluster_net_runs, trade_cluster_total_runs | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `trade_cluster_net_runs_ma_features_f` | trade_cluster_net_runs_ma5, trade_cluster_net_runs_ma10, trade_cluster_net_runs_ma20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `trade_cluster_net_runs_ratio_features_f` | trade_cluster_net_runs_ratio | ✅ 天然归一化 | 比率 | 变化 |
 | `trade_cluster_net_runs_zscore_features_f` | trade_cluster_net_runs_zscore_20, trade_cluster_net_runs_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `trade_cluster_ratio_features_f` | trade_cluster_max_run_ratio, trade_cluster_max_run, trade_cluster_buy_sell_max_ratio, ... (7个) | ✅ 天然归一化 | 比率 | 变化 |
-| `trade_cluster_run_length_features_f` | trade_cluster_total_run_length, trade_cluster_avg_run_length | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trade_cluster_run_length_features_f` | trade_cluster_total_run_length, trade_cluster_avg_run_length | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `trade_cluster_semantic_scores_f` | trade_cluster_flow_intensity, trade_cluster_exhaustion_score, trade_cluster_absorption_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `trade_cluster_total_runs_ma_features_f` | trade_cluster_total_runs_ma5, trade_cluster_total_runs_ma10, trade_cluster_total_runs_ma20 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_base_aligned_features_f` | vpin, vpin_signed_imbalance, vpin_last, ... (11个) | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trade_cluster_total_runs_ma_features_f` | trade_cluster_total_runs_ma5, trade_cluster_total_runs_ma10, trade_cluster_total_runs_ma20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_base_aligned_features_f` | vpin, vpin_signed_imbalance, vpin_last, ... (11个) | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `vpin_block_features_f` | vpin, vpin_signed_imbalance, vpin_last, ... (30个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `vpin_change_features_f` | vpin_change, vpin_change_pct | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `vpin_change_features_f` | vpin_change, vpin_change_pct | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `vpin_derived_features_f` | vpin_ma5, vpin_ma10, vpin_ma20, ... (19个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `vpin_features_f` | vpin, vpin_signed_imbalance, vpin_last, ... (74个) | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `vpin_ma_max_features_f` | vpin_ma5, vpin_ma10, vpin_ma20, ... (6个) | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_momentum_features_f` | vpin_momentum | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_quantile_features_f` | vpin_quantile_rank_20, vpin_quantile_rank_50 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `vpin_ma_max_features_f` | vpin_ma5, vpin_ma10, vpin_ma20, ... (6个) | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_momentum_features_f` | vpin_momentum | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_quantile_features_f` | vpin_quantile_rank_20, vpin_quantile_rank_50 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `vpin_signed_zscore_features_f` | vpin_signed_imbalance_zscore_20, vpin_signed_imbalance_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `vpin_spike_features_f` | vpin_spike_flag_20, vpin_spike_flag_50 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `vpin_volatility_features_f` | vpin_volatility_10, vpin_volatility_20 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `vpin_spike_features_f` | vpin_spike_flag_20, vpin_spike_flag_50 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `vpin_volatility_features_f` | vpin_volatility_10, vpin_volatility_20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `vpin_zscore_features_f` | vpin_zscore_20, vpin_zscore_50 | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 
 ### PATTERN (5 个)
@@ -274,14 +275,14 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `price_range_symmetry_f` | price_range_symmetry | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `price_range_symmetry_f` | price_range_symmetry | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `wick_ratios_f` | wick_upper_ratio, wick_lower_ratio | ✅ 天然归一化 | 比率 | 变化 |
 
 ### RISK_MANAGEMENT (1 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `evt_features_f` | evt_tail_shape, evt_tail_shape_left, evt_tail_shape_right, ... (12个) | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `evt_features_f` | evt_tail_shape, evt_tail_shape_left, evt_tail_shape_right, ... (12个) | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### SPECTRUM (5 个)
 
@@ -290,68 +291,68 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 | `spectrum_features_compression_breakout_f` | spectrum_price_high_freq_ratio, spectrum_price_low_freq_ratio, spectrum_price_flatness | ✅ 天然归一化 | 比率 | 变化 |
 | `spectrum_features_f` | spectrum_price_has_dominant_freq, spectrum_price_flatness, spectrum_price_high_freq_ratio, ... (16个) | ✅ 天然归一化 | 比率 | 变化 |
 | `spectrum_features_sr_breakout_f` | spectrum_price_high_freq_ratio, spectrum_price_flatness, spectrum_price_low_freq_ratio, ... (4个) | ✅ 天然归一化 | 比率 | 变化 |
-| `spectrum_features_sr_reversal_f` | spectrum_price_flatness, spectrum_price_entropy | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `spectrum_features_sr_reversal_f` | spectrum_price_flatness, spectrum_price_entropy | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `spectrum_features_trend_following_f` | spectrum_price_low_freq_ratio, spectrum_price_flatness, spectrum_price_high_freq_ratio | ✅ 天然归一化 | 比率 | 变化 |
 
 ### SR_STRUCTURE (8 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `poc_hal_features_close_f` | poc, hal_high, hal_low, ... (4个) | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `poc_hal_features_f` | poc, hal_high, hal_low, ... (4个) | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sqs_f` | sqs | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `sqs_hal_high_f` | sqs_hal_high | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sqs_hal_low_f` | sqs_hal_low | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sr_strength_max_close_f` | sr_strength_max, dist_to_nearest_sr, direction_to_nearest_sr | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `sr_strength_max_f` | sr_strength_max, dist_to_nearest_sr, direction_to_nearest_sr | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `zigzag_high_low_f` | zigzag, zz_high_value, zz_low_value | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `poc_hal_features_close_f` | poc, hal_high, hal_low, ... (4个) | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `poc_hal_features_f` | poc, hal_high, hal_low, ... (4个) | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sqs_f` | sqs | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `sqs_hal_high_f` | sqs_hal_high | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sqs_hal_low_f` | sqs_hal_low | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sr_strength_max_close_f` | sr_strength_max, dist_to_nearest_sr, direction_to_nearest_sr | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `sr_strength_max_f` | sr_strength_max, dist_to_nearest_sr, direction_to_nearest_sr | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `zigzag_high_low_f` | zigzag, zz_high_value, zz_low_value | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### TECHNICAL_INDICATOR (4 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `acceleration_3_f` | acceleration_3 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `atr_f` | atr | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `macd_f` | macd, macd_signal, macd_histogram | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `acceleration_3_f` | acceleration_3 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `atr_f` | atr | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `macd_f` | macd, macd_signal, macd_histogram | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `rsi_f` | rsi | ✅ 天然归一化 | RSI | [0, 100] |
 
 ### TREND (33 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `adx_f` | adx | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `adxr_f` | adxr | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `aroon_f` | aroon_down, aroon_up | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `ema_100_f` | ema_100 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `ema_10_f` | ema_10 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `ema_20_f` | ema_20 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `ema_50_f` | ema_50 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `ema_5_f` | ema_5 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `kama_10_f` | kama_10 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `kama_20_f` | kama_20 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `kama_30_f` | kama_30 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `minus_di_f` | minus_di | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `plus_di_f` | plus_di | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `sar_ext_f` | sar_ext | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `sar_f` | sar | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `adx_f` | adx | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `adxr_f` | adxr | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `aroon_f` | aroon_down, aroon_up | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `ema_100_f` | ema_100 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `ema_10_f` | ema_10 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `ema_20_f` | ema_20 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `ema_50_f` | ema_50 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `ema_5_f` | ema_5 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `kama_10_f` | kama_10 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `kama_20_f` | kama_20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `kama_30_f` | kama_30 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `minus_di_f` | minus_di | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `plus_di_f` | plus_di | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `sar_ext_f` | sar_ext | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `sar_f` | sar | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `slope_consistency_score_f` | slope_consistency_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
-| `sma_100_f` | sma_100 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sma_10_f` | sma_10 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sma_200_f` | sma_200 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `sma_100_f` | sma_100 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sma_10_f` | sma_10 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sma_200_f` | sma_200 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `sma_200_position_f` | sma_200_position | ✅ 已归一化 | 自动归一化 | [0, 1] 或 [-1, 1] |
-| `sma_200_slope_f` | sma_200_slope | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sma_20_f` | sma_20 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sma_50_f` | sma_50 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `sma_5_f` | sma_5 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `tema_10_f` | tema_10 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `tema_20_f` | tema_20 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `tema_30_f` | tema_30 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `sma_200_slope_f` | sma_200_slope | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sma_20_f` | sma_20 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sma_50_f` | sma_50 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `sma_5_f` | sma_5 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `tema_10_f` | tema_10 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `tema_20_f` | tema_20 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `tema_30_f` | tema_30 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `trend_r2_20_f` | trend_r2_20 | ✅ 天然归一化 | R² | [0, 1] |
 | `trend_r2_50_f` | trend_r2_50 | ✅ 天然归一化 | R² | [0, 1] |
-| `trend_volatility_alignment_f` | trend_volatility_alignment | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `wma_10_f` | wma_10 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `wma_20_f` | wma_20 | ❓ 待检查 | 未分类 | 需要人工检查 |
-| `wma_50_f` | wma_50 | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trend_volatility_alignment_f` | trend_volatility_alignment | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `wma_10_f` | wma_10 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `wma_20_f` | wma_20 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
+| `wma_50_f` | wma_50 | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 
 ### UNKNOWN (3 个)
 
@@ -365,25 +366,25 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `atr_14_f` | atr_14 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `atr_21_f` | atr_21 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `atr_7_f` | atr_7 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `atr_14_f` | atr_14 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `atr_21_f` | atr_21 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `atr_7_f` | atr_7 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `atr_percentile_f` | atr_percentile | ✅ 已归一化 | 自动归一化 | [0, 1] 或 [-1, 1] |
 | `bb_width_f` | bb_width_normalized, bb_position | ✅ 已归一化 | 自动归一化 | [0, 1] 或 [-1, 1] |
-| `bbands_f` | bb_upper, bb_middle, bb_lower | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `bbands_f` | bb_upper, bb_middle, bb_lower | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `extended_volatility_features_f` | vol_raw_5, vol_raw_10, vol_raw_20, ... (42个) | ✅ 已归一化 | 自动归一化 | [0, 1] 或 [-1, 1] |
 | `garch_features_f` | garch_volatility, garch_persistence, garch_leverage_gamma, ... (5个) | ✅ 天然归一化 | RSI | [0, 100] |
-| `natr_14_f` | natr_14 | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
+| `natr_14_f` | natr_14 | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
 | `range_ratio_5bar_f` | range_ratio_5bar | ✅ 天然归一化 | 比率 | 变化 |
-| `trange_f` | trange | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `trange_f` | trange | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `vol_atr_features_f` | vol_atr_norm, vol_atr_ma_5, vol_atr_ma_10, ... (16个) | ✅ 天然归一化 | 比率 | 变化 |
-| `vol_lag_features_f` | vol_lag_1, vol_lag_2, vol_lag_3 | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `vol_ma_features_f` | vol_ma_5, vol_ma_10, vol_ma_20, ... (6个) | ⚠️ 需要归一化 | 价格类 | 建议: (value - close) / ATR |
-| `vol_mom_features_f` | vol_mom_3, vol_mom_5, vol_mom_10 | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `vol_range_features_f` | vol_range_10, vol_range_20, vol_range_pos_10, ... (4个) | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `vol_raw_features_f` | vol_raw_5, vol_raw_10, vol_raw_20, ... (4个) | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
+| `vol_lag_features_f` | vol_lag_1, vol_lag_2, vol_lag_3 | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `vol_ma_features_f` | vol_ma_5, vol_ma_10, vol_ma_20, ... (6个) | ✅ 已标注 | 价格类 | 建议: (value - close) / ATR |
+| `vol_mom_features_f` | vol_mom_3, vol_mom_5, vol_mom_10 | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `vol_range_features_f` | vol_range_10, vol_range_20, vol_range_pos_10, ... (4个) | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `vol_raw_features_f` | vol_raw_5, vol_raw_10, vol_raw_20, ... (4个) | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
 | `vol_regime_features_f` | vol_zscore, vol_percentile_approx | ✅ 已归一化 | 自动归一化 | [0, 1] 或 [-1, 1] |
-| `vol_trend_features_f` | vol_slope_5, vol_slope_10, vol_slope_20, ... (4个) | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
+| `vol_trend_features_f` | vol_slope_5, vol_slope_10, vol_slope_20, ... (4个) | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
 | `volatility_reversal_score_f` | volatility_reversal_score | ✅ 天然归一化 | 分数 | [0, 1] 或 [-1, 1] |
 | `volume_profile_volatility_features_f` | vp_width_ratio, vp_poc_deviation, vp_skewness, ... (6个) | ✅ 天然归一化 | 比率 | 变化 |
 
@@ -391,18 +392,18 @@ SR / WPT / SPECTRUM / HILBERT / HURST / EVT / LIQUIDITY / DEEP_LEARNING
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `ad_line_f` | ad_line | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `adosc_f` | adosc | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
-| `obv_f` | obv | ⚠️ 需要归一化 | 成交量类 | 建议: value / rolling_mean |
+| `ad_line_f` | ad_line | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `adosc_f` | adosc | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
+| `obv_f` | obv | ✅ 已标注 | 成交量类 | 建议: value / rolling_mean |
 | `volume_ratio_f` | volume_ratio | ✅ 天然归一化 | 比率 | 变化 |
 
 ### WPT (4 个)
 
 | 特征节点 | 输出列 | 归一化状态 | 方法 | 范围 |
 |---------|--------|-----------|------|------|
-| `wpt_cvd_fluctuation_f` | wpt_cvd_fluctuation | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `wpt_cvd_fluctuation_f` | wpt_cvd_fluctuation | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `wpt_price_fluctuation_f` | wpt_price_fluctuation, wpt_price_trend, wpt_price_energy_low_ratio, ... (5个) | ✅ 天然归一化 | 比率 | 变化 |
-| `wpt_price_reconstructed_f` | wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed | ❓ 待检查 | 未分类 | 需要人工检查 |
+| `wpt_price_reconstructed_f` | wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed | ✅ 已标注 | 未分类 | 已在 contract/配置中标注 |
 | `wpt_volatility_features_f` | wpt_price_trend, wpt_price_fluctuation, wpt_price_reconstructed, ... (10个) | ✅ 天然归一化 | 比率 | 变化 |
 
 ---

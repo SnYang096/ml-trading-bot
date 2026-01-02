@@ -581,6 +581,7 @@ def compute_sr_reversal_label(
     max_holding_bars: int = 50,
     stop_loss_r: float = 1.0,
     take_profit_r: float = 2.0,
+    rr_ratio: Optional[float] = None,
     entry_offset: int = 1,
     entry_price_col: str = "open",
     auto_generate_signals: bool = True,
@@ -597,6 +598,14 @@ def compute_sr_reversal_label(
     depend on a precomputed signal and generates labels for every bar.
     """
     work_df = df.copy()
+
+    # Backward-compat: some older callers provide rr_ratio instead of take_profit_r.
+    # rr_ratio is interpreted as TP/SL ratio in R-multiples.
+    if rr_ratio is not None:
+        try:
+            take_profit_r = float(rr_ratio) * float(stop_loss_r)
+        except Exception:
+            pass
 
     # Ensure ATR exists (required by RR simulation)
     atr_series = _ensure_atr(work_df, atr_col, price_col, high_col, low_col, atr_window)

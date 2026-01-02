@@ -65,13 +65,15 @@ class TestTSRReversalOptuna:
 
         # 创建mock trial
         trial = MagicMock(spec=optuna.Trial)
+        fixed = {
+            "long_entry_threshold": 0.6,
+            "long_exit_threshold": 0.3,
+            "short_entry_threshold": 0.3,
+            "short_exit_threshold": 0.7,
+        }
+        # Optuna suggest_float signature is (name, low, high, **kwargs)
         trial.suggest_float = MagicMock(
-            side_effect={
-                "long_entry_threshold": 0.6,
-                "long_exit_threshold": 0.3,
-                "short_entry_threshold": 0.3,
-                "short_exit_threshold": 0.7,
-            }.get
+            side_effect=lambda name, low, high, **kwargs: fixed[name]
         )
 
         params = ts_sr_reversal_optuna.sample_params(trial)

@@ -429,8 +429,15 @@ def apply_post_label_filters(
     result = df
     for filt in filters:
         if filt.get("ensure_feature_non_null"):
-            if feature_cols:
-                result = result[result[feature_cols].notna().all(axis=1)]
+            # DEPRECATED (no-op):
+            # This filter used to require *all* feature columns to be non-null, which is usually
+            # not what we want in modern ML pipelines:
+            # - LightGBM / XGBoost can handle NaNs natively
+            # - It can collapse the dataset when any feature has partial NaNs (false-negative for search)
+            #
+            # Keep as a no-op for backward compatibility with existing YAML configs.
+            # If you need strict behavior for a specific model, implement it explicitly in the model
+            # preprocessor (e.g., imputation) or add a targeted filter on required columns only.
             continue
 
         column = filt.get("column")
@@ -568,16 +575,17 @@ def drop_inf_rows(df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
     if not numeric_cols:
         return result
 
-    # 只替换 inf，保留 NaN（NaN 可能是正常的，如数据不足）
-    subset = result[numeric_cols].replace([np.inf, -np.inf], np.nan)
-    for col in numeric_cols:
-        result[col] = subset[col]
-    # 只检查 inf，不检查 NaN（因为 NaN 可能是正常的）
-    inf_mask = np.isinf(result[numeric_cols])
-    has_inf = inf_mask.any(axis=1)
+    # First, detect rows that contain any inf/-inf (before replacing).
+    # We intentionally do NOT drop NaN rows here.
+    has_inf = np.isinf(result[numeric_cols]).any(axis=1)
     finite_mask = ~has_inf
     dropped = len(result) - finite_mask.sum()
     result = result[finite_mask]
+
+    # Safety: ensure no inf remains after filtering (convert to NaN).
+    # This should normally be a no-op, but keeps downstream code robust.
+    result[numeric_cols] = result[numeric_cols].replace([np.inf, -np.inf], np.nan)
+
     if dropped > 0:
         print(f"   ⚠️  Dropped {dropped} rows due to inf/-inf in features")
     return result
@@ -1740,6 +1748,63 @@ def train_strategy(
         pass
     if len(df_train_filtered) < 50:
         print("   ⚠️  Not enough samples to train, skipping strategy.")
+        # IMPORTANT:
+        # feature-group-search expects each run to emit exactly one results.json.
+        # When a candidate collapses the train set to empty (e.g. label too sparse after filters),
+        # we treat it as an invalid candidate but still write a placeholder results.json so the
+        # search loop can continue.
+        try:
+            # Infer basic metadata without training
+            trainer_params = dict(strategy_config.model.trainer.params or {})
+            target_col = trainer_params.get(
+                "target_col", getattr(strategy_config.labels, "target_column", "target")
+            )
+            model_type = str(trainer_params.get("model_type", "unknown"))
+            task_type = str(trainer_params.get("task_type", "unknown"))
+        except Exception:
+            target_col = getattr(strategy_config.labels, "target_column", "target")
+            model_type = "unknown"
+            task_type = "unknown"
+
+        results = {
+            "strategy": strategy_config.name,
+            "model_type": model_type,
+            "task_type": task_type,
+            "avg_cv_metric": None,
+            "n_features": int(len(feature_cols)),
+            "n_train_samples": int(len(df_train_filtered)),
+            "n_test_samples": int(len(df_test_filtered)),
+            "evaluation": {},
+            "diagnostics": diagnostics_payload
+            | {
+                "skip": {
+                    "skipped": True,
+                    "reason": "insufficient_train_samples_after_filtering",
+                    "min_required": 50,
+                    "target_col": str(target_col),
+                }
+            },
+            "backtest": {
+                "total_return_pct": 0.0,
+                "sharpe": -999.0,
+                "max_drawdown_pct": 0.0,
+                "win_rate": 0.0,
+                "total_trades": 0,
+                "skipped": True,
+                "reason": "insufficient_train_samples_after_filtering",
+            },
+        }
+
+        try:
+            output_cfg = strategy_config.model.output
+            if output_cfg.get("save_results", True):
+                filename = output_cfg.get("filename", "results.json")
+                results_file = output_dir / filename
+                with open(results_file, "w", encoding="utf-8") as fh:
+                    json.dump(results, fh, indent=2, default=str)
+                print(f"   💾 Results saved to {results_file}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"   ⚠️  Failed to save placeholder results.json: {exc}")
         return
 
     trainer_func = import_callable(
@@ -1828,62 +1893,80 @@ def train_strategy(
             print("   ⚠️  Volatility model training failed or skipped")
         print("=" * 80 + "\n")
 
-    X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
-    y_test = df_test_filtered[target_col].values
+    # If test set collapses to empty after filters/feature NaN trimming, we must not hard-fail.
+    # This happens often when a candidate feature is all-NaN on the test window (e.g. missing ticks).
+    # For feature-group-search we treat this as an invalid candidate (very low score), but keep producing
+    # results.json so the search loop can continue.
+    if len(df_test_filtered) == 0:
+        print(
+            "   ⚠️  Test set is empty after filtering; skipping prediction/eval/backtest."
+        )
+        preds = np.asarray([], dtype=float)
+        diagnostics_payload["predictions"] = {
+            "task_type": str(task_type),
+            "skipped": True,
+            "reason": "empty_test_after_filtering",
+        }
+        evaluation_results = {}
+    else:
+        X_test = preprocessor.transform(df_test_filtered, feature_cols=used_features)
+        y_test = df_test_filtered[target_col].values
 
-    print(f"   ▶️ Generating predictions on test set ({len(df_test_filtered)} samples)")
-    preds = generate_predictions(
-        models=models,
-        model_type=model_type,
-        task_type=task_type,
-        X=X_test,
-    )
+        print(
+            f"   ▶️ Generating predictions on test set ({len(df_test_filtered)} samples)"
+        )
+        preds = generate_predictions(
+            models=models,
+            model_type=model_type,
+            task_type=task_type,
+            X=X_test,
+        )
 
-    # Prediction diagnostics (saved in results.json)
-    pred_diag: dict = {"task_type": str(task_type)}
-    try:
-        if (
-            str(task_type).lower() == "multiclass"
-            and isinstance(preds, np.ndarray)
-            and preds.ndim == 2
-        ):
-            cls = np.argmax(preds, axis=1)
-            pred_diag["shape"] = [int(x) for x in preds.shape]
-            pred_diag["class_counts"] = {
-                str(k): int(v)
-                for k, v in pd.Series(cls).value_counts().to_dict().items()
-            }
-        else:
-            arr = np.asarray(preds).astype(float)
-            pred_diag["shape"] = list(arr.shape)
-            flat = arr.reshape(-1)
-            flat = flat[np.isfinite(flat)]
-            if flat.size:
-                s = pd.Series(flat)
-                pred_diag["summary"] = {
-                    "min": float(s.min()),
-                    "max": float(s.max()),
-                    "mean": float(s.mean()),
-                    "std": float(s.std()),
-                    "q25": float(s.quantile(0.25)),
-                    "q50": float(s.quantile(0.50)),
-                    "q75": float(s.quantile(0.75)),
-                    "q90": float(s.quantile(0.90)),
-                    "q95": float(s.quantile(0.95)),
-                    "q99": float(s.quantile(0.99)),
+        # Prediction diagnostics (saved in results.json)
+        pred_diag: dict = {"task_type": str(task_type)}
+        try:
+            if (
+                str(task_type).lower() == "multiclass"
+                and isinstance(preds, np.ndarray)
+                and preds.ndim == 2
+            ):
+                cls = np.argmax(preds, axis=1)
+                pred_diag["shape"] = [int(x) for x in preds.shape]
+                pred_diag["class_counts"] = {
+                    str(k): int(v)
+                    for k, v in pd.Series(cls).value_counts().to_dict().items()
                 }
-    except Exception:
-        pred_diag["error"] = "pred_diag_failed"
-    diagnostics_payload["predictions"] = pred_diag
+            else:
+                arr = np.asarray(preds).astype(float)
+                pred_diag["shape"] = list(arr.shape)
+                flat = arr.reshape(-1)
+                flat = flat[np.isfinite(flat)]
+                if flat.size:
+                    s = pd.Series(flat)
+                    pred_diag["summary"] = {
+                        "min": float(s.min()),
+                        "max": float(s.max()),
+                        "mean": float(s.mean()),
+                        "std": float(s.std()),
+                        "q25": float(s.quantile(0.25)),
+                        "q50": float(s.quantile(0.50)),
+                        "q75": float(s.quantile(0.75)),
+                        "q90": float(s.quantile(0.90)),
+                        "q95": float(s.quantile(0.95)),
+                        "q99": float(s.quantile(0.99)),
+                    }
+        except Exception:
+            pred_diag["error"] = "pred_diag_failed"
+        diagnostics_payload["predictions"] = pred_diag
 
-    evaluation_results = evaluate_predictions(
-        preds,
-        y_test,
-        strategy_config.evaluation,
-    )
+        evaluation_results = evaluate_predictions(
+            preds,
+            y_test,
+            strategy_config.evaluation,
+        )
 
-    for metric_name, score in evaluation_results.items():
-        print(f"   ✅ {metric_name}: {score:.4f}")
+        for metric_name, score in evaluation_results.items():
+            print(f"   ✅ {metric_name}: {score:.4f}")
 
     # Optionally persist minimal artifacts so we can replay backtests quickly
     # without retraining/recomputing features (useful for parameter sweeps like sr_fuse/breakeven).
@@ -2005,7 +2088,18 @@ def train_strategy(
         results["volatility_model"] = {"trained": False}
 
     print(f"\n   ▶️ Running backtest on test set")
-    if not is_multi_symbol or "_symbol" not in df_test_filtered.columns:
+    if len(df_test_filtered) == 0:
+        # Hard guard: produce a deterministic "invalid candidate" backtest payload.
+        # This keeps feature-group-search running without crashing.
+        results["backtest"] = {
+            "total_return_pct": 0.0,
+            "sharpe": -999.0,
+            "max_drawdown_pct": 0.0,
+            "total_trades": 0,
+            "note": "empty_test_after_filtering",
+        }
+        print("   ⚠️  Backtest skipped (empty test). Using placeholder sharpe=-999.")
+    elif not is_multi_symbol or "_symbol" not in df_test_filtered.columns:
         backtest_results = run_backtest_with_strategy(
             df_test_filtered,
             preds,

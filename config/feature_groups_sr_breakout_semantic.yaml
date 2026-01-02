@@ -3,6 +3,19 @@
 # Base strategy already contains a rich breakout feature set (WPT/Hilbert/Spectrum/DTW + ticks blocks).
 # We test incremental "scene semantic" blocks that may improve robustness and reduce raw-signal ambiguity.
 groups:
+  kline_core:
+    - macd_f
+    - rsi_f
+    - trend_r2_20_f
+    - bb_width_f
+    - wick_ratios_f
+    - volume_ratio_f
+
+  sr_structure_min:
+    - sr_strength_max_close_f
+    - sqs_hal_high_f
+    - sqs_hal_low_f
+
   vpin_scene:
     - vpin_scene_semantic_scores_f
 

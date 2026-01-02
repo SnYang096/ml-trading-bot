@@ -602,6 +602,101 @@ def compute_footprint_features(
     out = df.copy()
     for col in fp_df.columns:
         out[col] = fp_df[col]
+
+    # ---------------------------------------------------------------------
+    # Normalize footprint outputs to be cross-asset comparable (unitless).
+    #
+    # Why:
+    # - Several footprint outputs are in *price units* (POC/HVN/LVN/VAH/VAL/...).
+    #   Raw price levels are not comparable across assets and are problematic for NN.
+    #   We convert them to "distance in ATR units": (level - close) / ATR.
+    # - Some outputs are heavy-tailed (delta/imbalance). We apply log1p and
+    #   rolling robust scaling (median/IQR) to reduce outlier dominance.
+    # - Skewness-like metrics are bounded via tanh for stability.
+    # ---------------------------------------------------------------------
+    eps = 1e-8
+    close_s = pd.to_numeric(out.get("close"), errors="coerce").astype(float)
+    high_s = pd.to_numeric(out.get("high"), errors="coerce").astype(float)
+    low_s = pd.to_numeric(out.get("low"), errors="coerce").astype(float)
+
+    # ATR (causal). Prefer existing `atr` if present; otherwise compute quickly.
+    atr_s = out.get("atr")
+    if atr_s is None:
+        # Simple ATR proxy: rolling mean of true range (period=14), causal.
+        prev_close = close_s.shift(1)
+        tr = pd.concat(
+            [
+                (high_s - low_s).abs(),
+                (high_s - prev_close).abs(),
+                (low_s - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        atr_s = tr.rolling(window=14, min_periods=1).mean()
+    atr_s = pd.to_numeric(atr_s, errors="coerce").astype(float).clip(lower=eps)
+
+    def _atr_distance(level: pd.Series) -> pd.Series:
+        lv = pd.to_numeric(level, errors="coerce").astype(float)
+        return ((lv - close_s) / atr_s).replace([np.inf, -np.inf], np.nan)
+
+    def _signed_log1p(x: pd.Series) -> pd.Series:
+        v = pd.to_numeric(x, errors="coerce").astype(float)
+        return (np.sign(v) * np.log1p(np.abs(v))).replace([np.inf, -np.inf], np.nan)
+
+    def _robust_rolling_z(x: pd.Series, window: int = 50, min_periods: int = 10) -> pd.Series:
+        v = pd.to_numeric(x, errors="coerce").astype(float)
+        med = v.rolling(window=window, min_periods=min_periods).median()
+        q25 = v.rolling(window=window, min_periods=min_periods).quantile(0.25)
+        q75 = v.rolling(window=window, min_periods=min_periods).quantile(0.75)
+        iqr = (q75 - q25).replace(0, np.nan)
+        z = (v - med) / (iqr + eps)
+        return z.replace([np.inf, -np.inf], np.nan)
+
+    # Price-level footprint columns → ATR distance (unitless)
+    price_cols = [
+        "fp_poc",
+        "fp_hvn",
+        "fp_lvn",
+        "fp_vah",
+        "fp_val",
+        "fp_max_imbalance_price",
+        "fp_exhaustion_price",
+    ]
+    for c in price_cols:
+        if c in out.columns:
+            out[c] = _atr_distance(out[c])
+
+    # Heavy-tailed / scale-dependent columns → log1p + robust rolling scaling
+    if "fp_delta_poc" in out.columns:
+        out["fp_delta_poc"] = _robust_rolling_z(_signed_log1p(out["fp_delta_poc"]))
+
+    if "fp_max_imbalance_ratio" in out.columns:
+        r = pd.to_numeric(out["fp_max_imbalance_ratio"], errors="coerce").astype(float)
+        # ratio >= 1; compress to long-tail friendly domain
+        r_log = np.log1p((r - 1.0).clip(lower=0.0))
+        out["fp_max_imbalance_ratio"] = _robust_rolling_z(r_log)
+
+    # Skewness metrics → tanh bound [-1,1]
+    for c in ["fp_volume_skew", "fp_delta_skew"]:
+        if c in out.columns:
+            out[c] = np.tanh(pd.to_numeric(out[c], errors="coerce").astype(float))
+
+    # Exhaustion z-score is already a per-bar z-score across bins; just clip to avoid rare extremes.
+    if "fp_exhaustion_zscore" in out.columns:
+        out["fp_exhaustion_zscore"] = (
+            pd.to_numeric(out["fp_exhaustion_zscore"], errors="coerce")
+            .astype(float)
+            .clip(-8.0, 8.0)
+        )
+
+    # Delta divergence is binary-ish → float in [0,1]
+    if "fp_delta_divergence" in out.columns:
+        out["fp_delta_divergence"] = (
+            pd.to_numeric(out["fp_delta_divergence"], errors="coerce")
+            .fillna(0.0)
+            .astype(float)
+            .clip(0.0, 1.0)
+        )
     # 移除临时创建的 open_time/close_time 列（如果它们原本不存在）
     if open_col not in df.columns or close_col not in df.columns:
         if open_col in out.columns and open_col not in df.columns:

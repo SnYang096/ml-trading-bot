@@ -1,0 +1,46 @@
+name: normalization-contract
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyyaml
+
+      - name: Run normalization contract gate + generate reports
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python scripts/check_normalization_contract_ci.py \
+            --feature-deps config/feature_dependencies.yaml \
+            --include-deps \
+            --strategy-features-yaml config/strategies/sr_reversal_rr_reg_long/features.yaml \
+            --strategy-features-yaml config/strategies/sr_breakout/features.yaml \
+            --strategy-features-yaml config/strategies/compression_breakout/features.yaml \
+            --strategy-features-yaml config/strategies/trend_following/features.yaml \
+            --out-dir ci_artifacts/normalization_contract
+
+      - name: Upload reports artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: normalization-contract-reports
+          path: ci_artifacts/normalization_contract
+
+

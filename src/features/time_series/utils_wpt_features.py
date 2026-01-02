@@ -415,6 +415,148 @@ def extract_wpt_features(
     return df
 
 
+@register_feature("extract_wpt_price_features_normalized", category="wpt")
+def extract_wpt_price_features_normalized(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    wavelet: str = "db4",
+    level: int = 4,
+    window: int = 100,
+    update_step: int = 1,
+) -> pd.DataFrame:
+    """
+    Normalized WPT price features for cross-asset training.
+
+    - Keeps the same output column names as `extract_wpt_features`
+      but converts price-unit series to unitless ratios vs close:
+        - wpt_price_trend := (trend / close) - 1
+        - wpt_price_fluctuation := fluctuation / close
+    - Energy ratios are clipped to [0, 1].
+    """
+    out = extract_wpt_features(
+        df,
+        price_col=price_col,
+        volume_col="__unused__",  # unused because df likely doesn't have it; extract_wpt_features guards
+        cvd_col=None,
+        tbr_col=None,
+        wavelet=wavelet,
+        level=level,
+        window=window,
+        return_reconstructed_price=False,
+        update_step=update_step,
+    )
+
+    if price_col not in df.columns:
+        return out
+    close = pd.to_numeric(df[price_col], errors="coerce").astype(float)
+    close_safe = close.replace(0.0, np.nan)
+
+    if "wpt_price_trend" in out.columns:
+        out["wpt_price_trend"] = (
+            pd.to_numeric(out["wpt_price_trend"], errors="coerce").astype(float) / close_safe
+        ) - 1.0
+    if "wpt_price_fluctuation" in out.columns:
+        out["wpt_price_fluctuation"] = (
+            pd.to_numeric(out["wpt_price_fluctuation"], errors="coerce").astype(float) / close_safe
+        )
+
+    for c in [
+        "wpt_price_energy_low_ratio",
+        "wpt_price_energy_mid_ratio",
+        "wpt_price_energy_high_ratio",
+    ]:
+        if c in out.columns:
+            out[c] = (
+                pd.to_numeric(out[c], errors="coerce")
+                .astype(float)
+                .replace([np.inf, -np.inf], np.nan)
+                .clip(0.0, 1.0)
+            )
+
+    return out
+
+
+@register_feature("extract_wpt_volatility_features_normalized", category="wpt")
+def extract_wpt_volatility_features_normalized(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str = "volume",
+    cvd_col: Optional[str] = None,
+    wavelet: str = "db4",
+    level: int = 4,
+    window: int = 100,
+    update_step: int = 1,
+) -> pd.DataFrame:
+    """
+    Normalized full WPT volatility feature block (cross-asset comparable).
+
+    Converts price-unit WPT series to unitless:
+      - wpt_price_trend := (trend/close)-1
+      - wpt_price_fluctuation := fluct/close
+      - wpt_price_reconstructed := (reconstructed/close)-1
+
+    Keeps energy ratios bounded in [0,1].
+    For ratio-like long-tail metrics:
+      - wpt_price_energy_mid_low_ratio: robust log scaling (median/IQR)
+      - wpt_vper: robust log scaling (median/IQR)
+    """
+    out = extract_wpt_features(
+        df,
+        price_col=price_col,
+        volume_col=volume_col,
+        cvd_col=cvd_col,
+        wavelet=wavelet,
+        level=level,
+        window=window,
+        return_reconstructed_price=False,
+        update_step=update_step,
+    )
+
+    if price_col in df.columns:
+        close = pd.to_numeric(df[price_col], errors="coerce").astype(float)
+        close_safe = close.replace(0.0, np.nan)
+
+        if "wpt_price_trend" in out.columns:
+            out["wpt_price_trend"] = (pd.to_numeric(out["wpt_price_trend"], errors="coerce").astype(float) / close_safe) - 1.0
+        if "wpt_price_fluctuation" in out.columns:
+            out["wpt_price_fluctuation"] = pd.to_numeric(out["wpt_price_fluctuation"], errors="coerce").astype(float) / close_safe
+        if "wpt_price_reconstructed" in out.columns:
+            out["wpt_price_reconstructed"] = (pd.to_numeric(out["wpt_price_reconstructed"], errors="coerce").astype(float) / close_safe) - 1.0
+
+    # Energy ratios are bounded by construction; clip defensively
+    for c in [
+        "wpt_price_energy_low_ratio",
+        "wpt_price_energy_mid_ratio",
+        "wpt_price_energy_high_ratio",
+        "wpt_volume_energy_low_ratio",
+        "wpt_cvd_energy_low_ratio",
+    ]:
+        if c in out.columns:
+            out[c] = (
+                pd.to_numeric(out[c], errors="coerce")
+                .astype(float)
+                .replace([np.inf, -np.inf], np.nan)
+                .clip(0.0, 1.0)
+            )
+
+    def _log_robust_rolling(s: pd.Series, window: int = 50, min_periods: int = 10) -> pd.Series:
+        s = pd.to_numeric(s, errors="coerce").astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        s = np.log1p(np.abs(s))
+        med = s.rolling(window=window, min_periods=min_periods).median()
+        q25 = s.rolling(window=window, min_periods=min_periods).quantile(0.25)
+        q75 = s.rolling(window=window, min_periods=min_periods).quantile(0.75)
+        iqr = (q75 - q25).replace(0, np.nan)
+        z = (s - med) / (iqr + 1e-8)
+        return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    if "wpt_price_energy_mid_low_ratio" in out.columns:
+        out["wpt_price_energy_mid_low_ratio"] = _log_robust_rolling(out["wpt_price_energy_mid_low_ratio"])
+    if "wpt_vper" in out.columns:
+        out["wpt_vper"] = _log_robust_rolling(out["wpt_vper"])
+
+    return out
+
+
 def wpt_reconstruct_subband(
     wp: pywt.WaveletPacket,
     subband_path: str,

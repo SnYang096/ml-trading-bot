@@ -61,32 +61,38 @@ def analyze_dependency_levels(
                 all_needed.add(dep)
                 queue.append(dep)
 
-    # 2. 计算层级
+    # 2. 计算层级（使用 memo + recursion stack，避免把“已处理集合”误当成循环检测）
     levels: Dict[int, List[str]] = {}
-    resolved = set()
+    memo: Dict[str, int] = {}
+    visiting: set[str] = set()
 
     def get_level(feat_name: str) -> int:
-        if feat_name in resolved:
-            return -1  # 已解析，避免循环依赖
+        if feat_name in memo:
+            return memo[feat_name]
+        if feat_name in visiting:
+            raise ValueError(f"Circular dependency detected at: {feat_name}")
+        visiting.add(feat_name)
         if feat_name not in features:
-            return 0
-        deps = features[feat_name].get("dependencies", [])
-        if not deps:
-            return 0
-        return max([get_level(dep) for dep in deps], default=0) + 1
+            lvl = 0
+        else:
+            deps = features[feat_name].get("dependencies", []) or []
+            if not deps:
+                lvl = 0
+            else:
+                lvl = max(get_level(dep) for dep in deps) + 1
+        visiting.remove(feat_name)
+        memo[feat_name] = lvl
+        return lvl
 
     for feat_name in all_needed:
         level = get_level(feat_name)
-        if level not in levels:
-            levels[level] = []
-        levels[level].append(feat_name)
-        resolved.add(feat_name)
+        levels.setdefault(level, []).append(feat_name)
 
     return levels
 
 
 def _build_call_args(
-    feature_info: Dict, df: pd.DataFrame, feature_name: str
+    feature_info: Dict, df: pd.DataFrame, feature_name: str = "unknown"
 ) -> Tuple[tuple, dict]:
     """
     构建特征计算函数的调用参数
@@ -142,8 +148,18 @@ def _build_call_args(
                 )
 
     # 构建关键字参数（来自 compute_params）
-    # 排除非函数参数的配置项（如 ticks_dir, lookback_minutes，这些只用于自动生成 ticks_loader_json）
-    excluded_params = {"ticks_dir", "lookback_minutes"}
+    # 排除非函数参数的配置项：
+    # - ticks_dir/lookback_minutes: only used to auto-generate ticks_loader_json
+    # - normalized/output_normalization/output_normalization_map: repo normalization contract metadata
+    # - node_cache_version: caching metadata (not compute function argument)
+    excluded_params = {
+        "ticks_dir",
+        "lookback_minutes",
+        "normalized",
+        "output_normalization",
+        "output_normalization_map",
+        "node_cache_version",
+    }
     kwargs: Dict[str, Any] = {}
     for param_name, param_value in compute_params.items():
         if param_name in excluded_params:
@@ -242,7 +258,17 @@ def _build_call_args(
                 f"{type(source)}"
             )
 
-    return (tuple(args), kwargs)
+    # Auto-wire required_columns into kwargs when there are no explicit column_mappings
+    # and the node is not passing the full df. This is primarily used by selector
+    # nodes like `select_columns_from_series` which accept **series_kwargs.
+    if not column_mappings and not feature_info.get("pass_full_df", False):
+        required_columns = feature_info.get("required_columns", []) or []
+        for col in required_columns:
+            if col in df.columns and col not in kwargs:
+                kwargs[col] = df[col]
+
+    # Keep args as a list for easier inspection in tests; callers can still use *args.
+    return (args, kwargs)
 
 
 def _get_monthly_cache_key(
@@ -313,8 +339,16 @@ def _load_monthly_cache(cache_dir: Path, cache_key: str) -> Optional[pd.DataFram
     """加载月度缓存"""
     cache_file = cache_dir / f"{cache_key}.pkl"
     if cache_file.exists():
-        with open(cache_file, "rb") as f:
-            return pickle.load(f)
+        try:
+            with open(cache_file, "rb") as f:
+                return pickle.load(f)
+        except (EOFError, pickle.UnpicklingError):
+            # Corrupted cache (often caused by an interrupted write). Treat as cache-miss.
+            try:
+                cache_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None
     return None
 
 
@@ -549,7 +583,7 @@ class FeatureComputer:
         cached_result: pd.DataFrame | pd.Series,
         feature_name: str,
         cache_type: str = "unknown",
-    ) -> None:
+    ) -> dict:
         """
         验证缓存数据质量
 
@@ -558,20 +592,63 @@ class FeatureComputer:
             feature_name: 特征名称
             cache_type: 缓存类型（memory/disk/monthly）
         """
-        if isinstance(cached_result, (pd.Series, pd.DataFrame)):
-            if cached_result.empty:
-                print(
-                    f"     ⚠️  {cache_type} cache for {feature_name} is empty, recomputing."
-                )
-            elif isinstance(cached_result, pd.DataFrame):
-                nan_ratio = cached_result.isna().sum().sum() / (
-                    len(cached_result) * len(cached_result.columns)
-                )
-                if nan_ratio > 0.5:
-                    print(
-                        f"     ⚠️  {cache_type} cache for {feature_name} has high NaN ratio "
-                        f"({nan_ratio:.1%}), but using it anyway."
-                    )
+        import numpy as np
+        import pandas as pd
+
+        warnings: list[str] = []
+
+        # Default payload (safe / deterministic).
+        result: dict = {
+            "feature_name": feature_name,
+            "cache_type": cache_type,
+            "total_values": 0,
+            "nan_pct": 0.0,
+            "inf_pct": 0.0,
+            "has_issues": False,
+            "warnings": warnings,
+        }
+
+        if not isinstance(cached_result, (pd.Series, pd.DataFrame)):
+            warnings.append("non_pandas_input")
+            return result
+
+        if cached_result.empty:
+            warnings.append("empty")
+            result["has_issues"] = True
+            return result
+
+        # Only validate numeric values. Non-numeric cols are ignored (intended).
+        if isinstance(cached_result, pd.Series):
+            if not pd.api.types.is_numeric_dtype(cached_result):
+                return result
+            values = pd.to_numeric(cached_result, errors="coerce").to_numpy()
+        else:
+            numeric_df = cached_result.select_dtypes(include=[np.number])
+            if numeric_df.shape[1] == 0:
+                return result
+            values = numeric_df.to_numpy()
+
+        total = int(values.size)
+        result["total_values"] = total
+        if total == 0:
+            return result
+
+        nan_count = int(np.isnan(values).sum())
+        inf_count = int(np.isinf(values).sum())
+        result["nan_pct"] = float(nan_count) / float(total) * 100.0
+        result["inf_pct"] = float(inf_count) / float(total) * 100.0
+
+        # Thresholds (kept consistent with integration test expectations)
+        nan_threshold_pct = 50.0
+        inf_threshold_pct = 10.0
+        if result["nan_pct"] > nan_threshold_pct:
+            result["has_issues"] = True
+            warnings.append(f"high_nan_pct>{nan_threshold_pct}")
+        if result["inf_pct"] > inf_threshold_pct:
+            result["has_issues"] = True
+            warnings.append(f"high_inf_pct>{inf_threshold_pct}")
+
+        return result
 
     def _compute_and_cache_monthly(
         self,
@@ -594,10 +671,50 @@ class FeatureComputer:
         Returns:
             result: 特征计算结果
         """
-        if not self.use_monthly_cache or self.monthly_cache_dir is None:
+        if (
+            not self.use_monthly_cache
+            or self.monthly_cache_dir is None
+            or not isinstance(df.index, (pd.DatetimeIndex, pd.TimedeltaIndex, pd.PeriodIndex))
+        ):
             # 如果不使用月度缓存，直接计算
             call_args, call_kwargs = _build_call_args(feature_info, df, feature_name)
+            # Filter kwargs by signature unless compute_func accepts **kwargs
+            try:
+                import inspect
+
+                sig = inspect.signature(compute_func)
+                params = sig.parameters
+                accepts_var_kw = any(
+                    p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                )
+                if not accepts_var_kw and call_kwargs:
+                    allowed = set(params.keys())
+                    call_kwargs = {k: v for k, v in call_kwargs.items() if k in allowed}
+            except Exception:
+                pass
+
             result = compute_func(*call_args, **call_kwargs)
+
+            # Even without monthly cache, ensure we only materialize output_columns.
+            output_cols = feature_info.get("output_columns", [feature_name])
+            if not output_cols:
+                output_cols = [feature_name]
+
+            if isinstance(result, tuple):
+                # Convert tuple of Series to DataFrame using output_columns (best-effort)
+                if len(result) == len(output_cols):
+                    result = pd.DataFrame(
+                        {col: series for col, series in zip(output_cols, result)}
+                    )
+
+            if isinstance(result, pd.DataFrame):
+                if result.columns.duplicated().any():
+                    result = result.loc[:, ~result.columns.duplicated()]
+                # Trim wide results strictly to requested output columns (when present)
+                existing = [c for c in output_cols if c in result.columns]
+                if existing:
+                    result = result[existing]
+
             return result
 
         # Stable dataset id for cache keys.
@@ -679,6 +796,24 @@ class FeatureComputer:
                 call_args, call_kwargs = _build_call_args(
                     feature_info, df_month, feature_name
                 )
+                # Some configs may include non-compute metadata keys inside compute_params.
+                # To avoid runtime failures, filter kwargs by the compute_func signature
+                # unless it explicitly accepts **kwargs.
+                try:
+                    import inspect
+
+                    sig = inspect.signature(compute_func)
+                    params = sig.parameters
+                    accepts_var_kw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                    )
+                    if not accepts_var_kw and call_kwargs:
+                        allowed = set(params.keys())
+                        call_kwargs = {k: v for k, v in call_kwargs.items() if k in allowed}
+                except Exception:
+                    # Defensive: if signature introspection fails, run as-is.
+                    pass
+
                 month_result = compute_func(*call_args, **call_kwargs)
                 
                 # Debug: check return type for macd_f
@@ -1158,6 +1293,22 @@ class FeatureComputer:
                     call_args, call_kwargs = _build_call_args(
                         feature_info, result_df, feature_name
                     )
+                    # Filter kwargs by signature unless compute_func accepts **kwargs
+                    try:
+                        import inspect
+
+                        sig = inspect.signature(compute_func)
+                        params = sig.parameters
+                        accepts_var_kw = any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+                        )
+                        if not accepts_var_kw and call_kwargs:
+                            allowed = set(params.keys())
+                            call_kwargs = {
+                                k: v for k, v in call_kwargs.items() if k in allowed
+                            }
+                    except Exception:
+                        pass
                     computed_result = compute_func(*call_args, **call_kwargs)
 
                     # Handle tuple return values (e.g., compute_macd returns Tuple[Series, Series, Series])

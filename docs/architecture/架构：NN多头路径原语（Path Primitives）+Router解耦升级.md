@@ -442,6 +442,81 @@ Portfolio Construction
 
 > **NN path primitives 给“结构与机会”，树模型给“策略化 alpha”，CS 做“多标的择优”，PCM 做“风险可控的仓位路径”，Execution 做“可解释的成交与退出”，最后用 Shadow/Counterfactual/FSM/Exec-Control 保证上线安全。**
 
+##### 2.2.5.0 三种方式的优缺点对比（规则 / 树模型策略 / NN 原语+Router+Execution）与长期推荐
+
+你现在手里其实是 **三类“能产生交易行为”的系统**，它们的定位不同，应该明确“谁是主链路、谁是基线、谁是对照”：
+
+**(1) 纯规则（手写 if/else）**
+
+- 典型形态：`if cond: open/close/size else: no_trade`（比如基于 ATR、均线、SR 距离、阈值、硬过滤）
+- **优点**：
+  - **最可控/最可解释**：每一条行为都有明确原因，适合实盘风控审计
+  - **最稳定的回退基线**：系统再复杂，也必须保留一条“永远能跑”的规则链路
+  - **最小数据依赖**：少量特征、少量样本也能工作
+- **缺点**：
+  - **上限低**：难以捕捉非线性组合与跨特征交互
+  - **规则爆炸风险**：策略/市场 profile 增加后 if/else 很容易膨胀
+  - **对 regime 切换不自适应**：需要人工维护阈值与条件
+- **适合的长期角色**：**永远可用的 baseline / fallback / 安全闸门**（而不是追求 alpha 的主链路）
+
+**(2) 树模型策略（你现在的“四类策略”）**
+
+你当前的四类策略可以理解为四个“策略族”的树模型主线（每个策略通常一套模型 + 一套特征选择 + 一套回测/执行口径）：
+
+- **SR Reversal（均值回归）**
+- **SR Breakout（突破）**
+- **Compression Breakout（压缩→扩散）**
+- **Trend Following（趋势）**
+
+**优点**：
+- **策略语义强**：每个模型学的是“这个策略在什么结构下更有效”，调试与归因更直接
+- **特征选择能力强**：尤其适合你现在做的 `feature-group-search`/Pool B/semantic groups 工作流
+- **训练/推理成本低、工程成熟**：GBDT/LightGBM 在生产里非常成熟，部署简单
+
+**缺点**：
+- **模型数量乘法增长**：`market_profile × strategy_family × long/short × 参数口径` 容易膨胀
+- **不天然解决 Router 问题**：单个策略模型“只会在自己擅长的地方开仓”，但系统级依然需要回答：
+  - “现在要不要交易？”（NO_TRADE）
+  - “要用均值回归还是趋势？”（MEAN vs TREND）
+  - “风险/执行模式怎么切？”（Execution/Risk 模板）
+- **跨策略复用差**：四个策略往往四套特征与训练口径，很难共享底座
+
+**适合的长期角色**：
+- **阶段 0/1**：当 NN 原语链路还没稳定时，树模型可以作为**主链路**先上线（更快更稳）
+- **阶段 2+**：更推荐作为 **alpha/特征有效性验证工具**、或作为 NN/RL 的 **强对照基线**
+
+**(3) NN 多头市场原语 + Router + Execution（你现在的“方向类系统主线”）**
+
+这条链路的关键是：**底座学“市场原语”，策略只在 Router 层表达**，执行只在 Execution 层负责一致性。
+
+- **优点**：
+  - **复用性最强**：一个 shared trunk + 多头原语输出，可被多个策略族复用
+  - **把“是否交易/风险形态切换”提炼成 Router**：`mode ∈ {NO, MEAN, TREND}` 能承载大量策略族的共同结构
+  - **Execution 不做 alpha**：通过模板化执行 + 参数化（按 `market_profile`）避免规则爆炸
+  - **可进化到 BC/RL**：用 Shadow/Counterfactual/FSM 把上线变成“可证明更好才接管”
+- **缺点**：
+  - **前期工程更重**：要把 Feature Contract / missingness / 训练-推理一致性 / 执行口径对齐一次性打穿
+  - **冷启动更难**：原语预测不稳定时，Router 可能退化为全 NO_TRADE 或单边（你已经遇到过）
+  - **监控要求更高**：需要 Head health、Router drift、执行一致性三层监控
+
+**适合的长期角色**：**最推荐的长期主链路（生产主线）**  
+规则与树模型都应该保留，但更多作为 **fallback + 对照 + 审计工具**，而不是把生产复杂度绑死在“每策略一套模型”的乘法结构上。
+
+---
+
+###### 长期上线推荐（一句话）
+
+> **长期主链路：NN 原语 + Router + Execution**  
+> **永远保留：规则 if/else 作为 fallback/baseline**  
+> **强对照/可快速上线：树模型四策略作为主线备选与验证工具**
+
+###### 什么时候“短期先用树模型上线”更合理？
+
+- NN 原语链路尚未满足：训练-推理一致性、稳定的 action 分布、OOS 指标与回撤约束
+- 你急需先上线一条能跑、能审计、能回退的链路
+
+此时建议：**树模型四策略做主链路 + 规则做 fallback**，同时继续把 NN 原语链路打磨到可接管（Shadow → FSM gate）。
+
 ##### 2.2.5.1 分阶段落地建议（避免“系统太多套而拖死”）
 
 你担心“多套系统会不会太麻烦”，结论是：**第一阶段就应该只上线一套主链路**，其它都当作对比与审计工具。
@@ -840,6 +915,24 @@ MLP（静态 path primitives）
 MLP + short Mamba（8–16 bars，只影响 1–2 个 head）
   ↓
 必要时再扩展
+
+#### 9.1 `dl_sequence_features_f`（把 Mamba embedding 当“特征”）的使用建议
+
+**结论（非常工程化）**：
+- **树模型（GBDT/LightGBM）**：一般**不需要**把 `dl_sequence_features_f` 当特征。只有当它在 `factor-eval`/`feature-group-search` 中被证明能**稳定提升**（多 seed、多个时间段）时，才进入 Pool B 候选池。
+- **NN 多头 MLP（Path Primitives）**：默认**不需要**。Path Primitives 的重点是“结构原语 + Feature Contract + missingness 鲁棒性”，而不是在 feature 里嵌套序列模型。
+
+**为什么**：
+- 把 `dl_sequence_features_f` 当特征 ≈ “模型套模型”，信息瓶颈、调参维度膨胀、可解释性下降。
+- 序列 embedding 的尺度与分布更容易 drift；如果没有明确的归一化/契约，会导致训练不稳定、跨 symbol 可比性变差。
+
+**归一化要求（如果你坚持要用）**：
+- `dl_sequence_features_f` 内部对**输入序列**已经做了严格因果 EMA z-score（避免泄露）。
+- 但对**输出 embedding**：
+  - 树模型：可不做额外归一化（尺度不敏感）
+  - NN：建议增加“输出尺度契约”（逐维 rolling/EMA z-score 或逐行 L2 normalize），并写入 Feature Contract（含 missingness policy）。
+
+> 归一化细节与 contract 要求见：`docs/architecture/FEATURE_NORMALIZATION_POLICY.md`。
 ```
 
 ---

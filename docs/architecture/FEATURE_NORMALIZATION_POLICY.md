@@ -65,6 +65,57 @@ def compute_atr_normalized(close, high, low, window=14):
 
 ---
 
+## ✅ 主流归一化方法清单（与你给的表对齐）& repo contract 映射
+
+我们在 repo 里不做“训练前 fit 的 scaler”（避免泄露），而是做 **rolling/causal 版本**。
+
+| 你给的方法 | 典型公式 | 我们的 contract method 命名 | 适用（本 repo） |
+|---|---|---|---|
+| **Z-Score** | \( (x-\mu)/\sigma \) | `zscore_rolling` | 连续型、近似稳定分布：`roc_5`、`volume_anomaly`、（部分）`vpin_*_zscore_*` |
+| **Min-Max** | \( (x-x_{min})/(x_{max}-x_{min}) \) | `bounded_0_1` / `bounded_-1_1` / `bounded_0_100` | 有明确物理边界：RSI/随机指标；或我们显式构造的 0..1 语义分数（scene scores） |
+| **Robust Scaling** | \( (x-\mathrm{median})/\mathrm{IQR} \) | `robust_rolling` | 金融长尾/有 outlier 的连续值（rolling median/IQR） |
+| **Log + Robust/Z** | `log1p(x)` → robust/z | `log1p_robust_rolling` / `log_robust_rolling` | 成交量/订单流/比值类长尾：如 `fp_delta_poc`、`fp_max_imbalance_ratio`、Hilbert 比值类 |
+| **Rank Transform** | percentile rank → [0,1] | `rank_rolling` | 跨资产最稳：Hilbert 包络（`replace_env_with_qnorm`），或任何 “只关心相对强弱” 的信号 |
+| **Unit Vector (L2)** | \( x/\|x\|_2 \) | `l2_norm` | embedding（你提到的 `dl_sequence_features_f`，我们也支持输出 tanh；L2 可作为备选） |
+
+### 额外：量化常用但不在 scaler 表里的“波动率尺度归一化”
+
+| 方法 | 典型公式 | contract method | 适用场景 |
+|---|---|---|---|
+| **ATR 尺度化** | \( (level-close)/ATR \) 或 \( x/ATR \) | `atr_distance`（level 类）/ `atr`（强度类） | 价格位置信号最稳的跨资产做法：POC/HAL、Footprint 的 `fp_poc/fp_vah/...` |
+
+---
+
+## 🤖 `dl_sequence_features_f`（Mamba/Transformer 序列特征）是否需要归一化？
+
+### 结论
+
+- **输入序列**：`dl_sequence_features_f` 内部已经做了**严格因果的 EMA z-score 归一化**（只使用过去数据），用于防止信息泄露并提升跨时间稳定性。
+- **输出 embedding（例如 64 维）**：
+  - **树模型（GBDT）**：通常不需要额外归一化（树对尺度不敏感），建议当作 **Pool B 候选**，不要作为必选特征。
+  - **NN（包括 MLP 多头）**：如果把 embedding 当作普通特征输入，**建议**做一个明确的“输出尺度约束/归一化”，否则不同 seed / 不同市场阶段的 embedding 尺度漂移会放大训练不稳定性。
+
+### 推荐做法（输出 embedding 的“可选归一化”）
+
+当 `dl_sequence_features_f` 的输出需要喂给 NN 时，推荐二选一（都必须是因果的）：
+
+1. **逐维 rolling/EMA z-score（推荐）**
+   - 对每个 embedding 维度，按时间做 rolling 或 EMA 均值/方差，并输出 z-score
+   - 约束到常见范围（例如 99% 分位落在 [-5, 5]）
+2. **逐行 L2 normalize（可选）**
+   - 对每个时间点的 embedding 向量做 \(x / (\|x\|_2 + \epsilon)\)
+   - 好处：天然有界，跨 symbol 更稳定
+   - 注意：会改变向量幅度信息（仅保留方向）
+
+### Feature Contract 要求
+
+如果你把 `dl_sequence_features_f` 纳入某个任务/策略的输入：
+- 必须在 Feature Contract 中明确它是 **optional block**（高成本、易 drift）
+- 必须明确 **missingness policy**（无 GPU / 无依赖 / 计算超时的回退行为）
+- 如果做了输出归一化，必须把“输出归一化版本”的列命名策略写清（避免训练/推理不一致）
+
+---
+
 ## 🔧 需要修改的特征函数
 
 ### 1. ATR 类特征
@@ -202,6 +253,25 @@ def compute_macd(..., atr: pd.Series):
 assert feature.abs().quantile(0.99) < 5, "99% 分位数应该 < 5"
 assert feature.std() > 0.01, "标准差应该 > 0.01（避免常量）"
 ```
+
+### 4. 验证“归一化后仍然有用”的方法（建议顺序）
+
+归一化本质是 **尺度对齐/数值稳定**，不自动保证收益提升。要验证“信息没有被洗没”，建议做两层验证：
+
+**A. 信息/分布层（最快，无需训练）**
+- **非退化**：不能变成常量/几乎常量（std、unique count、缺失率）。
+- **饱和度**（对 `bounded_*` / `tanh`）：统计落在边界附近的比例（例如 \(|x|\ge 0.99\)、或接近 0/1 的占比），过高说明 clip/scale 可能太强。
+- **跨资产可比性**：同一列在多资产上的分布尺度比（std ratio / IQR ratio）应在合理范围（你已有 multi-asset normalization tests 的思路）。
+
+**B. 预测有效性层（需要训练/回测，但可以很轻量）**
+- **IC/IR / rank IC**：用 `make ts-feature-eval` / `make ts-factor-eval` 在固定 horizon 下评估（建议同时做 scene slice：near_sr / compression_high / trend_high）。
+- **Ablation（最可信）**：同一策略、同一窗口、同一 seed，比较“加入某一组归一化特征前后”的 Sharpe/收益/回撤（可以复用 `make ts-strategy-feature-compare`）。
+- **解释稳定性**：对赢家模型导出 gain importance / SHAP，检查归一化后的列是否仍进入 top-k，且跨 seed/时间窗稳定。
+
+**最省算力的投入产出顺序**
+1. 先做 A（分布/饱和/非退化）。
+2. 再做 IC/IR（比训练便宜很多）。
+3. 最后用 multi-seed ablation 定型。
 
 ---
 

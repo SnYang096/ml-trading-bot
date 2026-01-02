@@ -3,6 +3,19 @@
 # Base strategy already includes WPT + Spectrum + compression interactions and some ticks blocks.
 # We test incremental scene semantic blocks for robustness / regime alignment.
 groups:
+  kline_core:
+    - macd_f
+    - rsi_f
+    - trend_r2_20_f
+    - bb_width_f
+    - wick_ratios_f
+    - volume_ratio_f
+
+  compression_core:
+    - compression_score_f
+    - compression_energy_f
+    - compression_to_breakout_prob_f
+
   vpin_scene:
     - vpin_scene_semantic_scores_f
 

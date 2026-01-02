@@ -890,6 +890,41 @@ def extract_order_flow_features(
             print(f"   ⚠️  Trade clustering feature extraction failed: {e}")
             import traceback
             traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    # Contract-focused normalization (cross-asset comparable):
+    # - vpin: bounded [0,1] by construction
+    # - vpin_signed_imbalance: bounded [-1,1] by construction
+    # - vpin_count: event density proxy -> log1p + rolling robust scaling
+    # - vpin_skewness: bound with tanh
+    # - vpin_trend: robust rolling scaling
+    # ------------------------------------------------------------------
+    def _robust_rolling_z(s: pd.Series, window: int = 50, min_periods: int = 10) -> pd.Series:
+        s = pd.to_numeric(s, errors="coerce").astype(float)
+        med = s.rolling(window=window, min_periods=min_periods).median()
+        q25 = s.rolling(window=window, min_periods=min_periods).quantile(0.25)
+        q75 = s.rolling(window=window, min_periods=min_periods).quantile(0.75)
+        iqr = (q75 - q25).replace(0, np.nan)
+        z = (s - med) / (iqr + 1e-8)
+        return z.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    if "vpin" in df.columns:
+        df["vpin"] = pd.to_numeric(df["vpin"], errors="coerce").astype(float).clip(0.0, 1.0)
+    if "vpin_signed_imbalance" in df.columns:
+        df["vpin_signed_imbalance"] = (
+            pd.to_numeric(df["vpin_signed_imbalance"], errors="coerce").astype(float).clip(-1.0, 1.0)
+        )
+    if "vpin_count" in df.columns:
+        cnt = pd.to_numeric(df["vpin_count"], errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
+        df["vpin_count"] = _robust_rolling_z(np.log1p(cnt))
+    if "vpin_skewness" in df.columns:
+        df["vpin_skewness"] = np.tanh(
+            pd.to_numeric(df["vpin_skewness"], errors="coerce").fillna(0.0).astype(float)
+        )
+    if "vpin_trend" in df.columns:
+        df["vpin_trend"] = _robust_rolling_z(
+            pd.to_numeric(df["vpin_trend"], errors="coerce").fillna(0.0).astype(float)
+        )
     return df
 
 
@@ -1643,6 +1678,48 @@ def compute_trade_clustering_from_ticks(
         "trade_cluster_imbalance_ratio",
         "trade_cluster_directional_entropy",
     ]
+
+    # ------------------------------------------------------------
+    # Normalization (cross-asset comparable):
+    # This function uses a rolling window measured in *ticks* (window_size).
+    # The raw outputs are counts/lengths in "number of ticks", which are not comparable
+    # across symbols / liquidity regimes. Convert them to ratios over window_size so
+    # they become unitless and (mostly) bounded.
+    #
+    # This directly addresses the scale-instability noted in this docstring.
+    # ------------------------------------------------------------
+    denom = float(window_size) if float(window_size) > 0 else 1.0
+    for c in [
+        "trade_cluster_max_buy_run",
+        "trade_cluster_max_sell_run",
+        "trade_cluster_avg_buy_run",
+        "trade_cluster_avg_sell_run",
+        "trade_cluster_buy_run_count",
+        "trade_cluster_sell_run_count",
+    ]:
+        if c in cluster_df.columns:
+            cluster_df[c] = (
+                (pd.to_numeric(cluster_df[c], errors="coerce").astype(float) / denom)
+                .replace([np.inf, -np.inf], np.nan)
+                .clip(0.0, 1.0)
+            )
+
+    if "trade_cluster_imbalance_ratio" in cluster_df.columns:
+        # imbalance is (buy_runs - sell_runs) / total_runs => [-1, 1]
+        cluster_df["trade_cluster_imbalance_ratio"] = (
+            pd.to_numeric(cluster_df["trade_cluster_imbalance_ratio"], errors="coerce")
+            .astype(float)
+            .replace([np.inf, -np.inf], np.nan)
+            .clip(-1.0, 1.0)
+        )
+    if "trade_cluster_directional_entropy" in cluster_df.columns:
+        # entropy over 2 states with base=2 => [0, 1]
+        cluster_df["trade_cluster_directional_entropy"] = (
+            pd.to_numeric(cluster_df["trade_cluster_directional_entropy"], errors="coerce")
+            .astype(float)
+            .replace([np.inf, -np.inf], np.nan)
+            .clip(0.0, 1.0)
+        )
     
     # 返回最终状态（用于下一批次）
     final_state = {
@@ -2092,30 +2169,21 @@ def extract_trade_clustering_features(
                 result[c] = derived[c]
             return result
 
-        # 如果既无在内存的累积结果，又没有任何落盘文件，记录警告并返回原 df
+        # 如果既无在内存的累积结果，又没有任何落盘文件：返回空特征块（保持窄输出契约）
         if cluster_df_accum is None and not cluster_paths:
-            print("   ⚠️  Trade clustering produced no results; skipping feature merge.")
-            return df
-
-        cluster_df = cluster_df_accum if cluster_df_accum is not None else pd.DataFrame()
-        
-        # 打印 Trade Clustering 数据统计，用于调试
-        if cluster_df is not None and len(cluster_df) > 0:
-            print(f"   📊 Trade Clustering raw data: {len(cluster_df)} events")
-            print(f"      Time range: {cluster_df.index.min()} to {cluster_df.index.max()}")
-            # 检查是否有有效数据
-            valid_cols = [col for col in cluster_df.columns if cluster_df[col].notna().any()]
-            print(f"      Valid columns: {len(valid_cols)}/{len(cluster_df.columns)}")
-            if len(valid_cols) < len(cluster_df.columns):
-                nan_cols = [col for col in cluster_df.columns if col not in valid_cols]
-                print(f"      ⚠️  All-NaN columns: {nan_cols[:5]}..." if len(nan_cols) > 5 else f"      ⚠️  All-NaN columns: {nan_cols}")
-        else:
-            print(f"   ⚠️  Trade Clustering: No data computed")
-        
-        if cache_dir and cached_count > 0:
-            print(
-                f"   💾 Used {cached_count} cached months, computed {computed_count} new months",
-                flush=True,
+            print("   ⚠️  Trade clustering produced no results; returning empty features block.")
+            return pd.DataFrame(
+                {
+                    "trade_cluster_max_buy_run": 0.0,
+                    "trade_cluster_max_sell_run": 0.0,
+                    "trade_cluster_avg_buy_run": 0.0,
+                    "trade_cluster_avg_sell_run": 0.0,
+                    "trade_cluster_buy_run_count": 0.0,
+                    "trade_cluster_sell_run_count": 0.0,
+                    "trade_cluster_imbalance_ratio": 0.0,
+                    "trade_cluster_directional_entropy": 0.0,
+                },
+                index=df.index,
             )
     else:
         raise ValueError(
@@ -2416,11 +2484,19 @@ def compute_trade_cluster_buy_sell_max_ratio_features_from_base(df: pd.DataFrame
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_max_buy_run" not in df.columns or "trade_cluster_max_sell_run" not in df.columns:
         return out
-    max_buy_clean = df["trade_cluster_max_buy_run"].replace([np.inf, -np.inf], np.nan)
-    max_sell_clean = df["trade_cluster_max_sell_run"].replace([np.inf, -np.inf], np.nan)
-    out["trade_cluster_buy_sell_max_ratio"] = (max_buy_clean / (max_sell_clean + TOL)).replace(
+    # Normalize ratio-style feature:
+    # Use log-ratio (symmetric) + rolling robust scaling for cross-asset stability.
+    max_buy = pd.to_numeric(df["trade_cluster_max_buy_run"], errors="coerce").astype(float)
+    max_sell = pd.to_numeric(df["trade_cluster_max_sell_run"], errors="coerce").astype(float)
+    log_ratio = np.log((max_buy + TOL) / (max_sell + TOL)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    med = log_ratio.rolling(window=50, min_periods=10).median()
+    q25 = log_ratio.rolling(window=50, min_periods=10).quantile(0.25)
+    q75 = log_ratio.rolling(window=50, min_periods=10).quantile(0.75)
+    iqr = (q75 - q25).replace(0, np.nan)
+    out["trade_cluster_buy_sell_max_ratio"] = ((log_ratio - med) / (iqr + 1e-8)).replace(
         [np.inf, -np.inf], np.nan
-    )
+    ).fillna(0.0)
     return out
 
 
@@ -2473,11 +2549,17 @@ def compute_trade_cluster_buy_sell_avg_ratio_features_from_base(df: pd.DataFrame
     out = pd.DataFrame(index=df.index)
     if "trade_cluster_avg_buy_run" not in df.columns or "trade_cluster_avg_sell_run" not in df.columns:
         return out
-    avg_buy_clean = df["trade_cluster_avg_buy_run"].replace([np.inf, -np.inf], np.nan)
-    avg_sell_clean = df["trade_cluster_avg_sell_run"].replace([np.inf, -np.inf], np.nan)
-    out["trade_cluster_buy_sell_avg_ratio"] = (avg_buy_clean / (avg_sell_clean + TOL)).replace(
+    avg_buy = pd.to_numeric(df["trade_cluster_avg_buy_run"], errors="coerce").astype(float)
+    avg_sell = pd.to_numeric(df["trade_cluster_avg_sell_run"], errors="coerce").astype(float)
+    log_ratio = np.log((avg_buy + TOL) / (avg_sell + TOL)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    med = log_ratio.rolling(window=50, min_periods=10).median()
+    q25 = log_ratio.rolling(window=50, min_periods=10).quantile(0.25)
+    q75 = log_ratio.rolling(window=50, min_periods=10).quantile(0.75)
+    iqr = (q75 - q25).replace(0, np.nan)
+    out["trade_cluster_buy_sell_avg_ratio"] = ((log_ratio - med) / (iqr + 1e-8)).replace(
         [np.inf, -np.inf], np.nan
-    )
+    ).fillna(0.0)
     return out
 
 
@@ -2553,9 +2635,9 @@ def compute_trade_cluster_netruns_features_from_base(df: pd.DataFrame) -> pd.Dat
         out["trade_cluster_total_runs"] = (
             df["trade_cluster_buy_run_count"] + df["trade_cluster_sell_run_count"]
         )
-        out["trade_cluster_net_runs_ratio"] = out["trade_cluster_net_runs"] / (
-            out["trade_cluster_total_runs"] + TOL
-        )
+        out["trade_cluster_net_runs_ratio"] = (
+            out["trade_cluster_net_runs"] / (out["trade_cluster_total_runs"] + TOL)
+        ).clip(-1.0, 1.0)
     return out
 
 

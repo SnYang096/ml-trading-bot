@@ -1682,6 +1682,38 @@ def compute_bb_width_ratio_from_series(
     return out.replace([np.inf, -np.inf], np.nan).fillna(0.0).rename("bb_width_ratio")
 
 
+@register_feature("compute_bb_width_ratio_from_price_from_series", category="derived")
+def compute_bb_width_ratio_from_price_from_series(
+    *,
+    close: pd.Series,
+    timeperiod: int = 20,
+    nbdevup: float = 2.0,
+    nbdevdn: float = 2.0,
+    matype: int = 0,
+) -> pd.Series:
+    """
+    BB width ratio directly from close (no dependency on intermediate raw-price BB columns).
+
+    This exists because `bb_width_f` intentionally does NOT expose raw-price band levels
+    (`bb_upper/bb_middle/bb_lower`) to keep the feature registry fully normalized.
+    """
+    import talib
+
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    upper, middle, lower = talib.BBANDS(
+        close.values,
+        timeperiod=int(timeperiod),
+        nbdevup=float(nbdevup),
+        nbdevdn=float(nbdevdn),
+        matype=int(matype),
+    )
+    upper_s = pd.Series(upper, index=close.index)
+    middle_s = pd.Series(middle, index=close.index).replace(0, np.nan)
+    lower_s = pd.Series(lower, index=close.index)
+    out = (upper_s - lower_s) / middle_s
+    return out.replace([np.inf, -np.inf], np.nan).fillna(0.0).rename("bb_width_ratio")
+
+
 @register_feature("compute_compression_score", category="derived")
 def compute_compression_score(
     df: pd.DataFrame,

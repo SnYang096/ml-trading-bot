@@ -468,6 +468,10 @@ def extract_volatility_features_from_vp(
         vp_skew = float(skew(hist))
     except Exception:
         vp_skew = 0.0
+    # Normalize skewness to a stable, bounded range for NN / cross-asset comparability.
+    # This is per-window (no lookahead) and keeps semantics (sign + magnitude) while
+    # preventing extreme outliers.
+    vp_skew = float(np.tanh(vp_skew))
     
     # 4. 信息熵（衡量不确定性）
     prob = hist / total_vol
@@ -492,7 +496,7 @@ def extract_volatility_features_from_vp(
     return {
         "vp_width_ratio": float(width_ratio),  # 越小 → 共识强 → 波动可能低
         "vp_poc_deviation": float(poc_deviation),  # 绝对值大 → 远离价值中枢 → 波动可能高
-        "vp_skewness": float(vp_skew),  # 绝对值大 → 趋势强 → 波动可能持续
+        "vp_skewness": float(vp_skew),  # bounded to [-1,1]
         "vp_entropy": float(norm_entropy),  # 越大 → 分歧大 → 波动可能高
         "vp_lv_ratio": float(lv_ratio),  # 越大 → 薄弱区多 → 波动易放大
         "vp_hv_ratio": float(hv_ratio),  # 越大 → 支撑/阻力密集 → 波动可能受限

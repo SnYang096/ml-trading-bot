@@ -3485,6 +3485,138 @@ def compute_acceleration_3_from_series(
     return out.to_frame()
 
 
+@register_feature("compute_path_curvature_from_series", category="baseline")
+def compute_path_curvature_from_series(
+    *,
+    close: pd.Series,
+    smooth_window: int = 5,
+    window: int = 5,
+    z_window: int = 200,
+    min_periods: int = 50,
+) -> pd.DataFrame:
+    """
+    Path curvature (离散路径曲率): measure how violently the path changes direction.
+
+    Design goals:
+    - Unitless / cross-asset comparable: compute on returns (not raw price diffs).
+    - Causal: rolling stats are shifted(1) via _rolling_zscore().
+
+    Steps (simplified discrete approximation):
+      1) Smooth close with rolling mean
+      2) Velocity ≈ smoothed pct_change (unitless)
+      3) Acceleration ≈ diff of velocity
+      4) Curvature ≈ |acc| / (1 + vel^2)^(3/2)
+      5) Smooth curvature and normalize (log1p + rolling z-score)
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    close = close.replace(0, np.nan)
+
+    # 1) Smooth price to reduce micro-noise (still causal)
+    smoothed = close.rolling(window=int(smooth_window), min_periods=1).mean()
+
+    # 2) Velocity in return space (unitless)
+    velocity = smoothed.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    # 3) Acceleration: change in velocity
+    acceleration = velocity.diff().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    # 4) Curvature proxy (stable)
+    denom = (1.0 + velocity**2) ** 1.5
+    curvature = (acceleration.abs() / (denom + 1e-8)).replace([np.inf, -np.inf], np.nan)
+
+    # 5) Smooth + normalize
+    curvature_smoothed = curvature.rolling(window=int(window), min_periods=1).mean()
+    curvature_log = np.log1p(curvature_smoothed.clip(lower=0.0).fillna(0.0))
+    curvature_z = _rolling_zscore(
+        curvature_log,
+        window=int(z_window),
+        min_periods=int(min_periods),
+        shift=True,
+    ).fillna(0.0)
+    curvature_z.name = "path_curvature"
+    return curvature_z.to_frame()
+
+
+@register_feature("compute_volatility_cone_position_from_series", category="baseline")
+def compute_volatility_cone_position_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+    lookback: int | None = None,
+    lookback_days: int = 252,
+    timeframe_minutes: int | None = None,
+    min_periods: int | None = None,
+) -> pd.DataFrame:
+    """
+    Volatility cone position (波动率锥位置):
+    current rolling volatility's percentile rank within the past lookback window.
+
+    Implementation notes:
+    - Uses rolling std of returns as "current vol" proxy (unitless).
+    - Percentile rank is computed causally via _rolling_percentile(..., shift=True).
+      This uses only historical distribution (excluding current point) and then shift(1).
+
+    Args:
+        close: price series
+        window: rolling window for volatility (e.g., 20)
+        lookback: explicit lookback length in *bars* (overrides lookback_days conversion)
+        lookback_days: lookback length in *days* (converted to bars using timeframe)
+        timeframe_minutes: explicit timeframe in minutes (optional; if None and index is
+            DatetimeIndex, try to infer from index frequency)
+        min_periods: minimum periods for lookback percentile computation (default=lookback)
+
+    Returns:
+        DataFrame with 'volatility_cone_position' in [0,1]
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    close = close.replace(0, np.nan)
+
+    # Resolve lookback in bars
+    if lookback is None:
+        tf_min = None
+        if timeframe_minutes is not None:
+            tf_min = int(timeframe_minutes)
+        else:
+            # Best-effort: infer from DatetimeIndex (e.g., 240T, 4H, 5T)
+            try:
+                if isinstance(close.index, pd.DatetimeIndex) and len(close.index) >= 3:
+                    inferred = pd.infer_freq(close.index)
+                    if inferred:
+                        from pandas.tseries.frequencies import to_offset
+
+                        off = to_offset(inferred)
+                        # Convert to minutes (nanoseconds -> minutes)
+                        tf_min = int(round(off.delta.total_seconds() / 60.0))
+            except Exception:
+                tf_min = None
+
+        if tf_min and tf_min > 0:
+            bars_per_day = int(round((24 * 60) / tf_min))
+            bars_per_day = max(1, bars_per_day)
+            lookback = int(max(5, lookback_days * bars_per_day))
+        else:
+            # Fallback: keep backward-compatible behavior (252 bars)
+            lookback = 252
+
+    # Unitless returns
+    rets = close.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    # Current rolling vol (unitless); do NOT annualize here (position is relative anyway)
+    vol = rets.rolling(window=int(window), min_periods=max(2, int(window) // 2)).std()
+
+    if min_periods is None:
+        min_periods = int(lookback)
+
+    pos = _rolling_percentile(
+        vol.astype(float),
+        window=int(lookback),
+        min_periods=int(min_periods),
+        shift=True,
+    )
+    out = pos.clip(0.0, 1.0).fillna(0.5).rename("volatility_cone_position")
+    return out.to_frame()
+
+
 @register_feature("compute_volume_anomaly_from_series", category="baseline")
 def compute_volume_anomaly_from_series(*, volume: pd.Series) -> pd.DataFrame:
     """Narrow-IO volume_anomaly: EWM-based z-score of volume ratio."""
@@ -3672,7 +3804,9 @@ def compute_compression_duration_from_series(
             cnt = 0
         run[i] = cnt
 
-    out = pd.Series(run, index=close.index, name="compression_duration")
+    # Normalize to a unitless ratio for cross-asset/timeframe comparability.
+    denom = float(percentile_window) if float(percentile_window) > 0 else 1.0
+    out = (pd.Series(run, index=close.index, name="compression_duration") / denom).clip(0.0, 1.0)
     return out
 
 
@@ -3910,10 +4044,16 @@ def compute_ofi_short_from_series(
 def compute_compression_to_breakout_prob_from_series(
     *, compression_duration: pd.Series, roc_5: pd.Series
 ) -> pd.DataFrame:
-    """Narrow-IO compression_duration × roc_5 proxy."""
-    cd = pd.to_numeric(compression_duration, errors="coerce").astype(float).fillna(0.0)
+    """
+    Narrow-IO compression_duration × momentum proxy, mapped to a bounded [0,1] score.
+
+    - compression_duration: already normalized to [0,1]
+    - roc_5: rolling z-score signal -> squash with sigmoid to [0,1]
+    """
+    cd = pd.to_numeric(compression_duration, errors="coerce").astype(float).fillna(0.0).clip(0.0, 1.0)
     r = pd.to_numeric(roc_5, errors="coerce").astype(float).fillna(0.0)
-    out = (cd * r).rename("compression_to_breakout_prob")
+    mom = (1.0 / (1.0 + np.exp(-r))).clip(0.0, 1.0)
+    out = (cd * mom).rename("compression_to_breakout_prob")
     return out.to_frame()
 
 
@@ -4150,13 +4290,20 @@ def compute_sqs_hal_high_from_series(
     tolerance_factor: float = 0.5,
     sr_type: str = "resistance",
 ) -> pd.DataFrame:
+    # `poc_hal_features_close_f` provides HAL levels normalized as (level - close) / ATR.
+    # `calculate_sqs` expects SR price in *raw price units* (to compare vs high/low).
+    # Convert back: level_raw = hal_high_norm * atr + close.
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float)
+    hal_high_norm = pd.to_numeric(hal_high, errors="coerce").astype(float)
+    hal_high_raw = (hal_high_norm * atr_s + close_s).replace([np.inf, -np.inf], np.nan)
     sqs = compute_sqs_from_sr_price_series(
         high=high,
         low=low,
         close=close,
         volume=volume,
         atr=atr,
-        sr_price=hal_high,
+        sr_price=hal_high_raw,
         window=window,
         tolerance_factor=tolerance_factor,
         sr_type=sr_type,
@@ -4178,13 +4325,19 @@ def compute_sqs_hal_low_from_series(
     tolerance_factor: float = 0.5,
     sr_type: str = "support",
 ) -> pd.DataFrame:
+    # `poc_hal_features_close_f` provides HAL levels normalized as (level - close) / ATR.
+    # Convert back to raw SR price levels for SQS scoring.
+    close_s = pd.to_numeric(close, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float)
+    hal_low_norm = pd.to_numeric(hal_low, errors="coerce").astype(float)
+    hal_low_raw = (hal_low_norm * atr_s + close_s).replace([np.inf, -np.inf], np.nan)
     sqs = compute_sqs_from_sr_price_series(
         high=high,
         low=low,
         close=close,
         volume=volume,
         atr=atr,
-        sr_price=hal_low,
+        sr_price=hal_low_raw,
         window=window,
         tolerance_factor=tolerance_factor,
         sr_type=sr_type,

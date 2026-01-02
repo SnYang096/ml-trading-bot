@@ -258,6 +258,7 @@ class DeepLearningSequenceExtractor:
         use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
         device: Optional[str] = None,
         normalization_method: Literal["ema"] = "ema",  # 仅支持 EMA（因果安全）
+        output_normalization: Literal["tanh", "none"] = "tanh",
         seed: int = 42,
     ):
         """
@@ -276,6 +277,7 @@ class DeepLearningSequenceExtractor:
         self.d_model = d_model
         self.use_fp16 = use_fp16
         self.normalization_method = normalization_method
+        self.output_normalization = output_normalization
         self.seed = seed
 
         # Auto-detect device
@@ -311,6 +313,7 @@ class DeepLearningSequenceExtractor:
         print(f"   Output dimension: {d_model}")
         print(f"   FP16: {use_fp16}")
         print(f"   Normalization: causal EMA (α={self.alpha})")
+        print(f"   Output normalization: {self.output_normalization}")
 
     def _create_model(self, input_dim: int):
         """Create the appropriate model based on backend."""
@@ -475,6 +478,11 @@ class DeepLearningSequenceExtractor:
         # Concatenate all batches
         dl_features = np.vstack(all_features)
 
+        # Normalize outputs to a stable, unitless range for cross-asset comparability.
+        # This is per-sample (no future leakage).
+        if self.output_normalization == "tanh":
+            dl_features = np.tanh(dl_features)
+
         print(f"   ✓ Extracted {len(dl_features)} leak-free sequence features")
 
         return dl_features
@@ -542,6 +550,7 @@ def add_dl_sequence_features(
     feature_columns: Optional[List[str]] = None,
     use_fp16: bool = False,  # 默认关闭 FP16 提升稳定性
     normalization_method: str = "ema",  # 强制使用 EMA（因果安全）
+    output_normalization: str = "tanh",
     device: Optional[str] = None,  # 'cuda', 'cpu', or None (auto-detect)
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -583,6 +592,7 @@ def add_dl_sequence_features(
         str(device) if device is not None else None,
         tuple(feature_columns),
         normalization_method,
+        output_normalization,
         seed,
     )
 
@@ -594,6 +604,7 @@ def add_dl_sequence_features(
             d_model=d_model,
             use_fp16=use_fp16,
             normalization_method=normalization_method,
+            output_normalization=output_normalization,  # stable/bounded embeddings
             device=device,
             seed=seed,
         )
@@ -623,6 +634,7 @@ def compute_dl_sequence_features(
     use_fp16: bool = False,
     prefix: str = "dl_seq",
     device: Optional[str] = None,
+    output_normalization: str = "tanh",
 ) -> pd.DataFrame:
     """
     Compute leak-free deep learning sequence embeddings (Mamba/Transformer).
@@ -647,6 +659,7 @@ def compute_dl_sequence_features(
         d_model=d_model,
         feature_columns=feature_columns,
         use_fp16=use_fp16,
+        output_normalization=output_normalization,
         device=device,
     )
 
@@ -674,6 +687,7 @@ def compute_dl_sequence_features_from_series(
     use_fp16: bool = False,
     prefix: str = "dl_seq",
     device: Optional[str] = None,
+    output_normalization: str = "tanh",
 ) -> pd.DataFrame:
     """
     Narrow-IO entrypoint for DL sequence embeddings (Series-in, DataFrame-out).
@@ -691,4 +705,5 @@ def compute_dl_sequence_features_from_series(
         use_fp16=use_fp16,
         prefix=prefix,
         device=device,
+        output_normalization=output_normalization,
     )

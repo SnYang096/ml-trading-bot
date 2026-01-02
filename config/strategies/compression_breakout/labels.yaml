@@ -23,5 +23,5 @@ post_label_filters:
       1.0: 2
   - column: label_class
     notna: true
-  - ensure_feature_non_null: true
+  # NOTE: `ensure_feature_non_null` was deprecated (no-op). Prefer model-side NaN handling.
 

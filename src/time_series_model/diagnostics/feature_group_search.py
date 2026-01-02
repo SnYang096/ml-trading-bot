@@ -234,6 +234,41 @@ def _run_one_seed(
 
     results = list(out_root.rglob("results.json"))
     if len(results) != 1:
+        # Safety net:
+        # Even if the training pipeline decides to skip a run (e.g. insufficient samples),
+        # feature-group-search must keep going. Create a placeholder results.json so downstream
+        # aggregation/selection can proceed deterministically.
+        if len(results) == 0:
+            placeholder = out_root / "results.json"
+            payload = {
+                "strategy": _strategy_name(strategy_dir),
+                "model_type": "unknown",
+                "task_type": "unknown",
+                "avg_cv_metric": None,
+                "n_features": None,
+                "n_train_samples": 0,
+                "n_test_samples": 0,
+                "evaluation": {},
+                "diagnostics": {
+                    "skip": {
+                        "skipped": True,
+                        "reason": "missing_results_json_from_train_pipeline",
+                    }
+                },
+                "backtest": {
+                    "total_return_pct": 0.0,
+                    "sharpe": -999.0,
+                    "max_drawdown_pct": 0.0,
+                    "win_rate": 0.0,
+                    "total_trades": 0,
+                    "skipped": True,
+                    "reason": "missing_results_json_from_train_pipeline",
+                },
+            }
+            placeholder.write_text(
+                json.dumps(payload, indent=2, default=str), encoding="utf-8"
+            )
+            return placeholder
         raise RuntimeError(
             f"Expected 1 results.json under {out_root}, found {len(results)}"
         )

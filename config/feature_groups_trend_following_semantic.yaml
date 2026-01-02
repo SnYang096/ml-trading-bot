@@ -3,6 +3,19 @@
 # Base strategy already includes trend-centric WPT/Hurst/Hilbert/Spectrum + some ticks blocks.
 # We test incremental scene semantic blocks that may improve regime robustness.
 groups:
+  kline_core:
+    - macd_f
+    - rsi_f
+    - trend_r2_20_f
+    - bb_width_f
+    - wick_ratios_f
+    - volume_ratio_f
+
+  trend_core:
+    - trend_r2_50_f
+    - slope_consistency_score_f
+    - trend_volatility_alignment_f
+
   vpin_scene:
     - vpin_scene_semantic_scores_f
 

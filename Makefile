@@ -102,7 +102,7 @@ endif
 	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
 	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all \
 	docker-build-gpu \
-	list-features
+	list-features norm-contract
 
 start-docker:
 	@bash scripts/start_docker.sh
@@ -205,6 +205,22 @@ lint:
 # ---------------------------------------------------------------------------
 list-features:
 	@$(PYTHON) scripts/list_features.py
+
+# ---------------------------------------------------------------------------
+# Normalization contract (CI gate) - lightweight (no TA-Lib install required)
+# ---------------------------------------------------------------------------
+norm-contract:
+	@echo "🧾 Running normalization contract gate + generating reports..."
+	@$(PYTHON) -m pip show pyyaml > /dev/null 2>&1 || (echo "Installing minimal dep: pyyaml" && $(PYTHON) -m pip install -q pyyaml)
+	@$(PYTHON) scripts/check_normalization_contract_ci.py \
+		--feature-deps config/feature_dependencies.yaml \
+		--include-deps \
+		--strategy-features-yaml config/strategies/sr_reversal_rr_reg_long/features.yaml \
+		--strategy-features-yaml config/strategies/sr_breakout/features.yaml \
+		--strategy-features-yaml config/strategies/compression_breakout/features.yaml \
+		--strategy-features-yaml config/strategies/trend_following/features.yaml \
+		--out-dir docs/architecture/reports
+	@echo "✅ Reports updated under docs/architecture/reports"
 
 list-features-all:
 	@$(PYTHON) scripts/list_features.py --all
