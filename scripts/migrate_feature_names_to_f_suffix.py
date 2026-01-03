@@ -167,8 +167,12 @@ def main():
     if strategy_configs_dir.exists():
         migrate_strategy_configs(strategy_configs_dir, name_mapping)
 
-    # 3. 输出映射表（用于代码兼容性处理）
-    mapping_file = project_root / "config" / "feature_name_mapping.yaml"
+    # 3. 输出映射表（用于迁移记录/回溯）
+    # NOTE: We no longer write this into config/ because runtime code does not consume it.
+    # Keep it under results/ for audit/debug only.
+    mapping_dir = project_root / "results" / "migrations"
+    mapping_dir.mkdir(parents=True, exist_ok=True)
+    mapping_file = mapping_dir / "feature_name_mapping.yaml"
     mapping_data = {
         "old_to_new": name_mapping,
         "new_to_old": {v: k for k, v in name_mapping.items()},

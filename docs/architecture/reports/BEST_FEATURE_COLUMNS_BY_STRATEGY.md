@@ -4,6 +4,9 @@
 > **数据来源**: feature-group-search 结果 + 列级别 importance 分析
 > **方法**: Greedy Forward Selection + LightGBM Gain Importance
 
+> ✅ **统一入口**：该文档的“列级别建议”已被纳入统一索引，便于和最新 rerun 的“节点/组级推荐 YAML”放在同一处查看：
+> `docs/strategies/FEATURE_SELECTION_REPORTS.md`
+
 ---
 
 ## 📊 总览
@@ -200,6 +203,9 @@ vpin_ignition_score        ██      ██     ███    █
 - [nnmultihead features.yaml](../../config/nnmultihead/path_primitives_4h_80h_min/features.yaml) - NN 模型特征配置
 
 ---
+
+*文档自动生成，基于 feature-group-search 结果*
+
 
 *文档自动生成，基于 feature-group-search 结果*
 

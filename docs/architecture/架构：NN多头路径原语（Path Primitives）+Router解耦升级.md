@@ -446,6 +446,9 @@ Portfolio Construction
 
 你现在手里其实是 **三类“能产生交易行为”的系统**，它们的定位不同，应该明确“谁是主链路、谁是基线、谁是对照”：
 
+进一步展开（如何持续开发更多“子模型/模式”，且上线维护不爆炸）见：
+- `docs/architecture/STRATEGY_SUBMODEL_DEVELOPMENT_PLAYBOOK.md`
+
 **(1) 纯规则（手写 if/else）**
 
 - 典型形态：`if cond: open/close/size else: no_trade`（比如基于 ATR、均线、SR 距离、阈值、硬过滤）

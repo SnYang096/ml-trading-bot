@@ -4,6 +4,9 @@
 
 **更新时间**：2024-12-30
 
+> ⚠️ **维护状态**：本文件已被更“统一/最新”的入口文档替代（避免多处维护导致口径不一致）。
+> 请优先阅读：`docs/strategies/FEATURE_SELECTION_REPORTS.md`
+
 ---
 
 ## 1. SR Reversal (sr_reversal_rr_reg_long)
@@ -341,5 +344,8 @@ mlbot diagnose feature-group-search \
 - **架构文档**：
   - `docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 - **工具文档**：
+  - `mlbot diagnose feature-group-search --help`
+
+
   - `mlbot diagnose feature-group-search --help`
 

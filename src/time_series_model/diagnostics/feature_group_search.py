@@ -230,7 +230,45 @@ def _run_one_seed(
     # Train pipeline supports optional cropping via env vars.
     env["TRAIN_START_DATE"] = cfg.start_date
     env["TRAIN_END_DATE"] = cfg.end_date
-    subprocess.run(cmd, check=True, cwd=str(Path.cwd()), env=env)
+    try:
+        subprocess.run(cmd, check=True, cwd=str(Path.cwd()), env=env)
+    except subprocess.CalledProcessError as e:
+        # Safety net: training can fail non-deterministically (e.g. killed process / transient issues).
+        # The search must keep going, so we create a placeholder results.json and continue.
+        placeholder = out_root / _strategy_name(strategy_dir) / "results.json"
+        _ensure_dir(placeholder.parent)
+        payload = {
+            "strategy": _strategy_name(strategy_dir),
+            "model_type": "unknown",
+            "task_type": "unknown",
+            "avg_cv_metric": None,
+            "n_features": None,
+            "n_train_samples": 0,
+            "n_test_samples": 0,
+            "evaluation": {},
+            "diagnostics": {
+                "skip": {
+                    "skipped": True,
+                    "reason": "train_pipeline_nonzero_exit",
+                    "returncode": int(getattr(e, "returncode", -1) or -1),
+                    "cmd": [str(x) for x in cmd],
+                }
+            },
+            "backtest": {
+                "total_return_pct": 0.0,
+                "sharpe": -999.0,
+                "max_drawdown_pct": 0.0,
+                "total_trades": 0,
+                "reason": "train_pipeline_nonzero_exit",
+            },
+        }
+        with open(placeholder, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, default=str)
+        print(
+            f"   ⚠️  train_strategy_pipeline failed (returncode={payload['diagnostics']['skip']['returncode']}), "
+            f"created placeholder results at {placeholder}"
+        )
+        return placeholder
 
     results = list(out_root.rglob("results.json"))
     if len(results) != 1:
@@ -239,7 +277,8 @@ def _run_one_seed(
         # feature-group-search must keep going. Create a placeholder results.json so downstream
         # aggregation/selection can proceed deterministically.
         if len(results) == 0:
-            placeholder = out_root / "results.json"
+            placeholder = out_root / _strategy_name(strategy_dir) / "results.json"
+            _ensure_dir(placeholder.parent)
             payload = {
                 "strategy": _strategy_name(strategy_dir),
                 "model_type": "unknown",
