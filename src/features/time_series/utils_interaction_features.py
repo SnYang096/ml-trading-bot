@@ -1632,6 +1632,68 @@ def compute_atr_ratio_from_series(
     )
 
 
+@register_feature("compute_macdext_atr_normalized_from_series", category="derived")
+def compute_macdext_atr_normalized_from_series(
+    *,
+    macdext: pd.Series,
+    macdext_signal: pd.Series,
+    macdext_histogram: pd.Series,
+    close: pd.Series,
+    atr: pd.Series,
+) -> pd.DataFrame:
+    """
+    Normalize MACDEXT outputs by ATR (unitless), without changing upstream macdext_f semantics.
+
+    Background:
+    - In this repo, `macdext_f` is normalized by close (relative_close), so its outputs are ~unitless:
+        macdext_rel = macdext_raw / close
+    - To get a true ATR-normalized MACD (also unitless), we reconstruct:
+        macdext_raw/atr = (macdext_rel * close) / atr
+
+    This keeps compatibility while providing a scale-free MACD/ATR version for multi-asset modeling.
+    """
+    macdext = pd.to_numeric(macdext, errors="coerce").astype(float)
+    macdext_signal = pd.to_numeric(macdext_signal, errors="coerce").astype(float)
+    macdext_histogram = pd.to_numeric(macdext_histogram, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = pd.to_numeric(atr, errors="coerce").astype(float).replace(0, np.nan)
+
+    scale = (close / atr).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out = pd.DataFrame(index=macdext.index)
+    out["macdext_atr_norm"] = (macdext * scale).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["macdext_signal_atr_norm"] = (macdext_signal * scale).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["macdext_histogram_atr_norm"] = (macdext_histogram * scale).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return out
+
+
+@register_feature("compute_macdfix_atr_normalized_from_series", category="derived")
+def compute_macdfix_atr_normalized_from_series(
+    *,
+    macdfix: pd.Series,
+    macdfix_signal: pd.Series,
+    macdfix_histogram: pd.Series,
+    close: pd.Series,
+    atr: pd.Series,
+) -> pd.DataFrame:
+    """
+    Normalize MACDFIX outputs by ATR (unitless), without changing upstream macdfix_f semantics.
+
+    Same idea as compute_macdext_atr_normalized_from_series.
+    """
+    macdfix = pd.to_numeric(macdfix, errors="coerce").astype(float)
+    macdfix_signal = pd.to_numeric(macdfix_signal, errors="coerce").astype(float)
+    macdfix_histogram = pd.to_numeric(macdfix_histogram, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = pd.to_numeric(atr, errors="coerce").astype(float).replace(0, np.nan)
+
+    scale = (close / atr).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out = pd.DataFrame(index=macdfix.index)
+    out["macdfix_atr_norm"] = (macdfix * scale).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["macdfix_signal_atr_norm"] = (macdfix_signal * scale).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["macdfix_histogram_atr_norm"] = (macdfix_histogram * scale).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return out
+
+
 @register_feature("compute_bb_width_ratio", category="derived")
 def compute_bb_width_ratio(
     df: pd.DataFrame,

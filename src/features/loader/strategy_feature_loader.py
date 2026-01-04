@@ -2,9 +2,11 @@
 基于纯配置文件的特征加载器（支持并行计算和缓存）
 """
 
+import time
+from typing import List, Dict, Optional
+
 import yaml
 import pandas as pd
-from typing import List, Dict, Optional
 from pathlib import Path
 
 from src.features.loader.feature_computer import FeatureComputer
@@ -85,8 +87,25 @@ class StrategyFeatureLoader:
         if not path_obj.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
 
-        with open(path_obj, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+        # NOTE:
+        # Some workflows (feature-group-search background runs) may overlap with interactive edits
+        # to YAML configs. If a file is being written, a reader may briefly observe an incomplete
+        # YAML and get a transient yaml.scanner.ScannerError.
+        #
+        # We retry a few times to make the loader resilient to those transient states.
+        last_err: Exception | None = None
+        for attempt in range(5):
+            try:
+                with open(path_obj, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if data is None:
+                    raise ValueError(f"YAML file is empty or invalid (parsed None): {path}")
+                return data
+            except (OSError, yaml.YAMLError, ValueError) as e:
+                last_err = e
+                # small backoff: 50ms, 100ms, 150ms, ...
+                time.sleep(0.05 * (attempt + 1))
+        raise RuntimeError(f"Failed to load YAML after retries: {path}") from last_err
 
     def _load_yaml_optional(self, path: str) -> Dict:
         """加载 YAML 配置文件（可选，文件不存在时返回空字典）"""
@@ -94,8 +113,11 @@ class StrategyFeatureLoader:
         if not path_obj.exists():
             return {}
 
-        with open(path_obj, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+        try:
+            return self._load_yaml(path) or {}
+        except Exception:
+            # Optional config should never bring down the whole pipeline.
+            return {}
 
     def resolve_dependencies(self, requested_features: List[str]) -> List[str]:
         """

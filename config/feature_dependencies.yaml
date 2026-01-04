@@ -5921,6 +5921,39 @@ features:
       normalize_mode: relative_close
     column_mappings:
       real: close
+  macdext_atr_norm_f:
+    module: enhanced
+    compute_func: compute_macdext_atr_normalized_from_series
+    dependencies:
+    - atr_f
+    - macdext_f
+    required_columns:
+    - macdext
+    - macdext_signal
+    - macdext_histogram
+    - close
+    - atr
+    output_columns:
+    - macdext_atr_norm
+    - macdext_signal_atr_norm
+    - macdext_histogram_atr_norm
+    category: momentum
+    description: "MACDEXT normalized by ATR (unitless): (macdext_rel_close * close) / atr"
+    pass_full_df: false
+    column_mappings:
+      macdext: macdext
+      macdext_signal: macdext_signal
+      macdext_histogram: macdext_histogram
+      close: close
+      atr: atr
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        macdext_atr_norm: unitless
+        macdext_signal_atr_norm: unitless
+        macdext_histogram_atr_norm: unitless
+      input_normalization_map:
+        atr: price_unit
   macdfix_f:
     module: talib
     compute_func: compute_talib_indicator_from_series
@@ -5944,6 +5977,39 @@ features:
       normalize_mode: relative_close
     column_mappings:
       real: close
+  macdfix_atr_norm_f:
+    module: enhanced
+    compute_func: compute_macdfix_atr_normalized_from_series
+    dependencies:
+    - atr_f
+    - macdfix_f
+    required_columns:
+    - macdfix
+    - macdfix_signal
+    - macdfix_histogram
+    - close
+    - atr
+    output_columns:
+    - macdfix_atr_norm
+    - macdfix_signal_atr_norm
+    - macdfix_histogram_atr_norm
+    category: momentum
+    description: "MACDFIX normalized by ATR (unitless): (macdfix_rel_close * close) / atr"
+    pass_full_df: false
+    column_mappings:
+      macdfix: macdfix
+      macdfix_signal: macdfix_signal
+      macdfix_histogram: macdfix_histogram
+      close: close
+      atr: atr
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        macdfix_atr_norm: unitless
+        macdfix_signal_atr_norm: unitless
+        macdfix_histogram_atr_norm: unitless
+      input_normalization_map:
+        atr: price_unit
   bbands_f:
     module: talib
     compute_func: compute_talib_indicator_from_series

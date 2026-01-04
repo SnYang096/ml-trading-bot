@@ -167,6 +167,7 @@ mlbot train final \
 - **归一化契约与检查**：`docs/architecture/NORMALIZATION_CONTRACT_AND_CHECKS.md`
 - **“保留但不喂给模型”的列排除机制（exclude_columns）**：`docs/guides/FEATURE_PIPELINE_EXCLUDE_COLUMNS_CN.md`
 - **Feature-group-search / pipeline 调参指南**：`docs/guides/FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md`
+- **特征测试设计与覆盖（4类测试 + 覆盖快照保存）**：`docs/tests/FEATURE_TEST_DESIGN_AND_COVERAGE_CN.md`
 
 - **项目 TODO List**：`docs/TODO_LIST.md`
   - 所有待完成任务的详细说明

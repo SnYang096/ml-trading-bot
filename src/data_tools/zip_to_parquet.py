@@ -65,8 +65,8 @@ class DataConverter:
             logger.info(f"Converting {os.path.basename(zip_file)}...")
 
             # 从文件名自动检测交易对
+            zip_basename = os.path.basename(zip_file)
             if symbol is None:
-                zip_basename = os.path.basename(zip_file)
                 upper_name = zip_basename.upper()
                 match = re.search(r"([A-Z]+)(USDT|USD)", upper_name)
                 if match:
@@ -82,6 +82,23 @@ class DataConverter:
                         zip_basename,
                         symbol,
                     )
+
+            normalized_symbol = symbol.upper()
+            # Fast-path skip: derive output path from filename and skip BEFORE loading ZIP.
+            # This makes reruns / incremental conversion cheap.
+            output_file = self._generate_output_filename(zip_file, normalized_symbol)
+            if (
+                (not self.force)
+                and os.path.exists(output_file)
+                and os.path.getsize(output_file) > 0
+            ):
+                logger.info(f"Skip (already converted): {output_file}")
+                return {
+                    "original_file": zip_file,
+                    "output_file": output_file,
+                    "skipped": True,
+                    "symbol": symbol,
+                }
 
             # 解压zip文件
             with zipfile.ZipFile(zip_file, "r") as zip_ref:
@@ -137,25 +154,7 @@ class DataConverter:
                     logger.warning("No tick data after preprocessing for %s", zip_file)
                     return None
 
-                normalized_symbol = symbol.upper()
                 df_ticks["symbol"] = normalized_symbol
-                output_file = self._generate_output_filename(
-                    zip_file, normalized_symbol
-                )
-
-                # Skip if already converted and not forcing re-convert
-                if (
-                    (not self.force)
-                    and os.path.exists(output_file)
-                    and os.path.getsize(output_file) > 0
-                ):
-                    logger.info(f"Skip (already converted): {output_file}")
-                    return {
-                        "original_file": zip_file,
-                        "output_file": output_file,
-                        "skipped": True,
-                        "symbol": symbol,
-                    }
 
                 df_ticks.to_parquet(output_file, compression="snappy", index=False)
                 logger.info(f"Saved tick parquet: {output_file}")
