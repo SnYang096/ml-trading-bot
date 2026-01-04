@@ -25,13 +25,25 @@ class TestCLI:
         assert "rule" in result.output
         assert "rl" in result.output
         assert "data" in result.output
-        assert "serve-results" in result.output
+        assert "server" in result.output
 
     def test_cli_version(self, runner):
         """Test that CLI shows version."""
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
         assert "0.0.2" in result.output
+
+
+class TestDiagnoseCommands:
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    def test_diagnose_help_includes_poolb_semantic_search(self, runner):
+        result = runner.invoke(cli, ["diagnose", "--help"])
+        assert result.exit_code == 0
+        assert "poolb-semantic-search" in result.output
+        assert "holdout-eval" in result.output
 
 
 class TestFeaturesCommands:
@@ -71,6 +83,7 @@ class TestTrainCommands:
         assert "sr-reversal-long" in result.output
         assert "sr-reversal-short" in result.output
         assert "rolling" in result.output
+        assert "final" in result.output
 
 
 class TestRLCommands:
@@ -142,7 +155,21 @@ class TestServeResults:
         return CliRunner()
 
     def test_serve_results_help(self, runner):
+        # Backward-compat alias (hidden from top-level help)
         result = runner.invoke(cli, ["serve-results", "--help"])
+        assert result.exit_code == 0
+        assert "--port" in result.output
+        assert "--dir" in result.output
+        assert "--force" in result.output
+
+
+class TestServer:
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    def test_server_help(self, runner):
+        result = runner.invoke(cli, ["server", "--help"])
         assert result.exit_code == 0
         assert "--port" in result.output
         assert "--dir" in result.output
@@ -157,3 +184,17 @@ class TestProjectRoot:
         root = get_project_root()
         assert root.exists()
         assert (root / "setup.py").exists() or (root / "pyproject.toml").exists()
+
+
+class TestNNMultiheadCommands:
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    def test_nnmultihead_help_includes_render_report(self, runner):
+        result = runner.invoke(cli, ["nnmultihead", "--help"])
+        assert result.exit_code == 0
+        assert "train" in result.output
+        assert "predict" in result.output
+        assert "eval" in result.output
+        assert "render-report" in result.output

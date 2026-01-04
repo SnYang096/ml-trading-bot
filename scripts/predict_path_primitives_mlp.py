@@ -40,6 +40,9 @@ from src.time_series_model.models.nn.path_primitives_model import (
 from src.time_series_model.models.nn.path_primitives_reporting import (
     predict_path_primitives,
 )  # noqa: E402
+from src.time_series_model.models.nn.path_primitives_artifact import (  # noqa: E402
+    PathPrimitivesModelArtifact,
+)
 from src.time_series_model.models.nn.feature_contract import (  # noqa: E402
     load_feature_contract,
     validate_minimal_required_cols,
@@ -106,17 +109,14 @@ def main() -> None:
     if not symbols:
         raise ValueError("No symbols provided.")
 
-    payload = torch.load(args.model, map_location="cpu")
-    if "model" not in payload:
-        raise ValueError("Invalid model payload: missing 'model' key")
-    model = MultiHeadPathPrimitivesMLP.from_export(payload["model"])
-
-    # Get feature columns and scaler from model metadata (for consistency with training)
-    model_meta = payload.get("meta", {})
-    model_feature_cols = model_meta.get("feature_cols", None)
-    feature_scaler = model_meta.get("feature_scaler", None)
+    artifact = PathPrimitivesModelArtifact.load(
+        model_path=args.model, config_dir=cfg_dir
+    )
+    model = artifact.model
+    model_feature_cols = artifact.feature_cols
+    feature_scaler = artifact.feature_scaler
     if feature_scaler is not None:
-        print(f"✓ Loaded feature scaler from model (will apply z-score normalization)")
+        print("✓ Loaded feature scaler from model (will apply z-score normalization)")
 
     out_root = Path(args.output)
     multi = len(symbols) > 1
@@ -126,7 +126,11 @@ def main() -> None:
         out_root.parent.mkdir(parents=True, exist_ok=True)
 
     feature_loader = StrategyFeatureLoader()
-    contract = load_feature_contract(cfg_dir)
+    contract = (
+        artifact.contract
+        if artifact.contract is not None
+        else load_feature_contract(cfg_dir)
+    )
 
     if (args.features_store_layer is not None) and (args.features_path is None):
         args.features_path = str(args.features_store_root)
@@ -168,21 +172,8 @@ def main() -> None:
                 validate_minimal_required_cols(
                     available_columns=df_features.columns.tolist(), contract=contract
                 )
-            # Resolve block_cols_by_name for block mask if needed
-            block_cols_by_name = None
-            append_block_mask = False
-            if contract is not None and contract.optional_blocks:
-                from src.time_series_model.models.nn.path_primitives_dataset import (
-                    resolve_block_cols_by_name,
-                )
-
-                block_cols_by_name = resolve_block_cols_by_name(
-                    feature_cols,
-                    optional_blocks=contract.optional_blocks,
-                )
-                append_block_mask = contract.missingness_policy.get(
-                    "append_block_mask", False
-                )
+            block_cols_by_name = artifact.block_cols_by_name
+            append_block_mask = artifact.append_block_mask
             preds = predict_path_primitives(
                 model=model,
                 df=df_features,

@@ -38,7 +38,10 @@ def _infer_meta_for_feature(feature_name: str, feature_info: Dict[str, Any]) -> 
     normalize_mode = compute_params.get("normalize_mode")
     output_norm = compute_params.get("output_normalization")
     output_norm_map = compute_params.get("output_normalization_map") or {}
-    normalized_flag = bool(compute_params.get("normalized", False))
+    # Note: some features declare normalized at the top-level (older style); keep it honored.
+    normalized_flag = bool(compute_params.get("normalized", False)) or bool(
+        feature_info.get("normalized", False)
+    )
 
     method: Optional[str] = None
     expected_range: Optional[Tuple[float, float]] = None
@@ -49,9 +52,19 @@ def _infer_meta_for_feature(feature_name: str, feature_info: Dict[str, Any]) -> 
             expected_range = (-1.0, 1.0)
     elif normalize_mode is not None:
         method = str(normalize_mode)
-    elif normalized_flag or ("normalized" in desc.lower()) or ("unitless" in desc.lower()) or ("similarity" in desc.lower()):
-        # Explicitly mark as unitless when config/doc says so.
-        method = "unitless"
+    else:
+        # Heuristic only when we are NOT explicitly saying "not normalized" / "未归一化"
+        # (otherwise we'd misclassify raw-unit features as unitless).
+        dl = desc.lower()
+        says_not_norm = ("not normalized" in dl) or ("un-normalized" in dl) or ("未归一化" in desc)
+        if (not says_not_norm) and (
+            normalized_flag
+            or ("normalized" in dl)
+            or ("unitless" in dl)
+            or ("similarity" in dl)
+        ):
+            # Explicitly mark as unitless when config/doc says so.
+            method = "unitless"
 
     metas: List[FeatureNormalizationMeta] = []
     for col in output_cols:
@@ -64,6 +77,9 @@ def _infer_meta_for_feature(feature_name: str, feature_info: Dict[str, Any]) -> 
         # Per-column overrides (for multi-output features)
         if str(col) in output_norm_map:
             col_method = str(output_norm_map[str(col)])
+            # If config explicitly marks a column as raw/price-unit, it is NOT cross-asset comparable.
+            if col_method in {"raw", "price_unit", "usd"}:
+                col_cross_asset = False
             if col_method == "tanh":
                 col_expected_range = (-1.0, 1.0)
             elif col_method == "bounded_0_1":

@@ -1,0 +1,63 @@
+description: |
+  NN multi-head base (path primitives) - PoolB(primitives) subset experiment
+
+  This config is derived from `results/pools/path_primitives_4h_80h_min/pool_b_primitives/features_pool_b_primitives.yaml`.
+  Goal: train a smaller, more stable primitives model using only PoolB-selected features (plus optional blocks).
+
+feature_pipeline:
+  # Use requested_features to control what we *train on* (via selector).
+  # We still expect the FeatureStore layer to contain these columns.
+  requested_features:
+    required:
+      # Core (PoolB) required features
+      - acceleration_3_f
+      - atr_f
+      - atr_percentile_f
+      - bb_width_f
+      - compression_to_breakout_prob_f
+      - price_range_symmetry_f
+      - range_ratio_5bar_f
+      - rsi_f
+      - slope_consistency_score_f
+      - volatility_reversal_score_f
+      - volume_anomaly_f
+
+    # Optional blocks (still in PoolB): masked during training for robustness
+    optional_blocks:
+      vpin_block:
+        - vpin_features_f
+      volume_profile_block:
+        - volume_profile_volatility_features_f
+        # Backward-compatible alias is allowed in feature_dependencies.yaml
+        - volume_profile_vpvr
+
+  # IMPORTANT: FeatureStore layers can contain extra columns. We use a selector so nn training
+  # uses only the output columns implied by requested_features above.
+  selector:
+    module: src.time_series_model.models.nn.feature_selector
+    function: select_columns_from_requested_features
+    params:
+      requested_features:
+        # Flattened list (required + optional) for selector mapping.
+        - acceleration_3_f
+        - atr_f
+        - atr_percentile_f
+        - bb_width_f
+        - compression_to_breakout_prob_f
+        - price_range_symmetry_f
+        - range_ratio_5bar_f
+        - rsi_f
+        - slope_consistency_score_f
+        - volatility_reversal_score_f
+        - volume_anomaly_f
+        - vpin_features_f
+        - volume_profile_volatility_features_f
+        - volume_profile_vpvr
+      feature_deps_path: config/feature_dependencies.yaml
+      drop_constant: true
+
+  missingness_policy:
+    append_block_mask: true
+    block_dropout_p: 0.05
+
+

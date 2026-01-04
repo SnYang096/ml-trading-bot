@@ -297,18 +297,31 @@ def main() -> None:
         group_col="symbol" if len(symbols) > 1 else None,
         block_cols_by_name=block_cols_by_name,
         append_block_mask=append_block_mask,
+        feature_scaler=meta.get("feature_scaler"),
     )
     # Attach rolling IC preview (report artifact) to meta so report.html can render it.
     if isinstance(extra, dict) and extra.get("rolling_ic") is not None:
         meta["rolling_ic"] = extra.get("rolling_ic")
 
     # Save artifacts
+    # Prefer a sample where labels exist (avoid tail horizon NaNs).
+    sample_df = df_eval
+    if "mfe_valid" in sample_df.columns:
+        sample_df = sample_df[
+            pd.to_numeric(sample_df["mfe_valid"], errors="coerce").fillna(0.0) > 0.5
+        ]
+    if "dir_y" in sample_df.columns:
+        sample_df = sample_df[
+            pd.to_numeric(sample_df["dir_y"], errors="coerce").notna()
+        ]
+    sample_df = sample_df.tail(200) if len(sample_df) else df_eval.tail(200)
+
     save_train_artifacts(
         out_dir=str(out_dir),
         model_path=model_path,
         meta=meta,
         metrics=metrics,
-        df_pred_sample=df_eval.tail(200)[
+        df_pred_sample=sample_df[
             [
                 "pred_dir_prob",
                 "pred_mfe_atr",

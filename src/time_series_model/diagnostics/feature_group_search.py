@@ -537,6 +537,919 @@ def greedy_forward_search(
         "base_strategy": cfg.base_strategy_dir.name,
         "base_features": base_features,
         "baseline": {"score": baseline_score, "summary": baseline_summary},
+        "search_algo": "greedy",
+        "selected_groups": selected,
+        "final_features": current_features,
+        "history": history,
+        "candidates_history": candidates_history,
+        "stop_reason": stop_reason,
+        "rejected_groups": rejected_groups,
+        "objective": objective,
+        "min_trades": min_trades,
+        "seeds": cfg.seeds,
+    }
+
+
+def _parse_int_list(csv: str) -> List[int]:
+    out: List[int] = []
+    for part in str(csv or "").split(","):
+        part = str(part).strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part))
+        except Exception:
+            continue
+    return out
+
+
+def _score_from_summary(
+    *,
+    summary: pd.DataFrame,
+    objective: str,
+    min_trades: int,
+) -> tuple[float | None, bool, str | None, dict]:
+    """
+    Convert the aggregated summary DataFrame into a (score, valid, reject_reason, summary_dict).
+    Mirrors greedy_forward_search behavior.
+    """
+    if summary.empty:
+        return None, False, "empty_summary", {}
+    row = summary.iloc[0].to_dict()
+    if objective not in row:
+        return None, False, "objective_missing", row
+    # Min-trades constraint (mean across seeds)
+    try:
+        trades = float(row.get("trades_mean", 0.0))
+        if trades < float(min_trades):
+            return -999.0, False, "min_trades", row
+    except Exception:
+        pass
+    try:
+        return float(row[objective]), True, None, row
+    except Exception:
+        return None, False, "objective_not_float", row
+
+
+def successive_halving_prefilter(
+    *,
+    cfg: SearchConfig,
+    base_features: List[str],
+    groups: Dict[str, List[str]],
+    objective: str,
+    min_trades: int,
+    stages: List[int],
+    top_fraction: float,
+    min_survivors: int,
+    target_survivors: int,
+) -> dict:
+    """
+    Successive Halving prefilter (no selection, just pruning).
+
+    We evaluate each group as a *single add* on top of base_features.
+    Budget dimension: number of seeds (prefix of cfg.seeds).
+    Returns survivors and per-group scores from the final stage (if evaluated).
+    """
+    tmp_root = cfg.output_dir / "tmp_strategies"
+    _ensure_dir(tmp_root)
+
+    max_n = max(1, len(cfg.seeds))
+    stages = [max(1, min(int(x), max_n)) for x in (stages or []) if int(x) > 0]
+    if not stages:
+        stages = [1, max_n]
+    stages = sorted(set(stages))
+    if stages[-1] != max_n:
+        stages.append(max_n)
+
+    survivors = list(groups.keys())
+    stage_tables: List[dict] = []
+
+    for si, nseeds in enumerate(stages):
+        seeds_subset = cfg.seeds[:nseeds]
+        cfg_stage = SearchConfig(
+            base_strategy_dir=cfg.base_strategy_dir,
+            timeframe=cfg.timeframe,
+            symbol=cfg.symbol,
+            start_date=cfg.start_date,
+            end_date=cfg.end_date,
+            test_size=cfg.test_size,
+            seeds=list(seeds_subset),
+            output_dir=cfg.output_dir,
+            deterministic=cfg.deterministic,
+            no_docker=cfg.no_docker,
+        )
+
+        scored: List[tuple[str, float]] = []
+        rows: List[dict] = []
+        for g in survivors:
+            feats = list(base_features) + (groups.get(g) or [])
+            run_id = f"prefilter_add_{g}__halving_s{nseeds}"
+            strat_dir = _make_temp_strategy(
+                base_dir=cfg.base_strategy_dir,
+                tmp_root=tmp_root,
+                name_suffix=run_id,
+                requested_features=feats,
+            )
+            _, summ = run_seed_sweep_for_strategy(
+                strategy_dir=strat_dir, cfg=cfg_stage, run_id=run_id
+            )
+            score, valid, reject_reason, row = _score_from_summary(
+                summary=summ, objective=objective, min_trades=min_trades
+            )
+            rows.append(
+                {
+                    "stage": si + 1,
+                    "stage_seeds": list(seeds_subset),
+                    "candidate_group": g,
+                    "score": score,
+                    "valid": bool(valid),
+                    "reject_reason": reject_reason,
+                    "summary": row,
+                }
+            )
+            if valid and score is not None:
+                scored.append((g, float(score)))
+
+        stage_tables.append(
+            {"stage": si + 1, "seeds": list(seeds_subset), "candidates": rows}
+        )
+
+        if not scored:
+            survivors = []
+            break
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        keep_n = max(int(min_survivors), int(len(scored) * float(top_fraction)))
+        keep_n = max(1, min(keep_n, len(scored)))
+        survivors = [g for g, _ in scored[:keep_n]]
+
+        # Cap to target_survivors once we reach the full budget
+        if nseeds == max_n:
+            survivors = survivors[: max(1, int(target_survivors))]
+
+    # Extract final-stage scores
+    final_scores: Dict[str, float] = {}
+    if stage_tables:
+        last = stage_tables[-1]
+        for r in last.get("candidates", []):
+            if r.get("valid") and r.get("score") is not None:
+                final_scores[str(r["candidate_group"])] = float(r["score"])
+
+    return {
+        "stages": stages,
+        "top_fraction": float(top_fraction),
+        "min_survivors": int(min_survivors),
+        "target_survivors": int(target_survivors),
+        "survivors": survivors,
+        "final_scores": final_scores,
+        "stage_tables": stage_tables,
+    }
+
+
+def sffs_prune_selected(
+    *,
+    cfg: SearchConfig,
+    base_features: List[str],
+    groups: Dict[str, List[str]],
+    selected_groups: List[str],
+    objective: str,
+    min_trades: int,
+    max_backward_steps: int,
+) -> dict:
+    """
+    Prune-only SFFS stage: starting from a fixed selected set, repeatedly remove any single
+    group if removal improves the objective.
+    """
+    tmp_root = cfg.output_dir / "tmp_strategies"
+    _ensure_dir(tmp_root)
+
+    eps_improve = 1e-9
+    max_backward_steps = max(1, int(max_backward_steps))
+
+    def _feats_for(sel: List[str]) -> List[str]:
+        feats = list(base_features)
+        for g in sel:
+            feats = feats + (groups.get(g) or [])
+        return feats
+
+    sel = [g for g in (selected_groups or []) if g in groups]
+    history: List[dict] = []
+
+    # Score initial
+    init_feats = _feats_for(sel)
+    run_id0 = f"prune_init__{'__'.join(sel) if sel else 'none'}"
+    strat_dir0 = _make_temp_strategy(
+        base_dir=cfg.base_strategy_dir,
+        tmp_root=tmp_root,
+        name_suffix=run_id0,
+        requested_features=init_feats,
+    )
+    _, summ0 = run_seed_sweep_for_strategy(
+        strategy_dir=strat_dir0, cfg=cfg, run_id=run_id0
+    )
+    best_score, _, _, best_row = _score_from_summary(
+        summary=summ0, objective=objective, min_trades=min_trades
+    )
+    if best_score is None:
+        best_score = -1e18
+
+    steps = 0
+    while steps < max_backward_steps and len(sel) > 1:
+        steps += 1
+        best_rm = None
+        best_rm_score = None
+        best_rm_summary = None
+        for rm in list(sel):
+            kept = [g for g in sel if g != rm]
+            feats = _feats_for(kept)
+            run_id = f"prune_try__keep_{'__'.join(kept) if kept else 'none'}__rm_{rm}"
+            strat_dir = _make_temp_strategy(
+                base_dir=cfg.base_strategy_dir,
+                tmp_root=tmp_root,
+                name_suffix=run_id,
+                requested_features=feats,
+            )
+            _, summ = run_seed_sweep_for_strategy(
+                strategy_dir=strat_dir, cfg=cfg, run_id=run_id
+            )
+            score, valid, reject_reason, row = _score_from_summary(
+                summary=summ, objective=objective, min_trades=min_trades
+            )
+            if not valid or score is None:
+                continue
+            if best_rm_score is None or float(score) > float(best_rm_score):
+                best_rm = rm
+                best_rm_score = float(score)
+                best_rm_summary = row
+        if best_rm is None or best_rm_score is None:
+            break
+        if float(best_rm_score) <= float(best_score) + eps_improve:
+            break
+        sel = [g for g in sel if g != best_rm]
+        best_score = float(best_rm_score)
+        history.append(
+            {
+                "phase": "prune",
+                "removed_group": best_rm,
+                "objective": objective,
+                "score": best_rm_score,
+                "summary": best_rm_summary or {},
+            }
+        )
+
+    return {"selected_groups": sel, "score": float(best_score), "history": history}
+
+
+def pipeline_sh_beam_sffs(
+    *,
+    cfg: SearchConfig,
+    base_features: List[str],
+    groups: Dict[str, List[str]],
+    max_steps: int,
+    objective: str,
+    min_trades: int,
+    stages: List[int],
+    top_fraction: float,
+    min_survivors: int,
+    target_survivors: int,
+    beam_width: int,
+    sffs_max_backward_steps: int,
+) -> dict:
+    """
+    Pipeline:
+      1) Successive Halving prefilter (single-add ranking) -> survivors
+      2) Beam search on survivors -> best path
+      3) SFFS prune-only on best path -> final
+    """
+    # Baseline (full seeds)
+    tmp_root = cfg.output_dir / "tmp_strategies"
+    _ensure_dir(tmp_root)
+    baseline_suffix = "baseline"
+    baseline_dir = _make_temp_strategy(
+        base_dir=cfg.base_strategy_dir,
+        tmp_root=tmp_root,
+        name_suffix=baseline_suffix,
+        requested_features=list(base_features),
+    )
+    _, baseline_summ = run_seed_sweep_for_strategy(
+        strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
+    )
+    base_score, _, _, base_row = _score_from_summary(
+        summary=baseline_summ, objective=objective, min_trades=min_trades
+    )
+    if base_score is None:
+        raise RuntimeError("Baseline evaluation failed")
+
+    pre = successive_halving_prefilter(
+        cfg=cfg,
+        base_features=base_features,
+        groups=groups,
+        objective=objective,
+        min_trades=min_trades,
+        stages=stages,
+        top_fraction=top_fraction,
+        min_survivors=min_survivors,
+        target_survivors=target_survivors,
+    )
+    surv_groups = {k: groups[k] for k in pre["survivors"] if k in groups}
+
+    beam_res = beam_search(
+        cfg=cfg,
+        base_features=base_features,
+        groups=surv_groups,
+        max_steps=max_steps,
+        objective=objective,
+        min_trades=min_trades,
+        beam_width=beam_width,
+    )
+
+    pruned = sffs_prune_selected(
+        cfg=cfg,
+        base_features=base_features,
+        groups=surv_groups,
+        selected_groups=beam_res.get("selected_groups") or [],
+        objective=objective,
+        min_trades=min_trades,
+        max_backward_steps=sffs_max_backward_steps,
+    )
+
+    final_selected = pruned["selected_groups"]
+    final_features = list(base_features)
+    for g in final_selected:
+        final_features = final_features + (surv_groups.get(g) or [])
+
+    return {
+        "base_strategy": cfg.base_strategy_dir.name,
+        "base_features": base_features,
+        "baseline": {"score": float(base_score), "summary": base_row},
+        "search_algo": "pipeline_sh_beam_sffs",
+        "algo_params": {
+            "halving_stages": pre["stages"],
+            "halving_top_fraction": pre["top_fraction"],
+            "halving_min_survivors": pre["min_survivors"],
+            "pipeline_survivors": pre["target_survivors"],
+            "beam_width": int(beam_width),
+            "beam_max_steps": int(max_steps),
+            "sffs_max_backward_steps": int(sffs_max_backward_steps),
+        },
+        "prefilter": pre,
+        "beam": {
+            "selected_groups": beam_res.get("selected_groups") or [],
+            "stop_reason": beam_res.get("stop_reason"),
+        },
+        "prune": pruned,
+        "selected_groups": final_selected,
+        "final_features": final_features,
+        "history": (beam_res.get("history") or []) + (pruned.get("history") or []),
+        "candidates_history": (beam_res.get("candidates_history") or []),
+        "stop_reason": "completed",
+        "rejected_groups": [],
+        "objective": objective,
+        "min_trades": min_trades,
+        "seeds": cfg.seeds,
+    }
+
+
+def successive_halving_search(
+    *,
+    cfg: SearchConfig,
+    base_features: List[str],
+    groups: Dict[str, List[str]],
+    max_steps: int,
+    objective: str,
+    min_trades: int,
+    stages: List[int],
+    top_fraction: float,
+    min_survivors: int,
+) -> dict:
+    """
+    Successive Halving over candidates per greedy step.
+
+    Budget dimension: number of seeds (prefix of cfg.seeds).
+    """
+    tmp_root = cfg.output_dir / "tmp_strategies"
+    _ensure_dir(tmp_root)
+
+    selected: List[str] = []
+    remaining = list(groups.keys())
+    history: List[dict] = []
+    candidates_history: List[dict] = []
+
+    current_features = list(base_features)
+    eps_improve = 1e-9
+    stop_reason = "unknown"
+    rejected_groups: List[str] = []
+
+    # Baseline evaluation (full seeds)
+    baseline_suffix = "baseline"
+    baseline_dir = _make_temp_strategy(
+        base_dir=cfg.base_strategy_dir,
+        tmp_root=tmp_root,
+        name_suffix=baseline_suffix,
+        requested_features=current_features,
+    )
+    _, baseline_summ = run_seed_sweep_for_strategy(
+        strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
+    )
+    base_score, _, _, base_row = _score_from_summary(
+        summary=baseline_summ, objective=objective, min_trades=min_trades
+    )
+    if base_score is None:
+        raise RuntimeError("Baseline evaluation failed")
+    best_score = float(base_score)
+    baseline_score = float(base_score)
+    baseline_summary = base_row
+
+    # Normalize stages
+    max_n = max(1, len(cfg.seeds))
+    stages = [max(1, min(int(x), max_n)) for x in (stages or []) if int(x) > 0]
+    if not stages:
+        stages = [1, max_n]
+    stages = sorted(set(stages))
+    if stages[-1] != max_n:
+        stages.append(max_n)
+
+    for step in range(int(max_steps)):
+        survivors = list(remaining)
+        step_candidates: List[dict] = []
+
+        for si, nseeds in enumerate(stages):
+            seeds_subset = cfg.seeds[:nseeds]
+            cfg_stage = SearchConfig(
+                base_strategy_dir=cfg.base_strategy_dir,
+                timeframe=cfg.timeframe,
+                symbol=cfg.symbol,
+                start_date=cfg.start_date,
+                end_date=cfg.end_date,
+                test_size=cfg.test_size,
+                seeds=list(seeds_subset),
+                output_dir=cfg.output_dir,
+                deterministic=cfg.deterministic,
+                no_docker=cfg.no_docker,
+            )
+
+            stage_results: List[tuple[str, float]] = []
+            for g in survivors:
+                feats = current_features + groups[g]
+                suffix = f"step{step+1}_add_{g}__halving_s{nseeds}"
+                strat_dir = _make_temp_strategy(
+                    base_dir=cfg.base_strategy_dir,
+                    tmp_root=tmp_root,
+                    name_suffix=suffix,
+                    requested_features=feats,
+                )
+                _, summ = run_seed_sweep_for_strategy(
+                    strategy_dir=strat_dir, cfg=cfg_stage, run_id=suffix
+                )
+                score, valid, reject_reason, row = _score_from_summary(
+                    summary=summ, objective=objective, min_trades=min_trades
+                )
+                step_candidates.append(
+                    {
+                        "step": step + 1,
+                        "stage": si + 1,
+                        "stage_seeds": list(seeds_subset),
+                        "candidate_group": g,
+                        "score": score,
+                        "valid": bool(valid),
+                        "reject_reason": reject_reason,
+                        "summary": row,
+                    }
+                )
+                if valid and score is not None:
+                    stage_results.append((g, float(score)))
+                else:
+                    if reject_reason:
+                        rejected_groups.append(g)
+
+            if not stage_results:
+                survivors = []
+                break
+            stage_results.sort(key=lambda x: x[1], reverse=True)
+            keep_n = max(
+                int(min_survivors), int(len(stage_results) * float(top_fraction))
+            )
+            keep_n = max(1, min(keep_n, len(stage_results)))
+            survivors = [g for g, _ in stage_results[:keep_n]]
+            if len(survivors) <= 1:
+                break
+
+        candidates_history.append(
+            {
+                "step": step + 1,
+                "current_selected": list(selected),
+                "candidates": step_candidates,
+            }
+        )
+
+        # Pick best valid entry from the final stage among survivors
+        last_stage = len(stages)
+        best_candidate = None
+        best_candidate_score = None
+        best_candidate_summary = None
+        surv_set = set(survivors)
+        for e in step_candidates:
+            if e.get("stage") != last_stage:
+                continue
+            g = e.get("candidate_group")
+            if g not in surv_set:
+                continue
+            if not e.get("valid"):
+                continue
+            sc = e.get("score")
+            if sc is None:
+                continue
+            if best_candidate_score is None or float(sc) > float(best_candidate_score):
+                best_candidate = str(g)
+                best_candidate_score = float(sc)
+                best_candidate_summary = e.get("summary") or {}
+
+        if best_candidate is None or best_candidate_score is None:
+            stop_reason = "no_valid_candidates"
+            break
+        if float(best_candidate_score) <= float(best_score) + eps_improve:
+            stop_reason = "no_improvement"
+            break
+
+        selected.append(best_candidate)
+        remaining.remove(best_candidate)
+        current_features = current_features + groups[best_candidate]
+        best_score = float(best_candidate_score)
+        history.append(
+            {
+                "step": step + 1,
+                "added_group": best_candidate,
+                "objective": objective,
+                "score": best_score,
+                "summary": best_candidate_summary,
+            }
+        )
+        if not remaining:
+            stop_reason = "exhausted_candidates"
+            break
+
+    if stop_reason == "unknown":
+        stop_reason = (
+            "max_steps_reached" if len(selected) >= int(max_steps) else "completed"
+        )
+        if stop_reason == "max_steps_reached":
+            rejected_groups = list(remaining)
+
+    return {
+        "base_strategy": cfg.base_strategy_dir.name,
+        "base_features": base_features,
+        "baseline": {"score": baseline_score, "summary": baseline_summary},
+        "search_algo": "successive_halving",
+        "algo_params": {
+            "stages": stages,
+            "top_fraction": float(top_fraction),
+            "min_survivors": int(min_survivors),
+        },
+        "selected_groups": selected,
+        "final_features": current_features,
+        "history": history,
+        "candidates_history": candidates_history,
+        "stop_reason": stop_reason,
+        "rejected_groups": rejected_groups,
+        "objective": objective,
+        "min_trades": min_trades,
+        "seeds": cfg.seeds,
+    }
+
+
+def beam_search(
+    *,
+    cfg: SearchConfig,
+    base_features: List[str],
+    groups: Dict[str, List[str]],
+    max_steps: int,
+    objective: str,
+    min_trades: int,
+    beam_width: int,
+) -> dict:
+    """
+    Beam search over group additions.
+    Keeps top-K partial solutions at each depth.
+    """
+    tmp_root = cfg.output_dir / "tmp_strategies"
+    _ensure_dir(tmp_root)
+
+    eps_improve = 1e-9
+    beam_width = max(1, int(beam_width))
+
+    baseline_suffix = "baseline"
+    baseline_dir = _make_temp_strategy(
+        base_dir=cfg.base_strategy_dir,
+        tmp_root=tmp_root,
+        name_suffix=baseline_suffix,
+        requested_features=list(base_features),
+    )
+    _, baseline_summ = run_seed_sweep_for_strategy(
+        strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
+    )
+    base_score, _, _, base_row = _score_from_summary(
+        summary=baseline_summ, objective=objective, min_trades=min_trades
+    )
+    if base_score is None:
+        raise RuntimeError("Baseline evaluation failed")
+    baseline_score = float(base_score)
+    baseline_summary = base_row
+
+    # Beam items: (selected_groups, current_features, score, summary)
+    beam: List[tuple[List[str], List[str], float, dict]] = [
+        ([], list(base_features), float(base_score), base_row)
+    ]
+    best_item = beam[0]
+    best_score = float(best_item[2])
+
+    all_group_keys = list(groups.keys())
+    candidates_history: List[dict] = []
+    rejected_groups: List[str] = []
+    stop_reason = "unknown"
+
+    for step in range(int(max_steps)):
+        expansions: List[tuple[List[str], List[str], float, dict]] = []
+        step_candidates: List[dict] = []
+
+        for sel, feats, _, _ in beam:
+            rem = [g for g in all_group_keys if g not in set(sel)]
+            for g in rem:
+                new_sel = sel + [g]
+                new_feats = feats + groups[g]
+                sig = "__".join(new_sel)
+                run_id = f"beam_step{step+1}_sel_{sig}"
+                strat_dir = _make_temp_strategy(
+                    base_dir=cfg.base_strategy_dir,
+                    tmp_root=tmp_root,
+                    name_suffix=run_id,
+                    requested_features=new_feats,
+                )
+                _, summ = run_seed_sweep_for_strategy(
+                    strategy_dir=strat_dir, cfg=cfg, run_id=run_id
+                )
+                score, valid, reject_reason, row = _score_from_summary(
+                    summary=summ, objective=objective, min_trades=min_trades
+                )
+                step_candidates.append(
+                    {
+                        "step": step + 1,
+                        "parent_path": list(sel),
+                        "candidate_group": g,
+                        "score": score,
+                        "valid": bool(valid),
+                        "reject_reason": reject_reason,
+                        "summary": row,
+                    }
+                )
+                if valid and score is not None:
+                    expansions.append((new_sel, new_feats, float(score), row))
+                else:
+                    if reject_reason:
+                        rejected_groups.append(g)
+
+        candidates_history.append(
+            {
+                "step": step + 1,
+                "current_selected": [b[0] for b in beam],
+                "candidates": step_candidates,
+            }
+        )
+
+        if not expansions:
+            stop_reason = "no_valid_candidates"
+            break
+
+        expansions.sort(key=lambda x: x[2], reverse=True)
+        beam = expansions[:beam_width]
+
+        if beam[0][2] > best_item[2] + eps_improve:
+            best_item = beam[0]
+            best_score = float(best_item[2])
+        else:
+            stop_reason = "no_improvement"
+            break
+
+        if not beam:
+            stop_reason = "no_valid_candidates"
+            break
+
+    best_selected, best_features, _, _ = best_item
+    history: List[dict] = []
+    for i, g in enumerate(best_selected):
+        history.append({"step": i + 1, "added_group": g, "objective": objective})
+
+    if stop_reason == "unknown":
+        stop_reason = (
+            "max_steps_reached" if len(best_selected) >= int(max_steps) else "completed"
+        )
+
+    return {
+        "base_strategy": cfg.base_strategy_dir.name,
+        "base_features": base_features,
+        "baseline": {"score": baseline_score, "summary": baseline_summary},
+        "search_algo": "beam",
+        "algo_params": {"beam_width": beam_width},
+        "selected_groups": best_selected,
+        "final_features": best_features,
+        "history": history,
+        "candidates_history": candidates_history,
+        "stop_reason": stop_reason,
+        "rejected_groups": rejected_groups,
+        "objective": objective,
+        "min_trades": min_trades,
+        "seeds": cfg.seeds,
+    }
+
+
+def sffs_search(
+    *,
+    cfg: SearchConfig,
+    base_features: List[str],
+    groups: Dict[str, List[str]],
+    max_steps: int,
+    objective: str,
+    min_trades: int,
+    max_backward_per_step: int,
+) -> dict:
+    """
+    Sequential Floating Forward Selection (SFFS):
+    forward add best group, then backward remove any selected group if it improves score.
+    """
+    tmp_root = cfg.output_dir / "tmp_strategies"
+    _ensure_dir(tmp_root)
+
+    eps_improve = 1e-9
+    max_backward_per_step = max(1, int(max_backward_per_step))
+
+    selected: List[str] = []
+    remaining = list(groups.keys())
+    history: List[dict] = []
+    candidates_history: List[dict] = []
+    rejected_groups: List[str] = []
+    stop_reason = "unknown"
+
+    # Baseline
+    baseline_suffix = "baseline"
+    baseline_dir = _make_temp_strategy(
+        base_dir=cfg.base_strategy_dir,
+        tmp_root=tmp_root,
+        name_suffix=baseline_suffix,
+        requested_features=list(base_features),
+    )
+    _, baseline_summ = run_seed_sweep_for_strategy(
+        strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
+    )
+    base_score, _, _, base_row = _score_from_summary(
+        summary=baseline_summ, objective=objective, min_trades=min_trades
+    )
+    if base_score is None:
+        raise RuntimeError("Baseline evaluation failed")
+    baseline_score = float(base_score)
+    baseline_summary = base_row
+    best_score = float(base_score)
+
+    current_features = list(base_features)
+
+    def _eval_featureset(
+        feats: List[str], run_id: str
+    ) -> tuple[float | None, bool, str | None, dict]:
+        strat_dir = _make_temp_strategy(
+            base_dir=cfg.base_strategy_dir,
+            tmp_root=tmp_root,
+            name_suffix=run_id,
+            requested_features=feats,
+        )
+        _, summ = run_seed_sweep_for_strategy(
+            strategy_dir=strat_dir, cfg=cfg, run_id=run_id
+        )
+        return _score_from_summary(
+            summary=summ, objective=objective, min_trades=min_trades
+        )
+
+    for step in range(int(max_steps)):
+        step_candidates: List[dict] = []
+
+        # Forward add
+        best_add = None
+        best_add_score = None
+        best_add_summary = None
+        for g in list(remaining):
+            new_sel = selected + [g]
+            new_feats = current_features + groups[g]
+            sig = "__".join(new_sel)
+            run_id = f"sffs_step{step+1}_fwd_sel_{sig}"
+            score, valid, reject_reason, row = _eval_featureset(new_feats, run_id)
+            step_candidates.append(
+                {
+                    "step": step + 1,
+                    "phase": "forward",
+                    "candidate_group": g,
+                    "score": score,
+                    "valid": bool(valid),
+                    "reject_reason": reject_reason,
+                    "summary": row,
+                }
+            )
+            if valid and score is not None:
+                if best_add_score is None or float(score) > float(best_add_score):
+                    best_add = g
+                    best_add_score = float(score)
+                    best_add_summary = row
+            else:
+                if reject_reason:
+                    rejected_groups.append(g)
+
+        if best_add is None or best_add_score is None:
+            stop_reason = "no_valid_candidates"
+            candidates_history.append({"step": step + 1, "candidates": step_candidates})
+            break
+        if float(best_add_score) <= float(best_score) + eps_improve:
+            stop_reason = "no_improvement"
+            candidates_history.append({"step": step + 1, "candidates": step_candidates})
+            break
+
+        # Accept add
+        selected.append(best_add)
+        remaining.remove(best_add)
+        current_features = current_features + groups[best_add]
+        best_score = float(best_add_score)
+        history.append(
+            {
+                "step": step + 1,
+                "added_group": best_add,
+                "objective": objective,
+                "score": best_score,
+                "summary": best_add_summary or {},
+            }
+        )
+
+        # Backward floating remove
+        for _ in range(max_backward_per_step):
+            if len(selected) <= 1:
+                break
+            best_rm = None
+            best_rm_score = None
+            best_rm_summary = None
+            for rm in list(selected):
+                kept = [x for x in selected if x != rm]
+                feats = list(base_features)
+                for gg in kept:
+                    feats = feats + groups[gg]
+                sig = "__".join(kept) if kept else "none"
+                run_id = f"sffs_step{step+1}_bwd_sel_{sig}__rm_{rm}"
+                score, valid, reject_reason, row = _eval_featureset(feats, run_id)
+                step_candidates.append(
+                    {
+                        "step": step + 1,
+                        "phase": "backward",
+                        "candidate_group": rm,
+                        "score": score,
+                        "valid": bool(valid),
+                        "reject_reason": reject_reason,
+                        "summary": row,
+                    }
+                )
+                if valid and score is not None:
+                    if best_rm_score is None or float(score) > float(best_rm_score):
+                        best_rm = rm
+                        best_rm_score = float(score)
+                        best_rm_summary = row
+            if best_rm is None or best_rm_score is None:
+                break
+            if float(best_rm_score) <= float(best_score) + eps_improve:
+                break
+            # Remove
+            selected = [x for x in selected if x != best_rm]
+            current_features = list(base_features)
+            for gg in selected:
+                current_features = current_features + groups[gg]
+            best_score = float(best_rm_score)
+            history.append(
+                {
+                    "step": step + 1,
+                    "removed_group": best_rm,
+                    "objective": objective,
+                    "score": best_score,
+                    "summary": best_rm_summary or {},
+                }
+            )
+
+        candidates_history.append({"step": step + 1, "candidates": step_candidates})
+        if not remaining:
+            stop_reason = "exhausted_candidates"
+            break
+
+    if stop_reason == "unknown":
+        stop_reason = (
+            "max_steps_reached" if len(selected) >= int(max_steps) else "completed"
+        )
+
+    return {
+        "base_strategy": cfg.base_strategy_dir.name,
+        "base_features": base_features,
+        "baseline": {"score": baseline_score, "summary": baseline_summary},
+        "search_algo": "sffs",
+        "algo_params": {"max_backward_per_step": max_backward_per_step},
         "selected_groups": selected,
         "final_features": current_features,
         "history": history,
@@ -771,6 +1684,51 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--objective", default="Sharpe_mean")
     p.add_argument("--min-trades", type=int, default=10)
     p.add_argument("--max-steps", type=int, default=6)
+    p.add_argument(
+        "--search-algo",
+        default="greedy",
+        choices=["greedy", "halving", "beam", "sffs", "pipeline"],
+        help="Search algorithm: greedy (default), halving, beam, sffs, or pipeline (halving->beam->sffs).",
+    )
+    # Successive Halving params
+    p.add_argument(
+        "--halving-stages",
+        default="1,3,5",
+        help="Comma-separated seed counts to use as budgets, e.g. '1,3,5'. Will auto-append full seeds.",
+    )
+    p.add_argument(
+        "--halving-top-fraction",
+        type=float,
+        default=0.25,
+        help="Fraction of candidates to keep at each halving stage (0,1].",
+    )
+    p.add_argument(
+        "--halving-min-survivors",
+        type=int,
+        default=5,
+        help="Minimum number of survivors to keep at each halving stage.",
+    )
+    # Beam params
+    p.add_argument(
+        "--beam-width",
+        type=int,
+        default=3,
+        help="Beam width (top-K paths to keep).",
+    )
+    # SFFS params
+    p.add_argument(
+        "--sffs-max-backward-per-step",
+        type=int,
+        default=2,
+        help="Max backward removals to try per forward step in SFFS.",
+    )
+    # Pipeline params
+    p.add_argument(
+        "--pipeline-survivors",
+        type=int,
+        default=30,
+        help="Pipeline only: target number of candidate groups to keep after halving prefilter.",
+    )
     p.add_argument(
         "--groups-json", default=None, help="Optional groups override (JSON file path)"
     )
@@ -1007,14 +1965,65 @@ def main() -> None:
         invert_candidates = _load_invert_candidates(Path(args.invert_candidates_yaml))
 
     t0 = time.time()
-    result = greedy_forward_search(
-        cfg=cfg,
-        base_features=base_features,
-        groups=groups,
-        max_steps=int(args.max_steps),
-        objective=str(args.objective),
-        min_trades=int(args.min_trades),
-    )
+    algo = str(getattr(args, "search_algo", "greedy")).strip().lower()
+    if algo == "halving":
+        stages = _parse_int_list(str(getattr(args, "halving_stages", "1,3,5")))
+        result = successive_halving_search(
+            cfg=cfg,
+            base_features=base_features,
+            groups=groups,
+            max_steps=int(args.max_steps),
+            objective=str(args.objective),
+            min_trades=int(args.min_trades),
+            stages=stages,
+            top_fraction=float(getattr(args, "halving_top_fraction", 0.25)),
+            min_survivors=int(getattr(args, "halving_min_survivors", 5)),
+        )
+    elif algo == "pipeline":
+        stages = _parse_int_list(str(getattr(args, "halving_stages", "1,3,5")))
+        result = pipeline_sh_beam_sffs(
+            cfg=cfg,
+            base_features=base_features,
+            groups=groups,
+            max_steps=int(args.max_steps),
+            objective=str(args.objective),
+            min_trades=int(args.min_trades),
+            stages=stages,
+            top_fraction=float(getattr(args, "halving_top_fraction", 0.25)),
+            min_survivors=int(getattr(args, "halving_min_survivors", 5)),
+            target_survivors=int(getattr(args, "pipeline_survivors", 30)),
+            beam_width=int(getattr(args, "beam_width", 3)),
+            sffs_max_backward_steps=int(getattr(args, "sffs_max_backward_per_step", 2)),
+        )
+    elif algo == "beam":
+        result = beam_search(
+            cfg=cfg,
+            base_features=base_features,
+            groups=groups,
+            max_steps=int(args.max_steps),
+            objective=str(args.objective),
+            min_trades=int(args.min_trades),
+            beam_width=int(getattr(args, "beam_width", 3)),
+        )
+    elif algo == "sffs":
+        result = sffs_search(
+            cfg=cfg,
+            base_features=base_features,
+            groups=groups,
+            max_steps=int(args.max_steps),
+            objective=str(args.objective),
+            min_trades=int(args.min_trades),
+            max_backward_per_step=int(getattr(args, "sffs_max_backward_per_step", 2)),
+        )
+    else:
+        result = greedy_forward_search(
+            cfg=cfg,
+            base_features=base_features,
+            groups=groups,
+            max_steps=int(args.max_steps),
+            objective=str(args.objective),
+            min_trades=int(args.min_trades),
+        )
     result["elapsed_sec"] = round(time.time() - t0, 2)
 
     (out_dir / "feature_group_search_result.json").write_text(
@@ -1024,7 +2033,12 @@ def main() -> None:
     # Write a compact CSV of history (one row per step)
     hist_rows = []
     for h in result.get("history", []):
-        row = {"step": h["step"], "added_group": h["added_group"], "score": h["score"]}
+        # Some algorithms (beam) may not record per-step score/summary in the same shape.
+        row = {
+            "step": h.get("step"),
+            "added_group": h.get("added_group"),
+            "score": h.get("score"),
+        }
         summ = h.get("summary") or {}
         for k in [
             "Sharpe_mean",

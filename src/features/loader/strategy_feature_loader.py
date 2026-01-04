@@ -277,11 +277,29 @@ class StrategyFeatureLoader:
             pass
 
         # 3. 只返回请求的特征列（以及它们的输出列）
-        output_cols = []
-        for feature_name in requested_features:
-            if feature_name in features:
-                feature_info = features[feature_name]
-                output_cols.extend(feature_info.get("output_columns", [feature_name]))
+        # Build requested output columns for the final returned frame.
+        #
+        # Important:
+        # - `requested_features` may contain feature nodes (e.g. `atr_ratio_f`) OR
+        #   specific output column names (e.g. `trade_cluster_absorption_scene_score`)
+        #   when semantic singletons are enabled.
+        # - We keep only the explicitly requested outputs, not intermediate dependency outputs.
+        output_col_to_feature: Dict[str, str] = {}
+        for feat_name, feat_info in features.items():
+            for col in feat_info.get("output_columns", [feat_name]):
+                output_col_to_feature[col] = feat_name
+
+        output_cols: List[str] = []
+        for name in requested_features or []:
+            if name in features:
+                feature_info = features[name]
+                output_cols.extend(feature_info.get("output_columns", [name]) or [name])
+            elif name in output_col_to_feature:
+                # Singleton output column requested by name
+                output_cols.append(name)
+            elif name in df.columns:
+                # Allow passing through existing columns by name (rare; mostly for debugging)
+                output_cols.append(name)
 
         # 保留原始列和计算的特征列
         all_cols = list(df.columns) + [c for c in output_cols if c in result_df.columns]
@@ -546,11 +564,24 @@ class StrategyFeatureLoader:
                 # 如果无法访问列，跳过
                 continue
 
-        output_cols = []
-        for feature_name in requested_features:
-            if feature_name in features:
-                feature_info = features[feature_name]
-                output_cols.extend(feature_info.get("output_columns", [feature_name]))
+        # Build requested output columns for the final returned frame.
+        #
+        # `requested_features` may contain:
+        # - feature nodes (e.g. `atr_ratio_f`), OR
+        # - specific output column names (e.g. `trade_cluster_absorption_scene_score`)
+        #   when semantic singleton expansion is enabled.
+        #
+        # We keep only explicitly requested outputs (plus original input columns),
+        # and do NOT automatically include intermediate dependency outputs.
+        output_cols: List[str] = []
+        for name in requested_features or []:
+            if name in features:
+                feature_info = features[name]
+                output_cols.extend(feature_info.get("output_columns", [name]) or [name])
+            elif name in output_col_to_feature:
+                output_cols.append(name)
+            elif name in df.columns:
+                output_cols.append(name)
 
         # Auto materialize FeatureStore (wide table) when FeatureStore args were provided:
         # - try read -> if missing -> compute (using FeatureComputer caches) -> write monthly partitions

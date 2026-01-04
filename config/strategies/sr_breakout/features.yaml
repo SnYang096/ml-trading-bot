@@ -5,36 +5,27 @@ description: 'SR breakout strategy focusing on breakout quality, momentum persis
   '
 feature_pipeline:
   requested_features:
-  # Core kline features (required for feature-group-search)
+  # Recommended baseline (node-level) for rolling training
+  #
+  # Source:
+  # - feature-group-search (semantic groups + Pool-B), tag=20260103_norm_full
+  # - results json: results/feature_group_search/sr_breakout_greedy_poolb_semantic_20260103_norm_full/feature_group_search_result.json
+  #
+  # Notes:
+  # - Keep this node-level baseline for stability and synergy.
+  # - We also ran a singleton semantic-column ablation (tag=20260103_norm_full_singletons),
+  #   but its final Sharpe_mean was lower for sr_breakout.
+  # For multi-asset training, prefer scale-free volatility inputs:
+  - atr_ratio_f
+  - poc_hal_features_close_f
   - macd_f
   - rsi_f
-  - sma_200_f
-  - atr_f
   - trend_r2_20_f
-  # Strategy-specific features
-  - wpt_price_reconstructed_f
-  - wpt_price_fluctuation_f
-  - wpt_volume_energy_f
-  - wpt_cvd_fluctuation_f
-  - hurst_price_f
-  - hurst_cvd_f
-  - liquidity_void_f
-  - volume_profile_vpvr_f
-  - spectrum_features_sr_breakout_f
-  - liquidity_void_x_wpt_risk_f
-  - hurst_x_trend_r2_f
-  - hilbert_phase_f
-  - hilbert_price_env
-  - hilbert_cvd_env
-  - hilbert_cvd_price_env_ratio
-  - hilbert_volume_env
-  - hilbert_env_price_vol_ratio
-  - hilbert_triple_divergence
-  - vpin_features_f
-  - footprint_basic_f
-  - vpin_zscore_x_trade_cluster_max_buy_run_f
-  - vpin_signed_imbalance_x_trade_cluster_imbalance_f
-  - dtw_features_breakout_f
+  - bb_width_f
+  - wick_ratios_f
+  - volume_ratio_f
+  - trade_cluster_scene_semantic_scores_f
+  - sma_200_f
   ensure_signal_column:
     name: signal
     default_value: 0

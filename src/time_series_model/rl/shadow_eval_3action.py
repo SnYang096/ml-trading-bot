@@ -140,6 +140,17 @@ def _render_html_report(
   <h1>Shadow Eval - BC(3-action)</h1>
   <p class="muted">Offline gate: behavior match + stability. Not a counterfactual PnL simulator.</p>
 
+  <div class="card" style="margin:16px 0;">
+    <h2 style="margin-top:0;">How to read this report</h2>
+    <ul style="margin:0; padding-left:18px;">
+      <li>This checks whether a small BC Router can reproduce the logged <code>mode</code> decisions from the rule router.</li>
+      <li><b>acc_vs_rule_mode</b>: fraction of test steps where BC predicted the same mode as rule.</li>
+      <li><b>confusion matrix</b>: where BC disagrees (e.g., MEAN → NO_TRADE collapse).</li>
+      <li><b>mode_entropy_pred</b> near 0 and <b>pred_rate_no_trade</b> near 1 means mode collapse (bad for deployment).</li>
+      <li>This report is a stability gate only; it does <b>not</b> measure trading PnL.</li>
+    </ul>
+  </div>
+
   <div class="grid">
     <div class="card">
       <h2>Metrics</h2>

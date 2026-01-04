@@ -271,7 +271,7 @@ prediction = self.model.predict(X)[0]
 ## 参考文档
 
 - [Nautilus Trader 官方文档](https://docs.nautilustrader.io/)
-- [实盘特征加载流程分析](./实盘特征加载流程分析.md)
+- [实盘特征加载流程分析（legacy）](../legacy/实盘特征加载流程分析.md)
 - [特征加载器 README](../src/features/loader/README.md)
 
 ## 相关文件

@@ -121,14 +121,15 @@ def compute_atr_normalized(close, high, low, window=14):
 ### 1. ATR 类特征
 
 ```python
-# 当前（未归一化）
-def compute_atr(...) -> pd.Series:
-    return atr  # ❌ 原始值
-
-# 修改后
-def compute_atr(...) -> pd.Series:
-    atr_norm = atr / close  # ✅ 归一化
-    return atr_norm.rename("atr")  # 返回归一化值，但保持原名
+# 重要结论（已落地到代码）：`atr` 这列必须是 **价格单位 ATR**
+# 因为它会被用于：
+# - 路径原语 labels：mfe_atr = (price_diff) / atr(t)
+# - SR/结构特征的“反归一化”：level_raw = level_norm * atr + close
+#
+# 如果你需要跨资产可比的波动率，请使用单独列：
+# - atr_ratio = atr / close（无量纲）
+# - natr_14（Normalized ATR）
+# - atr_percentile（波动率分位数/状态）
 ```
 
 ### 2. SR 结构特征
@@ -212,7 +213,7 @@ def compute_macd(..., atr: pd.Series):
 
 ### ✅ Phase 1: 核心特征归一化（已完成 2026-01-01）
 
-1. [x] `atr_f` → 输出 `atr / close` (~[0.001, 0.1])
+1. [x] `atr_ratio` / `natr_14` / `atr_percentile` → 作为“跨资产可比”的 ATR 类指标（无量纲）
 2. [x] `macd_f` → 输出 `macd / atr` (~[-3, 3])
 3. [x] `bb_width_f` → 输出 `bb_width_normalized`, `bb_position` (移除原始价格)
 4. [x] `poc_hal_features_*` → 输出 `(level - close) / atr` (~[-3, 3])
@@ -235,8 +236,8 @@ def compute_macd(..., atr: pd.Series):
 ### 1. 保持列名不变
 
 ```python
-# 虽然值变了，但列名保持不变，避免破坏下游依赖
-"atr" → 仍然叫 "atr"，但值是 atr/close
+# `atr` 仍然叫 "atr"，且语义固定为“价格单位 ATR”（用于尺度/反归一化/labels）
+# 若需要 `atr/close`，请使用 `atr_ratio`（或 `natr_14`）
 ```
 
 ### 2. 向后兼容问题
@@ -279,6 +280,7 @@ assert feature.std() > 0.01, "标准差应该 > 0.01（避免常量）"
 
 - `docs/strategies/BEST_FEATURE_COLUMNS_BY_STRATEGY.md` - 各策略最佳特征列
 - `config/feature_dependencies.yaml` - 特征定义
+- `docs/architecture/reports/ATR_SEMANTICS_AND_NORMALIZATION.md` - ATR 的语义统一（为什么 `atr` 必须是价格单位）
 
 ---
 
@@ -287,11 +289,17 @@ assert feature.std() > 0.01, "标准差应该 > 0.01（避免常量）"
 ### 2026-01-01
 
 **Phase 1 完成**：
-- ✅ `compute_atr_from_series` → 返回 `atr / close`
+- ✅ `compute_atr_ratio_from_series` / `natr_14_f` / `compute_atr_percentile_from_series` → 提供无量纲 ATR 类指标
 - ✅ `compute_macd_from_series` → 新增，返回 `macd / ATR`
 - ✅ `compute_bb_width_features_from_series` → 只返回 `bb_width_normalized`, `bb_position`
 - ✅ `compute_poc_hal_features_from_series` → 返回 `(level - close) / ATR`
 - ✅ `compute_sr_strength_max_from_series` → `dist_to_nearest_sr` 归一化为 ATR 倍数
+
+### 2026-01-03
+
+**ATR 语义修正（避免下游计算错误）**：
+- ✅ `atr_f` 的 `atr` 统一为 **价格单位 ATR**（用于 labels 与 SR 反归一化）
+- ✅ 归一化/跨资产可比的 ATR 形态转由 `atr_ratio` / `natr_14` / `atr_percentile` 承担
 
 **Phase 2 完成**：
 - ✅ `compute_sma_position_from_series` → 新增，返回 `(close - sma_200) / close`

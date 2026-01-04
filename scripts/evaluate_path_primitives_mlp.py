@@ -46,6 +46,9 @@ from src.time_series_model.models.nn.path_primitives_reporting import (
     evaluate_model_on_df,
     save_train_artifacts,
 )  # noqa: E402
+from src.time_series_model.models.nn.path_primitives_artifact import (  # noqa: E402
+    PathPrimitivesModelArtifact,
+)
 from src.time_series_model.models.nn.feature_contract import (  # noqa: E402
     load_feature_contract,
     validate_minimal_required_cols,
@@ -55,6 +58,9 @@ from scripts.train_strategy_pipeline import (
     run_feature_pipeline,
     determine_feature_columns,
 )  # noqa: E402
+from src.time_series_model.models.nn.path_primitives_dataset import (  # noqa: E402
+    resolve_block_cols_by_name,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,10 +134,12 @@ def main() -> None:
             available_columns=df_features.columns.tolist(), contract=contract
         )
 
-    payload = torch.load(args.model, map_location="cpu")
-    if "model" not in payload:
-        raise ValueError("Invalid model payload: missing 'model' key")
-    model = MultiHeadPathPrimitivesMLP.from_export(payload["model"])
+    artifact = PathPrimitivesModelArtifact.load(
+        model_path=args.model, config_dir=cfg_dir
+    )
+    model = artifact.model
+    feature_scaler = artifact.feature_scaler
+    model_feature_cols = artifact.feature_cols
 
     horizon_bars = int(round(float(args.horizon_hours) / float(args.bar_hours)))
     if horizon_bars <= 0:
@@ -147,12 +155,24 @@ def main() -> None:
         atr_col="atr",
     )
 
+    # Use the same feature columns + optional block mask settings as training/prediction.
+    if model_feature_cols is not None:
+        feature_cols_eval = list(model_feature_cols)
+    else:
+        feature_cols_eval = feature_cols
+
+    block_cols_by_name = artifact.block_cols_by_name
+    append_block_mask = artifact.append_block_mask
+
     metrics, df_eval, extra = evaluate_model_on_df(
         model=model,
         df_features=df_features,
-        feature_cols=feature_cols,
+        feature_cols=feature_cols_eval,
         label_cfg=label_cfg,
         group_col="symbol" if len(symbols) > 1 else None,
+        feature_scaler=feature_scaler,
+        block_cols_by_name=block_cols_by_name,
+        append_block_mask=append_block_mask,
     )
 
     out_dir = Path(args.output_dir)
@@ -184,12 +204,24 @@ def main() -> None:
     if contract is not None:
         meta["feature_contract"] = contract.to_dict()
 
+    # Prefer a sample where labels exist (avoid tail horizon NaNs).
+    sample_df = df_eval
+    if "mfe_valid" in sample_df.columns:
+        sample_df = sample_df[
+            pd.to_numeric(sample_df["mfe_valid"], errors="coerce").fillna(0.0) > 0.5
+        ]
+    if "dir_y" in sample_df.columns:
+        sample_df = sample_df[
+            pd.to_numeric(sample_df["dir_y"], errors="coerce").notna()
+        ]
+    sample_df = sample_df.tail(200) if len(sample_df) else df_eval.tail(200)
+
     save_train_artifacts(
         out_dir=str(out_dir),
         model_path=str(args.model),
         meta=meta,
         metrics=metrics,
-        df_pred_sample=df_eval.tail(200)[
+        df_pred_sample=sample_df[
             (
                 [
                     "pred_dir_prob",

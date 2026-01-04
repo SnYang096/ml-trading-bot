@@ -24,6 +24,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.features.time_series.market_cap_features import (
     compute_market_cap_normalized_orderflow_from_df,
 )
+from src.features.normalization.feature_contract import (
+    collect_feature_normalization_meta,
+)
 
 
 def create_mock_market_cap_data(symbol: str, market_cap_dir: Path, n_days: int = 100):
@@ -317,6 +320,36 @@ class TestMarketCapFeatures:
             assert (
                 max_diff < 1e-10
             ), f"Market Cap 归一化计算不正确: 最大差异={max_diff:.10f}"
+
+    def test_market_cap_normalization_contract(self):
+        """
+        Ensure normalization contract captures mixed outputs:
+        - market_cap_usd is raw USD scale (NOT cross-asset comparable by itself)
+        - *_over_mcap are unitless ratios (cross-asset comparable)
+        """
+        import yaml
+
+        fd = yaml.safe_load(
+            Path(
+                "/workspaces/ml_trading_bot/config/feature_dependencies.yaml"
+            ).read_text()
+        )
+        rows = collect_feature_normalization_meta(
+            fd, only_features=["market_cap_normalized_orderflow_f"]
+        )
+        by_col = {r["column"]: r for r in rows}
+
+        assert by_col["market_cap_usd"]["method"] in {"usd", "price_unit", "raw"}
+        assert by_col["market_cap_usd"]["cross_asset_comparable"] is False
+
+        for c in [
+            "dollar_volume_over_mcap",
+            "turnover_over_mcap",
+            "net_buy_usd_over_mcap",
+            "abs_net_buy_usd_over_mcap",
+        ]:
+            assert by_col[c]["method"] == "unitless"
+            assert by_col[c]["cross_asset_comparable"] is True
 
 
 if __name__ == "__main__":

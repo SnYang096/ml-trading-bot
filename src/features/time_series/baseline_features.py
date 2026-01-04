@@ -158,18 +158,26 @@ def compute_atr_from_series(
     close: pd.Series,
     period: int = 14,
 ) -> pd.DataFrame:
-    """Narrow-IO ATR (Average True Range), normalized by close price.
-    
-    Returns:
-        DataFrame with 'atr' column normalized as atr / close.
-        This makes ATR cross-asset comparable (e.g., BTC vs ETH).
-        Typical range: [0.001, 0.1] for crypto assets.
+    """Narrow-IO ATR (Average True Range) in *price units*.
+
+    Important:
+        In this codebase, the canonical column name `atr` is used as a *price-unit scale*
+        for label normalization and for converting normalized SR distances back to raw price.
+
+        If you need a cross-asset comparable ATR, use one of:
+        - `atr_ratio` (atr/close) via `compute_atr_ratio(_from_series)`
+        - `natr_14` (Normalized ATR) from TA-Lib wrappers
+        - `atr_percentile` (regime indicator) via `compute_atr_percentile(_from_series)`
     """
     close = pd.to_numeric(close, errors="coerce").astype(float)
     atr_raw = compute_atr(high, low, close, period)
-    # Normalize by close price for cross-asset comparability
-    atr_norm = (atr_raw / close.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    return atr_norm.rename("atr").to_frame()
+    atr_raw = (
+        pd.to_numeric(atr_raw, errors="coerce")
+        .astype(float)
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    return atr_raw.rename("atr").to_frame()
 
 
 @register_feature("compute_zigzag", category="baseline")

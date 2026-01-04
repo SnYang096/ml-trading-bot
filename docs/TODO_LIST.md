@@ -213,7 +213,7 @@ mlbot diagnose feature-group-search \
 
 **参考文档**:
 - `src/time_series_model/backtesting/TODO.md`
-- `docs/Nautilus_Trader_集成指南.md`
+- `docs/实时流计算/reference/Nautilus_Trader_集成指南.md`
 
 ---
 

@@ -5,7 +5,7 @@
 
 功能：
 1. 下载BTC、ETH、SOL的aggTrades数据
-2. 时间范围：2021年1月 - 2025年9月
+2. 时间范围：默认 2021年1月 - 当前月份（可通过参数覆盖）
 3. 自动跳过已存在的文件
 4. 支持断点续传
 5. 显示下载进度和统计
@@ -105,10 +105,15 @@ class BinanceMultiSymbolDownloader:
         self,
         start_year: int = 2021,
         start_month: int = 1,
-        end_year: int = 2025,
-        end_month: int = 9,
+        end_year: Optional[int] = None,
+        end_month: Optional[int] = None,
     ) -> List[Tuple[int, int]]:
         """生成月份列表"""
+        if end_year is None or end_month is None:
+            today = datetime.utcnow()
+            end_year = int(end_year or today.year)
+            end_month = int(end_month or today.month)
+
         months = []
         current_year = start_year
         current_month = start_month
@@ -521,9 +526,11 @@ def main():
     )
     parser.add_argument("--start-month", type=int, default=1, help="开始月份 (默认: 1)")
     parser.add_argument(
-        "--end-year", type=int, default=2025, help="结束年份 (默认: 2025)"
+        "--end-year", type=int, default=None, help="结束年份 (默认: 当前年份)"
     )
-    parser.add_argument("--end-month", type=int, default=9, help="结束月份 (默认: 9)")
+    parser.add_argument(
+        "--end-month", type=int, default=None, help="结束月份 (默认: 当前月份)"
+    )
     parser.add_argument("--summary", action="store_true", help="只显示已下载文件的摘要")
     parser.add_argument(
         "--yes",
@@ -542,6 +549,14 @@ def main():
         # 只显示摘要
         downloader.print_summary()
     else:
+        # Default end date: current UTC month (unless caller specifies)
+        if args.end_year is None or args.end_month is None:
+            today = datetime.utcnow()
+            if args.end_year is None:
+                args.end_year = today.year
+            if args.end_month is None:
+                args.end_month = today.month
+
         # 执行下载
         # 执行下载（支持非交互模式）
         if args.yes:
@@ -554,8 +569,8 @@ def main():
                 downloader.download_all(
                     start_year=args.start_year,
                     start_month=args.start_month,
-                    end_year=args.end_year,
-                    end_month=args.end_month,
+                    end_year=int(args.end_year),
+                    end_month=int(args.end_month),
                     symbols=args.symbols,
                 )
             finally:
@@ -564,8 +579,8 @@ def main():
             downloader.download_all(
                 start_year=args.start_year,
                 start_month=args.start_month,
-                end_year=args.end_year,
-                end_month=args.end_month,
+                end_year=int(args.end_year),
+                end_month=int(args.end_month),
                 symbols=args.symbols,
             )
 

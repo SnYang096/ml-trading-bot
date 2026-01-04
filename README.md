@@ -43,6 +43,7 @@ The recommended workflow uses **config-driven architecture** with strategy-speci
 
 - **Industrial Experiment Loop (Layer A/B/C, TaskSpec, Filter→Wrapper, stability rules)**: `docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 - **NN Multi-head Path Primitives + Router→Execution (NO/MEAN/TREND) architecture**: `docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
+- **Feature Search Playbook (Pool B + semantic groups, greedy baselines, singleton ablation, and the roadmap for Halving/Beam/SFFS)**: `docs/strategies/FEATURE_SEARCH_PLAYBOOK.md`
 
 Quick mental model:
 - **PolicyTask (direct entry)**: train a model that directly produces trade signals; fastest research loop.
@@ -422,7 +423,7 @@ If you are running inside a Dev Container, `--open-browser` may not open the rep
 
 ```bash
 # Example: serve rolling reports directory
-mlbot serve-results
+mlbot server
 # or (manual)
 # python3 -m http.server 8008 --directory results
 ```
@@ -436,7 +437,7 @@ mlbot serve-results
 If port `8008` is already in use, you can force-kill the owning process inside the container:
 
 ```bash
-mlbot serve-results --force
+mlbot server --force
 ```
 
 #### Step 6: Periodic Updates (Weekly/Monthly)

@@ -18,6 +18,7 @@ import sys
 import subprocess
 import time
 import socket
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 
@@ -117,6 +118,8 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    # Ensure real-time logs even when stdout is redirected (e.g. nohup > file)
+    env["PYTHONUNBUFFERED"] = "1"
 
     click.echo(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT), **kwargs)
@@ -158,6 +161,8 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
     if "PYTHONPATH" in env:
         pythonpath_parts.insert(0, env["PYTHONPATH"])
     env["PYTHONPATH"] = ":".join(pythonpath_parts)
+    # Ensure real-time logs even when stdout is redirected (e.g. nohup > file)
+    env["PYTHONUNBUFFERED"] = "1"
 
     click.echo(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, env=env, cwd=str(PROJECT_ROOT), **kwargs)
@@ -267,29 +272,7 @@ def _kill_pids(pids: List[int], timeout_s: float = 2.0) -> List[int]:
     return sorted(set(killed))
 
 
-@cli.command("serve-results")
-@click.option("--port", "-p", type=int, default=8008, show_default=True, help="Port")
-@click.option(
-    "--dir",
-    "-d",
-    "directory",
-    default="results",
-    show_default=True,
-    help="Directory to serve",
-)
-@click.option(
-    "--bind",
-    default="0.0.0.0",
-    show_default=True,
-    help="Bind address (use 0.0.0.0 for devcontainer port forwarding)",
-)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="If port is in use, kill the process listening on the port and retry",
-)
-def serve_results(port: int, directory: str, bind: str, force: bool) -> None:
-    """Serve the results/ directory via a local static server (HTML reports)."""
+def _serve_static_dir(*, port: int, directory: str, bind: str, force: bool) -> None:
     port = int(port)
     directory_path = (PROJECT_ROOT / directory).resolve()
     if not directory_path.exists():
@@ -344,6 +327,59 @@ def serve_results(port: int, directory: str, bind: str, force: bool) -> None:
     # Foreground (Ctrl+C to stop)
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     sys.exit(result.returncode)
+
+
+@cli.command("server")
+@click.option("--port", "-p", type=int, default=8008, show_default=True, help="Port")
+@click.option(
+    "--dir",
+    "-d",
+    "directory",
+    default="results",
+    show_default=True,
+    help="Directory to serve",
+)
+@click.option(
+    "--bind",
+    default="0.0.0.0",
+    show_default=True,
+    help="Bind address (use 0.0.0.0 for devcontainer port forwarding)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="If port is in use, kill the process listening on the port and retry",
+)
+def server(port: int, directory: str, bind: str, force: bool) -> None:
+    """Serve a directory via a local static server (HTML reports)."""
+    _serve_static_dir(port=port, directory=directory, bind=bind, force=force)
+
+
+@cli.command("serve-results", hidden=True)
+@click.option("--port", "-p", type=int, default=8008, show_default=True, help="Port")
+@click.option(
+    "--dir",
+    "-d",
+    "directory",
+    default="results",
+    show_default=True,
+    help="Directory to serve",
+)
+@click.option(
+    "--bind",
+    default="0.0.0.0",
+    show_default=True,
+    help="Bind address (use 0.0.0.0 for devcontainer port forwarding)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="If port is in use, kill the process listening on the port and retry",
+)
+def serve_results(port: int, directory: str, bind: str, force: bool) -> None:
+    """DEPRECATED (use `mlbot server`). Kept for backward compatibility."""
+    click.echo("⚠️  DEPRECATED: use `mlbot server` (this alias will be removed later).")
+    _serve_static_dir(port=port, directory=directory, bind=bind, force=force)
 
 
 # =============================================================================
@@ -456,10 +492,13 @@ def _data_convert_impl(
     input_dir: Optional[str],
     output_dir: Optional[str],
     backup_dir: Optional[str],
+    pattern: Optional[str],
     force: bool,
     docker: bool,
 ) -> int:
     args = ["--cleanup", "yes" if cleanup else "no"]
+    if pattern:
+        args.extend(["--pattern", str(pattern)])
     if input_dir:
         args.extend(["--input-dir", input_dir])
     if output_dir:
@@ -647,6 +686,11 @@ def data_update_market_cap(
 @click.option(
     "--cleanup/--no-cleanup", default=True, help="Clean up ZIP files after conversion"
 )
+@click.option(
+    "--pattern",
+    default=None,
+    help="Optional ZIP glob pattern to convert a subset (example: BNBUSDT-aggTrades-2024-*.zip).",
+)
 @click.option("--input-dir", default=None, help="ZIP input directory (default: data/agg_data)")
 @click.option("--output-dir", default=None, help="Parquet output directory (default: data/parquet_data)")
 @click.option(
@@ -656,10 +700,11 @@ def data_update_market_cap(
 )
 @click.option("--force/--no-force", default=False, show_default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def data_convert(cleanup, input_dir, output_dir, backup_dir, force, docker):
+def data_convert(cleanup, pattern, input_dir, output_dir, backup_dir, force, docker):
     """Convert downloaded ZIPs to Parquet format."""
     code = _data_convert_impl(
         cleanup=cleanup,
+        pattern=pattern,
         input_dir=input_dir,
         output_dir=output_dir,
         backup_dir=backup_dir,
@@ -694,6 +739,7 @@ def data_pipeline(ctx, symbols, docker):
         sys.exit(code)
     code = _data_convert_impl(
         cleanup=True,
+        pattern=None,
         input_dir=None,
         output_dir=None,
         backup_dir=None,
@@ -750,6 +796,7 @@ def data_pipeline_universe(
         sys.exit(code)
     code = _data_convert_impl(
         cleanup=cleanup,
+        pattern=None,
         input_dir=data_dir,
         output_dir=parquet_dir,
         backup_dir=None,
@@ -757,6 +804,38 @@ def data_pipeline_universe(
         docker=docker,
     )
     sys.exit(code)
+
+
+@data.command("check-month-coverage")
+@click.option("--symbol", default="", help="Optional symbol like BNBUSDT (default: all symbols summary)")
+@click.option("--start", "start_ym", default="2023-01", show_default=True, help="Start YYYY-MM (inclusive)")
+@click.option(
+    "--end",
+    "end_ym",
+    default=datetime.now(timezone.utc).strftime("%Y-%m"),
+    show_default=True,
+    help="End YYYY-MM (inclusive)",
+)
+@click.option("--zip-dir", default="data/agg_data", show_default=True, help="ZIP directory")
+@click.option("--parquet-dir", default="data/parquet_data", show_default=True, help="Parquet directory")
+@click.option("--show-missing/--no-show-missing", default=False, show_default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def data_check_month_coverage(
+    symbol: str,
+    start_ym: str,
+    end_ym: str,
+    zip_dir: str,
+    parquet_dir: str,
+    show_missing: bool,
+    docker: bool,
+):
+    """Check YYYY-MM coverage for monthly aggTrades ZIP + Parquet datasets."""
+    args = ["--start", str(start_ym), "--end", str(end_ym), "--zip-dir", str(zip_dir), "--parquet-dir", str(parquet_dir)]
+    if symbol and str(symbol).strip():
+        args.extend(["--symbol", str(symbol).strip()])
+    if show_missing:
+        args.append("--show-missing")
+    sys.exit(run_script("scripts/check_month_coverage.py", args, docker=docker))
 
 
 # =============================================================================
@@ -1733,6 +1812,324 @@ def nnmultihead_eval(
 
     sys.exit(run_script("scripts/evaluate_path_primitives_mlp.py", args, docker=docker))
 
+
+@nnmultihead.command("render-report")
+@click.option(
+    "--run-dir",
+    required=True,
+    help="Existing nnmultihead training run directory (contains meta.json + metrics.json).",
+)
+@click.option(
+    "--out-html",
+    default=None,
+    help="Optional output HTML path (default: <run-dir>/report.html)",
+)
+@click.option(
+    "--out-summary",
+    default=None,
+    help="Optional output summary markdown path (default: <run-dir>/metrics_summary.md)",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_render_report(run_dir, out_html, out_summary, docker):
+    """
+    Re-render nnmultihead training report artifacts (report.html + metrics_summary.md)
+    without retraining. Useful after updating report templates/summary logic.
+
+    Note: for new training runs, `mlbot nnmultihead train` already writes these artifacts.
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--run-dir",
+        f"/workspace/{run_dir}" if use_workspace_prefix else run_dir,
+    ]
+    if out_html:
+        args.extend(["--out-html", f"/workspace/{out_html}" if use_workspace_prefix else out_html])
+    if out_summary:
+        args.extend(
+            ["--out-summary", f"/workspace/{out_summary}" if use_workspace_prefix else out_summary]
+        )
+    sys.exit(run_script("scripts/render_path_primitives_report.py", args, docker=docker))
+
+
+@nnmultihead.command("factor-eval")
+@click.option(
+    "--config-dir",
+    required=True,
+    help="nnmultihead config dir (for provenance and default output routing)",
+)
+@click.option(
+    "--candidates-yaml",
+    required=True,
+    help="YAML with feature_pipeline.requested_features (e.g., config/strategies/*/features_all.yaml)",
+)
+@click.option("--symbols", required=True, help="Comma-separated symbols, e.g. BTCUSDT,ETHUSDT")
+@click.option("--timeframe", default="240T", show_default=True, help="Timeframe")
+@click.option(
+    "--features-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root",
+)
+@click.option(
+    "--features-store-layer",
+    default=None,
+    help="FeatureStore layer id (leave empty to auto-generate from config-dir)",
+)
+@click.option("--start-date", default=None, help="Start date (optional)")
+@click.option("--end-date", default=None, help="End date (optional)")
+@click.option(
+    "--horizon-hours",
+    type=float,
+    default=80.0,
+    show_default=True,
+    help="Horizon in hours",
+)
+@click.option(
+    "--bar-hours",
+    type=float,
+    default=4.0,
+    show_default=True,
+    help="Bar duration in hours",
+)
+@click.option(
+    "--min-samples-per-group",
+    type=int,
+    default=200,
+    show_default=True,
+    help="Min samples per (symbol,month) group for IC/AUC",
+)
+@click.option(
+    "--max-nan-rate",
+    type=float,
+    default=0.5,
+    show_default=True,
+    help="Max NaN rate for factor",
+)
+@click.option(
+    "--min-abs-ir",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help="Min |IR| for qualification",
+)
+@click.option(
+    "--min-abs-tstat",
+    type=float,
+    default=1.96,
+    show_default=True,
+    help="Min |t-stat| for qualification",
+)
+@click.option("--output-dir", default=None, help="Override output directory")
+@click.option("--export-yaml", default=None, help="Override export YAML path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_factor_eval(
+    config_dir,
+    candidates_yaml,
+    symbols,
+    timeframe,
+    features_store_root,
+    features_store_layer,
+    start_date,
+    end_date,
+    horizon_hours,
+    bar_hours,
+    min_samples_per_group,
+    max_nan_rate,
+    min_abs_ir,
+    min_abs_tstat,
+    output_dir,
+    export_yaml,
+    docker,
+):
+    """Factor-eval for nnmultihead: score candidate features vs path primitives labels; export Pool B YAML."""
+    from src.feature_store.layer_naming import resolve_layer_name
+
+    use_workspace_prefix = docker and not _is_in_docker()
+    layer = resolve_layer_name(features_store_layer, Path(config_dir).resolve())
+
+    args = [
+        "--config-dir",
+        f"/workspace/{config_dir}" if use_workspace_prefix else config_dir,
+        "--candidates-yaml",
+        f"/workspace/{candidates_yaml}" if use_workspace_prefix else candidates_yaml,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--features-store-root",
+        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        "--features-store-layer",
+        layer,
+        "--horizon-hours",
+        str(horizon_hours),
+        "--bar-hours",
+        str(bar_hours),
+        "--min-samples-per-group",
+        str(min_samples_per_group),
+        "--max-nan-rate",
+        str(max_nan_rate),
+        "--min-abs-ir",
+        str(min_abs_ir),
+        "--min-abs-tstat",
+        str(min_abs_tstat),
+    ]
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if output_dir:
+        args.extend(
+            [
+                "--output-dir",
+                f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+            ]
+        )
+    if export_yaml:
+        args.extend(
+            [
+                "--export-yaml",
+                f"/workspace/{export_yaml}" if use_workspace_prefix else export_yaml,
+            ]
+        )
+
+    sys.exit(
+        run_python_module(
+            "time_series_model.diagnostics.factor_primitives_eval",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@nnmultihead.command("feature-group-search")
+@click.option("--base-config", required=True, help="Base nnmultihead config dir")
+@click.option(
+    "--base-features-yaml",
+    default=None,
+    help="Optional base feature funcs YAML (Pool A). If omitted, will try <base-config>/features_base.yaml.",
+)
+@click.option("--symbols", required=True, help="Comma-separated symbols")
+@click.option("--timeframe", default="240T", show_default=True)
+@click.option("--start-date", required=True)
+@click.option("--end-date", required=True)
+@click.option("--features-store-root", default="feature_store", show_default=True)
+@click.option("--features-store-layer", required=True)
+@click.option("--pool-b-yaml", required=True, help="PoolB YAML (features_pool_b_primitives.yaml)")
+@click.option("--objective", default="dir_auc", show_default=True, help="metrics.json key to maximize")
+@click.option("--max-steps", type=int, default=6, show_default=True)
+@click.option(
+    "--search-algo",
+    type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
+    default="greedy",
+    show_default=True,
+)
+@click.option("--epochs", type=int, default=10, show_default=True)
+@click.option("--batch-size", type=int, default=512, show_default=True)
+@click.option("--lr", type=float, default=2e-4, show_default=True)
+@click.option("--hidden", type=int, default=256, show_default=True)
+@click.option("--depth", type=int, default=2, show_default=True)
+@click.option("--dropout", type=float, default=0.1, show_default=True)
+@click.option("--device", default=None)
+@click.option("--halving-stages", default="3,6,10", show_default=True)
+@click.option("--halving-top-fraction", type=float, default=0.25, show_default=True)
+@click.option("--halving-min-survivors", type=int, default=5, show_default=True)
+@click.option("--beam-width", type=int, default=3, show_default=True)
+@click.option("--sffs-max-backward-per-step", type=int, default=2, show_default=True)
+@click.option("--pipeline-survivors", type=int, default=30, show_default=True)
+@click.option("--output-dir", required=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_feature_group_search(
+    base_config,
+    base_features_yaml,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    features_store_root,
+    features_store_layer,
+    pool_b_yaml,
+    objective,
+    max_steps,
+    search_algo,
+    epochs,
+    batch_size,
+    lr,
+    hidden,
+    depth,
+    dropout,
+    device,
+    halving_stages,
+    halving_top_fraction,
+    halving_min_survivors,
+    beam_width,
+    sffs_max_backward_per_step,
+    pipeline_survivors,
+    output_dir,
+    docker,
+):
+    """Feature-group-search for nnmultihead (primitives objective)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--base-config",
+        f"/workspace/{base_config}" if use_workspace_prefix else base_config,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--features-store-root",
+        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        "--features-store-layer",
+        features_store_layer,
+        "--pool-b-yaml",
+        f"/workspace/{pool_b_yaml}" if use_workspace_prefix else pool_b_yaml,
+        "--objective",
+        objective,
+        "--max-steps",
+        str(int(max_steps)),
+        "--search-algo",
+        str(search_algo),
+        "--epochs",
+        str(int(epochs)),
+        "--batch-size",
+        str(int(batch_size)),
+        "--lr",
+        str(float(lr)),
+        "--hidden",
+        str(int(hidden)),
+        "--depth",
+        str(int(depth)),
+        "--dropout",
+        str(float(dropout)),
+        "--halving-stages",
+        str(halving_stages),
+        "--halving-top-fraction",
+        str(float(halving_top_fraction)),
+        "--halving-min-survivors",
+        str(int(halving_min_survivors)),
+        "--beam-width",
+        str(int(beam_width)),
+        "--sffs-max-backward-per-step",
+        str(int(sffs_max_backward_per_step)),
+        "--pipeline-survivors",
+        str(int(pipeline_survivors)),
+        "--output-dir",
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+    ]
+    if base_features_yaml:
+        args.extend(
+            [
+                "--base-features-yaml",
+                f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
+            ]
+        )
+    if device:
+        args.extend(["--device", device])
+    sys.exit(run_python_module("time_series_model.diagnostics.nn_feature_group_search", args, docker=docker))
+
 def _train_strategy_pipeline(
     symbol,
     timeframe,
@@ -1897,6 +2294,78 @@ def train_rolling(
             docker=docker,
         )
     )
+
+
+@train.command("final")
+@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
+@click.option(
+    "--config",
+    "-c",
+    default="config/strategies/sr_reversal_long",
+    show_default=True,
+    help="Strategy config directory",
+)
+@click.option("--start-date", required=True, help="Train start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="Train end date (YYYY-MM-DD)")
+@click.option("--seed", default="42", show_default=True, help="Seed for reproducibility")
+@click.option(
+    "--output-root",
+    default="models",
+    show_default=True,
+    help="Root dir for final model outputs (ModelArtifact saved under <output-root>/<strategy_name>/).",
+)
+@click.option("--data-path", default="data/parquet_data", show_default=True, help="Data directory")
+@click.option("--feature-store-dir", default="feature_store", show_default=True)
+@click.option("--feature-store-layer", default=None)
+@click.option("--deterministic/--non-deterministic", default=True, help="Deterministic training")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def train_final(
+    symbol,
+    timeframe,
+    config,
+    start_date,
+    end_date,
+    seed,
+    output_root,
+    data_path,
+    feature_store_dir,
+    feature_store_layer,
+    deterministic,
+    docker,
+):
+    """Train a final (deployable) model on the full training window and save a ModelArtifact."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--seed",
+        str(seed),
+        "--output-root",
+        f"/workspace/{output_root}" if use_workspace_prefix else output_root,
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--train-all",
+    ]
+    args.extend(
+        [
+            "--feature-store-dir",
+            f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
+        ]
+    )
+    if feature_store_layer is not None:
+        args.extend(["--feature-store-layer", feature_store_layer])
+    if deterministic:
+        args.append("--deterministic")
+    sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
 # =============================================================================
@@ -2426,6 +2895,51 @@ def diagnose():
     pass
 
 
+@diagnose.command("feature-contract")
+@click.option(
+    "--feature-deps",
+    default="config/feature_dependencies.yaml",
+    help="Path to feature_dependencies.yaml",
+)
+@click.option(
+    "--mode",
+    default="error",
+    type=click.Choice(["error", "warn"]),
+    help="error: non-zero exit on violations; warn: always exit 0 but print report",
+)
+@click.option(
+    "--out-json",
+    default=None,
+    help="Optional output JSON path for the report",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_feature_contract(feature_deps, mode, out_json, docker):
+    """
+    Feature contract checks (normalization + semantic safety).
+
+    This is the unified entrypoint for:
+    - normalization contract completeness (no missing methods)
+    - mixed-output normalization maps (e.g., usd vs unitless)
+    - scale-column protection (e.g., atr must be price_unit)
+    """
+    args = [
+        "--feature-deps",
+        f"/workspace/{feature_deps}" if docker else feature_deps,
+        "--mode",
+        mode,
+    ]
+    if out_json:
+        args.extend(["--out-json", f"/workspace/{out_json}" if docker else out_json])
+
+    sys.exit(
+        run_python_module(
+            "src.features.normalization.feature_contract_checks",
+            args,
+            docker=docker,
+        )
+    )
+
+
 @diagnose.command("rule-baseline")
 @click.option(
     "--strategy-config",
@@ -2780,6 +3294,49 @@ def diagnose_sr_reversal_model_comparison(
 @click.option("--min-trades", default="10", help="Min trades_mean constraint")
 @click.option("--max-steps", default="6", help="Max greedy steps")
 @click.option(
+    "--search-algo",
+    default="greedy",
+    type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
+    show_default=True,
+    help="Search algorithm: greedy / halving / beam / sffs / pipeline (halving->beam->sffs).",
+)
+@click.option(
+    "--halving-stages",
+    default="1,3,5",
+    show_default=True,
+    help="Comma-separated seed counts as halving budgets (tool will append full seeds if missing).",
+)
+@click.option(
+    "--halving-top-fraction",
+    default="0.25",
+    show_default=True,
+    help="Fraction of candidates to keep at each halving stage (0,1].",
+)
+@click.option(
+    "--halving-min-survivors",
+    default="5",
+    show_default=True,
+    help="Minimum survivors to keep at each halving stage.",
+)
+@click.option(
+    "--pipeline-survivors",
+    default="30",
+    show_default=True,
+    help="Pipeline only: target survivors after halving prefilter.",
+)
+@click.option(
+    "--beam-width",
+    default="3",
+    show_default=True,
+    help="Beam width (top-K paths to keep) for beam/pipeline.",
+)
+@click.option(
+    "--sffs-max-backward-per-step",
+    default="2",
+    show_default=True,
+    help="SFFS backward removal budget (used by sffs/pipeline).",
+)
+@click.option(
     "--groups-json",
     default=None,
     help="Optional JSON file path overriding default feature groups.",
@@ -2850,6 +3407,13 @@ def diagnose_feature_group_search(
     objective,
     min_trades,
     max_steps,
+    search_algo,
+    halving_stages,
+    halving_top_fraction,
+    halving_min_survivors,
+    pipeline_survivors,
+    beam_width,
+    sffs_max_backward_per_step,
     groups_json,
     groups_yaml,
     pool_b_yaml,
@@ -2885,6 +3449,20 @@ def diagnose_feature_group_search(
         str(min_trades),
         "--max-steps",
         str(max_steps),
+        "--search-algo",
+        str(search_algo),
+        "--halving-stages",
+        str(halving_stages),
+        "--halving-top-fraction",
+        str(halving_top_fraction),
+        "--halving-min-survivors",
+        str(halving_min_survivors),
+        "--pipeline-survivors",
+        str(pipeline_survivors),
+        "--beam-width",
+        str(beam_width),
+        "--sffs-max-backward-per-step",
+        str(sffs_max_backward_per_step),
         "--output-dir",
         f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
         "--no-docker",
@@ -2945,6 +3523,204 @@ def diagnose_feature_group_search(
             docker=docker,
         )
     )
+
+
+@diagnose.command("poolb-semantic-search")
+@click.option(
+    "--strategies",
+    default="sr_reversal_rr_reg_long,sr_breakout,compression_breakout,trend_following",
+    show_default=True,
+    help="Comma-separated strategy directory names under config/strategies/ (can be a single strategy).",
+)
+@click.option("--tag", default=None, help="Tag for all outputs (Pool-B dir, search output, writeback YAML, report).")
+@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.3", show_default=True, help="Test set ratio")
+@click.option("--seeds", default="1,2,3,4,5", show_default=True, help="Comma-separated seeds")
+@click.option("--objective", default="Sharpe_mean", show_default=True, help="Objective metric (e.g. Sharpe_mean)")
+@click.option("--min-trades", default="10", show_default=True, help="Min trades_mean constraint")
+@click.option("--max-steps", default="5", show_default=True, help="Max steps (beam depth / greedy steps)")
+@click.option(
+    "--search-algo",
+    default="pipeline",
+    type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
+    show_default=True,
+    help="Search algorithm. Recommended: pipeline (SH prefilter -> Beam -> SFFS prune).",
+)
+@click.option("--halving-stages", default="1,3,5", show_default=True, help="Halving budgets in seed-counts")
+@click.option("--halving-top-fraction", default="0.25", show_default=True, help="Halving keep fraction")
+@click.option("--halving-min-survivors", default="5", show_default=True, help="Halving minimum survivors")
+@click.option("--pipeline-survivors", default="30", show_default=True, help="Pipeline only: target survivors")
+@click.option("--beam-width", default="3", show_default=True, help="Beam width (top-K paths)")
+@click.option("--sffs-max-backward-per-step", default="2", show_default=True, help="SFFS backward removal budget")
+@click.option(
+    "--expand-semantic-singletons",
+    is_flag=True,
+    default=False,
+    help="Expand semantic nodes into singleton output-column groups for finer-grained selection.",
+)
+@click.option("--regen-poolb", is_flag=True, default=False, help="Force regenerate Pool-B YAML")
+@click.option("--rerun-search", is_flag=True, default=False, help="Force rerun feature-group-search even if result exists")
+@click.option("--report-only", is_flag=True, default=False, help="Only generate report (requires result JSON present)")
+def diagnose_poolb_semantic_search(
+    strategies,
+    tag,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    seeds,
+    objective,
+    min_trades,
+    max_steps,
+    search_algo,
+    halving_stages,
+    halving_top_fraction,
+    halving_min_survivors,
+    pipeline_survivors,
+    beam_width,
+    sffs_max_backward_per_step,
+    expand_semantic_singletons,
+    regen_poolb,
+    rerun_search,
+    report_only,
+):
+    """One-shot: generate Pool-B (factor-eval) + run feature-group-search (semantic + Pool-B) + writeback YAML + report."""
+    script = PROJECT_ROOT / "scripts" / "run_poolb_semantic_search.py"
+    if not script.exists():
+        raise FileNotFoundError(f"Script not found: {script}")
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--strategies",
+        str(strategies),
+        "--symbol",
+        str(symbol),
+        "--timeframe",
+        str(timeframe),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--test-size",
+        str(test_size),
+        "--seeds",
+        str(seeds),
+        "--objective",
+        str(objective),
+        "--min-trades",
+        str(min_trades),
+        "--max-steps",
+        str(max_steps),
+        "--search-algo",
+        str(search_algo),
+        "--halving-stages",
+        str(halving_stages),
+        "--halving-top-fraction",
+        str(halving_top_fraction),
+        "--halving-min-survivors",
+        str(halving_min_survivors),
+        "--pipeline-survivors",
+        str(pipeline_survivors),
+        "--beam-width",
+        str(beam_width),
+        "--sffs-max-backward-per-step",
+        str(sffs_max_backward_per_step),
+    ]
+    if tag:
+        cmd.extend(["--tag", str(tag)])
+    if expand_semantic_singletons:
+        cmd.append("--expand-semantic-singletons")
+    if regen_poolb:
+        cmd.append("--regen-poolb")
+    if rerun_search:
+        cmd.append("--rerun-search")
+    if report_only:
+        cmd.append("--report-only")
+
+    print("CMD:", " ".join(cmd))
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)
+
+
+@diagnose.command("holdout-eval")
+@click.option(
+    "--config",
+    "-c",
+    default="config/strategies/sr_reversal_long",
+    show_default=True,
+    help="Strategy config directory",
+)
+@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
+@click.option("--train-start-date", required=True, help="Train start date (YYYY-MM-DD)")
+@click.option("--holdout-start-date", required=True, help="Holdout start date (YYYY-MM-DD)")
+@click.option("--holdout-end-date", required=True, help="Holdout end date (YYYY-MM-DD)")
+@click.option("--seed", default="42", show_default=True, help="Seed for reproducibility")
+@click.option(
+    "--output-root",
+    default="results/holdout_eval",
+    show_default=True,
+    help="Output root (will write to <output-root>/<strategy_name>/).",
+)
+@click.option("--data-path", default="data/parquet_data", show_default=True, help="Data directory")
+@click.option("--feature-store-dir", default="feature_store", show_default=True)
+@click.option("--feature-store-layer", default=None)
+@click.option("--deterministic/--non-deterministic", default=True, help="Deterministic training")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_holdout_eval(
+    config,
+    symbol,
+    timeframe,
+    train_start_date,
+    holdout_start_date,
+    holdout_end_date,
+    seed,
+    output_root,
+    data_path,
+    feature_store_dir,
+    feature_store_layer,
+    deterministic,
+    docker,
+):
+    """Train on [train_start_date, holdout_start_date) and evaluate on [holdout_start_date, holdout_end_date]."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--seed",
+        str(seed),
+        "--output-root",
+        f"/workspace/{output_root}" if use_workspace_prefix else output_root,
+        "--start-date",
+        str(train_start_date),
+        "--end-date",
+        str(holdout_end_date),
+        "--holdout-start-date",
+        str(holdout_start_date),
+        "--holdout-end-date",
+        str(holdout_end_date),
+    ]
+    args.extend(
+        [
+            "--feature-store-dir",
+            f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
+        ]
+    )
+    if feature_store_layer is not None:
+        args.extend(["--feature-store-layer", feature_store_layer])
+    if deterministic:
+        args.append("--deterministic")
+    sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
 # =============================================================================

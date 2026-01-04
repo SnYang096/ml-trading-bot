@@ -98,6 +98,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeframe", type=str, default="15T")
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument("--output-root", type=str, default="results/strategies")
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help="Optional crop start date (YYYY-MM-DD). Overrides TRAIN_START_DATE env if provided.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="Optional crop end date (YYYY-MM-DD). Overrides TRAIN_END_DATE env if provided.",
+    )
+    parser.add_argument(
+        "--train-all",
+        action="store_true",
+        help=(
+            "Train a final model on ALL available (cropped) data. "
+            "Skips the holdout test split/backtest, but still saves ModelArtifact."
+        ),
+    )
+    parser.add_argument(
+        "--holdout-start-date",
+        type=str,
+        default=None,
+        help=(
+            "Optional explicit holdout start date (YYYY-MM-DD). "
+            "If set (with --holdout-end-date), the pipeline will train on data strictly before holdout_start "
+            "and test on [holdout_start, holdout_end] instead of using --test-size."
+        ),
+    )
+    parser.add_argument(
+        "--holdout-end-date",
+        type=str,
+        default=None,
+        help="Optional explicit holdout end date (YYYY-MM-DD). Requires --holdout-start-date.",
+    )
     # FeatureStore is always enabled for tree training (read-first + auto materialize on miss).
     parser.add_argument(
         "--feature-store-dir",
@@ -1328,8 +1364,10 @@ def train_strategy(
 
     def _crop_df_by_env_dates(df_in: pd.DataFrame) -> pd.DataFrame:
         # Optional date cropping to align with available tick data or focus window
-        start_override = os.getenv("TRAIN_START_DATE")
-        end_override = os.getenv("TRAIN_END_DATE")
+        start_override = getattr(args, "start_date", None) or os.getenv(
+            "TRAIN_START_DATE"
+        )
+        end_override = getattr(args, "end_date", None) or os.getenv("TRAIN_END_DATE")
         if not (start_override or end_override) or df_in.empty:
             return df_in
         dt_idx = None
@@ -1376,6 +1414,14 @@ def train_strategy(
         df_raw = pd.concat(raw_parts, axis=0)
         # Keep duplicates (multiple symbols share timestamps); downstream we reset index after features.
         df_raw = df_raw.sort_index()
+
+    if bool(getattr(args, "train_all", False)) and (
+        getattr(args, "holdout_start_date", None)
+        or getattr(args, "holdout_end_date", None)
+    ):
+        raise ValueError(
+            "--train-all cannot be used together with --holdout-start-date/--holdout-end-date"
+        )
 
     # 监控源数据质量
     from src.features.utils.data_monitor import check_source_data_quality
@@ -1455,27 +1501,94 @@ def train_strategy(
     else:
         raise ValueError("Empty dataframe; cannot configure ticks")
 
-    if not is_multi_symbol:
-        split_idx = int(len(df_raw) * (1 - args.test_size))
-        df_train_raw = df_raw.iloc[:split_idx].copy()
-        df_test_raw = df_raw.iloc[split_idx:].copy()
-    else:
-        # Split per symbol to keep chronology within each asset, then pool.
-        train_parts: list[pd.DataFrame] = []
-        test_parts: list[pd.DataFrame] = []
-        for sym in symbol_list:
-            df_sym = (
-                df_raw[df_raw["_symbol"] == sym].sort_index()
-                if "_symbol" in df_raw.columns
-                else df_raw
+    holdout_start = getattr(args, "holdout_start_date", None)
+    holdout_end = getattr(args, "holdout_end_date", None)
+    if holdout_end and not holdout_start:
+        raise ValueError("--holdout-end-date requires --holdout-start-date")
+
+    def _dt_index(df_in: pd.DataFrame) -> pd.DatetimeIndex | None:
+        for col in ("datetime", "timestamp", "date"):
+            if col in df_in.columns:
+                return pd.to_datetime(df_in[col])
+        if isinstance(df_in.index, pd.DatetimeIndex):
+            return df_in.index
+        return None
+
+    if holdout_start:
+        hs = pd.to_datetime(holdout_start)
+        he = pd.to_datetime(holdout_end) if holdout_end else hs
+        if he < hs:
+            raise ValueError("--holdout-end-date must be >= --holdout-start-date")
+
+        if not is_multi_symbol:
+            dts = _dt_index(df_raw)
+            if dts is None:
+                raise ValueError(
+                    "Cannot apply holdout split: no datetime/timestamp found in dataframe"
+                )
+            mask_test = (dts >= hs) & (dts <= he)
+            df_test_raw = df_raw.loc[mask_test].copy()
+            df_train_raw = df_raw.loc[dts < hs].copy()
+        else:
+            train_parts: list[pd.DataFrame] = []
+            test_parts: list[pd.DataFrame] = []
+            for sym in symbol_list:
+                df_sym = (
+                    df_raw[df_raw["_symbol"] == sym].sort_index()
+                    if "_symbol" in df_raw.columns
+                    else df_raw
+                )
+                if df_sym.empty:
+                    continue
+                dts = _dt_index(df_sym)
+                if dts is None:
+                    continue
+                mask_test = (dts >= hs) & (dts <= he)
+                test_parts.append(df_sym.loc[mask_test].copy())
+                train_parts.append(df_sym.loc[dts < hs].copy())
+            df_train_raw = (
+                pd.concat(train_parts, axis=0).sort_index()
+                if train_parts
+                else df_raw.iloc[:0].copy()
             )
-            if df_sym.empty:
-                continue
-            split_idx = int(len(df_sym) * (1 - args.test_size))
-            train_parts.append(df_sym.iloc[:split_idx].copy())
-            test_parts.append(df_sym.iloc[split_idx:].copy())
-        df_train_raw = pd.concat(train_parts, axis=0).sort_index()
-        df_test_raw = pd.concat(test_parts, axis=0).sort_index()
+            df_test_raw = (
+                pd.concat(test_parts, axis=0).sort_index()
+                if test_parts
+                else df_raw.iloc[:0].copy()
+            )
+        print(
+            f"   🧪 Holdout split enabled: test=[{hs.date()}, {he.date()}], train=< {hs.date()}"
+        )
+    else:
+        if not is_multi_symbol:
+            if bool(getattr(args, "train_all", False)):
+                df_train_raw = df_raw.copy()
+                df_test_raw = df_raw.iloc[:0].copy()
+            else:
+                split_idx = int(len(df_raw) * (1 - args.test_size))
+                df_train_raw = df_raw.iloc[:split_idx].copy()
+                df_test_raw = df_raw.iloc[split_idx:].copy()
+        else:
+            # Split per symbol to keep chronology within each asset, then pool.
+            train_parts: list[pd.DataFrame] = []
+            test_parts: list[pd.DataFrame] = []
+            for sym in symbol_list:
+                df_sym = (
+                    df_raw[df_raw["_symbol"] == sym].sort_index()
+                    if "_symbol" in df_raw.columns
+                    else df_raw
+                )
+                if df_sym.empty:
+                    continue
+                if bool(getattr(args, "train_all", False)):
+                    train_parts.append(df_sym.copy())
+                    test_parts.append(df_sym.iloc[:0].copy())
+                else:
+                    split_idx = int(len(df_sym) * (1 - args.test_size))
+                    train_parts.append(df_sym.iloc[:split_idx].copy())
+                    test_parts.append(df_sym.iloc[split_idx:].copy())
+            df_train_raw = pd.concat(train_parts, axis=0).sort_index()
+            df_test_raw = pd.concat(test_parts, axis=0).sort_index()
 
     print(f"   ✅ Samples - Train: {len(df_train_raw)}, " f"Test: {len(df_test_raw)}")
 
@@ -2088,7 +2201,12 @@ def train_strategy(
         results["volatility_model"] = {"trained": False}
 
     print(f"\n   ▶️ Running backtest on test set")
-    if len(df_test_filtered) == 0:
+    if bool(getattr(args, "train_all", False)):
+        # Final training mode: no holdout test; do not emit placeholder sharpe=-999.
+        results["backtest"] = None
+        results["backtest_note"] = "train_all_no_holdout_test"
+        print("   ℹ️  Backtest skipped (train-all mode; no holdout test set).")
+    elif len(df_test_filtered) == 0:
         # Hard guard: produce a deterministic "invalid candidate" backtest payload.
         # This keeps feature-group-search running without crashing.
         results["backtest"] = {

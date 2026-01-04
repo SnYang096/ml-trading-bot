@@ -481,10 +481,22 @@ th,td{{border-bottom:1px solid #eee;text-align:left;padding:6px 8px;vertical-ali
 th{{background:#fafafa}}
 .grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
 .card{{border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;background:#fff}}
+.muted{{color:#6b7280}}
 </style></head>
 <body>
 <h1>Counterfactual Eval - Rule vs BC(3-action)</h1>
-<p>Uses precomputed <code>{cfg.sim_cfg.ret_mean_col}</code>/<code>{cfg.sim_cfg.ret_trend_col}</code> returns + same costs/constraints.</p>
+<p class="muted">A/B compare on the <em>same</em> precomputed mode returns and the <em>same</em> simulator costs/constraints.</p>
+
+<div class="card" style="margin:16px 0;">
+  <h2 style="margin-top:0;">How to read this report</h2>
+  <ul style="margin:0; padding-left:18px;">
+    <li><b>Rule</b> metrics: equity built by using the logged <code>mode</code> column (NO_TRADE/MEAN/TREND).</li>
+    <li><b>Pred</b> metrics: equity built by a small BC Router trained on the first <code>train_ratio</code> portion, then used to predict mode on the test portion.</li>
+    <li>Returns are counterfactual step returns from logs: <code>{cfg.sim_cfg.ret_mean_col}</code> and <code>{cfg.sim_cfg.ret_trend_col}</code>. When mode=NO_TRADE, return is 0.</li>
+    <li>If <b>Pred Sharpe = 0</b> and <b>Pred mode entropy = 0</b>, it usually means the BC Router collapsed (often all NO_TRADE). This is a Router-learning issue, not necessarily an NN-head issue.</li>
+    <li><b>Per symbol</b> table helps spot whether performance is driven by a single asset (e.g., ETH good, BTC flat).</li>
+  </ul>
+</div>
 <div class="grid">
   <div class="card">
     <h2>Aggregate metrics</h2>

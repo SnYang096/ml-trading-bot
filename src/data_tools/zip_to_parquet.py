@@ -224,8 +224,8 @@ class DataConverter:
 
             agg = (
                 df.set_index("timestamp")
-                .resample("1S")
-                .agg(
+                # Pandas deprecates upper-case offset aliases like "S"
+                .resample("1s").agg(
                     {
                         "buy_volume": "sum",
                         "sell_volume": "sum",
@@ -385,6 +385,11 @@ def main():
         description="Convert Binance ZIP aggTrades to Parquet (tick data)"
     )
     parser.add_argument(
+        "--pattern",
+        default="*aggTrades-*.zip",
+        help="ZIP filename glob pattern (default: *aggTrades-*.zip). Example: BNBUSDT-aggTrades-2024-*.zip",
+    )
+    parser.add_argument(
         "--input-dir",
         default=None,
         help="ZIP input directory (default: data/agg_data)",
@@ -445,7 +450,7 @@ def main():
     converter = DataConverter(input_dir, output_dir, backup_dir, force=bool(args.force))
 
     # 转换所有文件
-    results = converter.convert_all_files()
+    results = converter.convert_all_files(pattern=str(args.pattern))
 
     # 打印结果
     print(f"\n📊 Conversion Results:")
@@ -478,12 +483,8 @@ def main():
             cleaned_count = converter.cleanup_zip_files(results["converted_files"])
             print(f"✅ Cleaned up {cleaned_count} zip files")
         else:
-            response = input(
-                f"\n🗑️  Clean up {len(results['converted_files'])} converted zip files? (y/N): "
-            )
-            if response.lower() == "y":
-                cleaned_count = converter.cleanup_zip_files(results["converted_files"])
-                print(f"✅ Cleaned up {cleaned_count} zip files")
+            # Non-interactive safe: never prompt. Caller explicitly chose no-cleanup.
+            print("ℹ️  Cleanup disabled; keeping ZIP files.")
 
     print(f"\n🎉 Data conversion complete!")
     print(f"   Output directory: {output_dir}")

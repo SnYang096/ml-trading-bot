@@ -10,10 +10,17 @@ features:
     output_columns:
     - atr
     category: technical_indicator
-    description: Average True Range normalized by close price (atr/close). Typical
-      range [0.001, 0.1] for crypto.
+    normalized: false
+    description: Average True Range (ATR) in *price units* (not normalized). Used as
+      the canonical scale column `atr` for label normalization and for converting
+      normalized SR distances back into raw price units. For cross-asset comparable
+      volatility, prefer `atr_ratio` (atr/close), `natr_14`, or `atr_percentile`.
     compute_params:
       period: 14
+      # Normalization contract:
+      # - `atr` is a scale column in price units (NOT cross-asset comparable).
+      output_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       high: high
@@ -603,6 +610,8 @@ features:
       normalized: true
       output_normalization_map:
         sqs_hal_high: unitless
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       high: high
@@ -636,6 +645,8 @@ features:
       normalized: true
       output_normalization_map:
         sqs_hal_low: unitless
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       high: high
@@ -689,6 +700,8 @@ features:
     compute_params:
       window: 60
       tolerance_factor: 0.5
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       high: high
@@ -729,6 +742,8 @@ features:
     compute_params:
       window: 60
       tolerance_factor: 0.5
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       high: high
@@ -887,6 +902,8 @@ features:
         # retracement is pct over 3 bars => typically [0,1] but can exceed 1 in extreme; keep bounded-ish
         liquidity_void_retracement: bounded_0_1
         liquidity_void_false_breakout_risk: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       close: close
@@ -1190,6 +1207,13 @@ features:
       min_market_cap_usd: 10000000.0
       on_missing_market_cap: nan
       node_cache_version: v1
+      normalized: true
+      output_normalization_map:
+        market_cap_usd: usd
+        dollar_volume_over_mcap: unitless
+        turnover_over_mcap: unitless
+        net_buy_usd_over_mcap: unitless
+        abs_net_buy_usd_over_mcap: unitless
   funding_rate_features_f:
     module: funding_rate
     compute_func: compute_funding_rate_features_from_df
@@ -1277,6 +1301,8 @@ features:
       normalized: true
       output_normalization_map:
         fp_imbalance_exhaustion_score: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       fp_max_imbalance_ratio: fp_max_imbalance_ratio
@@ -1324,6 +1350,8 @@ features:
         fp_imbalance_ignition_score: bounded_0_1
         fp_imbalance_absorption_score: bounded_0_1
         fp_imbalance_exhaustion_scene_score: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       fp_max_imbalance_ratio: fp_max_imbalance_ratio
@@ -2155,6 +2183,8 @@ features:
         trade_cluster_flow_intensity: bounded_0_1
         trade_cluster_exhaustion_score: bounded_0_1
         trade_cluster_absorption_score: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       open: open
@@ -3218,6 +3248,8 @@ features:
     pass_full_df: false
     compute_params:
       normalized: true
+      input_normalization_map:
+        atr: price_unit
     column_mappings:
       close: close
       atr: atr
@@ -3443,6 +3475,8 @@ features:
       warping_window: 0.1
       use_c: true
       normalized: true
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       close: close
@@ -3645,6 +3679,8 @@ features:
       warping_window: 0.1
       use_c: true
       normalized: true
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       close: close
@@ -4007,6 +4043,8 @@ features:
         vpin_stress_score: bounded_0_1
         vpin_directional_pressure: bounded_0_1
         vpin_exhaustion_score: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       vpin_zscore_50: vpin_zscore_50
@@ -4058,6 +4096,8 @@ features:
         vpin_ignition_score: bounded_0_1
         vpin_absorption_score: bounded_0_1
         vpin_exhaustion_scene_score: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       vpin_zscore_50: vpin_zscore_50
@@ -4099,6 +4139,8 @@ features:
       output_normalization_map:
         imbalance_ratio: bounded_-1_1
         imbalance_exhaustion_score: bounded_0_1
+      input_normalization_map:
+        atr: price_unit
     pass_full_df: false
     column_mappings:
       taker_buy_ratio: taker_buy_ratio
@@ -4217,7 +4259,7 @@ features:
     compute_func: compute_sma_slope_x_price_pos_from_series
     dependencies:
     - sma_200_slope_f
-    - sma_200_f
+    - sma_200_value_f
     required_columns:
     - sma_200_slope
     - sma_200
@@ -4524,6 +4566,8 @@ features:
       normalized: true
       output_normalization_map:
         sr_distance_normalized: unitless
+      input_normalization_map:
+        atr: price_unit
   zigzag_high_low_f:
     module: baseline
     compute_func: compute_zigzag_high_low_from_series
@@ -4603,6 +4647,8 @@ features:
       normalized: true
       output_normalization_map:
         dist_to_zz_high_atr: unitless
+      input_normalization_map:
+        atr: price_unit
   dist_to_zz_low_atr_f:
     module: enhanced
     compute_func: compute_dist_to_zz_low_atr_from_series
@@ -4623,6 +4669,8 @@ features:
       atr: atr
     compute_params:
       normalized: true
+      input_normalization_map:
+        atr: price_unit
   cvd_slope_5_f:
     module: enhanced
     compute_func: compute_cvd_slope_from_series
@@ -4660,6 +4708,8 @@ features:
       normalized: true
       output_normalization_map:
         atr_ratio: unitless
+      input_normalization_map:
+        atr: price_unit
   bb_width_ratio_f:
     module: enhanced
     compute_func: compute_bb_width_ratio_from_price_from_series
@@ -4988,11 +5038,33 @@ features:
       normalize_mode: position
     column_mappings:
       real: close
+  sma_200_value_f:
+    module: talib
+    compute_func: compute_talib_indicator_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - sma_200
+    category: trend
+    normalized: false
+    description: 'SMA(200) in *price units* (raw SMA value). This is required by features
+      like `sma_200_slope_f` and `sma_slope_x_price_pos_f` which need the raw MA level.'
+    pass_full_df: false
+    compute_params:
+      indicator_name: SMA
+      timeperiod: 200
+      output_column: sma_200
+      # normalize_mode: null  (omit => raw SMA)
+      output_normalization_map:
+        sma_200: price_unit
+    column_mappings:
+      real: close
   sma_200_slope_f:
     module: baseline
     compute_func: compute_sma_slope_from_series
     dependencies:
-    - sma_200_f
+    - sma_200_value_f
     required_columns:
     - sma_200
     output_columns:
@@ -5009,7 +5081,7 @@ features:
     module: baseline
     compute_func: compute_sma_position_from_series
     dependencies:
-    - sma_200_f
+    - sma_200_value_f
     required_columns:
     - close
     - sma_200

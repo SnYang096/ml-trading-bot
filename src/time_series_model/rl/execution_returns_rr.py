@@ -129,9 +129,10 @@ def _simulate_rr_position(
 
     T = len(df)
     pos = np.zeros(T, dtype=int)
-    in_trade = False
-    current_sign = 0
-    exit_idx: Optional[int] = None
+    # NOTE:
+    # This is a single-position simulator in the sense that it prevents overlapping trades
+    # by jumping the time index forward to the exit point. It must still allow *multiple*
+    # sequential trades over the series.
 
     def _scan_exit(i: int, sign: int) -> int:
         entry_off = int(max(cfg.entry_offset, 1))
@@ -203,23 +204,19 @@ def _simulate_rr_position(
 
     t = 0
     while t < T:
-        if not in_trade:
-            if bool(entry_ok[t]) and int(dir_sign[t]) != 0:
-                current_sign = int(dir_sign[t])
-                entry_off = int(max(cfg.entry_offset, 1))
-                eff_start = t  # position applies at t for next-bar return; we approximate entry decision at t
-                # Determine exit
-                exit_idx = _scan_exit(t, current_sign)
-                in_trade = True
-                # Activate position from eff_start until exit_idx-1 (exit at exit_idx close)
-                end_hold = max(eff_start, int(exit_idx))
-                pos[eff_start:end_hold] = current_sign
-                t = end_hold
-                continue
-            t += 1
-        else:
-            # should not happen with our single-pass block (we jump to end_hold)
-            t += 1
+        if bool(entry_ok[t]) and int(dir_sign[t]) != 0:
+            sign = int(dir_sign[t])
+            eff_start = int(t)
+            # Determine exit (index of bar where TP/SL/time exit triggers)
+            exit_idx = int(_scan_exit(t, sign))
+            # Activate position from eff_start until (exit_idx - 1) inclusive.
+            # In slice semantics that's [eff_start : exit_idx).
+            end_hold = max(eff_start + 1, exit_idx)
+            pos[eff_start:end_hold] = sign
+            # Jump forward to avoid overlapping trades; next opportunity starts at exit_idx.
+            t = end_hold
+            continue
+        t += 1
     return pos
 
 

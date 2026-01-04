@@ -4,6 +4,9 @@ from src.features.normalization.feature_contract import (
     collect_feature_normalization_meta,
     validate_feature_dependencies_normalization,
 )
+from src.features.normalization.feature_contract_checks import (
+    run_feature_contract_checks,
+)
 
 
 def test_feature_dependencies_normalization_contract_has_no_missing_methods():
@@ -31,3 +34,16 @@ def test_feature_dependencies_normalization_contract_has_no_raw_columns_global()
     rows = collect_feature_normalization_meta(deps, only_features=None)
     raw = [r for r in rows if r["method"] == "raw"]
     assert raw == []
+
+
+def test_feature_contract_checks_semantic_safety_ok():
+    """
+    Higher-level gate: protected scale columns (e.g. atr in price units) must be:
+    - produced with the expected method
+    - and explicitly declared by every consumer via input_normalization_map
+    """
+    ok, report = run_feature_contract_checks(
+        feature_deps_path="config/feature_dependencies.yaml",
+        mode="error",
+    )
+    assert ok, report

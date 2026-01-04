@@ -19,7 +19,8 @@ feature_pipeline:
       # === 已归一化的核心特征 ===
       
       # --- 波动率/范围 (归一化) ---
-      - atr_percentile_f        # 替代 atr，范围 [0,1]
+      - atr_f                   # 必需：FeatureContract 需要 atr（这里是 atr/close，已归一化）
+      - atr_percentile_f        # 波动率分位数，范围 [0,1]
       - range_ratio_5bar_f      # 比率，小数值
       - price_range_symmetry_f  # 比率
       - wick_ratios_f           # 比率 [0,1]
@@ -75,6 +76,7 @@ feature_pipeline:
 feature_contract:
   minimal_required_cols:
     # 基于上面 required 特征的输出列
+    - atr
     - atr_percentile
     - range_ratio_5bar
     - price_range_symmetry
