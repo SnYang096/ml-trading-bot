@@ -965,6 +965,188 @@ def rl():
     pass
 
 
+# =============================================================================
+# Unified Search Workflows (Tree + nnmultihead)
+# =============================================================================
+
+
+@cli.group()
+def search():
+    """Unified search workflows (tree strategies and nnmultihead primitives)."""
+    pass
+
+
+@search.command("tree")
+@click.option(
+    "--strategies",
+    default="sr_reversal_rr_reg_long,sr_breakout,compression_breakout,trend_following",
+    show_default=True,
+    help="Comma-separated strategy directory names under config/strategies/ (can be a single strategy).",
+)
+@click.option("--tag", default=None, help="Tag for outputs.")
+@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--test-size", default="0.3", show_default=True, help="Test set ratio")
+@click.option("--seeds", default="1,2,3,4,5", show_default=True, help="Comma-separated seeds")
+@click.option("--objective", default="Sharpe_mean", show_default=True, help="Objective metric")
+@click.option("--min-trades", default="10", show_default=True, help="Min trades_mean constraint")
+@click.option("--max-steps", default="5", show_default=True, help="Max steps (beam depth / greedy steps)")
+@click.option(
+    "--search-algo",
+    default="pipeline",
+    type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
+    show_default=True,
+    help="Search algorithm. Recommended: pipeline (SH prefilter -> Beam -> SFFS prune).",
+)
+@click.option("--expand-semantic-singletons", is_flag=True, default=False)
+@click.option("--regen-poolb", is_flag=True, default=False)
+@click.option("--rerun-search", is_flag=True, default=False)
+@click.option("--report-only", is_flag=True, default=False)
+def search_tree(
+    strategies,
+    tag,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    seeds,
+    objective,
+    min_trades,
+    max_steps,
+    search_algo,
+    expand_semantic_singletons,
+    regen_poolb,
+    rerun_search,
+    report_only,
+):
+    """One-shot tree workflow: PoolB(factor-eval) + feature-group-search + writeback + report."""
+    script = PROJECT_ROOT / "scripts" / "run_poolb_semantic_search.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--strategies",
+        str(strategies),
+        "--symbol",
+        str(symbol),
+        "--timeframe",
+        str(timeframe),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--test-size",
+        str(test_size),
+        "--seeds",
+        str(seeds),
+        "--objective",
+        str(objective),
+        "--min-trades",
+        str(min_trades),
+        "--max-steps",
+        str(max_steps),
+        "--search-algo",
+        str(search_algo),
+    ]
+    if tag:
+        cmd.extend(["--tag", str(tag)])
+    if expand_semantic_singletons:
+        cmd.append("--expand-semantic-singletons")
+    if regen_poolb:
+        cmd.append("--regen-poolb")
+    if rerun_search:
+        cmd.append("--rerun-search")
+    if report_only:
+        cmd.append("--report-only")
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)
+
+
+@search.command("nn")
+@click.option(
+    "--config",
+    "config_dir",
+    default="config/nnmultihead/path_primitives_4h_80h_min",
+    show_default=True,
+    help="Base nnmultihead config directory.",
+)
+@click.option("--symbols", default="BTCUSDT,ETHUSDT", show_default=True, help="Comma-separated symbols")
+@click.option("--timeframe", default="240T", show_default=True)
+@click.option("--start-date", required=True)
+@click.option("--end-date", required=True)
+@click.option("--features-store-root", default="feature_store", show_default=True)
+@click.option("--features-store-layer", required=True)
+@click.option("--tag", default=None, help="Tag for outputs (default: auto).")
+@click.option("--objective", default="dir_auc", show_default=True, help="nn objective metric (metrics.json key)")
+@click.option(
+    "--search-algo",
+    default="pipeline",
+    type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
+    show_default=True,
+)
+@click.option("--epochs", type=int, default=10, show_default=True)
+@click.option(
+    "--exclude-columns",
+    default=None,
+    help="Comma-separated columns to exclude from MLP input. If omitted, use config's feature_pipeline.exclude_columns (recommended).",
+)
+@click.option("--expand-semantic-singletons", is_flag=True, default=False)
+@click.option("--run-train/--no-run-train", default=True, show_default=True, help="Train best config after search")
+def search_nn(
+    config_dir,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    features_store_root,
+    features_store_layer,
+    tag,
+    objective,
+    search_algo,
+    epochs,
+    exclude_columns,
+    expand_semantic_singletons,
+    run_train,
+):
+    """One-shot nn workflow: primitives PoolB + nn feature-group-search (+ optional train)."""
+    script = PROJECT_ROOT / "scripts" / "run_nnmultihead_search.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--config",
+        str(config_dir),
+        "--symbols",
+        str(symbols),
+        "--timeframe",
+        str(timeframe),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--features-store-root",
+        str(features_store_root),
+        "--features-store-layer",
+        str(features_store_layer),
+        "--objective",
+        str(objective),
+        "--search-algo",
+        str(search_algo),
+        "--epochs",
+        str(int(epochs)),
+    ]
+    # CLI override only (preferred default lives in config/features.yaml)
+    if exclude_columns is not None:
+        cmd.extend(["--exclude-columns", str(exclude_columns)])
+    if tag:
+        cmd.extend(["--tag", str(tag)])
+    if expand_semantic_singletons:
+        cmd.append("--expand-semantic-singletons")
+    if run_train:
+        cmd.append("--run-train")
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)
+
+
 @rl.group("exec")
 def rl_exec():
     """Execution control tooling (invariants/kill-switch/chaos) on Router logs."""
@@ -2008,6 +2190,17 @@ def nnmultihead_factor_eval(
     default=None,
     help="Optional base feature funcs YAML (Pool A). If omitted, will try <base-config>/features_base.yaml.",
 )
+@click.option(
+    "--groups-yaml",
+    default=None,
+    help="Optional semantic groups YAML (same schema as config/feature_groups.yaml).",
+)
+@click.option(
+    "--expand-semantic-singletons",
+    is_flag=True,
+    default=False,
+    help="Expand semantic nodes into singleton output-column groups (finer-grained selection).",
+)
 @click.option("--symbols", required=True, help="Comma-separated symbols")
 @click.option("--timeframe", default="240T", show_default=True)
 @click.option("--start-date", required=True)
@@ -2029,6 +2222,11 @@ def nnmultihead_factor_eval(
 @click.option("--hidden", type=int, default=256, show_default=True)
 @click.option("--depth", type=int, default=2, show_default=True)
 @click.option("--dropout", type=float, default=0.1, show_default=True)
+@click.option(
+    "--exclude-columns",
+    default=None,
+    help="Comma-separated columns to exclude from MLP input (still computed for labels). If omitted, use base-config feature_pipeline.exclude_columns.",
+)
 @click.option("--device", default=None)
 @click.option("--halving-stages", default="3,6,10", show_default=True)
 @click.option("--halving-top-fraction", type=float, default=0.25, show_default=True)
@@ -2041,6 +2239,8 @@ def nnmultihead_factor_eval(
 def nnmultihead_feature_group_search(
     base_config,
     base_features_yaml,
+    groups_yaml,
+    expand_semantic_singletons,
     symbols,
     timeframe,
     start_date,
@@ -2057,6 +2257,7 @@ def nnmultihead_feature_group_search(
     hidden,
     depth,
     dropout,
+    exclude_columns,
     device,
     halving_stages,
     halving_top_fraction,
@@ -2104,6 +2305,12 @@ def nnmultihead_feature_group_search(
         str(int(depth)),
         "--dropout",
         str(float(dropout)),
+    ]
+    # CLI override only (preferred default lives in base-config/features.yaml)
+    if exclude_columns is not None:
+        args.extend(["--exclude-columns", str(exclude_columns)])
+    args.extend(
+        [
         "--halving-stages",
         str(halving_stages),
         "--halving-top-fraction",
@@ -2118,7 +2325,8 @@ def nnmultihead_feature_group_search(
         str(int(pipeline_survivors)),
         "--output-dir",
         f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
-    ]
+        ]
+    )
     if base_features_yaml:
         args.extend(
             [
@@ -2126,6 +2334,15 @@ def nnmultihead_feature_group_search(
                 f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
             ]
         )
+    if groups_yaml:
+        args.extend(
+            [
+                "--groups-yaml",
+                f"/workspace/{groups_yaml}" if use_workspace_prefix else groups_yaml,
+            ]
+        )
+    if expand_semantic_singletons:
+        args.append("--expand-semantic-singletons")
     if device:
         args.extend(["--device", device])
     sys.exit(run_python_module("time_series_model.diagnostics.nn_feature_group_search", args, docker=docker))

@@ -10,6 +10,9 @@ description: |
   - 详见 docs/architecture/FEATURE_NORMALIZATION_POLICY.md
 
 feature_pipeline:
+  # Keep `atr` in the dataframe for primitives labels/contract scale, but do NOT feed it into the MLP inputs by default.
+  # (You can override in CLI for feature search via --exclude-columns, but config is the recommended default.)
+  exclude_columns: [atr]
   requested_features:
     # New structured format: classify features as required vs optional_blocks
     # All features will be computed, but optional_blocks will be masked during training

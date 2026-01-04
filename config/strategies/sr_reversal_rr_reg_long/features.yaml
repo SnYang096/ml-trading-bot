@@ -1,6 +1,9 @@
 name: sr_reversal_rr_reg_long
 description: "Regression mainline (optimized): 基于 feature-group-search 列级别分析优化"
 feature_pipeline:
+  # Keep label/backtest-required columns (like raw `atr`) in the dataframe, but do NOT feed them into the model.
+  exclude_columns:
+  - atr
   requested_features:
     # ============================================
     # Tier 1: 核心特征（CVD 系列 - 最高 importance）

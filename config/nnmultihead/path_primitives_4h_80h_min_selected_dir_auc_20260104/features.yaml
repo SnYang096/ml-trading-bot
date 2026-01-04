@@ -1,0 +1,64 @@
+description: |
+  NN multi-head (path primitives) - selected feature set (dir_auc objective)
+
+  Source:
+  - results/nn_feature_group_search/pipeline_poolb3_dir_auc_2023_2024_e6_poola/nn_feature_group_search_result.json
+  - selected_groups:
+    - poolb__volume_profile_volatility_features_f
+    - poolb__volatility_reversal_score_f
+    - poolb__compression_duration_f
+    - poolb__slope_consistency_score_f
+
+  Important:
+  - We keep `atr` in the dataframe for primitives labels/contract scale, but exclude it from MLP inputs
+    via `selector.params.exclude_columns: [atr]` to reduce cross-symbol shortcut risk.
+
+feature_pipeline:
+  requested_features:
+    required:
+      # PoolA / base
+      - atr_f
+      - atr_percentile_f
+      - bb_width_f
+      - rsi_f
+      - wick_ratios_f
+      - range_ratio_5bar_f
+      - price_range_symmetry_f
+      - volume_anomaly_f
+
+      # Selected PoolB adds (from nn feature-group-search)
+      - volume_profile_volatility_features_f
+      - volatility_reversal_score_f
+      - compression_duration_f
+      - slope_consistency_score_f
+    optional_blocks: {}
+
+  timeframe: 4H
+  data_path: data/parquet_data
+
+  selector:
+    module: src.time_series_model.models.nn.feature_selector
+    function: select_columns_from_requested_features
+    params:
+      requested_features:
+        - atr_f
+        - atr_percentile_f
+        - bb_width_f
+        - rsi_f
+        - wick_ratios_f
+        - range_ratio_5bar_f
+        - price_range_symmetry_f
+        - volume_anomaly_f
+        - volume_profile_volatility_features_f
+        - volatility_reversal_score_f
+        - compression_duration_f
+        - slope_consistency_score_f
+      feature_deps_path: config/feature_dependencies.yaml
+      drop_constant: true
+      exclude_columns: [atr]
+
+  missingness_policy:
+    append_block_mask: true
+    block_dropout_p: 0.05
+
+

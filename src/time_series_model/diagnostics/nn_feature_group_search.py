@@ -46,6 +46,8 @@ class NNFeatureSearchConfig:
     depth: int = 2
     dropout: float = 0.1
     device: Optional[str] = None
+    # Exclude columns from MLP input (still available in df for labels/contracts)
+    exclude_columns: Optional[List[str]] = None
 
 
 def _ensure_dir(p: Path) -> None:
@@ -113,6 +115,7 @@ def _make_temp_nnmultihead_config(
     tmp_root: Path,
     name_suffix: str,
     requested_features: List[str],
+    exclude_columns: Optional[List[str]] = None,
 ) -> Path:
     """
     Create a temp nn config directory:
@@ -136,6 +139,7 @@ def _make_temp_nnmultihead_config(
 
     fp_out = dict(fp)
     fp_out["requested_features"] = req_struct
+    excl = [str(c) for c in (exclude_columns or []) if str(c).strip()]
     fp_out["selector"] = {
         "module": "src.time_series_model.models.nn.feature_selector",
         "function": "select_columns_from_requested_features",
@@ -143,6 +147,9 @@ def _make_temp_nnmultihead_config(
             "requested_features": list(requested_features),
             "feature_deps_path": "config/feature_dependencies.yaml",
             "drop_constant": True,
+            # Keep `atr` in the dataframe for primitives label normalization, but exclude raw price-unit ATR
+            # from MLP input by default (reduces symbol/price-scale shortcut risk).
+            "exclude_columns": excl,
         },
     }
     # Keep existing missingness_policy if present
@@ -285,6 +292,7 @@ def greedy_forward_search(
         tmp_root=tmp_root,
         name_suffix="baseline",
         requested_features=list(base_features),
+        exclude_columns=cfg.exclude_columns,
     )
     base_score, base_valid, base_reject, base_meta = evaluator(
         cfg=cfg,
@@ -316,6 +324,7 @@ def greedy_forward_search(
                 tmp_root=tmp_root,
                 name_suffix=run_id,
                 requested_features=feats,
+                exclude_columns=cfg.exclude_columns,
             )
             score, valid, reject_reason, meta = evaluator(
                 cfg=cfg,
@@ -404,6 +413,7 @@ def successive_halving_search(
         tmp_root=tmp_root,
         name_suffix="baseline",
         requested_features=current,
+        exclude_columns=cfg.exclude_columns,
     )
     s0, v0, _, m0 = evaluator(
         cfg=cfg,
@@ -434,6 +444,7 @@ def successive_halving_search(
                     tmp_root=tmp_root,
                     name_suffix=run_id,
                     requested_features=feats,
+                    exclude_columns=cfg.exclude_columns,
                 )
                 score, valid, reject_reason, meta = evaluator(
                     cfg=cfg,
@@ -521,6 +532,7 @@ def beam_search(
         tmp_root=tmp_root,
         name_suffix="baseline",
         requested_features=list(base_features),
+        exclude_columns=cfg.exclude_columns,
     )
     base_score, base_valid, _, base_meta = evaluator(
         cfg=cfg,
@@ -555,6 +567,7 @@ def beam_search(
                     tmp_root=tmp_root,
                     name_suffix=run_id,
                     requested_features=feats2,
+                    exclude_columns=cfg.exclude_columns,
                 )
                 score, valid, reject_reason, meta = evaluator(
                     cfg=cfg,
@@ -613,6 +626,7 @@ def sffs_search(
         tmp_root=tmp_root,
         name_suffix="baseline",
         requested_features=list(base_features),
+        exclude_columns=cfg.exclude_columns,
     )
     base_score, base_valid, _, base_meta = evaluator(
         cfg=cfg,
@@ -646,6 +660,7 @@ def sffs_search(
                 tmp_root=tmp_root,
                 name_suffix=run_id,
                 requested_features=feats2,
+                exclude_columns=cfg.exclude_columns,
             )
             score, valid, _, meta = evaluator(
                 cfg=cfg,
@@ -693,6 +708,7 @@ def sffs_search(
                     tmp_root=tmp_root,
                     name_suffix=run_id,
                     requested_features=feats2,
+                    exclude_columns=cfg.exclude_columns,
                 )
                 score, valid, _, meta = evaluator(
                     cfg=cfg,
@@ -763,6 +779,7 @@ def pipeline_sh_beam_sffs(
                 tmp_root=tmp_root,
                 name_suffix=run_id,
                 requested_features=feats,
+                exclude_columns=cfg.exclude_columns,
             )
             score, valid, _, _ = evaluator(
                 cfg=cfg,
@@ -818,6 +835,7 @@ def pipeline_sh_beam_sffs(
             tmp_root=tmp_root,
             name_suffix=run_id0,
             requested_features=best_feats,
+            exclude_columns=cfg.exclude_columns,
         )
         s0, v0, _, m0 = evaluator(
             cfg=cfg,
@@ -845,6 +863,7 @@ def pipeline_sh_beam_sffs(
                 tmp_root=tmp_root,
                 name_suffix=run_id,
                 requested_features=feats,
+                exclude_columns=cfg.exclude_columns,
             )
             s, v, _, m = evaluator(
                 cfg=cfg,
@@ -922,12 +941,28 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--device", default=None)
     p.add_argument("--no-docker", action="store_true", default=True)
+    p.add_argument(
+        "--exclude-columns",
+        default=None,
+        help="Comma-separated columns to exclude from MLP input (still computed for labels). If omitted, use base-config feature_pipeline.exclude_columns. Use empty string to include all.",
+    )
 
     # Candidates / groups
     p.add_argument(
         "--pool-b-yaml",
         required=True,
         help="PoolB YAML with feature_pipeline.requested_features",
+    )
+    p.add_argument(
+        "--groups-yaml",
+        default=None,
+        help="Optional semantic groups YAML override (same schema as config/feature_groups.yaml).",
+    )
+    p.add_argument(
+        "--expand-semantic-singletons",
+        action="store_true",
+        default=False,
+        help="If True, expand semantic nodes into singleton output-column groups (like tree feature-group-search).",
     )
 
     # Halving params (epochs stages)
@@ -944,6 +979,48 @@ def _parse_args() -> argparse.Namespace:
     # Pipeline params
     p.add_argument("--pipeline-survivors", type=int, default=30)
     return p.parse_args()
+
+
+def _load_groups_yaml(path: Path) -> Dict[str, List[str]]:
+    obj = _load_yaml(path)
+    if not isinstance(obj, dict):
+        return {}
+    groups = obj.get("groups") or {}
+    if not isinstance(groups, dict):
+        return {}
+    out: Dict[str, List[str]] = {}
+    for k, v in groups.items():
+        if isinstance(k, str) and isinstance(v, list):
+            out[k] = [str(x) for x in v if str(x).strip()]
+    return out
+
+
+def _expand_semantic_groups_to_singletons(
+    groups: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    feats_obj = _load_yaml(Path("config/feature_dependencies.yaml"))
+    feats = feats_obj.get("features", {}) if isinstance(feats_obj, dict) else {}
+    if not isinstance(feats, dict):
+        return groups
+
+    expanded: Dict[str, List[str]] = {}
+    for gname, nodes in (groups or {}).items():
+        for node in nodes or []:
+            info = feats.get(str(node), {})
+            output_cols = (
+                (info.get("output_columns") or []) if isinstance(info, dict) else []
+            )
+            if not output_cols or len(output_cols) <= 1:
+                key = f"{gname}__{node}"
+                if key not in expanded:
+                    expanded[key] = [str(node)]
+                continue
+            for col in output_cols:
+                key = f"{gname}__{str(col)}"
+                if key not in expanded:
+                    # Request the output column; StrategyFeatureLoader will map it back to the node.
+                    expanded[key] = [str(col)]
+    return expanded if expanded else groups
 
 
 def _parse_int_list(csv: str) -> List[int]:
@@ -968,6 +1045,29 @@ def main() -> None:
     if not base_config_dir.exists():
         raise FileNotFoundError(f"base-config not found: {base_config_dir}")
 
+    # Resolve exclude_columns:
+    # - CLI provided => override
+    # - else => read from base-config/features.yaml: feature_pipeline.exclude_columns
+    # - else => default to ["atr"] (legacy behavior)
+    excl_arg = args.exclude_columns
+    if excl_arg is None:
+        try:
+            base_feats_yaml = _load_yaml(base_config_dir / "features.yaml")
+            fp = (
+                (base_feats_yaml.get("feature_pipeline") or {})
+                if isinstance(base_feats_yaml, dict)
+                else {}
+            )
+            excl_list = fp.get("exclude_columns", None)
+            if isinstance(excl_list, list):
+                excl_arg = ",".join(
+                    [str(x).strip() for x in excl_list if str(x).strip()]
+                )
+        except Exception:
+            excl_arg = None
+    if excl_arg is None:
+        excl_arg = "atr"
+
     cfg = NNFeatureSearchConfig(
         base_config_dir=base_config_dir,
         symbols=str(args.symbols),
@@ -985,6 +1085,8 @@ def main() -> None:
         depth=int(args.depth),
         dropout=float(args.dropout),
         device=str(args.device) if args.device else None,
+        exclude_columns=[c.strip() for c in str(excl_arg or "").split(",") if c.strip()]
+        or [],
     )
 
     # Base features (Pool A): must be minimal and non-optimizable.
@@ -1011,7 +1113,24 @@ def main() -> None:
     # Remove any base features from candidates (they are always included).
     base_set = set(base_features)
     requested = [f for f in requested if f not in base_set]
-    groups = {f"poolb__{f}": [f] for f in requested}
+    groups: Dict[str, List[str]] = {f"poolb__{f}": [f] for f in requested}
+
+    # Semantic groups (optional): either from --groups-yaml or auto from config/feature_groups.yaml
+    semantic_groups: Dict[str, List[str]] = {}
+    if args.groups_yaml:
+        semantic_groups = _load_groups_yaml(Path(args.groups_yaml).resolve())
+    else:
+        auto_groups = Path("config") / "feature_groups.yaml"
+        if auto_groups.exists():
+            semantic_groups = _load_groups_yaml(auto_groups)
+    if semantic_groups:
+        if bool(getattr(args, "expand_semantic_singletons", False)):
+            semantic_groups = _expand_semantic_groups_to_singletons(semantic_groups)
+        # Merge with prefix to avoid collisions
+        for k, v in semantic_groups.items():
+            kk = f"semantic__{k}"
+            if kk not in groups and v:
+                groups[kk] = v
 
     algo = str(args.search_algo)
     objective = str(args.objective)

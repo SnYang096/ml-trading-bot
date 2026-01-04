@@ -4,6 +4,10 @@ description: 'SR breakout strategy focusing on breakout quality, momentum persis
 
   '
 feature_pipeline:
+  # Keep label/backtest-required columns (like raw `atr`) in the dataframe, but do NOT feed them into the model.
+  # This aligns tree behavior with nnmultihead (atr used for labels, excluded from model inputs).
+  exclude_columns:
+  - atr
   requested_features:
   # Recommended baseline (node-level) for rolling training
   #

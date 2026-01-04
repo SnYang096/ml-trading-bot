@@ -145,6 +145,8 @@ mlbot nnmultihead feature-group-search --no-docker \
 说明：
 - nn 侧的 “budget 维度” 用的是 **epochs**（对应 tree 侧用 seeds 的思路）
 - 单次评估会跑一个小训练（因此比 tree 慢）；建议先用较小 epochs + pipeline 缩小候选
+- Pool A（底座）：默认会自动读取 `<base-config>/features_base.yaml`（如果存在），不传 `--base-features-yaml` 也可以
+- Semantic groups：可通过 `--groups-yaml` 传入（或默认使用 `config/feature_groups.yaml`），并可加 `--expand-semantic-singletons` 细粒度展开
 
 ---
 

@@ -26,6 +26,8 @@ class TestCLI:
         assert "rl" in result.output
         assert "data" in result.output
         assert "server" in result.output
+        # unified command family (optional)
+        assert "search" in result.output
 
     def test_cli_version(self, runner):
         """Test that CLI shows version."""

@@ -19,6 +19,7 @@ def test_strategy_config_loader_success(tmp_path: Path):
         """
         name: sr_reversal
         feature_pipeline:
+          exclude_columns: [atr]
           requested_features:
             - atr
           post_processors: []
@@ -56,6 +57,7 @@ def test_strategy_config_loader_success(tmp_path: Path):
 
     assert config.name == "sr_reversal"
     assert config.features.requested_features == ["atr"]
+    assert config.features.exclude_columns == ["atr"]
     assert config.labels.target_column == "label"
     assert config.model.trainer.module == "tests.sample_module"
     assert config.evaluation.metrics[0]["name"] == "test"

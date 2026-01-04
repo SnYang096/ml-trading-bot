@@ -28,6 +28,13 @@ class FeaturePipelineConfig:
     # Optional: output-column names to multiply by -1 BEFORE training/inference.
     # Used to align negative-direction factors into a consistent "higher = more bullish" convention.
     invert_features: List[str] = field(default_factory=list)
+    # Optional: columns to exclude from the model input columns (feature_cols).
+    #
+    # Important:
+    # - This does NOT prevent the column from being computed / present in the feature dataframe.
+    # - This is used to keep label/backtest-required columns (e.g. raw price-unit `atr`)
+    #   available while preventing them from being fed into the model as inputs.
+    exclude_columns: List[str] = field(default_factory=list)
     post_processors: List[ModuleFunctionConfig] = field(default_factory=list)
     selector: Optional[ModuleFunctionConfig] = None
     ensure_signal: Optional[Dict[str, Any]] = None
@@ -214,6 +221,7 @@ class StrategyConfigLoader:
             requested = flattened
 
         invert_features = pipeline.get("invert_features", []) or []
+        exclude_columns = pipeline.get("exclude_columns", []) or []
         post_processors = [
             self._parse_module_function(entry)
             for entry in pipeline.get("post_processors", []) or []
@@ -228,6 +236,11 @@ class StrategyConfigLoader:
             requested_features=requested,
             invert_features=(
                 invert_features if isinstance(invert_features, list) else []
+            ),
+            exclude_columns=(
+                [str(x).strip() for x in exclude_columns if str(x).strip()]
+                if isinstance(exclude_columns, list)
+                else []
             ),
             post_processors=post_processors,
             selector=selector,

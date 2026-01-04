@@ -4,6 +4,9 @@ description: 'Compression breakout strategy combining compression strength, trig
 
   '
 feature_pipeline:
+  # Keep label/backtest-required columns (like raw `atr`) in the dataframe, but do NOT feed them into the model.
+  exclude_columns:
+  - atr
   requested_features:
   # Core kline features (required for feature-group-search)
   - macd_f

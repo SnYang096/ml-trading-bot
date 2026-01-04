@@ -421,21 +421,36 @@ def determine_feature_columns(
     df: pd.DataFrame,
     pipeline_cfg,
 ) -> List[str]:
+    # YAML-driven input pruning: keep some columns for label/backtest, but never feed them into the model.
+    exclude_cols = []
+    try:
+        exclude_cols = list(getattr(pipeline_cfg, "exclude_columns", []) or [])
+    except Exception:
+        exclude_cols = []
+    exclude_cols = [str(c).strip() for c in exclude_cols if str(c).strip()]
+
     if pipeline_cfg.selector:
         selector_func = import_callable(
             pipeline_cfg.selector.module, pipeline_cfg.selector.function
         )
         try:
-            return selector_func(df, list(df.columns), **pipeline_cfg.selector.params)
+            cols = selector_func(df, list(df.columns), **pipeline_cfg.selector.params)
         except TypeError:
-            return selector_func(df, **pipeline_cfg.selector.params)
+            cols = selector_func(df, **pipeline_cfg.selector.params)
 
-    return [
+        if exclude_cols:
+            cols = [c for c in (cols or []) if c not in set(exclude_cols)]
+        return cols
+
+    cols = [
         col
         for col in df.columns
         if col not in BASE_DATA_COLUMNS
         and not col.startswith(("signal", "binary_signal"))
     ]
+    if exclude_cols:
+        cols = [c for c in cols if c not in set(exclude_cols)]
+    return cols
 
 
 def apply_filters(df: pd.DataFrame, filters: List[Dict[str, Any]]) -> pd.DataFrame:

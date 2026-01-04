@@ -165,6 +165,8 @@ mlbot train final \
 - **特征搜索 Playbook（详细算法/命令/概念）**：`docs/strategies/FEATURE_SEARCH_PLAYBOOK_CN.md`
 - **语义特征单列展开说明**：`docs/strategies/SEMANTIC_GROUPS_SINGLETON_EXPANSION.md`
 - **归一化契约与检查**：`docs/architecture/NORMALIZATION_CONTRACT_AND_CHECKS.md`
+- **“保留但不喂给模型”的列排除机制（exclude_columns）**：`docs/guides/FEATURE_PIPELINE_EXCLUDE_COLUMNS_CN.md`
+- **Feature-group-search / pipeline 调参指南**：`docs/guides/FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md`
 
 - **项目 TODO List**：`docs/TODO_LIST.md`
   - 所有待完成任务的详细说明
