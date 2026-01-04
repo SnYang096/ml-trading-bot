@@ -176,7 +176,7 @@ mlbot train final \
 
 ### 架构文档
 
-- **系统架构图**：`docs/ARCHITECTURE.md`（包含完整的架构层次图）
+- **系统架构图（已更新到当前 CLI/工作流）**：`docs/ARCHITECTURE.md`
 
 - **特征列表与归一化状态**：`docs/architecture/FEATURE_CATALOG.md`
   - 全部 208 个特征节点的归一化状态
