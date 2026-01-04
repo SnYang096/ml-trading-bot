@@ -35,6 +35,33 @@ from cross_sectional import (
 )
 
 
+def _filter_numeric_factor_cols(
+    panel: pd.DataFrame, factor_cols: List[str], target_col: str
+) -> List[str]:
+    """
+    Ensure factor columns are numeric.
+
+    Some upstream data sources include helper/meta columns (e.g. `_symbol`) which are strings.
+    These should never be treated as factors for winsorisation/zscore/regression.
+    """
+    cols: List[str] = []
+    dropped: List[str] = []
+    for c in factor_cols:
+        if c == target_col:
+            continue
+        if c not in panel.columns:
+            continue
+        if not pd.api.types.is_numeric_dtype(panel[c]):
+            dropped.append(c)
+            continue
+        cols.append(c)
+    if dropped:
+        print(
+            f"   ⚠️  Dropped {len(dropped)} non-numeric factor columns (e.g. {dropped[:5]})"
+        )
+    return cols
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Cross-sectional Fama-MacBeth factor evaluation with Newey-West t-stats and IC/IR diagnostics."
@@ -315,6 +342,8 @@ def main() -> None:
         factor_cols = list(dict.fromkeys(factor_cols + crypto_cols))
         print(f"   📦 Factor count after crypto enrichment: {len(factor_cols)}")
 
+    factor_cols = _filter_numeric_factor_cols(panel, factor_cols, target_col)
+
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
     periods_per_year = resolve_periods_per_year(
         args.periods_per_year, processed_panel.index
@@ -324,7 +353,7 @@ def main() -> None:
         f"{len(factor_cols)} factors, periods_per_year={periods_per_year:.2f}"
     )
 
-    model = CrossSectionalRegressor(add_intercept=True, min_assets=3)
+    model = CrossSectionalRegressor(add_intercept=True, min_assets=min_assets_required)
     result = model.fit(processed_panel, factor_cols=factor_cols, target_col=target_col)
 
     diagnostics = FactorPanelBuilder.describe_panel(processed_panel)

@@ -29,7 +29,14 @@ def load_feature_dependencies() -> dict:
 def get_test_files() -> List[Path]:
     """获取所有测试文件"""
     tests_dir = PROJECT_ROOT / "tests"
-    return list(tests_dir.glob("test_*.py"))
+    files = list(tests_dir.rglob("test_*.py"))
+    # drop __pycache__ / hidden
+    out: List[Path] = []
+    for p in files:
+        if "__pycache__" in str(p):
+            continue
+        out.append(p)
+    return sorted(out)
 
 
 def check_future_data_leakage() -> Dict[str, List[str]]:

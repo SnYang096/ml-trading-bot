@@ -40,6 +40,31 @@ from cross_sectional.factor_selection import (
     apply_factor_selection,
     compute_cross_sectional_ic,
 )
+from cross_sectional.model_portfolio_backtest import (
+    PortfolioBacktestConfig,
+    portfolio_backtest_from_signal,
+)
+
+
+def _filter_numeric_factor_cols(
+    panel: pd.DataFrame, factor_cols: List[str], target_col: str
+) -> List[str]:
+    cols: List[str] = []
+    dropped: List[str] = []
+    for c in factor_cols:
+        if c == target_col:
+            continue
+        if c not in panel.columns:
+            continue
+        if not pd.api.types.is_numeric_dtype(panel[c]):
+            dropped.append(c)
+            continue
+        cols.append(c)
+    if dropped:
+        print(
+            f"⚠️  Dropped {len(dropped)} non-numeric factor columns (e.g. {dropped[:5]})"
+        )
+    return cols
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,6 +136,108 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="auto",
         help="Annualisation factor for report metrics (e.g., 17520 for 5-min bars). Use 'auto' to infer from data.",
+    )
+    parser.add_argument(
+        "--backtest",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run an OOS portfolio backtest on model predictions (with lag/holding/constraints).",
+    )
+    parser.add_argument(
+        "--bt-fee-bps",
+        type=float,
+        default=2.0,
+        help="Fee (bps) applied to turnover in model prediction backtest.",
+    )
+    parser.add_argument(
+        "--bt-slippage-bps",
+        type=float,
+        default=0.0,
+        help="Slippage (bps) applied to turnover in model prediction backtest.",
+    )
+    parser.add_argument(
+        "--bt-min-assets",
+        type=int,
+        default=12,
+        help="Minimum assets per timestamp for model prediction backtest.",
+    )
+    parser.add_argument(
+        "--bt-mode",
+        type=str,
+        default="long_only,market_neutral",
+        help="Comma-separated backtest modes: long_only,market_neutral",
+    )
+    parser.add_argument(
+        "--bt-holding",
+        type=int,
+        default=None,
+        help="Holding period in bars (default: horizon).",
+    )
+    parser.add_argument(
+        "--bt-lag",
+        type=int,
+        default=1,
+        help="Execution lag in bars (default: 1).",
+    )
+    parser.add_argument(
+        "--bt-topk",
+        type=int,
+        default=10,
+        help="Top-K selection size for long leg.",
+    )
+    parser.add_argument(
+        "--bt-bottomk",
+        type=int,
+        default=10,
+        help="Bottom-K selection size for short leg (market-neutral).",
+    )
+    parser.add_argument(
+        "--bt-gross-leverage",
+        type=float,
+        default=1.0,
+        help="Gross leverage cap (sum abs weights).",
+    )
+    parser.add_argument(
+        "--bt-max-weight",
+        type=float,
+        default=0.10,
+        help="Max absolute weight per asset.",
+    )
+    parser.add_argument(
+        "--bt-turnover-limit",
+        type=float,
+        default=None,
+        help="Optional turnover limit per rebalance (e.g., 0.5).",
+    )
+    parser.add_argument(
+        "--bt-cash-buffer",
+        type=float,
+        default=0.0,
+        help="Cash buffer fraction (0..1). Uninvested capital.",
+    )
+    parser.add_argument(
+        "--bt-equity-mode",
+        type=str,
+        default="compound",
+        help="Equity curve mode: simple|compound|log",
+    )
+    parser.add_argument(
+        "--bt-funding-bps-per-bar",
+        type=float,
+        default=0.0,
+        help="Funding cost (bps per bar) applied to short exposure (market-neutral).",
+    )
+    parser.add_argument(
+        "--bt-borrow-bps-per-bar",
+        type=float,
+        default=0.0,
+        help="Borrow cost (bps per bar) applied to short exposure (market-neutral).",
+    )
+    parser.add_argument(
+        "--train-ratio",
+        type=float,
+        default=0.7,
+        help="OOS split: fraction of timestamps used for training (rest used for test backtest).",
     )
     parser.add_argument(
         "--save-markdown",
@@ -255,6 +382,8 @@ def main() -> None:
         factor_cols.extend(crypto_cols)
     print(f"📦 Factor count after augmentation: {len(factor_cols)}")
 
+    factor_cols = _filter_numeric_factor_cols(panel, factor_cols, target_col)
+
     processed_panel = preprocess_panel(panel, factor_cols, args.winsor, args.zscore)
     periods_per_year = resolve_periods_per_year(
         args.periods_per_year, processed_panel.index
@@ -309,13 +438,27 @@ def main() -> None:
 
     if args.model == "boosting":
         model = CrossSectionalBoostingModel()
-        model.fit(processed_panel, factor_cols=factor_cols, target_col=target_col)
-        predictions = model.predict(processed_panel)
+        # OOS split by time (timestamps)
+        ts = processed_panel.index.get_level_values(0)
+        uniq = pd.Index(sorted(pd.to_datetime(ts, utc=True).unique()))
+        split = int(np.floor(len(uniq) * float(args.train_ratio)))
+        split = min(max(split, 1), max(len(uniq) - 1, 1))
+        train_ts = set(uniq[:split])
+        test_ts = set(uniq[split:])
+        train_panel = processed_panel.loc[
+            processed_panel.index.get_level_values(0).isin(train_ts)
+        ]
+        test_panel = processed_panel.loc[
+            processed_panel.index.get_level_values(0).isin(test_ts)
+        ]
+
+        model.fit(train_panel, feature_cols=factor_cols, target_col=target_col)
+        predictions_test = model.predict(test_panel)
         eval_result = model.evaluate(
-            processed_panel, predictions=predictions, target_col=target_col
+            test_panel, predictions=predictions_test, target_col=target_col
         )
 
-        save_predictions(predictions, output_dir / args.predictions_name)
+        save_predictions(predictions_test, output_dir / args.predictions_name)
         save_metrics(
             eval_result,
             output_dir / args.metrics_name,
@@ -325,9 +468,64 @@ def main() -> None:
         )
         dump(model, output_dir / args.model_name)
 
+        # Realistic portfolio backtest on OOS test panel using 1-bar realized returns
+        if bool(args.backtest):
+            bt_panel = (
+                test_panel[["close", target_col]].copy()
+                if "close" in test_panel.columns
+                else test_panel[[target_col]].copy()
+            )
+            bt_panel["model_prediction"] = predictions_test.reindex(bt_panel.index)
+
+            modes = [m.strip() for m in str(args.bt_mode).split(",") if m.strip()]
+            holding = (
+                int(args.bt_holding)
+                if args.bt_holding is not None
+                else int(args.horizon)
+            )
+
+            for mode in modes:
+                cfg = PortfolioBacktestConfig(
+                    mode=mode,
+                    holding_period_bars=holding,
+                    execution_lag_bars=int(args.bt_lag),
+                    top_k=int(args.bt_topk),
+                    bottom_k=int(args.bt_bottomk),
+                    gross_leverage=float(args.bt_gross_leverage),
+                    max_weight=float(args.bt_max_weight),
+                    turnover_limit=(
+                        float(args.bt_turnover_limit)
+                        if args.bt_turnover_limit is not None
+                        else None
+                    ),
+                    fee_bps=float(args.bt_fee_bps),
+                    slippage_bps=float(args.bt_slippage_bps),
+                    funding_bps_per_bar=float(args.bt_funding_bps_per_bar),
+                    borrow_bps_per_bar=float(args.bt_borrow_bps_per_bar),
+                    min_assets=int(args.bt_min_assets),
+                    periods_per_year=(
+                        float(periods_per_year) if periods_per_year else None
+                    ),
+                    cash_buffer=float(args.bt_cash_buffer),
+                    equity_mode=str(args.bt_equity_mode),
+                    initial_capital=1.0,
+                )
+                tsdf, metrics = portfolio_backtest_from_signal(
+                    bt_panel,
+                    signal_col="model_prediction",
+                    close_col="close",
+                    cfg=cfg,
+                )
+                ts_path = output_dir / f"model_bt_timeseries__{mode}.csv"
+                met_path = output_dir / f"model_bt_metrics__{mode}.json"
+                tsdf.to_csv(ts_path)
+                met_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+                print(f"📈 Model backtest saved: {ts_path}")
+                print(f"📊 Model backtest metrics saved: {met_path}")
+
         if args.save_markdown:
             report = build_report_from_eval(
-                processed_panel,
+                test_panel,
                 factor_cols,
                 eval_result,
                 args,

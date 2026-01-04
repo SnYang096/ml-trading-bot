@@ -22,6 +22,31 @@
 
 ### 2) 推荐调参顺序（从“稳健”到“可交易”）
 
+#### ⭐ 推荐执行顺序（nnmultihead：先 primitives，再 Router，再 BC/RL）
+
+> 这段是“可执行”的最小闭环顺序，用于避免你遇到的典型问题：primitives 近随机时去调 Router/做 BC/RL，只会在噪声上过拟合或学到 NO_TRADE/亏钱策略。
+
+1) **highcap 子集（如 highcap6）先跑 feature search**
+   - `mlbot nnmultihead feature-group-search ...`
+   - 目标：让 primitives 输入特征更“primitives-friendly”（先把 head 指标拉到非随机）
+
+2) **用 search 的 best config 训练一次 primitives（固定 train window）**
+   - `mlbot nnmultihead train ...`
+   - 目标：`dir_auc/roll_icir__dir` 等稳定非随机（不是追 Sharpe）
+
+3) **固定 OOS 窗口做 predict（生成 heads/preds）**
+   - `mlbot nnmultihead predict ...`
+
+4) **固定 returns 假设（returns_source + 成本/延迟）生成 logs**
+   - `mlbot rl build-logs-3action ...`
+   - 注意：调参期间不要频繁切换 returns_source，否则 Sharpe 口径不稳定
+
+5) **只对 rule-based Router 做阈值调参（grid/Optuna），目标用 OOS Sharpe**
+   - `mlbot rule mode-3action ...`（阈值是调参对象）
+   - `mlbot rl run-e2e-3action ...`（Sharpe/score 是验收指标）
+
+6) **Router 过关后，再做 BC/RL（否则只会学到“亏钱/不交易”）**
+
 #### Step A：固定数据口径（不要在调参期间改窗口）
 - 训练窗：建议至少覆盖 1.5~2 年（4H）
 - OOS：留出最近 4~6 个月（严格 out-of-sample）

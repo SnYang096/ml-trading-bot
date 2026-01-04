@@ -6313,3 +6313,41 @@ features:
       low: low
       close: close
       volume: volume
+
+  # ---------------------------------------------------------------------------
+  # Alpha factors (TS-adapted shortlist)
+  # ---------------------------------------------------------------------------
+  alpha101_ts_core_f:
+    module: alpha_factors
+    compute_func: compute_alpha101_ts_core_from_df
+    dependencies: []
+    required_columns:
+    - open
+    - high
+    - low
+    - close
+    - volume
+    output_columns:
+    - alpha101_001_ts
+    - alpha101_022_ts
+    - alpha101_043_ts
+    - alpha101_066_ts
+    category: alpha_factors
+    description: TS-adapted Alpha101 shortlist (001/022/043/066). Uses OHLCV only (no ticks). Designed to be stable and interpretable.
+    pass_full_df: true
+    compute_params:
+      use_ts_rank: true
+      alpha001_window: 5
+      alpha022_corr_window: 10
+      alpha022_delta_window: 5
+      alpha022_vol_window: 20
+      alpha043_vol_rank_window: 20
+      alpha043_mom_rank_window: 8
+      alpha043_adv_window: 20
+      alpha043_mom_period: 7
+      normalized: true
+      output_normalization_map:
+        alpha101_001_ts: unitless
+        alpha101_022_ts: unitless
+        alpha101_043_ts: unitless
+        alpha101_066_ts: unitless

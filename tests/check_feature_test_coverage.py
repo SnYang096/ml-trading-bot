@@ -15,23 +15,34 @@ import argparse
 from pathlib import Path
 from collections import defaultdict
 
-# 所有特征相关的测试文件
-FEATURE_TEST_FILES = [
-    "tests/test_advanced_features.py",
-    "tests/test_extended_volatility_features.py",
-    "tests/test_complex_features_comprehensive.py",
-    "tests/test_spectrum_features.py",
-    "tests/test_hurst_features_improved.py",
-    "tests/test_hilbert_features_improved.py",
-    "tests/test_wpt_volatility_features.py",
-    "tests/test_wpt_future_leak_and_multi_asset.py",
-    "tests/test_vpin_features.py",
-    "tests/test_vpin_future_leak_and_multi_asset.py",
-    "tests/test_vpin_multi_dimensional_features.py",
-    "tests/test_volume_profile_volatility_features.py",
-    "tests/test_volume_profile_volatility_future_leak_and_multi_asset.py",
-    "tests/test_garch_evt_features.py",
-]
+
+def get_feature_test_files() -> list[str]:
+    """
+    Discover feature-related test files.
+
+    Repo has migrated most feature tests under:
+      - tests/features/test_*.py
+      - tests/cross_sectional/test_*.py (CS feature store / factor eval)
+    """
+    root = Path(__file__).resolve().parents[1]
+    patterns = [
+        root / "tests" / "features" / "test_*.py",
+        root / "tests" / "cross_sectional" / "test_*.py",
+        root / "tests" / "test_*.py",
+    ]
+    files: list[str] = []
+    for pat in patterns:
+        files.extend([str(p) for p in sorted(pat.parent.glob(pat.name))])
+    # de-dup preserve order
+    out: list[str] = []
+    seen = set()
+    for f in files:
+        name = str(f)
+        if name not in seen:
+            out.append(name)
+            seen.add(name)
+    return out
+
 
 # 四种关键测试的关键词模式
 TEST_PATTERNS = {
@@ -113,7 +124,13 @@ def check_file(test_file):
     return results
 
 
-def print_summary(results, detailed=False, missing_only=False):
+def print_summary(
+    results,
+    *,
+    detailed: bool = False,
+    missing_only: bool = False,
+    files: list[str] | None = None,
+):
     """打印汇总报告"""
     print("=" * 100)
     print("所有特征相关测试文件的四种关键测试覆盖情况")
@@ -140,7 +157,7 @@ def print_summary(results, detailed=False, missing_only=False):
         print("-" * 100)
         print()
 
-        for test_file in FEATURE_TEST_FILES:
+        for test_file in files or []:
             file_name = os.path.basename(test_file)
             file_results = results.get(file_name)
 
@@ -196,7 +213,7 @@ def print_summary(results, detailed=False, missing_only=False):
         if missing_only and stats["missing"] > 0:
             print(f"   ❌ 缺失文件 ({stats['missing']} 个):")
             missing_files = []
-            for test_file in FEATURE_TEST_FILES:
+            for test_file in files or []:
                 file_name = os.path.basename(test_file)
                 file_results = results.get(file_name)
                 if file_results and test_type in file_results:
@@ -218,7 +235,7 @@ def print_summary(results, detailed=False, missing_only=False):
         print()
 
         file_missing_count = defaultdict(int)
-        for test_file in FEATURE_TEST_FILES:
+        for test_file in files or []:
             file_name = os.path.basename(test_file)
             file_results = results.get(file_name)
             if file_results and "error" not in file_results:
@@ -244,14 +261,17 @@ def main():
     parser.add_argument("--missing-only", action="store_true", help="只显示缺失的测试")
     args = parser.parse_args()
 
+    files = get_feature_test_files()
     # 检查所有文件
     results = {}
-    for test_file in FEATURE_TEST_FILES:
+    for test_file in files:
         file_name = os.path.basename(test_file)
         results[file_name] = check_file(test_file)
 
     # 打印报告
-    print_summary(results, detailed=args.detailed, missing_only=args.missing_only)
+    print_summary(
+        results, detailed=args.detailed, missing_only=args.missing_only, files=files
+    )
 
 
 if __name__ == "__main__":

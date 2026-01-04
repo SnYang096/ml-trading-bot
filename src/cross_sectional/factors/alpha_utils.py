@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from ta.trend import WMAIndicator
 
 
 def rank(df):
@@ -93,7 +92,28 @@ def ts_weighted_mean(df, period=10):
     :param period: the LWMA period
     :return: a pandas DataFrame with the LWMA.
     """
-    return df.apply(lambda x: WMAIndicator(x, window=period, fillna=True).wma())
+    window = int(period)
+    if window <= 1:
+        return df
+    weights = np.arange(1, window + 1, dtype=float)
+    wsum = float(weights.sum())
+
+    def _wma(s: pd.Series) -> pd.Series:
+        arr = s.to_numpy(dtype=float)
+        out = np.full_like(arr, fill_value=np.nan, dtype=float)
+        for i in range(len(arr)):
+            j0 = max(0, i - window + 1)
+            x = arr[j0 : i + 1]
+            w = weights[-len(x) :]
+            # Ignore NaNs by reweighting
+            m = ~np.isnan(x)
+            if not m.any():
+                continue
+            ww = w[m]
+            out[i] = float(np.dot(x[m], ww) / ww.sum())
+        return pd.Series(out, index=s.index)
+
+    return df.apply(_wma, axis=0)
 
 
 def ts_std(df, window=10):

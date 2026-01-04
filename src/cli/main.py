@@ -117,7 +117,11 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
         cmd = [sys.executable, "-m", module] + args
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+    # Match Docker layout (PYTHONPATH includes project root + src/)
+    pythonpath_parts = [str(PROJECT_ROOT), str(PROJECT_ROOT / "src")]
+    if "PYTHONPATH" in env and env["PYTHONPATH"]:
+        pythonpath_parts.insert(0, env["PYTHONPATH"])
+    env["PYTHONPATH"] = ":".join(pythonpath_parts)
     # Ensure real-time logs even when stdout is redirected (e.g. nohup > file)
     env["PYTHONUNBUFFERED"] = "1"
 
@@ -156,9 +160,9 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
         cmd = [sys.executable, str(PROJECT_ROOT / script_path)] + args
 
     env = os.environ.copy()
-    # Ensure PYTHONPATH includes project root for src imports
-    pythonpath_parts = [str(PROJECT_ROOT / "src")]
-    if "PYTHONPATH" in env:
+    # Match Docker layout (PYTHONPATH includes project root + src/)
+    pythonpath_parts = [str(PROJECT_ROOT), str(PROJECT_ROOT / "src")]
+    if "PYTHONPATH" in env and env["PYTHONPATH"]:
         pythonpath_parts.insert(0, env["PYTHONPATH"])
     env["PYTHONPATH"] = ":".join(pythonpath_parts)
     # Ensure real-time logs even when stdout is redirected (e.g. nohup > file)
@@ -4387,27 +4391,75 @@ def cross_section():
 
 
 @cross_section.command("build-panel")
-@click.option("--symbols", "-s", help="Comma-separated symbols (default: from config)")
-@click.option("--start-date", help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", help="End date (YYYY-MM-DD)")
 @click.option(
-    "--output-dir",
-    default="data/cross_sectional_panels",
-    help="Output directory",
+    "--symbols",
+    "-s",
+    default=None,
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT).",
+)
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe (e.g., 240T)")
+@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
+@click.option(
+    "--feature-type",
+    type=click.Choice(["baseline", "comprehensive"]),
+    default="baseline",
+    show_default=True,
+    help="Feature recipe for the generated CS panel.",
+)
+@click.option("--data-path", default=None, help="Optional data root passed to loader (default: data/parquet_data)")
+@click.option(
+    "--output",
+    default="results/feature_exports/cs_panel.parquet",
+    show_default=True,
+    help="Output parquet path for the generated CS panel.",
+)
+@click.option("--dropna/--no-dropna", default=True, show_default=True, help="Drop rows with NaNs after generation")
+@click.option(
+    "--orderflow/--no-orderflow",
+    default=True,
+    show_default=True,
+    help="Enable order-flow augmentation when reading raw agg-trade files (if available).",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_build_panel(symbols, start_date, end_date, output_dir, docker):
+def cross_section_build_panel(
+    symbols,
+    timeframe,
+    horizon,
+    start_date,
+    end_date,
+    feature_type,
+    data_path,
+    output,
+    dropna,
+    orderflow,
+    docker,
+):
     """Generate multi-asset factor panels for CS modelling."""
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
+        "--timeframe",
+        str(timeframe),
+        "--horizon",
+        str(horizon),
+        "--feature-type",
+        str(feature_type),
+        "--output",
+        f"/workspace/{output}" if use_workspace_prefix else output,
     ]
     if symbols:
-        args.extend(["--symbols"] + symbols.split(","))
+        args.extend(["--symbols"] + [s.strip() for s in str(symbols).split(",") if s.strip()])
+    if data_path:
+        args.extend(["--data-path", f"/workspace/{data_path}" if use_workspace_prefix else data_path])
     if start_date:
-        args.extend(["--start-date", start_date])
+        args.extend(["--start-date", str(start_date)])
     if end_date:
-        args.extend(["--end-date", end_date])
+        args.extend(["--end-date", str(end_date)])
+    if not dropna:
+        args.append("--no-dropna")
+    if not orderflow:
+        args.append("--no-orderflow")
 
     sys.exit(
         run_script(
@@ -4418,26 +4470,141 @@ def cross_section_build_panel(symbols, start_date, end_date, output_dir, docker)
     )
 
 
+@cross_section.command("build-store")
+@click.option("--symbols", "-s", required=True, help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT).")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe (e.g., 240T)")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--data-path", default="data/parquet_data", show_default=True, help="Raw parquet root")
+@click.option("--factor-set-yaml", required=True, help="YAML containing factor_sets")
+@click.option("--factor-set", required=True, help="Factor set name to compute")
+@click.option("--feature-deps", default="config/feature_dependencies.yaml", show_default=True, help="Feature dependencies YAML")
+@click.option("--features-store-root", default="feature_store", show_default=True, help="FeatureStore root")
+@click.option("--features-store-layer", default=None, help="Optional layer name (default: hashed)")
+@click.option("--warmup-bars", default=600, show_default=True, help="Warmup bars before each month")
+@click.option("--include-ohlcv/--no-include-ohlcv", default=True, show_default=True, help="Include OHLCV in store")
+@click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="Overwrite existing month files")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_build_store(
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    data_path,
+    factor_set_yaml,
+    factor_set,
+    feature_deps,
+    features_store_root,
+    features_store_layer,
+    warmup_bars,
+    include_ohlcv,
+    overwrite,
+    docker,
+):
+    """Build monthly FeatureStore partitions for CS workflows (cacheable, no ticks)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--symbols",
+        str(symbols),
+        "--timeframe",
+        str(timeframe),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--factor-set-yaml",
+        f"/workspace/{factor_set_yaml}" if use_workspace_prefix else factor_set_yaml,
+        "--factor-set",
+        str(factor_set),
+        "--feature-deps",
+        f"/workspace/{feature_deps}" if use_workspace_prefix else feature_deps,
+        "--features-store-root",
+        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        "--warmup-bars",
+        str(int(warmup_bars)),
+    ]
+    if features_store_layer:
+        args.extend(["--features-store-layer", str(features_store_layer)])
+    if not include_ohlcv:
+        args.append("--no-include-ohlcv")
+    if overwrite:
+        args.append("--overwrite")
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/build_feature_store.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
 @cross_section.command("report")
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--input",
+    "inputs",
+    multiple=True,
+    default=None,
+    help="Input parquet/csv files or glob patterns (repeatable).",
 )
 @click.option(
-    "--output-dir",
-    default="results/cross_sectional",
-    help="Output directory",
+    "--panel-path",
+    default=None,
+    help="(Deprecated) Alias for --input <panel.parquet>.",
 )
+@click.option("--output", default="results/cross_sectional/fama_macbeth_report.md", show_default=True, help="Output markdown path")
+@click.option("--symbols", default=None, help="Comma-separated symbols filter")
+@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
+@click.option("--max-lag", default=5, show_default=True, help="Newey-West truncation lag")
+@click.option("--periods-per-year", default="auto", show_default=True, help="Annualisation factor or 'auto'")
+@click.option("--winsor", default=3.0, show_default=True, help="Sigma winsorisation (<=0 disables)")
+@click.option("--zscore/--no-zscore", default=True, show_default=True, help="Cross-sectional z-score per timestamp")
+@click.option("--crypto-factors/--no-crypto-factors", default=True, show_default=True, help="Add built-in crypto CS factors")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_report(panel_path, output_dir, docker):
+def cross_section_report(
+    inputs,
+    panel_path,
+    output,
+    symbols,
+    horizon,
+    max_lag,
+    periods_per_year,
+    winsor,
+    zscore,
+    crypto_factors,
+    docker,
+):
     """Generate Fama-MacBeth + Newey-West + IC/IR markdown report."""
-    args = [
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
-        "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
-    ]
+    use_workspace_prefix = docker and not _is_in_docker()
+    in_list = list(inputs or [])
+    if panel_path:
+        in_list.append(panel_path)
+    if not in_list:
+        raise ValueError("Must pass --input (repeatable) or --panel-path.")
+    args = []
+    for x in in_list:
+        args.extend(["--input", f"/workspace/{x}" if use_workspace_prefix else x])
+    args.extend(["--output", f"/workspace/{output}" if use_workspace_prefix else output])
+    args.extend(
+        [
+            "--horizon",
+            str(horizon),
+            "--max-lag",
+            str(max_lag),
+            "--periods-per-year",
+            str(periods_per_year),
+            "--winsor",
+            str(winsor),
+        ]
+    )
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
+    if not zscore:
+        args.append("--no-zscore")
+    if not crypto_factors:
+        args.append("--no-crypto-factors")
 
     sys.exit(
         run_script(
@@ -4450,24 +4617,100 @@ def cross_section_report(panel_path, output_dir, docker):
 
 @cross_section.command("train")
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--input",
+    "inputs",
+    multiple=True,
+    default=None,
+    help="Input parquet/csv files or glob patterns (repeatable).",
 )
 @click.option(
-    "--output-dir",
-    default="results/cross_sectional",
-    help="Output directory",
+    "--panel-path",
+    default=None,
+    help="(Deprecated) Alias for --input <panel.parquet>.",
 )
+@click.option("--output-dir", default="results/cross_sectional/models", show_default=True, help="Output directory")
+@click.option("--model", type=click.Choice(["boosting", "fama_macbeth"]), default="boosting", show_default=True, help="Model type")
+@click.option("--symbols", default=None, help="Comma-separated symbols filter")
+@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
+@click.option("--winsor", default=3.0, show_default=True, help="Sigma winsorisation (<=0 disables)")
+@click.option("--periods-per-year", default="auto", show_default=True, help="Annualisation factor or 'auto'")
+@click.option("--model-name", default="cs_boosting.joblib", show_default=True, help="Saved model filename")
+@click.option("--predictions-name", default="predictions.parquet", show_default=True, help="Saved predictions filename")
+@click.option("--metrics-name", default="metrics.json", show_default=True, help="Saved metrics filename")
+@click.option("--feature-cols", default=None, help="Optional comma-separated feature list")
+@click.option("--feature-file", default=None, help="Optional feature file (one per line)")
+@click.option("--auto-select/--no-auto-select", default=False, show_default=True, help="Auto-select factors via IC/IR")
+@click.option("--select-topk", default=0, show_default=True, help="Keep only top-K factors (0 disables)")
+@click.option("--ic-threshold", default=None, help="Minimum abs(IC mean) to keep a factor")
+@click.option("--ir-threshold", default=None, help="Minimum abs(IC IR) to keep a factor")
+@click.option("--selection-stat", type=click.Choice(["ic", "ir"]), default="ic", show_default=True, help="Rank stat for selection")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_train(panel_path, output_dir, docker):
+def cross_section_train(
+    inputs,
+    panel_path,
+    output_dir,
+    model,
+    symbols,
+    horizon,
+    winsor,
+    periods_per_year,
+    model_name,
+    predictions_name,
+    metrics_name,
+    feature_cols,
+    feature_file,
+    auto_select,
+    select_topk,
+    ic_threshold,
+    ir_threshold,
+    selection_stat,
+    docker,
+):
     """Train cross-sectional models (boosting/Fama-MacBeth)."""
-    args = [
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
-        "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
-    ]
+    use_workspace_prefix = docker and not _is_in_docker()
+    in_list = list(inputs or [])
+    if panel_path:
+        in_list.append(panel_path)
+    if not in_list:
+        raise ValueError("Must pass --input (repeatable) or --panel-path.")
+    args = []
+    for x in in_list:
+        args.extend(["--input", f"/workspace/{x}" if use_workspace_prefix else x])
+    args.extend(["--output-dir", f"/workspace/{output_dir}" if use_workspace_prefix else output_dir])
+    args.extend(
+        [
+            "--model",
+            str(model),
+            "--horizon",
+            str(horizon),
+            "--winsor",
+            str(winsor),
+            "--periods-per-year",
+            str(periods_per_year),
+            "--model-name",
+            str(model_name),
+            "--predictions-name",
+            str(predictions_name),
+            "--metrics-name",
+            str(metrics_name),
+        ]
+    )
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
+    if feature_file:
+        args.extend(["--feature-file", f"/workspace/{feature_file}" if use_workspace_prefix else feature_file])
+    if feature_cols:
+        args.extend(["--feature-cols", str(feature_cols)])
+    if auto_select:
+        args.append("--auto-select")
+    if int(select_topk or 0) > 0:
+        args.extend(["--select-topk", str(int(select_topk))])
+    if ic_threshold is not None:
+        args.extend(["--ic-threshold", str(ic_threshold)])
+    if ir_threshold is not None:
+        args.extend(["--ir-threshold", str(ir_threshold)])
+    if selection_stat:
+        args.extend(["--selection-stat", str(selection_stat)])
 
     sys.exit(
         run_script(
@@ -4480,23 +4723,27 @@ def cross_section_train(panel_path, output_dir, docker):
 
 @cross_section.command("catalog")
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--input",
+    "input_path",
+    default="results/feature_exports/*.parquet",
+    show_default=True,
+    help="Input panel parquet/csv file or glob",
 )
 @click.option(
-    "--output-path",
-    default="results/cross_sectional/factor_catalog.json",
-    help="Output catalog JSON path",
+    "--output-dir",
+    default="results/cross_sectional/factor_sets",
+    show_default=True,
+    help="Output directory for exported factor sets",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_catalog(panel_path, output_path, docker):
+def cross_section_catalog(input_path, output_dir, docker):
     """Export factor catalog (IC/IR summary)."""
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
-        "--output-path",
-        f"/workspace/{output_path}" if docker else output_path,
+        "--input",
+        f"/workspace/{input_path}" if use_workspace_prefix else input_path,
+        "--output-dir",
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
     ]
 
     sys.exit(
@@ -4510,24 +4757,73 @@ def cross_section_catalog(panel_path, output_path, docker):
 
 @cross_section.command("select")
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--input",
+    "input_path",
+    default="results/feature_exports/*.parquet",
+    show_default=True,
+    help="Input panel parquet/csv file or glob",
 )
 @click.option(
-    "--output-path",
-    default="results/cross_sectional/selected_factors.json",
-    help="Output selected factors JSON path",
+    "--output",
+    default="results/cross_sectional/selected_factors.txt",
+    show_default=True,
+    help="Output selected factors text path",
 )
+@click.option(
+    "--output-json",
+    default="results/cross_sectional/selection_summary.json",
+    show_default=True,
+    help="Output selection summary JSON path",
+)
+@click.option("--target", default=None, help="Target column (default inferred)")
+@click.option("--min-assets", default=4, show_default=True, help="Minimum assets per timestamp")
+@click.option("--per-category-top", default=2, show_default=True, help="Top per category")
+@click.option("--global-top", default=12, show_default=True, help="Global top-K")
+@click.option("--ic-threshold", default=None, help="Minimum abs(IC mean) to keep")
+@click.option("--ir-threshold", default=None, help="Minimum abs(IC IR) to keep")
+@click.option("--ranking-stat", type=click.Choice(["ic", "ir"]), default="ic", show_default=True, help="Ranking statistic")
+@click.option("--include-categories", default=None, help="Comma-separated categories to include")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_select(panel_path, output_path, docker):
+def cross_section_select(
+    input_path,
+    output,
+    output_json,
+    target,
+    min_assets,
+    per_category_top,
+    global_top,
+    ic_threshold,
+    ir_threshold,
+    ranking_stat,
+    include_categories,
+    docker,
+):
     """Auto-select factors using correlation and IC filtering."""
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
-        "--output-path",
-        f"/workspace/{output_path}" if docker else output_path,
+        "--input",
+        f"/workspace/{input_path}" if use_workspace_prefix else input_path,
+        "--min-assets",
+        str(min_assets),
+        "--per-category-top",
+        str(per_category_top),
+        "--global-top",
+        str(global_top),
+        "--ranking-stat",
+        str(ranking_stat),
+        "--output",
+        f"/workspace/{output}" if use_workspace_prefix else output,
+        "--output-json",
+        f"/workspace/{output_json}" if use_workspace_prefix else output_json,
     ]
+    if target:
+        args.extend(["--target", str(target)])
+    if ic_threshold is not None:
+        args.extend(["--ic-threshold", str(ic_threshold)])
+    if ir_threshold is not None:
+        args.extend(["--ir-threshold", str(ir_threshold)])
+    if include_categories:
+        args.extend(["--include-categories", str(include_categories)])
 
     sys.exit(
         run_script(
@@ -4540,31 +4836,66 @@ def cross_section_select(panel_path, output_path, docker):
 
 @cross_section.command("shap")
 @click.option(
-    "--model-path",
-    default="results/cross_sectional/model.pkl",
-    help="Trained model path",
+    "--model",
+    "model_path",
+    default="results/cross_sectional/models/cs_boosting.joblib",
+    show_default=True,
+    help="Trained model joblib/pkl path",
 )
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--panel",
+    "panel_path",
+    default="results/feature_exports/cs_panel.parquet",
+    show_default=True,
+    help="Cross-sectional panel parquet/csv path",
 )
+@click.option(
+    "--feature-file",
+    default=None,
+    help="Optional feature file (one feature per line) to restrict SHAP columns",
+)
+@click.option("--target", default=None, help="Optional target column (default auto-detect)")
+@click.option("--topk", default=10, show_default=True, help="Top-K features for dependence plots")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
 @click.option(
     "--output-dir",
-    default="results/cross_sectional/shap",
-    help="Output directory",
+    default="results/cross_sectional/shap_reports",
+    show_default=True,
+    help="Output directory for SHAP artifacts",
 )
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_shap(model_path, panel_path, output_dir, docker):
+@click.option("--max-samples", default=2000, show_default=True, help="Max samples for SHAP computation")
+@click.option("--interaction/--no-interaction", default=True, show_default=True, help="Compute SHAP interaction plot")
+def cross_section_shap(
+    model_path,
+    panel_path,
+    feature_file,
+    target,
+    topk,
+    output_dir,
+    max_samples,
+    interaction,
+    docker,
+):
     """Run SHAP analysis on cross-sectional model."""
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--model-path",
-        f"/workspace/{model_path}" if docker else model_path,
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
+        "--model",
+        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        "--panel",
+        f"/workspace/{panel_path}" if use_workspace_prefix else panel_path,
         "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+        "--topk",
+        str(topk),
+        "--max-samples",
+        str(max_samples),
     ]
+    if feature_file:
+        args.extend(["--feature-file", f"/workspace/{feature_file}" if use_workspace_prefix else feature_file])
+    if target:
+        args.extend(["--target", str(target)])
+    if not interaction:
+        args.append("--no-interaction")
 
     sys.exit(
         run_script(
@@ -4577,24 +4908,37 @@ def cross_section_shap(model_path, panel_path, output_dir, docker):
 
 @cross_section.command("logic-check")
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--shap-manifest",
+    default="results/cross_sectional/shap_reports/manifest.json",
+    show_default=True,
+    help="SHAP manifest.json produced by `mlbot cross-section shap`",
 )
 @click.option(
-    "--output-dir",
-    default="results/cross_sectional",
-    help="Output directory",
+    "--expectations",
+    default=None,
+    help="Optional expectations YAML/JSON file for economic-logic checks",
+)
+@click.option("--tolerance", default=0.0, show_default=True, help="Tolerance for expectation checks")
+@click.option(
+    "--output",
+    default="results/cross_sectional/shap_logic_report.md",
+    show_default=True,
+    help="Output markdown report path",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_logic_check(panel_path, output_dir, docker):
+def cross_section_logic_check(shap_manifest, expectations, tolerance, output, docker):
     """Run factor logic consistency checks."""
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
-        "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
+        "--shap-manifest",
+        f"/workspace/{shap_manifest}" if use_workspace_prefix else shap_manifest,
+        "--tolerance",
+        str(tolerance),
+        "--output",
+        f"/workspace/{output}" if use_workspace_prefix else output,
     ]
+    if expectations:
+        args.extend(["--expectations", f"/workspace/{expectations}" if use_workspace_prefix else expectations])
 
     sys.exit(
         run_script(
@@ -4607,31 +4951,46 @@ def cross_section_logic_check(panel_path, output_dir, docker):
 
 @cross_section.command("shap-drift")
 @click.option(
-    "--model-path",
-    default="results/cross_sectional/model.pkl",
-    help="Trained model path",
+    "--current",
+    default="results/cross_sectional/shap_reports/manifest.json",
+    show_default=True,
+    help="Current SHAP manifest.json",
 )
 @click.option(
-    "--panel-path",
-    default="data/cross_sectional_panels/panel.parquet",
-    help="Panel data path",
+    "--baseline",
+    default="results/cross_sectional/shap_baseline.json",
+    show_default=True,
+    help="Baseline SHAP metrics JSON",
 )
 @click.option(
-    "--output-dir",
-    default="results/cross_sectional/shap_drift",
-    help="Output directory",
+    "--threshold",
+    default=0.5,
+    show_default=True,
+    help="Alert threshold for drift scoring",
 )
+@click.option(
+    "--output",
+    default="results/cross_sectional/shap_drift_report.md",
+    show_default=True,
+    help="Output drift markdown report path",
+)
+@click.option("--update-baseline", is_flag=True, default=False, help="Overwrite baseline with current metrics if no alerts")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_shap_drift(model_path, panel_path, output_dir, docker):
+def cross_section_shap_drift(current, baseline, threshold, output, update_baseline, docker):
     """Monitor SHAP value drift over time."""
+    use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--model-path",
-        f"/workspace/{model_path}" if docker else model_path,
-        "--panel-path",
-        f"/workspace/{panel_path}" if docker else panel_path,
-        "--output-dir",
-        f"/workspace/{output_dir}" if docker else output_dir,
+        "--current",
+        f"/workspace/{current}" if use_workspace_prefix else current,
+        "--baseline",
+        f"/workspace/{baseline}" if use_workspace_prefix else baseline,
+        "--threshold",
+        str(threshold),
+        "--output",
+        f"/workspace/{output}" if use_workspace_prefix else output,
     ]
+    if update_baseline:
+        args.append("--update-baseline")
 
     sys.exit(
         run_script(
@@ -4643,26 +5002,373 @@ def cross_section_shap_drift(model_path, panel_path, output_dir, docker):
 
 
 @cross_section.command("factor-eval")
-@click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
-@click.option("--timeframe", "-t", default="240T", help="Timeframe")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="Optional YAML config for factor eval (recommended).",
+)
+@click.option(
+    "--input",
+    "input_path",
+    default=None,
+    help="Panel parquet/csv path. If provided, evaluate factors on this panel.",
+)
+@click.option(
+    "--symbols",
+    default=None,
+    help="Comma-separated symbols (required for FeatureStore source when --input is omitted).",
+)
 @click.option("--start-date", help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", help="End date (YYYY-MM-DD)")
+@click.option("--features-store-root", default="feature_store", show_default=True, help="FeatureStore root")
+@click.option("--features-store-layer", default=None, help="FeatureStore layer (features_xxx)")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
+@click.option("--columns", default=None, help="Comma-separated FeatureStore columns to load (optional).")
+@click.option("--factors", default=None, help="Comma-separated factor columns to evaluate.")
+@click.option("--factors-file", default=None, help="Path to factor list text file (one per line).")
+@click.option("--factor-set-yaml", default=None, help="YAML path containing factor_sets.")
+@click.option("--factor-set", default=None, help="Factor set name in --factor-set-yaml.")
+@click.option("--target", default=None, help="Target column (default: infer future_return_<horizon>).")
+@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars.")
+@click.option("--min-assets", default=4, show_default=True, help="Minimum assets per timestamp.")
+@click.option("--quantiles", default=5, show_default=True, help="Quantiles for long/short.")
+@click.option("--fee-bps", default=0.0, show_default=True, help="Fee (bps) applied to turnover.")
+@click.option("--output-dir", default="results/cross_sectional/factor_eval", show_default=True, help="Output directory.")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_factor_eval(symbol, timeframe, start_date, end_date, docker):
-    """Cross-sectional factor evaluation (IC, decay, quantile spread)."""
-    args = []
+def cross_section_factor_eval(
+    config_path,
+    input_path,
+    symbols,
+    start_date,
+    end_date,
+    features_store_root,
+    features_store_layer,
+    timeframe,
+    columns,
+    factors,
+    factors_file,
+    factor_set_yaml,
+    factor_set,
+    target,
+    horizon,
+    min_assets,
+    quantiles,
+    fee_bps,
+    output_dir,
+    docker,
+):
+    """Cross-sectional factor evaluation (IC + long/short backtest)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--output-dir",
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+        "--timeframe",
+        str(timeframe),
+        "--horizon",
+        str(int(horizon)),
+        "--min-assets",
+        str(int(min_assets)),
+        "--quantiles",
+        str(int(quantiles)),
+        "--fee-bps",
+        str(float(fee_bps)),
+    ]
+    if config_path:
+        args.extend(["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path])
+    if input_path:
+        args.extend(["--input", f"/workspace/{input_path}" if use_workspace_prefix else input_path])
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
     if start_date:
-        args.extend(["--start-date", start_date])
+        args.extend(["--start-date", str(start_date)])
     if end_date:
-        args.extend(["--end-date", end_date])
+        args.extend(["--end-date", str(end_date)])
+    if features_store_root:
+        args.extend(
+            ["--features-store-root", f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root]
+        )
+    if features_store_layer:
+        args.extend(["--features-store-layer", str(features_store_layer)])
+    if columns:
+        args.extend(["--columns", str(columns)])
+    if factors:
+        args.extend(["--factors", str(factors)])
+    if factors_file:
+        args.extend(["--factors-file", f"/workspace/{factors_file}" if use_workspace_prefix else factors_file])
+    if factor_set_yaml:
+        args.extend(["--factor-set-yaml", f"/workspace/{factor_set_yaml}" if use_workspace_prefix else factor_set_yaml])
+    if factor_set:
+        args.extend(["--factor-set", str(factor_set)])
+    if target:
+        args.extend(["--target", str(target)])
 
     sys.exit(
-        run_python_module(
-            "src.time_series_model.diagnostics.cross_sectional_eval",
+        run_script(
+            "src/cross_sectional/scripts/factor_eval.py",
             args,
             docker=docker,
         )
     )
+
+
+@cross_section.command("pipeline")
+@click.option("--config", "config_path", required=True, help="Pipeline YAML config path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_pipeline(config_path, docker):
+    """Run end-to-end cross-sectional pipeline from a YAML config."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = ["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path]
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/pipeline.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("rank")
+@click.option("--date", required=True, help="Date (YYYY-MM-DD)")
+@click.option("--factor", required=True, help="Factor/feature column name to rank by")
+@click.option("--factor-set-yaml", default=None, help="Optional YAML containing factor_sets (validate --factor).")
+@click.option("--factor-set", default=None, help="Factor set name in --factor-set-yaml.")
+@click.option(
+    "--symbols",
+    default=None,
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT). If set, overrides universe config.",
+)
+@click.option(
+    "--universe-config",
+    default=None,
+    help="Universe config YAML (e.g., config/download/crypto_4h_token_universe_groups.yaml).",
+)
+@click.option("--universe-set", default="starter_a", show_default=True, help="Universe set name")
+@click.option(
+    "--universe-groups",
+    default=None,
+    help="Comma-separated groups to include (e.g., highcap,alt). Default: all groups.",
+)
+@click.option("--features-store-root", default="feature_store", show_default=True, help="FeatureStore root dir")
+@click.option(
+    "--features-store-layer",
+    required=True,
+    help="FeatureStore layer (e.g., features_83f12ecc5e)",
+)
+@click.option("--timeframe", default="240T", show_default=True, help="Timeframe (e.g., 240T for 4H)")
+@click.option(
+    "--bar",
+    type=click.Choice(["last", "first"]),
+    default="last",
+    show_default=True,
+    help="Which bar within the day to use.",
+)
+@click.option("--ascending", is_flag=True, default=False, help="Sort ascending (default: descending)")
+@click.option("--top", default=50, show_default=True, help="Top-N rows to print")
+@click.option("--output", default=None, help="Optional output path (.csv or .json)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_rank(
+    date,
+    factor,
+    factor_set_yaml,
+    factor_set,
+    symbols,
+    universe_config,
+    universe_set,
+    universe_groups,
+    features_store_root,
+    features_store_layer,
+    timeframe,
+    bar,
+    ascending,
+    top,
+    output,
+    docker,
+):
+    """Rank tokens cross-sectionally on a given date using a FeatureStore factor column."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--date",
+        str(date),
+        "--factor",
+        str(factor),
+        "--features-store-root",
+        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        "--features-store-layer",
+        str(features_store_layer),
+        "--timeframe",
+        str(timeframe),
+        "--bar",
+        str(bar),
+        "--top",
+        str(top),
+    ]
+    if factor_set_yaml:
+        args.extend(["--factor-set-yaml", f"/workspace/{factor_set_yaml}" if use_workspace_prefix else factor_set_yaml])
+    if factor_set:
+        args.extend(["--factor-set", str(factor_set)])
+    if ascending:
+        args.append("--ascending")
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
+    if universe_config:
+        args.extend(
+            [
+                "--universe-config",
+                f"/workspace/{universe_config}" if use_workspace_prefix else universe_config,
+                "--universe-set",
+                str(universe_set),
+            ]
+        )
+        if universe_groups:
+            args.extend(["--universe-groups", str(universe_groups)])
+    if output:
+        args.extend(["--output", f"/workspace/{output}" if use_workspace_prefix else output])
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/rank_tokens.py",
+            args,
+            docker=docker,
+        )
+    )
+
+
+@cross_section.command("workflow")
+@click.option("--config", "config_path", default=None, help="YAML config path for config-driven workflow (recommended).")
+@click.option("--symbols", "-s", required=False, help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT,...)")
+@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe (e.g., 240T)")
+@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
+@click.option("--start-date", required=False, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=False, help="End date (YYYY-MM-DD)")
+@click.option(
+    "--feature-type",
+    type=click.Choice(["baseline", "comprehensive"]),
+    default="baseline",
+    show_default=True,
+    help="Feature recipe for CS panel generation.",
+)
+@click.option("--data-path", default=None, help="Optional data root (default: data/parquet_data)")
+@click.option(
+    "--panel-out",
+    default="results/feature_exports/cs_panel_workflow.parquet",
+    show_default=True,
+    help="Output panel parquet path",
+)
+@click.option(
+    "--report-out",
+    default="results/cross_sectional/fama_macbeth_report_workflow.md",
+    show_default=True,
+    help="Output markdown report path",
+)
+@click.option(
+    "--train-out-dir",
+    default="results/cross_sectional/models_workflow",
+    show_default=True,
+    help="Output directory for trained model artifacts",
+)
+@click.option("--model", type=click.Choice(["boosting", "fama_macbeth"]), default="boosting", show_default=True, help="Model type")
+@click.option("--winsor", default=3.0, show_default=True, help="Sigma winsorisation (<=0 disables)")
+@click.option("--periods-per-year", default="auto", show_default=True, help="Annualisation factor or 'auto'")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_workflow(
+    config_path,
+    symbols,
+    timeframe,
+    horizon,
+    start_date,
+    end_date,
+    feature_type,
+    data_path,
+    panel_out,
+    report_out,
+    train_out_dir,
+    model,
+    winsor,
+    periods_per_year,
+    docker,
+):
+    """End-to-end CS workflow. If --config is provided: run YAML pipeline (with optional report/train). Else: build-panel -> report -> train."""
+    use_workspace_prefix = docker and not _is_in_docker()
+
+    # Config-driven workflow (preferred)
+    if config_path:
+        args = ["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path]
+        sys.exit(
+            run_script(
+                "src/cross_sectional/scripts/pipeline.py",
+                args,
+                docker=docker,
+            )
+        )
+
+    sym_list = [s.strip() for s in str(symbols).split(",") if s.strip()]
+    if not sym_list:
+        raise ValueError("No symbols provided.")
+    if not start_date or not end_date:
+        raise ValueError("Must pass --start-date and --end-date when --config is not used.")
+
+    # 1) build-panel
+    build_args = [
+        "--symbols",
+        *sym_list,
+        "--timeframe",
+        str(timeframe),
+        "--horizon",
+        str(horizon),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--feature-type",
+        str(feature_type),
+        "--output",
+        f"/workspace/{panel_out}" if use_workspace_prefix else panel_out,
+    ]
+    if data_path:
+        build_args.extend(["--data-path", f"/workspace/{data_path}" if use_workspace_prefix else data_path])
+    rc = run_script("src/cross_sectional/scripts/generate_panel.py", build_args, docker=docker)
+    if rc != 0:
+        sys.exit(rc)
+
+    # 2) report
+    report_args = [
+        "--input",
+        f"/workspace/{panel_out}" if use_workspace_prefix else panel_out,
+        "--output",
+        f"/workspace/{report_out}" if use_workspace_prefix else report_out,
+        "--symbols",
+        str(symbols),
+        "--horizon",
+        str(horizon),
+        "--winsor",
+        str(winsor),
+        "--periods-per-year",
+        str(periods_per_year),
+    ]
+    rc = run_script("src/cross_sectional/scripts/run_famacbeth_report.py", report_args, docker=docker)
+    if rc != 0:
+        sys.exit(rc)
+
+    # 3) train
+    train_args = [
+        "--input",
+        f"/workspace/{panel_out}" if use_workspace_prefix else panel_out,
+        "--output-dir",
+        f"/workspace/{train_out_dir}" if use_workspace_prefix else train_out_dir,
+        "--symbols",
+        str(symbols),
+        "--horizon",
+        str(horizon),
+        "--model",
+        str(model),
+        "--winsor",
+        str(winsor),
+        "--periods-per-year",
+        str(periods_per_year),
+    ]
+    rc = run_script("src/cross_sectional/scripts/train_cross_sectional_model.py", train_args, docker=docker)
+    sys.exit(rc)
 
 
 # =============================================================================
@@ -4898,3 +5604,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

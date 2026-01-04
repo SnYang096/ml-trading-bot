@@ -146,11 +146,14 @@ def load_features(panel: pd.DataFrame, feature_file: Optional[str]) -> List[str]
         "volume",
         "timestamp",
         "symbol",
+        "_symbol",
     }
     features = [
         col
         for col in panel.columns
-        if col not in exclude and not col.startswith("future_return")
+        if col not in exclude
+        and not col.startswith("future_return")
+        and pd.api.types.is_numeric_dtype(panel[col])
     ]
     if not features:
         raise ValueError("No feature columns detected.")

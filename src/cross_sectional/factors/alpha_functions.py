@@ -1,4 +1,4 @@
-from alpha_utils import *
+from .alpha_utils import *
 
 
 def alpha001(c, r):

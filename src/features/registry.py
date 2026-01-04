@@ -314,6 +314,8 @@ FEATURE_MODULES = [
     "src.features.time_series.dl_sequence_features",
     # Selector utils
     "src.features.loader.selector_utils",
+    # Alpha (TS-adapted subset)
+    "src.features.time_series.alpha_factors.alpha_ts_wrappers",
 ]
 
 _features_registered = False
