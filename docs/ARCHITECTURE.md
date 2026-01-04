@@ -200,8 +200,8 @@ feature-group-search 会输出建议的 features YAML（便于进入 rolling/hol
 - **Nautilus 对齐**：事件驱动回测/实盘一致性验证（更接近真实执行）
 
 相关文档：
-- `docs/实时流计算/reference/Nautilus_Trader_集成指南.md`
-- `docs/实时流计算/07_与NautilusTrader对齐清单.md`
+- `docs/live_stream/reference/Nautilus_Trader_集成指南.md`
+- `docs/live_stream/07_与NautilusTrader对齐清单.md`
 
 ---
 

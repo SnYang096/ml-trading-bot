@@ -150,7 +150,7 @@ mlbot train final \
 ### 4) （可选）rolling / Nautilus
 
 - rolling：用于跨月稳定性与上线后监控（见 `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
-- Nautilus：用于“回测=实盘一致性验证”（见 `docs/实时流计算/reference/Nautilus_Trader_集成指南.md`、`docs/实时流计算/07_与NautilusTrader对齐清单.md`）
+- Nautilus：用于“回测=实盘一致性验证”（见 `docs/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/live_stream/07_与NautilusTrader对齐清单.md`）
 
 ---
 

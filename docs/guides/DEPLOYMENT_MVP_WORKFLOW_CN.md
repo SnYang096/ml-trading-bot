@@ -117,8 +117,8 @@ mlbot train final \
 定位：验证“回测=实盘”，不是拿来做特征/模型选择的主指标。
 
 参考文档：
-- `docs/实时流计算/reference/Nautilus_Trader_集成指南.md`
-- `docs/实时流计算/06_实盘稳定性运行手册.md`
-- `docs/实时流计算/07_与NautilusTrader对齐清单.md`
+- `docs/live_stream/reference/Nautilus_Trader_集成指南.md`
+- `docs/live_stream/06_实盘稳定性运行手册.md`
+- `docs/live_stream/07_与NautilusTrader对齐清单.md`
 
 
