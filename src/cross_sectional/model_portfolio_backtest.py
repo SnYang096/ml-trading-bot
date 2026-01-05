@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import json
 
 
 @dataclass(frozen=True)
@@ -352,3 +353,160 @@ def portfolio_backtest_from_signal(
         "max_drawdown": float(tsdf["drawdown"].min()),
     }
     return tsdf, metrics
+
+
+def portfolio_backtest_with_rebalance_log(
+    panel: pd.DataFrame,
+    *,
+    signal_col: str,
+    close_col: str = "close",
+    cfg: PortfolioBacktestConfig = PortfolioBacktestConfig(),
+) -> Tuple[pd.DataFrame, Dict[str, float], pd.DataFrame]:
+    """
+    Same as `portfolio_backtest_from_signal`, but also returns a rebalance-level audit log:
+    one row per rebalance event with long/short lists, exposures, turnover and costs.
+    """
+    if signal_col not in panel.columns:
+        raise KeyError(f"Missing signal column: {signal_col}")
+    if not isinstance(panel.index, pd.MultiIndex) or panel.index.nlevels != 2:
+        raise ValueError("panel must be MultiIndex (timestamp, symbol)")
+
+    panel = panel.copy()
+    ts = pd.to_datetime(panel.index.get_level_values(0), utc=True, errors="coerce")
+    panel.index = pd.MultiIndex.from_arrays(
+        [ts, panel.index.get_level_values(1)], names=["timestamp", "symbol"]
+    )
+    panel = panel.sort_index()
+
+    H = int(cfg.holding_period_bars)
+    L = int(cfg.execution_lag_bars)
+    retH = _compute_horizon_returns(panel, close_col=close_col, horizon=H)
+    sig = panel[signal_col].copy()
+    df = pd.concat([sig.rename("signal"), retH], axis=1).dropna(subset=["signal"])
+    if df.empty:
+        return pd.DataFrame(), {"error": 1.0}, pd.DataFrame()
+
+    timestamps = pd.Index(
+        sorted(df.index.get_level_values(0).unique()), name="timestamp"
+    )
+    if len(timestamps) < (L + 2):
+        return pd.DataFrame(), {"error": 1.0}, pd.DataFrame()
+
+    exec_idx: List[int] = []
+    start_i = max(L, 0)
+    i = start_i
+    while i < len(timestamps):
+        exec_idx.append(i)
+        i += H
+
+    prev_w: Optional[pd.Series] = None
+    rows_ts: List[Dict[str, float]] = []
+    rows_rb: List[Dict[str, object]] = []
+
+    for epos in exec_idx:
+        t = timestamps[epos]
+        sig_pos = epos - L
+        if sig_pos < 0:
+            continue
+        sig_ts = timestamps[sig_pos]
+        g = df.xs(sig_ts, level=0, drop_level=False)["signal"]
+        new_w = _select_weights(signals=g, cfg=cfg)
+
+        turnover = 0.0
+        if prev_w is not None:
+            union = prev_w.index.union(new_w.index)
+            prev_u = prev_w.reindex(union).fillna(0.0)
+            new_u = new_w.reindex(union).fillna(0.0)
+            turnover = 0.5 * float((new_u - prev_u).abs().sum())
+            if (
+                cfg.turnover_limit is not None
+                and turnover > float(cfg.turnover_limit) > 0
+            ):
+                scale = float(cfg.turnover_limit) / turnover
+                new_u = prev_u + (new_u - prev_u) * scale
+                turnover = 0.5 * float((new_u - prev_u).abs().sum())
+            new_w = new_u.reindex(new_w.index).fillna(0.0)
+
+        bps_trade = float(cfg.fee_bps) + float(cfg.slippage_bps)
+        trade_cost = bps_trade / 1e4 * turnover
+
+        try:
+            r = df.xs(t, level=0, drop_level=False)[f"ret_{H}"]
+        except KeyError:
+            prev_w = new_w
+            continue
+        r = r.astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+        if r.empty:
+            prev_w = new_w
+            continue
+
+        w = new_w.reindex(r.index.get_level_values(1)).fillna(0.0)
+        gross_ret = float((w.values * r.values).sum())
+
+        long_syms = w[w > 0].index.tolist()
+        short_syms = w[w < 0].index.tolist()
+        long_expo = float(w[w > 0].sum())
+        short_expo = float((-w[w < 0]).sum())
+        gross_expo = float(w.abs().sum())
+        net_expo = float(w.sum())
+
+        bps_funding = float(cfg.funding_bps_per_bar) + float(cfg.borrow_bps_per_bar)
+        funding_cost = (bps_funding / 1e4) * short_expo * float(H)
+        net_ret = gross_ret - trade_cost - funding_cost
+
+        rows_ts.append(
+            {
+                "timestamp": pd.Timestamp(t),
+                "gross_return": gross_ret,
+                "net_return": net_ret,
+                "turnover": turnover,
+                "trade_cost": trade_cost,
+                "funding_cost": funding_cost,
+                "short_exposure": short_expo,
+                "n_assets": float(len(r)),
+            }
+        )
+        rows_rb.append(
+            {
+                "rebalance_ts": pd.Timestamp(t),
+                "signal_ts": pd.Timestamp(sig_ts),
+                "signal_col": str(signal_col),
+                "mode": str(cfg.mode),
+                "holding_period_bars": int(cfg.holding_period_bars),
+                "execution_lag_bars": int(cfg.execution_lag_bars),
+                "top_k": int(cfg.top_k),
+                "bottom_k": int(cfg.bottom_k),
+                "cash_buffer": float(cfg.cash_buffer),
+                "gross_leverage": float(cfg.gross_leverage),
+                "max_weight": float(cfg.max_weight),
+                "turnover": float(turnover),
+                "trade_cost": float(trade_cost),
+                "funding_cost": float(funding_cost),
+                "gross_exposure": float(gross_expo),
+                "net_exposure": float(net_expo),
+                "long_exposure": float(long_expo),
+                "short_exposure": float(short_expo),
+                "long_symbols_json": json.dumps(long_syms),
+                "short_symbols_json": json.dumps(short_syms),
+            }
+        )
+        prev_w = new_w.copy()
+
+    tsdf = pd.DataFrame(rows_ts)
+    if tsdf.empty:
+        return tsdf, {"error": 1.0}, pd.DataFrame(rows_rb)
+    tsdf["timestamp"] = pd.to_datetime(tsdf["timestamp"], utc=True, errors="coerce")
+    tsdf = tsdf.dropna(subset=["timestamp"]).set_index("timestamp").sort_index()
+
+    # reuse metric computation by calling existing function on same inputs
+    tsdf2, metrics = portfolio_backtest_from_signal(
+        panel, signal_col=signal_col, close_col=close_col, cfg=cfg
+    )
+    rb = pd.DataFrame(rows_rb)
+    if not rb.empty:
+        rb["rebalance_ts"] = pd.to_datetime(
+            rb["rebalance_ts"], utc=True, errors="coerce"
+        )
+        rb["signal_ts"] = pd.to_datetime(rb["signal_ts"], utc=True, errors="coerce")
+        rb = rb.sort_values("rebalance_ts")
+    return tsdf2, metrics, rb

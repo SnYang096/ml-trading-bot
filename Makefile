@@ -98,7 +98,7 @@ endif
 	ts-strategy-feature-compare feature-indicators \
 	vectorbot-backtest nautilus-backtest feature-eval timeframe-forward-report \
 	cs-catalog cs-select cs-shap cs-shap-drift cs-auto cs-logic-check \
-	cs-build-panel cs-report cs-train cs-workflow \
+	cs-report cs-train \
 	test-wpt-volume-profile test-wpt-volume-profile-simple test-extended-volatility-features test-spectrum-features \
 	test-vpin-future-leak test-vpin-multi-dimensional test-wpt-future-leak test-volume-profile-volatility-future-leak test-key-features-all \
 	docker-build-gpu \
@@ -176,10 +176,8 @@ help:
 	@echo "    make ts-vectorbot-backtest # Run VectorBot risk-managed backtest"
 	@echo "    make ts-nautilus-backtest  # Run Nautilus Trader backtest"
 	@echo "    make cs-factor-eval    # Cross-sectional factor evaluation (IC, decay, quantile spread)"
-	@echo "    make cs-build-panel    # Generate multi-asset factor panels for CS modelling"
 	@echo "    make cs-report         # Fama-MacBeth + Newey-West + IC/IR markdown report"
 	@echo "    make cs-train          # Train cross-sectional models (boosting/Fama-MacBeth)"
-	@echo "    make cs-workflow       # Build panel + report + train in one go"
 	@echo "    make cs-catalog        # Categorise factors from an existing panel"
 	@echo ""
 	@echo ""
@@ -1049,38 +1047,8 @@ verify-feature-correlation:
 
 
 # ---------------------------------------------------------------------------
-# Cross-sectional feature generation & analysis
+# Cross-sectional analysis (panels must be provided externally / via FeatureStore pipeline)
 # ---------------------------------------------------------------------------
-
-CS_BUILD_SYMBOLS ?= $(SYMBOLS)
-CS_BUILD_TIMEFRAME ?= $(FREQ)
-CS_BUILD_HORIZON ?= 12
-CS_BUILD_START ?= 2024-11-01
-CS_BUILD_END ?= 2025-04-30
-CS_BUILD_FEATURE_TYPE ?= baseline
-CS_BUILD_OUTPUT ?= $(RESULTS_DIR)/feature_exports/cs_panel_$(shell echo $(CS_BUILD_SYMBOLS) | tr ' ,' '__' | cut -c1-40)_$(CS_BUILD_TIMEFRAME)_$(CS_BUILD_HORIZON)b_$(CS_BUILD_FEATURE_TYPE)_$(shell echo $(CS_BUILD_START))_$(shell echo $(CS_BUILD_END)).parquet
-CS_BUILD_DROPNA ?= 1
-
-cs-build-panel:
-	@echo "🛠  Building cross-sectional panel for $(CS_BUILD_SYMBOLS)..."
-	@echo "   Timeframe: $(CS_BUILD_TIMEFRAME)"
-	@echo "   Horizon: $(CS_BUILD_HORIZON)"
-	@echo "   Start Date: $(if $(CS_BUILD_START),$(CS_BUILD_START),Not specified)"
-	@echo "   End Date: $(if $(CS_BUILD_END),$(CS_BUILD_END),Not specified)"
-	@echo "   Feature Type: $(CS_BUILD_FEATURE_TYPE)"
-	@mkdir -p $(dir $(CS_BUILD_OUTPUT))
-	CS_BUILD_SYMBOLS_SPACE="$(shell echo $(CS_BUILD_SYMBOLS) | tr ',' ' ')" ; \
-	$(DOCKER_RUN_NO_TTY) python3 src/cross_sectional/scripts/generate_panel.py \
-		--symbols $$CS_BUILD_SYMBOLS_SPACE \
-		--timeframe $(CS_BUILD_TIMEFRAME) \
-		--horizon $(CS_BUILD_HORIZON) \
-		$(if $(CS_BUILD_START),--start-date $(CS_BUILD_START),) \
-		$(if $(CS_BUILD_END),--end-date $(CS_BUILD_END),) \
-		--feature-type $(CS_BUILD_FEATURE_TYPE) \
-		--output $(CS_BUILD_OUTPUT) \
-		$(if $(filter 0,$(CS_BUILD_DROPNA)),--no-dropna,) \
-		$(if $(DATA_DIR),--data-path $(DATA_DIR),)
-	@echo "✅ Panel saved to $(CS_BUILD_OUTPUT)"
 
 # ---------------------------------------------------------------------------
 # Cross-sectional Fama-MacBeth + Newey-West reporting
@@ -1156,12 +1124,10 @@ cs-train:
 # ---------------------------------------------------------------------------
 
 cs-workflow:
-	@echo "🔄 Running end-to-end cross-sectional pipeline..."
-	$(MAKE) cs-build-panel
-	$(MAKE) cs-report CS_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
-	$(MAKE) cs-train CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" SYMBOLS="$(CS_BUILD_SYMBOLS)" CS_HORIZON=$(CS_BUILD_HORIZON)
+	@echo "cs-workflow has been removed. Use `mlbot cross-section workflow --config ...` (YAML-driven) instead."
+	@exit 1
 
-CS_CATALOG_INPUT ?= $(CS_BUILD_OUTPUT)
+CS_CATALOG_INPUT ?= $(CS_INPUT)
 CS_CATALOG_OUTPUT ?= results/cross_sectional/factor_sets
 
 cs-catalog:
@@ -1171,7 +1137,7 @@ cs-catalog:
 		--output-dir $(CS_CATALOG_OUTPUT)
 	@echo "✅ Factor sets saved to $(CS_CATALOG_OUTPUT)"
 
-CS_SELECT_INPUT ?= $(CS_BUILD_OUTPUT)
+CS_SELECT_INPUT ?= $(CS_INPUT)
 CS_SELECT_OUTPUT ?= results/cross_sectional/selected_factors.txt
 CS_SELECT_OUTPUT_JSON ?= results/cross_sectional/selection_summary.json
 CS_SELECT_TARGET ?=
@@ -1202,7 +1168,7 @@ cs-select:
 	@echo "✅ Selected factors saved to $(CS_SELECT_OUTPUT)"
 
 CS_SHAP_MODEL ?= $(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)
-CS_SHAP_PANEL ?= $(CS_BUILD_OUTPUT)
+CS_SHAP_PANEL ?= $(CS_INPUT)
 CS_SHAP_FEATURE_FILE ?= $(CS_AUTO_FEATURE_FILE)
 CS_SHAP_TARGET ?=
 CS_SHAP_TOPK ?= 10
@@ -1260,36 +1226,8 @@ CS_AUTO_MIN_ASSETS ?= 4
 CS_AUTO_FEATURE_FILE ?= results/cross_sectional/selected_factors.txt
 
 cs-auto:
-	@echo "🤖 Running fully automated cross-sectional pipeline..."
-	$(MAKE) cs-build-panel
-	$(MAKE) cs-select \
-		CS_SELECT_INPUT="$(CS_BUILD_OUTPUT)" \
-		CS_SELECT_OUTPUT="$(CS_AUTO_FEATURE_FILE)" \
-		CS_SELECT_OUTPUT_JSON="results/cross_sectional/selection_summary.json" \
-		CS_SELECT_MIN_ASSETS=$(CS_AUTO_MIN_ASSETS) \
-		CS_SELECT_PER_CATEGORY_TOP=$(CS_AUTO_PER_CATEGORY_TOP) \
-		CS_SELECT_GLOBAL_TOP=$(CS_AUTO_GLOBAL_TOP) \
-		CS_SELECT_IC_THRESHOLD=$(CS_AUTO_IC_THRESHOLD) \
-		CS_SELECT_IR_THRESHOLD=$(CS_AUTO_IR_THRESHOLD)
-	$(MAKE) cs-report \
-		CS_INPUT="$(CS_BUILD_OUTPUT)" \
-		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
-		CS_HORIZON=$(CS_BUILD_HORIZON) \
-		CS_REPORT_EXTRA="--feature-file $(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cs-train \
-		CS_TRAIN_INPUT="$(CS_BUILD_OUTPUT)" \
-		SYMBOLS="$(CS_BUILD_SYMBOLS)" \
-		CS_HORIZON=$(CS_BUILD_HORIZON) \
-		CS_PERIODS_PER_YEAR=$(CS_PERIODS_PER_YEAR) \
-		CS_TRAIN_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cs-shap \
-		CS_SHAP_MODEL="$(CS_TRAIN_OUTPUT_DIR)/$(CS_TRAIN_MODEL_NAME)" \
-		CS_SHAP_PANEL="$(CS_BUILD_OUTPUT)" \
-		CS_SHAP_FEATURE_FILE="$(CS_AUTO_FEATURE_FILE)"
-	$(MAKE) cs-logic-check \
-		CS_LOGIC_EXPECTATIONS="$(CS_LOGIC_EXPECTATIONS)"
-	$(MAKE) cs-shap-drift \
-		CS_DRIFT_BASELINE="$(CS_DRIFT_BASELINE)"
+	@echo "cs-auto has been removed. Use `mlbot cross-section workflow --config ...` (YAML-driven) instead."
+	@exit 1
 
 
 

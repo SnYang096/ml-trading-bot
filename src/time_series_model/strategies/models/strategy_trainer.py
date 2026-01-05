@@ -235,15 +235,18 @@ def train_strategy_model(
     try:
         import yaml
         from pathlib import Path
+        from src.time_series_model.strategies.models.feature_direction import (
+            expand_invert_features,
+        )
 
         if model_params and isinstance(model_params, dict):
             # Single-file mode: allow passing invert_features directly (recommended),
             # or reading from a YAML file path if provided.
             invert_list = model_params.get("invert_features")
             if isinstance(invert_list, list):
-                for name in invert_list:
-                    if isinstance(name, str) and name.strip():
-                        feature_multipliers[name.strip()] = -1.0
+                inv_cols = expand_invert_features(invert_list)
+                for col in inv_cols:
+                    feature_multipliers[col] = -1.0
             else:
                 fd_cfg_path = model_params.get("feature_direction_config")
                 if fd_cfg_path:
@@ -259,12 +262,21 @@ def train_strategy_model(
                             or []
                         )
                         if isinstance(invert_list2, list):
-                            for name in invert_list2:
-                                if isinstance(name, str) and name.strip():
-                                    feature_multipliers[name.strip()] = -1.0
+                            inv_cols = expand_invert_features(invert_list2)
+                            for col in inv_cols:
+                                feature_multipliers[col] = -1.0
     except Exception:
         # Silent by design; direction config is optional.
         pass
+
+    # Warn (non-fatal) if user asked to invert columns that are not in model inputs.
+    if feature_multipliers:
+        missing = [c for c in feature_multipliers.keys() if c not in all_feature_cols]
+        if missing:
+            logger.warning(
+                "invert_features specified columns not present in model input columns (ignored): %s",
+                missing,
+            )
 
     preprocessor = FeaturePreprocessor(
         feature_cols=all_feature_cols,

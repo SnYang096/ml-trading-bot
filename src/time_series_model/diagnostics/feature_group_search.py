@@ -51,6 +51,29 @@ def _ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
+def _stable_dedup(items: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for x in items or []:
+        if not isinstance(x, str):
+            continue
+        s = x.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _load_base_invert_features(strategy_dir: Path) -> List[str]:
+    feats = _load_yaml(strategy_dir / "features.yaml")
+    fp = feats.get("feature_pipeline") or {}
+    inv = fp.get("invert_features") or []
+    if isinstance(inv, list):
+        return _stable_dedup([str(x) for x in inv])
+    return []
+
+
 def _backup_if_exists(path: Path) -> Optional[Path]:
     """Create a timestamped backup if file exists; returns backup path if created."""
     if not path.exists():
@@ -155,6 +178,7 @@ def _make_temp_strategy(
     tmp_root: Path,
     name_suffix: str,
     requested_features: List[str],
+    invert_features: Optional[List[str]] = None,
 ) -> Path:
     """
     Copy strategy dir to tmp_root/<base_name>__<suffix> and overwrite `features.yaml`.
@@ -169,6 +193,9 @@ def _make_temp_strategy(
     feats["name"] = f"{feats.get('name', base_name)}__{name_suffix}"
     feats.setdefault("feature_pipeline", {})
     feats["feature_pipeline"]["requested_features"] = list(requested_features)
+    if invert_features is not None:
+        # invert_features can be output columns OR feature nodes (*_f). The trainer will expand.
+        feats["feature_pipeline"]["invert_features"] = list(invert_features)
     _write_yaml(out_dir / "features.yaml", feats)
     return out_dir
 
@@ -602,6 +629,7 @@ def successive_halving_prefilter(
     top_fraction: float,
     min_survivors: int,
     target_survivors: int,
+    invert_candidates: Optional[List[str]] = None,
 ) -> dict:
     """
     Successive Halving prefilter (no selection, just pruning).
@@ -623,6 +651,17 @@ def successive_halving_prefilter(
 
     survivors = list(groups.keys())
     stage_tables: List[dict] = []
+    base_inv = _load_base_invert_features(cfg.base_strategy_dir)
+    inv_cand_set = set(
+        [str(x).strip() for x in (invert_candidates or []) if str(x).strip()]
+    )
+    invert_by_group: Dict[str, List[str]] = {}
+
+    # Inversion pick policy (conservative):
+    # - Only pick inverted version when raw is VALID and "clearly negative"
+    # - And inverted improves by a meaningful margin
+    invert_min_negative_score = -0.05
+    invert_min_improvement = 0.05
 
     for si, nseeds in enumerate(stages):
         seeds_subset = cfg.seeds[:nseeds]
@@ -643,12 +682,14 @@ def successive_halving_prefilter(
         rows: List[dict] = []
         for g in survivors:
             feats = list(base_features) + (groups.get(g) or [])
+            # Evaluate raw candidate
             run_id = f"prefilter_add_{g}__halving_s{nseeds}"
             strat_dir = _make_temp_strategy(
                 base_dir=cfg.base_strategy_dir,
                 tmp_root=tmp_root,
                 name_suffix=run_id,
                 requested_features=feats,
+                invert_features=base_inv,
             )
             _, summ = run_seed_sweep_for_strategy(
                 strategy_dir=strat_dir, cfg=cfg_stage, run_id=run_id
@@ -656,6 +697,54 @@ def successive_halving_prefilter(
             score, valid, reject_reason, row = _score_from_summary(
                 summary=summ, objective=objective, min_trades=min_trades
             )
+
+            # Optional verification: try inverted version for candidates in invert_candidates.
+            # We only try to invert the newly added features (groups[g]) on top of base invert list.
+            picked_inverted = False
+            inv_score = None
+            inv_valid = False
+            inv_reject_reason = None
+            inv_row: dict = {}
+            try_invert = (str(g) in inv_cand_set) or any(
+                str(x) in inv_cand_set for x in (groups.get(g) or [])
+            )
+            if try_invert:
+                inv_list = _stable_dedup(
+                    list(base_inv) + [str(x) for x in (groups.get(g) or [])]
+                )
+                run_id_inv = f"{run_id}__inv"
+                strat_dir_inv = _make_temp_strategy(
+                    base_dir=cfg.base_strategy_dir,
+                    tmp_root=tmp_root,
+                    name_suffix=run_id_inv,
+                    requested_features=feats,
+                    invert_features=inv_list,
+                )
+                _, summ_inv = run_seed_sweep_for_strategy(
+                    strategy_dir=strat_dir_inv, cfg=cfg_stage, run_id=run_id_inv
+                )
+                inv_score, inv_valid, inv_reject_reason, inv_row = _score_from_summary(
+                    summary=summ_inv, objective=objective, min_trades=min_trades
+                )
+                # Choose inverted ONLY when raw is valid and clearly negative.
+                if (
+                    bool(valid)
+                    and inv_valid
+                    and (score is not None)
+                    and (inv_score is not None)
+                    and (float(score) <= float(invert_min_negative_score))
+                    and (
+                        float(inv_score) >= float(score) + float(invert_min_improvement)
+                    )
+                ):
+                    picked_inverted = True
+                    score, valid, reject_reason, row = (
+                        inv_score,
+                        inv_valid,
+                        inv_reject_reason,
+                        inv_row,
+                    )
+                    invert_by_group[str(g)] = [str(x) for x in (groups.get(g) or [])]
             rows.append(
                 {
                     "stage": si + 1,
@@ -665,6 +754,15 @@ def successive_halving_prefilter(
                     "valid": bool(valid),
                     "reject_reason": reject_reason,
                     "summary": row,
+                    "picked_inverted": bool(picked_inverted),
+                    "raw_score": (
+                        None
+                        if score is None
+                        else float(score) if not picked_inverted else None
+                    ),
+                    "inv_score": None if inv_score is None else float(inv_score),
+                    "inv_valid": bool(inv_valid),
+                    "inv_reject_reason": inv_reject_reason,
                 }
             )
             if valid and score is not None:
@@ -703,6 +801,11 @@ def successive_halving_prefilter(
         "survivors": survivors,
         "final_scores": final_scores,
         "stage_tables": stage_tables,
+        "invert_by_group": invert_by_group,
+        "invert_policy": {
+            "invert_min_negative_score": invert_min_negative_score,
+            "invert_min_improvement": invert_min_improvement,
+        },
     }
 
 
@@ -715,6 +818,8 @@ def sffs_prune_selected(
     objective: str,
     min_trades: int,
     max_backward_steps: int,
+    base_invert_features: Optional[List[str]] = None,
+    invert_by_group: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     """
     Prune-only SFFS stage: starting from a fixed selected set, repeatedly remove any single
@@ -725,6 +830,8 @@ def sffs_prune_selected(
 
     eps_improve = 1e-9
     max_backward_steps = max(1, int(max_backward_steps))
+    base_inv = _stable_dedup(list(base_invert_features or []))
+    inv_map = invert_by_group or {}
 
     def _feats_for(sel: List[str]) -> List[str]:
         feats = list(base_features)
@@ -743,6 +850,9 @@ def sffs_prune_selected(
         tmp_root=tmp_root,
         name_suffix=run_id0,
         requested_features=init_feats,
+        invert_features=_stable_dedup(
+            list(base_inv) + [str(x) for g in sel for x in (inv_map.get(str(g)) or [])]
+        ),
     )
     _, summ0 = run_seed_sweep_for_strategy(
         strategy_dir=strat_dir0, cfg=cfg, run_id=run_id0
@@ -768,6 +878,10 @@ def sffs_prune_selected(
                 tmp_root=tmp_root,
                 name_suffix=run_id,
                 requested_features=feats,
+                invert_features=_stable_dedup(
+                    list(base_inv)
+                    + [str(x) for g in kept for x in (inv_map.get(str(g)) or [])]
+                ),
             )
             _, summ = run_seed_sweep_for_strategy(
                 strategy_dir=strat_dir, cfg=cfg, run_id=run_id
@@ -814,6 +928,7 @@ def pipeline_sh_beam_sffs(
     target_survivors: int,
     beam_width: int,
     sffs_max_backward_steps: int,
+    invert_candidates: Optional[List[str]] = None,
 ) -> dict:
     """
     Pipeline:
@@ -824,12 +939,14 @@ def pipeline_sh_beam_sffs(
     # Baseline (full seeds)
     tmp_root = cfg.output_dir / "tmp_strategies"
     _ensure_dir(tmp_root)
+    base_inv = _load_base_invert_features(cfg.base_strategy_dir)
     baseline_suffix = "baseline"
     baseline_dir = _make_temp_strategy(
         base_dir=cfg.base_strategy_dir,
         tmp_root=tmp_root,
         name_suffix=baseline_suffix,
         requested_features=list(base_features),
+        invert_features=base_inv,
     )
     _, baseline_summ = run_seed_sweep_for_strategy(
         strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
@@ -850,8 +967,10 @@ def pipeline_sh_beam_sffs(
         top_fraction=top_fraction,
         min_survivors=min_survivors,
         target_survivors=target_survivors,
+        invert_candidates=invert_candidates,
     )
     surv_groups = {k: groups[k] for k in pre["survivors"] if k in groups}
+    inv_map = pre.get("invert_by_group") or {}
 
     beam_res = beam_search(
         cfg=cfg,
@@ -861,6 +980,8 @@ def pipeline_sh_beam_sffs(
         objective=objective,
         min_trades=min_trades,
         beam_width=beam_width,
+        base_invert_features=base_inv,
+        invert_by_group=inv_map,
     )
 
     pruned = sffs_prune_selected(
@@ -871,12 +992,18 @@ def pipeline_sh_beam_sffs(
         objective=objective,
         min_trades=min_trades,
         max_backward_steps=sffs_max_backward_steps,
+        base_invert_features=base_inv,
+        invert_by_group=inv_map,
     )
 
     final_selected = pruned["selected_groups"]
     final_features = list(base_features)
     for g in final_selected:
         final_features = final_features + (surv_groups.get(g) or [])
+    final_invert_features = _stable_dedup(
+        list(base_inv)
+        + [str(x) for g in final_selected for x in (inv_map.get(str(g)) or [])]
+    )
 
     return {
         "base_strategy": cfg.base_strategy_dir.name,
@@ -900,6 +1027,7 @@ def pipeline_sh_beam_sffs(
         "prune": pruned,
         "selected_groups": final_selected,
         "final_features": final_features,
+        "final_invert_features": final_invert_features,
         "history": (beam_res.get("history") or []) + (pruned.get("history") or []),
         "candidates_history": (beam_res.get("candidates_history") or []),
         "stop_reason": "completed",
@@ -1126,6 +1254,8 @@ def beam_search(
     objective: str,
     min_trades: int,
     beam_width: int,
+    base_invert_features: Optional[List[str]] = None,
+    invert_by_group: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     """
     Beam search over group additions.
@@ -1138,11 +1268,14 @@ def beam_search(
     beam_width = max(1, int(beam_width))
 
     baseline_suffix = "baseline"
+    base_inv = _stable_dedup(list(base_invert_features or []))
+    inv_map = invert_by_group or {}
     baseline_dir = _make_temp_strategy(
         base_dir=cfg.base_strategy_dir,
         tmp_root=tmp_root,
         name_suffix=baseline_suffix,
         requested_features=list(base_features),
+        invert_features=base_inv,
     )
     _, baseline_summ = run_seed_sweep_for_strategy(
         strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
@@ -1176,6 +1309,10 @@ def beam_search(
             for g in rem:
                 new_sel = sel + [g]
                 new_feats = feats + groups[g]
+                inv_feats = list(base_inv)
+                for gg in new_sel:
+                    inv_feats.extend([str(x) for x in (inv_map.get(str(gg)) or [])])
+                inv_feats = _stable_dedup(inv_feats)
                 sig = "__".join(new_sel)
                 run_id = f"beam_step{step+1}_sel_{sig}"
                 strat_dir = _make_temp_strategy(
@@ -1183,6 +1320,7 @@ def beam_search(
                     tmp_root=tmp_root,
                     name_suffix=run_id,
                     requested_features=new_feats,
+                    invert_features=inv_feats,
                 )
                 _, summ = run_seed_sweep_for_strategy(
                     strategy_dir=strat_dir, cfg=cfg, run_id=run_id
@@ -1270,6 +1408,8 @@ def sffs_search(
     objective: str,
     min_trades: int,
     max_backward_per_step: int,
+    base_invert_features: Optional[List[str]] = None,
+    invert_by_group: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     """
     Sequential Floating Forward Selection (SFFS):
@@ -1290,11 +1430,14 @@ def sffs_search(
 
     # Baseline
     baseline_suffix = "baseline"
+    base_inv = _stable_dedup(list(base_invert_features or []))
+    inv_map = invert_by_group or {}
     baseline_dir = _make_temp_strategy(
         base_dir=cfg.base_strategy_dir,
         tmp_root=tmp_root,
         name_suffix=baseline_suffix,
         requested_features=list(base_features),
+        invert_features=base_inv,
     )
     _, baseline_summ = run_seed_sweep_for_strategy(
         strategy_dir=baseline_dir, cfg=cfg, run_id=baseline_suffix
@@ -1311,13 +1454,14 @@ def sffs_search(
     current_features = list(base_features)
 
     def _eval_featureset(
-        feats: List[str], run_id: str
+        feats: List[str], inv_feats: List[str], run_id: str
     ) -> tuple[float | None, bool, str | None, dict]:
         strat_dir = _make_temp_strategy(
             base_dir=cfg.base_strategy_dir,
             tmp_root=tmp_root,
             name_suffix=run_id,
             requested_features=feats,
+            invert_features=inv_feats,
         )
         _, summ = run_seed_sweep_for_strategy(
             strategy_dir=strat_dir, cfg=cfg, run_id=run_id
@@ -1336,9 +1480,15 @@ def sffs_search(
         for g in list(remaining):
             new_sel = selected + [g]
             new_feats = current_features + groups[g]
+            inv_feats = list(base_inv)
+            for gg in new_sel:
+                inv_feats.extend([str(x) for x in (inv_map.get(str(gg)) or [])])
+            inv_feats = _stable_dedup(inv_feats)
             sig = "__".join(new_sel)
             run_id = f"sffs_step{step+1}_fwd_sel_{sig}"
-            score, valid, reject_reason, row = _eval_featureset(new_feats, run_id)
+            score, valid, reject_reason, row = _eval_featureset(
+                new_feats, inv_feats, run_id
+            )
             step_candidates.append(
                 {
                     "step": step + 1,
@@ -1395,9 +1545,15 @@ def sffs_search(
                 feats = list(base_features)
                 for gg in kept:
                     feats = feats + groups[gg]
+                inv_feats = list(base_inv)
+                for gg in kept:
+                    inv_feats.extend([str(x) for x in (inv_map.get(str(gg)) or [])])
+                inv_feats = _stable_dedup(inv_feats)
                 sig = "__".join(kept) if kept else "none"
                 run_id = f"sffs_step{step+1}_bwd_sel_{sig}__rm_{rm}"
-                score, valid, reject_reason, row = _eval_featureset(feats, run_id)
+                score, valid, reject_reason, row = _eval_featureset(
+                    feats, inv_feats, run_id
+                )
                 step_candidates.append(
                     {
                         "step": step + 1,
@@ -1994,6 +2150,7 @@ def main() -> None:
             target_survivors=int(getattr(args, "pipeline_survivors", 30)),
             beam_width=int(getattr(args, "beam_width", 3)),
             sffs_max_backward_steps=int(getattr(args, "sffs_max_backward_per_step", 2)),
+            invert_candidates=invert_candidates,
         )
     elif algo == "beam":
         result = beam_search(
@@ -2099,12 +2256,13 @@ def main() -> None:
             "pool_b_merged_singletons": bool(args.pool_b_yaml),
             "feature_blacklist": blacklist,
         }
+        inv_for_writeback = result.get("final_invert_features") or invert_candidates
         writeback_info = _writeback_features_yaml(
             base_strategy_dir=cfg.base_strategy_dir,
             out_path=Path(args.writeback_yaml),
             requested_features=list(result.get("final_features") or []),
             meta=meta,
-            invert_candidates=invert_candidates,
+            invert_candidates=inv_for_writeback,
         )
         result["writeback"] = writeback_info
         (out_dir / "feature_group_search_result.json").write_text(

@@ -35,37 +35,22 @@ CS 面板是一个表（或 MultiIndex DataFrame），至少包含：
 
 ## 2) 推荐路径（可复现）：先落盘 panel，再跑 pipeline
 
-### 2.1 构建 panel（含 crypto CS 因子）
+### 2.1 一键跑 CS pipeline（YAML）
 
 ```bash
-mlbot cross-section build-panel \
-  --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT \
-  --timeframe 240T \
-  --start-date 2023-01-01 \
-  --end-date 2025-12-31 \
-  --horizon 12 \
-  --feature-type comprehensive \
-  --output results/feature_exports/cs_panel.parquet \
+mlbot cross-section workflow \
+  --config config/cross_sectional/pipeline_alpha101_cs_rank_4h_feature_store.yaml \
   --no-docker
 ```
 
-> `--feature-type comprehensive` 会在面板里增加 `cs_crypto_*` 因子（见 `cross_sectional/crypto_factors.py`）。
-
-### 2.2 一键跑 CS pipeline（YAML）
-
-```bash
-mlbot cross-section pipeline \
-  --config config/cross_sectional/pipeline_example_crypto_4h.yaml \
-  --no-docker
-```
-
-产物默认落到 `output_root`（示例：`results/cross_sectional/pipeline_demo_crypto_4h/`）：
+产物默认落到 `output_root`（示例：`results/cross_sectional/pipeline_alpha101_cs_rank_4h/`）：
 - `factor_eval/summary.csv`
 - `factor_eval/summary.json`
 - `factor_eval/long_short_timeseries__*.csv`
 - `selected_factors.txt`（若开启 select）
 - `selection_summary.json`
 - `pipeline_manifest.json`
+- `index.html`（总报告页）
 
 ---
 

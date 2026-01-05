@@ -85,22 +85,43 @@ flowchart LR
 
 ---
 
-## 3.1 FeatureStore / Monthly Cache 的版本口径（全局 vs 节点级）
+## 3.1 FeatureStore / Monthly Cache / Node Cache 的版本口径（全局层 vs 节点层）
 
-我们有两类“版本号”，分别解决不同的失效粒度问题：
+这里需要区分三件事（它们解决的问题不同，失效粒度也不同）：
+
+### 3.1.0 三种“缓存/落盘”实体分别是什么？
+
+- **FeatureStore（训练/评估的“数据集落盘”）**
+  - **是什么**：把“原始 OHLCV/ticks → 特征 DataFrame（含订单流等）”按月落盘成可复用的数据集。
+  - **结构**：`feature_store/<layer>/<symbol>/<timeframe>/YYYY-MM.parquet`（并伴随 `YYYY-MM.meta.json`）。
+  - **layer 是什么**：一个“数据集 id / 数据版本”（例如 `features_83f12ecc5e`）。同一个 layer 下，不同符号/月份共享同一套特征定义与缓存版本口径。
+  - **layer 如何确定**：通常由配置目录内容哈希自动生成（见 `src/feature_store/layer_naming.py` 的 `default_layer_from_config` / `resolve_layer_name`），也可以手动指定 `--layer` 强行复用/重建。
+
+- **Monthly cache（特征节点的“中间结果缓存”）**
+  - **是什么**：特征 DAG 节点（或需要 ticks 的重计算节点）在“按月窗口”上的中间结果缓存。
+  - **位置**：一般在 `cache/features/monthly/...`（实现细节随节点而异）。
+  - **用途**：让“同一配置、换训练窗口/换 seed/换策略搜索路径”时，不必每次从零算重特征。
+
+- **Node cache version（单节点失效旋钮）**
+  - **是什么**：写在 `config/feature_dependencies.yaml` → `compute_params.node_cache_version`，只影响某个 DAG 节点的缓存 key。
+  - **用途**：当你只修改了某一个特征节点的逻辑（尤其是外部数据 join/对齐/单位语义），只失效该节点的缓存，而不全盘清理。
+
+> **直觉总结**：FeatureStore 是“数据集落盘（大颗粒）”，Monthly cache 是“节点中间结果缓存（中颗粒）”，node_cache_version 是“单节点失效旋钮（小颗粒）”。
 
 ### 3.1.1 全局缓存版本：`FeatureComputer.cache_version`（例如 v6）
 
 - **位置**：`src/features/loader/feature_computer.py` → `FeatureComputer.cache_version = "v6"`
 - **影响范围**：
   - monthly cache key（`cache/features/monthly/...`）
-  - FeatureStore 的每个月分区 `*.meta.json` 中的 `feature_cache_version`
+  - FeatureStore 每个月分区的 `*.meta.json` 中的 `feature_cache_version`（用于审计“这个月分区是用哪个 cache_version 算出来的”）
 - **什么时候 bump**：
-  - 你修改了缓存 key 逻辑、对齐规则、或者大量特征的通用计算逻辑，想“全盘清缓存、确保一致性”。
+  - 你修改了缓存 key 逻辑、索引对齐规则、或大量特征的通用计算逻辑，想“全盘清 monthly cache、确保一致性”。
+
+> 进一步说明见：**[缓存版本控制使用说明](../features/缓存版本控制使用说明.md)**。
 
 ### 3.1.2 节点级版本：`node_cache_version`（只失效某一个 DAG 节点）
 
-节点级版本是写在 `config/feature_dependencies.yaml` 的 `compute_params` 里的一个字段：
+节点级版本写在 `config/feature_dependencies.yaml` 的 `compute_params`：
 
 - `node_cache_version: v1`
 
@@ -119,6 +140,19 @@ funding_rate_features_f:
 ```
 
 > 缓存 key 会同时包含：全局 `cache_version` + 节点 `compute_params`（含 `node_cache_version`）。因此它不破坏统一性，只是提供更细粒度的失效旋钮。
+
+### 3.1.3 FeatureStore layer 与 `cache_version/node_cache_version` 的关系（容易混）
+
+- **FeatureStore layer** 决定“我们落盘了哪一份特征数据集”（目录树 + 月分区 parquet）。
+- **cache_version/node_cache_version** 决定“特征节点计算的中间结果是否命中缓存、是否需要重算”。
+
+两者的典型交互是：
+
+- 你**只改了某节点逻辑**（例如 VPIN 对齐、market_cap join），建议：**bump `node_cache_version`** → 重跑 FeatureStore build（同 layer 或新 layer 都行）。
+- 你**改了很多通用计算/缓存键**，建议：**bump `cache_version`** → 重跑 FeatureStore build。
+- 你希望“把一整套配置当成一份不可变数据集版本”保存/对齐训练与评估，建议：**用 layer（自动哈希或手动命名）作为主版本口径**。
+
+> TS FeatureStore 的结构/复用思路，与 CS Alpha101 的 monthly FeatureStore 结构是同一套口径；CS 侧更详细见：`docs/architecture/CROSS_SECTIONAL_ALPHA101_FEATURESTORE_ARCH_CN.md`（第 3 节写了统一月分区结构）。
 
 ---
 

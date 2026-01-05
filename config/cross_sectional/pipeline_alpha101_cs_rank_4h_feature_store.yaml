@@ -17,8 +17,13 @@ panel:
     timeframe: 240T
     # symbols should be comma-separated USDT symbols
     symbols: BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,ADAUSDT,AVAXUSDT,LINKUSDT,DOTUSDT,LTCUSDT,BCHUSDT,TRXUSDT,TONUSDT,ATOMUSDT,ETCUSDT,FILUSDT,XLMUSDT,XTZUSDT,NEARUSDT,APTUSDT,SUIUSDT,SEIUSDT,INJUSDT,ARBUSDT,OPUSDT,UNIUSDT,AAVEUSDT,MKRUSDT,COMPUSDT,FTMUSDT,MANAUSDT,SANDUSDT,RUNEUSDT,STXUSDT,ICPUSDT,DYDXUSDT,GMXUSDT,LDOUSDT,CRVUSDT,SNXUSDT,IMXUSDT,GALAUSDT,ENAUSDT,TIAUSDT,JUPUSDT,JTOUSDT,PYTHUSDT,ZKUSDT,STRKUSDT,DOGEUSDT,WIFUSDT,BOMEUSDT,BRETTUSDT,POPCATUSDT,MEWUSDT,PONKEUSDT,TURBOUSDT,NEIROUSDT
-    start_date: 2025-07-01
+    # Extend the range to increase OOS rebalance sample size (n_timestamps)
+    start_date: 2022-01-01
     end_date: 2025-12-31
+  # Optional convenience: auto-build missing FeatureStore month partitions before running factor_eval/select/train.
+  # Disabled by default to avoid unexpected long runs.
+  auto_build_store:
+    enabled: false
 
 factor_eval:
   horizon: 12
@@ -59,6 +64,9 @@ train:
   periods_per_year: 2190
   split:
     train_ratio: 0.7
+  walk_forward:
+    folds: 4
+    embargo_bars: 13
   backtest_cfg:
     # both supported: long_only, market_neutral
     mode: long_only,market_neutral

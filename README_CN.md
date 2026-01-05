@@ -99,6 +99,7 @@ mlbot data download-funding-rate \
 > README 只保留“可复制的最小命令”。详细解释与扩展流程见：
 > - `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`
 > - `docs/guides/CROSS_SECTIONAL_PIPELINE_CN.md`（CS：截面因子评估→筛选→回测→训练）
+> - `docs/guides/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
 > - `docs/guides/CS_VS_TS_PIPELINE_CN.md`（CS vs TS：两套 pipeline 差异与指标取舍）
 > - `docs/architecture/CROSS_SECTIONAL_ALPHA101_FEATURESTORE_ARCH_CN.md`（CS Alpha101：为何不走 DAG + 缓存复用架构）
 

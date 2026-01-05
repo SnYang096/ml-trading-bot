@@ -61,15 +61,67 @@ class MarketDataLoader:
             raise ValueError("Symbol must be provided to load tick parquet files.")
 
         cache_file = self._cache_file_path(symbol, timeframe)
-        if cache_file.exists():
+        cache_exists = cache_file.exists()
+        if cache_exists:
             df_cached = pd.read_parquet(cache_file)
         else:
             df_cached = self._build_timeframe_cache(symbol, timeframe)
             df_cached.to_parquet(cache_file)
 
         df_cached.index = pd.to_datetime(df_cached.index)
-        start_ts = pd.to_datetime(start_date) if start_date else df_cached.index.min()
-        end_ts = pd.to_datetime(end_date) if end_date else df_cached.index.max()
+        # Handle tz-aware vs tz-naive comparisons robustly
+        idx_tz = getattr(df_cached.index, "tz", None)
+        if start_date:
+            start_ts = (
+                pd.to_datetime(start_date, utc=True)
+                if idx_tz is not None
+                else pd.to_datetime(start_date)
+            )
+        else:
+            start_ts = df_cached.index.min()
+        if end_date:
+            end_ts = (
+                pd.to_datetime(end_date, utc=True)
+                if idx_tz is not None
+                else pd.to_datetime(end_date)
+            )
+        else:
+            end_ts = df_cached.index.max()
+
+        # If new raw parquet months were downloaded after the cache file was built,
+        # the cache may be stale even when the requested window is within cached_min/max.
+        # In that case, rebuild the cache.
+        rebuild_due_to_new_raw = False
+        if cache_exists:
+            try:
+                data_root = Path(self.data_path)
+                pattern = f"{symbol}_*.parquet"
+                raw_files = list(data_root.glob(pattern))
+                if raw_files:
+                    newest_raw_mtime = max(p.stat().st_mtime for p in raw_files)
+                    cache_mtime = cache_file.stat().st_mtime
+                    if newest_raw_mtime > cache_mtime:
+                        rebuild_due_to_new_raw = True
+            except Exception:
+                # Never fail loading due to cache freshness checks.
+                rebuild_due_to_new_raw = False
+
+        # If the timeframe cache exists but doesn't cover the requested window,
+        # rebuild it to incorporate newly downloaded raw parquet months.
+        if cache_exists and not df_cached.empty:
+            cached_min = df_cached.index.min()
+            cached_max = df_cached.index.max()
+            if (start_ts is not None and start_ts < cached_min) or (
+                end_ts is not None and end_ts > cached_max
+            ):
+                df_cached = self._build_timeframe_cache(symbol, timeframe)
+                df_cached.to_parquet(cache_file)
+                df_cached.index = pd.to_datetime(df_cached.index)
+            elif rebuild_due_to_new_raw:
+                df_cached = self._build_timeframe_cache(symbol, timeframe)
+                df_cached.to_parquet(cache_file)
+                df_cached.index = pd.to_datetime(df_cached.index)
+
         df_subset = df_cached.loc[
             (df_cached.index >= start_ts) & (df_cached.index <= end_ts)
         ].copy()

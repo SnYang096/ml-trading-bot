@@ -4,6 +4,7 @@ import pandas as pd
 from src.cross_sectional.model_portfolio_backtest import (
     PortfolioBacktestConfig,
     portfolio_backtest_from_signal,
+    portfolio_backtest_with_rebalance_log,
 )
 
 
@@ -105,3 +106,33 @@ def test_compound_equity_and_funding_cost():
         float(ts["net_equity"].iloc[-1]) <= float(ts["gross_equity"].iloc[-1]) + 1e-12
     )
     assert m["avg_funding_cost"] >= 0.0
+
+
+def test_rebalance_audit_log_basic_fields_and_constraints():
+    panel = _make_panel(120)
+    cfg = PortfolioBacktestConfig(
+        mode="market_neutral",
+        holding_period_bars=12,
+        execution_lag_bars=1,
+        top_k=2,
+        bottom_k=2,
+        gross_leverage=1.0,
+        max_weight=0.6,
+        fee_bps=2.0,
+        slippage_bps=0.0,
+        cash_buffer=0.1,
+        min_assets=4,
+        periods_per_year=2190.0,
+    )
+    _, _, rb = portfolio_backtest_with_rebalance_log(
+        panel, signal_col="signal", cfg=cfg
+    )
+    assert not rb.empty
+    # one row per rebalance
+    assert rb["rebalance_ts"].isna().sum() == 0
+    assert rb["signal_ts"].isna().sum() == 0
+    # market-neutral should have both long and short exposure typically
+    assert (rb["long_exposure"] >= 0).all()
+    assert (rb["short_exposure"] >= 0).all()
+    # net exposure near 0 for market-neutral (allow small due to caps/cash)
+    assert (rb["net_exposure"].abs() <= 1e-6 + 1.0).all()

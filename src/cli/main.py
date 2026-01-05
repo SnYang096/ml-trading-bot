@@ -4390,84 +4390,6 @@ def cross_section():
     pass
 
 
-@cross_section.command("build-panel")
-@click.option(
-    "--symbols",
-    "-s",
-    default=None,
-    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT).",
-)
-@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe (e.g., 240T)")
-@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
-@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
-@click.option(
-    "--feature-type",
-    type=click.Choice(["baseline", "comprehensive"]),
-    default="baseline",
-    show_default=True,
-    help="Feature recipe for the generated CS panel.",
-)
-@click.option("--data-path", default=None, help="Optional data root passed to loader (default: data/parquet_data)")
-@click.option(
-    "--output",
-    default="results/feature_exports/cs_panel.parquet",
-    show_default=True,
-    help="Output parquet path for the generated CS panel.",
-)
-@click.option("--dropna/--no-dropna", default=True, show_default=True, help="Drop rows with NaNs after generation")
-@click.option(
-    "--orderflow/--no-orderflow",
-    default=True,
-    show_default=True,
-    help="Enable order-flow augmentation when reading raw agg-trade files (if available).",
-)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_build_panel(
-    symbols,
-    timeframe,
-    horizon,
-    start_date,
-    end_date,
-    feature_type,
-    data_path,
-    output,
-    dropna,
-    orderflow,
-    docker,
-):
-    """Generate multi-asset factor panels for CS modelling."""
-    use_workspace_prefix = docker and not _is_in_docker()
-    args = [
-        "--timeframe",
-        str(timeframe),
-        "--horizon",
-        str(horizon),
-        "--feature-type",
-        str(feature_type),
-        "--output",
-        f"/workspace/{output}" if use_workspace_prefix else output,
-    ]
-    if symbols:
-        args.extend(["--symbols"] + [s.strip() for s in str(symbols).split(",") if s.strip()])
-    if data_path:
-        args.extend(["--data-path", f"/workspace/{data_path}" if use_workspace_prefix else data_path])
-    if start_date:
-        args.extend(["--start-date", str(start_date)])
-    if end_date:
-        args.extend(["--end-date", str(end_date)])
-    if not dropna:
-        args.append("--no-dropna")
-    if not orderflow:
-        args.append("--no-orderflow")
-
-    sys.exit(
-        run_script(
-            "src/cross_sectional/scripts/generate_panel.py",
-            args,
-            docker=docker,
-        )
-    )
 
 
 @cross_section.command("build-store")
@@ -5288,87 +5210,134 @@ def cross_section_workflow(
     periods_per_year,
     docker,
 ):
-    """End-to-end CS workflow. If --config is provided: run YAML pipeline (with optional report/train). Else: build-panel -> report -> train."""
+    """End-to-end CS workflow. Requires --config (runs YAML pipeline including eval/select/report/train/backtest)."""
     use_workspace_prefix = docker and not _is_in_docker()
 
-    # Config-driven workflow (preferred)
-    if config_path:
-        args = ["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path]
-        sys.exit(
-            run_script(
-                "src/cross_sectional/scripts/pipeline.py",
-                args,
-                docker=docker,
-            )
+    if not config_path:
+        raise ValueError("cross-section workflow now requires --config.")
+    args = ["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path]
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/pipeline.py",
+            args,
+            docker=docker,
         )
+    )
 
-    sym_list = [s.strip() for s in str(symbols).split(",") if s.strip()]
-    if not sym_list:
-        raise ValueError("No symbols provided.")
-    if not start_date or not end_date:
-        raise ValueError("Must pass --start-date and --end-date when --config is not used.")
 
-    # 1) build-panel
-    build_args = [
-        "--symbols",
-        *sym_list,
-        "--timeframe",
-        str(timeframe),
-        "--horizon",
-        str(horizon),
-        "--start-date",
-        str(start_date),
-        "--end-date",
-        str(end_date),
-        "--feature-type",
-        str(feature_type),
-        "--output",
-        f"/workspace/{panel_out}" if use_workspace_prefix else panel_out,
-    ]
-    if data_path:
-        build_args.extend(["--data-path", f"/workspace/{data_path}" if use_workspace_prefix else data_path])
-    rc = run_script("src/cross_sectional/scripts/generate_panel.py", build_args, docker=docker)
-    if rc != 0:
-        sys.exit(rc)
-
-    # 2) report
-    report_args = [
-        "--input",
-        f"/workspace/{panel_out}" if use_workspace_prefix else panel_out,
-        "--output",
-        f"/workspace/{report_out}" if use_workspace_prefix else report_out,
-        "--symbols",
-        str(symbols),
-        "--horizon",
-        str(horizon),
-        "--winsor",
-        str(winsor),
-        "--periods-per-year",
-        str(periods_per_year),
-    ]
-    rc = run_script("src/cross_sectional/scripts/run_famacbeth_report.py", report_args, docker=docker)
-    if rc != 0:
-        sys.exit(rc)
-
-    # 3) train
-    train_args = [
-        "--input",
-        f"/workspace/{panel_out}" if use_workspace_prefix else panel_out,
+@cross_section.command("nautilus-backtest")
+@click.option("--panel", required=True, help="Panel parquet/csv (e.g., output_root/panel_from_feature_store.parquet)")
+@click.option("--output-dir", default="results/cross_sectional/nautilus_backtest", show_default=True, help="Output directory")
+@click.option("--signal", type=click.Choice(["model", "factor_combo"]), default="model", show_default=True, help="Signal source")
+@click.option("--model-path", default=None, help="Path to trained CS model joblib (for signal=model)")
+@click.option("--feature-file", default=None, help="Text file with feature columns (one per line)")
+@click.option("--feature-cols", default=None, help="Comma-separated feature columns")
+@click.option("--mode", default="market_neutral", show_default=True, help="long_only | market_neutral")
+@click.option("--holding", default=12, show_default=True, help="Holding period in bars")
+@click.option("--lag", default=1, show_default=True, help="Execution lag in bars")
+@click.option("--topk", default=10, show_default=True, help="Top-K longs")
+@click.option("--bottomk", default=10, show_default=True, help="Bottom-K shorts (market_neutral)")
+@click.option("--gross-leverage", default=1.0, show_default=True, help="Gross leverage cap")
+@click.option("--max-weight", default=0.10, show_default=True, help="Max abs weight per asset")
+@click.option("--turnover-limit", default=None, help="Optional turnover limit per rebalance")
+@click.option("--cash-buffer", default=0.10, show_default=True, help="Cash buffer fraction")
+@click.option("--equity-mode", default="compound", show_default=True, help="simple|compound|log")
+@click.option("--fee-bps", default=2.0, show_default=True, help="Fee bps on turnover")
+@click.option("--slippage-bps", default=0.0, show_default=True, help="Slippage bps on turnover")
+@click.option("--funding-bps-per-bar", default=0.0, show_default=True, help="Funding bps per bar (short exposure)")
+@click.option("--borrow-bps-per-bar", default=0.0, show_default=True, help="Borrow bps per bar (short exposure)")
+@click.option("--min-assets", default=12, show_default=True, help="Min assets per timestamp")
+@click.option("--periods-per-year", default=None, help="Annualisation factor (bars/year)")
+@click.option("--html", default="report.html", show_default=True, help="HTML report filename under output-dir")
+@click.option("--max-trades", default=300, show_default=True, help="Max trades to show inline in HTML")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def cross_section_nautilus_backtest(
+    panel,
+    output_dir,
+    signal,
+    model_path,
+    feature_file,
+    feature_cols,
+    mode,
+    holding,
+    lag,
+    topk,
+    bottomk,
+    gross_leverage,
+    max_weight,
+    turnover_limit,
+    cash_buffer,
+    equity_mode,
+    fee_bps,
+    slippage_bps,
+    funding_bps_per_bar,
+    borrow_bps_per_bar,
+    min_assets,
+    periods_per_year,
+    html,
+    max_trades,
+    docker,
+):
+    """CS portfolio backtest in a Nautilus-style bar-driven execution loop (re-run from panel + model/factor-combo)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--panel",
+        f"/workspace/{panel}" if use_workspace_prefix else panel,
         "--output-dir",
-        f"/workspace/{train_out_dir}" if use_workspace_prefix else train_out_dir,
-        "--symbols",
-        str(symbols),
-        "--horizon",
-        str(horizon),
-        "--model",
-        str(model),
-        "--winsor",
-        str(winsor),
-        "--periods-per-year",
-        str(periods_per_year),
+        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+        "--signal",
+        str(signal),
+        "--mode",
+        str(mode),
+        "--holding",
+        str(int(holding)),
+        "--lag",
+        str(int(lag)),
+        "--topk",
+        str(int(topk)),
+        "--bottomk",
+        str(int(bottomk)),
+        "--gross-leverage",
+        str(float(gross_leverage)),
+        "--max-weight",
+        str(float(max_weight)),
+        "--cash-buffer",
+        str(float(cash_buffer)),
+        "--equity-mode",
+        str(equity_mode),
+        "--fee-bps",
+        str(float(fee_bps)),
+        "--slippage-bps",
+        str(float(slippage_bps)),
+        "--funding-bps-per-bar",
+        str(float(funding_bps_per_bar)),
+        "--borrow-bps-per-bar",
+        str(float(borrow_bps_per_bar)),
+        "--min-assets",
+        str(int(min_assets)),
+        "--html",
+        str(html),
+        "--max-trades",
+        str(int(max_trades)),
     ]
-    rc = run_script("src/cross_sectional/scripts/train_cross_sectional_model.py", train_args, docker=docker)
-    sys.exit(rc)
+    if model_path:
+        args += ["--model-path", f"/workspace/{model_path}" if use_workspace_prefix else model_path]
+    if feature_file:
+        args += ["--feature-file", f"/workspace/{feature_file}" if use_workspace_prefix else feature_file]
+    if feature_cols:
+        args += ["--feature-cols", str(feature_cols)]
+    if turnover_limit is not None:
+        args += ["--turnover-limit", str(turnover_limit)]
+    if periods_per_year is not None:
+        args += ["--periods-per-year", str(periods_per_year)]
+
+    sys.exit(
+        run_script(
+            "src/cross_sectional/scripts/nautilus_backtest.py",
+            args,
+            docker=docker,
+        )
+    )
 
 
 # =============================================================================

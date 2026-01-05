@@ -107,7 +107,12 @@ def load_raw_data(
     if not all_dfs:
         raise ValueError(f"No data found for symbol(s): {symbol}")
 
-    df = pd.concat(all_dfs, axis=0).sort_index()
+    df = pd.concat(all_dfs, axis=0)
+    # Normalize index timezone to avoid tz-aware vs tz-naive comparison issues.
+    idx = pd.to_datetime(df.index, utc=True, errors="coerce")
+    df.index = idx
+    df = df[~df.index.isna()]
+    df = df.sort_index()
     return df
 
 

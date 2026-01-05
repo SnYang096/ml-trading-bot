@@ -164,9 +164,13 @@ def main() -> None:
             monthly_groups = df_raw.groupby(pd.Grouper(freq="M"))
             base_cols = ["open", "high", "low", "close", "volume", "_symbol", "symbol"]
 
-            # Parse start_date and end_date for month filtering
-            start_ts = pd.Timestamp(args.start_date) if args.start_date else None
-            end_ts = pd.Timestamp(args.end_date) if args.end_date else None
+            # Parse start_date and end_date for month filtering.
+            # NOTE: df_raw index is normalized to UTC (tz-aware) by load_raw_data().
+            # Use tz-aware timestamps here to avoid tz-naive vs tz-aware comparison errors.
+            start_ts = (
+                pd.to_datetime(args.start_date, utc=True) if args.start_date else None
+            )
+            end_ts = pd.to_datetime(args.end_date, utc=True) if args.end_date else None
 
             # Count months to process
             all_months = []

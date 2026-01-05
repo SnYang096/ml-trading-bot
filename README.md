@@ -838,35 +838,24 @@ mlbot optimize ml-plateau-charts \
 **Cross-Sectional Analysis Workflow**:
 
 ```bash
-# 1. Build cross-sectional panel
-mlbot cross-section build-panel \
+# build-panel has been removed. CS now recommends FeatureStore + YAML workflow:
+
+# 1) Build FeatureStore partitions (incremental cache)
+mlbot cross-section build-store --no-docker \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT \
-  --start-date 2024-01-01 \
-  --end-date 2025-10-31
+  --timeframe 240T \
+  --start-date 2025-07-01 --end-date 2025-12-31 \
+  --factor-set-yaml config/cross_sectional/cs_factor_sets_crypto.yaml \
+  --factor-set crypto_alpha101_cs_rank \
+  --features-store-layer cs_alpha101_cs_rank_4h_v1 \
+  --warmup-bars 600
 
-# 2. Generate Fama-MacBeth report
-mlbot cross-section report \
-  --panel-path data/cross_sectional_panels/panel.parquet \
-  --output-dir results/cross_sectional
+# 2) Run end-to-end workflow (eval/select/report/train/backtest/index.html)
+mlbot cross-section workflow --no-docker \
+  --config config/cross_sectional/pipeline_alpha101_cs_rank_4h_feature_store.yaml
 
-# 3. Train cross-sectional model
-mlbot cross-section train \
-  --panel-path data/cross_sectional_panels/panel.parquet
-
-# 4. Auto-select factors
-mlbot cross-section select \
-  --panel-path data/cross_sectional_panels/panel.parquet \
-  --output-path results/cross_sectional/selected_factors.json
-
-# 5. SHAP analysis
-mlbot cross-section shap \
-  --model-path results/cross_sectional/model.pkl \
-  --panel-path data/cross_sectional_panels/panel.parquet
-
-# 6. SHAP drift monitoring
-mlbot cross-section shap-drift \
-  --model-path results/cross_sectional/model.pkl \
-  --panel-path data/cross_sectional_panels/panel.parquet
+# Note: workflow will snapshot the assembled panel to:
+#   output_root/panel_from_feature_store.parquet
 ```
 
 ## Documentation

@@ -543,6 +543,34 @@ class FeatureComputer:
         Returns:
             aligned_result: 对齐后的结果
         """
+        # ------------------------------------------------------------------
+        # Index timezone normalization (critical for cache correctness)
+        #
+        # Cached monthly/disk results may carry tz-naive DatetimeIndex while the
+        # current base dataframe index can be tz-aware (UTC) depending on the data loader.
+        # A plain reindex() would then yield ALL-NaN (no timestamp matches).
+        #
+        # Policy:
+        # - base tz-aware + result tz-naive  => localize result to base tz (assume same clock, typically UTC)
+        # - base tz-naive + result tz-aware  => drop tz from result
+        # ------------------------------------------------------------------
+        try:
+            if isinstance(base_index, pd.DatetimeIndex) and isinstance(
+                result, (pd.Series, pd.DataFrame)
+            ) and isinstance(result.index, pd.DatetimeIndex):
+                base_tz = base_index.tz
+                res_tz = result.index.tz
+                if base_tz is not None and res_tz is None:
+                    _tmp = result.copy()
+                    _tmp.index = _tmp.index.tz_localize(base_tz)
+                    result = _tmp
+                elif base_tz is None and res_tz is not None:
+                    _tmp = result.copy()
+                    _tmp.index = _tmp.index.tz_localize(None)
+                    result = _tmp
+        except Exception:
+            pass
+
         if isinstance(result, pd.Series):
             if not result.index.equals(base_index):
                 # 记录索引不匹配统计

@@ -20,12 +20,131 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 import pandas as pd
+import datetime as _dt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+
+def _month_keys(start_date: str, end_date: str) -> List[str]:
+    start = pd.Timestamp(start_date, tz="UTC").normalize().replace(day=1)
+    end = pd.Timestamp(end_date, tz="UTC").normalize().replace(day=1)
+    months = pd.date_range(start=start, end=end, freq="MS")
+    return [f"{d.year:04d}-{d.month:02d}" for d in months]
+
+
+def _parse_factor_set_names(val: Any) -> List[str]:
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [str(x).strip() for x in val if str(x).strip()]
+    # support "a,b,c"
+    return [x.strip() for x in str(val).split(",") if x.strip()]
+
+
+def _maybe_autobuild_feature_store(cfg: Dict[str, Any], *, out_root: Path) -> None:
+    """
+    Optional convenience: if panel.source=feature_store and requested months are missing in the layer,
+    automatically run the CS build-store builder to fill missing month partitions.
+    """
+    panel_cfg = cfg.get("panel", {}) or {}
+    if str(panel_cfg.get("source", "")).strip().lower() != "feature_store":
+        return
+    fs = panel_cfg.get("feature_store", {}) or {}
+
+    auto = panel_cfg.get("auto_build_store", None)
+    enabled = False
+    auto_cfg: Dict[str, Any] = {}
+    if isinstance(auto, bool):
+        enabled = bool(auto)
+    elif isinstance(auto, dict):
+        auto_cfg = auto
+        enabled = bool(auto_cfg.get("enabled", False))
+    if not enabled:
+        return
+
+    root = Path(str(fs.get("root", "feature_store")))
+    layer = str(fs.get("layer", "")).strip()
+    timeframe = str(fs.get("timeframe", "240T")).strip()
+    symbols = [
+        s.strip().upper() for s in str(fs.get("symbols", "")).split(",") if s.strip()
+    ]
+    start_date = str(fs.get("start_date", "")).strip()
+    end_date = str(fs.get("end_date", "")).strip()
+    if not (layer and symbols and start_date and end_date):
+        return
+
+    months = _month_keys(start_date, end_date)
+    # quick missing check (filesystem only)
+    missing: List[str] = []
+    for sym in symbols:
+        base = root / layer / sym / timeframe
+        for mk in months:
+            if not (base / f"{mk}.parquet").exists():
+                missing.append(f"{sym}/{mk}")
+                break  # one miss per symbol is enough to trigger build
+    if not missing:
+        return
+
+    print(
+        f"ℹ️ FeatureStore missing months detected for {len(missing)} symbols (e.g. {missing[:3]}). Auto-building..."
+    )
+
+    # Resolve desired outputs from factor_set (use factor_eval defaults if not provided)
+    eval_cfg = cfg.get("factor_eval", {}) or {}
+    factor_set_yaml = str(
+        auto_cfg.get("factor_set_yaml") or eval_cfg.get("factor_set_yaml") or ""
+    ).strip()
+    factor_set_val = auto_cfg.get("factor_set") or eval_cfg.get("factor_set")
+    factor_sets = _parse_factor_set_names(factor_set_val)
+    if not factor_set_yaml or not factor_sets:
+        raise ValueError(
+            "panel.auto_build_store is enabled but factor_set_yaml/factor_set is missing. "
+            "Set panel.auto_build_store.factor_set_yaml + factor_set (or provide them under factor_eval)."
+        )
+
+    from cross_sectional.feature_store_builder import (
+        CSFeatureStoreBuildConfig,
+        build_feature_store_for_symbols,
+        load_factor_set,
+    )
+
+    desired: List[str] = []
+    for name in factor_sets:
+        desired.extend(
+            load_factor_set(factor_set_yaml=factor_set_yaml, factor_set=name)
+        )
+    desired = list(dict.fromkeys(desired))
+
+    feature_deps = str(
+        auto_cfg.get("feature_deps") or "config/feature_dependencies.yaml"
+    )
+    data_path = str(auto_cfg.get("data_path") or "data/parquet_data")
+    warmup_bars = int(auto_cfg.get("warmup_bars", 600))
+    include_ohlcv = bool(auto_cfg.get("include_ohlcv", True))
+    overwrite = bool(auto_cfg.get("overwrite", False))
+
+    build_cfg = CSFeatureStoreBuildConfig(
+        data_path=data_path,
+        features_store_root=str(root),
+        features_store_layer=layer,
+        timeframe=timeframe,
+        start_date=start_date,
+        end_date=end_date,
+        warmup_bars=warmup_bars,
+        include_ohlcv=include_ohlcv,
+        overwrite=overwrite,
+    )
+    resolved_layer = build_feature_store_for_symbols(
+        symbols=symbols,
+        desired_output_cols=desired,
+        feature_deps_path=feature_deps,
+        cfg=build_cfg,
+    )
+    print(f"✅ Auto build-store finished. layer={resolved_layer}")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -61,6 +180,8 @@ def _write_html_index(
     *,
     out_root: Path,
     title: str,
+    config: Dict[str, Any],
+    panel_path: Optional[Path] = None,
     summary_csv: Path,
     selected_factors_path: Path,
     report_md_path: Optional[Path],
@@ -101,36 +222,627 @@ def _write_html_index(
         )
         train_link = f"<p>Train artifacts: <code>{rel}</code></p>"
 
-    model_bt_html = ""
+    def _fmt(x: Any) -> str:
+        try:
+            if x is None:
+                return "NA"
+            if isinstance(x, (int, str)):
+                return str(x)
+            if isinstance(x, float):
+                if pd.isna(x):
+                    return "NA"
+                return f"{x:.6g}"
+            return str(x)
+        except Exception:
+            return str(x)
+
+    def _details(title: str, inner_html: str, *, open_default: bool = False) -> str:
+        return (
+            f"<details {'open' if open_default else ''}>"
+            f"<summary><b>{title}</b></summary>"
+            f"{inner_html}"
+            f"</details>"
+        )
+
+    def _csv_preview(path: Path, *, nrows: int = 200) -> str:
+        if not path.exists():
+            return "<p>(missing)</p>"
+        try:
+            df = pd.read_csv(path, nrows=int(nrows))
+            return df.to_html(index=False, float_format=lambda x: f"{x:.6g}")
+        except Exception as e:
+            return f"<p>(failed to read csv: {e})</p>"
+
+    def _bullet_list(items: List[str]) -> str:
+        if not items:
+            return "<p>(no conclusion)</p>"
+        li = "".join([f"<li>{x}</li>" for x in items])
+        return f"<ul>{li}</ul>"
+
+    # -----------------------------------------------------------------------------
+    # Conclusions helpers (derived from outputs)
+    # -----------------------------------------------------------------------------
+    eval_cfg = config.get("factor_eval", {}) or {}
+    sel_cfg = config.get("select", {}) or {}
+    tr_cfg = config.get("train", {}) or {}
+    bt_cfg = tr_cfg.get("backtest_cfg", {}) or {}
+    wf_cfg = tr_cfg.get("walk_forward", {}) or {}
+
+    # panel time range (prefer actual timestamps from panel file; fallback to YAML dates)
+    panel_range_html = ""
+    try:
+        ts_min = None
+        ts_max = None
+        if panel_path and panel_path.exists():
+            if panel_path.suffix.lower() in [".parquet", ".pq"]:
+                try:
+                    df_ts = pd.read_parquet(panel_path, columns=["timestamp"])
+                except Exception:
+                    df_ts = pd.read_parquet(panel_path)
+                if "timestamp" in df_ts.columns:
+                    s = pd.to_datetime(
+                        df_ts["timestamp"], utc=True, errors="coerce"
+                    ).dropna()
+                    if not s.empty:
+                        ts_min = s.min()
+                        ts_max = s.max()
+            else:
+                df_ts = pd.read_csv(panel_path, usecols=["timestamp"])
+                s = pd.to_datetime(
+                    df_ts["timestamp"], utc=True, errors="coerce"
+                ).dropna()
+                if not s.empty:
+                    ts_min = s.min()
+                    ts_max = s.max()
+
+        if ts_min is None or ts_max is None:
+            # fallback to config dates if provided (feature_store)
+            fs = (config.get("panel", {}) or {}).get("feature_store", {}) or {}
+            sd = fs.get("start_date")
+            ed = fs.get("end_date")
+            if sd and ed:
+                ts_min = str(sd)
+                ts_max = str(ed)
+        if ts_min is not None and ts_max is not None:
+            panel_range_html = f"<li><b>Panel range</b>: <code>{ts_min}</code> → <code>{ts_max}</code></li>"
+    except Exception:
+        panel_range_html = ""
+
+    # OOS backtest time range (from aggregated timeseries CSVs)
+    oos_range_items: List[str] = []
+    try:
+        if train_dir and train_dir.exists():
+            for mode in ["long_only", "market_neutral"]:
+                fp = train_dir / f"model_bt_timeseries__{mode}.csv"
+                if not fp.exists():
+                    continue
+                df = pd.read_csv(fp)
+                # Prefer "timestamp" column, else "index" (older variants)
+                col = (
+                    "timestamp"
+                    if "timestamp" in df.columns
+                    else (df.columns[0] if len(df.columns) else None)
+                )
+                if not col:
+                    continue
+                s = pd.to_datetime(df[col], utc=True, errors="coerce").dropna()
+                if s.empty:
+                    continue
+                oos_range_items.append(
+                    f"<li><b>OOS backtest range</b> (<code>{mode}</code>): <code>{s.min()}</code> → <code>{s.max()}</code> "
+                    f"(n_periods={len(s)})</li>"
+                )
+    except Exception:
+        oos_range_items = []
+
+    test_window_note = ""
+    if panel_range_html and oos_range_items:
+        test_window_note = (
+            "<p><b>Why these differ?</b> Panel range is the available data snapshot. "
+            "OOS backtest range is only the out-of-sample test segments after train split / walk-forward embargo, "
+            "and it is further thinned by rebalance frequency (holding_period_bars) and label/return alignment. "
+            "To extend OOS: increase data end_date (and ensure FeatureStore months exist), reduce train_ratio, "
+            "or reduce holding_period_bars (more frequent rebalances), and ensure min_assets filter doesn’t drop early timestamps.</p>"
+        )
+
+    test_window_html = ""
+    if panel_range_html or oos_range_items:
+        test_window_html = (
+            "<h2>Test window</h2><ul>"
+            + (panel_range_html if panel_range_html else "")
+            + "".join(oos_range_items)
+            + "</ul>"
+            + test_window_note
+        )
+
+    # selection summary (if exists)
+    selection_summary = out_root / "selection_summary.json"
+    sj: Dict[str, Any] = {}
+    if selection_summary.exists():
+        try:
+            sj = json.loads(selection_summary.read_text(encoding="utf-8"))
+        except Exception:
+            sj = {}
+
+    # selected factors
+    selected_factors: List[str] = []
+    if selected_factors_path.exists():
+        selected_factors = [
+            x.strip()
+            for x in selected_factors_path.read_text(encoding="utf-8").splitlines()
+            if x.strip()
+        ]
+
+    # walk-forward summary
+    wf_rows: List[Dict[str, Any]] = []
     if train_dir and train_dir.exists():
+        wf_sum = train_dir / "walk_forward_summary.json"
+        if wf_sum.exists():
+            try:
+                wf_rows = json.loads(wf_sum.read_text(encoding="utf-8"))
+                if not isinstance(wf_rows, list):
+                    wf_rows = []
+            except Exception:
+                wf_rows = []
+
+    # model backtest metrics
+    bt_conc: List[str] = []
+    bt_table_html = ""
+    bt_links_html = ""
+    if train_dir and train_dir.exists():
+
+        def _sharpe_grade(sh: float) -> str:
+            # Heuristic buckets for Sharpe(net) on OOS backtests
+            if sh >= 2.0:
+                return "EXCELLENT / 很强"
+            if sh >= 1.0:
+                return "GOOD / 不错"
+            if sh >= 0.0:
+                return "MARGINAL / 一般"
+            return "BAD / 差"
+
         rows = []
         for mode in ["long_only", "market_neutral"]:
-            met = train_dir / f"model_bt_metrics__{mode}.json"
-            if not met.exists():
+            met_m = train_dir / f"model_bt_metrics__{mode}.json"
+            met_f = train_dir / f"factor_combo_bt_metrics__{mode}.json"
+            if not met_m.exists() and not met_f.exists():
                 continue
             try:
-                m = json.loads(met.read_text(encoding="utf-8"))
+                m = (
+                    json.loads(met_m.read_text(encoding="utf-8"))
+                    if met_m.exists()
+                    else {}
+                )
+                f = (
+                    json.loads(met_f.read_text(encoding="utf-8"))
+                    if met_f.exists()
+                    else {}
+                )
+                sharpe_m = m.get("sharpe_net")
+                sharpe_f = f.get("sharpe_net")
                 rows.append(
-                    f"<tr><td>{mode}</td>"
-                    f"<td>{m.get('sharpe_net', float('nan')):.6g}</td>"
-                    f"<td>{m.get('sharpe_gross', float('nan')):.6g}</td>"
-                    f"<td>{m.get('avg_turnover', float('nan')):.6g}</td>"
-                    f"<td>{m.get('fee_bps', float('nan')):.6g}</td>"
-                    f"<td>{m.get('slippage_bps', float('nan')):.6g}</td>"
-                    f"<td><a href='train/model_bt_timeseries__{mode}.csv'>csv</a> / "
-                    f"<a href='train/model_bt_metrics__{mode}.json'>json</a></td></tr>"
+                    {
+                        "mode": mode,
+                        "sharpe_net_model": sharpe_m,
+                        "sharpe_net_factor_combo": sharpe_f,
+                        "avg_turnover_model": m.get("avg_turnover"),
+                        "avg_turnover_factor_combo": f.get("avg_turnover"),
+                        "fee_bps": m.get("fee_bps"),
+                        "slippage_bps": m.get("slippage_bps"),
+                        "total_return_net_model": m.get("total_return_net"),
+                        "total_return_net_factor_combo": f.get("total_return_net"),
+                        "max_drawdown_model": m.get("max_drawdown"),
+                        "max_drawdown_factor_combo": f.get("max_drawdown"),
+                        "n_timestamps": m.get("n_timestamps") or f.get("n_timestamps"),
+                        "periods_per_year": m.get("periods_per_year")
+                        or f.get("periods_per_year"),
+                    }
                 )
             except Exception:
                 continue
+
         if rows:
-            model_bt_html = (
-                "<h2>Model backtest (OOS, realistic execution)</h2>"
-                "<p>Modes: long-only and market-neutral long/short.</p>"
-                "<table><thead><tr>"
-                "<th>mode</th><th>Sharpe(net)</th><th>Sharpe(gross)</th><th>avg_turnover</th>"
-                "<th>fee_bps</th><th>slippage_bps</th><th>artifacts</th>"
-                "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+            df_bt = pd.DataFrame(rows)
+            # Always show sample size caveat if available
+            try:
+                n_ts = df_bt["n_timestamps"].dropna().astype(float)
+                if not n_ts.empty:
+                    bt_conc.append(
+                        f"<b>Sample size</b>: n_timestamps={_fmt(float(n_ts.iloc[0]))} "
+                        f"(this is the number of OOS rebalance periods after holding/lag; roughly ≈ total_OOS_bars / holding_period_bars. "
+                        f"Small = conclusions are preliminary; prefer 200+ by extending the date range or reducing holding_period_bars)."
+                    )
+            except Exception:
+                pass
+            # conclusions: pick best mode by model sharpe, compare vs factor combo
+            best_mode = None
+            try:
+                tmp = df_bt.dropna(subset=["sharpe_net_model"]).copy()
+                if not tmp.empty:
+                    best_row = tmp.iloc[tmp["sharpe_net_model"].astype(float).idxmax()]
+                    best_mode = str(best_row["mode"])
+                    bt_conc.append(
+                        f"<b>Best mode (model)</b>: <code>{best_mode}</code> with Sharpe(net)={_fmt(best_row['sharpe_net_model'])}."
+                    )
+            except Exception:
+                pass
+
+            # per mode compare
+            for _, r in df_bt.iterrows():
+                mode = str(r.get("mode"))
+                sm = r.get("sharpe_net_model")
+                sf = r.get("sharpe_net_factor_combo")
+                if sm is None or pd.isna(sm) or sf is None or pd.isna(sf):
+                    continue
+                diff = float(sm) - float(sf)
+                grade = _sharpe_grade(float(sm))
+                ddm = r.get("max_drawdown_model")
+                trm = r.get("total_return_net_model")
+                bt_conc.append(
+                    f"<code>{mode}</code>: <b>Sharpe(net)</b>={_fmt(sm)} → <b>{grade}</b>; "
+                    f"total_return_net={_fmt(trm)}, max_drawdown={_fmt(ddm)}; "
+                    f"vs factor-combo Sharpe(net)={_fmt(sf)} (Δ={_fmt(diff)})."
+                )
+
+            bt_table_html = df_bt.to_html(
+                index=False, float_format=lambda x: f"{x:.6g}"
             )
+
+            # Add links to detailed trade/audit artifacts if present
+            link_rows: List[str] = []
+            for mode in ["long_only", "market_neutral"]:
+                rep = train_dir / f"backtest_report__{mode}.html"
+                m_tr = train_dir / f"model_trades__{mode}.csv"
+                f_tr = train_dir / f"factor_combo_trades__{mode}.csv"
+                m_rb = train_dir / f"model_rebalance_log__{mode}.csv"
+                f_rb = train_dir / f"factor_combo_rebalance_log__{mode}.csv"
+                if not (
+                    rep.exists()
+                    or m_tr.exists()
+                    or f_tr.exists()
+                    or m_rb.exists()
+                    or f_rb.exists()
+                ):
+                    continue
+                parts: List[str] = []
+                if rep.exists():
+                    parts.append(f"<a href='train/{rep.name}'>detail report</a>")
+                if m_tr.exists():
+                    parts.append(f"<a href='train/{m_tr.name}'>model trades</a>")
+                if f_tr.exists():
+                    parts.append(f"<a href='train/{f_tr.name}'>factor-combo trades</a>")
+                if m_rb.exists():
+                    parts.append(f"<a href='train/{m_rb.name}'>model rebalance log</a>")
+                if f_rb.exists():
+                    parts.append(
+                        f"<a href='train/{f_rb.name}'>factor rebalance log</a>"
+                    )
+                link_rows.append(
+                    f"<li><code>{mode}</code>: " + " / ".join(parts) + "</li>"
+                )
+            if link_rows:
+                # Inline previews (avoid download-only UX)
+                preview_blocks: List[str] = []
+                for mode in ["long_only", "market_neutral"]:
+                    rep = train_dir / f"backtest_report__{mode}.html"
+                    m_tr = train_dir / f"model_trades__{mode}.csv"
+                    f_tr = train_dir / f"factor_combo_trades__{mode}.csv"
+                    m_rb = train_dir / f"model_rebalance_log__{mode}.csv"
+                    f_rb = train_dir / f"factor_combo_rebalance_log__{mode}.csv"
+                    if not (
+                        m_rb.exists()
+                        or f_rb.exists()
+                        or m_tr.exists()
+                        or f_tr.exists()
+                        or rep.exists()
+                    ):
+                        continue
+
+                    inner = ""
+                    if rep.exists():
+                        inner += f"<p><a href='train/{rep.name}'>Open detail report (HTML)</a></p>"
+                    if m_rb.exists():
+                        inner += _details(
+                            f"{mode} / model rebalance log (preview)",
+                            _csv_preview(m_rb, nrows=200),
+                            open_default=False,
+                        )
+                    if f_rb.exists():
+                        inner += _details(
+                            f"{mode} / factor rebalance log (preview)",
+                            _csv_preview(f_rb, nrows=200),
+                            open_default=False,
+                        )
+                    if m_tr.exists():
+                        inner += _details(
+                            f"{mode} / model trades (preview)",
+                            _csv_preview(m_tr, nrows=200),
+                            open_default=False,
+                        )
+                    if f_tr.exists():
+                        inner += _details(
+                            f"{mode} / factor-combo trades (preview)",
+                            _csv_preview(f_tr, nrows=200),
+                            open_default=False,
+                        )
+                    preview_blocks.append(
+                        _details(
+                            f"{mode}: view logs & trades (inline)",
+                            inner,
+                            open_default=False,
+                        )
+                    )
+
+                bt_links_html = (
+                    "<h3>Detailed trades & audit (inline preview)</h3>"
+                    + "".join(preview_blocks)
+                    + "<p>Direct file links (fallback):</p><ul>"
+                    + "".join(link_rows)
+                    + "</ul>"
+                )
+
+    # factor eval summary df
+    fe_conc: List[str] = []
+    fe_table_html = summary_html
+    if summary_csv.exists():
+        try:
+            df = pd.read_csv(summary_csv)
+            dfv = df.copy()
+            # filter to valid numeric rows
+            for col in ["ic_mean", "ic_ir", "sharpe_net", "avg_turnover", "ic_count"]:
+                if col in dfv.columns:
+                    dfv[col] = pd.to_numeric(dfv[col], errors="coerce")
+            df_ok = dfv[dfv.get("error").isna()] if "error" in dfv.columns else dfv
+            df_ok = (
+                df_ok.dropna(subset=["ic_mean"], how="any")
+                if "ic_mean" in df_ok.columns
+                else df_ok
+            )
+            n_all = len(dfv)
+            n_ok = len(df_ok)
+            if n_all:
+                fe_conc.append(
+                    f"<b>Evaluated</b>: {n_ok}/{n_all} factors produced valid stats."
+                )
+            if "ic_mean" in df_ok.columns and not df_ok.empty:
+                n_pos = int((df_ok["ic_mean"] > 0).sum())
+                fe_conc.append(
+                    f"<b>IC sign</b>: {n_pos}/{n_ok} factors have positive IC_mean."
+                )
+            # top by ic_ir and sharpe_net
+            if "ic_ir" in df_ok.columns and "factor" in df_ok.columns:
+                top_ir = df_ok.sort_values("ic_ir", ascending=False).head(5)
+                tops = ", ".join(
+                    [
+                        f"<code>{r['factor']}</code>({_fmt(r['ic_ir'])})"
+                        for _, r in top_ir.iterrows()
+                    ]
+                )
+                fe_conc.append(f"<b>Top IC/IR</b>: {tops}.")
+            if "sharpe_net" in df_ok.columns and "factor" in df_ok.columns:
+                top_sh = df_ok.sort_values("sharpe_net", ascending=False).head(5)
+                tops = ", ".join(
+                    [
+                        f"<code>{r['factor']}</code>({_fmt(r['sharpe_net'])})"
+                        for _, r in top_sh.iterrows()
+                    ]
+                )
+                fe_conc.append(f"<b>Top Sharpe(net)</b>: {tops}.")
+            if "avg_turnover" in df_ok.columns and not df_ok.empty:
+                med_to = float(df_ok["avg_turnover"].median())
+                fe_conc.append(
+                    f"<b>Turnover (median)</b>: {_fmt(med_to)} per rebalance."
+                )
+        except Exception:
+            pass
+
+    # selection output conclusions
+    sel_conc: List[str] = []
+    if selected_factors:
+        sel_conc.append(f"<b>Selected</b>: {len(selected_factors)} factors.")
+        sel_conc.append(
+            f"<b>List</b>: "
+            + ", ".join([f"<code>{x}</code>" for x in selected_factors[:30]])
+            + ("..." if len(selected_factors) > 30 else "")
+            + "."
+        )
+    else:
+        sel_conc.append(
+            "<b>Selected</b>: 0 factors (check thresholds / min_assets / factor pool)."
+        )
+    if sj:
+        sel_conc.append(
+            "Criteria: "
+            + ", ".join(
+                [
+                    f"target=<code>{_fmt(sj.get('target'))}</code>",
+                    f"min_assets={_fmt(sj.get('min_assets'))}",
+                    f"per_category_top={_fmt(sj.get('per_category_top'))}",
+                    f"global_top={_fmt(sj.get('global_top'))}",
+                    f"ranking_stat=<code>{_fmt(sj.get('ranking_stat'))}</code>",
+                    f"ic_threshold={_fmt(sj.get('ic_threshold'))}",
+                ]
+            )
+            + "."
+        )
+
+    # walk-forward conclusions
+    wf_conc: List[str] = []
+    wf_table_html = ""
+    if wf_rows:
+        try:
+            dff = pd.DataFrame(wf_rows)
+            for col in ["ic_mean", "rank_ic_mean"]:
+                if col in dff.columns:
+                    dff[col] = pd.to_numeric(dff[col], errors="coerce")
+            if "ic_mean" in dff.columns and dff["ic_mean"].notna().any():
+                mean_ic = float(dff["ic_mean"].mean())
+                std_ic = float(dff["ic_mean"].std(ddof=0))
+                n_folds = int(len(dff))
+                n_pos = int((dff["ic_mean"] > 0).sum())
+                min_ic = float(dff["ic_mean"].min())
+                max_ic = float(dff["ic_mean"].max())
+                cv = (std_ic / abs(mean_ic)) if mean_ic != 0 else float("inf")
+
+                # Simple, explicit verdict for humans (heuristics)
+                # Typical CS IC: ~0.01-0.03 is weak, 0.03-0.06 is decent, >0.06 is strong.
+                # Stability: positive across folds and not dominated by one fold; min fold shouldn't collapse.
+                verdict = "WEAK"
+                verdict_cn = "偏弱"
+                if mean_ic >= 0.06 and n_pos == n_folds and min_ic >= 0.01:
+                    verdict = "STRONG"
+                    verdict_cn = "很好（强且稳定）"
+                elif (
+                    mean_ic >= 0.03
+                    and n_pos >= max(1, int(0.75 * n_folds))
+                    and min_ic >= 0.0
+                ):
+                    verdict = "GOOD"
+                    verdict_cn = "不错（有一致性）"
+                elif mean_ic >= 0.01 and n_pos >= max(1, int(0.6 * n_folds)):
+                    verdict = "MARGINAL"
+                    verdict_cn = "一般（有信号但偏弱）"
+                else:
+                    verdict = "WEAK"
+                    verdict_cn = "偏弱/不稳定"
+
+                # fold coverage note (if configured folds != realized folds)
+                cfg_folds = wf_cfg.get("folds")
+                if cfg_folds is not None:
+                    try:
+                        cfg_folds_i = int(cfg_folds)
+                        if cfg_folds_i > 0 and n_folds != cfg_folds_i:
+                            wf_conc.append(
+                                f"<b>Fold coverage</b>: got {n_folds}/{cfg_folds_i} folds (missing folds usually means not enough usable timestamps after embargo/filters)."
+                            )
+                    except Exception:
+                        pass
+
+                wf_conc.append(
+                    f"<b>Verdict</b>: <code>{verdict}</code> / {verdict_cn}. "
+                    f"IC_mean={_fmt(mean_ic)} (typical: 0.01–0.03 weak, 0.03–0.06 ok, >0.06 strong), "
+                    f"min={_fmt(min_ic)}, max={_fmt(max_ic)}, CV(std/|mean|)={_fmt(cv)}."
+                )
+
+                wf_conc.append(
+                    f"<b>Walk-forward IC_mean</b>: mean={_fmt(mean_ic)}, std={_fmt(std_ic)} over {n_folds} folds."
+                )
+                wf_conc.append(
+                    f"<b>Sign stability</b>: {n_pos}/{n_folds} folds have positive IC_mean."
+                )
+                try:
+                    best = dff.iloc[dff["ic_mean"].idxmax()]
+                    worst = dff.iloc[dff["ic_mean"].idxmin()]
+                    wf_conc.append(
+                        f"<b>Best fold</b>: fold={_fmt(best.get('fold'))}, IC_mean={_fmt(best.get('ic_mean'))}."
+                    )
+                    wf_conc.append(
+                        f"<b>Worst fold</b>: fold={_fmt(worst.get('fold'))}, IC_mean={_fmt(worst.get('ic_mean'))}."
+                    )
+                except Exception:
+                    pass
+            wf_table_html = dff.to_html(index=False, float_format=lambda x: f"{x:.6g}")
+        except Exception:
+            wf_table_html = ""
+    else:
+        wf_conc.append("<b>Walk-forward</b>: (no fold summary found).")
+
+    # -----------------------------------------------------------------------------
+    # Separate interpretation page (keep the long “how to read” content off index.html)
+    # -----------------------------------------------------------------------------
+    interpretation_path = out_root / "interpretation.html"
+    interpretation_body = f"""
+    <h1>{title}: Interpretation Guide</h1>
+    <p><a href="index.html">← Back to conclusions</a></p>
+
+    <h2>How to read this report</h2>
+    <ul>
+      <li><b>Factor evaluation summary</b> answers: does a single factor work as a CS long/short signal?</li>
+      <li><b>Selected factors</b> is produced by <code>select</code> for <i>this</i> window/universe/cost settings (a run artifact).</li>
+      <li><b>OOS backtest</b> compares <code>model</code> vs <code>factor-combo</code> under the same execution assumptions.</li>
+    </ul>
+
+    <h3>What is factor-combo?</h3>
+    <p>
+      A simple baseline: for factors in <code>selected_factors.txt</code>, we z-score each factor cross-sectionally per timestamp and average into one signal.
+      It answers whether the model adds value beyond a linear multi-factor blend.
+    </p>
+
+    <h3>Selection criteria (this run)</h3>
+    <ul>
+      <li><b>target</b>: <code>{_fmt(sj.get('target') or sel_cfg.get('target') or eval_cfg.get('target'))}</code></li>
+      <li><b>min_assets</b>: {_fmt(sj.get('min_assets') or sel_cfg.get('min_assets') or eval_cfg.get('min_assets'))}</li>
+      <li><b>per_category_top</b>: {_fmt(sj.get('per_category_top') or sel_cfg.get('per_category_top'))}</li>
+      <li><b>global_top</b>: {_fmt(sj.get('global_top') or sel_cfg.get('global_top'))}</li>
+      <li><b>ranking_stat</b>: <code>{_fmt(sj.get('ranking_stat') or sel_cfg.get('ranking_stat') or 'ic')}</code></li>
+      <li><b>ic_threshold</b>: {_fmt(sj.get('ic_threshold') or sel_cfg.get('ic_threshold'))}</li>
+      <li><b>ir_threshold</b>: {_fmt(sj.get('ir_threshold') or sel_cfg.get('ir_threshold'))}</li>
+    </ul>
+
+    <h3>Execution assumptions (this run)</h3>
+    <ul>
+      <li><b>factor_eval</b>: horizon={_fmt(eval_cfg.get('horizon'))}, target=<code>{_fmt(eval_cfg.get('target'))}</code>, min_assets={_fmt(eval_cfg.get('min_assets'))}, quantiles={_fmt(eval_cfg.get('quantiles'))}, fee_bps={_fmt(eval_cfg.get('fee_bps'))}</li>
+      <li><b>train.backtest_cfg</b>: holding={_fmt(bt_cfg.get('holding_period_bars'))}, lag={_fmt(bt_cfg.get('execution_lag_bars'))}, mode=<code>{_fmt(bt_cfg.get('mode'))}</code>, top_k={_fmt(bt_cfg.get('top_k'))}, bottom_k={_fmt(bt_cfg.get('bottom_k'))}, max_weight={_fmt(bt_cfg.get('max_weight'))}, cash_buffer={_fmt(bt_cfg.get('cash_buffer'))}, fee_bps={_fmt(bt_cfg.get('fee_bps'))}, slippage_bps={_fmt(bt_cfg.get('slippage_bps'))}</li>
+      <li><b>walk_forward</b>: folds={_fmt(wf_cfg.get('folds'))}, embargo_bars={_fmt(wf_cfg.get('embargo_bars'))}</li>
+    </ul>
+    """
+
+    interpretation_html = f"""\
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>{title} - Interpretation</title>
+    <style>
+      body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; padding: 20px; }}
+      table {{ border-collapse: collapse; width: 100%; }}
+      th, td {{ border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }}
+      th {{ background: #f6f6f6; position: sticky; top: 0; }}
+      pre {{ background: #f6f8fa; padding: 12px; overflow-x: auto; }}
+      code {{ background: #f6f8fa; padding: 2px 4px; }}
+    </style>
+  </head>
+  <body>
+    {interpretation_body}
+  </body>
+</html>
+"""
+    interpretation_path.write_text(interpretation_html, encoding="utf-8")
+
+    # -----------------------------------------------------------------------------
+    # Index page: conclusions per table + raw tables collapsed
+    # -----------------------------------------------------------------------------
+    link_interp = (
+        "<p><a href='interpretation.html'>Interpretation (how to read)</a></p>"
+    )
+
+    oos_section = (
+        "<h2>OOS backtest (model vs factor-combo) — conclusion</h2>"
+        + _bullet_list(bt_conc)
+        + (bt_links_html if bt_links_html else "")
+        + (
+            _details("Raw table", bt_table_html)
+            if bt_table_html
+            else "<p>(no backtest table)</p>"
+        )
+    )
+
+    wf_section = (
+        "<h2>Walk-forward stability — conclusion</h2>"
+        + _bullet_list(wf_conc)
+        + (_details("Raw table", wf_table_html) if wf_table_html else "")
+    )
+
+    sel_section = (
+        "<h2>Selected factors — conclusion</h2>"
+        + _bullet_list(sel_conc)
+        + _details("Raw list", selected_html)
+    )
+
+    fe_section = (
+        "<h2>Factor evaluation summary — conclusion</h2>"
+        + _bullet_list(fe_conc)
+        + _details("Raw table", fe_table_html)
+    )
 
     html = f"""\
 <html>
@@ -144,6 +856,7 @@ def _write_html_index(
       th {{ background: #f6f6f6; position: sticky; top: 0; }}
       pre {{ background: #f6f8fa; padding: 12px; overflow-x: auto; }}
       code {{ background: #f6f8fa; padding: 2px 4px; }}
+      summary {{ cursor: pointer; }}
     </style>
   </head>
   <body>
@@ -151,11 +864,12 @@ def _write_html_index(
     <p>Output root: <code>{out_root}</code></p>
     {report_link}
     {train_link}
-    {model_bt_html}
-    <h2>Selected factors</h2>
-    {selected_html}
-    <h2>Factor evaluation summary</h2>
-    {summary_html}
+    {link_interp}
+    {test_window_html}
+    {oos_section}
+    {wf_section}
+    {sel_section}
+    {fe_section}
   </body>
 </html>
 """
@@ -169,6 +883,9 @@ def main() -> None:
 
     out_root = Path(cfg.get("output_root", "results/cross_sectional/pipeline"))
     out_root.mkdir(parents=True, exist_ok=True)
+
+    # Optional: auto build FeatureStore partitions if missing
+    _maybe_autobuild_feature_store(cfg, out_root=out_root)
 
     # 1) Panel source
     panel_cfg = cfg.get("panel", {}) or {}
@@ -239,7 +956,11 @@ def main() -> None:
     if eval_cfg.get("factor_set_yaml"):
         fe_args += ["--factor-set-yaml", str(eval_cfg["factor_set_yaml"])]
     if eval_cfg.get("factor_set"):
-        fe_args += ["--factor-set", str(eval_cfg["factor_set"])]
+        fs_val = eval_cfg.get("factor_set")
+        if isinstance(fs_val, list):
+            # allow YAML list: [setA, setB] -> "setA,setB"
+            fs_val = ",".join([str(x).strip() for x in fs_val if str(x).strip()])
+        fe_args += ["--factor-set", str(fs_val)]
 
     if panel_path:
         fe_args += ["--input", str(panel_path)]
@@ -402,6 +1123,12 @@ def main() -> None:
         if split_cfg.get("train_ratio") is not None:
             train_args += ["--train-ratio", str(float(split_cfg["train_ratio"]))]
 
+        wf_cfg = train_cfg.get("walk_forward", {}) or {}
+        if wf_cfg.get("folds") is not None:
+            train_args += ["--wf-folds", str(int(wf_cfg["folds"]))]
+        if wf_cfg.get("embargo_bars") is not None:
+            train_args += ["--wf-embargo-bars", str(int(wf_cfg["embargo_bars"]))]
+
         bt_cfg = train_cfg.get("backtest_cfg", {}) or {}
         if bt_cfg.get("mode"):
             train_args += ["--bt-mode", str(bt_cfg["mode"])]
@@ -452,9 +1179,19 @@ def main() -> None:
 
     # 3.7) HTML index report
     summary_csv = eval_out / "summary.csv"
+    # Best-effort fallback: if train step failed/was skipped but artifacts exist from a previous run,
+    # still include them in the HTML report to avoid "(no backtest table)".
+    if train_dir is None:
+        candidate = out_root / str(
+            (cfg.get("train", {}) or {}).get("output_dir", "train")
+        )
+        if candidate.exists():
+            train_dir = candidate
     html_path = _write_html_index(
         out_root=out_root,
         title=str(cfg.get("title", "CS Pipeline Report")),
+        config=cfg,
+        panel_path=Path(panel_path) if panel_path else None,
         summary_csv=summary_csv,
         selected_factors_path=selected_path,
         report_md_path=report_md,

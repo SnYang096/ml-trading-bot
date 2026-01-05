@@ -43,6 +43,7 @@ from cross_sectional.factor_selection import (
 from cross_sectional.model_portfolio_backtest import (
     PortfolioBacktestConfig,
     portfolio_backtest_from_signal,
+    portfolio_backtest_with_rebalance_log,
 )
 
 
@@ -238,6 +239,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.7,
         help="OOS split: fraction of timestamps used for training (rest used for test backtest).",
+    )
+    parser.add_argument(
+        "--wf-folds",
+        type=int,
+        default=1,
+        help="Walk-forward folds (>1 enables expanding walk-forward with multiple test segments).",
+    )
+    parser.add_argument(
+        "--wf-embargo-bars",
+        type=int,
+        default=None,
+        help="Embargo bars between train and test to avoid label overlap (default: horizon + bt_lag).",
     )
     parser.add_argument(
         "--save-markdown",
@@ -437,26 +450,525 @@ def main() -> None:
                     )
 
     if args.model == "boosting":
-        model = CrossSectionalBoostingModel()
-        # OOS split by time (timestamps)
+
+        def _factor_combo_signal(p: pd.DataFrame, cols: List[str]) -> pd.Series:
+            if not cols:
+                return pd.Series(index=p.index, dtype=float)
+            df = p[cols].copy().replace([np.inf, -np.inf], np.nan)
+            grp = df.groupby(level=0)
+            z = grp.transform(
+                lambda x: (x - x.mean())
+                / (x.std(ddof=0) if float(x.std(ddof=0)) > 0 else 1.0)
+            )
+            sig = z.mean(axis=1)
+            sig.name = "factor_combo"
+            return sig
+
+        def _agg_metrics_from_ts(tsdf: pd.DataFrame, *, ppy: float) -> Dict[str, float]:
+            r = tsdf["net_return"].dropna()
+            if r.empty or float(r.std(ddof=0)) <= 0:
+                sharpe = float("nan")
+            else:
+                sharpe = float(r.mean() / r.std(ddof=0) * np.sqrt(ppy))
+            eq = (1.0 + r.fillna(0.0)).cumprod()
+            peak = eq.cummax()
+            dd = eq / peak - 1.0
+            return {
+                "n_timestamps": float(len(tsdf)),
+                "avg_net_return": (
+                    float(tsdf["net_return"].mean()) if not tsdf.empty else float("nan")
+                ),
+                "avg_gross_return": (
+                    float(tsdf["gross_return"].mean())
+                    if not tsdf.empty
+                    else float("nan")
+                ),
+                "avg_turnover": (
+                    float(tsdf.get("turnover", pd.Series(dtype=float)).mean())
+                    if not tsdf.empty
+                    else float("nan")
+                ),
+                "sharpe_net": sharpe,
+                "total_return_net": (
+                    float(eq.iloc[-1] - 1.0) if not eq.empty else float("nan")
+                ),
+                "max_drawdown": float(dd.min()) if not dd.empty else float("nan"),
+                "periods_per_year": float(ppy),
+                "fee_bps": float(args.bt_fee_bps),
+                "slippage_bps": float(args.bt_slippage_bps),
+            }
+
+        modes = [m.strip() for m in str(args.bt_mode).split(",") if m.strip()]
+        holding = (
+            int(args.bt_holding) if args.bt_holding is not None else int(args.horizon)
+        )
+        embargo = args.wf_embargo_bars
+        if embargo is None:
+            embargo = int(args.horizon) + int(args.bt_lag)
+        embargo = max(0, int(embargo))
+
+        def _bt_cfg(mode: str) -> PortfolioBacktestConfig:
+            return PortfolioBacktestConfig(
+                mode=mode,
+                holding_period_bars=holding,
+                execution_lag_bars=int(args.bt_lag),
+                top_k=int(args.bt_topk),
+                bottom_k=int(args.bt_bottomk),
+                gross_leverage=float(args.bt_gross_leverage),
+                max_weight=float(args.bt_max_weight),
+                turnover_limit=(
+                    float(args.bt_turnover_limit)
+                    if args.bt_turnover_limit is not None
+                    else None
+                ),
+                fee_bps=float(args.bt_fee_bps),
+                slippage_bps=float(args.bt_slippage_bps),
+                funding_bps_per_bar=float(args.bt_funding_bps_per_bar),
+                borrow_bps_per_bar=float(args.bt_borrow_bps_per_bar),
+                min_assets=int(args.bt_min_assets),
+                periods_per_year=float(periods_per_year) if periods_per_year else None,
+                cash_buffer=float(args.bt_cash_buffer),
+                equity_mode=str(args.bt_equity_mode),
+                initial_capital=1.0,
+            )
+
+        # Time index
         ts = processed_panel.index.get_level_values(0)
         uniq = pd.Index(sorted(pd.to_datetime(ts, utc=True).unique()))
-        split = int(np.floor(len(uniq) * float(args.train_ratio)))
-        split = min(max(split, 1), max(len(uniq) - 1, 1))
-        train_ts = set(uniq[:split])
-        test_ts = set(uniq[split:])
-        train_panel = processed_panel.loc[
-            processed_panel.index.get_level_values(0).isin(train_ts)
-        ]
-        test_panel = processed_panel.loc[
-            processed_panel.index.get_level_values(0).isin(test_ts)
-        ]
 
-        model.fit(train_panel, feature_cols=factor_cols, target_col=target_col)
-        predictions_test = model.predict(test_panel)
-        eval_result = model.evaluate(
-            test_panel, predictions=predictions_test, target_col=target_col
-        )
+        # Storage for walk-forward aggregation
+        preds_all_parts: List[pd.Series] = []
+        fold_rows: List[dict] = []
+        ts_collect_model: Dict[str, List[pd.DataFrame]] = {m: [] for m in modes}
+        ts_collect_factor: Dict[str, List[pd.DataFrame]] = {m: [] for m in modes}
+        rb_collect_model: Dict[str, List[pd.DataFrame]] = {m: [] for m in modes}
+        rb_collect_factor: Dict[str, List[pd.DataFrame]] = {m: [] for m in modes}
+
+        def _run_on_test_segment(
+            *, test_panel: pd.DataFrame, preds: pd.Series, prefix: str
+        ) -> None:
+            if not bool(args.backtest):
+                return
+            base = test_panel[["close"]].copy()
+            base["model_prediction"] = preds.reindex(base.index)
+            base["factor_combo"] = _factor_combo_signal(
+                test_panel, list(factor_cols)
+            ).reindex(base.index)
+            for mode in modes:
+                cfg = _bt_cfg(mode)
+                ts_m, met_m, rb_m = portfolio_backtest_with_rebalance_log(
+                    base, signal_col="model_prediction", close_col="close", cfg=cfg
+                )
+                ts_f, met_f, rb_f = portfolio_backtest_with_rebalance_log(
+                    base, signal_col="factor_combo", close_col="close", cfg=cfg
+                )
+                # per-fold artifacts
+                ts_m.to_csv(output_dir / f"{prefix}model_bt_timeseries__{mode}.csv")
+                (output_dir / f"{prefix}model_bt_metrics__{mode}.json").write_text(
+                    json.dumps(met_m, indent=2), encoding="utf-8"
+                )
+                if not rb_m.empty:
+                    rb_m.to_csv(
+                        output_dir / f"{prefix}model_rebalance_log__{mode}.csv",
+                        index=False,
+                    )
+                ts_f.to_csv(
+                    output_dir / f"{prefix}factor_combo_bt_timeseries__{mode}.csv"
+                )
+                (
+                    output_dir / f"{prefix}factor_combo_bt_metrics__{mode}.json"
+                ).write_text(json.dumps(met_f, indent=2), encoding="utf-8")
+                if not rb_f.empty:
+                    rb_f.to_csv(
+                        output_dir / f"{prefix}factor_combo_rebalance_log__{mode}.csv",
+                        index=False,
+                    )
+
+                # Optional: trade list + small HTML report per fold segment (for auditability)
+                try:
+                    from cross_sectional.rebalance_trade_list import (
+                        TradeListConfig,
+                        build_trade_list_from_rebalance_log,
+                    )
+
+                    close_ser = base["close"].astype(float)
+                    tl_cfg = TradeListConfig(
+                        mode=str(cfg.mode),
+                        gross_leverage=float(cfg.gross_leverage),
+                        max_weight=float(cfg.max_weight),
+                        cash_buffer=float(cfg.cash_buffer),
+                    )
+                    # entry timestamps are the rebalance timestamps in the timeseries index
+                    if not ts_m.empty and not rb_m.empty:
+                        tr_m = build_trade_list_from_rebalance_log(
+                            close=close_ser,
+                            rb=rb_m,
+                            cfg=tl_cfg,
+                            entry_timestamps=pd.DatetimeIndex(ts_m.index),
+                        )
+                        if not tr_m.empty:
+                            tr_m.to_csv(
+                                output_dir / f"{prefix}model_trades__{mode}.csv",
+                                index=False,
+                            )
+                    if not ts_f.empty and not rb_f.empty:
+                        tr_f = build_trade_list_from_rebalance_log(
+                            close=close_ser,
+                            rb=rb_f,
+                            cfg=tl_cfg,
+                            entry_timestamps=pd.DatetimeIndex(ts_f.index),
+                        )
+                        if not tr_f.empty:
+                            tr_f.to_csv(
+                                output_dir / f"{prefix}factor_combo_trades__{mode}.csv",
+                                index=False,
+                            )
+
+                    # simple HTML linking artifacts (kept tiny; pipeline index.html provides main conclusions)
+                    html_path = output_dir / f"{prefix}backtest_report__{mode}.html"
+
+                    def _fmt(x):
+                        try:
+                            import math
+
+                            if x is None:
+                                return "NA"
+                            if isinstance(x, float):
+                                if math.isnan(x):
+                                    return "NA"
+                                return f"{x:.6g}"
+                            return str(x)
+                        except Exception:
+                            return str(x)
+
+                    html = f"""
+<html><head><meta charset=\"utf-8\"/>
+<title>CS Backtest Report ({mode})</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; padding: 20px; }}
+table {{ border-collapse: collapse; width: 100%; }}
+th, td {{ border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }}
+th {{ background: #f6f6f6; position: sticky; top: 0; }}
+code {{ background: #f6f8fa; padding: 2px 4px; }}
+</style></head>
+<body>
+<h1>CS Backtest Report ({mode})</h1>
+<h2>Summary</h2>
+<ul>
+  <li><b>Sharpe(net)</b> model={_fmt(met_m.get('sharpe_net'))} vs factor-combo={_fmt(met_f.get('sharpe_net'))}</li>
+  <li><b>Total return(net)</b> model={_fmt(met_m.get('total_return_net'))} vs factor-combo={_fmt(met_f.get('total_return_net'))}</li>
+  <li><b>Max drawdown</b> model={_fmt(met_m.get('max_drawdown'))} vs factor-combo={_fmt(met_f.get('max_drawdown'))}</li>
+</ul>
+<h2>Artifacts</h2>
+<ul>
+  <li><a href=\"{prefix}model_bt_timeseries__{mode}.csv\">model timeseries</a> / <a href=\"{prefix}model_bt_metrics__{mode}.json\">model metrics</a> / <a href=\"{prefix}model_rebalance_log__{mode}.csv\">model rebalance log</a> / <a href=\"{prefix}model_trades__{mode}.csv\">model trades</a></li>
+  <li><a href=\"{prefix}factor_combo_bt_timeseries__{mode}.csv\">factor-combo timeseries</a> / <a href=\"{prefix}factor_combo_bt_metrics__{mode}.json\">factor-combo metrics</a> / <a href=\"{prefix}factor_combo_rebalance_log__{mode}.csv\">factor-combo rebalance log</a> / <a href=\"{prefix}factor_combo_trades__{mode}.csv\">factor-combo trades</a></li>
+</ul>
+</body></html>
+"""
+                    html_path.write_text(html, encoding="utf-8")
+                except Exception:
+                    pass
+                # collect for aggregation
+                if not ts_m.empty:
+                    ts_collect_model[mode].append(ts_m)
+                if not ts_f.empty:
+                    ts_collect_factor[mode].append(ts_f)
+                if not rb_m.empty:
+                    rb_collect_model[mode].append(rb_m)
+                if not rb_f.empty:
+                    rb_collect_factor[mode].append(rb_f)
+
+        # Walk-forward expanding folds if enabled
+        if int(args.wf_folds or 1) > 1:
+            k = int(args.wf_folds)
+            edges = np.linspace(0, len(uniq), k + 1).astype(int)
+            for fi in range(k):
+                test_start = int(edges[fi])
+                test_end = int(edges[fi + 1])
+                if test_end - test_start <= 0:
+                    continue
+                train_end = max(0, test_start - embargo)
+                if train_end <= 1:
+                    continue
+                train_ts = set(uniq[:train_end])
+                test_ts = set(uniq[test_start:test_end])
+                train_panel = processed_panel.loc[
+                    processed_panel.index.get_level_values(0).isin(train_ts)
+                ]
+                test_panel = processed_panel.loc[
+                    processed_panel.index.get_level_values(0).isin(test_ts)
+                ]
+                if train_panel.empty or test_panel.empty:
+                    continue
+                model = CrossSectionalBoostingModel()
+                model.fit(train_panel, feature_cols=factor_cols, target_col=target_col)
+                preds = model.predict(test_panel)
+                preds_all_parts.append(preds)
+                eval_tmp = model.evaluate(
+                    test_panel, predictions=preds, target_col=target_col
+                )
+                fold_rows.append(
+                    {
+                        "fold": fi + 1,
+                        "train_timestamps": int(
+                            train_panel.index.get_level_values(0).nunique()
+                        ),
+                        "test_timestamps": int(
+                            test_panel.index.get_level_values(0).nunique()
+                        ),
+                        "ic_mean": float(eval_tmp.information_coefficients.mean()),
+                        "rank_ic_mean": float(eval_tmp.rank_ic.mean()),
+                    }
+                )
+                _run_on_test_segment(
+                    test_panel=test_panel, preds=preds, prefix=f"wf{fi+1}_"
+                )
+
+            # concatenate all fold test predictions
+            predictions_test = (
+                pd.concat(preds_all_parts).sort_index()
+                if preds_all_parts
+                else pd.Series(dtype=float)
+            )
+            (output_dir / "walk_forward_summary.json").write_text(
+                json.dumps(fold_rows, indent=2), encoding="utf-8"
+            )
+
+            # predictive IC on concatenated test predictions (using processed_panel targets)
+            aligned = (
+                processed_panel[[target_col]]
+                .join(predictions_test.rename("pred"), how="inner")
+                .dropna()
+            )
+            ic = aligned.groupby(level=0).apply(lambda x: x[target_col].corr(x["pred"]))
+            ric = aligned.groupby(level=0).apply(
+                lambda x: x[target_col].corr(x["pred"], method="spearman")
+            )
+            eval_result = type(
+                "Eval",
+                (),
+                {
+                    "information_coefficients": ic,
+                    "rank_ic": ric,
+                    "mse_by_timestamp": pd.Series(dtype=float),
+                },
+            )()
+
+            # Aggregate portfolio metrics across folds and write as the canonical files (for HTML)
+            if bool(args.backtest):
+                for mode in modes:
+                    # model
+                    ts_all = (
+                        pd.concat(ts_collect_model[mode]).sort_index()
+                        if ts_collect_model[mode]
+                        else pd.DataFrame()
+                    )
+                    if not ts_all.empty:
+                        ts_all.to_csv(output_dir / f"model_bt_timeseries__{mode}.csv")
+                        ppy = (
+                            float(
+                                ts_all.get("periods_per_year", pd.Series([np.nan]))
+                                .dropna()
+                                .iloc[0]
+                            )
+                            if "periods_per_year" in ts_all.columns
+                            else float(365.0 * 24.0 / (4.0 * holding))
+                        )
+                        met = _agg_metrics_from_ts(
+                            ts_all, ppy=float(periods_per_year) / float(holding)
+                        )
+                        (output_dir / f"model_bt_metrics__{mode}.json").write_text(
+                            json.dumps(met, indent=2), encoding="utf-8"
+                        )
+                    rb_all = (
+                        pd.concat(rb_collect_model[mode]).sort_values("rebalance_ts")
+                        if rb_collect_model[mode]
+                        else pd.DataFrame()
+                    )
+                    if not rb_all.empty:
+                        rb_all.to_csv(
+                            output_dir / f"model_rebalance_log__{mode}.csv", index=False
+                        )
+                    # factor combo
+                    ts_all2 = (
+                        pd.concat(ts_collect_factor[mode]).sort_index()
+                        if ts_collect_factor[mode]
+                        else pd.DataFrame()
+                    )
+                    if not ts_all2.empty:
+                        ts_all2.to_csv(
+                            output_dir / f"factor_combo_bt_timeseries__{mode}.csv"
+                        )
+                        met2 = _agg_metrics_from_ts(
+                            ts_all2, ppy=float(periods_per_year) / float(holding)
+                        )
+                        (
+                            output_dir / f"factor_combo_bt_metrics__{mode}.json"
+                        ).write_text(json.dumps(met2, indent=2), encoding="utf-8")
+                    rb_all2 = (
+                        pd.concat(rb_collect_factor[mode]).sort_values("rebalance_ts")
+                        if rb_collect_factor[mode]
+                        else pd.DataFrame()
+                    )
+                    if not rb_all2.empty:
+                        rb_all2.to_csv(
+                            output_dir / f"factor_combo_rebalance_log__{mode}.csv",
+                            index=False,
+                        )
+
+                    # Also build aggregated trade lists + a small HTML report at the end
+                    try:
+                        from cross_sectional.rebalance_trade_list import (
+                            TradeListConfig,
+                            build_trade_list_from_rebalance_log,
+                        )
+
+                        # close prices from processed_panel (test periods are already subset in aggregated ts)
+                        close_ser = processed_panel[["close"]].copy()
+                        close_ser["close"] = pd.to_numeric(
+                            close_ser["close"], errors="coerce"
+                        )
+                        close = close_ser["close"]
+                        tl_cfg = TradeListConfig(
+                            mode=str(mode),
+                            gross_leverage=float(args.bt_gross_leverage),
+                            max_weight=float(args.bt_max_weight),
+                            cash_buffer=float(args.bt_cash_buffer),
+                        )
+                        # Use timestamps from the aggregated model ts as entry timestamps
+                        ts_all = pd.read_csv(
+                            output_dir / f"model_bt_timeseries__{mode}.csv",
+                            parse_dates=["timestamp"],
+                        )
+                        ts_all["timestamp"] = pd.to_datetime(
+                            ts_all["timestamp"], utc=True, errors="coerce"
+                        )
+                        entry_ts = pd.DatetimeIndex(
+                            ts_all["timestamp"].dropna().unique()
+                        )
+                        if not rb_all.empty and len(entry_ts) >= 2:
+                            tr_m = build_trade_list_from_rebalance_log(
+                                close=close,
+                                rb=rb_all,
+                                cfg=tl_cfg,
+                                entry_timestamps=entry_ts,
+                            )
+                            if not tr_m.empty:
+                                tr_m.to_csv(
+                                    output_dir / f"model_trades__{mode}.csv",
+                                    index=False,
+                                )
+                        if not rb_all2.empty and len(entry_ts) >= 2:
+                            tr_f = build_trade_list_from_rebalance_log(
+                                close=close,
+                                rb=rb_all2,
+                                cfg=tl_cfg,
+                                entry_timestamps=entry_ts,
+                            )
+                            if not tr_f.empty:
+                                tr_f.to_csv(
+                                    output_dir / f"factor_combo_trades__{mode}.csv",
+                                    index=False,
+                                )
+                        # one HTML per mode at train root
+                        html_path = output_dir / f"backtest_report__{mode}.html"
+                        m_met = (
+                            json.loads(
+                                (
+                                    output_dir / f"model_bt_metrics__{mode}.json"
+                                ).read_text(encoding="utf-8")
+                            )
+                            if (output_dir / f"model_bt_metrics__{mode}.json").exists()
+                            else {}
+                        )
+                        f_met = (
+                            json.loads(
+                                (
+                                    output_dir / f"factor_combo_bt_metrics__{mode}.json"
+                                ).read_text(encoding="utf-8")
+                            )
+                            if (
+                                output_dir / f"factor_combo_bt_metrics__{mode}.json"
+                            ).exists()
+                            else {}
+                        )
+
+                        def _fmt(x):
+                            try:
+                                import math
+
+                                if x is None:
+                                    return "NA"
+                                if isinstance(x, float):
+                                    if math.isnan(x):
+                                        return "NA"
+                                    return f"{x:.6g}"
+                                return str(x)
+                            except Exception:
+                                return str(x)
+
+                        html = f"""
+<html><head><meta charset=\"utf-8\"/>
+<title>CS Backtest Report ({mode})</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; padding: 20px; }}
+table {{ border-collapse: collapse; width: 100%; }}
+th, td {{ border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }}
+th {{ background: #f6f6f6; position: sticky; top: 0; }}
+code {{ background: #f6f8fa; padding: 2px 4px; }}
+</style></head>
+<body>
+<h1>CS Backtest Report ({mode})</h1>
+<h2>Conclusion</h2>
+<ul>
+  <li><b>Sharpe(net)</b> model={_fmt(m_met.get('sharpe_net'))} vs factor-combo={_fmt(f_met.get('sharpe_net'))}</li>
+  <li><b>Total return(net)</b> model={_fmt(m_met.get('total_return_net'))} vs factor-combo={_fmt(f_met.get('total_return_net'))}</li>
+  <li><b>Max drawdown</b> model={_fmt(m_met.get('max_drawdown'))} vs factor-combo={_fmt(f_met.get('max_drawdown'))}</li>
+</ul>
+<h2>Artifacts</h2>
+<ul>
+  <li><a href=\"model_bt_timeseries__{mode}.csv\">model timeseries</a> / <a href=\"model_bt_metrics__{mode}.json\">model metrics</a> / <a href=\"model_rebalance_log__{mode}.csv\">model rebalance log</a> / <a href=\"model_trades__{mode}.csv\">model trades</a></li>
+  <li><a href=\"factor_combo_bt_timeseries__{mode}.csv\">factor-combo timeseries</a> / <a href=\"factor_combo_bt_metrics__{mode}.json\">factor-combo metrics</a> / <a href=\"factor_combo_rebalance_log__{mode}.csv\">factor-combo rebalance log</a> / <a href=\"factor_combo_trades__{mode}.csv\">factor-combo trades</a></li>
+</ul>
+</body></html>
+"""
+                        html_path.write_text(html, encoding="utf-8")
+                    except Exception:
+                        pass
+
+            # for model dump, re-fit on full pre-test data (best effort)
+            model = CrossSectionalBoostingModel()
+            split = int(np.floor(len(uniq) * float(args.train_ratio)))
+            train_end = max(0, split - embargo)
+            train_panel = processed_panel.loc[
+                processed_panel.index.get_level_values(0).isin(set(uniq[:train_end]))
+            ]
+            if not train_panel.empty:
+                model.fit(train_panel, feature_cols=factor_cols, target_col=target_col)
+        else:
+            # Single split with embargo
+            model = CrossSectionalBoostingModel()
+            split = int(np.floor(len(uniq) * float(args.train_ratio)))
+            split = min(max(split, 1), max(len(uniq) - 1, 1))
+            train_end = max(0, split - embargo)
+            train_ts = set(uniq[:train_end]) if train_end > 0 else set(uniq[:split])
+            test_ts = set(uniq[split:])
+            train_panel = processed_panel.loc[
+                processed_panel.index.get_level_values(0).isin(train_ts)
+            ]
+            test_panel = processed_panel.loc[
+                processed_panel.index.get_level_values(0).isin(test_ts)
+            ]
+
+            model.fit(train_panel, feature_cols=factor_cols, target_col=target_col)
+            predictions_test = model.predict(test_panel)
+            eval_result = model.evaluate(
+                test_panel, predictions=predictions_test, target_col=target_col
+            )
+            _run_on_test_segment(
+                test_panel=test_panel, preds=predictions_test, prefix=""
+            )
 
         save_predictions(predictions_test, output_dir / args.predictions_name)
         save_metrics(
@@ -468,64 +980,24 @@ def main() -> None:
         )
         dump(model, output_dir / args.model_name)
 
-        # Realistic portfolio backtest on OOS test panel using 1-bar realized returns
-        if bool(args.backtest):
-            bt_panel = (
-                test_panel[["close", target_col]].copy()
-                if "close" in test_panel.columns
-                else test_panel[[target_col]].copy()
-            )
-            bt_panel["model_prediction"] = predictions_test.reindex(bt_panel.index)
-
-            modes = [m.strip() for m in str(args.bt_mode).split(",") if m.strip()]
-            holding = (
-                int(args.bt_holding)
-                if args.bt_holding is not None
-                else int(args.horizon)
-            )
-
-            for mode in modes:
-                cfg = PortfolioBacktestConfig(
-                    mode=mode,
-                    holding_period_bars=holding,
-                    execution_lag_bars=int(args.bt_lag),
-                    top_k=int(args.bt_topk),
-                    bottom_k=int(args.bt_bottomk),
-                    gross_leverage=float(args.bt_gross_leverage),
-                    max_weight=float(args.bt_max_weight),
-                    turnover_limit=(
-                        float(args.bt_turnover_limit)
-                        if args.bt_turnover_limit is not None
-                        else None
-                    ),
-                    fee_bps=float(args.bt_fee_bps),
-                    slippage_bps=float(args.bt_slippage_bps),
-                    funding_bps_per_bar=float(args.bt_funding_bps_per_bar),
-                    borrow_bps_per_bar=float(args.bt_borrow_bps_per_bar),
-                    min_assets=int(args.bt_min_assets),
-                    periods_per_year=(
-                        float(periods_per_year) if periods_per_year else None
-                    ),
-                    cash_buffer=float(args.bt_cash_buffer),
-                    equity_mode=str(args.bt_equity_mode),
-                    initial_capital=1.0,
-                )
-                tsdf, metrics = portfolio_backtest_from_signal(
-                    bt_panel,
-                    signal_col="model_prediction",
-                    close_col="close",
-                    cfg=cfg,
-                )
-                ts_path = output_dir / f"model_bt_timeseries__{mode}.csv"
-                met_path = output_dir / f"model_bt_metrics__{mode}.json"
-                tsdf.to_csv(ts_path)
-                met_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-                print(f"📈 Model backtest saved: {ts_path}")
-                print(f"📊 Model backtest metrics saved: {met_path}")
-
         if args.save_markdown:
+            # Use a representative test panel for diagnostics.
+            # For walk-forward, a single contiguous test_panel variable may not exist here.
+            _panel_for_report = (
+                processed_panel.loc[
+                    processed_panel.index.get_level_values(0).isin(
+                        set(uniq[int(np.floor(len(uniq) * float(args.train_ratio))) :])
+                    )
+                ]
+                if int(args.wf_folds or 1) <= 1
+                else processed_panel.loc[
+                    processed_panel.index.get_level_values(0).isin(
+                        set(uniq[int(len(uniq) * 0.7) :])
+                    )
+                ]
+            )
             report = build_report_from_eval(
-                test_panel,
+                _panel_for_report,
                 factor_cols,
                 eval_result,
                 args,

@@ -151,10 +151,16 @@ def _load_factors_from_sources(
     if factor_set_yaml and factor_set:
         obj = yaml.safe_load(Path(factor_set_yaml).read_text(encoding="utf-8")) or {}
         sets = obj.get("factor_sets", {}) or {}
-        if factor_set not in sets:
-            raise KeyError(f"factor_set '{factor_set}' not found in {factor_set_yaml}")
-        vals = sets.get(factor_set) or []
-        return [str(x).strip() for x in vals if str(x).strip()]
+        # Support multiple sets: "a,b,c"
+        names = [x.strip() for x in str(factor_set).split(",") if x.strip()]
+        out: List[str] = []
+        for name in names:
+            if name not in sets:
+                raise KeyError(f"factor_set '{name}' not found in {factor_set_yaml}")
+            vals = sets.get(name) or []
+            out.extend([str(x).strip() for x in vals if str(x).strip()])
+        # stable unique order
+        return list(dict.fromkeys(out))
     raise ValueError(
         "Must provide one of --factors / --factors-file / (--factor-set-yaml + --factor-set)"
     )
@@ -264,18 +270,6 @@ def main() -> None:
     start_date = args.start_date or cfg_obj.get("start_date")
     end_date = args.end_date or cfg_obj.get("end_date")
 
-    # Factor sources
-    factors = args.factors or cfg_obj.get("factors")
-    factors_file = args.factors_file or cfg_obj.get("factors_file")
-    factor_set_yaml = args.factor_set_yaml or cfg_obj.get("factor_set_yaml")
-    factor_set = args.factor_set or cfg_obj.get("factor_set")
-    factor_cols = _load_factors_from_sources(
-        factors=factors,
-        factors_file=factors_file,
-        factor_set_yaml=factor_set_yaml,
-        factor_set=factor_set,
-    )
-
     # Load panel
     if input_path:
         panel = _load_panel_from_input(str(input_path))
@@ -310,6 +304,27 @@ def main() -> None:
         panel, horizon=int(args.horizon), target=args.target or cfg_obj.get("target")
     )
     panel = filter_panel_by_assets(panel, min_assets=int(args.min_assets))
+
+    # Factor sources (resolved AFTER panel is loaded)
+    factors = args.factors or cfg_obj.get("factors")
+    factors_file = args.factors_file or cfg_obj.get("factors_file")
+    factor_set_yaml = args.factor_set_yaml or cfg_obj.get("factor_set_yaml")
+    factor_set = args.factor_set or cfg_obj.get("factor_set")
+
+    if factors or factors_file:
+        factor_cols = _load_factors_from_sources(
+            factors=factors,
+            factors_file=factors_file,
+            factor_set_yaml=None,
+            factor_set=None,
+        )
+    else:
+        factor_cols = _load_factors_from_sources(
+            factors=None,
+            factors_file=None,
+            factor_set_yaml=factor_set_yaml,
+            factor_set=factor_set,
+        )
 
     # IC metrics (fast summary)
     ic_df = compute_cross_sectional_ic(

@@ -139,8 +139,16 @@ def load_tick_data(
         raise ValueError("No tick data loaded; please verify tick parquet path.")
 
     ticks = pd.concat(frames, ignore_index=True)
-    start = pd.to_datetime(start_ts) - pd.Timedelta(minutes=lookback_minutes)
-    end = pd.to_datetime(end_ts) + pd.Timedelta(minutes=lookback_minutes)
+    # Normalize to tz-naive timestamps (UTC) for robust comparisons.
+    # Upstream callers may pass tz-aware timestamps (e.g., from UTC-indexed feature frames),
+    # while tick parquet timestamps are tz-naive. Mixing them causes
+    # "Cannot compare tz-naive and tz-aware timestamps".
+    start = pd.to_datetime(start_ts, utc=True).tz_convert(None) - pd.Timedelta(
+        minutes=lookback_minutes
+    )
+    end = pd.to_datetime(end_ts, utc=True).tz_convert(None) + pd.Timedelta(
+        minutes=lookback_minutes
+    )
     mask = (ticks["timestamp"] >= start) & (ticks["timestamp"] <= end)
     ticks = ticks.loc[mask]
     if ticks.empty:
@@ -215,8 +223,16 @@ def list_tick_files(
     it will be skipped (not raise an error) to allow partial data processing.
     """
     ticks_root = Path(ticks_dir)
-    start = pd.to_datetime(start_ts) - pd.Timedelta(minutes=lookback_minutes)
-    end = pd.to_datetime(end_ts) + pd.Timedelta(minutes=lookback_minutes)
+    # Normalize to tz-naive timestamps (UTC) for robust comparisons.
+    # Upstream callers may pass tz-aware timestamps (e.g., UTC-indexed feature frames),
+    # while tick parquet timestamps are tz-naive. Mixing them causes:
+    # "Cannot compare tz-naive and tz-aware timestamps".
+    start = pd.to_datetime(start_ts, utc=True).tz_convert(None) - pd.Timedelta(
+        minutes=lookback_minutes
+    )
+    end = pd.to_datetime(end_ts, utc=True).tz_convert(None) + pd.Timedelta(
+        minutes=lookback_minutes
+    )
     months = _month_range(start, end)
 
     tick_files: List[str] = []
@@ -601,8 +617,16 @@ def compute_vpin_from_cached_ticks(
     if not cache_files:
         raise ValueError("No cached tick files provided for VPIN computation.")
 
-    start = pd.to_datetime(start_ts) - pd.Timedelta(minutes=lookback_minutes)
-    end = pd.to_datetime(end_ts) + pd.Timedelta(minutes=lookback_minutes)
+    # Normalize to tz-naive timestamps (UTC) for robust comparisons.
+    # Upstream callers may pass tz-aware timestamps (e.g., UTC-indexed feature frames),
+    # while tick parquet timestamps are tz-naive. Mixing them causes:
+    # "Cannot compare tz-naive and tz-aware timestamps".
+    start = pd.to_datetime(start_ts, utc=True).tz_convert(None) - pd.Timedelta(
+        minutes=lookback_minutes
+    )
+    end = pd.to_datetime(end_ts, utc=True).tz_convert(None) + pd.Timedelta(
+        minutes=lookback_minutes
+    )
 
     # 优化：根据 start/end 时间过滤 cache_files，只加载需要的月份
     # 文件名格式：{symbol}_{year}-{month:02d}.parquet

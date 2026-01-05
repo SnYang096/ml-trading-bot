@@ -1835,8 +1835,35 @@ def export_features_yaml(
                 all_factors.append(dl_seq_feat)
 
     if not all_factors:
-        print("   ⚠️  No qualified factors to export.")
-        return None
+        # Still export an empty YAML when output_path is requested.
+        # This is important for automation (e.g. Pool-B + semantic search scripts) so downstream
+        # tooling can proceed deterministically even when factor-eval finds no qualified factors.
+        print("   ⚠️  No qualified factors to export. Writing an empty exported YAML.")
+        out_path = output_path
+        if out_path is None:
+            out_path = output_dir / "features_pool_b.yaml"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        obj = {
+            "name": f"{strategy_name}__pool_b_empty",
+            "description": (
+                "Pool-B export (empty): factor-eval found no qualified factors for this window/symbol. "
+                "Check label availability, filters, and evaluation window."
+            ),
+            "feature_pipeline": {
+                "requested_features": [],
+                "invert_features": list(invert_features or []),
+            },
+            "factor_eval": {
+                "strategy": strategy_name,
+                "symbol": symbol,
+                "status": "empty",
+                "reason": "no_qualified_factors",
+            },
+        }
+        out_path.write_text(
+            yaml.safe_dump(obj, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+        return out_path
 
     # Collect non-numeric / invalid factors from error_factors (to be added at the end)
     # NOTE: These factors failed numeric conversion or had insufficient samples during IC evaluation.
