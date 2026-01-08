@@ -45,6 +45,173 @@ def _parse_factor_set_names(val: Any) -> List[str]:
     return [x.strip() for x in str(val).split(",") if x.strip()]
 
 
+def _load_factor_columns_from_sets(
+    *, factor_set_yaml: str, factor_sets: List[str]
+) -> List[str]:
+    """
+    Load factor columns from config/cross_sectional/cs_factor_sets_*.yaml.
+    Supports multiple sets and preserves order.
+    """
+    obj = yaml.safe_load(Path(factor_set_yaml).read_text(encoding="utf-8")) or {}
+    sets = obj.get("factor_sets", {}) or {}
+    out: List[str] = []
+    for name in factor_sets:
+        if name not in sets:
+            raise KeyError(f"factor_set '{name}' not found in {factor_set_yaml}")
+        vals = sets.get(name) or []
+        out.extend([str(x).strip() for x in vals if str(x).strip()])
+    return list(dict.fromkeys(out))
+
+
+def _store_buildable_outputs(*, feature_deps_path: str) -> set[str]:
+    """
+    Collect all output columns which can be produced via feature_dependencies.yaml.
+    Alpha101-CS and cs_crypto_* are NOT included here (they're special-cased elsewhere).
+    """
+    try:
+        from cross_sectional.feature_store_builder import _load_feature_nodes  # type: ignore
+
+        nodes = _load_feature_nodes(feature_deps_path)
+        outs: set[str] = set()
+        for node in (nodes or {}).values():
+            for c in node.get("output_columns") or []:
+                if str(c).strip():
+                    outs.add(str(c).strip())
+        return outs
+    except Exception:
+        return set()
+
+
+def _apply_panel_augmentations_and_transforms(
+    *,
+    df_flat: pd.DataFrame,
+    eval_cfg: Dict[str, Any],
+    panel_cfg: Dict[str, Any],
+) -> tuple[pd.DataFrame, List[str]]:
+    """
+    Apply panel-time augmentations/transforms which are not stored in FeatureStore:
+    - crypto cross-sectional factors (cs_crypto_*) via add_crypto_cross_sectional_factors
+    - optional cross-sectional rank transform for factor columns
+
+    Returns:
+        (flat_df_with_columns, factor_columns_for_eval)
+    """
+    df = df_flat.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df = df.dropna(subset=["timestamp", "symbol"])
+    df["symbol"] = df["symbol"].astype(str)
+    panel = df.set_index(["timestamp", "symbol"]).sort_index()
+
+    # Resolve factor columns from config (used to decide what to transform and what to pass to factor-eval).
+    factor_set_yaml = str(eval_cfg.get("factor_set_yaml") or "").strip()
+    factor_sets = _parse_factor_set_names(eval_cfg.get("factor_set"))
+    explicit_factors = eval_cfg.get("factors")
+    explicit_factors_file = eval_cfg.get("factors_file")
+
+    factor_cols: List[str] = []
+    if explicit_factors:
+        factor_cols = [x.strip() for x in str(explicit_factors).split(",") if x.strip()]
+    elif explicit_factors_file:
+        p = Path(str(explicit_factors_file))
+        if p.exists():
+            factor_cols = [
+                ln.strip()
+                for ln in p.read_text(encoding="utf-8").splitlines()
+                if ln.strip()
+            ]
+    elif factor_set_yaml and factor_sets:
+        factor_cols = _load_factor_columns_from_sets(
+            factor_set_yaml=factor_set_yaml, factor_sets=factor_sets
+        )
+
+    # Crypto CS augmentation: enable if explicitly requested OR if factor set includes crypto_cs_core
+    # OR if any desired factor column is cs_crypto_*.
+    crypto_cfg = panel_cfg.get("crypto_cs", panel_cfg.get("crypto_factors", None))
+    crypto_enabled = False
+    if isinstance(crypto_cfg, bool):
+        crypto_enabled = bool(crypto_cfg)
+    elif isinstance(crypto_cfg, dict):
+        crypto_enabled = bool(crypto_cfg.get("enabled", False))
+    if "crypto_cs_core" in set(factor_sets):
+        crypto_enabled = True
+    if any(str(c).startswith("cs_crypto_") for c in factor_cols):
+        crypto_enabled = True
+    if crypto_enabled:
+        from cross_sectional.crypto_factors import add_crypto_cross_sectional_factors
+
+        panel = add_crypto_cross_sectional_factors(panel)
+
+    # Cross-sectional rank transform (optional)
+    rank_cfg = panel_cfg.get("cross_section_rank", {}) or {}
+    rank_enabled = False
+    if isinstance(rank_cfg, bool):
+        rank_enabled = bool(rank_cfg)
+        rank_cfg = {}
+    elif isinstance(rank_cfg, dict):
+        rank_enabled = bool(rank_cfg.get("enabled", False))
+    if rank_enabled:
+        from cross_sectional.processing import cross_sectional_rank
+
+        replace = bool(rank_cfg.get("replace", True))
+        # Default behavior for CS pipelines:
+        # - replace=True: rank in-place (keep original column names; no suffix)
+        # - replace=False: keep both (suffix default "_cs_rank")
+        suffix = str(rank_cfg.get("suffix", "" if replace else "_cs_rank"))
+        pct = bool(rank_cfg.get("pct", True))
+        method = str(rank_cfg.get("method", "average"))
+        # default exclude: targets + already-ranked columns
+        exclude_prefixes = tuple(
+            rank_cfg.get(
+                "exclude_prefixes", ["future_return", "signal", "binary_signal"]
+            )
+        )
+        exclude_contains = tuple(rank_cfg.get("exclude_contains", ["_rank"]))
+
+        # Determine columns to rank: by default rank the configured factor cols, filtered to what's in panel.
+        cols_to_rank = [c for c in factor_cols if c in panel.columns]
+        if not cols_to_rank:
+            # fallback: rank all numeric, non-excluded columns
+            cols_to_rank = [
+                c
+                for c in panel.columns
+                if pd.api.types.is_numeric_dtype(panel[c])
+                and not str(c).startswith(exclude_prefixes)
+                and not any(x in str(c) for x in exclude_contains)
+            ]
+        # Exclude columns that are already ranks (e.g. cs_crypto_*_rank, alpha101_cs_* are allowed but redundant)
+        cols_to_rank = [
+            c
+            for c in cols_to_rank
+            if not str(c).startswith(exclude_prefixes)
+            and not any(x in str(c) for x in exclude_contains)
+        ]
+
+        if cols_to_rank:
+            ranked = cross_sectional_rank(
+                panel[cols_to_rank].copy(), columns=cols_to_rank, pct=pct, method=method
+            )
+            ranked = ranked.rename(columns={c: f"{c}{suffix}" for c in cols_to_rank})
+            if replace:
+                panel = panel.drop(
+                    columns=[c for c in cols_to_rank if c in panel.columns]
+                ).join(ranked, how="left")
+                # Keep factor columns which were excluded from ranking (e.g. *_rank),
+                # and rewrite only those which were actually ranked.
+                factor_cols = [
+                    (f"{c}{suffix}" if c in cols_to_rank else c) for c in factor_cols
+                ]
+            else:
+                panel = panel.join(ranked, how="left")
+                factor_cols = list(
+                    dict.fromkeys(factor_cols + [f"{c}{suffix}" for c in cols_to_rank])
+                )
+
+    out_flat = panel.reset_index()
+    # Keep factor_cols only if present (some cs_crypto_* may be absent if close/volume missing)
+    factor_cols = [c for c in factor_cols if c in panel.columns]
+    return out_flat, factor_cols
+
+
 def _maybe_autobuild_feature_store(cfg: Dict[str, Any], *, out_root: Path) -> None:
     """
     Optional convenience: if panel.source=feature_store and requested months are missing in the layer,
@@ -118,10 +285,21 @@ def _maybe_autobuild_feature_store(cfg: Dict[str, Any], *, out_root: Path) -> No
             load_factor_set(factor_set_yaml=factor_set_yaml, factor_set=name)
         )
     desired = list(dict.fromkeys(desired))
-
+    # Filter desired outputs to those which are actually buildable into FeatureStore.
+    # - alpha101_cs_* are handled by the multi-asset alpha path in build_feature_store_for_symbols
+    # - cs_crypto_* are PANEL-TIME augmentations, not FeatureStore columns (skip here)
+    # - everything else must be in feature_dependencies outputs
     feature_deps = str(
         auto_cfg.get("feature_deps") or "config/feature_dependencies.yaml"
     )
+    deps_outs = _store_buildable_outputs(feature_deps_path=feature_deps)
+    desired = [
+        c
+        for c in desired
+        if str(c).startswith("alpha101_cs_")
+        or (not str(c).startswith("cs_crypto_") and str(c) in deps_outs)
+    ]
+
     data_path = str(auto_cfg.get("data_path") or "data/parquet_data")
     warmup_bars = int(auto_cfg.get("warmup_bars", 600))
     include_ohlcv = bool(auto_cfg.get("include_ohlcv", True))
@@ -892,6 +1070,7 @@ def main() -> None:
     source = str(panel_cfg.get("source", "parquet")).strip().lower()
     panel_path = panel_cfg.get("path")
 
+    factor_cols_for_eval: Optional[List[str]] = None
     if source == "parquet":
         if not panel_path:
             raise ValueError("panel.source=parquet requires panel.path")
@@ -937,9 +1116,15 @@ def main() -> None:
             future = df.groupby("symbol")["close"].shift(-horizon)
             df[target_col] = (future - df["close"]) / df["close"]
 
+        # Optional: apply panel-time augmentations/transforms (crypto cs factors, cs-rank) and persist.
+        df_aug, factor_cols_for_eval = _apply_panel_augmentations_and_transforms(
+            df_flat=df,
+            eval_cfg=cfg.get("factor_eval", {}) or {},
+            panel_cfg=panel_cfg or {},
+        )
         panel_path = str(out_root / "panel_from_feature_store.parquet")
         Path(panel_path).parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(panel_path, index=False)
+        df_aug.to_parquet(panel_path, index=False)
     else:
         raise ValueError("panel.source must be one of: parquet, feature_store")
 
@@ -949,18 +1134,37 @@ def main() -> None:
     fe_args: List[str] = ["--output-dir", str(eval_out)]
 
     # factor list sources
-    if eval_cfg.get("factors"):
-        fe_args += ["--factors", str(eval_cfg["factors"])]
-    if eval_cfg.get("factors_file"):
-        fe_args += ["--factors-file", str(eval_cfg["factors_file"])]
-    if eval_cfg.get("factor_set_yaml"):
-        fe_args += ["--factor-set-yaml", str(eval_cfg["factor_set_yaml"])]
-    if eval_cfg.get("factor_set"):
-        fs_val = eval_cfg.get("factor_set")
-        if isinstance(fs_val, list):
-            # allow YAML list: [setA, setB] -> "setA,setB"
-            fs_val = ",".join([str(x).strip() for x in fs_val if str(x).strip()])
-        fe_args += ["--factor-set", str(fs_val)]
+    # If pipeline applied a rank transform with replace=true, the factor column names have changed;
+    # use the computed factor list directly to avoid mismatches.
+    rank_cfg = (
+        (panel_cfg or {}).get("cross_section_rank", {})
+        if isinstance(panel_cfg, dict)
+        else {}
+    )
+    rank_replace = False
+    if isinstance(rank_cfg, bool):
+        rank_replace = bool(rank_cfg)
+    elif isinstance(rank_cfg, dict):
+        rank_replace = bool(rank_cfg.get("enabled", False)) and bool(
+            rank_cfg.get("replace", True)
+        )
+    if factor_cols_for_eval and rank_replace:
+        factors_path = out_root / "factors_for_eval.txt"
+        factors_path.write_text("\n".join(factor_cols_for_eval), encoding="utf-8")
+        fe_args += ["--factors-file", str(factors_path)]
+    else:
+        if eval_cfg.get("factors"):
+            fe_args += ["--factors", str(eval_cfg["factors"])]
+        if eval_cfg.get("factors_file"):
+            fe_args += ["--factors-file", str(eval_cfg["factors_file"])]
+        if eval_cfg.get("factor_set_yaml"):
+            fe_args += ["--factor-set-yaml", str(eval_cfg["factor_set_yaml"])]
+        if eval_cfg.get("factor_set"):
+            fs_val = eval_cfg.get("factor_set")
+            if isinstance(fs_val, list):
+                # allow YAML list: [setA, setB] -> "setA,setB"
+                fs_val = ",".join([str(x).strip() for x in fs_val if str(x).strip()])
+            fe_args += ["--factor-set", str(fs_val)]
 
     if panel_path:
         fe_args += ["--input", str(panel_path)]

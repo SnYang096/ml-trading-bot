@@ -58,6 +58,16 @@ def _load_multi(p: Path, *, prefix: str) -> pd.DataFrame:
     parts = []
     for f in _collect_files(p, prefix=prefix):
         df = _read_any(f)
+        # Normalize timestamps so concatenation across symbols doesn't degrade the index dtype.
+        # Some parquet files may have tz-aware DatetimeIndex (datetime64[ns, UTC]) while others are tz-naive.
+        # If we concat mixed tz indices, pandas will upcast to object Index, and downstream code will
+        # lose the ability to infer a proper timestamp column from the index.
+        if "timestamp" not in df.columns and isinstance(df.index, pd.DatetimeIndex):
+            df = df.copy()
+            df["timestamp"] = pd.to_datetime(
+                df.index, utc=True, errors="coerce"
+            ).tz_convert(None)
+            df = df.reset_index(drop=True)
         if "symbol" not in df.columns:
             df = df.copy()
             df["symbol"] = f.stem.replace(f"{prefix}_", "")

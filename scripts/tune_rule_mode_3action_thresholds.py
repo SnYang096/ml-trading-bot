@@ -58,11 +58,15 @@ def _collect_pred_files(preds_dir: Path) -> List[Path]:
 
 def _ensure_timestamp_col(df: pd.DataFrame) -> pd.DataFrame:
     if "timestamp" in df.columns:
+        # Avoid ambiguity: timestamp might also be an index level in parquet outputs.
+        if "timestamp" in getattr(df.index, "names", []):
+            return df.reset_index(drop=True)
         return df
     if isinstance(df.index, pd.DatetimeIndex):
         out = df.copy()
         out["timestamp"] = out.index
-        return out
+        # Ensure timestamp is only a column (avoid index/column ambiguity downstream)
+        return out.reset_index(drop=True)
     raise ValueError("Expected preds to have a timestamp column or DatetimeIndex.")
 
 
@@ -107,6 +111,9 @@ def _load_preds_by_symbol(preds_path: Path) -> Dict[str, pd.DataFrame]:
     out: Dict[str, pd.DataFrame] = {}
     for f in _collect_pred_files(preds_path):
         df = _ensure_timestamp_col(_read_parquet_or_csv(f))
+        # After normalization, guarantee timestamp is not also an index name.
+        if "timestamp" in getattr(df.index, "names", []):
+            df = df.reset_index(drop=True)
         sym = (
             str(df["symbol"].iloc[0])
             if "symbol" in df.columns
@@ -119,7 +126,7 @@ def _load_preds_by_symbol(preds_path: Path) -> Dict[str, pd.DataFrame]:
             df["timestamp"], errors="coerce"
         ).dt.tz_localize(None)
         df = df.dropna(subset=["timestamp"])
-        df = df.sort_values("timestamp")
+        df = df.sort_values("timestamp").reset_index(drop=True)
         out[sym] = df
     return out
 

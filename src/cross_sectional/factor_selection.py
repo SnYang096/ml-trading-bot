@@ -34,6 +34,9 @@ def compute_cross_sectional_ic(
     if not isinstance(panel.index, pd.MultiIndex):
         raise ValueError("Panel must be a MultiIndex with (timestamp, symbol).")
 
+    # Ensure factor list is stable-unique to avoid duplicate metric rows / non-unique indices.
+    factor_cols = list(dict.fromkeys([str(c) for c in factor_cols if str(c)]))
+
     panel = filter_panel_by_assets(
         panel, min_assets=min_assets, timestamp_level=timestamp_level
     )
@@ -56,13 +59,25 @@ def compute_cross_sectional_ic(
         for _, group in grouped:
             if factor not in group.columns:
                 continue
-            series = group[[factor, target_col]].dropna()
-            if len(series) < min_assets or series[factor].nunique() < min(
+            pair = group[[factor, target_col]].dropna()
+            if pair.empty or len(pair) < min_assets:
+                continue
+
+            x = pair[factor]
+            y = pair[target_col]
+            # Guard: if x is not a Series (e.g. duplicate columns / pandas edge cases),
+            # reduce deterministically to a 1D Series.
+            if isinstance(x, pd.DataFrame):
+                x = x.iloc[:, 0]
+            if isinstance(y, pd.DataFrame):
+                y = y.iloc[:, 0]
+
+            if getattr(x, "nunique", None) is None or int(x.nunique()) < min(
                 3, min_assets
             ):
                 continue
 
-            corr = series[factor].corr(series[target_col], method="spearman")
+            corr = x.corr(y, method="spearman")
             if pd.notna(corr):
                 ic_values.append(float(corr))
 

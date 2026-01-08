@@ -99,6 +99,31 @@ def _ensure_timestamp_column(df: pd.DataFrame, *, ts_col: str) -> pd.DataFrame:
     return out
 
 
+def _normalize_timestamp_col(df: pd.DataFrame, *, ts_col: str) -> pd.DataFrame:
+    """
+    Normalize timestamp column to tz-naive UTC datetime64[ns].
+
+    Motivation:
+    - FeatureStore/preds may carry tz-aware DatetimeIndex (datetime64[ns, UTC]).
+    - Raw OHLCV loaders often yield tz-naive timestamps.
+    - Joining on (symbol, timestamp) must use the same dtype, otherwise the join becomes empty.
+    """
+    if ts_col not in df.columns:
+        return df
+    out = df.copy()
+    # If timestamp is integer (fallback path), do not coerce.
+    if pd.api.types.is_integer_dtype(out[ts_col]) or pd.api.types.is_bool_dtype(
+        out[ts_col]
+    ):
+        return out
+    ts = pd.to_datetime(out[ts_col], errors="coerce", utc=True)
+    # Convert to tz-naive UTC for consistent joins.
+    out[ts_col] = ts.dt.tz_convert(None)
+    # Drop invalid timestamps (cannot be joined)
+    out = out.dropna(subset=[ts_col])
+    return out
+
+
 def _apply_overrides_to_dataclass(
     cfg_obj: Any, overrides: Optional[Dict[str, Any]]
 ) -> Any:
@@ -178,6 +203,8 @@ def build_logs_3action(
 
     preds_df = _ensure_timestamp_column(preds_df, ts_col=cfg.timestamp_col)
     raw_df = _ensure_timestamp_column(raw_df, ts_col=cfg.timestamp_col)
+    preds_df = _normalize_timestamp_col(preds_df, ts_col=cfg.timestamp_col)
+    raw_df = _normalize_timestamp_col(raw_df, ts_col=cfg.timestamp_col)
 
     # Prepare/compute mode
     if mode_df is None:
@@ -188,6 +215,7 @@ def build_logs_3action(
         mode_df["mode"] = mode_out["mode"].astype(str).values
     else:
         mode_df = _ensure_timestamp_column(mode_df, ts_col=cfg.timestamp_col)
+        mode_df = _normalize_timestamp_col(mode_df, ts_col=cfg.timestamp_col)
         if cfg.symbol_col not in mode_df.columns:
             raise ValueError(
                 f"mode_df missing required symbol column '{cfg.symbol_col}'"

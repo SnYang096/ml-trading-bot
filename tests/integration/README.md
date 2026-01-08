@@ -74,7 +74,7 @@ make test-integration
 
 # 或直接使用 Docker
 docker run --rm -v $(pwd):/workspace -w /workspace \
-  hansenlovefiona017/lightgbm-runtime:v0.0.5 \
+  hansenlovefiona017/lightgbm-runtime:v0.0.9 \
   pytest tests/integration/ -v
 ```
 

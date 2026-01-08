@@ -164,6 +164,13 @@ def select_from_category(
         target_col,
         min_assets=min_assets,
     )
+    # If IC metrics cannot be computed (e.g. too many NaNs after filtering),
+    # fall back to a deterministic top-k subset to keep the workflow running.
+    # This is preferable to crashing; callers can inspect diagnostics to decide
+    # whether to relax thresholds or improve data coverage.
+    if metrics is None or metrics.empty:
+        fallback = list(factors)[: max(0, int(top_k))] if top_k else []
+        return {"selected": fallback, "metrics": {}}
     selected = apply_factor_selection(
         metrics,
         factors,
@@ -187,12 +194,21 @@ def aggregate_selection(
     ir_threshold: Optional[float],
     ranking_stat: str,
 ) -> Dict[str, object]:
+    # Ensure stable-unique list; same factor can be selected by multiple categories.
+    initial_selection = list(
+        dict.fromkeys([str(x) for x in initial_selection if str(x).strip()])
+    )
     metrics = compute_cross_sectional_ic(
         panel,
         initial_selection,
         target_col,
         min_assets=min_assets,
     )
+    if metrics is None or metrics.empty:
+        fallback = (
+            list(initial_selection)[: max(0, int(global_top))] if global_top else []
+        )
+        return {"selected": fallback, "metrics": {}}
     final_selected = apply_factor_selection(
         metrics,
         initial_selection,

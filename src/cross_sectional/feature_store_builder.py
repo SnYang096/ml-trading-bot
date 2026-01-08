@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -165,6 +166,21 @@ def _apply_feature_node(
     compute_params = node.get("compute_params") or {}
     mappings = node.get("column_mappings") or {}
 
+    # Some YAMLs may include extra keys under compute_params (e.g. metadata-ish fields).
+    # Filter compute_params to only those accepted by the compute function signature.
+    try:
+        sig = inspect.signature(func)
+        allow_all = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not allow_all:
+            compute_params = {
+                k: v for k, v in compute_params.items() if k in sig.parameters
+            }
+    except Exception:
+        # If signature introspection fails, fall back to passing params as-is.
+        pass
+
     if pass_full_df:
         out = func(df, **compute_params)
         if not isinstance(out, pd.DataFrame):
@@ -293,10 +309,14 @@ def build_feature_store_for_symbols(
         layer = str(cfg.features_store_layer)
 
     root = Path(cfg.features_store_root)
-    # Special mode: Alpha101 original cross-sectional-rank factors are computed
-    # from multi-asset wide tables, not from feature_dependencies.yaml nodes.
+    # Alpha101 original cross-sectional-rank factors are computed from multi-asset wide tables,
+    # while other OHLCV-only factors are computed per-symbol via feature_dependencies.yaml DAG.
+    # NOTE: it's common to want BOTH sets in the same FeatureStore layer (e.g. pipeline_all_cs_rank_4h).
     alpha_cs_cols = [
         c for c in desired_output_cols if str(c).startswith("alpha101_cs_")
+    ]
+    other_cols = [
+        c for c in desired_output_cols if not str(c).startswith("alpha101_cs_")
     ]
     alpha_cs_ids: List[int] = []
     if alpha_cs_cols:
@@ -307,10 +327,13 @@ def build_feature_store_for_symbols(
             except Exception:
                 continue
         alpha_cs_ids = sorted(set(alpha_cs_ids))
-    else:
+    # Prepare DAG-based compute for non-alpha columns if requested.
+    nodes = None
+    compute_order = None
+    if other_cols:
         nodes = _load_feature_nodes(feature_deps_path)
         feature_keys = _resolve_feature_keys_for_outputs(
-            desired_output_cols=list(desired_output_cols),
+            desired_output_cols=list(other_cols),
             feature_deps_path=feature_deps_path,
         )
         compute_order = _toposort_features(feature_keys, nodes)
@@ -326,8 +349,9 @@ def build_feature_store_for_symbols(
         sym = str(sym).strip().upper()
         if not sym:
             continue
-        if alpha_cs_ids:
-            # alpha101_cs_* requires cross-sectional computation; handle below after loading all symbols.
+        # alpha101_cs_* is handled in the per-month multi-asset path below, but we can still
+        # compute other_cols here in the standard per-symbol DAG path.
+        if alpha_cs_ids and not other_cols:
             continue
         for ms in months:
             me = (ms + pd.offsets.MonthBegin(1)).to_pydatetime()
@@ -383,7 +407,7 @@ def build_feature_store_for_symbols(
                 month_end=month_end,
                 nodes=nodes,
                 compute_order=compute_order,
-                desired_output_cols=desired_output_cols,
+                desired_output_cols=other_cols if other_cols else desired_output_cols,
                 include_ohlcv=bool(cfg.include_ohlcv),
             )
             if out_month.empty:
@@ -467,7 +491,8 @@ def build_feature_store_for_symbols(
             if panel.empty:
                 continue
 
-            # Split per symbol and write
+            # Split per symbol and write. If other_cols are requested, compute them and merge
+            # into the same monthly parquet so downstream panel loading sees the full factor universe.
             available_syms = set(panel.index.get_level_values("symbol").astype(str))
             for sym in [str(s).strip().upper() for s in symbols]:
                 if sym not in available_syms:
@@ -508,8 +533,47 @@ def build_feature_store_for_symbols(
                     for c in ["open", "high", "low", "close", "volume"]:
                         if c in raw_month.columns:
                             sub[c] = raw_month[c]
+
                 # store as flat index=timestamp for consistency with existing rank loader
-                df_out = sub.reset_index().set_index("timestamp").sort_index()
+                df_alpha = sub.reset_index().set_index("timestamp").sort_index()
+                df_alpha["symbol"] = sym
+
+                # When merging with per-symbol DAG features (which may already include OHLCV),
+                # only keep alpha columns from the alpha panel to avoid overlapping OHLCV columns.
+                alpha_only_cols = [
+                    c for c in df_alpha.columns if str(c).startswith("alpha101_cs_")
+                ]
+                df_alpha_only = df_alpha[alpha_only_cols].copy()
+
+                df_out = df_alpha
+                if (
+                    other_cols
+                    and nodes is not None
+                    and compute_order is not None
+                    and sym in frames
+                ):
+                    try:
+                        out_other = build_symbol_month(
+                            df_raw=frames[sym],
+                            symbol=sym,
+                            month_start=month_start,
+                            month_end=month_end,
+                            nodes=nodes,
+                            compute_order=compute_order,
+                            desired_output_cols=other_cols,
+                            include_ohlcv=bool(cfg.include_ohlcv),
+                        )
+                        if out_other is not None and not out_other.empty:
+                            # Merge on timestamp index; prefer alpha columns if collisions (shouldn't).
+                            df_out = out_other.join(
+                                df_alpha_only,
+                                how="left",
+                            )
+                            df_out["symbol"] = sym
+                    except Exception:
+                        # Keep alpha-only output if the per-symbol DAG computation fails.
+                        df_out = df_alpha
+
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 df_out.to_parquet(out_path, index=True)
 

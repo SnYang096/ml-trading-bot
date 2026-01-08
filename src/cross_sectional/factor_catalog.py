@@ -29,6 +29,7 @@ class FactorCategory:
 
 
 CATEGORY_DEFINITIONS: List[FactorCategory] = [
+    FactorCategory("alpha101_cs", ("alpha101_cs_",)),
     FactorCategory(
         "baseline_structure",
         (

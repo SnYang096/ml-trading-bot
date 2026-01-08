@@ -134,7 +134,7 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
     """Run a Python script with optional Docker wrapper."""
     if docker and not _is_in_docker():
         docker_image = os.environ.get(
-            "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7"
+            "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.9"
         )
         cmd = [
             "docker",
@@ -221,7 +221,9 @@ def _find_listening_pids(port: int) -> List[int]:
             if int(conn.laddr.port) != int(port):
                 continue
             # Only consider listeners
-            if getattr(conn, "status", None) != getattr(psutil, "CONN_LISTEN", "LISTEN"):
+            if getattr(conn, "status", None) != getattr(
+                psutil, "CONN_LISTEN", "LISTEN"
+            ):
                 continue
             if conn.pid:
                 pids.add(int(conn.pid))
@@ -466,7 +468,9 @@ def _data_download_impl(
             if universe_groups
             else None
         )
-        resolved = cfg.resolve_symbols_usdt(universe_set=str(universe_set), groups=groups)
+        resolved = cfg.resolve_symbols_usdt(
+            universe_set=str(universe_set), groups=groups
+        )
         symbols = ",".join(resolved)
 
     args = [
@@ -573,8 +577,11 @@ def data_download(
     )
     sys.exit(code)
 
+
 @data.command("download-funding-rate")
-@click.option("--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols")
+@click.option(
+    "--symbols", "-s", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
+)
 @click.option(
     "--universe-config",
     default=None,
@@ -586,10 +593,30 @@ def data_download(
 @click.option("--start-month", default="1", help="Start month")
 @click.option("--end-year", help="End year (default: current)")
 @click.option("--end-month", help="End month (default: current)")
-@click.option("--data-dir", default="data/funding_rate/zip", help="Output directory for fundingRate ZIP files")
-@click.option("--parquet-dir", default="data/funding_rate/parquet", help="Output directory for fundingRate Parquet")
-@click.option("--sleep-sec", type=float, default=0.2, show_default=True, help="Sleep between requests (rate-limit friendly)")
-@click.option("--progress-every", type=int, default=25, show_default=True, help="Print progress every N tasks (0 disables)")
+@click.option(
+    "--data-dir",
+    default="data/funding_rate/zip",
+    help="Output directory for fundingRate ZIP files",
+)
+@click.option(
+    "--parquet-dir",
+    default="data/funding_rate/parquet",
+    help="Output directory for fundingRate Parquet",
+)
+@click.option(
+    "--sleep-sec",
+    type=float,
+    default=0.2,
+    show_default=True,
+    help="Sleep between requests (rate-limit friendly)",
+)
+@click.option(
+    "--progress-every",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Print progress every N tasks (0 disables)",
+)
 @click.option("--force/--no-force", default=False, show_default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_download_funding_rate(
@@ -618,7 +645,9 @@ def data_download_funding_rate(
             if universe_groups
             else None
         )
-        resolved = cfg.resolve_symbols_usdt(universe_set=str(universe_set), groups=groups)
+        resolved = cfg.resolve_symbols_usdt(
+            universe_set=str(universe_set), groups=groups
+        )
         symbols = ",".join(resolved)
 
     args = [
@@ -646,10 +675,17 @@ def data_download_funding_rate(
 
     sys.exit(run_script("src/data_tools/download_funding_rate.py", args))
 
+
 @data.command("update-market-cap")
 @click.option("--config", default="config/data/market_cap.yaml", show_default=True)
-@click.option("--symbols", default="", help="Optional comma-separated symbols (default: universe+config)")
-@click.option("--output-dir", default="", help="Override output dir (default: config.data_dir)")
+@click.option(
+    "--symbols",
+    default="",
+    help="Optional comma-separated symbols (default: universe+config)",
+)
+@click.option(
+    "--output-dir", default="", help="Override output dir (default: config.data_dir)"
+)
 @click.option("--write-manifest/--no-write-manifest", default=True, show_default=True)
 @click.option("--force/--no-force", default=False, show_default=True)
 @click.option("--max-age-days", type=int, default=1, show_default=True)
@@ -695,8 +731,14 @@ def data_update_market_cap(
     default=None,
     help="Optional ZIP glob pattern to convert a subset (example: BNBUSDT-aggTrades-2024-*.zip).",
 )
-@click.option("--input-dir", default=None, help="ZIP input directory (default: data/agg_data)")
-@click.option("--output-dir", default=None, help="Parquet output directory (default: data/parquet_data)")
+@click.option(
+    "--input-dir", default=None, help="ZIP input directory (default: data/agg_data)"
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Parquet output directory (default: data/parquet_data)",
+)
 @click.option(
     "--backup-dir",
     default=None,
@@ -811,8 +853,18 @@ def data_pipeline_universe(
 
 
 @data.command("check-month-coverage")
-@click.option("--symbol", default="", help="Optional symbol like BNBUSDT (default: all symbols summary)")
-@click.option("--start", "start_ym", default="2023-01", show_default=True, help="Start YYYY-MM (inclusive)")
+@click.option(
+    "--symbol",
+    default="",
+    help="Optional symbol like BNBUSDT (default: all symbols summary)",
+)
+@click.option(
+    "--start",
+    "start_ym",
+    default="2023-01",
+    show_default=True,
+    help="Start YYYY-MM (inclusive)",
+)
 @click.option(
     "--end",
     "end_ym",
@@ -820,8 +872,15 @@ def data_pipeline_universe(
     show_default=True,
     help="End YYYY-MM (inclusive)",
 )
-@click.option("--zip-dir", default="data/agg_data", show_default=True, help="ZIP directory")
-@click.option("--parquet-dir", default="data/parquet_data", show_default=True, help="Parquet directory")
+@click.option(
+    "--zip-dir", default="data/agg_data", show_default=True, help="ZIP directory"
+)
+@click.option(
+    "--parquet-dir",
+    default="data/parquet_data",
+    show_default=True,
+    help="Parquet directory",
+)
 @click.option("--show-missing/--no-show-missing", default=False, show_default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_check_month_coverage(
@@ -834,7 +893,16 @@ def data_check_month_coverage(
     docker: bool,
 ):
     """Check YYYY-MM coverage for monthly aggTrades ZIP + Parquet datasets."""
-    args = ["--start", str(start_ym), "--end", str(end_ym), "--zip-dir", str(zip_dir), "--parquet-dir", str(parquet_dir)]
+    args = [
+        "--start",
+        str(start_ym),
+        "--end",
+        str(end_ym),
+        "--zip-dir",
+        str(zip_dir),
+        "--parquet-dir",
+        str(parquet_dir),
+    ]
     if symbol and str(symbol).strip():
         args.extend(["--symbol", str(symbol).strip()])
     if show_missing:
@@ -866,7 +934,12 @@ def feature_store():
 
 
 @feature_store.command("build")
-@click.option("--config", "-c", required=True, help="Config directory containing features.yaml (tree or nn).")
+@click.option(
+    "--config",
+    "-c",
+    required=True,
+    help="Config directory containing features.yaml (tree or nn).",
+)
 @click.option(
     "--symbols",
     "-s",
@@ -893,15 +966,27 @@ def feature_store():
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
-@click.option("--root", "feature_store_root", default="feature_store", help="FeatureStore root dir.")
+@click.option(
+    "--root",
+    "feature_store_root",
+    default="feature_store",
+    help="FeatureStore root dir.",
+)
 @click.option(
     "--layer",
     default=None,
     help="FeatureStore layer (dataset id). If not specified, auto-generated from config content. "
     "You can pass a versioned name like heavy_v6/base_v6 for manual invalidation/rebuild.",
 )
-@click.option("--warmup-months", type=int, default=0, help="Warmup calendar months (optional).")
-@click.option("--warmup-bars", type=int, default=0, help="Fallback warmup by bars if warmup-months=0.")
+@click.option(
+    "--warmup-months", type=int, default=0, help="Warmup calendar months (optional)."
+)
+@click.option(
+    "--warmup-bars",
+    type=int,
+    default=0,
+    help="Fallback warmup by bars if warmup-months=0.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def feature_store_build(
     config,
@@ -929,7 +1014,11 @@ def feature_store_build(
         "--data-path",
         f"/workspace/{data_path}" if use_workspace_prefix else data_path,
         "--root",
-        f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        (
+            f"/workspace/{feature_store_root}"
+            if use_workspace_prefix
+            else feature_store_root
+        ),
         "--warmup-months",
         str(int(warmup_months)),
         "--warmup-bars",
@@ -941,7 +1030,11 @@ def feature_store_build(
         args.extend(
             [
                 "--universe-config",
-                f"/workspace/{universe_config}" if use_workspace_prefix else universe_config,
+                (
+                    f"/workspace/{universe_config}"
+                    if use_workspace_prefix
+                    else universe_config
+                ),
             ]
         )
         args.extend(["--universe-set", universe_set])
@@ -954,7 +1047,9 @@ def feature_store_build(
     # Only pass --layer if explicitly provided (None means auto-generate in script)
     if layer is not None:
         args.extend(["--layer", layer])
-    sys.exit(run_script("scripts/build_feature_store_from_config.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/build_feature_store_from_config.py", args, docker=docker)
+    )
 
 
 @cli.group()
@@ -988,15 +1083,28 @@ def search():
     help="Comma-separated strategy directory names under config/strategies/ (can be a single strategy).",
 )
 @click.option("--tag", default=None, help="Tag for outputs.")
-@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option(
+    "--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol"
+)
 @click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
 @click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
 @click.option("--test-size", default="0.3", show_default=True, help="Test set ratio")
-@click.option("--seeds", default="1,2,3,4,5", show_default=True, help="Comma-separated seeds")
-@click.option("--objective", default="Sharpe_mean", show_default=True, help="Objective metric")
-@click.option("--min-trades", default="10", show_default=True, help="Min trades_mean constraint")
-@click.option("--max-steps", default="5", show_default=True, help="Max steps (beam depth / greedy steps)")
+@click.option(
+    "--seeds", default="1,2,3,4,5", show_default=True, help="Comma-separated seeds"
+)
+@click.option(
+    "--objective", default="Sharpe_mean", show_default=True, help="Objective metric"
+)
+@click.option(
+    "--min-trades", default="10", show_default=True, help="Min trades_mean constraint"
+)
+@click.option(
+    "--max-steps",
+    default="5",
+    show_default=True,
+    help="Max steps (beam depth / greedy steps)",
+)
 @click.option(
     "--search-algo",
     default="pipeline",
@@ -1075,14 +1183,24 @@ def search_tree(
     show_default=True,
     help="Base nnmultihead config directory.",
 )
-@click.option("--symbols", default="BTCUSDT,ETHUSDT", show_default=True, help="Comma-separated symbols")
+@click.option(
+    "--symbols",
+    default="BTCUSDT,ETHUSDT",
+    show_default=True,
+    help="Comma-separated symbols",
+)
 @click.option("--timeframe", default="240T", show_default=True)
 @click.option("--start-date", required=True)
 @click.option("--end-date", required=True)
 @click.option("--features-store-root", default="feature_store", show_default=True)
 @click.option("--features-store-layer", required=True)
 @click.option("--tag", default=None, help="Tag for outputs (default: auto).")
-@click.option("--objective", default="dir_auc", show_default=True, help="nn objective metric (metrics.json key)")
+@click.option(
+    "--objective",
+    default="dir_auc",
+    show_default=True,
+    help="nn objective metric (metrics.json key)",
+)
 @click.option(
     "--search-algo",
     default="pipeline",
@@ -1096,7 +1214,12 @@ def search_tree(
     help="Comma-separated columns to exclude from MLP input. If omitted, use config's feature_pipeline.exclude_columns (recommended).",
 )
 @click.option("--expand-semantic-singletons", is_flag=True, default=False)
-@click.option("--run-train/--no-run-train", default=True, show_default=True, help="Train best config after search")
+@click.option(
+    "--run-train/--no-run-train",
+    default=True,
+    show_default=True,
+    help="Train best config after search",
+)
 def search_nn(
     config_dir,
     symbols,
@@ -1158,8 +1281,18 @@ def rl_exec():
 
 
 @rl_exec.command("control-check")
-@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet (symbol,timestamp,mode,ret_mean,ret_trend,...)")
-@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (report/metrics/csv).")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet (symbol,timestamp,mode,ret_mean,ret_trend,...)",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory for artifacts (report/metrics/csv).",
+)
 @click.option("--entry-delay", type=int, default=1)
 @click.option("--cost-per-turnover", type=float, default=0.0002)
 @click.option("--slippage-bps", type=float, default=0.0)
@@ -1218,7 +1351,9 @@ def rl_exec_control_check(
 
 @rl_exec.command("chaos-test")
 @click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet")
-@click.option("--out", "out_dir", required=True, help="Output directory root (baseline/chaos).")
+@click.option(
+    "--out", "out_dir", required=True, help="Output directory root (baseline/chaos)."
+)
 @click.option("--seed", type=int, default=0)
 @click.option("--nan-ratio", type=float, default=0.0)
 @click.option("--return-scale", type=float, default=1.0)
@@ -1266,10 +1401,30 @@ def rl_router():
 
 
 @rl_router.command("diagnose")
-@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet (symbol,timestamp,mode,ret_mean,ret_trend,...)")
-@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (report/metrics/csv).")
-@click.option("--rolling-window", type=int, default=300, help="Rolling window (steps) for drift metrics.")
-@click.option("--rolling-min-periods", type=int, default=60, help="Min periods for rolling drift metrics.")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet (symbol,timestamp,mode,ret_mean,ret_trend,...)",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory for artifacts (report/metrics/csv).",
+)
+@click.option(
+    "--rolling-window",
+    type=int,
+    default=300,
+    help="Rolling window (steps) for drift metrics.",
+)
+@click.option(
+    "--rolling-min-periods",
+    type=int,
+    default=60,
+    help="Min periods for rolling drift metrics.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_router_diagnose(logs_path, out_dir, rolling_window, rolling_min_periods, docker):
     use_workspace_prefix = docker and not _is_in_docker()
@@ -1287,10 +1442,27 @@ def rl_router_diagnose(logs_path, out_dir, rolling_window, rolling_min_periods, 
 
 
 @rl_router.command("embed-eval")
-@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with mode + ret_mean/ret_trend + head_*")
-@click.option("--out", "out_dir", required=True, help="Output directory root for A/B artifacts.")
-@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
-@click.option("--regime-buckets", type=int, default=4, help="Number of regime buckets for one-hot embedding.")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet with mode + ret_mean/ret_trend + head_*",
+)
+@click.option(
+    "--out", "out_dir", required=True, help="Output directory root for A/B artifacts."
+)
+@click.option(
+    "--train-ratio",
+    type=float,
+    default=0.7,
+    help="Train ratio per symbol (time-ordered).",
+)
+@click.option(
+    "--regime-buckets",
+    type=int,
+    default=4,
+    help="Number of regime buckets for one-hot embedding.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker):
     """A/B eval: BC baseline vs +regime(one-hot) embedding."""
@@ -1309,33 +1481,96 @@ def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker
 
 
 @rl.command("build-logs-3action")
-@click.option("--preds", "preds_path", required=True, help="Preds file/dir from nnmultihead predict (preds_*.parquet)")
-@click.option("--mode", "mode_path", default=None, help="Optional mode file/dir from mlbot rule mode-3action")
-@click.option("--symbols", "-s", default=None, help="Optional symbols filter (comma-separated). If omitted, infer from preds.")
+@click.option(
+    "--preds",
+    "preds_path",
+    required=True,
+    help="Preds file/dir from nnmultihead predict (preds_*.parquet)",
+)
+@click.option(
+    "--mode",
+    "mode_path",
+    default=None,
+    help="Optional mode file/dir from mlbot rule mode-3action",
+)
+@click.option(
+    "--symbols",
+    "-s",
+    default=None,
+    help="Optional symbols filter (comma-separated). If omitted, infer from preds.",
+)
 @click.option("--data-path", default="data/parquet_data", help="Raw data directory")
 @click.option("--timeframe", default="240T", help="Timeframe (must match preds)")
 @click.option("--start-date", default=None)
 @click.option("--end-date", default=None)
-@click.option("--model", "model_path", default=None, help="Optional model.pt to infer preds_in_log1p")
-@click.option("--preds-in-log1p", type=click.Choice(["yes", "no"]), default=None, help="Override preds space (yes=log1p)")
+@click.option(
+    "--model",
+    "model_path",
+    default=None,
+    help="Optional model.pt to infer preds_in_log1p",
+)
+@click.option(
+    "--preds-in-log1p",
+    type=click.Choice(["yes", "no"]),
+    default=None,
+    help="Override preds space (yes=log1p)",
+)
 @click.option(
     "--returns-source",
     type=click.Choice(["momentum_proxy", "rr_execution", "vectorbt_execution"]),
     default="momentum_proxy",
     help="How to build ret_mean/ret_trend",
 )
-@click.option("--momentum-lookback", type=int, default=5, help="Lookback for momentum proxy used in ret_mean/ret_trend")
-@click.option("--vbt-top-quantile", type=float, default=0.05, help="vectorbt: top quantile for long entries (regression score)")
-@click.option("--vbt-bottom-quantile", type=float, default=0.05, help="vectorbt: bottom quantile for short entries (regression score)")
-@click.option("--vbt-entry-mode", type=click.Choice(["level", "cross"]), default="cross", help="vectorbt: entry mode")
-@click.option("--vbt-fee", type=float, default=0.0004, help="vectorbt: fee per trade (fraction)")
-@click.option("--vbt-slippage", type=float, default=0.0001, help="vectorbt: slippage (fraction)")
+@click.option(
+    "--momentum-lookback",
+    type=int,
+    default=5,
+    help="Lookback for momentum proxy used in ret_mean/ret_trend",
+)
+@click.option(
+    "--vbt-top-quantile",
+    type=float,
+    default=0.05,
+    help="vectorbt: top quantile for long entries (regression score)",
+)
+@click.option(
+    "--vbt-bottom-quantile",
+    type=float,
+    default=0.05,
+    help="vectorbt: bottom quantile for short entries (regression score)",
+)
+@click.option(
+    "--vbt-entry-mode",
+    type=click.Choice(["level", "cross"]),
+    default="cross",
+    help="vectorbt: entry mode",
+)
+@click.option(
+    "--vbt-fee", type=float, default=0.0004, help="vectorbt: fee per trade (fraction)"
+)
+@click.option(
+    "--vbt-slippage", type=float, default=0.0001, help="vectorbt: slippage (fraction)"
+)
 @click.option("--vbt-freq", default="4H", help="vectorbt: freq string, e.g. 4H/1H/15T")
-@click.option("--symbol-profiles-json", default=None, help='Per-symbol profile mapping JSON, e.g. {"BTCUSDT":"btc","DOGEUSDT":"meme"}')
+@click.option(
+    "--symbol-profiles-json",
+    default=None,
+    help='Per-symbol profile mapping JSON, e.g. {"BTCUSDT":"btc","DOGEUSDT":"meme"}',
+)
 @click.option("--default-profile", default="standard", help="Default market profile.")
-@click.option("--rr-profile-overrides-json", default=None, help='RR profile overrides JSON, e.g. {"meme":{"take_profit_r":2.5}}')
-@click.option("--vbt-profile-overrides-json", default=None, help='vectorbt profile overrides JSON, e.g. {"btc":{"fee":0.0002}}')
-@click.option("--output", "output_path", required=True, help="Output logs path (.parquet/.csv)")
+@click.option(
+    "--rr-profile-overrides-json",
+    default=None,
+    help='RR profile overrides JSON, e.g. {"meme":{"take_profit_r":2.5}}',
+)
+@click.option(
+    "--vbt-profile-overrides-json",
+    default=None,
+    help='vectorbt profile overrides JSON, e.g. {"btc":{"fee":0.0002}}',
+)
+@click.option(
+    "--output", "output_path", required=True, help="Output logs path (.parquet/.csv)"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_build_logs_3action(
     preds_path,
@@ -1398,7 +1633,9 @@ def rl_build_logs_3action(
     if vbt_profile_overrides_json:
         args.extend(["--vbt-profile-overrides-json", str(vbt_profile_overrides_json)])
     if mode_path:
-        args.extend(["--mode", f"/workspace/{mode_path}" if use_workspace_prefix else mode_path])
+        args.extend(
+            ["--mode", f"/workspace/{mode_path}" if use_workspace_prefix else mode_path]
+        )
     if symbols:
         args.extend(["--symbols", str(symbols)])
     if start_date:
@@ -1406,7 +1643,12 @@ def rl_build_logs_3action(
     if end_date:
         args.extend(["--end-date", str(end_date)])
     if model_path:
-        args.extend(["--model", f"/workspace/{model_path}" if use_workspace_prefix else model_path])
+        args.extend(
+            [
+                "--model",
+                f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+            ]
+        )
     if preds_in_log1p:
         args.extend(["--preds-in-log1p", str(preds_in_log1p)])
 
@@ -1414,10 +1656,26 @@ def rl_build_logs_3action(
 
 
 @rule.command("mode-3action")
-@click.option("--preds", required=True, help="Preds file (.parquet/.csv) or directory of per-symbol preds_*.parquet")
-@click.option("--model", "model_path", default=None, help="Optional model.pt to infer whether preds are log1p targets")
-@click.option("--preds-in-log1p", type=click.Choice(["yes", "no"]), default=None, help="Override preds space (yes=log1p)")
-@click.option("--output", "output_path", required=True, help="Output path (.parquet or .csv)")
+@click.option(
+    "--preds",
+    required=True,
+    help="Preds file (.parquet/.csv) or directory of per-symbol preds_*.parquet",
+)
+@click.option(
+    "--model",
+    "model_path",
+    default=None,
+    help="Optional model.pt to infer whether preds are log1p targets",
+)
+@click.option(
+    "--preds-in-log1p",
+    type=click.Choice(["yes", "no"]),
+    default=None,
+    help="Override preds space (yes=log1p)",
+)
+@click.option(
+    "--output", "output_path", required=True, help="Output path (.parquet or .csv)"
+)
 @click.option("--mfe-min", type=float, default=None)
 @click.option("--eff-min", type=float, default=None)
 @click.option("--dir-conf-trend-min", type=float, default=None)
@@ -1449,7 +1707,12 @@ def rule_mode_3action(
         f"/workspace/{output_path}" if use_workspace_prefix else output_path,
     ]
     if model_path:
-        args.extend(["--model", f"/workspace/{model_path}" if use_workspace_prefix else model_path])
+        args.extend(
+            [
+                "--model",
+                f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+            ]
+        )
     if preds_in_log1p:
         args.extend(["--preds-in-log1p", preds_in_log1p])
     # thresholds
@@ -1472,9 +1735,24 @@ def rule_mode_3action(
 
 
 @rl.command("shadow-eval-3action")
-@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with columns: symbol,timestamp,mode,head_*")
-@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (metrics/report).")
-@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet with columns: symbol,timestamp,mode,head_*",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory for artifacts (metrics/report).",
+)
+@click.option(
+    "--train-ratio",
+    type=float,
+    default=0.7,
+    help="Train ratio per symbol (time-ordered).",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
     use_workspace_prefix = docker and not _is_in_docker()
@@ -1490,12 +1768,31 @@ def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
 
 
 @rl.command("counterfactual-eval-3action")
-@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with mode + ret_mean/ret_trend + head_*")
-@click.option("--out", "out_dir", required=True, help="Output directory for artifacts (metrics/report).")
-@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet with mode + ret_mean/ret_trend + head_*",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory for artifacts (metrics/report).",
+)
+@click.option(
+    "--train-ratio",
+    type=float,
+    default=0.7,
+    help="Train ratio per symbol (time-ordered).",
+)
 @click.option("--entry-delay", type=int, default=0, help="Entry delay steps for sim.")
-@click.option("--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit.")
-@click.option("--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure.")
+@click.option(
+    "--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit."
+)
+@click.option(
+    "--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure."
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_counterfactual_eval_3action(
     logs_path,
@@ -1521,23 +1818,83 @@ def rl_counterfactual_eval_3action(
         "--slippage_bps",
         str(float(slippage_bps)),
     ]
-    sys.exit(run_script("scripts/rl_counterfactual_eval_3action.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/rl_counterfactual_eval_3action.py", args, docker=docker)
+    )
 
 
 @rl.command("fsm-decide")
-@click.option("--metrics", "metrics_path", required=True, help="metrics.json produced by counterfactual-eval-3action")
-@click.option("--state", default="RL_CANDIDATE", help="Initial FSM state: RULE/RL_CANDIDATE/RL_ACTIVE/RL_SUSPENDED")
-@click.option("--promote-days", type=int, default=10, help="Consecutive ok windows required to promote.")
-@click.option("--cooldown-days", type=int, default=20, help="Cooldown windows after suspension.")
-@click.option("--dd-ratio-max", type=float, default=1.2, help="Hard gate: dd_RL > dd_Rule * dd_ratio_max")
-@click.option("--switch-ratio-max", type=float, default=2.0, help="Hard gate: switch_RL > switch_Rule * switch_ratio_max")
-@click.option("--pnl-dd-margin", type=float, default=0.15, help="Drift gate: (PnL/DD)_RL < (PnL/DD)_Rule * (1 - margin)")
-@click.option("--sharpe-ratio-min", type=float, default=0.8, help="Hard gate: sharpe_RL < sharpe_Rule * sharpe_ratio_min")
-@click.option("--sharpe-min-abs", type=float, default=None, help="Hard gate: sharpe_RL < sharpe_min_abs (optional)")
-@click.option("--sortino-ratio-min", type=float, default=0.8, help="Hard gate: sortino_RL < sortino_Rule * sortino_ratio_min")
-@click.option("--sortino-min-abs", type=float, default=None, help="Hard gate: sortino_RL < sortino_min_abs (optional)")
-@click.option("--ann-vol-ratio-max", type=float, default=2.0, help="Hard gate: ann_vol_RL > ann_vol_Rule * ann_vol_ratio_max")
-@click.option("--out", "out_path", default=None, help="Optional path to write decision json.")
+@click.option(
+    "--metrics",
+    "metrics_path",
+    required=True,
+    help="metrics.json produced by counterfactual-eval-3action",
+)
+@click.option(
+    "--state",
+    default="RL_CANDIDATE",
+    help="Initial FSM state: RULE/RL_CANDIDATE/RL_ACTIVE/RL_SUSPENDED",
+)
+@click.option(
+    "--promote-days",
+    type=int,
+    default=10,
+    help="Consecutive ok windows required to promote.",
+)
+@click.option(
+    "--cooldown-days", type=int, default=20, help="Cooldown windows after suspension."
+)
+@click.option(
+    "--dd-ratio-max",
+    type=float,
+    default=1.2,
+    help="Hard gate: dd_RL > dd_Rule * dd_ratio_max",
+)
+@click.option(
+    "--switch-ratio-max",
+    type=float,
+    default=2.0,
+    help="Hard gate: switch_RL > switch_Rule * switch_ratio_max",
+)
+@click.option(
+    "--pnl-dd-margin",
+    type=float,
+    default=0.15,
+    help="Drift gate: (PnL/DD)_RL < (PnL/DD)_Rule * (1 - margin)",
+)
+@click.option(
+    "--sharpe-ratio-min",
+    type=float,
+    default=0.8,
+    help="Hard gate: sharpe_RL < sharpe_Rule * sharpe_ratio_min",
+)
+@click.option(
+    "--sharpe-min-abs",
+    type=float,
+    default=None,
+    help="Hard gate: sharpe_RL < sharpe_min_abs (optional)",
+)
+@click.option(
+    "--sortino-ratio-min",
+    type=float,
+    default=0.8,
+    help="Hard gate: sortino_RL < sortino_Rule * sortino_ratio_min",
+)
+@click.option(
+    "--sortino-min-abs",
+    type=float,
+    default=None,
+    help="Hard gate: sortino_RL < sortino_min_abs (optional)",
+)
+@click.option(
+    "--ann-vol-ratio-max",
+    type=float,
+    default=2.0,
+    help="Hard gate: ann_vol_RL > ann_vol_Rule * ann_vol_ratio_max",
+)
+@click.option(
+    "--out", "out_path", default=None, help="Optional path to write decision json."
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_fsm_decide(
     metrics_path,
@@ -1583,17 +1940,38 @@ def rl_fsm_decide(
     if sortino_min_abs is not None:
         args.extend(["--sortino_min_abs", str(float(sortino_min_abs))])
     if out_path:
-        args.extend(["--out", f"/workspace/{out_path}" if use_workspace_prefix else out_path])
+        args.extend(
+            ["--out", f"/workspace/{out_path}" if use_workspace_prefix else out_path]
+        )
     sys.exit(run_script("scripts/rl_fsm_decide.py", args, docker=docker))
 
 
 @rl.command("run-e2e-3action")
-@click.option("--logs", "logs_path", required=True, help="Logs .csv/.parquet with mode + heads (+ ret_mean/ret_trend for counterfactual).")
-@click.option("--out", "out_dir", required=True, help="Output directory root. Will create shadow/ counterfactual/ fsm_decision.json")
-@click.option("--train-ratio", type=float, default=0.7, help="Train ratio per symbol (time-ordered).")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet with mode + heads (+ ret_mean/ret_trend for counterfactual).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory root. Will create shadow/ counterfactual/ fsm_decision.json",
+)
+@click.option(
+    "--train-ratio",
+    type=float,
+    default=0.7,
+    help="Train ratio per symbol (time-ordered).",
+)
 @click.option("--entry-delay", type=int, default=0, help="Entry delay steps for sim.")
-@click.option("--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit.")
-@click.option("--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure.")
+@click.option(
+    "--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit."
+)
+@click.option(
+    "--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure."
+)
 @click.option("--fsm-state", default="RL_CANDIDATE", help="Initial FSM state.")
 @click.option("--promote-days", type=int, default=10)
 @click.option("--cooldown-days", type=int, default=20)
@@ -1625,7 +2003,14 @@ def rl_run_e2e_3action(
 
     rc = run_script(
         "scripts/rl_shadow_eval_3action.py",
-        ["--logs", logs_arg, "--out", shadow_out, "--train_ratio", str(float(train_ratio))],
+        [
+            "--logs",
+            logs_arg,
+            "--out",
+            shadow_out,
+            "--train_ratio",
+            str(float(train_ratio)),
+        ],
         docker=docker,
     )
     if rc != 0:
@@ -1671,8 +2056,14 @@ def rl_run_e2e_3action(
     )
     sys.exit(rc)
 
+
 @nnmultihead.command("train")
-@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option(
+    "--symbols",
+    "-s",
+    default="BTCUSDT",
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)",
+)
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
@@ -1683,8 +2074,15 @@ def rl_run_e2e_3action(
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
-@click.option("--horizon-hours", type=float, default=80.0, help="Future horizon in hours (e.g., 80H)")
-@click.option("--bar-hours", type=float, default=4.0, help="Bar duration in hours (4H => 4)")
+@click.option(
+    "--horizon-hours",
+    type=float,
+    default=80.0,
+    help="Future horizon in hours (e.g., 80H)",
+)
+@click.option(
+    "--bar-hours", type=float, default=4.0, help="Bar duration in hours (4H => 4)"
+)
 @click.option("--epochs", type=int, default=30, help="Training epochs")
 @click.option("--batch-size", type=int, default=512, help="Batch size")
 @click.option("--lr", type=float, default=2e-4, help="Learning rate")
@@ -1775,7 +2173,11 @@ def nnmultihead_train(
     args.extend(
         [
             "--features-store-root",
-            f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+            (
+                f"/workspace/{feature_store_root}"
+                if use_workspace_prefix
+                else feature_store_root
+            ),
         ]
     )
 
@@ -1783,7 +2185,12 @@ def nnmultihead_train(
 
 
 @nnmultihead.command("predict")
-@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option(
+    "--symbols",
+    "-s",
+    default="BTCUSDT",
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)",
+)
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
@@ -1794,8 +2201,15 @@ def nnmultihead_train(
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
-@click.option("--model", "model_path", required=True, help="Path to model.pt produced by nnmultihead train")
-@click.option("--output", "output_path", required=True, help="Output path (.parquet or .csv)")
+@click.option(
+    "--model",
+    "model_path",
+    required=True,
+    help="Path to model.pt produced by nnmultihead train",
+)
+@click.option(
+    "--output", "output_path", required=True, help="Output path (.parquet or .csv)"
+)
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
 @click.option(
     "--feature-store-layer",
@@ -1853,7 +2267,11 @@ def nnmultihead_predict(
     args.extend(
         [
             "--features-store-root",
-            f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+            (
+                f"/workspace/{feature_store_root}"
+                if use_workspace_prefix
+                else feature_store_root
+            ),
         ]
     )
 
@@ -1861,7 +2279,12 @@ def nnmultihead_predict(
 
 
 @nnmultihead.command("build-feature-store")
-@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option(
+    "--symbols",
+    "-s",
+    default="BTCUSDT",
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)",
+)
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
@@ -1920,7 +2343,11 @@ def nnmultihead_build_feature_store(
         "--timeframe",
         timeframe,
         "--output-dir",
-        f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+        (
+            f"/workspace/{feature_store_root}"
+            if use_workspace_prefix
+            else feature_store_root
+        ),
         "--output-format",
         "monthly",
         "--layer",
@@ -1934,11 +2361,18 @@ def nnmultihead_build_feature_store(
         args.extend(["--start-date", start_date])
     if end_date:
         args.extend(["--end-date", end_date])
-    sys.exit(run_script("scripts/build_feature_store_nnmultihead.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/build_feature_store_nnmultihead.py", args, docker=docker)
+    )
 
 
 @nnmultihead.command("eval")
-@click.option("--symbols", "-s", default="BTCUSDT", help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option(
+    "--symbols",
+    "-s",
+    default="BTCUSDT",
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)",
+)
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
@@ -1949,11 +2383,27 @@ def nnmultihead_build_feature_store(
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
-@click.option("--model", "model_path", required=True, help="Path to model.pt produced by nnmultihead train")
-@click.option("--horizon-hours", type=float, default=80.0, help="Future horizon in hours (e.g., 80H)")
-@click.option("--bar-hours", type=float, default=4.0, help="Bar duration in hours (4H => 4)")
+@click.option(
+    "--model",
+    "model_path",
+    required=True,
+    help="Path to model.pt produced by nnmultihead train",
+)
+@click.option(
+    "--horizon-hours",
+    type=float,
+    default=80.0,
+    help="Future horizon in hours (e.g., 80H)",
+)
+@click.option(
+    "--bar-hours", type=float, default=4.0, help="Bar duration in hours (4H => 4)"
+)
 @click.option("--device", default=None, help="cpu|cuda (default auto)")
-@click.option("--output-dir", default="results/nnmultihead_eval", help="Output directory for eval artifacts")
+@click.option(
+    "--output-dir",
+    default="results/nnmultihead_eval",
+    help="Output directory for eval artifacts",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_eval(
     symbols,
@@ -2029,12 +2479,22 @@ def nnmultihead_render_report(run_dir, out_html, out_summary, docker):
         f"/workspace/{run_dir}" if use_workspace_prefix else run_dir,
     ]
     if out_html:
-        args.extend(["--out-html", f"/workspace/{out_html}" if use_workspace_prefix else out_html])
+        args.extend(
+            [
+                "--out-html",
+                f"/workspace/{out_html}" if use_workspace_prefix else out_html,
+            ]
+        )
     if out_summary:
         args.extend(
-            ["--out-summary", f"/workspace/{out_summary}" if use_workspace_prefix else out_summary]
+            [
+                "--out-summary",
+                f"/workspace/{out_summary}" if use_workspace_prefix else out_summary,
+            ]
         )
-    sys.exit(run_script("scripts/render_path_primitives_report.py", args, docker=docker))
+    sys.exit(
+        run_script("scripts/render_path_primitives_report.py", args, docker=docker)
+    )
 
 
 @nnmultihead.command("factor-eval")
@@ -2048,7 +2508,9 @@ def nnmultihead_render_report(run_dir, out_html, out_summary, docker):
     required=True,
     help="YAML with feature_pipeline.requested_features (e.g., config/strategies/*/features_all.yaml)",
 )
-@click.option("--symbols", required=True, help="Comma-separated symbols, e.g. BTCUSDT,ETHUSDT")
+@click.option(
+    "--symbols", required=True, help="Comma-separated symbols, e.g. BTCUSDT,ETHUSDT"
+)
 @click.option("--timeframe", default="240T", show_default=True, help="Timeframe")
 @click.option(
     "--features-store-root",
@@ -2143,7 +2605,11 @@ def nnmultihead_factor_eval(
         "--timeframe",
         timeframe,
         "--features-store-root",
-        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        (
+            f"/workspace/{features_store_root}"
+            if use_workspace_prefix
+            else features_store_root
+        ),
         "--features-store-layer",
         layer,
         "--horizon-hours",
@@ -2211,8 +2677,15 @@ def nnmultihead_factor_eval(
 @click.option("--end-date", required=True)
 @click.option("--features-store-root", default="feature_store", show_default=True)
 @click.option("--features-store-layer", required=True)
-@click.option("--pool-b-yaml", required=True, help="PoolB YAML (features_pool_b_primitives.yaml)")
-@click.option("--objective", default="dir_auc", show_default=True, help="metrics.json key to maximize")
+@click.option(
+    "--pool-b-yaml", required=True, help="PoolB YAML (features_pool_b_primitives.yaml)"
+)
+@click.option(
+    "--objective",
+    default="dir_auc",
+    show_default=True,
+    help="metrics.json key to maximize",
+)
 @click.option("--max-steps", type=int, default=6, show_default=True)
 @click.option(
     "--search-algo",
@@ -2286,7 +2759,11 @@ def nnmultihead_feature_group_search(
         "--end-date",
         end_date,
         "--features-store-root",
-        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        (
+            f"/workspace/{features_store_root}"
+            if use_workspace_prefix
+            else features_store_root
+        ),
         "--features-store-layer",
         features_store_layer,
         "--pool-b-yaml",
@@ -2315,27 +2792,31 @@ def nnmultihead_feature_group_search(
         args.extend(["--exclude-columns", str(exclude_columns)])
     args.extend(
         [
-        "--halving-stages",
-        str(halving_stages),
-        "--halving-top-fraction",
-        str(float(halving_top_fraction)),
-        "--halving-min-survivors",
-        str(int(halving_min_survivors)),
-        "--beam-width",
-        str(int(beam_width)),
-        "--sffs-max-backward-per-step",
-        str(int(sffs_max_backward_per_step)),
-        "--pipeline-survivors",
-        str(int(pipeline_survivors)),
-        "--output-dir",
-        f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+            "--halving-stages",
+            str(halving_stages),
+            "--halving-top-fraction",
+            str(float(halving_top_fraction)),
+            "--halving-min-survivors",
+            str(int(halving_min_survivors)),
+            "--beam-width",
+            str(int(beam_width)),
+            "--sffs-max-backward-per-step",
+            str(int(sffs_max_backward_per_step)),
+            "--pipeline-survivors",
+            str(int(pipeline_survivors)),
+            "--output-dir",
+            f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
         ]
     )
     if base_features_yaml:
         args.extend(
             [
                 "--base-features-yaml",
-                f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
+                (
+                    f"/workspace/{base_features_yaml}"
+                    if use_workspace_prefix
+                    else base_features_yaml
+                ),
             ]
         )
     if groups_yaml:
@@ -2349,7 +2830,12 @@ def nnmultihead_feature_group_search(
         args.append("--expand-semantic-singletons")
     if device:
         args.extend(["--device", device])
-    sys.exit(run_python_module("time_series_model.diagnostics.nn_feature_group_search", args, docker=docker))
+    sys.exit(
+        run_python_module(
+            "time_series_model.diagnostics.nn_feature_group_search", args, docker=docker
+        )
+    )
+
 
 def _train_strategy_pipeline(
     symbol,
@@ -2385,7 +2871,11 @@ def _train_strategy_pipeline(
     args.extend(
         [
             "--feature-store-dir",
-            f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
+            (
+                f"/workspace/{feature_store_dir}"
+                if use_workspace_prefix
+                else feature_store_dir
+            ),
         ]
     )
     # Only pass --feature-store-layer if explicitly provided (None means auto-generate in script)
@@ -2410,7 +2900,14 @@ def _train_strategy_pipeline(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def train_sr_reversal_long(
-    symbol, timeframe, data_path, test_size, feature_store_dir, feature_store_layer, output_root, docker
+    symbol,
+    timeframe,
+    data_path,
+    test_size,
+    feature_store_dir,
+    feature_store_layer,
+    output_root,
+    docker,
 ):
     """Train SR Reversal Long-only model (direction-fixed)."""
     _train_strategy_pipeline(
@@ -2442,7 +2939,14 @@ def train_sr_reversal_long(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def train_sr_reversal_short(
-    symbol, timeframe, data_path, test_size, feature_store_dir, feature_store_layer, output_root, docker
+    symbol,
+    timeframe,
+    data_path,
+    test_size,
+    feature_store_dir,
+    feature_store_layer,
+    output_root,
+    docker,
 ):
     """Train SR Reversal Short-only model (direction-fixed)."""
     _train_strategy_pipeline(
@@ -2518,7 +3022,9 @@ def train_rolling(
 
 
 @train.command("final")
-@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option(
+    "--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol"
+)
 @click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
 @click.option(
     "--config",
@@ -2529,17 +3035,23 @@ def train_rolling(
 )
 @click.option("--start-date", required=True, help="Train start date (YYYY-MM-DD)")
 @click.option("--end-date", required=True, help="Train end date (YYYY-MM-DD)")
-@click.option("--seed", default="42", show_default=True, help="Seed for reproducibility")
+@click.option(
+    "--seed", default="42", show_default=True, help="Seed for reproducibility"
+)
 @click.option(
     "--output-root",
     default="models",
     show_default=True,
     help="Root dir for final model outputs (ModelArtifact saved under <output-root>/<strategy_name>/).",
 )
-@click.option("--data-path", default="data/parquet_data", show_default=True, help="Data directory")
+@click.option(
+    "--data-path", default="data/parquet_data", show_default=True, help="Data directory"
+)
 @click.option("--feature-store-dir", default="feature_store", show_default=True)
 @click.option("--feature-store-layer", default=None)
-@click.option("--deterministic/--non-deterministic", default=True, help="Deterministic training")
+@click.option(
+    "--deterministic/--non-deterministic", default=True, help="Deterministic training"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def train_final(
     symbol,
@@ -2579,7 +3091,11 @@ def train_final(
     args.extend(
         [
             "--feature-store-dir",
-            f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
+            (
+                f"/workspace/{feature_store_dir}"
+                if use_workspace_prefix
+                else feature_store_dir
+            ),
         ]
     )
     if feature_store_layer is not None:
@@ -2725,7 +3241,7 @@ def docker():
 def docker_shell():
     """Open interactive shell in Docker container."""
     docker_image = os.environ.get(
-        "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7"
+        "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.9"
     )
     cmd = [
         "docker",
@@ -2760,7 +3276,7 @@ def docker_build():
             "-n",
             "hansenlovefiona017/lightgbm-runtime",
             "-t",
-            "v0.0.7",
+            "v0.0.9",
             "--no-proxy",
             "--no-ssh",
         ]
@@ -2968,6 +3484,8 @@ def analyze_factor_eval(
             docker=False,  # Makefile already runs us in Docker, don't nest
         )
     )
+
+
 @analyze.command("strategy-feature-compare")
 @click.option(
     "--strategy-config",
@@ -3511,9 +4029,18 @@ def diagnose_sr_reversal_model_comparison(
 @click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
 @click.option("--test-size", default="0.3", help="Test set ratio")
 @click.option("--seeds", default="1,2,3", help="Comma-separated seeds")
-@click.option("--objective", default="Sharpe_mean", help="Objective metric (e.g. Sharpe_mean)")
+@click.option(
+    "--objective", default="Sharpe_mean", help="Objective metric (e.g. Sharpe_mean)"
+)
 @click.option("--min-trades", default="10", help="Min trades_mean constraint")
 @click.option("--max-steps", default="6", help="Max greedy steps")
+@click.option(
+    "--preset",
+    default="",
+    type=click.Choice(["", "A", "B", "C"]),
+    show_default=True,
+    help="Budget preset for feature-group-search. A=fast screening, B=medium, C=final verification.",
+)
 @click.option(
     "--search-algo",
     default="greedy",
@@ -3615,7 +4142,9 @@ def diagnose_sr_reversal_model_comparison(
     default="results/feature_group_search",
     help="Output directory",
 )
-@click.option("--deterministic/--non-deterministic", default=True, help="Deterministic training")
+@click.option(
+    "--deterministic/--non-deterministic", default=True, help="Deterministic training"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_feature_group_search(
     base_strategy_config,
@@ -3628,6 +4157,7 @@ def diagnose_feature_group_search(
     objective,
     min_trades,
     max_steps,
+    preset,
     search_algo,
     halving_stages,
     halving_top_fraction,
@@ -3651,7 +4181,11 @@ def diagnose_feature_group_search(
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--base-strategy-config",
-        f"/workspace/{base_strategy_config}" if use_workspace_prefix else base_strategy_config,
+        (
+            f"/workspace/{base_strategy_config}"
+            if use_workspace_prefix
+            else base_strategy_config
+        ),
         "--symbol",
         symbol,
         "--timeframe",
@@ -3670,6 +4204,8 @@ def diagnose_feature_group_search(
         str(min_trades),
         "--max-steps",
         str(max_steps),
+        "--preset",
+        str(preset),
         "--search-algo",
         str(search_algo),
         "--halving-stages",
@@ -3717,21 +4253,33 @@ def diagnose_feature_group_search(
         args.extend(
             [
                 "--base-features-yaml",
-                f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
+                (
+                    f"/workspace/{base_features_yaml}"
+                    if use_workspace_prefix
+                    else base_features_yaml
+                ),
             ]
         )
     if writeback_yaml:
         args.extend(
             [
                 "--writeback-yaml",
-                f"/workspace/{writeback_yaml}" if use_workspace_prefix else writeback_yaml,
+                (
+                    f"/workspace/{writeback_yaml}"
+                    if use_workspace_prefix
+                    else writeback_yaml
+                ),
             ]
         )
     if invert_candidates_yaml:
         args.extend(
             [
                 "--invert-candidates-yaml",
-                f"/workspace/{invert_candidates_yaml}" if use_workspace_prefix else invert_candidates_yaml,
+                (
+                    f"/workspace/{invert_candidates_yaml}"
+                    if use_workspace_prefix
+                    else invert_candidates_yaml
+                ),
             ]
         )
     if expand_semantic_singletons:
@@ -3753,38 +4301,61 @@ def diagnose_feature_group_search(
     show_default=True,
     help="Comma-separated strategy directory names under config/strategies/ (can be a single strategy).",
 )
-@click.option("--tag", default=None, help="Tag for all outputs (Pool-B dir, search output, writeback YAML, report).")
-@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option(
+    "--tag",
+    default=None,
+    help="Tag for all outputs (Pool-B dir, search output, writeback YAML, report).",
+)
+@click.option(
+    "--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol"
+)
 @click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
 @click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
 @click.option("--test-size", default="0.3", show_default=True, help="Test set ratio")
-@click.option("--seeds", default="1,2,3,4,5", show_default=True, help="Comma-separated seeds")
-@click.option("--objective", default="Sharpe_mean", show_default=True, help="Objective metric (e.g. Sharpe_mean)")
-@click.option("--min-trades", default="10", show_default=True, help="Min trades_mean constraint")
-@click.option("--max-steps", default="5", show_default=True, help="Max steps (beam depth / greedy steps)")
+@click.option(
+    "--min-trades", default="10", show_default=True, help="Min trades_mean constraint"
+)
 @click.option(
     "--search-algo",
     default="pipeline",
     type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
     show_default=True,
-    help="Search algorithm. Recommended: pipeline (SH prefilter -> Beam -> SFFS prune).",
+    help="Search algorithm used in all stages. Recommended: pipeline (SH prefilter -> Beam -> SFFS prune).",
 )
-@click.option("--halving-stages", default="1,3,5", show_default=True, help="Halving budgets in seed-counts")
-@click.option("--halving-top-fraction", default="0.25", show_default=True, help="Halving keep fraction")
-@click.option("--halving-min-survivors", default="5", show_default=True, help="Halving minimum survivors")
-@click.option("--pipeline-survivors", default="30", show_default=True, help="Pipeline only: target survivors")
-@click.option("--beam-width", default="3", show_default=True, help="Beam width (top-K paths)")
-@click.option("--sffs-max-backward-per-step", default="2", show_default=True, help="SFFS backward removal budget")
+@click.option(
+    "--shortlist-max-groups-a",
+    default="30",
+    show_default=True,
+    help="Stage A shortlist size (exported and used as Stage B candidate groups).",
+)
+@click.option(
+    "--shortlist-max-groups-b",
+    default="20",
+    show_default=True,
+    help="Stage B shortlist size (exported and used as Stage C candidate groups).",
+)
 @click.option(
     "--expand-semantic-singletons",
     is_flag=True,
     default=False,
     help="Expand semantic nodes into singleton output-column groups for finer-grained selection.",
 )
-@click.option("--regen-poolb", is_flag=True, default=False, help="Force regenerate Pool-B YAML")
-@click.option("--rerun-search", is_flag=True, default=False, help="Force rerun feature-group-search even if result exists")
-@click.option("--report-only", is_flag=True, default=False, help="Only generate report (requires result JSON present)")
+@click.option(
+    "--regen-poolb", is_flag=True, default=False, help="Force regenerate Pool-B YAML"
+)
+@click.option(
+    "--rerun-search",
+    is_flag=True,
+    default=False,
+    help="Force rerun feature-group-search even if result exists",
+)
+@click.option(
+    "--report-only",
+    is_flag=True,
+    default=False,
+    help="Only generate report (requires result JSON present)",
+)
 def diagnose_poolb_semantic_search(
     strategies,
     tag,
@@ -3793,23 +4364,16 @@ def diagnose_poolb_semantic_search(
     start_date,
     end_date,
     test_size,
-    seeds,
-    objective,
     min_trades,
-    max_steps,
     search_algo,
-    halving_stages,
-    halving_top_fraction,
-    halving_min_survivors,
-    pipeline_survivors,
-    beam_width,
-    sffs_max_backward_per_step,
+    shortlist_max_groups_a,
+    shortlist_max_groups_b,
     expand_semantic_singletons,
     regen_poolb,
     rerun_search,
     report_only,
 ):
-    """One-shot: generate Pool-B (factor-eval) + run feature-group-search (semantic + Pool-B) + writeback YAML + report."""
+    """Best workflow: generate Pool-B + run staged feature-group-search (A->B->C with shortlist) + writeback YAMLs + report."""
     script = PROJECT_ROOT / "scripts" / "run_poolb_semantic_search.py"
     if not script.exists():
         raise FileNotFoundError(f"Script not found: {script}")
@@ -3829,28 +4393,14 @@ def diagnose_poolb_semantic_search(
         str(end_date),
         "--test-size",
         str(test_size),
-        "--seeds",
-        str(seeds),
-        "--objective",
-        str(objective),
         "--min-trades",
         str(min_trades),
-        "--max-steps",
-        str(max_steps),
         "--search-algo",
         str(search_algo),
-        "--halving-stages",
-        str(halving_stages),
-        "--halving-top-fraction",
-        str(halving_top_fraction),
-        "--halving-min-survivors",
-        str(halving_min_survivors),
-        "--pipeline-survivors",
-        str(pipeline_survivors),
-        "--beam-width",
-        str(beam_width),
-        "--sffs-max-backward-per-step",
-        str(sffs_max_backward_per_step),
+        "--shortlist-max-groups-a",
+        str(shortlist_max_groups_a),
+        "--shortlist-max-groups-b",
+        str(shortlist_max_groups_b),
     ]
     if tag:
         cmd.extend(["--tag", str(tag)])
@@ -3867,6 +4417,85 @@ def diagnose_poolb_semantic_search(
     subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)
 
 
+@diagnose.command("export-fgs-shortlist")
+@click.option(
+    "--base-strategy-config",
+    "-c",
+    required=True,
+    help="Base strategy config directory (single strategy), e.g. config/strategies/sr_breakout",
+)
+@click.option(
+    "--result-json",
+    required=True,
+    help="Path to feature_group_search_result.json from a previous run",
+)
+@click.option(
+    "--output-yaml",
+    required=True,
+    help="Output shortlist groups YAML path",
+)
+@click.option(
+    "--mode",
+    default="prefilter_survivors",
+    type=click.Choice(["selected_groups", "prefilter_survivors", "beam_selected"]),
+    show_default=True,
+    help="Which group-name list to export from result JSON",
+)
+@click.option(
+    "--pool-b-yaml",
+    default="",
+    show_default=True,
+    help="Optional features_pool_b.yaml used in the run (to reproduce poolb__* singleton groups).",
+)
+@click.option(
+    "--expand-semantic-singletons",
+    is_flag=True,
+    default=False,
+    help="Apply the same semantic singleton expansion before filtering (must match your run).",
+)
+@click.option(
+    "--max-groups",
+    default="0",
+    show_default=True,
+    help="If >0, keep only the first N names from the chosen list",
+)
+def diagnose_export_fgs_shortlist(
+    base_strategy_config: str,
+    result_json: str,
+    output_yaml: str,
+    mode: str,
+    pool_b_yaml: str,
+    expand_semantic_singletons: bool,
+    max_groups: str,
+):
+    """Export a shortlisted groups YAML from a previous feature-group-search run."""
+    script = PROJECT_ROOT / "scripts" / "fgs_export_shortlist_groups_yaml.py"
+    if not script.exists():
+        raise FileNotFoundError(f"Script not found: {script}")
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--base-strategy-config",
+        str(base_strategy_config),
+        "--result-json",
+        str(result_json),
+        "--output-yaml",
+        str(output_yaml),
+        "--mode",
+        str(mode),
+        "--max-groups",
+        str(max_groups),
+    ]
+    if str(pool_b_yaml).strip():
+        cmd.extend(["--pool-b-yaml", str(pool_b_yaml)])
+    if expand_semantic_singletons:
+        cmd.append("--expand-semantic-singletons")
+
+    print("CMD:", " ".join(cmd))
+    subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)
+
+
 @diagnose.command("holdout-eval")
 @click.option(
     "--config",
@@ -3875,22 +4504,32 @@ def diagnose_poolb_semantic_search(
     show_default=True,
     help="Strategy config directory",
 )
-@click.option("--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol")
+@click.option(
+    "--symbol", "-s", default="BTCUSDT", show_default=True, help="Trading symbol"
+)
 @click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
 @click.option("--train-start-date", required=True, help="Train start date (YYYY-MM-DD)")
-@click.option("--holdout-start-date", required=True, help="Holdout start date (YYYY-MM-DD)")
+@click.option(
+    "--holdout-start-date", required=True, help="Holdout start date (YYYY-MM-DD)"
+)
 @click.option("--holdout-end-date", required=True, help="Holdout end date (YYYY-MM-DD)")
-@click.option("--seed", default="42", show_default=True, help="Seed for reproducibility")
+@click.option(
+    "--seed", default="42", show_default=True, help="Seed for reproducibility"
+)
 @click.option(
     "--output-root",
     default="results/holdout_eval",
     show_default=True,
     help="Output root (will write to <output-root>/<strategy_name>/).",
 )
-@click.option("--data-path", default="data/parquet_data", show_default=True, help="Data directory")
+@click.option(
+    "--data-path", default="data/parquet_data", show_default=True, help="Data directory"
+)
 @click.option("--feature-store-dir", default="feature_store", show_default=True)
 @click.option("--feature-store-layer", default=None)
-@click.option("--deterministic/--non-deterministic", default=True, help="Deterministic training")
+@click.option(
+    "--deterministic/--non-deterministic", default=True, help="Deterministic training"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_holdout_eval(
     config,
@@ -3934,7 +4573,11 @@ def diagnose_holdout_eval(
     args.extend(
         [
             "--feature-store-dir",
-            f"/workspace/{feature_store_dir}" if use_workspace_prefix else feature_store_dir,
+            (
+                f"/workspace/{feature_store_dir}"
+                if use_workspace_prefix
+                else feature_store_dir
+            ),
         ]
     )
     if feature_store_layer is not None:
@@ -4271,18 +4914,29 @@ def backtest_strategy(
             --start-date 2024-01-01 --end-date 2024-12-31 --no-docker
     """
     args = [
-        "--strategy", strategy,
-        "--symbol", symbol,
-        "--timeframe", timeframe,
-        "--start-date", start_date,
-        "--end-date", end_date,
-        "--mode", mode,
-        "--output-dir", output_dir if not docker else f"/workspace/{output_dir}",
+        "--strategy",
+        strategy,
+        "--symbol",
+        symbol,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--mode",
+        mode,
+        "--output-dir",
+        output_dir if not docker else f"/workspace/{output_dir}",
     ]
     if model_path:
-        args.extend(["--model-path", model_path if not docker else f"/workspace/{model_path}"])
+        args.extend(
+            ["--model-path", model_path if not docker else f"/workspace/{model_path}"]
+        )
     if data_path:
-        args.extend(["--data-path", data_path if not docker else f"/workspace/{data_path}"])
+        args.extend(
+            ["--data-path", data_path if not docker else f"/workspace/{data_path}"]
+        )
 
     sys.exit(
         run_python_module(
@@ -4309,15 +4963,17 @@ def backtest_strategy(
     default="results/backtest/report.html",
     help="Output HTML report path",
 )
-def backtest_visualize(strategy, symbol, data_path, trades_path, model_path, output_path):
+def backtest_visualize(
+    strategy, symbol, data_path, trades_path, model_path, output_path
+):
     """
     Generate interactive backtest visualization report.
-    
+
     Creates an HTML report with:
     - Candlestick chart with trade markers
     - Trade list with PnL and exit reasons
     - SHAP feature importance (if model provided)
-    
+
     Example:
         mlbot backtest visualize -c sr_reversal_rr_reg_long \\
             --data-path data/parquet_data/BTCUSDT/combined.parquet \\
@@ -4327,39 +4983,44 @@ def backtest_visualize(strategy, symbol, data_path, trades_path, model_path, out
     from pathlib import Path
     import json
     import pandas as pd
-    
+
     print(f"\n📊 Generating Backtest Visualization Report")
     print(f"   Strategy: {strategy}")
     print(f"   Symbol: {symbol}")
     print(f"   Data: {data_path}")
     print(f"   Trades: {trades_path}")
-    
+
     try:
-        from src.time_series_model.visualization.backtest_visualizer import BacktestVisualizer
-        
+        from src.time_series_model.visualization.backtest_visualizer import (
+            BacktestVisualizer,
+        )
+
         # Load OHLCV data
         ohlcv_df = pd.read_parquet(data_path)
-        
+
         # Load trades
         with open(trades_path) as f:
             trades_data = json.load(f)
-        
+
         # Handle different trade formats
         if isinstance(trades_data, dict):
             trades = trades_data.get("trades", [])
         else:
             trades = trades_data
-        
+
         # Load model artifact if provided
         model_artifact = None
         if model_path:
             try:
-                from src.time_series_model.strategies.models.model_artifact import ModelArtifact
+                from src.time_series_model.strategies.models.model_artifact import (
+                    ModelArtifact,
+                )
+
                 model_artifact = ModelArtifact.load(Path(model_path))
                 print(f"   ✅ Loaded ModelArtifact: {model_path}")
             except Exception as e:
                 print(f"   ⚠️ Failed to load model: {e}")
-        
+
         # Generate report
         visualizer = BacktestVisualizer(
             ohlcv_df=ohlcv_df,
@@ -4368,13 +5029,14 @@ def backtest_visualize(strategy, symbol, data_path, trades_path, model_path, out
             strategy_name=strategy,
             symbol=symbol,
         )
-        
+
         report_path = visualizer.generate_report(output_path)
         print(f"\n✅ Report generated: {report_path}")
-        
+
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
@@ -4390,22 +5052,63 @@ def cross_section():
     pass
 
 
-
-
 @cross_section.command("build-store")
-@click.option("--symbols", "-s", required=True, help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT).")
-@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe (e.g., 240T)")
+@click.option(
+    "--symbols",
+    "-s",
+    required=True,
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT).",
+)
+@click.option(
+    "--timeframe",
+    "-t",
+    default="240T",
+    show_default=True,
+    help="Timeframe (e.g., 240T)",
+)
 @click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
-@click.option("--data-path", default="data/parquet_data", show_default=True, help="Raw parquet root")
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    show_default=True,
+    help="Raw parquet root",
+)
 @click.option("--factor-set-yaml", required=True, help="YAML containing factor_sets")
 @click.option("--factor-set", required=True, help="Factor set name to compute")
-@click.option("--feature-deps", default="config/feature_dependencies.yaml", show_default=True, help="Feature dependencies YAML")
-@click.option("--features-store-root", default="feature_store", show_default=True, help="FeatureStore root")
-@click.option("--features-store-layer", default=None, help="Optional layer name (default: hashed)")
-@click.option("--warmup-bars", default=600, show_default=True, help="Warmup bars before each month")
-@click.option("--include-ohlcv/--no-include-ohlcv", default=True, show_default=True, help="Include OHLCV in store")
-@click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="Overwrite existing month files")
+@click.option(
+    "--feature-deps",
+    default="config/feature_dependencies.yaml",
+    show_default=True,
+    help="Feature dependencies YAML",
+)
+@click.option(
+    "--features-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root",
+)
+@click.option(
+    "--features-store-layer", default=None, help="Optional layer name (default: hashed)"
+)
+@click.option(
+    "--warmup-bars",
+    default=600,
+    show_default=True,
+    help="Warmup bars before each month",
+)
+@click.option(
+    "--include-ohlcv/--no-include-ohlcv",
+    default=True,
+    show_default=True,
+    help="Include OHLCV in store",
+)
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    show_default=True,
+    help="Overwrite existing month files",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_build_store(
     symbols,
@@ -4443,7 +5146,11 @@ def cross_section_build_store(
         "--feature-deps",
         f"/workspace/{feature_deps}" if use_workspace_prefix else feature_deps,
         "--features-store-root",
-        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        (
+            f"/workspace/{features_store_root}"
+            if use_workspace_prefix
+            else features_store_root
+        ),
         "--warmup-bars",
         str(int(warmup_bars)),
     ]
@@ -4476,14 +5183,43 @@ def cross_section_build_store(
     default=None,
     help="(Deprecated) Alias for --input <panel.parquet>.",
 )
-@click.option("--output", default="results/cross_sectional/fama_macbeth_report.md", show_default=True, help="Output markdown path")
+@click.option(
+    "--output",
+    default="results/cross_sectional/fama_macbeth_report.md",
+    show_default=True,
+    help="Output markdown path",
+)
 @click.option("--symbols", default=None, help="Comma-separated symbols filter")
-@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
-@click.option("--max-lag", default=5, show_default=True, help="Newey-West truncation lag")
-@click.option("--periods-per-year", default="auto", show_default=True, help="Annualisation factor or 'auto'")
-@click.option("--winsor", default=3.0, show_default=True, help="Sigma winsorisation (<=0 disables)")
-@click.option("--zscore/--no-zscore", default=True, show_default=True, help="Cross-sectional z-score per timestamp")
-@click.option("--crypto-factors/--no-crypto-factors", default=True, show_default=True, help="Add built-in crypto CS factors")
+@click.option(
+    "--horizon", default=12, show_default=True, help="Forward return horizon in bars"
+)
+@click.option(
+    "--max-lag", default=5, show_default=True, help="Newey-West truncation lag"
+)
+@click.option(
+    "--periods-per-year",
+    default="auto",
+    show_default=True,
+    help="Annualisation factor or 'auto'",
+)
+@click.option(
+    "--winsor",
+    default=3.0,
+    show_default=True,
+    help="Sigma winsorisation (<=0 disables)",
+)
+@click.option(
+    "--zscore/--no-zscore",
+    default=True,
+    show_default=True,
+    help="Cross-sectional z-score per timestamp",
+)
+@click.option(
+    "--crypto-factors/--no-crypto-factors",
+    default=True,
+    show_default=True,
+    help="Add built-in crypto CS factors",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_report(
     inputs,
@@ -4508,7 +5244,9 @@ def cross_section_report(
     args = []
     for x in in_list:
         args.extend(["--input", f"/workspace/{x}" if use_workspace_prefix else x])
-    args.extend(["--output", f"/workspace/{output}" if use_workspace_prefix else output])
+    args.extend(
+        ["--output", f"/workspace/{output}" if use_workspace_prefix else output]
+    )
     args.extend(
         [
             "--horizon",
@@ -4550,22 +5288,84 @@ def cross_section_report(
     default=None,
     help="(Deprecated) Alias for --input <panel.parquet>.",
 )
-@click.option("--output-dir", default="results/cross_sectional/models", show_default=True, help="Output directory")
-@click.option("--model", type=click.Choice(["boosting", "fama_macbeth"]), default="boosting", show_default=True, help="Model type")
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional/models",
+    show_default=True,
+    help="Output directory",
+)
+@click.option(
+    "--model",
+    type=click.Choice(["boosting", "fama_macbeth"]),
+    default="boosting",
+    show_default=True,
+    help="Model type",
+)
 @click.option("--symbols", default=None, help="Comma-separated symbols filter")
-@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
-@click.option("--winsor", default=3.0, show_default=True, help="Sigma winsorisation (<=0 disables)")
-@click.option("--periods-per-year", default="auto", show_default=True, help="Annualisation factor or 'auto'")
-@click.option("--model-name", default="cs_boosting.joblib", show_default=True, help="Saved model filename")
-@click.option("--predictions-name", default="predictions.parquet", show_default=True, help="Saved predictions filename")
-@click.option("--metrics-name", default="metrics.json", show_default=True, help="Saved metrics filename")
-@click.option("--feature-cols", default=None, help="Optional comma-separated feature list")
-@click.option("--feature-file", default=None, help="Optional feature file (one per line)")
-@click.option("--auto-select/--no-auto-select", default=False, show_default=True, help="Auto-select factors via IC/IR")
-@click.option("--select-topk", default=0, show_default=True, help="Keep only top-K factors (0 disables)")
-@click.option("--ic-threshold", default=None, help="Minimum abs(IC mean) to keep a factor")
-@click.option("--ir-threshold", default=None, help="Minimum abs(IC IR) to keep a factor")
-@click.option("--selection-stat", type=click.Choice(["ic", "ir"]), default="ic", show_default=True, help="Rank stat for selection")
+@click.option(
+    "--horizon", default=12, show_default=True, help="Forward return horizon in bars"
+)
+@click.option(
+    "--winsor",
+    default=3.0,
+    show_default=True,
+    help="Sigma winsorisation (<=0 disables)",
+)
+@click.option(
+    "--periods-per-year",
+    default="auto",
+    show_default=True,
+    help="Annualisation factor or 'auto'",
+)
+@click.option(
+    "--model-name",
+    default="cs_boosting.joblib",
+    show_default=True,
+    help="Saved model filename",
+)
+@click.option(
+    "--predictions-name",
+    default="predictions.parquet",
+    show_default=True,
+    help="Saved predictions filename",
+)
+@click.option(
+    "--metrics-name",
+    default="metrics.json",
+    show_default=True,
+    help="Saved metrics filename",
+)
+@click.option(
+    "--feature-cols", default=None, help="Optional comma-separated feature list"
+)
+@click.option(
+    "--feature-file", default=None, help="Optional feature file (one per line)"
+)
+@click.option(
+    "--auto-select/--no-auto-select",
+    default=False,
+    show_default=True,
+    help="Auto-select factors via IC/IR",
+)
+@click.option(
+    "--select-topk",
+    default=0,
+    show_default=True,
+    help="Keep only top-K factors (0 disables)",
+)
+@click.option(
+    "--ic-threshold", default=None, help="Minimum abs(IC mean) to keep a factor"
+)
+@click.option(
+    "--ir-threshold", default=None, help="Minimum abs(IC IR) to keep a factor"
+)
+@click.option(
+    "--selection-stat",
+    type=click.Choice(["ic", "ir"]),
+    default="ic",
+    show_default=True,
+    help="Rank stat for selection",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_train(
     inputs,
@@ -4598,7 +5398,12 @@ def cross_section_train(
     args = []
     for x in in_list:
         args.extend(["--input", f"/workspace/{x}" if use_workspace_prefix else x])
-    args.extend(["--output-dir", f"/workspace/{output_dir}" if use_workspace_prefix else output_dir])
+    args.extend(
+        [
+            "--output-dir",
+            f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
+        ]
+    )
     args.extend(
         [
             "--model",
@@ -4620,7 +5425,12 @@ def cross_section_train(
     if symbols:
         args.extend(["--symbols", str(symbols)])
     if feature_file:
-        args.extend(["--feature-file", f"/workspace/{feature_file}" if use_workspace_prefix else feature_file])
+        args.extend(
+            [
+                "--feature-file",
+                f"/workspace/{feature_file}" if use_workspace_prefix else feature_file,
+            ]
+        )
     if feature_cols:
         args.extend(["--feature-cols", str(feature_cols)])
     if auto_select:
@@ -4698,13 +5508,25 @@ def cross_section_catalog(input_path, output_dir, docker):
     help="Output selection summary JSON path",
 )
 @click.option("--target", default=None, help="Target column (default inferred)")
-@click.option("--min-assets", default=4, show_default=True, help="Minimum assets per timestamp")
-@click.option("--per-category-top", default=2, show_default=True, help="Top per category")
+@click.option(
+    "--min-assets", default=4, show_default=True, help="Minimum assets per timestamp"
+)
+@click.option(
+    "--per-category-top", default=2, show_default=True, help="Top per category"
+)
 @click.option("--global-top", default=12, show_default=True, help="Global top-K")
 @click.option("--ic-threshold", default=None, help="Minimum abs(IC mean) to keep")
 @click.option("--ir-threshold", default=None, help="Minimum abs(IC IR) to keep")
-@click.option("--ranking-stat", type=click.Choice(["ic", "ir"]), default="ic", show_default=True, help="Ranking statistic")
-@click.option("--include-categories", default=None, help="Comma-separated categories to include")
+@click.option(
+    "--ranking-stat",
+    type=click.Choice(["ic", "ir"]),
+    default="ic",
+    show_default=True,
+    help="Ranking statistic",
+)
+@click.option(
+    "--include-categories", default=None, help="Comma-separated categories to include"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_select(
     input_path,
@@ -4776,8 +5598,12 @@ def cross_section_select(
     default=None,
     help="Optional feature file (one feature per line) to restrict SHAP columns",
 )
-@click.option("--target", default=None, help="Optional target column (default auto-detect)")
-@click.option("--topk", default=10, show_default=True, help="Top-K features for dependence plots")
+@click.option(
+    "--target", default=None, help="Optional target column (default auto-detect)"
+)
+@click.option(
+    "--topk", default=10, show_default=True, help="Top-K features for dependence plots"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 @click.option(
     "--output-dir",
@@ -4785,8 +5611,18 @@ def cross_section_select(
     show_default=True,
     help="Output directory for SHAP artifacts",
 )
-@click.option("--max-samples", default=2000, show_default=True, help="Max samples for SHAP computation")
-@click.option("--interaction/--no-interaction", default=True, show_default=True, help="Compute SHAP interaction plot")
+@click.option(
+    "--max-samples",
+    default=2000,
+    show_default=True,
+    help="Max samples for SHAP computation",
+)
+@click.option(
+    "--interaction/--no-interaction",
+    default=True,
+    show_default=True,
+    help="Compute SHAP interaction plot",
+)
 def cross_section_shap(
     model_path,
     panel_path,
@@ -4813,7 +5649,12 @@ def cross_section_shap(
         str(max_samples),
     ]
     if feature_file:
-        args.extend(["--feature-file", f"/workspace/{feature_file}" if use_workspace_prefix else feature_file])
+        args.extend(
+            [
+                "--feature-file",
+                f"/workspace/{feature_file}" if use_workspace_prefix else feature_file,
+            ]
+        )
     if target:
         args.extend(["--target", str(target)])
     if not interaction:
@@ -4840,7 +5681,12 @@ def cross_section_shap(
     default=None,
     help="Optional expectations YAML/JSON file for economic-logic checks",
 )
-@click.option("--tolerance", default=0.0, show_default=True, help="Tolerance for expectation checks")
+@click.option(
+    "--tolerance",
+    default=0.0,
+    show_default=True,
+    help="Tolerance for expectation checks",
+)
 @click.option(
     "--output",
     default="results/cross_sectional/shap_logic_report.md",
@@ -4860,7 +5706,12 @@ def cross_section_logic_check(shap_manifest, expectations, tolerance, output, do
         f"/workspace/{output}" if use_workspace_prefix else output,
     ]
     if expectations:
-        args.extend(["--expectations", f"/workspace/{expectations}" if use_workspace_prefix else expectations])
+        args.extend(
+            [
+                "--expectations",
+                f"/workspace/{expectations}" if use_workspace_prefix else expectations,
+            ]
+        )
 
     sys.exit(
         run_script(
@@ -4896,9 +5747,16 @@ def cross_section_logic_check(shap_manifest, expectations, tolerance, output, do
     show_default=True,
     help="Output drift markdown report path",
 )
-@click.option("--update-baseline", is_flag=True, default=False, help="Overwrite baseline with current metrics if no alerts")
+@click.option(
+    "--update-baseline",
+    is_flag=True,
+    default=False,
+    help="Overwrite baseline with current metrics if no alerts",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def cross_section_shap_drift(current, baseline, threshold, output, update_baseline, docker):
+def cross_section_shap_drift(
+    current, baseline, threshold, output, update_baseline, docker
+):
     """Monitor SHAP value drift over time."""
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
@@ -4943,20 +5801,56 @@ def cross_section_shap_drift(current, baseline, threshold, output, update_baseli
 )
 @click.option("--start-date", help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", help="End date (YYYY-MM-DD)")
-@click.option("--features-store-root", default="feature_store", show_default=True, help="FeatureStore root")
-@click.option("--features-store-layer", default=None, help="FeatureStore layer (features_xxx)")
+@click.option(
+    "--features-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root",
+)
+@click.option(
+    "--features-store-layer", default=None, help="FeatureStore layer (features_xxx)"
+)
 @click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe")
-@click.option("--columns", default=None, help="Comma-separated FeatureStore columns to load (optional).")
-@click.option("--factors", default=None, help="Comma-separated factor columns to evaluate.")
-@click.option("--factors-file", default=None, help="Path to factor list text file (one per line).")
-@click.option("--factor-set-yaml", default=None, help="YAML path containing factor_sets.")
-@click.option("--factor-set", default=None, help="Factor set name in --factor-set-yaml.")
-@click.option("--target", default=None, help="Target column (default: infer future_return_<horizon>).")
-@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars.")
-@click.option("--min-assets", default=4, show_default=True, help="Minimum assets per timestamp.")
-@click.option("--quantiles", default=5, show_default=True, help="Quantiles for long/short.")
-@click.option("--fee-bps", default=0.0, show_default=True, help="Fee (bps) applied to turnover.")
-@click.option("--output-dir", default="results/cross_sectional/factor_eval", show_default=True, help="Output directory.")
+@click.option(
+    "--columns",
+    default=None,
+    help="Comma-separated FeatureStore columns to load (optional).",
+)
+@click.option(
+    "--factors", default=None, help="Comma-separated factor columns to evaluate."
+)
+@click.option(
+    "--factors-file", default=None, help="Path to factor list text file (one per line)."
+)
+@click.option(
+    "--factor-set-yaml", default=None, help="YAML path containing factor_sets."
+)
+@click.option(
+    "--factor-set", default=None, help="Factor set name in --factor-set-yaml."
+)
+@click.option(
+    "--target",
+    default=None,
+    help="Target column (default: infer future_return_<horizon>).",
+)
+@click.option(
+    "--horizon", default=12, show_default=True, help="Forward return horizon in bars."
+)
+@click.option(
+    "--min-assets", default=4, show_default=True, help="Minimum assets per timestamp."
+)
+@click.option(
+    "--quantiles", default=5, show_default=True, help="Quantiles for long/short."
+)
+@click.option(
+    "--fee-bps", default=0.0, show_default=True, help="Fee (bps) applied to turnover."
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional/factor_eval",
+    show_default=True,
+    help="Output directory.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_factor_eval(
     config_path,
@@ -4997,9 +5891,19 @@ def cross_section_factor_eval(
         str(float(fee_bps)),
     ]
     if config_path:
-        args.extend(["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path])
+        args.extend(
+            [
+                "--config",
+                f"/workspace/{config_path}" if use_workspace_prefix else config_path,
+            ]
+        )
     if input_path:
-        args.extend(["--input", f"/workspace/{input_path}" if use_workspace_prefix else input_path])
+        args.extend(
+            [
+                "--input",
+                f"/workspace/{input_path}" if use_workspace_prefix else input_path,
+            ]
+        )
     if symbols:
         args.extend(["--symbols", str(symbols)])
     if start_date:
@@ -5008,7 +5912,14 @@ def cross_section_factor_eval(
         args.extend(["--end-date", str(end_date)])
     if features_store_root:
         args.extend(
-            ["--features-store-root", f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root]
+            [
+                "--features-store-root",
+                (
+                    f"/workspace/{features_store_root}"
+                    if use_workspace_prefix
+                    else features_store_root
+                ),
+            ]
         )
     if features_store_layer:
         args.extend(["--features-store-layer", str(features_store_layer)])
@@ -5017,9 +5928,23 @@ def cross_section_factor_eval(
     if factors:
         args.extend(["--factors", str(factors)])
     if factors_file:
-        args.extend(["--factors-file", f"/workspace/{factors_file}" if use_workspace_prefix else factors_file])
+        args.extend(
+            [
+                "--factors-file",
+                f"/workspace/{factors_file}" if use_workspace_prefix else factors_file,
+            ]
+        )
     if factor_set_yaml:
-        args.extend(["--factor-set-yaml", f"/workspace/{factor_set_yaml}" if use_workspace_prefix else factor_set_yaml])
+        args.extend(
+            [
+                "--factor-set-yaml",
+                (
+                    f"/workspace/{factor_set_yaml}"
+                    if use_workspace_prefix
+                    else factor_set_yaml
+                ),
+            ]
+        )
     if factor_set:
         args.extend(["--factor-set", str(factor_set)])
     if target:
@@ -5035,12 +5960,17 @@ def cross_section_factor_eval(
 
 
 @cross_section.command("pipeline")
-@click.option("--config", "config_path", required=True, help="Pipeline YAML config path")
+@click.option(
+    "--config", "config_path", required=True, help="Pipeline YAML config path"
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_pipeline(config_path, docker):
     """Run end-to-end cross-sectional pipeline from a YAML config."""
     use_workspace_prefix = docker and not _is_in_docker()
-    args = ["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path]
+    args = [
+        "--config",
+        f"/workspace/{config_path}" if use_workspace_prefix else config_path,
+    ]
     sys.exit(
         run_script(
             "src/cross_sectional/scripts/pipeline.py",
@@ -5053,8 +5983,14 @@ def cross_section_pipeline(config_path, docker):
 @cross_section.command("rank")
 @click.option("--date", required=True, help="Date (YYYY-MM-DD)")
 @click.option("--factor", required=True, help="Factor/feature column name to rank by")
-@click.option("--factor-set-yaml", default=None, help="Optional YAML containing factor_sets (validate --factor).")
-@click.option("--factor-set", default=None, help="Factor set name in --factor-set-yaml.")
+@click.option(
+    "--factor-set-yaml",
+    default=None,
+    help="Optional YAML containing factor_sets (validate --factor).",
+)
+@click.option(
+    "--factor-set", default=None, help="Factor set name in --factor-set-yaml."
+)
 @click.option(
     "--symbols",
     default=None,
@@ -5065,19 +6001,31 @@ def cross_section_pipeline(config_path, docker):
     default=None,
     help="Universe config YAML (e.g., config/download/crypto_4h_token_universe_groups.yaml).",
 )
-@click.option("--universe-set", default="starter_a", show_default=True, help="Universe set name")
+@click.option(
+    "--universe-set", default="starter_a", show_default=True, help="Universe set name"
+)
 @click.option(
     "--universe-groups",
     default=None,
     help="Comma-separated groups to include (e.g., highcap,alt). Default: all groups.",
 )
-@click.option("--features-store-root", default="feature_store", show_default=True, help="FeatureStore root dir")
+@click.option(
+    "--features-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root dir",
+)
 @click.option(
     "--features-store-layer",
     required=True,
     help="FeatureStore layer (e.g., features_83f12ecc5e)",
 )
-@click.option("--timeframe", default="240T", show_default=True, help="Timeframe (e.g., 240T for 4H)")
+@click.option(
+    "--timeframe",
+    default="240T",
+    show_default=True,
+    help="Timeframe (e.g., 240T for 4H)",
+)
 @click.option(
     "--bar",
     type=click.Choice(["last", "first"]),
@@ -5085,7 +6033,12 @@ def cross_section_pipeline(config_path, docker):
     show_default=True,
     help="Which bar within the day to use.",
 )
-@click.option("--ascending", is_flag=True, default=False, help="Sort ascending (default: descending)")
+@click.option(
+    "--ascending",
+    is_flag=True,
+    default=False,
+    help="Sort ascending (default: descending)",
+)
 @click.option("--top", default=50, show_default=True, help="Top-N rows to print")
 @click.option("--output", default=None, help="Optional output path (.csv or .json)")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
@@ -5115,7 +6068,11 @@ def cross_section_rank(
         "--factor",
         str(factor),
         "--features-store-root",
-        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        (
+            f"/workspace/{features_store_root}"
+            if use_workspace_prefix
+            else features_store_root
+        ),
         "--features-store-layer",
         str(features_store_layer),
         "--timeframe",
@@ -5126,7 +6083,16 @@ def cross_section_rank(
         str(top),
     ]
     if factor_set_yaml:
-        args.extend(["--factor-set-yaml", f"/workspace/{factor_set_yaml}" if use_workspace_prefix else factor_set_yaml])
+        args.extend(
+            [
+                "--factor-set-yaml",
+                (
+                    f"/workspace/{factor_set_yaml}"
+                    if use_workspace_prefix
+                    else factor_set_yaml
+                ),
+            ]
+        )
     if factor_set:
         args.extend(["--factor-set", str(factor_set)])
     if ascending:
@@ -5137,7 +6103,11 @@ def cross_section_rank(
         args.extend(
             [
                 "--universe-config",
-                f"/workspace/{universe_config}" if use_workspace_prefix else universe_config,
+                (
+                    f"/workspace/{universe_config}"
+                    if use_workspace_prefix
+                    else universe_config
+                ),
                 "--universe-set",
                 str(universe_set),
             ]
@@ -5145,7 +6115,9 @@ def cross_section_rank(
         if universe_groups:
             args.extend(["--universe-groups", str(universe_groups)])
     if output:
-        args.extend(["--output", f"/workspace/{output}" if use_workspace_prefix else output])
+        args.extend(
+            ["--output", f"/workspace/{output}" if use_workspace_prefix else output]
+        )
 
     sys.exit(
         run_script(
@@ -5157,10 +6129,28 @@ def cross_section_rank(
 
 
 @cross_section.command("workflow")
-@click.option("--config", "config_path", default=None, help="YAML config path for config-driven workflow (recommended).")
-@click.option("--symbols", "-s", required=False, help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT,...)")
-@click.option("--timeframe", "-t", default="240T", show_default=True, help="Timeframe (e.g., 240T)")
-@click.option("--horizon", default=12, show_default=True, help="Forward return horizon in bars")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="YAML config path for config-driven workflow (recommended).",
+)
+@click.option(
+    "--symbols",
+    "-s",
+    required=False,
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT,...)",
+)
+@click.option(
+    "--timeframe",
+    "-t",
+    default="240T",
+    show_default=True,
+    help="Timeframe (e.g., 240T)",
+)
+@click.option(
+    "--horizon", default=12, show_default=True, help="Forward return horizon in bars"
+)
 @click.option("--start-date", required=False, help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", required=False, help="End date (YYYY-MM-DD)")
 @click.option(
@@ -5170,7 +6160,9 @@ def cross_section_rank(
     show_default=True,
     help="Feature recipe for CS panel generation.",
 )
-@click.option("--data-path", default=None, help="Optional data root (default: data/parquet_data)")
+@click.option(
+    "--data-path", default=None, help="Optional data root (default: data/parquet_data)"
+)
 @click.option(
     "--panel-out",
     default="results/feature_exports/cs_panel_workflow.parquet",
@@ -5189,9 +6181,25 @@ def cross_section_rank(
     show_default=True,
     help="Output directory for trained model artifacts",
 )
-@click.option("--model", type=click.Choice(["boosting", "fama_macbeth"]), default="boosting", show_default=True, help="Model type")
-@click.option("--winsor", default=3.0, show_default=True, help="Sigma winsorisation (<=0 disables)")
-@click.option("--periods-per-year", default="auto", show_default=True, help="Annualisation factor or 'auto'")
+@click.option(
+    "--model",
+    type=click.Choice(["boosting", "fama_macbeth"]),
+    default="boosting",
+    show_default=True,
+    help="Model type",
+)
+@click.option(
+    "--winsor",
+    default=3.0,
+    show_default=True,
+    help="Sigma winsorisation (<=0 disables)",
+)
+@click.option(
+    "--periods-per-year",
+    default="auto",
+    show_default=True,
+    help="Annualisation factor or 'auto'",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_workflow(
     config_path,
@@ -5215,7 +6223,10 @@ def cross_section_workflow(
 
     if not config_path:
         raise ValueError("cross-section workflow now requires --config.")
-    args = ["--config", f"/workspace/{config_path}" if use_workspace_prefix else config_path]
+    args = [
+        "--config",
+        f"/workspace/{config_path}" if use_workspace_prefix else config_path,
+    ]
     sys.exit(
         run_script(
             "src/cross_sectional/scripts/pipeline.py",
@@ -5226,30 +6237,94 @@ def cross_section_workflow(
 
 
 @cross_section.command("nautilus-backtest")
-@click.option("--panel", required=True, help="Panel parquet/csv (e.g., output_root/panel_from_feature_store.parquet)")
-@click.option("--output-dir", default="results/cross_sectional/nautilus_backtest", show_default=True, help="Output directory")
-@click.option("--signal", type=click.Choice(["model", "factor_combo"]), default="model", show_default=True, help="Signal source")
-@click.option("--model-path", default=None, help="Path to trained CS model joblib (for signal=model)")
-@click.option("--feature-file", default=None, help="Text file with feature columns (one per line)")
+@click.option(
+    "--panel",
+    required=True,
+    help="Panel parquet/csv (e.g., output_root/panel_from_feature_store.parquet)",
+)
+@click.option(
+    "--output-dir",
+    default="results/cross_sectional/nautilus_backtest",
+    show_default=True,
+    help="Output directory",
+)
+@click.option(
+    "--signal",
+    type=click.Choice(["model", "factor_combo"]),
+    default="model",
+    show_default=True,
+    help="Signal source",
+)
+@click.option(
+    "--model-path",
+    default=None,
+    help="Path to trained CS model joblib (for signal=model)",
+)
+@click.option(
+    "--feature-file", default=None, help="Text file with feature columns (one per line)"
+)
 @click.option("--feature-cols", default=None, help="Comma-separated feature columns")
-@click.option("--mode", default="market_neutral", show_default=True, help="long_only | market_neutral")
+@click.option(
+    "--mode",
+    default="market_neutral",
+    show_default=True,
+    help="long_only | market_neutral",
+)
 @click.option("--holding", default=12, show_default=True, help="Holding period in bars")
 @click.option("--lag", default=1, show_default=True, help="Execution lag in bars")
 @click.option("--topk", default=10, show_default=True, help="Top-K longs")
-@click.option("--bottomk", default=10, show_default=True, help="Bottom-K shorts (market_neutral)")
-@click.option("--gross-leverage", default=1.0, show_default=True, help="Gross leverage cap")
-@click.option("--max-weight", default=0.10, show_default=True, help="Max abs weight per asset")
-@click.option("--turnover-limit", default=None, help="Optional turnover limit per rebalance")
-@click.option("--cash-buffer", default=0.10, show_default=True, help="Cash buffer fraction")
-@click.option("--equity-mode", default="compound", show_default=True, help="simple|compound|log")
+@click.option(
+    "--bottomk", default=10, show_default=True, help="Bottom-K shorts (market_neutral)"
+)
+@click.option(
+    "--gross-leverage", default=1.0, show_default=True, help="Gross leverage cap"
+)
+@click.option(
+    "--max-weight", default=0.10, show_default=True, help="Max abs weight per asset"
+)
+@click.option(
+    "--turnover-limit", default=None, help="Optional turnover limit per rebalance"
+)
+@click.option(
+    "--cash-buffer", default=0.10, show_default=True, help="Cash buffer fraction"
+)
+@click.option(
+    "--equity-mode", default="compound", show_default=True, help="simple|compound|log"
+)
 @click.option("--fee-bps", default=2.0, show_default=True, help="Fee bps on turnover")
-@click.option("--slippage-bps", default=0.0, show_default=True, help="Slippage bps on turnover")
-@click.option("--funding-bps-per-bar", default=0.0, show_default=True, help="Funding bps per bar (short exposure)")
-@click.option("--borrow-bps-per-bar", default=0.0, show_default=True, help="Borrow bps per bar (short exposure)")
-@click.option("--min-assets", default=12, show_default=True, help="Min assets per timestamp")
-@click.option("--periods-per-year", default=None, help="Annualisation factor (bars/year)")
-@click.option("--html", default="report.html", show_default=True, help="HTML report filename under output-dir")
-@click.option("--max-trades", default=300, show_default=True, help="Max trades to show inline in HTML")
+@click.option(
+    "--slippage-bps", default=0.0, show_default=True, help="Slippage bps on turnover"
+)
+@click.option(
+    "--funding-bps-per-bar",
+    default=0.0,
+    show_default=True,
+    help="Funding bps per bar (short exposure)",
+)
+@click.option(
+    "--borrow-bps-per-bar",
+    default=0.0,
+    show_default=True,
+    help="Borrow bps per bar (short exposure)",
+)
+@click.option(
+    "--min-assets", default=12, show_default=True, help="Min assets per timestamp"
+)
+@click.option(
+    "--periods-per-year", default=None, help="Annualisation factor (bars/year)"
+)
+@click.option(
+    "--html",
+    default="report.html",
+    show_default=True,
+    help="HTML report filename under output-dir",
+)
+@click.option(
+    "--max-trades",
+    default=300,
+    show_default=True,
+    help="Max trades to show inline in HTML",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def cross_section_nautilus_backtest(
     panel,
@@ -5321,9 +6396,15 @@ def cross_section_nautilus_backtest(
         str(int(max_trades)),
     ]
     if model_path:
-        args += ["--model-path", f"/workspace/{model_path}" if use_workspace_prefix else model_path]
+        args += [
+            "--model-path",
+            f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        ]
     if feature_file:
-        args += ["--feature-file", f"/workspace/{feature_file}" if use_workspace_prefix else feature_file]
+        args += [
+            "--feature-file",
+            f"/workspace/{feature_file}" if use_workspace_prefix else feature_file,
+        ]
     if feature_cols:
         args += ["--feature-cols", str(feature_cols)]
     if turnover_limit is not None:
@@ -5573,4 +6654,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

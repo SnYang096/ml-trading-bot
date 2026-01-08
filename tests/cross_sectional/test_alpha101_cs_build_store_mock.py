@@ -10,6 +10,7 @@ def test_build_store_alpha101_cs_rank_smoke(tmp_path, monkeypatch):
     # Mock load_raw_data so build_feature_store_for_symbols doesn't hit disk.
     from src import data_tools as _dt  # noqa: F401
     import src.data_tools.data_utils as du
+    import src.cross_sectional.feature_store_builder as fsb
 
     idx = pd.date_range("2025-01-01", periods=20, freq="4h", tz="UTC")
 
@@ -30,6 +31,29 @@ def test_build_store_alpha101_cs_rank_smoke(tmp_path, monkeypatch):
 
     monkeypatch.setattr(du, "load_raw_data", _fake_load_raw_data)
 
+    # The default RSI implementation depends on TA-Lib in some environments.
+    # For this unit test we patch the registry lookup to a pure-pandas stub so we can
+    # verify mixed-mode store writing (alpha101_cs_* + non-alpha DAG features).
+    _orig_get = fsb.get_feature_func
+
+    def _fake_get_feature_func(name: str):
+        if name == "compute_rsi_from_series":
+
+            def _stub_rsi_from_series(
+                close: pd.Series, period: int = 14
+            ) -> pd.DataFrame:
+                s = pd.to_numeric(close, errors="coerce").astype(float)
+                # cheap deterministic signal; not a real RSI
+                out = (
+                    s.pct_change(fill_method=None).fillna(0.0).rename("rsi").to_frame()
+                )
+                return out
+
+            return _stub_rsi_from_series
+        return _orig_get(name)
+
+    monkeypatch.setattr(fsb, "get_feature_func", _fake_get_feature_func)
+
     cfg = CSFeatureStoreBuildConfig(
         data_path="ignored",
         features_store_root=str(tmp_path / "feature_store"),
@@ -44,7 +68,13 @@ def test_build_store_alpha101_cs_rank_smoke(tmp_path, monkeypatch):
 
     layer = build_feature_store_for_symbols(
         symbols=["A", "B", "C"],
-        desired_output_cols=["alpha101_cs_001", "alpha101_cs_002", "alpha101_cs_101"],
+        # Mixed mode should be supported: alpha101_cs_* + normal OHLCV-only factors via feature_dependencies DAG.
+        desired_output_cols=[
+            "alpha101_cs_001",
+            "alpha101_cs_002",
+            "alpha101_cs_101",
+            "rsi",
+        ],
         feature_deps_path="config/feature_dependencies.yaml",
         cfg=cfg,
     )
@@ -58,3 +88,5 @@ def test_build_store_alpha101_cs_rank_smoke(tmp_path, monkeypatch):
     assert "alpha101_cs_001" in df.columns
     assert "alpha101_cs_002" in df.columns
     assert "alpha101_cs_101" in df.columns
+    # Should also contain at least one non-alpha feature from feature_dependencies.yaml
+    assert "rsi" in df.columns

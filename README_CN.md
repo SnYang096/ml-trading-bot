@@ -121,8 +121,20 @@ mlbot diagnose poolb-semantic-search \
   --search-algo pipeline \
   --expand-semantic-singletons \
   --regen-poolb --rerun-search \
-  --no-docker
 ```
+
+#### A/B/C 预算预设（推荐工作流：A → B → C）
+
+这个命令固定执行 **最稳** 的 staged 工作流（你不需要再手动串 A/B/C）：
+
+- **Pool‑B**：先生成候选因子池（factor-eval → `features_pool_b.yaml`）
+- **Stage A**：preset A（快筛）→ 自动导出 shortlist
+- **Stage B**：preset B（收敛）→ 自动导出 shortlist
+- **Stage C**：preset C（最终验收）→ 输出最终 `features_suggested_*_C.yaml`
+
+你只需要记住这一条命令即可；详细说明见：
+
+- `docs/guides/FEATURE_GROUP_SEARCH_PRESETS_CN.md`
 
 ### 2) 最终验收：6 个月 Holdout（只验收，不再调参）
 
@@ -153,8 +165,9 @@ mlbot train final \
 
 ### 4) （可选）rolling / Nautilus
 
-- rolling：用于跨月稳定性与上线后监控（见 `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
-- Nautilus：用于“回测=实盘一致性验证”（见 `docs/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/live_stream/07_与NautilusTrader对齐清单.md`）
+- rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
+  - 说明：`poolb-semantic-search` 不是 rolling；它是在**单个训练窗 + 单个测试窗**（time split + 多 seed）上做特征搜索/收敛。
+- Nautilus：用于“回测=实盘一致性验证”（事件驱动回放）（见 `docs/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/live_stream/07_与NautilusTrader对齐清单.md`）
 
 ---
 
@@ -166,6 +179,8 @@ mlbot train final \
   - Pool‑B + 语义组搜索 → 6 个月 holdout 验收 → 训练最终上线模型
   - rolling 与 Nautilus 的职责边界（OOS vs 实盘一致性）
 
+- **多资产合约实盘落地路线图（从 1w→10w 的可执行路线，低维护）**：`docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`
+- **ETH 拖累处理与 Universe 演进（V1 交易 / V2 Shadow 监控）**：`docs/guides/ETH_DRAG_AND_UNIVERSE_EVOLUTION_CN.md`
 - **特征搜索 Playbook（详细算法/命令/概念）**：`docs/strategies/FEATURE_SEARCH_PLAYBOOK_CN.md`
 - **语义特征单列展开说明**：`docs/strategies/SEMANTIC_GROUPS_SINGLETON_EXPANSION.md`
 - **归一化契约与检查**：`docs/architecture/NORMALIZATION_CONTRACT_AND_CHECKS.md`

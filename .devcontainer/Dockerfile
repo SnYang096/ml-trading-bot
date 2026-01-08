@@ -1,4 +1,4 @@
-FROM hansenlovefiona017/lightgbm-runtime:v0.0.7
+FROM hansenlovefiona017/lightgbm-runtime:v0.0.9
 
 # Developer tools inside Dev Container (keeps parity with production image)
 # Increase timeout and add retries to handle network issues

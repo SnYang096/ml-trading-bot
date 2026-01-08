@@ -16,7 +16,7 @@ INSIDE_FROM_FILE := $(shell if [ -f /.devcontainer-env ]; then echo yes; else ec
 INSIDE_CONTAINER ?= $(if $(filter yes,$(INSIDE_FROM_ENV) $(INSIDE_FROM_FILE)),yes,no)
 
 # Docker configuration
-DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.7
+DOCKER_IMAGE ?= hansenlovefiona017/lightgbm-runtime:v0.0.9
 
 # Common paths (override when invoking make, e.g. `make train DATA_DIR=data/parquet_data`)
 DATA_DIR ?= data/parquet_data
@@ -242,11 +242,11 @@ install-hooks:
 
 docker-build: start-docker
 	@echo "🔨 Building Docker image $(DOCKER_IMAGE) via docker/build-gpu.sh ..."
-	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.7 --no-proxy --no-ssh
+	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.9 --no-proxy --no-ssh
 
 docker-build-gpu: start-docker
-	@echo "🔨 Building GPU image hansenlovefiona017/lightgbm-runtime:v0.0.7 ..."
-	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.7 --no-proxy --no-ssh
+	@echo "🔨 Building GPU image hansenlovefiona017/lightgbm-runtime:v0.0.9 ..."
+	./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.9 --no-proxy --no-ssh
 
 
 docker-install:

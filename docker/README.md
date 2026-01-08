@@ -11,14 +11,14 @@
 ./docker/build-gpu.sh
 
 # 指定镜像名称和标签
-./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.8 --no-ssh --no-proxy
+./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.9 --no-ssh --no-proxy
 
 # 使用代理构建
 # 注意：脚本会自动修复代理地址（127.0.0.1 -> Docker 网桥 IP，以便容器访问宿主机代理）
 HTTP_PROXY=http://127.0.0.1:7897 \
 HTTPS_PROXY=http://127.0.0.1:7897 \
 NO_PROXY=localhost,127.0.0.1 \
-./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.8 --no-ssh
+./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.9 --no-ssh
 
 # Clash TUN 模式用户注意：
 # 1. 如果配置了很多 DIRECT 规则（如 docker.io, ubuntu.com 等），可能不需要代理
@@ -81,12 +81,12 @@ make docker-gpu-quickstart
 
 ## 📚 文档导航
 
-| 文档 | 说明 | 适合人群 |
-|-----|------|---------|
-| [📖 QUICKSTART.md](./QUICKSTART.md) | 3步快速开始 | 所有人 ⭐ |
-| [📘 SETUP_SUMMARY.md](./SETUP_SUMMARY.md) | 配置总结 | 已配置用户 |
-| [📕 README_GPU_DOCKER.md](./README_GPU_DOCKER.md) | 完整文档 | 需要详细配置 ⭐⭐⭐ |
-| [📚 INDEX.md](./INDEX.md) | 文件索引 | 开发者 |
+| 文档                                             | 说明        | 适合人群         |
+| ------------------------------------------------ | ----------- | ---------------- |
+| [📖 QUICKSTART.md](./QUICKSTART.md)               | 3步快速开始 | 所有人 ⭐         |
+| [📘 SETUP_SUMMARY.md](./SETUP_SUMMARY.md)         | 配置总结    | 已配置用户       |
+| [📕 README_GPU_DOCKER.md](./README_GPU_DOCKER.md) | 完整文档    | 需要详细配置 ⭐⭐⭐ |
+| [📚 INDEX.md](./INDEX.md)                         | 文件索引    | 开发者           |
 
 ## 📦 文件列表
 
@@ -178,11 +178,11 @@ docker run --rm \
 
 ## 📊 性能对比
 
-| 环境 | 训练时间 | 状态 |
-|-----|---------|------|
-| WSL Native | ❌ 失败 | GPU 不兼容 |
-| Docker GPU | ✅ 2秒 | 正常工作 |
-| Docker CPU | 15秒 | 对比基准 |
+| 环境       | 训练时间 | 状态       |
+| ---------- | -------- | ---------- |
+| WSL Native | ❌ 失败   | GPU 不兼容 |
+| Docker GPU | ✅ 2秒    | 正常工作   |
+| Docker CPU | 15秒     | 对比基准   |
 
 **加速比: 7.5x** 🚀
 

@@ -1841,6 +1841,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--min-trades", type=int, default=10)
     p.add_argument("--max-steps", type=int, default=6)
     p.add_argument(
+        "--preset",
+        default="",
+        choices=["", "A", "B", "C"],
+        help=(
+            "Budget preset to speed up feature-group-search. "
+            "A=fast proxy (CV_mean, fewer seeds), B=medium, C=full (Sharpe_mean, more seeds). "
+            "If set, this will override related args (seeds/objective/halving/beam/sffs/max-steps)."
+        ),
+    )
+    p.add_argument(
         "--search-algo",
         default="greedy",
         choices=["greedy", "halving", "beam", "sffs", "pipeline"],
@@ -1938,6 +1948,78 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _apply_preset(args: argparse.Namespace) -> argparse.Namespace:
+    """
+    Apply A/B/C budget presets for faster iteration.
+
+    Notes:
+    - Presets intentionally override user-provided flags to ensure deterministic budgets.
+      If you want full manual control, do not pass --preset.
+    - halving_stages represent *seed budgets* (e.g. 1,2,3), and the implementation
+      will auto-append the full seed count.
+    """
+    preset = (getattr(args, "preset", "") or "").strip().upper()
+    if not preset:
+        return args
+
+    presets = {
+        # A: very fast screening (use proxy objective + fewer seeds)
+        "A": {
+            "objective": "CV_mean",
+            "seeds": "1,2",
+            "halving_stages": "1,2",
+            "halving_top_fraction": 0.35,
+            "halving_min_survivors": 20,
+            "pipeline_survivors": 25,
+            "beam_width": 3,
+            "max_steps": 4,
+            "sffs_max_backward_per_step": 1,
+        },
+        # B: medium (more seeds + slightly wider search)
+        "B": {
+            "objective": "CV_mean",
+            "seeds": "1,2,3",
+            "halving_stages": "1,2,3",
+            "halving_top_fraction": 0.5,
+            "halving_min_survivors": 30,
+            "pipeline_survivors": 40,
+            "beam_width": 4,
+            "max_steps": 5,
+            "sffs_max_backward_per_step": 1,
+        },
+        # C: full verification (closest to your wide runs)
+        "C": {
+            "objective": "Sharpe_mean",
+            "seeds": "1,2,3,4,5",
+            "halving_stages": "1,3,5",
+            "halving_top_fraction": 0.6,
+            "halving_min_survivors": 40,
+            "pipeline_survivors": 60,
+            "beam_width": 5,
+            "max_steps": 6,
+            "sffs_max_backward_per_step": 2,
+        },
+    }
+
+    cfg = presets.get(preset)
+    if cfg is None:
+        return args
+
+    # Apply
+    for k, v in cfg.items():
+        setattr(args, k, v)
+
+    print(
+        f"⚙️  Applied preset {preset}: "
+        f"objective={args.objective}, seeds={args.seeds}, "
+        f"halving_stages={args.halving_stages}, top_fraction={args.halving_top_fraction}, "
+        f"min_survivors={args.halving_min_survivors}, pipeline_survivors={getattr(args,'pipeline_survivors',None)}, "
+        f"beam_width={getattr(args,'beam_width',None)}, max_steps={args.max_steps}, "
+        f"sffs_max_backward_per_step={getattr(args,'sffs_max_backward_per_step',None)}"
+    )
+    return args
+
+
 def _load_groups_with_source(
     *,
     strategy_dir_name: str,
@@ -1993,7 +2075,7 @@ def _load_groups_with_source(
 
 
 def main() -> None:
-    args = _parse_args()
+    args = _apply_preset(_parse_args())
     base_dir = Path(args.base_strategy_config)
     out_dir = Path(args.output_dir)
     _ensure_dir(out_dir)

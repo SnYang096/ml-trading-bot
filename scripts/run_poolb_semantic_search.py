@@ -1,11 +1,16 @@
 """
-Run a full 2-stage loop for multiple strategies:
+Run the **best-practice** end-to-end loop for multiple strategies:
 
 1) Generate Pool-B YAML via `mlbot analyze factor-eval`
-2) Run `mlbot diagnose feature-group-search` using:
+2) Run `mlbot diagnose feature-group-search` in strict stages:
+   - preset A (fast proxy) -> export shortlist groups.yaml
+   - preset B (medium)     -> export shortlist groups.yaml
+   - preset C (full verify) using B-shortlist
+3) Generate a markdown summary report (includes A/B/C paths, final = C)
+
+Each feature-group-search run uses:
    - semantic groups (auto groups-yaml by strategy dir name)
    - Pool-B YAML as additional singleton candidate groups
-3) Generate a markdown summary report.
 
 Key behavior:
 - `--tag` affects ALL outputs: Pool-B dir, search output dir, writeback YAML, and report.
@@ -51,8 +56,6 @@ class RunSpec:
     strategy_dir: Path
     pool_b_dir: Path
     pool_b_yaml: Path
-    fgs_out_dir: Path
-    writeback_yaml: Path
     search_algo: str
 
 
@@ -82,27 +85,12 @@ def _build_runs(*, strategies: List[str], tag: str, search_algo: str) -> List[Ru
         strategy_dir = ROOT / "config" / "strategies" / s
         pool_b_dir = _pool_b_dir(s, tag)
         pool_b_yaml = pool_b_dir / "features_pool_b.yaml"
-        fgs_out_dir = (
-            ROOT
-            / "results"
-            / "feature_group_search"
-            / f"{s}_{search_algo}_poolb_semantic_{tag}"
-        )
-        writeback_yaml = (
-            ROOT
-            / "config"
-            / "strategies"
-            / s
-            / f"features_suggested_{search_algo}_poolb_semantic_{tag}.yaml"
-        )
         out.append(
             RunSpec(
                 strategy=s,
                 strategy_dir=strategy_dir,
                 pool_b_dir=pool_b_dir,
                 pool_b_yaml=pool_b_yaml,
-                fgs_out_dir=fgs_out_dir,
-                writeback_yaml=writeback_yaml,
                 search_algo=search_algo,
             )
         )
@@ -172,27 +160,22 @@ def run_feature_group_search(
     start_date: str,
     end_date: str,
     test_size: float,
-    seeds: str,
-    objective: str,
     min_trades: int,
-    max_steps: int,
     search_algo: str,
-    halving_stages: str,
-    halving_top_fraction: float,
-    halving_min_survivors: int,
-    pipeline_survivors: int,
-    beam_width: int,
-    sffs_max_backward_per_step: int,
+    out_dir: Path,
+    writeback_yaml: Path,
+    groups_yaml: Path | None,
     expand_semantic_singletons: bool,
     rerun_search: bool,
+    preset: str,
 ) -> Path:
     _ensure_strategy_dir_exists(spec)
-    result_json = spec.fgs_out_dir / "feature_group_search_result.json"
+    result_json = out_dir / "feature_group_search_result.json"
     if result_json.exists() and not rerun_search:
         print(f"✅ feature-group-search result exists, reuse: {result_json}")
         return result_json
 
-    spec.fgs_out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         sys.executable,
@@ -212,39 +195,25 @@ def run_feature_group_search(
         end_date,
         "--test-size",
         str(test_size),
-        "--seeds",
-        seeds,
-        "--objective",
-        objective,
         "--min-trades",
         str(min_trades),
-        "--max-steps",
-        str(max_steps),
         "--search-algo",
         str(search_algo),
-        "--halving-stages",
-        str(halving_stages),
-        "--halving-top-fraction",
-        str(halving_top_fraction),
-        "--halving-min-survivors",
-        str(halving_min_survivors),
-        "--pipeline-survivors",
-        str(pipeline_survivors),
-        "--beam-width",
-        str(beam_width),
-        "--sffs-max-backward-per-step",
-        str(sffs_max_backward_per_step),
+        "--preset",
+        str(preset),
         "--pool-b-yaml",
         str(spec.pool_b_yaml),
         # Let the tool pick groups-yaml automatically (strategy semantic yaml if present).
         "--invert-candidates-yaml",
         str(spec.pool_b_yaml),
         "--writeback-yaml",
-        str(spec.writeback_yaml),
+        str(writeback_yaml),
         "--output-dir",
-        str(spec.fgs_out_dir),
+        str(out_dir),
         "--no-docker",
     ]
+    if groups_yaml is not None:
+        cmd.extend(["--groups-yaml", str(groups_yaml)])
     if expand_semantic_singletons:
         cmd.append("--expand-semantic-singletons")
     _run(cmd, cwd=ROOT)
@@ -255,6 +224,47 @@ def run_feature_group_search(
         )
     print(f"✅ feature-group-search done: {result_json}")
     return result_json
+
+
+def export_shortlist_groups(
+    *,
+    spec: RunSpec,
+    result_json: Path,
+    out_yaml: Path,
+    expand_semantic_singletons: bool,
+    mode: str = "prefilter_survivors",
+    max_groups: int = 30,
+) -> Path:
+    """
+    Export shortlist groups YAML from a previous feature-group-search result JSON.
+    This is used to make A output become B input, and B output become C input.
+    """
+    out_yaml.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        "-m",
+        "src.cli.main",
+        "diagnose",
+        "export-fgs-shortlist",
+        "--base-strategy-config",
+        str(spec.strategy_dir),
+        "--result-json",
+        str(result_json),
+        "--output-yaml",
+        str(out_yaml),
+        "--mode",
+        str(mode),
+        "--pool-b-yaml",
+        str(spec.pool_b_yaml),
+        "--max-groups",
+        str(max_groups),
+    ]
+    if expand_semantic_singletons:
+        cmd.append("--expand-semantic-singletons")
+    _run(cmd, cwd=ROOT)
+    if not out_yaml.exists():
+        raise RuntimeError(f"Shortlist groups YAML was not generated: {out_yaml}")
+    return out_yaml
 
 
 def _fmt(x: Optional[float]) -> str:
@@ -293,21 +303,19 @@ def _seed1_stats(fgs_out_dir: Path, *, history: List[dict]) -> Dict[str, object]
 def write_report(
     *,
     specs: List[RunSpec],
-    result_json_paths: Dict[str, Path],
+    result_json_paths: Dict[str, Dict[str, Path]],
     tag: str,
     symbol: str,
     timeframe: str,
     start_date: str,
     end_date: str,
-    seeds: str,
-    objective: str,
     out_path: Path,
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: List[str] = []
     lines.append(
-        f"# Feature Group Search Summary (Pool-B + semantic, greedy multi-seed) — {tag}"
+        f"# Feature Group Search Summary (Pool-B + semantic, staged A→B→C) — {tag}"
     )
     lines.append("")
     lines.append(
@@ -317,64 +325,76 @@ def write_report(
     lines.append("## Runs included")
     lines.append("")
     for s in specs:
-        r = result_json_paths.get(s.strategy)
-        if r:
-            lines.append(f"- **{s.strategy}**: `{r.relative_to(ROOT)}`")
+        stage_paths = result_json_paths.get(s.strategy) or {}
+        if stage_paths:
+            lines.append(f"- **{s.strategy}**:")
             lines.append(f"  - pool_b: `{s.pool_b_yaml.relative_to(ROOT)}`")
-            lines.append(f"  - writeback: `{s.writeback_yaml.relative_to(ROOT)}`")
+            for stage in ["A", "B", "C"]:
+                rp = stage_paths.get(stage)
+                if rp:
+                    lines.append(f"  - stage_{stage}_result: `{rp.relative_to(ROOT)}`")
+            # Convention: final writeback is stage C YAML
+            final_writeback = (
+                ROOT
+                / "config"
+                / "strategies"
+                / s.strategy
+                / f"features_suggested_{s.search_algo}_poolb_semantic_{tag}_C.yaml"
+            )
+            lines.append(f"  - final_writeback: `{final_writeback.relative_to(ROOT)}`")
     lines.append("")
     lines.append("Common params:")
     lines.append(f"- symbol: `{symbol}`")
     lines.append(f"- timeframe: `{timeframe}`")
     lines.append(f"- date range: `{start_date} .. {end_date}`")
-    lines.append(f"- seeds: `{seeds}`")
-    lines.append(f"- objective: `{objective}`")
+    lines.append(
+        "- stages: `A (CV_mean, 2 seeds) -> B (CV_mean, 3 seeds) -> C (Sharpe_mean, 5 seeds)`"
+    )
     lines.append("")
     lines.append("## Results")
     lines.append("")
 
     for s in specs:
-        rpath = result_json_paths.get(s.strategy)
-        if not rpath or not rpath.exists():
-            continue
-        d = json.loads(rpath.read_text())
-        baseline = (d.get("baseline") or {}).get("score")
-        history = d.get("history") or []
-        selected_groups = d.get("selected_groups") or []
-        final_features = d.get("final_features") or []
-        stop_reason = d.get("stop_reason")
-
         lines.append(f"### {s.strategy}")
         lines.append("")
-        lines.append(
-            f"- **Selected groups**: `{', '.join(selected_groups)}`"
-            if selected_groups
-            else "- **Selected groups**: *(none)*"
-        )
-        lines.append(f"- **Final requested_features ({len(final_features)} nodes)**:")
-        if final_features:
-            lines.append(f"  - `{', '.join(final_features)}`")
-        else:
-            lines.append("  - *(none)*")
-        lines.append(f"- **{objective} (multi-seed)**:")
-        lines.append(f"  - baseline: **{_fmt(baseline)}**")
-        for h in history:
-            lines.append(f"  - +`{h['added_group']}`: **{_fmt(h.get('score'))}**")
-        if stop_reason:
-            lines.append(f"- **stop_reason**: `{stop_reason}`")
-
-        s1 = _seed1_stats(s.fgs_out_dir, history=history)
-        if s1:
+        stage_paths = result_json_paths.get(s.strategy) or {}
+        for stage in ["A", "B", "C"]:
+            rpath = stage_paths.get(stage)
+            if not rpath or not rpath.exists():
+                continue
+            d = json.loads(rpath.read_text())
+            objective = d.get("objective")
+            baseline = (d.get("baseline") or {}).get("score")
+            history = d.get("history") or []
+            selected_groups = d.get("selected_groups") or []
+            final_features = d.get("final_features") or []
+            stop_reason = d.get("stop_reason")
+            lines.append(f"- **Stage {stage}**: `{rpath.relative_to(ROOT)}`")
+            lines.append(f"  - objective: `{objective}`")
+            lines.append(f"  - baseline_score: **{_fmt(baseline)}**")
+            if history:
+                last = history[-1]
+                lines.append(
+                    f"  - last_score: **{_fmt(last.get('score'))}** (step={last.get('step')})"
+                )
             lines.append(
-                f"- **Seed-1 training stats** (`{Path(s1['seed1_results_path']).relative_to(ROOT)}`)"
+                f"  - selected_groups: `{', '.join(selected_groups)}`"
+                if selected_groups
+                else "  - selected_groups: *(none)*"
             )
-            lines.append(
-                f"  - `n_train_samples={s1.get('n_train_samples')}`, `n_test_samples={s1.get('n_test_samples')}`"
-            )
-            lines.append(f"  - `n_features={s1.get('n_features')}`")
-            lines.append(
-                f"  - backtest: `sharpe={_fmt(s1.get('backtest_sharpe'))}`, `total_trades={s1.get('total_trades')}`"
-            )
+            lines.append(f"  - final_requested_features: `{len(final_features)}` nodes")
+            if stop_reason:
+                lines.append(f"  - stop_reason: `{stop_reason}`")
+            if stage == "C":
+                # Only print full feature list for final stage to keep report short.
+                if final_features:
+                    lines.append(f"  - final_features: `{', '.join(final_features)}`")
+            # seed-1 stats for that stage
+            s1 = _seed1_stats(rpath.parent, history=history)
+            if s1:
+                lines.append(
+                    f"  - seed1: `n_train={s1.get('n_train_samples')}`, `n_test={s1.get('n_test_samples')}`, `n_features={s1.get('n_features')}`, `sharpe={_fmt(s1.get('backtest_sharpe'))}`, `trades={s1.get('total_trades')}`"
+                )
         lines.append("")
 
     out_path.write_text("\n".join(lines), encoding="utf-8")
@@ -390,26 +410,15 @@ def main() -> None:
     p.add_argument("--start-date", required=True)
     p.add_argument("--end-date", required=True)
     p.add_argument("--test-size", type=float, default=0.3)
-    p.add_argument("--seeds", default="1,2,3,4,5")
-    p.add_argument("--objective", default="Sharpe_mean")
     p.add_argument("--min-trades", type=int, default=10)
-    p.add_argument("--max-steps", type=int, default=10)
+    p.add_argument("--shortlist-max-groups-a", type=int, default=30)
+    p.add_argument("--shortlist-max-groups-b", type=int, default=20)
     p.add_argument(
         "--search-algo",
-        default="greedy",
+        default="pipeline",
         choices=["greedy", "halving", "beam", "sffs", "pipeline"],
-        help="feature-group-search algo; pipeline is SH->Beam->SFFS.",
+        help="feature-group-search algo; best workflow defaults to pipeline (SH->Beam->SFFS).",
     )
-    p.add_argument(
-        "--halving-stages",
-        default="1,3,5",
-        help="Halving budgets in seeds-counts, e.g. 1,3,5",
-    )
-    p.add_argument("--halving-top-fraction", type=float, default=0.25)
-    p.add_argument("--halving-min-survivors", type=int, default=5)
-    p.add_argument("--pipeline-survivors", type=int, default=30)
-    p.add_argument("--beam-width", type=int, default=3)
-    p.add_argument("--sffs-max-backward-per-step", type=int, default=2)
     p.add_argument(
         "--expand-semantic-singletons",
         action="store_true",
@@ -434,7 +443,7 @@ def main() -> None:
     tag = args.tag
 
     specs = _build_runs(strategies=strategies, tag=tag, search_algo=args.search_algo)
-    result_json_paths: Dict[str, Path] = {}
+    result_json_paths: Dict[str, Dict[str, Path]] = {}
 
     if not args.report_only:
         for spec in specs:
@@ -446,33 +455,129 @@ def main() -> None:
                 end_date=args.end_date,
                 regen_poolb=args.regen_poolb,
             )
-            result_json = run_feature_group_search(
+            # Stage A
+            out_a = (
+                ROOT
+                / "results"
+                / "feature_group_search"
+                / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_A"
+            )
+            wb_a = (
+                ROOT
+                / "config"
+                / "strategies"
+                / spec.strategy
+                / f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_A.yaml"
+            )
+            r_a = run_feature_group_search(
                 spec,
                 symbol=args.symbol,
                 timeframe=args.timeframe,
                 start_date=args.start_date,
                 end_date=args.end_date,
                 test_size=args.test_size,
-                seeds=args.seeds,
-                objective=args.objective,
                 min_trades=args.min_trades,
-                max_steps=args.max_steps,
                 search_algo=args.search_algo,
-                halving_stages=args.halving_stages,
-                halving_top_fraction=args.halving_top_fraction,
-                halving_min_survivors=args.halving_min_survivors,
-                pipeline_survivors=args.pipeline_survivors,
-                beam_width=args.beam_width,
-                sffs_max_backward_per_step=args.sffs_max_backward_per_step,
+                out_dir=out_a,
+                writeback_yaml=wb_a,
+                groups_yaml=None,
                 expand_semantic_singletons=args.expand_semantic_singletons,
                 rerun_search=args.rerun_search,
+                preset="A",
             )
-            result_json_paths[spec.strategy] = result_json
+            shortlist_a = out_a / "shortlist_groups_A.yaml"
+            export_shortlist_groups(
+                spec=spec,
+                result_json=r_a,
+                out_yaml=shortlist_a,
+                expand_semantic_singletons=args.expand_semantic_singletons,
+                max_groups=int(args.shortlist_max_groups_a),
+            )
+
+            # Stage B (restricted by shortlist A)
+            out_b = (
+                ROOT
+                / "results"
+                / "feature_group_search"
+                / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_B"
+            )
+            wb_b = (
+                ROOT
+                / "config"
+                / "strategies"
+                / spec.strategy
+                / f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_B.yaml"
+            )
+            r_b = run_feature_group_search(
+                spec,
+                symbol=args.symbol,
+                timeframe=args.timeframe,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                test_size=args.test_size,
+                min_trades=args.min_trades,
+                search_algo=args.search_algo,
+                out_dir=out_b,
+                writeback_yaml=wb_b,
+                groups_yaml=shortlist_a,
+                expand_semantic_singletons=args.expand_semantic_singletons,
+                rerun_search=args.rerun_search,
+                preset="B",
+            )
+            shortlist_b = out_b / "shortlist_groups_B.yaml"
+            export_shortlist_groups(
+                spec=spec,
+                result_json=r_b,
+                out_yaml=shortlist_b,
+                expand_semantic_singletons=args.expand_semantic_singletons,
+                max_groups=int(args.shortlist_max_groups_b),
+            )
+
+            # Stage C (final verification; restricted by shortlist B)
+            out_c = (
+                ROOT
+                / "results"
+                / "feature_group_search"
+                / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_C"
+            )
+            wb_c = (
+                ROOT
+                / "config"
+                / "strategies"
+                / spec.strategy
+                / f"features_suggested_{args.search_algo}_poolb_semantic_{tag}_C.yaml"
+            )
+            r_c = run_feature_group_search(
+                spec,
+                symbol=args.symbol,
+                timeframe=args.timeframe,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                test_size=args.test_size,
+                min_trades=args.min_trades,
+                search_algo=args.search_algo,
+                out_dir=out_c,
+                writeback_yaml=wb_c,
+                groups_yaml=shortlist_b,
+                expand_semantic_singletons=args.expand_semantic_singletons,
+                rerun_search=args.rerun_search,
+                preset="C",
+            )
+            result_json_paths[spec.strategy] = {"A": r_a, "B": r_b, "C": r_c}
     else:
         for spec in specs:
-            result_json_paths[spec.strategy] = (
-                spec.fgs_out_dir / "feature_group_search_result.json"
-            )
+            base = ROOT / "results" / "feature_group_search"
+            result_json_paths[spec.strategy] = {
+                "A": base
+                / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_A"
+                / "feature_group_search_result.json",
+                "B": base
+                / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_B"
+                / "feature_group_search_result.json",
+                "C": base
+                / f"{spec.strategy}_{args.search_algo}_poolb_semantic_{tag}_C"
+                / "feature_group_search_result.json",
+            }
 
     report_path = (
         ROOT
@@ -489,8 +594,6 @@ def main() -> None:
         timeframe=args.timeframe,
         start_date=args.start_date,
         end_date=args.end_date,
-        seeds=args.seeds,
-        objective=args.objective,
         out_path=report_path,
     )
 
