@@ -929,6 +929,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--objective", default="dir_auc", help="Metric key in metrics.json")
     p.add_argument("--max-steps", type=int, default=6)
     p.add_argument(
+        "--preset",
+        default="",
+        choices=["", "A", "B", "C"],
+        help="Budget preset: A=fast screen, B=medium, C=full verify. Overrides budget knobs.",
+    )
+    p.add_argument(
         "--search-algo",
         default="greedy",
         choices=["greedy", "halving", "beam", "sffs", "pipeline"],
@@ -964,6 +970,29 @@ def _parse_args() -> argparse.Namespace:
         default=False,
         help="If True, expand semantic nodes into singleton output-column groups (like tree feature-group-search).",
     )
+    p.add_argument(
+        "--export-shortlist-yaml",
+        default=None,
+        help="Optional: export a shortlisted groups YAML from this run (plain dict; tree-compatible).",
+    )
+    p.add_argument(
+        "--export-shortlist-mode",
+        default="prefilter_survivors",
+        choices=["prefilter_survivors", "beam_selected", "selected_groups"],
+        help="Which group list to export when using --export-shortlist-yaml.",
+    )
+    p.add_argument(
+        "--export-shortlist-max-groups",
+        type=int,
+        default=0,
+        help="If >0, keep only the first N groups in the exported shortlist.",
+    )
+    p.add_argument(
+        "--run-abc",
+        action="store_true",
+        default=False,
+        help="Run A->B->C orchestration into <output-dir>/{A,B,C} with shortlists and a summary.md.",
+    )
 
     # Halving params (epochs stages)
     p.add_argument("--halving-stages", default="3,6,10")
@@ -985,7 +1014,10 @@ def _load_groups_yaml(path: Path) -> Dict[str, List[str]]:
     obj = _load_yaml(path)
     if not isinstance(obj, dict):
         return {}
-    groups = obj.get("groups") or {}
+    # Accept both schemas:
+    # - nn schema: { groups: { name: [nodes_or_cols...] } }
+    # - tree/ad-hoc schema: { name: [nodes_or_cols...] }
+    groups = obj.get("groups") if isinstance(obj.get("groups"), dict) else obj
     if not isinstance(groups, dict):
         return {}
     out: Dict[str, List[str]] = {}
@@ -993,6 +1025,115 @@ def _load_groups_yaml(path: Path) -> Dict[str, List[str]]:
         if isinstance(k, str) and isinstance(v, list):
             out[k] = [str(x) for x in v if str(x).strip()]
     return out
+
+
+def _apply_preset(args: argparse.Namespace) -> argparse.Namespace:
+    """
+    Apply A/B/C budget presets (tree-style) for nn feature-group-search.
+
+    Budget dimension in nn search is primarily epochs and search width/steps.
+    Presets override the user-provided knobs to keep runs comparable and repeatable.
+    """
+    preset = (getattr(args, "preset", "") or "").strip().upper()
+    if not preset:
+        return args
+
+    presets = {
+        # A: fast screening
+        "A": {
+            "halving_stages": "2,4",
+            "halving_top_fraction": 0.35,
+            "halving_min_survivors": 20,
+            "pipeline_survivors": 25,
+            "beam_width": 2,
+            "max_steps": 4,
+            "sffs_max_backward_per_step": 1,
+            "epochs": 6,
+            "search_algo": "pipeline",
+        },
+        # B: medium
+        "B": {
+            "halving_stages": "2,6",
+            "halving_top_fraction": 0.5,
+            "halving_min_survivors": 30,
+            "pipeline_survivors": 40,
+            "beam_width": 3,
+            "max_steps": 5,
+            "sffs_max_backward_per_step": 1,
+            "epochs": 8,
+            "search_algo": "pipeline",
+        },
+        # C: full verify
+        "C": {
+            "halving_stages": "3,6,10",
+            "halving_top_fraction": 0.6,
+            "halving_min_survivors": 40,
+            "pipeline_survivors": 60,
+            "beam_width": 4,
+            "max_steps": 6,
+            "sffs_max_backward_per_step": 2,
+            "epochs": 10,
+            "search_algo": "pipeline",
+        },
+    }
+    cfg = presets.get(preset)
+    if not cfg:
+        return args
+    for k, v in cfg.items():
+        setattr(args, k, v)
+    print(
+        f"⚙️  Applied nn preset {preset}: "
+        f"epochs={getattr(args,'epochs',None)}, search_algo={getattr(args,'search_algo',None)}, "
+        f"halving_stages={args.halving_stages}, top_fraction={args.halving_top_fraction}, "
+        f"min_survivors={args.halving_min_survivors}, pipeline_survivors={getattr(args,'pipeline_survivors',None)}, "
+        f"beam_width={args.beam_width}, max_steps={args.max_steps}, "
+        f"sffs_max_backward_per_step={args.sffs_max_backward_per_step}"
+    )
+    return args
+
+
+def _export_shortlist_groups_yaml(
+    *,
+    groups: Dict[str, List[str]],
+    result: Dict[str, Any],
+    mode: str,
+    out_path: Path,
+    max_groups: int = 0,
+) -> None:
+    """
+    Export a shortlisted groups YAML.
+
+    Output schema: plain mapping {group_name: [nodes_or_cols...]} (tree-compatible).
+    Reader accepts both this schema and nn schema {groups:{...}}.
+    """
+    names: List[str] = []
+    if mode == "selected_groups":
+        names = list(result.get("selected_groups") or [])
+    elif mode == "beam_selected":
+        beam = result.get("beam") or {}
+        names = (
+            list((beam.get("selected_groups") or [])) if isinstance(beam, dict) else []
+        )
+    else:
+        pre = result.get("prefilter") or {}
+        names = list((pre.get("survivors") or [])) if isinstance(pre, dict) else []
+
+    names = [str(x) for x in names if str(x).strip()]
+    if max_groups and int(max_groups) > 0:
+        names = names[: int(max_groups)]
+
+    kept = {k: groups[k] for k in names if k in groups}
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        yaml.safe_dump(kept, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+
+    missing = [n for n in names if n not in groups]
+    print(f"✅ Wrote shortlist groups YAML: {out_path}")
+    print(f"   - requested names: {len(names)}")
+    print(f"   - kept: {len(kept)}")
+    if missing:
+        print(f"   - missing: {len(missing)} (first 10): {missing[:10]}")
 
 
 def _expand_semantic_groups_to_singletons(
@@ -1037,9 +1178,142 @@ def _parse_int_list(csv: str) -> List[int]:
 
 
 def main() -> None:
-    args = _parse_args()
+    args = _apply_preset(_parse_args())
     out_dir = Path(args.output_dir).resolve()
     _ensure_dir(out_dir)
+
+    # Tree-style experiment orchestration: A -> shortlist -> B -> shortlist -> C
+    if bool(getattr(args, "run_abc", False)):
+        root_out = out_dir
+        stages = [
+            ("A", None),
+            ("B", str(root_out / "A" / "groups_shortlist_A.yaml")),
+            ("C", str(root_out / "B" / "groups_shortlist_B.yaml")),
+        ]
+
+        def _run_stage(stage: str, groups_yaml: str | None) -> None:
+            stage_out = root_out / stage
+            _ensure_dir(stage_out)
+
+            cmd: List[str] = [
+                "python3",
+                "-m",
+                "time_series_model.diagnostics.nn_feature_group_search",
+                "--base-config",
+                str(args.base_config),
+                "--pool-b-yaml",
+                str(args.pool_b_yaml),
+                "--symbols",
+                str(args.symbols),
+                "--timeframe",
+                str(args.timeframe),
+                "--start-date",
+                str(args.start_date),
+                "--end-date",
+                str(args.end_date),
+                "--features-store-root",
+                str(args.features_store_root),
+                "--features-store-layer",
+                str(args.features_store_layer),
+                "--objective",
+                str(args.objective),
+                "--preset",
+                stage,
+                "--output-dir",
+                str(stage_out),
+                "--no-docker",
+            ]
+            if str(args.base_features_yaml or "").strip():
+                cmd.extend(["--base-features-yaml", str(args.base_features_yaml)])
+            if str(args.groups_yaml or "").strip():
+                cmd.extend(["--groups-yaml", str(args.groups_yaml)])
+            if bool(getattr(args, "expand_semantic_singletons", False)):
+                cmd.append("--expand-semantic-singletons")
+            if str(args.exclude_columns) is not None:
+                cmd.extend(["--exclude-columns", str(args.exclude_columns)])
+            if str(args.device or "").strip():
+                cmd.extend(["--device", str(args.device)])
+
+            # training knobs (kept for consistency; presets may override some, but we pass anyway)
+            cmd.extend(
+                [
+                    "--epochs",
+                    str(int(args.epochs)),
+                    "--batch-size",
+                    str(int(args.batch_size)),
+                    "--lr",
+                    str(float(args.lr)),
+                    "--hidden",
+                    str(int(args.hidden)),
+                    "--depth",
+                    str(int(args.depth)),
+                    "--dropout",
+                    str(float(args.dropout)),
+                    "--max-steps",
+                    str(int(args.max_steps)),
+                    "--halving-stages",
+                    str(args.halving_stages),
+                    "--halving-top-fraction",
+                    str(float(args.halving_top_fraction)),
+                    "--halving-min-survivors",
+                    str(int(args.halving_min_survivors)),
+                    "--beam-width",
+                    str(int(args.beam_width)),
+                    "--sffs-max-backward-per-step",
+                    str(int(args.sffs_max_backward_per_step)),
+                    "--pipeline-survivors",
+                    str(int(args.pipeline_survivors)),
+                ]
+            )
+
+            if groups_yaml:
+                cmd.extend(["--groups-yaml", str(groups_yaml)])
+
+            # Export shortlist for A/B
+            if stage in ("A", "B"):
+                out_short = stage_out / f"groups_shortlist_{stage}.yaml"
+                cmd.extend(
+                    [
+                        "--export-shortlist-yaml",
+                        str(out_short),
+                        "--export-shortlist-mode",
+                        "prefilter_survivors",
+                    ]
+                )
+
+            print("\n" + "=" * 100)
+            print("CMD:", " ".join(cmd))
+            print("=" * 100)
+            subprocess.run(cmd, check=True)
+
+        for stage, gy in stages:
+            _run_stage(stage, gy)
+
+        # Summarize
+        lines: List[str] = []
+        for stage in ("A", "B", "C"):
+            p = root_out / stage / "nn_feature_group_search_result.json"
+            if not p.exists():
+                continue
+            d = json.loads(p.read_text(encoding="utf-8"))
+            pre = d.get("prefilter") or {}
+            beam = d.get("beam") or {}
+            lines.append(f"## Stage {stage}")
+            if isinstance(pre, dict):
+                lines.append(
+                    f"- prefilter survivors: {len(pre.get('survivors') or [])}"
+                )
+            if isinstance(beam, dict):
+                lines.append(
+                    f"- beam selected: {len(beam.get('selected_groups') or [])}"
+                )
+            lines.append(f"- selected_groups: {len(d.get('selected_groups') or [])}")
+            lines.append("")
+        (root_out / "summary.md").write_text(
+            "\n".join(lines).strip() + "\n", encoding="utf-8"
+        )
+        print(f"✅ Wrote ABC summary: {root_out / 'summary.md'}")
+        return
 
     base_config_dir = Path(args.base_config).resolve()
     if not base_config_dir.exists():
@@ -1195,6 +1469,16 @@ def main() -> None:
         json.dumps(result, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
     )
     print(f"✅ Wrote: {out_dir / 'nn_feature_group_search_result.json'}")
+
+    # Optional: export shortlist groups yaml for A/B/C workflows
+    if getattr(args, "export_shortlist_yaml", None):
+        _export_shortlist_groups_yaml(
+            groups=groups,
+            result=result if isinstance(result, dict) else {},
+            mode=str(getattr(args, "export_shortlist_mode", "prefilter_survivors")),
+            out_path=Path(str(args.export_shortlist_yaml)).resolve(),
+            max_groups=int(getattr(args, "export_shortlist_max_groups", 0)),
+        )
 
 
 if __name__ == "__main__":

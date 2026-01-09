@@ -18,6 +18,11 @@ from .path_primitives_labels import (
 )
 from .path_primitives_model import MultiHeadPathPrimitivesMLP
 from .path_primitives_conditions import SRFuseConditionConfig, compute_near_sr_mask
+from .path_primitives_eval import binary_threshold_metrics
+from src.time_series_model.rule.router_3action import (
+    Rule3ActionConfig,
+    compute_mode_3action,
+)
 
 
 def _html_escape(s: object) -> str:
@@ -145,6 +150,33 @@ def _metrics_summary_md(metrics: Dict[str, float]) -> str:
                 f"- **trend_high__roll_icir__dir**: {_fmt(m.get('trend_high__roll_icir__dir'))} (trend_high 内滚动 ICIR)"
             )
 
+    # Threshold-consistent eval (Router-aligned)
+    if "th_eval__mfe_atr_gt__auc" in m:
+        lines.append(
+            f"- **th_eval__mfe_atr_gt__auc**: {_fmt(m.get('th_eval__mfe_atr_gt__auc'))} (用 pred_mfe 排序，判断 true_mfe 是否超过 mfe_min)"
+        )
+        lines.append(
+            f"- **th_eval__mfe_atr_gt__ap**: {_fmt(m.get('th_eval__mfe_atr_gt__ap'))} (PR-AUC / average precision)"
+        )
+    if "th_eval__eff_gt__auc" in m:
+        lines.append(
+            f"- **th_eval__eff_gt__auc**: {_fmt(m.get('th_eval__eff_gt__auc'))} (用 pred_eff 排序，判断 true_eff 是否超过 eff_min)"
+        )
+    if "th_eval__dir_y__auc" in m:
+        lines.append(
+            f"- **th_eval__dir_y__auc**: {_fmt(m.get('th_eval__dir_y__auc'))} (用 dir_conf=abs(p-0.5)*2 排序，判断 dir_y)"
+        )
+
+    # Trade slice
+    if "trade__rate" in m:
+        lines.append(
+            f"- **trade__rate**: {_fmt(m.get('trade__rate'))} (Router=MEAN/TREND 样本占比)"
+        )
+        if "trade__roll_icir__dir" in m:
+            lines.append(
+                f"- **trade__roll_icir__dir**: {_fmt(m.get('trade__roll_icir__dir'))} (trade slice 内滚动 ICIR)"
+            )
+
     return "\n".join(lines)
 
 
@@ -188,6 +220,9 @@ def render_html_dashboard(
     label_cfg = (meta or {}).get("label_cfg") or {}
     dataset_cfg = (meta or {}).get("dataset_cfg") or {}
     n_samples = (meta or {}).get("n_samples")
+    config_dir_arg = (meta or {}).get("config_dir_arg")
+    base_cfg_guess = (meta or {}).get("base_config_dir_guess")
+    cfg_kind = (meta or {}).get("config_source_kind")
     rolling_ic = (meta or {}).get("rolling_ic") or {}
     rolling_cfg = rolling_ic.get("cfg") or {}
     preview_by_slice = rolling_ic.get("preview_by_slice") or {}
@@ -216,6 +251,37 @@ def render_html_dashboard(
             except Exception:
                 continue
         rolling_html = "\n".join(parts)
+
+    # Optional: threshold-consistent eval table (Router-aligned)
+    th = (meta or {}).get("threshold_eval") or {}
+    th_by_sym = (meta or {}).get("threshold_eval_by_symbol") or []
+    th_html = ""
+    if isinstance(th, dict) and th:
+        rows = []
+        for k in sorted(th.keys()):
+            rows.append(
+                f"<tr><td><code>{_html_escape(k)}</code></td><td>{_html_escape(th.get(k))}</td></tr>"
+            )
+        th_html = (
+            '<div class="card" style="margin-top:16px;">'
+            "<h2>Threshold-consistent evaluation (Router-aligned)</h2>"
+            '<p class="muted">用与 Router 相同的派生量（mfe/eff/dir_conf）做二分类阈值一致评估：AUC/AP + 覆盖率。用于解释“回归/相关性不高但阈值仍可用”的情况。</p>'
+            "<table><thead><tr><th>metric</th><th>value</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+            "</div>"
+        )
+    if isinstance(th_by_sym, list) and th_by_sym:
+        try:
+            df_th = pd.DataFrame(th_by_sym)
+            if len(df_th) > 0:
+                th_html += (
+                    '<div class="card" style="margin-top:16px;">'
+                    "<h3>Per-symbol</h3>"
+                    + df_th.to_html(index=False, escape=True)
+                    + "</div>"
+                )
+        except Exception:
+            pass
 
     return f"""<!doctype html>
 <html lang="en">
@@ -248,6 +314,9 @@ def render_html_dashboard(
       <table>
         <tbody>
           <tr><td><code>n_samples</code></td><td>{_html_escape(n_samples)}</td></tr>
+          <tr><td><code>config_source_kind</code></td><td><code>{_html_escape(cfg_kind)}</code></td></tr>
+          <tr><td><code>config_dir_arg</code></td><td><code>{_html_escape(config_dir_arg)}</code></td></tr>
+          <tr><td><code>base_config_dir_guess</code></td><td><code>{_html_escape(base_cfg_guess)}</code></td></tr>
           <tr><td><code>model_cfg</code></td><td><pre style="margin:0; white-space:pre-wrap;">{_html_escape(json.dumps(model_cfg, ensure_ascii=False, indent=2, default=str))}</pre></td></tr>
           <tr><td><code>label_cfg</code></td><td><pre style="margin:0; white-space:pre-wrap;">{_html_escape(json.dumps(label_cfg, ensure_ascii=False, indent=2, default=str))}</pre></td></tr>
           <tr><td><code>dataset_cfg</code></td><td><pre style="margin:0; white-space:pre-wrap;">{_html_escape(json.dumps(dataset_cfg, ensure_ascii=False, indent=2, default=str))}</pre></td></tr>
@@ -270,6 +339,8 @@ def render_html_dashboard(
     <h2>Rolling IC/ICIR (preview)</h2>
     {rolling_html}
   </div>
+
+  {th_html}
 
   <div class="card" style="margin-top:16px;">
     <h2>Training history</h2>
@@ -400,20 +471,23 @@ def evaluate_model_on_df(
         work["_true_mae_atr_tr"] = true_mae
         work["_true_t_to_mfe_tr"] = true_t
 
+    pred_cols = {
+        "dir": "pred_dir_prob",
+        "mfe_atr": "pred_mfe_atr",
+        "mae_atr": "pred_mae_atr",
+        "t_to_mfe": "pred_t_to_mfe",
+    }
+    true_cols = {
+        "dir_y": dataset_cfg.dir_y_col,
+        "mfe_atr": "_true_mfe_atr_tr",
+        "mae_atr": "_true_mae_atr_tr",
+        "t_to_mfe": "_true_t_to_mfe_tr",
+    }
+
     metrics_all = evaluate_path_primitives(
         df=work,
-        pred_cols={
-            "dir": "pred_dir_prob",
-            "mfe_atr": "pred_mfe_atr",
-            "mae_atr": "pred_mae_atr",
-            "t_to_mfe": "pred_t_to_mfe",
-        },
-        true_cols={
-            "dir_y": dataset_cfg.dir_y_col,
-            "mfe_atr": "_true_mfe_atr_tr",
-            "mae_atr": "_true_mae_atr_tr",
-            "t_to_mfe": "_true_t_to_mfe_tr",
-        },
+        pred_cols=pred_cols,
+        true_cols=true_cols,
         mask_col=(
             dataset_cfg.mfe_valid_col
             if dataset_cfg.mfe_valid_col in work.columns
@@ -456,6 +530,179 @@ def evaluate_model_on_df(
         metrics["near_sr__rate"] = float(near_mask.mean())
 
     extra: Dict[str, Any] = {}
+
+    # Router-aligned derived columns (mfe/mae/ttm/eff/dir_conf + mode)
+    # These are in ATR units AFTER inverse-transform if preds_in_log1p=True.
+    preds_in_log1p = bool(getattr(dataset_cfg, "log1p_targets", True))
+    router_cfg = Rule3ActionConfig()  # default unless caller injects via meta/scripts
+    # Allow caller to pass a router eval cfg via df_features attrs (advanced); otherwise defaults.
+    try:
+        cfg_obj = getattr(df_features, "_router_eval_cfg", None)  # type: ignore[attr-defined]
+        if isinstance(cfg_obj, Rule3ActionConfig):
+            router_cfg = cfg_obj
+    except Exception:
+        pass
+    router_out = compute_mode_3action(
+        work,
+        cfg=router_cfg,
+        preds_in_log1p=preds_in_log1p,
+        out_col="router_mode",
+    )
+    for c in [
+        "router_mode",
+        "mode_action",
+        "mfe_atr",
+        "mae_atr",
+        "t_to_mfe",
+        "eff",
+        "dir_conf",
+    ]:
+        if c in router_out.columns:
+            work[f"router_{c}" if c != "router_mode" else "router_mode"] = router_out[c]
+
+    # Trade slice mask: Router allows participation (MEAN/TREND)
+    trade_mask = None
+    if "router_mode" in work.columns:
+        trade_mask = work["router_mode"].astype(str).isin(["MEAN", "TREND"])
+        metrics["trade__rate"] = float(trade_mask.mean())
+
+        # Slice-level head evaluation on trade subset (same metrics, but conditioned)
+        if bool(trade_mask.any()):
+            m_trade = evaluate_path_primitives(
+                df=work.loc[trade_mask],
+                pred_cols=pred_cols,
+                true_cols=true_cols,
+                mask_col=(
+                    dataset_cfg.mfe_valid_col
+                    if dataset_cfg.mfe_valid_col in work.columns
+                    else None
+                ),
+                cfg=eval_cfg,
+            )
+            for k, v in m_trade.items():
+                metrics[f"trade__{k}"] = float(v)
+
+    # Threshold-consistent binary evaluation (Router-aligned)
+    # Uses:
+    # - score: router_mfe_atr/router_eff/router_dir_conf (derived exactly as router)
+    # - label: true_mfe_atr (raw, unclipped) / true_eff / dir_y
+    try:
+        # true (raw) in ATR units (before log1p transform)
+        true_mfe_raw = pd.to_numeric(
+            work[dataset_cfg.mfe_atr_col], errors="coerce"
+        ).to_numpy(dtype=float)
+        true_mae_raw = pd.to_numeric(
+            work[dataset_cfg.mae_atr_col], errors="coerce"
+        ).to_numpy(dtype=float)
+        true_eff_raw = true_mfe_raw / (true_mae_raw + 1e-9)
+
+        th_mfe = float(getattr(router_cfg, "mfe_min", 0.0))
+        th_eff = float(getattr(router_cfg, "eff_min", 0.0))
+        th_dir_conf = float(getattr(router_cfg, "dir_conf_trend_min", 0.0))
+
+        score_mfe = pd.to_numeric(work.get("router_mfe_atr"), errors="coerce").to_numpy(
+            dtype=float
+        )
+        score_eff = pd.to_numeric(work.get("router_eff"), errors="coerce").to_numpy(
+            dtype=float
+        )
+        score_dir_conf = pd.to_numeric(
+            work.get("router_dir_conf"), errors="coerce"
+        ).to_numpy(dtype=float)
+        dir_y = pd.to_numeric(work[dataset_cfg.dir_y_col], errors="coerce").to_numpy(
+            dtype=float
+        )
+        dir_y_bin = (dir_y > 0.5).astype(int)
+
+        th_eval: Dict[str, Any] = {
+            "thresholds": {
+                "mfe_min": th_mfe,
+                "eff_min": th_eff,
+                "dir_conf_trend_min": th_dir_conf,
+            },
+        }
+
+        m1 = binary_threshold_metrics(
+            y_true_cont=true_mfe_raw, y_score_cont=score_mfe, threshold=th_mfe
+        )
+        metrics["th_eval__mfe_atr_gt__auc"] = float(m1["auc"])
+        metrics["th_eval__mfe_atr_gt__ap"] = float(m1["ap"])
+        metrics["th_eval__mfe_atr_gt__pos_rate"] = float(m1["pos_rate"])
+        th_eval["mfe_atr_gt"] = m1
+
+        m2 = binary_threshold_metrics(
+            y_true_cont=true_eff_raw, y_score_cont=score_eff, threshold=th_eff
+        )
+        metrics["th_eval__eff_gt__auc"] = float(m2["auc"])
+        metrics["th_eval__eff_gt__ap"] = float(m2["ap"])
+        metrics["th_eval__eff_gt__pos_rate"] = float(m2["pos_rate"])
+        th_eval["eff_gt"] = m2
+
+        # dir_conf is a score; evaluate ability to rank correct direction (dir_y)
+        m3 = binary_threshold_metrics(
+            y_true_cont=dir_y_bin.astype(float),
+            y_score_cont=score_dir_conf,
+            threshold=0.5,
+        )
+        # threshold=0.5 here is arbitrary for pos_rate; AUC/AP use the score ranking anyway.
+        metrics["th_eval__dir_y__auc"] = float(m3["auc"])
+        metrics["th_eval__dir_y__ap"] = float(m3["ap"])
+        th_eval["dir_y_ranked_by_dir_conf"] = m3
+
+        # Per-symbol breakdown
+        by_sym: List[Dict[str, Any]] = []
+        if group_col and group_col in work.columns:
+            for sym, g in work.groupby(group_col, sort=False):
+                y_mfe = pd.to_numeric(
+                    g[dataset_cfg.mfe_atr_col], errors="coerce"
+                ).to_numpy(dtype=float)
+                y_mae = pd.to_numeric(
+                    g[dataset_cfg.mae_atr_col], errors="coerce"
+                ).to_numpy(dtype=float)
+                y_eff = y_mfe / (y_mae + 1e-9)
+                s_mfe = pd.to_numeric(
+                    g.get("router_mfe_atr"), errors="coerce"
+                ).to_numpy(dtype=float)
+                s_eff = pd.to_numeric(g.get("router_eff"), errors="coerce").to_numpy(
+                    dtype=float
+                )
+                s_dc = pd.to_numeric(
+                    g.get("router_dir_conf"), errors="coerce"
+                ).to_numpy(dtype=float)
+                y_dir = pd.to_numeric(
+                    g[dataset_cfg.dir_y_col], errors="coerce"
+                ).to_numpy(dtype=float)
+                y_dir_bin2 = (y_dir > 0.5).astype(int)
+                r1 = binary_threshold_metrics(
+                    y_true_cont=y_mfe, y_score_cont=s_mfe, threshold=th_mfe
+                )
+                r2 = binary_threshold_metrics(
+                    y_true_cont=y_eff, y_score_cont=s_eff, threshold=th_eff
+                )
+                r3 = binary_threshold_metrics(
+                    y_true_cont=y_dir_bin2.astype(float),
+                    y_score_cont=s_dc,
+                    threshold=0.5,
+                )
+                by_sym.append(
+                    {
+                        "symbol": str(sym),
+                        "mfe_auc": float(r1["auc"]),
+                        "mfe_ap": float(r1["ap"]),
+                        "mfe_pos_rate": float(r1["pos_rate"]),
+                        "eff_auc": float(r2["auc"]),
+                        "eff_ap": float(r2["ap"]),
+                        "eff_pos_rate": float(r2["pos_rate"]),
+                        "dir_auc": float(r3["auc"]),
+                        "dir_ap": float(r3["ap"]),
+                    }
+                )
+        extra["threshold_eval"] = th_eval
+        if by_sym:
+            extra["threshold_eval_by_symbol"] = by_sym
+    except Exception:
+        # Best-effort: report generation must not fail if some columns are absent.
+        pass
 
     # Rolling IC/ICIR monitoring (per symbol, then averaged by timestamp)
     if bool(getattr(eval_cfg, "rolling_enabled", True)):
@@ -638,6 +885,18 @@ def evaluate_model_on_df(
                         orient="records"
                     )
                 metrics["compression_high__rate"] = float(mask.mean())
+
+        # Trade slice preview (Router=MEAN/TREND)
+        if trade_mask is not None and bool(trade_mask.any()):
+            summ_tr, agg_tr = _build_roll_df(
+                work.loc[trade_mask].copy(), slice_name="trade"
+            )
+            for k, v in summ_tr.items():
+                metrics[f"trade__{k}"] = float(v)
+            if not agg_tr.empty:
+                preview_by_slice["trade"] = agg_tr.tail(tail_n).to_dict(
+                    orient="records"
+                )
 
         extra["rolling_ic"] = {
             "cfg": {"window": window, "min_periods": minp, "tail_points": tail_n},

@@ -1793,6 +1793,29 @@ def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
 @click.option(
     "--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure."
 )
+@click.option(
+    "--preds-in-log1p/--preds-not-in-log1p",
+    default=True,
+    help="Whether head_mfe/head_mae/head_t_to_mfe are in log1p space (affects Router diagnostics only).",
+)
+@click.option(
+    "--router-mfe-min",
+    type=float,
+    default=None,
+    help="Router threshold override: mfe_min (for counterfactual report diagnostics).",
+)
+@click.option(
+    "--router-eff-min",
+    type=float,
+    default=None,
+    help="Router threshold override: eff_min (for counterfactual report diagnostics).",
+)
+@click.option(
+    "--router-dir-conf-trend-min",
+    type=float,
+    default=None,
+    help="Router threshold override: dir_conf_trend_min (for counterfactual report diagnostics).",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_counterfactual_eval_3action(
     logs_path,
@@ -1801,6 +1824,10 @@ def rl_counterfactual_eval_3action(
     entry_delay,
     cost_per_turnover,
     slippage_bps,
+    preds_in_log1p,
+    router_mfe_min,
+    router_eff_min,
+    router_dir_conf_trend_min,
     docker,
 ):
     use_workspace_prefix = docker and not _is_in_docker()
@@ -1817,7 +1844,15 @@ def rl_counterfactual_eval_3action(
         str(float(cost_per_turnover)),
         "--slippage_bps",
         str(float(slippage_bps)),
+        "--preds-in-log1p",
+        "1" if preds_in_log1p else "0",
     ]
+    if router_mfe_min is not None:
+        args.extend(["--router-mfe-min", str(float(router_mfe_min))])
+    if router_eff_min is not None:
+        args.extend(["--router-eff-min", str(float(router_eff_min))])
+    if router_dir_conf_trend_min is not None:
+        args.extend(["--router-dir-conf-trend-min", str(float(router_dir_conf_trend_min))])
     sys.exit(
         run_script("scripts/rl_counterfactual_eval_3action.py", args, docker=docker)
     )
@@ -1972,6 +2007,29 @@ def rl_fsm_decide(
 @click.option(
     "--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure."
 )
+@click.option(
+    "--preds-in-log1p/--preds-not-in-log1p",
+    default=True,
+    help="Whether head_mfe/head_mae/head_t_to_mfe are in log1p space (affects Router diagnostics only).",
+)
+@click.option(
+    "--router-mfe-min",
+    type=float,
+    default=None,
+    help="Router threshold override: mfe_min (for counterfactual report diagnostics).",
+)
+@click.option(
+    "--router-eff-min",
+    type=float,
+    default=None,
+    help="Router threshold override: eff_min (for counterfactual report diagnostics).",
+)
+@click.option(
+    "--router-dir-conf-trend-min",
+    type=float,
+    default=None,
+    help="Router threshold override: dir_conf_trend_min (for counterfactual report diagnostics).",
+)
 @click.option("--fsm-state", default="RL_CANDIDATE", help="Initial FSM state.")
 @click.option("--promote-days", type=int, default=10)
 @click.option("--cooldown-days", type=int, default=20)
@@ -1983,6 +2041,10 @@ def rl_run_e2e_3action(
     entry_delay,
     cost_per_turnover,
     slippage_bps,
+    preds_in_log1p,
+    router_mfe_min,
+    router_eff_min,
+    router_dir_conf_trend_min,
     fsm_state,
     promote_days,
     cooldown_days,
@@ -2016,24 +2078,31 @@ def rl_run_e2e_3action(
     if rc != 0:
         sys.exit(rc)
 
-    rc = run_script(
-        "scripts/rl_counterfactual_eval_3action.py",
-        [
-            "--logs",
-            logs_arg,
-            "--out",
-            cf_out,
-            "--train_ratio",
-            str(float(train_ratio)),
-            "--entry_delay",
-            str(int(entry_delay)),
-            "--cost_per_turnover",
-            str(float(cost_per_turnover)),
-            "--slippage_bps",
-            str(float(slippage_bps)),
-        ],
-        docker=docker,
-    )
+    cf_args = [
+        "--logs",
+        logs_arg,
+        "--out",
+        cf_out,
+        "--train_ratio",
+        str(float(train_ratio)),
+        "--entry_delay",
+        str(int(entry_delay)),
+        "--cost_per_turnover",
+        str(float(cost_per_turnover)),
+        "--slippage_bps",
+        str(float(slippage_bps)),
+        "--preds-in-log1p",
+        "1" if preds_in_log1p else "0",
+    ]
+    if router_mfe_min is not None:
+        cf_args.extend(["--router-mfe-min", str(float(router_mfe_min))])
+    if router_eff_min is not None:
+        cf_args.extend(["--router-eff-min", str(float(router_eff_min))])
+    if router_dir_conf_trend_min is not None:
+        cf_args.extend(
+            ["--router-dir-conf-trend-min", str(float(router_dir_conf_trend_min))]
+        )
+    rc = run_script("scripts/rl_counterfactual_eval_3action.py", cf_args, docker=docker)
     if rc != 0:
         sys.exit(rc)
 
@@ -2276,6 +2345,257 @@ def nnmultihead_predict(
     )
 
     sys.exit(run_script("scripts/predict_path_primitives_mlp.py", args, docker=docker))
+
+
+@nnmultihead.command("pipeline-3action-e2e")
+@click.option(
+    "--config",
+    "-c",
+    default="config/nnmultihead/path_primitives_4h_80h_min",
+    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+)
+@click.option(
+    "--symbols",
+    "-s",
+    required=True,
+    help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)",
+)
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option(
+    "--model",
+    "model_path",
+    required=True,
+    help="Path to model.pt produced by nnmultihead train",
+)
+@click.option(
+    "--feature-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root dir",
+)
+@click.option(
+    "--feature-store-layer",
+    default=None,
+    help="FeatureStore layer id (leave empty to auto-generate from config-dir)",
+)
+@click.option(
+    "--data-path",
+    default="data/parquet_data",
+    show_default=True,
+    help="Raw parquet data directory (used by build-logs)",
+)
+@click.option(
+    "--returns-source",
+    default="rr_execution",
+    show_default=True,
+    help="Execution assumption used to build ret_mean/ret_trend (e.g., rr_execution, momentum_proxy).",
+)
+@click.option("--out", "out_dir", required=True, help="Output directory root for this pipeline run.")
+@click.option("--mfe-min", type=float, default=None)
+@click.option("--eff-min", type=float, default=None)
+@click.option("--dir-conf-trend-min", type=float, default=None)
+@click.option("--mfe-trend-min", type=float, default=None)
+@click.option("--ttm-trend-min", type=float, default=None)
+@click.option("--eff-mean-min", type=float, default=None)
+@click.option("--ttm-mean-max", type=float, default=None)
+@click.option("--train-ratio", type=float, default=0.7, show_default=True)
+@click.option("--entry-delay", type=int, default=0, show_default=True)
+@click.option("--cost-per-turnover", type=float, default=0.0, show_default=True)
+@click.option("--slippage-bps", type=float, default=0.0, show_default=True)
+@click.option(
+    "--preds-in-log1p/--preds-not-in-log1p",
+    default=True,
+    help="Whether head_mfe/head_mae/head_t_to_mfe are in log1p space (affects Router diagnostics only).",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_pipeline_3action_e2e(
+    config,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    model_path,
+    feature_store_root,
+    feature_store_layer,
+    data_path,
+    returns_source,
+    out_dir,
+    mfe_min,
+    eff_min,
+    dir_conf_trend_min,
+    mfe_trend_min,
+    ttm_trend_min,
+    eff_mean_min,
+    ttm_mean_max,
+    train_ratio,
+    entry_delay,
+    cost_per_turnover,
+    slippage_bps,
+    preds_in_log1p,
+    docker,
+):
+    """
+    One-command mainline pipeline:
+      nnmultihead predict -> rule mode-3action -> rl build-logs-3action -> rl run-e2e-3action
+
+    Motivation:
+    - Keep existing family commands (nnmultihead/rule/rl) for clarity and modularity.
+    - Provide a smooth, single entrypoint for the recommended mainline (Rule + Execution),
+      while BC/RL/FSM remain optional modules.
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    out_root = f"/workspace/{out_dir}" if use_workspace_prefix else out_dir
+    preds_dir = f"{out_root}/preds"
+    mode_path = f"{out_root}/mode_3action.parquet"
+    logs_path = f"{out_root}/logs_3action.parquet"
+    e2e_out = f"{out_root}/e2e"
+
+    # [1/4] nnmultihead predict
+    args_pred = [
+        "--config",
+        f"/workspace/{config}" if use_workspace_prefix else config,
+        "--symbols",
+        str(symbols),
+        "--timeframe",
+        str(timeframe),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--model",
+        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        "--output",
+        preds_dir,
+        "--features-store-root",
+        f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+    ]
+    if feature_store_layer is not None:
+        args_pred.extend(["--features-store-layer", str(feature_store_layer)])
+    rc = run_script("scripts/predict_path_primitives_mlp.py", args_pred, docker=docker)
+    if rc != 0:
+        sys.exit(rc)
+
+    # [2/4] rule mode-3action
+    args_mode = [
+        "--preds",
+        preds_dir,
+        "--model",
+        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        "--output",
+        mode_path,
+    ]
+    if mfe_min is not None:
+        args_mode.extend(["--mfe-min", str(float(mfe_min))])
+    if eff_min is not None:
+        args_mode.extend(["--eff-min", str(float(eff_min))])
+    if dir_conf_trend_min is not None:
+        args_mode.extend(["--dir-conf-trend-min", str(float(dir_conf_trend_min))])
+    if mfe_trend_min is not None:
+        args_mode.extend(["--mfe-trend-min", str(float(mfe_trend_min))])
+    if ttm_trend_min is not None:
+        args_mode.extend(["--ttm-trend-min", str(float(ttm_trend_min))])
+    if eff_mean_min is not None:
+        args_mode.extend(["--eff-mean-min", str(float(eff_mean_min))])
+    if ttm_mean_max is not None:
+        args_mode.extend(["--ttm-mean-max", str(float(ttm_mean_max))])
+    rc = run_script("scripts/rule_mode_3action.py", args_mode, docker=docker)
+    if rc != 0:
+        sys.exit(rc)
+
+    # [3/4] rl build-logs-3action
+    args_logs = [
+        "--preds",
+        preds_dir,
+        "--mode",
+        mode_path,
+        "--model",
+        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+        "--symbols",
+        str(symbols),
+        "--timeframe",
+        str(timeframe),
+        "--start-date",
+        str(start_date),
+        "--end-date",
+        str(end_date),
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--returns-source",
+        str(returns_source),
+        "--output",
+        logs_path,
+    ]
+    rc = run_script("scripts/rl_build_logs_3action.py", args_logs, docker=docker)
+    if rc != 0:
+        sys.exit(rc)
+
+    # [4/4] rl run-e2e-3action (shadow + counterfactual + fsm decision)
+    shadow_out = f"{e2e_out}/shadow"
+    cf_out = f"{e2e_out}/counterfactual"
+    fsm_out = f"{e2e_out}/fsm_decision.json"
+
+    rc = run_script(
+        "scripts/rl_shadow_eval_3action.py",
+        [
+            "--logs",
+            logs_path,
+            "--out",
+            shadow_out,
+            "--train_ratio",
+            str(float(train_ratio)),
+        ],
+        docker=docker,
+    )
+    if rc != 0:
+        sys.exit(rc)
+
+    cf_args = [
+        "--logs",
+        logs_path,
+        "--out",
+        cf_out,
+        "--train_ratio",
+        str(float(train_ratio)),
+        "--entry_delay",
+        str(int(entry_delay)),
+        "--cost_per_turnover",
+        str(float(cost_per_turnover)),
+        "--slippage_bps",
+        str(float(slippage_bps)),
+        "--preds-in-log1p",
+        "1" if preds_in_log1p else "0",
+    ]
+    # For unified Router diagnostics in counterfactual report
+    if mfe_min is not None:
+        cf_args.extend(["--router-mfe-min", str(float(mfe_min))])
+    if eff_min is not None:
+        cf_args.extend(["--router-eff-min", str(float(eff_min))])
+    if dir_conf_trend_min is not None:
+        cf_args.extend(["--router-dir-conf-trend-min", str(float(dir_conf_trend_min))])
+
+    rc = run_script("scripts/rl_counterfactual_eval_3action.py", cf_args, docker=docker)
+    if rc != 0:
+        sys.exit(rc)
+
+    rc = run_script(
+        "scripts/rl_fsm_decide.py",
+        [
+            "--metrics",
+            f"{cf_out}/metrics.json",
+            "--state",
+            "RL_CANDIDATE",
+            "--promote_days",
+            "10",
+            "--cooldown_days",
+            "20",
+            "--out",
+            fsm_out,
+        ],
+        docker=docker,
+    )
+    sys.exit(rc)
 
 
 @nnmultihead.command("build-feature-store")
@@ -2688,10 +3008,23 @@ def nnmultihead_factor_eval(
 )
 @click.option("--max-steps", type=int, default=6, show_default=True)
 @click.option(
+    "--preset",
+    default="",
+    type=click.Choice(["", "A", "B", "C"]),
+    show_default=True,
+    help="Budget preset: A=fast screen, B=medium, C=full verify. Overrides budget knobs.",
+)
+@click.option(
     "--search-algo",
     type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
     default="greedy",
     show_default=True,
+)
+@click.option(
+    "--run-abc",
+    is_flag=True,
+    default=False,
+    help="Run A->B->C orchestration into <output-dir>/{A,B,C} with shortlists and a summary.md.",
 )
 @click.option("--epochs", type=int, default=10, show_default=True)
 @click.option("--batch-size", type=int, default=512, show_default=True)
@@ -2711,6 +3044,18 @@ def nnmultihead_factor_eval(
 @click.option("--beam-width", type=int, default=3, show_default=True)
 @click.option("--sffs-max-backward-per-step", type=int, default=2, show_default=True)
 @click.option("--pipeline-survivors", type=int, default=30, show_default=True)
+@click.option(
+    "--export-shortlist-yaml",
+    default=None,
+    help="Optional: export shortlisted groups YAML (plain dict; tree-compatible).",
+)
+@click.option(
+    "--export-shortlist-mode",
+    type=click.Choice(["prefilter_survivors", "beam_selected", "selected_groups"]),
+    default="prefilter_survivors",
+    show_default=True,
+)
+@click.option("--export-shortlist-max-groups", type=int, default=0, show_default=True)
 @click.option("--output-dir", required=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_feature_group_search(
@@ -2727,7 +3072,9 @@ def nnmultihead_feature_group_search(
     pool_b_yaml,
     objective,
     max_steps,
+    preset,
     search_algo,
+    run_abc,
     epochs,
     batch_size,
     lr,
@@ -2742,6 +3089,9 @@ def nnmultihead_feature_group_search(
     beam_width,
     sffs_max_backward_per_step,
     pipeline_survivors,
+    export_shortlist_yaml,
+    export_shortlist_mode,
+    export_shortlist_max_groups,
     output_dir,
     docker,
 ):
@@ -2772,8 +3122,11 @@ def nnmultihead_feature_group_search(
         objective,
         "--max-steps",
         str(int(max_steps)),
+        "--preset",
+        str(preset),
         "--search-algo",
         str(search_algo),
+        "--run-abc" if run_abc else "",
         "--epochs",
         str(int(epochs)),
         "--batch-size",
@@ -2830,6 +3183,25 @@ def nnmultihead_feature_group_search(
         args.append("--expand-semantic-singletons")
     if device:
         args.extend(["--device", device])
+
+    if export_shortlist_yaml:
+        args.extend(
+            [
+                "--export-shortlist-yaml",
+                (
+                    f"/workspace/{export_shortlist_yaml}"
+                    if use_workspace_prefix
+                    else export_shortlist_yaml
+                ),
+                "--export-shortlist-mode",
+                str(export_shortlist_mode),
+                "--export-shortlist-max-groups",
+                str(int(export_shortlist_max_groups)),
+            ]
+        )
+
+    # Remove any empty tokens (from conditional flags)
+    args = [x for x in args if str(x).strip()]
     sys.exit(
         run_python_module(
             "time_series_model.diagnostics.nn_feature_group_search", args, docker=docker
@@ -4356,6 +4728,12 @@ def diagnose_feature_group_search(
     default=False,
     help="Only generate report (requires result JSON present)",
 )
+@click.option(
+    "--skip-report",
+    is_flag=True,
+    default=False,
+    help="Skip writing the markdown summary report (useful for parallel per-strategy runs).",
+)
 def diagnose_poolb_semantic_search(
     strategies,
     tag,
@@ -4372,6 +4750,7 @@ def diagnose_poolb_semantic_search(
     regen_poolb,
     rerun_search,
     report_only,
+    skip_report,
 ):
     """Best workflow: generate Pool-B + run staged feature-group-search (A->B->C with shortlist) + writeback YAMLs + report."""
     script = PROJECT_ROOT / "scripts" / "run_poolb_semantic_search.py"
@@ -4412,6 +4791,8 @@ def diagnose_poolb_semantic_search(
         cmd.append("--rerun-search")
     if report_only:
         cmd.append("--report-only")
+    if skip_report:
+        cmd.append("--skip-report")
 
     print("CMD:", " ".join(cmd))
     subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)

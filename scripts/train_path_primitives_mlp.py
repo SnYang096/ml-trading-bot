@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import torch
 
 # Ensure project root on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -259,7 +260,17 @@ def main() -> None:
     )
 
     sym_tag = "multi" if len(symbols) > 1 else symbols[0]
-    out_dir = Path(args.output_dir) / f"{strategy_cfg.name}_{sym_tag}_{args.timeframe}"
+    # Output naming: include a short "base config" prefix when this is a derived tmp config.
+    # Example:
+    #   tmp_configs/path_primitives_4h_80h_min__foo__bar  ->  path_primitives_4h_80h_min__path_primitives_4h_80h_min__foo__bar_multi_240T
+    # This makes it much easier to spot which config under config/nnmultihead it started from.
+    cfg_name = cfg_dir.name
+    base_name = cfg_name.split("__", 1)[0] if "__" in cfg_name else cfg_name
+    if base_name and base_name != str(strategy_cfg.name):
+        run_name = f"{base_name}__{strategy_cfg.name}"
+    else:
+        run_name = str(strategy_cfg.name)
+    out_dir = Path(args.output_dir) / f"{run_name}_{sym_tag}_{args.timeframe}"
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = str(out_dir / "model.pt")
 
@@ -281,12 +292,43 @@ def main() -> None:
         bar_hours=float(args.bar_hours),
         version="v1",
     )
+    # Provenance: record which config path was used and, if this is a tmp_config, which base
+    # config under config/nnmultihead it was derived from (best-effort).
+    meta["config_dir_arg"] = str(cfg_dir)
+    try:
+        base_guess = None
+        # Example tmp config name:
+        #   path_primitives_4h_80h_min__prune_try__keep_semantic__...
+        cfg_name = cfg_dir.name
+        base_name = cfg_name.split("__", 1)[0] if "__" in cfg_name else cfg_name
+        base_cfg_dir = PROJECT_ROOT / "config" / "nnmultihead" / base_name
+        if base_cfg_dir.exists():
+            base_guess = str(base_cfg_dir)
+        meta["base_config_dir_guess"] = base_guess
+        if "tmp_configs" in str(cfg_dir):
+            meta["config_source_kind"] = "feature_group_search_tmp"
+        elif str(cfg_dir).startswith(str(PROJECT_ROOT / "config" / "nnmultihead")):
+            meta["config_source_kind"] = "config_nnmultihead"
+        else:
+            meta["config_source_kind"] = "other"
+    except Exception:
+        meta["base_config_dir_guess"] = None
+        meta["config_source_kind"] = "unknown"
     meta["task_spec_hint"] = (
         "docs/architecture/task_specs/primitives_path_primitives_4h_80h_v1.yaml"
     )
     if contract is not None:
         meta["feature_contract"] = contract.to_dict()
         meta["block_cols_by_name"] = block_cols_by_name or {}
+
+    # Ensure model.pt carries updated meta (task_id/config provenance/etc).
+    try:
+        payload = torch.load(model_path, map_location="cpu")
+        if isinstance(payload, dict):
+            payload["meta"] = meta
+            torch.save(payload, model_path)
+    except Exception:
+        pass
 
     # Evaluate on the same df (phase-1 sanity). For true OOS, use rolling_train integration later.
     metrics, df_eval, extra = evaluate_model_on_df(
@@ -302,6 +344,11 @@ def main() -> None:
     # Attach rolling IC preview (report artifact) to meta so report.html can render it.
     if isinstance(extra, dict) and extra.get("rolling_ic") is not None:
         meta["rolling_ic"] = extra.get("rolling_ic")
+    # Optional: Router-aligned eval tables (threshold-consistent + per-symbol)
+    if isinstance(extra, dict) and extra.get("threshold_eval") is not None:
+        meta["threshold_eval"] = extra.get("threshold_eval")
+    if isinstance(extra, dict) and extra.get("threshold_eval_by_symbol") is not None:
+        meta["threshold_eval_by_symbol"] = extra.get("threshold_eval_by_symbol")
 
     # Save artifacts
     # Prefer a sample where labels exist (avoid tail horizon NaNs).

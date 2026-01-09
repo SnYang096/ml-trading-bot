@@ -42,14 +42,42 @@ def select_columns_from_requested_features(
     - By default, drops strictly-constant columns (helps avoid useless inputs like 0-only flags).
     """
     feats = _load_feature_dependencies(feature_deps_path)
-    want_cols: List[str] = []
-    for feat_name in requested_features or []:
-        info = feats.get(str(feat_name), None)
+
+    # Reverse map: output_column -> feature node (compute function name, with _f suffix).
+    # This lets callers pass either:
+    # - feature nodes (recommended): "compression_duration_f" -> include ALL its output columns
+    # - output columns (fine-grained): "compression_duration" -> include ONLY that column
+    #
+    # Why:
+    # - Tree-side semantic expansion often operates at output-column granularity.
+    # - For nn, the *final model inputs are columns*, while nodes are compute units.
+    out_to_node: Dict[str, str] = {}
+    for node, info in (feats or {}).items():
         if not isinstance(info, dict):
             continue
-        out_cols = info.get("output_columns") or []
-        for c in out_cols:
-            want_cols.append(str(c))
+        for c in info.get("output_columns") or []:
+            c = str(c)
+            if c and c not in out_to_node:
+                out_to_node[c] = str(node)
+
+    want_cols: List[str] = []
+    for name in requested_features or []:
+        name = str(name).strip()
+        if not name:
+            continue
+
+        # Case 1) feature node name (compute function): include all its outputs
+        info = feats.get(name, None)
+        if isinstance(info, dict):
+            out_cols = info.get("output_columns") or []
+            for c in out_cols:
+                want_cols.append(str(c))
+            continue
+
+        # Case 2) output column name: include only that column if known
+        if name in out_to_node:
+            want_cols.append(name)
+            continue
 
     # De-dup while preserving order
     seen = set()

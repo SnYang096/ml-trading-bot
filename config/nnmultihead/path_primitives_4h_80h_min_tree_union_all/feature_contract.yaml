@@ -1,0 +1,63 @@
+feature_contract:
+  # ---------------------------------------------------------------------------
+  # Feature Contract (nnmultihead only)
+  #
+  # Purpose:
+  # - Make training/inference assumptions explicit and auditable.
+  # - Allow future "two-stage feature computation" by cost/observability gating,
+  #   WITHOUT selecting features by action (avoid self-bootstrapping bias).
+  #
+  # Note:
+  # - This file is consumed ONLY by nnmultihead scripts.
+  # - It does NOT affect the tree-model strategy pipeline.
+  # ---------------------------------------------------------------------------
+
+  minimal_required_cols:
+    # Basic OHLCV fields (data pipeline invariant)
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - atr
+
+    # Conditional slice / regime proxies (if present; used in reports/slicing)
+    # These may be produced by requested_features, but we declare them explicitly
+    # so missingness becomes visible.
+    - trend_r2_20
+    - compression_score
+
+    # SR distance is used by the near_sr conditional metrics (optional but recommended).
+    # If you don't have SR features in this config, the scripts will not hard-require it.
+    # - dist_to_nearest_sr
+
+  optional_blocks:
+    # High-cost / non-guaranteed blocks.
+    #
+    # New format: block_name -> list of column patterns (fnmatch).
+    # These patterns will be resolved against `feature_cols` at train/predict time.
+    #
+    # IMPORTANT: keep patterns conservative to avoid accidentally pulling in core columns.
+    ticks_orderflow_semantic_blocks:
+      - "*vpin*"
+    volume_profile_semantic_blocks:
+      - "*vp_*"
+      - "*volume_profile*"
+    trade_cluster_semantic_blocks:
+      - "*trade_cluster*"
+      - "*TradeCluster*"
+
+  missingness_policy:
+    # Policy for missing optional blocks during inference.
+    # options: "skip" | "impute" | "mask"
+    # - skip: treat missing blocks as unavailable; model must be trained to tolerate it
+    # - mask: provide feature_available_mask (future upgrade) and/or block dropout in training
+    # - impute: fill missing with constants (should be paired with masks to avoid leakage)
+    optional_blocks_on_missing: skip
+    # If true and optional blocks are resolved, append per-block availability mask to model input.
+    append_block_mask: true
+    # During training only: randomly zero-out available blocks to make the model robust to block on/off.
+    # Start small; tune later.
+    block_dropout_p: 0.05
+
+

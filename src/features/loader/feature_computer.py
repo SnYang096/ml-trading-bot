@@ -931,13 +931,29 @@ class FeatureComputer:
         # 合并所有月份的结果
         print(f"       🔄 Merging {len(monthly_results)} monthly results...")
         try:
+            def _tz_normalize_index(x):
+                """
+                Normalize DatetimeIndex to UTC tz-naive to avoid pandas comparisons failing
+                when some monthly chunks are tz-aware and others are tz-naive.
+                """
+                try:
+                    if hasattr(x, "index") and isinstance(x.index, pd.DatetimeIndex):
+                        if x.index.tz is not None:
+                            y = x.copy()
+                            y.index = y.index.tz_convert("UTC").tz_localize(None)
+                            return y
+                except Exception:
+                    return x
+                return x
+
             # 处理不同的返回类型
             if isinstance(list(monthly_results.values())[0], tuple):
                 # 如果是tuple，需要分别合并每个元素
                 combined_results = []
                 for i in range(len(output_cols)):
                     combined_series = pd.concat(
-                        [r[i] for r in monthly_results.values()], axis=0
+                        [_tz_normalize_index(r[i]) for r in monthly_results.values()],
+                        axis=0,
                     ).sort_index()
                     combined_results.append(combined_series)
                 result_df = pd.DataFrame(
@@ -950,6 +966,7 @@ class FeatureComputer:
                 # 确保所有 DataFrame 都有相同的列（缺失的列填充 NaN）
                 aligned_results = []
                 for month_key, month_result in monthly_results.items():
+                    month_result = _tz_normalize_index(month_result)
                     # 处理重复列名：如果有重复列，保留第一个
                     if (
                         isinstance(month_result, pd.DataFrame)
@@ -1005,7 +1022,8 @@ class FeatureComputer:
             elif isinstance(list(monthly_results.values())[0], pd.Series):
                 # 合并 Series
                 combined_series = pd.concat(
-                    list(monthly_results.values()), axis=0
+                    [_tz_normalize_index(s) for s in list(monthly_results.values())],
+                    axis=0,
                 ).sort_index()
                 # 如果 output_columns 中只有一个列，且 Series name 匹配，则返回 Series
                 if len(output_cols) == 1 and combined_series.name == output_cols[0]:

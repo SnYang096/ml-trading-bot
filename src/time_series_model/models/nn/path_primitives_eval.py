@@ -63,6 +63,59 @@ def _binary_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     return float(max(0.0, min(1.0, auc)))
 
 
+def _average_precision(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """
+    Average precision (area under precision-recall curve) without sklearn.
+    Returns positive-class prevalence when undefined.
+    """
+    y_true = y_true.astype(int)
+    mask = np.isfinite(y_score) & np.isfinite(y_true)
+    y_true = y_true[mask]
+    y_score = y_score[mask]
+    if y_true.size == 0:
+        return 0.0
+    n_pos = int((y_true == 1).sum())
+    if n_pos == 0:
+        return 0.0
+    if n_pos == int(y_true.size):
+        return 1.0
+
+    order = np.argsort(-y_score)  # descending
+    y_sorted = y_true[order]
+    tp = np.cumsum(y_sorted == 1)
+    fp = np.cumsum(y_sorted == 0)
+    precision = tp / np.maximum(tp + fp, 1)
+    # AP = mean(precision at each positive hit)
+    ap = float(np.sum(precision[y_sorted == 1]) / float(n_pos))
+    return float(max(0.0, min(1.0, ap)))
+
+
+def binary_threshold_metrics(
+    *,
+    y_true_cont: np.ndarray,
+    y_score_cont: np.ndarray,
+    threshold: float,
+) -> Dict[str, float]:
+    """
+    Evaluate how well y_score ranks samples that exceed a threshold on y_true.
+    Returns AUC and AP (average precision).
+    """
+    y = y_true_cont
+    s = y_score_cont
+    mask = np.isfinite(y) & np.isfinite(s)
+    y = y[mask]
+    s = s[mask]
+    if y.size == 0:
+        return {"auc": 0.5, "ap": 0.0, "pos_rate": 0.0}
+    y_bin = (y > float(threshold)).astype(int)
+    pos_rate = float(np.mean(y_bin))
+    return {
+        "auc": _binary_auc(y_bin, s),
+        "ap": _average_precision(y_bin, s),
+        "pos_rate": pos_rate,
+    }
+
+
 def evaluate_path_primitives(
     *,
     df: pd.DataFrame,

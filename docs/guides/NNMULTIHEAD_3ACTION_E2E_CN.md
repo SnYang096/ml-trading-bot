@@ -163,13 +163,48 @@ mode_3action.parquet (交易模式)
   ↓
 [组装 logs + 计算 ret_mean/ret_trend]
   ↓
-logs_3action.parquet (RL/BC 训练数据)
+logs_3action.parquet (统一日志：评估/复盘/可选训练)
   ↓
-[BC/RL 训练] → 新的 Router 模型（.pt）
+【主链路（推荐，上线/回测主力）】
+  - Rule Router + Execution（先固定）+ Gate（树模型导出的 allow/deny）
+  - 输出：counterfactual/report.html（PnL 口径）+ Router-aligned diagnostics（AUC/AP/漂移）
   ↓
-[Shadow/Counterfactual 评估]
-  ↓
-results/rl/e2e/* (评估报告)
+results/rl/e2e/* (评估报告：以 counterfactual 为主)
+
+【可选链路（非必跑）】
+  A) BC shadow（行为一致性门禁，不是为了赚钱）
+     logs_3action.parquet → BC(3-action) → shadow_report.html（看行为分布/切换率/是否塌缩）
+  B) Offline RL（研究/探索上限，上线前必须配合宪法/门禁）
+     logs_3action.parquet → RL policy → counterfactual/report.html（对照 Rule）
+```
+
+### 主链路 vs 可选链路（流程图式文字，推荐用法）
+
+```
+                    ┌──────────────────────────────────────────────────────┐
+                    │ 共同前置（必须）                                      │
+                    │ OHLCV → nnmultihead predict → preds_*.parquet         │
+                    │ preds → rule mode-3action → mode_3action.parquet      │
+                    │ preds+mode+raw → build-logs-3action → logs_3action.parquet │
+                    └──────────────────────────────────────────────────────┘
+
+主链路（推荐：先把规则 Router + execution + tree gate 做硬、可控、低维护）
+  logs_3action.parquet
+    → (固定 execution 假设 / 版本化) + (Gate: tree 导出规则，返回 allow/deny + reason)
+    → Counterfactual 评估（PnL）+ Router-aligned 诊断（trade slice / AUC/AP / rolling drift）
+    → 产物：results/rl/e2e/*/counterfactual/report.html
+
+可选链路 A（BC shadow：行为一致性门禁）
+  logs_3action.parquet
+    → BC(3-action) 复现 rule 行为
+    → 产物：results/rl/e2e/*/shadow/shadow_report.html
+    → 用途：判断“行为是否稳定/是否塌缩”，不是 PnL 优化
+
+可选链路 B（Offline RL：研究/探索）
+  logs_3action.parquet
+    → RL policy（更高自由度）
+    → counterfactual 对照 Rule
+    → 上线前必须：宪法（position/execution）+ gate/detector 约束自由度
 ```
 
 ### 为什么需要这些中间产物？（每个 bar 都输出）
@@ -183,10 +218,11 @@ results/rl/e2e/* (评估报告)
   - `logs_3action.parquet`：看 `ret_mean/ret_trend` 计算是否正确
 - **没有这些文件，你只能重新跑整个 pipeline**，耗时且可能因为数据/代码版本不一致导致无法复现
 
-#### 2. **离线训练 RL/BC**
-- BC（Behavior Cloning）和 Offline RL 需要**大量历史 transitions**（状态-动作-奖励三元组）
-- `logs_3action.parquet` 就是这些 transitions 的集合，每个 bar 一行
-- **不保存 logs，你就无法训练 BC/RL Router**（除非每次都重新组装，但这样无法积累历史数据）
+#### 2. **可选：离线训练 BC/RL（不是必跑）**
+- `logs_3action.parquet` 的核心价值首先是：**统一评估/复盘口径**（counterfactual + Router-aligned diagnostics）
+- BC（Behavior Cloning）和 Offline RL 的训练只是它的**可选用途**：
+  - **BC shadow**：用于“行为一致性/稳定性门禁”（验证能否稳定复现 rule 的 mode 分布/切换率）
+  - **Offline RL**：用于研究探索（自由度更大、维护成本更高，不建议作为 v1 主链路）
 
 #### 3. **A/B 对比与实验迭代**
 - 当你修改 Rule Router 阈值或尝试新的 Router 策略时，可以：

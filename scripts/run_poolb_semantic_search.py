@@ -437,6 +437,11 @@ def main() -> None:
         action="store_true",
         help="Only generate report (requires results.json present)",
     )
+    p.add_argument(
+        "--skip-report",
+        action="store_true",
+        help="Skip writing the markdown report (useful when running multiple strategies in parallel).",
+    )
     args = p.parse_args()
 
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
@@ -579,23 +584,26 @@ def main() -> None:
                 / "feature_group_search_result.json",
             }
 
-    report_path = (
-        ROOT
-        / "docs"
-        / "architecture"
-        / "reports"
-        / f"feature_group_search_summary_{tag}_poolb_semantic.md"
-    )
-    write_report(
-        specs=specs,
-        result_json_paths=result_json_paths,
-        tag=tag,
-        symbol=args.symbol,
-        timeframe=args.timeframe,
-        start_date=args.start_date,
-        end_date=args.end_date,
-        out_path=report_path,
-    )
+    if not args.skip_report:
+        report_path = (
+            ROOT
+            / "docs"
+            / "architecture"
+            / "reports"
+            / f"feature_group_search_summary_{tag}_poolb_semantic.md"
+        )
+        write_report(
+            specs=specs,
+            result_json_paths=result_json_paths,
+            tag=tag,
+            symbol=args.symbol,
+            timeframe=args.timeframe,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            out_path=report_path,
+        )
+    else:
+        print("ℹ️  skip-report enabled: not writing summary markdown.")
 
 
 if __name__ == "__main__":

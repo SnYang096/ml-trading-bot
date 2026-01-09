@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict, field
 from typing import Dict, List, Optional, Tuple
 
+import os
+import time
+
 import numpy as np
 import pandas as pd
 import torch
@@ -56,6 +59,16 @@ from .path_primitives_loss import (
     path_primitives_loss,
 )
 from .path_primitives_model import MultiHeadPathPrimitivesMLP, PathPrimitivesModelConfig
+
+
+def _is_verbose() -> bool:
+    v = str(os.environ.get("MLBOT_TRAIN_VERBOSE", "")).strip().lower()
+    return v not in ("", "0", "false", "no", "off")
+
+
+def _log(msg: str) -> None:
+    if _is_verbose():
+        print(msg, flush=True)
 
 
 @dataclass(frozen=True)
@@ -115,12 +128,24 @@ def train_path_primitives_mlp(
 
     _set_seed(cfg.seed)
     device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    t0 = time.time()
+    _log(
+        f"[train_path_primitives_mlp] device={device} seed={cfg.seed} epochs={cfg.epochs}"
+    )
 
     block_names: List[str] = []
     block_feature_indices: List[List[int]] = []
     if append_block_mask and block_cols_by_name:
         block_names, block_feature_indices = compute_block_feature_indices(
             feature_cols, block_cols_by_name=block_cols_by_name
+        )
+        _log(
+            f"[train_path_primitives_mlp] block_mask=on blocks={len(block_names)} "
+            f"(append_block_mask={append_block_mask}, block_dropout_p={block_dropout_p})"
+        )
+    else:
+        _log(
+            f"[train_path_primitives_mlp] block_mask=off (append_block_mask={append_block_mask})"
         )
 
     # 1) Labels + dataset (group-safe)
@@ -135,6 +160,10 @@ def train_path_primitives_mlp(
         groups = list(df.groupby(group_col, sort=False))
     else:
         groups = [(None, df)]
+    _log(
+        f"[train_path_primitives_mlp] n_groups={len(groups)} group_col={group_col} "
+        f"n_rows_input={len(df)} n_feature_cols={len(feature_cols)}"
+    )
 
     # First pass: collect all raw feature matrices for scaler fitting
     all_X_raw = []
@@ -142,6 +171,9 @@ def train_path_primitives_mlp(
     all_work_list = []
 
     for gname, gdf in groups:
+        _log(
+            f"[train_path_primitives_mlp] build labels+X group={gname} rows={len(gdf)}"
+        )
         df_labels = compute_path_primitives_labels(
             gdf, cfg=cfg.label_cfg, out_prefix="", group_col=None
         )
@@ -176,9 +208,14 @@ def train_path_primitives_mlp(
 
     # Fit scaler on all training data (only on feature columns, not block masks)
     n_feature_cols = len(feature_cols)
+    _log("[train_path_primitives_mlp] fitting scaler on concatenated X ...")
     all_X_concat = np.vstack(all_X_raw)
     # Only scale feature columns, not block mask columns (last n_blocks dims if append_block_mask)
     feature_scaler = FeatureScaler.fit(all_X_concat[:, :n_feature_cols])
+    _log(
+        f"[train_path_primitives_mlp] scaler fit done X_shape={tuple(all_X_concat.shape)} "
+        f"(features={n_feature_cols}, extra={int(all_X_concat.shape[1] - n_feature_cols)})"
+    )
 
     # Second pass: apply scaler and create datasets
     for i, (X_raw, labels) in enumerate(zip(all_X_raw, all_labels_list)):
@@ -205,6 +242,10 @@ def train_path_primitives_mlp(
 
     if n_samples_total < 100:
         raise ValueError(f"Not enough valid samples for training: {n_samples_total}")
+    _log(
+        f"[train_path_primitives_mlp] dataset ready n_samples={n_samples_total} "
+        f"n_train={n_train_total} n_val={n_val_total} batch_size={cfg.batch_size}"
+    )
 
     train_dataset = torch.utils.data.ConcatDataset(train_subsets)
     val_dataset = torch.utils.data.ConcatDataset(val_subsets)
@@ -236,6 +277,10 @@ def train_path_primitives_mlp(
         with_persistence=False,
     )
     model = MultiHeadPathPrimitivesMLP(cfg=model_cfg).to(device)
+    _log(
+        f"[train_path_primitives_mlp] model created d_in={model_cfg.d_in} hidden={model_cfg.hidden} "
+        f"depth={model_cfg.depth} dropout={model_cfg.dropout}"
+    )
 
     opt = torch.optim.AdamW(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
@@ -269,6 +314,7 @@ def train_path_primitives_mlp(
     best_state = None
 
     for epoch in range(int(cfg.epochs)):
+        t_ep = time.time()
         model.train()
         w = (
             cfg.fixed_weights
@@ -331,8 +377,18 @@ def train_path_primitives_mlp(
             best_val = float(val_metrics["total"])
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
 
+        _log(
+            f"[train_path_primitives_mlp] epoch={epoch+1}/{cfg.epochs} "
+            f"train_total={float(train_metrics.get('total', 0.0)):.6g} "
+            f"val_total={float(val_metrics.get('total', 0.0)):.6g} "
+            f"dt_s={time.time()-t_ep:.1f}"
+        )
+
     if best_state is not None:
         model.load_state_dict(best_state)
+    _log(
+        f"[train_path_primitives_mlp] done dt_s={time.time()-t0:.1f} best_val={best_val:.6g}"
+    )
 
     meta = {
         "feature_cols": feature_cols,

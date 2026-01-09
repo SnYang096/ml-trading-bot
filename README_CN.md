@@ -102,6 +102,8 @@ mlbot data download-funding-rate \
 > - `docs/guides/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
 > - `docs/guides/CS_VS_TS_PIPELINE_CN.md`（CS vs TS：两套 pipeline 差异与指标取舍）
 > - `docs/architecture/CROSS_SECTIONAL_ALPHA101_FEATURESTORE_ARCH_CN.md`（CS Alpha101：为何不走 DAG + 缓存复用架构）
+> - `docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`（多资产合约实盘落地路线图）
+> - `docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`（NN 多资产系统：Task/Router/Gate/Execution 宪法与运维落地设计）
 
 ### 0) 质量闸门（推荐）
 
