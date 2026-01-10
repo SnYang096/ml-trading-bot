@@ -138,6 +138,10 @@ mlbot diagnose poolb-semantic-search \
 
 - `docs/guides/FEATURE_GROUP_SEARCH_PRESETS_CN.md`
 
+> 重要补充：Stage B / C 写回的 `features_suggested_*.yaml` **是可直接喂给模型训练/回测的候选特征配置**；  
+> 但“可用 ≠ 可上线”，合并/上线前建议用 holdout/rolling/多标的/Nautilus 做验收门禁。  
+> 具体命令与解释见 `docs/guides/FEATURE_GROUP_SEARCH_PRESETS_CN.md` 的 “B/C 输出能不能直接用？（以及为什么还要验收/门禁）”。
+
 ### 2) 最终验收：6 个月 Holdout（只验收，不再调参）
 
 ```bash

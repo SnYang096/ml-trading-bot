@@ -137,4 +137,75 @@ Preset 的定义在：`src/time_series_model/diagnostics/feature_group_search.py
 
 （补充）报告会把每个策略的 Stage A/B/C 都列出来，但最终以 **Stage C** 的 writeback YAML 作为“最终特征组合”。
 
+---
+
+## 5) B/C 输出能不能直接用？（以及为什么还要“验收/门禁”）
+
+### 5.1 可以这么理解：B/C 的 writeback YAML = “可直接喂给模型的候选特征配置”
+
+当你看到这些文件存在时：
+
+- `config/strategies/<strategy>/features_suggested_<algo>_poolb_semantic_<TAG>_B.yaml`
+- `config/strategies/<strategy>/features_suggested_<algo>_poolb_semantic_<TAG>_C.yaml`
+
+你就可以把它当作**一个可执行的特征配置**：其中 `feature_pipeline.requested_features` 与 `feature_pipeline.invert_features` 是“要传给模型”的输入列（节点级/列级取决于是否启用了 singleton）。
+
+> 实操上：B 更适合日常迭代（快），C 更适合准备合并/上线前的最终候选（更稳、更贴近最终目标）。
+
+### 5.2 但要注意：可用 ≠ 可上线（feature-group-search 不做所有“上线门禁”）
+
+feature-group-search 在过程里已经做了 CV 与回测（按当前时间切分 + 多 seeds），并把结果落盘；
+但它默认**不承担**以下“上线门禁”（因为成本高、口径因团队而异）：
+
+- **Holdout / OOS 验收**：固定 6 个月（或你指定窗口）只验收不调参
+- **Rolling 稳定性**：walk-forward/多窗口一致性（验证长期有效性与不跳跃）
+- **多标的泛化**：不仅 BTC 单标的（尤其是你要做 multi-asset）
+- **事件驱动一致性**：用 Nautilus 做“回测=实盘假设一致性”复核（撮合/滑点/延迟等）
+- **特征成本与可得性**：tick 重特征、频域/DTW 等是否能实时稳定产出
+
+因此推荐的工业化节奏是：
+
+- **研发迭代**：A → B，直接拿 B 的 YAML 继续训练/对比
+- **合并/上线前**：对 B 的 top 3–5（或直接 C）做更严格验收，通过后再固化为上线版本
+
+### 5.3 后续命令（现成可用）：把 B/C 作为候选，做“验收/门禁”
+
+#### (1) Ablation：baseline vs B vs C（可选 rolling）
+
+用 `mlbot analyze strategy-feature-compare` 一次对比多个 feature 配置（并支持 rolling）：
+
+```bash
+mlbot analyze strategy-feature-compare \
+  --strategy-config config/strategies/<strategy> \
+  --symbol BTCUSDT --timeframe 240T \
+  --start-date 2023-01-01 --end-date 2025-12-31 \
+  --test-size 0.30 \
+  --feature-overrides \
+    base=config/strategies/<strategy>/features.yaml \
+    B=config/strategies/<strategy>/features_suggested_<algo>_poolb_semantic_<TAG>_B.yaml \
+    C=config/strategies/<strategy>/features_suggested_<algo>_poolb_semantic_<TAG>_C.yaml \
+  --run-rolling \
+  --rolling-train-bars 1000 --rolling-test-bars 200 --rolling-step-bars 100 --rolling-max-windows 10 \
+  --no-docker
+```
+
+> 说明：`features.yaml` 是当前“基线/主配置”；B/C 是候选。你也可以把 base 换成 `features_base.yaml` 或你自己的对照版本。
+
+#### (2) 事件驱动复核：Nautilus（更贴近执行假设）
+
+当你已经训练出最终模型（或有 model artifact）后，用 Nautilus 做事件驱动复核：
+
+```bash
+mlbot backtest strategy \
+  --strategy <strategy> \
+  --symbol BTCUSDT --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2025-10-31 \
+  --mode event-driven \
+  --output-dir results/backtest/nautilus_check \
+  --no-docker
+```
+
+> 说明：Nautilus 是“执行一致性/事件驱动撮合”的门禁；它不是用来在大候选空间里做搜索的。
+
+
 

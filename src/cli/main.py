@@ -4734,6 +4734,11 @@ def diagnose_feature_group_search(
     default=False,
     help="Skip writing the markdown summary report (useful for parallel per-strategy runs).",
 )
+@click.option(
+    "--feature-blacklist",
+    default="",
+    help="Comma-separated requested_feature nodes to exclude from BOTH base and candidate groups during feature-group-search (applied to A/B/C).",
+)
 def diagnose_poolb_semantic_search(
     strategies,
     tag,
@@ -4751,6 +4756,7 @@ def diagnose_poolb_semantic_search(
     rerun_search,
     report_only,
     skip_report,
+    feature_blacklist,
 ):
     """Best workflow: generate Pool-B + run staged feature-group-search (A->B->C with shortlist) + writeback YAMLs + report."""
     script = PROJECT_ROOT / "scripts" / "run_poolb_semantic_search.py"
@@ -4793,6 +4799,8 @@ def diagnose_poolb_semantic_search(
         cmd.append("--report-only")
     if skip_report:
         cmd.append("--skip-report")
+    if feature_blacklist:
+        cmd.extend(["--feature-blacklist", feature_blacklist])
 
     print("CMD:", " ".join(cmd))
     subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)

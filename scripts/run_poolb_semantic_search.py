@@ -166,6 +166,7 @@ def run_feature_group_search(
     writeback_yaml: Path,
     groups_yaml: Path | None,
     expand_semantic_singletons: bool,
+    feature_blacklist: str,
     rerun_search: bool,
     preset: str,
 ) -> Path:
@@ -212,6 +213,8 @@ def run_feature_group_search(
         str(out_dir),
         "--no-docker",
     ]
+    if str(feature_blacklist or "").strip():
+        cmd.extend(["--feature-blacklist", str(feature_blacklist)])
     if groups_yaml is not None:
         cmd.extend(["--groups-yaml", str(groups_yaml)])
     if expand_semantic_singletons:
@@ -414,6 +417,11 @@ def main() -> None:
     p.add_argument("--shortlist-max-groups-a", type=int, default=30)
     p.add_argument("--shortlist-max-groups-b", type=int, default=20)
     p.add_argument(
+        "--feature-blacklist",
+        default="",
+        help="Comma-separated requested_feature nodes to exclude from BOTH base and candidate groups during feature-group-search.",
+    )
+    p.add_argument(
         "--search-algo",
         default="pipeline",
         choices=["greedy", "halving", "beam", "sffs", "pipeline"],
@@ -487,6 +495,7 @@ def main() -> None:
                 writeback_yaml=wb_a,
                 groups_yaml=None,
                 expand_semantic_singletons=args.expand_semantic_singletons,
+                feature_blacklist=str(args.feature_blacklist),
                 rerun_search=args.rerun_search,
                 preset="A",
             )
@@ -526,6 +535,7 @@ def main() -> None:
                 writeback_yaml=wb_b,
                 groups_yaml=shortlist_a,
                 expand_semantic_singletons=args.expand_semantic_singletons,
+                feature_blacklist=str(args.feature_blacklist),
                 rerun_search=args.rerun_search,
                 preset="B",
             )
@@ -565,6 +575,7 @@ def main() -> None:
                 writeback_yaml=wb_c,
                 groups_yaml=shortlist_b,
                 expand_semantic_singletons=args.expand_semantic_singletons,
+                feature_blacklist=str(args.feature_blacklist),
                 rerun_search=args.rerun_search,
                 preset="C",
             )
