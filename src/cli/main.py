@@ -87,11 +87,17 @@ def _is_in_docker() -> bool:
 
 def run_python_module(module: str, args: List[str], docker: bool = False, **kwargs):
     """Run a Python module with optional Docker wrapper."""
+    env_overrides = kwargs.pop("env_overrides", None) or {}
     if docker and not _is_in_docker():
         # Build Docker command
         docker_image = os.environ.get(
             "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.7"
         )
+        extra_env_flags: List[str] = []
+        for k, v in (env_overrides or {}).items():
+            if v is None:
+                continue
+            extra_env_flags.extend(["-e", f"{k}={v}"])
         cmd = [
             "docker",
             "run",
@@ -103,6 +109,7 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
             "PYTHONPATH=/workspace/src",
             "-e",
             "PYTHONUNBUFFERED=1",
+        ] + extra_env_flags + [
             "-v",
             f"{PROJECT_ROOT}:/workspace",
             "-w",
@@ -117,6 +124,11 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
         cmd = [sys.executable, "-m", module] + args
 
     env = os.environ.copy()
+    if env_overrides:
+        for k, v in env_overrides.items():
+            if v is None:
+                continue
+            env[str(k)] = str(v)
     # Match Docker layout (PYTHONPATH includes project root + src/)
     pythonpath_parts = [str(PROJECT_ROOT), str(PROJECT_ROOT / "src")]
     if "PYTHONPATH" in env and env["PYTHONPATH"]:
@@ -132,10 +144,16 @@ def run_python_module(module: str, args: List[str], docker: bool = False, **kwar
 
 def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs):
     """Run a Python script with optional Docker wrapper."""
+    env_overrides = kwargs.pop("env_overrides", None) or {}
     if docker and not _is_in_docker():
         docker_image = os.environ.get(
             "DOCKER_IMAGE", "hansenlovefiona017/lightgbm-runtime:v0.0.9"
         )
+        extra_env_flags: List[str] = []
+        for k, v in (env_overrides or {}).items():
+            if v is None:
+                continue
+            extra_env_flags.extend(["-e", f"{k}={v}"])
         cmd = [
             "docker",
             "run",
@@ -147,6 +165,7 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
             "PYTHONPATH=/workspace:/workspace/src",
             "-e",
             "PYTHONUNBUFFERED=1",
+        ] + extra_env_flags + [
             "-v",
             f"{PROJECT_ROOT}:/workspace",
             "-w",
@@ -160,6 +179,11 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
         cmd = [sys.executable, str(PROJECT_ROOT / script_path)] + args
 
     env = os.environ.copy()
+    if env_overrides:
+        for k, v in env_overrides.items():
+            if v is None:
+                continue
+            env[str(k)] = str(v)
     # Match Docker layout (PYTHONPATH includes project root + src/)
     pythonpath_parts = [str(PROJECT_ROOT), str(PROJECT_ROOT / "src")]
     if "PYTHONPATH" in env and env["PYTHONPATH"]:
@@ -2637,6 +2661,26 @@ def nnmultihead_pipeline_3action_e2e(
     default=1,
     help="Warmup calendar months to prepend when computing each month (recommended).",
 )
+@click.option(
+    "--feature-monthly-workers",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Opt-in: parallelize per-feature monthly cache-miss computation (FEATURE_MONTHLY_WORKERS). Use small values (2-4) for tick-heavy features.",
+)
+@click.option(
+    "--feature-monthly-backend",
+    type=click.Choice(["process", "thread"]),
+    default="process",
+    show_default=True,
+    help="Backend for monthly parallelism (FEATURE_MONTHLY_BACKEND).",
+)
+@click.option(
+    "--fast-features",
+    is_flag=True,
+    default=False,
+    help="Enable faster feature computation for DTW/Spectrum where supported (FEATURE_FAST_MODE=1).",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_build_feature_store(
     symbols,
@@ -2649,6 +2693,9 @@ def nnmultihead_build_feature_store(
     layer,
     warmup_bars,
     warmup_months,
+    feature_monthly_workers,
+    feature_monthly_backend,
+    fast_features,
     docker,
 ):
     """Build monthly FeatureStore for nnmultihead features (shared infra; default path works for tree+nn)."""
@@ -2681,8 +2728,19 @@ def nnmultihead_build_feature_store(
         args.extend(["--start-date", start_date])
     if end_date:
         args.extend(["--end-date", end_date])
+    env_overrides = {
+        "FEATURE_MONTHLY_WORKERS": str(int(feature_monthly_workers)),
+        "FEATURE_MONTHLY_BACKEND": str(feature_monthly_backend),
+    }
+    if fast_features:
+        env_overrides["FEATURE_FAST_MODE"] = "1"
     sys.exit(
-        run_script("scripts/build_feature_store_nnmultihead.py", args, docker=docker)
+        run_script(
+            "scripts/build_feature_store_nnmultihead.py",
+            args,
+            docker=docker,
+            env_overrides=env_overrides,
+        )
     )
 
 
@@ -4414,6 +4472,12 @@ def diagnose_sr_reversal_model_comparison(
     help="Budget preset for feature-group-search. A=fast screening, B=medium, C=final verification.",
 )
 @click.option(
+    "--fast-features",
+    is_flag=True,
+    default=False,
+    help="Enable faster feature computation for search runs (sets FEATURE_FAST_MODE=1 in training subprocess).",
+)
+@click.option(
     "--search-algo",
     default="greedy",
     type=click.Choice(["greedy", "halving", "beam", "sffs", "pipeline"]),
@@ -4530,6 +4594,7 @@ def diagnose_feature_group_search(
     min_trades,
     max_steps,
     preset,
+    fast_features,
     search_algo,
     halving_stages,
     halving_top_fraction,
@@ -4578,6 +4643,7 @@ def diagnose_feature_group_search(
         str(max_steps),
         "--preset",
         str(preset),
+        "--fast-features" if fast_features else "",
         "--search-algo",
         str(search_algo),
         "--halving-stages",
@@ -4596,6 +4662,8 @@ def diagnose_feature_group_search(
         f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
         "--no-docker",
     ]
+    # Remove empty entries added by optional flags
+    args = [a for a in args if a]
     if deterministic:
         args.append("--deterministic")
     if groups_json:

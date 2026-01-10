@@ -28,6 +28,7 @@ from typing import Dict, Optional, List
 from scipy import signal as sp_signal
 
 from src.features.registry import register_feature
+import os
 
 
 def compute_spectrum_features(
@@ -174,6 +175,7 @@ def extract_spectrum_features_from_series(
     volume: Optional[pd.Series] = None,
     cvd: Optional[pd.Series] = None,
     rolling_window: int = 64,
+    step: int = 1,
 ) -> pd.DataFrame:
     """
     Narrow-IO spectrum feature entrypoint for the feature DAG.
@@ -185,6 +187,23 @@ def extract_spectrum_features_from_series(
     close = pd.to_numeric(close, errors="coerce").astype(float)
     n = len(close)
     idx = close.index
+
+    # Fast mode: compute spectrum less frequently (and forward-fill) to save a lot of time during search.
+    fast_mode = str(os.getenv("FEATURE_FAST_MODE", "")).strip() in {
+        "1",
+        "true",
+        "True",
+        "yes",
+        "YES",
+    }
+    try:
+        step_i = int(step)
+    except Exception:
+        step_i = 1
+    if step_i < 1:
+        step_i = 1
+    if fast_mode and step_i == 1:
+        step_i = 4
 
     # Allocate outputs (match extract_spectrum_features defaults)
     price_has_dom = np.zeros(n, dtype=float)
@@ -206,9 +225,11 @@ def extract_spectrum_features_from_series(
     cvd_ent = np.full(n, np.nan, dtype=float)
     cvd_cent = np.full(n, np.nan, dtype=float)
 
-    # Price rolling spectrum
+    # Price rolling spectrum (optionally downsampled by step_i; results forward-filled)
     price_returns = close.pct_change().fillna(0.0).values
     for i in range(rolling_window, n):
+        if step_i > 1 and (i % step_i) != 0:
+            continue
         window_returns = price_returns[i - rolling_window : i]
         spec = compute_spectrum_features(window_returns)
         price_has_dom[i] = spec["has_dominant_freq"]
@@ -224,6 +245,8 @@ def extract_spectrum_features_from_series(
         v = volume.values
         v_diff = np.diff(v, prepend=v[0] if len(v) else 0.0)
         for i in range(rolling_window, n):
+            if step_i > 1 and (i % step_i) != 0:
+                continue
             spec = compute_spectrum_features(v_diff[i - rolling_window : i])
             vol_flat[i] = spec["spectral_flatness"]
             vol_high[i] = spec["high_freq_energy_ratio"]
@@ -237,12 +260,42 @@ def extract_spectrum_features_from_series(
         c = cvd.values
         c_diff = np.diff(c, prepend=c[0] if len(c) else 0.0)
         for i in range(rolling_window, n):
+            if step_i > 1 and (i % step_i) != 0:
+                continue
             spec = compute_spectrum_features(c_diff[i - rolling_window : i])
             cvd_flat[i] = spec["spectral_flatness"]
             cvd_high[i] = spec["high_freq_energy_ratio"]
             cvd_low[i] = spec["low_freq_energy_ratio"]
             cvd_ent[i] = spec["spectral_entropy"]
             cvd_cent[i] = spec["spectral_centroid"]
+
+    # Forward-fill downsampled outputs if step_i > 1 (keep initial warmup as defaults/NaNs)
+    if step_i > 1 and n > 0:
+        def _ffill(a: np.ndarray) -> np.ndarray:
+            s = pd.Series(a, index=idx)
+            s = s.replace([np.inf, -np.inf], np.nan).ffill()
+            return s.to_numpy()
+
+        price_has_dom = _ffill(price_has_dom)
+        price_flat = _ffill(price_flat)
+        price_high = _ffill(price_high)
+        price_low = _ffill(price_low)
+        price_ent = _ffill(price_ent)
+        price_cent = _ffill(price_cent)
+
+        if volume is not None:
+            vol_flat = _ffill(vol_flat)
+            vol_high = _ffill(vol_high)
+            vol_low = _ffill(vol_low)
+            vol_ent = _ffill(vol_ent)
+            vol_cent = _ffill(vol_cent)
+
+        if cvd is not None:
+            cvd_flat = _ffill(cvd_flat)
+            cvd_high = _ffill(cvd_high)
+            cvd_low = _ffill(cvd_low)
+            cvd_ent = _ffill(cvd_ent)
+            cvd_cent = _ffill(cvd_cent)
 
     return pd.DataFrame(
         {
@@ -265,6 +318,74 @@ def extract_spectrum_features_from_series(
         },
         index=idx,
     )
+
+
+@register_feature("extract_spectrum_price_features_from_series", category="spectrum")
+def extract_spectrum_price_features_from_series(
+    *,
+    close: pd.Series,
+    rolling_window: int = 64,
+    step: int = 1,
+) -> pd.DataFrame:
+    """Price-only spectrum block (cheaper than spectrum_features_f: no volume/cvd)."""
+    df = extract_spectrum_features_from_series(
+        close=close, volume=None, cvd=None, rolling_window=rolling_window, step=step
+    )
+    cols = [
+        "spectrum_price_has_dominant_freq",
+        "spectrum_price_flatness",
+        "spectrum_price_high_freq_ratio",
+        "spectrum_price_low_freq_ratio",
+        "spectrum_price_entropy",
+        "spectrum_price_centroid",
+    ]
+    return df[cols]
+
+
+@register_feature("extract_spectrum_volume_features_from_series", category="spectrum")
+def extract_spectrum_volume_features_from_series(
+    *,
+    volume: pd.Series,
+    rolling_window: int = 64,
+    step: int = 1,
+) -> pd.DataFrame:
+    """Volume-only spectrum block (diff spectrum)."""
+    # Reuse the shared implementation by passing a dummy close series for index alignment.
+    # Price outputs are ignored.
+    dummy_close = pd.Series(0.0, index=volume.index)
+    df = extract_spectrum_features_from_series(
+        close=dummy_close, volume=volume, cvd=None, rolling_window=rolling_window, step=step
+    )
+    cols = [
+        "spectrum_volume_flatness",
+        "spectrum_volume_high_freq_ratio",
+        "spectrum_volume_low_freq_ratio",
+        "spectrum_volume_entropy",
+        "spectrum_volume_centroid",
+    ]
+    return df[cols]
+
+
+@register_feature("extract_spectrum_cvd_features_from_series", category="spectrum")
+def extract_spectrum_cvd_features_from_series(
+    *,
+    cvd: pd.Series,
+    rolling_window: int = 64,
+    step: int = 1,
+) -> pd.DataFrame:
+    """CVD-only spectrum block (diff spectrum)."""
+    dummy_close = pd.Series(0.0, index=cvd.index)
+    df = extract_spectrum_features_from_series(
+        close=dummy_close, volume=None, cvd=cvd, rolling_window=rolling_window, step=step
+    )
+    cols = [
+        "spectrum_cvd_flatness",
+        "spectrum_cvd_high_freq_ratio",
+        "spectrum_cvd_low_freq_ratio",
+        "spectrum_cvd_entropy",
+        "spectrum_cvd_centroid",
+    ]
+    return df[cols]
 
 
 def add_spectrum_derived_features(

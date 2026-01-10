@@ -4838,6 +4838,92 @@ features:
         spectrum_cvd_low_freq_ratio: bounded_0_1
         spectrum_cvd_entropy: bounded_0_1
         spectrum_cvd_centroid: unitless
+
+  spectrum_price_features_f:
+    module: enhanced
+    compute_func: extract_spectrum_price_features_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - spectrum_price_has_dominant_freq
+    - spectrum_price_flatness
+    - spectrum_price_high_freq_ratio
+    - spectrum_price_low_freq_ratio
+    - spectrum_price_entropy
+    - spectrum_price_centroid
+    category: spectrum
+    description: '频谱分析特征（Price-only，拆分版；更适合搜索/裁剪）
+
+      说明：与 spectrum_features_f 的 price 子集一致，但不强制依赖 volume/cvd。
+      '
+    pass_full_df: false
+    column_mappings:
+      close: close
+    compute_params:
+      rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_price_has_dominant_freq: bounded_0_1
+        spectrum_price_flatness: bounded_0_1
+        spectrum_price_high_freq_ratio: bounded_0_1
+        spectrum_price_low_freq_ratio: bounded_0_1
+        spectrum_price_entropy: bounded_0_1
+        spectrum_price_centroid: unitless
+
+  spectrum_volume_features_f:
+    module: enhanced
+    compute_func: extract_spectrum_volume_features_from_series
+    dependencies: []
+    required_columns:
+    - volume
+    output_columns:
+    - spectrum_volume_flatness
+    - spectrum_volume_high_freq_ratio
+    - spectrum_volume_low_freq_ratio
+    - spectrum_volume_entropy
+    - spectrum_volume_centroid
+    category: spectrum
+    description: '频谱分析特征（Volume-only，拆分版；更适合搜索/裁剪）'
+    pass_full_df: false
+    column_mappings:
+      volume: volume
+    compute_params:
+      rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_volume_flatness: bounded_0_1
+        spectrum_volume_high_freq_ratio: bounded_0_1
+        spectrum_volume_low_freq_ratio: bounded_0_1
+        spectrum_volume_entropy: bounded_0_1
+        spectrum_volume_centroid: unitless
+
+  spectrum_cvd_features_f:
+    module: enhanced
+    compute_func: extract_spectrum_cvd_features_from_series
+    dependencies: []
+    required_columns:
+    - cvd
+    output_columns:
+    - spectrum_cvd_flatness
+    - spectrum_cvd_high_freq_ratio
+    - spectrum_cvd_low_freq_ratio
+    - spectrum_cvd_entropy
+    - spectrum_cvd_centroid
+    category: spectrum
+    description: '频谱分析特征（CVD-only，拆分版；更适合搜索/裁剪）'
+    pass_full_df: false
+    column_mappings:
+      cvd: cvd
+    compute_params:
+      rolling_window: 64
+      normalized: true
+      output_normalization_map:
+        spectrum_cvd_flatness: bounded_0_1
+        spectrum_cvd_high_freq_ratio: bounded_0_1
+        spectrum_cvd_low_freq_ratio: bounded_0_1
+        spectrum_cvd_entropy: bounded_0_1
+        spectrum_cvd_centroid: unitless
   spectrum_features_sr_breakout_f:
     module: enhanced
     compute_func: extract_spectrum_features_from_series

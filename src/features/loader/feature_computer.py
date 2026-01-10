@@ -19,6 +19,7 @@ import os
 import gc
 import json
 import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Tuple, Any
 import pandas as pd
@@ -361,15 +362,66 @@ def _compute_single_feature_worker_monthly(
     ticks_loader_json: Optional[str] = None,
 ) -> Tuple[str, bytes]:
     """
-    Legacy parallel worker (DEPRECATED).
+    Monthly parallel worker (opt-in).
 
-    This function is kept for backward compatibility but is no longer used
-    in the current sequential implementation.
+    This is intentionally scoped to *per-month slices* to keep payloads small and avoid
+    cross-process contention. It is only used when FEATURE_MONTHLY_WORKERS>1.
     """
-    # This function is deprecated and should not be called
-    raise NotImplementedError(
-        "Parallel feature computation has been removed. Use sequential computation instead."
-    )
+    df = pickle.loads(df_bytes)
+    compute_func_name = (feature_info.get("compute_func") or "").strip()
+    if not compute_func_name:
+        raise ValueError(f"feature_info.compute_func missing for {feature_name}")
+    compute_func = get_compute_func(compute_func_name)
+
+    # Build call args/kwargs (auto-wires ticks_loader_json when needed).
+    call_args, call_kwargs = _build_call_args(feature_info, df, feature_name)
+
+    # Best-effort: allow caller to override ticks_loader_json (rare; mostly for debugging).
+    if ticks_loader_json is not None:
+        call_kwargs["ticks_loader_json"] = ticks_loader_json
+
+    # Filter kwargs by signature unless compute_func accepts **kwargs
+    try:
+        import inspect
+
+        sig = inspect.signature(compute_func)
+        params = sig.parameters
+        accepts_var_kw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        if not accepts_var_kw and call_kwargs:
+            allowed = set(params.keys())
+            call_kwargs = {k: v for k, v in call_kwargs.items() if k in allowed}
+    except Exception:
+        pass
+
+    month_result = compute_func(*call_args, **call_kwargs)
+
+    # Strictly keep only output_columns (when present)
+    output_cols = feature_info.get("output_columns", [feature_name]) or [feature_name]
+    if isinstance(month_result, tuple):
+        if len(month_result) == len(output_cols):
+            month_result = pd.DataFrame(
+                {col: series for col, series in zip(output_cols, month_result)}
+            )
+        else:
+            month_result = pd.DataFrame(
+                {f"{feature_name}_{i}": series for i, series in enumerate(month_result)}
+            )
+    if isinstance(month_result, pd.DataFrame):
+        if month_result.columns.duplicated().any():
+            month_result = month_result.loc[:, ~month_result.columns.duplicated()]
+        existing = [c for c in output_cols if c in month_result.columns]
+        if existing:
+            month_result = month_result[existing]
+        else:
+            month_result = pd.DataFrame(index=month_result.index)
+    elif isinstance(month_result, pd.Series):
+        series_name = month_result.name if month_result.name else feature_name
+        if series_name not in output_cols:
+            month_result = pd.DataFrame(index=month_result.index)
+
+    return feature_name, pickle.dumps(month_result, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 class FeatureComputer:
@@ -412,6 +464,24 @@ class FeatureComputer:
         self.use_memory_cache = use_memory_cache
         self.use_monthly_cache = use_monthly_cache
 
+        # Opt-in: monthly parallelism (still feature-level sequential).
+        # This is a compromise: it keeps caching stable and payloads small (per-month slices),
+        # while allowing expensive tick/sequence features to compute faster on multi-core machines.
+        try:
+            env_workers = int(os.getenv("FEATURE_MONTHLY_WORKERS", "1"))
+        except Exception:
+            env_workers = 1
+        self.monthly_workers = int(max_workers) if max_workers is not None else env_workers
+        if self.monthly_workers < 1:
+            self.monthly_workers = 1
+        self.monthly_backend = (
+            os.getenv("FEATURE_MONTHLY_BACKEND", "").strip().lower()
+            or str(parallel_backend or "").strip().lower()
+            or "process"
+        )
+        if self.monthly_backend not in {"process", "thread"}:
+            self.monthly_backend = "process"
+
         # Simplified design: always run sequentially at the feature level.
         # Performance is achieved via disk/monthly caches rather than process/thread pools.
         self.enable_parallel = False
@@ -420,6 +490,10 @@ class FeatureComputer:
         self.executor = None
         self._print_memory_info()
         print("   🔧 Feature-level parallelism disabled. Running sequentially.")
+        if self.monthly_workers > 1 and self.use_monthly_cache and self.cache_dir:
+            print(
+                f"   ⚡ Monthly parallelism enabled: workers={self.monthly_workers}, backend={self.monthly_backend}"
+            )
 
         # 内存缓存：使用 (df_signature, feature_name) 作为键，而不是全局清空
         # 这样即使 DataFrame 切换，相同 DataFrame 签名的特征结果仍可复用
@@ -777,6 +851,7 @@ class FeatureComputer:
         # 统计缓存命中情况
         cached_months = 0
         computed_months = 0
+        queued_months: List[tuple[str, str, bytes]] = []
 
         for month_key, df_month in monthly_groups:
             if df_month.empty:
@@ -819,6 +894,17 @@ class FeatureComputer:
                 if feature_name not in self._debug_stats["cache_hits"]["monthly_features"]:
                     self._debug_stats["cache_hits"]["monthly_features"].append(feature_name)
             else:
+                # Monthly parallel path (opt-in): queue cache-miss months for parallel compute.
+                if int(getattr(self, "monthly_workers", 1)) > 1:
+                    queued_months.append(
+                        (
+                            month_str,
+                            monthly_cache_key,
+                            pickle.dumps(df_month, protocol=pickle.HIGHEST_PROTOCOL),
+                        )
+                    )
+                    continue
+
                 # 计算特征
                 print(f"       🔸 Computing {feature_name} for {month_str}...")
                 call_args, call_kwargs = _build_call_args(
@@ -922,6 +1008,36 @@ class FeatureComputer:
                 print(
                     f"       📊 Month {month_str}: {len(month_result)} rows, Series name: {month_result.name}"
                 )
+
+        # Compute queued cache-miss months in parallel (if enabled)
+        if queued_months and int(getattr(self, "monthly_workers", 1)) > 1:
+            backend = str(getattr(self, "monthly_backend", "process") or "process").lower()
+            max_workers = int(getattr(self, "monthly_workers", 1))
+            Exec = ProcessPoolExecutor if backend == "process" else ThreadPoolExecutor
+            print(
+                f"       ⚡ Computing {len(queued_months)} month(s) in parallel "
+                f"(workers={max_workers}, backend={backend})..."
+            )
+            futures = {}
+            with Exec(max_workers=max_workers) as ex:
+                for mstr, cache_key, df_b in queued_months:
+                    fut = ex.submit(
+                        _compute_single_feature_worker_monthly,
+                        feature_name,
+                        feature_info,
+                        df_b,
+                        True,
+                        str(self.monthly_cache_dir) if self.monthly_cache_dir else None,
+                        None,
+                    )
+                    futures[fut] = (mstr, cache_key)
+                for fut in as_completed(futures):
+                    mstr, cache_key = futures[fut]
+                    _, res_bytes = fut.result()
+                    month_result = pickle.loads(res_bytes)
+                    _save_monthly_cache(self.monthly_cache_dir, cache_key, month_result)
+                    monthly_results[mstr] = month_result
+                    computed_months += 1
 
         # 获取特征的输出列（根本性解决方案：只返回 output_columns 中定义的列）
         output_cols = feature_info.get("output_columns", [feature_name])

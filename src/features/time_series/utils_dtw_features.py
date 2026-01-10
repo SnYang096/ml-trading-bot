@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Optional, List, Tuple, Union
 import warnings
+import os
 
 from src.features.registry import register_feature
 
@@ -291,6 +292,8 @@ def extract_dtw_features(
     window: Union[int, List[int], Tuple[int, int, int]] = 20,
     templates: Optional[Dict[str, np.ndarray]] = None,
     template_filter: Optional[List[str]] = None,
+    include_inverse: Optional[bool] = None,
+    include_random: Optional[bool] = None,
     compute_only_near_sr: bool = False,
     sr_dist_col: Optional[str] = None,
     sr_threshold: float = 1.0,
@@ -356,7 +359,19 @@ def extract_dtw_features(
         raise ValueError(f"Price column '{price_col}' not found")
     
     if templates is None:
-        templates = create_dtw_templates()
+        # Fast mode: if FEATURE_FAST_MODE=1, disable random templates unless explicitly enabled.
+        fast_mode = str(os.getenv("FEATURE_FAST_MODE", "")).strip() in {
+            "1",
+            "true",
+            "True",
+            "yes",
+            "YES",
+        }
+        inv = True if include_inverse is None else bool(include_inverse)
+        rnd = True if include_random is None else bool(include_random)
+        if fast_mode and include_random is None:
+            rnd = False
+        templates = create_dtw_templates(include_inverse=inv, include_random=rnd)
     
     # Filter templates if template_filter is provided
     if template_filter is not None:
@@ -368,10 +383,15 @@ def extract_dtw_features(
             inverse_name = f"{name}_inverse"
             if inverse_name in templates:
                 filtered_templates[inverse_name] = templates[inverse_name]
-        # Always include random templates for contrastive learning
-        for name, template in templates.items():
-            if name.startswith("random_"):
-                filtered_templates[name] = template
+        # Optionally include random templates for contrastive learning
+        if bool(include_random) or (
+            include_random is None
+            and str(os.getenv("FEATURE_FAST_MODE", "")).strip()
+            not in {"1", "true", "True", "yes", "YES"}
+        ):
+            for name, template in templates.items():
+                if name.startswith("random_"):
+                    filtered_templates[name] = template
         templates = filtered_templates
         if not templates:
             raise ValueError(f"No templates found matching filter: {template_filter}")
@@ -543,6 +563,8 @@ def extract_dtw_features_from_series(
     window: Union[int, List[int], Tuple[int, int, int]] = 20,
     templates: Optional[Dict[str, np.ndarray]] = None,
     template_filter: Optional[List[str]] = None,
+    include_inverse: Optional[bool] = None,
+    include_random: Optional[bool] = None,
     compute_only_near_sr: bool = False,
     sr_dist_col: Optional[str] = None,
     sr_threshold: float = 1.0,
@@ -566,6 +588,8 @@ def extract_dtw_features_from_series(
         window=window,
         templates=templates,
         template_filter=template_filter,
+        include_inverse=include_inverse,
+        include_random=include_random,
         compute_only_near_sr=compute_only_near_sr,
         sr_dist_col=sr_dist_col,
         sr_threshold=sr_threshold,

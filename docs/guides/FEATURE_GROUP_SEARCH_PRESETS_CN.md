@@ -207,5 +207,58 @@ mlbot backtest strategy \
 
 > 说明：Nautilus 是“执行一致性/事件驱动撮合”的门禁；它不是用来在大候选空间里做搜索的。
 
+---
 
+## 6) 性能加速（搜索阶段推荐）：Fast Mode + 频谱拆分 + 月度并行
 
+> 你如果感觉“orderflow/数学特征太慢，流程跑不通”，建议先看：
+> - `docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md`（按计算复杂性分层：先易后难，逐层解锁）
+
+### 6.1 月度并行（opt-in）：并行计算“月度缓存 miss”的月份
+
+特征计算器在“特征级别”仍然是顺序执行（避免依赖图/缓存一致性问题），但现在支持 **按月并行**：
+
+- 只对 **monthly cache miss** 的月份并行计算（cache hit 仍然直接读）
+- 并行粒度是“单月切片”，不会把整段大 DataFrame 在进程间来回拷贝（更稳定）
+
+启用方式（环境变量）：
+
+```bash
+export FEATURE_MONTHLY_WORKERS=4          # >1 开启月度并行
+export FEATURE_MONTHLY_BACKEND=process    # process 或 thread
+```
+
+> 常见疑问：会不会导致“状态不连续/无法把上月状态传到下个月”？  
+> 不会额外变差：月度缓存本身就是按“单月切片”计算，边界处的滚动特征会自然出现 warmup 缺失（一般表现为月初 NaN/更弱信号）。  
+> 如果你需要严格连续的滚动状态（跨月 warmup），需要进一步做“跨月 overlap warmup”切片（这属于正确性增强，不是并行的副作用）。
+
+**补充确认（你关心的跨月 state）：**
+
+- **VPIN**：有跨月 bucket state（用于保证 bucket 续接），但这个 state 在 tick 计算函数内部维护，并且有“带 state 的月度缓存键”。按月并行不会破坏它。
+- **Trade Cluster**：有跨月 state（如 run-length 窗口），同样在 tick 计算函数内部维护；当 state 为空时还会从前一个月缓存里加载 final_state 来 warm-start。按月并行不会破坏它。
+- **Footprint**：通常是“每根 bar 当期 ticks 的统计聚合”，没有类似 VPIN/trade_cluster 的跨月 state 需要继承，月度分块主要是为缓存与 I/O。
+
+### 6.2 Fast Mode（用于搜索阶段 A/B）：关 DTW random templates + 降频 spectrum 计算
+
+Fast Mode 会在搜索阶段自动启用（A/B），在最终验收阶段默认关闭（C）。
+
+- **DTW**：禁用 random templates（随机模板特征），减少 DTW 的模板数 → 直接降耗  
+  - random templates 是为了“对比学习/负样本对照”加入的随机形态模板（例如 `random_15/random_20/...`）
+- **Spectrum**：对频谱特征做降频计算（例如每 4 根 bar 才算一次并 forward-fill），把 O(n) 的滚动 Welch 计算成本显著降低
+
+### 6.3 频谱拆分：把 `spectrum_features_f` 拆成三路（price / volume / cvd）
+
+原来的 `spectrum_features_f` 会把 **price + volume + cvd** 三路一起算（对搜索很贵）。
+现在支持拆分节点（你可以按需选其中一路）：
+
+- `spectrum_price_features_f`：只依赖 `close`
+- `spectrum_volume_features_f`：只依赖 `volume`
+- `spectrum_cvd_features_f`：只依赖 `cvd`
+
+### 6.4 这些增强哪些流程都能用上？
+
+- **月度并行（FEATURE_MONTHLY_WORKERS）**：只要走的是同一个 `StrategyFeatureLoader -> FeatureComputer` 特征栈，就都能用上（树模型训练/回测、rolling 验证、以及“自动 materialize FeatureStore”）。  
+  - 开关是环境变量，所以对 tree/nn 都是“全局生效”（谁用 FeatureComputer 谁受益）。
+- **Fast Mode（FEATURE_FAST_MODE）**：目前只在 DTW / Spectrum 相关的特征函数里读这个环境变量。  
+  - 树模型 `feature-group-search` 的 preset A/B 会自动开启；C 默认关闭。  
+  - 其他流程（包括 nn 多头模型/feature store 构建）如果你也想快，可以在启动命令前手动 `export FEATURE_FAST_MODE=1`（只影响 DTW/Spectrum，不影响其他特征）。

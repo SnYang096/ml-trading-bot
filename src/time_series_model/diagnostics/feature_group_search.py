@@ -35,6 +35,7 @@ class SearchConfig:
     output_dir: Path
     deterministic: bool
     no_docker: bool
+    fast_features: bool = False
 
 
 def _load_yaml(path: Path) -> dict:
@@ -257,6 +258,10 @@ def _run_one_seed(
     # Train pipeline supports optional cropping via env vars.
     env["TRAIN_START_DATE"] = cfg.start_date
     env["TRAIN_END_DATE"] = cfg.end_date
+    if bool(getattr(cfg, "fast_features", False)):
+        # Feature search speed-up: allow feature functions to switch to cheaper approximations
+        # (e.g., DTW without random templates; spectrum computed at lower frequency).
+        env["FEATURE_FAST_MODE"] = "1"
     try:
         subprocess.run(cmd, check=True, cwd=str(Path.cwd()), env=env)
     except subprocess.CalledProcessError as e:
@@ -676,6 +681,7 @@ def successive_halving_prefilter(
             output_dir=cfg.output_dir,
             deterministic=cfg.deterministic,
             no_docker=cfg.no_docker,
+            fast_features=cfg.fast_features,
         )
 
         scored: List[tuple[str, float]] = []
@@ -1114,6 +1120,7 @@ def successive_halving_search(
                 output_dir=cfg.output_dir,
                 deterministic=cfg.deterministic,
                 no_docker=cfg.no_docker,
+                fast_features=cfg.fast_features,
             )
 
             stage_results: List[tuple[str, float]] = []
@@ -1841,6 +1848,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--min-trades", type=int, default=10)
     p.add_argument("--max-steps", type=int, default=6)
     p.add_argument(
+        "--fast-features",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable faster feature computation for search runs (sets env FEATURE_FAST_MODE=1). "
+            "This can disable DTW random templates and compute spectrum features at a lower frequency. "
+            "Recommended for preset A/B; typically keep disabled for final verification (C)."
+        ),
+    )
+    p.add_argument(
         "--preset",
         default="",
         choices=["", "A", "B", "C"],
@@ -1974,6 +1991,7 @@ def _apply_preset(args: argparse.Namespace) -> argparse.Namespace:
             "beam_width": 3,
             "max_steps": 4,
             "sffs_max_backward_per_step": 1,
+            "fast_features": True,
         },
         # B: medium (more seeds + slightly wider search)
         "B": {
@@ -1986,6 +2004,7 @@ def _apply_preset(args: argparse.Namespace) -> argparse.Namespace:
             "beam_width": 4,
             "max_steps": 5,
             "sffs_max_backward_per_step": 1,
+            "fast_features": True,
         },
         # C: full verification (closest to your wide runs)
         "C": {
@@ -1998,6 +2017,7 @@ def _apply_preset(args: argparse.Namespace) -> argparse.Namespace:
             "beam_width": 5,
             "max_steps": 6,
             "sffs_max_backward_per_step": 2,
+            "fast_features": False,
         },
     }
 
@@ -2092,6 +2112,7 @@ def main() -> None:
         output_dir=out_dir,
         deterministic=bool(args.deterministic),
         no_docker=bool(args.no_docker),
+        fast_features=bool(getattr(args, "fast_features", False)),
     )
 
     groups, resolved_groups_source, groups_yaml_auto = _load_groups_with_source(

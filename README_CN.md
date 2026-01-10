@@ -137,6 +137,8 @@ mlbot diagnose poolb-semantic-search \
 你只需要记住这一条命令即可；详细说明见：
 
 - `docs/guides/FEATURE_GROUP_SEARCH_PRESETS_CN.md`
+  - 性能加速（Fast Mode / 频谱拆分 / 月度并行）：见该文档第 6 节
+  - 特征按计算复杂性分层（先易后难、逐层解锁）：`docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md`
 
 > 重要补充：Stage B / C 写回的 `features_suggested_*.yaml` **是可直接喂给模型训练/回测的候选特征配置**；  
 > 但“可用 ≠ 可上线”，合并/上线前建议用 holdout/rolling/多标的/Nautilus 做验收门禁。  
