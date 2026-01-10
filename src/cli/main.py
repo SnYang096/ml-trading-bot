@@ -3180,8 +3180,6 @@ def nnmultihead_feature_group_search(
         objective,
         "--max-steps",
         str(int(max_steps)),
-        "--preset",
-        str(preset),
         "--search-algo",
         str(search_algo),
         "--run-abc" if run_abc else "",
@@ -3219,6 +3217,10 @@ def nnmultihead_feature_group_search(
             f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
         ]
     )
+    # Only include --preset if explicitly provided (non-empty).
+    # (Empty preset would otherwise leave a dangling '--preset' after empty-token filtering.)
+    if str(preset or "").strip():
+        args.extend(["--preset", str(preset)])
     if base_features_yaml:
         args.extend(
             [

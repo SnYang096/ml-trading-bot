@@ -222,7 +222,9 @@ mlbot train final \
 - **研究 Playbook（标签/执行一致性、timeframe、仓位管理）**：`docs/guides/RESEARCH_PLAYBOOK_CN.md`
 - **Policy 执行假设（intrabar vs close）**：`docs/strategies/POLICY_EXECUTION_ASSUMPTIONS_CN.md`
 - **NN 多头 → 3-action → RL/BC e2e（长文档）**：`docs/guides/NNMULTIHEAD_3ACTION_E2E_CN.md`
-
+- [多头NN和订单流的使用分类和评估](/workspaces/ml_trading_bot/docs/architecture/多头NN和订单流.md)
+- [训练落地文档](docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md)
+- [谁对sharp负责](docs/architecture/谁对sharp负责.md)
 ---
 
 ## 获取帮助

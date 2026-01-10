@@ -26,6 +26,40 @@
 
 下面是一个工程导向的复杂性分层（不追求学术完美，只追求“能落地迭代”）。
 
+---
+
+## 1.5) 另一个同等重要的轴：Symbol Universe 的规模与分组（先缩 universe，再谈重特征）
+
+很多时候你“算不动/跑不通”并不是特征本身的问题，而是：
+\[
+\text{总计算量} \approx \text{(每个 symbol 的特征成本)} \times \text{symbol 数量} \times \text{时间跨度}
+\]
+
+所以除了按特征分层（Tier0→3），你还需要按 **symbol universe 分层**：
+
+### Universe 分层（建议从小到大推进）
+
+- **U1：Core2（先跑通）**：BTCUSDT + 1 个代表（例如 ETHUSDT）  
+  - 目的：验证 pipeline 正确性（训练/预测/Router/E2E）与产物完整性
+- **U2：HighCap6（再收敛特征）**：BTC/ETH/BNB/SOL/XRP/ADA（或你定义的 HighCap6）  
+  - 目的：验证“跨资产可复用”的 primitives 信息 + Router 可控性
+- **U3：Top9 / Top10（最后再扩）**：在 U2 跑通后，再逐个加新币  
+  - 目的：把“新增 symbol 的边际成本”与“边际收益”量化出来（每加一个币都能解释）
+
+> 关键建议：**不要一上来 Top10 + Tier3（ticks/orderflow）**。  
+> 先 U1/U2 把主流程跑通，再逐层解锁 heavy features 与更多 symbols。
+
+### Symbol 分组（用于“先算一部分、再逐步扩容”）
+
+当你 symbols 很多时，建议把 universe 分成 2-4 组，分别训练/评估（避免异质污染 + 计算爆炸）：
+
+- **HighCap**：BTC/ETH/BNB/SOL…（流动性好、形态相对稳定）
+- **Alt**：中等市值主流山寨（波动更大、结构更不稳定）
+- **Meme/LowCap**：极端尾部（噪声强、分布漂移快、对执行/风控更苛刻）
+
+落地方式很简单：**每次训练只喂一个组**（`--symbols` 只填该组），跑完 A-layer eval 与 Router/E2E，再决定是否合并或做多模型。
+
+
 ### Tier 0（最便宜）：OHLCV + 轻量 rolling（默认先从这里开始）
 
 **特征类型**：
@@ -166,3 +200,36 @@ mlbot nnmultihead build-feature-store --no-docker \
 - 再用 **ABC**（A/B/C 三阶段）只在 Tier1 候选里找“最稳的一套”
 - 然后再逐个解锁：`DTW`（fast mode）→ `Spectrum`（拆分 price/volume/cvd）→ `Orderflow ticks`
 
+---
+
+## 5) “symbols 太多算不过来”的两种可落地方案
+
+你问的两个点其实是同一个问题：**如何在不一次性加载/计算所有 symbols 的情况下持续迭代模型**。
+
+### 方案 A（现在就能做，推荐）：固定小 universe 作为“主引擎”，其他币先 shadow
+
+- **主引擎 universe**：固定为 U1/U2（例如 Core2 或 HighCap6）  
+  - 训练、特征搜索、E2E 全都只在这个 universe 上跑
+- **扩展 universe**：其他币只做 shadow（预测 + 报告 + 监控），不参与主模型训练  
+  - 你只在“确实需要纳入交易”时才把它加入训练/特征计算
+
+这能立刻解决你“流程打不通”的问题：主链路先跑通，且迭代速度可控。
+
+### 方案 B（持续更新但不一次性上全量）：按组/按批训练（多模型或轮换）
+
+你可以把 symbols 拆成 2-4 组（HighCap/Alt/Meme），然后：
+
+- **多模型路线**：每组训练一个 primitives 模型（更稳、更可控）  
+  - Router/gate 再决定“哪个 symbol 用哪个模型”
+- **轮换训练路线**：每次训练只选一批 symbols（例如 6 个），按周/月轮换  
+  - 目标是让你能持续产出报告、持续做 A-layer/Router 诊断，而不是被全量计算卡死
+
+> 注意：当前脚本会把选定 symbols 的 FeatureStore 读出来再拼成一个大 df 训练；  
+> 所以“每次只选一批 symbols”本身就是最有效的降本方法（不用改代码也能落地）。
+
+### （可选）更进一步的工程改造方向（后续再做，不影响你现在跑通）
+
+- **Warm-start / Finetune**：在上一次 `model.pt` 基础上继续训练（避免从零开始）  
+  - 需要在训练脚本增加 `--init-model` 并处理 scaler/feature_cols 一致性
+- **Streaming dataset**：训练时不把所有 symbols 拼成一个大 df（分 symbol 读、分批加载）  
+  - 能解决“symbols 很多导致内存/启动太慢”的问题，但工程量更大
