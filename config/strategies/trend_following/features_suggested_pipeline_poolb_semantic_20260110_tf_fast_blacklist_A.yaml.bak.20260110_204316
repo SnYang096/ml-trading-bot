@@ -14,7 +14,7 @@ feature_pipeline:
   - bb_width_f
   - wick_ratios_f
   - volume_ratio_f
-  - wpt_scene_semantic_scores_f
+  - funding_scene_semantic_scores_f
   invert_features:
   - atr
   - dtw_triangle_dist_w25
@@ -44,7 +44,7 @@ feature_group_search:
   - 2
   selected_groups:
   - kline_core
-  - wpt_scene
+  - funding_scene
   stop_reason: completed
   base_features:
   - atr_f
@@ -56,7 +56,7 @@ feature_group_search:
   - bb_width_f
   - wick_ratios_f
   - volume_ratio_f
-  - wpt_scene_semantic_scores_f
+  - funding_scene_semantic_scores_f
   groups_source: groups_yaml:auto:config/feature_groups_trend_following_semantic.yaml
   groups_yaml_auto: true
   pool_b_yaml: /workspaces/ml_trading_bot/results/pools/trend_following/pool_b/20260110_tf_fast_blacklist/features_pool_b.yaml
