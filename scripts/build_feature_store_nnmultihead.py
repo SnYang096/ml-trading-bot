@@ -99,6 +99,11 @@ def main() -> None:
     feature_cols_union: List[str] = []
 
     for sym in symbols:
+        print(
+            f"📥 Load raw: symbol={sym} timeframe={args.timeframe} "
+            f"range=[{args.start_date or 'min'}..{args.end_date or 'max'}]",
+            flush=True,
+        )
         df_raw = load_raw_data(
             data_path=args.data_path,
             symbol=sym,
@@ -106,6 +111,7 @@ def main() -> None:
             end_date=args.end_date,
             timeframe=args.timeframe,
         )
+        print(f"📦 Raw loaded: symbol={sym} rows={len(df_raw)}", flush=True)
         if df_raw.empty:
             raise ValueError(f"No raw data loaded for symbol={sym}")
         if "symbol" not in df_raw.columns:
@@ -140,6 +146,10 @@ def main() -> None:
                 continue
             month_str = period.strftime("%Y-%m")
             if store.has_month(spec, month_str):
+                print(
+                    f"↩️  Skip existing month: symbol={sym} timeframe={args.timeframe} month={month_str}",
+                    flush=True,
+                )
                 continue
 
             month_start = df_month_raw.index.min()
@@ -166,6 +176,11 @@ def main() -> None:
                     (df_raw.index >= month_start) & (df_raw.index <= month_end)
                 ]
 
+            print(
+                f"⚙️  Compute month: symbol={sym} timeframe={args.timeframe} month={month_str} "
+                f"window=[{str(df_window.index.min())}..{str(df_window.index.max())}] rows={len(df_window)}",
+                flush=True,
+            )
             df_feats_window = feature_loader.load_features_from_requested(
                 df_window, requested_features=requested, fit=True
             )

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -40,8 +41,19 @@ except ImportError:
 from src.time_series_model.live.incremental_feature_computer import (
     IncrementalFeatureComputer,
 )
-from src.time_series_model.strategy_config import StrategyConfigLoader
 from src.time_series_model.strategies.models import ModelArtifact
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
+from src.time_series_model.core.constitution.execution_evidence import (
+    compute_execution_evidence,
+)
+from src.time_series_model.live.enforcement import enforce_before_order
+from src.time_series_model.live.execution_manager import (
+    ExecutionManager,
+    GuardedOrderContext,
+)
+from src.time_series_model.nnmultihead.strategy_profile import resolve_execution_profile
 
 
 class EventDrivenStrategy(Strategy):
@@ -66,6 +78,7 @@ class EventDrivenStrategy(Strategy):
         check_interval_minutes: int = 15,  # 信号检查间隔（分钟）
         min_order_interval_minutes: int = 15,  # 最小开仓间隔（分钟）
         vpin_bucket_volume_usd: Optional[float] = None,  # VPIN bucket volume (USD)
+        constitution_yaml: Optional[str] = None,
     ):
         """
         Args:
@@ -88,6 +101,9 @@ class EventDrivenStrategy(Strategy):
         self.model_path = model_path
         self.check_interval_minutes = check_interval_minutes
         self.min_order_interval_ns = min_order_interval_minutes * 60 * 1_000_000_000
+        self.constitution_yaml = constitution_yaml or os.getenv(
+            "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution_v1.yaml"
+        )
 
         # 特征计算器
         self.feature_computer = IncrementalFeatureComputer(
@@ -104,6 +120,9 @@ class EventDrivenStrategy(Strategy):
             None  # 使用 ModelArtifact 统一管理
         )
         self.last_order_time_ns: Optional[int] = None
+        self._constitution_executor: Optional[ConstitutionExecutor] = None
+        self._constitution_runtime_state = None
+        self._xm: Optional[ExecutionManager] = None
 
         # 时间框架特征缓存
         self.timeframe_features: Dict[str, Dict[str, float]] = {}
@@ -113,14 +132,10 @@ class EventDrivenStrategy(Strategy):
         self.log.info(f"🚀 Starting {self.strategy_name} strategy (event-driven)")
 
         try:
-            # 1. 加载策略配置
-            config_path = Path(self.config_base_path) / self.strategy_name
-            if not config_path.exists():
-                raise FileNotFoundError(f"Strategy config not found: {config_path}")
-
-            config_loader = StrategyConfigLoader(config_path)
-            self.strategy_config = config_loader.load()
-            self.log.info(f"✅ Loaded strategy config: {self.strategy_name}")
+            # 1. Tree strategy configs are NOT supported in live (research-only).
+            self.log.info(
+                "ℹ️ Live does not load config/strategies/* (tree configs are research-only)."
+            )
 
             # 2. 加载模型（优先使用 ModelArtifact）
             if self.model_path:
@@ -157,6 +172,24 @@ class EventDrivenStrategy(Strategy):
                         )
                     else:
                         self.log.warning("⚠️ No model found. Using rule-based signals.")
+
+            # 2.5 Load constitution executor (for live safety / whitelist)
+            try:
+                if self.constitution_yaml and Path(self.constitution_yaml).exists():
+                    self._constitution_executor = ConstitutionExecutor(
+                        constitution_yaml=str(self.constitution_yaml)
+                    )
+                    self._constitution_runtime_state = (
+                        self._constitution_executor.load_runtime_state()
+                    )
+                    self._xm = ExecutionManager(
+                        strategy=self,
+                        executor=self._constitution_executor,
+                        runtime_state=self._constitution_runtime_state,
+                    )
+                    self.log.info(f"✅ Constitution loaded: {self.constitution_yaml}")
+            except Exception as e:
+                self.log.error(f"⚠️ Constitution init failed: {e}")
 
             # 3. 订阅市场数据
             for timeframe, bar_type in self.bar_types.items():
@@ -406,13 +439,82 @@ class EventDrivenStrategy(Strategy):
         try:
             quantity = self.instrument.make_qty(self.trade_size)
 
+            # Constitution enforcement (whitelist + slots) BEFORE submit_order
+            if (
+                self._constitution_executor is not None
+                and self._constitution_runtime_state is not None
+            ):
+                root = os.getenv(
+                    "MLBOT_NNMH_STRATEGY_PROFILE_ROOT", "config/nnmultihead/strategies"
+                )
+                reg = os.getenv(
+                    "MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY",
+                    "config/nnmultihead/execution_archetypes_v1.yaml",
+                )
+                ex = resolve_execution_profile(
+                    strategy_id=str(self.strategy_name),
+                    profile_root=root,
+                    archetype_registry_path=reg,
+                )
+                if ex is None:
+                    mode, exec_id, rules = "TREND", "MomentumExpansion", []
+                else:
+                    mode, exec_id, rules = (
+                        ex.router_mode,
+                        ex.execution_strategy_id,
+                        ex.evidence_rules,
+                    )
+                # Build evidence from merged feature set keys (all_features+orderflow_features are used upstream)
+                merged_feats = {}
+                try:
+                    merged_feats.update(self.feature_computer.get_features() or {})
+                    merged_feats.update(
+                        self.feature_computer.get_orderflow_features(window_minutes=15)
+                        or {}
+                    )
+                except Exception:
+                    merged_feats = {}
+                evidence = compute_execution_evidence(
+                    features=merged_feats,
+                    rules=rules,
+                )
+                enforce_before_order(
+                    executor=self._constitution_executor,
+                    runtime_state=self._constitution_runtime_state,
+                    position_id=f"{self.strategy_name}:{int(self.clock.timestamp_ns())}",
+                    symbol=str(self.instrument_id),
+                    mode=mode,
+                    execution_strategy=exec_id,
+                    execution_tags=[str(reason)],
+                    execution_evidence=evidence,
+                )
+
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=side,
                 quantity=quantity,
             )
-
-            self.submit_order(order)
+            if (
+                self._xm is not None
+                and self._constitution_executor is not None
+                and self._constitution_runtime_state is not None
+            ):
+                self._xm.submit_order_guarded(
+                    order=order,
+                    ctx=GuardedOrderContext(
+                        position_id=f"{self.strategy_name}:{int(self.clock.timestamp_ns())}",
+                        symbol=str(self.instrument_id),
+                        mode=mode,
+                        execution_strategy=exec_id,
+                        execution_tags=[str(reason)],
+                        execution_evidence=evidence,
+                    ),
+                )
+            else:
+                self.log.error(
+                    "❌ No ExecutionManager/ConstitutionExecutor; refusing to submit order"
+                )
+                return
 
             self.log.info(f"📊 Entry: {side} {quantity} @ {price} ({reason})")
 

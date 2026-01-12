@@ -1,0 +1,55 @@
+version: 1
+name: "meta_router_live_config_v1"
+
+# One Nautilus Strategy hosts all archetypes; do NOT run one-strategy-per-archetype.
+enabled_archetypes:
+  TREND:
+    - BreakoutPullbackContinuation
+    - MomentumExpansion
+    - HTFBiasLTFEntry
+  MEAN:
+    - FailedBreakoutFade
+    - LiquiditySweepRejection
+    - AuctionExhaustionReversal
+  NO_TRADE: []
+
+# Per-archetype size multipliers (relative to base trade_size).
+size_multipliers:
+  BreakoutPullbackContinuation: 1.0
+  MomentumExpansion: 1.0
+  HTFBiasLTFEntry: 1.0
+  FailedBreakoutFade: 1.0
+  LiquiditySweepRejection: 1.0
+  AuctionExhaustionReversal: 0.5   # "small size, once" bias
+
+# Vol Mean overlay (Mean Alpha #2): implemented but disabled by default.
+vol_mean:
+  enabled: false
+  archetype_id: VolMeanCompressionExpansionReversion
+  size_multiplier: 0.05
+
+# Router thresholds (Rule 3-action) - optional overrides for live.
+router_thresholds:
+  preds_in_log1p: true
+  mfe_min: 0.4
+  eff_min: 1.05
+  dir_conf_trend_min: 0.25
+  mfe_trend_min: 0.8
+  ttm_trend_min: 8.0
+  eff_mean_min: 1.15
+  ttm_mean_max: 12.0
+
+# nnmultihead online inference (model produces preds_* used by rule router)
+nnmultihead_inference:
+  enabled: false
+  model_path: null          # set to path/to/model.pt
+  config_dir: null          # optional: config/nnmultihead/<...> for FeatureContract
+  device: null              # cpu|cuda|null(auto in torch)
+  timeframe: "15T"          # used by incremental feature computer key names
+
+# Streaming decision loop:
+decision_loop:
+  enabled: true
+  check_interval_minutes: 10          # run router/execution decision every N minutes
+  orderflow_window_minutes: 15        # when building orderflow features from ticks
+  min_order_interval_minutes: 10      # cooldown between submits (safety)

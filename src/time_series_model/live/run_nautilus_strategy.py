@@ -60,9 +60,7 @@ except ImportError:
     print("Install it with: pip install nautilus-trader")
     sys.exit(1)
 
-from src.time_series_model.live.nautilus_strategy_with_features import (
-    NautilusStrategyWithFeatures,
-)
+from src.time_series_model.live.meta_router_strategy import MetaRouterStrategy
 
 
 def parse_timeframe(timeframe_str: str) -> tuple[int, BarAggregation]:
@@ -171,11 +169,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run Nautilus Trader strategy with feature engineering"
     )
+    # IMPORTANT (per docs/live_stream/策略一起还是分开.md):
+    # There should be ONE Nautilus Strategy hosting all archetypes.
+    # We keep --strategy-id only as a label for trader_id / logs.
     parser.add_argument(
-        "--strategy",
+        "--strategy-id",
         type=str,
-        required=True,
-        help="Strategy name (e.g., sr_reversal, sr_breakout)",
+        default="meta_router",
+        help="Strategy id label (NOT archetype). Default: meta_router",
     )
     parser.add_argument(
         "--symbol",
@@ -195,18 +196,9 @@ def main():
         default=0.001,
         help="Base trade size",
     )
-    parser.add_argument(
-        "--history-window",
-        type=int,
-        default=1000,
-        help="Historical data window size for features",
-    )
-    parser.add_argument(
-        "--model-path",
-        type=str,
-        default=None,
-        help="Path to trained model file (optional)",
-    )
+    # Kept for backward CLI compatibility; MetaRouterStrategy does not use them yet.
+    parser.add_argument("--history-window", type=int, default=1000)
+    parser.add_argument("--model-path", type=str, default=None)
     parser.add_argument(
         "--testnet",
         action="store_true",
@@ -218,15 +210,15 @@ def main():
         help="Use Redis cache for state persistence",
     )
     parser.add_argument(
-        "--config-base-path",
+        "--live-config",
         type=str,
-        default="config/strategies",
-        help="Base path for strategy configs",
+        default="config/nnmultihead/live/meta_router_live_config_v1.yaml",
+        help="MetaRouter live config YAML (enabled archetypes, sizing, vol-mean overlay).",
     )
 
     args = parser.parse_args()
 
-    print(f"🚀 Starting Nautilus Trader strategy: {args.strategy}")
+    print(f"🚀 Starting Nautilus Trader MetaRouterStrategy: {args.strategy_id}")
     print(f"   Symbol: {args.symbol}")
     print(f"   Timeframe: {args.timeframe}")
     print(f"   Testnet: {args.testnet}")
@@ -248,7 +240,7 @@ def main():
 
         # 4. Create trading node config
         config = create_trading_node_config(
-            strategy_name=args.strategy,
+            strategy_name=args.strategy_id,
             testnet=args.testnet,
             use_cache=args.use_cache,
         )
@@ -264,14 +256,12 @@ def main():
         node.build()
 
         # 8. Create strategy
-        strategy = NautilusStrategyWithFeatures(
-            strategy_name=args.strategy,
+        strategy = MetaRouterStrategy(
+            strategy_name=args.strategy_id,
             instrument_id=instrument_id,
             bar_type=bar_type,
             trade_size=args.trade_size,
-            config_base_path=args.config_base_path,
-            history_window=args.history_window,
-            model_path=args.model_path,
+            live_config_path=args.live_config,
         )
 
         # 9. Add strategy to node

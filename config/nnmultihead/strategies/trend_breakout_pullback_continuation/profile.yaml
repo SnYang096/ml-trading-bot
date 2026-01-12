@@ -1,0 +1,4 @@
+version: 1
+strategy_id: trend_breakout_pullback_continuation
+archetype: BreakoutPullbackContinuation
+

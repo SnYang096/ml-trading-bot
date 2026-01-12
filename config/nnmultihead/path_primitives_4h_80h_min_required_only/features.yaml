@@ -1,0 +1,67 @@
+# Required-only variant for fast OOS FeatureStore builds (no tick-heavy optional blocks).
+#
+# Intended use:
+# - Build a fast FeatureStore layer for a quick end-to-end research pipeline smoke test.
+# - Keep feature_contract optional_blocks + append_block_mask ON, so models trained with
+#   block masks remain compatible (missing optional-block columns will be treated as unavailable).
+description: |
+  Path primitives 4H/80H - REQUIRED ONLY (fast build).
+
+feature_pipeline:
+  exclude_columns: [atr]
+  requested_features:
+    required:
+      - atr_f
+      - atr_percentile_f
+      - range_ratio_5bar_f
+      - price_range_symmetry_f
+      - wick_ratios_f
+      - roc_5_f
+      - acceleration_3_f
+      - trend_r2_20_f
+      - trend_r2_50_f
+      - slope_consistency_score_f
+      - trend_volatility_alignment_f
+      - volatility_reversal_score_f
+      - rsi_f
+      - bb_width_f
+      - compression_duration_f
+      - compression_to_breakout_prob_f
+      - volume_anomaly_f
+
+  timeframe: 4H
+  data_path: data/parquet_data
+
+feature_contract:
+  minimal_required_cols:
+    - atr
+    - atr_percentile
+    - range_ratio_5bar
+    - price_range_symmetry
+    - wick_upper_ratio
+    - wick_lower_ratio
+    - roc_5
+    - acceleration_3
+    - trend_r2_20
+    - trend_r2_50
+    - slope_consistency_score
+    - trend_volatility_alignment
+    - volatility_reversal_score
+    - rsi
+    - bb_width_normalized
+    - compression_duration
+    - compression_to_breakout_prob
+    - volume_anomaly
+
+  # Keep optional block patterns so models trained with block masks remain compatible.
+  optional_blocks:
+    # Match historical training artifacts which used only 2 block-mask dims.
+    vpin_block:
+      - "*vpin*"
+    trade_cluster_block:
+      - "trade_cluster_*"
+
+  missingness_policy:
+    append_block_mask: true
+    block_dropout_p: 0.05
+

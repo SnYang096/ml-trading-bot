@@ -104,6 +104,10 @@ mlbot data download-funding-rate \
 > - `docs/architecture/CROSS_SECTIONAL_ALPHA101_FEATURESTORE_ARCH_CN.md`（CS Alpha101：为何不走 DAG + 缓存复用架构）
 > - `docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`（多资产合约实盘落地路线图）
 > - `docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`（NN 多资产系统：Task/Router/Gate/Execution 宪法与运维落地设计）
+> - `docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（架构升级 V1：TaskSpec + Constitution + PCM）
+> - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
+> - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
+> - `docs/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
 
 ### 0) 质量闸门（推荐）
 
@@ -179,6 +183,57 @@ mlbot train final \
 
 ---
 
+## TaskSpec 驱动的 Tier0/Tier1 对比（nnmultihead）
+
+你问的“Tier0/Tier1 会如何影响训练？是不是跑两次看报告？”——**是的**，但需要做到两点才能可复盘：  
+1) 每个 Tier 生成一个**具体可执行的 config 目录**（不直接靠“标签”）  
+2) 用各自 config 训练出 model，再用统一流程评估（A-layer + system/e2e）  
+
+### 1) 先从 TaskSpec 生成派生 config（让 tiers 变成真实 features.yaml）
+
+```bash
+mlbot nnmultihead materialize-config-from-task-spec --no-docker \
+  --task-spec config/tasks/task_spec_v1.yaml \
+  --base-config config/nnmultihead/path_primitives_4h_80h_min \
+  --out-config results/derived_cfg/tier01
+```
+
+> `task_spec_v1.yaml` 里通过 `feature_plan.tiers_enabled` + `tier_feature_files` 显式定义 Tier0/Tier1 的 feature nodes 列表。  
+
+### 2) 用派生 config 训练（得到对应 tiers 的 model.pt + A-layer 报告）
+
+```bash
+mlbot nnmultihead train --no-docker \
+  --config results/derived_cfg/tier01 \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2023-01-01 --end-date 2024-12-31 \
+  --features-store-root feature_store \
+  --features-store-layer nnmh_tree_union_all_240T_v2
+```
+
+### 3) 跑主链路评估（predict → router → build-logs → e2e）
+
+```bash
+mlbot nnmultihead pipeline-3action-e2e --no-docker \
+  --task-spec config/tasks/task_spec_v1.yaml \
+  --config results/derived_cfg/tier01 \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2025-05-01 --end-date 2025-12-31 \
+  --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
+  --feature-store-root feature_store \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
+  --returns-source rr_execution \
+  --out results/nnmh_e2e/tier01
+```
+
+对比方式：
+- 跑两份 TaskSpec（Tier0-only vs Tier0+Tier1），生成两份 derived config / model / 报告
+- 对比：A-layer（head eval）+ system（e2e counterfactual + KPI gate + snapshot）
+
+---
+
 ## 文档入口（建议先读）
 
 ### 核心工作流文档
@@ -196,11 +251,10 @@ mlbot train final \
 - **Feature-group-search / pipeline 调参指南**：`docs/guides/FEATURE_GROUP_SEARCH_TUNING_GUIDE_CN.md`
   - nnmultihead 推荐顺序：search → train(primitives) → OOS predict → build-logs → Router 阈值调参 → BC/RL
 - **特征测试设计与覆盖（4类测试 + 覆盖快照保存）**：`docs/tests/FEATURE_TEST_DESIGN_AND_COVERAGE_CN.md`
+- **实盘特征契约与证据字段（缺失策略/has_orderflow/has_sr_quality）**：`docs/guides/LIVE_FEATURE_CONTRACT_AND_EVIDENCE_CN.md`
 
-- **项目 TODO List**：`docs/TODO_LIST.md`
-  - 所有待完成任务的详细说明
-  - 按优先级和类别组织
-  - 包含任务作用、命令示例、预期结果等
+- **项目 TODO / Roadmap**：`docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`
+  - TODO 已内聚到架构升级文档中（按 P0/P1/P2 分层）
 
 ### 架构文档
 
@@ -225,12 +279,30 @@ mlbot train final \
 - [多头NN和订单流的使用分类和评估](/workspaces/ml_trading_bot/docs/architecture/多头NN和订单流.md)
 - [训练落地文档](docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md)
 - [谁对sharp负责](docs/architecture/谁对sharp负责.md)
+- [删除的策略该不做什么](docs/architecture/删除的策略该不做什么.md)
 ---
 
 ## 获取帮助
 
 ```bash
 mlbot --help
+```
+
+---
+
+## 实盘（Live：Nautilus + MetaRouterStrategy）
+
+> 实盘入口与事件流/回放/对账等细节：见 `docs/live_stream/README.md`。
+
+启动 MetaRouterStrategy（单策略 + 多 archetype 编排）：
+
+```bash
+python -m src.time_series_model.live.run_nautilus_strategy \
+  --strategy-id meta_router \
+  --live-config config/nnmultihead/live/meta_router_live_config_v1.yaml \
+  --symbol BTCUSDT-PERP \
+  --timeframe 15T \
+  --testnet
 ```
 
 

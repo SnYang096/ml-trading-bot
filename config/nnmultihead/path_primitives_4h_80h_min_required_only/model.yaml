@@ -1,0 +1,6 @@
+# Copy of base config model.yaml (schema placeholder for StrategyConfigLoader).
+trainer:
+  module: src.time_series_model.models.nn.path_primitives_trainer
+  function: train_path_primitives_mlp
+  params: {}
+

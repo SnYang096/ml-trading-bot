@@ -1,0 +1,26 @@
+feature_contract:
+  minimal_required_cols:
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - atr
+    - trend_r2_20
+    - compression_score
+
+  optional_blocks:
+    ticks_orderflow_semantic_blocks:
+      - "*vpin*"
+    volume_profile_semantic_blocks:
+      - "*vp_*"
+      - "*volume_profile*"
+    trade_cluster_semantic_blocks:
+      - "*trade_cluster*"
+      - "*TradeCluster*"
+
+  missingness_policy:
+    optional_blocks_on_missing: skip
+    append_block_mask: true
+    block_dropout_p: 0.05
+

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +19,16 @@ from src.time_series_model.rl.counterfactual_eval_3action import (
 from src.time_series_model.rl.sim_env_3action import SimEnvConfig
 from src.time_series_model.rl.walk_forward import WalkForwardSplitConfig
 from src.time_series_model.rule.router_3action import Rule3ActionConfig
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
+from src.time_series_model.core.constitution.state import ConstitutionState
+from src.time_series_model.diagnostics.kpi_gate import run_kpi_gate
+from src.time_series_model.ops.state_snapshot import (
+    HumanOverride,
+    SystemStateSnapshot,
+    write_state_snapshot,
+)
 
 
 def _read_any(path: str) -> pd.DataFrame:
@@ -106,12 +118,91 @@ def main() -> None:
         ),
         router_cfg=router_cfg,
         preds_in_log1p=bool(int(args.preds_in_log1p)),
+        portfolio_assets_yaml=str(
+            os.environ.get("MLBOT_PORTFOLIO_ASSETS_YAML") or ""
+        ).strip()
+        or None,
     )
 
     Path(args.out).mkdir(parents=True, exist_ok=True)
     _, metrics, _ = train_and_counterfactual_eval_bc3(
         df, cfg=cfg, out_dir=str(args.out)
     )
+
+    # -----------------------------------------------------------------------------
+    # V1.1 enforcement hooks (opt-in via env) — prevents "PPT-only" KPIs/constitution
+    # -----------------------------------------------------------------------------
+    task_id = str(os.environ.get("MLBOT_TASK_ID") or "").strip() or None
+    constitution_yaml = (
+        str(os.environ.get("MLBOT_CONSTITUTION_YAML") or "").strip() or None
+    )
+    kpi_gate_yaml = str(os.environ.get("MLBOT_KPI_GATE_YAML") or "").strip() or None
+
+    override_tag = str(os.environ.get("MLBOT_HUMAN_OVERRIDE_TAG") or "").strip() or None
+    override_reason = (
+        str(os.environ.get("MLBOT_HUMAN_OVERRIDE_REASON") or "").strip() or None
+    )
+    overrides = (
+        [HumanOverride(tag=override_tag, reason=override_reason)]
+        if override_tag and override_reason
+        else []
+    )
+
+    # Constitution check (kill-switch style) using counterfactual dd metric.
+    constitution_meta = {}
+    if constitution_yaml:
+        ex = ConstitutionExecutor(constitution_yaml=constitution_yaml)
+        constitution_meta = ex.meta()
+        st = ConstitutionState(
+            task_id=task_id,
+            # best-effort: use rule-side mean max dd as a proxy
+            drawdown=float(metrics.get("rule_avg_max_dd", 0.0)),
+        )
+        ex.validate_drawdown(state=st)
+
+    # KPI gate: hard-fail CI if gate says no.
+    kpi_gate_res = None
+    if kpi_gate_yaml:
+        metrics_json = str(Path(args.out) / "metrics.json")
+        out_json = str(Path(args.out) / "kpi_gate_result.json")
+        rc, res = run_kpi_gate(
+            metrics_json=metrics_json, gate_yaml=kpi_gate_yaml, out_json=out_json
+        )
+        kpi_gate_res = res.as_dict()
+        if rc != 0:
+            raise SystemExit(int(rc))
+
+    # Always write a minimal snapshot for attribution/replay.
+    snap = SystemStateSnapshot(
+        task_id=task_id,
+        timestamp=None,
+        constitution_hash=(
+            str(constitution_meta.get("constitution_hash"))
+            if constitution_meta
+            else None
+        ),
+        constitution_yaml=constitution_yaml,
+        router_mode=None,
+        gate_decisions={},
+        pcm_budget={},
+        active_slots=None,
+        drawdown=float(metrics.get("rule_avg_max_dd", 0.0)),
+        kpi_gate=kpi_gate_res,
+        overrides=overrides,
+    )
+    # If portfolio assets summary exists, include it for attribution.
+    try:
+        pa_path = Path(args.out) / "portfolio_assets_summary.json"
+        if pa_path.exists():
+            snap.pcm_budget.update(
+                json.loads(pa_path.read_text(encoding="utf-8")) or {}
+            )
+    except Exception:
+        pass
+    write_state_snapshot(
+        out_path=str(Path(args.out) / "system_state_snapshot.json"), snapshot=snap
+    )
+
     print("counterfactual metrics:", metrics)
     print("saved to:", args.out)
 

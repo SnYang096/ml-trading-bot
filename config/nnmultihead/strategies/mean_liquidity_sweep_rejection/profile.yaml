@@ -1,0 +1,4 @@
+version: 1
+strategy_id: mean_liquidity_sweep_rejection
+archetype: LiquiditySweepRejection
+

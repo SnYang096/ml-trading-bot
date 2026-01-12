@@ -81,6 +81,8 @@ def simulate_3action_episode(
     df: pd.DataFrame,
     *,
     actions: Sequence[int],
+    mean_multiplier: Optional[Sequence[float]] = None,
+    trend_multiplier: Optional[Sequence[float]] = None,
     cfg: SimEnvConfig = SimEnvConfig(),
 ) -> pd.DataFrame:
     """
@@ -99,6 +101,14 @@ def simulate_3action_episode(
     if len(actions) != len(df):
         raise ValueError(
             f"actions length {len(actions)} must match df length {len(df)}"
+        )
+    if mean_multiplier is not None and len(mean_multiplier) != len(df):
+        raise ValueError(
+            f"mean_multiplier length {len(mean_multiplier)} must match df length {len(df)}"
+        )
+    if trend_multiplier is not None and len(trend_multiplier) != len(df):
+        raise ValueError(
+            f"trend_multiplier length {len(trend_multiplier)} must match df length {len(df)}"
         )
     if cfg.ret_mean_col not in df.columns:
         raise ValueError(f"Missing required return column: {cfg.ret_mean_col}")
@@ -120,6 +130,16 @@ def simulate_3action_episode(
     exposure = np.zeros(T, dtype=float)
     desired = np.zeros(T, dtype=float)
     action_arr = np.asarray([int(a) for a in actions], dtype=int)
+    mean_mult = (
+        np.asarray(mean_multiplier, dtype=float)
+        if mean_multiplier is not None
+        else np.ones(T, dtype=float)
+    )
+    trend_mult = (
+        np.asarray(trend_multiplier, dtype=float)
+        if trend_multiplier is not None
+        else np.ones(T, dtype=float)
+    )
 
     cooldown = 0
     peak = float(cfg.initial_equity)
@@ -134,7 +154,14 @@ def simulate_3action_episode(
 
     # Pre-compute desired exposure based on action (risk control may override later)
     for t in range(T):
-        desired[t] = _action_to_target_exposure(action_arr[t], cfg=cfg)
+        a = int(action_arr[t])
+        base = _action_to_target_exposure(a, cfg=cfg)
+        if a == int(Router3Action.MEAN):
+            desired[t] = float(base) * float(max(0.0, mean_mult[t]))
+        elif a == int(Router3Action.TREND):
+            desired[t] = float(base) * float(max(0.0, trend_mult[t]))
+        else:
+            desired[t] = 0.0
 
     for t in range(T):
         # apply drawdown stop / cooldown before setting exposure

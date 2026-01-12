@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -29,6 +30,19 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import yaml
+
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
+from src.time_series_model.core.constitution.execution_evidence import (
+    compute_execution_evidence,
+)
+from src.time_series_model.live.enforcement import enforce_before_order
+from src.time_series_model.live.execution_manager import (
+    ExecutionManager,
+    GuardedOrderContext,
+)
+from src.time_series_model.nnmultihead.strategy_profile import resolve_execution_profile
 
 try:
     from nautilus_trader.model.data import Bar, QuoteTick, TradeTick
@@ -281,6 +295,7 @@ if NAUTILUS_AVAILABLE:
             use_breakeven_stop: bool = False,
             breakeven_trigger_r: float = 1.0,
             min_confidence: float = 0.3,
+            constitution_yaml: Optional[str] = None,
         ):
             super().__init__()
 
@@ -302,6 +317,9 @@ if NAUTILUS_AVAILABLE:
             self.use_breakeven_stop = use_breakeven_stop
             self.breakeven_trigger_r = breakeven_trigger_r
             self.min_confidence = min_confidence
+            self.constitution_yaml = constitution_yaml or os.getenv(
+                "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution_v1.yaml"
+            )
 
             # Will be initialized in on_start()
             self.feature_manager: Optional[EnhancedFeatureManager] = None
@@ -311,6 +329,48 @@ if NAUTILUS_AVAILABLE:
             # Position tracking
             self.current_position: Optional[Position] = None
             self.trade_history: List[TradeRecord] = []
+            self._constitution_executor: Optional[ConstitutionExecutor] = None
+            self._constitution_runtime_state = None
+
+        def _infer_mode_and_exec_id(self) -> tuple[str, str]:
+            name = str(self.strategy_name).lower()
+            if self.router_mode:
+                mode = str(self.router_mode).upper()
+            else:
+                mode = "MEAN" if ("reversal" in name or "mean" in name) else "TREND"
+            if self.execution_strategy_id:
+                sid = str(self.execution_strategy_id)
+            else:
+                if mode == "MEAN":
+                    sid = "FailedBreakoutFade"
+                else:
+                    sid = (
+                        "BreakoutPullbackContinuation"
+                        if ("breakout" in name)
+                        else "MomentumExpansion"
+                    )
+            return mode, sid
+
+        def _get_execution_meta(self) -> Dict[str, Any]:
+            root = os.getenv(
+                "MLBOT_NNMH_STRATEGY_PROFILE_ROOT", "config/nnmultihead/strategies"
+            )
+            reg = os.getenv(
+                "MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY",
+                "config/nnmultihead/execution_archetypes_v1.yaml",
+            )
+            ex = resolve_execution_profile(
+                strategy_id=str(self.strategy_name),
+                profile_root=root,
+                archetype_registry_path=reg,
+            )
+            if ex is None:
+                return {}
+            return {
+                "router_mode": ex.router_mode,
+                "execution_strategy_id": ex.execution_strategy_id,
+                "evidence_rules": ex.evidence_rules,
+            }
 
         def on_start(self) -> None:
             """Initialize strategy components"""
@@ -330,6 +390,26 @@ if NAUTILUS_AVAILABLE:
 
                 # 3. Load ModelArtifact
                 self._load_model_artifact()
+
+                # 3.5 Load constitution executor (for live safety / whitelist)
+                try:
+                    if self.constitution_yaml and Path(self.constitution_yaml).exists():
+                        self._constitution_executor = ConstitutionExecutor(
+                            constitution_yaml=str(self.constitution_yaml)
+                        )
+                        self._constitution_runtime_state = (
+                            self._constitution_executor.load_runtime_state()
+                        )
+                        self.log.info(
+                            f"✅ Constitution loaded: {self.constitution_yaml}"
+                        )
+                        self._xm = ExecutionManager(
+                            strategy=self,
+                            executor=self._constitution_executor,
+                            runtime_state=self._constitution_runtime_state,
+                        )
+                except Exception as e:
+                    self.log.error(f"⚠️ Constitution init failed: {e}")
 
                 # 4. Subscribe to market data
                 self.subscribe_bars(self.bar_type)
@@ -543,12 +623,60 @@ if NAUTILUS_AVAILABLE:
             side = OrderSide.BUY if direction == 1 else OrderSide.SELL
             quantity = self.instrument.make_qty(self.trade_size)
 
+            # Constitution enforcement (whitelist + slots) BEFORE submit_order
+            if (
+                self._constitution_executor is not None
+                and self._constitution_runtime_state is not None
+            ):
+                ex_meta = self._get_execution_meta()
+                mode = str(
+                    ex_meta.get("router_mode") or self._infer_mode_and_exec_id()[0]
+                ).upper()
+                exec_id = str(
+                    ex_meta.get("execution_strategy_id")
+                    or self._infer_mode_and_exec_id()[1]
+                )
+                evidence = compute_execution_evidence(
+                    features=dict(features or {}),
+                    rules=ex_meta.get("evidence_rules") or [],
+                )
+                enforce_before_order(
+                    executor=self._constitution_executor,
+                    runtime_state=self._constitution_runtime_state,
+                    position_id=f"{self.strategy_name}:{int(datetime.now().timestamp() * 1e9)}",
+                    symbol=str(self.instrument_id),
+                    mode=mode,
+                    execution_strategy=exec_id,
+                    execution_tags=[str(self.strategy_name)],
+                    execution_evidence=evidence,
+                )
+
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=side,
                 quantity=quantity,
             )
-            self.submit_order(order)
+            if (
+                getattr(self, "_xm", None) is not None
+                and self._constitution_executor is not None
+                and self._constitution_runtime_state is not None
+            ):
+                self._xm.submit_order_guarded(
+                    order=order,
+                    ctx=GuardedOrderContext(
+                        position_id=f"{self.strategy_name}:{int(datetime.now().timestamp() * 1e9)}",
+                        symbol=str(self.instrument_id),
+                        mode=mode,
+                        execution_strategy=exec_id,
+                        execution_tags=[str(self.strategy_name)],
+                        execution_evidence=evidence,
+                    ),
+                )
+            else:
+                self.log.error(
+                    "❌ No ExecutionManager/ConstitutionExecutor; refusing to submit order"
+                )
+                return
 
             self.log.info(
                 f"📈 ENTRY: {'LONG' if direction == 1 else 'SHORT'} @ {entry_price:.2f} | "
@@ -686,7 +814,28 @@ if NAUTILUS_AVAILABLE:
                 order_side=side,
                 quantity=quantity,
             )
-            self.submit_order(order)
+            if (
+                getattr(self, "_xm", None) is not None
+                and self._constitution_executor is not None
+                and self._constitution_runtime_state is not None
+            ):
+                # Conservative: enforce before exits as well (may be relaxed later with dedicated exit hook).
+                self._xm.submit_order_guarded(
+                    order=order,
+                    ctx=GuardedOrderContext(
+                        position_id=f"{self.strategy_name}:{int(datetime.now().timestamp() * 1e9)}:exit",
+                        symbol=str(self.instrument_id),
+                        mode="NO_TRADE",
+                        execution_strategy=str(self.strategy_name),
+                        execution_tags=[str(self.strategy_name), "exit"],
+                        execution_evidence={},
+                    ),
+                )
+            else:
+                self.log.error(
+                    "❌ No ExecutionManager/ConstitutionExecutor; refusing to submit order"
+                )
+                return
 
             self.log.info(
                 f"📉 EXIT [{exit_reason.value}]: "

@@ -1,0 +1,258 @@
+# TaskSpec v1 (YAML-first)
+# Purpose: unify research -> evaluation -> deployment into a single reproducible contract.
+#
+# This file is intentionally verbose: it is a *spec* (audit-friendly), not a runtime config only.
+# Recommended: copy this file to create a concrete task (change task_id) and commit it.
+
+version: 1
+
+# Globally unique ID. Should be embedded into:
+# - output directory name
+# - meta.json
+# - reports
+task_id: "TASK_V1_EXAMPLE__U2_HIGHCAP6__TIER01__NNMH_3ACTION"
+
+owner: "dev"
+created_at: "2026-01-12"
+
+universe:
+  timeframe: "240T"
+  # Source of truth for what you actually train/eval on is `symbols` below.
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
+  # Optional metadata (recommended for audit + scale control):
+  # Relationship:
+  # - `symbols` = the concrete universe used in THIS task run (truth)
+  # - `universe_layer` = which "stage" this universe belongs to (helps enforce you don't jump too big)
+  # - `group_tag` = behavior group label (HighCap/Alt/Meme...) used for grouping ablations / reporting
+  #
+  # If you already explicitly list `symbols`, you *can* omit universe_layer/group_tag.
+  # Keeping them is useful for: CI naming, report grouping, and avoiding accidental "Top10+Tier3" runs.
+  #
+  # Universe layering (scale control):
+  # - U1: Core2 (must run through end-to-end fast, used to validate mainline)
+  # - U2: HighCap6 (feature convergence + cross-asset sanity)
+  # - U3: Top9/Top10 (last stage; add symbols one-by-one and measure marginal contribution)
+  universe_layer: "U2" # U1|U2|U3
+  group_tag: "HighCap"
+
+  # IMPORTANT: "训练 universe" vs "交易 universe" 可以不同：
+  # - symbols: 用于训练/评估（提升泛化/鲁棒性）
+  # - 交易时你完全可以只交易 BTC（更高级）：把 BTC 拆成多个 Strategy Assets（见下方 strategy_assets）
+
+windows:
+  # IMPORTANT: holdout window MUST be strictly isolated (no tuning).
+  train:
+    start: "2023-01-01"
+    end: "2024-12-31"
+  holdout:
+    start: "2025-05-01"
+    end: "2025-12-31"
+    # frozen=true means:
+    # - This window is *acceptance-only* (CI gate / promotion decision).
+    # - No feature search / threshold tuning / parameter iteration is allowed using this window.
+    # - If you break this rule, the experiment is no longer auditable.
+    frozen: true
+  # Optional ad-hoc OOS window for post-hoc evaluation.
+  oos:
+    start: "2025-05-01"
+    end: "2025-10-31"
+
+enforcement:
+  # Optional but recommended: make constitution/kpi-gate injection explicit and reproducible.
+  constitution_yaml: "config/constitution/constitution_v1.yaml"
+  kpi_gate_yaml: "config/kpi_gates/router_counterfactual_v1.yaml"
+
+feature_plan:
+  # See: docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md
+  #
+  # IMPORTANT: feature_plan.tiers_enabled does NOT magically change which features are used.
+  # The actual features used by training/inference are defined by:
+  # - `model_plan.base_config_dir` -> `config/nnmultihead/.../features.yaml`
+  # - and the FeatureStore layer you point to (`feature_store.layer`)
+  #
+  # So why keep `tiers_enabled` here?
+  # - It is an *engineering contract / planning label*:
+  #   - tells you which feature complexity tiers you intended to enable for this task
+  #   - helps prevent "Tier3 + Top10" accidentally (audit + review)
+  # - In V1.1 we don't auto-derive tiers->features. It is metadata + review gate.
+  #
+  # If you prefer, we can later evolve this into:
+  # - separate feature files: features_tier0.yaml, features_tier1.yaml
+  # - or required/optional_blocks in `features.yaml` and set optional blocks here
+  tiers_enabled:
+    - "TIER0_OHLCV_LIGHT"              # Tier0: OHLCV + light rolling (fast baseline)
+    - "TIER1_BAR_SEMANTIC_STRUCTURAL"  # Tier1: bar semantic/structure/compression/SR-quality
+  # Make tiers concrete & unambiguous:
+  # - each enabled tier must map to a YAML list of feature nodes (compute funcs, e.g. *_f)
+  # - pipeline will materialize a derived `features.yaml` from these files (so tiers are not "PPT only")
+  tier_feature_files:
+    TIER0_OHLCV_LIGHT: "config/nnmultihead/path_primitives_4h_80h_min/features_tier0.yaml"
+    TIER1_BAR_SEMANTIC_STRUCTURAL: "config/nnmultihead/path_primitives_4h_80h_min/features_tier1.yaml"
+  optional_blocks_enabled: []
+  # FeatureStore contract
+  feature_store:
+    root: "feature_store"
+    # FeatureStore layer is the REAL "what features exist" contract for this task run.
+    # It must be built from a config whose features.yaml matches the intended tier plan.
+    layer: "nnmh_tree_union_all_240T_v2"
+    monthly_parallelism:
+      workers: 4
+      backend: "process" # process|thread
+    fast_features: true
+
+# Plugin-like entrypoints (for quick code navigation / review).
+# These are documentation-only pointers; pipeline uses the actual CLI/scripts.
+entrypoints:
+  nnmultihead_predict: "scripts/predict_path_primitives_mlp.py"
+  rule_mode_3action: "scripts/rule_mode_3action.py"
+  rl_build_logs_3action: "scripts/rl_build_logs_3action.py"
+  rl_counterfactual_eval_3action: "scripts/rl_counterfactual_eval_3action.py"
+  cli_pipeline_3action_e2e: "src/cli/main.py (nnmultihead pipeline-3action-e2e)"
+
+model_plan:
+  kind: "nnmultihead_path_primitives"
+  base_config_dir: "config/nnmultihead/path_primitives_4h_80h_min"
+  device: "auto" # auto|cpu|cuda
+  training:
+    epochs: 10
+    batch_size: 512
+    lr: 0.0002
+    seed: 42
+    warm_start:
+      enabled: false
+      init_model_path: null
+
+router_plan:
+  kind: "rule_mode_3action"
+  thresholds_source: "fixed" # fixed|tuned|sweep
+  thresholds:
+    # Minimal (3-core) example. For tuned runs, include all tuned thresholds (7+).
+    mfe_min: 0.1259
+    eff_min: 1.0434
+    dir_conf_trend_min: 0.0642
+
+gate_plan:
+  enabled: false
+  kind: "tree_gate_veto"
+  # Placeholder for future: train tree on (features + primitives) and export veto rules.
+  rules_export:
+    enabled: true
+    format: "yaml" # yaml|json
+
+pcm_plan:
+  enabled: true
+  kind: "portfolio_capital_manager_v1"
+  modes:
+    - "NO_TRADE"
+    - "MEAN"
+    - "TREND"
+  # This is a *policy spec*. Runtime logic should live in a shared module (research/live unified).
+  policy:
+    # Baseline: conservative. Real budgets must respect constitution (kill-switch/slots/escalation).
+    baseline_mode_budgets:
+      NO_TRADE: 0.0
+      MEAN: 0.4
+      TREND: 0.6
+    # Escalation mode budgets (enabled by constitution.capital_escalation + runtime eligibility).
+    escalation_mode_budgets:
+      NO_TRADE: 0.0
+      MEAN: 0.25
+      TREND: 0.75
+    # Cash constraints are "portfolio-level invariants" (anti-overbet):
+    # - baseline_min: minimum cash buffer in normal mode
+    # - escalation_min: minimum cash buffer even in escalation mode
+    cash_constraints:
+      baseline_min: 0.30
+      escalation_min: 0.20
+    # Position concentration caps prevent single-asset dominance (DOF control):
+    # - baseline_max: per-symbol cap in normal mode
+    # - escalation_max: per-symbol cap when escalation is active
+    position_concentration:
+      # NOTE: 这里的“concentration”不是指 BTC/ETH/SOL 的 token 分配。
+      # 我们推荐把“可分配资本的对象”抽象成 Strategy Assets（分布资产），例如：
+      # - BTC_TREND_V1 / BTC_MEAN_V1 / BTC_CASH
+      # Portfolio/PCM 的目标是：给这些“分布资产”分配权重，而不是给 token 分配权重。
+      #
+      # 当前 V1.1 只是把这个约束写进合同里（供 review/CI/后续 enforce），
+      # 真正执行层将把它映射为 per-asset weight cap。
+      baseline_max: 0.40
+      escalation_max: 0.50
+  withdrawal_policy:
+    # Withdrawal rules are constitution-like but personal (risk-of-ruin control + compounding discipline).
+    # Keep disabled in research runs unless you explicitly want to simulate cash-out behavior.
+    enabled: false
+    config_file: "config/constitution/withdrawal_rules_v1.yaml"
+
+strategy_assets:
+  # Strategy Assets Registry (V1.1 schema placeholder; recommended for "system finalization").
+  #
+  # Key idea:
+  # - asset_id is the portfolio allocation primitive (资金分配对象)
+  # - asset is defined by Router x Gate x Execution, not by raw symbol list
+  #
+  # Minimal recommended set (BTC only, but multiple distributions):
+  - asset_id: "BTC_TREND_V1"
+    base_symbol: "BTCUSDT"
+    router_type: "TREND"
+    gate_profile: "commitment_high_absorption_low"
+    execution_profile: "pyramid_trailing"
+  - asset_id: "BTC_MEAN_V1"
+    base_symbol: "BTCUSDT"
+    router_type: "MEAN"
+    gate_profile: "absorption_high_opposing_spike"
+    execution_profile: "fixed_horizon"
+  - asset_id: "BTC_CASH"
+    base_symbol: "BTCUSDT"
+    router_type: "NO_TRADE"
+    gate_profile: null
+    execution_profile: null
+
+# Portfolio assets (distribution assets):
+# - Portfolio/PCM should allocate to a small number of assets defined by return distribution,
+#   not by (symbol x strategy) cartesian product.
+# - This is where "GLOBAL_TREND / GLOBAL_MEAN / GLOBAL_CASH ..." live.
+portfolio_assets_plan:
+  enabled: true
+  config_file: "config/portfolio_assets/portfolio_assets_v1.yaml"
+
+execution_plan:
+  # Must be consistent across router tuning / e2e / live assumptions.
+  returns_source: "rr_execution" # rr_execution|momentum_proxy
+  entry_delay: 0
+  rr_sim:
+    stop_loss_r: 1.0
+    take_profit_r: 2.0
+    max_holding_bars: 50
+    use_trailing_stop: true
+
+acceptance:
+  # Layer-wise acceptance (report-driven). Keep these stable; do not tune them to pass.
+  data:
+    require_monthly_coverage: true
+    min_monthly_bars_4h: 900
+  model:
+    # Router-aligned threshold binary eval
+    min_auc:
+      dir_conf_trend: 0.52
+    min_ap: {}
+  router:
+    min_trade_rate: 0.01
+    max_trade_rate: 0.40
+    # Optional: NO_TRADE health checks (requires metrics support in reports).
+    no_trade_quality:
+      min_coverage: 0.20
+      max_coverage: 0.60
+  portfolio:
+    # Only PCM layer can look at Sharpe/DD as acceptance.
+    max_dd: 0.20
+    withdrawal_compliance:
+      enabled: false
+  ops:
+    require_meta_and_report: true
+

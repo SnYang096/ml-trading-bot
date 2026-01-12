@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
+import re
 from typing import List, Tuple, Dict, Optional, Any
 
 from src.data_tools.tick_loader import load_tick_data
@@ -65,7 +66,10 @@ class MarketDataLoader:
         if cache_exists:
             df_cached = pd.read_parquet(cache_file)
         else:
-            df_cached = self._build_timeframe_cache(symbol, timeframe)
+            # Build cache for the requested window only (avoid full-history resample cost).
+            df_cached = self._build_timeframe_cache(
+                symbol, timeframe, start_date, end_date
+            )
             df_cached.to_parquet(cache_file)
 
         df_cached.index = pd.to_datetime(df_cached.index)
@@ -107,18 +111,27 @@ class MarketDataLoader:
                 rebuild_due_to_new_raw = False
 
         # If the timeframe cache exists but doesn't cover the requested window,
-        # rebuild it to incorporate newly downloaded raw parquet months.
+        # extend it to incorporate newly downloaded raw parquet months.
         if cache_exists and not df_cached.empty:
             cached_min = df_cached.index.min()
             cached_max = df_cached.index.max()
             if (start_ts is not None and start_ts < cached_min) or (
                 end_ts is not None and end_ts > cached_max
             ):
-                df_cached = self._build_timeframe_cache(symbol, timeframe)
+                df_cached = self._extend_timeframe_cache(
+                    df_cached=df_cached,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                )
                 df_cached.to_parquet(cache_file)
                 df_cached.index = pd.to_datetime(df_cached.index)
             elif rebuild_due_to_new_raw:
-                df_cached = self._build_timeframe_cache(symbol, timeframe)
+                # Conservative: rebuild only the requested window (fast) rather than full history.
+                df_cached = self._build_timeframe_cache(
+                    symbol, timeframe, start_date, end_date
+                )
                 df_cached.to_parquet(cache_file)
                 df_cached.index = pd.to_datetime(df_cached.index)
 
@@ -134,10 +147,62 @@ class MarketDataLoader:
         safe_symbol = symbol.replace("/", "_")
         return TIMEFRAME_CACHE_DIR / f"{safe_symbol}_{timeframe}.parquet"
 
-    def _build_timeframe_cache(self, symbol: str, timeframe: str) -> pd.DataFrame:
+    def _parse_month_from_raw_filename(self, p: Path) -> Optional[pd.Timestamp]:
+        """
+        Raw parquet naming convention (monthly):
+          <SYMBOL>_YYYY-MM.parquet
+        """
+        m = re.search(r"_(\d{4}-\d{2})\.parquet$", p.name)
+        if not m:
+            return None
+        try:
+            return pd.to_datetime(m.group(1) + "-01", utc=True)
+        except Exception:
+            return None
+
+    def _select_raw_files_for_range(
+        self,
+        *,
+        symbol: str,
+        start_ts: Optional[pd.Timestamp],
+        end_ts: Optional[pd.Timestamp],
+    ) -> List[Path]:
         data_root = Path(self.data_path)
         pattern = f"{symbol}_*.parquet"
         files = sorted(data_root.glob(pattern))
+        if not files:
+            return []
+        if start_ts is None and end_ts is None:
+            return files
+        out: List[Path] = []
+        for fp in files:
+            m = self._parse_month_from_raw_filename(fp)
+            if m is None:
+                out.append(fp)
+                continue
+            month_start = m
+            month_end = (m + pd.offsets.MonthEnd(1)).normalize()
+            if start_ts is not None and month_end < start_ts:
+                continue
+            if end_ts is not None and month_start > end_ts:
+                continue
+            out.append(fp)
+        return out
+
+    def _build_timeframe_cache(
+        self,
+        symbol: str,
+        timeframe: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> pd.DataFrame:
+        data_root = Path(self.data_path)
+        # Only read raw months needed for requested window (huge speedup vs full-history resample).
+        start_ts = pd.to_datetime(start_date, utc=True) if start_date else None
+        end_ts = pd.to_datetime(end_date, utc=True) if end_date else None
+        files = self._select_raw_files_for_range(
+            symbol=symbol, start_ts=start_ts, end_ts=end_ts
+        )
         if not files:
             raise FileNotFoundError(
                 f"No parquet files found for symbol {symbol} under {data_root}"
@@ -156,6 +221,57 @@ class MarketDataLoader:
         if not frames:
             raise ValueError(f"No usable data after reading {len(files)} files.")
 
+        result = pd.concat(frames).sort_index()
+        result = result[~result.index.duplicated(keep="last")]
+        return result
+
+    def _extend_timeframe_cache(
+        self,
+        *,
+        df_cached: pd.DataFrame,
+        symbol: str,
+        timeframe: str,
+        start_ts: pd.Timestamp,
+        end_ts: pd.Timestamp,
+    ) -> pd.DataFrame:
+        # Extend forward/backward by resampling only missing raw months, then concat.
+        cached_min = df_cached.index.min()
+        cached_max = df_cached.index.max()
+        need_before = start_ts is not None and start_ts < cached_min
+        need_after = end_ts is not None and end_ts > cached_max
+
+        frames = [df_cached]
+        if need_before:
+            files = self._select_raw_files_for_range(
+                symbol=symbol, start_ts=start_ts, end_ts=cached_min
+            )
+            if files:
+                frames.append(self._build_timeframe_cache_for_files(files, timeframe))
+        if need_after:
+            files = self._select_raw_files_for_range(
+                symbol=symbol, start_ts=cached_max, end_ts=end_ts
+            )
+            if files:
+                frames.append(self._build_timeframe_cache_for_files(files, timeframe))
+
+        out = pd.concat(frames).sort_index()
+        out = out[~out.index.duplicated(keep="last")]
+        return out
+
+    def _build_timeframe_cache_for_files(
+        self, files: List[Path], timeframe: str
+    ) -> pd.DataFrame:
+        frames = []
+        for file_path in files:
+            df = pd.read_parquet(file_path)
+            if df.empty:
+                continue
+            if {"open", "high", "low", "close"}.issubset(df.columns):
+                frames.append(self._resample_from_ohlc(df, timeframe))
+            else:
+                frames.append(self._resample_from_ticks(df, timeframe))
+        if not frames:
+            raise ValueError(f"No usable data after reading {len(files)} files.")
         result = pd.concat(frames).sort_index()
         result = result[~result.index.duplicated(keep="last")]
         return result

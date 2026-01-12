@@ -212,19 +212,12 @@ def load_feature_contract(config_dir: str | Path) -> Optional[FeatureContract]:
     if features_path.exists():
         obj = yaml.safe_load(features_path.read_text(encoding="utf-8")) or {}
 
-        # Try new format: derive from requested_features structure
+        # Prefer explicit feature_contract section if present.
+        # Rationale:
+        # - Some features have multiple possible output column sets depending on implementation/caching.
+        # - For nnmultihead, the author-maintained contract should be the source of truth for
+        #   "hard required columns", while derived contracts are useful as a fallback.
         feature_pipeline = obj.get("feature_pipeline") or {}
-        requested_features = feature_pipeline.get("requested_features")
-        if requested_features and isinstance(requested_features, dict):
-            # Load feature_dependencies for accurate output_columns mapping
-            feature_deps = _load_feature_dependencies()
-            contract = _derive_contract_from_requested_features(
-                requested_features, feature_pipeline, feature_deps
-            )
-            if contract is not None:
-                return contract
-
-        # Fallback to explicit feature_contract section
         fc = obj.get("feature_contract") if isinstance(obj, dict) else None
         if isinstance(fc, dict):
             minimal = fc.get("minimal_required_cols") or []
@@ -241,6 +234,17 @@ def load_feature_contract(config_dir: str | Path) -> Optional[FeatureContract]:
                 optional_blocks=optional_blocks,
                 missingness_policy=missingness_policy,
             )
+
+        # Fallback: derive from requested_features structure (new format).
+        requested_features = feature_pipeline.get("requested_features")
+        if requested_features and isinstance(requested_features, dict):
+            # Load feature_dependencies for accurate output_columns mapping
+            feature_deps = _load_feature_dependencies()
+            contract = _derive_contract_from_requested_features(
+                requested_features, feature_pipeline, feature_deps
+            )
+            if contract is not None:
+                return contract
 
     # Fallback to legacy feature_contract.yaml
     contract_path = config_dir / "feature_contract.yaml"

@@ -1,0 +1,8 @@
+# Tier1 (medium): bar-level semantic/structural features (compression/SR-quality/scene scores, etc.)
+# Used by TaskSpec-driven tier materialization in `mlbot nnmultihead pipeline-3action-e2e --task-spec ...`
+#
+# Note: this file is a YAML *list* of feature nodes (compute functions, usually *_f).
+
+- compression_duration_f
+- compression_to_breakout_prob_f
+

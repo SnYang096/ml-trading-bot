@@ -99,9 +99,14 @@ feature_contract:
     - volume_anomaly
 
   optional_blocks:
-    vpin_block: "*vpin*"
-    trade_cluster_block: "trade_cluster_*"
-    volume_profile_block: "vp_*"
+    # NOTE: This model artifact expects 2 block-mask dims (d_in = len(feature_cols) + 2).
+    # Keep only 2 optional blocks here to match historical training artifacts:
+    # - vpin (orderflow presence)
+    # - trade_cluster (microstructure cluster presence)
+    vpin_block:
+      - "*vpin*"
+    trade_cluster_block:
+      - "trade_cluster_*"
 
   missingness_policy:
     append_block_mask: true

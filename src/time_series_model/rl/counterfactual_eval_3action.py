@@ -12,6 +12,16 @@ import torch
 
 from src.time_series_model.rule.router_3action import Rule3ActionConfig
 
+from src.time_series_model.portfolio.portfolio_assets_artifacts import (
+    build_portfolio_assets_v1_artifacts_from_modes,
+)
+from src.time_series_model.portfolio.portfolio_assets_v1 import (
+    aggregate_from_symbol_modes,
+    compute_portfolio_asset_weights_v1,
+    load_portfolio_assets_config,
+)
+from src.time_series_model.portfolio.mean_system import compute_mean_system_health
+
 from .bc_dataset import (
     BCStateSchema,
     Router3Action,
@@ -67,6 +77,11 @@ class CounterfactualEvalConfig:
     rolling_window: int = 300
     rolling_min_periods: int = 60
     rolling_tail_points: int = 120
+
+    # Portfolio assets v1 (optional reporting artifact; no trading logic change).
+    portfolio_assets_yaml: Optional[str] = None
+    portfolio_key_symbols: Sequence[str] = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    portfolio_assets_tail_points: int = 240
 
 
 def _binary_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
@@ -243,6 +258,39 @@ def _mode_to_action(mode: Any) -> int:
         return int(Router3Action.TREND)
     # fallback: treat unknown as NO_TRADE for safety
     return int(Router3Action.NO_TRADE)
+
+
+def _apply_mean_only_actions(actions: np.ndarray) -> np.ndarray:
+    """
+    Mean-only mode for 3-action router:
+    - keep MEAN as-is
+    - convert TREND -> NO_TRADE (disable trend engine entirely)
+    - keep NO_TRADE as-is
+    """
+    if actions is None:
+        return np.zeros((0,), dtype=np.int64)
+    a = np.asarray(actions, dtype=np.int64).copy()
+    a[a == int(Router3Action.TREND)] = int(Router3Action.NO_TRADE)
+    return a
+
+
+def _asset_weights_to_mode_multipliers(
+    weights: Dict[str, float],
+) -> Tuple[float, float]:
+    """
+    Map portfolio asset weights to (mean_multiplier, trend_multiplier) for the 3-action simulator.
+    - mean multiplier is the total weight assigned to MEAN-like assets
+    - trend multiplier is the total weight assigned to TREND-like assets
+    """
+    w = weights or {}
+    mean_mult = float(w.get("GLOBAL_MEAN", 0.0)) + float(w.get("DEFENSIVE_MEAN", 0.0))
+    trend_mult = float(w.get("GLOBAL_TREND", 0.0)) + float(
+        w.get("HIGH_BETA_OVERLAY", 0.0)
+    )
+    # Clamp to [0,1] for safety (cash is residual in PortfolioAssets v1).
+    mean_mult = float(max(0.0, min(1.0, mean_mult)))
+    trend_mult = float(max(0.0, min(1.0, trend_mult)))
+    return mean_mult, trend_mult
 
 
 def _predict_modes(
@@ -610,22 +658,101 @@ def train_and_counterfactual_eval_bc3(
         router_roll_tail = pd.DataFrame()
 
     # per-symbol simulation
+    # Optional: build a global timestamp->(mean_mult,trend_mult) schedule from PortfolioAssets v1.
+    pcm_mult_by_ts: Dict[pd.Timestamp, Tuple[float, float]] = {}
+    try:
+        if cfg.portfolio_assets_yaml and cfg.timestamp_col in test_df.columns:
+            dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
+            pa_cfg = load_portfolio_assets_config(str(cfg.portfolio_assets_yaml))
+            work = test_df.reset_index(drop=True).copy()
+            work[cfg.timestamp_col] = pd.to_datetime(
+                work[cfg.timestamp_col], utc=True, errors="coerce"
+            )
+            work = work.dropna(subset=[cfg.timestamp_col])
+            for ts, g in work.groupby(cfg.timestamp_col, sort=True):
+                decisions = [
+                    {
+                        "symbol": str(r.get(cfg.symbol_col, "")).strip(),
+                        "mode": str(r.get(cfg.mode_col, "NO_TRADE")),
+                    }
+                    for r in g.to_dict(orient="records")
+                    if str(r.get(cfg.symbol_col, "")).strip()
+                ]
+                if not decisions:
+                    continue
+                # reuse the same aggregation function used by artifacts
+                sig = aggregate_from_symbol_modes(
+                    decisions=decisions, key_symbols=list(cfg.portfolio_key_symbols)
+                )
+                w = compute_portfolio_asset_weights_v1(
+                    cfg=pa_cfg,
+                    sig=sig,
+                    gate_veto=False,
+                    portfolio_drawdown=dd_proxy,
+                )
+                pcm_mult_by_ts[pd.Timestamp(ts)] = _asset_weights_to_mode_multipliers(w)
+    except Exception:
+        pcm_mult_by_ts = {}
+
     rows = []
     for sym, g in test_df.groupby(cfg.symbol_col, sort=False):
         g = g.reset_index(drop=True)
         ra = rule_actions[test_df[cfg.symbol_col].values == sym]
         pa = pred_actions[test_df[cfg.symbol_col].values == sym]
+        ma = _apply_mean_only_actions(ra)
 
+        mean_mult_arr = None
+        trend_mult_arr = None
+        if pcm_mult_by_ts and cfg.timestamp_col in g.columns:
+            ts_arr = pd.to_datetime(g[cfg.timestamp_col], utc=True, errors="coerce")
+            mm = []
+            tm = []
+            for ts in ts_arr.tolist():
+                m2, t2 = pcm_mult_by_ts.get(pd.Timestamp(ts), (1.0, 1.0))
+                mm.append(float(m2))
+                tm.append(float(t2))
+            mean_mult_arr = mm
+            trend_mult_arr = tm
+
+        # Baselines:
+        # - rule: the original rule router execution (full exposure per mode)
+        # - rule_pcm: rule router execution with PCM multipliers (partial cash / budgets)
         out_rule = simulate_3action_episode(g, actions=ra.tolist(), cfg=cfg.sim_cfg)
+        out_rule_pcm = (
+            simulate_3action_episode(
+                g,
+                actions=ra.tolist(),
+                mean_multiplier=mean_mult_arr,
+                trend_multiplier=trend_mult_arr,
+                cfg=cfg.sim_cfg,
+            )
+            if (mean_mult_arr is not None or trend_mult_arr is not None)
+            else out_rule
+        )
         out_pred = simulate_3action_episode(g, actions=pa.tolist(), cfg=cfg.sim_cfg)
+        out_mean_only = simulate_3action_episode(
+            g, actions=ma.tolist(), cfg=cfg.sim_cfg
+        )
 
         eq_r = out_rule["equity"].to_numpy(dtype=float)
+        eq_r_pcm = out_rule_pcm["equity"].to_numpy(dtype=float)
         eq_p = out_pred["equity"].to_numpy(dtype=float)
+        eq_m = out_mean_only["equity"].to_numpy(dtype=float)
         pnl_r = (
             out_rule["pnl"].to_numpy(dtype=float) if "pnl" in out_rule.columns else None
         )
+        pnl_r_pcm = (
+            out_rule_pcm["pnl"].to_numpy(dtype=float)
+            if "pnl" in out_rule_pcm.columns
+            else None
+        )
         pnl_p = (
             out_pred["pnl"].to_numpy(dtype=float) if "pnl" in out_pred.columns else None
+        )
+        pnl_m = (
+            out_mean_only["pnl"].to_numpy(dtype=float)
+            if "pnl" in out_mean_only.columns
+            else None
         )
 
         steps_per_year = (
@@ -639,18 +766,33 @@ def train_and_counterfactual_eval_bc3(
                 "n": int(len(g)),
                 "steps_per_year": float(steps_per_year) if steps_per_year else 0.0,
                 "rule_total_return": _total_return(eq_r),
+                "rule_pcm_total_return": _total_return(eq_r_pcm),
                 "pred_total_return": _total_return(eq_p),
+                "mean_only_total_return": _total_return(eq_m),
                 "rule_max_dd": _max_drawdown(eq_r),
+                "rule_pcm_max_dd": _max_drawdown(eq_r_pcm),
                 "pred_max_dd": _max_drawdown(eq_p),
+                "mean_only_max_dd": _max_drawdown(eq_m),
                 "rule_ann_return": _ann_return_from_equity(
                     eq_r, steps_per_year=steps_per_year
+                ),
+                "rule_pcm_ann_return": _ann_return_from_equity(
+                    eq_r_pcm, steps_per_year=steps_per_year
                 ),
                 "pred_ann_return": _ann_return_from_equity(
                     eq_p, steps_per_year=steps_per_year
                 ),
+                "mean_only_ann_return": _ann_return_from_equity(
+                    eq_m, steps_per_year=steps_per_year
+                ),
                 "rule_ann_vol": (
                     _ann_vol_from_pnl(pnl_r, steps_per_year=steps_per_year)
                     if pnl_r is not None
+                    else 0.0
+                ),
+                "rule_pcm_ann_vol": (
+                    _ann_vol_from_pnl(pnl_r_pcm, steps_per_year=steps_per_year)
+                    if pnl_r_pcm is not None
                     else 0.0
                 ),
                 "pred_ann_vol": (
@@ -658,9 +800,19 @@ def train_and_counterfactual_eval_bc3(
                     if pnl_p is not None
                     else 0.0
                 ),
+                "mean_only_ann_vol": (
+                    _ann_vol_from_pnl(pnl_m, steps_per_year=steps_per_year)
+                    if pnl_m is not None
+                    else 0.0
+                ),
                 "rule_sharpe": (
                     _sharpe_from_pnl(pnl_r, steps_per_year=steps_per_year)
                     if pnl_r is not None
+                    else 0.0
+                ),
+                "rule_pcm_sharpe": (
+                    _sharpe_from_pnl(pnl_r_pcm, steps_per_year=steps_per_year)
+                    if pnl_r_pcm is not None
                     else 0.0
                 ),
                 "pred_sharpe": (
@@ -668,9 +820,19 @@ def train_and_counterfactual_eval_bc3(
                     if pnl_p is not None
                     else 0.0
                 ),
+                "mean_only_sharpe": (
+                    _sharpe_from_pnl(pnl_m, steps_per_year=steps_per_year)
+                    if pnl_m is not None
+                    else 0.0
+                ),
                 "rule_sortino": (
                     _sortino_from_pnl(pnl_r, steps_per_year=steps_per_year)
                     if pnl_r is not None
+                    else 0.0
+                ),
+                "rule_pcm_sortino": (
+                    _sortino_from_pnl(pnl_r_pcm, steps_per_year=steps_per_year)
+                    if pnl_r_pcm is not None
                     else 0.0
                 ),
                 "pred_sortino": (
@@ -678,21 +840,44 @@ def train_and_counterfactual_eval_bc3(
                     if pnl_p is not None
                     else 0.0
                 ),
+                "mean_only_sortino": (
+                    _sortino_from_pnl(pnl_m, steps_per_year=steps_per_year)
+                    if pnl_m is not None
+                    else 0.0
+                ),
                 "rule_turnover_mean": (
                     float(out_rule["turnover"].mean()) if len(out_rule) else 0.0
+                ),
+                "rule_pcm_turnover_mean": (
+                    float(out_rule_pcm["turnover"].mean()) if len(out_rule_pcm) else 0.0
                 ),
                 "pred_turnover_mean": (
                     float(out_pred["turnover"].mean()) if len(out_pred) else 0.0
                 ),
+                "mean_only_turnover_mean": (
+                    float(out_mean_only["turnover"].mean())
+                    if len(out_mean_only)
+                    else 0.0
+                ),
                 "rule_switch_rate": _switch_rate(ra),
                 "pred_switch_rate": _switch_rate(pa),
+                "mean_only_switch_rate": _switch_rate(ma),
                 "rule_mode_entropy": _entropy(ra),
                 "pred_mode_entropy": _entropy(pa),
+                "mean_only_mode_entropy": _entropy(ma),
                 "rule_final_equity": (
                     float(eq_r[-1]) if len(eq_r) else float(cfg.sim_cfg.initial_equity)
                 ),
+                "rule_pcm_final_equity": (
+                    float(eq_r_pcm[-1])
+                    if len(eq_r_pcm)
+                    else float(cfg.sim_cfg.initial_equity)
+                ),
                 "pred_final_equity": (
                     float(eq_p[-1]) if len(eq_p) else float(cfg.sim_cfg.initial_equity)
+                ),
+                "mean_only_final_equity": (
+                    float(eq_m[-1]) if len(eq_m) else float(cfg.sim_cfg.initial_equity)
                 ),
             }
         )
@@ -706,14 +891,30 @@ def train_and_counterfactual_eval_bc3(
         "rule_avg_total_return": (
             float(per_symbol["rule_total_return"].mean()) if len(per_symbol) else 0.0
         ),
+        "rule_pcm_avg_total_return": (
+            float(per_symbol["rule_pcm_total_return"].mean())
+            if len(per_symbol)
+            else 0.0
+        ),
         "pred_avg_total_return": (
             float(per_symbol["pred_total_return"].mean()) if len(per_symbol) else 0.0
+        ),
+        "mean_only_avg_total_return": (
+            float(per_symbol["mean_only_total_return"].mean())
+            if len(per_symbol)
+            else 0.0
         ),
         "rule_avg_max_dd": (
             float(per_symbol["rule_max_dd"].mean()) if len(per_symbol) else 0.0
         ),
+        "rule_pcm_avg_max_dd": (
+            float(per_symbol["rule_pcm_max_dd"].mean()) if len(per_symbol) else 0.0
+        ),
         "pred_avg_max_dd": (
             float(per_symbol["pred_max_dd"].mean()) if len(per_symbol) else 0.0
+        ),
+        "mean_only_avg_max_dd": (
+            float(per_symbol["mean_only_max_dd"].mean()) if len(per_symbol) else 0.0
         ),
         "rule_avg_switch_rate": (
             float(per_symbol["rule_switch_rate"].mean()) if len(per_symbol) else 0.0
@@ -721,17 +922,27 @@ def train_and_counterfactual_eval_bc3(
         "pred_avg_switch_rate": (
             float(per_symbol["pred_switch_rate"].mean()) if len(per_symbol) else 0.0
         ),
+        "mean_only_avg_switch_rate": (
+            float(per_symbol["mean_only_switch_rate"].mean())
+            if len(per_symbol)
+            else 0.0
+        ),
         "rule_avg_mode_entropy": (
             float(per_symbol["rule_mode_entropy"].mean()) if len(per_symbol) else 0.0
         ),
         "pred_avg_mode_entropy": (
             float(per_symbol["pred_mode_entropy"].mean()) if len(per_symbol) else 0.0
         ),
+        "mean_only_avg_mode_entropy": (
+            float(per_symbol["mean_only_mode_entropy"].mean())
+            if len(per_symbol)
+            else 0.0
+        ),
     }
 
     # Risk metrics (mean/std across symbols)
     if len(per_symbol):
-        for side in ["rule", "pred"]:
+        for side in ["rule", "rule_pcm", "pred", "mean_only"]:
             for k in ["sharpe", "sortino", "ann_return", "ann_vol"]:
                 col = f"{side}_{k}"
                 if col in per_symbol.columns:
@@ -755,6 +966,13 @@ def train_and_counterfactual_eval_bc3(
     metrics["score_mu"] = mu
     metrics["rule_score"] = float(rule_sh_m - lam * rule_sh_s - mu * rule_dd_m)
     metrics["pred_score"] = float(pred_sh_m - lam * pred_sh_s - mu * pred_dd_m)
+
+    # Mean-only survivability (gateable, stable)
+    try:
+        ms = compute_mean_system_health(metrics).as_metrics()
+        metrics.update(ms)
+    except Exception:
+        pass
 
     meta = {
         "cfg": {
@@ -814,6 +1032,36 @@ def train_and_counterfactual_eval_bc3(
     except Exception:
         pass
 
+    # -------------------------------------------------------------------------
+    # Portfolio assets (V1) reporting: aggregate router state across symbols and
+    # map to deterministic portfolio asset weights (purely diagnostic for now).
+    # -------------------------------------------------------------------------
+    pa_summary: Dict[str, Any] = {}
+    try:
+        if cfg.portfolio_assets_yaml:
+            dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
+            pa = build_portfolio_assets_v1_artifacts_from_modes(
+                test_df,
+                portfolio_assets_yaml=str(cfg.portfolio_assets_yaml),
+                timestamp_col=str(cfg.timestamp_col),
+                symbol_col=str(cfg.symbol_col),
+                mode_col=str(cfg.mode_col),
+                key_symbols=tuple(cfg.portfolio_key_symbols),
+                tail_points=int(cfg.portfolio_assets_tail_points),
+                gate_veto=False,
+                portfolio_drawdown=dd_proxy,
+            )
+            pa_summary = dict(pa.summary or {})
+            if pa_summary:
+                meta["portfolio_assets_v1"] = pa_summary
+                for k, v in (pa_summary.get("avg_weights") or {}).items():
+                    metrics[f"pa__avg_weight__{k}"] = float(v)
+                metrics["pa__trend_zero_rate"] = float(
+                    pa_summary.get("trend_zero_rate", 0.0)
+                )
+    except Exception:
+        pa_summary = {}
+
     if out_dir:
         p = Path(out_dir)
         p.mkdir(parents=True, exist_ok=True)
@@ -826,6 +1074,33 @@ def train_and_counterfactual_eval_bc3(
             encoding="utf-8",
         )
         per_symbol.to_csv(p / "per_symbol.csv", index=False)
+        if pa_summary:
+            (p / "portfolio_assets_summary.json").write_text(
+                json.dumps(pa_summary, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        try:
+            if cfg.portfolio_assets_yaml:
+                dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
+                pa = build_portfolio_assets_v1_artifacts_from_modes(
+                    test_df,
+                    portfolio_assets_yaml=str(cfg.portfolio_assets_yaml),
+                    timestamp_col=str(cfg.timestamp_col),
+                    symbol_col=str(cfg.symbol_col),
+                    mode_col=str(cfg.mode_col),
+                    key_symbols=tuple(cfg.portfolio_key_symbols),
+                    tail_points=int(cfg.portfolio_assets_tail_points),
+                    gate_veto=False,
+                    portfolio_drawdown=dd_proxy,
+                )
+                if isinstance(pa.timeseries_tail, pd.DataFrame) and len(
+                    pa.timeseries_tail
+                ):
+                    pa.timeseries_tail.to_csv(
+                        p / "portfolio_assets_timeseries_tail.csv", index=False
+                    )
+        except Exception:
+            pass
         if isinstance(router_diag_per_symbol, pd.DataFrame) and len(
             router_diag_per_symbol
         ):
@@ -852,11 +1127,17 @@ def train_and_counterfactual_eval_bc3(
 
         # Build an executive summary (conclusion-oriented)
         rule_sh = float(metrics.get("rule_sharpe_mean", 0.0))
+        rule_pcm_sh = float(metrics.get("rule_pcm_sharpe_mean", 0.0))
         pred_sh = float(metrics.get("pred_sharpe_mean", 0.0))
+        mean_only_sh = float(metrics.get("mean_only_sharpe_mean", 0.0))
         rule_dd = float(metrics.get("rule_avg_max_dd", 0.0))
+        rule_pcm_dd = float(metrics.get("rule_pcm_avg_max_dd", 0.0))
         pred_dd = float(metrics.get("pred_avg_max_dd", 0.0))
+        mean_only_dd = float(metrics.get("mean_only_avg_max_dd", 0.0))
         rule_tr = float(metrics.get("rule_avg_total_return", 0.0))
+        rule_pcm_tr = float(metrics.get("rule_pcm_avg_total_return", 0.0))
         pred_tr = float(metrics.get("pred_avg_total_return", 0.0))
+        mean_only_tr = float(metrics.get("mean_only_avg_total_return", 0.0))
         trade_rate = float(metrics.get("router_diag__trade_rate", 0.0))
 
         def _judge() -> Tuple[str, str]:
@@ -877,6 +1158,12 @@ def train_and_counterfactual_eval_bc3(
             ("Rule Sharpe (mean)", _fmt(rule_sh, 3)),
             ("Rule MaxDD (mean)", _fmt(rule_dd, 3)),
             ("Rule TotalReturn (mean)", _fmt(rule_tr, 3)),
+            ("Rule+PCM Sharpe (mean)", _fmt(rule_pcm_sh, 3)),
+            ("Rule+PCM MaxDD (mean)", _fmt(rule_pcm_dd, 3)),
+            ("Rule+PCM TotalReturn (mean)", _fmt(rule_pcm_tr, 3)),
+            ("Mean-only Sharpe (mean)", _fmt(mean_only_sh, 3)),
+            ("Mean-only MaxDD (mean)", _fmt(mean_only_dd, 3)),
+            ("Mean-only TotalReturn (mean)", _fmt(mean_only_tr, 3)),
             ("Pred Sharpe (mean)", _fmt(pred_sh, 3)),
             ("Pred MaxDD (mean)", _fmt(pred_dd, 3)),
             ("Pred TotalReturn (mean)", _fmt(pred_tr, 3)),

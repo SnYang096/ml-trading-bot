@@ -1,0 +1,14 @@
+version: 1
+name: "withdrawal_rules_v1"
+
+# This policy is intentionally conservative: it exists to prevent withdrawals from
+# silently breaking compounding and to keep risk budgets consistent.
+rules:
+  # Max fraction of equity withdrawable per calendar month.
+  max_monthly_withdrawal_ratio: 0.02
+
+  # Max fraction of annual realized profit that can be withdrawn.
+  max_annual_profit_withdrawal_ratio: 0.40
+
+  # During escalation lockout / kill-switch periods, withdrawals are forbidden.
+  forbid_when_global_pause: true

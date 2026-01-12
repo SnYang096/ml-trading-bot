@@ -26,6 +26,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import pickle
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -62,7 +63,18 @@ except ImportError:
         pass
 
 
-from src.time_series_model.strategy_config import StrategyConfigLoader
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
+from src.time_series_model.core.constitution.execution_evidence import (
+    compute_execution_evidence,
+)
+from src.time_series_model.live.enforcement import enforce_before_order
+from src.time_series_model.live.execution_manager import (
+    ExecutionManager,
+    GuardedOrderContext,
+)
+from src.time_series_model.nnmultihead.strategy_profile import resolve_execution_profile
 
 
 class RealtimeFeatureManager:
@@ -126,6 +138,7 @@ if NAUTILUS_AVAILABLE:
             config_base_path: str = "config/strategies",
             history_window: int = 1000,
             model_path: Optional[str] = None,
+            constitution_yaml: Optional[str] = None,
         ):
             """
             Initialize the strategy.
@@ -147,26 +160,55 @@ if NAUTILUS_AVAILABLE:
             self.config_base_path = config_base_path
             self.history_window = history_window
             self.model_path = model_path
+            self.constitution_yaml = constitution_yaml or os.getenv(
+                "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution_v1.yaml"
+            )
 
             # Will be initialized in on_start()
             self.feature_manager: Optional[RealtimeFeatureManager] = None
-            self.strategy_config = None
+            self.strategy_config = None  # deprecated; tree configs are not used in live
             self.model = None
             self.feature_columns: Optional[list] = None
+            self._constitution_executor: Optional[ConstitutionExecutor] = None
+            self._constitution_runtime_state = None
+
+        def _infer_mode_and_exec_id(self) -> tuple[str, str]:
+            name = str(self.strategy_name).lower()
+            mode = "MEAN" if ("reversal" in name or "mean" in name) else "TREND"
+            sid = "FailedBreakoutFade" if mode == "MEAN" else "MomentumExpansion"
+            return mode, sid
+
+        def _get_execution_meta(self) -> Dict[str, Any]:
+            # nnmultihead-first: read from config/nnmultihead/strategies/<strategy_id>/profile.yaml
+            root = os.getenv(
+                "MLBOT_NNMH_STRATEGY_PROFILE_ROOT", "config/nnmultihead/strategies"
+            )
+            reg = os.getenv(
+                "MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY",
+                "config/nnmultihead/execution_archetypes_v1.yaml",
+            )
+            ex = resolve_execution_profile(
+                strategy_id=str(self.strategy_name),
+                profile_root=root,
+                archetype_registry_path=reg,
+            )
+            if ex is None:
+                return {}
+            return {
+                "router_mode": ex.router_mode,
+                "execution_strategy_id": ex.execution_strategy_id,
+                "evidence_rules": ex.evidence_rules,
+            }
 
         def on_start(self) -> None:
             """Called when the strategy starts."""
             self.log.info(f"🚀 Starting {self.strategy_name} strategy")
 
             try:
-                # 1. Load strategy configuration
-                config_path = Path(self.config_base_path) / self.strategy_name
-                if not config_path.exists():
-                    raise FileNotFoundError(f"Strategy config not found: {config_path}")
-
-                config_loader = StrategyConfigLoader(config_path)
-                self.strategy_config = config_loader.load()
-                self.log.info(f"✅ Loaded strategy config: {self.strategy_name}")
+                # 1. Tree strategy configs are NOT supported in live (by design).
+                self.log.info(
+                    "ℹ️ Live does not load config/strategies/* (tree configs are research-only)."
+                )
 
                 # 2. Initialize feature manager
                 self.feature_manager = RealtimeFeatureManager(
@@ -192,6 +234,26 @@ if NAUTILUS_AVAILABLE:
                         self.log.warning(
                             f"⚠️ No model found. Signal generation will be disabled."
                         )
+
+                # 3.5 Load constitution executor (for live safety / whitelist)
+                try:
+                    if self.constitution_yaml and Path(self.constitution_yaml).exists():
+                        self._constitution_executor = ConstitutionExecutor(
+                            constitution_yaml=str(self.constitution_yaml)
+                        )
+                        self._constitution_runtime_state = (
+                            self._constitution_executor.load_runtime_state()
+                        )
+                        self.log.info(
+                            f"✅ Constitution loaded: {self.constitution_yaml}"
+                        )
+                        self._xm = ExecutionManager(
+                            strategy=self,
+                            executor=self._constitution_executor,
+                            runtime_state=self._constitution_runtime_state,
+                        )
+                except Exception as e:
+                    self.log.error(f"⚠️ Constitution init failed: {e}")
 
                 # 4. Subscribe to market data
                 self.subscribe_bars(self.bar_type)
@@ -372,14 +434,8 @@ if NAUTILUS_AVAILABLE:
             Returns:
                 Signal dictionary or None
             """
-            # Example: Simple RSI-based signal
-            if "rsi" in features_df.columns:
-                rsi = features_df["rsi"].iloc[0]
-                if rsi < 30:
-                    return {"side": OrderSide.BUY, "prediction": 1}
-                elif rsi > 70:
-                    return {"side": OrderSide.SELL, "prediction": -1}
-
+            # Disabled by constitutional strategy subtraction:
+            # "indicator mean" (RSI/Stoch/CCI etc) is forbidden as entry logic.
             return None
 
         def _execute_trade(self, signal: Dict[str, Any], bar: Bar) -> None:
@@ -394,6 +450,35 @@ if NAUTILUS_AVAILABLE:
                 side = signal["side"]
                 quantity = self.instrument.make_qty(self.trade_size)
 
+                # Constitution enforcement (whitelist + slots) BEFORE submit_order
+                if (
+                    self._constitution_executor is not None
+                    and self._constitution_runtime_state is not None
+                ):
+                    ex_meta = self._get_execution_meta()
+                    mode = str(
+                        ex_meta.get("router_mode") or self._infer_mode_and_exec_id()[0]
+                    ).upper()
+                    exec_id = str(
+                        ex_meta.get("execution_strategy_id")
+                        or self._infer_mode_and_exec_id()[1]
+                    )
+                    feats = signal.get("features") or {}
+                    evidence = compute_execution_evidence(
+                        features=dict(feats) if isinstance(feats, dict) else {},
+                        rules=ex_meta.get("evidence_rules") or [],
+                    )
+                    enforce_before_order(
+                        executor=self._constitution_executor,
+                        runtime_state=self._constitution_runtime_state,
+                        position_id=f"{self.strategy_name}:{int(bar.ts_event)}",
+                        symbol=str(self.instrument_id),
+                        mode=mode,
+                        execution_strategy=exec_id,
+                        execution_tags=[str(self.strategy_name)],
+                        execution_evidence=evidence,
+                    )
+
                 # Create market order
                 order = self.order_factory.market(
                     instrument_id=self.instrument_id,
@@ -402,7 +487,28 @@ if NAUTILUS_AVAILABLE:
                 )
 
                 # Submit order
-                self.submit_order(order)
+                if (
+                    getattr(self, "_xm", None) is not None
+                    and self._constitution_executor is not None
+                    and self._constitution_runtime_state is not None
+                ):
+                    self._xm.submit_order_guarded(
+                        order=order,
+                        ctx=GuardedOrderContext(
+                            position_id=f"{self.strategy_name}:{int(bar.ts_event)}",
+                            symbol=str(self.instrument_id),
+                            mode=mode,
+                            execution_strategy=exec_id,
+                            execution_tags=[str(self.strategy_name)],
+                            execution_evidence=evidence,
+                        ),
+                    )
+                else:
+                    # Very conservative fallback: if executor not loaded, do not submit.
+                    self.log.error(
+                        "❌ No ExecutionManager/ConstitutionExecutor; refusing to submit order"
+                    )
+                    return
 
                 self.log.info(
                     f"📊 Signal: {side} {quantity} @ {bar.close} "

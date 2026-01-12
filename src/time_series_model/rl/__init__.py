@@ -33,10 +33,6 @@ from .sim_env_3action import (
     TradingSimEnv3Action,
     simulate_3action_episode,
 )
-from .counterfactual_eval_3action import (
-    CounterfactualEvalConfig,
-    train_and_counterfactual_eval_bc3,
-)
 from .fallback_fsm import (
     FallbackFSM,
     GateConfig,

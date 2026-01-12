@@ -1,0 +1,9 @@
+# Copy of base config labels.yaml (schema placeholder for StrategyConfigLoader).
+target_column: dummy_label
+label_generator:
+  module: src.time_series_model.models.nn.path_primitives_labels
+  function: compute_path_primitives_labels
+  params: {}
+filters: []
+post_label_filters: []
+

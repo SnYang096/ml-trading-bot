@@ -1,0 +1,21 @@
+version: 1
+name: "gate_feature_registry_example_v1"
+
+# Gate-only features must have explicit metadata.
+features:
+  aggressive_ratio_5s:
+    feature_name: aggressive_ratio_5s
+    semantic_group: commitment
+    time_scale: 5s
+    applicable_scope: trend
+    allowed_layers: [gate]
+    drift_sensitivity: high
+
+  spread_atr_ratio_1m:
+    feature_name: spread_atr_ratio_1m
+    semantic_group: tradeability
+    time_scale: 1m
+    applicable_scope: global
+    allowed_layers: [gate, execution]
+    drift_sensitivity: medium
+

@@ -1,0 +1,4 @@
+version: 1
+strategy_id: trend_htf_bias_ltf_entry
+archetype: HTFBiasLTFEntry
+

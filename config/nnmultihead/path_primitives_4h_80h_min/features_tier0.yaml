@@ -1,0 +1,21 @@
+# Tier0 (cheap): OHLCV + light rolling features
+# Used by TaskSpec-driven tier materialization in `mlbot nnmultihead pipeline-3action-e2e --task-spec ...`
+#
+# Note: this file is a YAML *list* of feature nodes (compute functions, usually *_f).
+
+- atr_f
+- atr_percentile_f
+- range_ratio_5bar_f
+- price_range_symmetry_f
+- wick_ratios_f
+- roc_5_f
+- acceleration_3_f
+- trend_r2_20_f
+- trend_r2_50_f
+- slope_consistency_score_f
+- trend_volatility_alignment_f
+- volatility_reversal_score_f
+- rsi_f
+- bb_width_f
+- volume_anomaly_f
+
