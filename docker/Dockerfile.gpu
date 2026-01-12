@@ -463,10 +463,11 @@ RUN if [ -n "$(ls -A /tmp/local-wheels/xgboost-*.whl 2>/dev/null)" ]; then \
     echo "🌐 Local xgboost wheel not found, will download from PyPI"; \
     fi
 
-# 注意：scipy 已在安装 LightGBM 时安装（1.11.4），这里不再重复安装
+# 注意：scipy 已在安装 LightGBM 时安装（1.11.4），这里需要固定版本以防止被升级
 RUN echo "📦 Installing project dependencies..." && \
     pip3 install --timeout=1800 --retries=10 --no-build-isolation \
     --find-links /tmp/local-wheels \
+    scipy==1.11.4 \
     PyWavelets==1.4.1 \
     optuna==3.4.0 \
     python-dotenv==1.0.0 \
@@ -490,7 +491,8 @@ RUN echo "📦 Installing project dependencies..." && \
     vectorbt \
     pytest \
     imodels \
-    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, psutil, catboost, xgboost, arch, vectorbt, pytest, imodels; print('✅ 项目依赖库安装完成 (包括pytest、psutil和imodels)')"
+    cvxpy \
+    && python3 -c "import pywt, optuna, plotly, matplotlib, seaborn, bokeh, statsmodels, gymnasium, alphalens, openpyxl, stable_baselines3, nautilus_trader, tabulate, psutil, catboost, xgboost, arch, vectorbt, pytest, imodels, cvxpy; print('✅ 项目依赖库安装完成 (包括pytest、psutil、imodels和cvxpy)')"
 
 # 安装编译工具（用于编译 dtaidistance 的 C 扩展）
 RUN echo "📦 Installing build tools for dtaidistance C extension compilation..." && \

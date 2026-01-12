@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -36,6 +37,7 @@ class SearchConfig:
     deterministic: bool
     no_docker: bool
     fast_features: bool = False
+    invert_eval: str = "conservative"  # none|conservative|all
 
 
 def _load_yaml(path: Path) -> dict:
@@ -173,6 +175,30 @@ def _strategy_name(strategy_dir: Path) -> str:
     return str(name)
 
 
+def _safe_dir_component(s: str, *, max_len: int = 180) -> str:
+    """
+    Make a filesystem-safe directory component.
+
+    Linux filesystems typically limit a single path component to 255 bytes.
+    Our group/run suffixes can get extremely long, so we truncate and add a hash.
+    """
+    s = str(s or "").strip()
+    if not s:
+        return "x"
+    safe = []
+    for ch in s:
+        if ch.isalnum() or ch in {"_", "-", ".", "="}:
+            safe.append(ch)
+        else:
+            safe.append("_")
+    out = "".join(safe)
+    if len(out) <= max_len:
+        return out
+    h = hashlib.md5(out.encode("utf-8")).hexdigest()[:12]
+    prefix = out[: max(16, max_len - (2 + len(h)))]
+    return f"{prefix}__{h}"
+
+
 def _make_temp_strategy(
     *,
     base_dir: Path,
@@ -185,13 +211,14 @@ def _make_temp_strategy(
     Copy strategy dir to tmp_root/<base_name>__<suffix> and overwrite `features.yaml`.
     """
     base_name = base_dir.name
-    out_dir = tmp_root / f"{base_name}__{name_suffix}"
+    safe_suffix = _safe_dir_component(name_suffix, max_len=180)
+    out_dir = tmp_root / f"{base_name}__{safe_suffix}"
     if out_dir.exists():
         shutil.rmtree(out_dir)
     shutil.copytree(base_dir, out_dir)
 
     feats = _load_yaml(out_dir / "features.yaml")
-    feats["name"] = f"{feats.get('name', base_name)}__{name_suffix}"
+    feats["name"] = f"{feats.get('name', base_name)}__{safe_suffix}"
     feats.setdefault("feature_pipeline", {})
     feats["feature_pipeline"]["requested_features"] = list(requested_features)
     if invert_features is not None:
@@ -212,6 +239,14 @@ def _run_one_seed(
     Run training pipeline; returns path to results.json.
     """
     _ensure_dir(out_root)
+    # Resume behavior: if this seed output already has exactly one results.json, reuse it.
+    # This is important for long searches that can be interrupted (or crash on a single candidate).
+    try:
+        existing = list(out_root.rglob("results.json"))
+        if len(existing) == 1:
+            return existing[0]
+    except Exception:
+        pass
     args = [
         "--config",
         str(strategy_dir),
@@ -682,6 +717,7 @@ def successive_halving_prefilter(
             deterministic=cfg.deterministic,
             no_docker=cfg.no_docker,
             fast_features=cfg.fast_features,
+            invert_eval=cfg.invert_eval,
         )
 
         scored: List[tuple[str, float]] = []
@@ -704,20 +740,32 @@ def successive_halving_prefilter(
                 summary=summ, objective=objective, min_trades=min_trades
             )
 
-            # Optional verification: try inverted version for candidates in invert_candidates.
-            # We only try to invert the newly added features (groups[g]) on top of base invert list.
+            # Optional verification: try inverted version for Pool-B invert candidates (output columns).
+            # NOTE:
+            # - `invert_candidates` are OUTPUT COLUMN NAMES (from Pool-B YAML invert_features),
+            #   not feature nodes (*_f) and not group names.
+            # - Many groups (semantic singletons) may directly add output columns; for those we can
+            #   test inversion precisely at the column level.
+            # - For feature-node groups, we generally cannot infer which output columns correspond
+            #   without consulting the feature DAG; therefore inversion trials are primarily effective
+            #   for singleton output-column groups.
             picked_inverted = False
             inv_score = None
             inv_valid = False
             inv_reject_reason = None
             inv_row: dict = {}
-            try_invert = (str(g) in inv_cand_set) or any(
-                str(x) in inv_cand_set for x in (groups.get(g) or [])
+            inv_cols_for_group = _stable_dedup(
+                [
+                    str(x)
+                    for x in ([str(g)] + [str(xx) for xx in (groups.get(g) or [])])
+                    if str(x).strip() in inv_cand_set
+                ]
             )
+            try_invert = str(
+                getattr(cfg, "invert_eval", "conservative")
+            ).strip().lower() in {"conservative", "all"} and bool(inv_cols_for_group)
             if try_invert:
-                inv_list = _stable_dedup(
-                    list(base_inv) + [str(x) for x in (groups.get(g) or [])]
-                )
+                inv_list = _stable_dedup(list(base_inv) + list(inv_cols_for_group))
                 run_id_inv = f"{run_id}__inv"
                 strat_dir_inv = _make_temp_strategy(
                     base_dir=cfg.base_strategy_dir,
@@ -732,25 +780,41 @@ def successive_halving_prefilter(
                 inv_score, inv_valid, inv_reject_reason, inv_row = _score_from_summary(
                     summary=summ_inv, objective=objective, min_trades=min_trades
                 )
-                # Choose inverted ONLY when raw is valid and clearly negative.
-                if (
-                    bool(valid)
-                    and inv_valid
-                    and (score is not None)
-                    and (inv_score is not None)
-                    and (float(score) <= float(invert_min_negative_score))
-                    and (
-                        float(inv_score) >= float(score) + float(invert_min_improvement)
-                    )
-                ):
-                    picked_inverted = True
+                mode = str(getattr(cfg, "invert_eval", "conservative")).strip().lower()
+                if mode == "all":
+                    # Always pick the better of raw vs inverted (when both valid).
+                    if (
+                        bool(valid)
+                        and inv_valid
+                        and (score is not None)
+                        and (inv_score is not None)
+                        and float(inv_score) > float(score) + 1e-9
+                    ):
+                        picked_inverted = True
+                else:
+                    # Conservative: choose inverted ONLY when raw is valid and clearly negative.
+                    if (
+                        bool(valid)
+                        and inv_valid
+                        and (score is not None)
+                        and (inv_score is not None)
+                        and (float(score) <= float(invert_min_negative_score))
+                        and (
+                            float(inv_score)
+                            >= float(score) + float(invert_min_improvement)
+                        )
+                    ):
+                        picked_inverted = True
+
+                if picked_inverted:
                     score, valid, reject_reason, row = (
                         inv_score,
                         inv_valid,
                         inv_reject_reason,
                         inv_row,
                     )
-                    invert_by_group[str(g)] = [str(x) for x in (groups.get(g) or [])]
+                    # Record only the OUTPUT COLUMNS we inverted for this group.
+                    invert_by_group[str(g)] = list(inv_cols_for_group)
             rows.append(
                 {
                     "stage": si + 1,
@@ -1121,6 +1185,7 @@ def successive_halving_search(
                 deterministic=cfg.deterministic,
                 no_docker=cfg.no_docker,
                 fast_features=cfg.fast_features,
+                invert_eval=cfg.invert_eval,
             )
 
             stage_results: List[tuple[str, float]] = []
@@ -1848,6 +1913,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--min-trades", type=int, default=10)
     p.add_argument("--max-steps", type=int, default=6)
     p.add_argument(
+        "--invert-eval",
+        default="conservative",
+        choices=["none", "conservative", "all"],
+        help=(
+            "How to validate Pool-B invert candidates (output columns) during search. "
+            "none=never try inversion; conservative=try and pick only when raw is clearly negative; "
+            "all=always try raw vs inverted for candidate columns and pick the better one."
+        ),
+    )
+    p.add_argument(
         "--fast-features",
         action="store_true",
         default=False,
@@ -2113,6 +2188,7 @@ def main() -> None:
         deterministic=bool(args.deterministic),
         no_docker=bool(args.no_docker),
         fast_features=bool(getattr(args, "fast_features", False)),
+        invert_eval=str(getattr(args, "invert_eval", "conservative")),
     )
 
     groups, resolved_groups_source, groups_yaml_auto = _load_groups_with_source(
@@ -2152,6 +2228,8 @@ def main() -> None:
             pool_fp.get("requested_features") if isinstance(pool_fp, dict) else None
         )
         pool_req = pool_req if isinstance(pool_req, list) else []
+        pool_inv = pool_fp.get("invert_features") if isinstance(pool_fp, dict) else None
+        pool_inv = pool_inv if isinstance(pool_inv, list) else []
 
         used_nodes = set()
         for feats in (groups or {}).values():
@@ -2173,6 +2251,21 @@ def main() -> None:
                     i += 1
                 key = f"{key}__{i}"
             groups[key] = [f]
+
+        # Add singleton groups for Pool-B inverted OUTPUT columns, so we can validate sign per column.
+        # This makes "Pool-B inverted factors" first-class candidates in the search space.
+        for col in pool_inv:
+            c = str(col).strip()
+            if not c:
+                continue
+            # Avoid clobbering existing semantic singleton keys; use a dedicated namespace.
+            key = f"poolb_invcol__{c}"
+            if key in groups:
+                i = 2
+                while f"{key}__{i}" in groups:
+                    i += 1
+                key = f"{key}__{i}"
+            groups[key] = [c]
 
     # Resolve base_features: these are "must-have" features required by label generator / backtest
     # They are NOT part of the optimization; they always stay in the feature set.

@@ -182,8 +182,14 @@ def main() -> None:
                 spec,
                 month_str,
                 df_feats_month,
+                # IMPORTANT:
+                # - If base_columns is provided and feature_columns is None, FeatureStore will ONLY keep base columns.
+                # - For nnmultihead we need the full wide feature table (base + computed features) for training/eval.
+                # So we explicitly pass feature_columns = all non-base columns.
                 base_columns=base_cols,
-                feature_columns=None,
+                feature_columns=[
+                    c for c in df_feats_month.columns if c not in set(base_cols)
+                ],
                 overwrite=False,
                 metadata={
                     "config_dir": str(cfg_dir),

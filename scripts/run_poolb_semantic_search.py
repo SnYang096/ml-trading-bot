@@ -207,6 +207,9 @@ def run_feature_group_search(
         # Let the tool pick groups-yaml automatically (strategy semantic yaml if present).
         "--invert-candidates-yaml",
         str(spec.pool_b_yaml),
+        # Validate Pool-B inverted candidates (output columns) as first-class candidates.
+        "--invert-eval",
+        "all",
         "--writeback-yaml",
         str(writeback_yaml),
         "--output-dir",

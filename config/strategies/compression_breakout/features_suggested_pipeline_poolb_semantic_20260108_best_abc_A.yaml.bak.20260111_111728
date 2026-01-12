@@ -1,0 +1,62 @@
+name: compression_breakout__suggested
+description: 'Compression breakout strategy combining compression strength, trigger,
+  and direction confirmation signals across WPT/VPVR/Spectrum domains.
+
+  '
+feature_pipeline:
+  exclude_columns:
+  - atr
+  requested_features:
+  - compression_duration_f
+  - atr_f
+  - liquidity_void_f
+  - volume_ratio_f
+  - rsi_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+  invert_features:
+  - dtw_bull_flag_dist_w20
+  - dtw_bull_flag_dist_w50
+  - dtw_decline_consolidation_inverse_dist_w20
+  - dtw_decline_consolidation_inverse_dist_w30
+  - hurst_cvd_rolling
+  - hurst_price_rolling
+  - macd_signal
+  - trade_cluster_imbalance_zscore_50
+  - trade_cluster_max_buy_run_ma10
+  - trade_cluster_max_buy_run_ma5
+  - trade_cluster_net_runs
+  - trade_cluster_net_runs_zscore_20
+  - trade_cluster_total_run_length
+  - wpt_price_energy_high_ratio
+  - wpt_price_energy_mid_ratio
+  - wpt_price_reconstructed
+  - wpt_vper_high
+  - wpt_vper_mid
+feature_group_search:
+  base_strategy_dir: /workspaces/ml_trading_bot/config/strategies/compression_breakout
+  objective: CV_mean
+  min_trades: 10
+  seeds:
+  - 1
+  - 2
+  selected_groups:
+  - poolb__liquidity_void_f
+  - kline_core__volume_ratio_f
+  - kline_core__rsi_f
+  stop_reason: completed
+  base_features:
+  - compression_duration_f
+  - atr_f
+  final_features:
+  - compression_duration_f
+  - atr_f
+  - liquidity_void_f
+  - volume_ratio_f
+  - rsi_f
+  groups_source: groups_yaml:auto:config/feature_groups_compression_breakout_semantic.yaml
+  groups_yaml_auto: true
+  pool_b_yaml: /workspaces/ml_trading_bot/results/pools/compression_breakout/pool_b/20260108_best_abc/features_pool_b.yaml
+  pool_b_merged_singletons: true
+  feature_blacklist: []

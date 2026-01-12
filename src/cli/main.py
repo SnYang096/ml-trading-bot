@@ -4474,6 +4474,13 @@ def diagnose_sr_reversal_model_comparison(
     help="Budget preset for feature-group-search. A=fast screening, B=medium, C=final verification.",
 )
 @click.option(
+    "--invert-eval",
+    default="conservative",
+    type=click.Choice(["none", "conservative", "all"]),
+    show_default=True,
+    help="Validate Pool-B inverted candidates (output columns) by trying raw vs inverted. Use all to always validate/pick better sign.",
+)
+@click.option(
     "--fast-features",
     is_flag=True,
     default=False,
@@ -4596,6 +4603,7 @@ def diagnose_feature_group_search(
     min_trades,
     max_steps,
     preset,
+    invert_eval,
     fast_features,
     search_algo,
     halving_stages,
@@ -4645,6 +4653,8 @@ def diagnose_feature_group_search(
         str(max_steps),
         "--preset",
         str(preset),
+        "--invert-eval",
+        str(invert_eval),
         "--fast-features" if fast_features else "",
         "--search-algo",
         str(search_algo),

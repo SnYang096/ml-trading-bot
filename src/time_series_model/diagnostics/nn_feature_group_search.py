@@ -1229,7 +1229,12 @@ def main() -> None:
                 cmd.extend(["--groups-yaml", str(args.groups_yaml)])
             if bool(getattr(args, "expand_semantic_singletons", False)):
                 cmd.append("--expand-semantic-singletons")
-            if str(args.exclude_columns) is not None:
+            # Only pass exclude-columns if explicitly provided.
+            # (Avoid passing the literal string "None".)
+            if (
+                args.exclude_columns is not None
+                and str(args.exclude_columns).strip() != ""
+            ):
                 cmd.extend(["--exclude-columns", str(args.exclude_columns)])
             if str(args.device or "").strip():
                 cmd.extend(["--device", str(args.device)])
