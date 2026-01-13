@@ -36,6 +36,9 @@ class SystemStateSnapshot:
     active_slots: Optional[int]
     drawdown: Optional[float]
 
+    # Observability / drift debug (optional, stable extension)
+    observability: Optional[Dict[str, Any]] = None
+
     kpi_gate: Optional[Dict[str, Any]] = None
     overrides: Optional[List[HumanOverride]] = None
 
@@ -50,6 +53,11 @@ class SystemStateSnapshot:
             "pcm_budget": dict(self.pcm_budget or {}),
             "active_slots": self.active_slots,
             "drawdown": self.drawdown,
+            "observability": (
+                dict(self.observability or {})
+                if self.observability is not None
+                else None
+            ),
             "kpi_gate": self.kpi_gate,
             "overrides": [o.as_dict() for o in (self.overrides or [])],
         }

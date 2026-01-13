@@ -17,8 +17,10 @@ regimes:
         required_evidence: [has_orderflow, has_trend_context, has_volatility]
         evidence_rules:
           - name: has_orderflow
-            kind: any_key_contains
-            any_key_contains: ["vpin", "footprint", "cvd", "delta", "trade_cluster"]
+            kind: value_gt
+            key: vpin
+            threshold: 0.05
+            on_missing: error
           - name: has_trend_context
             kind: any_key_contains
             any_key_contains: ["sma_200", "trend_r2", "macd", "hurst", "hilbert"]
@@ -34,8 +36,10 @@ regimes:
         required_evidence: [has_orderflow, has_volatility]
         evidence_rules:
           - name: has_orderflow
-            kind: any_key_contains
-            any_key_contains: ["vpin", "footprint", "cvd", "delta", "ofi"]
+            kind: value_gt
+            key: vpin
+            threshold: 0.05
+            on_missing: error
           - name: has_volatility
             kind: any_key_contains
             any_key_contains: ["atr", "bb_width", "spectrum"]
@@ -48,8 +52,10 @@ regimes:
         required_evidence: [has_orderflow, has_trend_context]
         evidence_rules:
           - name: has_orderflow
-            kind: any_key_contains
-            any_key_contains: ["vpin", "footprint", "cvd", "delta"]
+            kind: value_gt
+            key: vpin
+            threshold: 0.05
+            on_missing: error
           - name: has_trend_context
             kind: any_key_contains
             any_key_contains: ["sma_200", "trend_r2", "hurst", "hilbert"]
@@ -65,8 +71,10 @@ regimes:
         required_evidence: [has_orderflow, has_sr_quality]
         evidence_rules:
           - name: has_orderflow
-            kind: any_key_contains
-            any_key_contains: ["vpin", "footprint", "cvd", "delta"]
+            kind: value_gt
+            key: vpin
+            threshold: 0.05
+            on_missing: error
           - name: has_sr_quality
             kind: any_key_contains
             any_key_contains: ["sr_", "sqs_", "poc_"]
@@ -79,8 +87,10 @@ regimes:
         required_evidence: [has_orderflow, has_wick]
         evidence_rules:
           - name: has_orderflow
-            kind: any_key_contains
-            any_key_contains: ["vpin", "footprint", "cvd", "delta"]
+            kind: value_gt
+            key: vpin
+            threshold: 0.05
+            on_missing: error
           - name: has_wick
             kind: any_key_contains
             any_key_contains: ["wick"]
@@ -94,8 +104,10 @@ regimes:
         required_evidence: [has_orderflow, has_volume_profile]
         evidence_rules:
           - name: has_orderflow
-            kind: any_key_contains
-            any_key_contains: ["vpin", "footprint", "cvd", "delta"]
+            kind: value_gt
+            key: vpin
+            threshold: 0.05
+            on_missing: error
           - name: has_volume_profile
             kind: any_key_contains
             any_key_contains: ["volume_profile", "vp_"]
@@ -118,6 +130,8 @@ overlays:
         kind: any_key_contains
         any_key_contains: ["atr", "bb_width", "atr_percentile", "bb_width_percentile"]
       - name: has_orderflow
-        kind: any_key_contains
-        any_key_contains: ["vpin", "footprint", "delta", "cvd"]
+        kind: value_gt
+        key: vpin
+        threshold: 0.05
+        on_missing: error
 

@@ -99,6 +99,56 @@ flowchart TD
 
 ---
 
+## 1.5) Research 回测 vs Live 风控：vectorbt / counterfactual / Nautilus 各自负责什么？
+
+你提到的关键点是对的：**Constitution 的“下单前强制验证”主要发生在 Nautilus（实盘 adapter）**，目的是把“风控”变成 runtime gate，避免实盘绕过。
+
+但我们平时做训练/迭代，并不总是在 Nautilus 环境里。仓库里目前有三种“评估/回测口径”，分别服务不同层：
+
+### A) vectorbt（快迭代，适合 Layer5 Execution & archetype 规则微调）
+
+代码入口：
+- `src/time_series_model/strategies/backtesting/vectorbt_backtest.py`
+- `src/time_series_model/rl/execution_returns_vectorbt.py`（`returns_source='vectorbt_execution'`）
+
+适用场景（推荐保留）：
+- **Execution 层快速迭代**：SL/TP/时间止损/entry_delay/手续费滑点假设变更后的敏感性检查  
+- **archetype 启发式规则/导出规则的微回测**：在单币/小窗口上快速验证“规则是否方向正确、是否会过度交易、是否明显增大 DD”
+- **阈值平坦高原**：对 execution rule 阈值（以及未来 tree 导出规则的 veto 阈值）做快速网格/局部扰动检验
+
+注意：vectorbt 的定位是 **快**，不是 “100% 复刻实盘”。它不负责：
+- 下单前风控强制（slot/whitelist/override 审计）
+- event-driven 的 timer 对齐、tick 断流等 live 现实问题
+
+### B) router counterfactual / e2e（主研究链路，适合 Layer3 Router + Layer3b Gate 的系统级口径）
+
+代码入口（主链路）：
+- `mlbot nnmultihead pipeline-3action-e2e` 产生 `mode/logs/counterfactual/report.html`
+- `scripts/rl_counterfactual_eval_3action.py`（这里已经接入 KPI Gate + ConstitutionExecutor 的离线检查与快照产出）
+
+适用场景：
+- **Router 阈值调参**、trade coverage、per-symbol 贡献分解
+- **Gate 的 ablation**：router-only vs router+gate（这里更像“系统层行为比较”）
+
+注意：它是“离线系统评估”，不是实盘下单；但我们把 **KPI Gate/Constitution 快照**接进来，是为了让 research 也能在 CI/实验里被门禁约束（例如 DD 过大直接 fail）。
+
+### C) Nautilus（Live adapter，负责“下单前强制风控 + event-driven 现实约束”）
+
+代码入口（live）：
+- `src/time_series_model/live/meta_router_strategy.py`（timer 决策 + tick 订单流）
+- `src/time_series_model/live/enforcement.py`（`enforce_before_order`）
+
+适用场景（必须在 Nautilus 才能真实覆盖）：
+- **下单前强制执行**：whitelist/证据/slot 等（绕过就拒单）
+- **timer/tick/bar 对齐**：断流/延迟/重连/缺失策略（live feature contract）
+- **审计链**：system_state_snapshot / 事件记录（便于复盘）
+
+结论（回答你问的“哪一层还需要 vectorbt？”）：
+- 需要保留：**Layer5 Execution / archetype 规则** 的快速 vectorbt 回测（快迭代的“工程工作台”）
+- 不应该用 vectorbt 替代：**live 下单前宪法强制**（那必须在 Nautilus adapter）
+
+---
+
 ## 2) TaskSpec v1（训练目标与流程）——YAML-first
 
 ### 2.1 文件位置

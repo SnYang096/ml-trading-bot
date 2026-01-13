@@ -474,10 +474,14 @@ class EventDrivenStrategy(Strategy):
                     )
                 except Exception:
                     merged_feats = {}
-                evidence = compute_execution_evidence(
-                    features=merged_feats,
-                    rules=rules,
-                )
+                try:
+                    evidence = compute_execution_evidence(
+                        features=merged_feats,
+                        rules=rules,
+                    )
+                except Exception as e:
+                    self.log.error(f"❌ evidence_dsl_error -> NO_TRADE: {e}")
+                    return
                 enforce_before_order(
                     executor=self._constitution_executor,
                     runtime_state=self._constitution_runtime_state,

@@ -107,6 +107,7 @@ mlbot data download-funding-rate \
 > - `docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（架构升级 V1：TaskSpec + Constitution + PCM）
 > - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
 > - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
+> - `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找“平坦高原”而非尖峰，Router/SLTP 通用）
 > - `docs/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
 
 ### 0) 质量闸门（推荐）
@@ -226,6 +227,24 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
   --feature-store-layer nnmh_tree_union_all_240T_v2 \
   --returns-source rr_execution \
   --out results/nnmh_e2e/tier01
+```
+
+### 3.1) Router 阈值：用“平坦高原”协议做稳健调参（推荐）
+
+> 目的：避免“找尖峰”导致的炼丹，优先选多窗口/bootstrapped 都稳的阈值组合。  
+> 详细解释见：`docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
+>
+> 说明：`mlbot nnmultihead pipeline-3action-e2e` 会在输出目录下自动写出
+> `router_thresholds_baseline.json`（使用你传入的阈值覆盖 + 未传入则用 Router 默认值），
+> 供 plateau 命令直接复用。
+
+```bash
+mlbot diagnose threshold-plateau --no-docker \
+  --preds results/nnmh_e2e/tier01/preds \
+  --logs  results/nnmh_e2e/tier01/logs_3action.parquet \
+  --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
+  --baseline-json results/nnmh_e2e/tier01/router_thresholds_baseline.json \
+  --out results/plateau/router3action_tier01_oos_v1
 ```
 
 对比方式：

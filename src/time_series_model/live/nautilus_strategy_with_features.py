@@ -464,10 +464,14 @@ if NAUTILUS_AVAILABLE:
                         or self._infer_mode_and_exec_id()[1]
                     )
                     feats = signal.get("features") or {}
-                    evidence = compute_execution_evidence(
-                        features=dict(feats) if isinstance(feats, dict) else {},
-                        rules=ex_meta.get("evidence_rules") or [],
-                    )
+                    try:
+                        evidence = compute_execution_evidence(
+                            features=dict(feats) if isinstance(feats, dict) else {},
+                            rules=ex_meta.get("evidence_rules") or [],
+                        )
+                    except Exception as e:
+                        self.log.error(f"❌ evidence_dsl_error -> NO_TRADE: {e}")
+                        return
                     enforce_before_order(
                         executor=self._constitution_executor,
                         runtime_state=self._constitution_runtime_state,

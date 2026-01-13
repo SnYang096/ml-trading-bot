@@ -347,6 +347,28 @@ class IncrementalFeatureComputer:
             "total_vol": float(total_vol),
         }
 
+    def get_recent_bars(self, n: int = 200) -> list[Dict[str, Any]]:
+        """
+        Return recent bar records (oldest -> newest).
+
+        Used by heuristic execution rules to compute simple structure signals
+        without introducing full batch feature dependencies.
+        """
+        if n <= 0:
+            return []
+        xs = list(self.bar_buffer)
+        if not xs:
+            return []
+        return xs[-int(n) :]
+
+    def get_last_tick_ts_ns(self) -> Optional[int]:
+        if not self.tick_buffer:
+            return None
+        try:
+            return int(self.tick_buffer[-1]["ts"])
+        except Exception:
+            return None
+
     def reset(self) -> None:
         """重置所有状态"""
         self.tick_buffer.clear()

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
+from datetime import datetime, timezone
 
 try:
     from nautilus_trader.model import (
@@ -59,6 +61,27 @@ from src.time_series_model.live.nnmh_live_inferencer import (
     NNMHLiveInferencerConfig,
 )
 from src.time_series_model.live.timers import compute_next_aligned_delay_seconds
+from src.time_series_model.live.live_feature_contract import (
+    load_live_feature_contract_v1,
+    validate_live_features_v1,
+)
+from src.time_series_model.live.archetype_heuristics_v1 import (
+    evaluate_required_conditions_v1,
+)
+from src.time_series_model.live.execution_rules_v1 import (
+    apply_execution_rules_v1,
+    load_execution_rules_v1,
+)
+from src.time_series_model.ops.state_snapshot import (
+    SystemStateSnapshot,
+    write_state_snapshot,
+)
+from src.time_series_model.live.observability_metrics import (
+    compute_evidence_true_rate,
+    compute_feature_missing_rate,
+    compute_router_mode_entropy,
+    compute_tick_gap_seconds,
+)
 
 
 def _infer_regime_placeholder() -> str:
@@ -111,6 +134,18 @@ if NAUTILUS_AVAILABLE:
             self._feature_computer: Optional[IncrementalFeatureComputer] = None
             self._inferencer: Optional[NNMHLiveInferencer] = None
             self._last_order_time_ns: Optional[int] = None
+            self._live_feature_contract_path = str(
+                os.getenv(
+                    "MLBOT_LIVE_FEATURE_CONTRACT_YAML",
+                    "config/live/live_feature_contract_v1.yaml",
+                )
+            )
+            self._live_feature_contract = None
+            self._execution_rules_yaml = str(
+                os.getenv("MLBOT_EXECUTION_RULES_YAML", "")
+            )
+            self._execution_rules = None
+            self._mode_hist = deque(maxlen=200)
 
         def on_start(self) -> None:
             self._cfg = load_meta_router_live_config(self.live_config_path)
@@ -137,6 +172,36 @@ if NAUTILUS_AVAILABLE:
                         device=str(nni.get("device")) if nni.get("device") else None,
                     )
                 )
+
+            # Live feature contract (runtime input credibility gate)
+            try:
+                if (
+                    self._live_feature_contract_path
+                    and Path(self._live_feature_contract_path).exists()
+                ):
+                    self._live_feature_contract = load_live_feature_contract_v1(
+                        self._live_feature_contract_path
+                    )
+                    self.log.info(
+                        f"✅ Live feature contract loaded: {self._live_feature_contract_path}"
+                    )
+            except Exception as e:
+                self.log.error(f"⚠️ Live feature contract init failed: {e}")
+
+            # Optional: exported execution rules (tree-distilled / YAML-first), fail-closed.
+            try:
+                if (
+                    self._execution_rules_yaml
+                    and Path(self._execution_rules_yaml).exists()
+                ):
+                    self._execution_rules = load_execution_rules_v1(
+                        self._execution_rules_yaml
+                    )
+                    self.log.info(
+                        f"✅ Execution rules loaded: {self._execution_rules_yaml}"
+                    )
+            except Exception as e:
+                self.log.error(f"⚠️ Execution rules init failed: {e}")
             self.subscribe_bars(self.bar_type)
             # Orderflow must update on trade ticks (not bar)
             self.subscribe_trade_ticks(self.instrument_id)
@@ -214,12 +279,97 @@ if NAUTILUS_AVAILABLE:
                 )
             )
 
+            # Precompute observability (before early returns)
+            last_tick_ts = self._feature_computer.get_last_tick_ts_ns()
+            tick_gap_seconds = compute_tick_gap_seconds(
+                now_ns=now_ns, last_tick_ts_ns=last_tick_ts
+            )
+            required_keys_for_missing = []
+            if self._live_feature_contract is not None:
+                required_keys_for_missing += list(
+                    self._live_feature_contract.required_keys_any or []
+                )
+                if self._inferencer is not None:
+                    required_keys_for_missing += list(
+                        self._live_feature_contract.required_pred_keys or []
+                    )
+            feature_missing_rate = compute_feature_missing_rate(
+                required_keys=required_keys_for_missing, features=feats
+            )
+
             # Online nnmultihead inference (optional)
             if self._inferencer is not None:
                 try:
                     preds = self._inferencer.predict_one(feats)
                     feats.update(preds)
                 except Exception:
+                    self._schedule_next_check()
+                    return
+
+            # Runtime validate live feature contract BEFORE any router/archetype decision.
+            if self._live_feature_contract is not None:
+                ok, reasons = validate_live_features_v1(
+                    contract=self._live_feature_contract,
+                    features=feats,
+                    nn_inference_enabled=(self._inferencer is not None),
+                )
+                if not ok:
+                    # Record reason for auditability (file output is optional but helpful).
+                    try:
+                        snap_dir = Path(
+                            os.getenv(
+                                "MLBOT_LIVE_SNAPSHOT_DIR",
+                                "results/live_snapshots",
+                            )
+                        )
+                        now_iso = datetime.fromtimestamp(
+                            now_ns / 1e9, tz=timezone.utc
+                        ).isoformat()
+                        out_path = snap_dir / f"system_state_snapshot_{now_ns}.json"
+                        meta = (
+                            self._exec.meta()
+                            if getattr(self, "_exec", None) is not None
+                            else {}
+                        )
+                        active_slots = (
+                            int(self._st.slots.active_count())
+                            if getattr(self, "_st", None) is not None
+                            else None
+                        )
+                        write_state_snapshot(
+                            out_path=out_path,
+                            snapshot=SystemStateSnapshot(
+                                task_id=(
+                                    str(os.getenv("MLBOT_TASK_ID"))
+                                    if os.getenv("MLBOT_TASK_ID")
+                                    else None
+                                ),
+                                timestamp=now_iso,
+                                constitution_hash=(
+                                    str(meta.get("constitution_hash"))
+                                    if meta.get("constitution_hash")
+                                    else None
+                                ),
+                                constitution_yaml=(
+                                    str(meta.get("constitution_yaml"))
+                                    if meta.get("constitution_yaml")
+                                    else None
+                                ),
+                                router_mode="NO_TRADE",
+                                gate_decisions={
+                                    "live_feature_contract_violation": reasons
+                                },
+                                pcm_budget={},
+                                active_slots=active_slots,
+                                drawdown=None,
+                            ),
+                        )
+                    except Exception:
+                        pass
+                    self.log.warning(
+                        "⚠️ live_feature_contract_violation -> NO_TRADE | "
+                        + "; ".join(reasons)
+                    )
                     self._schedule_next_check()
                     return
 
@@ -257,8 +407,14 @@ if NAUTILUS_AVAILABLE:
             if regime is None:
                 regime = _infer_regime_placeholder()
             if regime == "NO_TRADE":
+                self._mode_hist.append("NO_TRADE")
+                mode_entropy = compute_router_mode_entropy(list(self._mode_hist))
+                self.log.info(
+                    f"OBS mode=NO_TRADE tick_gap_s={tick_gap_seconds} missing_rate={feature_missing_rate} mode_entropy={mode_entropy}"
+                )
                 self._schedule_next_check()
                 return
+            self._mode_hist.append(str(regime).upper())
 
             archetype_id = select_first_enabled_archetype(self._cfg, regime=regime)
             if not archetype_id:
@@ -275,19 +431,66 @@ if NAUTILUS_AVAILABLE:
                 if overlay_id in self._arches:
                     arch = self._arches[overlay_id]
 
-            evidence = compute_execution_evidence(
-                features=feats, rules=list(arch.evidence_rules or [])
+            try:
+                evidence = compute_execution_evidence(
+                    features=feats, rules=list(arch.evidence_rules or [])
+                )
+            except Exception as e:
+                # Fail-closed: evidence DSL config/key mismatch should block trading.
+                self.log.error(f"❌ evidence_dsl_error -> NO_TRADE: {e}")
+                self._mode_hist.append("NO_TRADE")
+                self._schedule_next_check()
+                return
+            evidence_true_rate = compute_evidence_true_rate(evidence)
+            mode_entropy = compute_router_mode_entropy(list(self._mode_hist))
+            self.log.info(
+                f"OBS mode={regime} arch={arch.name} tick_gap_s={tick_gap_seconds} missing_rate={feature_missing_rate} "
+                f"evidence_true_rate={evidence_true_rate} mode_entropy={mode_entropy}"
             )
+
+            # Execution archetype heuristics (v1, fail-closed)
+            bars = self._feature_computer.get_recent_bars(200)
+            hd = evaluate_required_conditions_v1(
+                archetype_name=str(arch.name),
+                regime=str(arch.regime),
+                required_conditions=list(arch.required_conditions or []),
+                feats=feats,
+                bars=bars,
+            )
+            if not bool(hd.ok):
+                self.log.info(
+                    f"ℹ️ archetype_heuristics_blocked: {arch.name} | "
+                    + "; ".join(hd.reasons[:6])
+                )
+                self._schedule_next_check()
+                return
+
+            # Optional exported execution rules veto (tree-distilled hook)
+            if self._execution_rules is not None:
+                ok2, reasons2 = apply_execution_rules_v1(
+                    rules=self._execution_rules,
+                    archetype_name=str(arch.name),
+                    features=feats,
+                )
+                if not ok2:
+                    self.log.info(
+                        f"ℹ️ execution_rules_veto: {arch.name} | "
+                        + "; ".join(reasons2[:6])
+                    )
+                    self._schedule_next_check()
+                    return
 
             size_mult = float(self._cfg.size_multipliers.get(str(arch.name), 1.0))
             if self._cfg.vol_mean.enabled and str(arch.name) == str(
                 self._cfg.vol_mean.archetype_id
             ):
                 size_mult = float(self._cfg.vol_mean.size_multiplier)
-            qty = self.instrument.make_qty(self.trade_size * max(0.0, size_mult))
+            qty = self.instrument.make_qty(
+                self.trade_size * max(0.0, size_mult) * float(hd.risk_multiplier)
+            )
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.BUY,
+                order_side=OrderSide.BUY if str(hd.side) == "BUY" else OrderSide.SELL,
                 quantity=qty,
             )
             self._xm.submit_order_guarded(
@@ -302,6 +505,61 @@ if NAUTILUS_AVAILABLE:
                 ),
             )
             self._last_order_time_ns = now_ns
+
+            # Persist latest snapshot for auditability (overwrite by default).
+            try:
+                snap_dir = Path(
+                    os.getenv("MLBOT_LIVE_SNAPSHOT_DIR", "results/live_snapshots")
+                )
+                snap_dir.mkdir(parents=True, exist_ok=True)
+                meta = (
+                    self._exec.meta()
+                    if getattr(self, "_exec", None) is not None
+                    else {}
+                )
+                now_iso = datetime.fromtimestamp(
+                    now_ns / 1e9, tz=timezone.utc
+                ).isoformat()
+                obs = {
+                    "tick_gap_seconds": tick_gap_seconds,
+                    "feature_missing_rate": feature_missing_rate,
+                    "evidence_true_rate": evidence_true_rate,
+                    "router_mode_entropy": mode_entropy,
+                }
+                snap = SystemStateSnapshot(
+                    task_id=(
+                        str(os.getenv("MLBOT_TASK_ID"))
+                        if os.getenv("MLBOT_TASK_ID")
+                        else None
+                    ),
+                    timestamp=now_iso,
+                    constitution_hash=(
+                        str(meta.get("constitution_hash"))
+                        if meta.get("constitution_hash")
+                        else None
+                    ),
+                    constitution_yaml=(
+                        str(meta.get("constitution_yaml"))
+                        if meta.get("constitution_yaml")
+                        else None
+                    ),
+                    router_mode=str(regime),
+                    gate_decisions={},
+                    pcm_budget={},
+                    active_slots=(
+                        int(self._st.slots.active_count())
+                        if self._st is not None
+                        else None
+                    ),
+                    drawdown=None,
+                    observability=obs,
+                )
+                write_state_snapshot(
+                    out_path=snap_dir / "latest_system_state_snapshot.json",
+                    snapshot=snap,
+                )
+            except Exception:
+                pass
             self._schedule_next_check()
 
 else:

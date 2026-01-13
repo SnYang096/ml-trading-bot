@@ -2483,6 +2483,44 @@ def nnmultihead_pipeline_3action_e2e(
     e2e_out = f"{out_root}/e2e"
 
     # -------------------------------------------------------------------------
+    # Convenience: always materialize a baseline router thresholds JSON in out_dir
+    # so plateau tuning can be run without hand-writing the file.
+    # -------------------------------------------------------------------------
+    try:
+        import json as _json
+        from src.time_series_model.rule.router_3action import Rule3ActionConfig as _R3
+
+        cfg0 = _R3()
+        baseline = {
+            "mfe_min": float(mfe_min) if mfe_min is not None else float(cfg0.mfe_min),
+            "eff_min": float(eff_min) if eff_min is not None else float(cfg0.eff_min),
+            "dir_conf_trend_min": float(dir_conf_trend_min)
+            if dir_conf_trend_min is not None
+            else float(cfg0.dir_conf_trend_min),
+            "mfe_trend_min": float(mfe_trend_min)
+            if mfe_trend_min is not None
+            else float(cfg0.mfe_trend_min),
+            "ttm_trend_min": float(ttm_trend_min)
+            if ttm_trend_min is not None
+            else float(cfg0.ttm_trend_min),
+            "eff_mean_min": float(eff_mean_min)
+            if eff_mean_min is not None
+            else float(cfg0.eff_mean_min),
+            "ttm_mean_max": float(ttm_mean_max)
+            if ttm_mean_max is not None
+            else float(cfg0.ttm_mean_max),
+        }
+        p = Path(out_dir)
+        if not p.is_absolute():
+            p = (PROJECT_ROOT / p).resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        (p / "router_thresholds_baseline.json").write_text(
+            _json.dumps(baseline, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+    # -------------------------------------------------------------------------
     # P0: TaskSpec-driven enforcement injection (research/live unified)
     # -------------------------------------------------------------------------
     env_overrides = {}
@@ -4394,6 +4432,113 @@ def diagnose_kpi_gate(metrics_json, gate_yaml, out_json, docker):
             docker=docker,
         )
     )
+
+
+@diagnose.command("threshold-plateau")
+@click.option(
+    "--preds",
+    required=True,
+    help="preds dir/file (preds_*.parquet) from nnmultihead predict or pipeline-3action-e2e.",
+)
+@click.option(
+    "--logs",
+    required=True,
+    help="logs_3action.parquet (must contain ret_mean/ret_trend), typically from rl build-logs-3action.",
+)
+@click.option(
+    "--model",
+    required=True,
+    help="model.pt (used to infer preds_in_log1p so threshold semantics match).",
+)
+@click.option(
+    "--baseline-json",
+    required=True,
+    help="Baseline router thresholds JSON (7 keys: mfe_min,eff_min,dir_conf_trend_min,mfe_trend_min,ttm_trend_min,eff_mean_min,ttm_mean_max).",
+)
+@click.option(
+    "--out",
+    required=True,
+    help="Output directory (will write candidates.csv/summary.json/report.md).",
+)
+@click.option("--n-candidates", default=300, type=int, show_default=True)
+@click.option("--n-windows", default=6, type=int, show_default=True)
+@click.option("--min-days-per-window", default=25, type=int, show_default=True)
+@click.option("--n-bootstrap", default=30, type=int, show_default=True)
+@click.option("--rel-sigma", default=0.05, type=float, show_default=True)
+@click.option("--abs-sigma", default=0.01, type=float, show_default=True)
+@click.option("--lambda", "lam", default=1.0, type=float, show_default=True)
+@click.option("--mu", default=0.5, type=float, show_default=True)
+@click.option("--entry-delay", default=0, type=int, show_default=True)
+@click.option("--cost-per-turnover", default=0.0, type=float, show_default=True)
+@click.option("--slippage-bps", default=0.0, type=float, show_default=True)
+@click.option("--seed", default=0, type=int, show_default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_threshold_plateau(
+    preds,
+    logs,
+    model,
+    baseline_json,
+    out,
+    n_candidates,
+    n_windows,
+    min_days_per_window,
+    n_bootstrap,
+    rel_sigma,
+    abs_sigma,
+    lam,
+    mu,
+    entry_delay,
+    cost_per_turnover,
+    slippage_bps,
+    seed,
+    docker,
+):
+    """
+    Threshold plateau tuning (Rule Router 3-action).
+
+    This wraps `scripts/plateau_tune_rule_router_3action.py` and implements a robust
+    "flat plateau" protocol (multi-window + bootstrap + local perturbations).
+
+    Detailed guide: docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds}" if use_workspace_prefix else preds,
+        "--logs",
+        f"/workspace/{logs}" if use_workspace_prefix else logs,
+        "--model",
+        f"/workspace/{model}" if use_workspace_prefix else model,
+        "--baseline-json",
+        f"/workspace/{baseline_json}" if use_workspace_prefix else baseline_json,
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+        "--n-candidates",
+        str(int(n_candidates)),
+        "--n-windows",
+        str(int(n_windows)),
+        "--min-days-per-window",
+        str(int(min_days_per_window)),
+        "--n-bootstrap",
+        str(int(n_bootstrap)),
+        "--rel-sigma",
+        str(float(rel_sigma)),
+        "--abs-sigma",
+        str(float(abs_sigma)),
+        "--lambda",
+        str(float(lam)),
+        "--mu",
+        str(float(mu)),
+        "--entry-delay",
+        str(int(entry_delay)),
+        "--cost-per-turnover",
+        str(float(cost_per_turnover)),
+        "--slippage-bps",
+        str(float(slippage_bps)),
+        "--seed",
+        str(int(seed)),
+    ]
+    sys.exit(run_script("scripts/plateau_tune_rule_router_3action.py", args, docker=docker))
 
 
 @diagnose.command("rule-baseline")

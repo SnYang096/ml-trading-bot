@@ -151,3 +151,11 @@ live enforcement hook：
 
 > 备注：当前仓库里还没有正式落地 `live_feature_contract_v1.yaml` 文件；我们已经实现了 Evidence DSL 与 whitelist 的 enforcement，但“live 特征契约”仍建议补一份 YAML 作为下一阶段工程入口。
 
+### 3.2 当前仓库的落地状态（v1）
+
+已落地的最小版本：
+- **配置**：`config/live/live_feature_contract_v1.yaml`
+- **校验器**：`src/time_series_model/live/live_feature_contract.py`
+- **接入点**：`src/time_series_model/live/meta_router_strategy.py` 的 timer 决策入口（`_on_signal_check`）
+  - 行为：若 contract 不满足 → **强制 NO_TRADE**（本周期不下单）并记录原因到日志
+  - 环境变量覆盖：`MLBOT_LIVE_FEATURE_CONTRACT_YAML`（默认指向上述 YAML）

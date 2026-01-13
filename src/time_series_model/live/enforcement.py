@@ -92,8 +92,9 @@ def enforce_before_order(
             router_mode=str(mode),
             gate_decisions={},
             pcm_budget={},
-            active_slots={"count": runtime_state.slots.active_count()},
+            active_slots=int(runtime_state.slots.active_count()),
             drawdown=float(drawdown) if drawdown is not None else None,
+            observability=None,
             kpi_gate=None,
             overrides=[],
         )
