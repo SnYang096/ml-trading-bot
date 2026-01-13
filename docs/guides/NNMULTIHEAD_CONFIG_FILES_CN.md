@@ -111,12 +111,14 @@ nnmultihead 的脚本/loader 仍然以“目录里存在这些文件”为运行
 mlbot nnmultihead compare-feature-sets --no-docker \
   --task-spec config/tasks/task_spec_v1.yaml \
   --base-config config/nnmultihead/path_primitives_4h_80h_min \
-  --poolb-yaml results/factor_eval/<RUN>/features_pool_b_primitives.yaml \
-  --out results/feature_compare/<TAG>
+  --poolb-yaml results/factor_eval/<RUN>/features_pool_b_primitives.yaml
 ```
 
 输出：
 - `features_compare_summary.json`
 - `features_compare_summary.md`
+
+默认输出目录：
+- `results/feature_compare/<task_id>__<poolb_stem>/`
 
 

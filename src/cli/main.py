@@ -3619,8 +3619,9 @@ def nnmultihead_factor_eval(
 @click.option(
     "--out",
     type=str,
-    required=True,
-    help="Output directory for report JSON/MD.",
+    required=False,
+    default=None,
+    help="Output directory for report JSON/MD. Default: results/feature_compare/<task_id>__<poolb_stem>",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, docker):
@@ -3638,7 +3639,23 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
 
     use_workspace_prefix = docker and not _is_in_docker()
 
-    out_dir = Path(out)
+    # Default output under results/feature_compare/...
+    if out is None or str(out).strip() == "":
+        ts_obj = yaml.safe_load(Path(task_spec).read_text(encoding="utf-8")) or {}
+        task_id = ts_obj.get("task_id") if isinstance(ts_obj, dict) else None
+        task_id = str(task_id).strip() if task_id else "TASK"
+        poolb_stem = Path(poolb_yaml).stem
+        base_out = Path("results") / "feature_compare" / f"{task_id}__{poolb_stem}"
+        out_dir = base_out
+        # Avoid clobbering: add suffix if already exists
+        if out_dir.exists():
+            for i in range(1, 1000):
+                cand = Path(f"{str(base_out)}__{i}")
+                if not cand.exists():
+                    out_dir = cand
+                    break
+    else:
+        out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Materialize a derived config and read its resolved required nodes list.
@@ -3670,7 +3687,65 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
         poolb = (obj.get("feature_pipeline") or {}).get("requested_features") or obj.get("requested_features") or []
     if not isinstance(poolb, list):
         poolb = []
-    poolb_nodes = sorted({str(x).strip() for x in poolb if str(x).strip()})
+    poolb_raw = [str(x).strip() for x in poolb if str(x).strip()]
+
+    # Normalize PoolB entries:
+    # - If user provided output column names (e.g. "volume_profile_vpvr"), map them to feature funcs using feature_dependencies.yaml.
+    deps_path = (PROJECT_ROOT / "config/feature_dependencies.yaml").resolve()
+    deps_obj = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
+    feats = deps_obj.get("features") if isinstance(deps_obj, dict) else None
+    feats = feats if isinstance(feats, dict) else {}
+    out2func = {}
+    for func, meta in feats.items():
+        cols = (meta or {}).get("output_columns") if isinstance(meta, dict) else None
+        if isinstance(cols, list):
+            for c in cols:
+                out2func[str(c)] = str(func)
+
+    poolb_norm = []
+    for item in poolb_raw:
+        if item in feats:
+            # common alias convention: foo -> foo_f
+            if (not item.endswith("_f")) and (f"{item}_f" in feats):
+                poolb_norm.append(f"{item}_f")
+            else:
+                poolb_norm.append(item)
+        elif item in out2func:
+            poolb_norm.append(out2func[item])
+        else:
+            poolb_norm.append(item)
+    poolb_nodes = sorted(set(poolb_norm))
+
+    # Build tier membership map (so we can explain "only_poolb" items are actually in tier files but not enabled).
+    # We do NOT assume tier2 is enabled; we just show where each node is declared.
+    ts_obj = yaml.safe_load(Path(task_spec).read_text(encoding="utf-8")) or {}
+    fp_ref = ts_obj.get("feature_plan_ref") if isinstance(ts_obj, dict) else None
+    fp_overrides = ts_obj.get("feature_plan_overrides") if isinstance(ts_obj, dict) else None
+    fp_overrides = fp_overrides if isinstance(fp_overrides, dict) else {}
+    fp_obj = yaml.safe_load(Path(fp_ref).read_text(encoding="utf-8")) if fp_ref else {}
+    fp = (fp_obj.get("feature_plan") if isinstance(fp_obj, dict) else None) or {}
+    # apply shallow overrides for tier_feature_files/tiers_enabled
+    if "tiers_enabled" in fp_overrides:
+        fp["tiers_enabled"] = fp_overrides.get("tiers_enabled")
+    if "tier_feature_files" in fp_overrides:
+        fp["tier_feature_files"] = fp_overrides.get("tier_feature_files")
+
+    tiers_enabled = fp.get("tiers_enabled") if isinstance(fp, dict) else None
+    tiers_enabled = [str(x) for x in tiers_enabled] if isinstance(tiers_enabled, list) else []
+    tier_files = fp.get("tier_feature_files") if isinstance(fp, dict) else None
+    tier_files = tier_files if isinstance(tier_files, dict) else {}
+
+    tier_membership: Dict[str, str] = {}
+    for tier_name, rel_path in tier_files.items():
+        try:
+            items = yaml.safe_load((PROJECT_ROOT / str(rel_path)).read_text(encoding="utf-8")) or []
+            if isinstance(items, list):
+                for node in items:
+                    node = str(node).strip()
+                    if node and node not in tier_membership:
+                        tier_membership[node] = str(tier_name)
+        except Exception:
+            continue
 
     s_tier = set(tier_required)
     s_poolb = set(poolb_nodes)
@@ -3691,6 +3766,17 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
         "overlap": overlap,
         "only_tier": only_tier,
         "only_poolb": only_poolb,
+        "tiers_enabled": tiers_enabled,
+        "only_poolb_tier_hint": [
+            {
+                "node": n,
+                "declared_in_tier": tier_membership.get(n),
+                "tier_enabled": bool(tier_membership.get(n) in tiers_enabled)
+                if tier_membership.get(n)
+                else False,
+            }
+            for n in only_poolb
+        ],
     }
     (out_dir / "features_compare_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -3717,7 +3803,12 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
     if len(only_tier) > 200:
         md.append(f"- ... ({len(only_tier)-200} more)\n")
     md.append("\n## only in poolb\n")
-    md.extend([f"- `{x}`\n" for x in only_poolb[:200]])
+    for x in only_poolb[:200]:
+        tname = tier_membership.get(x)
+        if tname:
+            md.append(f"- `{x}`  (declared_in={tname}, enabled={str(tname in tiers_enabled).lower()})\n")
+        else:
+            md.append(f"- `{x}`\n")
     if len(only_poolb) > 200:
         md.append(f"- ... ({len(only_poolb)-200} more)\n")
     (out_dir / "features_compare_summary.md").write_text("".join(md), encoding="utf-8")

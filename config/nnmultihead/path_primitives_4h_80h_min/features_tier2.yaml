@@ -17,6 +17,7 @@
 # ----------------------------
 - vpin_base_aligned_features_f
 - vpin_derived_features_f
+- vpin_features_f
 - ofi_short_f
 - vpin_scene_semantic_scores_f
 
@@ -50,4 +51,9 @@
 - wpt_volume_energy_f
 - wpt_scene_semantic_scores_f
 - hilbert_phase_f
+- hilbert_advanced_f
+
+# Spectrum strategy-oriented packs (kept optional; can be informative but expensive)
+- spectrum_features_sr_reversal_f
+- spectrum_features_trend_following_f
 
