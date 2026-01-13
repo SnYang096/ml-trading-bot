@@ -1,8 +1,35 @@
-# Tier1 (medium): bar-level semantic/structural features (compression/SR-quality/scene scores, etc.)
+# Tier1 (medium): bar-level semantic/structural features (compression/SR-quality/zigzag/scene scores, etc.)
 # Used by TaskSpec-driven tier materialization in `mlbot nnmultihead pipeline-3action-e2e --task-spec ...`
 #
 # Note: this file is a YAML *list* of feature nodes (compute functions, usually *_f).
+#
+# Design intent:
+# - Tier1 should be dominated by "structure description" features (可解释/可维护/可复盘).
+# - Exclude tick-heavy orderflow + heavy math/WPT features from Tier1; those belong to Tier2+.
 
+# Core compression / release context (bar-level, no ticks)
 - compression_duration_f
 - compression_to_breakout_prob_f
+- compression_score_f
+- compression_energy_f
+
+# Wick semantics (structure + context; no ticks)
+- wick_scene_semantic_scores_f
+
+# Liquidity-void (gap / thin-book proxy from bars; no ticks)
+- liquidity_void_f
+
+# SR quality / proximity (close-based POC/HAL to avoid WPT dependence)
+- poc_hal_features_close_f
+- sr_strength_max_close_f
+- sr_distance_normalized_f
+- sqs_hal_high_f
+- sqs_hal_low_f
+- sqs_f
+- sr_strength_combined_f
+
+# ZigZag structure (proxy for swing points; no ticks)
+- zigzag_high_low_f
+- dist_to_zz_high_atr_f
+- dist_to_zz_low_atr_f
 

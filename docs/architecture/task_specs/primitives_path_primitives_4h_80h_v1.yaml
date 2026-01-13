@@ -37,7 +37,6 @@ evaluation:
 
 config_binding:
   nnmultihead_config_dir: config/nnmultihead/path_primitives_4h_80h_min
-  # feature_contract 现在合并到 features.yaml 中，不再需要单独的 feature_contract.yaml
-  # feature_contract_path: config/nnmultihead/path_primitives_4h_80h_min/feature_contract.yaml  # legacy
+  # feature_contract 现在由 FeaturePlan 提供，并写入派生 features.yaml（不再需要单独的 feature_contract.yaml）
 
 

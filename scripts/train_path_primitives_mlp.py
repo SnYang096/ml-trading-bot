@@ -125,6 +125,16 @@ def main() -> None:
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
 
+    # TaskSpec-only enforcement (no legacy config mode).
+    # We require that `--config` points to a TaskSpec-materialized config directory.
+    if not (cfg_dir / "derived_from_task_spec.json").exists():
+        raise SystemExit(
+            "ERROR: nnmultihead is TaskSpec-only.\n"
+            f"Config dir is not TaskSpec-derived: {cfg_dir}\n"
+            "Please run via `mlbot nnmultihead train --task-spec ...` (recommended),\n"
+            "or materialize first via `mlbot nnmultihead materialize-config-from-task-spec --task-spec ...`."
+        )
+
     # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
     args.features_store_layer = resolve_layer_name(args.features_store_layer, cfg_dir)
 

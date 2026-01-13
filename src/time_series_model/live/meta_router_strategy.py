@@ -111,7 +111,7 @@ if NAUTILUS_AVAILABLE:
             trade_size: float,
             live_config_path: str = "config/nnmultihead/live/meta_router_live_config_v1.yaml",
             constitution_yaml: Optional[str] = None,
-            archetype_registry_path: str = "config/nnmultihead/execution_archetypes_v1.yaml",
+            archetype_registry_path: str = "config/nnmultihead/execution_archetypes_v2.yaml",
         ):
             super().__init__()
             self.strategy_name = str(strategy_name)

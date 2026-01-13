@@ -42,6 +42,7 @@ def enforce_before_order(
     hard_violation: bool = False,
     data_bad: bool = False,
     snapshot_out: Optional[str | Path] = None,
+    snapshot_extra: Optional[Dict[str, Any]] = None,
 ) -> LiveEnforcementResult:
     """
     Minimal live adapter hook:
@@ -95,6 +96,11 @@ def enforce_before_order(
             active_slots=int(runtime_state.slots.active_count()),
             drawdown=float(drawdown) if drawdown is not None else None,
             observability=None,
+            live_dashboard=(
+                dict((snapshot_extra or {}).get("live_dashboard") or {})
+                if snapshot_extra is not None
+                else None
+            ),
             kpi_gate=None,
             overrides=[],
         )

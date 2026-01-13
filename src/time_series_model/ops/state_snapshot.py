@@ -39,6 +39,10 @@ class SystemStateSnapshot:
     # Observability / drift debug (optional, stable extension)
     observability: Optional[Dict[str, Any]] = None
 
+    # Live dashboard: "only watch 5 numbers" (optional, stable extension)
+    # Keys are defined by config/ood/ood_config_v1.yaml::dashboard.keys
+    live_dashboard: Optional[Dict[str, Any]] = None
+
     kpi_gate: Optional[Dict[str, Any]] = None
     overrides: Optional[List[HumanOverride]] = None
 
@@ -56,6 +60,11 @@ class SystemStateSnapshot:
             "observability": (
                 dict(self.observability or {})
                 if self.observability is not None
+                else None
+            ),
+            "live_dashboard": (
+                dict(self.live_dashboard or {})
+                if self.live_dashboard is not None
                 else None
             ),
             "kpi_gate": self.kpi_gate,

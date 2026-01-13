@@ -1,0 +1,39 @@
+name: sr_breakout__suggested
+description: 'SR breakout strategy focusing on breakout quality, momentum persistence,
+  and liquidity void confirmation using WPT/Hilbert/Spectrum features.
+
+  '
+feature_pipeline:
+  exclude_columns:
+  - atr
+  requested_features:
+  - atr_f
+  - poc_hal_features_close_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
+  invert_features:
+  - hal_high
+feature_group_search:
+  base_strategy_dir: /workspaces/ml_trading_bot/config/strategies/sr_breakout
+  objective: Sharpe_mean
+  min_trades: 10
+  seeds:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  selected_groups: []
+  stop_reason: completed
+  base_features:
+  - atr_f
+  - poc_hal_features_close_f
+  final_features:
+  - atr_f
+  - poc_hal_features_close_f
+  groups_source: groups_yaml:/workspaces/ml_trading_bot/results/feature_group_search/sr_breakout_pipeline_poolb_semantic__smoke_best_abc_B/shortlist_groups_B.yaml
+  groups_yaml_auto: false
+  pool_b_yaml: /workspaces/ml_trading_bot/results/pools/sr_breakout/pool_b/_smoke_best_abc/features_pool_b.yaml
+  pool_b_merged_singletons: true
+  feature_blacklist: []

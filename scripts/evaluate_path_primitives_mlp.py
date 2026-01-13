@@ -96,6 +96,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg_dir = Path(args.config).resolve()
+    # TaskSpec-only enforcement (no legacy config mode).
+    if not (cfg_dir / "derived_from_task_spec.json").exists():
+        raise SystemExit(
+            "ERROR: nnmultihead is TaskSpec-only.\n"
+            f"Config dir is not TaskSpec-derived: {cfg_dir}\n"
+            "Please run via `mlbot nnmultihead eval --task-spec ...` (recommended),\n"
+            "or materialize first via `mlbot nnmultihead materialize-config-from-task-spec --task-spec ...`."
+        )
     cfg_loader = StrategyConfigLoader(cfg_dir)
     cfg = cfg_loader.load()
 

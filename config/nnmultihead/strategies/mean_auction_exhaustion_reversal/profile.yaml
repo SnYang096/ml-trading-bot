@@ -1,4 +1,4 @@
 version: 1
 strategy_id: mean_auction_exhaustion_reversal
-archetype: AuctionExhaustionReversal
+archetype: ExhaustionTurnET
 

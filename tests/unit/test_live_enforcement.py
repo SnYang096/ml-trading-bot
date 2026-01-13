@@ -5,6 +5,10 @@ from src.time_series_model.core.constitution.constitution_executor import (
 )
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.live.enforcement import enforce_before_order
+from src.time_series_model.diagnostics.ood_config import load_ood_config_v1
+from src.time_series_model.diagnostics.live_dashboard import (
+    build_live_dashboard_payload,
+)
 
 
 @pytest.mark.unit
@@ -41,13 +45,22 @@ extreme_tail:
     ex = ConstitutionExecutor(constitution_yaml=str(cy))
     st = ex.load_runtime_state()
     out_path = tmp_path / "snap.json"
+    ood_cfg = load_ood_config_v1("config/ood/ood_config_v1.yaml")
+    dash = build_live_dashboard_payload(
+        ood_cfg=ood_cfg,
+        ood_score=None,
+        top_archetype_survival_prob=None,
+        active_archetype=None,
+        size_cap=None,
+        kill_switch_state=None,
+    ).as_dict()
     res = enforce_before_order(
         executor=ex,
         runtime_state=st,
         position_id="p1",
         symbol="BTCUSDT",
         mode="TREND",
-        execution_strategy="BreakoutPullbackContinuation",
+        execution_strategy="TrendContinuationTC",
         execution_evidence={
             "has_orderflow": True,
             "has_trend_context": True,
@@ -55,6 +68,7 @@ extreme_tail:
         },
         drawdown=0.1,
         snapshot_out=str(out_path),
+        snapshot_extra={"live_dashboard": dash},
     )
     assert res.ok is True
     assert out_path.exists()

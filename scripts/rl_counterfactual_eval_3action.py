@@ -91,9 +91,43 @@ def main() -> None:
         default=None,
         help="Router threshold override: dir_conf_trend_min (for report diagnostics).",
     )
+    ap.add_argument(
+        "--survival-preds",
+        default=None,
+        help="Optional survival preds parquet (must contain symbol,timestamp,survival_prob). If provided, will be merged into logs for report + extra baseline.",
+    )
+    ap.add_argument(
+        "--survival-prob-col",
+        default="survival_prob",
+        help="Column name for survival probability after merging (default: survival_prob).",
+    )
+    ap.add_argument(
+        "--ood-score-col",
+        default="ood_score",
+        help="Optional ood score column name in logs (default: ood_score).",
+    )
+    ap.add_argument(
+        "--ood-config",
+        default="config/ood/ood_config_v1.yaml",
+        help="OOD config YAML used to map (ood,survival)->size cap for the extra baseline.",
+    )
     args = ap.parse_args()
 
     df = _read_any(args.logs)
+    if args.survival_preds:
+        sp = _read_any(args.survival_preds)
+        need = {"symbol", "timestamp", str(args.survival_prob_col)}
+        if not need.issubset(set(sp.columns)):
+            raise ValueError(
+                f"--survival-preds missing required cols: {sorted(list(need))}, got {list(sp.columns)}"
+            )
+        sp["timestamp"] = pd.to_datetime(sp["timestamp"], utc=True, errors="coerce")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+        df = df.merge(
+            sp[["symbol", "timestamp", str(args.survival_prob_col)]],
+            on=["symbol", "timestamp"],
+            how="left",
+        )
     router_cfg = Rule3ActionConfig()
     if args.router_mfe_min is not None:
         router_cfg = Rule3ActionConfig(
@@ -123,6 +157,18 @@ def main() -> None:
         ).strip()
         or None,
     )
+    # Optional: let library compute extra baseline if cols exist
+    try:
+        cfg = CounterfactualEvalConfig(
+            **{
+                **cfg.__dict__,
+                "survival_prob_col": str(args.survival_prob_col),
+                "ood_score_col": str(args.ood_score_col),
+                "ood_config_yaml": str(args.ood_config),
+            }
+        )
+    except Exception:
+        pass
 
     Path(args.out).mkdir(parents=True, exist_ok=True)
     _, metrics, _ = train_and_counterfactual_eval_bc3(

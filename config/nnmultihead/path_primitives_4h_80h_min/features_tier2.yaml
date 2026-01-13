@@ -1,0 +1,53 @@
+# Tier2 (heavy, optional): orderflow + math/regime stability features
+# Default: NOT enabled. Enable via TaskSpec.feature_plan.tiers_enabled when you want ablations.
+#
+# WARNING (important):
+# - Tier2 requires a FeatureStore layer that actually contains these columns.
+# - If you enable Tier2 but your FeatureStore layer was built without these feature nodes,
+#   training/eval will fail fast (by design) due to FeatureContract missing columns.
+#
+# Design intent (from docs/architecture/树模型和数学指标的去处.md):
+# - Orderflow is "evidence" (confirmation), not the definition of archetypes.
+# - Math features (Hurst/Spectrum/Hilbert/WPT) are best used for tradeability/regime stability/OOD,
+#   and can be useful as additional context for primitives, but should stay optional to avoid
+#   compute blowups and DOF explosion.
+
+# ----------------------------
+# A) Orderflow (tick-heavy; confirmation evidence)
+# ----------------------------
+- vpin_base_aligned_features_f
+- vpin_derived_features_f
+- ofi_short_f
+- vpin_scene_semantic_scores_f
+
+- trade_cluster_base_aligned_features_f
+- trade_cluster_derived_features_f
+- trade_cluster_scene_semantic_scores_f
+
+# Optional footprint (can be heavy; keep Tier2 only)
+- footprint_basic_f
+
+# ----------------------------
+# B) Volume profile (bar-heavy; structure context)
+# ----------------------------
+- volume_profile_vpvr_f
+- volume_profile_volatility_features_f
+- volume_profile_scene_semantic_scores_f
+
+# ----------------------------
+# C) Math / regime stability (heavy; tradeability/regime/OOD-ish context)
+# ----------------------------
+- hurst_price_f
+- hurst_volume_f
+
+# Spectrum (split version; avoid forcing cvd dependency by default)
+- spectrum_price_features_f
+- spectrum_volume_features_f
+
+# WPT + Hilbert (very heavy; keep optional)
+- wpt_price_fluctuation_f
+- wpt_cvd_fluctuation_f
+- wpt_volume_energy_f
+- wpt_scene_semantic_scores_f
+- hilbert_phase_f
+

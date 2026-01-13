@@ -31,7 +31,7 @@ class ExecutionArchetype:
 
 
 def load_execution_archetypes_registry(
-    path: str | Path = "config/nnmultihead/execution_archetypes_v1.yaml",
+    path: str | Path = "config/nnmultihead/execution_archetypes_v2.yaml",
 ) -> Dict[str, ExecutionArchetype]:
     p = Path(path)
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -121,7 +121,7 @@ def resolve_execution_profile(
     profile_root: str | Path = "config/nnmultihead/strategies",
     archetype_registry_path: (
         str | Path
-    ) = "config/nnmultihead/execution_archetypes_v1.yaml",
+    ) = "config/nnmultihead/execution_archetypes_v2.yaml",
 ) -> Optional[StrategyExecutionProfile]:
     pp = resolve_strategy_profile_path(strategy_name=strategy_id, root_dir=profile_root)
     prof = load_strategy_profile_yaml(pp) if pp else None

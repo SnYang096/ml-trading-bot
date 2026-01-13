@@ -313,9 +313,10 @@ def evaluate_required_conditions_v1(
         risk_mult = 0.0
 
     # Archetype-specific multipliers (coarse, conservative v1).
-    if str(archetype_name) in ("MomentumExpansion",):
+    # NOTE: stable 4-archetype IDs: TC/TE/FR/ET.
+    if str(archetype_name) in ("TrendExpansionTE",):
         risk_mult *= 1.1
-    if str(archetype_name) in ("AuctionExhaustionReversal",):
+    if str(archetype_name) in ("ExhaustionTurnET",):
         risk_mult *= 0.8
 
     return HeuristicDecision(

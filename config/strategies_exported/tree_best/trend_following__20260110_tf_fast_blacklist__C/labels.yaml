@@ -1,0 +1,19 @@
+name: trend_following
+target_column: label
+
+label_generator:
+  module: src.time_series_model.strategies.labels.trend_following_label
+  function: compute_trend_following_label
+  params:
+    price_col: close
+    horizon: 50
+    rank_window: 200
+    min_periods: 50
+
+filters:
+  - column: label
+    notna: true
+
+post_label_filters:
+  # NOTE: `ensure_feature_non_null` was deprecated (no-op). Keep post_label_filters empty for now.
+

@@ -121,3 +121,31 @@ current_risk / allowed_risk
 
 如果这 5 个数都没报警，
 你根本不需要看别的。
+
+---
+
+二、增强版（同一套世界观的“可落地版”）
+
+> 依然坚持“只看少数关键数”，只是把它们变成 **可执行/可回测/可审计** 的接口输出。
+
+✅ 建议增强为这 5 个（和基础版一一对应）：
+
+1) OOD Score（全局，0~1）
+   - 解释：当前市场有多“分布外”
+   - 用法：超过阈值 -> 触发 kill / 降速；低于更严格阈值 -> 分阶段 revive
+
+2) Top Archetype Survival Prob（0~1）
+   - 解释：在当前世界里，最可能“活得久”的 archetype 的生存概率（来自 Survival Head）
+   - 用法：用于选择 archetype / 给 size cap 上限
+
+3) Active Archetype + Router Confidence
+   - 解释：当前实际启用的 archetype（TC/TE/FR/ET）以及 Router 对当前 regime 的置信度
+   - 用法：解释“今天在做什么”，而不是“今天赚不赚”
+
+4) Size Cap（当前）
+   - 解释：当前允许的最大风险暴露上限（来自 OOD/Survival/Constitution 的合成）
+   - 用法：这是“最后一道保险丝”更细的版本
+
+5) Kill-switch State（运行态）
+   - 解释：是否处于 freeze / degrade / revive phase1/2/3
+   - 用法：让系统行为可审计（为什么不下单 / 为什么只小仓位）

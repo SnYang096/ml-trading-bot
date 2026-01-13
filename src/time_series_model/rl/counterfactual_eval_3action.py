@@ -22,6 +22,11 @@ from src.time_series_model.portfolio.portfolio_assets_v1 import (
 )
 from src.time_series_model.portfolio.mean_system import compute_mean_system_health
 
+from src.time_series_model.diagnostics.ood_config import (
+    compute_size_cap_multiplier,
+    load_ood_config_v1,
+)
+
 from .bc_dataset import (
     BCStateSchema,
     Router3Action,
@@ -82,6 +87,11 @@ class CounterfactualEvalConfig:
     portfolio_assets_yaml: Optional[str] = None
     portfolio_key_symbols: Sequence[str] = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
     portfolio_assets_tail_points: int = 240
+
+    # Optional: Survival Head integration (research + live share semantics)
+    survival_prob_col: str = "survival_prob"
+    ood_score_col: str = "ood_score"
+    ood_config_yaml: Optional[str] = None
 
 
 def _binary_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
@@ -703,6 +713,8 @@ def train_and_counterfactual_eval_bc3(
 
         mean_mult_arr = None
         trend_mult_arr = None
+        surv_mean_mult_arr = None
+        surv_trend_mult_arr = None
         if pcm_mult_by_ts and cfg.timestamp_col in g.columns:
             ts_arr = pd.to_datetime(g[cfg.timestamp_col], utc=True, errors="coerce")
             mm = []
@@ -713,6 +725,36 @@ def train_and_counterfactual_eval_bc3(
                 tm.append(float(t2))
             mean_mult_arr = mm
             trend_mult_arr = tm
+
+        # Optional: Survival baseline multipliers (size_cap = survival^a * (1-ood)^b).
+        try:
+            if (
+                cfg.ood_config_yaml
+                and cfg.survival_prob_col in g.columns
+                and cfg.ood_score_col in g.columns
+            ):
+                ood_cfg = load_ood_config_v1(str(cfg.ood_config_yaml))
+                ood_arr = (
+                    pd.to_numeric(g[cfg.ood_score_col], errors="coerce")
+                    .fillna(0.0)
+                    .to_numpy(dtype=float)
+                )
+                surv_arr = (
+                    pd.to_numeric(g[cfg.survival_prob_col], errors="coerce")
+                    .fillna(1.0)
+                    .to_numpy(dtype=float)
+                )
+                cap = [
+                    compute_size_cap_multiplier(
+                        cfg=ood_cfg, ood_score=float(o), survival_prob=float(s)
+                    )
+                    for o, s in zip(ood_arr.tolist(), surv_arr.tolist())
+                ]
+                surv_mean_mult_arr = cap
+                surv_trend_mult_arr = cap
+        except Exception:
+            surv_mean_mult_arr = None
+            surv_trend_mult_arr = None
 
         # Baselines:
         # - rule: the original rule router execution (full exposure per mode)
@@ -729,6 +771,17 @@ def train_and_counterfactual_eval_bc3(
             if (mean_mult_arr is not None or trend_mult_arr is not None)
             else out_rule
         )
+        out_rule_survival = (
+            simulate_3action_episode(
+                g,
+                actions=ra.tolist(),
+                mean_multiplier=surv_mean_mult_arr,
+                trend_multiplier=surv_trend_mult_arr,
+                cfg=cfg.sim_cfg,
+            )
+            if (surv_mean_mult_arr is not None or surv_trend_mult_arr is not None)
+            else out_rule
+        )
         out_pred = simulate_3action_episode(g, actions=pa.tolist(), cfg=cfg.sim_cfg)
         out_mean_only = simulate_3action_episode(
             g, actions=ma.tolist(), cfg=cfg.sim_cfg
@@ -736,6 +789,7 @@ def train_and_counterfactual_eval_bc3(
 
         eq_r = out_rule["equity"].to_numpy(dtype=float)
         eq_r_pcm = out_rule_pcm["equity"].to_numpy(dtype=float)
+        eq_r_surv = out_rule_survival["equity"].to_numpy(dtype=float)
         eq_p = out_pred["equity"].to_numpy(dtype=float)
         eq_m = out_mean_only["equity"].to_numpy(dtype=float)
         pnl_r = (
@@ -744,6 +798,11 @@ def train_and_counterfactual_eval_bc3(
         pnl_r_pcm = (
             out_rule_pcm["pnl"].to_numpy(dtype=float)
             if "pnl" in out_rule_pcm.columns
+            else None
+        )
+        pnl_r_surv = (
+            out_rule_survival["pnl"].to_numpy(dtype=float)
+            if "pnl" in out_rule_survival.columns
             else None
         )
         pnl_p = (
@@ -767,10 +826,12 @@ def train_and_counterfactual_eval_bc3(
                 "steps_per_year": float(steps_per_year) if steps_per_year else 0.0,
                 "rule_total_return": _total_return(eq_r),
                 "rule_pcm_total_return": _total_return(eq_r_pcm),
+                "rule_survival_total_return": _total_return(eq_r_surv),
                 "pred_total_return": _total_return(eq_p),
                 "mean_only_total_return": _total_return(eq_m),
                 "rule_max_dd": _max_drawdown(eq_r),
                 "rule_pcm_max_dd": _max_drawdown(eq_r_pcm),
+                "rule_survival_max_dd": _max_drawdown(eq_r_surv),
                 "pred_max_dd": _max_drawdown(eq_p),
                 "mean_only_max_dd": _max_drawdown(eq_m),
                 "rule_ann_return": _ann_return_from_equity(
@@ -778,6 +839,9 @@ def train_and_counterfactual_eval_bc3(
                 ),
                 "rule_pcm_ann_return": _ann_return_from_equity(
                     eq_r_pcm, steps_per_year=steps_per_year
+                ),
+                "rule_survival_ann_return": _ann_return_from_equity(
+                    eq_r_surv, steps_per_year=steps_per_year
                 ),
                 "pred_ann_return": _ann_return_from_equity(
                     eq_p, steps_per_year=steps_per_year
@@ -793,6 +857,11 @@ def train_and_counterfactual_eval_bc3(
                 "rule_pcm_ann_vol": (
                     _ann_vol_from_pnl(pnl_r_pcm, steps_per_year=steps_per_year)
                     if pnl_r_pcm is not None
+                    else 0.0
+                ),
+                "rule_survival_ann_vol": (
+                    _ann_vol_from_pnl(pnl_r_surv, steps_per_year=steps_per_year)
+                    if pnl_r_surv is not None
                     else 0.0
                 ),
                 "pred_ann_vol": (
@@ -815,6 +884,11 @@ def train_and_counterfactual_eval_bc3(
                     if pnl_r_pcm is not None
                     else 0.0
                 ),
+                "rule_survival_sharpe": (
+                    _sharpe_from_pnl(pnl_r_surv, steps_per_year=steps_per_year)
+                    if pnl_r_surv is not None
+                    else 0.0
+                ),
                 "pred_sharpe": (
                     _sharpe_from_pnl(pnl_p, steps_per_year=steps_per_year)
                     if pnl_p is not None
@@ -835,6 +909,11 @@ def train_and_counterfactual_eval_bc3(
                     if pnl_r_pcm is not None
                     else 0.0
                 ),
+                "rule_survival_sortino": (
+                    _sortino_from_pnl(pnl_r_surv, steps_per_year=steps_per_year)
+                    if pnl_r_surv is not None
+                    else 0.0
+                ),
                 "pred_sortino": (
                     _sortino_from_pnl(pnl_p, steps_per_year=steps_per_year)
                     if pnl_p is not None
@@ -850,6 +929,11 @@ def train_and_counterfactual_eval_bc3(
                 ),
                 "rule_pcm_turnover_mean": (
                     float(out_rule_pcm["turnover"].mean()) if len(out_rule_pcm) else 0.0
+                ),
+                "rule_survival_turnover_mean": (
+                    float(out_rule_survival["turnover"].mean())
+                    if len(out_rule_survival)
+                    else 0.0
                 ),
                 "pred_turnover_mean": (
                     float(out_pred["turnover"].mean()) if len(out_pred) else 0.0
@@ -871,6 +955,11 @@ def train_and_counterfactual_eval_bc3(
                 "rule_pcm_final_equity": (
                     float(eq_r_pcm[-1])
                     if len(eq_r_pcm)
+                    else float(cfg.sim_cfg.initial_equity)
+                ),
+                "rule_survival_final_equity": (
+                    float(eq_r_surv[-1])
+                    if len(eq_r_surv)
                     else float(cfg.sim_cfg.initial_equity)
                 ),
                 "pred_final_equity": (
@@ -896,6 +985,11 @@ def train_and_counterfactual_eval_bc3(
             if len(per_symbol)
             else 0.0
         ),
+        "rule_survival_avg_total_return": (
+            float(per_symbol["rule_survival_total_return"].mean())
+            if len(per_symbol)
+            else 0.0
+        ),
         "pred_avg_total_return": (
             float(per_symbol["pred_total_return"].mean()) if len(per_symbol) else 0.0
         ),
@@ -909,6 +1003,9 @@ def train_and_counterfactual_eval_bc3(
         ),
         "rule_pcm_avg_max_dd": (
             float(per_symbol["rule_pcm_max_dd"].mean()) if len(per_symbol) else 0.0
+        ),
+        "rule_survival_avg_max_dd": (
+            float(per_symbol["rule_survival_max_dd"].mean()) if len(per_symbol) else 0.0
         ),
         "pred_avg_max_dd": (
             float(per_symbol["pred_max_dd"].mean()) if len(per_symbol) else 0.0
@@ -942,7 +1039,7 @@ def train_and_counterfactual_eval_bc3(
 
     # Risk metrics (mean/std across symbols)
     if len(per_symbol):
-        for side in ["rule", "rule_pcm", "pred", "mean_only"]:
+        for side in ["rule", "rule_pcm", "rule_survival", "pred", "mean_only"]:
             for k in ["sharpe", "sortino", "ann_return", "ann_vol"]:
                 col = f"{side}_{k}"
                 if col in per_symbol.columns:
@@ -1136,6 +1233,9 @@ def train_and_counterfactual_eval_bc3(
         mean_only_dd = float(metrics.get("mean_only_avg_max_dd", 0.0))
         rule_tr = float(metrics.get("rule_avg_total_return", 0.0))
         rule_pcm_tr = float(metrics.get("rule_pcm_avg_total_return", 0.0))
+        rule_surv_sh = float(metrics.get("rule_survival_sharpe_mean", 0.0))
+        rule_surv_dd = float(metrics.get("rule_survival_avg_max_dd", 0.0))
+        rule_surv_tr = float(metrics.get("rule_survival_avg_total_return", 0.0))
         pred_tr = float(metrics.get("pred_avg_total_return", 0.0))
         mean_only_tr = float(metrics.get("mean_only_avg_total_return", 0.0))
         trade_rate = float(metrics.get("router_diag__trade_rate", 0.0))
@@ -1161,6 +1261,9 @@ def train_and_counterfactual_eval_bc3(
             ("Rule+PCM Sharpe (mean)", _fmt(rule_pcm_sh, 3)),
             ("Rule+PCM MaxDD (mean)", _fmt(rule_pcm_dd, 3)),
             ("Rule+PCM TotalReturn (mean)", _fmt(rule_pcm_tr, 3)),
+            ("Rule+Survival Sharpe (mean)", _fmt(rule_surv_sh, 3)),
+            ("Rule+Survival MaxDD (mean)", _fmt(rule_surv_dd, 3)),
+            ("Rule+Survival TotalReturn (mean)", _fmt(rule_surv_tr, 3)),
             ("Mean-only Sharpe (mean)", _fmt(mean_only_sh, 3)),
             ("Mean-only MaxDD (mean)", _fmt(mean_only_dd, 3)),
             ("Mean-only TotalReturn (mean)", _fmt(mean_only_tr, 3)),

@@ -105,10 +105,14 @@ mlbot data download-funding-rate \
 > - `docs/guides/LIVE_TRADING_ROADMAP_MULTI_ASSET_CN.md`（多资产合约实盘落地路线图）
 > - `docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`（NN 多资产系统：Task/Router/Gate/Execution 宪法与运维落地设计）
 > - `docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`（架构升级 V1：TaskSpec + Constitution + PCM）
+> - `docs/architecture/archetype灭绝级回测.md`（Archetype 灭绝级回测：压力测试→生存评分→Router/Size 映射）
+> - `docs/architecture/ood头的训练.md`（OOD/Survival Head：监督信号定义、loss、评估曲线、熄火/复燃验证）
+> - `docs/architecture/LiveDashboard.md`（LiveDashboard：只盯 5 个数（含增强版），用于阻止系统犯蠢）
 > - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
 > - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
 > - `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找“平坦高原”而非尖峰，Router/SLTP 通用）
 > - `docs/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
+> - `docs/guides/NNMULTIHEAD_CONFIG_FILES_CN.md`（nnmultihead 配置文件职责图：TaskSpec/FeaturePlan/features.yaml/labels.yaml/model.yaml）
 
 ### 0) 质量闸门（推荐）
 
@@ -201,30 +205,23 @@ mlbot nnmultihead materialize-config-from-task-spec --no-docker \
 
 > `task_spec_v1.yaml` 里通过 `feature_plan.tiers_enabled` + `tier_feature_files` 显式定义 Tier0/Tier1 的 feature nodes 列表。  
 
-### 2) 用派生 config 训练（得到对应 tiers 的 model.pt + A-layer 报告）
+### 2) 训练（TaskSpec-only：命令会自动 materialize 派生 config）
 
 ```bash
 mlbot nnmultihead train --no-docker \
-  --config results/derived_cfg/tier01 \
-  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
-  --timeframe 240T \
-  --start-date 2023-01-01 --end-date 2024-12-31 \
-  --features-store-root feature_store \
-  --features-store-layer nnmh_tree_union_all_240T_v2
+  --task-spec config/tasks/task_spec_v1.yaml \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT
 ```
 
-### 3) 跑主链路评估（predict → router → build-logs → e2e）
+### 3) 跑主链路评估（predict → router → build-logs → e2e）（TaskSpec-only）
 
 ```bash
 mlbot nnmultihead pipeline-3action-e2e --no-docker \
   --task-spec config/tasks/task_spec_v1.yaml \
-  --config results/derived_cfg/tier01 \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
   --start-date 2025-05-01 --end-date 2025-12-31 \
   --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
-  --feature-store-root feature_store \
-  --feature-store-layer nnmh_tree_union_all_240T_v2 \
   --returns-source rr_execution \
   --out results/nnmh_e2e/tier01
 ```
@@ -245,6 +242,41 @@ mlbot diagnose threshold-plateau --no-docker \
   --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
   --baseline-json results/nnmh_e2e/tier01/router_thresholds_baseline.json \
   --out results/plateau/router3action_tier01_oos_v1
+```
+
+### 3.2) 灭绝回放（Extinction Replay）：产出 survival labels（给 Survival Head / 熄火复燃验证）
+
+> 目的：把 “在极端路径里会不会死” 变成可回放、可产物、可训练的标签（`labels.parquet`）。
+> 对应长文：`docs/architecture/archetype灭绝级回测.md`、`docs/architecture/ood头的训练.md`
+
+```bash
+mlbot diagnose extinction-replay-3action --no-docker \
+  --logs results/nnmh_e2e/tier01/logs_3action.parquet \
+  --out  results/extinction_replay/tier01_v1
+```
+
+### 3.3) 训练 Survival Head（MLP）：产出 survival_prob（给 size cap / 熄火复燃）
+
+> 输入：`logs_3action.parquet` + 上一步产出的 `labels.parquet`  
+> 输出：`model.pt` + `survival_preds.parquet` + `report.html`（含 ROC/PR/Calibration 曲线）
+
+```bash
+mlbot diagnose survival-head-train --no-docker \
+  --logs   results/nnmh_e2e/tier01/logs_3action.parquet \
+  --labels results/extinction_replay/tier01_v1/labels.parquet \
+  --out    results/survival_head/tier01_v1
+```
+
+### 3.4) Conditional Survival Table：学习 OOD → Archetype 生存权重（baseline）
+
+> 目的：先用最稳的“表格基线”学习 `survival_rate(archetype | ood_bin)`，并导出可部署的 `weights.yaml`。  
+> 备注：需要 `logs_3action.parquet` 中存在 `ood_score` 与 `active_archetype` 列（通常来自 LiveDashboard/Router 产物合并）。
+
+```bash
+mlbot diagnose ood-to-archetype-weights --no-docker \
+  --logs   results/nnmh_e2e/tier01/logs_3action.parquet \
+  --labels results/extinction_replay/tier01_v1/labels.parquet \
+  --out    results/ood_to_archetype/tier01_v1
 ```
 
 对比方式：

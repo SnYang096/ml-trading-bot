@@ -68,43 +68,20 @@ enforcement:
   constitution_yaml: "config/constitution/constitution_v1.yaml"
   kpi_gate_yaml: "config/kpi_gates/router_counterfactual_v1.yaml"
 
-feature_plan:
-  # See: docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md
-  #
-  # IMPORTANT: feature_plan.tiers_enabled does NOT magically change which features are used.
-  # The actual features used by training/inference are defined by:
-  # - `model_plan.base_config_dir` -> `config/nnmultihead/.../features.yaml`
-  # - and the FeatureStore layer you point to (`feature_store.layer`)
-  #
-  # So why keep `tiers_enabled` here?
-  # - It is an *engineering contract / planning label*:
-  #   - tells you which feature complexity tiers you intended to enable for this task
-  #   - helps prevent "Tier3 + Top10" accidentally (audit + review)
-  # - In V1.1 we don't auto-derive tiers->features. It is metadata + review gate.
-  #
-  # If you prefer, we can later evolve this into:
-  # - separate feature files: features_tier0.yaml, features_tier1.yaml
-  # - or required/optional_blocks in `features.yaml` and set optional blocks here
-  tiers_enabled:
-    - "TIER0_OHLCV_LIGHT"              # Tier0: OHLCV + light rolling (fast baseline)
-    - "TIER1_BAR_SEMANTIC_STRUCTURAL"  # Tier1: bar semantic/structure/compression/SR-quality
-  # Make tiers concrete & unambiguous:
-  # - each enabled tier must map to a YAML list of feature nodes (compute funcs, e.g. *_f)
-  # - pipeline will materialize a derived `features.yaml` from these files (so tiers are not "PPT only")
-  tier_feature_files:
-    TIER0_OHLCV_LIGHT: "config/nnmultihead/path_primitives_4h_80h_min/features_tier0.yaml"
-    TIER1_BAR_SEMANTIC_STRUCTURAL: "config/nnmultihead/path_primitives_4h_80h_min/features_tier1.yaml"
-  optional_blocks_enabled: []
-  # FeatureStore contract
-  feature_store:
-    root: "feature_store"
-    # FeatureStore layer is the REAL "what features exist" contract for this task run.
-    # It must be built from a config whose features.yaml matches the intended tier plan.
-    layer: "nnmh_tree_union_all_240T_v2"
-    monthly_parallelism:
-      workers: 4
-      backend: "process" # process|thread
-    fast_features: true
+# Feature plan:
+# - Prefer referencing a nnmultihead-owned plan file, so feature configs live in one place.
+# - TaskSpec can still override specific fields via `feature_plan_overrides` if needed for ablations.
+feature_plan_ref: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan_v1.yaml"
+
+# Optional: per-task overrides (only include keys you want to change for this run)
+# feature_plan_overrides:
+#   tiers_enabled:
+#     - "TIER0_OHLCV_LIGHT"
+#     - "TIER1_BAR_SEMANTIC_STRUCTURAL"
+#     - "TIER2_ORDERFLOW_MATH_OPTIONAL"
+#   optional_blocks_enabled:
+#     - "vpin_block"
+#     - "trade_cluster_block"
 
 # Plugin-like entrypoints (for quick code navigation / review).
 # These are documentation-only pointers; pipeline uses the actual CLI/scripts.

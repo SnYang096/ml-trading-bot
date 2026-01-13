@@ -1,0 +1,10 @@
+strategy:
+  name: sr_breakout
+  description: >
+    SR breakout strategy capturing high-quality breakouts confirmed by
+    volume-price energy and liquidity void analysis.
+  tags:
+    - sr
+    - breakout
+  owner: quant_team
+

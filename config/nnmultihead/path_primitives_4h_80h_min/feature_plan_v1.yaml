@@ -1,0 +1,82 @@
+version: 1
+
+# NNMultihead Feature Plan v1 (feature-domain config)
+#
+# Purpose:
+# - Keep all "feature selection & compute knobs" in ONE place under config/nnmultihead/...
+# - TaskSpec should reference this plan (feature_plan_ref) and focus on non-feature task concerns
+#   (windows/objectives/acceptance/enforcement/etc).
+#
+# Single-source-of-truth rules:
+# - Tier definitions (tiers_enabled + tier_feature_files) live here.
+# - Optional block library (node-level) lives here.
+# - Which optional blocks are enabled for the run lives here by default, but can be overridden per TaskSpec.
+# - FeatureStore defaults (root/layer/parallelism/fast_features) live here.
+
+feature_plan:
+  tiers_enabled:
+    - "TIER0_OHLCV_LIGHT"
+    - "TIER1_BAR_SEMANTIC_STRUCTURAL"
+    # - "TIER2_ORDERFLOW_MATH_OPTIONAL"
+
+  tier_feature_files:
+    TIER0_OHLCV_LIGHT: "config/nnmultihead/path_primitives_4h_80h_min/features_tier0.yaml"
+    TIER1_BAR_SEMANTIC_STRUCTURAL: "config/nnmultihead/path_primitives_4h_80h_min/features_tier1.yaml"
+    TIER2_ORDERFLOW_MATH_OPTIONAL: "config/nnmultihead/path_primitives_4h_80h_min/features_tier2.yaml"
+
+  # Exclude columns from NN MLP inputs (still computed & kept for labels/contracts).
+  exclude_columns: [atr]
+
+  # Optional blocks library (node-level grouping).
+  optional_blocks_library:
+    vpin_block:
+      - vpin_base_aligned_features_f
+      - vpin_derived_features_f
+    trade_cluster_block:
+      - trade_cluster_base_aligned_features_f
+      - trade_cluster_imbalance_ratio_ma_features_f
+      - trade_cluster_entropy_ma_change_features_f
+      - trade_cluster_max_buy_run_ma_features_f
+      - trade_cluster_max_buy_run_zscore_features_f
+      - trade_cluster_max_run_ratio_features_f
+      - trade_cluster_net_runs_ratio_features_f
+      - trade_cluster_net_runs_ma_features_f
+      - trade_cluster_net_runs_zscore_features_f
+      - trade_cluster_total_runs_ma_features_f
+    volume_profile_block:
+      - volume_profile_volatility_features_f
+      - volume_profile_vpvr_f
+
+  # Default: keep baseline clean (no optional blocks).
+  # TaskSpec may override this list for ablations.
+  optional_blocks_enabled: []
+
+  # FeatureStore defaults for this feature plan.
+  feature_store:
+    root: "feature_store"
+    layer: "nnmh_tree_union_all_240T_v2"
+    monthly_parallelism:
+      workers: 4
+      backend: "process"
+    fast_features: true
+
+  # Feature contract (stable semantics; rarely changed).
+  # This is intentionally kept INSIDE feature plan to reduce file count.
+  # The materializer will write it into the derived `features.yaml.feature_contract`,
+  # and overwrite `minimal_required_cols` with:
+  #   (baseline minimal_required_cols) ∪ (tier output_columns union)
+  feature_contract:
+    minimal_required_cols:
+      - open
+      - high
+      - low
+      - close
+      - volume
+      - atr
+      # Slicing / diagnostics proxies (optional, but declared to make missingness visible)
+      - trend_r2_20
+      - compression_score
+    missingness_policy:
+      optional_blocks_on_missing: skip
+      append_block_mask: true
+      block_dropout_p: 0.05

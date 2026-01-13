@@ -34,7 +34,7 @@ def test_trend_breakout_pullback_continuation_can_pass_minimal() -> None:
         "total_vol": 10.0,
     }
     hd = evaluate_required_conditions_v1(
-        archetype_name="BreakoutPullbackContinuation",
+        archetype_name="TrendContinuationTC",
         regime="TREND",
         required_conditions=["structure_breakout", "healthy_pullback", "rr_geq_2"],
         feats=feats,
@@ -61,7 +61,7 @@ def test_mean_failed_breakout_fade_requires_absorption_and_failed_breakout() -> 
         "total_vol": 10.0,
     }
     hd = evaluate_required_conditions_v1(
-        archetype_name="FailedBreakoutFade",
+        archetype_name="FailureReversionFR",
         regime="MEAN",
         required_conditions=[
             "breakout_failed_close_back",

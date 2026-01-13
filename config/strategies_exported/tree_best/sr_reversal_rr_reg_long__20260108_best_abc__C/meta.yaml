@@ -1,0 +1,13 @@
+strategy:
+  name: sr_reversal_rr_reg_long
+  description: >
+    Long-only SR reversal regression variant: continuous RR (MFE/MAE) label near SR,
+    model learns to rank entries by expected R/R instead of binary TP/SL outcomes.
+  tags:
+    - sr
+    - reversal
+    - intraday
+    - long_only
+    - regression
+  owner: quant_team
+

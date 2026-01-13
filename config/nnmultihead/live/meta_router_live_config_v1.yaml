@@ -4,23 +4,19 @@ name: "meta_router_live_config_v1"
 # One Nautilus Strategy hosts all archetypes; do NOT run one-strategy-per-archetype.
 enabled_archetypes:
   TREND:
-    - BreakoutPullbackContinuation
-    - MomentumExpansion
-    - HTFBiasLTFEntry
+    - TrendContinuationTC
+    - TrendExpansionTE
   MEAN:
-    - FailedBreakoutFade
-    - LiquiditySweepRejection
-    - AuctionExhaustionReversal
+    - FailureReversionFR
+    - ExhaustionTurnET
   NO_TRADE: []
 
 # Per-archetype size multipliers (relative to base trade_size).
 size_multipliers:
-  BreakoutPullbackContinuation: 1.0
-  MomentumExpansion: 1.0
-  HTFBiasLTFEntry: 1.0
-  FailedBreakoutFade: 1.0
-  LiquiditySweepRejection: 1.0
-  AuctionExhaustionReversal: 0.5   # "small size, once" bias
+  TrendContinuationTC: 1.0
+  TrendExpansionTE: 0.6            # "火箭、一次只来一个" (默认更小、更克制)
+  FailureReversionFR: 1.0
+  ExhaustionTurnET: 0.5            # "医生": 小仓位、条件极端才用
 
 # Vol Mean overlay (Mean Alpha #2): implemented but disabled by default.
 vol_mean:

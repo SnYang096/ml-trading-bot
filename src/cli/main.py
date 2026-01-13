@@ -198,6 +198,211 @@ def run_script(script_path: str, args: List[str], docker: bool = False, **kwargs
 
 
 # =============================================================================
+# TaskSpec -> derived nnmultihead config (single entrypoint)
+# =============================================================================
+
+
+def materialize_nnmh_config_from_task_spec(
+    *,
+    task_spec_path: str,
+    base_config_dir: str,
+    out_config_dir: str,
+) -> str:
+    """
+    Materialize a concrete nnmultihead config directory from TaskSpec tiers.
+
+    Single-source-of-truth rule (enforced by design):
+    - required feature nodes come ONLY from TaskSpec tiers (tier files).
+    - optional block enablement comes ONLY from TaskSpec optional_blocks_enabled.
+    - base config's features.yaml is treated as a template (schema + block library).
+    """
+    import yaml
+    import shutil
+    import json as _json2
+
+    ts_path = Path(task_spec_path)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    if not ts_path.exists():
+        raise click.ClickException(f"TaskSpec not found: {ts_path}")
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+
+    # Feature plan sources (in priority order):
+    # 1) feature_plan_ref (recommended): load nnmultihead-owned feature plan file
+    # 2) feature_plan_overrides: per-task overrides
+    # 3) feature_plan (inline): legacy/temporary compatibility
+    fp: Dict[str, Any] = {}
+    plan_ref = str(ts_obj.get("feature_plan_ref") or "").strip()
+    if plan_ref:
+        p = Path(plan_ref)
+        if not p.is_absolute():
+            p = (PROJECT_ROOT / p).resolve()
+        if not p.exists():
+            raise click.ClickException(f"feature_plan_ref not found: {p}")
+        objp = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        if isinstance(objp, dict):
+            fp = objp.get("feature_plan") or {}
+    # Apply overrides if present
+    fp_over = ts_obj.get("feature_plan_overrides") or {}
+    if isinstance(fp_over, dict) and fp_over:
+        fp = {**fp, **fp_over}
+    # Apply inline as last (compat)
+    fp_inline = ts_obj.get("feature_plan") or {}
+    if isinstance(fp_inline, dict) and fp_inline:
+        fp = {**fp, **fp_inline}
+    tiers_enabled = fp.get("tiers_enabled") or []
+    tier_feature_files = fp.get("tier_feature_files") or {}
+    if not (isinstance(tiers_enabled, list) and isinstance(tier_feature_files, dict)):
+        raise click.ClickException("TaskSpec missing feature_plan.tiers_enabled or tier_feature_files")
+
+    # Collect feature nodes from enabled tier files
+    tier_nodes: List[str] = []
+    for tier_name in tiers_enabled:
+        k = str(tier_name).strip()
+        fpath = tier_feature_files.get(k)
+        if not fpath:
+            continue
+        p = Path(str(fpath))
+        if not p.is_absolute():
+            p = (PROJECT_ROOT / p).resolve()
+        if not p.exists():
+            raise click.ClickException(f"TaskSpec tier_feature_files[{k}] not found: {p}")
+        obj = yaml.safe_load(p.read_text(encoding="utf-8"))
+        if not isinstance(obj, list):
+            raise click.ClickException(f"Tier file must be a YAML list: {p}")
+        tier_nodes.extend([str(x).strip() for x in obj if str(x).strip()])
+    tier_nodes = sorted(set(tier_nodes))
+    if not tier_nodes:
+        raise click.ClickException("No tier feature nodes collected (tiers_enabled/tier_feature_files mismatch).")
+
+    base_dir = Path(base_config_dir)
+    if not base_dir.is_absolute():
+        base_dir = (PROJECT_ROOT / base_dir).resolve()
+    if not base_dir.exists():
+        raise click.ClickException(f"Base config dir not found: {base_dir}")
+
+    outp = Path(out_config_dir)
+    if not outp.is_absolute():
+        outp = (PROJECT_ROOT / outp).resolve()
+    if outp.exists():
+        shutil.rmtree(outp)
+    shutil.copytree(base_dir, outp)
+
+    feat_path = outp / "features.yaml"
+    feat_obj = yaml.safe_load(feat_path.read_text(encoding="utf-8")) or {}
+    fp2 = feat_obj.get("feature_pipeline") or {}
+    # TaskSpec can override exclude_columns (still computed, but excluded from MLP inputs)
+    exc = fp.get("exclude_columns", None)
+    if exc is not None:
+        if not isinstance(exc, list):
+            raise click.ClickException("TaskSpec feature_plan.exclude_columns must be a list when provided")
+        fp2["exclude_columns"] = [str(x).strip() for x in exc if str(x).strip()]
+    req = fp2.get("requested_features") or {}
+    if not isinstance(req, dict):
+        req = {}
+
+    # Required features come ONLY from tiers
+    req["required"] = tier_nodes
+
+    # Optional blocks are enabled/disabled ONLY by FeaturePlan (via TaskSpec feature_plan_ref / overrides).
+    # Block definitions (library) also live ONLY in FeaturePlan to avoid duplicated definitions.
+    ob_library = fp.get("optional_blocks_library", {}) or {}
+    if not isinstance(ob_library, dict):
+        raise click.ClickException("TaskSpec feature_plan.optional_blocks_library must be a dict when provided")
+    ob_enabled = fp.get("optional_blocks_enabled", [])
+    if not isinstance(ob_enabled, list):
+        raise click.ClickException("TaskSpec feature_plan.optional_blocks_enabled must be a list")
+    enabled_keys = {str(x).strip() for x in ob_enabled if str(x).strip()}
+    if not enabled_keys:
+        req["optional_blocks"] = {}
+    else:
+        missing = sorted([k for k in enabled_keys if k not in ob_library])
+        if missing:
+            raise click.ClickException(
+                f"TaskSpec optional_blocks_enabled references missing blocks in optional_blocks_library: {missing}"
+            )
+        req["optional_blocks"] = {k: ob_library.get(k) for k in sorted(enabled_keys)}
+
+    fp2["requested_features"] = req
+    feat_obj["feature_pipeline"] = fp2
+
+    # Rebuild feature_contract from FeaturePlan:
+    # - FeaturePlan.feature_contract provides stable contract semantics (baseline minimal cols + missingness_policy)
+    # - minimal_required_cols overwritten by (baseline minimal + tier output_columns union)
+    deps_path = (PROJECT_ROOT / "config/feature_dependencies.yaml").resolve()
+    deps = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
+    feats = deps.get("features") or {}
+    out_cols: List[str] = []
+    for node in tier_nodes:
+        meta = feats.get(str(node)) if isinstance(feats, dict) else None
+        cols = meta.get("output_columns") if isinstance(meta, dict) else None
+        if isinstance(cols, list) and cols:
+            out_cols.extend([str(c).strip() for c in cols if str(c).strip()])
+    out_cols = sorted(set(out_cols))
+
+    # Baseline contract comes from FeaturePlan (kept in the feature_plan_ref file).
+    fc0 = fp.get("feature_contract") if isinstance(fp, dict) else None
+    fc0 = fc0 if isinstance(fc0, dict) else {}
+
+    baseline_min = fc0.get("minimal_required_cols") if isinstance(fc0, dict) else None
+    if not isinstance(baseline_min, list):
+        baseline_min = []
+    minimal_required_cols = sorted(
+        set([str(x).strip() for x in baseline_min if str(x).strip()] + out_cols)
+    )
+
+    fc_new: Dict[str, Any] = {}
+    if fc0:
+        # Keep semantics from FeaturePlan.feature_contract (missingness policy only).
+        if "missingness_policy" in fc0 and isinstance(fc0.get("missingness_policy"), dict):
+            fc_new["missingness_policy"] = fc0.get("missingness_policy")
+
+    # Build feature_contract.optional_blocks from enabled optional blocks (node-level -> output columns).
+    # This avoids duplicated definitions and keeps block mapping tied to actual enabled feature nodes.
+    block_cols_patterns: Dict[str, List[str]] = {}
+    for bname in sorted(enabled_keys):
+        nodes = ob_library.get(bname)
+        if not isinstance(nodes, list):
+            continue
+        cols_acc: List[str] = []
+        for node in nodes:
+            meta = feats.get(str(node)) if isinstance(feats, dict) else None
+            cols = meta.get("output_columns") if isinstance(meta, dict) else None
+            if isinstance(cols, list) and cols:
+                cols_acc.extend([str(c).strip() for c in cols if str(c).strip()])
+        # De-dup while preserving order
+        seen = set()
+        cols_acc = [c for c in cols_acc if not (c in seen or seen.add(c))]
+        if cols_acc:
+            # Use exact columns (not wildcards) to avoid accidentally capturing core columns.
+            block_cols_patterns[str(bname)] = cols_acc
+    if block_cols_patterns:
+        fc_new["optional_blocks"] = block_cols_patterns
+    fc_new["minimal_required_cols"] = minimal_required_cols
+    feat_obj["feature_contract"] = fc_new
+
+    feat_path.write_text(
+        yaml.safe_dump(feat_obj, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    marker = {
+        "kind": "nnmultihead_config_derived_from_task_spec",
+        "task_id": str(ts_obj.get("task_id") or "").strip(),
+        "base_config_dir": str(base_config_dir),
+        "tiers_enabled": list(tiers_enabled),
+        "optional_blocks_enabled": list(ob_enabled),
+        "tier_nodes": list(tier_nodes),
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    (outp / "derived_from_task_spec.json").write_text(
+        _json2.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    return str(outp)
+
+
+# =============================================================================
 # Main CLI Group
 # =============================================================================
 
@@ -2152,6 +2357,11 @@ def rl_run_e2e_3action(
 
 @nnmultihead.command("train")
 @click.option(
+    "--task-spec",
+    required=True,
+    help="TaskSpec YAML (v1). REQUIRED: nnmultihead is TaskSpec-only (no legacy config mode).",
+)
+@click.option(
     "--symbols",
     "-s",
     default="BTCUSDT",
@@ -2160,10 +2370,9 @@ def rl_run_e2e_3action(
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
-    "--config",
-    "-c",
-    default="config/nnmultihead/path_primitives_4h_80h_min",
-    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+    "--base-config",
+    default=None,
+    help="Override base nnmultihead config dir (default: TaskSpec.model_plan.base_config_dir).",
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
@@ -2200,10 +2409,11 @@ def rl_run_e2e_3action(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_train(
+    task_spec,
     symbols,
     timeframe,
     data_path,
-    config,
+    base_config,
     start_date,
     end_date,
     horizon_hours,
@@ -2224,9 +2434,49 @@ def nnmultihead_train(
     # Note: Layer name auto-generation is handled by the script itself.
     # CLI just passes the parameter as-is (None = auto-generate).
     use_workspace_prefix = docker and not _is_in_docker()
+    import yaml
+
+    ts_path = Path(task_spec)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+    task_id = str(ts_obj.get("task_id") or "").strip() or "TASKSPEC"
+    base_cfg = (
+        str(base_config).strip()
+        if base_config
+        else str((ts_obj.get("model_plan") or {}).get("base_config_dir") or "").strip()
+    ) or "config/nnmultihead/path_primitives_4h_80h_min"
+
+    # Default windows from TaskSpec if not explicitly provided
+    win_train = (ts_obj.get("windows") or {}).get("train") or {}
+    if not start_date:
+        start_date = str(win_train.get("start") or "").strip() or None
+    if not end_date:
+        end_date = str(win_train.get("end") or "").strip() or None
+
+    derived_rel = f"results/derived_configs/{task_id}/nnmh_config_train"
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=str(ts_path),
+        base_config_dir=base_cfg,
+        out_config_dir=derived_rel,
+    )
+    effective_config = derived_rel
+
+    # FeatureStore defaults come from TaskSpec unless explicitly overridden.
+    fp = ts_obj.get("feature_plan") or {}
+    fs = fp.get("feature_store") or {}
+    if feature_store_layer is None:
+        v = str(fs.get("layer") or "").strip()
+        if v:
+            feature_store_layer = v
+    if feature_store_root == "feature_store":
+        v = str(fs.get("root") or "").strip()
+        if v:
+            feature_store_root = v
+
     args = [
         "--config",
-        f"/workspace/{config}" if use_workspace_prefix else config,
+        f"/workspace/{effective_config}" if use_workspace_prefix else effective_config,
         "--symbols",
         symbols,
         "--data-path",
@@ -2279,6 +2529,11 @@ def nnmultihead_train(
 
 @nnmultihead.command("predict")
 @click.option(
+    "--task-spec",
+    required=True,
+    help="TaskSpec YAML (v1). REQUIRED: nnmultihead is TaskSpec-only (no legacy config mode).",
+)
+@click.option(
     "--symbols",
     "-s",
     default="BTCUSDT",
@@ -2287,10 +2542,9 @@ def nnmultihead_train(
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
-    "--config",
-    "-c",
-    default="config/nnmultihead/path_primitives_4h_80h_min",
-    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+    "--base-config",
+    default=None,
+    help="Override base nnmultihead config dir (default: TaskSpec.model_plan.base_config_dir).",
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
@@ -2316,10 +2570,11 @@ def nnmultihead_train(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_predict(
+    task_spec,
     symbols,
     timeframe,
     data_path,
-    config,
+    base_config,
     start_date,
     end_date,
     model_path,
@@ -2333,9 +2588,49 @@ def nnmultihead_predict(
     # Note: Layer name auto-generation is handled by the script itself.
     # CLI just passes the parameter as-is (None = auto-generate).
     use_workspace_prefix = docker and not _is_in_docker()
+    import yaml
+
+    ts_path = Path(task_spec)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+    task_id = str(ts_obj.get("task_id") or "").strip() or "TASKSPEC"
+    base_cfg = (
+        str(base_config).strip()
+        if base_config
+        else str((ts_obj.get("model_plan") or {}).get("base_config_dir") or "").strip()
+    ) or "config/nnmultihead/path_primitives_4h_80h_min"
+
+    # Default window from TaskSpec if not explicitly provided (prefer oos, else holdout, else train)
+    wins = ts_obj.get("windows") or {}
+    win = wins.get("oos") or wins.get("holdout") or wins.get("train") or {}
+    if not start_date:
+        start_date = str(win.get("start") or "").strip() or None
+    if not end_date:
+        end_date = str(win.get("end") or "").strip() or None
+
+    derived_rel = f"results/derived_configs/{task_id}/nnmh_config_predict"
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=str(ts_path),
+        base_config_dir=base_cfg,
+        out_config_dir=derived_rel,
+    )
+    effective_config = derived_rel
+
+    # FeatureStore defaults come from TaskSpec unless explicitly overridden.
+    fp = ts_obj.get("feature_plan") or {}
+    fs = fp.get("feature_store") or {}
+    if feature_store_layer is None:
+        v = str(fs.get("layer") or "").strip()
+        if v:
+            feature_store_layer = v
+    if feature_store_root == "feature_store":
+        v = str(fs.get("root") or "").strip()
+        if v:
+            feature_store_root = v
     args = [
         "--config",
-        f"/workspace/{config}" if use_workspace_prefix else config,
+        f"/workspace/{effective_config}" if use_workspace_prefix else effective_config,
         "--symbols",
         symbols,
         "--data-path",
@@ -2372,12 +2667,6 @@ def nnmultihead_predict(
 
 
 @nnmultihead.command("pipeline-3action-e2e")
-@click.option(
-    "--config",
-    "-c",
-    default="config/nnmultihead/path_primitives_4h_80h_min",
-    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
-)
 @click.option(
     "--symbols",
     "-s",
@@ -2419,8 +2708,13 @@ def nnmultihead_predict(
 @click.option("--out", "out_dir", required=True, help="Output directory root for this pipeline run.")
 @click.option(
     "--task-spec",
+    required=True,
+    help="TaskSpec YAML (v1). REQUIRED: pipeline is TaskSpec-only (no legacy config mode).",
+)
+@click.option(
+    "--base-config",
     default=None,
-    help="Optional TaskSpec YAML (v1). If provided, will inject MLBOT_TASK_ID / MLBOT_CONSTITUTION_YAML / MLBOT_KPI_GATE_YAML into downstream steps.",
+    help="Override base nnmultihead config dir (default: TaskSpec.model_plan.base_config_dir).",
 )
 @click.option("--mfe-min", type=float, default=None)
 @click.option("--eff-min", type=float, default=None)
@@ -2429,6 +2723,11 @@ def nnmultihead_predict(
 @click.option("--ttm-trend-min", type=float, default=None)
 @click.option("--eff-mean-min", type=float, default=None)
 @click.option("--ttm-mean-max", type=float, default=None)
+@click.option(
+    "--router-thresholds-json",
+    default=None,
+    help="Optional JSON file with 7 router thresholds to one-click apply in this pipeline. Any explicit --mfe-min/--eff-min/... flags take precedence.",
+)
 @click.option("--train-ratio", type=float, default=0.7, show_default=True)
 @click.option("--entry-delay", type=int, default=0, show_default=True)
 @click.option("--cost-per-turnover", type=float, default=0.0, show_default=True)
@@ -2440,7 +2739,6 @@ def nnmultihead_predict(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_pipeline_3action_e2e(
-    config,
     symbols,
     timeframe,
     start_date,
@@ -2452,6 +2750,7 @@ def nnmultihead_pipeline_3action_e2e(
     returns_source,
     out_dir,
     task_spec,
+    base_config,
     mfe_min,
     eff_min,
     dir_conf_trend_min,
@@ -2459,6 +2758,7 @@ def nnmultihead_pipeline_3action_e2e(
     ttm_trend_min,
     eff_mean_min,
     ttm_mean_max,
+    router_thresholds_json,
     train_ratio,
     entry_delay,
     cost_per_turnover,
@@ -2491,24 +2791,40 @@ def nnmultihead_pipeline_3action_e2e(
         from src.time_series_model.rule.router_3action import Rule3ActionConfig as _R3
 
         cfg0 = _R3()
+        # Optional: load thresholds JSON (best/baseline). Explicit CLI flags win.
+        loaded = {}
+        try:
+            if router_thresholds_json:
+                pp = Path(str(router_thresholds_json))
+                if not pp.is_absolute():
+                    pp = (PROJECT_ROOT / pp).resolve()
+                loaded = _json.loads(pp.read_text(encoding="utf-8")) or {}
+        except Exception:
+            loaded = {}
+
+        def _pick(name: str, cur):
+            if cur is not None:
+                return float(cur)
+            if isinstance(loaded, dict) and name in loaded and loaded.get(name) is not None:
+                return float(loaded.get(name))
+            return float(getattr(cfg0, name))
+
+        mfe_min = _pick("mfe_min", mfe_min)
+        eff_min = _pick("eff_min", eff_min)
+        dir_conf_trend_min = _pick("dir_conf_trend_min", dir_conf_trend_min)
+        mfe_trend_min = _pick("mfe_trend_min", mfe_trend_min)
+        ttm_trend_min = _pick("ttm_trend_min", ttm_trend_min)
+        eff_mean_min = _pick("eff_mean_min", eff_mean_min)
+        ttm_mean_max = _pick("ttm_mean_max", ttm_mean_max)
+
         baseline = {
-            "mfe_min": float(mfe_min) if mfe_min is not None else float(cfg0.mfe_min),
-            "eff_min": float(eff_min) if eff_min is not None else float(cfg0.eff_min),
-            "dir_conf_trend_min": float(dir_conf_trend_min)
-            if dir_conf_trend_min is not None
-            else float(cfg0.dir_conf_trend_min),
-            "mfe_trend_min": float(mfe_trend_min)
-            if mfe_trend_min is not None
-            else float(cfg0.mfe_trend_min),
-            "ttm_trend_min": float(ttm_trend_min)
-            if ttm_trend_min is not None
-            else float(cfg0.ttm_trend_min),
-            "eff_mean_min": float(eff_mean_min)
-            if eff_mean_min is not None
-            else float(cfg0.eff_mean_min),
-            "ttm_mean_max": float(ttm_mean_max)
-            if ttm_mean_max is not None
-            else float(cfg0.ttm_mean_max),
+            "mfe_min": float(mfe_min),
+            "eff_min": float(eff_min),
+            "dir_conf_trend_min": float(dir_conf_trend_min),
+            "mfe_trend_min": float(mfe_trend_min),
+            "ttm_trend_min": float(ttm_trend_min),
+            "eff_mean_min": float(eff_mean_min),
+            "ttm_mean_max": float(ttm_mean_max),
         }
         p = Path(out_dir)
         if not p.is_absolute():
@@ -2521,118 +2837,65 @@ def nnmultihead_pipeline_3action_e2e(
         pass
 
     # -------------------------------------------------------------------------
-    # P0: TaskSpec-driven enforcement injection (research/live unified)
+    # TaskSpec (mandatory): enforcement injection + config materialization (no legacy mode)
     # -------------------------------------------------------------------------
-    env_overrides = {}
-    effective_config = config
-    def _materialize_cfg_from_task_spec(*, ts_obj: dict, out_root: str, base_config_dir: str) -> str:
-        import yaml
-        import shutil
-        from pathlib import Path
+    import yaml
 
-        fp = ts_obj.get("feature_plan") or {}
-        tiers_enabled = fp.get("tiers_enabled") or []
-        tier_feature_files = fp.get("tier_feature_files") or {}
-        if not (isinstance(tiers_enabled, list) and isinstance(tier_feature_files, dict)):
-            return base_config_dir
+    ts_path = Path(task_spec)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+    task_id = str(ts_obj.get("task_id") or "").strip() or "TASKSPEC"
 
-        # Collect feature nodes from enabled tier files
-        tier_nodes = []
-        for tier_name in tiers_enabled:
-            k = str(tier_name).strip()
-            fpath = tier_feature_files.get(k)
-            if not fpath:
-                continue
-            p = Path(str(fpath))
-            if not p.exists():
-                raise click.ClickException(
-                    f"TaskSpec tier_feature_files[{k}] not found: {p}"
-                )
-            obj = yaml.safe_load(p.read_text(encoding="utf-8"))
-            if not isinstance(obj, list):
-                raise click.ClickException(f"Tier file must be a YAML list: {p}")
-            tier_nodes.extend([str(x).strip() for x in obj if str(x).strip()])
+    env_overrides = {"MLBOT_TASK_ID": task_id}
 
-        if not tier_nodes:
-            return base_config_dir
+    enf = ts_obj.get("enforcement") or {}
+    constitution_yaml = str(enf.get("constitution_yaml") or "").strip()
+    kpi_gate_yaml = str(enf.get("kpi_gate_yaml") or "").strip()
 
-        base_dir = Path(base_config_dir)
-        if not base_dir.exists():
-            raise click.ClickException(f"Config dir not found: {base_dir}")
+    def _ws(p: str) -> str:
+        return f"/workspace/{p}" if use_workspace_prefix else p
 
-        derived_dir = Path(out_root) / "derived_config_from_task_spec"
-        if derived_dir.exists():
-            shutil.rmtree(derived_dir)
-        shutil.copytree(base_dir, derived_dir)
+    if constitution_yaml:
+        env_overrides["MLBOT_CONSTITUTION_YAML"] = _ws(constitution_yaml)
+    if kpi_gate_yaml:
+        env_overrides["MLBOT_KPI_GATE_YAML"] = _ws(kpi_gate_yaml)
 
-        # Load base features.yaml and override required list.
-        feat_path = derived_dir / "features.yaml"
-        feat_obj = yaml.safe_load(feat_path.read_text(encoding="utf-8")) or {}
-        fp2 = feat_obj.get("feature_pipeline") or {}
-        req = fp2.get("requested_features") or {}
-        if not isinstance(req, dict):
-            req = {}
-        req["required"] = sorted(set(tier_nodes))
-        fp2["requested_features"] = req
-        feat_obj["feature_pipeline"] = fp2
+    # Optional: Portfolio Assets v1 contract (diagnostic artifacts / PCM wiring).
+    pa = ts_obj.get("portfolio_assets_plan") or {}
+    try:
+        pa_enabled = bool(pa.get("enabled", False))
+    except Exception:
+        pa_enabled = False
+    pa_cfg = str(pa.get("config_file") or "").strip()
+    if pa_enabled and pa_cfg:
+        env_overrides["MLBOT_PORTFOLIO_ASSETS_YAML"] = _ws(pa_cfg)
 
-        # Rebuild minimal_required_cols based on selected required nodes (avoid contract mismatch).
-        deps_path = Path("config/feature_dependencies.yaml")
-        deps = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
-        feats = deps.get("features") or {}
-        out_cols = []
-        for node in req["required"]:
-            meta = feats.get(str(node)) if isinstance(feats, dict) else None
-            cols = meta.get("output_columns") if isinstance(meta, dict) else None
-            if isinstance(cols, list) and cols:
-                out_cols.extend([str(c).strip() for c in cols if str(c).strip()])
-        out_cols = sorted(set(out_cols))
-        fc = feat_obj.get("feature_contract") or {}
-        if not isinstance(fc, dict):
-            fc = {}
-        fc["minimal_required_cols"] = out_cols
-        feat_obj["feature_contract"] = fc
+    base_cfg = (
+        str(base_config).strip()
+        if base_config
+        else str((ts_obj.get("model_plan") or {}).get("base_config_dir") or "").strip()
+    ) or "config/nnmultihead/path_primitives_4h_80h_min"
 
-        feat_path.write_text(
-            yaml.safe_dump(feat_obj, sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
-        )
-        return str(derived_dir)
-    if task_spec:
-        import yaml
-        import shutil
-        from pathlib import Path
+    derived_rel = f"results/derived_configs/{task_id}/nnmh_config_pipeline"
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=str(ts_path),
+        base_config_dir=base_cfg,
+        out_config_dir=derived_rel,
+    )
+    effective_config = derived_rel
 
-        ts_path = Path(task_spec)
-        ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
-        task_id = str(ts_obj.get("task_id") or "").strip()
-        if task_id:
-            env_overrides["MLBOT_TASK_ID"] = task_id
-
-        enf = ts_obj.get("enforcement") or {}
-        constitution_yaml = str(enf.get("constitution_yaml") or "").strip()
-        kpi_gate_yaml = str(enf.get("kpi_gate_yaml") or "").strip()
-
-        def _ws(p: str) -> str:
-            return f"/workspace/{p}" if use_workspace_prefix else p
-
-        if constitution_yaml:
-            env_overrides["MLBOT_CONSTITUTION_YAML"] = _ws(constitution_yaml)
-        if kpi_gate_yaml:
-            env_overrides["MLBOT_KPI_GATE_YAML"] = _ws(kpi_gate_yaml)
-
-        # Optional: Portfolio Assets v1 contract (diagnostic artifacts / PCM wiring).
-        pa = ts_obj.get("portfolio_assets_plan") or {}
-        try:
-            pa_enabled = bool(pa.get("enabled", False))
-        except Exception:
-            pa_enabled = False
-        pa_cfg = str(pa.get("config_file") or "").strip()
-        if pa_enabled and pa_cfg:
-            env_overrides["MLBOT_PORTFOLIO_ASSETS_YAML"] = _ws(pa_cfg)
-        effective_config = _materialize_cfg_from_task_spec(
-            ts_obj=ts_obj, out_root=out_root, base_config_dir=config
-        )
+    # FeatureStore defaults come from TaskSpec unless explicitly overridden.
+    fp = ts_obj.get("feature_plan") or {}
+    fs = fp.get("feature_store") or {}
+    if feature_store_layer is None:
+        v = str(fs.get("layer") or "").strip()
+        if v:
+            feature_store_layer = v
+    if feature_store_root == "feature_store":
+        v = str(fs.get("root") or "").strip()
+        if v:
+            feature_store_root = v
 
     # [1/4] nnmultihead predict
     args_pred = [
@@ -2830,81 +3093,23 @@ def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_co
       - compare A-layer + system reports
     """
     use_workspace_prefix = docker and not _is_in_docker()
-    ts_path = f"/workspace/{task_spec}" if use_workspace_prefix else task_spec
-    base_dir = f"/workspace/{base_config}" if use_workspace_prefix else base_config
-    out_dir = f"/workspace/{out_config}" if use_workspace_prefix else out_config
-
-    import yaml
-    import shutil
-    from pathlib import Path
-
-    ts_obj = yaml.safe_load(Path(ts_path).read_text(encoding="utf-8")) or {}
-
-    # Use the same materialization logic as pipeline (copy base config and rewrite features.yaml required list).
-    fp = ts_obj.get("feature_plan") or {}
-    tiers_enabled = fp.get("tiers_enabled") or []
-    tier_feature_files = fp.get("tier_feature_files") or {}
-    if not (isinstance(tiers_enabled, list) and isinstance(tier_feature_files, dict)):
-        raise click.ClickException("TaskSpec missing feature_plan.tiers_enabled or tier_feature_files")
-
-    tier_nodes = []
-    for tier_name in tiers_enabled:
-        k = str(tier_name).strip()
-        fpath = tier_feature_files.get(k)
-        if not fpath:
-            continue
-        p = Path(fpath)
-        if not p.is_absolute():
-            # When running in docker, ts_path is /workspace/..., repo root also /workspace
-            p = Path("/workspace") / p
-        obj = yaml.safe_load(p.read_text(encoding="utf-8"))
-        if not isinstance(obj, list):
-            raise click.ClickException(f"Tier file must be a YAML list: {p}")
-        tier_nodes.extend([str(x).strip() for x in obj if str(x).strip()])
-    tier_nodes = sorted(set(tier_nodes))
-    if not tier_nodes:
-        raise click.ClickException("No tier feature nodes collected (tiers_enabled/tier_feature_files mismatch).")
-
-    outp = Path(out_dir)
-    if outp.exists():
-        shutil.rmtree(outp)
-    shutil.copytree(Path(base_dir), outp)
-
-    feat_path = outp / "features.yaml"
-    feat_obj = yaml.safe_load(feat_path.read_text(encoding="utf-8")) or {}
-    fp2 = feat_obj.get("feature_pipeline") or {}
-    req = fp2.get("requested_features") or {}
-    if not isinstance(req, dict):
-        req = {}
-    req["required"] = tier_nodes
-    fp2["requested_features"] = req
-    feat_obj["feature_pipeline"] = fp2
-
-    deps_path = Path("/workspace/config/feature_dependencies.yaml") if use_workspace_prefix else Path("config/feature_dependencies.yaml")
-    deps = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
-    feats = deps.get("features") or {}
-    out_cols = []
-    for node in tier_nodes:
-        meta = feats.get(str(node)) if isinstance(feats, dict) else None
-        cols = meta.get("output_columns") if isinstance(meta, dict) else None
-        if isinstance(cols, list) and cols:
-            out_cols.extend([str(c).strip() for c in cols if str(c).strip()])
-    out_cols = sorted(set(out_cols))
-    fc = feat_obj.get("feature_contract") or {}
-    if not isinstance(fc, dict):
-        fc = {}
-    fc["minimal_required_cols"] = out_cols
-    feat_obj["feature_contract"] = fc
-
-    feat_path.write_text(
-        yaml.safe_dump(feat_obj, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
+    # Materialize on host filesystem; docker wrapper will mount repo to /workspace anyway.
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=task_spec,
+        base_config_dir=base_config,
+        out_config_dir=out_config,
     )
-
-    click.echo(f"✅ Derived config written: {out_dir}")
+    click.echo(
+        f"✅ Derived config written: {('/workspace/' + out_config) if use_workspace_prefix else out_config}"
+    )
 
 
 @nnmultihead.command("build-feature-store")
+@click.option(
+    "--task-spec",
+    required=True,
+    help="TaskSpec YAML (v1). REQUIRED: nnmultihead is TaskSpec-only (no legacy config mode).",
+)
 @click.option(
     "--symbols",
     "-s",
@@ -2914,10 +3119,9 @@ def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_co
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
-    "--config",
-    "-c",
-    default="config/nnmultihead/path_primitives_4h_80h_min",
-    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+    "--base-config",
+    default=None,
+    help="Override base nnmultihead config dir (default: TaskSpec.model_plan.base_config_dir).",
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
@@ -2928,8 +3132,8 @@ def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_co
 )
 @click.option(
     "--layer",
-    default="nnmultihead_v1",
-    help="FeatureStore layer name for nnmultihead features.",
+    default=None,
+    help="FeatureStore layer name for nnmultihead features (default: TaskSpec.feature_plan.feature_store.layer).",
 )
 @click.option(
     "--warmup-bars",
@@ -2965,10 +3169,11 @@ def nnmultihead_materialize_config_from_task_spec(task_spec, base_config, out_co
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_build_feature_store(
+    task_spec,
     symbols,
     timeframe,
     data_path,
-    config,
+    base_config,
     start_date,
     end_date,
     feature_store_root,
@@ -2982,9 +3187,49 @@ def nnmultihead_build_feature_store(
 ):
     """Build monthly FeatureStore for nnmultihead features (shared infra; default path works for tree+nn)."""
     use_workspace_prefix = docker and not _is_in_docker()
+    import yaml
+
+    ts_path = Path(task_spec)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+    task_id = str(ts_obj.get("task_id") or "").strip() or "TASKSPEC"
+    base_cfg = (
+        str(base_config).strip()
+        if base_config
+        else str((ts_obj.get("model_plan") or {}).get("base_config_dir") or "").strip()
+    ) or "config/nnmultihead/path_primitives_4h_80h_min"
+
+    # Default window from TaskSpec if not explicitly provided (prefer train)
+    win_train = (ts_obj.get("windows") or {}).get("train") or {}
+    if not start_date:
+        start_date = str(win_train.get("start") or "").strip() or None
+    if not end_date:
+        end_date = str(win_train.get("end") or "").strip() or None
+
+    derived_rel = f"results/derived_configs/{task_id}/nnmh_config_feature_store"
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=str(ts_path),
+        base_config_dir=base_cfg,
+        out_config_dir=derived_rel,
+    )
+    effective_config = derived_rel
+
+    # FeatureStore defaults come from TaskSpec unless explicitly overridden.
+    fp = ts_obj.get("feature_plan") or {}
+    fs = fp.get("feature_store") or {}
+    if layer is None:
+        v = str(fs.get("layer") or "").strip()
+        if v:
+            layer = v
+    if feature_store_root == "feature_store":
+        v = str(fs.get("root") or "").strip()
+        if v:
+            feature_store_root = v
+
     args = [
         "--config",
-        f"/workspace/{config}" if use_workspace_prefix else config,
+        f"/workspace/{effective_config}" if use_workspace_prefix else effective_config,
         "--symbols",
         symbols,
         "--data-path",
@@ -3000,7 +3245,7 @@ def nnmultihead_build_feature_store(
         "--output-format",
         "monthly",
         "--layer",
-        layer,
+        str(layer),
         "--warmup-bars",
         str(int(warmup_bars)),
         "--warmup-months",
@@ -3028,6 +3273,11 @@ def nnmultihead_build_feature_store(
 
 @nnmultihead.command("eval")
 @click.option(
+    "--task-spec",
+    required=True,
+    help="TaskSpec YAML (v1). REQUIRED: nnmultihead is TaskSpec-only (no legacy config mode).",
+)
+@click.option(
     "--symbols",
     "-s",
     default="BTCUSDT",
@@ -3036,10 +3286,9 @@ def nnmultihead_build_feature_store(
 @click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T for 4H)")
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
 @click.option(
-    "--config",
-    "-c",
-    default="config/nnmultihead/path_primitives_4h_80h_min",
-    help="NN multihead config directory (features.yaml + labels.yaml + model.yaml)",
+    "--base-config",
+    default=None,
+    help="Override base nnmultihead config dir (default: TaskSpec.model_plan.base_config_dir).",
 )
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD) optional")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD) optional")
@@ -3066,10 +3315,11 @@ def nnmultihead_build_feature_store(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_eval(
+    task_spec,
     symbols,
     timeframe,
     data_path,
-    config,
+    base_config,
     start_date,
     end_date,
     model_path,
@@ -3081,9 +3331,43 @@ def nnmultihead_eval(
 ):
     """Evaluate a trained nnmultihead model and generate report.html artifacts."""
     use_workspace_prefix = docker and not _is_in_docker()
+    import yaml
+
+    ts_path = Path(task_spec)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+    task_id = str(ts_obj.get("task_id") or "").strip() or "TASKSPEC"
+    base_cfg = (
+        str(base_config).strip()
+        if base_config
+        else str((ts_obj.get("model_plan") or {}).get("base_config_dir") or "").strip()
+    ) or "config/nnmultihead/path_primitives_4h_80h_min"
+
+    # Default window from TaskSpec if not explicitly provided (prefer oos, else holdout, else train)
+    wins = ts_obj.get("windows") or {}
+    win = wins.get("oos") or wins.get("holdout") or wins.get("train") or {}
+    if not start_date:
+        start_date = str(win.get("start") or "").strip() or None
+    if not end_date:
+        end_date = str(win.get("end") or "").strip() or None
+
+    derived_rel = f"results/derived_configs/{task_id}/nnmh_config_eval"
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=str(ts_path),
+        base_config_dir=base_cfg,
+        out_config_dir=derived_rel,
+    )
+    effective_config = derived_rel
+
+    # FeatureStore defaults come from TaskSpec unless explicitly overridden (kept for consistency).
+    fp = ts_obj.get("feature_plan") or {}
+    fs = fp.get("feature_store") or {}
+    if (feature_store_root == "feature_store") and str(fs.get("root") or "").strip():
+        feature_store_root = str(fs.get("root")).strip()
     args = [
         "--config",
-        f"/workspace/{config}" if use_workspace_prefix else config,
+        f"/workspace/{effective_config}" if use_workspace_prefix else effective_config,
         "--symbols",
         symbols,
         "--data-path",
@@ -3313,12 +3597,153 @@ def nnmultihead_factor_eval(
     )
 
 
+@nnmultihead.command("compare-feature-sets")
+@click.option(
+    "--task-spec",
+    type=str,
+    required=True,
+    help="TaskSpec YAML (source of tiers + feature_plan_ref/overrides).",
+)
+@click.option(
+    "--base-config",
+    type=str,
+    required=True,
+    help="Base nnmultihead config dir (template dir used for materialization).",
+)
+@click.option(
+    "--poolb-yaml",
+    type=str,
+    required=True,
+    help="PoolB YAML exported by nnmultihead factor-eval / feature-group-search (list of feature nodes).",
+)
+@click.option(
+    "--out",
+    type=str,
+    required=True,
+    help="Output directory for report JSON/MD.",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, docker):
+    """
+    Compare feature sets: TaskSpec-tier required nodes vs PoolB suggestion YAML.
+
+    Output:
+      - features_compare_summary.json
+      - features_compare_summary.md
+    """
+    import json
+    import shutil
+    from pathlib import Path
+    import yaml
+
+    use_workspace_prefix = docker and not _is_in_docker()
+
+    out_dir = Path(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Materialize a derived config and read its resolved required nodes list.
+    tmp_cfg = out_dir / "_derived_cfg_for_compare"
+    if tmp_cfg.exists():
+        shutil.rmtree(tmp_cfg)
+
+    materialize_nnmh_config_from_task_spec(
+        task_spec_path=Path(task_spec),
+        base_config_dir=Path(base_config),
+        out_config_dir=tmp_cfg,
+    )
+
+    feat_yaml = yaml.safe_load((tmp_cfg / "features.yaml").read_text(encoding="utf-8")) or {}
+    req_nodes = (
+        (feat_yaml.get("feature_pipeline") or {})
+        .get("requested_features", {})
+        .get("required", [])
+    )
+    if not isinstance(req_nodes, list):
+        req_nodes = []
+    tier_required = sorted({str(x).strip() for x in req_nodes if str(x).strip()})
+
+    # PoolB YAML: allow either plain list OR {feature_pipeline: {requested_features: [..]}}
+    obj = yaml.safe_load(Path(poolb_yaml).read_text(encoding="utf-8")) or {}
+    if isinstance(obj, list):
+        poolb = obj
+    else:
+        poolb = (obj.get("feature_pipeline") or {}).get("requested_features") or obj.get("requested_features") or []
+    if not isinstance(poolb, list):
+        poolb = []
+    poolb_nodes = sorted({str(x).strip() for x in poolb if str(x).strip()})
+
+    s_tier = set(tier_required)
+    s_poolb = set(poolb_nodes)
+    overlap = sorted(s_tier & s_poolb)
+    only_tier = sorted(s_tier - s_poolb)
+    only_poolb = sorted(s_poolb - s_tier)
+
+    summary = {
+        "task_spec": str(Path(task_spec).resolve()),
+        "base_config": str(Path(base_config).resolve()),
+        "poolb_yaml": str(Path(poolb_yaml).resolve()),
+        "derived_config_dir": str(tmp_cfg.resolve()),
+        "tier_required_n": len(tier_required),
+        "poolb_n": len(poolb_nodes),
+        "overlap_n": len(overlap),
+        "only_tier_n": len(only_tier),
+        "only_poolb_n": len(only_poolb),
+        "overlap": overlap,
+        "only_tier": only_tier,
+        "only_poolb": only_poolb,
+    }
+    (out_dir / "features_compare_summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    md = []
+    md.append("# nnmultihead feature set compare\n")
+    md.append(f"- task_spec: `{summary['task_spec']}`\n")
+    md.append(f"- base_config: `{summary['base_config']}`\n")
+    md.append(f"- poolb_yaml: `{summary['poolb_yaml']}`\n")
+    md.append(f"- derived_config_dir: `{summary['derived_config_dir']}`\n")
+    md.append("\n## counts\n")
+    md.append(f"- tier_required_n: **{summary['tier_required_n']}**\n")
+    md.append(f"- poolb_n: **{summary['poolb_n']}**\n")
+    md.append(f"- overlap_n: **{summary['overlap_n']}**\n")
+    md.append(f"- only_tier_n: **{summary['only_tier_n']}**\n")
+    md.append(f"- only_poolb_n: **{summary['only_poolb_n']}**\n")
+    md.append("\n## overlap\n")
+    md.extend([f"- `{x}`\n" for x in overlap[:200]])
+    if len(overlap) > 200:
+        md.append(f"- ... ({len(overlap)-200} more)\n")
+    md.append("\n## only in tier_required\n")
+    md.extend([f"- `{x}`\n" for x in only_tier[:200]])
+    if len(only_tier) > 200:
+        md.append(f"- ... ({len(only_tier)-200} more)\n")
+    md.append("\n## only in poolb\n")
+    md.extend([f"- `{x}`\n" for x in only_poolb[:200]])
+    if len(only_poolb) > 200:
+        md.append(f"- ... ({len(only_poolb)-200} more)\n")
+    (out_dir / "features_compare_summary.md").write_text("".join(md), encoding="utf-8")
+
+    # A small UX hint for docker users (paths)
+    _ = use_workspace_prefix
+
+    click.echo(f"✅ Wrote: {out_dir / 'features_compare_summary.json'}")
+    click.echo(f"✅ Wrote: {out_dir / 'features_compare_summary.md'}")
+
+
 @nnmultihead.command("feature-group-search")
-@click.option("--base-config", required=True, help="Base nnmultihead config dir")
+@click.option(
+    "--task-spec",
+    required=True,
+    help="TaskSpec YAML (v1). REQUIRED: nnmultihead is TaskSpec-only (no legacy config mode).",
+)
+@click.option(
+    "--base-config",
+    default=None,
+    help="Override base nnmultihead config dir (default: TaskSpec.model_plan.base_config_dir).",
+)
 @click.option(
     "--base-features-yaml",
     default=None,
-    help="Optional base feature funcs YAML (Pool A). If omitted, will try <base-config>/features_base.yaml.",
+    help="Optional base feature funcs YAML (Pool A). If omitted, will use Tier0 file from TaskSpec (recommended).",
 )
 @click.option(
     "--groups-yaml",
@@ -3399,6 +3824,7 @@ def nnmultihead_factor_eval(
 @click.option("--output-dir", required=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_feature_group_search(
+    task_spec,
     base_config,
     base_features_yaml,
     groups_yaml,
@@ -3437,9 +3863,37 @@ def nnmultihead_feature_group_search(
 ):
     """Feature-group-search for nnmultihead (primitives objective)."""
     use_workspace_prefix = docker and not _is_in_docker()
+    import yaml
+
+    ts_path = Path(task_spec)
+    if not ts_path.is_absolute():
+        ts_path = (PROJECT_ROOT / ts_path).resolve()
+    ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
+    base_cfg = (
+        str(base_config).strip()
+        if base_config
+        else str((ts_obj.get("model_plan") or {}).get("base_config_dir") or "").strip()
+    ) or "config/nnmultihead/path_primitives_4h_80h_min"
+
+    # Pool-A default: Tier0 file from TaskSpec (single-source-of-truth).
+    if not str(base_features_yaml or "").strip():
+        fp = ts_obj.get("feature_plan") or {}
+        tier_files = fp.get("tier_feature_files") or {}
+        tier0_path = (
+            tier_files.get("TIER0_OHLCV_LIGHT")
+            or tier_files.get("Tier0")
+            or next((v for k, v in tier_files.items() if "TIER0" in str(k).upper()), None)
+        )
+        if not tier0_path:
+            raise click.ClickException(
+                "TaskSpec missing Tier0 tier_feature_files entry. "
+                "Set feature_plan.tier_feature_files.TIER0_OHLCV_LIGHT or pass --base-features-yaml."
+            )
+        base_features_yaml = str(tier0_path)
+
     args = [
         "--base-config",
-        f"/workspace/{base_config}" if use_workspace_prefix else base_config,
+        f"/workspace/{base_cfg}" if use_workspace_prefix else base_cfg,
         "--symbols",
         symbols,
         "--timeframe",
@@ -3478,6 +3932,14 @@ def nnmultihead_feature_group_search(
         "--dropout",
         str(float(dropout)),
     ]
+    # Pool-A base feature nodes list
+    if str(base_features_yaml or "").strip():
+        args.extend(
+            [
+                "--base-features-yaml",
+                f"/workspace/{base_features_yaml}" if use_workspace_prefix else base_features_yaml,
+            ]
+        )
     # CLI override only (preferred default lives in base-config/features.yaml)
     if exclude_columns is not None:
         args.extend(["--exclude-columns", str(exclude_columns)])
@@ -3503,17 +3965,6 @@ def nnmultihead_feature_group_search(
     # (Empty preset would otherwise leave a dangling '--preset' after empty-token filtering.)
     if str(preset or "").strip():
         args.extend(["--preset", str(preset)])
-    if base_features_yaml:
-        args.extend(
-            [
-                "--base-features-yaml",
-                (
-                    f"/workspace/{base_features_yaml}"
-                    if use_workspace_prefix
-                    else base_features_yaml
-                ),
-            ]
-        )
     if groups_yaml:
         args.extend(
             [
@@ -4539,6 +4990,136 @@ def diagnose_threshold_plateau(
         str(int(seed)),
     ]
     sys.exit(run_script("scripts/plateau_tune_rule_router_3action.py", args, docker=docker))
+
+
+@diagnose.command("extinction-replay-3action")
+@click.option(
+    "--logs",
+    required=True,
+    help="logs_3action.parquet (must contain symbol,timestamp,mode,ret_mean,ret_trend).",
+)
+@click.option("--out", required=True, help="Output directory (report.json/sim.parquet/labels.parquet).")
+@click.option(
+    "--ood-config",
+    default="config/ood/ood_config_v1.yaml",
+    show_default=True,
+    help="OOD config YAML (dashboard keys, size-cap mapping).",
+)
+@click.option("--ood-score-col", default=None, help="Optional column name for ood_score (if present in logs).")
+@click.option("--survival-prob-col", default=None, help="Optional column name for survival_prob (if present in logs).")
+@click.option("--survival-horizon-bars", default=50, type=int, show_default=True)
+@click.option("--equity-floor-frac", default=0.5, type=float, show_default=True)
+@click.option("--dd-floor", default=0.5, type=float, show_default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_extinction_replay_3action(
+    logs,
+    out,
+    ood_config,
+    ood_score_col,
+    survival_prob_col,
+    survival_horizon_bars,
+    equity_floor_frac,
+    dd_floor,
+    docker,
+):
+    """
+    Extinction replay runner for 3-action logs.
+
+    Produces:
+      - report.json: extinction_rate/max_dd per symbol
+      - sim.parquet: equity/drawdown/exposure timeline
+      - labels.parquet: y_surv labels (for Survival Head training)
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if use_workspace_prefix else logs,
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+        "--ood-config",
+        f"/workspace/{ood_config}" if use_workspace_prefix else ood_config,
+        "--survival-horizon-bars",
+        str(int(survival_horizon_bars)),
+        "--equity-floor-frac",
+        str(float(equity_floor_frac)),
+        "--dd-floor",
+        str(float(dd_floor)),
+    ]
+    if ood_score_col:
+        args.extend(["--ood-score-col", str(ood_score_col)])
+    if survival_prob_col:
+        args.extend(["--survival-prob-col", str(survival_prob_col)])
+    sys.exit(run_script("scripts/extinction_replay_3action.py", args, docker=docker))
+
+
+@diagnose.command("survival-head-train")
+@click.option(
+    "--logs",
+    required=True,
+    help="logs_3action.parquet (from build-logs/run-e2e).",
+)
+@click.option(
+    "--labels",
+    required=True,
+    help="labels.parquet (from diagnose extinction-replay-3action).",
+)
+@click.option("--out", required=True, help="Output directory (model.pt/survival_preds.parquet/report.html).")
+@click.option(
+    "--config",
+    "config_yaml",
+    default="config/ood/survival_head_mlp_v1.yaml",
+    show_default=True,
+    help="Survival head config YAML.",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
+    """
+    Train Survival Head (tiny MLP) from extinction replay labels.
+
+    Produces model.pt + survival_preds.parquet + metrics/curves/report.
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if use_workspace_prefix else logs,
+        "--labels",
+        f"/workspace/{labels}" if use_workspace_prefix else labels,
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+        "--config",
+        f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml,
+    ]
+    sys.exit(run_script("scripts/train_survival_head_mlp.py", args, docker=docker))
+
+
+@diagnose.command("ood-to-archetype-weights")
+@click.option("--logs", required=True, help="logs_3action.parquet (must contain ood_score + active_archetype).")
+@click.option("--labels", required=True, help="labels.parquet (y_surv) from extinction-replay-3action.")
+@click.option("--out", required=True, help="Output directory (survival_table.csv/weights.yaml).")
+@click.option(
+    "--config",
+    "config_yaml",
+    default="config/ood/ood_to_archetype_table_v1.yaml",
+    show_default=True,
+    help="Config YAML (bins/archetypes/temperature/min_samples).",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
+    """
+    Learn OOD -> Archetype weights via Conditional Survival Table (baseline).
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if use_workspace_prefix else logs,
+        "--labels",
+        f"/workspace/{labels}" if use_workspace_prefix else labels,
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+        "--config",
+        f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml,
+    ]
+    sys.exit(run_script("scripts/learn_ood_to_archetype_weights_table.py", args, docker=docker))
 
 
 @diagnose.command("rule-baseline")

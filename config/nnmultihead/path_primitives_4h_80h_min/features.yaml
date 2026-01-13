@@ -1,6 +1,21 @@
-# Note: Strategy ID is the directory name (path_primitives_4h_80h_min).
-# The 'name' field is optional and only for display purposes.
-# Removed to avoid warning about name mismatch.
+# NOTE (important, single-source-of-truth guidance)
+# This `features.yaml` is the *base config template* for nnmultihead.
+#
+# If you run via TaskSpec-driven workflow (recommended):
+#   - `mlbot nnmultihead pipeline-3action-e2e --task-spec ...`
+#   - or `mlbot nnmultihead materialize-config-from-task-spec --task-spec ...`
+#
+# Then this file's `feature_pipeline.requested_features.required` is NOT the source of truth:
+#   - It will be overwritten by the union of enabled Tier files:
+#     `TaskSpec.feature_plan.tiers_enabled` + `TaskSpec.feature_plan.tier_feature_files`
+#   - `feature_contract.minimal_required_cols` will also be rebuilt from those tier nodes.
+#
+# In other words:
+#   - Tier files + TaskSpec = single source of truth for "required / what to compute & feed".
+#   - This file keeps "template semantics": exclude_columns / optional_blocks schema / missingness policy.
+#
+# Legacy mode (not recommended): if you run scripts directly with `--config <this_dir>` and without TaskSpec,
+# then `required` below becomes the default feature set.
 description: |
   NN multi-head base (path primitives) - 仅使用已归一化特征
   
@@ -12,102 +27,33 @@ description: |
 feature_pipeline:
   # Keep `atr` in the dataframe for primitives labels/contract scale, but do NOT feed it into the MLP inputs by default.
   # (You can override in CLI for feature search via --exclude-columns, but config is the recommended default.)
+  # TaskSpec-only: this value is overridden by TaskSpec.feature_plan.exclude_columns when materialized.
   exclude_columns: [atr]
   requested_features:
     # New structured format: classify features as required vs optional_blocks
     # All features will be computed, but optional_blocks will be masked during training
     # to make the model robust to missing feature blocks during inference.
     
-    required:
+    # Required features (single source of truth):
+    # - In TaskSpec workflow, this list is always overwritten by enabled tier files.
+    # - Keep it empty here to avoid duplicated definitions across config files.
+    required: []
+      # NOTE: When using TaskSpec tiers, this list is overwritten. Edit Tier files instead:
+      # - config/nnmultihead/path_primitives_4h_80h_min/features_tier0.yaml
+      # - config/nnmultihead/path_primitives_4h_80h_min/features_tier1.yaml
+      # - config/nnmultihead/path_primitives_4h_80h_min/features_tier2.yaml (optional heavy pack)
       # === 已归一化的核心特征 ===
       
-      # --- 波动率/范围 (归一化) ---
-      - atr_f                   # 必需：FeatureContract 需要 atr（这里是 atr/close，已归一化）
-      - atr_percentile_f        # 波动率分位数，范围 [0,1]
-      - range_ratio_5bar_f      # 比率，小数值
-      - price_range_symmetry_f  # 比率
-      - wick_ratios_f           # 比率 [0,1]
 
-      # --- 动量/趋势 (小数值，天然归一化) ---
-      - roc_5_f                 # 收益率，小数值
-      - acceleration_3_f        # 二阶导，小数值
-      - trend_r2_20_f           # R², [0,1]
-      - trend_r2_50_f           # R², [0,1]
-      - slope_consistency_score_f  # 比率
-      - trend_volatility_alignment_f
-      - volatility_reversal_score_f
-
-      # --- 技术指标 (已归一化) ---
-      - rsi_f                   # [0, 100]
-      - bb_width_f              # 输出包含 bb_width_normalized
-      # macd 替换为 macd_histogram（差值，量级较小）
-
-      # --- 压缩特征 ---
-      - compression_duration_f
-      - compression_to_breakout_prob_f
-
-      # --- 成交量 ---
-      - volume_anomaly_f        # 异常值指标
-
-    optional_blocks:
-      # === 可选特征块（训练时会随机 mask 以增强鲁棒性）===
-      
-      vpin_block:
-        - vpin_base_aligned_features_f
-        - vpin_derived_features_f
-      
-      trade_cluster_block:
-        - trade_cluster_base_aligned_features_f
-        - trade_cluster_imbalance_ratio_ma_features_f
-        - trade_cluster_entropy_ma_change_features_f
-        - trade_cluster_max_buy_run_ma_features_f
-        - trade_cluster_max_buy_run_zscore_features_f
-        - trade_cluster_max_run_ratio_features_f
-        - trade_cluster_net_runs_ratio_features_f
-        - trade_cluster_net_runs_ma_features_f
-        - trade_cluster_net_runs_zscore_features_f
-        - trade_cluster_total_runs_ma_features_f
-      
-      volume_profile_block:
-        - volume_profile_volatility_features_f
-        - volume_profile_vpvr_f
+    # Optional blocks are defined in TaskSpec.feature_plan.optional_blocks_library,
+    # and enabled via TaskSpec.feature_plan.optional_blocks_enabled.
+    # In the *base template* we intentionally omit optional_blocks to avoid duplicated definitions.
 
   timeframe: 4H
   data_path: data/parquet_data
 
-# Feature contract (合并自 feature_contract.yaml)
-feature_contract:
-  minimal_required_cols:
-    # 基于上面 required 特征的输出列
-    - atr
-    - atr_percentile
-    - range_ratio_5bar
-    - price_range_symmetry
-    - wick_upper_ratio
-    - wick_lower_ratio
-    - roc_5
-    - acceleration_3
-    - trend_r2_20
-    - trend_r2_50
-    - slope_consistency_score
-    - trend_volatility_alignment
-    - volatility_reversal_score
-    - rsi
-    - bb_width_normalized
-    - compression_duration
-    - compression_to_breakout_prob
-    - volume_anomaly
-
-  optional_blocks:
-    # NOTE: This model artifact expects 2 block-mask dims (d_in = len(feature_cols) + 2).
-    # Keep only 2 optional blocks here to match historical training artifacts:
-    # - vpin (orderflow presence)
-    # - trade_cluster (microstructure cluster presence)
-    vpin_block:
-      - "*vpin*"
-    trade_cluster_block:
-      - "trade_cluster_*"
-
-  missingness_policy:
-    append_block_mask: true
-    block_dropout_p: 0.05
+#
+# Feature contract semantics are defined in:
+# - `feature_plan_v1.yaml` (feature_plan.feature_contract)
+# TaskSpec materialization will write the merged contract into the derived features.yaml, and overwrite
+# `minimal_required_cols` with (baseline minimal + tier output_columns union).

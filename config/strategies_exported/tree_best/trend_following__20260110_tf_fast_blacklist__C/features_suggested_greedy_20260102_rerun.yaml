@@ -1,0 +1,50 @@
+name: trend_following__suggested
+description: 'Trend-following strategy leveraging WPT trend, Hurst persistence, Hilbert
+  phase stability, and multi-timeframe context features.
+
+  '
+feature_pipeline:
+  requested_features:
+  - atr_f
+  - macd_f
+  - rsi_f
+  - trend_r2_20_f
+  - bb_width_f
+  - wick_ratios_f
+  - volume_ratio_f
+  - trend_r2_50_f
+  - slope_consistency_score_f
+  - trend_volatility_alignment_f
+  invert_features: []
+feature_group_search:
+  base_strategy_dir: config/strategies/trend_following
+  objective: Sharpe_mean
+  min_trades: 5
+  seeds:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  selected_groups:
+  - kline_core
+  - trend_core
+  stop_reason: no_improvement
+  base_features:
+  - atr_f
+  final_features:
+  - atr_f
+  - macd_f
+  - rsi_f
+  - trend_r2_20_f
+  - bb_width_f
+  - wick_ratios_f
+  - volume_ratio_f
+  - trend_r2_50_f
+  - slope_consistency_score_f
+  - trend_volatility_alignment_f
+  groups_source: groups_yaml:auto:config/feature_groups_trend_following_semantic.yaml
+  groups_yaml_auto: true
+  pool_b_yaml: /dev/null
+  pool_b_merged_singletons: true
+  feature_blacklist: []
