@@ -393,6 +393,14 @@ def main() -> None:
         ],
     )
 
+    # KPI journal (append-only): helps evaluate each layer without drowning in reports.
+    try:
+        from src.time_series_model.diagnostics.kpi_journal import write_kpi_journal
+
+        write_kpi_journal(run_dir=str(out_dir), stage="train")
+    except Exception:
+        pass
+
     print("✅ Training complete")
     print(f"   output_dir: {out_dir}")
     print(f"   model_path: {model_path}")

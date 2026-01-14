@@ -3062,6 +3062,87 @@ def nnmultihead_pipeline_3action_e2e(
         docker=docker,
         env_overrides=env_overrides,
     )
+
+    # ---------------------------------------------------------------------
+    # Per-symbol primitives KPI (default-on diagnostic):
+    # - produces per_symbol_kpi/(baseline|tuned)/per_symbol_kpi.(md|csv|json)
+    # - kpi_journal.html will auto-embed these tables when present
+    # ---------------------------------------------------------------------
+    try:
+        per_sym_root = f"{out_root}/per_symbol_kpi"
+
+        # Baseline thresholds (always materialized at out_dir/router_thresholds_baseline.json)
+        rc2 = run_script(
+            "scripts/nnmh_per_symbol_primitives_kpi.py",
+            [
+                "--model",
+                str(model),
+                "--symbols",
+                str(symbols),
+                "--timeframe",
+                str(timeframe),
+                "--start-date",
+                str(start_date),
+                "--end-date",
+                str(end_date),
+                "--features-store-root",
+                str(feature_store_root),
+                "--features-store-layer",
+                str(feature_store_layer),
+                "--router-thresholds-json",
+                f"{out_root}/router_thresholds_baseline.json",
+                "--out-dir",
+                f"{per_sym_root}/baseline",
+                "--max-rows-per-symbol",
+                "4000",
+            ],
+            docker=docker,
+            env_overrides=env_overrides,
+        )
+        _ = rc2  # non-fatal
+
+        # Tuned thresholds (if explicitly provided to pipeline)
+        if router_thresholds_json:
+            rc3 = run_script(
+                "scripts/nnmh_per_symbol_primitives_kpi.py",
+                [
+                    "--model",
+                    str(model),
+                    "--symbols",
+                    str(symbols),
+                    "--timeframe",
+                    str(timeframe),
+                    "--start-date",
+                    str(start_date),
+                    "--end-date",
+                    str(end_date),
+                    "--features-store-root",
+                    str(feature_store_root),
+                    "--features-store-layer",
+                    str(feature_store_layer),
+                    "--router-thresholds-json",
+                    str(router_thresholds_json),
+                    "--out-dir",
+                    f"{per_sym_root}/tuned",
+                    "--max-rows-per-symbol",
+                    "4000",
+                ],
+                docker=docker,
+                env_overrides=env_overrides,
+            )
+            _ = rc3  # non-fatal
+    except Exception:
+        pass
+
+    # KPI journal (append-only): summarize layer KPIs in one place per run dir.
+    try:
+        from src.time_series_model.diagnostics.kpi_journal import write_kpi_journal
+
+        # `out_dir` is the user-provided run root for this pipeline invocation.
+        write_kpi_journal(run_dir=str(out_dir), stage="pipeline")
+    except Exception:
+        pass
+
     sys.exit(rc)
 
 
@@ -3818,6 +3899,225 @@ def nnmultihead_compare_feature_sets(task_spec, base_config, poolb_yaml, out, do
 
     click.echo(f"✅ Wrote: {out_dir / 'features_compare_summary.json'}")
     click.echo(f"✅ Wrote: {out_dir / 'features_compare_summary.md'}")
+
+
+@nnmultihead.command("compare-runs")
+@click.option(
+    "--runs",
+    required=True,
+    help="Comma-separated run directories (produced by nnmultihead train/pipeline-3action-e2e), e.g. results/runs/runA,results/runs/runB",
+)
+@click.option(
+    "--out",
+    default=None,
+    help="Output directory (default: results/compare/nnmh_runs/<timestamp>/)",
+)
+def nnmultihead_compare_runs(runs, out):
+    """
+    Compare nnmultihead run directories (model params + key metrics + e2e counterfactual sharpe/dd).
+
+    Produces:
+      - report.md (human-readable)
+      - summary.json (machine-readable)
+    """
+    import json as _json
+    import time as _time
+    from pathlib import Path as _Path
+
+    def _as_abs(p: str) -> _Path:
+        pp = _Path(p)
+        if not pp.is_absolute():
+            pp = (PROJECT_ROOT / pp).resolve()
+        return pp
+
+    run_dirs = [s.strip() for s in str(runs).split(",") if s.strip()]
+    if len(run_dirs) < 2:
+        raise click.ClickException("--runs must contain at least 2 run dirs")
+
+    out_dir = _as_abs(out or f"results/compare/nnmh_runs/{_time.strftime('%Y%m%d_%H%M%S')}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _safe_read_json(p: _Path) -> dict:
+        try:
+            return _json.loads(p.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return {}
+
+    def _find_latest_model_pt(root: _Path) -> _Path | None:
+        candidates = list(root.glob("**/model.pt"))
+        candidates = [p for p in candidates if "feature_store" not in p.parts]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: p.stat().st_mtime)
+
+    def _extract_model_meta(model_pt: _Path) -> dict:
+        meta_p = model_pt.parent / "meta.json"
+        if meta_p.exists():
+            return _safe_read_json(meta_p)
+        try:
+            import torch  # type: ignore
+
+            payload = torch.load(str(model_pt), map_location="cpu")
+            if isinstance(payload, dict):
+                return payload.get("meta") or {}
+        except Exception:
+            pass
+        return {}
+
+    def _extract_train_metrics(model_pt: _Path) -> dict:
+        metrics_p = model_pt.parent / "metrics.json"
+        return _safe_read_json(metrics_p) if metrics_p.exists() else {}
+
+    def _extract_counterfactual_metrics(run_dir: _Path) -> dict:
+        p = run_dir / "e2e" / "counterfactual" / "metrics.json"
+        return _safe_read_json(p) if p.exists() else {}
+
+    def _extract_thresholds(run_dir: _Path) -> dict:
+        outp = {}
+        p0 = run_dir / "router_thresholds_baseline.json"
+        if p0.exists():
+            outp["baseline"] = _safe_read_json(p0)
+        p1 = run_dir / "threshold_plateau" / "router_thresholds_best.json"
+        if p1.exists():
+            outp["plateau_best"] = _safe_read_json(p1)
+        p2 = run_dir / "threshold_plateau" / "summary.json"
+        if p2.exists():
+            outp["plateau_summary"] = _safe_read_json(p2)
+        p3 = run_dir / "threshold_plateau" / "report.html"
+        if p3.exists():
+            outp["plateau_report_html"] = str(p3)
+        return outp
+
+    entries = []
+    for rd in run_dirs:
+        rdir = _as_abs(rd)
+        if not rdir.exists():
+            raise click.ClickException(f"run dir not found: {rdir}")
+        model_pt = _find_latest_model_pt(rdir)
+        if model_pt is None:
+            raise click.ClickException(f"model.pt not found under: {rdir}")
+        meta = _extract_model_meta(model_pt)
+        train_metrics = _extract_train_metrics(model_pt)
+        cf = _extract_counterfactual_metrics(rdir)
+        th = _extract_thresholds(rdir)
+
+        feature_cols = meta.get("feature_cols") or []
+        train_cfg = meta.get("train_cfg") or {}
+
+        entries.append(
+            {
+                "run_dir": str(rdir),
+                "model_pt": str(model_pt),
+                "feature_cols_n": int(len(feature_cols)) if isinstance(feature_cols, list) else None,
+                "train_cfg": {
+                    k: train_cfg.get(k)
+                    for k in ["hidden", "depth", "dropout", "batch_size", "lr", "epochs", "seed"]
+                },
+                "task_id": meta.get("task_id"),
+                "n_samples": meta.get("n_samples"),
+                "train_metrics": train_metrics,
+                "counterfactual": cf,
+                "thresholds": th,
+            }
+        )
+
+    summary = {
+        "kind": "nnmultihead_run_compare_v1",
+        "created_at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        "runs": entries,
+    }
+    (out_dir / "summary.json").write_text(
+        _json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    def _fmt(x):
+        try:
+            if x is None:
+                return "null"
+            if isinstance(x, float):
+                return f"{x:.6g}"
+            return str(x)
+        except Exception:
+            return str(x)
+
+    def _pick(m: dict, k: str):
+        return m.get(k) if isinstance(m, dict) else None
+
+    md = []
+    md.append("# nnmultihead run comparison\n\n")
+    md.append(f"- out_dir: `{out_dir}`\n")
+    md.append(f"- n_runs: **{len(entries)}**\n\n")
+
+    md.append("## Summary table (counterfactual)\n\n")
+    md.append("| run | rule_sharpe_mean | pred_sharpe_mean | rule_avg_max_dd | pred_avg_max_dd | rule_avg_total_return | pred_avg_total_return | router_trade_n | router_trade_rate |\n")
+    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+    for e in entries:
+        cf = e.get("counterfactual") or {}
+        md.append(
+            "| "
+            + f"`{_Path(e['run_dir']).name}`"
+            + " | "
+            + " | ".join(
+                _fmt(_pick(cf, k))
+                for k in [
+                    "rule_sharpe_mean",
+                    "pred_sharpe_mean",
+                    "rule_avg_max_dd",
+                    "pred_avg_max_dd",
+                    "rule_avg_total_return",
+                    "pred_avg_total_return",
+                    "router_diag__trade_n",
+                    "router_diag__trade_rate",
+                ]
+            )
+            + " |\n"
+        )
+    md.append("\n")
+
+    md.append("## Model params / feature size\n\n")
+    md.append("| run | feature_cols_n | hidden | depth | dropout | batch_size | lr | epochs | seed |\n")
+    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+    for e in entries:
+        tc = e.get("train_cfg") or {}
+        md.append(
+            "| "
+            + f"`{_Path(e['run_dir']).name}`"
+            + " | "
+            + " | ".join(
+                _fmt(x)
+                for x in [
+                    e.get("feature_cols_n"),
+                    tc.get("hidden"),
+                    tc.get("depth"),
+                    tc.get("dropout"),
+                    tc.get("batch_size"),
+                    tc.get("lr"),
+                    tc.get("epochs"),
+                    tc.get("seed"),
+                ]
+            )
+            + " |\n"
+        )
+    md.append("\n")
+
+    md.append("## Threshold tuning (plateau)\n\n")
+    for e in entries:
+        rname = _Path(e["run_dir"]).name
+        md.append(f"### `{rname}`\n\n")
+        th = e.get("thresholds") or {}
+        ps = th.get("plateau_summary") or {}
+        if ps:
+            md.append(f"- plateau_frac_ge_95pct: **{_fmt(ps.get('plateau_frac_ge_95pct'))}**\n")
+            md.append(f"- best.robust_score: {_fmt((ps.get('best') or {}).get('robust_score'))}\n")
+            if th.get("plateau_report_html"):
+                md.append(f"- plateau report: `{th.get('plateau_report_html')}`\n")
+        else:
+            md.append("- (no threshold_plateau artifacts found)\n")
+        md.append("\n")
+
+    (out_dir / "report.md").write_text("".join(md), encoding="utf-8")
+    click.echo(f"✅ Wrote: {out_dir / 'report.md'}")
+    click.echo(f"✅ Wrote: {out_dir / 'summary.json'}")
 
 
 @nnmultihead.command("feature-group-search")
@@ -4974,6 +5274,45 @@ def diagnose_kpi_gate(metrics_json, gate_yaml, out_json, docker):
             docker=docker,
         )
     )
+
+
+@diagnose.command("kpi-journal")
+@click.option("--run-dir", required=True, help="nnmultihead run dir (results/runs/<RUN_ID>).")
+@click.option(
+    "--stage",
+    default="all",
+    show_default=True,
+    type=click.Choice(["all", "train", "pipeline", "threshold_plateau"]),
+    help="Which KPI layer snapshot(s) to append (best-effort).",
+)
+@click.option(
+    "--docker/--no-docker",
+    default=True,
+    help="Run in Docker (not required; this command reads local artifacts).",
+)
+def diagnose_kpi_journal(run_dir, stage, docker):
+    """
+    Append a KPI snapshot section into <run_dir>/kpi_journal.md and write kpi_latest.(md|json).
+
+    This is a lightweight “single pane of glass” for evaluating improvements when you:
+      - add features
+      - change labels
+      - tune router thresholds
+    """
+    _ = docker  # purely local; kept for CLI consistency
+    from pathlib import Path
+
+    from src.time_series_model.diagnostics.kpi_journal import write_kpi_journal
+
+    p = Path(run_dir)
+    if not p.is_absolute():
+        p = (PROJECT_ROOT / p).resolve()
+    outp = write_kpi_journal(run_dir=str(p), stage=str(stage))
+    click.echo(f"✅ Wrote: {outp}")
+    click.echo(f"✅ Wrote: {p / 'kpi_latest.md'}")
+    click.echo(f"✅ Wrote: {p / 'kpi_latest.json'}")
+    click.echo(f"✅ Wrote: {p / 'kpi_journal.html'}")
+    click.echo(f"✅ Wrote: {p / 'kpi_latest.html'}")
 
 
 @diagnose.command("threshold-plateau")

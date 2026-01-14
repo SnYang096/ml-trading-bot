@@ -437,10 +437,34 @@ def evaluate_model_on_df(
     """
     Compute labels, run predictions, and return (metrics, merged_frame).
     """
+    # Defensive: evaluation must be index-stable.
+    #
+    # In multi-symbol FeatureStore reads, df_features often has a DatetimeIndex that is duplicated
+    # across symbols. Pandas joins on a duplicated index can subtly misalign rows and corrupt metrics.
+    #
+    # Fix: normalize to a RangeIndex, preserve the original time index as `timestamp`, and ensure
+    # per-symbol ordering is chronological before computing labels and joining them back.
+    work0 = df_features.copy()
+    if "timestamp" not in work0.columns:
+        if isinstance(work0.index, pd.DatetimeIndex):
+            work0 = work0.reset_index(drop=False).rename(columns={"index": "timestamp"})
+        else:
+            work0 = work0.reset_index(drop=True)
+    else:
+        work0 = work0.reset_index(drop=True)
+    if "timestamp" in work0.columns:
+        work0["timestamp"] = pd.to_datetime(
+            work0["timestamp"], errors="coerce"
+        ).dt.tz_localize(None)
+    if group_col and group_col in work0.columns and "timestamp" in work0.columns:
+        work0 = work0.sort_values(
+            [group_col, "timestamp"], kind="mergesort"
+        ).reset_index(drop=True)
+
     df_labels = compute_path_primitives_labels(
-        df_features, cfg=label_cfg, group_col=group_col
+        work0, cfg=label_cfg, group_col=group_col
     )
-    work = df_features.join(df_labels)
+    work = work0.join(df_labels)
 
     preds = predict_path_primitives(
         model=model,

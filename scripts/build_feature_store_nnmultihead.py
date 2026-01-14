@@ -149,17 +149,92 @@ def main() -> None:
         base_cols = ["open", "high", "low", "close", "volume", "_symbol", "symbol"]
         requested = cfg.features.requested_features
 
+        # Precompute expected output columns for requested feature nodes
+        features_cfg = feature_loader.feature_deps.get("features", {}) or {}
+        expected_cols: List[str] = []
+        for feature_name in requested:
+            if feature_name in features_cfg:
+                outs = features_cfg[feature_name].get("output_columns", [feature_name])
+                if isinstance(outs, list):
+                    expected_cols.extend([str(c) for c in outs])
+        expected_cols = sorted(set([c for c in expected_cols if c]))
+
+        # output_col -> feature node (for repairing missing cols)
+        out2node = {}
+        for feat_name, feat_info in features_cfg.items():
+            outs = feat_info.get("output_columns", [feat_name]) or [feat_name]
+            for c in outs:
+                out2node[str(c)] = str(feat_name)
+
         monthly_groups = df_raw.groupby(pd.Grouper(freq="M"))
         for period, df_month_raw in monthly_groups:
             if df_month_raw.empty:
                 continue
             month_str = period.strftime("%Y-%m")
             if store.has_month(spec, month_str):
-                print(
-                    f"↩️  Skip existing month: symbol={sym} timeframe={args.timeframe} month={month_str}",
-                    flush=True,
-                )
-                continue
+                # Repair mode: if existing month parquet is missing expected columns, compute ONLY missing nodes
+                # and overwrite the month file while preserving existing columns.
+                try:
+                    import pyarrow.parquet as pq
+
+                    parquet_path, _ = store._file_paths(spec, month_str)  # type: ignore[attr-defined]
+                    schema_cols = set(pq.ParquetFile(str(parquet_path)).schema.names)
+                    missing = [c for c in expected_cols if c not in schema_cols]
+                    if missing:
+                        print(
+                            f"🩹 Repair month (missing {len(missing)} cols): symbol={sym} timeframe={args.timeframe} month={month_str}",
+                            flush=True,
+                        )
+                        # Load existing month (already contains base + many features)
+                        df_existing = store.read_month(spec, month_str)
+                        # Determine minimal set of nodes needed to produce missing cols
+                        needed_nodes = sorted(
+                            {
+                                out2node.get(c)
+                                for c in missing
+                                if out2node.get(c) is not None
+                            }
+                        )
+                        if needed_nodes:
+                            df_fixed = feature_loader.load_features_from_requested(
+                                df_existing, requested_features=needed_nodes, fit=True
+                            )
+                            # Merge back only missing columns
+                            for c in missing:
+                                if c in df_fixed.columns:
+                                    df_existing[c] = df_fixed[c]
+
+                            store.write_month(
+                                spec,
+                                month_str,
+                                df_existing,
+                                base_columns=base_cols,
+                                feature_columns=[
+                                    c
+                                    for c in df_existing.columns
+                                    if c not in set(base_cols)
+                                ],
+                                overwrite=True,
+                                metadata={
+                                    "config_dir": str(cfg_dir),
+                                    "warmup_months": int(args.warmup_months),
+                                    "warmup_bars": int(args.warmup_bars),
+                                    "feature_cache_version": feature_cache_version,
+                                    "repair_missing_cols": missing[:50],
+                                },
+                            )
+                            continue
+                    print(
+                        f"↩️  Skip existing month: symbol={sym} timeframe={args.timeframe} month={month_str}",
+                        flush=True,
+                    )
+                    continue
+                except Exception:
+                    print(
+                        f"↩️  Skip existing month: symbol={sym} timeframe={args.timeframe} month={month_str}",
+                        flush=True,
+                    )
+                    continue
 
             month_start = df_month_raw.index.min()
             month_end = df_month_raw.index.max()

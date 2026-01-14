@@ -22,6 +22,8 @@ Outputs (out dir):
 from __future__ import annotations
 
 import argparse
+import base64
+from io import BytesIO
 import json
 import sys
 from dataclasses import asdict
@@ -31,6 +33,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend for CI/servers
+import matplotlib.pyplot as plt
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -55,6 +61,184 @@ ROUTER_KEYS = [
     "eff_mean_min",
     "ttm_mean_max",
 ]
+
+
+def _fig_to_data_uri(fig) -> str:
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
+
+
+def _write_html_report(
+    *,
+    out_dir: Path,
+    df: pd.DataFrame,
+    best_thresholds: Dict[str, float],
+    best_row: Dict[str, Any],
+    plateau_frac: float,
+) -> None:
+    """
+    Create a minimal HTML report to visually confirm “plateau” behavior.
+
+    It embeds a few PNG plots as data URIs (no external deps beyond matplotlib).
+    """
+    if df is None or df.empty:
+        return
+    if "robust_score" not in df.columns:
+        return
+
+    dfx = df.reset_index(drop=True).copy()
+    best_score = float(dfx["robust_score"].iloc[0])
+    # Plateau cutoff must work for negative scores too.
+    # If best_score < 0, multiplying by 0.95 makes it *less negative* (higher than best),
+    # which would yield plateau_frac=0 by construction. Instead we use:
+    #   cutoff = best_score - 0.05 * |best_score|
+    cutoff = (
+        (best_score - 0.05 * float(abs(best_score)))
+        if np.isfinite(best_score)
+        else float("nan")
+    )
+
+    # Plot 1: robust_score by rank
+    fig1 = plt.figure(figsize=(9.0, 3.6))
+    ax1 = fig1.add_subplot(1, 1, 1)
+    ax1.plot(dfx["robust_score"].to_numpy(dtype=float), lw=1.2)
+    ax1.axhline(
+        cutoff,
+        color="orange",
+        lw=1.2,
+        ls="--",
+        label="within 5% of |best|",
+    )
+    ax1.set_title("robust_score by candidate rank (sorted, best at left)")
+    ax1.set_xlabel("rank")
+    ax1.set_ylabel("robust_score")
+    ax1.grid(True, alpha=0.25)
+    ax1.legend(loc="best")
+    img1 = _fig_to_data_uri(fig1)
+
+    # Plot 2: trade_rate_mean vs robust_score (if present)
+    img2 = ""
+    if "trade_rate_mean" in dfx.columns:
+        fig2 = plt.figure(figsize=(6.2, 4.2))
+        ax2 = fig2.add_subplot(1, 1, 1)
+        ax2.scatter(
+            dfx["trade_rate_mean"].to_numpy(dtype=float),
+            dfx["robust_score"].to_numpy(dtype=float),
+            s=10,
+            alpha=0.45,
+        )
+        ax2.scatter(
+            [float(dfx["trade_rate_mean"].iloc[0])],
+            [float(dfx["robust_score"].iloc[0])],
+            s=60,
+            color="red",
+            label="best",
+        )
+        ax2.axhline(cutoff, color="orange", lw=1.0, ls="--")
+        ax2.set_title("trade_rate_mean vs robust_score")
+        ax2.set_xlabel("trade_rate_mean")
+        ax2.set_ylabel("robust_score")
+        ax2.grid(True, alpha=0.25)
+        ax2.legend(loc="best")
+        img2 = _fig_to_data_uri(fig2)
+
+    # Plot 3: histogram of robust_score
+    fig3 = plt.figure(figsize=(6.2, 3.6))
+    ax3 = fig3.add_subplot(1, 1, 1)
+    ax3.hist(dfx["robust_score"].to_numpy(dtype=float), bins=40, alpha=0.85)
+    ax3.axvline(best_score, color="red", lw=1.2, label="best")
+    ax3.axvline(cutoff, color="orange", lw=1.2, ls="--", label="plateau cutoff")
+    ax3.set_title("robust_score distribution")
+    ax3.set_xlabel("robust_score")
+    ax3.set_ylabel("count")
+    ax3.grid(True, alpha=0.25)
+    ax3.legend(loc="best")
+    img3 = _fig_to_data_uri(fig3)
+
+    def _fmt(x) -> str:
+        try:
+            if x is None:
+                return "null"
+            return f"{float(x):.6g}"
+        except Exception:
+            return str(x)
+
+    rows = "\n".join(
+        f"<tr><td><code>{k}</code></td><td>{_fmt(v)}</td></tr>"
+        for k, v in best_thresholds.items()
+    )
+
+    best_meta_rows = []
+    for k in [
+        "robust_score",
+        "win_score_mean",
+        "win_score_p25",
+        "win_sharpe_mean",
+        "win_sharpe_p25",
+        "win_dd_mean",
+    ]:
+        if k in best_row:
+            best_meta_rows.append(f"<li><b>{k}</b>: {_fmt(best_row.get(k))}</li>")
+    best_meta_html = "\n".join(best_meta_rows)
+
+    html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Threshold plateau report</title>
+    <style>
+      body {{ font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin: 24px; }}
+      code {{ background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }}
+      .grid {{ display: grid; grid-template-columns: 1fr; gap: 18px; }}
+      img {{ max-width: 100%; border: 1px solid #eee; border-radius: 8px; }}
+      table {{ border-collapse: collapse; }}
+      td, th {{ border: 1px solid #eee; padding: 6px 10px; }}
+      .muted {{ color: #666; }}
+    </style>
+  </head>
+  <body>
+    <h2>Threshold plateau report (Rule Router 3-action)</h2>
+    <p class="muted">
+      A “plateau” means many candidates near the best score (not a single sharp peak).
+      We use <code>plateau_frac</code> = fraction of candidates with <code>robust_score</code> ≥ (best − 5%·|best|).
+    </p>
+    <ul>
+      <li><b>n_candidates</b>: {len(dfx)}</li>
+      <li><b>best_robust_score</b>: {_fmt(best_score)}</li>
+      <li><b>plateau_cutoff</b>: {_fmt(cutoff)}</li>
+      <li><b>plateau_frac</b>: <b>{_fmt(plateau_frac)}</b></li>
+    </ul>
+    <h3>Best candidate diagnostics</h3>
+    <ul>
+      {best_meta_html}
+    </ul>
+    <h3>Best thresholds (robust)</h3>
+    <table>
+      <thead><tr><th>key</th><th>value</th></tr></thead>
+      <tbody>
+        {rows}
+      </tbody>
+    </table>
+    <h3>Plots</h3>
+    <div class="grid">
+      <div><img src="{img1}" alt="robust_score_by_rank"/></div>
+      {f'<div><img src="{img2}" alt="trade_rate_vs_score"/></div>' if img2 else ''}
+      <div><img src="{img3}" alt="robust_score_hist"/></div>
+    </div>
+    <h3>Files</h3>
+    <ul>
+      <li><code>candidates.csv</code> (all candidates)</li>
+      <li><code>summary.json</code> (machine-readable summary)</li>
+      <li><code>router_thresholds_best.json</code> (best thresholds to feed back into pipeline)</li>
+      <li><code>report.md</code> (text report)</li>
+    </ul>
+  </body>
+</html>
+"""
+    (out_dir / "report.html").write_text(html, encoding="utf-8")
 
 
 def _read_parquet_or_csv(path: Path) -> pd.DataFrame:
@@ -467,12 +651,17 @@ def main() -> None:
     df.to_csv(out_dir / "candidates.csv", index=False)
 
     best = df.iloc[0].to_dict()
-    # plateau width: fraction of candidates within 95% of best robust_score
+    # plateau width: fraction of candidates within (best - 5%*|best|).
+    # This definition works for both positive and negative best_score.
     best_score = float(best["robust_score"])
-    thr = 0.95 * best_score
-    plateau_frac = (
-        float(np.mean(df["robust_score"].to_numpy(dtype=float) >= thr))
+    thr = (
+        best_score - 0.05 * float(abs(best_score))
         if np.isfinite(best_score)
+        else float("nan")
+    )
+    plateau_frac = (
+        float(np.mean(df["robust_score"].to_numpy(dtype=float) >= float(thr)))
+        if np.isfinite(best_score) and np.isfinite(thr)
         else 0.0
     )
 
@@ -512,7 +701,7 @@ def main() -> None:
     md.append(
         f"- n_windows: **{len(windows)}**, n_bootstrap: **{int(args.n_bootstrap)}**\n"
     )
-    md.append(f"- plateau_frac (>=95% best robust_score): **{plateau_frac:.3f}**\n")
+    md.append(f"- plateau_frac (>= best - 5%*|best|): **{plateau_frac:.3f}**\n")
     md.append("\n### Best thresholds (robust)\n")
     md.append("```json\n")
     md.append(json.dumps({k: float(best[k]) for k in ROUTER_KEYS}, indent=2))
@@ -544,6 +733,42 @@ def main() -> None:
         "- Keep an eye on trade_rate_mean in candidates.csv to avoid unrealistic overtrading.\n"
     )
     (out_dir / "report.md").write_text("".join(md), encoding="utf-8")
+
+    # Optional: HTML report with plots (helps visually confirm plateau vs sharp peak)
+    try:
+        _write_html_report(
+            out_dir=out_dir,
+            df=df,
+            best_thresholds={k: float(best[k]) for k in ROUTER_KEYS},
+            best_row=best,
+            plateau_frac=float(plateau_frac),
+        )
+    except Exception:
+        pass
+
+    print("✅ Wrote:", (out_dir / "candidates.csv").as_posix())
+    print("✅ Wrote:", (out_dir / "summary.json").as_posix())
+    print("✅ Wrote:", (out_dir / "router_thresholds_best.json").as_posix())
+    print("✅ Wrote:", (out_dir / "report.md").as_posix())
+    if (out_dir / "report.html").exists():
+        print("✅ Wrote:", (out_dir / "report.html").as_posix())
+
+    # KPI journal (append-only): if this out_dir is under a run root, append plateau KPI status there.
+    try:
+        from src.time_series_model.diagnostics.kpi_journal import (
+            find_run_root,
+            write_kpi_journal,
+        )
+
+        rr = find_run_root(out_dir)
+        if rr is not None:
+            write_kpi_journal(
+                run_dir=str(rr),
+                stage="threshold_plateau",
+                extra={"plateau_out_dir": str(out_dir)},
+            )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

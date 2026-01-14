@@ -12,6 +12,15 @@ hard_fail:
   rule_avg_mode_entropy: {min: 0.15, max: 1.05}
   # If present, Rule+PCM should not collapse (optional so older reports won't fail).
   rule_pcm_avg_mode_entropy: {min: 0.05, max: 1.05, optional: true}
+  #
+  # Router KPI per docs/architecture/谁对sharp负责.md:
+  # - mismatch: does the learned policy disagree with the rule router too often?
+  # - stability: does it switch/collapse?
+  #
+  # These fields are computed in KPI journal by combining e2e/shadow/metrics.json with counterfactual metrics:
+  router_kpi__mismatch: {min: 0.0, max: 0.25}          # mismatch = 1 - acc_vs_rule_mode
+  router_kpi__switch_rate_pred: {min: 0.0, max: 0.20}  # too high => unstable; too low handled by entropy
+  router_kpi__mode_entropy_pred: {min: 0.05, max: 1.05}  # too low => collapse; too high => random
 
 warn:
   # Drawdown is execution/system-facing; keep as WARN here (hard-fail belongs to PCM/portfolio gate).

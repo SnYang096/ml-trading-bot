@@ -129,6 +129,11 @@ features:
     - close
     - high
     - low
+    compute_params:
+      # Cache invalidation hint:
+      # bb_width_f output contract includes `bb_position`. Some old monthly caches were missing this column.
+      # Bump this value whenever bb_width_f output schema/logic changes to force recompute.
+      node_cache_version: "bb_width_v2_bb_position"
     output_columns:
     - bb_width_normalized
     - bb_position

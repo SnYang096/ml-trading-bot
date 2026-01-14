@@ -110,6 +110,7 @@ mlbot data download-funding-rate \
 > - `docs/architecture/LiveDashboard.md`（LiveDashboard：只盯 5 个数（含增强版），用于阻止系统犯蠢）
 > - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
 > - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
+> - `docs/strategies/树策略导出的可泛化规则.md`（tree 策略 if/else：语义规则模板 + 扫描汇总（含 VPIN/订单流规则））
 > - `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找“平坦高原”而非尖峰，Router/SLTP 通用）
 > - `docs/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
 > - `docs/guides/NNMULTIHEAD_CONFIG_FILES_CN.md`（nnmultihead 配置文件职责图：TaskSpec/FeaturePlan/features.yaml/labels.yaml/model.yaml）
@@ -244,6 +245,50 @@ mlbot diagnose threshold-plateau --no-docker \
   --out results/plateau/router3action_tier01_oos_v1
 ```
 
+**用法（推荐两步法）**
+
+- **Step A：先跑一次 pipeline 产出 `preds/` + `logs_3action.parquet` + baseline thresholds**
+
+```bash
+mlbot nnmultihead pipeline-3action-e2e --no-docker \
+  --task-spec config/tasks/task_spec_v1.yaml \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --feature-store-root feature_store \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
+  --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
+  --returns-source rr_execution \
+  --out results/nnmh_e2e/tier01
+```
+
+- **Step B：做 plateau tuning，得到 `router_thresholds_best.json`，再把它喂回 pipeline 重跑**
+  - 输出位置：`results/plateau/router3action_tier01_oos_v1/router_thresholds_best.json`
+  - 重要：**阈值调参只能用 train/oos（可调参）窗口**；`holdout`（只验收）不要用来调参。
+
+```bash
+# 1) tune -> best thresholds
+mlbot diagnose threshold-plateau --no-docker \
+  --preds results/nnmh_e2e/tier01/preds \
+  --logs  results/nnmh_e2e/tier01/logs_3action.parquet \
+  --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
+  --baseline-json results/nnmh_e2e/tier01/router_thresholds_baseline.json \
+  --out results/plateau/router3action_tier01_oos_v1
+
+# 2) rerun pipeline with tuned thresholds (explicitly applied)
+mlbot nnmultihead pipeline-3action-e2e --no-docker \
+  --task-spec config/tasks/task_spec_v1.yaml \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --feature-store-root feature_store \
+  --feature-store-layer nnmh_tree_union_all_240T_v2 \
+  --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
+  --router-thresholds-json results/plateau/router3action_tier01_oos_v1/router_thresholds_best.json \
+  --returns-source rr_execution \
+  --out results/nnmh_e2e/tier01_tuned
+```
+
 ### 3.2) 灭绝回放（Extinction Replay）：产出 survival labels（给 Survival Head / 熄火复燃验证）
 
 > 目的：把 “在极端路径里会不会死” 变成可回放、可产物、可训练的标签（`labels.parquet`）。
@@ -330,7 +375,10 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 - [多头NN和订单流的使用分类和评估](/workspaces/ml_trading_bot/docs/architecture/多头NN和订单流.md)
 - [训练落地文档](docs/guides/FEATURE_COMPLEXITY_LAYERS_CN.md)
 - [谁对sharp负责](docs/architecture/谁对sharp负责.md)
-- [删除的策略该不做什么](docs/architecture/删除的策略该不做什么.md)
+- [删除的策略(该不做什么)](docs/architecture/删除的策略该不做什么.md)
+- [alpha可以更多吗](docs/architecture/alpha可以更多吗.md)
+- [VolMean难在哪里](docs/architecture/VolMean难在哪里.md)
+- [时间框架高级甜点区](docs/architecture/时间框架高级甜点区.md)
 ---
 
 ## 获取帮助

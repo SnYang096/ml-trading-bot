@@ -1,0 +1,23 @@
+layer: "nnmh_primitives_model"
+
+# KPI Gate for NN Path Primitives (Multi-head) model quality.
+# Purpose:
+# - Evaluate model *as a predictor* (A-layer), not as a trading system.
+# - Do NOT use Sharpe here (see docs/architecture/谁对sharp负责.md).
+#
+# Source: training run dir `metrics.json` (produced by scripts/train_path_primitives_mlp.py
+# or scripts/eval_path_primitives_from_model.py).
+
+hard_fail:
+  # Must be better than coin-flip on direction.
+  dir_auc: {min: 0.52, max: 1.0}
+
+warn:
+  # Rolling ICIR is a stability proxy (optional because some runs may disable rolling_ic).
+  roll_icir__dir: {min: 1.0, optional: true}
+  roll_icir__mfe_atr: {min: 0.5, optional: true}
+  roll_icir__mae_atr: {min: 0.5, optional: true}
+
+  # Sanity: some trading sample exists when applying router-aligned thresholds in report artifacts.
+  trade__rate: {min: 0.005, max: 0.80, optional: true}
+

@@ -160,6 +160,28 @@ class MarketDataLoader:
         except Exception:
             return None
 
+    @staticmethod
+    def _to_utc_naive(ts: Optional[pd.Timestamp]) -> Optional[pd.Timestamp]:
+        """
+        Normalize timestamps to UTC tz-naive for safe comparisons.
+
+        We sometimes mix tz-aware (utc=True) and tz-naive timestamps, which breaks
+        comparisons like `month_end < start_ts`.
+        """
+        if ts is None:
+            return None
+        try:
+            t = pd.to_datetime(ts, utc=True)
+            return t.tz_convert("UTC").tz_localize(None)
+        except Exception:
+            try:
+                t = pd.to_datetime(ts)
+                if getattr(t, "tz", None) is not None:
+                    t = t.tz_convert("UTC").tz_localize(None)
+                return t
+            except Exception:
+                return None
+
     def _select_raw_files_for_range(
         self,
         *,
@@ -175,16 +197,26 @@ class MarketDataLoader:
         if start_ts is None and end_ts is None:
             return files
         out: List[Path] = []
+        start_ts_n = self._to_utc_naive(start_ts)
+        end_ts_n = self._to_utc_naive(end_ts)
         for fp in files:
             m = self._parse_month_from_raw_filename(fp)
             if m is None:
                 out.append(fp)
                 continue
-            month_start = m
-            month_end = (m + pd.offsets.MonthEnd(1)).normalize()
-            if start_ts is not None and month_end < start_ts:
+            month_start = self._to_utc_naive(m)
+            month_end = self._to_utc_naive((m + pd.offsets.MonthEnd(1)).normalize())
+            if (
+                start_ts_n is not None
+                and month_end is not None
+                and month_end < start_ts_n
+            ):
                 continue
-            if end_ts is not None and month_start > end_ts:
+            if (
+                end_ts_n is not None
+                and month_start is not None
+                and month_start > end_ts_n
+            ):
                 continue
             out.append(fp)
         return out
