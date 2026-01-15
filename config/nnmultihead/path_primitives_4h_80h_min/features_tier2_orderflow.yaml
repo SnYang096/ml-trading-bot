@@ -1,0 +1,15 @@
+## Tier2 (Orderflow-only)
+# Subset of Tier2 features focusing on orderflow evidence.
+
+- vpin_base_aligned_features_f
+- vpin_derived_features_f
+- vpin_features_f
+- ofi_short_f
+- vpin_scene_semantic_scores_f
+
+- trade_cluster_base_aligned_features_f
+- trade_cluster_derived_features_f
+- trade_cluster_scene_semantic_scores_f
+
+# Optional footprint (can be heavy; keep Tier2 only)
+- footprint_basic_f

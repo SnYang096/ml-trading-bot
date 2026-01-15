@@ -376,14 +376,29 @@ def _metric_explain(name: str) -> str | None:
         "router_diag__trade_rate": "Router 最终交易密度（counterfactual test 区间）。过高=噪声/成本敏感；过低=空仓/无样本。",
         "rule_avg_mode_entropy": "Rule Router 模式熵（NO/MEAN/TREND）。太低=塌缩；太高=乱切换。",
         "rule_avg_max_dd": "Rule 系统回撤（WARN 级）。属于 system 层，Router 不应以 Sharpe 为 KPI，但可以作为风险警告。",
+        "rule_pcm_avg_max_dd": "Gate/PCM 后的系统回撤。用于 gate 层或系统层的风控硬门槛。",
+        "rule_pcm_avg_total_return": "Gate/PCM 后的累计收益。属于系统层，默认 WARN。",
+        "rule_pcm_avg_mode_entropy": "Gate/PCM 后的模式熵（NO/MEAN/TREND）。用于防止塌缩或随机。",
+        "rule_pcm_avg_switch_rate": "Gate/PCM 后的切换率。过高=不稳；过低=可能塌缩。",
         # --- Router KPIs per doc (mismatch/stability) ---
         "router_kpi__mismatch": "Router KPI: mismatch（按文档命名）。这里定义为 1 - acc_vs_rule_mode（shadow test 区间）。越低越好。",
         "router_kpi__acc_vs_rule_mode": "shadow 中 pred policy 与 rule mode 的一致率（越高越一致）。mismatch=1-acc。",
         "router_kpi__switch_rate_pred": "Router KPI: stability。pred policy 的切换率（越低越稳；但过低也可能塌缩）。",
         "router_kpi__mode_entropy_pred": "Router KPI: stability。pred policy 的模式熵（太低=塌缩；太高=随机）。",
+        "router_diag__trade_win_rate": "Router 交易胜率（trade 子集）。是执行质量的粗 proxy，不等于最终 Sharpe。",
+        "router_diag__trade_avg_ret": "Router 单笔平均收益（trade 子集）。粗 proxy，受成本/滑点影响。",
         # --- Plateau ---
         "plateau_frac_ge_95pct": "Plateau 稳健性：接近最优（best−5%·|best|）的候选比例。越大表示阈值不敏感、更可控。",
         "best__robust_score": "Plateau best 的鲁棒分数（多窗口+bootstrap）。分数可为负；关键是相对与 plateau_frac。",
+        # --- Portfolio / Allocation ---
+        "rule_pcm_sharpe_mean": "Gate/PCM 后系统 Sharpe（system 层 KPI）。",
+        "rule_pcm_ann_return_mean": "Gate/PCM 后年化收益（system 层）。",
+        "rule_pcm_ann_vol_mean": "Gate/PCM 后年化波动（system 层）。",
+        "pa__avg_weight__GLOBAL_CASH": "组合层现金权重均值（资产配置 sanity check）。",
+        "pa__avg_weight__GLOBAL_TREND": "组合层趋势策略权重均值（资产配置诊断）。",
+        "pa__avg_weight__GLOBAL_MEAN": "组合层均值回复权重均值（资产配置诊断）。",
+        "pa__avg_weight__DEFENSIVE_MEAN": "组合层防御均值权重均值（资产配置诊断）。",
+        "pa__trend_zero_rate": "趋势策略空仓比率（过高=趋势腿缺失）。",
     }
     return m.get(n)
 
@@ -489,6 +504,38 @@ def write_kpi_journal(
             "MLBOT_KPI_PLATEAU_YAML", "config/kpi_gates/nnmh_router_plateau_v1.yaml"
         )
     ).resolve()
+    gate_layer_gate = Path(
+        os.getenv(
+            "MLBOT_KPI_GATE_LAYER_YAML", "config/kpi_gates/nnmh_gate_layer_v1.yaml"
+        )
+    ).resolve()
+    execution_gate = Path(
+        os.getenv(
+            "MLBOT_KPI_EXECUTION_YAML",
+            "config/kpi_gates/nnmh_execution_layer_v1.yaml",
+        )
+    ).resolve()
+    portfolio_gate = Path(
+        os.getenv(
+            "MLBOT_KPI_PORTFOLIO_YAML",
+            "config/kpi_gates/nnmh_portfolio_allocation_v1.yaml",
+        )
+    ).resolve()
+
+    guardrails = [
+        {
+            "layer": "Router",
+            "rule": "Plateau-pass is a hard gate; if FAIL, do not proceed to system-level tuning.",
+        },
+        {
+            "layer": "A-layer (Primitives Model)",
+            "rule": "Optimize AUC/IC/calibration/tau only (including trade-subset KPIs); do not chase Sharpe here.",
+        },
+        {
+            "layer": "System (Gate/Portfolio/Execution)",
+            "rule": "Sharpe/DD/cost/slippage are optimized here after Router + A-layer pass.",
+        },
+    ]
 
     snap: Dict[str, Any] = {
         "kind": "kpi_snapshot_v1",
@@ -496,6 +543,7 @@ def write_kpi_journal(
         "stage": str(stage),
         "created_at": _utc_now_iso(),
         "extra": extra or {},
+        "guardrails": guardrails,
         "layers": {},
     }
 
@@ -503,6 +551,9 @@ def write_kpi_journal(
     md.append(f"- run_dir: `{run_root}`\n")
     md.append(f"- stage: **{stage}**\n")
     md.append(f"- created_at: `{snap['created_at']}`\n")
+    md.append("\n### Workflow Guardrails\n")
+    for g in guardrails:
+        md.append(f"- **{g['layer']}**: {g['rule']}\n")
 
     # HTML snapshot body (pretty dashboard)
     html_parts: List[str] = []
@@ -515,6 +566,20 @@ def write_kpi_journal(
         f"<div class='mono'>created_at: {_html.escape(str(snap['created_at']))}</div>"
     )
     html_parts.append("</div>")
+    html_parts.append("<div class='card span-12'>")
+    html_parts.append("<div class='kpi-title'>")
+    html_parts.append(
+        "<div><h2>Workflow Guardrails</h2><div class='muted'>Fixed evaluation principles for this run</div></div>"
+    )
+    html_parts.append("</div>")
+    html_parts.append("<div class='divider'></div>")
+    html_parts.append("<ul>")
+    for g in guardrails:
+        html_parts.append(
+            f"<li><b>{_html.escape(g['layer'])}</b>: {_html.escape(g['rule'])}</li>"
+        )
+    html_parts.append("</ul>")
+    html_parts.append("</div>")
     html_parts.append("<div class='divider'></div>")
     html_parts.append(
         f"<div class='row'><div class='mono'>run_dir</div><div class='mono'>{_html.escape(str(run_root))}</div></div>"
@@ -523,12 +588,26 @@ def write_kpi_journal(
 
     # --- Layer: Primitives model (train metrics.json) ---
     if stage in {"train", "all"}:
-        metrics_paths = sorted(run_root.glob("**/metrics.json"))
-        metrics_p = (
-            max(metrics_paths, key=lambda p: p.stat().st_mtime)
-            if metrics_paths
-            else None
-        )
+        # Prefer fixed metrics if present (historical runs might have incorrect aggregate metrics).
+        def _is_train_metrics(p: Path) -> bool:
+            # Exclude non-train metrics (e2e/counterfactual/shadow/plateau)
+            bad_parts = {"e2e", "counterfactual", "shadow", "threshold_plateau"}
+            return not any(part in bad_parts for part in p.parts)
+
+        fixed_paths = [
+            p for p in run_root.glob("**/metrics_fixed.json") if _is_train_metrics(p)
+        ]
+        if fixed_paths:
+            metrics_p = max(fixed_paths, key=lambda p: p.stat().st_mtime)
+        else:
+            metrics_paths = [
+                p for p in run_root.glob("**/metrics.json") if _is_train_metrics(p)
+            ]
+            metrics_p = (
+                max(metrics_paths, key=lambda p: p.stat().st_mtime)
+                if metrics_paths
+                else None
+            )
         if metrics_p and primitives_gate.exists():
             metrics = _read_json(metrics_p)
             gate = _read_yaml(primitives_gate)
@@ -748,6 +827,150 @@ def write_kpi_journal(
             )
             html_parts.append(
                 "<div class='card span-12'><h2>Router / Counterfactual</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
+            )
+
+        # --- Layer: Gate (PCM / rules) ---
+        if cf_p.exists() and gate_layer_gate.exists():
+            metrics_gate = _read_json(cf_p)
+            gate = _read_yaml(gate_layer_gate)
+            ok, rows = _eval_gate(metrics_gate, gate)
+            snap["layers"]["gate_layer"] = {
+                "metrics_json": str(cf_p),
+                "gate_yaml": str(gate_layer_gate),
+                "ok": bool(ok),
+                "rows": [r.__dict__ for r in rows],
+            }
+            md.append("\n### Gate Layer (PCM)\n")
+            md.append(f"- metrics: `{cf_p}`\n")
+            md.append(f"- gate: `{gate_layer_gate}`\n")
+            md.append(f"- ok: **{ok}**\n\n")
+            md.append("| severity | metric | value | min | max | status |\n")
+            md.append("|---|---|---:|---:|---:|---|\n")
+            for r in rows:
+                md.append(
+                    f"| {r.severity} | `{r.name}` | {_fmt(r.value)} | {_fmt(r.min)} | {_fmt(r.max)} | **{r.status}** |\n"
+                )
+            html_parts.append("<div class='grid'>")
+            html_parts.append("<div class='card span-12'>")
+            html_parts.append("<div class='kpi-title'>")
+            html_parts.append(
+                "<div><h2>Gate Layer (PCM)</h2><div class='muted'>风险控制/过滤层（不以 Sharpe 为核心 KPI）</div></div>"
+            )
+            html_parts.append(f"<div>{_ok_badge_html(ok)}</div>")
+            html_parts.append("</div>")
+            html_parts.append("<div class='row'>")
+            html_parts.append(
+                f"<div>metrics: <a class='mono' href='{_html.escape(str(cf_p))}'>{_html.escape(str(cf_p))}</a></div>"
+            )
+            html_parts.append(
+                f"<div>gate: <a class='mono' href='{_html.escape(str(gate_layer_gate))}'>{_html.escape(str(gate_layer_gate))}</a></div>"
+            )
+            html_parts.append("</div>")
+            html_parts.append("<div class='divider'></div>")
+            html_parts.append(_rows_table_html(rows))
+            html_parts.append("</div></div>")
+        else:
+            md.append(
+                "\n### Gate Layer (PCM)\n- (missing e2e/counterfactual/metrics.json or gate yaml)\n"
+            )
+            html_parts.append(
+                "<div class='card span-12'><h2>Gate Layer (PCM)</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
+            )
+
+        # --- Layer: Execution ---
+        if cf_p.exists() and execution_gate.exists():
+            metrics_exec = _read_json(cf_p)
+            gate = _read_yaml(execution_gate)
+            ok, rows = _eval_gate(metrics_exec, gate)
+            snap["layers"]["execution_layer"] = {
+                "metrics_json": str(cf_p),
+                "gate_yaml": str(execution_gate),
+                "ok": bool(ok),
+                "rows": [r.__dict__ for r in rows],
+            }
+            md.append("\n### Execution Layer\n")
+            md.append(f"- metrics: `{cf_p}`\n")
+            md.append(f"- gate: `{execution_gate}`\n")
+            md.append(f"- ok: **{ok}**\n\n")
+            md.append("| severity | metric | value | min | max | status |\n")
+            md.append("|---|---|---:|---:|---:|---|\n")
+            for r in rows:
+                md.append(
+                    f"| {r.severity} | `{r.name}` | {_fmt(r.value)} | {_fmt(r.min)} | {_fmt(r.max)} | **{r.status}** |\n"
+                )
+            html_parts.append("<div class='grid'>")
+            html_parts.append("<div class='card span-12'>")
+            html_parts.append("<div class='kpi-title'>")
+            html_parts.append(
+                "<div><h2>Execution Layer</h2><div class='muted'>成交质量/成本敏感性（当前使用 trade 诊断 proxy）</div></div>"
+            )
+            html_parts.append(f"<div>{_ok_badge_html(ok)}</div>")
+            html_parts.append("</div>")
+            html_parts.append("<div class='row'>")
+            html_parts.append(
+                f"<div>metrics: <a class='mono' href='{_html.escape(str(cf_p))}'>{_html.escape(str(cf_p))}</a></div>"
+            )
+            html_parts.append(
+                f"<div>gate: <a class='mono' href='{_html.escape(str(execution_gate))}'>{_html.escape(str(execution_gate))}</a></div>"
+            )
+            html_parts.append("</div>")
+            html_parts.append("<div class='divider'></div>")
+            html_parts.append(_rows_table_html(rows))
+            html_parts.append("</div></div>")
+        else:
+            md.append(
+                "\n### Execution Layer\n- (missing e2e/counterfactual/metrics.json or gate yaml)\n"
+            )
+            html_parts.append(
+                "<div class='card span-12'><h2>Execution Layer</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
+            )
+
+        # --- Layer: Portfolio / Allocation ---
+        if cf_p.exists() and portfolio_gate.exists():
+            metrics_port = _read_json(cf_p)
+            gate = _read_yaml(portfolio_gate)
+            ok, rows = _eval_gate(metrics_port, gate)
+            snap["layers"]["portfolio_allocation"] = {
+                "metrics_json": str(cf_p),
+                "gate_yaml": str(portfolio_gate),
+                "ok": bool(ok),
+                "rows": [r.__dict__ for r in rows],
+            }
+            md.append("\n### Portfolio / Allocation\n")
+            md.append(f"- metrics: `{cf_p}`\n")
+            md.append(f"- gate: `{portfolio_gate}`\n")
+            md.append(f"- ok: **{ok}**\n\n")
+            md.append("| severity | metric | value | min | max | status |\n")
+            md.append("|---|---|---:|---:|---:|---|\n")
+            for r in rows:
+                md.append(
+                    f"| {r.severity} | `{r.name}` | {_fmt(r.value)} | {_fmt(r.min)} | {_fmt(r.max)} | **{r.status}** |\n"
+                )
+            html_parts.append("<div class='grid'>")
+            html_parts.append("<div class='card span-12'>")
+            html_parts.append("<div class='kpi-title'>")
+            html_parts.append(
+                "<div><h2>Portfolio / Allocation</h2><div class='muted'>系统层 KPI（Sharpe/DD/配置健康）</div></div>"
+            )
+            html_parts.append(f"<div>{_ok_badge_html(ok)}</div>")
+            html_parts.append("</div>")
+            html_parts.append("<div class='row'>")
+            html_parts.append(
+                f"<div>metrics: <a class='mono' href='{_html.escape(str(cf_p))}'>{_html.escape(str(cf_p))}</a></div>"
+            )
+            html_parts.append(
+                f"<div>gate: <a class='mono' href='{_html.escape(str(portfolio_gate))}'>{_html.escape(str(portfolio_gate))}</a></div>"
+            )
+            html_parts.append("</div>")
+            html_parts.append("<div class='divider'></div>")
+            html_parts.append(_rows_table_html(rows))
+            html_parts.append("</div></div>")
+        else:
+            md.append(
+                "\n### Portfolio / Allocation\n- (missing e2e/counterfactual/metrics.json or gate yaml)\n"
+            )
+            html_parts.append(
+                "<div class='card span-12'><h2>Portfolio / Allocation</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
             )
 
     # --- Layer: Plateau tuning robustness ---

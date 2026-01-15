@@ -324,6 +324,17 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
   --out    results/ood_to_archetype/tier01_v1
 ```
 
+---
+
+## Research Notes（近期结论）
+
+- **Tier2 / Orderflow-only 对多头模型无增强**（HighCap6 / 2024H1）
+  - Orderflow baseline：`results/runs/tier02_highcap6_2024H1_orderflow_20260115_041919/`
+  - Orderflow tuned（plateau 后）：`results/runs/tier02_highcap6_2024H1_orderflow_tuned_20260115_044953/`
+  - 对比报告：`results/compare/nnmh_runs/20260115_045141/report.md`
+  - 结论：A-layer 提升不明显，系统层 Sharpe/收益无改善，trade_rate 下降；可暂时放弃该方向。
+
+
 对比方式：
 - 跑两份 TaskSpec（Tier0-only vs Tier0+Tier1），生成两份 derived config / model / 报告
 - 对比：A-layer（head eval）+ system（e2e counterfactual + KPI gate + snapshot）

@@ -1,0 +1,17 @@
+layer: "execution_layer"
+
+# KPI Gate for Execution Layer (trade quality / fill proxy).
+# Uses counterfactual metrics.json (router_diag__*).
+
+hard_fail:
+  # Trade density should be in a controllable range (execution/cost sensitivity).
+  router_diag__trade_rate: {min: 0.01, max: 0.50}
+  # Basic trade quality guardrails.
+  router_diag__trade_win_rate: {min: 0.40, max: 0.70}
+  router_diag__trade_avg_ret: {min: -0.005, max: 0.010}
+
+warn:
+  # Router diagnostic AUCs (optional; may be absent in older runs).
+  router_diag__mfe_auc: {min: 0.50, max: 1.00, optional: true}
+  router_diag__eff_auc: {min: 0.50, max: 1.00, optional: true}
+  router_diag__dir_conf_auc: {min: 0.50, max: 1.00, optional: true}

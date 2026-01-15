@@ -1,0 +1,19 @@
+layer: "portfolio_allocation"
+
+# KPI Gate for Portfolio / Allocation layer.
+# Uses counterfactual metrics.json (rule_pcm_* + pa__*).
+
+hard_fail:
+  # System-level performance gate (after Router + A-layer pass).
+  rule_pcm_sharpe_mean: {min: 0.0, max: 5.0}
+  rule_pcm_avg_max_dd: {min: 0.0, max: 0.35}
+  # Cash allocation sanity (optional if portfolio assets summary missing).
+  pa__avg_weight__GLOBAL_CASH: {min: 0.05, max: 0.95, optional: true}
+
+warn:
+  rule_pcm_ann_return_mean: {min: -0.10, max: 0.50, optional: true}
+  rule_pcm_ann_vol_mean: {min: 0.0, max: 0.60, optional: true}
+  pa__trend_zero_rate: {min: 0.0, max: 1.0, optional: true}
+  pa__avg_weight__GLOBAL_TREND: {min: 0.0, max: 0.50, optional: true}
+  pa__avg_weight__GLOBAL_MEAN: {min: 0.0, max: 0.80, optional: true}
+  pa__avg_weight__DEFENSIVE_MEAN: {min: 0.0, max: 0.50, optional: true}

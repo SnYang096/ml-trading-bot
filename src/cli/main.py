@@ -5352,6 +5352,11 @@ def diagnose_kpi_journal(run_dir, stage, docker):
 @click.option("--entry-delay", default=0, type=int, show_default=True)
 @click.option("--cost-per-turnover", default=0.0, type=float, show_default=True)
 @click.option("--slippage-bps", default=0.0, type=float, show_default=True)
+@click.option("--trade-rate-target", default=None, type=float, show_default=True)
+@click.option("--trade-rate-tol", default=0.06, type=float, show_default=True)
+@click.option("--trade-rate-min", default=None, type=float, show_default=True)
+@click.option("--trade-rate-max", default=None, type=float, show_default=True)
+@click.option("--trade-rate-penalty", default=1.5, type=float, show_default=True)
 @click.option("--seed", default=0, type=int, show_default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_threshold_plateau(
@@ -5371,6 +5376,11 @@ def diagnose_threshold_plateau(
     entry_delay,
     cost_per_turnover,
     slippage_bps,
+    trade_rate_target,
+    trade_rate_tol,
+    trade_rate_min,
+    trade_rate_max,
+    trade_rate_penalty,
     seed,
     docker,
 ):
@@ -5416,6 +5426,16 @@ def diagnose_threshold_plateau(
         str(float(cost_per_turnover)),
         "--slippage-bps",
         str(float(slippage_bps)),
+        "--trade-rate-target",
+        str(trade_rate_target) if trade_rate_target is not None else "",
+        "--trade-rate-tol",
+        str(float(trade_rate_tol)),
+        "--trade-rate-min",
+        str(trade_rate_min) if trade_rate_min is not None else "",
+        "--trade-rate-max",
+        str(trade_rate_max) if trade_rate_max is not None else "",
+        "--trade-rate-penalty",
+        str(float(trade_rate_penalty)),
         "--seed",
         str(int(seed)),
     ]

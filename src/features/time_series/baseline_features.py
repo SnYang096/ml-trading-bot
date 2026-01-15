@@ -57,6 +57,8 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     rsi_series = pd.Series(values, index=series.index)
     # 清理输出中的 inf 值
     rsi_series = rsi_series.replace([np.inf, -np.inf], np.nan)
+    # RSI has a warmup period; fill leading gaps with a neutral value to avoid NaNs.
+    rsi_series = rsi_series.ffill().fillna(50.0)
     return rsi_series
 
 
@@ -227,6 +229,12 @@ def compute_zigzag(
         # 使用原始价格
         price_series = None
         last_pivot = high.iloc[0]
+
+    # Seed the first pivot to avoid leading NaNs before the first turn is detected.
+    zigzag.iloc[0] = last_pivot
+    if return_high_low:
+        zz_high.iloc[0] = last_pivot
+        zz_low.iloc[0] = last_pivot
 
     trend = None
     try:

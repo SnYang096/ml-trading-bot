@@ -78,6 +78,10 @@ def _write_html_report(
     best_thresholds: Dict[str, float],
     best_row: Dict[str, Any],
     plateau_frac: float,
+    trade_rate_target: Optional[float] = None,
+    trade_rate_tol: float = 0.0,
+    trade_rate_min: Optional[float] = None,
+    trade_rate_max: Optional[float] = None,
 ) -> None:
     """
     Create a minimal HTML report to visually confirm “plateau” behavior.
@@ -138,6 +142,20 @@ def _write_html_report(
             label="best",
         )
         ax2.axhline(cutoff, color="orange", lw=1.0, ls="--")
+        # Optional target band / min-max band
+        try:
+            if trade_rate_min is not None:
+                ax2.axvline(float(trade_rate_min), color="gray", lw=1.0, ls=":")
+            if trade_rate_max is not None:
+                ax2.axvline(float(trade_rate_max), color="gray", lw=1.0, ls=":")
+            if trade_rate_target is not None and np.isfinite(float(trade_rate_target)):
+                t = float(trade_rate_target)
+                tol = float(abs(trade_rate_tol))
+                ax2.axvline(t, color="gray", lw=1.0, ls="--")
+                if tol > 0:
+                    ax2.axvspan(t - tol, t + tol, color="gray", alpha=0.10)
+        except Exception:
+            pass
         ax2.set_title("trade_rate_mean vs robust_score")
         ax2.set_xlabel("trade_rate_mean")
         ax2.set_ylabel("robust_score")
@@ -179,6 +197,9 @@ def _write_html_report(
         "win_sharpe_mean",
         "win_sharpe_p25",
         "win_dd_mean",
+        "trade_rate_mean",
+        "trade_rate_p25",
+        "trade_rate_pen_mean",
     ]:
         if k in best_row:
             best_meta_rows.append(f"<li><b>{k}</b>: {_fmt(best_row.get(k))}</li>")
@@ -210,6 +231,10 @@ def _write_html_report(
       <li><b>best_robust_score</b>: {_fmt(best_score)}</li>
       <li><b>plateau_cutoff</b>: {_fmt(cutoff)}</li>
       <li><b>plateau_frac</b>: <b>{_fmt(plateau_frac)}</b></li>
+      <li><b>trade_rate_target</b>: {_fmt(trade_rate_target)}</li>
+      <li><b>trade_rate_tol</b>: {_fmt(trade_rate_tol)}</li>
+      <li><b>trade_rate_min</b>: {_fmt(trade_rate_min)}</li>
+      <li><b>trade_rate_max</b>: {_fmt(trade_rate_max)}</li>
     </ul>
     <h3>Best candidate diagnostics</h3>
     <ul>
@@ -474,6 +499,43 @@ def _robust_score(m: Dict[str, float], *, lam: float, mu: float) -> float:
     )
 
 
+def _trade_rate_penalty(
+    trade_rate: float,
+    *,
+    target: Optional[float],
+    tol: float,
+    w: float,
+    min_v: Optional[float],
+    max_v: Optional[float],
+) -> float:
+    """
+    Penalize candidates whose trade_rate is outside desired operating band.
+
+    Two modes:
+    - min/max band: hinge penalty on violations
+    - target+tol: quadratic penalty when |trade_rate-target| exceeds tol
+    """
+    tr = float(trade_rate)
+    if not np.isfinite(tr):
+        return 0.0
+    if (min_v is not None) or (max_v is not None):
+        lo = float(min_v) if min_v is not None else -1e9
+        hi = float(max_v) if max_v is not None else 1e9
+        viol = max(0.0, lo - tr) + max(0.0, tr - hi)
+        return float(w * viol)
+    if target is None:
+        return 0.0
+    t = float(target)
+    if not np.isfinite(t):
+        return 0.0
+    tol = float(max(1e-6, abs(tol)))
+    d = abs(tr - t) - tol
+    if d <= 0:
+        return 0.0
+    # normalized squared deviation beyond tolerance band
+    return float(w * (d / tol) ** 2)
+
+
 def _bootstrap_indices(n: int, rng: np.random.Generator) -> np.ndarray:
     return rng.integers(0, n, size=n, endpoint=False)
 
@@ -549,6 +611,36 @@ def main() -> None:
     ap.add_argument("--entry-delay", type=int, default=0)
     ap.add_argument("--cost-per-turnover", type=float, default=0.0)
     ap.add_argument("--slippage-bps", type=float, default=0.0)
+    ap.add_argument(
+        "--trade-rate-target",
+        type=float,
+        default=None,
+        help="Optional target trade rate (fraction of non-zero actions). If set, applies a penalty when outside tolerance.",
+    )
+    ap.add_argument(
+        "--trade-rate-tol",
+        type=float,
+        default=0.06,
+        help="Tolerance band around trade-rate-target before penalty applies.",
+    )
+    ap.add_argument(
+        "--trade-rate-min",
+        type=float,
+        default=None,
+        help="Optional minimum trade rate (hinge penalty if below). Overrides target-mode when set.",
+    )
+    ap.add_argument(
+        "--trade-rate-max",
+        type=float,
+        default=None,
+        help="Optional maximum trade rate (hinge penalty if above). Overrides target-mode when set.",
+    )
+    ap.add_argument(
+        "--trade-rate-penalty",
+        type=float,
+        default=1.5,
+        help="Penalty weight for trade-rate deviation (higher => force stable operating density).",
+    )
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -600,6 +692,8 @@ def main() -> None:
         win_scores: List[float] = []
         win_sharpes: List[float] = []
         win_dd: List[float] = []
+        win_trade_rate: List[float] = []
+        win_trade_pen: List[float] = []
         for ws, we in windows:
             preds_w = {
                 s: _slice_by_time(df, start=ws, end=we)
@@ -615,9 +709,22 @@ def main() -> None:
                 preds_in_log1p=preds_in_log1p,
                 sim_cfg=sim_cfg,
             )
+            tr = float(m.get("trade_rate_mean", 0.0))
+            pen = _trade_rate_penalty(
+                tr,
+                target=args.trade_rate_target,
+                tol=float(args.trade_rate_tol),
+                w=float(args.trade_rate_penalty),
+                min_v=args.trade_rate_min,
+                max_v=args.trade_rate_max,
+            )
             win_sharpes.append(float(m["rule_sharpe_mean"]))
             win_dd.append(float(m["rule_dd_mean"]))
-            win_scores.append(_robust_score(m, lam=float(args.lam), mu=float(args.mu)))
+            win_trade_rate.append(tr)
+            win_trade_pen.append(float(pen))
+            win_scores.append(
+                _robust_score(m, lam=float(args.lam), mu=float(args.mu)) - float(pen)
+            )
 
         # bootstrap metrics (resample windows)
         bs_scores: List[float] = []
@@ -634,6 +741,15 @@ def main() -> None:
             "win_sharpe_mean": float(np.mean(win_sharpes)),
             "win_sharpe_p25": float(np.quantile(win_sharpes, 0.25)),
             "win_dd_mean": float(np.mean(win_dd)),
+            "trade_rate_mean": (
+                float(np.mean(win_trade_rate)) if win_trade_rate else 0.0
+            ),
+            "trade_rate_p25": (
+                float(np.quantile(win_trade_rate, 0.25)) if win_trade_rate else 0.0
+            ),
+            "trade_rate_pen_mean": (
+                float(np.mean(win_trade_pen)) if win_trade_pen else 0.0
+            ),
             "bs_score_mean": float(np.mean(bs_scores)) if bs_scores else float("nan"),
             "bs_score_p10": (
                 float(np.quantile(bs_scores, 0.10)) if bs_scores else float("nan")
@@ -676,6 +792,9 @@ def main() -> None:
                 "win_sharpe_mean",
                 "win_sharpe_p25",
                 "win_dd_mean",
+                "trade_rate_mean",
+                "trade_rate_p25",
+                "trade_rate_pen_mean",
             ]
             + ROUTER_KEYS
         },
@@ -685,9 +804,14 @@ def main() -> None:
         "windows": [{"start": str(a), "end": str(b)} for a, b in windows],
         "sim_cfg": asdict(sim_cfg),
         "preds_in_log1p": bool(preds_in_log1p),
-        "score_formula": "robust_score = mean(window_score) + mean(bootstrap(window_score)) ; window_score = sharpe_mean - lambda*sharpe_std - mu*dd_mean",
+        "score_formula": "window_score = sharpe_mean - lambda*sharpe_std - mu*dd_mean - trade_rate_penalty ; robust_score = mean(window_score) + mean(bootstrap(window_score))",
         "lambda": float(args.lam),
         "mu": float(args.mu),
+        "trade_rate_target": args.trade_rate_target,
+        "trade_rate_tol": float(args.trade_rate_tol),
+        "trade_rate_min": args.trade_rate_min,
+        "trade_rate_max": args.trade_rate_max,
+        "trade_rate_penalty": float(args.trade_rate_penalty),
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -721,6 +845,9 @@ def main() -> None:
         f"- win_sharpe_mean: {float(best['win_sharpe_mean']):.4f}\n"
         f"- win_sharpe_p25: {float(best['win_sharpe_p25']):.4f}\n"
         f"- win_dd_mean: {float(best['win_dd_mean']):.4f}\n"
+        f"- trade_rate_mean: {float(best.get('trade_rate_mean', 0.0)):.4f}\n"
+        f"- trade_rate_p25: {float(best.get('trade_rate_p25', 0.0)):.4f}\n"
+        f"- trade_rate_pen_mean: {float(best.get('trade_rate_pen_mean', 0.0)):.4f}\n"
     )
     md.append("\n### How to interpret\n")
     md.append(
@@ -742,6 +869,10 @@ def main() -> None:
             best_thresholds={k: float(best[k]) for k in ROUTER_KEYS},
             best_row=best,
             plateau_frac=float(plateau_frac),
+            trade_rate_target=args.trade_rate_target,
+            trade_rate_tol=float(args.trade_rate_tol),
+            trade_rate_min=args.trade_rate_min,
+            trade_rate_max=args.trade_rate_max,
         )
     except Exception:
         pass

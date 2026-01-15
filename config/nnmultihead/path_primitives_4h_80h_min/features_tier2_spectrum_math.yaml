@@ -1,0 +1,23 @@
+## Tier2 (Spectrum/Math-only)
+# Subset of Tier2 features focusing on regime stability / spectral cues.
+
+# Volume profile
+- volume_profile_vpvr_f
+- volume_profile_volatility_features_f
+- volume_profile_scene_semantic_scores_f
+
+# Hurst / regime
+- hurst_price_f
+- hurst_volume_f
+
+# Spectrum
+- spectrum_price_features_f
+- spectrum_volume_features_f
+
+# WPT + Hilbert
+- wpt_price_fluctuation_f
+- wpt_cvd_fluctuation_f
+- wpt_volume_energy_f
+- wpt_scene_semantic_scores_f
+- hilbert_phase_f
+- hilbert_advanced_f

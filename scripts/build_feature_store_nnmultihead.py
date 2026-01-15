@@ -103,7 +103,10 @@ def main() -> None:
     if not symbols:
         raise ValueError("No symbols provided.")
 
-    feature_loader = StrategyFeatureLoader()
+    # Always disable monthly cache to avoid month-boundary resets for rolling features.
+    # FeatureStore still writes monthly parquet files; this only disables per-month
+    # compute caching inside the feature loader.
+    feature_loader = StrategyFeatureLoader(use_monthly_cache=False)
     feature_cache_version = getattr(feature_loader.computer, "cache_version", None)
     feature_cols_union: List[str] = []
 
@@ -113,10 +116,22 @@ def main() -> None:
             f"range=[{args.start_date or 'min'}..{args.end_date or 'max'}]",
             flush=True,
         )
+        # If warmup_months is requested, extend the raw-load window backwards so
+        # month-level rolling features don't reset with NaNs every month.
+        load_start_date = args.start_date
+        try:
+            warmup_months = max(0, int(args.warmup_months))
+        except Exception:
+            warmup_months = 0
+        if load_start_date and warmup_months > 0:
+            load_start_date = (
+                pd.Timestamp(load_start_date) - pd.DateOffset(months=warmup_months)
+            ).strftime("%Y-%m-%d")
+
         df_raw = load_raw_data(
             data_path=args.data_path,
             symbol=sym,
-            start_date=args.start_date,
+            start_date=load_start_date,
             end_date=args.end_date,
             timeframe=args.timeframe,
         )
@@ -166,11 +181,37 @@ def main() -> None:
             for c in outs:
                 out2node[str(c)] = str(feat_name)
 
+        warmup_months = max(0, int(args.warmup_months))
+        warmup_bars = max(0, int(args.warmup_bars))
+
+        # If warmup is requested, prefer a contiguous feature pass (no month reset),
+        # then slice by month. This yields correct rolling features without
+        # month-boundary NaN resets.
+        max_contiguous_rows = 50000
+        use_contiguous = warmup_months > 0 and len(df_raw) <= max_contiguous_rows
+        df_feats_full = None
+        if use_contiguous:
+            df_feats_full = feature_loader.load_features_from_requested(
+                df_raw, requested_features=requested, fit=True
+            )
+            if "symbol" not in df_feats_full.columns:
+                df_feats_full["symbol"] = sym
+
         monthly_groups = df_raw.groupby(pd.Grouper(freq="M"))
+        # If we loaded extra warmup months, skip writing months before the
+        # requested start_date (keeps output range stable).
+        write_start_ts = pd.Timestamp(args.start_date) if args.start_date else None
         for period, df_month_raw in monthly_groups:
             if df_month_raw.empty:
                 continue
             month_str = period.strftime("%Y-%m")
+            if write_start_ts is not None:
+                month_start = df_month_raw.index.min()
+                # Align timezone if needed (df index is often UTC tz-aware).
+                if month_start.tzinfo is not None and write_start_ts.tzinfo is None:
+                    write_start_ts = write_start_ts.tz_localize(month_start.tzinfo)
+                if month_start < write_start_ts:
+                    continue
             if store.has_month(spec, month_str):
                 # Repair mode: if existing month parquet is missing expected columns, compute ONLY missing nodes
                 # and overwrite the month file while preserving existing columns.
@@ -239,43 +280,51 @@ def main() -> None:
             month_start = df_month_raw.index.min()
             month_end = df_month_raw.index.max()
 
-            warmup_months = max(0, int(args.warmup_months))
-            warmup_bars = max(0, int(args.warmup_bars))
-
-            # Prefer warmup by calendar months when explicitly requested.
-            if warmup_months > 0:
-                start_ts = pd.Timestamp(month_start) - pd.DateOffset(
-                    months=warmup_months
+            if use_contiguous and df_feats_full is not None:
+                df_feats_month = df_feats_full.loc[
+                    (df_feats_full.index >= month_start)
+                    & (df_feats_full.index <= month_end)
+                ]
+                print(
+                    f"⚙️  Compute month (contiguous): symbol={sym} timeframe={args.timeframe} month={month_str} "
+                    f"rows={len(df_feats_month)}",
+                    flush=True,
                 )
-                df_window = df_raw.loc[
-                    (df_raw.index >= start_ts) & (df_raw.index <= month_end)
-                ]
-            elif warmup_bars > 0:
-                # Fallback: warmup by bars
-                pos_end = df_raw.index.searchsorted(month_start, side="left")
-                pos_start = max(0, pos_end - warmup_bars)
-                df_window = df_raw.iloc[pos_start:].loc[:month_end]
             else:
-                df_window = df_raw.loc[
-                    (df_raw.index >= month_start) & (df_raw.index <= month_end)
+                # Prefer warmup by calendar months when explicitly requested.
+                if warmup_months > 0:
+                    start_ts = pd.Timestamp(month_start) - pd.DateOffset(
+                        months=warmup_months
+                    )
+                    df_window = df_raw.loc[
+                        (df_raw.index >= start_ts) & (df_raw.index <= month_end)
+                    ]
+                elif warmup_bars > 0:
+                    # Fallback: warmup by bars
+                    pos_end = df_raw.index.searchsorted(month_start, side="left")
+                    pos_start = max(0, pos_end - warmup_bars)
+                    df_window = df_raw.iloc[pos_start:].loc[:month_end]
+                else:
+                    df_window = df_raw.loc[
+                        (df_raw.index >= month_start) & (df_raw.index <= month_end)
+                    ]
+
+                print(
+                    f"⚙️  Compute month: symbol={sym} timeframe={args.timeframe} month={month_str} "
+                    f"window=[{str(df_window.index.min())}..{str(df_window.index.max())}] rows={len(df_window)}",
+                    flush=True,
+                )
+                df_feats_window = feature_loader.load_features_from_requested(
+                    df_window, requested_features=requested, fit=True
+                )
+                if "symbol" not in df_feats_window.columns:
+                    df_feats_window["symbol"] = sym
+
+                # Trim to just this month before writing
+                df_feats_month = df_feats_window.loc[
+                    (df_feats_window.index >= month_start)
+                    & (df_feats_window.index <= month_end)
                 ]
-
-            print(
-                f"⚙️  Compute month: symbol={sym} timeframe={args.timeframe} month={month_str} "
-                f"window=[{str(df_window.index.min())}..{str(df_window.index.max())}] rows={len(df_window)}",
-                flush=True,
-            )
-            df_feats_window = feature_loader.load_features_from_requested(
-                df_window, requested_features=requested, fit=True
-            )
-            if "symbol" not in df_feats_window.columns:
-                df_feats_window["symbol"] = sym
-
-            # Trim to just this month before writing
-            df_feats_month = df_feats_window.loc[
-                (df_feats_window.index >= month_start)
-                & (df_feats_window.index <= month_end)
-            ]
 
             store.write_month(
                 spec,
@@ -294,6 +343,8 @@ def main() -> None:
                     "config_dir": str(cfg_dir),
                     "warmup_months": warmup_months,
                     "warmup_bars": warmup_bars,
+                    "contiguous_features": bool(use_contiguous),
+                    "contiguous_rows": int(len(df_raw)),
                     "feature_cache_version": feature_cache_version,
                 },
             )
