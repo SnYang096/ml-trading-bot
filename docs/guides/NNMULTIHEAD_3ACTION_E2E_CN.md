@@ -14,7 +14,8 @@
 
 ### `features.yaml`（特征计算 + 使用契约，统一管理）
 
-这个文件使用**新的结构化格式**，在 `feature_pipeline.requested_features` 中直接分类特征：
+这个文件使用**新的结构化格式**，在 `feature_pipeline.requested_features` 中直接分类特征。  
+TaskSpec 会 materialize 出派生 config，但最终仍以 `features.yaml` 为单一入口。
 
 #### 新格式（推荐）：结构化分类
 
@@ -59,11 +60,11 @@ feature_pipeline:
 ```
 原始数据 (OHLCV)
   ↓
-[features.yaml: feature_pipeline.requested_features] → 定义要计算哪些特征
+[features.yaml: feature_pipeline.requested_features] → 定义要计算哪些特征（required/optional_blocks）
   ↓
 FeatureComputer 计算特征 → 生成特征列（例如 atr, trend_r2_20, compression_score, ...）
   ↓
-[features.yaml: feature_contract] → 定义如何使用这些特征
+[features.yaml: feature_contract] → 定义如何使用这些特征（**legacy，可不写**）
   ↓
 - 校验 minimal_required_cols 是否存在
 - 解析 optional_blocks（例如 *vpin*, *trade_cluster*）
@@ -75,7 +76,8 @@ FeatureComputer 计算特征 → 生成特征列（例如 atr, trend_r2_20, comp
 ### 关键点
 
 1. **所有特征都会计算**：`feature_pipeline.requested_features` 中列出的所有特征都会被计算
-2. **训练时会 mask**：`feature_contract.optional_blocks` 中的特征块在训练时会随机 mask（block-dropout），让模型对特征缺失鲁棒
+2. **训练时会 mask**：`feature_contract.optional_blocks` 中的特征块在训练时会随机 mask（block-dropout），让模型对特征缺失鲁棒  
+   （若不使用 legacy `feature_contract`，可只保留 `feature_pipeline`）
 3. **一个文件维护**：不再需要单独的 `feature_contract.yaml`，减少维护负担
 4. **向后兼容**：如果存在 `feature_contract.yaml`，代码仍会读取（legacy 支持）
 
@@ -140,13 +142,13 @@ feature_contract:
    - **内容**：每行是一个“状态-动作-奖励”三元组（transition），用于 RL/BC 训练
    - **列**：`symbol`、`timestamp`、`mode`（action）、`head_*`（state 的一部分）、`drawdown`、`ret_mean`、`ret_trend`（rewards）
    - **用途**：喂给 BC（Behavior Cloning）或 Offline RL（如 IQL）训练 Router 策略
-   - **生成命令**：`mlbot rl build-logs-3action`
+- **生成命令**：`mlbot nnmultihead build-logs-3action`
 
 4. **`results/rl/e2e/*`（评估报告，HTML/JSON）**
    - **内容**：shadow evaluation、counterfactual evaluation、FSM decision 的评估报告
    - **文件**：`shadow_report.html`、`counterfactual_metrics.json`、`fsm_decision.json` 等
    - **用途**：用于判断 BC/RL Router 是否比 Rule Router 更好，是否满足上线安全约束
-   - **生成命令**：`mlbot rl run-e2e-3action`
+- **生成命令**：`mlbot nnmultihead run-e2e-3action`
 
 ### Pipeline 数据流示意
 
@@ -174,6 +176,7 @@ results/rl/e2e/* (评估报告：以 counterfactual 为主)
 【可选链路（非必跑）】
   A) BC shadow（行为一致性门禁，不是为了赚钱）
      logs_3action.parquet → BC(3-action) → shadow_report.html（看行为分布/切换率/是否塌缩）
+     说明：若当前只有 rule（无 BC/RL），shadow 只是 rule vs rule 的分布/切换率自检。
   B) Offline RL（研究/探索上限，上线前必须配合宪法/门禁）
      logs_3action.parquet → RL policy → counterfactual/report.html（对照 Rule）
 ```
@@ -242,7 +245,7 @@ results/rl/e2e/* (评估报告：以 counterfactual 为主)
 #### 5. **可选：不保存中间产物（不推荐）**
 如果你确定不需要回溯/调试/离线训练，可以：
 - 在 `mlbot nnmultihead predict` 后直接 pipe 到 `mlbot rule mode-3action`
-- 在 `mlbot rule mode-3action` 后直接 pipe 到 `mlbot rl build-logs-3action`
+- 在 `mlbot rule mode-3action` 后直接 pipe 到 `mlbot nnmultihead build-logs-3action`
 - 但这样**无法做 A/B 对比**，也无法积累历史 logs 用于 RL 训练
 
 **结论**：这些中间产物是**可选的，但强烈推荐保存**，因为存储成本低（MB 级），但带来的可追溯性、调试能力、实验灵活性价值很大。
@@ -450,6 +453,66 @@ mlbot nnmultihead train \
   --no-docker
 ```
 
+### 1.1) Evidence quantiles + Plateau 流程（execution 证据阈值）
+
+目的：用分位数而不是固定阈值，避免跨币尺度差异。
+
+**Step A：训练时输出量化文件（默认从 TaskSpec 开启）**
+
+```bash
+mlbot nnmultihead train \
+  --task-spec config/tasks/task_spec_v1.yaml \
+  --emit-evidence-quantiles \
+  --no-docker
+```
+
+产物：`<run_dir>/evidence_quantiles.json`
+
+**Step B：独立生成（可控窗口）**
+
+```bash
+mlbot diagnose evidence-quantiles \
+  --layer <feature_store_layer> \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --keys vpin,cvd_change_5 \
+  --quantiles 0.1,0.5,0.9 \
+  --out results/evidence_quantiles.json
+```
+
+**Step C：q 阈值 plateau**
+
+做一个 q 的网格（如 0.55~0.85），对 `execution_archetypes_v2.yaml` 的
+`quantile` 字段做 sweep，比较 trade_rate / win_rate / dd，选择平坦高原区间。
+最后锁定 q，并把 `evidence_quantiles.json` 作为 artifact 固化。
+
+可以直接用命令（默认 `score_key=gate_exec_score`，优先贴合 gate/execution KPI）：
+
+```bash
+mlbot diagnose evidence-quantiles-plateau \
+  --layer <feature_store_layer> \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --archetype TrendContinuationTC \
+  --sweep-key vpin \
+  --q-grid 0.55,0.60,0.65,0.70,0.75,0.80 \
+  --logs results/.../e2e/logs/logs_3action.parquet \
+  --gate-yaml config/kpi_gates/nnmh_execution_layer_v1.yaml \
+  --require-gate \
+  --out results/diagnose/evidence_quantiles_plateau
+
+# 如需改成收益优先：
+#   --score-key sharpe
+```
+
+运行时加载：
+
+```bash
+export MLBOT_EVIDENCE_QUANTILES_JSON=/path/to/evidence_quantiles.json
+```
+
 ### 2) NN 多头推理（多 symbol 输出目录）
 
 ```bash
@@ -478,7 +541,7 @@ mlbot rule mode-3action \
 ### 4) 组装 RL/BC logs（把 close 转成 ret_mean/ret_trend，并合并 heads + mode）
 
 ```bash
-mlbot rl build-logs-3action \
+mlbot nnmultihead build-logs-3action \
   --preds results/nnmultihead/preds_multi \
   --mode results/rule/mode_3action.parquet \
   --model results/nnmultihead/.../model.pt \
@@ -488,13 +551,22 @@ mlbot rl build-logs-3action \
   --no-docker
 ```
 
-### 5) 一键跑 RL(e2e)：shadow → counterfactual → fsm
+### 5) 一键跑 E2E：shadow → counterfactual → fsm
 
 ```bash
-mlbot rl run-e2e-3action \
+mlbot nnmultihead run-e2e-3action \
   --logs results/rl/logs_3action.parquet \
   --out results/rl/e2e \
   --no-docker
+
+### 5.1) 只跑 shadow（单独行为一致性）
+
+```bash
+mlbot nnmultihead shadow-eval-3action \
+  --logs results/rl/logs_3action.parquet \
+  --out results/rl/shadow \
+  --no-docker
+```
 ```
 
 

@@ -101,6 +101,12 @@ model_plan:
     batch_size: 512
     lr: 0.0002
     seed: 42
+    # Evidence quantiles (for execution evidence rules)
+    emit_evidence_quantiles: true
+    evidence_quantiles_keys: "vpin,cvd_change_5"
+    evidence_quantiles_prefixes: ""
+    evidence_quantiles: "0.1,0.5,0.9"
+    evidence_quantiles_global: false
     warm_start:
       enabled: false
       init_model_path: null

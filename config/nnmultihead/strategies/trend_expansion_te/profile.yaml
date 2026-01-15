@@ -1,4 +1,3 @@
 version: 1
-strategy_id: trend_momentum_expansion
+strategy_id: trend_expansion_te
 archetype: TrendExpansionTE
-

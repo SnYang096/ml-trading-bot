@@ -2599,6 +2599,13 @@ Gate.veto == TRUE
 Portfolio_drawdown_rolling > DD_limit
 ```
 
+**v0 简化实现说明**
+
+- 当前 Gate/Execution 在主流程里尚未完全分离为“独立执行层”。
+- 现阶段的 Execution KPI 使用 counterfactual 的 `router_diag__*` 作为 proxy。
+- Gate 层的 veto/confirm 在 KPI 层已有指标，但 pipeline 还未完整接线。
+- 因此这张图在 v0 的对应关系是“概念层级正确，但实现是简化版”。
+
 📌 含义：
 
 * 就算模型对

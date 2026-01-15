@@ -1,0 +1,3 @@
+version: 1
+strategy_id: exhaustion_turn_et
+archetype: ExhaustionTurnET

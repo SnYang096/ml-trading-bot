@@ -11,7 +11,13 @@
 
 （推荐一键）mlbot nnmultihead pipeline-3action-e2e
 
-（等价展开）nnmultihead predict → rule mode-3action → rl build-logs-3action → rl run-e2e-3action
+（等价展开）nnmultihead predict → rule mode-3action → nnmultihead build-logs-3action → nnmultihead run-e2e-3action
+（可选插入）nnmultihead shadow-eval-3action（单独跑 shadow 报告）
+
+说明（分层归属）：
+- **v0 主链路评估**：`nnmultihead build-logs-3action`、`nnmultihead run-e2e-3action`  
+  用于系统级 counterfactual/shadow 评估，不属于 BC/RL 训练。
+- **BC/RL 独有**：`mlbot rl ...` 下的影子研究命令（可选研究，v1 影子）。
 ```
 
 > 说明：BC/RL/FSM 目前都当作 **将来可选模块**。现在主力是 **Rule Router +（将来的 Gate）+ Execution 假设版本化**，通过 counterfactual 报告做复盘与迭代。
@@ -151,7 +157,7 @@ mlbot rule mode-3action --no-docker \
 - timestamp 不对齐会导致 `n_rows=0`（我们之前已经修过）；如果再出现，优先检查 preds/mode/raw 的时间范围与 timezone。
 
 ```bash
-mlbot rl build-logs-3action --no-docker \
+mlbot nnmultihead build-logs-3action --no-docker \
   --preds <PREDS_DIR> \
   --mode <MODE_PARQUET> \
   --model <MODEL> \
@@ -189,7 +195,7 @@ mlbot rl build-logs-3action --no-docker \
 - 再看：per-symbol 是否被单一币驱动（集中风险）
 
 ```bash
-mlbot rl run-e2e-3action --no-docker \
+mlbot nnmultihead run-e2e-3action --no-docker \
   --logs <LOGS_PARQUET> \
   --out <E2E_DIR> \
   --entry-delay 0 \
@@ -401,7 +407,7 @@ mlbot nnmultihead feature-group-search --no-docker \
 用途：验证“一个小模型能否稳定复现 rule 的 mode 行为分布/切换频率”，**不是 PnL 优化**。
 
 ```bash
-mlbot rl shadow-eval-3action --no-docker \
+mlbot nnmultihead shadow-eval-3action --no-docker \
   --logs <LOGS_PARQUET> \
   --out <OUT_DIR>
 ```
@@ -413,6 +419,8 @@ mlbot rl shadow-eval-3action --no-docker \
 
 用途：研究/探索 policy；FSM 是把 RL 当候选时的上线门禁（hard_sharpe/hard_sortino/drift 等）。
 当前路线里你可以先忽略它。
+> 说明：真正的 BC/RL “训练”命令目前不是主链路必备，
+> 如果需要训练 BC/Offline RL，统一以 `logs_3action.parquet` 为输入，再单独训练。
 
 
 

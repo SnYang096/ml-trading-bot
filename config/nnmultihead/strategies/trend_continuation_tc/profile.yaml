@@ -1,4 +1,3 @@
 version: 1
-strategy_id: trend_htf_bias_ltf_entry
+strategy_id: trend_continuation_tc
 archetype: TrendContinuationTC
-

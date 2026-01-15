@@ -35,6 +35,7 @@ from src.time_series_model.core.constitution.constitution_executor import (
 )
 from src.time_series_model.core.constitution.execution_evidence import (
     compute_execution_evidence,
+    load_evidence_quantiles,
 )
 from src.time_series_model.live.enforcement import enforce_before_order
 from src.time_series_model.live.execution_manager import (
@@ -432,8 +433,13 @@ if NAUTILUS_AVAILABLE:
                     arch = self._arches[overlay_id]
 
             try:
+                quantiles = load_evidence_quantiles(
+                    os.getenv("MLBOT_EVIDENCE_QUANTILES_JSON")
+                )
                 evidence = compute_execution_evidence(
-                    features=feats, rules=list(arch.evidence_rules or [])
+                    features=feats,
+                    rules=list(arch.evidence_rules or []),
+                    quantiles=quantiles,
                 )
             except Exception as e:
                 # Fail-closed: evidence DSL config/key mismatch should block trading.

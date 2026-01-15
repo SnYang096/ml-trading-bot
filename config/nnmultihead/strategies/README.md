@@ -8,3 +8,8 @@ It defines StrategyProfile YAMLs used by the live adapter / execution constituti
 This intentionally does **NOT** reuse `config/strategies/*` (tree-model legacy configs),
 which may be deprecated.
 
+Core nnmultihead strategy IDs (TC/TE/FR/ET):
+- `trend_continuation_tc`
+- `trend_expansion_te`
+- `failure_reversion_fr`
+- `exhaustion_turn_et`

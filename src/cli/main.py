@@ -1289,7 +1289,7 @@ def rule():
 
 @cli.group()
 def rl():
-    """RL-ready router tooling (3-action BC/shadow/counterfactual/FSM) using logs."""
+    """BC/RL research tooling (shadow/BC/RL/FSM). Mainline eval lives in nnmultihead."""
     pass
 
 
@@ -1826,6 +1826,10 @@ def rl_build_logs_3action(
     output_path,
     docker,
 ):
+    click.echo(
+        "Note: `mlbot rl build-logs-3action` is deprecated for v0 mainline. "
+        "Use `mlbot nnmultihead build-logs-3action` instead."
+    )
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--preds",
@@ -1984,6 +1988,10 @@ def rule_mode_3action(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rl_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
+    click.echo(
+        "Note: `mlbot rl shadow-eval-3action` is deprecated for v0 mainline. "
+        "Use `mlbot nnmultihead shadow-eval-3action` instead."
+    )
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--logs",
@@ -2279,6 +2287,10 @@ def rl_run_e2e_3action(
     cooldown_days,
     docker,
 ):
+    click.echo(
+        "Note: `mlbot rl run-e2e-3action` is deprecated for v0 mainline. "
+        "Use `mlbot nnmultihead run-e2e-3action` instead."
+    )
     """
     Convenience wrapper:
       1) shadow-eval-3action -> {out}/shadow
@@ -2407,6 +2419,36 @@ def rl_run_e2e_3action(
     default="results/nnmultihead",
     help="Output root directory for artifacts",
 )
+@click.option(
+    "--emit-evidence-quantiles/--no-emit-evidence-quantiles",
+    default=None,
+    help="If set, write evidence_quantiles.json based on training window features.",
+)
+@click.option(
+    "--evidence-quantiles-out",
+    default=None,
+    help="Output path for evidence_quantiles.json (default: <run_dir>/evidence_quantiles.json).",
+)
+@click.option(
+    "--evidence-quantiles-keys",
+    default=None,
+    help="Comma-separated feature keys to include in quantiles.",
+)
+@click.option(
+    "--evidence-quantiles-prefixes",
+    default=None,
+    help="Comma-separated prefixes to include in quantiles (in addition to keys).",
+)
+@click.option(
+    "--evidence-quantiles",
+    default=None,
+    help="Comma-separated quantiles (e.g., 0.1,0.5,0.9).",
+)
+@click.option(
+    "--evidence-quantiles-global/--evidence-quantiles-per-symbol",
+    default=None,
+    help="If set, pool all symbols into GLOBAL quantiles.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_train(
     task_spec,
@@ -2428,6 +2470,12 @@ def nnmultihead_train(
     feature_store_layer,
     feature_store_root,
     output_dir,
+    emit_evidence_quantiles,
+    evidence_quantiles_out,
+    evidence_quantiles_keys,
+    evidence_quantiles_prefixes,
+    evidence_quantiles,
+    evidence_quantiles_global,
     docker,
 ):
     """Train NN multi-head path primitives MLP and save report.html artifacts."""
@@ -2441,6 +2489,7 @@ def nnmultihead_train(
         ts_path = (PROJECT_ROOT / ts_path).resolve()
     ts_obj = yaml.safe_load(ts_path.read_text(encoding="utf-8")) or {}
     task_id = str(ts_obj.get("task_id") or "").strip() or "TASKSPEC"
+    training_cfg = (ts_obj.get("model_plan") or {}).get("training") or {}
     base_cfg = (
         str(base_config).strip()
         if base_config
@@ -2473,6 +2522,23 @@ def nnmultihead_train(
         v = str(fs.get("root") or "").strip()
         if v:
             feature_store_root = v
+
+    if emit_evidence_quantiles is None:
+        emit_evidence_quantiles = bool(training_cfg.get("emit_evidence_quantiles", False))
+    if evidence_quantiles_out is None:
+        evidence_quantiles_out = training_cfg.get("evidence_quantiles_out")
+    if evidence_quantiles_keys is None:
+        evidence_quantiles_keys = training_cfg.get(
+            "evidence_quantiles_keys", "vpin,cvd_change_5"
+        )
+    if evidence_quantiles_prefixes is None:
+        evidence_quantiles_prefixes = training_cfg.get("evidence_quantiles_prefixes", "")
+    if evidence_quantiles is None:
+        evidence_quantiles = training_cfg.get("evidence_quantiles", "0.1,0.5,0.9")
+    if evidence_quantiles_global is None:
+        evidence_quantiles_global = bool(
+            training_cfg.get("evidence_quantiles_global", False)
+        )
 
     args = [
         "--config",
@@ -2508,6 +2574,18 @@ def nnmultihead_train(
         args.extend(["--end-date", end_date])
     if device:
         args.extend(["--device", device])
+    if emit_evidence_quantiles:
+        args.append("--emit-evidence-quantiles")
+        if evidence_quantiles_out:
+            args.extend(["--evidence-quantiles-out", evidence_quantiles_out])
+        if evidence_quantiles_keys:
+            args.extend(["--evidence-quantiles-keys", evidence_quantiles_keys])
+        if evidence_quantiles_prefixes:
+            args.extend(["--evidence-quantiles-prefixes", evidence_quantiles_prefixes])
+        if evidence_quantiles:
+            args.extend(["--evidence-quantiles", evidence_quantiles])
+        if evidence_quantiles_global:
+            args.append("--evidence-quantiles-global")
     # Always use FeatureStore (monthly) for nnmultihead (fast + consistent).
     # NOTE: underlying scripts use '--features-store-layer/--features-store-root'.
     # Only pass --features-store-layer if explicitly provided (None means auto-generate in script)
@@ -2768,7 +2846,7 @@ def nnmultihead_pipeline_3action_e2e(
 ):
     """
     One-command mainline pipeline:
-      nnmultihead predict -> rule mode-3action -> rl build-logs-3action -> rl run-e2e-3action
+      nnmultihead predict -> rule mode-3action -> nnmultihead build-logs-3action -> nnmultihead run-e2e-3action
 
     Motivation:
     - Keep existing family commands (nnmultihead/rule/rl) for clarity and modularity.
@@ -2959,7 +3037,7 @@ def nnmultihead_pipeline_3action_e2e(
     if rc != 0:
         sys.exit(rc)
 
-    # [3/4] rl build-logs-3action
+    # [3/4] build-logs-3action
     args_logs = [
         "--preds",
         preds_dir,
@@ -2991,7 +3069,7 @@ def nnmultihead_pipeline_3action_e2e(
     if rc != 0:
         sys.exit(rc)
 
-    # [4/4] rl run-e2e-3action (shadow + counterfactual + fsm decision)
+    # [4/4] run-e2e-3action (shadow + counterfactual + fsm decision)
     shadow_out = f"{e2e_out}/shadow"
     cf_out = f"{e2e_out}/counterfactual"
     fsm_out = f"{e2e_out}/fsm_decision.json"
@@ -3144,6 +3222,356 @@ def nnmultihead_pipeline_3action_e2e(
         pass
 
     sys.exit(rc)
+
+
+@nnmultihead.command("build-logs-3action")
+@click.option(
+    "--preds",
+    "preds_path",
+    required=True,
+    help="Preds file/dir from nnmultihead predict (preds_*.parquet)",
+)
+@click.option(
+    "--mode",
+    "mode_path",
+    default=None,
+    help="Optional mode file/dir from mlbot rule mode-3action",
+)
+@click.option(
+    "--symbols",
+    "-s",
+    default=None,
+    help="Optional symbols filter (comma-separated). If omitted, infer from preds.",
+)
+@click.option("--data-path", default="data/parquet_data", help="Raw data directory")
+@click.option("--timeframe", default="240T", help="Timeframe (must match preds)")
+@click.option("--start-date", default=None)
+@click.option("--end-date", default=None)
+@click.option(
+    "--model",
+    "model_path",
+    default=None,
+    help="Optional model.pt to infer preds_in_log1p",
+)
+@click.option(
+    "--preds-in-log1p",
+    type=click.Choice(["yes", "no"]),
+    default=None,
+    help="Override preds space (yes=log1p)",
+)
+@click.option(
+    "--returns-source",
+    type=click.Choice(["momentum_proxy", "rr_execution", "vectorbt_execution"]),
+    default="rr_execution",
+    show_default=True,
+    help="How to build ret_mean/ret_trend",
+)
+@click.option(
+    "--momentum-lookback",
+    type=int,
+    default=5,
+    help="Lookback for momentum proxy used in ret_mean/ret_trend",
+)
+@click.option(
+    "--vbt-top-quantile",
+    type=float,
+    default=0.05,
+    help="vectorbt: top quantile for long entries (regression score)",
+)
+@click.option(
+    "--vbt-bottom-quantile",
+    type=float,
+    default=0.05,
+    help="vectorbt: bottom quantile for short entries (regression score)",
+)
+@click.option(
+    "--vbt-entry-mode",
+    type=click.Choice(["level", "cross"]),
+    default="cross",
+    help="vectorbt: entry mode",
+)
+@click.option(
+    "--vbt-fee", type=float, default=0.0004, help="vectorbt: fee per trade (fraction)"
+)
+@click.option(
+    "--vbt-slippage", type=float, default=0.0001, help="vectorbt: slippage (fraction)"
+)
+@click.option("--vbt-freq", default="4H", help="vectorbt: freq string, e.g. 4H/1H/15T")
+@click.option(
+    "--symbol-profiles-json",
+    default=None,
+    help='Per-symbol profile mapping JSON, e.g. {"BTCUSDT":"btc","DOGEUSDT":"meme"}',
+)
+@click.option("--default-profile", default="standard", help="Default market profile.")
+@click.option(
+    "--rr-profile-overrides-json",
+    default=None,
+    help='RR profile overrides JSON, e.g. {"meme":{"take_profit_r":2.5}}',
+)
+@click.option(
+    "--vbt-profile-overrides-json",
+    default=None,
+    help='vectorbt profile overrides JSON, e.g. {"btc":{"fee":0.0002}}',
+)
+@click.option(
+    "--output", "output_path", required=True, help="Output logs path (.parquet/.csv)"
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_build_logs_3action(
+    preds_path,
+    mode_path,
+    symbols,
+    data_path,
+    timeframe,
+    start_date,
+    end_date,
+    model_path,
+    preds_in_log1p,
+    returns_source,
+    momentum_lookback,
+    vbt_top_quantile,
+    vbt_bottom_quantile,
+    vbt_entry_mode,
+    vbt_fee,
+    vbt_slippage,
+    vbt_freq,
+    symbol_profiles_json,
+    default_profile,
+    rr_profile_overrides_json,
+    vbt_profile_overrides_json,
+    output_path,
+    docker,
+):
+    """Build logs_3action.parquet for mainline evaluation (v0)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds_path}" if use_workspace_prefix else preds_path,
+        "--data-path",
+        f"/workspace/{data_path}" if use_workspace_prefix else data_path,
+        "--timeframe",
+        str(timeframe),
+        "--output",
+        f"/workspace/{output_path}" if use_workspace_prefix else output_path,
+        "--momentum-lookback",
+        str(int(momentum_lookback)),
+        "--returns-source",
+        str(returns_source),
+        "--vbt-top-quantile",
+        str(float(vbt_top_quantile)),
+        "--vbt-bottom-quantile",
+        str(float(vbt_bottom_quantile)),
+        "--vbt-entry-mode",
+        str(vbt_entry_mode),
+        "--vbt-fee",
+        str(float(vbt_fee)),
+        "--vbt-slippage",
+        str(float(vbt_slippage)),
+        "--vbt-freq",
+        str(vbt_freq),
+        "--default-profile",
+        str(default_profile),
+    ]
+    if symbol_profiles_json:
+        args.extend(["--symbol-profiles-json", str(symbol_profiles_json)])
+    if rr_profile_overrides_json:
+        args.extend(["--rr-profile-overrides-json", str(rr_profile_overrides_json)])
+    if vbt_profile_overrides_json:
+        args.extend(["--vbt-profile-overrides-json", str(vbt_profile_overrides_json)])
+    if mode_path:
+        args.extend(
+            ["--mode", f"/workspace/{mode_path}" if use_workspace_prefix else mode_path]
+        )
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
+    if start_date:
+        args.extend(["--start-date", str(start_date)])
+    if end_date:
+        args.extend(["--end-date", str(end_date)])
+    if model_path:
+        args.extend(
+            [
+                "--model",
+                f"/workspace/{model_path}" if use_workspace_prefix else model_path,
+            ]
+        )
+    if preds_in_log1p:
+        args.extend(["--preds-in-log1p", str(preds_in_log1p)])
+    sys.exit(run_script("scripts/rl_build_logs_3action.py", args, docker=docker))
+
+
+@nnmultihead.command("run-e2e-3action")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet with mode + heads (+ ret_mean/ret_trend for counterfactual).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory root. Will create shadow/ counterfactual/ fsm_decision.json",
+)
+@click.option(
+    "--train-ratio",
+    type=float,
+    default=0.7,
+    help="Train ratio per symbol (time-ordered).",
+)
+@click.option("--entry-delay", type=int, default=0, help="Entry delay steps for sim.")
+@click.option(
+    "--cost-per-turnover", type=float, default=0.0, help="Cost per turnover unit."
+)
+@click.option(
+    "--slippage-bps", type=float, default=0.0, help="Slippage bps per abs exposure."
+)
+@click.option(
+    "--preds-in-log1p/--preds-not-in-log1p",
+    default=True,
+    help="Whether head_mfe/head_mae/head_t_to_mfe are in log1p space (affects Router diagnostics only).",
+)
+@click.option(
+    "--router-mfe-min",
+    type=float,
+    default=None,
+    help="Router threshold override: mfe_min (for counterfactual report diagnostics).",
+)
+@click.option(
+    "--router-eff-min",
+    type=float,
+    default=None,
+    help="Router threshold override: eff_min (for counterfactual report diagnostics).",
+)
+@click.option(
+    "--router-dir-conf-trend-min",
+    type=float,
+    default=None,
+    help="Router threshold override: dir_conf_trend_min (for counterfactual report diagnostics).",
+)
+@click.option("--fsm-state", default="RL_CANDIDATE", help="Initial FSM state.")
+@click.option("--promote-days", type=int, default=10)
+@click.option("--cooldown-days", type=int, default=20)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_run_e2e_3action(
+    logs_path,
+    out_dir,
+    train_ratio,
+    entry_delay,
+    cost_per_turnover,
+    slippage_bps,
+    preds_in_log1p,
+    router_mfe_min,
+    router_eff_min,
+    router_dir_conf_trend_min,
+    fsm_state,
+    promote_days,
+    cooldown_days,
+    docker,
+):
+    """Mainline e2e evaluation (shadow + counterfactual + fsm decision)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    logs_arg = f"/workspace/{logs_path}" if use_workspace_prefix else logs_path
+    out_root = f"/workspace/{out_dir}" if use_workspace_prefix else out_dir
+    shadow_out = f"{out_root}/shadow"
+    cf_out = f"{out_root}/counterfactual"
+    fsm_out = f"{out_root}/fsm_decision.json"
+
+    rc = run_script(
+        "scripts/rl_shadow_eval_3action.py",
+        [
+            "--logs",
+            logs_arg,
+            "--out",
+            shadow_out,
+            "--train_ratio",
+            str(float(train_ratio)),
+        ],
+        docker=docker,
+    )
+    if rc != 0:
+        sys.exit(rc)
+
+    cf_args = [
+        "--logs",
+        logs_arg,
+        "--out",
+        cf_out,
+        "--train_ratio",
+        str(float(train_ratio)),
+        "--entry_delay",
+        str(int(entry_delay)),
+        "--cost_per_turnover",
+        str(float(cost_per_turnover)),
+        "--slippage_bps",
+        str(float(slippage_bps)),
+        "--preds-in-log1p",
+        "1" if preds_in_log1p else "0",
+    ]
+    if router_mfe_min is not None:
+        cf_args.extend(["--router-mfe-min", str(float(router_mfe_min))])
+    if router_eff_min is not None:
+        cf_args.extend(["--router-eff-min", str(float(router_eff_min))])
+    if router_dir_conf_trend_min is not None:
+        cf_args.extend(
+            ["--router-dir-conf-trend-min", str(float(router_dir_conf_trend_min))]
+        )
+
+    rc = run_script(
+        "scripts/rl_counterfactual_eval_3action.py",
+        cf_args,
+        docker=docker,
+    )
+    if rc != 0:
+        sys.exit(rc)
+
+    fsm_args = [
+        "--metrics",
+        f"{cf_out}/metrics.json",
+        "--state",
+        str(fsm_state),
+        "--promote_days",
+        str(int(promote_days)),
+        "--cooldown_days",
+        str(int(cooldown_days)),
+        "--out",
+        fsm_out,
+    ]
+    sys.exit(run_script("scripts/rl_fsm_decide.py", fsm_args, docker=docker))
+
+
+@nnmultihead.command("shadow-eval-3action")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Logs .csv/.parquet with mode + heads (from nnmultihead build-logs-3action).",
+)
+@click.option(
+    "--out",
+    "out_dir",
+    required=True,
+    help="Output directory for shadow report.",
+)
+@click.option(
+    "--train-ratio",
+    type=float,
+    default=0.7,
+    help="Train ratio per symbol (time-ordered).",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def nnmultihead_shadow_eval_3action(logs_path, out_dir, train_ratio, docker):
+    """Mainline shadow evaluation (behavioral consistency)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--out",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--train_ratio",
+        str(float(train_ratio)),
+    ]
+    sys.exit(run_script("scripts/rl_shadow_eval_3action.py", args, docker=docker))
 
 
 @nnmultihead.command("materialize-config-from-task-spec")
@@ -5315,6 +5743,156 @@ def diagnose_kpi_journal(run_dir, stage, docker):
     click.echo(f"✅ Wrote: {p / 'kpi_latest.html'}")
 
 
+@diagnose.command("evidence-quantiles")
+@click.option("--feature-store-root", default="feature_store")
+@click.option("--layer", required=True, help="FeatureStore layer id")
+@click.option("--symbols", required=True, help="Comma-separated symbols")
+@click.option("--timeframe", default="240T")
+@click.option("--start-date", required=True)
+@click.option("--end-date", required=True)
+@click.option("--keys", default="vpin,cvd_change_5")
+@click.option("--prefixes", default="")
+@click.option("--quantiles", default="0.1,0.5,0.9")
+@click.option("--out", required=True, help="Output JSON path")
+@click.option("--global/--per-symbol", "global_pool", default=False)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_evidence_quantiles(
+    feature_store_root,
+    layer,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    keys,
+    prefixes,
+    quantiles,
+    out,
+    global_pool,
+    docker,
+):
+    """Build evidence_quantiles.json for execution evidence rules."""
+    args = [
+        "--feature-store-root",
+        feature_store_root,
+        "--layer",
+        layer,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--keys",
+        keys,
+        "--prefixes",
+        prefixes,
+        "--quantiles",
+        quantiles,
+        "--out",
+        out,
+    ]
+    if global_pool:
+        args.append("--global")
+    sys.exit(run_script("scripts/build_evidence_quantiles.py", args, docker=docker))
+
+
+@diagnose.command("evidence-quantiles-plateau")
+@click.option("--feature-store-root", default="feature_store")
+@click.option("--layer", required=True, help="FeatureStore layer id")
+@click.option("--symbols", required=True, help="Comma-separated symbols")
+@click.option("--timeframe", default="240T")
+@click.option("--start-date", required=True)
+@click.option("--end-date", required=True)
+@click.option(
+    "--registry",
+    default="config/nnmultihead/execution_archetypes_v2.yaml",
+    help="Execution archetypes registry yaml",
+)
+@click.option("--archetype", required=True, help="Archetype to evaluate")
+@click.option("--sweep-key", default="vpin")
+@click.option("--q-grid", default="0.55,0.60,0.65,0.70,0.75,0.80")
+@click.option("--quantiles", default="0.1,0.5,0.9")
+@click.option("--quantiles-json", default=None)
+@click.option("--logs", default=None)
+@click.option("--out", required=True)
+@click.option(
+    "--gate-yaml",
+    default="config/kpi_gates/nnmh_execution_layer_v1.yaml",
+    help="KPI gate yaml for auto selection",
+)
+@click.option("--require-gate/--no-require-gate", default=False)
+@click.option("--plateau-frac", default=0.05, type=float)
+@click.option("--score-key", default="gate_exec_score")
+@click.option("--global/--per-symbol", "global_pool", default=False)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_evidence_quantiles_plateau(
+    feature_store_root,
+    layer,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    registry,
+    archetype,
+    sweep_key,
+    q_grid,
+    quantiles,
+    quantiles_json,
+    logs,
+    out,
+    gate_yaml,
+    require_gate,
+    plateau_frac,
+    score_key,
+    global_pool,
+    docker,
+):
+    """Plateau sweep for evidence quantile thresholds."""
+    args = [
+        "--feature-store-root",
+        feature_store_root,
+        "--layer",
+        layer,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--registry",
+        registry,
+        "--archetype",
+        archetype,
+        "--sweep-key",
+        sweep_key,
+        "--q-grid",
+        q_grid,
+        "--quantiles",
+        quantiles,
+        "--out",
+        out,
+        "--gate-yaml",
+        gate_yaml,
+        "--plateau-frac",
+        str(plateau_frac),
+        "--score-key",
+        score_key,
+    ]
+    if quantiles_json:
+        args.extend(["--quantiles-json", quantiles_json])
+    if logs:
+        args.extend(["--logs", logs])
+    if require_gate:
+        args.append("--require-gate")
+    if global_pool:
+        args.append("--global")
+    sys.exit(run_script("scripts/diagnose_evidence_quantiles_plateau.py", args, docker=docker))
+
+
 @diagnose.command("threshold-plateau")
 @click.option(
     "--preds",
@@ -5324,7 +5902,7 @@ def diagnose_kpi_journal(run_dir, stage, docker):
 @click.option(
     "--logs",
     required=True,
-    help="logs_3action.parquet (must contain ret_mean/ret_trend), typically from rl build-logs-3action.",
+    help="logs_3action.parquet (must contain ret_mean/ret_trend), typically from nnmultihead build-logs-3action.",
 )
 @click.option(
     "--model",

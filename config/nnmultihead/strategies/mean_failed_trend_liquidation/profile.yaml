@@ -1,4 +1,0 @@
-version: 1
-strategy_id: mean_failed_trend_liquidation
-archetype: FailureReversionFR
-

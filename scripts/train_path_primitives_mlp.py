@@ -118,7 +118,78 @@ def parse_args() -> argparse.Namespace:
 
     # Output
     p.add_argument("--output-dir", default="results/nn_path_primitives")
+    # Evidence quantiles (optional)
+    p.add_argument(
+        "--emit-evidence-quantiles",
+        action="store_true",
+        help="If set, write evidence_quantiles.json based on training window features.",
+    )
+    p.add_argument(
+        "--evidence-quantiles-out",
+        default=None,
+        help="Output path for evidence_quantiles.json (default: <run_dir>/evidence_quantiles.json).",
+    )
+    p.add_argument(
+        "--evidence-quantiles-keys",
+        default="vpin,cvd_change_5",
+        help="Comma-separated feature keys to include in quantiles.",
+    )
+    p.add_argument(
+        "--evidence-quantiles-prefixes",
+        default="",
+        help="Comma-separated prefixes to include in quantiles (in addition to keys).",
+    )
+    p.add_argument(
+        "--evidence-quantiles",
+        default="0.1,0.5,0.9",
+        help="Comma-separated quantiles (e.g., 0.1,0.5,0.9).",
+    )
+    p.add_argument(
+        "--evidence-quantiles-global",
+        action="store_true",
+        help="If set, pool all symbols into GLOBAL quantiles.",
+    )
     return p.parse_args()
+
+
+def _build_evidence_quantiles(
+    df: pd.DataFrame,
+    *,
+    symbol_col: str,
+    keys: list[str],
+    prefixes: list[str],
+    qs: list[float],
+    global_pool: bool,
+) -> dict:
+    if df.empty:
+        return {}
+    cols = []
+    if keys:
+        cols.extend([c for c in keys if c in df.columns])
+    if prefixes:
+        cols.extend([c for c in df.columns if any(c.startswith(p) for p in prefixes)])
+    cols = sorted(set(cols))
+    if not cols:
+        return {}
+
+    def _quantile_map(s: pd.Series) -> dict:
+        vals = pd.to_numeric(s, errors="coerce").dropna()
+        if vals.empty:
+            return {}
+        return {str(q): float(vals.quantile(q)) for q in qs}
+
+    out = {}
+    if global_pool:
+        pooled = {c: _quantile_map(df[c]) for c in cols}
+        out["GLOBAL"] = {k: v for k, v in pooled.items() if v}
+        return out
+
+    for sym, g in df.groupby(symbol_col):
+        sym_out = {c: _quantile_map(g[c]) for c in cols}
+        sym_out = {k: v for k, v in sym_out.items() if v}
+        if sym_out:
+            out[str(sym)] = sym_out
+    return out
 
 
 def main() -> None:
@@ -392,6 +463,36 @@ def main() -> None:
             ]
         ],
     )
+
+    # Optional: write evidence quantiles for execution rules
+    if bool(args.emit_evidence_quantiles):
+        keys = [
+            s.strip() for s in str(args.evidence_quantiles_keys).split(",") if s.strip()
+        ]
+        prefixes = [
+            s.strip()
+            for s in str(args.evidence_quantiles_prefixes).split(",")
+            if s.strip()
+        ]
+        qs = [float(x) for x in str(args.evidence_quantiles).split(",") if x.strip()]
+        quantiles = _build_evidence_quantiles(
+            df_features,
+            symbol_col="symbol",
+            keys=keys,
+            prefixes=prefixes,
+            qs=qs,
+            global_pool=bool(args.evidence_quantiles_global),
+        )
+        if quantiles:
+            out_path = (
+                Path(args.evidence_quantiles_out)
+                if args.evidence_quantiles_out
+                else (out_dir / "evidence_quantiles.json")
+            )
+            out_path.write_text(
+                json.dumps(quantiles, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            meta["evidence_quantiles_json"] = str(out_path)
 
     # KPI journal (append-only): helps evaluate each layer without drowning in reports.
     try:

@@ -47,6 +47,7 @@ from src.time_series_model.core.constitution.constitution_executor import (
 )
 from src.time_series_model.core.constitution.execution_evidence import (
     compute_execution_evidence,
+    load_evidence_quantiles,
 )
 from src.time_series_model.live.enforcement import enforce_before_order
 from src.time_series_model.live.execution_manager import (
@@ -475,9 +476,13 @@ class EventDrivenStrategy(Strategy):
                 except Exception:
                     merged_feats = {}
                 try:
+                    quantiles = load_evidence_quantiles(
+                        os.getenv("MLBOT_EVIDENCE_QUANTILES_JSON")
+                    )
                     evidence = compute_execution_evidence(
                         features=merged_feats,
                         rules=rules,
+                        quantiles=quantiles,
                     )
                 except Exception as e:
                     self.log.error(f"❌ evidence_dsl_error -> NO_TRADE: {e}")
