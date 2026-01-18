@@ -103,10 +103,11 @@ def main() -> None:
     if not symbols:
         raise ValueError("No symbols provided.")
 
-    # Always disable monthly cache to avoid month-boundary resets for rolling features.
-    # FeatureStore still writes monthly parquet files; this only disables per-month
-    # compute caching inside the feature loader.
-    feature_loader = StrategyFeatureLoader(use_monthly_cache=False)
+    # Use monthly cache + warmup to speed up computation without month-boundary NaNs.
+    feature_loader = StrategyFeatureLoader(
+        use_monthly_cache=True,
+        monthly_warmup_months=int(args.warmup_months or 0),
+    )
     feature_cache_version = getattr(feature_loader.computer, "cache_version", None)
     feature_cols_union: List[str] = []
 
@@ -184,18 +185,9 @@ def main() -> None:
         warmup_months = max(0, int(args.warmup_months))
         warmup_bars = max(0, int(args.warmup_bars))
 
-        # If warmup is requested, prefer a contiguous feature pass (no month reset),
-        # then slice by month. This yields correct rolling features without
-        # month-boundary NaN resets.
-        max_contiguous_rows = 50000
-        use_contiguous = warmup_months > 0 and len(df_raw) <= max_contiguous_rows
+        # Monthly cache + warmup path (avoid full contiguous compute).
+        use_contiguous = False
         df_feats_full = None
-        if use_contiguous:
-            df_feats_full = feature_loader.load_features_from_requested(
-                df_raw, requested_features=requested, fit=True
-            )
-            if "symbol" not in df_feats_full.columns:
-                df_feats_full["symbol"] = sym
 
         monthly_groups = df_raw.groupby(pd.Grouper(freq="M"))
         # If we loaded extra warmup months, skip writing months before the

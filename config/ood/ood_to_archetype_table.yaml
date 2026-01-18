@@ -1,0 +1,43 @@
+version: 1
+name: "ood_to_archetype_table"
+
+# Conditional Survival Table (baseline, most controllable):
+# Build a table of survival_rate(archetype | ood_bin), then map to router weights.
+#
+# Inputs required in the joined dataframe (logs + y_surv labels):
+# - ood_score (0..1)
+# - active_archetype (one of TC/TE/FR/ET IDs)
+# - y_surv (0/1)
+
+columns:
+  symbol_col: symbol
+  timestamp_col: timestamp
+  ood_score_col: ood_score
+  archetype_col: active_archetype
+  label_col: y_surv
+
+archetypes:
+  - TrendContinuationTC
+  - TrendExpansionTE
+  - FailureReversionFR
+  - ExhaustionTurnET
+
+bins:
+  # OOD bins must cover [0,1]. Using wide bins reduces overfitting.
+  - name: low_ood
+    lo: 0.0
+    hi: 0.4
+  - name: mid_ood
+    lo: 0.4
+    hi: 0.7
+  - name: high_ood
+    lo: 0.7
+    hi: 1.0
+
+weights:
+  # Convert survival_rate -> weight using softmax(survival_rate / temperature)
+  # Smaller temperature => more "winner-takes-more".
+  temperature: 0.15
+  min_samples_per_cell: 200
+  default_weight_if_missing: 0.0
+

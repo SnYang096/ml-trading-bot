@@ -31,9 +31,7 @@ def test_compare_feature_sets_generates_reports(tmp_path: Path) -> None:
 
     # Use repo's real base config/feature plan (keeps the test small and stable)
     base_config = Path("config/nnmultihead/path_primitives_4h_80h_min")
-    feature_plan_ref = (
-        "config/nnmultihead/path_primitives_4h_80h_min/feature_plan_v1.yaml"
-    )
+    feature_plan_ref = "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
 
     task_spec = _write_minimal_task_spec(tmp_path, feature_plan_ref=feature_plan_ref)
 

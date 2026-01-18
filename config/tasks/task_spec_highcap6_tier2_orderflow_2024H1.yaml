@@ -1,0 +1,83 @@
+version: 1
+
+task_id: "TASK_V1_U2_HIGHCAP6_TIER2_ORDERFLOW_2024H1__NNMH_3ACTION"
+owner: "dev"
+created_at: "2026-01-15"
+
+universe:
+  timeframe: "240T"
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
+  universe_layer: "U2"
+  group_tag: "HighCap"
+
+windows:
+  train:
+    start: "2024-01-01"
+    end: "2024-06-30"
+  holdout:
+    start: "2024-07-01"
+    end: "2024-12-31"
+    frozen: true
+
+enforcement:
+  constitution_yaml: "config/constitution/constitution.yaml"
+  kpi_gate_yaml: "config/kpi_gates/router_counterfactual.yaml"
+
+feature_plan_ref: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
+feature_plan_overrides:
+  tiers_enabled:
+    - "TIER0_OHLCV_LIGHT"
+    - "TIER1_BAR_SEMANTIC_STRUCTURAL"
+    - "TIER2_ORDERFLOW_ONLY"
+  tier_feature_files:
+    TIER0_OHLCV_LIGHT: "config/nnmultihead/path_primitives_4h_80h_min/features_tier0.yaml"
+    TIER1_BAR_SEMANTIC_STRUCTURAL: "config/nnmultihead/path_primitives_4h_80h_min/features_tier1.yaml"
+    TIER2_ORDERFLOW_ONLY: "config/nnmultihead/path_primitives_4h_80h_min/features_tier2_orderflow.yaml"
+
+model_plan:
+  kind: "nnmultihead_path_primitives"
+  base_config_dir: "config/nnmultihead/path_primitives_4h_80h_min"
+  device: "auto"
+  training:
+    epochs: 10
+    batch_size: 512
+    lr: 0.0002
+    seed: 42
+
+router_plan:
+  kind: "rule_mode_3action"
+  thresholds_source: "fixed"
+  thresholds:
+    mfe_min: 0.1259
+    eff_min: 1.0434
+    dir_conf_trend_min: 0.0642
+
+gate_plan:
+  enabled: false
+  kind: "tree_gate_veto"
+  rules_export:
+    enabled: true
+    format: "yaml"
+
+pcm_plan:
+  enabled: true
+  kind: "portfolio_capital_manager_v1"
+
+portfolio_assets_plan:
+  enabled: true
+  config_file: "config/portfolio_assets/portfolio_assets.yaml"
+
+execution_plan:
+  returns_source: "rr_execution"
+  entry_delay: 0
+  rr_sim:
+    stop_loss_r: 1.0
+    take_profit_r: 2.0
+    max_holding_bars: 50
+    use_trailing_stop: true

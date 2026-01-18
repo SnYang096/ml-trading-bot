@@ -1,0 +1,322 @@
+version: 2
+name: "execution_archetypes_v2_tc_te_fr_et"
+
+# Final 4 archetypes (per docs/architecture/archetype灭绝级回测.md:1752-1758):
+# A. Trend Continuation (TC)   ← 主力、养老金
+# B. Trend Expansion (TE)     ← 火箭、一次只来一个
+# C. Failure Reversion (FR)   ← 均值里唯一值得活的
+# D. Exhaustion Turn (ET)     ← 极端条件、医生
+#
+# NOTE:
+# - This registry is archetype-first; StrategyProfile only maps strategy_id -> archetype id.
+# - Names are stable IDs used by live configs and reports.
+
+regimes:
+  TREND:
+    archetypes:
+      TrendContinuationTC:
+        required_conditions:
+          - htf_trend_confirmed
+          - ltf_precision_entry
+          - structure_breakout
+          - healthy_pullback
+          - rr_geq_2
+          - not_counter_trend
+        required_evidence: [has_orderflow, has_trend_context, has_volatility]
+        gate_rules:
+          rules:
+            # TC vetoes: no orderflow continuation, thin volume, vol compression, or weak trend.
+            - name: tc_no_oflow_continuation
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.55
+              on_missing: false
+            - name: tc_oflow_weak
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.45
+              on_missing: false
+            - name: tc_volume_too_low
+              kind: quantile_lt
+              key: volume_ratio
+              quantile: 0.2
+              on_missing: false
+            - name: tc_vol_compress
+              kind: quantile_lt
+              key: bb_width_normalized
+              quantile: 0.2
+              on_missing: false
+            - name: tc_trend_break
+              kind: value_lt
+              key: trend_r2_20
+              threshold: 0.2
+              on_missing: false
+          deny_if: [tc_no_oflow_continuation, tc_oflow_weak, tc_volume_too_low, tc_vol_compress, tc_trend_break]
+          allow_if: []
+          allow_mode: any
+          default_action: allow
+        evidence_rules:
+          # Orderflow should not be clearly adverse
+          - name: has_orderflow
+            kind: quantile_gt
+            key: vpin
+            quantile: 0.6
+            on_missing: error
+          - name: oflow_not_negative
+            kind: quantile_gte
+            key: cvd_change_5_normalized
+            quantile: 0.55
+            on_missing: false
+          - name: has_trend_context
+            kind: any_key_contains
+            any_key_contains: ["sma_200", "trend_r2", "macd", "hurst", "hilbert"]
+          - name: has_volatility
+            kind: any_key_contains
+            any_key_contains: ["atr", "bb_width", "volume_ratio", "spectrum"]
+
+      TrendExpansionTE:
+        required_conditions:
+          - ttm_above_threshold
+          - vol_expansion
+          - no_reverse_absorption
+          - rr_geq_2
+        required_evidence: [has_orderflow, has_volatility]
+        gate_rules:
+          rules:
+            # TE requires expansion in orderflow + volume + volatility; deny fake breakouts.
+            - name: te_oflow_expansion
+              kind: quantile_gt
+              key: cvd_change_5
+              quantile: 0.85
+              on_missing: false
+            - name: te_volume_surge
+              kind: quantile_gt
+              key: volume_ratio
+              quantile: 0.6
+              on_missing: false
+            - name: te_vol_expansion
+              kind: quantile_gt
+              key: bb_width_normalized
+              quantile: 0.7
+              on_missing: false
+            - name: te_fake_breakout_oflow
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.3
+              on_missing: false
+            - name: te_no_volume_surge
+              kind: quantile_lt
+              key: volume_ratio
+              quantile: 0.4
+              on_missing: false
+            - name: te_vol_not_expanding
+              kind: quantile_lt
+              key: bb_width_normalized
+              quantile: 0.3
+              on_missing: false
+            - name: te_volume_too_low
+              kind: quantile_lt
+              key: volume_ratio
+              quantile: 0.2
+              on_missing: false
+            - name: te_bb_width_too_low
+              kind: quantile_lt
+              key: bb_width_normalized
+              quantile: 0.2
+              on_missing: false
+          deny_if: [te_fake_breakout_oflow, te_no_volume_surge, te_vol_not_expanding, te_volume_too_low, te_bb_width_too_low]
+          allow_if: [te_oflow_expansion, te_volume_surge, te_vol_expansion]
+          allow_mode: min2
+          default_action: deny
+        evidence_rules:
+          # Expansion requires orderflow + volume surge signals
+          - name: has_orderflow
+            kind: quantile_gt
+            key: vpin
+            quantile: 0.6
+            on_missing: error
+          - name: oflow_expansion
+            kind: quantile_gt
+            key: cvd_change_5_normalized
+            quantile: 0.85
+            on_missing: false
+          - name: has_volatility
+            kind: any_key_contains
+            any_key_contains: ["atr", "bb_width", "spectrum"]
+          - name: has_volume_surge
+            kind: any_key_contains
+            any_key_contains: ["volume_anomaly", "volume_ratio", "vp_", "volume_profile"]
+
+  MEAN:
+    archetypes:
+      FailureReversionFR:
+        required_conditions:
+          - breakout_failed_close_back
+          - no_follow_through
+          - absorption_present
+          - ttm_break
+        required_evidence: [has_orderflow, has_sr_quality]
+        execution_constraints:
+          allow_add_on: false
+          min_order_interval_minutes: 60
+          fixed_rr:
+            stop_loss_r: 1.0
+            take_profit_r: 2.0
+            max_holding_bars: 24
+        gate_rules:
+          rules:
+            # FR: divergence + vpin spike + absorption signals (>=2 hits). Deny thin liquidity.
+            - name: fr_divergence
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.3
+              on_missing: false
+            - name: fr_vpin_spike
+              kind: quantile_gt
+              key: vpin
+              quantile: 0.65
+              on_missing: false
+            - name: fr_cvd_divergence
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.3
+              on_missing: false
+            - name: fr_absorption
+              kind: quantile_gt
+              key: vp_absorption_score
+              quantile: 0.7
+              on_missing: false
+            - name: fr_volume_too_low
+              kind: quantile_lt
+              key: volume_ratio
+              quantile: 0.2
+              on_missing: false
+            - name: fr_bb_width_too_low
+              kind: quantile_lt
+              key: bb_width_normalized
+              quantile: 0.2
+              on_missing: false
+          deny_if: [fr_volume_too_low, fr_bb_width_too_low]
+          allow_if: [fr_divergence, fr_vpin_spike, fr_cvd_divergence, fr_absorption]
+          allow_mode: min2
+          default_action: deny
+        evidence_rules:
+          # Failure reversion needs divergence/absorption-like context
+          - name: has_orderflow
+            kind: quantile_gt
+            key: vpin
+            quantile: 0.6
+            on_missing: error
+          - name: oflow_divergence
+            kind: quantile_lt
+            key: cvd_change_5_normalized
+            quantile: 0.15
+            on_missing: false
+          - name: has_sr_quality
+            kind: any_key_contains
+            any_key_contains: ["sr_", "sqs_", "poc_"]
+          - name: has_absorption
+            kind: any_key_contains
+            any_key_contains: ["absorption", "vp_absorption", "wick_absorption"]
+
+      ExhaustionTurnET:
+        required_conditions:
+          - long_trend_late_stage
+          - vol_climax
+          - mfe_extreme
+          - momentum_divergence
+        required_evidence: [has_orderflow, has_volume_profile]
+        execution_constraints:
+          allow_add_on: false
+          min_order_interval_minutes: 60
+          fixed_rr:
+            stop_loss_r: 1.0
+            take_profit_r: 2.0
+            max_holding_bars: 24
+        gate_rules:
+          rules:
+            # ET: climax + divergence + momentum decay + profile proximity (>=2 hits).
+            - name: et_vol_climax
+              kind: quantile_gt
+              key: atr_percentile
+              quantile: 0.9
+              on_missing: false
+            - name: et_vpin_spike
+              kind: quantile_gt
+              key: vpin
+              quantile: 0.65
+              on_missing: false
+            - name: et_cvd_divergence
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.3
+              on_missing: false
+            - name: et_momentum_decay
+              kind: quantile_lt
+              key: cvd_change_5
+              quantile: 0.3
+              on_missing: false
+            - name: et_near_lvn
+              kind: value_lt
+              key: vpvr_lvn_distance
+              threshold: 0.2
+              on_missing: false
+            - name: et_volume_too_low
+              kind: quantile_lt
+              key: volume_ratio
+              quantile: 0.2
+              on_missing: false
+            - name: et_bb_width_too_low
+              kind: quantile_lt
+              key: bb_width_normalized
+              quantile: 0.2
+              on_missing: false
+          deny_if: [et_volume_too_low, et_bb_width_too_low]
+          allow_if: [et_vol_climax, et_vpin_spike, et_cvd_divergence, et_momentum_decay, et_near_lvn]
+          allow_mode: min2
+          default_action: deny
+        evidence_rules:
+          # Exhaustion is rare: require volume profile + momentum decay signals
+          - name: has_orderflow
+            kind: quantile_gt
+            key: vpin
+            quantile: 0.6
+            on_missing: error
+          - name: has_volume_profile
+            kind: any_key_contains
+            any_key_contains: ["volume_profile", "vp_"]
+          - name: has_momentum_decay
+            kind: any_key_contains
+            any_key_contains: ["macd", "trend_r2", "momentum"]
+          - name: has_vol_climax
+            kind: any_key_contains
+            any_key_contains: ["volatility_reversal", "atr_percentile", "bb_width"]
+
+  NO_TRADE:
+    archetypes: {}
+
+# Optional overlay axis (Vol Mean) is implemented, but should NOT be enabled as mainline.
+overlays:
+  VolMeanCompressionExpansionReversion:
+    regime: MEAN
+    required_conditions:
+      - vol_compression_history
+      - breakout_failed
+      - trend_weight_zero
+    required_evidence: [has_volatility, has_orderflow]
+    gate_rules:
+      rules: []
+      deny_if: []
+      allow_if: []
+      allow_mode: any
+      default_action: allow
+    evidence_rules:
+      - name: has_volatility
+        kind: any_key_contains
+        any_key_contains: ["atr", "bb_width", "atr_percentile", "bb_width_percentile"]
+      - name: has_orderflow
+        kind: value_gt
+        key: vpin
+        threshold: 0.05
+        on_missing: error
+

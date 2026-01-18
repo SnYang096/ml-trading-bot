@@ -54,7 +54,16 @@ from src.time_series_model.live.execution_manager import (
     ExecutionManager,
     GuardedOrderContext,
 )
-from src.time_series_model.nnmultihead.strategy_profile import resolve_execution_profile
+from src.time_series_model.nnmultihead.strategy_profile import (
+    resolve_execution_profile,
+    resolve_execution_profile_paths,
+)
+from src.time_series_model.live.live_runtime_paths import resolve_live_runtime_paths
+from src.time_series_model.diagnostics.execution_log import (
+    build_decision_id,
+    build_stage_record,
+    ExecutionStageLogWriter,
+)
 
 
 class EventDrivenStrategy(Strategy):
@@ -102,9 +111,8 @@ class EventDrivenStrategy(Strategy):
         self.model_path = model_path
         self.check_interval_minutes = check_interval_minutes
         self.min_order_interval_ns = min_order_interval_minutes * 60 * 1_000_000_000
-        self.constitution_yaml = constitution_yaml or os.getenv(
-            "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution_v1.yaml"
-        )
+        live_paths = resolve_live_runtime_paths()
+        self.constitution_yaml = constitution_yaml or live_paths["constitution_yaml"]
 
         # 特征计算器
         self.feature_computer = IncrementalFeatureComputer(
@@ -124,6 +132,7 @@ class EventDrivenStrategy(Strategy):
         self._constitution_executor: Optional[ConstitutionExecutor] = None
         self._constitution_runtime_state = None
         self._xm: Optional[ExecutionManager] = None
+        self._exec_stage_writers: dict[str, ExecutionStageLogWriter] = {}
 
         # 时间框架特征缓存
         self.timeframe_features: Dict[str, Dict[str, float]] = {}
@@ -137,6 +146,20 @@ class EventDrivenStrategy(Strategy):
             self.log.info(
                 "ℹ️ Live does not load config/strategies/* (tree configs are research-only)."
             )
+            log_dir = Path(os.getenv("MLBOT_EXECUTION_LOG_DIR", "results/live_logs"))
+            for stage in [
+                "features",
+                "preds",
+                "router",
+                "gate",
+                "evidence",
+                "execution",
+                "returns",
+                "observability",
+            ]:
+                self._exec_stage_writers[stage] = ExecutionStageLogWriter(
+                    base_dir=log_dir, stage=stage
+                )
 
             # 2. 加载模型（优先使用 ModelArtifact）
             if self.model_path:
@@ -313,6 +336,33 @@ class EventDrivenStrategy(Strategy):
                 orderflow_features,
             )
 
+            decision_id = build_decision_id(
+                strategy_name=str(self.strategy_name),
+                symbol=str(self.instrument_id),
+                decision_ts_ns=current_time_ns,
+            )
+            if self._exec_stage_writers:
+                feats = {**(all_features or {}), **(orderflow_features or {})}
+                record = build_stage_record(
+                    stage="features",
+                    decision_id=decision_id,
+                    decision_ts_ns=current_time_ns,
+                    source="live",
+                    run_id=(
+                        str(os.getenv("MLBOT_RUN_ID"))
+                        if os.getenv("MLBOT_RUN_ID")
+                        else None
+                    ),
+                    symbol=str(self.instrument_id),
+                    timeframe="event",
+                    strategy_name=str(self.strategy_name),
+                    instrument_id=str(self.instrument_id),
+                    data=feats,
+                )
+                self._exec_stage_writers["features"].write(
+                    record, decision_ts_ns=current_time_ns
+                )
+
             if should_enter:
                 quote = self.cache.quote_tick(self.instrument_id)
                 if quote:
@@ -323,8 +373,56 @@ class EventDrivenStrategy(Strategy):
                     )
                     self.last_order_time_ns = current_time_ns
                     self.log.info(f"📊 Entry executed: {signal_reason.get('reason')}")
+                    if self._exec_stage_writers:
+                        record = build_stage_record(
+                            stage="execution",
+                            decision_id=decision_id,
+                            decision_ts_ns=current_time_ns,
+                            source="live",
+                            run_id=(
+                                str(os.getenv("MLBOT_RUN_ID"))
+                                if os.getenv("MLBOT_RUN_ID")
+                                else None
+                            ),
+                            symbol=str(self.instrument_id),
+                            timeframe="event",
+                            strategy_name=str(self.strategy_name),
+                            instrument_id=str(self.instrument_id),
+                            data={
+                                "intent": True,
+                                "submit_order": True,
+                                "side": str(signal_reason.get("side")),
+                                "qty": float(self.trade_size),
+                                "price": float(quote.mid),
+                                "reason": str(signal_reason.get("reason")),
+                            },
+                        )
+                        self._exec_stage_writers["execution"].write(
+                            record, decision_ts_ns=current_time_ns
+                        )
                 else:
                     self.log.warning("No quote available for entry execution")
+            else:
+                if self._exec_stage_writers:
+                    record = build_stage_record(
+                        stage="execution",
+                        decision_id=decision_id,
+                        decision_ts_ns=current_time_ns,
+                        source="live",
+                        run_id=(
+                            str(os.getenv("MLBOT_RUN_ID"))
+                            if os.getenv("MLBOT_RUN_ID")
+                            else None
+                        ),
+                        symbol=str(self.instrument_id),
+                        timeframe="event",
+                        strategy_name=str(self.strategy_name),
+                        instrument_id=str(self.instrument_id),
+                        data={"intent": False, "submit_order": False},
+                    )
+                    self._exec_stage_writers["execution"].write(
+                        record, decision_ts_ns=current_time_ns
+                    )
 
             # 安排下一次检查
             self._schedule_next_check()
@@ -445,13 +543,7 @@ class EventDrivenStrategy(Strategy):
                 self._constitution_executor is not None
                 and self._constitution_runtime_state is not None
             ):
-                root = os.getenv(
-                    "MLBOT_NNMH_STRATEGY_PROFILE_ROOT", "config/nnmultihead/strategies"
-                )
-                reg = os.getenv(
-                    "MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY",
-                    "config/nnmultihead/execution_archetypes_v1.yaml",
-                )
+                root, reg = resolve_execution_profile_paths()
                 ex = resolve_execution_profile(
                     strategy_id=str(self.strategy_name),
                     profile_root=root,

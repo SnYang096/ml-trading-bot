@@ -14,7 +14,7 @@ class RevivePhase:
 
 
 @dataclass(frozen=True)
-class OODConfigV1:
+class OODConfig:
     version: int
     name: str
 
@@ -55,9 +55,9 @@ def _i(x: Any, default: int) -> int:
         return int(default)
 
 
-def load_ood_config_v1(
-    path: str | Path = "config/ood/ood_config_v1.yaml",
-) -> OODConfigV1:
+def load_ood_config(
+    path: str | Path = "config/ood/ood_config.yaml",
+) -> OODConfig:
     p = Path(path)
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
@@ -85,9 +85,9 @@ def load_ood_config_v1(
         if isinstance(xs, list):
             keys = [str(x) for x in xs]
 
-    return OODConfigV1(
+    return OODConfig(
         version=int(obj.get("version", 1)),
-        name=str(obj.get("name", "ood_config_v1")),
+        name=str(obj.get("name", "ood_config")),
         ood_horizon_bars=_i(labels.get("ood_horizon_bars"), 20),
         survival_horizon_bars=_i(labels.get("survival_horizon_bars"), 50),
         y_ood_or_sources=[str(x) for x in (agg.get("y_ood_or_sources") or [])],
@@ -108,7 +108,7 @@ def load_ood_config_v1(
 
 
 def compute_size_cap_multiplier(
-    *, cfg: OODConfigV1, ood_score: float, survival_prob: float
+    *, cfg: OODConfig, ood_score: float, survival_prob: float
 ) -> float:
     """
     Deterministic mapping used by both research and live:

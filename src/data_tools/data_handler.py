@@ -334,6 +334,7 @@ class MarketDataLoader:
             "cvd_change_5",
             "cvd_change_20",
             "cvd_normalized",
+            "cvd_change_5_normalized",
         ]
         for col in optional_cols:
             if col in df.columns:
@@ -383,6 +384,13 @@ class MarketDataLoader:
             result["cvd"] = delta.cumsum()
             result["cvd_normalized"] = delta / total_flow.replace(0, np.nan)
             result["cvd_normalized"] = result["cvd_normalized"].fillna(0)
+            total_flow_5 = total_flow.rolling(window=5, min_periods=1).sum()
+            result["cvd_change_5_normalized"] = result[
+                "cvd_change_5"
+            ] / total_flow_5.replace(0, np.nan)
+            result["cvd_change_5_normalized"] = result[
+                "cvd_change_5_normalized"
+            ].fillna(0)
         else:
             for col in [
                 "buy_qty",
@@ -396,6 +404,7 @@ class MarketDataLoader:
                 "cvd_change_5",
                 "cvd_change_20",
                 "cvd_normalized",
+                "cvd_change_5_normalized",
             ]:
                 result[col] = 0.0
 

@@ -111,8 +111,8 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 
 ## 6) 你应该如何用 TaskSpec/Constitution 把流程“锁死”
 
-- 用 `config/tasks/task_spec_v1.yaml` 固定：窗口、universe、feature tier、FeatureStore layer、router 阈值来源、执行假设\n
-- 用 `config/constitution/constitution_v1.yaml` 固定：kill-switch、slots、加仓合法方式、跃迁条款\n
+- 用 `config/tasks/task_spec.yaml` 固定：窗口、universe、feature tier、FeatureStore layer、router 阈值来源、执行假设\n
+- 用 `config/constitution/constitution.yaml` 固定：kill-switch、slots、加仓合法方式、跃迁条款\n
 
 任何一次训练/调参/上线，都必须把 TaskSpec ID 写入产物目录与报告。\n
 

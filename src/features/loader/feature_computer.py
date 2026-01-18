@@ -446,6 +446,7 @@ class FeatureComputer:
         parallel_backend: str = "process",  # deprecated (sequential-only)
         use_monthly_cache: bool = True,  # 是否使用按月缓存
         enable_parallel: bool = False,  # deprecated (sequential-only)
+        monthly_warmup_months: Optional[int] = None,
     ):
         """
         Args:
@@ -463,6 +464,13 @@ class FeatureComputer:
         self.use_disk_cache = use_disk_cache
         self.use_memory_cache = use_memory_cache
         self.use_monthly_cache = use_monthly_cache
+        try:
+            env_warmup = int(os.getenv("FEATURE_MONTHLY_WARMUP_MONTHS", "3"))
+        except Exception:
+            env_warmup = 3
+        if monthly_warmup_months is None:
+            monthly_warmup_months = env_warmup
+        self.monthly_warmup_months = max(0, int(monthly_warmup_months))
 
         # Opt-in: monthly parallelism (still feature-level sequential).
         # This is a compromise: it keeps caching stable and payloads small (per-month slices),
@@ -557,6 +565,72 @@ class FeatureComputer:
         }
         return stats
 
+    def _get_monthly_cache_key(
+        self,
+        feature_name: str,
+        month_key: str,
+        compute_params: Dict,
+        feature_info: Optional[Dict] = None,
+        df_sig: str = "unknown",
+    ) -> str:
+        """
+        Back-compat wrapper used by tests. Includes monthly warmup in key.
+        """
+        params = dict(compute_params or {})
+        if self.monthly_warmup_months:
+            params["__monthly_warmup_months"] = int(self.monthly_warmup_months)
+        return _get_monthly_cache_key(
+            feature_name=feature_name,
+            month_key=month_key,
+            cache_version=self.cache_version,
+            fit=True,
+            compute_params=params,
+            data_id=str(df_sig),
+        )
+
+    def _split_df_by_month(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """Back-compat helper used by tests."""
+        if not isinstance(df.index, (pd.DatetimeIndex, pd.TimedeltaIndex, pd.PeriodIndex)):
+            raise ValueError("Expected Datetime-like index for monthly split.")
+        out: Dict[str, pd.DataFrame] = {}
+        for month_key, df_month in df.groupby(pd.Grouper(freq="M")):
+            if df_month.empty:
+                continue
+            out[month_key.strftime("%Y-%m")] = df_month
+        return out
+
+    def _save_monthly_cache(self, cache_key: str, data: pd.DataFrame | pd.Series) -> None:
+        if not self.monthly_cache_dir:
+            return
+        _save_monthly_cache(self.monthly_cache_dir, cache_key, data)
+
+    def _load_monthly_cache(self, cache_key: str) -> Optional[pd.DataFrame | pd.Series]:
+        if not self.monthly_cache_dir:
+            return None
+        return _load_monthly_cache(self.monthly_cache_dir, cache_key)
+
+    def _try_monthly_cache(
+        self,
+        feature_name: str,
+        df: pd.DataFrame,
+        compute_params: Dict,
+        feature_info: Dict,
+    ) -> Optional[Dict[str, pd.DataFrame | pd.Series]]:
+        """
+        Back-compat helper used by tests. Return cached month results if all months exist.
+        """
+        monthly_dfs = self._split_df_by_month(df)
+        results: Dict[str, pd.DataFrame | pd.Series] = {}
+        for month_key, month_df in monthly_dfs.items():
+            cache_key = self._get_monthly_cache_key(
+                feature_name, month_key, compute_params, feature_info, df_sig=self._get_df_signature(month_df)
+            )
+            cached = self._load_monthly_cache(cache_key)
+            if cached is None:
+                return None
+            results[month_key] = cached
+        return results
+
     def _get_df_hash(self, df: pd.DataFrame) -> str:
         """计算 DataFrame 的哈希值（用于缓存键）"""
         h = hashlib.md5()
@@ -646,6 +720,9 @@ class FeatureComputer:
             pass
 
         if isinstance(result, pd.Series):
+            if result.index.has_duplicates:
+                # Monthly warmup windows can overlap across months; keep the latest.
+                result = result[~result.index.duplicated(keep="last")]
             if not result.index.equals(base_index):
                 # 记录索引不匹配统计
                 extra = len(result.index.difference(base_index))
@@ -662,6 +739,9 @@ class FeatureComputer:
                 result = result.reindex(base_index)
             return result
         elif isinstance(result, pd.DataFrame):
+            if result.index.has_duplicates:
+                # Monthly warmup windows can overlap across months; keep the latest.
+                result = result[~result.index.duplicated(keep="last")]
             if not result.index.equals(base_index):
                 # 记录索引不匹配统计
                 extra = len(result.index.difference(base_index))
@@ -819,31 +899,6 @@ class FeatureComputer:
 
             return result
 
-        # Stable dataset id for cache keys.
-        # Goal: cache should hit across runs even if caller passes a larger warmup window,
-        # as long as the per-month slice is identical for the same symbol/timeframe.
-        sym = None
-        try:
-            if "_symbol" in df.columns:
-                uniq = pd.Series(df["_symbol"]).dropna().astype(str).unique().tolist()
-                if len(uniq) == 1:
-                    sym = uniq[0]
-                elif len(uniq) > 1:
-                    sym = "multi_" + hashlib.md5(
-                        ("|".join(sorted(uniq))).encode()
-                    ).hexdigest()[:8]
-            if sym is None and "symbol" in df.columns:
-                uniq = pd.Series(df["symbol"]).dropna().astype(str).unique().tolist()
-                if len(uniq) == 1:
-                    sym = uniq[0]
-                elif len(uniq) > 1:
-                    sym = "multi_" + hashlib.md5(
-                        ("|".join(sorted(uniq))).encode()
-                    ).hexdigest()[:8]
-        except Exception:
-            sym = None
-        data_id = f"sym={sym or 'unknown'}"
-
         # 按月分组
         monthly_groups = df.groupby(pd.Grouper(freq="M"))
         monthly_results: Dict[str, pd.DataFrame | pd.Series] = {}
@@ -853,20 +908,32 @@ class FeatureComputer:
         computed_months = 0
         queued_months: List[tuple[str, str, bytes]] = []
 
+        warmup_months = int(self.monthly_warmup_months or 0)
         for month_key, df_month in monthly_groups:
             if df_month.empty:
                 continue
 
             month_str = month_key.strftime("%Y-%m")
+            month_start = df_month.index.min()
+            month_end = df_month.index.max()
+            if warmup_months > 0:
+                start_ts = pd.Timestamp(month_start) - pd.DateOffset(months=warmup_months)
+                df_window = df.loc[(df.index >= start_ts) & (df.index <= month_end)]
+            else:
+                df_window = df_month
+            compute_params_key = dict(compute_params or {})
+            if warmup_months > 0:
+                compute_params_key["__monthly_warmup_months"] = warmup_months
 
-            # 生成月度缓存键
+            # 生成月度缓存键（include warmup + month signature）
+            df_sig = self._get_df_signature(df_month)
             monthly_cache_key = _get_monthly_cache_key(
                 feature_name=feature_name,
                 month_key=month_str,
                 cache_version=self.cache_version,
                 fit=True,  # 月度缓存不区分 fit/predict
-                compute_params=compute_params,
-                data_id=data_id,
+                compute_params=compute_params_key,
+                data_id=str(df_sig),
             )
 
             # 尝试加载缓存
@@ -900,7 +967,7 @@ class FeatureComputer:
                         (
                             month_str,
                             monthly_cache_key,
-                            pickle.dumps(df_month, protocol=pickle.HIGHEST_PROTOCOL),
+                            pickle.dumps(df_window, protocol=pickle.HIGHEST_PROTOCOL),
                         )
                     )
                     continue
@@ -908,7 +975,7 @@ class FeatureComputer:
                 # 计算特征
                 print(f"       🔸 Computing {feature_name} for {month_str}...")
                 call_args, call_kwargs = _build_call_args(
-                    feature_info, df_month, feature_name
+                    feature_info, df_window, feature_name
                 )
                 # Some configs may include non-compute metadata keys inside compute_params.
                 # To avoid runtime failures, filter kwargs by the compute_func signature
@@ -928,6 +995,17 @@ class FeatureComputer:
                     # Defensive: if signature introspection fails, run as-is.
                     pass
 
+                # If no args were built but compute_func expects a DataFrame, pass df_window.
+                if not call_args:
+                    try:
+                        import inspect
+
+                        sig = inspect.signature(compute_func)
+                        params = list(sig.parameters.keys())
+                        if params and params[0] in {"df", "data", "frame"}:
+                            call_args = [df_window]
+                    except Exception:
+                        pass
                 month_result = compute_func(*call_args, **call_kwargs)
                 
                 # Debug: check return type for macd_f
@@ -935,6 +1013,13 @@ class FeatureComputer:
                     print(f"       🔍 DEBUG macd_f: compute_func returned type: {type(month_result)}")
                     if isinstance(month_result, tuple):
                         print(f"       🔍 DEBUG macd_f: tuple length: {len(month_result)}")
+
+                # Trim to current month index after warmup computation
+                if isinstance(month_result, (pd.Series, pd.DataFrame)):
+                    try:
+                        month_result = month_result.reindex(df_month.index)
+                    except Exception:
+                        pass
 
                 # 处理计算结果的重复列名
                 if (

@@ -212,7 +212,7 @@ def main():
     parser.add_argument(
         "--live-config",
         type=str,
-        default="config/nnmultihead/live/meta_router_live_config_v1.yaml",
+        default="config/nnmultihead/live/meta_router_live_config.yaml",
         help="MetaRouter live config YAML (enabled archetypes, sizing, vol-mean overlay).",
     )
 

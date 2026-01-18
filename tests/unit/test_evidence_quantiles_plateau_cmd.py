@@ -1,5 +1,7 @@
-import pandas as pd
+import json
 from pathlib import Path
+
+import pandas as pd
 
 from src.feature_store.feature_store import FeatureStore, FeatureStoreSpec
 
@@ -42,7 +44,7 @@ def test_evidence_quantiles_plateau_smoke(tmp_path):
         "--end-date",
         "2024-01-02",
         "--registry",
-        "config/nnmultihead/execution_archetypes_v2.yaml",
+        "config/nnmultihead/execution_archetypes.yaml",
         "--archetype",
         "TrendContinuationTC",
         "--sweep-key",
@@ -123,7 +125,7 @@ def test_evidence_quantiles_plateau_gate_selection(tmp_path):
         "--end-date",
         "2024-01-02",
         "--registry",
-        "config/nnmultihead/execution_archetypes_v2.yaml",
+        "config/nnmultihead/execution_archetypes.yaml",
         "--archetype",
         "TrendContinuationTC",
         "--sweep-key",
@@ -148,4 +150,11 @@ def test_evidence_quantiles_plateau_gate_selection(tmp_path):
         sys.argv = old
 
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
-    assert summary["selected_q"] == 0.5
+    plateau_qs = summary.get("plateau_qs") or []
+    assert plateau_qs
+    if len(plateau_qs) % 2 == 1:
+        expected = float(sorted(plateau_qs)[len(plateau_qs) // 2])
+    else:
+        qs = sorted(plateau_qs)
+        expected = 0.5 * (qs[len(qs) // 2 - 1] + qs[len(qs) // 2])
+    assert summary["selected_q"] == expected

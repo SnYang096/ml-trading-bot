@@ -144,7 +144,13 @@ feature_contract:
    - **用途**：喂给 BC（Behavior Cloning）或 Offline RL（如 IQL）训练 Router 策略
 - **生成命令**：`mlbot nnmultihead build-logs-3action`
 
-4. **`results/rl/e2e/*`（评估报告，HTML/JSON）**
+4. **`exec_logs/<stage>/YYYY-MM.jsonl`（分阶段执行日志）**
+   - **内容**：按 stage 分拆的执行日志（`features/preds/router/gate/evidence/execution/returns/observability`）
+   - **用途**：对齐 live 与 pipeline 行为，便于定位异常来源
+   - **生成方式**：`mlbot nnmultihead pipeline-3action-e2e` 自动输出（默认开启）
+   - **可选聚合**：`execution_log.jsonl`（canonical 聚合日志）
+
+5. **`results/rl/e2e/*`（评估报告，HTML/JSON）**
    - **内容**：shadow evaluation、counterfactual evaluation、FSM decision 的评估报告
    - **文件**：`shadow_report.html`、`counterfactual_metrics.json`、`fsm_decision.json` 等
    - **用途**：用于判断 BC/RL Router 是否比 Rule Router 更好，是否满足上线安全约束
@@ -219,6 +225,7 @@ results/rl/e2e/* (评估报告：以 counterfactual 为主)
   - `preds_*.parquet`：看 NN 预测是否正常
   - `mode_3action.parquet`：看 Rule Router 的阈值是否合理
   - `logs_3action.parquet`：看 `ret_mean/ret_trend` 计算是否正确
+  - 统一日志（可选）：`scripts/build_execution_log_stages.py` 生成分阶段日志，`scripts/aggregate_execution_log_stages.py` 可聚合为 canonical（用于和 live 对齐）
 - **没有这些文件，你只能重新跑整个 pipeline**，耗时且可能因为数据/代码版本不一致导致无法复现
 
 #### 2. **可选：离线训练 BC/RL（不是必跑）**
@@ -461,7 +468,7 @@ mlbot nnmultihead train \
 
 ```bash
 mlbot nnmultihead train \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --emit-evidence-quantiles \
   --no-docker
 ```
@@ -483,7 +490,7 @@ mlbot diagnose evidence-quantiles \
 
 **Step C：q 阈值 plateau**
 
-做一个 q 的网格（如 0.55~0.85），对 `execution_archetypes_v2.yaml` 的
+做一个 q 的网格（如 0.55~0.85），对 `execution_archetypes.yaml` 的
 `quantile` 字段做 sweep，比较 trade_rate / win_rate / dd，选择平坦高原区间。
 最后锁定 q，并把 `evidence_quantiles.json` 作为 artifact 固化。
 
@@ -499,7 +506,7 @@ mlbot diagnose evidence-quantiles-plateau \
   --sweep-key vpin \
   --q-grid 0.55,0.60,0.65,0.70,0.75,0.80 \
   --logs results/.../e2e/logs/logs_3action.parquet \
-  --gate-yaml config/kpi_gates/nnmh_execution_layer_v1.yaml \
+  --gate-yaml config/kpi_gates/nnmh_execution_layer.yaml \
   --require-gate \
   --out results/diagnose/evidence_quantiles_plateau
 

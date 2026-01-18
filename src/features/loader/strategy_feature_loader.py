@@ -31,6 +31,7 @@ class StrategyFeatureLoader:
         use_disk_cache: bool = True,
         use_memory_cache: bool = True,
         use_monthly_cache: bool = True,
+        monthly_warmup_months: Optional[int] = None,
         max_workers: Optional[int] = None,
         parallel_backend: str = "process",
         normalization_contract_mode: str = "warn",  # "warn" | "error"
@@ -77,6 +78,7 @@ class StrategyFeatureLoader:
             use_disk_cache=use_disk_cache,
             use_memory_cache=use_memory_cache,
             use_monthly_cache=use_monthly_cache,
+            monthly_warmup_months=monthly_warmup_months,
             max_workers=max_workers,
             parallel_backend=parallel_backend,
         )

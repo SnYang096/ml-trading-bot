@@ -54,6 +54,6 @@ feature_pipeline:
 
 #
 # Feature contract semantics are defined in:
-# - `feature_plan_v1.yaml` (feature_plan.feature_contract)
+# - `feature_plan.yaml` (feature_plan.feature_contract)
 # TaskSpec materialization will write the merged contract into the derived features.yaml, and overwrite
 # `minimal_required_cols` with (baseline minimal + tier output_columns union).

@@ -10,7 +10,7 @@
   - **特点**：这是“字典/注册表”，不是“本次 run 选哪些特征”。
 
 ### B) FeaturePlan（nnmultihead 特征域配置，稳定但可版本化）
-- `config/nnmultihead/path_primitives_4h_80h_min/feature_plan_v1.yaml`
+- `config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml`
   - **职责**：把“特征选择与计算开关”集中到一个文件里：
     - `tiers_enabled` + `tier_feature_files`：本计划默认启用哪些 Tier（Tier0/1/2…）
     - `optional_blocks_library`：把一组 feature nodes 聚合成一个 block（例如 `vpin_block`）
@@ -31,7 +31,7 @@
     - `feature_contract`：稳定的合同语义（baseline `minimal_required_cols` + `missingness_policy`）
 
 ### C) TaskSpec（任务合同，本次 run 的“非特征”定义，可变）
-- `config/tasks/task_spec_v1.yaml`
+- `config/tasks/task_spec.yaml`
   - **职责**：定义这次任务的目标与边界：
     - 数据窗口（train/holdout/oos）、universe、验收门槛、enforcement（constitution/kpi gate）等
     - 通过 `feature_plan_ref` 引用 FeaturePlan（让特征域配置不散落在 TaskSpec）
@@ -109,7 +109,7 @@ nnmultihead 的脚本/loader 仍然以“目录里存在这些文件”为运行
 
 ```bash
 mlbot nnmultihead compare-feature-sets --no-docker \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --base-config config/nnmultihead/path_primitives_4h_80h_min \
   --poolb-yaml results/factor_eval/<RUN>/features_pool_b_primitives.yaml
 ```

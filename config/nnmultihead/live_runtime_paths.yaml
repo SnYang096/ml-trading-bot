@@ -1,0 +1,5 @@
+# Centralized live runtime paths for event-driven / Nautilus strategies.
+# Precedence: env vars override these values.
+constitution_yaml: "config/constitution/constitution.yaml"
+live_feature_contract_yaml: "config/live/live_feature_contract.yaml"
+execution_rules_yaml: ""

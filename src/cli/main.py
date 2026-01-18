@@ -20,7 +20,7 @@ import time
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import click
 
@@ -731,6 +731,7 @@ def _data_convert_impl(
     backup_dir: Optional[str],
     pattern: Optional[str],
     force: bool,
+    aggregate_freq: Optional[str],
     docker: bool,
 ) -> int:
     args = ["--cleanup", "yes" if cleanup else "no"]
@@ -744,6 +745,8 @@ def _data_convert_impl(
         args.extend(["--backup-dir", backup_dir])
     if force:
         args.append("--force")
+    if aggregate_freq:
+        args.extend(["--aggregate-freq", aggregate_freq])
     return run_python_module("src.data_tools.zip_to_parquet", args, docker=docker)
 
 
@@ -974,8 +977,17 @@ def data_update_market_cap(
     help="Optional backup directory for ZIPs (default: disabled; avoid disk blowups).",
 )
 @click.option("--force/--no-force", default=False, show_default=True)
+@click.option(
+    "--aggregate-freq",
+    default="1s",
+    help="Aggregation frequency for tick data (default: 1s). "
+    "Examples: '1s' (1 second), '1T' (1 minute), '5T' (5 minutes). "
+    "Uses pandas resample frequency strings.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def data_convert(cleanup, pattern, input_dir, output_dir, backup_dir, force, docker):
+def data_convert(
+    cleanup, pattern, input_dir, output_dir, backup_dir, force, aggregate_freq, docker
+):
     """Convert downloaded ZIPs to Parquet format."""
     code = _data_convert_impl(
         cleanup=cleanup,
@@ -984,8 +996,49 @@ def data_convert(cleanup, pattern, input_dir, output_dir, backup_dir, force, doc
         output_dir=output_dir,
         backup_dir=backup_dir,
         force=force,
+        aggregate_freq=aggregate_freq,
         docker=docker,
     )
+    sys.exit(code)
+
+
+@data.command("convert-1min")
+@click.option(
+    "--input-dir",
+    default=None,
+    help="Input parquet directory (default: data/parquet_data)",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Output parquet directory (default: data/parquet_data_1min)",
+)
+@click.option(
+    "--pattern",
+    default="*.parquet",
+    help="File pattern to match (default: *.parquet)",
+)
+@click.option(
+    "--symbol",
+    default=None,
+    help="Optional: convert only specific symbol (e.g., BTCUSDT)",
+)
+@click.option("--force/--no-force", default=False, help="Force re-convert even if output exists")
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
+def data_convert_1min(input_dir, output_dir, pattern, symbol, force, docker):
+    """Convert tick/1s parquet data to 1-minute aggregated orderflow parquet."""
+    args = []
+    if input_dir:
+        args.extend(["--input-dir", input_dir])
+    if output_dir:
+        args.extend(["--output-dir", output_dir])
+    if pattern:
+        args.extend(["--pattern", pattern])
+    if symbol:
+        args.extend(["--symbol", symbol])
+    if force:
+        args.append("--force")
+    code = run_python_module("src.data_tools.convert_to_1min_orderflow", args, docker=docker)
     sys.exit(code)
 
 
@@ -1019,6 +1072,7 @@ def data_pipeline(ctx, symbols, docker):
         output_dir=None,
         backup_dir=None,
         force=False,
+        aggregate_freq=None,
         docker=docker,
     )
     sys.exit(code)
@@ -1076,6 +1130,7 @@ def data_pipeline_universe(
         output_dir=parquet_dir,
         backup_dir=None,
         force=False,
+        aggregate_freq=None,
         docker=docker,
     )
     sys.exit(code)
@@ -2815,6 +2870,26 @@ def nnmultihead_predict(
     default=True,
     help="Whether head_mfe/head_mae/head_t_to_mfe are in log1p space (affects Router diagnostics only).",
 )
+@click.option(
+    "--emit-exec-log-stages/--no-emit-exec-log-stages",
+    default=True,
+    help="Emit split-stage execution logs from pipeline outputs.",
+)
+@click.option(
+    "--exec-log-stage-dir",
+    default=None,
+    help="Output dir for stage logs (default: <out>/exec_logs).",
+)
+@click.option(
+    "--emit-exec-log-canonical/--no-emit-exec-log-canonical",
+    default=False,
+    help="Also aggregate canonical execution log from stage logs.",
+)
+@click.option(
+    "--exec-log-canonical-path",
+    default=None,
+    help="Output canonical jsonl (default: <out>/execution_log.jsonl).",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_pipeline_3action_e2e(
     symbols,
@@ -2842,6 +2917,10 @@ def nnmultihead_pipeline_3action_e2e(
     cost_per_turnover,
     slippage_bps,
     preds_in_log1p,
+    emit_exec_log_stages,
+    exec_log_stage_dir,
+    emit_exec_log_canonical,
+    exec_log_canonical_path,
     docker,
 ):
     """
@@ -3006,13 +3085,14 @@ def nnmultihead_pipeline_3action_e2e(
         sys.exit(rc)
 
     # [2/4] rule mode-3action
+    mode_path_raw = mode_path
     args_mode = [
         "--preds",
         preds_dir,
         "--model",
         f"/workspace/{model_path}" if use_workspace_prefix else model_path,
         "--output",
-        mode_path,
+        mode_path_raw,
     ]
     if mfe_min is not None:
         args_mode.extend(["--mfe-min", str(float(mfe_min))])
@@ -3036,6 +3116,69 @@ def nnmultihead_pipeline_3action_e2e(
     )
     if rc != 0:
         sys.exit(rc)
+
+    # Optional: tree gate veto (TaskSpec gate_plan)
+    gate_plan = ts_obj.get("gate_plan") or {}
+    try:
+        gate_enabled = bool(gate_plan.get("enabled", False))
+    except Exception:
+        gate_enabled = False
+    gate_kind = str(gate_plan.get("kind") or "").strip()
+    if gate_enabled and gate_kind == "tree_gate_veto":
+        gate_mode_path = f"{out_root}/mode_3action_gate.parquet"
+        gate_args = [
+            "--mode",
+            mode_path_raw,
+            "--out",
+            gate_mode_path,
+            "--features-store-root",
+            f"/workspace/{feature_store_root}"
+            if use_workspace_prefix
+            else feature_store_root,
+            "--features-store-layer",
+            str(feature_store_layer),
+            "--symbols",
+            str(symbols),
+            "--timeframe",
+            str(timeframe),
+            "--start-date",
+            str(start_date),
+            "--end-date",
+            str(end_date),
+        ]
+        gate_exec = str(
+            gate_plan.get("execution_archetypes_yaml")
+            or "config/nnmultihead/execution_archetypes.yaml"
+        )
+        gate_live_cfg = str(
+            gate_plan.get("live_config_yaml")
+            or "config/nnmultihead/live/meta_router_live_config.yaml"
+        )
+        gate_args.extend(
+            [
+                "--execution-archetypes",
+                f"/workspace/{gate_exec}" if use_workspace_prefix else gate_exec,
+                "--live-config",
+                f"/workspace/{gate_live_cfg}" if use_workspace_prefix else gate_live_cfg,
+            ]
+        )
+        eq_path = str(gate_plan.get("evidence_quantiles_json") or "").strip()
+        if eq_path:
+            gate_args.extend(
+                [
+                    "--evidence-quantiles",
+                    f"/workspace/{eq_path}" if use_workspace_prefix else eq_path,
+                ]
+            )
+        rc = run_script(
+            "scripts/apply_tree_gate_3action.py",
+            gate_args,
+            docker=docker,
+            env_overrides=env_overrides,
+        )
+        if rc != 0:
+            sys.exit(rc)
+        mode_path = gate_mode_path
 
     # [3/4] build-logs-3action
     args_logs = [
@@ -3068,6 +3211,45 @@ def nnmultihead_pipeline_3action_e2e(
     )
     if rc != 0:
         sys.exit(rc)
+
+    # Optional: emit split-stage execution logs (pipeline parity with live).
+    if emit_exec_log_stages:
+        stage_dir = exec_log_stage_dir or f"{out_root}/exec_logs"
+        run_id = Path(out_root).name
+        stage_args = [
+            "--preds",
+            preds_dir,
+            "--mode",
+            mode_path,
+            "--logs",
+            logs_path,
+            "--out-dir",
+            stage_dir,
+            "--run-id",
+            run_id,
+            "--timeframe",
+            str(timeframe),
+            "--strategy-name",
+            "pipeline-3action-e2e",
+        ]
+        rc = run_script(
+            "scripts/build_execution_log_stages.py",
+            stage_args,
+            docker=docker,
+            env_overrides=env_overrides,
+        )
+        if rc != 0:
+            sys.exit(rc)
+        if emit_exec_log_canonical:
+            canonical_path = exec_log_canonical_path or f"{out_root}/execution_log.jsonl"
+            rc = run_script(
+                "scripts/aggregate_execution_log_stages.py",
+                ["--stage-dir", stage_dir, "--out", canonical_path],
+                docker=docker,
+                env_overrides=env_overrides,
+            )
+            if rc != 0:
+                sys.exit(rc)
 
     # [4/4] run-e2e-3action (shadow + counterfactual + fsm decision)
     shadow_out = f"{e2e_out}/shadow"
@@ -3154,7 +3336,7 @@ def nnmultihead_pipeline_3action_e2e(
             "scripts/nnmh_per_symbol_primitives_kpi.py",
             [
                 "--model",
-                str(model),
+                str(model_path),
                 "--symbols",
                 str(symbols),
                 "--timeframe",
@@ -4871,6 +5053,16 @@ def _train_strategy_pipeline(
 @train.command("sr-reversal-long")
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
 @click.option(
+    "--symbols",
+    default=None,
+    help="Comma-separated symbols (overrides --symbol)",
+)
+@click.option(
+    "--symbols",
+    default=None,
+    help="Comma-separated symbols (overrides --symbol)",
+)
+@click.option(
     "--timeframe", "-t", default="240T", help="Timeframe (e.g., 15T, 60T, 240T)"
 )
 @click.option("--data-path", default="data/parquet_data", help="Data directory")
@@ -5807,7 +5999,7 @@ def diagnose_evidence_quantiles(
 @click.option("--end-date", required=True)
 @click.option(
     "--registry",
-    default="config/nnmultihead/execution_archetypes_v2.yaml",
+    default="config/nnmultihead/execution_archetypes.yaml",
     help="Execution archetypes registry yaml",
 )
 @click.option("--archetype", required=True, help="Archetype to evaluate")
@@ -5819,7 +6011,7 @@ def diagnose_evidence_quantiles(
 @click.option("--out", required=True)
 @click.option(
     "--gate-yaml",
-    default="config/kpi_gates/nnmh_execution_layer_v1.yaml",
+    default="config/kpi_gates/nnmh_execution_layer.yaml",
     help="KPI gate yaml for auto selection",
 )
 @click.option("--require-gate/--no-require-gate", default=False)
@@ -5893,6 +6085,436 @@ def diagnose_evidence_quantiles_plateau(
     sys.exit(run_script("scripts/diagnose_evidence_quantiles_plateau.py", args, docker=docker))
 
 
+@diagnose.command("execution-gate-plateau")
+@click.option("--feature-store-root", default="feature_store")
+@click.option("--layer", required=True, help="FeatureStore layer id")
+@click.option("--symbols", required=True, help="Comma-separated symbols")
+@click.option("--timeframe", default="240T")
+@click.option("--start-date", required=True)
+@click.option("--end-date", required=True)
+@click.option("--mode", required=True, help="mode_3action parquet/csv")
+@click.option("--logs", required=True, help="logs_3action parquet/csv")
+@click.option(
+    "--registry",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    help="Execution archetypes registry yaml",
+)
+@click.option(
+    "--live-config",
+    default="config/nnmultihead/live/meta_router_live_config.yaml",
+    help="Live meta router config",
+)
+@click.option("--sweep-key", default="vpin")
+@click.option("--q-grid", default="0.55,0.60,0.65,0.70,0.75,0.80")
+@click.option("--quantiles", default="0.1,0.5,0.9")
+@click.option("--evidence-quantiles", default=None)
+@click.option(
+    "--gate-yaml",
+    default="config/kpi_gates/nnmh_execution_layer.yaml",
+    help="KPI gate yaml for auto selection",
+)
+@click.option("--require-gate/--no-require-gate", default=False)
+@click.option("--plateau-frac", default=0.05, type=float)
+@click.option("--score-key", default="gate_exec_score")
+@click.option("--out", required=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_execution_gate_plateau(
+    feature_store_root,
+    layer,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    mode,
+    logs,
+    registry,
+    live_config,
+    sweep_key,
+    q_grid,
+    quantiles,
+    evidence_quantiles,
+    gate_yaml,
+    require_gate,
+    plateau_frac,
+    score_key,
+    out,
+    docker,
+):
+    """Execution-layer plateau sweep (joint gate + execution KPIs)."""
+    args = [
+        "--feature-store-root",
+        feature_store_root,
+        "--layer",
+        layer,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--mode",
+        mode,
+        "--logs",
+        logs,
+        "--registry",
+        registry,
+        "--live-config",
+        live_config,
+        "--sweep-key",
+        sweep_key,
+        "--q-grid",
+        q_grid,
+        "--quantiles",
+        quantiles,
+        "--out",
+        out,
+        "--gate-yaml",
+        gate_yaml,
+        "--plateau-frac",
+        str(plateau_frac),
+        "--score-key",
+        score_key,
+    ]
+    if evidence_quantiles:
+        args.extend(["--evidence-quantiles", evidence_quantiles])
+    if require_gate:
+        args.append("--require-gate")
+    sys.exit(run_script("scripts/diagnose_execution_gate_plateau.py", args, docker=docker))
+
+
+@diagnose.command("execution-constraints-plateau")
+@click.option("--logs", required=True, help="logs_3action parquet/csv")
+@click.option("--min-interval-grid", default="0,60,120,240,360")
+@click.option(
+    "--gate-yaml",
+    default="config/kpi_gates/nnmh_execution_layer.yaml",
+    help="KPI gate yaml for auto selection",
+)
+@click.option("--require-gate/--no-require-gate", default=False)
+@click.option("--plateau-frac", default=0.05, type=float)
+@click.option("--score-key", default="gate_exec_score")
+@click.option("--out", required=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_execution_constraints_plateau(
+    logs,
+    min_interval_grid,
+    gate_yaml,
+    require_gate,
+    plateau_frac,
+    score_key,
+    out,
+    docker,
+):
+    """Execution constraints plateau (min_order_interval only, proxy KPIs)."""
+    args = [
+        "--logs",
+        logs,
+        "--min-interval-grid",
+        min_interval_grid,
+        "--out",
+        out,
+        "--gate-yaml",
+        gate_yaml,
+        "--plateau-frac",
+        str(plateau_frac),
+        "--score-key",
+        score_key,
+    ]
+    if require_gate:
+        args.append("--require-gate")
+    sys.exit(
+        run_script("scripts/diagnose_execution_constraints_plateau.py", args, docker=docker)
+    )
+
+
+@diagnose.command("portfolio-allocation-plateau")
+@click.option("--mode", required=True, help="mode_3action parquet/csv")
+@click.option("--portfolio-assets-yaml", required=True)
+@click.option("--metrics-json", required=True)
+@click.option(
+    "--sweep-target",
+    required=True,
+    type=click.Choice(
+        [
+            "global_trend_p_trend_min",
+            "global_trend_regime_entropy_max",
+            "high_beta_confidence_min",
+            "high_beta_crowding_max",
+            "trend_zero_regime_entropy_gt",
+            "trend_zero_portfolio_drawdown_gt",
+        ]
+    ),
+)
+@click.option("--grid", required=True, help="Comma-separated sweep values")
+@click.option(
+    "--gate-yaml",
+    default="config/kpi_gates/nnmh_portfolio_allocation.yaml",
+    help="KPI gate yaml for auto selection",
+)
+@click.option("--require-gate/--no-require-gate", default=False)
+@click.option("--plateau-frac", default=0.05, type=float)
+@click.option("--score-key", default="rule_pcm_sharpe_mean")
+@click.option("--out", required=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_portfolio_allocation_plateau(
+    mode,
+    portfolio_assets_yaml,
+    metrics_json,
+    sweep_target,
+    grid,
+    gate_yaml,
+    require_gate,
+    plateau_frac,
+    score_key,
+    out,
+    docker,
+):
+    """Portfolio allocation plateau sweep (proxy KPIs)."""
+    args = [
+        "--mode",
+        mode,
+        "--portfolio-assets-yaml",
+        portfolio_assets_yaml,
+        "--metrics-json",
+        metrics_json,
+        "--sweep-target",
+        sweep_target,
+        "--grid",
+        grid,
+        "--out",
+        out,
+        "--gate-yaml",
+        gate_yaml,
+        "--plateau-frac",
+        str(plateau_frac),
+        "--score-key",
+        score_key,
+    ]
+    if require_gate:
+        args.append("--require-gate")
+    sys.exit(run_script("scripts/diagnose_portfolio_allocation_plateau.py", args, docker=docker))
+
+
+@diagnose.command("archetype-trade-counts")
+@click.option("--mode", required=True, help="mode_3action_gate parquet/csv")
+@click.option("--out", required=True)
+@click.option("--symbol-col", default="symbol")
+@click.option("--timestamp-col", default="timestamp")
+@click.option("--mode-col", default="mode")
+@click.option("--archetype-col", default="gate_archetype")
+@click.option("--gate-decision-col", default="gate_decision")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_archetype_trade_counts(
+    mode,
+    out,
+    symbol_col,
+    timestamp_col,
+    mode_col,
+    archetype_col,
+    gate_decision_col,
+    docker,
+):
+    """Count archetype trade entries from gated mode outputs."""
+    args = [
+        "--mode",
+        mode,
+        "--out",
+        out,
+        "--symbol-col",
+        symbol_col,
+        "--timestamp-col",
+        timestamp_col,
+        "--mode-col",
+        mode_col,
+        "--archetype-col",
+        archetype_col,
+        "--gate-decision-col",
+        gate_decision_col,
+    ]
+    sys.exit(run_script("scripts/diagnose_archetype_trade_counts.py", args, docker=docker))
+
+
+@diagnose.command("execution-log-stages")
+@click.option("--preds", required=True, help="preds file/dir (preds_*.parquet)")
+@click.option("--mode", default=None, help="mode_3action file/dir (optional)")
+@click.option("--logs", default=None, help="logs_3action file/dir (optional)")
+@click.option("--out-dir", required=True, help="Output base dir for stage logs")
+@click.option("--run-id", default=None)
+@click.option("--timeframe", default=None)
+@click.option("--strategy-name", default="pipeline")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_execution_log_stages(
+    preds, mode, logs, out_dir, run_id, timeframe, strategy_name, docker
+):
+    """Build split-stage execution logs from pipeline outputs."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds}" if use_workspace_prefix else preds,
+        "--out-dir",
+        f"/workspace/{out_dir}" if use_workspace_prefix else out_dir,
+        "--strategy-name",
+        str(strategy_name),
+    ]
+    if mode:
+        args.extend(["--mode", f"/workspace/{mode}" if use_workspace_prefix else mode])
+    if logs:
+        args.extend(["--logs", f"/workspace/{logs}" if use_workspace_prefix else logs])
+    if run_id:
+        args.extend(["--run-id", str(run_id)])
+    if timeframe:
+        args.extend(["--timeframe", str(timeframe)])
+    sys.exit(run_script("scripts/build_execution_log_stages.py", args, docker=docker))
+
+
+@diagnose.command("execution-log-aggregate")
+@click.option("--stage-dir", required=True, help="Base dir with stage subdirs")
+@click.option("--out", required=True, help="Output canonical jsonl path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_execution_log_aggregate(stage_dir, out, docker):
+    """Aggregate stage logs into canonical execution log."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--stage-dir",
+        f"/workspace/{stage_dir}" if use_workspace_prefix else stage_dir,
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+    ]
+    sys.exit(run_script("scripts/aggregate_execution_log_stages.py", args, docker=docker))
+
+
+@diagnose.command("backtest-time-windows")
+@click.option("--trades", required=True, help="Trades file (json/csv/parquet)")
+@click.option("--out", required=True, help="Output JSON path")
+@click.option("--entry-col", default=None)
+@click.option("--exit-col", default=None)
+@click.option("--symbol-col", default=None)
+@click.option("--default-symbol", default=None)
+@click.option("--pre-minutes", default=480, show_default=True)
+@click.option("--post-minutes", default=480, show_default=True)
+@click.option("--max-windows", default=None)
+@click.option("--merge-overlap", is_flag=True, default=False)
+@click.option("--merge-gap-minutes", default=0, show_default=True)
+@click.option("--negative-ratio", default=0.0, show_default=True)
+@click.option("--timeline-parquet", default=None)
+@click.option("--timeline-ts-col", default="timestamp", show_default=True)
+@click.option("--timeline-symbol-col", default="symbol", show_default=True)
+@click.option("--seed", default=42, show_default=True)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_backtest_time_windows(
+    trades,
+    out,
+    entry_col,
+    exit_col,
+    symbol_col,
+    default_symbol,
+    pre_minutes,
+    post_minutes,
+    max_windows,
+    merge_overlap,
+    merge_gap_minutes,
+    negative_ratio,
+    timeline_parquet,
+    timeline_ts_col,
+    timeline_symbol_col,
+    seed,
+    docker,
+):
+    """Build time windows JSON for Nautilus event-sampling backtest."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--trades",
+        f"/workspace/{trades}" if use_workspace_prefix else trades,
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+        "--pre-minutes",
+        str(int(pre_minutes)),
+        "--post-minutes",
+        str(int(post_minutes)),
+        "--merge-gap-minutes",
+        str(int(merge_gap_minutes)),
+        "--negative-ratio",
+        str(float(negative_ratio)),
+        "--seed",
+        str(int(seed)),
+    ]
+    if entry_col:
+        args.extend(["--entry-col", entry_col])
+    if exit_col:
+        args.extend(["--exit-col", exit_col])
+    if symbol_col:
+        args.extend(["--symbol-col", symbol_col])
+    if default_symbol:
+        args.extend(["--default-symbol", default_symbol])
+    if max_windows is not None:
+        args.extend(["--max-windows", str(int(max_windows))])
+    if merge_overlap:
+        args.append("--merge-overlap")
+    if timeline_parquet:
+        args.extend(
+            [
+                "--timeline-parquet",
+                f"/workspace/{timeline_parquet}"
+                if use_workspace_prefix
+                else timeline_parquet,
+            ]
+        )
+    if timeline_ts_col:
+        args.extend(["--timeline-ts-col", timeline_ts_col])
+    if timeline_symbol_col:
+        args.extend(["--timeline-symbol-col", timeline_symbol_col])
+    sys.exit(run_script("scripts/build_backtest_time_windows.py", args, docker=docker))
+
+
+@diagnose.command("export-vectorbt-trades")
+@click.option("--artifacts-dir", default=None, help="Dir with backtest artifacts")
+@click.option("--meta", default=None, help="Path to backtest_artifacts_meta.json")
+@click.option("--df", default=None, help="Path to backtest_df_test.parquet")
+@click.option("--preds", default=None, help="Path to backtest_preds.npy")
+@click.option("--out", required=True, help="Output trades JSON path")
+@click.option("--max-trades", default=None)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_export_vectorbt_trades(
+    artifacts_dir,
+    meta,
+    df,
+    preds,
+    out,
+    max_trades,
+    docker,
+):
+    """Export vectorbt trades JSON from saved backtest artifacts."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--out",
+        f"/workspace/{out}" if use_workspace_prefix else out,
+    ]
+    if artifacts_dir:
+        args.extend(
+            [
+                "--artifacts-dir",
+                f"/workspace/{artifacts_dir}"
+                if use_workspace_prefix
+                else artifacts_dir,
+            ]
+        )
+    if meta:
+        args.extend(
+            ["--meta", f"/workspace/{meta}" if use_workspace_prefix else meta]
+        )
+    if df:
+        args.extend(["--df", f"/workspace/{df}" if use_workspace_prefix else df])
+    if preds:
+        args.extend(
+            ["--preds", f"/workspace/{preds}" if use_workspace_prefix else preds]
+        )
+    if max_trades is not None:
+        args.extend(["--max-trades", str(int(max_trades))])
+    sys.exit(run_script("scripts/export_vectorbt_trades.py", args, docker=docker))
+
+
 @diagnose.command("threshold-plateau")
 @click.option(
     "--preds",
@@ -5935,6 +6557,26 @@ def diagnose_evidence_quantiles_plateau(
 @click.option("--trade-rate-min", default=None, type=float, show_default=True)
 @click.option("--trade-rate-max", default=None, type=float, show_default=True)
 @click.option("--trade-rate-penalty", default=1.5, type=float, show_default=True)
+@click.option("--trend-rate-target", default=None, type=float, show_default=True)
+@click.option("--trend-rate-tol", default=0.04, type=float, show_default=True)
+@click.option("--trend-rate-min", default=0.10, type=float, show_default=True)
+@click.option("--trend-rate-max", default=0.60, type=float, show_default=True)
+@click.option("--trend-rate-penalty", default=1.0, type=float, show_default=True)
+@click.option("--mean-rate-min", default=0.05, type=float, show_default=True)
+@click.option("--mean-rate-max", default=0.40, type=float, show_default=True)
+@click.option("--no-trade-rate-min", default=0.10, type=float, show_default=True)
+@click.option("--no-trade-rate-max", default=0.70, type=float, show_default=True)
+@click.option(
+    "--disable-dist-rate-constraints",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Disable mean/no_trade distribution range constraints.",
+)
+@click.option("--trend-correct-horizon", default=24, type=int, show_default=True)
+@click.option("--heuristic-bounds/--no-heuristic-bounds", default=False)
+@click.option("--heuristic-qmin", default=0.05, type=float, show_default=True)
+@click.option("--heuristic-qmax", default=0.95, type=float, show_default=True)
 @click.option("--seed", default=0, type=int, show_default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_threshold_plateau(
@@ -5959,6 +6601,20 @@ def diagnose_threshold_plateau(
     trade_rate_min,
     trade_rate_max,
     trade_rate_penalty,
+    trend_rate_target,
+    trend_rate_tol,
+    trend_rate_min,
+    trend_rate_max,
+    trend_rate_penalty,
+    mean_rate_min,
+    mean_rate_max,
+    no_trade_rate_min,
+    no_trade_rate_max,
+    disable_dist_rate_constraints,
+    trend_correct_horizon,
+    heuristic_bounds,
+    heuristic_qmin,
+    heuristic_qmax,
     seed,
     docker,
 ):
@@ -6004,19 +6660,47 @@ def diagnose_threshold_plateau(
         str(float(cost_per_turnover)),
         "--slippage-bps",
         str(float(slippage_bps)),
-        "--trade-rate-target",
-        str(trade_rate_target) if trade_rate_target is not None else "",
         "--trade-rate-tol",
         str(float(trade_rate_tol)),
-        "--trade-rate-min",
-        str(trade_rate_min) if trade_rate_min is not None else "",
-        "--trade-rate-max",
-        str(trade_rate_max) if trade_rate_max is not None else "",
         "--trade-rate-penalty",
         str(float(trade_rate_penalty)),
+        "--trend-rate-tol",
+        str(float(trend_rate_tol)),
+        "--trend-rate-penalty",
+        str(float(trend_rate_penalty)),
+        "--mean-rate-min",
+        str(float(mean_rate_min)),
+        "--mean-rate-max",
+        str(float(mean_rate_max)),
+        "--no-trade-rate-min",
+        str(float(no_trade_rate_min)),
+        "--no-trade-rate-max",
+        str(float(no_trade_rate_max)),
+        "--trend-correct-horizon",
+        str(int(trend_correct_horizon)),
+        "--heuristic-qmin",
+        str(float(heuristic_qmin)),
+        "--heuristic-qmax",
+        str(float(heuristic_qmax)),
         "--seed",
         str(int(seed)),
     ]
+    if trade_rate_target is not None:
+        args.extend(["--trade-rate-target", str(float(trade_rate_target))])
+    if trade_rate_min is not None:
+        args.extend(["--trade-rate-min", str(float(trade_rate_min))])
+    if trade_rate_max is not None:
+        args.extend(["--trade-rate-max", str(float(trade_rate_max))])
+    if trend_rate_target is not None:
+        args.extend(["--trend-rate-target", str(float(trend_rate_target))])
+    if trend_rate_min is not None:
+        args.extend(["--trend-rate-min", str(float(trend_rate_min))])
+    if trend_rate_max is not None:
+        args.extend(["--trend-rate-max", str(float(trend_rate_max))])
+    if heuristic_bounds:
+        args.append("--heuristic-bounds")
+    if disable_dist_rate_constraints:
+        args.append("--disable-dist-rate-constraints")
     sys.exit(run_script("scripts/plateau_tune_rule_router_3action.py", args, docker=docker))
 
 
@@ -6029,7 +6713,7 @@ def diagnose_threshold_plateau(
 @click.option("--out", required=True, help="Output directory (report.json/sim.parquet/labels.parquet).")
 @click.option(
     "--ood-config",
-    default="config/ood/ood_config_v1.yaml",
+    default="config/ood/ood_config.yaml",
     show_default=True,
     help="OOD config YAML (dashboard keys, size-cap mapping).",
 )
@@ -6095,7 +6779,7 @@ def diagnose_extinction_replay_3action(
 @click.option(
     "--config",
     "config_yaml",
-    default="config/ood/survival_head_mlp_v1.yaml",
+    default="config/ood/survival_head_mlp.yaml",
     show_default=True,
     help="Survival head config YAML.",
 )
@@ -6127,7 +6811,7 @@ def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
 @click.option(
     "--config",
     "config_yaml",
-    default="config/ood/ood_to_archetype_table_v1.yaml",
+    default="config/ood/ood_to_archetype_table.yaml",
     show_default=True,
     help="Config YAML (bins/archetypes/temperature/min_samples).",
 )
@@ -7358,19 +8042,172 @@ def backtest_vectorbot(model, symbol, start, end, docker):
     help="Data directory",
 )
 @click.option("--symbol", "-s", default="BTCUSDT", help="Trading symbol")
+@click.option(
+    "--symbols",
+    default=None,
+    help="Comma-separated symbols (overrides --symbol)",
+)
+@click.option("--timeframe", "-t", default="240T", help="Timeframe (e.g., 240T, 15T)")
+@click.option("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--trade-size", type=float, default=0.001)
+@click.option(
+    "--live-config",
+    default="config/nnmultihead/live/meta_router_live_config.yaml",
+    help="MetaRouter live config YAML",
+)
+@click.option("--model-path", default=None, help="Model path for online inference")
+@click.option("--config-dir", default=None, help="NNMH config dir for FeatureContract")
+@click.option("--device", default=None, help="Inference device (cpu|cuda)")
+@click.option(
+    "--live-feature-plan",
+    default=None,
+    help="Live feature plan YAML (optional override)",
+)
+@click.option(
+    "--evidence-quantiles",
+    default=None,
+    help="Evidence quantiles JSON path (optional override)",
+)
+@click.option("--output-dir", default="results/backtest", help="Output directory")
+@click.option(
+    "--env-file",
+    default=None,
+    help="Load environment variables from a file (KEY=VALUE per line)",
+)
+@click.option(
+    "--max-files",
+    default=None,
+    type=int,
+    help="Limit tick parquet files to load (smoke runs)",
+)
+@click.option(
+    "--use-adapter-data",
+    is_flag=True,
+    default=False,
+    help="Use Binance adapter data client (requires API keys in env)",
+)
+@click.option(
+    "--adapter-testnet",
+    is_flag=True,
+    default=False,
+    help="Use Binance testnet credentials",
+)
+@click.option(
+    "--adapter-account-type",
+    default="USDT_FUTURES",
+    type=click.Choice(["SPOT", "USDT_FUTURES"]),
+    help="Binance account type for adapter data client",
+)
+@click.option(
+    "--adapter-api-key-env",
+    default=None,
+    help="Env var name for Binance API key (optional override)",
+)
+@click.option(
+    "--adapter-api-secret-env",
+    default=None,
+    help="Env var name for Binance API secret (optional override)",
+)
+@click.option(
+    "--no-trade-ticks",
+    is_flag=True,
+    default=False,
+    help="Disable trade ticks (bar-only smoke run)",
+)
+@click.option("--catalog-dir", default=None)
+@click.option("--reuse-catalog", is_flag=True, default=False)
+@click.option(
+    "--time-windows-json",
+    default=None,
+    help="Optional time windows JSON for event-sampling backtest",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
-def backtest_nautilus(data_dir, symbol, docker):
-    """Run Nautilus Trader backtest."""
+def backtest_nautilus(
+    data_dir,
+    symbol,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    trade_size,
+    live_config,
+    model_path,
+    config_dir,
+    device,
+    live_feature_plan,
+    evidence_quantiles,
+    output_dir,
+    env_file,
+    max_files,
+    use_adapter_data,
+    adapter_testnet,
+    adapter_account_type,
+    adapter_api_key_env,
+    adapter_api_secret_env,
+    no_trade_ticks,
+    catalog_dir,
+    reuse_catalog,
+    time_windows_json,
+    docker,
+):
+    """Run Nautilus Trader MetaRouter backtest (event-driven)."""
     args = [
         "--data-dir",
         data_dir if not docker else f"/workspace/{data_dir}",
-        "--symbol",
-        symbol,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--trade-size",
+        str(float(trade_size)),
+        "--live-config",
+        live_config,
+        "--output-dir",
+        output_dir,
     ]
+    if env_file:
+        args.extend(["--env-file", env_file])
+    if symbols:
+        args.extend(["--symbols", symbols])
+    elif symbol:
+        args.extend(["--symbol", symbol])
+    if max_files is not None:
+        args.extend(["--max-files", str(int(max_files))])
+    if use_adapter_data:
+        args.append("--use-adapter-data")
+    if adapter_testnet:
+        args.append("--adapter-testnet")
+    if adapter_account_type:
+        args.extend(["--adapter-account-type", adapter_account_type])
+    if adapter_api_key_env:
+        args.extend(["--adapter-api-key-env", adapter_api_key_env])
+    if adapter_api_secret_env:
+        args.extend(["--adapter-api-secret-env", adapter_api_secret_env])
+    if no_trade_ticks:
+        args.append("--no-trade-ticks")
+    if model_path:
+        args.extend(["--model-path", model_path])
+    if config_dir:
+        args.extend(["--config-dir", config_dir])
+    if device:
+        args.extend(["--device", device])
+    if live_feature_plan:
+        args.extend(["--live-feature-plan", live_feature_plan])
+    if evidence_quantiles:
+        args.extend(["--evidence-quantiles", evidence_quantiles])
+    if catalog_dir:
+        args.extend(["--catalog-dir", catalog_dir])
+    if reuse_catalog:
+        args.append("--reuse-catalog")
+    if time_windows_json:
+        args.extend(["--time-windows-json", time_windows_json])
 
     sys.exit(
         run_python_module(
-            "time_series_model.backtesting.nautilus_dim",
+            "time_series_model.backtesting.nautilus_meta_router_backtest",
             args,
             docker=docker,
         )

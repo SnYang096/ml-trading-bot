@@ -70,6 +70,7 @@ def load_raw_data(
                     "cvd_change_5",
                     "cvd_change_20",
                     "cvd_normalized",
+                    "cvd_change_5_normalized",
                     "buy_qty",
                     "sell_qty",
                     "delta",

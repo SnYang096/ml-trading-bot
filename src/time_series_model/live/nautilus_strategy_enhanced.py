@@ -43,7 +43,11 @@ from src.time_series_model.live.execution_manager import (
     ExecutionManager,
     GuardedOrderContext,
 )
-from src.time_series_model.nnmultihead.strategy_profile import resolve_execution_profile
+from src.time_series_model.nnmultihead.strategy_profile import (
+    resolve_execution_profile,
+    resolve_execution_profile_paths,
+)
+from src.time_series_model.live.live_runtime_paths import resolve_live_runtime_paths
 
 try:
     from nautilus_trader.model.data import Bar, QuoteTick, TradeTick
@@ -318,8 +322,9 @@ if NAUTILUS_AVAILABLE:
             self.use_breakeven_stop = use_breakeven_stop
             self.breakeven_trigger_r = breakeven_trigger_r
             self.min_confidence = min_confidence
-            self.constitution_yaml = constitution_yaml or os.getenv(
-                "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution_v1.yaml"
+            live_paths = resolve_live_runtime_paths()
+            self.constitution_yaml = (
+                constitution_yaml or live_paths["constitution_yaml"]
             )
 
             # Will be initialized in on_start()
@@ -353,13 +358,7 @@ if NAUTILUS_AVAILABLE:
             return mode, sid
 
         def _get_execution_meta(self) -> Dict[str, Any]:
-            root = os.getenv(
-                "MLBOT_NNMH_STRATEGY_PROFILE_ROOT", "config/nnmultihead/strategies"
-            )
-            reg = os.getenv(
-                "MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY",
-                "config/nnmultihead/execution_archetypes_v1.yaml",
-            )
+            root, reg = resolve_execution_profile_paths()
             ex = resolve_execution_profile(
                 strategy_id=str(self.strategy_name),
                 profile_root=root,

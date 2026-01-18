@@ -488,37 +488,33 @@ def write_kpi_journal(
     primitives_gate = Path(
         os.getenv(
             "MLBOT_KPI_PRIMITIVES_YAML",
-            "config/kpi_gates/nnmh_primitives_model_v1.yaml",
+            "config/kpi_gates/nnmh_primitives_model.yaml",
         )
     ).resolve()
     router_gate = Path(
         os.getenv(
             "MLBOT_KPI_ROUTER_YAML",
             os.getenv(
-                "MLBOT_KPI_GATE_YAML", "config/kpi_gates/router_counterfactual_v1.yaml"
+                "MLBOT_KPI_GATE_YAML", "config/kpi_gates/router_counterfactual.yaml"
             ),
         )
     ).resolve()
     plateau_gate = Path(
-        os.getenv(
-            "MLBOT_KPI_PLATEAU_YAML", "config/kpi_gates/nnmh_router_plateau_v1.yaml"
-        )
+        os.getenv("MLBOT_KPI_PLATEAU_YAML", "config/kpi_gates/nnmh_router_plateau.yaml")
     ).resolve()
     gate_layer_gate = Path(
-        os.getenv(
-            "MLBOT_KPI_GATE_LAYER_YAML", "config/kpi_gates/nnmh_gate_layer_v1.yaml"
-        )
+        os.getenv("MLBOT_KPI_GATE_LAYER_YAML", "config/kpi_gates/nnmh_gate_layer.yaml")
     ).resolve()
     execution_gate = Path(
         os.getenv(
             "MLBOT_KPI_EXECUTION_YAML",
-            "config/kpi_gates/nnmh_execution_layer_v1.yaml",
+            "config/kpi_gates/nnmh_execution_layer.yaml",
         )
     ).resolve()
     portfolio_gate = Path(
         os.getenv(
             "MLBOT_KPI_PORTFOLIO_YAML",
-            "config/kpi_gates/nnmh_portfolio_allocation_v1.yaml",
+            "config/kpi_gates/nnmh_portfolio_allocation.yaml",
         )
     ).resolve()
 

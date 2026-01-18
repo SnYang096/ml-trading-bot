@@ -1,5 +1,6 @@
 # ML Trading Bot（中文）
-
+ **Alpha不是收集的，是雕刻的。**
+ 
 本仓库包含因子研究、模型训练、回测与数据管道的生产就绪组件。**本 README 保持尽量短**：只提供“命令 + 推荐流程 + 入口文档链接”。研究解释型内容已迁移到独立文档。
 
 ---
@@ -187,6 +188,104 @@ mlbot train final \
   - 说明：`poolb-semantic-search` 不是 rolling；它是在**单个训练窗 + 单个测试窗**（time split + 多 seed）上做特征搜索/收敛。
 - Nautilus：用于“回测=实盘一致性验证”（事件驱动回放）（见 `docs/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/live_stream/07_与NautilusTrader对齐清单.md`）
 
+**Nautilus MetaRouter 事件回测（本地数据 / 多币）**
+
+```bash
+mlbot backtest nautilus \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2020-01-01 --end-date 2020-01-02 \
+  --trade-size 0.001 \
+  --output-dir results/backtest_smoke_multi \
+  --max-files 1 \
+  --no-docker
+```
+
+**Nautilus 事件抽样回测（vectorbt 选点 → Nautilus 只跑窗口）**
+
+先把 vectorbt trades 导出为 json/csv（包含 `Entry Timestamp` 或 `entry_time` 列），然后生成窗口：
+
+```bash
+# 第一步：从 vectorbt 回测产物导出 trades.json（不用手工拼）
+mlbot diagnose export-vectorbt-trades \
+  --artifacts-dir results/strategies/sr_reversal_long/BTCUSDT \
+  --out results/backtest/vectorbt_trades.json \
+  --no-docker
+```
+
+```bash
+# 第二步：把 trades 转成“回放窗口”列表（前后扩展 pre/post，必要时合并重叠窗口）
+mlbot diagnose backtest-time-windows \
+  --trades results/backtest/vectorbt_trades.json \
+  --out results/backtest/time_windows.json \
+  --pre-minutes 480 \
+  --post-minutes 480 \
+  --default-symbol BTCUSDT \
+  --merge-overlap \
+  --no-docker
+```
+
+然后用 Nautilus 只回放这些窗口：
+
+```bash
+mlbot backtest nautilus \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2020-01-01 --end-date 2020-01-02 \
+  --trade-size 0.001 \
+  --time-windows-json results/backtest/time_windows.json \
+  --output-dir results/backtest_smoke_windows \
+  --no-docker
+```
+> 说明：即使提供了 `--time-windows-json`，当前实现仍要求给出 `--start-date/--end-date` 用于框定全局回测区间；
+> 真正的数据过滤由窗口列表完成。`trade-size` 目前仍是 CLI 参数（后续可以迁移到 live config / yaml）。
+
+**Nautilus Adapter 数据流（testnet）**
+
+先把 testnet key 放到本地文件（已默认忽略）：
+
+```bash
+source config/local/env.testnet
+```
+
+然后运行：
+
+```bash
+mlbot backtest nautilus \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2020-01-01 --end-date 2020-01-02 \
+  --trade-size 0.001 \
+  --output-dir results/backtest_smoke_adapter \
+  --max-files 1 \
+  --use-adapter-data \
+  --adapter-testnet \
+  --adapter-account-type USDT_FUTURES \
+  --env-file config/local/env.testnet \
+  --no-docker
+```
+> 说明：`--max-files` 用于本地 parquet 的“抽样加载”（smoke 级别），只读前 N 个文件，加速验证链路。
+
+**Nautilus Adapter 数据流（live）**
+
+```bash
+source config/local/env.live
+```
+
+```bash
+mlbot backtest nautilus \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2020-01-01 --end-date 2020-01-02 \
+  --trade-size 0.001 \
+  --output-dir results/backtest_smoke_adapter_live \
+  --max-files 1 \
+  --use-adapter-data \
+  --adapter-account-type USDT_FUTURES \
+  --env-file config/local/env.live \
+  --no-docker
+```
+
 ---
 
 ## TaskSpec 驱动的 Tier0/Tier1 对比（nnmultihead）
@@ -199,18 +298,18 @@ mlbot train final \
 
 ```bash
 mlbot nnmultihead materialize-config-from-task-spec --no-docker \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --base-config config/nnmultihead/path_primitives_4h_80h_min \
   --out-config results/derived_cfg/tier01
 ```
 
-> `task_spec_v1.yaml` 里通过 `feature_plan.tiers_enabled` + `tier_feature_files` 显式定义 Tier0/Tier1 的 feature nodes 列表。  
+> `task_spec.yaml` 里通过 `feature_plan.tiers_enabled` + `tier_feature_files` 显式定义 Tier0/Tier1 的 feature nodes 列表。  
 
 ### 2) 训练（TaskSpec-only：命令会自动 materialize 派生 config）
 
 ```bash
 mlbot nnmultihead train --no-docker \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT
 ```
 
@@ -218,7 +317,7 @@ mlbot nnmultihead train --no-docker \
 
 ```bash
 mlbot nnmultihead pipeline-3action-e2e --no-docker \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
   --start-date 2025-05-01 --end-date 2025-12-31 \
@@ -235,6 +334,8 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 > 说明：`mlbot nnmultihead pipeline-3action-e2e` 会在输出目录下自动写出
 > `router_thresholds_baseline.json`（使用你传入的阈值覆盖 + 未传入则用 Router 默认值），
 > 供 plateau 命令直接复用。
+>
+> 默认 tuned-threshold 流程已包含：**heuristic bounds**（防离谱阈值）与 **trend_rate 约束**（防 TREND 趋零）。
 
 ```bash
 mlbot diagnose threshold-plateau --no-docker \
@@ -242,7 +343,9 @@ mlbot diagnose threshold-plateau --no-docker \
   --logs  results/nnmh_e2e/tier01/logs_3action.parquet \
   --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
   --baseline-json results/nnmh_e2e/tier01/router_thresholds_baseline.json \
-  --out results/plateau/router3action_tier01_oos_v1
+  --out results/plateau/router3action_tier01_oos_v1 \
+  --trend-rate-min 0.005 --trend-rate-penalty 2.0 \
+  --heuristic-bounds --heuristic-qmin 0.05 --heuristic-qmax 0.95
 ```
 
 **用法（推荐两步法）**
@@ -251,7 +354,7 @@ mlbot diagnose threshold-plateau --no-docker \
 
 ```bash
 mlbot nnmultihead pipeline-3action-e2e --no-docker \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 --end-date 2024-06-30 \
@@ -273,11 +376,13 @@ mlbot diagnose threshold-plateau --no-docker \
   --logs  results/nnmh_e2e/tier01/logs_3action.parquet \
   --model <PATH_TO_MODEL_PT_FROM_TRAIN> \
   --baseline-json results/nnmh_e2e/tier01/router_thresholds_baseline.json \
-  --out results/plateau/router3action_tier01_oos_v1
+  --out results/plateau/router3action_tier01_oos_v1 \
+  --trend-rate-min 0.005 --trend-rate-penalty 2.0 \
+  --heuristic-bounds --heuristic-qmin 0.05 --heuristic-qmax 0.95
 
 # 2) rerun pipeline with tuned thresholds (explicitly applied)
 mlbot nnmultihead pipeline-3action-e2e --no-docker \
-  --task-spec config/tasks/task_spec_v1.yaml \
+  --task-spec config/tasks/task_spec.yaml \
   --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 --end-date 2024-06-30 \
@@ -334,6 +439,14 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
   - 对比报告：`results/compare/nnmh_runs/20260115_045141/report.md`
   - 结论：A-layer 提升不明显，系统层 Sharpe/收益无改善，trade_rate 下降；可暂时放弃该方向。
 
+- **Tier2 / Spectrum+Math 对多头模型无增强**（HighCap6 / 2024H1）
+  - Spectrum+Math baseline：`results/runs/tier02_highcap6_2024H1_spectrum_math_20260115_042103/`
+  - Spectrum+Math warm3+extfill：`results/runs/tier02_highcap6_2024H1_spectrum_math_warm3_extfill_20260115_050924/`
+  - Spectrum+Math nocache：`results/runs/tier02_highcap6_2024H1_spectrum_math_nocache_20260115_075757/`
+  - 对比报告（同组内部）：`results/compare/nnmh_runs/20260115_095830/report.md`
+  - 对比报告（与 Tier01 baseline）：`results/compare/nnmh_runs/20260115_100550/report.md`
+  - 结论：系统层 Sharpe/收益无明显改善且 trade_rate 更低；无 plateau 报告产出，优先级降低。
+
 
 对比方式：
 - 跑两份 TaskSpec（Tier0-only vs Tier0+Tier1），生成两份 derived config / model / 报告
@@ -359,6 +472,7 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
   - nnmultihead 推荐顺序：search → train(primitives) → OOS predict → build-logs → Router 阈值调参 → BC/RL
 - **特征测试设计与覆盖（4类测试 + 覆盖快照保存）**：`docs/tests/FEATURE_TEST_DESIGN_AND_COVERAGE_CN.md`
 - **实盘特征契约与证据字段（缺失策略/has_orderflow/has_sr_quality）**：`docs/guides/LIVE_FEATURE_CONTRACT_AND_EVIDENCE_CN.md`
+- **Archetype 上线前 Checklist（v0）**：`docs/architecture/ARCHETYPE_PRELIVE_CHECKLIST_CN.md`
 
 - **项目 TODO / Roadmap**：`docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`
   - TODO 已内聚到架构升级文档中（按 P0/P1/P2 分层）
@@ -390,6 +504,8 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 - [alpha可以更多吗](docs/architecture/alpha可以更多吗.md)
 - [VolMean难在哪里](docs/architecture/VolMean难在哪里.md)
 - [时间框架高级甜点区](docs/architecture/时间框架高级甜点区.md)
+- [职责坍缩](docs/architecture/职责坍缩.md)
+
 ---
 
 ## 获取帮助
@@ -409,7 +525,7 @@ mlbot --help
 ```bash
 python -m src.time_series_model.live.run_nautilus_strategy \
   --strategy-id meta_router \
-  --live-config config/nnmultihead/live/meta_router_live_config_v1.yaml \
+  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
   --symbol BTCUSDT-PERP \
   --timeframe 15T \
   --testnet

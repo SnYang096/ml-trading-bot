@@ -115,6 +115,29 @@ mlbot rule mode-3action --no-docker \
   --ttm-mean-max <TTM_MEAN_MAX>
 ```
 
+#### 0.2.3 默认 tuned‑threshold 流程（带启发式约束）
+> 目的：让阈值搜索“尊重真实分布”，避免 TREND 被阈值卡死。
+
+```bash
+mlbot diagnose threshold-plateau --no-docker \
+  --preds <PREDS_DIR> \
+  --logs <LOGS_PARQUET> \
+  --model <MODEL> \
+  --baseline-json <BASELINE_JSON> \
+  --out <OUT_DIR> \
+  --n-candidates 300 \
+  --n-windows 6 --min-days-per-window 25 \
+  --n-bootstrap 30 \
+  --trend-rate-min 0.005 --trend-rate-penalty 2.0 \
+  --heuristic-bounds --heuristic-qmin 0.05 --heuristic-qmax 0.95
+```
+
+产物：
+- `<OUT_DIR>/router_thresholds_best.json`（用于 0.2.2 的完整 tuned 版）
+- `<OUT_DIR>/summary.json` / `report.html`（复盘口径）
+
+协议解释见：`docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`
+
 **举例（EXP_006 Top9 best 阈值）**：
 - `--mfe-min 0.1259208384`
 - `--eff-min 1.0434303531`

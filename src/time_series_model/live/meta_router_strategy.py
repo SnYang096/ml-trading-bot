@@ -6,18 +6,19 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 try:
     from nautilus_trader.model import (
         Bar,
         InstrumentId,
         BarType,
-        OrderSide,
         TradeTick,
         QuoteTick,
     )
+    from nautilus_trader.model.enums import OrderSide
     from nautilus_trader.trading import Strategy
+    from nautilus_trader.trading.config import StrategyConfig
 
     NAUTILUS_AVAILABLE = True
 except Exception:  # pragma: no cover
@@ -49,6 +50,13 @@ from src.time_series_model.live.meta_router_config import (
 )
 from src.time_series_model.nnmultihead.strategy_profile import (
     load_execution_archetypes_registry,
+    resolve_execution_profile_paths,
+)
+from src.time_series_model.live.live_runtime_paths import resolve_live_runtime_paths
+from src.time_series_model.diagnostics.execution_log import (
+    build_decision_id,
+    build_stage_record,
+    ExecutionStageLogWriter,
 )
 from src.time_series_model.rule.router_3action import (
     Rule3ActionConfig,
@@ -66,13 +74,14 @@ from src.time_series_model.live.live_feature_contract import (
     load_live_feature_contract_v1,
     validate_live_features_v1,
 )
-from src.time_series_model.live.archetype_heuristics_v1 import (
-    evaluate_required_conditions_v1,
+from src.time_series_model.live.archetype_heuristics import (
+    evaluate_required_conditions,
 )
-from src.time_series_model.live.execution_rules_v1 import (
-    apply_execution_rules_v1,
-    load_execution_rules_v1,
+from src.time_series_model.live.execution_rules import (
+    apply_execution_rules,
+    load_execution_rules,
 )
+from src.time_series_model.live.tree_gate import apply_gate_rules
 from src.time_series_model.ops.state_snapshot import (
     SystemStateSnapshot,
     write_state_snapshot,
@@ -82,6 +91,10 @@ from src.time_series_model.live.observability_metrics import (
     compute_feature_missing_rate,
     compute_router_mode_entropy,
     compute_tick_gap_seconds,
+)
+from src.time_series_model.portfolio.pcm import (
+    SymbolDecision as PCMSymbolDecision,
+    compute_pcm_budget_for_decisions,
 )
 
 
@@ -95,6 +108,16 @@ def _infer_regime_placeholder() -> str:
 
 if NAUTILUS_AVAILABLE:
 
+    class MetaRouterStrategyConfig(StrategyConfig):
+        strategy_name: str
+        instrument_id: InstrumentId
+        bar_type: BarType
+        trade_size: float
+        data_client_id: str = "BINANCE"
+        live_config_path: str = "config/nnmultihead/live/meta_router_live_config.yaml"
+        constitution_yaml: Optional[str] = None
+        archetype_registry_path: str = "config/nnmultihead/execution_archetypes.yaml"
+
     class MetaRouterStrategy(Strategy):
         """
         One Strategy process, multiple archetypes (per docs/live_stream/策略一起还是分开.md).
@@ -103,30 +126,25 @@ if NAUTILUS_AVAILABLE:
         to enforce correct *architecture*: one account, one world-view, one order stream.
         """
 
-        def __init__(
-            self,
-            *,
-            strategy_name: str,
-            instrument_id: InstrumentId,
-            bar_type: BarType,
-            trade_size: float,
-            live_config_path: str = "config/nnmultihead/live/meta_router_live_config_v1.yaml",
-            constitution_yaml: Optional[str] = None,
-            archetype_registry_path: str = "config/nnmultihead/execution_archetypes_v2.yaml",
-        ):
+        def __init__(self, config: MetaRouterStrategyConfig):
             super().__init__()
-            self.strategy_name = str(strategy_name)
-            self.instrument_id = instrument_id
-            self.bar_type = bar_type
-            self.trade_size = float(trade_size)
+            self.strategy_name = str(config.strategy_name)
+            self.instrument_id = config.instrument_id
+            self.bar_type = config.bar_type
+            self.trade_size = float(config.trade_size)
 
-            self.live_config_path = str(live_config_path)
-            self.constitution_yaml = constitution_yaml or os.getenv(
-                "MLBOT_CONSTITUTION_YAML", "config/constitution/constitution_v1.yaml"
+            self.live_config_path = str(config.live_config_path)
+            from nautilus_trader.model.identifiers import ClientId
+
+            self._data_client_id = ClientId(str(config.data_client_id))
+            live_paths = resolve_live_runtime_paths()
+            self.constitution_yaml = (
+                config.constitution_yaml or live_paths["constitution_yaml"]
             )
-            self.archetype_registry_path = str(
-                os.getenv("MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY", archetype_registry_path)
+            _, resolved_registry = resolve_execution_profile_paths(
+                default_archetype_registry_path=str(config.archetype_registry_path)
             )
+            self.archetype_registry_path = str(resolved_registry)
 
             self._cfg: Optional[MetaRouterLiveConfig] = None
             self._exec = None
@@ -136,17 +154,13 @@ if NAUTILUS_AVAILABLE:
             self._inferencer: Optional[NNMHLiveInferencer] = None
             self._last_order_time_ns: Optional[int] = None
             self._live_feature_contract_path = str(
-                os.getenv(
-                    "MLBOT_LIVE_FEATURE_CONTRACT_YAML",
-                    "config/live/live_feature_contract_v1.yaml",
-                )
+                live_paths["live_feature_contract_yaml"]
             )
             self._live_feature_contract = None
-            self._execution_rules_yaml = str(
-                os.getenv("MLBOT_EXECUTION_RULES_YAML", "")
-            )
+            self._execution_rules_yaml = str(live_paths["execution_rules_yaml"])
             self._execution_rules = None
             self._mode_hist = deque(maxlen=200)
+            self._exec_stage_writers: dict[str, ExecutionStageLogWriter] = {}
 
         def on_start(self) -> None:
             self._cfg = load_meta_router_live_config(self.live_config_path)
@@ -159,6 +173,20 @@ if NAUTILUS_AVAILABLE:
                 strategy=self, executor=self._exec, runtime_state=self._st
             )
             self._feature_computer = IncrementalFeatureComputer(bar_window_size=1000)
+            log_dir = Path(os.getenv("MLBOT_EXECUTION_LOG_DIR", "results/live_logs"))
+            for stage in [
+                "features",
+                "preds",
+                "router",
+                "gate",
+                "evidence",
+                "execution",
+                "returns",
+                "observability",
+            ]:
+                self._exec_stage_writers[stage] = ExecutionStageLogWriter(
+                    base_dir=log_dir, stage=stage
+                )
             # Optional: online nnmultihead inference
             nni = (self._cfg.nnmultihead_inference or {}) if self._cfg else {}
             if bool(nni.get("enabled", False)) and nni.get("model_path"):
@@ -195,7 +223,7 @@ if NAUTILUS_AVAILABLE:
                     self._execution_rules_yaml
                     and Path(self._execution_rules_yaml).exists()
                 ):
-                    self._execution_rules = load_execution_rules_v1(
+                    self._execution_rules = load_execution_rules(
                         self._execution_rules_yaml
                     )
                     self.log.info(
@@ -203,9 +231,11 @@ if NAUTILUS_AVAILABLE:
                     )
             except Exception as e:
                 self.log.error(f"⚠️ Execution rules init failed: {e}")
-            self.subscribe_bars(self.bar_type)
+            self.subscribe_bars(self.bar_type, client_id=self._data_client_id)
             # Orderflow must update on trade ticks (not bar)
-            self.subscribe_trade_ticks(self.instrument_id)
+            self.subscribe_trade_ticks(
+                self.instrument_id, client_id=self._data_client_id
+            )
 
             # Start timer loop (decision/inference should NOT run only on bar)
             self._schedule_next_check()
@@ -243,9 +273,13 @@ if NAUTILUS_AVAILABLE:
             delay_sec = compute_next_aligned_delay_seconds(
                 now_ns=int(self.clock.timestamp_ns()), interval_minutes=interval_min
             )
+            try:
+                self.clock.cancel_timer("meta_router_check")
+            except Exception:
+                pass
             self.clock.set_timer(
                 name="meta_router_check",
-                interval=int(delay_sec),
+                interval=timedelta(seconds=int(delay_sec)),
                 callback=self._on_signal_check,
             )
 
@@ -298,12 +332,144 @@ if NAUTILUS_AVAILABLE:
                 required_keys=required_keys_for_missing, features=feats
             )
 
+            def _emit_stage(
+                *,
+                stage: str,
+                decision_id: str,
+                decision_ts_ns: int,
+                data: dict[str, Any] | None,
+            ) -> None:
+                writer = self._exec_stage_writers.get(stage)
+                if writer is None:
+                    return
+                record = build_stage_record(
+                    stage=stage,
+                    decision_id=decision_id,
+                    decision_ts_ns=decision_ts_ns,
+                    source="live",
+                    run_id=(
+                        str(os.getenv("MLBOT_RUN_ID"))
+                        if os.getenv("MLBOT_RUN_ID")
+                        else None
+                    ),
+                    symbol=str(self.instrument_id),
+                    timeframe=str(self.bar_type),
+                    strategy_name=str(self.strategy_name),
+                    instrument_id=str(self.instrument_id),
+                    data=data,
+                )
+                try:
+                    writer.write(record, decision_ts_ns=decision_ts_ns)
+                except Exception:
+                    pass
+
+            def _emit_log(
+                *,
+                router_mode: Optional[str],
+                gate_blocked: bool,
+                gate_decisions: list[str],
+                gate_reasons: Optional[dict[str, list[str]]] = None,
+                evidence: Optional[dict[str, bool]] = None,
+                execution: Optional[dict[str, Any]] = None,
+                observability: Optional[dict[str, Any]] = None,
+            ) -> None:
+                decision_id = build_decision_id(
+                    strategy_name=str(self.strategy_name),
+                    symbol=str(self.instrument_id),
+                    decision_ts_ns=now_ns,
+                )
+                _emit_stage(
+                    stage="features",
+                    decision_id=decision_id,
+                    decision_ts_ns=now_ns,
+                    data=feats,
+                )
+                preds = {
+                    k: feats.get(k)
+                    for k in [
+                        "pred_dir_prob",
+                        "pred_mfe_atr",
+                        "pred_mae_atr",
+                        "pred_t_to_mfe",
+                    ]
+                    if k in feats
+                }
+                _emit_stage(
+                    stage="preds",
+                    decision_id=decision_id,
+                    decision_ts_ns=now_ns,
+                    data=preds or None,
+                )
+                router = None
+                if router_mode is not None:
+                    rt = self._cfg.router_thresholds or {}
+                    router = {
+                        "mode": str(router_mode),
+                        "thresholds": dict(rt),
+                        "scores": {
+                            "head_dir_score": feats.get("head_dir_score"),
+                            "head_mfe_atr": feats.get("head_mfe_atr"),
+                            "head_mae_atr": feats.get("head_mae_atr"),
+                            "head_t_to_mfe": feats.get("head_t_to_mfe"),
+                        },
+                    }
+                _emit_stage(
+                    stage="router",
+                    decision_id=decision_id,
+                    decision_ts_ns=now_ns,
+                    data=router,
+                )
+                _emit_stage(
+                    stage="gate",
+                    decision_id=decision_id,
+                    decision_ts_ns=now_ns,
+                    data={
+                        "blocked": bool(gate_blocked),
+                        "decisions": gate_decisions,
+                        "reasons": gate_reasons or {},
+                    },
+                )
+                if evidence is not None:
+                    _emit_stage(
+                        stage="evidence",
+                        decision_id=decision_id,
+                        decision_ts_ns=now_ns,
+                        data=evidence,
+                    )
+                if execution is not None:
+                    _emit_stage(
+                        stage="execution",
+                        decision_id=decision_id,
+                        decision_ts_ns=now_ns,
+                        data=execution,
+                    )
+                if observability is not None:
+                    _emit_stage(
+                        stage="observability",
+                        decision_id=decision_id,
+                        decision_ts_ns=now_ns,
+                        data=observability,
+                    )
+
             # Online nnmultihead inference (optional)
             if self._inferencer is not None:
                 try:
                     preds = self._inferencer.predict_one(feats)
                     feats.update(preds)
-                except Exception:
+                except Exception as exc:
+                    err_reason = f"inference_error:{type(exc).__name__}"
+                    _emit_log(
+                        router_mode="NO_TRADE",
+                        gate_blocked=True,
+                        gate_decisions=["live_feature_contract_violation"],
+                        gate_reasons={"contract": [err_reason]},
+                        evidence=None,
+                        execution={"intent": False, "submit_order": False},
+                        observability={
+                            "tick_gap_seconds": tick_gap_seconds,
+                            "feature_missing_rate": feature_missing_rate,
+                        },
+                    )
                     self._schedule_next_check()
                     return
 
@@ -413,12 +579,33 @@ if NAUTILUS_AVAILABLE:
                 self.log.info(
                     f"OBS mode=NO_TRADE tick_gap_s={tick_gap_seconds} missing_rate={feature_missing_rate} mode_entropy={mode_entropy}"
                 )
+                _emit_log(
+                    router_mode="NO_TRADE",
+                    gate_blocked=False,
+                    gate_decisions=[],
+                    gate_reasons={},
+                    evidence=None,
+                    execution={"intent": False, "submit_order": False},
+                    observability={
+                        "tick_gap_seconds": tick_gap_seconds,
+                        "feature_missing_rate": feature_missing_rate,
+                        "router_mode_entropy": mode_entropy,
+                    },
+                )
                 self._schedule_next_check()
                 return
             self._mode_hist.append(str(regime).upper())
 
             archetype_id = select_first_enabled_archetype(self._cfg, regime=regime)
             if not archetype_id:
+                _emit_log(
+                    router_mode=str(regime),
+                    gate_blocked=True,
+                    gate_decisions=["evidence_dsl_error"],
+                    gate_reasons={"evidence": ["evidence_dsl_error"]},
+                    evidence=None,
+                    execution={"intent": True, "submit_order": False},
+                )
                 self._schedule_next_check()
                 return
 
@@ -454,9 +641,32 @@ if NAUTILUS_AVAILABLE:
                 f"evidence_true_rate={evidence_true_rate} mode_entropy={mode_entropy}"
             )
 
+            # Gate rules (optional, defined per archetype)
+            gate_cfg = getattr(arch, "gate_rules", None) or {}
+            if gate_cfg:
+                ok3, reasons3 = apply_gate_rules(
+                    gate_rules=gate_cfg,
+                    features=feats,
+                    quantiles=quantiles,
+                )
+                if not ok3:
+                    self.log.info(
+                        f"ℹ️ gate_rules_veto: {arch.name} | " + "; ".join(reasons3[:6])
+                    )
+                    _emit_log(
+                        router_mode=str(regime),
+                        gate_blocked=True,
+                        gate_decisions=["gate_rules_veto"],
+                        gate_reasons={"gate_rules": list(reasons3 or [])},
+                        evidence=evidence,
+                        execution={"intent": True, "submit_order": False},
+                    )
+                    self._schedule_next_check()
+                    return
+
             # Execution archetype heuristics (v1, fail-closed)
             bars = self._feature_computer.get_recent_bars(200)
-            hd = evaluate_required_conditions_v1(
+            hd = evaluate_required_conditions(
                 archetype_name=str(arch.name),
                 regime=str(arch.regime),
                 required_conditions=list(arch.required_conditions or []),
@@ -468,12 +678,20 @@ if NAUTILUS_AVAILABLE:
                     f"ℹ️ archetype_heuristics_blocked: {arch.name} | "
                     + "; ".join(hd.reasons[:6])
                 )
+                _emit_log(
+                    router_mode=str(regime),
+                    gate_blocked=True,
+                    gate_decisions=["archetype_heuristics_blocked"],
+                    gate_reasons={"heuristics": list(hd.reasons or [])},
+                    evidence=evidence,
+                    execution={"intent": True, "submit_order": False},
+                )
                 self._schedule_next_check()
                 return
 
             # Optional exported execution rules veto (tree-distilled hook)
             if self._execution_rules is not None:
-                ok2, reasons2 = apply_execution_rules_v1(
+                ok2, reasons2 = apply_execution_rules(
                     rules=self._execution_rules,
                     archetype_name=str(arch.name),
                     features=feats,
@@ -483,14 +701,74 @@ if NAUTILUS_AVAILABLE:
                         f"ℹ️ execution_rules_veto: {arch.name} | "
                         + "; ".join(reasons2[:6])
                     )
+                    _emit_log(
+                        router_mode=str(regime),
+                        gate_blocked=True,
+                        gate_decisions=["execution_rules_veto"],
+                        gate_reasons={"execution_rules": list(reasons2 or [])},
+                        evidence=evidence,
+                        execution={"intent": True, "submit_order": False},
+                    )
                     self._schedule_next_check()
                     return
+
+            # FR/ET low-frequency constraint (if configured)
+            constraints = getattr(arch, "execution_constraints", None) or {}
+            min_interval_m = float(constraints.get("min_order_interval_minutes", 0.0))
+            if min_interval_m > 0 and self._last_order_time_ns is not None:
+                delta_sec = (now_ns - int(self._last_order_time_ns)) / 1e9
+                if delta_sec < (min_interval_m * 60.0):
+                    self.log.info(
+                        f"ℹ️ execution_constraints_rate_limit: {arch.name} | "
+                        f"min_interval_minutes={min_interval_m}"
+                    )
+                    _emit_log(
+                        router_mode=str(regime),
+                        gate_blocked=True,
+                        gate_decisions=["execution_constraints_rate_limit"],
+                        gate_reasons={
+                            "execution_constraints": [
+                                f"min_interval_minutes={min_interval_m}"
+                            ]
+                        },
+                        evidence=evidence,
+                        execution={"intent": True, "submit_order": False},
+                    )
+                    self._schedule_next_check()
+                    return
+
+            pcm_budget = {}
+            try:
+                pcm_result = compute_pcm_budget_for_decisions(
+                    decisions=[
+                        PCMSymbolDecision(
+                            symbol=str(self.instrument_id),
+                            mode=str(regime),
+                            gated=True,
+                            score=float(feats.get("pred_dir_prob", 0.5)),
+                        )
+                    ]
+                )
+                pcm_budget = {
+                    "global_pause": bool(pcm_result.global_pause),
+                    "per_mode_budget": dict(pcm_result.per_mode_budget or {}),
+                    "per_symbol_budget": dict(pcm_result.per_symbol_budget or {}),
+                    "reasons": list(pcm_result.reasons or []),
+                }
+            except Exception:
+                pcm_budget = {}
 
             size_mult = float(self._cfg.size_multipliers.get(str(arch.name), 1.0))
             if self._cfg.vol_mean.enabled and str(arch.name) == str(
                 self._cfg.vol_mean.archetype_id
             ):
                 size_mult = float(self._cfg.vol_mean.size_multiplier)
+            if pcm_budget:
+                sym_key = str(self.instrument_id)
+                sym_mult = float(
+                    (pcm_budget.get("per_symbol_budget") or {}).get(sym_key, 1.0)
+                )
+                size_mult *= max(0.0, sym_mult)
             qty = self.instrument.make_qty(
                 self.trade_size * max(0.0, size_mult) * float(hd.risk_multiplier)
             )
@@ -511,6 +789,30 @@ if NAUTILUS_AVAILABLE:
                 ),
             )
             self._last_order_time_ns = now_ns
+            _emit_log(
+                router_mode=str(regime),
+                gate_blocked=False,
+                gate_decisions=[],
+                gate_reasons={},
+                evidence=evidence,
+                execution={
+                    "intent": True,
+                    "submit_order": True,
+                    "side": str(hd.side),
+                    "qty": float(qty),
+                    "price": None,
+                    "reason": str(arch.name),
+                    "rr_constraints": (
+                        constraints.get("fixed_rr") if constraints else None
+                    ),
+                },
+                observability={
+                    "tick_gap_seconds": tick_gap_seconds,
+                    "feature_missing_rate": feature_missing_rate,
+                    "evidence_true_rate": evidence_true_rate,
+                    "router_mode_entropy": mode_entropy,
+                },
+            )
 
             # Persist latest snapshot for auditability (overwrite by default).
             try:
@@ -551,7 +853,7 @@ if NAUTILUS_AVAILABLE:
                     ),
                     router_mode=str(regime),
                     gate_decisions={},
-                    pcm_budget={},
+                    pcm_budget=pcm_budget,
                     active_slots=(
                         int(self._st.slots.active_count())
                         if self._st is not None

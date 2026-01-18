@@ -132,7 +132,7 @@ def main() -> None:
     ap.add_argument("--end-date", required=True)
     ap.add_argument(
         "--registry",
-        default="config/nnmultihead/execution_archetypes_v2.yaml",
+        default="config/nnmultihead/execution_archetypes.yaml",
         help="Execution archetypes registry yaml",
     )
     ap.add_argument("--archetype", required=True, help="Archetype to evaluate")
@@ -158,7 +158,7 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="Output directory for report")
     ap.add_argument(
         "--gate-yaml",
-        default="config/kpi_gates/nnmh_execution_layer_v1.yaml",
+        default="config/kpi_gates/nnmh_execution_layer.yaml",
         help="KPI gate yaml for auto selection",
     )
     ap.add_argument(

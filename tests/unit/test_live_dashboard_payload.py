@@ -2,11 +2,11 @@ from src.time_series_model.diagnostics.live_dashboard import (
     build_live_dashboard_payload,
     validate_live_dashboard_payload,
 )
-from src.time_series_model.diagnostics.ood_config import load_ood_config_v1
+from src.time_series_model.diagnostics.ood_config import load_ood_config
 
 
 def test_live_dashboard_payload_has_required_keys() -> None:
-    cfg = load_ood_config_v1("config/ood/ood_config_v1.yaml")
+    cfg = load_ood_config("config/ood/ood_config.yaml")
     m = build_live_dashboard_payload(
         ood_cfg=cfg,
         ood_score=0.2,

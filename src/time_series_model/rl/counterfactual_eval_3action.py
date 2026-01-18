@@ -13,18 +13,18 @@ import torch
 from src.time_series_model.rule.router_3action import Rule3ActionConfig
 
 from src.time_series_model.portfolio.portfolio_assets_artifacts import (
-    build_portfolio_assets_v1_artifacts_from_modes,
+    build_portfolio_assets_artifacts_from_modes,
 )
-from src.time_series_model.portfolio.portfolio_assets_v1 import (
+from src.time_series_model.portfolio.portfolio_assets import (
     aggregate_from_symbol_modes,
-    compute_portfolio_asset_weights_v1,
+    compute_portfolio_asset_weights,
     load_portfolio_assets_config,
 )
 from src.time_series_model.portfolio.mean_system import compute_mean_system_health
 
 from src.time_series_model.diagnostics.ood_config import (
     compute_size_cap_multiplier,
-    load_ood_config_v1,
+    load_ood_config,
 )
 
 from .bc_dataset import (
@@ -694,7 +694,7 @@ def train_and_counterfactual_eval_bc3(
                 sig = aggregate_from_symbol_modes(
                     decisions=decisions, key_symbols=list(cfg.portfolio_key_symbols)
                 )
-                w = compute_portfolio_asset_weights_v1(
+                w = compute_portfolio_asset_weights(
                     cfg=pa_cfg,
                     sig=sig,
                     gate_veto=False,
@@ -733,7 +733,7 @@ def train_and_counterfactual_eval_bc3(
                 and cfg.survival_prob_col in g.columns
                 and cfg.ood_score_col in g.columns
             ):
-                ood_cfg = load_ood_config_v1(str(cfg.ood_config_yaml))
+                ood_cfg = load_ood_config(str(cfg.ood_config_yaml))
                 ood_arr = (
                     pd.to_numeric(g[cfg.ood_score_col], errors="coerce")
                     .fillna(0.0)
@@ -1137,7 +1137,7 @@ def train_and_counterfactual_eval_bc3(
     try:
         if cfg.portfolio_assets_yaml:
             dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
-            pa = build_portfolio_assets_v1_artifacts_from_modes(
+            pa = build_portfolio_assets_artifacts_from_modes(
                 test_df,
                 portfolio_assets_yaml=str(cfg.portfolio_assets_yaml),
                 timestamp_col=str(cfg.timestamp_col),
@@ -1150,7 +1150,7 @@ def train_and_counterfactual_eval_bc3(
             )
             pa_summary = dict(pa.summary or {})
             if pa_summary:
-                meta["portfolio_assets_v1"] = pa_summary
+                meta["portfolio_assets"] = pa_summary
                 for k, v in (pa_summary.get("avg_weights") or {}).items():
                     metrics[f"pa__avg_weight__{k}"] = float(v)
                 metrics["pa__trend_zero_rate"] = float(
@@ -1179,7 +1179,7 @@ def train_and_counterfactual_eval_bc3(
         try:
             if cfg.portfolio_assets_yaml:
                 dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
-                pa = build_portfolio_assets_v1_artifacts_from_modes(
+                pa = build_portfolio_assets_artifacts_from_modes(
                     test_df,
                     portfolio_assets_yaml=str(cfg.portfolio_assets_yaml),
                     timestamp_col=str(cfg.timestamp_col),

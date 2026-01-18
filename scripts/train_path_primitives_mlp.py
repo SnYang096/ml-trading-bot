@@ -396,7 +396,7 @@ def main() -> None:
         meta["base_config_dir_guess"] = None
         meta["config_source_kind"] = "unknown"
     meta["task_spec_hint"] = (
-        "docs/architecture/task_specs/primitives_path_primitives_4h_80h_v1.yaml"
+        "docs/architecture/task_specs/primitives_path_primitives_4h_80h.yaml"
     )
     if contract is not None:
         meta["feature_contract"] = contract.to_dict()

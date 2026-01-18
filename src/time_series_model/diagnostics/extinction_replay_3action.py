@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from src.time_series_model.diagnostics.ood_config import (
-    OODConfigV1,
+    OODConfig,
     compute_size_cap_multiplier,
 )
 from src.time_series_model.rl.bc_dataset import Router3Action
@@ -78,7 +78,7 @@ def run_extinction_replay_3action(
     df_logs: pd.DataFrame,
     *,
     cfg: ExtinctionReplayConfig = ExtinctionReplayConfig(),
-    ood_cfg: Optional[OODConfigV1] = None,
+    ood_cfg: Optional[OODConfig] = None,
     ood_score_col: Optional[str] = None,
     survival_prob_col: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], pd.DataFrame, pd.DataFrame]:

@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", required=True, help="Output directory")
     p.add_argument(
         "--config",
-        default="config/ood/ood_to_archetype_table_v1.yaml",
+        default="config/ood/ood_to_archetype_table.yaml",
         help="Config YAML for bins/archetypes/temperature/min_samples",
     )
     return p.parse_args()

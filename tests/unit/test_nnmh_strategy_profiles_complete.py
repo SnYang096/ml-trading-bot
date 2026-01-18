@@ -12,7 +12,7 @@ from src.time_series_model.nnmultihead.strategy_profile import (
 def test_nnmh_tc_te_fr_et_profiles_exist_and_valid():
     root = Path("config/nnmultihead/strategies")
     registry = load_execution_archetypes_registry(
-        "config/nnmultihead/execution_archetypes_v2.yaml"
+        "config/nnmultihead/execution_archetypes.yaml"
     )
     assert registry
 
@@ -35,3 +35,23 @@ def test_nnmh_tc_te_fr_et_profiles_exist_and_valid():
 
     assert missing == [], f"Missing profile.yaml in: {missing}"
     assert invalid == [], f"Invalid archetype in: {invalid}"
+
+
+@pytest.mark.unit
+def test_gate_rules_names_match_rules():
+    registry = load_execution_archetypes_registry(
+        "config/nnmultihead/execution_archetypes.yaml"
+    )
+    assert registry
+    for name, arch in registry.items():
+        gate = getattr(arch, "gate_rules", None) or {}
+        if not gate:
+            continue
+        rules = gate.get("rules") or []
+        rule_names = {
+            str(r.get("name")) for r in rules if isinstance(r, dict) and r.get("name")
+        }
+        deny = [str(x) for x in (gate.get("deny_if") or [])]
+        allow = [str(x) for x in (gate.get("allow_if") or [])]
+        for n in deny + allow:
+            assert n in rule_names, f"{name} gate_rules reference missing rule: {n}"

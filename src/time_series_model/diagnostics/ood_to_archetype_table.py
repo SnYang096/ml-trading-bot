@@ -37,7 +37,7 @@ class OODToArchetypeTableConfig:
 
 
 def load_ood_to_archetype_table_config(
-    path: str | Path = "config/ood/ood_to_archetype_table_v1.yaml",
+    path: str | Path = "config/ood/ood_to_archetype_table.yaml",
 ) -> OODToArchetypeTableConfig:
     p = Path(path)
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -59,7 +59,7 @@ def load_ood_to_archetype_table_config(
             )
     return OODToArchetypeTableConfig(
         version=int(obj.get("version", 1)),
-        name=str(obj.get("name", "ood_to_archetype_table_v1")),
+        name=str(obj.get("name", "ood_to_archetype_table")),
         symbol_col=str(cols.get("symbol_col", "symbol")),
         timestamp_col=str(cols.get("timestamp_col", "timestamp")),
         ood_score_col=str(cols.get("ood_score_col", "ood_score")),

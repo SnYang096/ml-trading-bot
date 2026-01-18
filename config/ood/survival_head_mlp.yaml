@@ -1,0 +1,46 @@
+version: 1
+name: "survival_head_mlp"
+
+data:
+  # Join keys between logs and extinction labels
+  symbol_col: symbol
+  timestamp_col: timestamp
+  label_col: y_surv
+
+  # Feature columns taken from logs_3action.parquet
+  # Keep them "risk semantics", do NOT feed alpha-heavy raw price features.
+  feature_cols:
+    - head_dir_score
+    - head_mfe_atr
+    - head_mae_atr
+    - head_t_to_mfe
+    - drawdown
+  # Optional: include a 3-action one-hot derived from logs["mode"]
+  include_mode_onehot: true
+
+split:
+  # Time-based split per symbol (walk-forward style)
+  train_ratio: 0.7
+  val_ratio_within_train: 0.15
+
+train:
+  seed: 0
+  device: cpu
+  epochs: 5
+  batch_size: 512
+  lr: 0.001
+  weight_decay: 0.0
+  hidden: 128
+  depth: 2
+  dropout: 0.1
+
+loss:
+  # Weighted BCE to handle imbalance
+  pos_weight: 1.0
+  # Optional aux regression to stabilize ranking (q in [0,1]) if provided
+  aux_enabled: false
+  aux_weight: 0.2
+
+report:
+  n_calibration_bins: 12
+

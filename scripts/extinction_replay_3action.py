@@ -17,7 +17,7 @@ from src.time_series_model.diagnostics.extinction_replay_3action import (  # noq
     run_extinction_replay_3action,
 )
 from src.time_series_model.diagnostics.ood_config import (
-    load_ood_config_v1,
+    load_ood_config,
 )  # noqa: E402
 
 
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--logs", required=True, help="Path to logs_3action.parquet")
     p.add_argument("--out", required=True, help="Output directory")
-    p.add_argument("--ood-config", default="config/ood/ood_config_v1.yaml")
+    p.add_argument("--ood-config", default="config/ood/ood_config.yaml")
     p.add_argument(
         "--ood-score-col", default=None, help="Optional column name for ood_score"
     )
@@ -48,7 +48,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_parquet(args.logs)
-    ood_cfg = load_ood_config_v1(args.ood_config) if args.ood_config else None
+    ood_cfg = load_ood_config(args.ood_config) if args.ood_config else None
 
     cfg = ExtinctionReplayConfig(
         survival_horizon_bars=int(args.survival_horizon_bars),

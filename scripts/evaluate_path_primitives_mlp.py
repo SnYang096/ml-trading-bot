@@ -205,7 +205,7 @@ def main() -> None:
         version="v1",
     )
     meta["task_spec_hint"] = (
-        "docs/architecture/task_specs/primitives_path_primitives_4h_80h_v1.yaml"
+        "docs/architecture/task_specs/primitives_path_primitives_4h_80h.yaml"
     )
     if isinstance(extra, dict) and extra.get("rolling_ic") is not None:
         meta["rolling_ic"] = extra.get("rolling_ic")

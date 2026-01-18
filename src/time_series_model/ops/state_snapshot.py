@@ -40,7 +40,7 @@ class SystemStateSnapshot:
     observability: Optional[Dict[str, Any]] = None
 
     # Live dashboard: "only watch 5 numbers" (optional, stable extension)
-    # Keys are defined by config/ood/ood_config_v1.yaml::dashboard.keys
+    # Keys are defined by config/ood/ood_config.yaml::dashboard.keys
     live_dashboard: Optional[Dict[str, Any]] = None
 
     kpi_gate: Optional[Dict[str, Any]] = None

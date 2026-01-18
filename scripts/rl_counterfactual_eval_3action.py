@@ -108,7 +108,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--ood-config",
-        default="config/ood/ood_config_v1.yaml",
+        default="config/ood/ood_config.yaml",
         help="OOD config YAML used to map (ood,survival)->size cap for the extra baseline.",
     )
     args = ap.parse_args()

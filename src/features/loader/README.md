@@ -89,8 +89,15 @@ strategies:
 - **顺序执行**: 特征按依赖层级顺序计算（已移除并行，避免大 DataFrame 序列化开销）
 - **内存缓存**: 同一 DataFrame 签名内快速复用（基于 `(df_signature, feature_name)` 键）
 - **磁盘缓存**: 跨会话持久化，支持按月增量计算，避免重复计算
+- **月度缓存 + warmup**: 每月计算时带历史窗口，避免月初 cold-start NaN
 
 性能主要依赖磁盘/月度缓存，内存缓存作为补充加速。
+
+### 月度缓存 warmup（重要）
+
+- 默认 `FEATURE_MONTHLY_WARMUP_MONTHS=3`
+- 会被写入 cache key，旧缓存自动失效并重算
+- 目的：避免月初 rolling 特征冷启动 NaN
 
 ## 注意事项
 

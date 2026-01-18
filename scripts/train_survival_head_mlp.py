@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", required=True, help="Output directory")
     p.add_argument(
         "--config",
-        default="config/ood/survival_head_mlp_v1.yaml",
+        default="config/ood/survival_head_mlp.yaml",
         help="Config YAML for survival head training",
     )
     return p.parse_args()

@@ -31,6 +31,7 @@ class DataConverter:
         backup_dir: Optional[str] = None,
         *,
         force: bool = False,
+        aggregate_freq: str = "1s",
     ):
         """
         初始化数据转换器
@@ -39,11 +40,15 @@ class DataConverter:
             input_dir: ZIP 文件输入目录
             output_dir: Parquet 文件输出目录
             backup_dir: 备份目录（可选）
+            force: 是否强制重新转换
+            aggregate_freq: 聚合频率，pandas resample 格式（默认: "1s"）
+                Examples: "1s" (1秒), "1T" (1分钟), "5T" (5分钟)
         """
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.backup_dir = backup_dir
         self.force = bool(force)
+        self.aggregate_freq = aggregate_freq
         os.makedirs(self.output_dir, exist_ok=True)
         if self.backup_dir:
             os.makedirs(self.backup_dir, exist_ok=True)
@@ -153,7 +158,17 @@ class DataConverter:
                 if df_ticks is None or df_ticks.empty:
                     logger.warning("No tick data after preprocessing for %s", zip_file)
                     return None
-
+                # Ensure stable output schema: timestamp, price, volume, side (+ symbol)
+                expected_cols = ["timestamp", "price", "volume", "side"]
+                missing_cols = [c for c in expected_cols if c not in df_ticks.columns]
+                if missing_cols:
+                    logger.warning(
+                        "Missing expected columns %s after preprocessing for %s",
+                        missing_cols,
+                        zip_file,
+                    )
+                    return None
+                df_ticks = df_ticks[expected_cols].copy()
                 df_ticks["symbol"] = normalized_symbol
 
                 df_ticks.to_parquet(output_file, compression="snappy", index=False)
@@ -212,19 +227,19 @@ class DataConverter:
             else:
                 df["side"] = np.sign(df["volume"]).replace(0, 1)
 
-            # 追加：将原始 tick 聚合到 1s 级别（显著降低体积，适用于 1h/4h 策略）
+            # 追加：将原始 tick 聚合到指定频率级别（显著降低体积，适用于 1h/4h 策略）
             # 聚合逻辑：
-            # - 秒内按买/卖分别累加成交量
-            # - 价格使用该秒的整体 VWAP（price * volume / sum(volume)）
-            # - 若某秒只有买或只有卖，则只输出对应一条记录
+            # - 按指定频率内按买/卖分别累加成交量
+            # - 价格使用该时间段的整体 VWAP（price * volume / sum(volume)）
+            # - 若某时间段只有买或只有卖，则只输出对应一条记录
             df["buy_volume"] = np.where(df["side"] == 1, df["volume"], 0.0)
             df["sell_volume"] = np.where(df["side"] == -1, df["volume"], 0.0)
             df["price_volume"] = df["price"] * df["volume"]
 
             agg = (
                 df.set_index("timestamp")
-                # Pandas deprecates upper-case offset aliases like "S"
-                .resample("1s").agg(
+                # 使用 self.aggregate_freq 指定的频率（默认 "1s"，也可以是 "1T" 等）
+                .resample(self.aggregate_freq).agg(
                     {
                         "buy_volume": "sum",
                         "sell_volume": "sum",
@@ -414,6 +429,13 @@ def main():
         action="store_true",
         help="Force re-convert even if output parquet already exists.",
     )
+    parser.add_argument(
+        "--aggregate-freq",
+        default="1s",
+        help="Aggregation frequency for tick data (default: 1s). "
+        "Examples: '1s' (1 second), '1T' (1 minute), '5T' (5 minutes). "
+        "Uses pandas resample frequency strings.",
+    )
     args = parser.parse_args()
 
     # 设置日志
@@ -446,7 +468,13 @@ def main():
         return
 
     # 创建转换器
-    converter = DataConverter(input_dir, output_dir, backup_dir, force=bool(args.force))
+    converter = DataConverter(
+        input_dir,
+        output_dir,
+        backup_dir,
+        force=bool(args.force),
+        aggregate_freq=args.aggregate_freq,
+    )
 
     # 转换所有文件
     results = converter.convert_all_files(pattern=str(args.pattern))

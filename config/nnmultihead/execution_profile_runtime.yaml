@@ -1,0 +1,5 @@
+# Used by resolve_execution_profile_paths() to map strategy -> archetype -> evidence_rules
+# Callers (live): EventDrivenStrategy / NautilusStrategy* / MetaRouterStrategy
+# Override with: MLBOT_NNMH_EXEC_PROFILE_CONFIG or env keys below.
+strategy_profile_root: "config/nnmultihead/strategies"
+execution_archetype_registry: "config/nnmultihead/execution_archetypes.yaml"

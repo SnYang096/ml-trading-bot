@@ -53,7 +53,7 @@ Notes:
   - **result_json**: *(pending)* (expected `/workspaces/ml_trading_bot/results/feature_group_search/compression_breakout/feature_group_search_result.json`)
 - **`compression_breakout_best_combo_multisymbol_v1`**
   - **result_json**: `/workspaces/ml_trading_bot/results/feature_group_search/compression_breakout_best_combo_multisymbol_v1/feature_group_search_result.json`
-  - **writeback_yaml**: *(pending)* (expected `/workspaces/ml_trading_bot/config/strategies/compression_breakout/features_suggested_best_combo_multisymbol_v1.yaml`)
+  - **writeback_yaml**: *(pending)* (expected `/workspaces/ml_trading_bot/config/strategies/compression_breakout/features_suggested_best_combo_multisymbol.yaml`)
   - **stop_reason**: `no_improvement`
 - **`compression_breakout_best_combo_quick`**
   - **result_json**: *(pending)* (expected `/workspaces/ml_trading_bot/results/feature_group_search/compression_breakout_best_combo_quick/feature_group_search_result.json`)
@@ -157,7 +157,7 @@ Notes:
   - **result_json**: *(pending)* (expected `/workspaces/ml_trading_bot/results/feature_group_search/sr_breakout/feature_group_search_result.json`)
 - **`sr_breakout_best_combo_multisymbol_v1`**
   - **result_json**: *(pending)* (expected `/workspaces/ml_trading_bot/results/feature_group_search/sr_breakout_best_combo_multisymbol_v1/feature_group_search_result.json`)
-  - **writeback_yaml**: *(pending)* (expected `/workspaces/ml_trading_bot/config/strategies/sr_breakout/features_suggested_best_combo_multisymbol_v1.yaml`)
+  - **writeback_yaml**: *(pending)* (expected `/workspaces/ml_trading_bot/config/strategies/sr_breakout/features_suggested_best_combo_multisymbol.yaml`)
 - **`sr_breakout_best_combo_multisymbol_v2`**
   - **result_json**: `/workspaces/ml_trading_bot/results/feature_group_search/sr_breakout_best_combo_multisymbol_v2/feature_group_search_result.json`
   - **writeback_yaml**: *(pending)* (expected `/workspaces/ml_trading_bot/config/strategies/sr_breakout/features_suggested_best_combo_multisymbol_v2.yaml`)

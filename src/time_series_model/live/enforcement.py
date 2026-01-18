@@ -43,6 +43,7 @@ def enforce_before_order(
     data_bad: bool = False,
     snapshot_out: Optional[str | Path] = None,
     snapshot_extra: Optional[Dict[str, Any]] = None,
+    pcm_budget: Optional[Dict[str, Any]] = None,
 ) -> LiveEnforcementResult:
     """
     Minimal live adapter hook:
@@ -92,7 +93,7 @@ def enforce_before_order(
             constitution_yaml=str(executor.meta().get("constitution_yaml")),
             router_mode=str(mode),
             gate_decisions={},
-            pcm_budget={},
+            pcm_budget=dict(pcm_budget or {}),
             active_slots=int(runtime_state.slots.active_count()),
             drawdown=float(drawdown) if drawdown is not None else None,
             observability=None,

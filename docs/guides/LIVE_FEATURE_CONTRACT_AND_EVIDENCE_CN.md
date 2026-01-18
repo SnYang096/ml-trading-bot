@@ -1,10 +1,12 @@
 # Live Feature Contract & Evidence（为什么需要“缺失策略”、证据字段怎么来的）
 
+> Feature Contract 目前集成到 feature_plan 配置文件终，因为基本不会变
+
 本文回答三个常见疑问：
 
 - **Q1：同一套缺失策略有没有必要？不是“不可能缺”吗？**
 - **Q2：`has_orderflow` / `has_sr_quality` 这些证据字段现在实现在哪里？要手写吗？**
-- **Q3：`live_feature_contract_v1.yaml` 是不是给实盘用的？**
+- **Q3：`live_feature_contract.yaml` 是不是给实盘用的？**
 
 ---
 
@@ -53,13 +55,13 @@
 它们同时出现在两处配置（职责不同）：
 
 - **A) Execution Archetype Registry（定义“证据怎么计算”）**
-  - 文件：`config/nnmultihead/execution_archetypes_v1.yaml`
+  - 文件：`config/nnmultihead/execution_archetypes.yaml`
   - 每个 archetype 有：
     - `required_evidence`: 这个 archetype 必须满足哪些证据
     - `evidence_rules`: 证据如何从 `features: Dict[str, Any]` 推导出来（DSL）
 
 - **B) Execution Whitelist Constitution（定义“证据不满足就硬拒绝”）**
-  - 文件：`config/constitution/execution_whitelist_v1.yaml`
+  - 文件：`config/constitution/execution_whitelist.yaml`
   - 每个 regime 下每个 strategy 的 `required_evidence`：**硬门禁**
 
 ### 2.2 证据字段如何计算（代码入口）
@@ -89,7 +91,7 @@
 - 例如：`value_gt(key=vpin, threshold=0.4)` 才算 `has_orderflow`
 - 或：`key_exists(key=sr_score)` + `value_gte(threshold=...)` 才算 `has_sr_quality`
 
-这种升级不需要改 Python 代码，只需要改 YAML（`execution_archetypes_v1.yaml`）并补测试即可。
+这种升级不需要改 Python 代码，只需要改 YAML（`execution_archetypes.yaml`）并补测试即可。
 
 在 live 策略里调用位置：
 - `src/time_series_model/live/meta_router_strategy.py`
@@ -112,7 +114,7 @@ live enforcement hook：
 
 ### 2.4 一个具体例子（`has_orderflow` / `has_sr_quality`）
 
-在 `config/nnmultihead/execution_archetypes_v1.yaml` 中（简化理解）：
+在 `config/nnmultihead/execution_archetypes.yaml` 中（简化理解）：
 
 - `has_orderflow`：只要 `features` 的 key 里出现过 `vpin/cvd/delta/...` 任意一个子串，就认为有 orderflow 证据
 - `has_sr_quality`：只要 key 里出现 `sr_` / `sqs_` / `poc_` 这类子串，就认为有 SR 质量证据
@@ -123,7 +125,7 @@ live enforcement hook：
 
 ---
 
-## 3) `live_feature_contract_v1.yaml` 是给实盘用的吗？
+## 3) `live_feature_contract.yaml` 是给实盘用的吗？
 
 是的，定位是：**实盘侧的“特征输入契约”**（类似于 API contract）。
 
@@ -149,12 +151,12 @@ live enforcement hook：
 - 但 features 的语义已经漂了（例如窗口不同、对齐不同、断流导致“默认为 0”）
 - 最终门禁变成“形式正确、实际无效”
 
-> 备注：当前仓库里还没有正式落地 `live_feature_contract_v1.yaml` 文件；我们已经实现了 Evidence DSL 与 whitelist 的 enforcement，但“live 特征契约”仍建议补一份 YAML 作为下一阶段工程入口。
+> 备注：仓库里已提供 `live_feature_contract.yaml` 作为默认样例；如果你的 live 特征集不同，请按需裁剪/扩展。
 
 ### 3.2 当前仓库的落地状态（v1）
 
 已落地的最小版本：
-- **配置**：`config/live/live_feature_contract_v1.yaml`
+- **配置**：`config/live/live_feature_contract.yaml`
 - **校验器**：`src/time_series_model/live/live_feature_contract.py`
 - **接入点**：`src/time_series_model/live/meta_router_strategy.py` 的 timer 决策入口（`_on_signal_check`）
   - 行为：若 contract 不满足 → **强制 NO_TRADE**（本周期不下单）并记录原因到日志

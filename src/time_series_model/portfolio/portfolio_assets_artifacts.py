@@ -5,21 +5,21 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from .portfolio_assets_v1 import (
+from .portfolio_assets import (
     aggregate_from_symbol_modes,
-    compute_portfolio_asset_weights_v1,
+    compute_portfolio_asset_weights,
     load_portfolio_assets_config,
-    trend_zero_law_status_v1,
+    trend_zero_law_status,
 )
 
 
 @dataclass(frozen=True)
-class PortfolioAssetsArtifactsV1:
+class PortfolioAssetsArtifacts:
     summary: Dict[str, Any]
     timeseries_tail: pd.DataFrame
 
 
-def build_portfolio_assets_v1_artifacts_from_modes(
+def build_portfolio_assets_artifacts_from_modes(
     df: pd.DataFrame,
     *,
     portfolio_assets_yaml: str,
@@ -30,17 +30,17 @@ def build_portfolio_assets_v1_artifacts_from_modes(
     tail_points: int = 240,
     gate_veto: bool = False,
     portfolio_drawdown: float = 0.0,
-) -> PortfolioAssetsArtifactsV1:
+) -> PortfolioAssetsArtifacts:
     """
     Build diagnostic artifacts by aggregating per-symbol Router modes over timestamps
-    and mapping to deterministic portfolio asset weights (PortfolioAssets v1).
+    and mapping to deterministic portfolio asset weights.
 
     This function is intentionally pure (no file I/O) so it's easy to unit test.
     """
     if df is None or len(df) == 0:
-        return PortfolioAssetsArtifactsV1(summary={}, timeseries_tail=pd.DataFrame())
+        return PortfolioAssetsArtifacts(summary={}, timeseries_tail=pd.DataFrame())
     if not portfolio_assets_yaml:
-        return PortfolioAssetsArtifactsV1(summary={}, timeseries_tail=pd.DataFrame())
+        return PortfolioAssetsArtifacts(summary={}, timeseries_tail=pd.DataFrame())
     if timestamp_col not in df.columns:
         raise ValueError(f"Missing timestamp_col={timestamp_col}")
     if symbol_col not in df.columns:
@@ -73,13 +73,13 @@ def build_portfolio_assets_v1_artifacts_from_modes(
         sig = aggregate_from_symbol_modes(
             decisions=decisions, key_symbols=list(key_symbols)
         )
-        tz = trend_zero_law_status_v1(
+        tz = trend_zero_law_status(
             cfg=pa_cfg,
             sig=sig,
             gate_veto=bool(gate_veto),
             portfolio_drawdown=float(portfolio_drawdown),
         )
-        w = compute_portfolio_asset_weights_v1(
+        w = compute_portfolio_asset_weights(
             cfg=pa_cfg,
             sig=sig,
             gate_veto=bool(gate_veto),
@@ -99,7 +99,7 @@ def build_portfolio_assets_v1_artifacts_from_modes(
 
     df_pa = pd.DataFrame(rows)
     if df_pa.empty:
-        return PortfolioAssetsArtifactsV1(summary={}, timeseries_tail=pd.DataFrame())
+        return PortfolioAssetsArtifacts(summary={}, timeseries_tail=pd.DataFrame())
 
     weight_cols = [c for c in df_pa.columns if c.startswith("w__")]
     avg_weights = (
@@ -107,7 +107,7 @@ def build_portfolio_assets_v1_artifacts_from_modes(
     )
     summary: Dict[str, Any] = {
         "portfolio_assets_yaml": str(portfolio_assets_yaml),
-        "name": str(getattr(pa_cfg, "name", "portfolio_assets_v1")),
+        "name": str(getattr(pa_cfg, "name", "portfolio_assets")),
         "n_timestamps": int(df_pa.shape[0]),
         "trend_zero_rate": float(df_pa["trend_zero_triggered"].mean()),
         "avg_weights": {k.replace("w__", ""): float(v) for k, v in avg_weights.items()},
@@ -120,4 +120,4 @@ def build_portfolio_assets_v1_artifacts_from_modes(
     df_tail = (
         df_pa.tail(tail_n).reset_index(drop=True) if tail_n > 0 else pd.DataFrame()
     )
-    return PortfolioAssetsArtifactsV1(summary=summary, timeseries_tail=df_tail)
+    return PortfolioAssetsArtifacts(summary=summary, timeseries_tail=df_tail)

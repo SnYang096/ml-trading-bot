@@ -77,7 +77,7 @@ def _infer_base_dir(constitution_yaml: str | Path) -> Path:
     for parent in p.parents:
         if (parent / "config").exists() and (parent / "src").exists():
             return parent
-    # Fallback: config/constitution/constitution_v1.yaml -> go up 2
+    # Fallback: config/constitution/constitution.yaml -> go up 2
     try:
         return p.parents[2]
     except Exception:

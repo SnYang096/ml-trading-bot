@@ -156,7 +156,8 @@ class TestMonthlyCacheBasic:
 
         # 先为所有月份创建缓存
         monthly_dfs = computer._split_df_by_month(sample_monthly_data)
-        compute_params = {}
+        # Align with monthly warmup default (FEATURE_MONTHLY_WARMUP_MONTHS=3)
+        compute_params = {"__monthly_warmup_months": 3}
         feature_info = {"output_columns": ["test_feature"]}
 
         for month_key, month_df in monthly_dfs.items():
@@ -169,7 +170,11 @@ class TestMonthlyCacheBasic:
 
                 # 保存缓存
                 cache_key = computer._get_monthly_cache_key(
-                    "test_feature", month_key, compute_params, feature_info
+                    "test_feature",
+                    month_key,
+                    compute_params,
+                    feature_info,
+                    df_sig=computer._get_df_signature(month_df),
                 )
                 computer._save_monthly_cache(cache_key, test_result)
 
@@ -196,7 +201,8 @@ class TestMonthlyCacheBasic:
 
         # 只为部分月份创建缓存
         monthly_dfs = computer._split_df_by_month(sample_monthly_data)
-        compute_params = {}
+        # Align with monthly warmup default (FEATURE_MONTHLY_WARMUP_MONTHS=3)
+        compute_params = {"__monthly_warmup_months": 3}
         feature_info = {"output_columns": ["test_feature"]}
 
         # 只为第一个月创建缓存
@@ -207,7 +213,11 @@ class TestMonthlyCacheBasic:
         )
 
         cache_key = computer._get_monthly_cache_key(
-            "test_feature", first_month_key, compute_params, feature_info
+            "test_feature",
+            first_month_key,
+            compute_params,
+            feature_info,
+            df_sig=computer._get_df_signature(month_df),
         )
         computer._save_monthly_cache(cache_key, test_result)
 
@@ -331,7 +341,8 @@ class TestMonthlyCacheIntegration:
                 {"simple_feature": df["close"].rolling(window=5).mean()}, index=df.index
             )
 
-        compute_params = {}
+        # Align with monthly warmup default (FEATURE_MONTHLY_WARMUP_MONTHS=3)
+        compute_params = {"__monthly_warmup_months": 3}
         feature_info = {"output_columns": ["simple_feature"]}
 
         # 第一次计算（应该计算所有月份并缓存）
@@ -393,7 +404,8 @@ class TestMonthlyCacheIntegration:
             index=pd.DatetimeIndex(dates_jan_feb),
         )
 
-        compute_params = {}
+        # Align with monthly warmup default (FEATURE_MONTHLY_WARMUP_MONTHS=3)
+        compute_params = {"__monthly_warmup_months": 3}
         feature_info = {"output_columns": ["simple_feature"]}
 
         # 第一次计算（计算1月和2月）

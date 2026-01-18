@@ -1714,6 +1714,26 @@ features:
     pass_full_df: false
     compute_params:
       normalized: true
+  cvd_change_features_f:
+    module: enhanced
+    compute_func: select_columns_from_series
+    dependencies: []
+    required_columns:
+    - cvd
+    - cvd_change_1
+    - cvd_change_5
+    - cvd_change_20
+    - cvd_normalized
+    - cvd_change_5_normalized
+    output_columns:
+    - cvd
+    - cvd_change_1
+    - cvd_change_5
+    - cvd_change_20
+    - cvd_normalized
+    - cvd_change_5_normalized
+    category: order_flow
+    description: CVD change features (raw + normalized) passthrough.
   ofi_short_f:
     module: enhanced
     compute_func: compute_ofi_short_from_series

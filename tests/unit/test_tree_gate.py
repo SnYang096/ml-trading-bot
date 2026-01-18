@@ -1,3 +1,52 @@
+from src.time_series_model.live.tree_gate import apply_gate_rules
+
+
+def test_tree_gate_deny():
+    rules = {
+        "rules": [
+            {"name": "deny_big", "kind": "value_gt", "key": "x", "threshold": 10}
+        ],
+        "deny_if": ["deny_big"],
+        "allow_if": [],
+        "allow_mode": "any",
+        "default_action": "allow",
+    }
+    ok, reasons = apply_gate_rules(gate_rules=rules, features={"x": 11})
+    assert ok is False
+    assert "gate_deny" in reasons[0]
+
+
+def test_tree_gate_allow_any():
+    rules = {
+        "rules": [
+            {"name": "allow_a", "kind": "value_gt", "key": "x", "threshold": 1},
+            {"name": "allow_b", "kind": "value_gt", "key": "y", "threshold": 1},
+        ],
+        "deny_if": [],
+        "allow_if": ["allow_a", "allow_b"],
+        "allow_mode": "any",
+        "default_action": "deny",
+    }
+    ok, _ = apply_gate_rules(gate_rules=rules, features={"x": 2, "y": 0})
+    assert ok is True
+
+
+def test_tree_gate_allow_min2():
+    rules = {
+        "rules": [
+            {"name": "allow_a", "kind": "value_gt", "key": "x", "threshold": 1},
+            {"name": "allow_b", "kind": "value_gt", "key": "y", "threshold": 1},
+            {"name": "allow_c", "kind": "value_gt", "key": "z", "threshold": 1},
+        ],
+        "deny_if": [],
+        "allow_if": ["allow_a", "allow_b", "allow_c"],
+        "allow_mode": "min2",
+        "default_action": "deny",
+    }
+    ok, _ = apply_gate_rules(gate_rules=rules, features={"x": 2, "y": 0, "z": 2})
+    assert ok is True
+
+
 import numpy as np
 import pytest
 

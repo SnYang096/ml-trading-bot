@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.time_series_model.diagnostics.ood_config import OODConfigV1
+from src.time_series_model.diagnostics.ood_config import OODConfig
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class LiveDashboardMetrics:
 
 def build_live_dashboard_payload(
     *,
-    ood_cfg: OODConfigV1,
+    ood_cfg: OODConfig,
     ood_score: Optional[float],
     top_archetype_survival_prob: Optional[float],
     active_archetype: Optional[str],
@@ -51,7 +51,7 @@ def build_live_dashboard_payload(
 
 
 def validate_live_dashboard_payload(
-    *, ood_cfg: OODConfigV1, payload: Dict[str, Any]
+    *, ood_cfg: OODConfig, payload: Dict[str, Any]
 ) -> Tuple[bool, List[str]]:
     """
     Ensure required keys exist (for auditability).

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -28,10 +29,12 @@ class ExecutionArchetype:
     required_conditions: List[str]
     required_evidence: List[str]
     evidence_rules: List[Dict[str, Any]]
+    gate_rules: Dict[str, Any]
+    execution_constraints: Dict[str, Any]
 
 
 def load_execution_archetypes_registry(
-    path: str | Path = "config/nnmultihead/execution_archetypes_v2.yaml",
+    path: str | Path = "config/nnmultihead/execution_archetypes.yaml",
 ) -> Dict[str, ExecutionArchetype]:
     p = Path(path)
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -57,6 +60,8 @@ def load_execution_archetypes_registry(
                         str(x) for x in (a.get("required_evidence") or [])
                     ],
                     evidence_rules=list(a.get("evidence_rules") or []),
+                    gate_rules=dict(a.get("gate_rules") or {}),
+                    execution_constraints=dict(a.get("execution_constraints") or {}),
                 )
 
     # Optional overlays
@@ -73,8 +78,46 @@ def load_execution_archetypes_registry(
                 ],
                 required_evidence=[str(x) for x in (a.get("required_evidence") or [])],
                 evidence_rules=list(a.get("evidence_rules") or []),
+                gate_rules=dict(a.get("gate_rules") or {}),
+                execution_constraints=dict(a.get("execution_constraints") or {}),
             )
     return out
+
+
+def load_execution_profile_runtime_config(
+    path: str | Path = "config/nnmultihead/execution_profile_runtime.yaml",
+) -> Dict[str, Any]:
+    p = Path(path)
+    if not p.exists():
+        return {}
+    obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def resolve_execution_profile_paths(
+    *,
+    default_profile_root: str = "config/nnmultihead/strategies",
+    default_archetype_registry_path: str = "config/nnmultihead/execution_archetypes.yaml",
+    runtime_config_path: Optional[str | Path] = None,
+) -> Tuple[str, str]:
+    cfg_path = (
+        runtime_config_path
+        if runtime_config_path is not None
+        else os.getenv(
+            "MLBOT_NNMH_EXEC_PROFILE_CONFIG",
+            "config/nnmultihead/execution_profile_runtime.yaml",
+        )
+    )
+    cfg = load_execution_profile_runtime_config(cfg_path)
+    profile_root = os.getenv(
+        "MLBOT_NNMH_STRATEGY_PROFILE_ROOT",
+        str(cfg.get("strategy_profile_root") or default_profile_root),
+    )
+    archetype_registry = os.getenv(
+        "MLBOT_NNMH_EXEC_ARCHETYPE_REGISTRY",
+        str(cfg.get("execution_archetype_registry") or default_archetype_registry_path),
+    )
+    return profile_root, archetype_registry
 
 
 def load_strategy_profile_yaml(path: str | Path) -> StrategyProfile:
@@ -121,7 +164,7 @@ def resolve_execution_profile(
     profile_root: str | Path = "config/nnmultihead/strategies",
     archetype_registry_path: (
         str | Path
-    ) = "config/nnmultihead/execution_archetypes_v2.yaml",
+    ) = "config/nnmultihead/execution_archetypes.yaml",
 ) -> Optional[StrategyExecutionProfile]:
     pp = resolve_strategy_profile_path(strategy_name=strategy_id, root_dir=profile_root)
     prof = load_strategy_profile_yaml(pp) if pp else None

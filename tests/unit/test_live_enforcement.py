@@ -5,7 +5,7 @@ from src.time_series_model.core.constitution.constitution_executor import (
 )
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.live.enforcement import enforce_before_order
-from src.time_series_model.diagnostics.ood_config import load_ood_config_v1
+from src.time_series_model.diagnostics.ood_config import load_ood_config
 from src.time_series_model.diagnostics.live_dashboard import (
     build_live_dashboard_payload,
 )
@@ -45,7 +45,7 @@ extreme_tail:
     ex = ConstitutionExecutor(constitution_yaml=str(cy))
     st = ex.load_runtime_state()
     out_path = tmp_path / "snap.json"
-    ood_cfg = load_ood_config_v1("config/ood/ood_config_v1.yaml")
+    ood_cfg = load_ood_config("config/ood/ood_config.yaml")
     dash = build_live_dashboard_payload(
         ood_cfg=ood_cfg,
         ood_score=None,

@@ -63,6 +63,67 @@ ROUTER_KEYS = [
 ]
 
 
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return float(max(lo, min(hi, float(x))))
+
+
+def _compute_router_bounds(
+    *,
+    preds_by_sym: Dict[str, pd.DataFrame],
+    preds_in_log1p: bool,
+    qmin: float,
+    qmax: float,
+) -> Dict[str, Tuple[float, float]]:
+    """
+    Heuristic bounds from empirical distributions.
+    Ensures thresholds stay within reasonable data-driven ranges.
+    """
+    rows: List[pd.DataFrame] = []
+    for df in preds_by_sym.values():
+        if df is None or df.empty:
+            continue
+        # Use default config; derived fields are independent of thresholds.
+        diag = compute_mode_3action(
+            df, cfg=Rule3ActionConfig(), preds_in_log1p=preds_in_log1p
+        )
+        rows.append(diag[["mfe_atr", "eff", "t_to_mfe", "dir_conf"]])
+    if not rows:
+        return {}
+    all_df = pd.concat(rows, axis=0)
+    bounds: Dict[str, Tuple[float, float]] = {}
+
+    def _q(col: str) -> Tuple[float, float]:
+        s = pd.to_numeric(all_df[col], errors="coerce").dropna()
+        if s.empty:
+            return (0.0, 0.0)
+        return (float(s.quantile(qmin)), float(s.quantile(qmax)))
+
+    mfe_lo, mfe_hi = _q("mfe_atr")
+    eff_lo, eff_hi = _q("eff")
+    ttm_lo, ttm_hi = _q("t_to_mfe")
+    dconf_lo, dconf_hi = _q("dir_conf")
+    bounds["mfe_min"] = (mfe_lo, mfe_hi)
+    bounds["mfe_trend_min"] = (mfe_lo, mfe_hi)
+    bounds["eff_min"] = (eff_lo, eff_hi)
+    bounds["eff_mean_min"] = (eff_lo, eff_hi)
+    bounds["ttm_trend_min"] = (ttm_lo, ttm_hi)
+    bounds["ttm_mean_max"] = (ttm_lo, ttm_hi)
+    bounds["dir_conf_trend_min"] = (dconf_lo, dconf_hi)
+    return bounds
+
+
+def _apply_bounds(
+    cand: Dict[str, float], bounds: Dict[str, Tuple[float, float]]
+) -> Dict[str, float]:
+    if not bounds:
+        return cand
+    out = dict(cand)
+    for k, (lo, hi) in bounds.items():
+        if k in out and np.isfinite(lo) and np.isfinite(hi) and hi >= lo:
+            out[k] = _clamp(out[k], lo, hi)
+    return out
+
+
 def _fig_to_data_uri(fig) -> str:
     buf = BytesIO()
     fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
@@ -82,6 +143,10 @@ def _write_html_report(
     trade_rate_tol: float = 0.0,
     trade_rate_min: Optional[float] = None,
     trade_rate_max: Optional[float] = None,
+    trend_rate_target: Optional[float] = None,
+    trend_rate_tol: float = 0.0,
+    trend_rate_min: Optional[float] = None,
+    trend_rate_max: Optional[float] = None,
 ) -> None:
     """
     Create a minimal HTML report to visually confirm “plateau” behavior.
@@ -200,6 +265,9 @@ def _write_html_report(
         "trade_rate_mean",
         "trade_rate_p25",
         "trade_rate_pen_mean",
+        "trend_rate_mean",
+        "trend_rate_p25",
+        "trend_rate_pen_mean",
     ]:
         if k in best_row:
             best_meta_rows.append(f"<li><b>{k}</b>: {_fmt(best_row.get(k))}</li>")
@@ -235,6 +303,10 @@ def _write_html_report(
       <li><b>trade_rate_tol</b>: {_fmt(trade_rate_tol)}</li>
       <li><b>trade_rate_min</b>: {_fmt(trade_rate_min)}</li>
       <li><b>trade_rate_max</b>: {_fmt(trade_rate_max)}</li>
+      <li><b>trend_rate_target</b>: {_fmt(trend_rate_target)}</li>
+      <li><b>trend_rate_tol</b>: {_fmt(trend_rate_tol)}</li>
+      <li><b>trend_rate_min</b>: {_fmt(trend_rate_min)}</li>
+      <li><b>trend_rate_max</b>: {_fmt(trend_rate_max)}</li>
     </ul>
     <h3>Best candidate diagnostics</h3>
     <ul>
@@ -430,10 +502,17 @@ def _eval_thresholds_on_logs(
     cfg: Rule3ActionConfig,
     preds_in_log1p: bool,
     sim_cfg: SimEnvConfig,
+    trend_correct_horizon: int,
 ) -> Dict[str, float]:
     sharpe_by_sym: List[float] = []
     dd_by_sym: List[float] = []
     trade_rate_by_sym: List[float] = []
+    trend_rate_by_sym: List[float] = []
+    mean_rate_by_sym: List[float] = []
+    no_trade_rate_by_sym: List[float] = []
+    switch_rate_by_sym: List[float] = []
+    entropy_by_sym: List[float] = []
+    trend_correct_by_sym: List[float] = []
 
     for sym, logs in logs_by_sym.items():
         preds = preds_by_sym.get(sym)
@@ -470,6 +549,64 @@ def _eval_thresholds_on_logs(
         sharpe_by_sym.append(_sharpe(pnl, steps_per_year))
         dd_by_sym.append(_max_drawdown(equity))
         trade_rate_by_sym.append(float(np.mean(actions != 0)))
+        trend_rate_by_sym.append(float(np.mean(actions == 2)))
+        mean_rate_by_sym.append(float(np.mean(actions == 1)))
+        no_trade_rate_by_sym.append(float(np.mean(actions == 0)))
+        if len(actions) > 1:
+            switch_rate_by_sym.append(float(np.mean(actions[1:] != actions[:-1])))
+        else:
+            switch_rate_by_sym.append(0.0)
+        # entropy over {NO_TRADE, MEAN, TREND}
+        counts = np.bincount(actions, minlength=3).astype(float)
+        probs = counts / max(1.0, counts.sum())
+        entropy = float(-np.sum([p * np.log(p) for p in probs if p > 0.0]))
+        entropy_by_sym.append(entropy)
+        # conditional correctness: realized MFE over next horizon (if OHLC available)
+        if {"high", "low", "close"}.issubset(set(logs.columns)):
+            high = pd.to_numeric(logs["high"], errors="coerce").astype(float)
+            low = pd.to_numeric(logs["low"], errors="coerce").astype(float)
+            close = pd.to_numeric(logs["close"], errors="coerce").astype(float)
+            # ATR (use provided atr if available, else TR rolling mean)
+            if "atr" in logs.columns:
+                atr = pd.to_numeric(logs["atr"], errors="coerce").astype(float)
+            else:
+                tr = pd.concat(
+                    [
+                        high - low,
+                        (high - close.shift(1)).abs(),
+                        (low - close.shift(1)).abs(),
+                    ],
+                    axis=1,
+                ).max(axis=1)
+                atr = tr.rolling(window=14, min_periods=1).mean().astype(float)
+            horizon = max(1, int(trend_correct_horizon))
+            # forward window max/min (exclude current bar)
+            f_high = (
+                high[::-1].rolling(window=horizon, min_periods=1).max()[::-1].shift(-1)
+            )
+            f_low = (
+                low[::-1].rolling(window=horizon, min_periods=1).min()[::-1].shift(-1)
+            )
+            dir_score = pd.to_numeric(
+                logs.get("head_dir_score", 0.0), errors="coerce"
+            ).fillna(0.0)
+            dir_sign = np.sign(dir_score.to_numpy(dtype=float))
+            mfe_atr = np.where(
+                dir_sign >= 0,
+                (f_high.to_numpy(dtype=float) - close.to_numpy(dtype=float))
+                / np.maximum(1e-9, atr.to_numpy(dtype=float)),
+                (close.to_numpy(dtype=float) - f_low.to_numpy(dtype=float))
+                / np.maximum(1e-9, atr.to_numpy(dtype=float)),
+            )
+            mfe_thr = float(cfg.mfe_trend_min)
+            mask = (actions == 2) & np.isfinite(mfe_atr)
+            if mask.any():
+                trend_correct_by_sym.append(float(np.mean(mfe_atr[mask] >= mfe_thr)))
+        else:
+            raise ValueError(
+                "conditional_correctness requires logs with high/low/close (and atr or inferable ATR). "
+                "Regenerate logs with returns_source=rr_execution or vectorbt_execution."
+            )
 
     if not sharpe_by_sym:
         return {
@@ -478,6 +615,12 @@ def _eval_thresholds_on_logs(
             "rule_dd_mean": 0.0,
             "trade_rate_mean": 0.0,
             "n_symbols": 0.0,
+            "trend_rate_mean": 0.0,
+            "mean_rate_mean": 0.0,
+            "no_trade_rate_mean": 0.0,
+            "switch_rate_mean": 0.0,
+            "entropy_mean": 0.0,
+            "trend_correctness_mean": 0.0,
         }
 
     return {
@@ -488,6 +631,20 @@ def _eval_thresholds_on_logs(
         "rule_dd_mean": float(np.mean(dd_by_sym)),
         "trade_rate_mean": float(np.mean(trade_rate_by_sym)),
         "n_symbols": float(len(sharpe_by_sym)),
+        "trend_rate_mean": (
+            float(np.mean(trend_rate_by_sym)) if trend_rate_by_sym else 0.0
+        ),
+        "mean_rate_mean": float(np.mean(mean_rate_by_sym)) if mean_rate_by_sym else 0.0,
+        "no_trade_rate_mean": (
+            float(np.mean(no_trade_rate_by_sym)) if no_trade_rate_by_sym else 0.0
+        ),
+        "switch_rate_mean": (
+            float(np.mean(switch_rate_by_sym)) if switch_rate_by_sym else 0.0
+        ),
+        "entropy_mean": float(np.mean(entropy_by_sym)) if entropy_by_sym else 0.0,
+        "trend_correctness_mean": (
+            float(np.mean(trend_correct_by_sym)) if trend_correct_by_sym else 0.0
+        ),
     }
 
 
@@ -536,6 +693,13 @@ def _trade_rate_penalty(
     return float(w * (d / tol) ** 2)
 
 
+def _range_penalty(value: float, *, lo: float, hi: float, weight: float = 1.0) -> float:
+    if not np.isfinite(value):
+        return 0.0
+    viol = max(0.0, lo - value) + max(0.0, value - hi)
+    return float(weight * viol)
+
+
 def _bootstrap_indices(n: int, rng: np.random.Generator) -> np.ndarray:
     return rng.integers(0, n, size=n, endpoint=False)
 
@@ -579,6 +743,13 @@ def main() -> None:
     )
     ap.add_argument("--n-candidates", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--heuristic-bounds",
+        action="store_true",
+        help="Clamp candidate thresholds to empirical quantile bounds.",
+    )
+    ap.add_argument("--heuristic-qmin", type=float, default=0.05)
+    ap.add_argument("--heuristic-qmax", type=float, default=0.95)
 
     ap.add_argument("--n-windows", type=int, default=6)
     ap.add_argument("--min-days-per-window", type=int, default=25)
@@ -641,6 +812,46 @@ def main() -> None:
         default=1.5,
         help="Penalty weight for trade-rate deviation (higher => force stable operating density).",
     )
+    ap.add_argument(
+        "--trend-rate-target",
+        type=float,
+        default=None,
+        help="Optional target trend rate (fraction of TREND actions).",
+    )
+    ap.add_argument(
+        "--trend-rate-tol",
+        type=float,
+        default=0.04,
+        help="Tolerance band around trend-rate-target before penalty applies.",
+    )
+    ap.add_argument(
+        "--trend-rate-min",
+        type=float,
+        default=0.10,
+        help="Optional minimum trend rate (hinge penalty if below). Overrides target-mode when set.",
+    )
+    ap.add_argument(
+        "--trend-rate-max",
+        type=float,
+        default=0.60,
+        help="Optional maximum trend rate (hinge penalty if above). Overrides target-mode when set.",
+    )
+    ap.add_argument(
+        "--trend-rate-penalty",
+        type=float,
+        default=1.0,
+        help="Penalty weight for trend-rate deviation (higher => force non-zero TREND activation).",
+    )
+    ap.add_argument("--mean-rate-min", type=float, default=0.05)
+    ap.add_argument("--mean-rate-max", type=float, default=0.40)
+    ap.add_argument("--no-trade-rate-min", type=float, default=0.10)
+    ap.add_argument("--no-trade-rate-max", type=float, default=0.70)
+    ap.add_argument(
+        "--disable-dist-rate-constraints",
+        action="store_true",
+        help="Disable mean/no_trade distribution range constraints.",
+    )
+    ap.add_argument("--trend-correct-horizon", type=int, default=24)
     args = ap.parse_args()
 
     out_dir = Path(args.out)
@@ -655,6 +866,15 @@ def main() -> None:
     keep = sorted(set(preds_by_sym.keys()) & set(logs_by_sym.keys()))
     preds_by_sym = {k: preds_by_sym[k] for k in keep}
     logs_by_sym = {k: logs_by_sym[k] for k in keep}
+
+    bounds = {}
+    if args.heuristic_bounds:
+        bounds = _compute_router_bounds(
+            preds_by_sym=preds_by_sym,
+            preds_in_log1p=preds_in_log1p,
+            qmin=float(args.heuristic_qmin),
+            qmax=float(args.heuristic_qmax),
+        )
 
     windows = _make_time_windows(
         logs_by_sym,
@@ -672,17 +892,67 @@ def main() -> None:
 
     rng = np.random.default_rng(int(args.seed))
 
-    # candidates include baseline
-    cands: List[Dict[str, float]] = [dict(base)]
-    for _ in range(int(args.n_candidates)):
-        cands.append(
-            _candidate_from_baseline(
-                base,
-                rng=rng,
-                rel_sigma=float(args.rel_sigma),
-                abs_sigma=float(args.abs_sigma),
-            )
+    # baseline ranges for distribution-style KPIs
+    dist_keys = [
+        "trade_rate_mean",
+        "trend_rate_mean",
+        "mean_rate_mean",
+        "no_trade_rate_mean",
+        "switch_rate_mean",
+        "entropy_mean",
+        "trend_correctness_mean",
+    ]
+    baseline_window_metrics: List[Dict[str, float]] = []
+    base_cfg = Rule3ActionConfig(**{k: float(base[k]) for k in ROUTER_KEYS})
+    for ws, we in windows:
+        preds_w = {
+            s: _slice_by_time(df, start=ws, end=we) for s, df in preds_by_sym.items()
+        }
+        logs_w = {
+            s: _slice_by_time(df, start=ws, end=we) for s, df in logs_by_sym.items()
+        }
+        m = _eval_thresholds_on_logs(
+            preds_by_sym=preds_w,
+            logs_by_sym=logs_w,
+            cfg=base_cfg,
+            preds_in_log1p=preds_in_log1p,
+            sim_cfg=sim_cfg,
+            trend_correct_horizon=int(args.trend_correct_horizon),
         )
+        baseline_window_metrics.append(m)
+
+    baseline_ranges: Dict[str, Tuple[float, float]] = {}
+    for k in dist_keys:
+        vals = [float(x.get(k, 0.0)) for x in baseline_window_metrics]
+        vmean = float(np.mean(vals)) if vals else 0.0
+        vstd = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+        lo = vmean - vstd
+        hi = vmean + vstd
+        if k in {
+            "trade_rate_mean",
+            "trend_rate_mean",
+            "mean_rate_mean",
+            "no_trade_rate_mean",
+            "switch_rate_mean",
+            "trend_correctness_mean",
+        }:
+            lo = max(0.0, lo)
+            hi = min(1.0, hi)
+        if k == "entropy_mean":
+            lo = max(0.0, lo)
+            hi = max(lo, hi)
+        baseline_ranges[k] = (lo, hi)
+
+    # candidates include baseline
+    cands: List[Dict[str, float]] = [_apply_bounds(dict(base), bounds)]
+    for _ in range(int(args.n_candidates)):
+        cand = _candidate_from_baseline(
+            base,
+            rng=rng,
+            rel_sigma=float(args.rel_sigma),
+            abs_sigma=float(args.abs_sigma),
+        )
+        cands.append(_apply_bounds(cand, bounds))
 
     rows = []
     for i, cand in enumerate(cands):
@@ -693,7 +963,15 @@ def main() -> None:
         win_sharpes: List[float] = []
         win_dd: List[float] = []
         win_trade_rate: List[float] = []
+        win_trend_rate: List[float] = []
+        win_mean_rate: List[float] = []
+        win_no_trade_rate: List[float] = []
+        win_switch_rate: List[float] = []
+        win_entropy: List[float] = []
+        win_trend_correct: List[float] = []
         win_trade_pen: List[float] = []
+        win_trend_pen: List[float] = []
+        win_dist_pen: List[float] = []
         for ws, we in windows:
             preds_w = {
                 s: _slice_by_time(df, start=ws, end=we)
@@ -708,8 +986,17 @@ def main() -> None:
                 cfg=cfg,
                 preds_in_log1p=preds_in_log1p,
                 sim_cfg=sim_cfg,
+                trend_correct_horizon=int(args.trend_correct_horizon),
             )
             tr = float(m.get("trade_rate_mean", 0.0))
+            tr_trend = float(m.get("trend_rate_mean", 0.0))
+            tr_mean = float(m.get("mean_rate_mean", 0.0))
+            tr_no = float(m.get("no_trade_rate_mean", 0.0))
+            tr_switch = float(m.get("switch_rate_mean", 0.0))
+            tr_entropy = float(m.get("entropy_mean", 0.0))
+            tr_correct = float(m.get("trend_correctness_mean", 0.0))
+
+            # explicit penalties (optional)
             pen = _trade_rate_penalty(
                 tr,
                 target=args.trade_rate_target,
@@ -718,13 +1005,61 @@ def main() -> None:
                 min_v=args.trade_rate_min,
                 max_v=args.trade_rate_max,
             )
+            pen_trend = _trade_rate_penalty(
+                tr_trend,
+                target=args.trend_rate_target,
+                tol=float(args.trend_rate_tol),
+                w=float(args.trend_rate_penalty),
+                min_v=args.trend_rate_min,
+                max_v=args.trend_rate_max,
+            )
+
+            # baseline-driven distribution penalties
+            dist_pen = 0.0
+            # baseline-driven penalties for non-explicit keys
+            explicit_keys = {
+                "trade_rate_mean",
+                "trend_rate_mean",
+                "mean_rate_mean",
+                "no_trade_rate_mean",
+            }
+            for key, val in [
+                ("trade_rate_mean", tr),
+                ("trend_rate_mean", tr_trend),
+                ("mean_rate_mean", tr_mean),
+                ("no_trade_rate_mean", tr_no),
+                ("switch_rate_mean", tr_switch),
+                ("entropy_mean", tr_entropy),
+                ("trend_correctness_mean", tr_correct),
+            ]:
+                if key in explicit_keys:
+                    continue
+                lo, hi = baseline_ranges.get(key, (0.0, 1.0))
+                dist_pen += _range_penalty(val, lo=lo, hi=hi, weight=1.0)
+
+            if not args.disable_dist_rate_constraints:
+                dist_pen += _range_penalty(
+                    tr_mean, lo=float(args.mean_rate_min), hi=float(args.mean_rate_max)
+                )
+                dist_pen += _range_penalty(
+                    tr_no,
+                    lo=float(args.no_trade_rate_min),
+                    hi=float(args.no_trade_rate_max),
+                )
+
             win_sharpes.append(float(m["rule_sharpe_mean"]))
             win_dd.append(float(m["rule_dd_mean"]))
             win_trade_rate.append(tr)
+            win_trend_rate.append(tr_trend)
+            win_mean_rate.append(tr_mean)
+            win_no_trade_rate.append(tr_no)
+            win_switch_rate.append(tr_switch)
+            win_entropy.append(tr_entropy)
+            win_trend_correct.append(tr_correct)
             win_trade_pen.append(float(pen))
-            win_scores.append(
-                _robust_score(m, lam=float(args.lam), mu=float(args.mu)) - float(pen)
-            )
+            win_trend_pen.append(float(pen_trend))
+            win_dist_pen.append(float(dist_pen))
+            win_scores.append(-float(pen) - float(pen_trend) - float(dist_pen))
 
         # bootstrap metrics (resample windows)
         bs_scores: List[float] = []
@@ -747,15 +1082,39 @@ def main() -> None:
             "trade_rate_p25": (
                 float(np.quantile(win_trade_rate, 0.25)) if win_trade_rate else 0.0
             ),
+            "trend_rate_mean": (
+                float(np.mean(win_trend_rate)) if win_trend_rate else 0.0
+            ),
+            "trend_rate_p25": (
+                float(np.quantile(win_trend_rate, 0.25)) if win_trend_rate else 0.0
+            ),
+            "mean_rate_mean": float(np.mean(win_mean_rate)) if win_mean_rate else 0.0,
+            "no_trade_rate_mean": (
+                float(np.mean(win_no_trade_rate)) if win_no_trade_rate else 0.0
+            ),
+            "switch_rate_mean": (
+                float(np.mean(win_switch_rate)) if win_switch_rate else 0.0
+            ),
+            "entropy_mean": float(np.mean(win_entropy)) if win_entropy else 0.0,
+            "trend_correctness_mean": (
+                float(np.mean(win_trend_correct)) if win_trend_correct else 0.0
+            ),
             "trade_rate_pen_mean": (
                 float(np.mean(win_trade_pen)) if win_trade_pen else 0.0
             ),
+            "trend_rate_pen_mean": (
+                float(np.mean(win_trend_pen)) if win_trend_pen else 0.0
+            ),
+            "dist_pen_mean": float(np.mean(win_dist_pen)) if win_dist_pen else 0.0,
             "bs_score_mean": float(np.mean(bs_scores)) if bs_scores else float("nan"),
             "bs_score_p10": (
                 float(np.quantile(bs_scores, 0.10)) if bs_scores else float("nan")
             ),
-            "robust_score": float(np.mean(win_scores))
-            + (float(np.mean(bs_scores)) if bs_scores else 0.0),
+            "robust_score": (
+                float(np.mean(win_scores)) - float(np.std(win_scores, ddof=1))
+                if len(win_scores) > 1
+                else float(np.mean(win_scores))
+            ),
         }
         rows.append(row)
 
@@ -789,12 +1148,18 @@ def main() -> None:
                 "robust_score",
                 "win_score_mean",
                 "win_score_p25",
-                "win_sharpe_mean",
-                "win_sharpe_p25",
-                "win_dd_mean",
                 "trade_rate_mean",
                 "trade_rate_p25",
                 "trade_rate_pen_mean",
+                "trend_rate_mean",
+                "trend_rate_p25",
+                "trend_rate_pen_mean",
+                "mean_rate_mean",
+                "no_trade_rate_mean",
+                "switch_rate_mean",
+                "entropy_mean",
+                "trend_correctness_mean",
+                "dist_pen_mean",
             ]
             + ROUTER_KEYS
         },
@@ -804,7 +1169,7 @@ def main() -> None:
         "windows": [{"start": str(a), "end": str(b)} for a, b in windows],
         "sim_cfg": asdict(sim_cfg),
         "preds_in_log1p": bool(preds_in_log1p),
-        "score_formula": "window_score = sharpe_mean - lambda*sharpe_std - mu*dd_mean - trade_rate_penalty ; robust_score = mean(window_score) + mean(bootstrap(window_score))",
+        "score_formula": "window_score = - (trade_rate_penalty + trend_rate_penalty + dist_penalty) ; robust_score = mean(window_score) - std(window_score)",
         "lambda": float(args.lam),
         "mu": float(args.mu),
         "trade_rate_target": args.trade_rate_target,
@@ -812,6 +1177,23 @@ def main() -> None:
         "trade_rate_min": args.trade_rate_min,
         "trade_rate_max": args.trade_rate_max,
         "trade_rate_penalty": float(args.trade_rate_penalty),
+        "trend_rate_target": args.trend_rate_target,
+        "trend_rate_tol": float(args.trend_rate_tol),
+        "trend_rate_min": args.trend_rate_min,
+        "trend_rate_max": args.trend_rate_max,
+        "trend_rate_penalty": float(args.trend_rate_penalty),
+        "mean_rate_min": float(args.mean_rate_min),
+        "mean_rate_max": float(args.mean_rate_max),
+        "no_trade_rate_min": float(args.no_trade_rate_min),
+        "no_trade_rate_max": float(args.no_trade_rate_max),
+        "disable_dist_rate_constraints": bool(args.disable_dist_rate_constraints),
+        "trend_correct_horizon": int(args.trend_correct_horizon),
+        "heuristic_bounds": {
+            "enabled": bool(args.heuristic_bounds),
+            "qmin": float(args.heuristic_qmin),
+            "qmax": float(args.heuristic_qmax),
+            "bounds": {k: [float(v[0]), float(v[1])] for k, v in bounds.items()},
+        },
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -848,6 +1230,15 @@ def main() -> None:
         f"- trade_rate_mean: {float(best.get('trade_rate_mean', 0.0)):.4f}\n"
         f"- trade_rate_p25: {float(best.get('trade_rate_p25', 0.0)):.4f}\n"
         f"- trade_rate_pen_mean: {float(best.get('trade_rate_pen_mean', 0.0)):.4f}\n"
+        f"- trend_rate_mean: {float(best.get('trend_rate_mean', 0.0)):.4f}\n"
+        f"- trend_rate_p25: {float(best.get('trend_rate_p25', 0.0)):.4f}\n"
+        f"- trend_rate_pen_mean: {float(best.get('trend_rate_pen_mean', 0.0)):.4f}\n"
+        f"- mean_rate_mean: {float(best.get('mean_rate_mean', 0.0)):.4f}\n"
+        f"- no_trade_rate_mean: {float(best.get('no_trade_rate_mean', 0.0)):.4f}\n"
+        f"- switch_rate_mean: {float(best.get('switch_rate_mean', 0.0)):.4f}\n"
+        f"- entropy_mean: {float(best.get('entropy_mean', 0.0)):.4f}\n"
+        f"- trend_correctness_mean: {float(best.get('trend_correctness_mean', 0.0)):.4f}\n"
+        f"- dist_pen_mean: {float(best.get('dist_pen_mean', 0.0)):.4f}\n"
     )
     md.append("\n### How to interpret\n")
     md.append(
@@ -859,6 +1250,13 @@ def main() -> None:
     md.append(
         "- Keep an eye on trade_rate_mean in candidates.csv to avoid unrealistic overtrading.\n"
     )
+    md.append(
+        "- Note: win_sharpe_* are diagnostics only; Router KPI does not optimize Sharpe.\n"
+    )
+    if args.heuristic_bounds and bounds:
+        md.append(
+            f"- heuristic_bounds: qmin={float(args.heuristic_qmin):.2f}, qmax={float(args.heuristic_qmax):.2f}\n"
+        )
     (out_dir / "report.md").write_text("".join(md), encoding="utf-8")
 
     # Optional: HTML report with plots (helps visually confirm plateau vs sharp peak)
@@ -873,6 +1271,10 @@ def main() -> None:
             trade_rate_tol=float(args.trade_rate_tol),
             trade_rate_min=args.trade_rate_min,
             trade_rate_max=args.trade_rate_max,
+            trend_rate_target=args.trend_rate_target,
+            trend_rate_tol=float(args.trend_rate_tol),
+            trend_rate_min=args.trend_rate_min,
+            trend_rate_max=args.trend_rate_max,
         )
     except Exception:
         pass
