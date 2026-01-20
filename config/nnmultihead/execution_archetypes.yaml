@@ -51,7 +51,28 @@ regimes:
               key: trend_r2_20
               threshold: 0.2
               on_missing: false
-          deny_if: [tc_no_oflow_continuation, tc_oflow_weak, tc_volume_too_low, tc_vol_compress, tc_trend_break]
+            # Regime (trend) constraints
+            - name: tc_trend_adx_too_low
+              kind: value_lt
+              key: adx
+              threshold: 20
+              on_missing: false
+            - name: tc_trend_price_below_ma200
+              kind: value_lt
+              key: sma_200_position
+              threshold: 0.0
+              on_missing: false
+            - name: tc_quality_too_low
+              kind: value_lt
+              key: trade_quality
+              threshold: 0.12
+              on_missing: false
+            - name: tc_score_too_low
+              kind: value_lt
+              key: tc_score
+              threshold: 0.2226
+              on_missing: false
+          deny_if: [tc_no_oflow_continuation, tc_oflow_weak, tc_volume_too_low, tc_vol_compress, tc_trend_break, tc_trend_adx_too_low, tc_trend_price_below_ma200, tc_quality_too_low, tc_score_too_low]
           allow_if: []
           allow_mode: any
           default_action: allow
@@ -124,9 +145,30 @@ regimes:
               key: bb_width_normalized
               quantile: 0.2
               on_missing: false
-          deny_if: [te_fake_breakout_oflow, te_no_volume_surge, te_vol_not_expanding, te_volume_too_low, te_bb_width_too_low]
+            # Regime (trend) constraints
+            - name: te_trend_adx_too_low
+              kind: value_lt
+              key: adx
+              threshold: 20
+              on_missing: false
+            - name: te_trend_price_below_ma200
+              kind: value_lt
+              key: sma_200_position
+              threshold: 0.0
+              on_missing: false
+            - name: te_quality_too_low
+              kind: value_lt
+              key: trade_quality
+              threshold: 0.07
+              on_missing: false
+            - name: te_score_too_low
+              kind: value_lt
+              key: te_score
+              threshold: 0.4253
+              on_missing: false
+          deny_if: [te_fake_breakout_oflow, te_no_volume_surge, te_vol_not_expanding, te_volume_too_low, te_bb_width_too_low, te_trend_adx_too_low, te_trend_price_below_ma200, te_quality_too_low, te_score_too_low]
           allow_if: [te_oflow_expansion, te_volume_surge, te_vol_expansion]
-          allow_mode: min2
+          allow_mode: any
           default_action: deny
         evidence_rules:
           # Expansion requires orderflow + volume surge signals
@@ -196,9 +238,40 @@ regimes:
               key: bb_width_normalized
               quantile: 0.2
               on_missing: false
-          deny_if: [fr_volume_too_low, fr_bb_width_too_low]
-          allow_if: [fr_divergence, fr_vpin_spike, fr_cvd_divergence, fr_absorption]
-          allow_mode: min2
+            - name: fr_near_sr
+              kind: value_lt
+              key: sr_distance_normalized
+              threshold: 0.3
+              on_missing: false
+            # Regime (mean) constraints
+            - name: fr_mean_adx_too_high
+              kind: value_gt
+              key: adx
+              threshold: 25
+              on_missing: false
+            - name: fr_mean_sr_too_far
+              kind: value_gt
+              key: sr_distance_normalized
+              threshold: 0.4
+              on_missing: false
+            - name: fr_sqs_too_low
+              kind: value_lt
+              key: sqs
+              threshold: 0.2
+              on_missing: false
+            - name: fr_quality_too_low
+              kind: value_lt
+              key: trade_quality
+              threshold: 0.09
+              on_missing: false
+            - name: fr_score_too_low
+              kind: value_lt
+              key: mean_score
+              threshold: 0.2751
+              on_missing: false
+          deny_if: [fr_volume_too_low, fr_bb_width_too_low, fr_mean_adx_too_high, fr_mean_sr_too_far, fr_sqs_too_low, fr_quality_too_low, fr_score_too_low]
+          allow_if: [fr_divergence, fr_vpin_spike, fr_cvd_divergence, fr_absorption, fr_near_sr]
+          allow_mode: any
           default_action: deny
         evidence_rules:
           # Failure reversion needs divergence/absorption-like context
@@ -271,9 +344,40 @@ regimes:
               key: bb_width_normalized
               quantile: 0.2
               on_missing: false
-          deny_if: [et_volume_too_low, et_bb_width_too_low]
-          allow_if: [et_vol_climax, et_vpin_spike, et_cvd_divergence, et_momentum_decay, et_near_lvn]
-          allow_mode: min2
+            - name: et_near_sr
+              kind: value_lt
+              key: sr_distance_normalized
+              threshold: 0.3
+              on_missing: false
+            # Regime (mean) constraints
+            - name: et_mean_adx_too_high
+              kind: value_gt
+              key: adx
+              threshold: 25
+              on_missing: false
+            - name: et_mean_sr_too_far
+              kind: value_gt
+              key: sr_distance_normalized
+              threshold: 0.4
+              on_missing: false
+            - name: et_sqs_too_low
+              kind: value_lt
+              key: sqs
+              threshold: 0.2
+              on_missing: false
+            - name: et_quality_too_low
+              kind: value_lt
+              key: trade_quality
+              threshold: 0.09
+              on_missing: false
+            - name: et_score_too_low
+              kind: value_lt
+              key: mean_score
+              threshold: 0.2751
+              on_missing: false
+          deny_if: [et_volume_too_low, et_bb_width_too_low, et_mean_adx_too_high, et_mean_sr_too_far, et_sqs_too_low, et_quality_too_low, et_score_too_low]
+          allow_if: [et_vol_climax, et_vpin_spike, et_cvd_divergence, et_momentum_decay, et_near_lvn, et_near_sr]
+          allow_mode: any
           default_action: deny
         evidence_rules:
           # Exhaustion is rare: require volume profile + momentum decay signals

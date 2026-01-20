@@ -400,6 +400,8 @@ flowchart TD
 - 总体原则与宪法：`docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`
 - 架构升级 V1：`docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`
 - Experiment Loop：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
+- Regime Filter + Trade Quality 方案：`docs/architecture/REGIME_FILTER_TRADE_QUALITY_PLAN_CN.md`
+- 为什么用规则做 Regime 判断：`docs/architecture/WHY_REGIME_RULES_OVER_NN_CN.md`
 - NNMH 3-action E2E：`docs/guides/NNMULTIHEAD_3ACTION_E2E_CN.md`
 - NNMH 命令总览（含 RL/BC/FSM 说明）：`docs/guides/NNMULTIHEAD_COMMANDS_CN.md`
 - 为什么延迟 RL：`docs/architecture/WHY_RL_IS_DELAYED_CN.md`

@@ -18,4 +18,12 @@
 - rsi_f
 - bb_width_f
 - volume_anomaly_f
+- sma_100_f
+- sma_200_f
+- sma_200_position_f
+- sma_200_slope_f
+- sma_slope_x_price_pos_rank_f
+- adx_f
+- vwap_position_f
+- cvd_basic_f
 

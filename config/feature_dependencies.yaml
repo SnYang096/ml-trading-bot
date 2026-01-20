@@ -1734,6 +1734,18 @@ features:
     - cvd_change_5_normalized
     category: order_flow
     description: CVD change features (raw + normalized) passthrough.
+  cvd_basic_f:
+    module: enhanced
+    compute_func: select_columns_from_series
+    dependencies: []
+    required_columns:
+    - cvd_normalized
+    - cvd_change_5_normalized
+    output_columns:
+    - cvd_normalized
+    - cvd_change_5_normalized
+    category: order_flow
+    description: CVD basic normalized features (simple regime proxy).
   ofi_short_f:
     module: enhanced
     compute_func: compute_ofi_short_from_series
@@ -5216,6 +5228,32 @@ features:
       normalized: true
       output_normalization_map:
         sma_200_position: bounded_-1_1
+  vwap_position_f:
+    module: baseline
+    compute_func: compute_vwap_position_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - volume
+    output_columns:
+    - price_to_vwap_pct
+    - price_to_vwap_ratio
+    category: trend
+    description: '价格相对于 VWAP 的归一化位置
+
+      price_to_vwap_pct = (close - vwap) / close
+      price_to_vwap_ratio = close / vwap
+      '
+    pass_full_df: false
+    column_mappings:
+      close: close
+      volume: volume
+    compute_params:
+      window: 20
+      normalized: true
+      output_normalization_map:
+        price_to_vwap_pct: bounded_-1_1
+        price_to_vwap_ratio: unitless
   volume_ratio_f:
     module: baseline
     compute_func: compute_volume_ratio_from_series

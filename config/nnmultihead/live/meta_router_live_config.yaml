@@ -6,9 +6,7 @@ enabled_archetypes:
   TREND:
     - TrendContinuationTC
     - TrendExpansionTE
-  MEAN:
-    - FailureReversionFR
-    - ExhaustionTurnET
+  MEAN: []  # Phase 4-C-Split: Disabled MEAN archetypes due to negative Sharpe (-1.70, 70% of trades)
   NO_TRADE: []
 
 # Per-archetype size multipliers (relative to base trade_size).

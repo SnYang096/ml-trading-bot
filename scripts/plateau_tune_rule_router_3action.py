@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Threshold plateau tuning protocol for Rule Router (3-action).
+Threshold plateau tuning protocol for Regime Rule Router (3-action).
 
 Goal:
   Avoid "sharp peak" overfitting by selecting thresholds that sit on a flat, robust plateau:
@@ -9,7 +9,7 @@ Goal:
   - low local sensitivity (small threshold nudges don't flip the result)
 
 Inputs:
-  - preds: preds_*.parquet (nnmultihead outputs per symbol; includes timestamp + pred_*)
+  - preds: preds_*.parquet (nnmultihead outputs per symbol; includes timestamp + feature columns)
   - logs:  logs_3action.parquet (per-step ret_mean/ret_trend already computed, e.g. rr_execution)
   - model: model.pt (to infer preds_in_log1p flag)
 
@@ -47,19 +47,20 @@ from src.time_series_model.rl.sim_env_3action import (
     simulate_3action_episode,
 )
 from src.time_series_model.rule.router_3action import (
-    Rule3ActionConfig,
-    compute_mode_3action,
+    RegimeRuleConfig,
+    compute_mode_3action_regime_only,
 )
 
 
-ROUTER_KEYS = [
-    "mfe_min",
-    "eff_min",
-    "dir_conf_trend_min",
-    "mfe_trend_min",
-    "ttm_trend_min",
-    "eff_mean_min",
-    "ttm_mean_max",
+REGIME_KEYS = [
+    "trend_adx_min",
+    "trend_ma200_pos_min",
+    "mean_adx_max",
+    "mean_sr_max",
+    "mean_sqs_min",
+    "te_adx_min",
+    "te_adx_slope_min",
+    "extreme_atr_percentile_max",
 ]
 
 
@@ -67,7 +68,7 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return float(max(lo, min(hi, float(x))))
 
 
-def _compute_router_bounds(
+def _compute_regime_bounds(
     *,
     preds_by_sym: Dict[str, pd.DataFrame],
     preds_in_log1p: bool,
@@ -76,17 +77,25 @@ def _compute_router_bounds(
 ) -> Dict[str, Tuple[float, float]]:
     """
     Heuristic bounds from empirical distributions.
-    Ensures thresholds stay within reasonable data-driven ranges.
+    Ensures regime thresholds stay within reasonable data-driven ranges.
     """
     rows: List[pd.DataFrame] = []
     for df in preds_by_sym.values():
         if df is None or df.empty:
             continue
-        # Use default config; derived fields are independent of thresholds.
-        diag = compute_mode_3action(
-            df, cfg=Rule3ActionConfig(), preds_in_log1p=preds_in_log1p
-        )
-        rows.append(diag[["mfe_atr", "eff", "t_to_mfe", "dir_conf"]])
+        keep = [
+            c
+            for c in [
+                "adx",
+                "sma_200_position",
+                "sr_distance_normalized",
+                "sqs",
+                "atr_percentile",
+            ]
+            if c in df.columns
+        ]
+        if keep:
+            rows.append(df[keep])
     if not rows:
         return {}
     all_df = pd.concat(rows, axis=0)
@@ -98,17 +107,18 @@ def _compute_router_bounds(
             return (0.0, 0.0)
         return (float(s.quantile(qmin)), float(s.quantile(qmax)))
 
-    mfe_lo, mfe_hi = _q("mfe_atr")
-    eff_lo, eff_hi = _q("eff")
-    ttm_lo, ttm_hi = _q("t_to_mfe")
-    dconf_lo, dconf_hi = _q("dir_conf")
-    bounds["mfe_min"] = (mfe_lo, mfe_hi)
-    bounds["mfe_trend_min"] = (mfe_lo, mfe_hi)
-    bounds["eff_min"] = (eff_lo, eff_hi)
-    bounds["eff_mean_min"] = (eff_lo, eff_hi)
-    bounds["ttm_trend_min"] = (ttm_lo, ttm_hi)
-    bounds["ttm_mean_max"] = (ttm_lo, ttm_hi)
-    bounds["dir_conf_trend_min"] = (dconf_lo, dconf_hi)
+    if "adx" in all_df.columns:
+        bounds["trend_adx_min"] = _q("adx")
+        bounds["mean_adx_max"] = _q("adx")
+        bounds["te_adx_min"] = _q("adx")
+    if "sma_200_position" in all_df.columns:
+        bounds["trend_ma200_pos_min"] = _q("sma_200_position")
+    if "sr_distance_normalized" in all_df.columns:
+        bounds["mean_sr_max"] = _q("sr_distance_normalized")
+    if "sqs" in all_df.columns:
+        bounds["mean_sqs_min"] = _q("sqs")
+    if "atr_percentile" in all_df.columns:
+        bounds["extreme_atr_percentile_max"] = _q("atr_percentile")
     return bounds
 
 
@@ -121,6 +131,37 @@ def _apply_bounds(
     for k, (lo, hi) in bounds.items():
         if k in out and np.isfinite(lo) and np.isfinite(hi) and hi >= lo:
             out[k] = _clamp(out[k], lo, hi)
+    # keep simple logical constraints
+    if "trend_adx_min" in out and "te_adx_min" in out:
+        out["trend_adx_min"] = max(out["trend_adx_min"], out["te_adx_min"])
+    if "mean_adx_max" in out and "trend_adx_min" in out:
+        out["mean_adx_max"] = min(out["mean_adx_max"], out["trend_adx_min"])
+    if "extreme_atr_percentile_max" in out:
+        out["extreme_atr_percentile_max"] = _clamp(
+            out["extreme_atr_percentile_max"], 0.5, 0.999
+        )
+    return out
+
+
+def _apply_extreme_override(
+    cand: Dict[str, float],
+    *,
+    extreme_fixed: Optional[float],
+    extreme_range: Optional[Tuple[float, float]],
+) -> Dict[str, float]:
+    if (extreme_fixed is None) and (extreme_range is None):
+        return cand
+    out = dict(cand)
+    if extreme_fixed is not None:
+        out["extreme_atr_percentile_max"] = float(extreme_fixed)
+        return out
+    if extreme_range is not None:
+        lo, hi = extreme_range
+        if "extreme_atr_percentile_max" in out:
+            out["extreme_atr_percentile_max"] = _clamp(
+                out["extreme_atr_percentile_max"], float(lo), float(hi)
+            )
+        return out
     return out
 
 
@@ -499,7 +540,7 @@ def _eval_thresholds_on_logs(
     *,
     preds_by_sym: Dict[str, pd.DataFrame],
     logs_by_sym: Dict[str, pd.DataFrame],
-    cfg: Rule3ActionConfig,
+    cfg: RegimeRuleConfig,
     preds_in_log1p: bool,
     sim_cfg: SimEnvConfig,
     trend_correct_horizon: int,
@@ -507,31 +548,35 @@ def _eval_thresholds_on_logs(
     sharpe_by_sym: List[float] = []
     dd_by_sym: List[float] = []
     trade_rate_by_sym: List[float] = []
-    trend_rate_by_sym: List[float] = []
+    tc_rate_by_sym: List[float] = []
+    te_rate_by_sym: List[float] = []
     mean_rate_by_sym: List[float] = []
     no_trade_rate_by_sym: List[float] = []
     switch_rate_by_sym: List[float] = []
     entropy_by_sym: List[float] = []
-    trend_correct_by_sym: List[float] = []
+    extreme_contraction_by_sym: List[float] = []
 
     for sym, logs in logs_by_sym.items():
         preds = preds_by_sym.get(sym)
         if preds is None or preds.empty or logs is None or logs.empty:
             continue
 
-        mode_df = compute_mode_3action(preds, cfg=cfg, preds_in_log1p=preds_in_log1p)
+        mode_df = compute_mode_3action_regime_only(
+            preds, regime_cfg=cfg, preds_in_log1p=preds_in_log1p
+        )
         s = mode_df["mode_action"].astype(int)
         s.index = pd.to_datetime(preds["timestamp"], errors="coerce").dt.tz_localize(
             None
         )
-        actions = (
-            s.reindex(
-                pd.to_datetime(logs["timestamp"], errors="coerce").dt.tz_localize(None)
-            )
-            .fillna(0)
-            .astype(int)
-            .to_numpy()
-        )
+        ts_idx = pd.to_datetime(logs["timestamp"], errors="coerce").dt.tz_localize(None)
+        actions = s.reindex(ts_idx).fillna(0).astype(int).to_numpy()
+
+        # Regime labels aligned to logs timestamps (TC/TE/MEAN/NO_TRADE)
+        regime_s = mode_df["regime"].astype(str)
+        regime_s.index = pd.to_datetime(
+            preds["timestamp"], errors="coerce"
+        ).dt.tz_localize(None)
+        regimes = regime_s.reindex(ts_idx).fillna("NO_TRADE").astype(str).to_numpy()
 
         sim = simulate_3action_episode(logs, actions=actions.tolist(), cfg=sim_cfg)
         pnl = (
@@ -549,63 +594,37 @@ def _eval_thresholds_on_logs(
         sharpe_by_sym.append(_sharpe(pnl, steps_per_year))
         dd_by_sym.append(_max_drawdown(equity))
         trade_rate_by_sym.append(float(np.mean(actions != 0)))
-        trend_rate_by_sym.append(float(np.mean(actions == 2)))
-        mean_rate_by_sym.append(float(np.mean(actions == 1)))
-        no_trade_rate_by_sym.append(float(np.mean(actions == 0)))
-        if len(actions) > 1:
-            switch_rate_by_sym.append(float(np.mean(actions[1:] != actions[:-1])))
+        # Regime shares (TE/TC split)
+        tc_rate_by_sym.append(float(np.mean(regimes == "TC")))
+        te_rate_by_sym.append(float(np.mean(regimes == "TE")))
+        mean_rate_by_sym.append(float(np.mean(regimes == "MEAN")))
+        no_trade_rate_by_sym.append(float(np.mean(regimes == "NO_TRADE")))
+        if len(regimes) > 1:
+            switch_rate_by_sym.append(float(np.mean(regimes[1:] != regimes[:-1])))
         else:
             switch_rate_by_sym.append(0.0)
         # entropy over {NO_TRADE, MEAN, TREND}
-        counts = np.bincount(actions, minlength=3).astype(float)
+        # entropy over {NO_TRADE, MEAN, TE, TC}
+        labels = np.array(["NO_TRADE", "MEAN", "TE", "TC"], dtype=object)
+        counts = np.array([float(np.sum(regimes == l)) for l in labels], dtype=float)
         probs = counts / max(1.0, counts.sum())
         entropy = float(-np.sum([p * np.log(p) for p in probs if p > 0.0]))
         entropy_by_sym.append(entropy)
-        # conditional correctness: realized MFE over next horizon (if OHLC available)
-        if {"high", "low", "close"}.issubset(set(logs.columns)):
-            high = pd.to_numeric(logs["high"], errors="coerce").astype(float)
-            low = pd.to_numeric(logs["low"], errors="coerce").astype(float)
-            close = pd.to_numeric(logs["close"], errors="coerce").astype(float)
-            # ATR (use provided atr if available, else TR rolling mean)
-            if "atr" in logs.columns:
-                atr = pd.to_numeric(logs["atr"], errors="coerce").astype(float)
-            else:
-                tr = pd.concat(
-                    [
-                        high - low,
-                        (high - close.shift(1)).abs(),
-                        (low - close.shift(1)).abs(),
-                    ],
-                    axis=1,
-                ).max(axis=1)
-                atr = tr.rolling(window=14, min_periods=1).mean().astype(float)
-            horizon = max(1, int(trend_correct_horizon))
-            # forward window max/min (exclude current bar)
-            f_high = (
-                high[::-1].rolling(window=horizon, min_periods=1).max()[::-1].shift(-1)
-            )
-            f_low = (
-                low[::-1].rolling(window=horizon, min_periods=1).min()[::-1].shift(-1)
-            )
-            dir_score = pd.to_numeric(
-                logs.get("head_dir_score", 0.0), errors="coerce"
-            ).fillna(0.0)
-            dir_sign = np.sign(dir_score.to_numpy(dtype=float))
-            mfe_atr = np.where(
-                dir_sign >= 0,
-                (f_high.to_numpy(dtype=float) - close.to_numpy(dtype=float))
-                / np.maximum(1e-9, atr.to_numpy(dtype=float)),
-                (close.to_numpy(dtype=float) - f_low.to_numpy(dtype=float))
-                / np.maximum(1e-9, atr.to_numpy(dtype=float)),
-            )
-            mfe_thr = float(cfg.mfe_trend_min)
-            mask = (actions == 2) & np.isfinite(mfe_atr)
-            if mask.any():
-                trend_correct_by_sym.append(float(np.mean(mfe_atr[mask] >= mfe_thr)))
+        # Extreme contraction (top 1% ATR per symbol; fallback to abs returns)
+        if "atr" in logs.columns:
+            atr = pd.to_numeric(logs["atr"], errors="coerce").astype(float)
+            thr = float(atr.quantile(0.99)) if len(atr) else float("nan")
+            extreme_idx = atr >= thr
         else:
-            raise ValueError(
-                "conditional_correctness requires logs with high/low/close (and atr or inferable ATR). "
-                "Regenerate logs with returns_source=rr_execution or vectorbt_execution."
+            close = pd.to_numeric(logs["close"], errors="coerce").astype(float)
+            ret = close.pct_change().abs()
+            thr = float(ret.quantile(0.99)) if len(ret) else float("nan")
+            extreme_idx = ret >= thr
+        if np.isfinite(thr) and extreme_idx.any():
+            allow_rate = float(np.mean(actions != 0))
+            allow_rate_extreme = float(np.mean(actions[extreme_idx.to_numpy()] != 0))
+            extreme_contraction_by_sym.append(
+                allow_rate_extreme / allow_rate if allow_rate > 0 else 0.0
             )
 
     if not sharpe_by_sym:
@@ -616,11 +635,13 @@ def _eval_thresholds_on_logs(
             "trade_rate_mean": 0.0,
             "n_symbols": 0.0,
             "trend_rate_mean": 0.0,
+            "tc_rate_mean": 0.0,
+            "te_rate_mean": 0.0,
             "mean_rate_mean": 0.0,
             "no_trade_rate_mean": 0.0,
             "switch_rate_mean": 0.0,
             "entropy_mean": 0.0,
-            "trend_correctness_mean": 0.0,
+            "extreme_contraction_mean": 0.0,
         }
 
     return {
@@ -631,9 +652,9 @@ def _eval_thresholds_on_logs(
         "rule_dd_mean": float(np.mean(dd_by_sym)),
         "trade_rate_mean": float(np.mean(trade_rate_by_sym)),
         "n_symbols": float(len(sharpe_by_sym)),
-        "trend_rate_mean": (
-            float(np.mean(trend_rate_by_sym)) if trend_rate_by_sym else 0.0
-        ),
+        "trend_rate_mean": float(np.mean(tc_rate_by_sym)) if tc_rate_by_sym else 0.0,
+        "tc_rate_mean": float(np.mean(tc_rate_by_sym)) if tc_rate_by_sym else 0.0,
+        "te_rate_mean": float(np.mean(te_rate_by_sym)) if te_rate_by_sym else 0.0,
         "mean_rate_mean": float(np.mean(mean_rate_by_sym)) if mean_rate_by_sym else 0.0,
         "no_trade_rate_mean": (
             float(np.mean(no_trade_rate_by_sym)) if no_trade_rate_by_sym else 0.0
@@ -642,8 +663,10 @@ def _eval_thresholds_on_logs(
             float(np.mean(switch_rate_by_sym)) if switch_rate_by_sym else 0.0
         ),
         "entropy_mean": float(np.mean(entropy_by_sym)) if entropy_by_sym else 0.0,
-        "trend_correctness_mean": (
-            float(np.mean(trend_correct_by_sym)) if trend_correct_by_sym else 0.0
+        "extreme_contraction_mean": (
+            float(np.mean(extreme_contraction_by_sym))
+            if extreme_contraction_by_sym
+            else 0.0
         ),
     }
 
@@ -712,18 +735,26 @@ def _candidate_from_baseline(
     abs_sigma: float,
 ) -> Dict[str, float]:
     out = dict(base)
-    for k in ROUTER_KEYS:
+    for k in REGIME_KEYS:
         v = float(base[k])
         noise = rng.normal(0.0, 1.0)
         dv = abs_sigma + rel_sigma * abs(v)
         out[k] = float(v + noise * dv)
     # keep some obvious constraints
-    out["mfe_min"] = max(0.0, out["mfe_min"])
-    out["eff_min"] = max(0.0, out["eff_min"])
-    out["eff_mean_min"] = max(0.0, out["eff_mean_min"])
-    out["mfe_trend_min"] = max(0.0, out["mfe_trend_min"])
-    out["ttm_trend_min"] = max(0.0, out["ttm_trend_min"])
-    out["ttm_mean_max"] = max(0.0, out["ttm_mean_max"])
+    if "trend_adx_min" in out and "te_adx_min" in out:
+        out["trend_adx_min"] = max(out["trend_adx_min"], out["te_adx_min"])
+    if "mean_adx_max" in out:
+        out["mean_adx_max"] = max(0.0, out["mean_adx_max"])
+    if "mean_sr_max" in out:
+        out["mean_sr_max"] = max(0.0, out["mean_sr_max"])
+    if "mean_sqs_min" in out:
+        out["mean_sqs_min"] = max(0.0, out["mean_sqs_min"])
+    if "te_adx_slope_min" in out:
+        out["te_adx_slope_min"] = max(0.0, out["te_adx_slope_min"])
+    if "extreme_atr_percentile_max" in out:
+        out["extreme_atr_percentile_max"] = _clamp(
+            out["extreme_atr_percentile_max"], 0.5, 0.999
+        )
     return out
 
 
@@ -739,7 +770,20 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output directory")
 
     ap.add_argument(
-        "--baseline-json", required=True, help="baseline thresholds JSON (7 keys)"
+        "--baseline-json",
+        required=True,
+        help="baseline regime thresholds JSON (keys: trend_adx_min, trend_ma200_pos_min, mean_adx_max, mean_sr_max, mean_sqs_min, te_adx_min, te_adx_slope_min, extreme_atr_percentile_max)",
+    )
+    ap.add_argument(
+        "--extreme-atr-fixed",
+        type=float,
+        default=None,
+        help="Fix extreme_atr_percentile_max to a constant (removes it from search).",
+    )
+    ap.add_argument(
+        "--extreme-atr-range",
+        default=None,
+        help="Clamp extreme_atr_percentile_max to a range, e.g. 0.93,0.97.",
     )
     ap.add_argument("--n-candidates", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
@@ -778,6 +822,17 @@ def main() -> None:
     ap.add_argument(
         "--mu", dest="mu", type=float, default=0.5, help="penalty on max drawdown mean"
     )
+    ap.add_argument(
+        "--regime-soft-scores",
+        action="store_true",
+        help="Use soft regime scores instead of hard thresholds.",
+    )
+    ap.add_argument(
+        "--min-regime-score",
+        type=float,
+        default=0.2,
+        help="Minimum score to assign a regime in soft mode.",
+    )
 
     ap.add_argument("--entry-delay", type=int, default=0)
     ap.add_argument("--cost-per-turnover", type=float, default=0.0)
@@ -811,6 +866,28 @@ def main() -> None:
         type=float,
         default=1.5,
         help="Penalty weight for trade-rate deviation (higher => force stable operating density).",
+    )
+    ap.add_argument(
+        "--trade-rate-hard",
+        action="store_true",
+        help="If set, candidates outside trade-rate min/max are heavily penalized.",
+    )
+    ap.add_argument(
+        "--include-trade-rate-penalty",
+        action="store_true",
+        help="Include trade_rate penalty in window_score (default off for regime-only tuning).",
+    )
+    ap.add_argument(
+        "--extreme-contraction-max",
+        type=float,
+        default=None,
+        help="Optional max extreme_contraction_mean (hinge penalty if above).",
+    )
+    ap.add_argument(
+        "--extreme-contraction-penalty",
+        type=float,
+        default=2.0,
+        help="Penalty weight for extreme_contraction_mean violations.",
     )
     ap.add_argument(
         "--trend-rate-target",
@@ -858,7 +935,27 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     base_obj = json.loads(Path(args.baseline_json).read_text(encoding="utf-8"))
-    base: Dict[str, float] = {k: float(base_obj[k]) for k in ROUTER_KEYS}
+    base: Dict[str, float] = {k: float(base_obj[k]) for k in REGIME_KEYS}
+
+    extreme_fixed = (
+        float(args.extreme_atr_fixed) if args.extreme_atr_fixed is not None else None
+    )
+    extreme_range: Optional[Tuple[float, float]] = None
+    if args.extreme_atr_range:
+        parts = [p.strip() for p in str(args.extreme_atr_range).split(",") if p.strip()]
+        if len(parts) != 2:
+            raise ValueError("--extreme-atr-range expects 'lo,hi' (e.g., 0.93,0.97)")
+        lo, hi = float(parts[0]), float(parts[1])
+        if hi < lo:
+            lo, hi = hi, lo
+        extreme_range = (lo, hi)
+
+    # Apply extreme override to baseline if requested
+    base = _apply_extreme_override(
+        base,
+        extreme_fixed=extreme_fixed,
+        extreme_range=extreme_range,
+    )
 
     preds_in_log1p = _load_preds_in_log1p_from_model(Path(args.model))
     preds_by_sym = _load_preds_by_symbol(Path(args.preds))
@@ -869,7 +966,7 @@ def main() -> None:
 
     bounds = {}
     if args.heuristic_bounds:
-        bounds = _compute_router_bounds(
+        bounds = _compute_regime_bounds(
             preds_by_sym=preds_by_sym,
             preds_in_log1p=preds_in_log1p,
             qmin=float(args.heuristic_qmin),
@@ -896,14 +993,19 @@ def main() -> None:
     dist_keys = [
         "trade_rate_mean",
         "trend_rate_mean",
+        "te_rate_mean",
         "mean_rate_mean",
         "no_trade_rate_mean",
         "switch_rate_mean",
         "entropy_mean",
-        "trend_correctness_mean",
+        "extreme_contraction_mean",
     ]
     baseline_window_metrics: List[Dict[str, float]] = []
-    base_cfg = Rule3ActionConfig(**{k: float(base[k]) for k in ROUTER_KEYS})
+    base_cfg = RegimeRuleConfig(
+        **{k: float(base[k]) for k in REGIME_KEYS},
+        use_soft_scores=bool(args.regime_soft_scores),
+        min_regime_score=float(args.min_regime_score),
+    )
     for ws, we in windows:
         preds_w = {
             s: _slice_by_time(df, start=ws, end=we) for s, df in preds_by_sym.items()
@@ -934,7 +1036,7 @@ def main() -> None:
             "mean_rate_mean",
             "no_trade_rate_mean",
             "switch_rate_mean",
-            "trend_correctness_mean",
+            "extreme_contraction_mean",
         }:
             lo = max(0.0, lo)
             hi = min(1.0, hi)
@@ -944,7 +1046,13 @@ def main() -> None:
         baseline_ranges[k] = (lo, hi)
 
     # candidates include baseline
-    cands: List[Dict[str, float]] = [_apply_bounds(dict(base), bounds)]
+    cands: List[Dict[str, float]] = [
+        _apply_extreme_override(
+            _apply_bounds(dict(base), bounds),
+            extreme_fixed=extreme_fixed,
+            extreme_range=extreme_range,
+        )
+    ]
     for _ in range(int(args.n_candidates)):
         cand = _candidate_from_baseline(
             base,
@@ -952,11 +1060,21 @@ def main() -> None:
             rel_sigma=float(args.rel_sigma),
             abs_sigma=float(args.abs_sigma),
         )
-        cands.append(_apply_bounds(cand, bounds))
+        cands.append(
+            _apply_extreme_override(
+                _apply_bounds(cand, bounds),
+                extreme_fixed=extreme_fixed,
+                extreme_range=extreme_range,
+            )
+        )
 
     rows = []
     for i, cand in enumerate(cands):
-        cfg = Rule3ActionConfig(**{k: float(cand[k]) for k in ROUTER_KEYS})
+        cfg = RegimeRuleConfig(
+            **{k: float(cand[k]) for k in REGIME_KEYS},
+            use_soft_scores=bool(args.regime_soft_scores),
+            min_regime_score=float(args.min_regime_score),
+        )
 
         # window metrics
         win_scores: List[float] = []
@@ -964,11 +1082,12 @@ def main() -> None:
         win_dd: List[float] = []
         win_trade_rate: List[float] = []
         win_trend_rate: List[float] = []
+        win_te_rate: List[float] = []
         win_mean_rate: List[float] = []
         win_no_trade_rate: List[float] = []
         win_switch_rate: List[float] = []
         win_entropy: List[float] = []
-        win_trend_correct: List[float] = []
+        win_extreme_contraction: List[float] = []
         win_trade_pen: List[float] = []
         win_trend_pen: List[float] = []
         win_dist_pen: List[float] = []
@@ -990,21 +1109,36 @@ def main() -> None:
             )
             tr = float(m.get("trade_rate_mean", 0.0))
             tr_trend = float(m.get("trend_rate_mean", 0.0))
+            tr_te = float(m.get("te_rate_mean", 0.0))
             tr_mean = float(m.get("mean_rate_mean", 0.0))
             tr_no = float(m.get("no_trade_rate_mean", 0.0))
             tr_switch = float(m.get("switch_rate_mean", 0.0))
             tr_entropy = float(m.get("entropy_mean", 0.0))
-            tr_correct = float(m.get("trend_correctness_mean", 0.0))
+            tr_ext = float(m.get("extreme_contraction_mean", 0.0))
 
             # explicit penalties (optional)
-            pen = _trade_rate_penalty(
-                tr,
-                target=args.trade_rate_target,
-                tol=float(args.trade_rate_tol),
-                w=float(args.trade_rate_penalty),
-                min_v=args.trade_rate_min,
-                max_v=args.trade_rate_max,
-            )
+            pen = 0.0
+            pen_hard = 0.0
+            if args.include_trade_rate_penalty:
+                pen = _trade_rate_penalty(
+                    tr,
+                    target=args.trade_rate_target,
+                    tol=float(args.trade_rate_tol),
+                    w=float(args.trade_rate_penalty),
+                    min_v=args.trade_rate_min,
+                    max_v=args.trade_rate_max,
+                )
+                if args.trade_rate_hard and (
+                    (
+                        args.trade_rate_min is not None
+                        and tr < float(args.trade_rate_min)
+                    )
+                    or (
+                        args.trade_rate_max is not None
+                        and tr > float(args.trade_rate_max)
+                    )
+                ):
+                    pen_hard = 1e6
             pen_trend = _trade_rate_penalty(
                 tr_trend,
                 target=args.trend_rate_target,
@@ -1013,6 +1147,14 @@ def main() -> None:
                 min_v=args.trend_rate_min,
                 max_v=args.trend_rate_max,
             )
+            pen_extreme = 0.0
+            if args.extreme_contraction_max is not None:
+                pen_extreme = _range_penalty(
+                    tr_ext,
+                    lo=0.0,
+                    hi=float(args.extreme_contraction_max),
+                    weight=float(args.extreme_contraction_penalty),
+                )
 
             # baseline-driven distribution penalties
             dist_pen = 0.0
@@ -1030,7 +1172,7 @@ def main() -> None:
                 ("no_trade_rate_mean", tr_no),
                 ("switch_rate_mean", tr_switch),
                 ("entropy_mean", tr_entropy),
-                ("trend_correctness_mean", tr_correct),
+                ("extreme_contraction_mean", tr_ext),
             ]:
                 if key in explicit_keys:
                     continue
@@ -1051,15 +1193,22 @@ def main() -> None:
             win_dd.append(float(m["rule_dd_mean"]))
             win_trade_rate.append(tr)
             win_trend_rate.append(tr_trend)
+            win_te_rate.append(tr_te)
             win_mean_rate.append(tr_mean)
             win_no_trade_rate.append(tr_no)
             win_switch_rate.append(tr_switch)
             win_entropy.append(tr_entropy)
-            win_trend_correct.append(tr_correct)
-            win_trade_pen.append(float(pen))
+            win_extreme_contraction.append(tr_ext)
+            win_trade_pen.append(float(pen) + float(pen_extreme) + float(pen_hard))
             win_trend_pen.append(float(pen_trend))
             win_dist_pen.append(float(dist_pen))
-            win_scores.append(-float(pen) - float(pen_trend) - float(dist_pen))
+            win_scores.append(
+                -float(pen)
+                - float(pen_trend)
+                - float(pen_extreme)
+                - float(dist_pen)
+                - float(pen_hard)
+            )
 
         # bootstrap metrics (resample windows)
         bs_scores: List[float] = []
@@ -1070,7 +1219,7 @@ def main() -> None:
 
         row = {
             "cand_id": int(i),
-            **{k: float(cand[k]) for k in ROUTER_KEYS},
+            **{k: float(cand[k]) for k in REGIME_KEYS},
             "win_score_mean": float(np.mean(win_scores)),
             "win_score_p25": float(np.quantile(win_scores, 0.25)),
             "win_sharpe_mean": float(np.mean(win_sharpes)),
@@ -1085,6 +1234,8 @@ def main() -> None:
             "trend_rate_mean": (
                 float(np.mean(win_trend_rate)) if win_trend_rate else 0.0
             ),
+            "tc_rate_mean": float(np.mean(win_trend_rate)) if win_trend_rate else 0.0,
+            "te_rate_mean": float(np.mean(win_te_rate)) if win_te_rate else 0.0,
             "trend_rate_p25": (
                 float(np.quantile(win_trend_rate, 0.25)) if win_trend_rate else 0.0
             ),
@@ -1096,8 +1247,10 @@ def main() -> None:
                 float(np.mean(win_switch_rate)) if win_switch_rate else 0.0
             ),
             "entropy_mean": float(np.mean(win_entropy)) if win_entropy else 0.0,
-            "trend_correctness_mean": (
-                float(np.mean(win_trend_correct)) if win_trend_correct else 0.0
+            "extreme_contraction_mean": (
+                float(np.mean(win_extreme_contraction))
+                if win_extreme_contraction
+                else 0.0
             ),
             "trade_rate_pen_mean": (
                 float(np.mean(win_trade_pen)) if win_trade_pen else 0.0
@@ -1154,14 +1307,16 @@ def main() -> None:
                 "trend_rate_mean",
                 "trend_rate_p25",
                 "trend_rate_pen_mean",
+                "tc_rate_mean",
+                "te_rate_mean",
                 "mean_rate_mean",
                 "no_trade_rate_mean",
                 "switch_rate_mean",
                 "entropy_mean",
-                "trend_correctness_mean",
+                "extreme_contraction_mean",
                 "dist_pen_mean",
             ]
-            + ROUTER_KEYS
+            + REGIME_KEYS
         },
         "plateau_frac_ge_95pct": plateau_frac,
         "n_candidates": int(len(df)),
@@ -1169,7 +1324,10 @@ def main() -> None:
         "windows": [{"start": str(a), "end": str(b)} for a, b in windows],
         "sim_cfg": asdict(sim_cfg),
         "preds_in_log1p": bool(preds_in_log1p),
-        "score_formula": "window_score = - (trade_rate_penalty + trend_rate_penalty + dist_penalty) ; robust_score = mean(window_score) - std(window_score)",
+        "score_formula": "window_score = - (trend_rate_penalty + dist_penalty + trade_rate_penalty*) ; robust_score = mean(window_score) - std(window_score)",
+        "trade_rate_penalty_included": bool(args.include_trade_rate_penalty),
+        "regime_soft_scores": bool(args.regime_soft_scores),
+        "min_regime_score": float(args.min_regime_score),
         "lambda": float(args.lam),
         "mu": float(args.mu),
         "trade_rate_target": args.trade_rate_target,
@@ -1188,6 +1346,10 @@ def main() -> None:
         "no_trade_rate_max": float(args.no_trade_rate_max),
         "disable_dist_rate_constraints": bool(args.disable_dist_rate_constraints),
         "trend_correct_horizon": int(args.trend_correct_horizon),
+        "extreme_override": {
+            "fixed": extreme_fixed,
+            "range": list(extreme_range) if extreme_range is not None else None,
+        },
         "heuristic_bounds": {
             "enabled": bool(args.heuristic_bounds),
             "qmin": float(args.heuristic_qmin),
@@ -1210,12 +1372,12 @@ def main() -> None:
     md.append(f"- plateau_frac (>= best - 5%*|best|): **{plateau_frac:.3f}**\n")
     md.append("\n### Best thresholds (robust)\n")
     md.append("```json\n")
-    md.append(json.dumps({k: float(best[k]) for k in ROUTER_KEYS}, indent=2))
+    md.append(json.dumps({k: float(best[k]) for k in REGIME_KEYS}, indent=2))
     md.append("\n```\n")
     # Machine-friendly export for one-click reuse
     (out_dir / "router_thresholds_best.json").write_text(
         json.dumps(
-            {k: float(best[k]) for k in ROUTER_KEYS}, indent=2, ensure_ascii=False
+            {k: float(best[k]) for k in REGIME_KEYS}, indent=2, ensure_ascii=False
         ),
         encoding="utf-8",
     )
@@ -1237,7 +1399,7 @@ def main() -> None:
         f"- no_trade_rate_mean: {float(best.get('no_trade_rate_mean', 0.0)):.4f}\n"
         f"- switch_rate_mean: {float(best.get('switch_rate_mean', 0.0)):.4f}\n"
         f"- entropy_mean: {float(best.get('entropy_mean', 0.0)):.4f}\n"
-        f"- trend_correctness_mean: {float(best.get('trend_correctness_mean', 0.0)):.4f}\n"
+        f"- extreme_contraction_mean: {float(best.get('extreme_contraction_mean', 0.0)):.4f}\n"
         f"- dist_pen_mean: {float(best.get('dist_pen_mean', 0.0)):.4f}\n"
     )
     md.append("\n### How to interpret\n")
@@ -1264,7 +1426,7 @@ def main() -> None:
         _write_html_report(
             out_dir=out_dir,
             df=df,
-            best_thresholds={k: float(best[k]) for k in ROUTER_KEYS},
+            best_thresholds={k: float(best[k]) for k in REGIME_KEYS},
             best_row=best,
             plateau_frac=float(plateau_frac),
             trade_rate_target=args.trade_rate_target,

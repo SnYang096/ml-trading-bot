@@ -164,16 +164,21 @@ def main() -> int:
     gate_arch: List[str] = []
 
     for _, row in merged.iterrows():
-        regime = str(row.get("mode") or "NO_TRADE").upper()
-        if regime == "NO_TRADE":
+        mode = str(row.get("mode") or "NO_TRADE").upper()
+        regime = str(
+            row.get("regime") or mode
+        ).upper()  # Use regime if available, fallback to mode
+        if mode == "NO_TRADE":
             gate_ok.append(True)
             gate_decision.append("no_trade")
             gate_reasons.append("")
             gate_arch.append("")
             continue
+        # Map TE/TC to TREND for enabled_archetypes lookup
+        regime_for_lookup = "TREND" if regime in ("TE", "TC") else regime
         candidates = _enabled_archetypes(
             live_cfg_path=str(args.live_config),
-            regime=regime,
+            regime=regime_for_lookup,
             archetypes=arches,
         )
         if not candidates:
@@ -182,6 +187,19 @@ def main() -> int:
             gate_reasons.append("")
             gate_arch.append("")
             continue
+
+        # If regime is TE/TC, prioritize matching archetype
+        # TE -> TrendExpansionTE, TC -> TrendContinuationTC
+        if regime == "TE":
+            prioritized = ["TrendExpansionTE"] + [
+                c for c in candidates if c != "TrendExpansionTE"
+            ]
+            candidates = prioritized
+        elif regime == "TC":
+            prioritized = ["TrendContinuationTC"] + [
+                c for c in candidates if c != "TrendContinuationTC"
+            ]
+            candidates = prioritized
 
         quantiles = None
         if isinstance(quantiles_raw, dict):

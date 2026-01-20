@@ -1,0 +1,153 @@
+version: 1
+
+task_id: "TASK_V1__U2_HIGHCAP6__TIER01__NNMH_3ACTION__2024_202510"
+
+owner: "dev"
+created_at: "2026-01-18"
+
+universe:
+  timeframe: "240T"
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - BNBUSDT
+    - SOLUSDT
+    - XRPUSDT
+    - ADAUSDT
+  universe_layer: "U2"
+  group_tag: "HighCap"
+
+windows:
+  train:
+    start: "2024-01-01"
+    end: "2025-04-30"
+  holdout:
+    start: "2025-05-01"
+    end: "2025-10-31"
+    frozen: true
+  oos:
+    start: "2025-05-01"
+    end: "2025-10-31"
+
+enforcement:
+  constitution_yaml: "config/constitution/constitution.yaml"
+  kpi_gate_yaml: "config/kpi_gates/router_counterfactual.yaml"
+
+feature_plan_ref: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
+
+entrypoints:
+  nnmultihead_predict: "scripts/predict_path_primitives_mlp.py"
+  rule_mode_3action: "scripts/rule_mode_3action.py"
+  rl_build_logs_3action: "scripts/rl_build_logs_3action.py"
+  rl_counterfactual_eval_3action: "scripts/rl_counterfactual_eval_3action.py"
+  cli_pipeline_3action_e2e: "src/cli/main.py (nnmultihead pipeline-3action-e2e)"
+
+model_plan:
+  kind: "nnmultihead_path_primitives"
+  base_config_dir: "config/nnmultihead/path_primitives_4h_80h_min"
+  device: "auto"
+  training:
+    epochs: 10
+    batch_size: 512
+    lr: 0.0002
+    seed: 42
+    emit_evidence_quantiles: true
+    evidence_quantiles_keys: "vpin,cvd_change_5"
+    evidence_quantiles_prefixes: ""
+    evidence_quantiles: "0.1,0.5,0.9"
+    evidence_quantiles_global: false
+    warm_start:
+      enabled: false
+      init_model_path: null
+
+router_plan:
+  kind: "rule_mode_3action"
+  thresholds_source: "fixed"
+  thresholds:
+    mfe_min: 0.1259
+    eff_min: 1.0434
+    dir_conf_trend_min: 0.0642
+
+gate_plan:
+  enabled: false
+  kind: "tree_gate_veto"
+  rules_export:
+    enabled: true
+    format: "yaml"
+
+pcm_plan:
+  enabled: true
+  kind: "portfolio_capital_manager_v1"
+  modes:
+    - "NO_TRADE"
+    - "MEAN"
+    - "TREND"
+  policy:
+    baseline_mode_budgets:
+      NO_TRADE: 0.0
+      MEAN: 0.4
+      TREND: 0.6
+    escalation_mode_budgets:
+      NO_TRADE: 0.0
+      MEAN: 0.25
+      TREND: 0.75
+    cash_constraints:
+      baseline_min: 0.30
+      escalation_min: 0.20
+    position_concentration:
+      baseline_max: 0.40
+      escalation_max: 0.50
+  withdrawal_policy:
+    enabled: false
+    config_file: "config/constitution/withdrawal_rules.yaml"
+
+strategy_assets:
+  - asset_id: "BTC_TREND_V1"
+    base_symbol: "BTCUSDT"
+    router_type: "TREND"
+    gate_profile: "commitment_high_absorption_low"
+    execution_profile: "pyramid_trailing"
+  - asset_id: "BTC_MEAN_V1"
+    base_symbol: "BTCUSDT"
+    router_type: "MEAN"
+    gate_profile: "absorption_high_opposing_spike"
+    execution_profile: "fixed_horizon"
+  - asset_id: "BTC_CASH"
+    base_symbol: "BTCUSDT"
+    router_type: "NO_TRADE"
+    gate_profile: null
+    execution_profile: null
+
+portfolio_assets_plan:
+  enabled: true
+  config_file: "config/portfolio_assets/portfolio_assets.yaml"
+
+execution_plan:
+  returns_source: "rr_execution"
+  entry_delay: 0
+  rr_sim:
+    stop_loss_r: 1.0
+    take_profit_r: 2.0
+    max_holding_bars: 50
+    use_trailing_stop: true
+
+acceptance:
+  data:
+    require_monthly_coverage: true
+    min_monthly_bars_4h: 900
+  model:
+    min_auc:
+      dir_conf_trend: 0.52
+    min_ap: {}
+  router:
+    min_trade_rate: 0.01
+    max_trade_rate: 0.40
+    no_trade_quality:
+      min_coverage: 0.20
+      max_coverage: 0.60
+  portfolio:
+    max_dd: 0.20
+    withdrawal_compliance:
+      enabled: false
+  ops:
+    require_meta_and_report: true

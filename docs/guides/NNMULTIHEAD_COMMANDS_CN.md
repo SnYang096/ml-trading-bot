@@ -311,6 +311,21 @@ mlbot nnmultihead predict --no-docker \
   --output results/nnmultihead/my_run_name/preds_2025H2
 ```
 
+### 2.5) Router 可视化：`mlbot rule plot-router-modes-kline`
+
+基于 `mode_3action` 画 K 线 + Router 模式点（支持 gate filter）。
+
+```bash
+mlbot rule plot-router-modes-kline --no-docker \
+  --mode results/nnmultihead/my_run_name/mode_3action_2024.parquet \
+  --feature-store-root feature_store \
+  --feature-store-layer features_83f12ecc5e \
+  --all-symbols \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --out results/nnmultihead/my_run_name/router_plots
+```
+
 ### 3) 评估：`mlbot nnmultihead eval`
 
 对某段数据进行评估并生成报告（用于 OOS 复核、回归测试）。

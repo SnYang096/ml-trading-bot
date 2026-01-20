@@ -3952,6 +3952,50 @@ def compute_sma_position_from_series(
     return pd.DataFrame({"sma_200_position": position}, index=close.index)
 
 
+@register_feature("compute_vwap_position_from_series", category="baseline")
+def compute_vwap_position_from_series(
+    *,
+    close: pd.Series,
+    volume: pd.Series,
+    window: int = 20,
+) -> pd.DataFrame:
+    """
+    计算价格相对于 VWAP 的归一化位置（跨品种可比）
+
+    - price_to_vwap_pct = (close - vwap) / close
+    - price_to_vwap_ratio = close / vwap
+
+    Returns:
+        DataFrame with columns: price_to_vwap_pct, price_to_vwap_ratio
+    """
+    close_clean = pd.to_numeric(close, errors="coerce").astype(float)
+    vol_clean = pd.to_numeric(volume, errors="coerce").astype(float)
+
+    vol_roll = vol_clean.rolling(window=window, min_periods=1).sum()
+    vwap = (close_clean * vol_clean).rolling(window=window, min_periods=1).sum() / vol_roll
+
+    close_safe = close_clean.replace(0, np.nan)
+    vwap_safe = vwap.replace(0, np.nan)
+
+    price_to_vwap_pct = (close_clean - vwap) / close_safe
+    price_to_vwap_ratio = close_clean / vwap_safe
+
+    price_to_vwap_pct = (
+        price_to_vwap_pct.replace([np.inf, -np.inf], np.nan).clip(-1.0, 1.0).fillna(0.0)
+    )
+    price_to_vwap_ratio = (
+        price_to_vwap_ratio.replace([np.inf, -np.inf], np.nan).clip(0.2, 5.0).fillna(1.0)
+    )
+
+    return pd.DataFrame(
+        {
+            "price_to_vwap_pct": price_to_vwap_pct,
+            "price_to_vwap_ratio": price_to_vwap_ratio,
+        },
+        index=close.index,
+    )
+
+
 @register_feature("compute_volume_ratio_from_series", category="baseline")
 def compute_volume_ratio_from_series(
     *,

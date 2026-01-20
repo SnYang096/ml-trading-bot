@@ -1800,6 +1800,11 @@ def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker
     help="Override preds space (yes=log1p)",
 )
 @click.option(
+    "--calibration-json",
+    default=None,
+    help="Optional router calibration JSON (dir_prob + linear bias for heads).",
+)
+@click.option(
     "--returns-source",
     type=click.Choice(["momentum_proxy", "rr_execution", "vectorbt_execution"]),
     default="momentum_proxy",
@@ -1971,11 +1976,33 @@ def rl_build_logs_3action(
 @click.option("--ttm-trend-min", type=float, default=None)
 @click.option("--eff-mean-min", type=float, default=None)
 @click.option("--ttm-mean-max", type=float, default=None)
+@click.option(
+    "--trend-confirm-mode",
+    type=click.Choice(["and", "or"]),
+    default=None,
+    help="Trend confirm logic: and (legacy) or (dir_conf AND (mfe OR ttm)).",
+)
+@click.option(
+    "--regime-soft-scores",
+    type=click.Choice(["yes", "no"]),
+    default=None,
+    help="Use soft regime scores instead of hard thresholds.",
+)
+@click.option(
+    "--min-regime-score",
+    type=float,
+    default=None,
+    help="Minimum score to assign a regime in soft mode.",
+)
+@click.option("--tc-score-floor", type=float, default=None)
+@click.option("--te-score-floor", type=float, default=None)
+@click.option("--mean-score-floor", type=float, default=None)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rule_mode_3action(
     preds,
     model_path,
     preds_in_log1p,
+    calibration_json,
     output_path,
     mfe_min,
     eff_min,
@@ -1984,6 +2011,12 @@ def rule_mode_3action(
     ttm_trend_min,
     eff_mean_min,
     ttm_mean_max,
+    trend_confirm_mode,
+    regime_soft_scores,
+    min_regime_score,
+    tc_score_floor,
+    te_score_floor,
+    mean_score_floor,
     docker,
 ):
     """Generate mode labels (NO_TRADE/MEAN/TREND) from nnmultihead heads."""
@@ -2003,6 +2036,8 @@ def rule_mode_3action(
         )
     if preds_in_log1p:
         args.extend(["--preds-in-log1p", preds_in_log1p])
+    if calibration_json:
+        args.extend(["--calibration-json", calibration_json])
     # thresholds
     if mfe_min is not None:
         args.extend(["--mfe-min", str(mfe_min)])
@@ -2018,8 +2053,90 @@ def rule_mode_3action(
         args.extend(["--eff-mean-min", str(eff_mean_min)])
     if ttm_mean_max is not None:
         args.extend(["--ttm-mean-max", str(ttm_mean_max)])
+    if trend_confirm_mode is not None:
+        args.extend(["--trend-confirm-mode", str(trend_confirm_mode)])
+    if regime_soft_scores is not None:
+        args.extend(["--regime-soft-scores", str(regime_soft_scores)])
+    if min_regime_score is not None:
+        args.extend(["--min-regime-score", str(min_regime_score)])
+    if tc_score_floor is not None:
+        args.extend(["--tc-score-floor", str(tc_score_floor)])
+    if te_score_floor is not None:
+        args.extend(["--te-score-floor", str(te_score_floor)])
+    if mean_score_floor is not None:
+        args.extend(["--mean-score-floor", str(mean_score_floor)])
 
     sys.exit(run_script("scripts/rule_mode_3action.py", args, docker=docker))
+
+
+@rule.command("plot-router-modes-kline")
+@click.option("--mode", "mode_path", required=True, help="mode_3action parquet")
+@click.option(
+    "--feature-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root dir",
+)
+@click.option(
+    "--feature-store-layer",
+    required=True,
+    help="FeatureStore layer id (used to load OHLC)",
+)
+@click.option("--symbol", default=None, help="Single symbol to plot")
+@click.option(
+    "--all-symbols",
+    is_flag=True,
+    default=False,
+    help="Plot all symbols found in mode_3action",
+)
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--out", "out_path", required=True, help="Output PNG or output dir")
+@click.option(
+    "--gate-only",
+    type=click.Choice(["all", "allow", "veto"]),
+    default="all",
+    show_default=True,
+    help="If gate_decision exists, filter plotted points.",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_plot_router_modes_kline(
+    mode_path,
+    feature_store_root,
+    feature_store_layer,
+    symbol,
+    all_symbols,
+    start_date,
+    end_date,
+    out_path,
+    gate_only,
+    docker,
+):
+    """Plot router modes on OHLC close series."""
+    use_workspace_prefix = docker
+    args = [
+        "--mode",
+        f"/workspace/{mode_path}" if use_workspace_prefix else mode_path,
+        "--feature-store-root",
+        f"/workspace/{feature_store_root}"
+        if use_workspace_prefix
+        else feature_store_root,
+        "--feature-store-layer",
+        str(feature_store_layer),
+        "--out",
+        f"/workspace/{out_path}" if use_workspace_prefix else out_path,
+        "--gate-only",
+        str(gate_only),
+    ]
+    if all_symbols:
+        args.append("--all-symbols")
+    if symbol:
+        args.extend(["--symbol", str(symbol)])
+    if start_date:
+        args.extend(["--start-date", str(start_date)])
+    if end_date:
+        args.extend(["--end-date", str(end_date)])
+    sys.exit(run_script("scripts/plot_router_modes_kline.py", args, docker=docker))
 
 
 @rl.command("shadow-eval-3action")
@@ -2890,6 +3007,17 @@ def nnmultihead_predict(
     default=None,
     help="Output canonical jsonl (default: <out>/execution_log.jsonl).",
 )
+@click.option(
+    "--emit-router-plots/--no-emit-router-plots",
+    default=True,
+    show_default=True,
+    help="Emit router mode plots on OHLC for all symbols.",
+)
+@click.option(
+    "--router-plot-dir",
+    default=None,
+    help="Output dir for router plots (default: <out>/router_plots).",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def nnmultihead_pipeline_3action_e2e(
     symbols,
@@ -2921,6 +3049,8 @@ def nnmultihead_pipeline_3action_e2e(
     exec_log_stage_dir,
     emit_exec_log_canonical,
     exec_log_canonical_path,
+    emit_router_plots,
+    router_plot_dir,
     docker,
 ):
     """
@@ -3179,6 +3309,31 @@ def nnmultihead_pipeline_3action_e2e(
         if rc != 0:
             sys.exit(rc)
         mode_path = gate_mode_path
+
+    # Optional: router plot on OHLC (all symbols, default on)
+    if emit_router_plots:
+        plot_dir = router_plot_dir or f"{out_root}/router_plots"
+        plot_args = [
+            "--mode",
+            mode_path,
+            "--feature-store-root",
+            f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+            "--feature-store-layer",
+            str(feature_store_layer),
+            "--all-symbols",
+            "--out",
+            plot_dir,
+        ]
+        if start_date:
+            plot_args.extend(["--start-date", str(start_date)])
+        if end_date:
+            plot_args.extend(["--end-date", str(end_date)])
+        _ = run_script(
+            "scripts/plot_router_modes_kline.py",
+            plot_args,
+            docker=docker,
+            env_overrides=env_overrides,
+        )
 
     # [3/4] build-logs-3action
     args_logs = [
@@ -4051,11 +4206,6 @@ def nnmultihead_eval(
     )
     effective_config = derived_rel
 
-    # FeatureStore defaults come from TaskSpec unless explicitly overridden (kept for consistency).
-    fp = ts_obj.get("feature_plan") or {}
-    fs = fp.get("feature_store") or {}
-    if (feature_store_root == "feature_store") and str(fs.get("root") or "").strip():
-        feature_store_root = str(fs.get("root")).strip()
     args = [
         "--config",
         f"/workspace/{effective_config}" if use_workspace_prefix else effective_config,
@@ -8745,7 +8895,7 @@ def cross_section_train(
         args.extend(["--input", f"/workspace/{x}" if use_workspace_prefix else x])
     args.extend(
         [
-            "--output-dir",
+        "--output-dir",
             f"/workspace/{output_dir}" if use_workspace_prefix else output_dir,
         ]
     )

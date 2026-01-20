@@ -23,10 +23,10 @@ def default_loss_weights(epoch: int) -> LossWeights:
     - late: increase time-scale head
     """
     if epoch < 5:
-        return LossWeights(dir=1.0, mfe=0.2, mae=0.2, t=0.1)
+        return LossWeights(dir=1.0, mfe=0.3, mae=0.1, t=0.1)
     if epoch < 20:
-        return LossWeights(dir=0.8, mfe=0.6, mae=0.6, t=0.2)
-    return LossWeights(dir=0.6, mfe=1.0, mae=1.0, t=0.5)
+        return LossWeights(dir=0.8, mfe=0.8, mae=0.3, t=0.2)
+    return LossWeights(dir=0.6, mfe=1.2, mae=0.5, t=0.4)
 
 
 def path_primitives_loss(

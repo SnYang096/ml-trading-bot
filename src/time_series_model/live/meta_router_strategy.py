@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 try:
@@ -567,8 +568,22 @@ if NAUTILUS_AVAILABLE:
                     eff_mean_min=float(rt.get("eff_mean_min", 1.15)),
                     ttm_mean_max=float(rt.get("ttm_mean_max", 12.0)),
                 )
+                calibration = None
+                calib_path = (
+                    rt.get("calibration_json") if isinstance(rt, dict) else None
+                )
+                if calib_path:
+                    try:
+                        calibration = json.loads(
+                            Path(str(calib_path)).read_text(encoding="utf-8")
+                        )
+                    except Exception:
+                        calibration = None
                 mode_df = compute_mode_3action(
-                    pd.DataFrame([feats]), cfg=cfg, preds_in_log1p=preds_in_log1p
+                    pd.DataFrame([feats]),
+                    cfg=cfg,
+                    preds_in_log1p=preds_in_log1p,
+                    calibration=calibration,
                 )
                 regime = str(mode_df["mode"].iloc[0]).upper()
             if regime is None:

@@ -379,22 +379,24 @@ def build_logs_3action(
     else:
         raise ValueError(f"Unknown returns_source: {cfg.returns_source}")
 
-    # Final column selection
-    out = joined[
-        [
-            cfg.symbol_col,
-            cfg.timestamp_col,
-            cfg.market_profile_col,
-            "mode",
-            cfg.head_dir_score_col,
-            cfg.head_mfe_col,
-            cfg.head_mae_col,
-            cfg.head_ttm_col,
-            cfg.drawdown_col,
-            cfg.ret_mean_col,
-            cfg.ret_trend_col,
-        ]
-    ].copy()
+    # Final column selection (keep OHLC/ATR when present for diagnostics)
+    base_cols = [
+        cfg.symbol_col,
+        cfg.timestamp_col,
+        cfg.market_profile_col,
+        "mode",
+        cfg.head_dir_score_col,
+        cfg.head_mfe_col,
+        cfg.head_mae_col,
+        cfg.head_ttm_col,
+        cfg.drawdown_col,
+        cfg.ret_mean_col,
+        cfg.ret_trend_col,
+    ]
+    ohlc_cols = [
+        c for c in ["open", "high", "low", "close", "atr"] if c in joined.columns
+    ]
+    out = joined[base_cols + ohlc_cols].copy()
 
     # Ensure types
     out["mode"] = out["mode"].astype(str)
@@ -408,6 +410,8 @@ def build_logs_3action(
         cfg.ret_mean_col,
         cfg.ret_trend_col,
     ]:
+        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0).astype(float)
+    for c in ohlc_cols:
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0).astype(float)
 
     return out.reset_index(drop=True)
