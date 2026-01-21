@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-Apply tree-gate veto rules on top of rule-router mode_3action outputs.
+Apply tree-gate veto rules based on regime and archetype.
 
 Inputs:
-  - mode_3action parquet/csv (symbol, timestamp, mode, mode_action, ...)
+  - logs_3action parquet/csv (symbol, timestamp, regime, ...) OR physics_regime parquet
   - FeatureStore (root + layer) for the same timeframe/window
   - execution_archetypes.yaml gate_rules (per archetype)
   - live meta_router config (to select a single archetype per regime)
   - optional evidence_quantiles.json (for quantile-based rules)
 
 Output:
-  - gated mode file with added columns:
+  - gated file with added columns:
       gate_ok, gate_decision, gate_reasons, gate_archetype
-    and mode/mode_action overridden to NO_TRADE on veto.
 """
 from __future__ import annotations
 
@@ -103,9 +102,15 @@ def _enabled_archetypes(
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Apply tree gate on mode_3action.")
-    p.add_argument("--mode", required=True, help="mode_3action file")
-    p.add_argument("--out", required=True, help="output gated mode file")
+    p = argparse.ArgumentParser(
+        description="Apply tree gate based on regime and archetype."
+    )
+    p.add_argument(
+        "--logs",
+        required=True,
+        help="logs_3action or physics_regime file (must contain symbol, timestamp, regime)",
+    )
+    p.add_argument("--out", required=True, help="output gated file")
     p.add_argument("--features-store-root", default="feature_store")
     p.add_argument("--features-store-layer", required=True)
     p.add_argument("--symbols", default=None, help="Comma-separated symbols")
@@ -130,18 +135,20 @@ def main() -> int:
     p.add_argument(
         "--semantic-score-floors",
         default=None,
-        help="Optional JSON with tc/te semantic score floors (p05/p10).",
+        help="Optional JSON with tc/te semantic score thresholds (tc_p95 ceiling, te_p10 floor).",
     )
     args = p.parse_args()
 
-    mode_df = _ensure_timestamp_col(_read_any(Path(args.mode)))
-    if "symbol" not in mode_df.columns or "timestamp" not in mode_df.columns:
-        raise KeyError("mode_3action must include symbol and timestamp columns")
+    logs_df = _ensure_timestamp_col(_read_any(Path(args.logs)))
+    if "symbol" not in logs_df.columns or "timestamp" not in logs_df.columns:
+        raise KeyError("logs file must include symbol and timestamp columns")
+    if "regime" not in logs_df.columns:
+        raise KeyError("logs file must include regime column")
 
     symbols = (
         [s.strip() for s in str(args.symbols).split(",") if s.strip()]
         if args.symbols
-        else sorted(mode_df["symbol"].astype(str).unique().tolist())
+        else sorted(logs_df["symbol"].astype(str).unique().tolist())
     )
     feats = _read_feature_store_range(
         features_store_root=str(args.features_store_root),
@@ -157,11 +164,11 @@ def main() -> int:
         feats = feats.reset_index(drop=True)
     feats["symbol"] = feats["symbol"].astype(str)
     feats["timestamp"] = pd.to_datetime(feats["timestamp"], errors="coerce")
-    mode_df = mode_df.copy()
-    mode_df["symbol"] = mode_df["symbol"].astype(str)
-    mode_df["timestamp"] = pd.to_datetime(mode_df["timestamp"], errors="coerce")
+    logs_df = logs_df.copy()
+    logs_df["symbol"] = logs_df["symbol"].astype(str)
+    logs_df["timestamp"] = pd.to_datetime(logs_df["timestamp"], errors="coerce")
 
-    merged = mode_df.merge(
+    merged = logs_df.merge(
         feats, on=["symbol", "timestamp"], how="left", suffixes=("", "_feat")
     )
 
@@ -187,7 +194,7 @@ def main() -> int:
     if args.semantic_score_floors:
         with open(args.semantic_score_floors, "r") as f:
             semantic_floors = json.load(f)
-        # Expected keys: tc_semantic_score_p05, te_semantic_score_p10
+        # Expected keys: tc_semantic_score_p95 (ceiling), te_semantic_score_p10 (floor)
 
     arches = load_execution_archetypes_registry(str(args.execution_archetypes))
     quantiles_raw = load_evidence_quantiles(args.evidence_quantiles)
@@ -198,32 +205,36 @@ def main() -> int:
     gate_arch: List[str] = []
 
     for _, row in merged.iterrows():
-        mode = str(row.get("mode") or "NO_TRADE").upper()
-        regime = str(
-            row.get("regime") or mode
-        ).upper()  # Use regime if available, fallback to mode
-        if mode == "NO_TRADE":
+        regime = str(row.get("regime") or "NO_TRADE").upper()
+        if regime == "NO_TRADE" or regime == "NONE":
             gate_ok.append(True)
             gate_decision.append("no_trade")
             gate_reasons.append("")
             gate_arch.append("")
             continue
-        # Semantic score floor veto (Gate-only)
+        # Semantic score veto (Gate-only)
+        # ⚠️ IMPORTANT: Based on E2E analysis:
+        # - TC_REGIME: Low scores (0-0.127) have highest Sharpe (5.811), high scores (>0.321) are negative
+        #   → Veto HIGH scores (p95), keep LOW sweet spot
+        # - TE_REGIME: High scores (0.308-0.761) have highest Sharpe (6.215)
+        #   → Veto LOW scores (p10), keep HIGH signals
         if semantic_floors and regime in ("TC", "TE"):
             if regime == "TC":
-                floor = semantic_floors.get("tc_semantic_score_p05")
+                # Veto high-score toxic zone, keep low-score sweet spot
+                ceiling = semantic_floors.get("tc_semantic_score_p95")
                 score = row.get("tc_semantic_score")
                 if (
-                    floor is not None
+                    ceiling is not None
                     and pd.notna(score)
-                    and float(score) < float(floor)
+                    and float(score) > float(ceiling)
                 ):
                     gate_ok.append(False)
                     gate_decision.append("veto")
-                    gate_reasons.append("tc_semantic_floor")
-                    gate_arch.append("semantic_floor")
+                    gate_reasons.append("tc_semantic_ceiling")
+                    gate_arch.append("semantic_ceiling")
                     continue
             if regime == "TE":
+                # Veto low-score noise, keep high-score signals
                 floor = semantic_floors.get("te_semantic_score_p10")
                 score = row.get("te_semantic_score")
                 if (
@@ -301,15 +312,14 @@ def main() -> int:
             gate_reasons.append(";".join(last_reasons or ["gate_all_candidates_veto"]))
             gate_arch.append(candidates[0] if candidates else "")
 
-    out = mode_df.copy()
+    out = logs_df.copy()
     out["gate_ok"] = gate_ok
     out["gate_decision"] = gate_decision
     out["gate_reasons"] = gate_reasons
     out["gate_archetype"] = gate_arch
+    # Set regime to NO_TRADE for vetoed rows
     veto = ~out["gate_ok"].astype(bool)
-    out.loc[veto, "mode"] = "NO_TRADE"
-    if "mode_action" in out.columns:
-        out.loc[veto, "mode_action"] = 0
+    out.loc[veto, "regime"] = "NO_TRADE"
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

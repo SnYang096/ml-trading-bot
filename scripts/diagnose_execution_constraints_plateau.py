@@ -19,19 +19,55 @@ def _read_any(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def _compute_returns_from_mode(df: pd.DataFrame) -> np.ndarray:
-    mode = df.get("mode")
-    if mode is None:
+def _compute_returns_from_archetype(
+    df: pd.DataFrame,
+    *,
+    archetype_col: str = "gate_archetype",
+    ret_mean_col: str = "ret_mean",
+    ret_trend_col: str = "ret_trend",
+) -> np.ndarray:
+    """
+    Select ret_mean or ret_trend based on archetype.
+    - TC/TE → ret_trend
+    - FR/ET → ret_mean
+    """
+    if len(df) == 0:
         return np.array([], dtype=float)
+
     ret = np.zeros(len(df), dtype=float)
-    ret_mean = pd.to_numeric(df.get("ret_mean"), errors="coerce").fillna(0.0).to_numpy()
-    ret_trend = (
-        pd.to_numeric(df.get("ret_trend"), errors="coerce").fillna(0.0).to_numpy()
+    ret_mean = (
+        pd.to_numeric(df.get(ret_mean_col), errors="coerce").fillna(0.0).to_numpy()
     )
-    mode_str = mode.astype(str).str.upper().to_numpy()
-    ret[mode_str == "MEAN"] = ret_mean[mode_str == "MEAN"]
-    ret[mode_str == "TREND"] = ret_trend[mode_str == "TREND"]
+    ret_trend = (
+        pd.to_numeric(df.get(ret_trend_col), errors="coerce").fillna(0.0).to_numpy()
+    )
+
+    archetype = df.get(archetype_col)
+    if archetype is None:
+        # Fallback to mode for backward compatibility
+        mode = df.get("mode")
+        if mode is not None:
+            mode_str = mode.astype(str).str.upper().to_numpy()
+            ret[mode_str == "MEAN"] = ret_mean[mode_str == "MEAN"]
+            ret[mode_str == "TREND"] = ret_trend[mode_str == "TREND"]
+        return ret
+
+    archetype_str = archetype.astype(str).str.upper().to_numpy()
+
+    # TC/TE → ret_trend
+    trend_mask = np.array([("TC" in a or "TE" in a) for a in archetype_str])
+    ret[trend_mask] = ret_trend[trend_mask]
+
+    # FR/ET → ret_mean
+    mean_mask = np.array([("FR" in a or "ET" in a) for a in archetype_str])
+    ret[mean_mask] = ret_mean[mean_mask]
+
     return ret
+
+
+def _compute_returns_from_mode(df: pd.DataFrame) -> np.ndarray:
+    """Legacy function for backward compatibility. Use _compute_returns_from_archetype instead."""
+    return _compute_returns_from_archetype(df)
 
 
 def _max_dd(arr: np.ndarray) -> float:

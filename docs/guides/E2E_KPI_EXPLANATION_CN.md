@@ -69,22 +69,23 @@ NN Predictions (dir/mfe/mae/mtt)
     ↓
 Physics/Regime Classifier
     ↓ 输出: regime (TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE)
-    ↓ 输出: semantic_score (tc_semantic_score/te_semantic_score)
+    ↓ 输出: semantic_score (tc_semantic_score/te_semantic_score/fr_semantic_score/et_semantic_score)
     ↓
-Build Logs (build-logs-3action)
-    ↓ 集成 Router 逻辑，输出: mode (TREND/MEAN/NO_TRADE)
-    ↓ 同时计算: ret_mean, ret_trend (counterfactual returns)
+Build Execution Logs (build-execution-logs)
+    ↓ 计算: ret_mean, ret_trend (counterfactual execution returns)
+    ↓ 注意: 这些 returns 已包含止损止盈的执行逻辑（在 rr_execution 模式下）
     ↓
 Gate (apply-tree-gate)
-    ↓ 使用: regime + semantic_score + live_config + mode
-    ↓ 输出: gate_ok, gate_arch
+    ↓ 使用: regime + semantic_score + live_config
+    ↓ 输出: gate_ok, gate_archetype (TC/TE/FR/ET/NO_TRADE)
     ↓
 Execution
-    ↓ 使用: gate_arch + execution_archetypes.yaml
+    ↓ 使用: gate_archetype 选择 ret_mean 或 ret_trend
+    ↓ TC/TE → ret_trend, FR/ET → ret_mean
     ↓ 输出: 实际交易
 ```
 
-**注意**: 在新架构中，Router 的 `mode` 输出已集成到 `build-logs-3action` 步骤中，不再需要单独的 `mode-3action` 命令。
+**注意**: Router 模块已被移除。Execution 层现在直接根据 archetype 选择 ret_mean 或 ret_trend。
 
 ### 2.2 Regime 划分如何影响下游
 
@@ -184,19 +185,21 @@ mean_conditions = [
 # 满足 3/4 条件 → MEAN_REGIME
 ```
 
-#### 2.2.2 Build Logs（集成 Router Mode 输出）
+#### 2.2.2 Build Execution Logs
 
-**位置**: `mlbot rl build-logs-3action`
+**位置**: `mlbot rl build-execution-logs`
 
 **功能**:
-- 集成 Router 逻辑，基于 Regime 分类和 Router 阈值生成 `mode` (TREND/MEAN/NO_TRADE)
-- 计算 counterfactual returns (`ret_mean`, `ret_trend`)
-- **注意**: Router 不再作为独立步骤，已集成到 build-logs 中
+- 计算 counterfactual execution returns (`ret_mean`, `ret_trend`)
+- 这些 returns 已经包含了止损止盈的执行逻辑（在 `rr_execution` 模式下）
+- Execution 层根据 archetype 选择使用哪个 return：
+  - TC/TE → 使用 `ret_trend` (趋势风格执行)
+  - FR/ET → 使用 `ret_mean` (均值回归风格执行)
+- **注意**: Router 模块已被移除，不再输出 `mode` 列
 
 **输出**:
-- `mode`: TREND/MEAN/NO_TRADE（用于 Execution 层）
-- `ret_mean`: MEAN 模式的 counterfactual return
-- `ret_trend`: TREND 模式的 counterfactual return
+- `ret_mean`: MEAN 风格的 counterfactual execution return（已包含止损止盈逻辑）
+- `ret_trend`: TREND 风格的 counterfactual execution return（已包含止损止盈逻辑）
 
 ---
 
@@ -323,58 +326,43 @@ bucket                    | sharpe_e2e | sharpe_trades_only | trade_rate
    python3 scripts/compute_semantic_score_floors.py \
      --physics-regime physics_regime.parquet \
      --output semantic_score_floors.json \
-     --tc-quantile 0.05 \
+     --tc-quantile 0.95 \
      --te-quantile 0.10
    ```
+   **注意**: TC 使用 p95（上限），TE 使用 p10（下限），因为它们的语义分数含义不同。
 
-2. **Gate 应用阈值**:
+2. **Gate 应用阈值**（已修正）:
    ```python
    # 从 semantic_score_floors.json 读取
-   floors = {
-       "tc_semantic_score_p05": 0.0677,  # P05 分位数
-       "te_semantic_score_p10": 0.0443   # P10 分位数
+   thresholds = {
+       "tc_semantic_score_p95": 0.321,  # P95 分位数（上限，veto 高分毒区）
+       "te_semantic_score_p10": 0.0443  # P10 分位数（下限，veto 低分噪声）
    }
    
-   # Gate 过滤
+   # Gate 过滤（修正后的逻辑）
    if regime == "TC_REGIME":
-       if tc_semantic_score < floors["tc_semantic_score_p05"]:
-           gate_ok = False  # Veto 低分桶（但这里逻辑反了？）
+       # Veto 高分毒区，保留低分甜点区
+       if tc_semantic_score > thresholds["tc_semantic_score_p95"]:
+           gate_ok = False  # Veto 高分桶
+   
+   if regime == "TE_REGIME":
+       # Veto 低分噪声，保留高分信号
+       if te_semantic_score < thresholds["te_semantic_score_p10"]:
+           gate_ok = False  # Veto 低分桶
    ```
 
-**当前实现的问题**:
+**修正说明**:
 
-根据分桶结果：
-- **TC_REGIME**: 低分桶（0-0.127）表现最好，高分桶（>0.321）表现最差
-- **TE_REGIME**: 高分桶（0.308-0.761）表现最好
+根据 E2E 分桶分析结果：
+- **TC_REGIME**: 低分桶（0-0.127）Sharpe 最高（5.811），高分桶（>0.321）Sharpe 为负（-3.869）
+  - ✅ **修正**: 使用上限阈值（p95），veto 高分毒区，保留低分甜点区
+- **TE_REGIME**: 高分桶（0.308-0.761）Sharpe 最高（6.215）
+  - ✅ **保持**: 使用下限阈值（p10），veto 低分噪声，保留高分信号
 
-但当前 Gate 实现是"低于阈值则 veto"：
-```python
-if tc_semantic_score < tc_semantic_score_p05:  # 例如 0.0677
-    gate_ok = False  # Veto
-```
-
-**这意味着**:
-- 如果 `tc_semantic_score_p05 = 0.0677`
-- 那么 `tc_semantic_score < 0.0677` 会被 veto
-- **这会过滤掉 TC_REGIME 的甜点区！**
-
-**建议修正**:
-
-1. **TC_REGIME**: 应该设置**上限阈值**（veto 高分桶）
-   ```python
-   if tc_semantic_score > tc_semantic_score_p95:  # 例如 0.321
-       gate_ok = False  # Veto 高分桶
-   ```
-
-2. **TE_REGIME**: 可以设置**下限阈值**（veto 低分桶）
-   ```python
-   if te_semantic_score < te_semantic_score_p10:  # 例如 0.0443
-       gate_ok = False  # Veto 低分桶
-   ```
-
-3. **或者**: 重新理解 `semantic_score` 的含义
-   - 检查 `tc_semantic_score` 和 `te_semantic_score` 的计算逻辑
-   - 确认分数含义是否一致
+**关键发现**:
+- `tc_semantic_score` 和 `te_semantic_score` 的含义不同
+- TC 的"好"是低分（稳定、不扩张），TE 的"好"是高分（扩张、突破）
+- 必须根据实际分桶结果调整 Gate 逻辑，不能假设"分数越高越好"
 
 ---
 
@@ -386,11 +374,10 @@ if tc_semantic_score < tc_semantic_score_p05:  # 例如 0.0677
    ↓ 影响: Gate 的候选 Archetype 列表
    ↓ 输出: regime (TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE)
 
-2. Build Logs (集成 Router)
-   ↓ 使用: Regime + NN Predictions
-   ↓ 输出: mode (TREND/MEAN/NO_TRADE)
-   ↓ 输出: ret_mean, ret_trend (counterfactual returns)
-   ↓ 影响: 为 Gate 和 Execution 提供 mode 和收益数据
+2. Build Execution Logs
+   ↓ 使用: NN Predictions + Raw OHLCV
+   ↓ 输出: ret_mean, ret_trend (counterfactual execution returns)
+   ↓ 影响: 为 Execution 层提供收益数据（已包含止损止盈逻辑）
 
 3. Semantic Score
    ↓ 计算: tc_semantic_score / te_semantic_score
@@ -398,12 +385,13 @@ if tc_semantic_score < tc_semantic_score_p05:  # 例如 0.0677
    ↓ 影响: Gate 的语义分数阈值（当前实现可能有问题）
 
 4. Gate 过滤
-   ↓ 使用: Regime + Semantic Score + Live Config + Mode
-   ↓ 输出: gate_ok, gate_arch
+   ↓ 使用: Regime + Semantic Score + Live Config
+   ↓ 输出: gate_ok, gate_archetype
    ↓ 影响: 哪些交易可以进入 Execution
 
 5. Execution
-   ↓ 使用: gate_arch + execution_archetypes.yaml
+   ↓ 使用: gate_archetype 选择 ret_mean 或 ret_trend
+   ↓ TC/TE → ret_trend, FR/ET → ret_mean
    ↓ 输出: 实际交易参数（SL/TP/hold/trail）
    ↓ 影响: 最终 PnL
 ```
@@ -463,50 +451,56 @@ mlbot rule physics-regime \
   --preds results/preds/ \
   --output /tmp/physics_regime.parquet
 
-# 3. 构建日志（集成 Router mode 输出）
-mlbot rl build-logs-3action \
+# 3. 构建 Execution 日志
+mlbot rl build-execution-logs \
   --preds results/preds/ \
-  --mode /tmp/mode_3action.parquet \
-  --output /tmp/logs_3action.parquet
+  --output /tmp/logs_execution.parquet \
+  --returns-source rr_execution
 
 # 4. 应用 Gate 过滤
 mlbot rule apply-tree-gate \
-  --mode /tmp/logs_3action.parquet \
+  --logs /tmp/logs_execution.parquet \
   --regime /tmp/physics_regime.parquet \
-  --out /tmp/logs_3action_gated.parquet
+  --out /tmp/logs_execution_gated.parquet
 
 # 5. 生成 E2E 报告
 mlbot rule diagnose-e2e-kpi \
-  --logs /tmp/logs_3action_gated.parquet \
+  --logs /tmp/logs_execution_gated.parquet \
   --regime /tmp/physics_regime.parquet \
-  --gate /tmp/logs_3action_gated.parquet \
-  --output-md /tmp/e2e_kpi_report.md \
-  --output-json /tmp/e2e_kpi_report.json \
+  --gate /tmp/logs_execution_gated.parquet \
+  --output-md results/e2e_kpi/e2e_kpi_report.md \
+  --output-json results/e2e_kpi/e2e_kpi_report.json \
   --no-regime-filter
 ```
 
-**注意**: Router 逻辑已集成到步骤 3 (`build-logs-3action`) 中，不再需要单独的 `mode-3action` 命令。
+**注意**: Router 模块已被移除。Execution 层现在直接根据 archetype 选择 ret_mean 或 ret_trend。
 
-### 4.2 计算 Semantic Score Floors
+### 4.2 计算 Semantic Score Thresholds
 
 ```bash
 python3 scripts/compute_semantic_score_floors.py \
   --physics-regime /tmp/physics_regime.parquet \
   --output /tmp/semantic_score_floors.json \
-  --tc-quantile 0.05 \
+  --tc-quantile 0.95 \
   --te-quantile 0.10 \
   --fr-quantile 0.05 \
   --et-quantile 0.05
 ```
 
-**输出**: JSON 文件包含 TC/TE/FR/ET 的语义分数分位数阈值
+**输出**: JSON 文件包含 TC/TE/FR/ET 的语义分数阈值
+- `tc_semantic_score_p95`: TC 上限阈值（veto 高分毒区）
+- `te_semantic_score_p10`: TE 下限阈值（veto 低分噪声）
+- `fr_semantic_score_p05`: FR 下限阈值（veto 低分）
+- `et_semantic_score_p05`: ET 下限阈值（veto 低分）
+
+**注意**: TC 使用 p95（上限），因为低分桶表现最好；TE/FR/ET 使用 p05/p10（下限），因为高分桶表现更好。
 
 ### 4.3 应用 Gate（带 Semantic Score Floors）
 
 ```bash
 mlbot rule apply-tree-gate \
-  --mode /tmp/logs_3action.parquet \
-  --out /tmp/logs_3action_gated.parquet \
+  --logs /tmp/logs_execution.parquet \
+  --out /tmp/logs_execution_gated.parquet \
   --features-store-layer tier0 \
   --physics-regime /tmp/physics_regime.parquet \
   --semantic-score-floors /tmp/semantic_score_floors.json
@@ -518,10 +512,10 @@ mlbot rule apply-tree-gate \
 
 - `scripts/diagnose_e2e_kpi.py`: E2E KPI 计算逻辑
 - `scripts/apply_tree_gate_3action.py`: Gate 过滤逻辑
-- `src/time_series_model/rule/physics_regime.py`: Regime 分类逻辑
-- `src/time_series_model/rl/counterfactual_eval_3action.py`: Build Logs 逻辑（集成 Router）
-- `src/time_series_model/rule/router_3action.py`: Router 逻辑（已集成到 build-logs 中）
+- `src/time_series_model/rule/regime.py`: Regime 分类逻辑
+- `src/time_series_model/rl/build_execution_logs.py`: Build Execution Logs 逻辑
+- `src/time_series_model/rule/regime.py`: Regime 分类逻辑
 - `docs/ARCHITECTURE.md`: 系统架构文档
 - `docs/workflow/PIPELINE_WORKFLOW.md`: 工作流文档
 
-**注意**: Router 逻辑已集成到 `build-logs-3action` 中，不再作为独立步骤。相关代码在 `src/time_series_model/rule/router_3action.py`，但通过 `build-logs-3action` 调用。
+**注意**: Router 模块已被移除。Execution 层现在直接根据 archetype 选择 ret_mean 或 ret_trend。相关代码在 `src/time_series_model/rl/build_execution_logs.py`。

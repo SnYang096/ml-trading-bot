@@ -17,8 +17,18 @@ def main() -> int:
     )
     p.add_argument("--physics-regime", required=True, help="physics_regime parquet")
     p.add_argument("--output", required=True, help="Output JSON path")
-    p.add_argument("--tc-quantile", type=float, default=0.05)
-    p.add_argument("--te-quantile", type=float, default=0.10)
+    p.add_argument(
+        "--tc-quantile",
+        type=float,
+        default=0.95,
+        help="TC ceiling quantile (veto high scores)",
+    )
+    p.add_argument(
+        "--te-quantile",
+        type=float,
+        default=0.10,
+        help="TE floor quantile (veto low scores)",
+    )
     p.add_argument(
         "--fr-quantile", type=float, default=0.05, help="FR semantic score quantile"
     )
@@ -34,11 +44,21 @@ def main() -> int:
 
     tc_score = pd.to_numeric(tc_df.get("tc_semantic_score"), errors="coerce")
     te_score = pd.to_numeric(te_df.get("te_semantic_score"), errors="coerce")
-    fr_score = pd.to_numeric(mean_df.get("fr_semantic_score"), errors="coerce")
-    et_score = pd.to_numeric(mean_df.get("et_semantic_score"), errors="coerce")
+    fr_score_raw = mean_df.get("fr_semantic_score")
+    et_score_raw = mean_df.get("et_semantic_score")
+    fr_score = (
+        pd.to_numeric(fr_score_raw, errors="coerce")
+        if fr_score_raw is not None
+        else pd.Series(dtype=float)
+    )
+    et_score = (
+        pd.to_numeric(et_score_raw, errors="coerce")
+        if et_score_raw is not None
+        else pd.Series(dtype=float)
+    )
 
     out = {
-        "tc_semantic_score_p05": (
+        "tc_semantic_score_p95": (
             float(tc_score.quantile(args.tc_quantile))
             if tc_score.notna().any()
             else None

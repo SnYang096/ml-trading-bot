@@ -1,13 +1,13 @@
 import numpy as np
 import pandas as pd
 
-from src.time_series_model.rl.build_logs_3action import (
-    BuildLogs3ActionConfig,
-    build_logs_3action,
+from src.time_series_model.rl.build_execution_logs import (
+    BuildExecutionLogsConfig,
+    build_execution_logs,
 )
 
 
-def test_build_logs_3action_multi_symbol_no_leakage_and_columns() -> None:
+def test_build_execution_logs_multi_symbol_no_leakage_and_columns() -> None:
     # Two symbols with different close patterns.
     # preds are in log1p space (regression heads).
     idx0 = pd.date_range("2024-01-01", periods=6, freq="4H")
@@ -59,14 +59,13 @@ def test_build_logs_3action_multi_symbol_no_leakage_and_columns() -> None:
         ignore_index=True,
     )
 
-    cfg = BuildLogs3ActionConfig(momentum_lookback=2, preds_in_log1p=True)
-    logs = build_logs_3action(preds, raw_df=raw, cfg=cfg, mode_df=None)
+    cfg = BuildExecutionLogsConfig(momentum_lookback=2, preds_in_log1p=True)
+    logs = build_execution_logs(preds, raw_df=raw, cfg=cfg)
 
     # Required columns for RL pipeline
     for c in [
         "symbol",
         "timestamp",
-        "mode",
         "head_dir_score",
         "head_mfe_atr",
         "head_mae_atr",
@@ -87,7 +86,7 @@ def test_build_logs_3action_multi_symbol_no_leakage_and_columns() -> None:
     assert float(bbb["ret_trend"].iloc[-2]) >= 0.0
 
 
-def test_build_logs_3action_rr_execution_smoke() -> None:
+def test_build_execution_logs_rr_execution_smoke() -> None:
     # Minimal OHLC required for rr_execution; use simple monotonic series.
     idx0 = pd.date_range("2024-01-01", periods=30, freq="4H")
     close = pd.Series(np.linspace(100, 130, num=len(idx0)), index=idx0)
@@ -112,14 +111,14 @@ def test_build_logs_3action_rr_execution_smoke() -> None:
         }
     )
 
-    cfg = BuildLogs3ActionConfig(returns_source="rr_execution", preds_in_log1p=True)
-    logs = build_logs_3action(preds, raw_df=raw, cfg=cfg, mode_df=None)
+    cfg = BuildExecutionLogsConfig(returns_source="rr_execution", preds_in_log1p=True)
+    logs = build_execution_logs(preds, raw_df=raw, cfg=cfg)
     assert "ret_mean" in logs.columns and "ret_trend" in logs.columns
     # With strong dir_prob and upward trend, trend returns should have some positive mass.
     assert float(logs["ret_trend"].sum()) >= 0.0
 
 
-def test_build_logs_3action_exec_specialize_adds_market_profile() -> None:
+def test_build_execution_logs_exec_specialize_adds_market_profile() -> None:
     idx0 = pd.date_range("2024-01-01", periods=40, freq="4H", tz="UTC")
     # Two symbols with minimal OHLC
     close_a = np.linspace(100, 120, num=len(idx0))
@@ -177,7 +176,7 @@ def test_build_logs_3action_exec_specialize_adds_market_profile() -> None:
         ignore_index=True,
     )
 
-    cfg = BuildLogs3ActionConfig(
+    cfg = BuildExecutionLogsConfig(
         returns_source="rr_execution",
         preds_in_log1p=True,
         symbol_profiles={"AAA": "meme", "BBB": "btc"},
@@ -187,7 +186,7 @@ def test_build_logs_3action_exec_specialize_adds_market_profile() -> None:
             "btc": {"max_holding_bars": 24},
         },
     )
-    logs = build_logs_3action(preds, raw_df=raw, cfg=cfg, mode_df=None)
+    logs = build_execution_logs(preds, raw_df=raw, cfg=cfg)
     assert "market_profile" in logs.columns
     assert set(logs.loc[logs["symbol"] == "AAA", "market_profile"].unique()) == {"meme"}
     assert set(logs.loc[logs["symbol"] == "BBB", "market_profile"].unique()) == {"btc"}
@@ -233,10 +232,10 @@ def test_build_logs_3action_vectorbt_execution_smoke() -> None:
         }
     )
 
-    cfg = BuildLogs3ActionConfig(
+    cfg = BuildExecutionLogsConfig(
         returns_source="vectorbt_execution", preds_in_log1p=True
     )
-    logs = build_logs_3action(preds, raw_df=raw, cfg=cfg, mode_df=None)
+    logs = build_execution_logs(preds, raw_df=raw, cfg=cfg)
     assert {"ret_mean", "ret_trend"}.issubset(set(logs.columns))
     assert np.isfinite(logs["ret_mean"].to_numpy(dtype=float)).all()
     assert np.isfinite(logs["ret_trend"].to_numpy(dtype=float)).all()

@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.time_series_model.rl.build_logs_3action import (
-    BuildLogs3ActionConfig,
-    build_logs_3action,
+from src.time_series_model.rl.build_execution_logs import (
+    BuildExecutionLogsConfig,
+    build_execution_logs,
 )
 from src.time_series_model.rl.counterfactual_eval_3action import (
     CounterfactualEvalConfig,
@@ -28,7 +28,7 @@ from src.time_series_model.rl.walk_forward import WalkForwardSplitConfig
 def test_rl_pipeline_from_preds_build_logs(tmp_path) -> None:
     """
     End-to-end integration smoke:
-      preds + raw(close) -> build_logs_3action -> shadow eval -> counterfactual eval -> FSM decision.
+      preds + raw(close) -> build_execution_logs -> shadow eval -> counterfactual eval -> FSM decision.
 
     Uses synthetic but structured price series to ensure:
       - multi-symbol joins work
@@ -71,14 +71,13 @@ def test_rl_pipeline_from_preds_build_logs(tmp_path) -> None:
     raw = pd.concat(parts_raw, axis=0, ignore_index=True)
     preds = pd.concat(parts_pred, axis=0, ignore_index=True)
 
-    cfg_logs = BuildLogs3ActionConfig(momentum_lookback=5, preds_in_log1p=True)
-    logs = build_logs_3action(preds, raw_df=raw, cfg=cfg_logs, mode_df=None)
+    cfg_logs = BuildExecutionLogsConfig(momentum_lookback=5, preds_in_log1p=True)
+    logs = build_execution_logs(preds, raw_df=raw, cfg=cfg_logs)
 
     # Ensure required columns exist
     required_cols = {
         "symbol",
         "timestamp",
-        "mode",
         "head_dir_score",
         "head_mfe_atr",
         "head_mae_atr",

@@ -73,11 +73,20 @@ class PhysicsRegimeConfig:
     # ⚠️ PROXY V0: Current definition is not fully physical
     # True MEAN_REGIME requires: price path statistically "unsustainable"
     # TODO: Add distance-to-anchor (z-score), path length > limit, liquidity vacuum
+    # NOTE: Thresholds relaxed to generate FR/ET data (2026-01-21)
+    # Original: 2.5, 0.8, 0.4, 0.9 → Relaxed: 0.85 (percentile), 0.7, 0.5, 0.8
+    # ⚠️ IMPORTANT: All thresholds are now percentile-based for consistency
     mean_deviation_window: int = 200
-    mean_deviation_z_min: float = 2.5  # Extreme deviation z-score
-    mean_path_length_min_pct: float = 0.8  # Extreme path length (percentile)
-    mean_dir_sign_consistency_max_pct: float = 0.4  # Direction should be unstable
-    mean_atr_percentile_min: float = 0.9  # Vol spike proxy
+    mean_deviation_z_abs_min_pct: float = (
+        0.85  # Percentile threshold (was hard threshold 2.0)
+    )
+    mean_path_length_min_pct: float = (
+        0.7  # Relaxed from 0.8 (Extreme path length percentile)
+    )
+    mean_dir_sign_consistency_max_pct: float = (
+        0.5  # Relaxed from 0.4 (Direction instability)
+    )
+    mean_atr_percentile_min: float = 0.8  # Relaxed from 0.9 (Vol spike proxy)
     mean_dir_conf_max: float = 0.4  # Raised (weaker constraint, not primary)
     mean_vol_spike_min: float = 2.0  # Simplified proxy
 
@@ -305,6 +314,9 @@ def classify_regime(
     path_length_pct = _percentile_rank(path_length)
     deviation_z = _compute_deviation_z(close, window=cfg.mean_deviation_window)
     deviation_z_abs = np.abs(deviation_z)
+    deviation_z_abs_pct = _percentile_rank(
+        deviation_z_abs
+    )  # Convert to percentile for consistency
 
     # Initialize regime as NO_TRADE
     regime = np.full(len(df), "NO_TRADE", dtype=object)
@@ -411,8 +423,12 @@ def classify_regime(
     # - local liquidity vacuum + quick refill - TODO
     # Current implementation is a simplified proxy
     # NOTE: This should NOT be enabled in production execution
+    # ⚠️ IMPORTANT: All thresholds are percentile-based for consistency with TC/TE
     mean_physical_ok = (
-        (~np.isnan(deviation_z_abs) & (deviation_z_abs >= cfg.mean_deviation_z_min))
+        (
+            ~np.isnan(deviation_z_abs_pct)
+            & (deviation_z_abs_pct >= cfg.mean_deviation_z_abs_min_pct)
+        )
         & (
             ~np.isnan(path_length_pct)
             & (path_length_pct >= cfg.mean_path_length_min_pct)
@@ -452,6 +468,7 @@ def classify_regime(
         out["te_score_pct"] = te_score_pct
     out["deviation_z"] = deviation_z
     out["deviation_z_abs"] = deviation_z_abs
+    out["deviation_z_abs_pct"] = deviation_z_abs_pct
     out["hard_veto"] = hard_veto
 
     # Semantic scores (do NOT affect regime assignment; consumed by Gate)

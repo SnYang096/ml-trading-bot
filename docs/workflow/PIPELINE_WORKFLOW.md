@@ -37,25 +37,28 @@ mlbot rule physics-regime \
 **说明**:
 - Regime 分类器输出 `regime` (TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE) 用于 Gate 层
 - 这是 Physics/Regime 分类器的输出，基于市场物理可行性判断
-- **注意**: 在新架构中，Router 的 `mode` 输出已集成到 `build-logs-3action` 步骤中，不再需要单独的 `mode-3action` 命令
+- **注意**: Router 模块已被移除。Execution 层现在直接根据 archetype 选择 ret_mean 或 ret_trend
 
 ---
 
-### 3. 构建日志 (Build Logs) - 集成 Router Mode 输出
+### 3. 构建 Execution 日志 (Build Execution Logs)
 
 ```bash
-mlbot rl build-logs-3action \
+mlbot rl build-execution-logs \
   --preds results/preds/ \
-  --mode /tmp/mode_3action.parquet \
-  --output /tmp/logs_3action.parquet
+  --output /tmp/logs_execution.parquet \
+  --returns-source rr_execution
 ```
 
-**输出**: `logs_3action.parquet` (包含 `mode`: TREND/MEAN/NO_TRADE, `ret_mean`, `ret_trend` 等)
+**输出**: `logs_execution.parquet` (包含 `ret_mean`, `ret_trend` 等)
 
 **说明**:
-- 在新架构中，Router 的 `mode` 输出已集成到 `build-logs-3action` 步骤中
-- `mode` 基于 Regime 分类和 Router 阈值生成（TREND/MEAN/NO_TRADE）
-- 同时计算 counterfactual returns (`ret_mean`, `ret_trend`)
+- 计算 counterfactual execution returns (`ret_mean`, `ret_trend`)
+- 这些 returns 已经包含了止损止盈的执行逻辑（在 `rr_execution` 模式下）
+- Execution 层根据 archetype 选择使用哪个 return：
+  - TC/TE → 使用 `ret_trend` (趋势风格执行)
+  - FR/ET → 使用 `ret_mean` (均值回归风格执行)
+- **注意**: 不再输出 `mode` 列，因为 Router 模块已被移除
 
 ---
 
@@ -63,19 +66,22 @@ mlbot rl build-logs-3action \
 
 ```bash
 mlbot rule apply-tree-gate \
-  --mode /tmp/logs_3action.parquet \
-  --regime /tmp/physics_regime.parquet \
-  --out /tmp/logs_3action_gated.parquet \
+  --logs /tmp/logs_execution.parquet \
+  --out /tmp/logs_execution_gated.parquet \
   --live-config config/nnmultihead/live/meta_router_live_config.yaml
 ```
 
-**输出**: `logs_3action_gated.parquet` (包含 `gate_decision`, `gate_arch`, `gate_ok`)
+**输出**: `logs_execution_gated.parquet` (包含 `gate_decision`, `gate_archetype`, `gate_ok`)
 
 **说明**:
 - 这一步应用 Gate 规则过滤交易
+- 输入 `logs` 必须包含 `regime` 列（来自 physics-regime 步骤）
 - 根据 `regime` 和 `live_config` 中的 `enabled_archetypes` 决定哪些交易可以执行
 - 过滤掉 NO_TRADE regime 中的交易
-- 应用 semantic score floors（如果提供）
+- 应用 semantic score thresholds（如果提供）
+  - TC_REGIME: 使用上限阈值（p95），veto 高分毒区
+  - TE_REGIME: 使用下限阈值（p10），veto 低分噪声
+- 输出 `gate_archetype` 列（TC/TE/FR/ET/NO_TRADE），用于 Execution 层选择 ret_mean 或 ret_trend
 
 ---
 
@@ -83,11 +89,11 @@ mlbot rule apply-tree-gate \
 
 ```bash
 mlbot rule diagnose-e2e-kpi \
-  --logs /tmp/logs_3action_gated.parquet \
+  --logs /tmp/logs_execution_gated.parquet \
   --regime /tmp/physics_regime.parquet \
-  --gate /tmp/logs_3action_gated.parquet \
-  --output-json /tmp/e2e_kpi_report.json \
-  --output-md /tmp/e2e_kpi_report.md \
+  --gate /tmp/logs_execution_gated.parquet \
+  --output-json results/e2e_kpi/e2e_kpi_report.json \
+  --output-md results/e2e_kpi/e2e_kpi_report.md \
   --no-regime-filter
 ```
 
@@ -100,7 +106,7 @@ mlbot rule diagnose-e2e-kpi \
 - `--no-regime-filter` 生成对比报告（有/无 regime 过滤）
 
 **最新报告位置**:
-- 默认输出到 `/tmp/e2e_kpi_report_gated.md` 和 `/tmp/e2e_kpi_report_gated.json`
+- 默认输出到 `results/e2e_kpi/e2e_kpi_report.md` 和 `results/e2e_kpi/e2e_kpi_report.json`
 - 可以通过 `--output-md` 和 `--output-json` 参数指定输出路径
 
 ---
@@ -111,7 +117,7 @@ mlbot rule diagnose-e2e-kpi \
 
 ```bash
 mlbot rule diagnose-gate-filtering \
-  --logs /tmp/logs_3action.parquet \
+  --logs /tmp/logs_execution.parquet \
   --regime /tmp/physics_regime.parquet \
   --live-config config/nnmultihead/live/meta_router_live_config.yaml \
   --output-md /tmp/gate_filtering_diagnosis.md
@@ -125,7 +131,7 @@ mlbot rule diagnose-gate-filtering \
 
 ```bash
 mlbot rule diagnose-tc-regime-execution \
-  --logs /tmp/logs_3action_gated.parquet \
+  --logs /tmp/logs_execution_gated.parquet \
   --regime /tmp/physics_regime.parquet \
   --output-json /tmp/tc_execution.json \
   --output-md /tmp/tc_execution.md
@@ -148,24 +154,27 @@ mlbot rule diagnose-tc-regime-execution \
 # 1. Predict
 mlbot nnmultihead predict --output-dir results/preds/ ...
 
-# 2. Router mode
-mlbot rule mode-3action --preds results/preds/ --output /tmp/logs_3action.parquet
-
-# 3. Regime classification
+# 2. Regime classification
 mlbot rule physics-regime --preds results/preds/ --output /tmp/physics_regime.parquet
+
+# 3. Build execution logs
+mlbot rl build-execution-logs \
+  --preds results/preds/ \
+  --output /tmp/logs_execution.parquet \
+  --returns-source rr_execution
 
 # 4. Gate filtering (默认执行)
 mlbot rule apply-tree-gate \
-  --mode /tmp/logs_3action.parquet \
-  --regime /tmp/physics_regime.parquet \
-  --out /tmp/logs_3action_gated.parquet
+  --logs /tmp/logs_execution.parquet \
+  --out /tmp/logs_execution_gated.parquet \
+  --live-config config/nnmultihead/live/meta_router_live_config.yaml
 
 # 5. E2E report
 mlbot rule diagnose-e2e-kpi \
-  --logs /tmp/logs_3action_gated.parquet \
+  --logs /tmp/logs_execution_gated.parquet \
   --regime /tmp/physics_regime.parquet \
-  --gate /tmp/logs_3action_gated.parquet \
-  --output-md /tmp/e2e_kpi_report.md
+  --gate /tmp/logs_execution_gated.parquet \
+  --output-md results/e2e_kpi/e2e_kpi_report.md
 ```
 
 ---
@@ -181,16 +190,15 @@ mlbot rule diagnose-e2e-kpi \
 2. **E2E 报告需要 Gate 输出**: 使用 `--gate` 参数提供准确的 archetype 信息
 
 3. **ET/FR 交易缺失原因**:
-   - **主要原因**: MEAN_REGIME 中没有交易（Router 在 MEAN_REGIME 时间点输出了 NO_TRADE）
-   - **次要原因**: Router 阈值设置导致 MEAN mode 很少被触发（`eff_mean_min`, `ttm_mean_max` 可能过于严格）
-   - **Gate 过滤**: 即使有 MEAN mode 的交易，也可能被 Gate 规则过滤
+   - **主要原因**: MEAN_REGIME 中没有交易（MEAN_REGIME 分类条件可能过于严格）
+   - **次要原因**: Gate 过滤可能过于严格，导致 FR/ET archetype 被 veto
    - **检查方法**: 
      ```bash
      # 检查 MEAN_REGIME 分布
      python3 -c "import pandas as pd; df = pd.read_parquet('/tmp/physics_regime.parquet'); print(df['regime'].value_counts())"
      
-     # 检查 Router mode 在 MEAN_REGIME 中的分布
-     python3 -c "import pandas as pd; logs = pd.read_parquet('/tmp/logs_3action.parquet'); regime = pd.read_parquet('/tmp/physics_regime.parquet'); merged = logs.merge(regime[['symbol', 'timestamp', 'regime']], on=['symbol', 'timestamp']); print(merged[merged['regime'] == 'MEAN_REGIME']['mode'].value_counts())"
+     # 检查 Gate 输出中的 archetype 分布
+     python3 -c "import pandas as pd; logs = pd.read_parquet('/tmp/logs_execution_gated.parquet'); print(logs['gate_archetype'].value_counts())"
      ```
 
 ---
@@ -223,21 +231,20 @@ enabled_archetypes:
 ### Q: 为什么 ET/FR 交易没有？
 
 **A**: 可能的原因：
-1. **MEAN_REGIME 中没有交易**: Router 的 mode-3action 在 MEAN_REGIME 时间点输出了 NO_TRADE
-2. **MEAN_REGIME 中的交易被 Gate 过滤**: 即使有 MEAN mode 的交易，也可能被 Gate 规则 veto
-3. **简化版 Gate 逻辑**: 简化版只检查 regime 和 enabled_archetypes，不应用完整的 Gate 规则
+1. **MEAN_REGIME 中没有交易**: MEAN_REGIME 分类条件可能过于严格
+2. **MEAN_REGIME 中的交易被 Gate 过滤**: 即使有 MEAN_REGIME 的交易，也可能被 Gate 规则 veto
+3. **Execution 层选择**: Execution 层根据 archetype 选择 ret_mean 或 ret_trend，如果 archetype 不正确，可能导致交易缺失
 
 **检查方法**:
 ```bash
 # 1. 检查 MEAN_REGIME 的分布
-mlbot rule diagnose-gate-filtering \
-  --logs /tmp/logs_3action.parquet \
+mlbot rule diagnose-fr-et-filtering \
+  --preds results/preds/ \
   --regime /tmp/physics_regime.parquet \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
-  --output-md /tmp/gate_diagnosis.md
+  --output-md /tmp/fr_et_diagnosis.md
 
-# 2. 检查 Router 的 MEAN mode 输出
-python3 -c "import pandas as pd; df = pd.read_parquet('/tmp/logs_3action.parquet'); print(df['mode'].value_counts())"
+# 2. 检查 Gate 输出中的 archetype 分布
+python3 -c "import pandas as pd; df = pd.read_parquet('/tmp/logs_execution_gated.parquet'); print(df['gate_archetype'].value_counts())"
 ```
 
 ### Q: 为什么 gate_plan 有两个开关（enabled 和 kind）？

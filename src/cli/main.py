@@ -1764,7 +1764,7 @@ def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker
     sys.exit(run_script("scripts/rl_router_embed_eval.py", args, docker=docker))
 
 
-@rl.command("build-logs-3action")
+@rl.command("build-execution-logs")
 @click.option(
     "--preds",
     "preds_path",
@@ -1775,7 +1775,7 @@ def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker
     "--mode",
     "mode_path",
     default=None,
-    help="Optional mode file/dir from mlbot rule mode-3action",
+    help="Optional mode file/dir (deprecated, not used)",
 )
 @click.option(
     "--symbols",
@@ -1861,7 +1861,7 @@ def rl_router_embed_eval(logs_path, out_dir, train_ratio, regime_buckets, docker
     "--output", "output_path", required=True, help="Output logs path (.parquet/.csv)"
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def rl_build_logs_3action(
+def rl_build_execution_logs(
     preds_path,
     mode_path,
     symbols,
@@ -1887,8 +1887,8 @@ def rl_build_logs_3action(
     docker,
 ):
     click.echo(
-        "Note: `mlbot rl build-logs-3action` is deprecated for v0 mainline. "
-        "Use `mlbot nnmultihead build-logs-3action` instead."
+        "Note: `mlbot rl build-execution-logs` is deprecated for v0 mainline. "
+        "Use `mlbot nnmultihead build-execution-logs` instead."
     )
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
@@ -1945,132 +1945,16 @@ def rl_build_logs_3action(
     if preds_in_log1p:
         args.extend(["--preds-in-log1p", str(preds_in_log1p)])
 
-    sys.exit(run_script("scripts/rl_build_logs_3action.py", args, docker=docker))
-
-
-@rule.command("mode-3action")
-@click.option(
-    "--preds",
-    required=True,
-    help="Preds file (.parquet/.csv) or directory of per-symbol preds_*.parquet",
-)
-@click.option(
-    "--model",
-    "model_path",
-    default=None,
-    help="Optional model.pt to infer whether preds are log1p targets",
-)
-@click.option(
-    "--preds-in-log1p",
-    type=click.Choice(["yes", "no"]),
-    default=None,
-    help="Override preds space (yes=log1p)",
-)
-@click.option(
-    "--output", "output_path", required=True, help="Output path (.parquet or .csv)"
-)
-@click.option("--mfe-min", type=float, default=None)
-@click.option("--eff-min", type=float, default=None)
-@click.option("--dir-conf-trend-min", type=float, default=None)
-@click.option("--mfe-trend-min", type=float, default=None)
-@click.option("--ttm-trend-min", type=float, default=None)
-@click.option("--eff-mean-min", type=float, default=None)
-@click.option("--ttm-mean-max", type=float, default=None)
-@click.option(
-    "--trend-confirm-mode",
-    type=click.Choice(["and", "or"]),
-    default=None,
-    help="Trend confirm logic: and (legacy) or (dir_conf AND (mfe OR ttm)).",
-)
-@click.option(
-    "--regime-soft-scores",
-    type=click.Choice(["yes", "no"]),
-    default=None,
-    help="Use soft regime scores instead of hard thresholds.",
-)
-@click.option(
-    "--min-regime-score",
-    type=float,
-    default=None,
-    help="Minimum score to assign a regime in soft mode.",
-)
-@click.option("--tc-score-floor", type=float, default=None)
-@click.option("--te-score-floor", type=float, default=None)
-@click.option("--mean-score-floor", type=float, default=None)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def rule_mode_3action(
-    preds,
-    model_path,
-    preds_in_log1p,
-    calibration_json,
-    output_path,
-    mfe_min,
-    eff_min,
-    dir_conf_trend_min,
-    mfe_trend_min,
-    ttm_trend_min,
-    eff_mean_min,
-    ttm_mean_max,
-    trend_confirm_mode,
-    regime_soft_scores,
-    min_regime_score,
-    tc_score_floor,
-    te_score_floor,
-    mean_score_floor,
-    docker,
-):
-    """Generate mode labels (NO_TRADE/MEAN/TREND) from nnmultihead heads."""
-    use_workspace_prefix = docker and not _is_in_docker()
-    args = [
-        "--preds",
-        f"/workspace/{preds}" if use_workspace_prefix else preds,
-        "--output",
-        f"/workspace/{output_path}" if use_workspace_prefix else output_path,
-    ]
-    if model_path:
-        args.extend(
-            [
-                "--model",
-                f"/workspace/{model_path}" if use_workspace_prefix else model_path,
-            ]
-        )
-    if preds_in_log1p:
-        args.extend(["--preds-in-log1p", preds_in_log1p])
-    if calibration_json:
-        args.extend(["--calibration-json", calibration_json])
-    # thresholds
-    if mfe_min is not None:
-        args.extend(["--mfe-min", str(mfe_min)])
-    if eff_min is not None:
-        args.extend(["--eff-min", str(eff_min)])
-    if dir_conf_trend_min is not None:
-        args.extend(["--dir-conf-trend-min", str(dir_conf_trend_min)])
-    if mfe_trend_min is not None:
-        args.extend(["--mfe-trend-min", str(mfe_trend_min)])
-    if ttm_trend_min is not None:
-        args.extend(["--ttm-trend-min", str(ttm_trend_min)])
-    if eff_mean_min is not None:
-        args.extend(["--eff-mean-min", str(eff_mean_min)])
-    if ttm_mean_max is not None:
-        args.extend(["--ttm-mean-max", str(ttm_mean_max)])
-    if trend_confirm_mode is not None:
-        args.extend(["--trend-confirm-mode", str(trend_confirm_mode)])
-    if regime_soft_scores is not None:
-        args.extend(["--regime-soft-scores", str(regime_soft_scores)])
-    if min_regime_score is not None:
-        args.extend(["--min-regime-score", str(min_regime_score)])
-    if tc_score_floor is not None:
-        args.extend(["--tc-score-floor", str(tc_score_floor)])
-    if te_score_floor is not None:
-        args.extend(["--te-score-floor", str(te_score_floor)])
-    if mean_score_floor is not None:
-        args.extend(["--mean-score-floor", str(mean_score_floor)])
-
-    sys.exit(run_script("scripts/rule_mode_3action.py", args, docker=docker))
+    sys.exit(run_script("scripts/rl_build_execution_logs.py", args, docker=docker))
 
 
 @rule.command("plot-router-modes-kline")
-@click.option("--mode", "mode_path", required=True, help="mode_3action parquet")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="logs_3action or physics_regime parquet (must contain regime column)",
+)
 @click.option(
     "--feature-store-root",
     default="feature_store",
@@ -2259,12 +2143,52 @@ def rule_diagnose_tc_regime_execution(
     sys.exit(run_script("scripts/diagnose_tc_world_execution.py", args, docker=docker))
 
 
+@rule.command("diagnose-fr-et-filtering")
+@click.option("--preds", required=True, help="Predictions parquet directory or file")
+@click.option("--output-md", default=None, help="Output Markdown report path")
+@click.option("--relax-router", is_flag=True, help="Relax router thresholds for testing")
+@click.option("--relax-regime", is_flag=True, help="Relax regime classification for testing")
+def rule_diagnose_fr_et_filtering(
+    preds,
+    output_md,
+    relax_router,
+    relax_regime,
+    docker,
+):
+    """Diagnose FR/ET filtering at each layer."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds}" if use_workspace_prefix else preds,
+    ]
+    if output_md:
+        args.extend(
+            [
+                "--output-md",
+                f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+            ]
+        )
+    if relax_router:
+        args.append("--relax-router")
+    if relax_regime:
+        args.append("--relax-regime")
+    sys.exit(run_script("scripts/diagnose_fr_et_filtering.py", args, docker=docker))
+
+
 @rule.command("diagnose-e2e-kpi")
 @click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
 @click.option("--regime", "regime_path", default=None, help="physics_regime parquet (optional)")
 @click.option("--gate", "gate_path", default=None, help="gate output parquet with archetype info (optional)")
-@click.option("--output-json", required=True, help="Output JSON path")
-@click.option("--output-md", required=True, help="Output Markdown path")
+@click.option(
+    "--output-json",
+    default=None,
+    help="Output JSON path (default: results/e2e_kpi/e2e_kpi_report.json)",
+)
+@click.option(
+    "--output-md",
+    default=None,
+    help="Output Markdown path (default: results/e2e_kpi/e2e_kpi_report.md)",
+)
 @click.option("--no-regime-filter", is_flag=True, help="Generate comparison report without regime filtering")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rule_diagnose_e2e_kpi(
@@ -2281,11 +2205,21 @@ def rule_diagnose_e2e_kpi(
     args = [
         "--logs",
         f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
-        "--output-json",
-        f"/workspace/{output_json}" if use_workspace_prefix else output_json,
-        "--output-md",
-        f"/workspace/{output_md}" if use_workspace_prefix else output_md,
     ]
+    if output_json:
+        args.extend(
+            [
+                "--output-json",
+                f"/workspace/{output_json}" if use_workspace_prefix else output_json,
+            ]
+        )
+    if output_md:
+        args.extend(
+            [
+                "--output-md",
+                f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+            ]
+        )
     if regime_path:
         args.extend(
             [
@@ -2306,8 +2240,12 @@ def rule_diagnose_e2e_kpi(
 
 
 @rule.command("apply-tree-gate")
-@click.option("--mode", "mode_path", required=True, help="mode_3action parquet")
-@click.option("--regime", "regime_path", default=None, help="physics_regime parquet (optional, use --physics-regime to merge)")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="logs_3action or physics_regime parquet (must contain regime column)",
+)
 @click.option("--out", "out_path", required=True, help="output gated mode file")
 @click.option(
     "--live-config",
@@ -2357,8 +2295,7 @@ def rule_diagnose_e2e_kpi(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rule_apply_tree_gate(
-    mode_path,
-    regime_path,
+    logs_path,
     out_path,
     live_config_path,
     features_store_root,
@@ -2370,11 +2307,11 @@ def rule_apply_tree_gate(
     semantic_score_floors,
     docker,
 ):
-    """Apply tree gate on mode_3action (Gate filtering step in pipeline)."""
+    """Apply tree gate based on regime and archetype (Gate filtering step in pipeline)."""
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
-        "--mode",
-        f"/workspace/{mode_path}" if use_workspace_prefix else mode_path,
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
         "--out",
         f"/workspace/{out_path}" if use_workspace_prefix else out_path,
         "--live-config",
@@ -3381,18 +3318,18 @@ def nnmultihead_pipeline_3action_e2e(
 ):
     """
     One-command mainline pipeline:
-      nnmultihead predict -> rule mode-3action -> nnmultihead build-logs-3action -> nnmultihead run-e2e-3action
+      nnmultihead predict -> rule physics-regime -> nnmultihead build-execution-logs -> nnmultihead run-e2e-3action
 
     Motivation:
     - Keep existing family commands (nnmultihead/rule/rl) for clarity and modularity.
-    - Provide a smooth, single entrypoint for the recommended mainline (Rule + Execution),
+    - Provide a smooth, single entrypoint for the recommended mainline (Regime + Execution),
       while BC/RL/FSM remain optional modules.
     """
     use_workspace_prefix = docker and not _is_in_docker()
     out_root = f"/workspace/{out_dir}" if use_workspace_prefix else out_dir
     preds_dir = f"{out_root}/preds"
-    mode_path = f"{out_root}/mode_3action.parquet"
-    logs_path = f"{out_root}/logs_3action.parquet"
+    regime_path = f"{out_root}/physics_regime.parquet"
+    logs_path = f"{out_root}/logs_execution.parquet"
     e2e_out = f"{out_root}/e2e"
 
     # -------------------------------------------------------------------------
@@ -3540,33 +3477,29 @@ def nnmultihead_pipeline_3action_e2e(
     if rc != 0:
         sys.exit(rc)
 
-    # [2/4] rule mode-3action
-    mode_path_raw = mode_path
-    args_mode = [
+    # [2/4] physics-regime (Router removed, regime classification is done here)
+    # Note: Router (mode-3action) has been removed. Regime classification is now done in physics-regime step.
+    regime_path_raw = regime_path
+    args_regime = [
         "--preds",
         preds_dir,
-        "--model",
-        f"/workspace/{model_path}" if use_workspace_prefix else model_path,
         "--output",
-        mode_path_raw,
+        f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
+        "--timeframe",
+        str(timeframe),
     ]
-    if mfe_min is not None:
-        args_mode.extend(["--mfe-min", str(float(mfe_min))])
-    if eff_min is not None:
-        args_mode.extend(["--eff-min", str(float(eff_min))])
-    if dir_conf_trend_min is not None:
-        args_mode.extend(["--dir-conf-trend-min", str(float(dir_conf_trend_min))])
-    if mfe_trend_min is not None:
-        args_mode.extend(["--mfe-trend-min", str(float(mfe_trend_min))])
-    if ttm_trend_min is not None:
-        args_mode.extend(["--ttm-trend-min", str(float(ttm_trend_min))])
-    if eff_mean_min is not None:
-        args_mode.extend(["--eff-mean-min", str(float(eff_mean_min))])
-    if ttm_mean_max is not None:
-        args_mode.extend(["--ttm-mean-max", str(float(ttm_mean_max))])
+    if feature_store_root:
+        args_regime.extend(
+            [
+                "--feature-store-root",
+                f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+            ]
+        )
+    if feature_store_layer:
+        args_regime.extend(["--layer", str(feature_store_layer)])
     rc = run_script(
-        "scripts/rule_mode_3action.py",
-        args_mode,
+        "scripts/physics_regime_classifier.py",
+        args_regime,
         docker=docker,
         env_overrides=env_overrides,
     )
@@ -3581,12 +3514,12 @@ def nnmultihead_pipeline_3action_e2e(
         gate_enabled = False
     gate_kind = str(gate_plan.get("kind") or "").strip()
     if gate_enabled and gate_kind == "tree_gate_veto":
-        gate_mode_path = f"{out_root}/mode_3action_gate.parquet"
+        gate_logs_path = f"{out_root}/logs_execution_gated.parquet"
         gate_args = [
-            "--mode",
-            mode_path_raw,
+            "--logs",
+            f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
             "--out",
-            gate_mode_path,
+            gate_logs_path,
             "--features-store-root",
             f"/workspace/{feature_store_root}"
             if use_workspace_prefix
@@ -3634,14 +3567,15 @@ def nnmultihead_pipeline_3action_e2e(
         )
         if rc != 0:
             sys.exit(rc)
-        mode_path = gate_mode_path
+        # Gate output contains logs with gate_archetype, use it for downstream steps
+        logs_path = gate_logs_path
 
     # Optional: router plot on OHLC (all symbols, default on)
     if emit_router_plots:
         plot_dir = router_plot_dir or f"{out_root}/router_plots"
         plot_args = [
-            "--mode",
-            mode_path,
+            "--logs",
+            f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
             "--feature-store-root",
             f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
             "--feature-store-layer",
@@ -3661,12 +3595,10 @@ def nnmultihead_pipeline_3action_e2e(
             env_overrides=env_overrides,
         )
 
-    # [3/4] build-logs-3action
+    # [3/4] build-execution-logs
     args_logs = [
         "--preds",
         preds_dir,
-        "--mode",
-        mode_path,
         "--model",
         f"/workspace/{model_path}" if use_workspace_prefix else model_path,
         "--symbols",
@@ -3685,7 +3617,7 @@ def nnmultihead_pipeline_3action_e2e(
         logs_path,
     ]
     rc = run_script(
-        "scripts/rl_build_logs_3action.py",
+        "scripts/rl_build_execution_logs.py",
         args_logs,
         docker=docker,
         env_overrides=env_overrides,
@@ -3700,8 +3632,8 @@ def nnmultihead_pipeline_3action_e2e(
         stage_args = [
             "--preds",
             preds_dir,
-            "--mode",
-            mode_path,
+            "--regime",
+            f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
             "--logs",
             logs_path,
             "--out-dir",
@@ -3887,7 +3819,7 @@ def nnmultihead_pipeline_3action_e2e(
     sys.exit(rc)
 
 
-@nnmultihead.command("build-logs-3action")
+@nnmultihead.command("build-execution-logs")
 @click.option(
     "--preds",
     "preds_path",
@@ -3898,7 +3830,7 @@ def nnmultihead_pipeline_3action_e2e(
     "--mode",
     "mode_path",
     default=None,
-    help="Optional mode file/dir from mlbot rule mode-3action",
+    help="Optional mode file/dir (deprecated, not used)",
 )
 @click.option(
     "--symbols",
@@ -3980,7 +3912,7 @@ def nnmultihead_pipeline_3action_e2e(
     "--output", "output_path", required=True, help="Output logs path (.parquet/.csv)"
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def nnmultihead_build_logs_3action(
+def nnmultihead_build_execution_logs(
     preds_path,
     mode_path,
     symbols,
@@ -4060,7 +3992,7 @@ def nnmultihead_build_logs_3action(
         )
     if preds_in_log1p:
         args.extend(["--preds-in-log1p", str(preds_in_log1p)])
-    sys.exit(run_script("scripts/rl_build_logs_3action.py", args, docker=docker))
+    sys.exit(run_script("scripts/rl_build_execution_logs.py", args, docker=docker))
 
 
 @nnmultihead.command("run-e2e-3action")

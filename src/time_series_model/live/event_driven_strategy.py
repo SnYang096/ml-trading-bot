@@ -550,13 +550,38 @@ class EventDrivenStrategy(Strategy):
                     archetype_registry_path=reg,
                 )
                 if ex is None:
-                    mode, exec_id, rules = "TREND", "MomentumExpansion", []
+                    # Default: infer from strategy name
+                    name = str(self.strategy_name).lower()
+                    if "reversal" in name or "mean" in name:
+                        archetype, exec_id, rules = (
+                            "FailureReversionFR",
+                            "FailedBreakoutFade",
+                            [],
+                        )
+                    else:
+                        archetype, exec_id, rules = (
+                            "TrendContinuationTC",
+                            "MomentumExpansion",
+                            [],
+                        )
                 else:
-                    mode, exec_id, rules = (
-                        ex.router_mode,
-                        ex.execution_strategy_id,
-                        ex.evidence_rules,
-                    )
+                    # Use execution profile: exec_id contains archetype info (TC/TE/FR/ET)
+                    exec_id = ex.execution_strategy_id
+                    exec_id_upper = exec_id.upper()
+                    if "TC" in exec_id_upper or "TE" in exec_id_upper:
+                        archetype = exec_id  # Use exec_id as archetype
+                    elif "FR" in exec_id_upper or "ET" in exec_id_upper:
+                        archetype = exec_id  # Use exec_id as archetype
+                    else:
+                        # Fallback: use router_mode
+                        archetype = ex.router_mode
+                    rules = ex.evidence_rules
+                # For backward compatibility, mode is derived from archetype
+                mode = (
+                    "MEAN"
+                    if ("FR" in archetype.upper() or "ET" in archetype.upper())
+                    else "TREND"
+                )
                 # Build evidence from merged feature set keys (all_features+orderflow_features are used upstream)
                 merged_feats = {}
                 try:

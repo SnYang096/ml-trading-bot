@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Build RL/BC-ready logs for 3-action Router.
+Build Execution logs with counterfactual execution returns.
 
 Consumes:
   - nnmultihead predict outputs (preds parquet/csv file OR directory of preds_*.parquet)
-  - optional rule mode outputs (mode parquet/csv file OR directory)
   - raw OHLCV (close) from data/parquet_data to compute ret_mean/ret_trend + drawdown
 
 Produces a single logs file with columns required by:
   - mlbot rl shadow-eval-3action
   - mlbot rl counterfactual-eval-3action
+
+Note: ret_mean and ret_trend are counterfactual execution returns that already include
+stop-loss and take-profit execution logic (in rr_execution mode).
 """
 
 from __future__ import annotations
@@ -28,9 +30,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_tools.data_utils import load_raw_data  # noqa: E402
-from src.time_series_model.rl.build_logs_3action import (
-    BuildLogs3ActionConfig,
-    build_logs_3action,
+from src.time_series_model.rl.build_execution_logs import (
+    BuildExecutionLogsConfig,
+    build_execution_logs,
 )  # noqa: E402
 from src.time_series_model.rl.execution_returns_vectorbt import (  # noqa: E402
     VectorBTExecutionReturnsConfig,
@@ -76,7 +78,9 @@ def _load_multi(p: Path, *, prefix: str) -> pd.DataFrame:
 
 
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Build logs for RL/BC 3-action Router.")
+    ap = argparse.ArgumentParser(
+        description="Build Execution logs with counterfactual execution returns."
+    )
     ap.add_argument(
         "--preds",
         required=True,
@@ -85,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--mode",
         default=None,
-        help="Optional mode file/dir from mlbot rule mode-3action",
+        help="Optional mode file/dir (deprecated, not used)",
     )
     ap.add_argument(
         "--data-path", default="data/parquet_data", help="Raw data directory"
@@ -199,11 +203,10 @@ def main() -> None:
         raw = raw.copy()
         raw["timestamp"] = raw.index
 
-    mode_df: Optional[pd.DataFrame] = None
+    # Note: mode_df is deprecated and not used
     if mode_path is not None:
-        mode_df = _load_multi(mode_path, prefix="mode")
-        if args.symbols:
-            mode_df = mode_df[mode_df["symbol"].isin(set(symbols))]
+        # Silently ignore mode_path for backward compatibility
+        pass
 
     symbol_profiles = (
         json.loads(str(args.symbol_profiles_json))
@@ -221,7 +224,7 @@ def main() -> None:
         else None
     )
 
-    cfg = BuildLogs3ActionConfig(
+    cfg = BuildExecutionLogsConfig(
         momentum_lookback=int(args.momentum_lookback),
         preds_in_log1p=bool(preds_in_log1p),
         returns_source=str(args.returns_source),
@@ -238,7 +241,7 @@ def main() -> None:
         rr_profile_overrides=rr_profile_overrides,
         vbt_profile_overrides=vbt_profile_overrides,
     )
-    logs = build_logs_3action(preds_df, raw_df=raw, cfg=cfg, mode_df=mode_df)
+    logs = build_execution_logs(preds_df, raw_df=raw, cfg=cfg)
 
     if out_path.suffix.lower() == ".parquet":
         logs.to_parquet(out_path, index=False)

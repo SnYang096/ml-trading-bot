@@ -8,7 +8,6 @@ import pandas as pd
 
 from src.time_series_model.rule.router_3action import (
     Rule3ActionConfig,
-    compute_mode_3action,
 )
 from src.time_series_model.rl.execution_returns_rr import (
     RRExecutionReturnsConfig,
@@ -21,16 +20,21 @@ from src.time_series_model.rl.execution_returns_vectorbt import (
 
 
 @dataclass(frozen=True)
-class BuildLogs3ActionConfig:
+class BuildExecutionLogsConfig:
     """
-    Build RL/BC-ready logs for 3-action Router from:
+    Build Execution logs with counterfactual execution returns from:
       - nnmultihead predictions (pred_* heads)
       - raw OHLCV (close) for per-step counterfactual returns
 
     Output is a single table with at least:
-      symbol, timestamp, mode,
+      symbol, timestamp,
       head_dir_score, head_mfe_atr, head_mae_atr, head_t_to_mfe,
       drawdown, ret_mean, ret_trend
+
+    Note: mode column has been removed. Execution now uses archetype to select ret_mean/ret_trend.
+
+    Important: ret_mean and ret_trend are counterfactual execution returns that already include
+    stop-loss and take-profit execution logic (in rr_execution mode).
 
     Important: returns are computed WITHOUT using future information beyond next bar.
     """
@@ -181,16 +185,25 @@ def _compute_mode_returns(
     return ret_mean.astype(float), ret_trend.astype(float)
 
 
-def build_logs_3action(
+def build_execution_logs(
     preds_df: pd.DataFrame,
     *,
     raw_df: pd.DataFrame,
-    cfg: BuildLogs3ActionConfig = BuildLogs3ActionConfig(),
-    mode_df: Optional[pd.DataFrame] = None,
+    cfg: BuildExecutionLogsConfig = BuildExecutionLogsConfig(),
 ) -> pd.DataFrame:
     """
-    Build a single logs dataframe. Both preds_df and raw_df may contain multiple symbols,
+    Build Execution logs with counterfactual execution returns (ret_mean, ret_trend).
+
+    These returns already include stop-loss and take-profit execution logic (in rr_execution mode).
+    Execution layer selects ret_mean or ret_trend based on archetype:
+      - TC/TE → ret_trend
+      - FR/ET → ret_mean
+
+    Both preds_df and raw_df may contain multiple symbols,
     but computations (returns/drawdown) are strictly per-symbol to avoid leakage.
+
+    Note: Router (mode-3action) has been removed. Execution now directly uses archetype
+    to select ret_mean or ret_trend.
     """
     if cfg.symbol_col not in preds_df.columns:
         raise ValueError(f"preds_df missing required symbol column '{cfg.symbol_col}'")
@@ -206,27 +219,8 @@ def build_logs_3action(
     preds_df = _normalize_timestamp_col(preds_df, ts_col=cfg.timestamp_col)
     raw_df = _normalize_timestamp_col(raw_df, ts_col=cfg.timestamp_col)
 
-    # Prepare/compute mode
-    if mode_df is None:
-        mode_out = compute_mode_3action(
-            preds_df, cfg=cfg.rule_cfg, preds_in_log1p=cfg.preds_in_log1p
-        )
-        mode_df = preds_df[[cfg.symbol_col, cfg.timestamp_col]].copy()
-        mode_df["mode"] = mode_out["mode"].astype(str).values
-    else:
-        mode_df = _ensure_timestamp_column(mode_df, ts_col=cfg.timestamp_col)
-        mode_df = _normalize_timestamp_col(mode_df, ts_col=cfg.timestamp_col)
-        if cfg.symbol_col not in mode_df.columns:
-            raise ValueError(
-                f"mode_df missing required symbol column '{cfg.symbol_col}'"
-            )
-        if "mode" not in mode_df.columns:
-            raise ValueError("mode_df must contain 'mode' column")
-        mode_df = mode_df[[cfg.symbol_col, cfg.timestamp_col, "mode"]].copy()
-
-    # Join preds + mode + raw (symbol, timestamp)
+    # Join preds + raw (symbol, timestamp)
     preds_keyed = preds_df.set_index([cfg.symbol_col, cfg.timestamp_col], drop=False)
-    mode_keyed = mode_df.set_index([cfg.symbol_col, cfg.timestamp_col], drop=False)
     raw_keyed = raw_df.set_index([cfg.symbol_col, cfg.timestamp_col], drop=False)
 
     if cfg.close_col not in raw_keyed.columns:
@@ -268,7 +262,7 @@ def build_logs_3action(
             raw_cols.append(atr_c)
 
     # Join in a way that avoids column overlap (preds outputs already include OHLC in many cases).
-    joined = preds_keyed.join(mode_keyed[["mode"]], how="inner")
+    joined = preds_keyed.copy()
     need_from_raw = [c for c in raw_cols if c not in joined.columns]
     if need_from_raw:
         joined = joined.join(raw_keyed[need_from_raw], how="inner")
@@ -384,7 +378,6 @@ def build_logs_3action(
         cfg.symbol_col,
         cfg.timestamp_col,
         cfg.market_profile_col,
-        "mode",
         cfg.head_dir_score_col,
         cfg.head_mfe_col,
         cfg.head_mae_col,
@@ -399,7 +392,6 @@ def build_logs_3action(
     out = joined[base_cols + ohlc_cols].copy()
 
     # Ensure types
-    out["mode"] = out["mode"].astype(str)
     out[cfg.market_profile_col] = out[cfg.market_profile_col].astype(str)
     for c in [
         cfg.head_dir_score_col,

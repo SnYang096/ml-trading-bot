@@ -35,7 +35,35 @@ def _pct(x: pd.Series, p: float) -> float:
     return float(np.percentile(x, p))
 
 
+def _archetype_return(row: pd.Series, ret_mean_col: str, ret_trend_col: str) -> float:
+    """
+    Select ret_mean or ret_trend based on archetype.
+    - TC/TE → ret_trend
+    - FR/ET → ret_mean
+    """
+    archetype = str(row.get("gate_archetype") or row.get("archetype") or "").upper()
+    if not archetype:
+        return 0.0
+
+    # TC/TE → ret_trend
+    if "TC" in archetype or "TE" in archetype:
+        return float(row.get(ret_trend_col, 0.0) or 0.0)
+
+    # FR/ET → ret_mean
+    if "FR" in archetype or "ET" in archetype:
+        return float(row.get(ret_mean_col, 0.0) or 0.0)
+
+    return 0.0
+
+
 def _mode_return(row: pd.Series, ret_mean_col: str, ret_trend_col: str) -> float:
+    """Legacy function for backward compatibility. Use _archetype_return instead."""
+    # Try archetype first
+    archetype = str(row.get("gate_archetype") or row.get("archetype") or "").upper()
+    if archetype:
+        return _archetype_return(row, ret_mean_col, ret_trend_col)
+
+    # Fallback to mode (for backward compatibility)
     mode = str(row.get("mode") or "NO_TRADE").upper()
     if mode == "MEAN":
         return float(row.get(ret_mean_col, 0.0) or 0.0)
@@ -163,8 +191,16 @@ def main() -> int:
         default=None,
         help="gate output parquet with archetype info (optional)",
     )
-    p.add_argument("--output-json", required=True, help="Output JSON path")
-    p.add_argument("--output-md", required=True, help="Output Markdown path")
+    p.add_argument(
+        "--output-json",
+        default=None,
+        help="Output JSON path (default: results/e2e_kpi/e2e_kpi_report.json)",
+    )
+    p.add_argument(
+        "--output-md",
+        default=None,
+        help="Output Markdown path (default: results/e2e_kpi/e2e_kpi_report.md)",
+    )
     p.add_argument("--ret-mean-col", default="ret_mean")
     p.add_argument("--ret-trend-col", default="ret_trend")
     p.add_argument("--semantic-buckets", type=int, default=5)
@@ -397,8 +433,25 @@ def main() -> int:
     if args.no_regime_filter:
         # Use all trades without regime filtering (original logs_df)
         # This includes trades that would be filtered out by NO_TRADE regime
+        # But still apply gate filtering if gate file is provided
         original_logs = pd.read_parquet(args.logs)
         original_logs["timestamp"] = pd.to_datetime(original_logs["timestamp"])
+
+        # Apply gate filtering if gate file is provided (same as logs_df)
+        if args.gate:
+            gate_df = pd.read_parquet(args.gate)
+            gate_df["timestamp"] = pd.to_datetime(gate_df["timestamp"])
+            if "gate_ok" in gate_df.columns:
+                original_logs = original_logs.merge(
+                    gate_df[["symbol", "timestamp", "gate_ok"]],
+                    on=["symbol", "timestamp"],
+                    how="left",
+                )
+                # Apply gate_ok filter (same as logs_df) - only if column exists
+                if "gate_ok" in original_logs.columns:
+                    original_logs = original_logs[original_logs["gate_ok"] == True]
+
+        # Calculate KPI without regime filtering (includes NO_TRADE regime trades)
         no_regime_filter_kpi = _kpi_for_df(
             original_logs,
             ret_mean_col=args.ret_mean_col,
@@ -449,6 +502,7 @@ def main() -> int:
         # Note: After merging, regime column is normalized to TREND/MEAN/NO_TRADE
         # But semantic scores are keyed by TC_REGIME/TE_REGIME, so we need to check original regime
         # Load regime file for semantic scores if not already loaded
+        regime_df_for_semantic = None
         if args.regime and (
             "tc_semantic_score" not in merged.columns
             and "te_semantic_score" not in merged.columns
@@ -482,7 +536,10 @@ def main() -> int:
             # Use merged dataframe which already has semantic scores
             # No need to reload regime_df
             # Keep original regime values for semantic score lookup
-            if "regime" in regime_df_for_semantic.columns:
+            if (
+                regime_df_for_semantic is not None
+                and "regime" in regime_df_for_semantic.columns
+            ):
                 # Create a mapping: normalized regime -> original regime
                 regime_df_for_semantic["regime_original"] = regime_df_for_semantic[
                     "regime"
@@ -506,25 +563,30 @@ def main() -> int:
                     "regime_original"
                 ].apply(_normalize_for_semantic)
 
-            merged_semantic = logs_df.merge(
-                regime_df_for_semantic[
-                    [
-                        "symbol",
-                        "timestamp",
-                        "regime_original",
-                        "tc_semantic_score",
-                        "te_semantic_score",
-                    ]
-                ],
-                on=["symbol", "timestamp"],
-                how="inner",
-            )
+            merged_semantic = None
+            if regime_df_for_semantic is not None:
+                merged_semantic = logs_df.merge(
+                    regime_df_for_semantic[
+                        [
+                            "symbol",
+                            "timestamp",
+                            "regime_original",
+                            "tc_semantic_score",
+                            "te_semantic_score",
+                        ]
+                    ],
+                    on=["symbol", "timestamp"],
+                    how="inner",
+                )
             by_regime_semantic = {}
-            for regime_orig, score_col in [
-                ("TC_REGIME", "tc_semantic_score"),
-                ("TE_REGIME", "te_semantic_score"),
-            ]:
-                wdf = merged_semantic[merged_semantic["regime_original"] == regime_orig]
+            if merged_semantic is not None:
+                for regime_orig, score_col in [
+                    ("TC_REGIME", "tc_semantic_score"),
+                    ("TE_REGIME", "te_semantic_score"),
+                ]:
+                    wdf = merged_semantic[
+                        merged_semantic["regime_original"] == regime_orig
+                    ]
                 by_regime_semantic[regime_orig] = _bucket_by_score(
                     wdf,
                     score_col,

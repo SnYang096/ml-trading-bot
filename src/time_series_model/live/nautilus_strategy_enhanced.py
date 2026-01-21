@@ -338,24 +338,44 @@ if NAUTILUS_AVAILABLE:
             self._constitution_executor: Optional[ConstitutionExecutor] = None
             self._constitution_runtime_state = None
 
-        def _infer_mode_and_exec_id(self) -> tuple[str, str]:
+        def _infer_archetype_and_exec_id(self) -> tuple[str, str]:
+            """
+            Infer archetype and execution strategy ID from strategy name or execution profile.
+            Returns (archetype, exec_id) where archetype is used to select ret_mean or ret_trend.
+            """
             name = str(self.strategy_name).lower()
-            if self.router_mode:
-                mode = str(self.router_mode).upper()
-            else:
-                mode = "MEAN" if ("reversal" in name or "mean" in name) else "TREND"
-            if self.execution_strategy_id:
-                sid = str(self.execution_strategy_id)
-            else:
-                if mode == "MEAN":
-                    sid = "FailedBreakoutFade"
-                else:
-                    sid = (
-                        "BreakoutPullbackContinuation"
-                        if ("breakout" in name)
-                        else "MomentumExpansion"
+            # Try to get from execution profile first
+            ex_meta = self._get_execution_meta()
+            if ex_meta and ex_meta.get("execution_strategy_id"):
+                exec_id = str(ex_meta["execution_strategy_id"])
+                # Infer archetype from exec_id: TC/TE → TREND, FR/ET → MEAN
+                exec_id_upper = exec_id.upper()
+                if "TC" in exec_id_upper or "TE" in exec_id_upper:
+                    archetype = (
+                        exec_id  # Use exec_id as archetype (e.g., TrendContinuationTC)
                     )
-            return mode, sid
+                elif "FR" in exec_id_upper or "ET" in exec_id_upper:
+                    archetype = (
+                        exec_id  # Use exec_id as archetype (e.g., FailureReversionFR)
+                    )
+                else:
+                    # Fallback: infer from router_mode
+                    mode = str(ex_meta.get("router_mode", "TREND")).upper()
+                    archetype = "MEAN" if mode == "MEAN" else "TREND"
+                return archetype, exec_id
+
+            # Fallback: infer from strategy name
+            if "reversal" in name or "mean" in name:
+                archetype = "FailureReversionFR"  # Default MEAN archetype
+                exec_id = "FailedBreakoutFade"
+            else:
+                archetype = "TrendContinuationTC"  # Default TREND archetype
+                exec_id = (
+                    "BreakoutPullbackContinuation"
+                    if ("breakout" in name)
+                    else "MomentumExpansion"
+                )
+            return archetype, exec_id
 
         def _get_execution_meta(self) -> Dict[str, Any]:
             root, reg = resolve_execution_profile_paths()
@@ -630,11 +650,11 @@ if NAUTILUS_AVAILABLE:
             ):
                 ex_meta = self._get_execution_meta()
                 mode = str(
-                    ex_meta.get("router_mode") or self._infer_mode_and_exec_id()[0]
+                    ex_meta.get("router_mode") or self._infer_archetype_and_exec_id()[0]
                 ).upper()
                 exec_id = str(
                     ex_meta.get("execution_strategy_id")
-                    or self._infer_mode_and_exec_id()[1]
+                    or self._infer_archetype_and_exec_id()[1]
                 )
                 try:
                     quantiles = load_evidence_quantiles(
