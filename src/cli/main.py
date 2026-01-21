@@ -2139,6 +2139,332 @@ def rule_plot_router_modes_kline(
     sys.exit(run_script("scripts/plot_router_modes_kline.py", args, docker=docker))
 
 
+@rule.command("physics-regime")
+@click.option(
+    "--preds",
+    required=True,
+    help="Preds file (.parquet/.csv) or directory of per-symbol preds_*.parquet",
+)
+@click.option(
+    "--feature-store-root",
+    default=None,
+    help="Optional FeatureStore root (if preds lack required features).",
+)
+@click.option("--layer", default="tier0", show_default=True, help="FeatureStore layer.")
+@click.option("--timeframe", default="240T", show_default=True, help="Timeframe (e.g., 240T).")
+@click.option("--output", "output_path", required=True, help="Output parquet/csv path.")
+@click.option(
+    "--stats-output",
+    default=None,
+    help="Optional JSON output for Symbol × Regime frequency stats.",
+)
+@click.option(
+    "--scan-physics-score-pct",
+    default=None,
+    help="Comma-separated physics_score_min_pct values for scan (e.g., 0.8,0.85,0.9).",
+)
+@click.option(
+    "--scan-output",
+    default=None,
+    help="JSON output path for scan report.",
+)
+@click.option(
+    "--scan-md-output",
+    default=None,
+    help="Markdown output path for scan summary.",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_physics_regime(
+    preds,
+    feature_store_root,
+    layer,
+    timeframe,
+    output_path,
+    stats_output,
+    scan_physics_score_pct,
+    scan_output,
+    scan_md_output,
+    docker,
+):
+    """Classify Physics/Regimes and (optionally) scan physics_score_min_pct."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--preds",
+        f"/workspace/{preds}" if use_workspace_prefix else preds,
+        "--output",
+        f"/workspace/{output_path}" if use_workspace_prefix else output_path,
+    ]
+    if feature_store_root:
+        args.extend(
+            [
+                "--feature-store-root",
+                f"/workspace/{feature_store_root}" if use_workspace_prefix else feature_store_root,
+            ]
+        )
+    if layer:
+        args.extend(["--layer", str(layer)])
+    if timeframe:
+        args.extend(["--timeframe", str(timeframe)])
+    if stats_output:
+        args.extend(
+            [
+                "--stats-output",
+                f"/workspace/{stats_output}" if use_workspace_prefix else stats_output,
+            ]
+        )
+    if scan_physics_score_pct:
+        args.extend(["--scan-physics-score-pct", str(scan_physics_score_pct)])
+    if scan_output:
+        args.extend(
+            [
+                "--scan-output",
+                f"/workspace/{scan_output}" if use_workspace_prefix else scan_output,
+            ]
+        )
+    if scan_md_output:
+        args.extend(
+            [
+                "--scan-md-output",
+                f"/workspace/{scan_md_output}" if use_workspace_prefix else scan_md_output,
+            ]
+        )
+    sys.exit(run_script("scripts/physics_regime_classifier.py", args, docker=docker))
+
+
+@rule.command("diagnose-tc-regime-execution")
+@click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
+@click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
+@click.option("--output-json", required=True, help="Output JSON path")
+@click.option("--output-md", required=True, help="Output Markdown path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_tc_regime_execution(
+    logs_path,
+    regime_path,
+    output_json,
+    output_md,
+    docker,
+):
+    """Diagnose execution KPIs within TC_REGIME subset only."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--regime",
+        f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
+        "--output-json",
+        f"/workspace/{output_json}" if use_workspace_prefix else output_json,
+        "--output-md",
+        f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+    ]
+    sys.exit(run_script("scripts/diagnose_tc_world_execution.py", args, docker=docker))
+
+
+@rule.command("diagnose-e2e-kpi")
+@click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
+@click.option("--regime", "regime_path", default=None, help="physics_regime parquet (optional)")
+@click.option("--gate", "gate_path", default=None, help="gate output parquet with archetype info (optional)")
+@click.option("--output-json", required=True, help="Output JSON path")
+@click.option("--output-md", required=True, help="Output Markdown path")
+@click.option("--no-regime-filter", is_flag=True, help="Generate comparison report without regime filtering")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_e2e_kpi(
+    logs_path,
+    regime_path,
+    gate_path,
+    output_json,
+    output_md,
+    no_regime_filter,
+    docker,
+):
+    """E2E KPI diagnostics for Router/Gate/Execution."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--output-json",
+        f"/workspace/{output_json}" if use_workspace_prefix else output_json,
+        "--output-md",
+        f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+    ]
+    if regime_path:
+        args.extend(
+            [
+                "--regime",
+                f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
+            ]
+        )
+    if gate_path:
+        args.extend(
+            [
+                "--gate",
+                f"/workspace/{gate_path}" if use_workspace_prefix else gate_path,
+            ]
+        )
+    if no_regime_filter:
+        args.append("--no-regime-filter")
+    sys.exit(run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker))
+
+
+@rule.command("apply-tree-gate")
+@click.option("--mode", "mode_path", required=True, help="mode_3action parquet")
+@click.option("--regime", "regime_path", default=None, help="physics_regime parquet (optional, use --physics-regime to merge)")
+@click.option("--out", "out_path", required=True, help="output gated mode file")
+@click.option(
+    "--live-config",
+    "live_config_path",
+    default="config/nnmultihead/live/meta_router_live_config.yaml",
+    show_default=True,
+    help="meta_router_live_config.yaml",
+)
+@click.option(
+    "--features-store-root",
+    default="feature_store",
+    show_default=True,
+    help="FeatureStore root dir",
+)
+@click.option(
+    "--features-store-layer",
+    "features_store_layer",
+    required=True,
+    help="FeatureStore layer (required)",
+)
+@click.option(
+    "--timeframe",
+    default="240T",
+    show_default=True,
+    help="Timeframe (e.g., 240T)",
+)
+@click.option(
+    "--start-date",
+    default=None,
+    help="Start date (YYYY-MM-DD, optional)",
+)
+@click.option(
+    "--end-date",
+    default=None,
+    help="End date (YYYY-MM-DD, optional)",
+)
+@click.option(
+    "--physics-regime",
+    "physics_regime_path",
+    default=None,
+    help="physics_regime parquet file (adds tc/te semantic scores)",
+)
+@click.option(
+    "--semantic-score-floors",
+    default=None,
+    help="JSON file with semantic score floors (optional)",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_apply_tree_gate(
+    mode_path,
+    regime_path,
+    out_path,
+    live_config_path,
+    features_store_root,
+    features_store_layer,
+    timeframe,
+    start_date,
+    end_date,
+    physics_regime_path,
+    semantic_score_floors,
+    docker,
+):
+    """Apply tree gate on mode_3action (Gate filtering step in pipeline)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--mode",
+        f"/workspace/{mode_path}" if use_workspace_prefix else mode_path,
+        "--out",
+        f"/workspace/{out_path}" if use_workspace_prefix else out_path,
+        "--live-config",
+        f"/workspace/{live_config_path}" if use_workspace_prefix else live_config_path,
+        "--features-store-root",
+        f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
+        "--features-store-layer",
+        str(features_store_layer),
+        "--timeframe",
+        str(timeframe),
+    ]
+    if start_date:
+        args.extend(["--start-date", str(start_date)])
+    if end_date:
+        args.extend(["--end-date", str(end_date)])
+    if physics_regime_path:
+        args.extend(
+            [
+                "--physics-regime",
+                f"/workspace/{physics_regime_path}" if use_workspace_prefix else physics_regime_path,
+            ]
+        )
+    if semantic_score_floors:
+        args.extend(
+            [
+                "--semantic-score-floors",
+                f"/workspace/{semantic_score_floors}" if use_workspace_prefix else semantic_score_floors,
+            ]
+        )
+    sys.exit(run_script("scripts/apply_tree_gate_3action.py", args, docker=docker))
+
+
+@rule.command("diagnose-gate-filtering")
+@click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
+@click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
+@click.option("--live-config", "live_config_path", required=True, help="meta_router_live_config.yaml")
+@click.option("--output-md", required=True, help="Output Markdown path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_gate_filtering(
+    logs_path,
+    regime_path,
+    live_config_path,
+    output_md,
+    docker,
+):
+    """Diagnose Gate filtering effects on trades."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--regime",
+        f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
+        "--live-config",
+        f"/workspace/{live_config_path}" if use_workspace_prefix else live_config_path,
+        "--output-md",
+        f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+    ]
+    sys.exit(run_script("scripts/diagnose_gate_filtering.py", args, docker=docker))
+
+
+@rule.command("diagnose-e2e-symbol-regime-archetype")
+@click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
+@click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
+@click.option("--output-json", required=True, help="Output JSON path")
+@click.option("--output-md", required=True, help="Output Markdown path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_e2e_symbol_regime_archetype(
+    logs_path,
+    regime_path,
+    output_json,
+    output_md,
+    docker,
+):
+    """E2E KPI by Symbol × Regime × Archetype (sharpe, trade_count, win_rate, profit_loss_ratio)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--regime",
+        f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
+        "--output-json",
+        f"/workspace/{output_json}" if use_workspace_prefix else output_json,
+        "--output-md",
+        f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+    ]
+    sys.exit(
+        run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker)
+    )
+
+
 @rl.command("shadow-eval-3action")
 @click.option(
     "--logs",

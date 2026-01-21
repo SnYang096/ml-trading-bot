@@ -7,12 +7,194 @@
 
 ## 问题陈述
 
-当前 `compute_mode_3action` 以 `mfe/mae/ttm/dir_conf` 为输入，直接划分 `MEAN/TREND`。
-这些是“交易质量预测”，不等价于“市场结构/Regime”，因此：
+当前 `compute_mode_3action` 的 3-action 输出仍会聚合为 `MEAN/TREND/NO_TRADE`，但**内部 Regime 已拆分为 `TC/TE/ER`**，
+且 `mfe/mae/ttm/dir_conf` 只应视作 **Outcome Path（交易质量预测）**，**不等价于市场结构/Regime**，因此：
+
+**命名约定（消除旧术语冲突）**：
+- 旧文档里的 **TREND ≈ TC/TE**  
+- 旧文档里的 **MEAN ≈ ER（Extreme Reversion）**
 
 - 阈值难解释，稳定性差
 - 预测偏差会直接污染 Regime 判断
 - 调参时难区分“结构错”还是“质量错”
+
+---
+
+## Path 角色对齐（Price Trajectory vs Outcome vs p-path）
+
+为避免“Path 命名冲突”，本方案统一以下三类对象：
+
+| 名称 | 层级 | 是否预测 | 核心对象 |
+| --- | --- | --- | --- |
+| **Outcome Path** | 预测层 | 是 | `(dir, mfe, mae, mtt)` |
+| **Price Trajectory Path** | 状态层 | 否 | 价格如何实际走 |
+| **p-path** | 事后验证层 | 否 | 轨迹是否兑现承诺 |
+
+**关系（因果顺序）**：
+```
+Price history
+  ↓
+NN → Outcome Path (dir/mfe/mae/mtt)
+  ↓
+Execution
+  ↓
+Price Trajectory Path (realized)
+  ↓
+p-path KPI（兑现/风险释放/Regime 对齐）
+```
+
+**关键结论**：
+- `p-path` ≈ “Trajectory + 兑现 / 风险释放 / Regime 对齐”  
+- World 只做 **可交易性 veto**，不该承担 p-path 判断  
+- Regime/Archetype 应围绕 **Outcome Path → Execution 映射**  
+- p-path 只用于 **事后验证与校准**（不反向污染 World）
+
+---
+
+## 工程级总表（输入 / 输出 / KPI）
+
+```
+┌────────────┬──────────────────────────┬──────────────────────────┬──────────────────────────────┐
+│ Layer      │ 输入                     │ 输出                     │ KPI                          │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ NN Path    │ 原始特征                  │ dir, mfe, mae, mtt       │ IC(dir), IC(mfe/mae),        │
+│ (Root)     │ (price/vol/flow/htf)      │ + calib stats            │ calibration, monotonicity    │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ World      │ 市场统计 + NN summary     │ World label              │ 覆盖率, 存活率,              │
+│            │ (vol, jump, cont.)        │ TC_WORLD/TE_WORLD/       │ world-conditioned entropy    │
+│            │                            │ MEAN_WORLD/NO_TRADE      │                              │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ Regime     │ World + Path moments      │ Regime label             │ Conditional IC,              │
+│            │ (dir,mfe/mae ratio,mtt)   │ TC / TE / ER / NONE      │ regime separation (JS / KS)  │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ Gate       │ Regime + Path score       │ TRADE / NO_TRADE         │ ΔSharpe, ΔWinRate,           │
+│            │ (semantic / confidence)   │ + trade_strength         │ precision@trade              │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ Archetype  │ Regime + Path geometry    │ Archetype ID             │ Archetype stability,         │
+│            │ (dir,mfe,mae,mtt)         │ TC_EXEC/TE_EXEC/         │ MFE capture %, variance      │
+│            │                            │ FR_TREND/FR_MEAN/ET_EXEC │                              │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ Execution  │ Archetype + Path params   │ Trades (orders, exits)   │ R-multiple, MAE control,     │
+│            │ (SL/TP/hold/trail)        │                          │ slippage-adjusted PnL        │
+├────────────┼──────────────────────────┼──────────────────────────┼──────────────────────────────┤
+│ p-path     │ All realized outcomes     │ success / fail           │ Attribution: world/regime/   │
+│ (Outcome)  │ (PnL, MAE, MFE, TTE)      │ + failure cause          │ archetype / execution        │
+└────────────┴──────────────────────────┴──────────────────────────┴──────────────────────────────┘
+```
+
+**命名映射（实现对齐）**：
+- `TC_EXEC` → `TrendContinuationTC`
+- `TE_EXEC` → `TrendExpansionTE`
+- `FR_TREND/FR_MEAN` → `FailureReversionFR`（建议后续拆分）
+- `ET_EXEC` → `ExhaustionTurnET`
+
+**边界规则（必须遵守）**：
+- IC 到 Regime，Sharpe 从 Gate，钱在 Execution，尸体在 p-path  
+- World 只负责可交易性，不能背 Sharpe  
+- Regime 只负责结构分离，不替 Gate 赚收益  
+
+---
+
+## Physics vs Regime（不再一一对应）
+
+**Physics / World**：只管“是否可交易 + 风险带宽”，输出是**硬 veto + band**。  
+**Regime**：在可交易世界内判断**执行相关状态**（TC/TE/ER/NONE）。  
+因此两者**不是同层**，只是 Regime 受 World 约束时看起来一一对应。
+
+---
+
+## 分桶逻辑归属（Regime/Gate）
+
+**分桶不是 World 逻辑**，属于 **Regime/Gate 诊断与执行选择**：
+- 对 `semantic_score / regime_score` 分桶  
+- 观察甜点区/毒区是否稳定  
+- 结论只用于 **execution 选择或切换**（如最高桶 → MEAN-A）
+
+---
+
+## Sharpe 的“挖掘”路径（架构内体现）
+
+Sharpe **不能在 World/Regime 出现**，必须从 Gate 之后开始：
+
+```
+Regime/Gate 分桶 → 选择 Execution family
+          ↓
+Execution 产出交易 → E2E KPI 统计 Sharpe
+          ↓
+归因到 bucket / world / symbol
+```
+
+**关键原则**：
+- Gate 的 KPI 是 ΔSharpe（开 vs 不开）  
+- Execution 才对 Sharpe 负责  
+- E2E 只做汇总与归因，不回调 World  
+
+---
+
+## World vs Regime：为什么不能合并（划分算法视角）
+
+**结论**：World 与 Regime 是在**不同不变性假设**下的两次划分，不能合并。  
+World 追求 **低频稳定**，Regime 追求 **高频状态敏感**；二者合并会导致边界漂移与失去可复用性。
+
+**形式化**：
+```
+W_t = f_world(X_{t-L:t})          # 长窗口、低频、分布级别
+R_t = f_regime(X_{t-k:t} | W_t)   # 短窗口、条件状态
+```
+
+**合并的统计问题**：
+- 同时满足“稳定”和“敏感”的单一边界在统计上不可兼容  
+- World 会被短期噪声拖着跑（高频抖动）  
+- 条件期望不可分解：`E[PnL | W, R, A]` 退化为 `E[PnL | Z, A]`
+
+**直观例子**：
+同一 **Trend World** 内会出现 pullback/chop，  
+若把它当作 World 切换，TC 会被系统性错杀。
+
+**工程口径一句话**：
+> World 是“在哪个物理宇宙”，Regime 是“该宇宙当前天气”。
+
+---
+
+## Regime vs Archetype：为什么不能合并
+
+**结论**：Regime 是“什么时候可以做”，Archetype 是“怎么做”。  
+合并会导致归因与扩展能力丢失。
+
+**条件期望角度**：
+```
+E[PnL | W, R, A]
+```
+Regime 改变 **分布条件**，Archetype 定义 **执行模板**。
+
+**反例（关键）**：
+同一个 Regime（如 Pullback）可以支持多个 Archetype：  
+TC（顺势回调入）、TE（回调后放量突破）、FR（假回调失败反转）。  
+
+**什么时候“看起来可以合并”**（但只是退化）：  
+- 只有一个 Archetype 在赚钱（如 TC-only）  
+- Regime 定义过粗（变成 World）  
+
+**工程口径一句话**：
+> Regime 是状态标签，Archetype 是执行模板。
+
+---
+
+## Mean World 的 FR ≠ Trend Failure（必须显式区分）
+
+**关键纠偏**：
+- **Trend World 下的 FR**：趋势尝试失败（continuation/expansion 失败）  
+- **Mean World 下的 FR**：极端偏离 → 均值回归套利（不是趋势失败）
+
+**冻结规则**：
+- Mean World 中 **TC/TE 永远不允许**  
+- FR 在 Mean World 必须走 **mean-style execution**（宽 SL / 慢 exit）
+
+**建议 Archetype 拆分**：
+```
+FR_TREND   # trend physics 下的失败结构
+FR_MEAN    # mean physics 下的反转套利
+```
 
 ---
 

@@ -19,9 +19,51 @@
 
 ---
 
+## Physics 概念（架构层理解）
+
+**核心转变**：
+> **从"策略拼装" → "物理系统设计"**
+
+**Physics 定义**：
+> **Physics 不是 symbol，也不是 archetype，  
+> 而是：一套"执行物理假设（execution assumptions）"的集合。**
+
+**当前系统本质**：
+> **Physics-TREND-CONTINUATION**
+
+它隐含的物理假设：
+- 价格是 **平坦高原 + 少量延伸**
+- 回撤是 **可接受的**
+- 极端反转是 **低概率事件**
+- 交易是 **少而精**
+- 错一次，成本很高 → **必须严格过滤**
+
+**正确关系**：
+```
+(archetype) → physics
+(symbol, physics) → allow / deny
+```
+
+**为什么 BTC/BNB 稳，SOL 爆**：
+👉 不是模型问题，是 **物理不匹配**。  
+BTC/BNB 是 TREND 物理的稳定载体，SOL 不是。
+
+**下一步**：
+- 在代码里显式引入 Physics 概念（enum + config）
+- 将当前系统命名为 `Physics-TREND / Execution Guardrail v0`
+- 将 MEAN 永久迁移到 `Physics-EXTREME_MEAN`（research-only）
+
+---
+
+---
+
 ## ✅ TODO 1: Symbol-Level Execution Allowlist（优先级最高）
 
 **Purpose**: Implement symbol-level filtering for TC-only execution
+
+**Physics 视角**：
+> 这不是简单的 symbol 过滤，而是 **Symbol × Physics 合法性矩阵**。  
+> BTC/BNB 是 TREND 物理的稳定载体，SOL 不是。
 
 **Classification** (based on Phase 4-C-Split results):
 
@@ -40,19 +82,33 @@
   - False expansion signals
   - Deep drawdowns
 
-**Implementation**:
+**Implementation** (Physics-aware):
 ```yaml
 # meta_router_live_config.yaml
-tc_symbol_allowlist:
-  enabled: [BTCUSDT, BNBUSDT]
-  shadow: [ETHUSDT, XRPUSDT]
-  disabled: [SOLUSDT, ADAUSDT]
+physics:
+  TREND:
+    description: "Continuation / Expansion in plateau markets"
+    max_dd: 0.12
+    min_hold_bars: 8
+    score_floor_q: 0.05
+    allow_switch: false
+
+archetype_physics:
+  TrendContinuationTC: TREND
+  TrendExpansionTE: TREND
+
+symbol_physics_allow:
+  TREND:
+    allow: [BTCUSDT, BNBUSDT]
+    shadow: [ETHUSDT, XRPUSDT]
+    deny: [SOLUSDT, ADAUSDT]
 ```
 
 **Why Legal**:
 - ❌ No changes to router / score / guardrail
 - ❌ No changes to execution logic
 - ✅ Only **asset universe selection** (market selection, not alpha tuning)
+- ✅ **Physics 显式化**（架构层改进，不是模型调优）
 
 **Acceptance Criteria**:
 - Sharpe ≥ 1.8 (focusing on strong trend assets)
@@ -121,6 +177,17 @@ tc_symbol_allowlist:
 > **Direct rollback, no hesitation.**
 
 **Status**: 🟡 Waiting for TC-only stability
+
+---
+
+## ✅ TODO 4: 链路 KPI 诊断清单维护
+
+**Purpose**: 固化“层级分工”的诊断边界，避免 E2E 反调 Physics  
+
+**Checklist Reference**:
+- `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md` → 七.4.16
+
+**Status**: 🔴 Pending
 
 ---
 

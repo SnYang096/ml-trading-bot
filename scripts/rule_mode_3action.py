@@ -27,11 +27,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.time_series_model.rule.router_3action import (
     Rule3ActionConfig,
-    RegimeRuleConfig,
     QualityScoreConfig,
-    compute_mode_3action,
-    compute_mode_3action_regime_quality,
-    compute_mode_3action_regime_only,
+    compute_mode_3action_regime_aware,
 )  # noqa: E402
 
 
@@ -118,9 +115,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", required=True, help="Output path (.parquet or .csv)")
     p.add_argument(
         "--router-mode",
-        default="quality",
-        choices=["quality", "regime_quality", "regime_only"],
-        help="quality=legacy thresholds; regime_quality=rule regime + NN quality; regime_only=rule regime + NN quality (no threshold)",
+        default="regime_quality",
+        choices=["regime_quality"],
+        help="regime_quality=Physics regime + NN quality",
     )
     p.add_argument("--feature-store-root", default=None)
     p.add_argument("--feature-store-layer", default=None)
@@ -139,41 +136,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         choices=["and", "or"],
         help="Trend confirm logic: and (legacy) or (dir_conf AND (mfe OR ttm)).",
-    )
-    # Regime rules (B/C)
-    p.add_argument("--trend-adx-min", type=float, default=None)
-    p.add_argument("--trend-ma200-pos-min", type=float, default=None)
-    p.add_argument("--mean-adx-max", type=float, default=None)
-    p.add_argument("--mean-sr-max", type=float, default=None)
-    p.add_argument("--mean-sqs-min", type=float, default=None)
-    p.add_argument("--te-adx-min", type=float, default=None)
-    p.add_argument("--te-adx-slope-min", type=float, default=None)
-    p.add_argument(
-        "--te-use-ma200-cross",
-        choices=["yes", "no"],
-        default=None,
-        help="Use MA200 cross for TE qualification.",
-    )
-    p.add_argument(
-        "--regime-soft-scores",
-        choices=["yes", "no"],
-        default=None,
-        help="Use soft regime scores instead of hard thresholds.",
-    )
-    p.add_argument(
-        "--min-regime-score",
-        type=float,
-        default=None,
-        help="Minimum score to assign a regime in soft mode.",
-    )
-    p.add_argument("--tc-score-floor", type=float, default=None)
-    p.add_argument("--te-score-floor", type=float, default=None)
-    p.add_argument("--mean-score-floor", type=float, default=None)
-    p.add_argument(
-        "--extreme-atr-percentile-max",
-        type=float,
-        default=None,
-        help="Veto regimes when atr_percentile >= this value (None disables).",
     )
     # Quality thresholds (B/C)
     p.add_argument("--quality-trend-min", type=float, default=None)
@@ -225,38 +187,6 @@ def main() -> None:
     }
     cfg = Rule3ActionConfig(**merged_cfg)
 
-    # Regime rule config (B/C)
-    regime_cfg0 = RegimeRuleConfig()
-    regime_overrides = {
-        "trend_adx_min": args.trend_adx_min,
-        "trend_ma200_pos_min": args.trend_ma200_pos_min,
-        "mean_adx_max": args.mean_adx_max,
-        "mean_sr_max": args.mean_sr_max,
-        "mean_sqs_min": args.mean_sqs_min,
-        "te_adx_min": args.te_adx_min,
-        "te_adx_slope_min": args.te_adx_slope_min,
-        "te_use_ma200_cross": (
-            None
-            if args.te_use_ma200_cross is None
-            else bool(args.te_use_ma200_cross == "yes")
-        ),
-        "use_soft_scores": (
-            None
-            if args.regime_soft_scores is None
-            else bool(args.regime_soft_scores == "yes")
-        ),
-        "min_regime_score": args.min_regime_score,
-        "tc_score_floor": args.tc_score_floor,
-        "te_score_floor": args.te_score_floor,
-        "mean_score_floor": args.mean_score_floor,
-        "extreme_atr_percentile_max": args.extreme_atr_percentile_max,
-    }
-    merged_regime_cfg = {
-        **regime_cfg0.__dict__,
-        **{k: v for k, v in regime_overrides.items() if v is not None},
-    }
-    regime_cfg = RegimeRuleConfig(**merged_regime_cfg)
-
     score_cfg0 = QualityScoreConfig()
     score_overrides = {
         "quality_trend_min": args.quality_trend_min,
@@ -277,57 +207,44 @@ def main() -> None:
     def _process_symbol(df_sym: pd.DataFrame, sym: str) -> pd.DataFrame:
         df_sym = _ensure_timestamp_col(df_sym, col="timestamp")
         df_sym["symbol"] = sym
-        if args.router_mode in {"regime_quality", "regime_only"}:
-            if not args.feature_store_root or not args.feature_store_layer:
-                raise ValueError(
-                    "--feature-store-root and --feature-store-layer are required for regime_quality mode"
-                )
-            feature_cols = [
-                regime_cfg.adx_col,
-                regime_cfg.sma_200_position_col,
-                regime_cfg.sma_200_slope_col or "",
-                regime_cfg.sr_distance_col,
-                regime_cfg.sqs_col,
-                regime_cfg.adx_slope_col or "",
-            ]
-            feature_cols = [c for c in feature_cols if c]
-            missing_cols = [c for c in feature_cols if c not in df_sym.columns]
-            if missing_cols:
-                feats = _load_feature_store(
-                    feature_store_root=Path(args.feature_store_root),
-                    layer=str(args.feature_store_layer),
-                    symbol=sym,
-                    timeframe=str(args.timeframe),
-                    columns=missing_cols,
-                )
-                df_sym["timestamp"] = pd.to_datetime(df_sym["timestamp"])
-                if df_sym.index.name == "timestamp":
-                    df_sym = df_sym.reset_index(drop=True)
-                if feats.index.name == "timestamp":
-                    feats = feats.reset_index(drop=True)
-                df_sym = pd.merge(df_sym, feats, on="timestamp", how="left")
-        if args.router_mode == "regime_quality":
-            mode_df = compute_mode_3action_regime_quality(
-                df_sym,
-                rule_cfg=cfg,
-                regime_cfg=regime_cfg,
-                score_cfg=score_cfg,
-                preds_in_log1p=preds_in_log1p,
-                calibration=calibration,
+        if not args.feature_store_root or not args.feature_store_layer:
+            raise ValueError(
+                "--feature-store-root and --feature-store-layer are required for regime_quality mode"
             )
-        elif args.router_mode == "regime_only":
-            mode_df = compute_mode_3action_regime_only(
-                df_sym,
-                rule_cfg=cfg,
-                regime_cfg=regime_cfg,
-                score_cfg=score_cfg,
-                preds_in_log1p=preds_in_log1p,
-                calibration=calibration,
+        from src.time_series_model.rule.regime import PhysicsRegimeConfig
+
+        regime_cfg = PhysicsRegimeConfig()
+        feature_cols = [
+            regime_cfg.atr_col,
+            regime_cfg.atr_percentile_col,
+            regime_cfg.high_col,
+            regime_cfg.low_col,
+            regime_cfg.close_col,
+        ]
+        feature_cols = [c for c in feature_cols if c]
+        missing_cols = [c for c in feature_cols if c not in df_sym.columns]
+        if missing_cols:
+            feats = _load_feature_store(
+                feature_store_root=Path(args.feature_store_root),
+                layer=str(args.feature_store_layer),
+                symbol=sym,
+                timeframe=str(args.timeframe),
+                columns=missing_cols,
             )
-        else:
-            mode_df = compute_mode_3action(
-                df_sym, cfg=cfg, preds_in_log1p=preds_in_log1p, calibration=calibration
-            )
+            df_sym["timestamp"] = pd.to_datetime(df_sym["timestamp"])
+            if df_sym.index.name == "timestamp":
+                df_sym = df_sym.reset_index(drop=True)
+            if feats.index.name == "timestamp":
+                feats = feats.reset_index(drop=True)
+            df_sym = pd.merge(df_sym, feats, on="timestamp", how="left")
+        mode_df = compute_mode_3action_regime_aware(
+            df_sym,
+            rule_cfg=cfg,
+            score_cfg=score_cfg,
+            preds_in_log1p=preds_in_log1p,
+            calibration=calibration,
+            use_physics_regime=True,
+        )
         merged = df_sym[["symbol"]].copy()
         if "timestamp" in df_sym.columns:
             merged["timestamp"] = df_sym["timestamp"]
@@ -340,7 +257,7 @@ def main() -> None:
         if "symbol" not in df.columns:
             sym = f.stem.replace("preds_", "")
             df["symbol"] = sym
-        if args.router_mode == "regime_quality" and df["symbol"].nunique() > 1:
+        if df["symbol"].nunique() > 1:
             for sym, g in df.groupby("symbol", sort=False):
                 parts.append(_process_symbol(g.copy(), str(sym)))
         else:

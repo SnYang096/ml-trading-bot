@@ -6,6 +6,16 @@ from typing import Optional, Dict, Any
 import numpy as np
 import pandas as pd
 
+try:
+    from src.time_series_model.rule.regime import (
+        PhysicsRegimeConfig,
+        classify_regime,
+    )
+
+    _PHYSICS_REGIME_AVAILABLE = True
+except ImportError:
+    _PHYSICS_REGIME_AVAILABLE = False
+
 
 @dataclass(frozen=True)
 class Rule3ActionConfig:
@@ -46,67 +56,6 @@ class Rule3ActionConfig:
     ttm_mean_max: float = 12.0
 
     eps: float = 1e-9
-
-
-@dataclass(frozen=True)
-class RegimeRuleConfig:
-    """
-    Rule-based regime qualifier. Uses feature columns, not model heads.
-
-    Regime priority: TC > TE > MEAN > NO_TRADE
-    """
-
-    # Column names
-    adx_col: str = "adx"
-    adx_slope_col: Optional[str] = None
-    sma_200_position_col: str = "sma_200_position"
-    sma_200_slope_col: Optional[str] = "sma_200_slope"
-    sr_distance_col: str = "sr_distance_normalized"
-    sqs_col: str = "sqs"
-    atr_percentile_col: str = "atr_percentile"
-
-    # Thresholds
-    trend_adx_min: float = 25.0
-    trend_ma200_pos_min: float = 0.0
-
-    mean_adx_max: float = 25.0
-    mean_sr_max: float = 0.4
-    mean_sqs_min: float = 0.2
-
-    te_adx_min: float = 15.0
-    te_adx_slope_min: float = 0.0
-    te_use_ma200_cross: bool = True
-
-    # Soft regime scoring (optional)
-    use_soft_scores: bool = False
-    min_regime_score: float = 0.2
-    soft_profile_name: str = "plateau_open_khalf_v1"
-    tc_score_floor: Optional[float] = None
-    te_score_floor: Optional[float] = None
-    mean_score_floor: Optional[float] = None
-
-    tc_adx_center: Optional[float] = None
-    tc_adx_k: float = 0.1
-    tc_ma200_center: Optional[float] = None
-    tc_ma200_k: float = 4.0
-
-    te_adx_slope_center: Optional[float] = None
-    te_adx_slope_k: float = 25.0
-    te_ma200_center: Optional[float] = None
-    te_ma200_k: float = 4.0
-
-    mean_adx_center: Optional[float] = None
-    mean_adx_k: float = 0.1
-    mean_sr_center: Optional[float] = None
-    mean_sr_k: float = 2.5
-    mean_sqs_center: Optional[float] = None
-    mean_sqs_k: float = 1.0
-
-    # Extreme market veto (set to None to disable)
-    extreme_atr_percentile_max: Optional[float] = 0.9
-
-    # Missing handling
-    missing_default_false: bool = True
 
 
 @dataclass(frozen=True)
@@ -235,219 +184,6 @@ def _slope(arr: np.ndarray, *, window: int = 3) -> np.ndarray:
     return arr - prev
 
 
-def compute_regime_rules(
-    df: pd.DataFrame,
-    *,
-    cfg: RegimeRuleConfig = RegimeRuleConfig(),
-) -> pd.DataFrame:
-    """
-    Compute rule-based regime: NO_TRADE / MEAN / TE / TREND.
-    """
-    missing = [
-        c
-        for c in [
-            cfg.adx_col,
-            cfg.sma_200_position_col,
-            cfg.sr_distance_col,
-            cfg.sqs_col,
-        ]
-        if c not in df.columns
-    ]
-    if missing and not cfg.missing_default_false:
-        raise KeyError(f"Missing required regime columns: {missing}")
-
-    def _col_or_nan(col: str) -> pd.Series:
-        if col in df.columns:
-            return df[col]
-        return pd.Series(np.nan, index=df.index)
-
-    adx = pd.to_numeric(_col_or_nan(cfg.adx_col), errors="coerce").to_numpy(dtype=float)
-    sma_pos = pd.to_numeric(
-        _col_or_nan(cfg.sma_200_position_col), errors="coerce"
-    ).to_numpy(dtype=float)
-    sr_dist = pd.to_numeric(_col_or_nan(cfg.sr_distance_col), errors="coerce").to_numpy(
-        dtype=float
-    )
-    sqs = pd.to_numeric(_col_or_nan(cfg.sqs_col), errors="coerce").to_numpy(dtype=float)
-    atr_pct = pd.to_numeric(
-        _col_or_nan(cfg.atr_percentile_col), errors="coerce"
-    ).to_numpy(dtype=float)
-
-    if cfg.adx_slope_col and cfg.adx_slope_col in df.columns:
-        adx_slope = pd.to_numeric(
-            _col_or_nan(cfg.adx_slope_col), errors="coerce"
-        ).to_numpy(dtype=float)
-    else:
-        adx_slope = _slope(adx, window=3)
-
-    if cfg.sma_200_slope_col and cfg.sma_200_slope_col in df.columns:
-        sma_slope = pd.to_numeric(
-            _col_or_nan(cfg.sma_200_slope_col), errors="coerce"
-        ).to_numpy(dtype=float)
-    else:
-        sma_slope = _slope(sma_pos, window=3)
-
-    # Handle missing
-    if cfg.missing_default_false:
-        adx = np.where(np.isfinite(adx), adx, -np.inf)
-        sma_pos = np.where(np.isfinite(sma_pos), sma_pos, -np.inf)
-        sr_dist = np.where(np.isfinite(sr_dist), sr_dist, np.inf)
-        sqs = np.where(np.isfinite(sqs), sqs, -np.inf)
-        atr_pct = np.where(np.isfinite(atr_pct), atr_pct, -np.inf)
-        adx_slope = np.where(np.isfinite(adx_slope), adx_slope, -np.inf)
-        sma_slope = np.where(np.isfinite(sma_slope), sma_slope, -np.inf)
-
-    if cfg.use_soft_scores:
-        # Soft regime scoring
-        tc_adx_center = (
-            float(cfg.tc_adx_center)
-            if cfg.tc_adx_center is not None
-            else float(cfg.trend_adx_min)
-        )
-        tc_ma_center = (
-            float(cfg.tc_ma200_center)
-            if cfg.tc_ma200_center is not None
-            else float(cfg.trend_ma200_pos_min)
-        )
-        te_slope_center = (
-            float(cfg.te_adx_slope_center)
-            if cfg.te_adx_slope_center is not None
-            else float(cfg.te_adx_slope_min)
-        )
-        te_ma_center = (
-            float(cfg.te_ma200_center)
-            if cfg.te_ma200_center is not None
-            else float(cfg.trend_ma200_pos_min)
-        )
-        mean_adx_center = (
-            float(cfg.mean_adx_center)
-            if cfg.mean_adx_center is not None
-            else float(cfg.mean_adx_max)
-        )
-        mean_sr_center = (
-            float(cfg.mean_sr_center)
-            if cfg.mean_sr_center is not None
-            else float(cfg.mean_sr_max)
-        )
-        mean_sqs_center = (
-            float(cfg.mean_sqs_center)
-            if cfg.mean_sqs_center is not None
-            else float(cfg.mean_sqs_min)
-        )
-
-        tc_score = _sigmoid((adx - tc_adx_center) * float(cfg.tc_adx_k)) * _sigmoid(
-            (sma_pos - tc_ma_center) * float(cfg.tc_ma200_k)
-        )
-        te_score = _sigmoid(
-            (adx_slope - te_slope_center) * float(cfg.te_adx_slope_k)
-        ) * _sigmoid((sma_pos - te_ma_center) * float(cfg.te_ma200_k))
-        mean_score = (
-            _sigmoid((mean_adx_center - adx) * float(cfg.mean_adx_k))
-            * _sigmoid((mean_sr_center - sr_dist) * float(cfg.mean_sr_k))
-            * _sigmoid((sqs - mean_sqs_center) * float(cfg.mean_sqs_k))
-        )
-
-        if cfg.te_use_ma200_cross:
-            prev_pos = np.roll(sma_pos, 1)
-            prev_pos[0] = np.nan
-            ma200_cross = (sma_pos > 0.0) & (prev_pos <= 0.0)
-        else:
-            ma200_cross = sma_pos > 0.0
-        te_score = te_score * (ma200_cross | (sma_slope > 0.0)).astype(float)
-
-        # Extreme veto: in extreme volatility, force NO_TRADE
-        if cfg.extreme_atr_percentile_max is not None:
-            extreme = atr_pct >= float(cfg.extreme_atr_percentile_max)
-            tc_score = np.where(extreme, 0.0, tc_score)
-            te_score = np.where(extreme, 0.0, te_score)
-            mean_score = np.where(extreme, 0.0, mean_score)
-
-        scores = np.stack([tc_score, te_score, mean_score], axis=1)
-        max_score = np.nanmax(scores, axis=1)
-        best_idx = np.nanargmax(scores, axis=1)
-        labels = np.array(["TC", "TE", "MEAN"], dtype=object)
-        regime = np.where(
-            max_score >= float(cfg.min_regime_score),
-            labels[best_idx],
-            "NO_TRADE",
-        )
-
-        # Weak guardrail: per-regime score floors (optional)
-        if cfg.tc_score_floor is not None:
-            regime = np.where(
-                (regime == "TC") & (tc_score < float(cfg.tc_score_floor)),
-                "NO_TRADE",
-                regime,
-            )
-        if cfg.te_score_floor is not None:
-            regime = np.where(
-                (regime == "TE") & (te_score < float(cfg.te_score_floor)),
-                "NO_TRADE",
-                regime,
-            )
-        if cfg.mean_score_floor is not None:
-            regime = np.where(
-                (regime == "MEAN") & (mean_score < float(cfg.mean_score_floor)),
-                "NO_TRADE",
-                regime,
-            )
-    else:
-        # Regime rules (hard thresholds)
-        # TC (Trend Continuation): strong trend, price above MA200
-        tc = (adx >= float(cfg.trend_adx_min)) & (
-            sma_pos >= float(cfg.trend_ma200_pos_min)
-        )
-
-        mean = (
-            (adx <= float(cfg.mean_adx_max))
-            & (sr_dist <= float(cfg.mean_sr_max))
-            & (sqs >= float(cfg.mean_sqs_min))
-        )
-
-        if cfg.te_use_ma200_cross:
-            prev_pos = np.roll(sma_pos, 1)
-            prev_pos[0] = np.nan
-            ma200_cross = (sma_pos > 0.0) & (prev_pos <= 0.0)
-        else:
-            ma200_cross = sma_pos > 0.0
-
-        te = (
-            (adx >= float(cfg.te_adx_min))
-            & (adx_slope >= float(cfg.te_adx_slope_min))
-            & (ma200_cross | (sma_slope > 0.0))
-        )
-
-        # Extreme veto: in extreme volatility, force NO_TRADE
-        if cfg.extreme_atr_percentile_max is not None:
-            extreme = atr_pct >= float(cfg.extreme_atr_percentile_max)
-            tc = tc & ~extreme
-            te = te & ~extreme
-            mean = mean & ~extreme
-
-        # Priority: TC > TE > MEAN
-        regime = np.full(len(df), "NO_TRADE", dtype=object)
-        regime[mean] = "MEAN"
-        regime[te] = "TE"
-        regime[tc] = "TC"
-
-    out = pd.DataFrame(index=df.index)
-    out["regime"] = regime.astype(str)
-    out["adx"] = adx
-    out["adx_slope"] = adx_slope
-    out["sma_200_position"] = sma_pos
-    out["sma_200_slope"] = sma_slope
-    out["sr_distance_normalized"] = sr_dist
-    out["sqs"] = sqs
-    out["atr_percentile"] = atr_pct
-    if cfg.use_soft_scores:
-        out["tc_score"] = tc_score
-        out["te_score"] = te_score
-        out["mean_score"] = mean_score
-        out["regime_score"] = max_score
-        out["regime_soft_profile"] = cfg.soft_profile_name
-    return out
-
-
 def compute_trade_quality(
     df: pd.DataFrame,
     *,
@@ -506,99 +242,6 @@ def compute_trade_quality(
     out["t_to_mfe"] = ttm
     out["eff"] = eff
     out["dir_conf"] = dconf
-    return out
-
-
-def compute_mode_3action_regime_quality(
-    df: pd.DataFrame,
-    *,
-    rule_cfg: Rule3ActionConfig = Rule3ActionConfig(),
-    regime_cfg: RegimeRuleConfig = RegimeRuleConfig(),
-    score_cfg: QualityScoreConfig = QualityScoreConfig(),
-    preds_in_log1p: bool = True,
-    calibration: Optional[Dict[str, Any]] = None,
-    out_col: str = "mode",
-) -> pd.DataFrame:
-    """
-    Regime-qualified router (B/C):
-      - Regime from rule features
-      - Trade quality from model heads
-      - Mode from (regime + quality threshold)
-    """
-    regime_df = compute_regime_rules(df, cfg=regime_cfg)
-    quality_df = compute_trade_quality(
-        df,
-        cfg=rule_cfg,
-        score_cfg=score_cfg,
-        preds_in_log1p=preds_in_log1p,
-        calibration=calibration,
-    )
-
-    regime = regime_df["regime"].astype(str).values
-    quality = quality_df["trade_quality"].to_numpy(dtype=float)
-
-    mode = np.full(len(df), "NO_TRADE", dtype=object)
-    action = np.zeros(len(df), dtype=int)
-
-    trend_mask = regime == "TC"
-    te_mask = regime == "TE"
-    mean_mask = regime == "MEAN"
-
-    trend_ok = trend_mask & (quality >= float(score_cfg.quality_trend_min))
-    te_ok = te_mask & (quality >= float(score_cfg.quality_te_min))
-    mean_ok = mean_mask & (quality >= float(score_cfg.quality_mean_min))
-
-    mode[mean_ok] = "MEAN"
-    action[mean_ok] = 1
-    mode[trend_ok | te_ok] = "TREND"
-    action[trend_ok | te_ok] = 2
-
-    out = pd.DataFrame(index=df.index)
-    out[out_col] = mode.astype(str)
-    out["mode_action"] = action.astype(int)
-    out = out.join(quality_df).join(regime_df)
-    return out
-
-
-def compute_mode_3action_regime_only(
-    df: pd.DataFrame,
-    *,
-    rule_cfg: Rule3ActionConfig = Rule3ActionConfig(),
-    regime_cfg: RegimeRuleConfig = RegimeRuleConfig(),
-    score_cfg: QualityScoreConfig = QualityScoreConfig(),
-    preds_in_log1p: bool = True,
-    calibration: Optional[Dict[str, Any]] = None,
-    out_col: str = "mode",
-) -> pd.DataFrame:
-    """
-    C-mode: Regime decides mode; NN provides trade_quality only.
-    TE is mapped to TREND for execution compatibility.
-    """
-    regime_df = compute_regime_rules(df, cfg=regime_cfg)
-    quality_df = compute_trade_quality(
-        df,
-        cfg=rule_cfg,
-        score_cfg=score_cfg,
-        preds_in_log1p=preds_in_log1p,
-        calibration=calibration,
-    )
-
-    regime = regime_df["regime"].astype(str).values
-    mode = np.full(len(df), "NO_TRADE", dtype=object)
-    action = np.zeros(len(df), dtype=int)
-
-    mean_mask = regime == "MEAN"
-    trend_mask = (regime == "TC") | (regime == "TE")
-
-    mode[mean_mask] = "MEAN"
-    action[mean_mask] = 1
-    mode[trend_mask] = "TREND"
-    action[trend_mask] = 2
-
-    out = pd.DataFrame(index=df.index)
-    out[out_col] = mode.astype(str)
-    out["mode_action"] = action.astype(int)
-    out = out.join(quality_df).join(regime_df)
     return out
 
 
@@ -702,4 +345,109 @@ def compute_mode_3action(
     out["t_to_mfe"] = ttm
     out["eff"] = eff
     out["dir_conf"] = dconf
+    return out
+
+
+def compute_mode_3action_regime_aware(
+    df: pd.DataFrame,
+    *,
+    rule_cfg: Rule3ActionConfig = Rule3ActionConfig(),
+    score_cfg: QualityScoreConfig = QualityScoreConfig(),
+    preds_in_log1p: bool = True,
+    calibration: Optional[Dict[str, Any]] = None,
+    out_col: str = "mode",
+    use_physics_regime: bool = True,
+    physics_regime_cfg: Optional[Any] = None,
+) -> pd.DataFrame:
+    """
+    Regime-aware router: Physics/Regime classification before mode selection.
+
+    Flow:
+    1. Classify Physics/Regime (feasibility check)
+    2. Regime determines allowed archetype class
+    3. Router selects within allowed options
+
+    This prevents executing strategies in incompatible physical regimes.
+
+    Args:
+        df: DataFrame with required features and head outputs
+        rule_cfg: Router configuration
+        score_cfg: Quality score configuration
+        preds_in_log1p: Whether predictions are in log1p space
+        calibration: Calibration dictionary
+        out_col: Output column name for mode
+        use_physics_regime: Whether to enable Physics/Regime filtering
+        physics_regime_cfg: Physics/Regime configuration (optional)
+
+    Returns:
+        DataFrame with mode, regime, and diagnostics
+    """
+    if not _PHYSICS_REGIME_AVAILABLE:
+        # Fallback to legacy head-only router if physics_regime not available
+        return compute_mode_3action(
+            df,
+            cfg=rule_cfg,
+            preds_in_log1p=preds_in_log1p,
+            calibration=calibration,
+            out_col=out_col,
+        )
+
+    # Step 1: Classify Physics/Regime
+    if use_physics_regime:
+        if physics_regime_cfg is None:
+            from src.time_series_model.rule.regime import PhysicsRegimeConfig
+
+            physics_regime_cfg = PhysicsRegimeConfig()
+
+        regime_df = classify_regime(df, cfg=physics_regime_cfg)
+        regime = regime_df["regime"].astype(str).values
+    else:
+        # If disabled, set all to allow all regimes (for backward compatibility)
+        regime = np.full(len(df), "TC_REGIME", dtype=object)
+        regime_df = pd.DataFrame(index=df.index)
+        regime_df["regime"] = regime
+
+    # Step 2: Compute quality
+    quality_df = compute_trade_quality(
+        df,
+        cfg=rule_cfg,
+        score_cfg=score_cfg,
+        preds_in_log1p=preds_in_log1p,
+        calibration=calibration,
+    )
+
+    quality = quality_df["trade_quality"].to_numpy(dtype=float)
+
+    # Step 3: Regime + quality mapping
+
+    mode = np.full(len(df), "NO_TRADE", dtype=object)
+    action = np.zeros(len(df), dtype=int)
+
+    # Regime-based filtering
+    tc_regime_mask = regime == "TC_REGIME"
+    te_regime_mask = regime == "TE_REGIME"
+    mean_regime_mask = regime == "MEAN_REGIME"
+    no_trade_regime_mask = regime == "NO_TRADE"
+
+    tc_ok = tc_regime_mask & (quality >= float(score_cfg.quality_trend_min))
+    te_ok = te_regime_mask & (quality >= float(score_cfg.quality_te_min))
+    mean_ok = mean_regime_mask & (quality >= float(score_cfg.quality_mean_min))
+
+    # Apply regime constraints
+    mode[tc_ok] = "TREND"
+    action[tc_ok] = 2
+    mode[te_ok] = "TREND"
+    action[te_ok] = 2
+    mode[mean_ok] = "MEAN"
+    action[mean_ok] = 1
+
+    # NO_TRADE regime overrides everything
+    mode[no_trade_regime_mask] = "NO_TRADE"
+    action[no_trade_regime_mask] = 0
+
+    out = pd.DataFrame(index=df.index)
+    out[out_col] = mode.astype(str)
+    out["mode_action"] = action.astype(int)
+    out = out.join(quality_df).join(regime_df)
+
     return out

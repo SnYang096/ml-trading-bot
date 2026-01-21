@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Tuple
 
 import numpy as np
@@ -40,6 +40,22 @@ class RRExecutionReturnsConfig:
     use_trailing_stop: bool = False
     trailing_atr_mult: float = 1.0
     use_breakeven_stop: bool = False
+
+    # TREND-specific execution overrides (TC-friendly trailing stop)
+    trend_use_time_exit: bool = False
+    trend_use_trailing_stop: bool = True
+    trend_trailing_atr_mult: float = 1.0
+    trend_take_profit_r: float = 100.0  # effectively disable TP; exit via SL
+    trend_stop_loss_r: float = 1.0
+    trend_use_breakeven_stop: bool = False
+
+    # MEAN-specific execution overrides (event-style mean)
+    mean_use_time_exit: bool = True
+    mean_use_trailing_stop: bool = True
+    mean_trailing_atr_mult: float = 3.0
+    mean_take_profit_r: float = 5.0
+    mean_stop_loss_r: float = 3.0
+    mean_use_breakeven_stop: bool = False
 
     # How to decide direction from heads
     head_dir_score_col: str = "head_dir_score"
@@ -260,17 +276,35 @@ def compute_rr_execution_mode_returns(
             .to_numpy(dtype=float)
         )
 
-        # TREND
+        # TREND (TC-friendly trailing stop)
         entry_ok_t, sign_t = _compute_entry_signal_and_dir(g, cfg=cfg, mode="TREND")
+        cfg_trend = replace(
+            cfg,
+            use_time_exit=cfg.trend_use_time_exit,
+            use_trailing_stop=cfg.trend_use_trailing_stop,
+            trailing_atr_mult=cfg.trend_trailing_atr_mult,
+            take_profit_r=cfg.trend_take_profit_r,
+            stop_loss_r=cfg.trend_stop_loss_r,
+            use_breakeven_stop=cfg.trend_use_breakeven_stop,
+        )
         pos_t = _simulate_rr_position(
-            g, entry_ok=entry_ok_t, dir_sign=sign_t, atr=atr_s, cfg=cfg
+            g, entry_ok=entry_ok_t, dir_sign=sign_t, atr=atr_s, cfg=cfg_trend
         )
         ret_t = pd.Series(pos_t.astype(float) * r_next, index=g.index, dtype=float)
 
-        # MEAN
+        # MEAN (event-style mean)
         entry_ok_m, sign_m = _compute_entry_signal_and_dir(g, cfg=cfg, mode="MEAN")
+        cfg_mean = replace(
+            cfg,
+            use_time_exit=cfg.mean_use_time_exit,
+            use_trailing_stop=cfg.mean_use_trailing_stop,
+            trailing_atr_mult=cfg.mean_trailing_atr_mult,
+            take_profit_r=cfg.mean_take_profit_r,
+            stop_loss_r=cfg.mean_stop_loss_r,
+            use_breakeven_stop=cfg.mean_use_breakeven_stop,
+        )
         pos_m = _simulate_rr_position(
-            g, entry_ok=entry_ok_m, dir_sign=sign_m, atr=atr_s, cfg=cfg
+            g, entry_ok=entry_ok_m, dir_sign=sign_m, atr=atr_s, cfg=cfg_mean
         )
         ret_m = pd.Series(pos_m.astype(float) * r_next, index=g.index, dtype=float)
 

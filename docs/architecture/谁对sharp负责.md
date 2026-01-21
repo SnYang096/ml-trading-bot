@@ -6,13 +6,15 @@
 
 ## 一句话结论（先给你定心丸）
 
-> **没有任何一个模块对 Sharpe 负责。
+> **没有任何一个模块对 Sharpe 负责。  
 > Sharpe 是“系统协同后的涌现结果（emergent outcome）”。**
 
 但——
-**有且只有一个地方“看 Sharpe”**：
+**有且只有一个地方“用 Sharpe 做生产决策”**：
 
 > **系统级 Portfolio / Capital Allocation 层。**
+
+补充：Gate/Execution 可以**诊断性观察 Sharpe**，但不得用来驱动生产决策。
 
 ---
 
@@ -130,11 +132,11 @@ Std(return | system passes)
 
 ---
 
-## 三、唯一“可以看 Sharpe”的地方
+## 三、唯一“可以用 Sharpe 做生产决策”的地方
 
 ### 🎯 Portfolio / Capital Allocation 层
 
-这是**系统中唯一合法对 Sharpe 负责的模块**。
+这是**系统中唯一合法用 Sharpe 驱动生产决策的模块**。
 
 它做什么？
 
@@ -161,7 +163,7 @@ strategy_i:
 
 | 指标                 | 说明             |
 | ------------------ | -------------- |
-| Portfolio Sharpe   | 唯一看 Sharpe 的地方 |
+| Portfolio Sharpe   | 唯一用 Sharpe 做生产决策 |
 | Drawdown Profile   | 系统生存           |
 | Correlation Drift  | 防止同向爆仓         |
 | Capital Efficiency | 单位风险回报         |

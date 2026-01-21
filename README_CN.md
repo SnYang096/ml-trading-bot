@@ -326,6 +326,8 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
   --out results/nnmh_e2e/tier01
 ```
 
+> **详细工作流文档**: 完整的命令序列、Gate 过滤说明、ET/FR 交易缺失原因分析等，见 [`docs/workflow/PIPELINE_WORKFLOW.md`](docs/workflow/PIPELINE_WORKFLOW.md)
+
 ### 3.1) Router 阈值：用“平坦高原”协议做稳健调参（推荐）
 
 > 目的：避免“找尖峰”导致的炼丹，优先选多窗口/bootstrapped 都稳的阈值组合。  

@@ -1,0 +1,26 @@
+{
+  "mean_A_trailing": {
+    "mean_use_time_exit": true,
+    "mean_use_trailing_stop": true,
+    "mean_trailing_atr_mult": 3.0,
+    "mean_stop_loss_r": 3.0,
+    "mean_take_profit_r": 5.0,
+    "mean_use_breakeven_stop": false
+  },
+  "mean_B_longhold": {
+    "mean_use_time_exit": true,
+    "mean_use_trailing_stop": false,
+    "mean_trailing_atr_mult": 3.0,
+    "mean_stop_loss_r": 4.0,
+    "mean_take_profit_r": 8.0,
+    "mean_use_breakeven_stop": false
+  },
+  "mean_C_event": {
+    "mean_use_time_exit": true,
+    "mean_use_trailing_stop": true,
+    "mean_trailing_atr_mult": 5.0,
+    "mean_stop_loss_r": 5.0,
+    "mean_take_profit_r": 12.0,
+    "mean_use_breakeven_stop": true
+  }
+}

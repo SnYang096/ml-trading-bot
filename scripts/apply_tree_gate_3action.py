@@ -122,6 +122,16 @@ def main() -> int:
         help="Use enabled_archetypes to select per-regime archetype",
     )
     p.add_argument("--evidence-quantiles", default=None)
+    p.add_argument(
+        "--physics-regime",
+        default=None,
+        help="Optional physics_regime parquet to merge (adds tc/te semantic scores).",
+    )
+    p.add_argument(
+        "--semantic-score-floors",
+        default=None,
+        help="Optional JSON with tc/te semantic score floors (p05/p10).",
+    )
     args = p.parse_args()
 
     mode_df = _ensure_timestamp_col(_read_any(Path(args.mode)))
@@ -155,6 +165,30 @@ def main() -> int:
         feats, on=["symbol", "timestamp"], how="left", suffixes=("", "_feat")
     )
 
+    # Optional: merge physics_regime scores
+    if args.physics_regime:
+        pw_df = _ensure_timestamp_col(_read_any(Path(args.physics_regime)))
+        if "symbol" not in pw_df.columns or "timestamp" not in pw_df.columns:
+            raise KeyError("physics_regime must include symbol and timestamp columns")
+        pw_df = pw_df.copy()
+        pw_df["symbol"] = pw_df["symbol"].astype(str)
+        pw_df["timestamp"] = pd.to_datetime(pw_df["timestamp"], errors="coerce")
+        keep_cols = [
+            "symbol",
+            "timestamp",
+            "tc_semantic_score",
+            "te_semantic_score",
+        ]
+        keep_cols = [c for c in keep_cols if c in pw_df.columns]
+        merged = merged.merge(pw_df[keep_cols], on=["symbol", "timestamp"], how="left")
+
+    # Optional: semantic score floors
+    semantic_floors = None
+    if args.semantic_score_floors:
+        with open(args.semantic_score_floors, "r") as f:
+            semantic_floors = json.load(f)
+        # Expected keys: tc_semantic_score_p05, te_semantic_score_p10
+
     arches = load_execution_archetypes_registry(str(args.execution_archetypes))
     quantiles_raw = load_evidence_quantiles(args.evidence_quantiles)
 
@@ -174,6 +208,35 @@ def main() -> int:
             gate_reasons.append("")
             gate_arch.append("")
             continue
+        # Semantic score floor veto (Gate-only)
+        if semantic_floors and regime in ("TC", "TE"):
+            if regime == "TC":
+                floor = semantic_floors.get("tc_semantic_score_p05")
+                score = row.get("tc_semantic_score")
+                if (
+                    floor is not None
+                    and pd.notna(score)
+                    and float(score) < float(floor)
+                ):
+                    gate_ok.append(False)
+                    gate_decision.append("veto")
+                    gate_reasons.append("tc_semantic_floor")
+                    gate_arch.append("semantic_floor")
+                    continue
+            if regime == "TE":
+                floor = semantic_floors.get("te_semantic_score_p10")
+                score = row.get("te_semantic_score")
+                if (
+                    floor is not None
+                    and pd.notna(score)
+                    and float(score) < float(floor)
+                ):
+                    gate_ok.append(False)
+                    gate_decision.append("veto")
+                    gate_reasons.append("te_semantic_floor")
+                    gate_arch.append("semantic_floor")
+                    continue
+
         # Map TE/TC to TREND for enabled_archetypes lookup
         regime_for_lookup = "TREND" if regime in ("TE", "TC") else regime
         candidates = _enabled_archetypes(
