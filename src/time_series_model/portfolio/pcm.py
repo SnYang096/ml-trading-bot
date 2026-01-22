@@ -144,21 +144,6 @@ def _are_archetypes_compatible(arch1: str, arch2: str) -> bool:
     return False
 
 
-def _get_archetype_conflict_rules() -> Dict[str, List[str]]:
-    """
-    Get archetype conflict rules: which archetypes should be closed/reduced when a new one appears.
-
-    Returns:
-        Dict mapping archetype -> list of archetypes that should be closed/reduced
-    """
-    return {
-        "ET": ["TC", "TE"],  # ET出现时，TC/TE要清仓减仓
-        "FR": ["TC"],  # FR时不能是TC
-        "TC": ["FR"],  # TC时不能是FR
-        "TE": ["FR"],  # TE时不能是FR (implied, but explicit for clarity)
-    }
-
-
 def decide_pcm(
     *,
     policy: PCMPolicy,
@@ -194,16 +179,14 @@ def decide_pcm(
 
     slots = list(active_slots or [])
 
-    # NEW: Check archetype compatibility with existing slots
+    # Check archetype compatibility with existing slots (simplified: no conflict rules)
     candidate_arch = (
         str(candidate.archetype).upper().strip()
         if hasattr(candidate, "archetype") and candidate.archetype
         else None
     )
-    conflict_rules = _get_archetype_conflict_rules()
 
-    # Check if candidate archetype conflicts with existing slots
-    slots_to_close: List[str] = []
+    # Check if candidate is incompatible with existing slots
     for slot in slots:
         slot_arch = (
             str(slot.archetype).upper().strip()
@@ -213,18 +196,6 @@ def decide_pcm(
         if not slot_arch or not candidate_arch:
             # Fallback to regime-based logic if archetype not available
             continue
-
-        # Check if candidate conflicts with this slot
-        if candidate_arch in conflict_rules:
-            conflicting_archetypes = conflict_rules[candidate_arch]
-            if any(
-                slot_arch.startswith(conflict.upper()) or conflict.upper() in slot_arch
-                for conflict in conflicting_archetypes
-            ):
-                slots_to_close.append(slot.position_id)
-                reasons.append(
-                    f"archetype_conflict:{candidate_arch}_requires_close_{slot_arch}"
-                )
 
         # Check if candidate is incompatible with this slot
         if not _are_archetypes_compatible(candidate_arch, slot_arch):
@@ -290,73 +261,15 @@ def decide_pcm(
         return PCMDecision(
             allow_entry=allow_entry,
             allow_add_on=allow_add_on,
-            replace_position_id=replace_position_id if slots_to_close else None,
+            replace_position_id=replace_position_id,
             reasons=reasons,
         )
 
     # No free slot -> rotation by ppath dominance (ex-post only)
-    # NEW: Check archetype compatibility before rotation
-    if candidate_arch:
-        # Check if any slot has incompatible archetype
-        incompatible_slots = [
-            slot
-            for slot in slots
-            if hasattr(slot, "archetype")
-            and slot.archetype
-            and not _are_archetypes_compatible(
-                candidate_arch, str(slot.archetype).upper().strip()
-            )
-        ]
-
-        # If incompatible, try to replace the weakest incompatible slot
-        if incompatible_slots:
-            weakest_incompatible = _pick_weakest_slot(incompatible_slots)
-            if weakest_incompatible:
-                thr = float(weakest_incompatible.remaining_ppath) * float(
-                    1.0 + policy.replacement_margin
-                )
-                if float(candidate.ppath) > thr:
-                    allow_entry = True
-                    replace_position_id = str(weakest_incompatible.position_id)
-                    reasons.append(
-                        f"entry:replace_incompatible_slot:{weakest_incompatible.position_id}"
-                    )
-                else:
-                    reasons.append(
-                        f"entry:ppath_not_better_than_incompatible_slot:{weakest_incompatible.position_id}"
-                    )
-                return PCMDecision(
-                    allow_entry=allow_entry,
-                    allow_add_on=allow_add_on,
-                    replace_position_id=replace_position_id,
-                    reasons=reasons,
-                )
-
-    # Standard rotation logic: replace weakest slot if ppath is better
+    # Simplified: no archetype compatibility check in rotation, just replace weakest slot
     weakest = _pick_weakest_slot(slots)
     if weakest is None:
         reasons.append("entry:no_active_slot_info")
-        return PCMDecision(
-            allow_entry=False,
-            allow_add_on=allow_add_on,
-            replace_position_id=None,
-            reasons=reasons,
-        )
-
-    # Check archetype compatibility with weakest slot
-    weakest_arch = (
-        str(weakest.archetype).upper().strip()
-        if hasattr(weakest, "archetype") and weakest.archetype
-        else None
-    )
-    if (
-        candidate_arch
-        and weakest_arch
-        and not _are_archetypes_compatible(candidate_arch, weakest_arch)
-    ):
-        reasons.append(
-            f"entry:archetype_incompatible_with_weakest:{candidate_arch}_vs_{weakest_arch}"
-        )
         return PCMDecision(
             allow_entry=False,
             allow_add_on=allow_add_on,

@@ -450,3 +450,9 @@ xgboost-3.1.2-py3-none-manylinux_2_28_x86_64.whl
 feature_store/
 terraform.tfvars
 terraform/*.tfvars
+
+# Terraform provider binaries (should be downloaded automatically)
+terraform/terraform-provider-*/
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/.terraform-config.zip
