@@ -36,9 +36,7 @@ enforcement:
 feature_plan_ref: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
 
 feature_plan_overrides:
-  optional_blocks_enabled:
-    # Note: volume_profile_block and vpin_block are auto-detected from execution_archetypes.yaml
-    # Only add blocks here if they are NOT used in gate/evidence rules (user-defined blocks)
+  optional_blocks_enabled: []  # Auto-detected from execution_archetypes.yaml (volume_profile_block, vpin_block)
 
 entrypoints:
   nnmultihead_predict: "scripts/predict_path_primitives_mlp.py"
@@ -65,94 +63,101 @@ model_plan:
       enabled: false
       init_model_path: null
 
-router_plan:
-  kind: "rule_mode_3action"
-  thresholds_source: "fixed"
-  thresholds:
-    mfe_min: 0.1259
-    eff_min: 1.0434
-    dir_conf_trend_min: 0.0642
+# Router configuration (currently not used in code, kept for future reference)
+# router_plan:
+#   kind: "rule_mode_3action"
+#   thresholds_source: "fixed"
+#   thresholds:
+#     mfe_min: 0.1259
+#     eff_min: 1.0434
+#     dir_conf_trend_min: 0.0642
 
-gate_plan:
-  enabled: false
-  kind: "tree_gate_veto"
-  rules_export:
-    enabled: true
-    format: "yaml"
+# Gate configuration (currently not used in code, kept for future reference)
+# gate_plan:
+#   enabled: false
+#   kind: "tree_gate_veto"
+#   rules_export:
+#     enabled: true
+#     format: "yaml"
 
-pcm_plan:
-  enabled: true
-  kind: "portfolio_capital_manager_v1"
-  modes:
-    - "NO_TRADE"
-    - "MEAN"
-    - "TREND"
-  policy:
-    baseline_mode_budgets:
-      NO_TRADE: 0.0
-      MEAN: 0.4
-      TREND: 0.6
-    escalation_mode_budgets:
-      NO_TRADE: 0.0
-      MEAN: 0.25
-      TREND: 0.75
-    cash_constraints:
-      baseline_min: 0.30
-      escalation_min: 0.20
-    position_concentration:
-      baseline_max: 0.40
-      escalation_max: 0.50
-  withdrawal_policy:
-    enabled: false
-    config_file: "config/constitution/withdrawal_rules.yaml"
+# Portfolio Capital Manager configuration (currently not used in code, kept for future reference)
+# pcm_plan:
+#   enabled: true
+#   kind: "portfolio_capital_manager_v1"
+#   modes:
+#     - "NO_TRADE"
+#     - "MEAN"
+#     - "TREND"
+#   policy:
+#     baseline_mode_budgets:
+#       NO_TRADE: 0.0
+#       MEAN: 0.4
+#       TREND: 0.6
+#     escalation_mode_budgets:
+#       NO_TRADE: 0.0
+#       MEAN: 0.25
+#       TREND: 0.75
+#     cash_constraints:
+#       baseline_min: 0.30
+#       escalation_min: 0.20
+#     position_concentration:
+#       baseline_max: 0.40
+#       escalation_max: 0.50
+#   withdrawal_policy:
+#     enabled: false
+#     config_file: "config/constitution/withdrawal_rules.yaml"
 
-strategy_assets:
-  - asset_id: "BTC_TREND_V1"
-    base_symbol: "BTCUSDT"
-    router_type: "TREND"
-    gate_profile: "commitment_high_absorption_low"
-    execution_profile: "pyramid_trailing"
-  - asset_id: "BTC_MEAN_V1"
-    base_symbol: "BTCUSDT"
-    router_type: "MEAN"
-    gate_profile: "absorption_high_opposing_spike"
-    execution_profile: "fixed_horizon"
-  - asset_id: "BTC_CASH"
-    base_symbol: "BTCUSDT"
-    router_type: "NO_TRADE"
-    gate_profile: null
-    execution_profile: null
+# Strategy Assets Registry (placeholder for future implementation, not currently used)
+# strategy_assets:
+#   - asset_id: "BTC_TREND_V1"
+#     base_symbol: "BTCUSDT"
+#     router_type: "TREND"
+#     gate_profile: "commitment_high_absorption_low"
+#     execution_profile: "pyramid_trailing"
+#   - asset_id: "BTC_MEAN_V1"
+#     base_symbol: "BTCUSDT"
+#     router_type: "MEAN"
+#     gate_profile: "absorption_high_opposing_spike"
+#     execution_profile: "fixed_horizon"
+#   - asset_id: "BTC_CASH"
+#     base_symbol: "BTCUSDT"
+#     router_type: "NO_TRADE"
+#     gate_profile: null
+#     execution_profile: null
 
+# Portfolio assets plan (used in pipeline for diagnostic artifacts / PCM wiring)
 portfolio_assets_plan:
   enabled: true
   config_file: "config/portfolio_assets/portfolio_assets.yaml"
 
-execution_plan:
-  returns_source: "rr_execution"
-  entry_delay: 0
-  rr_sim:
-    stop_loss_r: 1.0
-    take_profit_r: 2.0
-    max_holding_bars: 50
-    use_trailing_stop: true
+# Execution plan (currently not used in code, kept for future reference)
+# execution_plan:
+#   returns_source: "rr_execution"
+#   entry_delay: 0
+#   rr_sim:
+#     stop_loss_r: 1.0
+#     take_profit_r: 2.0
+#     max_holding_bars: 50
+#     use_trailing_stop: true
 
-acceptance:
-  data:
-    require_monthly_coverage: true
-    min_monthly_bars_4h: 900
-  model:
-    min_auc:
-      dir_conf_trend: 0.52
-    min_ap: {}
-  router:
-    min_trade_rate: 0.01
-    max_trade_rate: 0.40
-    no_trade_quality:
-      min_coverage: 0.20
-      max_coverage: 0.60
-  portfolio:
-    max_dd: 0.20
-    withdrawal_compliance:
-      enabled: false
-  ops:
-    require_meta_and_report: true
+# Acceptance criteria (placeholder for future report-driven validation, not currently used)
+# acceptance:
+#   data:
+#     require_monthly_coverage: true
+#     min_monthly_bars_4h: 900
+#   model:
+#     min_auc:
+#       dir_conf_trend: 0.52
+#     min_ap: {}
+#   router:
+#     min_trade_rate: 0.01
+#     max_trade_rate: 0.40
+#     no_trade_quality:
+#       min_coverage: 0.20
+#       max_coverage: 0.60
+#   portfolio:
+#     max_dd: 0.20
+#     withdrawal_compliance:
+#       enabled: false
+#   ops:
+#     require_meta_and_report: true

@@ -1,0 +1,6 @@
+env:
+  TF_VAR_secret_id: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
+  TF_VAR_secret_key: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+  TF_VAR_cls_secret_id: ${{ secrets.TENCENTCLOUD_SECRET_ID }}
+  TF_VAR_cls_secret_key: ${{ secrets.TENCENTCLOUD_SECRET_KEY }}
+  TF_VAR_cls_topic_id: "bot"

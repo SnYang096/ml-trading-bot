@@ -1,0 +1,19 @@
+filebeat.inputs:
+  - type: journald
+    id: quant-logs
+    seek_cursor: true
+    include_matches:
+      - "_SYSTEMD_UNIT=quant-engine.service"
+
+output.cls:
+  enabled: true
+  topic_id: "${CLS_TOPIC_ID}"
+  secret_id: "${CLS_SECRET_ID}"
+  secret_key: "${CLS_SECRET_KEY}"
+  region: "ap-hongkong" # 与 CVM Region 一致
+
+processors:
+  - decode_json_fields:
+      fields: ["message"]
+      target: ""
+      overwrite_keys: true

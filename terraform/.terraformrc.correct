@@ -1,0 +1,25 @@
+# 正确的 Terraform provider 镜像配置示例
+# 注意：腾讯云官方可能不提供 Terraform provider 镜像
+# 如果网络有问题，建议使用代理或手动下载
+
+# 方案 1：使用官方源（推荐，如果网络可以）
+# 不创建 .terraformrc 文件，或使用以下配置允许回退到官方源：
+
+provider_installation {
+  # 优先使用镜像（如果配置了）
+  network_mirror {
+    url = "https://mirrors.tencent.com/terraform/providers/"
+    include = ["registry.terraform.io/*/*"]
+  }
+  # 如果镜像失败，回退到官方源
+  direct {
+    # 不排除任何 provider，允许回退
+  }
+}
+
+# 方案 2：完全使用官方源（如果镜像不可用）
+# 删除或注释掉 network_mirror 部分，只保留 direct：
+# provider_installation {
+#   direct {
+#   }
+# }

@@ -1,0 +1,28 @@
+[Unit]
+Description=Quant Engine (Order Flow Strategy)
+After=network.target
+
+[Service]
+# 假设你的策略代码放在 /opt/quant-engine/main.py
+WorkingDirectory=/opt/quant-engine
+ExecStart=/usr/bin/python3 main.py
+
+# 关键：输出日志到 journald（供 Filebeat 采集）
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quant-engine
+
+# 环境变量（可选）
+Environment=PYTHONUNBUFFERED=1
+Environment=LOG_FORMAT=json
+
+# 资源限制（留足内存给策略）
+MemoryLimit=2.5G
+CPUQuota=90%
+
+# 崩溃自动重启
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

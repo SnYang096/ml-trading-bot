@@ -9,7 +9,7 @@ Runs 4 configurations:
 4. Both disabled: without regime filter + without gate veto
 
 For each configuration:
-- Runs apply_tree_gate_3action
+- Runs apply_archetype_gate
 - Runs diagnose_e2e_kpi
 - Generates comparison report
 """
@@ -174,7 +174,7 @@ def main() -> int:
         gated_file = output_dir / f"{config_name}_gated.parquet"
         gate_cmd = [
             sys.executable,
-            "scripts/apply_tree_gate_3action.py",
+            "scripts/apply_archetype_gate.py",
             "--logs",
             str(args.logs),
             "--out",

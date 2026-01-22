@@ -2364,7 +2364,7 @@ def rule_apply_tree_gate(
                 f"/workspace/{semantic_score_floors}" if use_workspace_prefix else semantic_score_floors,
             ]
         )
-    sys.exit(run_script("scripts/apply_tree_gate_3action.py", args, docker=docker))
+    sys.exit(run_script("scripts/apply_archetype_gate.py", args, docker=docker))
 
 
 @rule.command("diagnose-gate-filtering")
@@ -3714,7 +3714,7 @@ def nnmultihead_pipeline_3action_e2e(
                 ]
             )
         rc = run_script(
-            "scripts/apply_tree_gate_3action.py",
+            "scripts/apply_archetype_gate.py",
             gate_args,
             docker=docker,
             env_overrides=env_overrides,

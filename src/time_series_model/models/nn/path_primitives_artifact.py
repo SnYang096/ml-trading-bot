@@ -69,16 +69,18 @@ class PathPrimitivesModelArtifact:
         feature_scaler = meta.get("feature_scaler", None)
 
         contract = None
-        if config_dir is not None:
+        # Priority: use feature_contract from model meta (training-time config)
+        # Only fallback to config_dir if model doesn't have it saved
+        try:
+            fc = meta.get("feature_contract", None)
+            if isinstance(fc, dict):
+                contract = FeatureContract.from_dict(fc)  # type: ignore[attr-defined]
+        except Exception:
+            contract = None
+
+        # Fallback to config_dir if model doesn't have feature_contract saved
+        if contract is None and config_dir is not None:
             contract = load_feature_contract(Path(config_dir).resolve())
-        else:
-            # fallback: allow loading from meta if present
-            try:
-                fc = meta.get("feature_contract", None)
-                if isinstance(fc, dict):
-                    contract = FeatureContract.from_dict(fc)  # type: ignore[attr-defined]
-            except Exception:
-                contract = None
 
         block_cols_by_name = None
         append_block_mask = False
@@ -95,6 +97,35 @@ class PathPrimitivesModelArtifact:
             )
             if not block_cols_by_name:
                 append_block_mask = False
+
+        # Safety check: ensure expected_feature_dim matches model.input_dim
+        # If model was trained without block masks, disable append_block_mask even if contract says otherwise
+        if feature_cols is not None:
+            base_dim = len(feature_cols)
+            if append_block_mask and block_cols_by_name:
+                expected_with_mask = base_dim + len(block_cols_by_name)
+            else:
+                expected_with_mask = base_dim
+
+            # Try to get model input dim from backbone first layer
+            try:
+                model_input_dim = None
+                if hasattr(model, "input_dim"):
+                    model_input_dim = model.input_dim
+                elif hasattr(model, "backbone"):
+                    layers = list(model.backbone.children())
+                    if layers and hasattr(layers[0], "in_features"):
+                        model_input_dim = layers[0].in_features
+
+                if (
+                    model_input_dim is not None
+                    and expected_with_mask != model_input_dim
+                ):
+                    # Model expects different dimension, disable append_block_mask to match training
+                    append_block_mask = False
+                    block_cols_by_name = None
+            except Exception:
+                pass
 
         return cls(
             model=model,

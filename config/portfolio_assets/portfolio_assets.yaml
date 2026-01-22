@@ -8,7 +8,14 @@
 # - deterministic mapping from Router aggregate signals -> asset weights
 # - TREND ZERO LAW (hard rules forcing GLOBAL_TREND weight to 0)
 #
-# Note: current system may not produce all router signals (crowding/regime_entropy/etc).
+# NOTE: Current Status (2026-01-22):
+# - This configuration is designed for use with a router that generates aggregate signals
+# - Current system does not have a router, so router_to_weights mapping is not fully functional
+# - aggregate_from_symbol_modes() can compute signals from symbol modes (TREND/MEAN/NO_TRADE)
+# - If regime is removed, this will need to be adapted to use archetypes (TC, TE, FR, ET)
+# - Currently used in counterfactual_eval_3action.py for diagnostic artifacts
+# - Marked as "future use" until router is implemented or archetype migration is complete
+#
 # Missing fields should be treated conservatively (i.e., disable risky assets).
 
 version: 1

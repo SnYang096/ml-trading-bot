@@ -27,7 +27,7 @@ from src.time_series_model.nnmultihead.strategy_profile import (
 
 def analyze_current_regime_filter() -> Dict[str, Any]:
     """分析当前regime filter的实现"""
-    gate_script = PROJECT_ROOT / "scripts/apply_tree_gate_3action.py"
+    gate_script = PROJECT_ROOT / "scripts/apply_archetype_gate.py"
 
     with open(gate_script, "r", encoding="utf-8") as f:
         content = f.read()
@@ -93,7 +93,7 @@ def evaluate_migration_cost() -> Dict[str, Any]:
     """评估迁移成本"""
     return {
         "code_changes": [
-            "scripts/apply_tree_gate_3action.py: 移除regime filter逻辑（~30行）",
+            "scripts/apply_archetype_gate.py: 移除regime filter逻辑（~30行）",
             "config/nnmultihead/execution_archetypes.yaml: 为每个archetype添加regime veto规则",
             "config/nnmultihead/live/meta_router_live_config.yaml: 更新enabled_archetypes语义（可选）",
         ],

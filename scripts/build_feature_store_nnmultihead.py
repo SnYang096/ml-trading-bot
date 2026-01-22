@@ -197,6 +197,27 @@ def main() -> None:
                     )
                     print(f"✅ Configured tick data for {sym}", flush=True)
             except ValueError as e:
+                # Check if vpin is in requested features - if so, tick data is required
+                error_msg = str(e)
+                if (
+                    "vpin" in str(requested_features_list).lower()
+                    or "tick" in error_msg.lower()
+                ):
+                    # If vpin is requested, tick data is required - fail immediately
+                    print(
+                        f"❌ ERROR: Tick data required for vpin but not found for {sym}: {e}",
+                        flush=True,
+                    )
+                    raise SystemExit(
+                        f"ERROR: Cannot build FeatureStore without tick data for vpin feature.\n"
+                        f"Symbol: {sym}\n"
+                        f"Data path: {args.data_path}\n"
+                        f"Time range: {start_ts} to {end_ts}\n"
+                        f"Error: {e}\n"
+                        f"\n"
+                        f"Please ensure tick data files exist in format: {sym}_YYYY-MM.parquet\n"
+                        f"Or disable vpin_block if tick data is not available."
+                    )
                 # If tick data is missing but not required, continue (will fail later if actually needed)
                 print(f"⚠️  Tick configuration warning for {sym}: {e}", flush=True)
             except Exception as e:

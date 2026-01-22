@@ -1,0 +1,18 @@
+[Unit]
+Description=Filebeat to send logs to Tencent Cloud CLS
+After=network.target
+
+[Service]
+ExecStart=/usr/share/filebeat/bin/filebeat -e -c /etc/filebeat/filebeat.yml
+Restart=always
+RestartSec=10
+
+# 从 /etc/default/filebeat 读取密钥
+EnvironmentFile=/etc/default/filebeat
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=filebeat
+
+[Install]
+WantedBy=multi-user.target

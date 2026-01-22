@@ -27,8 +27,10 @@
           `feature_dependencies.yaml.output_columns` 自动推导写入派生 `features.yaml.feature_contract.optional_blocks`。
         - 也就是说：**你最终运行用的派生 config 里仍然有列级 block mask 语义**（只是来源更单一、更不容易漂移）。
     - `feature_store`：FeatureStore 的默认 root/layer/并行/fast_features
-    - `exclude_columns`：哪些列“计算但不喂给 MLP”（例如 `atr`）
+    - `exclude_columns`：哪些列"计算但不喂给 MLP"（例如 `atr`）
     - `feature_contract`：稳定的合同语义（baseline `minimal_required_cols` + `missingness_policy`）
+      - **注意**：`feature_contract` 定义在 `feature_plan.yaml` 中，materialize 时会写入派生 `features.yaml`
+      - 不再支持独立的 `feature_contract.yaml` 文件（legacy 格式已移除）
 
 ### C) TaskSpec（任务合同，本次 run 的“非特征”定义，可变）
 - `config/tasks/task_spec.yaml`
@@ -64,13 +66,13 @@ nnmultihead 的脚本/loader 仍然以“目录里存在这些文件”为运行
     `model.yaml` 才是该模型的“默认训练参数/结构参数”的承载体。
   - 经验上：TaskSpec 负责“本次 run 变的部分”，base config 负责“默认不变的部分”。
 
-## 3) 最终“落地配置”长什么样（派生 config）
+## 3) 最终"落地配置"长什么样（派生 config）
 
 当你运行：
 - `mlbot nnmultihead train --task-spec ...`
 - `mlbot nnmultihead pipeline-3action-e2e --task-spec ...`
 
-系统会先 materialize 一个派生 config（目录里会出现 `derived_from_task_spec.json`），并写出一份“自包含”的 `features.yaml`：
+系统会先 materialize 一个派生 config（目录里会出现 `derived_from_task_spec.json`），并写出一份"自包含"的 `features.yaml`：
 - `requested_features.required`：来自启用的 tiers（feature nodes）
 - `requested_features.optional_blocks`：来自启用的 blocks（node 列表）
 - `feature_contract`：来自 FeaturePlan.feature_contract（missingness_policy + baseline minimal cols）
@@ -78,6 +80,29 @@ nnmultihead 的脚本/loader 仍然以“目录里存在这些文件”为运行
     - baseline minimal_required_cols
     - ∪（tier nodes 的 output_columns union）
   - `optional_blocks`（列级）会从启用 blocks 的 nodes 的 `output_columns` 推导出来（用于 block mask/dropout）
+
+### feature_contract 的完整流程
+
+**定义阶段**：
+1. `feature_plan.yaml` 中定义 `feature_contract`（第63-82行）
+   - 包含 `minimal_required_cols`（baseline）
+   - 包含 `missingness_policy`（block mask/dropout 策略）
+
+**Materialize 阶段**：
+2. `materialize_nnmh_config_from_task_spec()` 从 `feature_plan.yaml` 读取 `feature_contract`
+3. 根据 TaskSpec 的 tiers 和 optional_blocks_enabled 更新：
+   - `minimal_required_cols` = baseline ∪ (tier nodes 的 output_columns)
+   - `optional_blocks` = 从启用的 blocks 推导出列级映射
+4. 写入到派生 config 的 `features.yaml` 中（`feat_obj["feature_contract"] = fc_new`）
+
+**使用阶段**：
+5. `load_feature_contract()` 从派生 config 的 `features.yaml` 读取 `feature_contract`
+6. 用于模型训练/推理时的特征验证和 block mask 配置
+
+**重要说明**：
+- **不再支持独立的 `feature_contract.yaml` 文件**（legacy 格式已移除）
+- 所有 `feature_contract` 必须定义在 `feature_plan.yaml` 中
+- 派生 config 的 `features.yaml` 是最终使用的配置（包含完整的 feature_contract）
 
 ## 4) 常见困惑：Tier vs Block vs Contract
 

@@ -2,8 +2,11 @@
 """
 Apply tree-gate veto rules based on regime and archetype.
 
+This script applies gate rules (deny_if/allow_if) and evidence rules to filter
+trading signals based on archetype-specific requirements.
+
 Inputs:
-  - logs_3action parquet/csv (symbol, timestamp, regime, ...) OR physics_regime parquet
+  - logs parquet/csv (symbol, timestamp, regime, ...) OR physics_regime parquet
   - FeatureStore (root + layer) for the same timeframe/window
   - execution_archetypes.yaml gate_rules (per archetype)
   - live meta_router config (to select a single archetype per regime)
@@ -37,6 +40,9 @@ from src.time_series_model.live.meta_router_config import (  # noqa: E402
 from src.time_series_model.live.tree_gate import apply_gate_rules  # noqa: E402
 from src.time_series_model.nnmultihead.strategy_profile import (  # noqa: E402
     load_execution_archetypes_registry,
+)
+from src.time_series_model.portfolio.pcm import (  # noqa: E402
+    _are_archetypes_compatible,
 )
 
 
@@ -313,9 +319,19 @@ def main() -> int:
         end=args.end_date,
     )
     feats = feats.copy()
-    # If timestamp is both index and column, drop index to avoid merge ambiguity.
+    # If timestamp is both index and column, ensure we use the column and drop index to avoid merge ambiguity.
     if getattr(feats.index, "name", None) == "timestamp":
-        feats = feats.reset_index(drop=True)
+        # If timestamp is in index but not in columns, it should have been handled by _read_feature_store_range
+        # But if it's in both, we need to ensure the column version is used
+        if "timestamp" in feats.columns:
+            feats = feats.reset_index(drop=True)
+        else:
+            # This shouldn't happen if _read_feature_store_range worked correctly, but handle it anyway
+            feats = feats.reset_index()
+    # Ensure timestamp is a column (should already be after _read_feature_store_range)
+    if "timestamp" not in feats.columns:
+        if getattr(feats.index, "name", None) == "timestamp":
+            feats = feats.reset_index()
     feats["symbol"] = feats["symbol"].astype(str)
     feats["timestamp"] = pd.to_datetime(feats["timestamp"], errors="coerce")
     logs_df = logs_df.copy()
@@ -568,13 +584,50 @@ def main() -> int:
             else:
                 last_reasons = list(reasons or [])
 
+        # NEW: Check archetype compatibility when multiple archetypes pass gate
+        # This logic applies when regime is removed (as per user requirement)
+        # For now, we implement it but it can be enabled/disabled via a flag
+
+        # Filter passing candidates by compatibility
+        compatible_candidates: List[tuple[str, float, List[str]]] = []
+        if len(passing_candidates) > 1:
+            # If multiple archetypes pass, check compatibility
+            # TC+TE: compatible (both trend-following)
+            # FR+ET: compatible (both mean-reversion)
+            # Other combinations: incompatible (semantic conflict)
+
+            archetype_names = [arch_name for arch_name, _, _ in passing_candidates]
+
+            # Check all pairs for compatibility
+            all_compatible = True
+            for i, arch1 in enumerate(archetype_names):
+                for j, arch2 in enumerate(archetype_names):
+                    if i < j:  # Avoid duplicate pairs
+                        if not _are_archetypes_compatible(arch1, arch2):
+                            all_compatible = False
+                            break
+                if not all_compatible:
+                    break
+
+            if all_compatible:
+                # All passing archetypes are compatible, keep them all
+                compatible_candidates = passing_candidates
+            else:
+                # Not all compatible: select the best one (highest score)
+                # This maintains backward compatibility
+                passing_candidates.sort(key=lambda x: x[1], reverse=True)
+                compatible_candidates = [passing_candidates[0]]
+        else:
+            # Single or no candidates: no compatibility check needed
+            compatible_candidates = passing_candidates
+
         # Parallel archetype trading: when both regime filter and gate veto are disabled,
         # allow all passing archetypes to trade in parallel
         use_parallel = args.disable_regime_filter and args.disable_gate_veto
 
-        if use_parallel and passing_candidates:
-            # Create a row for each passing archetype
-            for arch_name, score, _ in passing_candidates:
+        if use_parallel and compatible_candidates:
+            # Create a row for each compatible archetype
+            for arch_name, score, _ in compatible_candidates:
                 parallel_rows.append(
                     {
                         "row_data": row.to_dict(),
@@ -589,10 +642,10 @@ def main() -> int:
         else:
             # Original logic: select the best archetype based on score
             chosen = None
-            if passing_candidates:
+            if compatible_candidates:
                 # Sort by score (descending) and select the best
-                passing_candidates.sort(key=lambda x: x[1], reverse=True)
-                chosen, best_score, _ = passing_candidates[0]
+                compatible_candidates.sort(key=lambda x: x[1], reverse=True)
+                chosen, best_score, _ = compatible_candidates[0]
                 # If multiple candidates have the same score, prefer the first one in original order
                 # (This maintains backward compatibility when scores are equal)
 
@@ -644,7 +697,8 @@ def main() -> int:
             out = parallel_df.copy()
     else:
         # Original logic: single archetype per row
-        out = logs_df.copy()
+        # Use merged DataFrame (which includes features from FeatureStore) instead of logs_df
+        out = merged.copy()
         out["gate_ok"] = gate_ok
         out["gate_decision"] = gate_decision
         out["gate_reasons"] = gate_reasons

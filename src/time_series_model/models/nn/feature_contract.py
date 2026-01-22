@@ -196,18 +196,21 @@ def _derive_contract_from_requested_features(
 
 def load_feature_contract(config_dir: str | Path) -> Optional[FeatureContract]:
     """
-    Load nnmultihead feature contract from:
-      1. <config_dir>/features.yaml (preferred, merged format)
-      2. <config_dir>/feature_contract.yaml (legacy, standalone format)
+    Load nnmultihead feature contract from <config_dir>/features.yaml.
 
-    Returns None if neither file contains a feature_contract section.
+    The feature_contract is now always embedded in features.yaml (merged format).
+    It is materialized by materialize_nnmh_config_from_task_spec() from:
+      - feature_plan.yaml (source of truth for feature_contract definition)
+      - TaskSpec tiers and optional_blocks_enabled (for minimal_required_cols and optional_blocks)
 
-    New format: derive contract from requested_features structure.
-    Legacy format: read from explicit feature_contract section.
+    Returns None if features.yaml does not contain a feature_contract section.
+
+    Note: Legacy standalone feature_contract.yaml is no longer supported.
+    All feature contracts should be defined in feature_plan.yaml and materialized into features.yaml.
     """
     config_dir = Path(config_dir)
 
-    # Try features.yaml first (merged format)
+    # Load from features.yaml (merged format, materialized from feature_plan.yaml)
     features_path = config_dir / "features.yaml"
     if features_path.exists():
         obj = yaml.safe_load(features_path.read_text(encoding="utf-8")) or {}
@@ -245,28 +248,6 @@ def load_feature_contract(config_dir: str | Path) -> Optional[FeatureContract]:
             )
             if contract is not None:
                 return contract
-
-    # Fallback to legacy feature_contract.yaml
-    contract_path = config_dir / "feature_contract.yaml"
-    if contract_path.exists():
-        obj = yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
-        fc = obj.get("feature_contract") if isinstance(obj, dict) else None
-        if not isinstance(fc, dict):
-            return None
-        minimal = fc.get("minimal_required_cols") or []
-        optional_blocks = fc.get("optional_blocks") or []
-        missingness_policy = fc.get("missingness_policy") or {}
-        if not isinstance(minimal, list):
-            minimal = []
-        if not isinstance(optional_blocks, (list, dict)):
-            optional_blocks = []
-        if not isinstance(missingness_policy, dict):
-            missingness_policy = {}
-        return FeatureContract(
-            minimal_required_cols=[str(x) for x in minimal if str(x).strip()],
-            optional_blocks=optional_blocks,
-            missingness_policy=missingness_policy,
-        )
 
     return None
 
