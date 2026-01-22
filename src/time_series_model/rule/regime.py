@@ -9,6 +9,7 @@ Regime types:
 - TC_REGIME: Trend Continuation regime (low noise, stable)
 - TE_REGIME: Trend Expansion regime (volatility expansion, range expansion)
 - MEAN_REGIME: Extreme Mean Reversion regime (extreme dislocations only) [PROXY V0 - NOT production-ready]
+- ET_REGIME: Exhaustion Turn regime (trend late stage, high volatility, orderflow active) [NEW]
 - NO_TRADE: No viable execution regime (microstructure unmodelable zone)
 
 Key principle: Regime determines "feasibility", not "direction" or "profitability".
@@ -26,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 
-RegimeType = Literal["TC_REGIME", "TE_REGIME", "MEAN_REGIME", "NO_TRADE"]
+RegimeType = Literal["TC_REGIME", "TE_REGIME", "MEAN_REGIME", "ET_REGIME", "NO_TRADE"]
 
 
 @dataclass(frozen=True)
@@ -69,26 +70,42 @@ class PhysicsRegimeConfig:
     # Physics feasibility score threshold (percentile-based)
     physics_score_min_pct: float = 0.9  # Top 10% of physics_score
 
-    # MEAN Regime constraints (extreme only)
+    # MEAN Regime constraints (optimized for FR/ET mean reversion)
     # ⚠️ PROXY V0: Current definition is not fully physical
     # True MEAN_REGIME requires: price path statistically "unsustainable"
     # TODO: Add distance-to-anchor (z-score), path length > limit, liquidity vacuum
-    # NOTE: Thresholds relaxed to generate FR/ET data (2026-01-21)
-    # Original: 2.5, 0.8, 0.4, 0.9 → Relaxed: 0.85 (percentile), 0.7, 0.5, 0.8
-    # ⚠️ IMPORTANT: All thresholds are now percentile-based for consistency
+    # NOTE: Optimized based on FR/ET analysis (2026-01-22)
+    # Analysis shows profitable FR/ET have:
+    # - path_efficiency_pct <= 0.4 (low efficiency, choppy paths)
+    # - price_dir_consistency_pct <= 0.5 (unstable direction)
+    # - deviation_z_abs_pct >= 0.6 (high deviation from mean)
+    # - jump_risk_pct <= 0.3 (low jump risk)
+    # ⚠️ IMPORTANT: All thresholds are percentile-based for consistency
     mean_deviation_window: int = 200
     mean_deviation_z_abs_min_pct: float = (
-        0.85  # Percentile threshold (was hard threshold 2.0)
+        0.5  # Optimized: top 50% deviation (relaxed from 0.6 to increase samples)
     )
     mean_path_length_min_pct: float = (
-        0.7  # Relaxed from 0.8 (Extreme path length percentile)
+        0.5  # Optimized: top 50% path length (was 0.7, too strict)
     )
     mean_dir_sign_consistency_max_pct: float = (
-        0.5  # Relaxed from 0.4 (Direction instability)
+        0.5  # Keep: unstable direction (bottom 50%)
     )
-    mean_atr_percentile_min: float = 0.8  # Relaxed from 0.9 (Vol spike proxy)
-    mean_dir_conf_max: float = 0.4  # Raised (weaker constraint, not primary)
+    # NEW: Path efficiency constraint (low efficiency = choppy/mean-reverting)
+    mean_path_efficiency_max_pct: float = (
+        0.5  # Bottom 50% efficiency (relaxed from 0.4 to increase samples)
+    )
+    # NEW: Price direction consistency (based on actual returns, not pred_dir_prob)
+    mean_price_dir_consistency_max_pct: float = (
+        0.5  # Bottom 50% consistency (unstable direction)
+    )
+    mean_atr_percentile_min: float = 0.5  # Optimized: relaxed from 0.8 (was too strict)
+    mean_dir_conf_max: float = 0.4  # Keep: weaker constraint, not primary
     mean_vol_spike_min: float = 2.0  # Simplified proxy
+    # NEW: Jump risk constraint (low jump risk for mean reversion)
+    mean_jump_risk_max_pct: float = (
+        0.4  # Bottom 40% jump risk (relaxed from 0.3 to increase samples)
+    )
 
     # Jump risk percentile bands (relative, not absolute)
     # These define the regime layers instead of an absolute veto.
@@ -97,7 +114,30 @@ class PhysicsRegimeConfig:
     jump_risk_te_max_pct: float = 0.9
     jump_risk_tc_min_pct: float = 0.3
     jump_risk_tc_max_pct: float = 0.6
-    jump_risk_mean_max_pct: float = 0.3  # Bottom 30% -> MEAN/IDLE candidate
+    jump_risk_mean_max_pct: float = (
+        0.4  # Bottom 40% -> MEAN/IDLE candidate (relaxed from 0.3)
+    )
+
+    # ET Regime constraints (Exhaustion Turn: trend late stage)
+    # ET occurs at trend late stage, requiring:
+    # - Moderate trend strength (ADX: 20-30)
+    # - High volatility (atr_percentile > 0.85) - Optimized: higher volatility for better Sharpe
+    # - Active orderflow (vpin quantile > 0.5)
+    # - Near key levels (sr_distance_normalized < 0.3)
+    # - Momentum divergence (cvd_change_5 < 0)
+    # - Higher path efficiency (0.55-0.7) - Optimized: higher efficiency for better Sharpe
+    # - Lower jump risk (0.2-0.5) - Optimized: lower risk for better Sharpe
+    et_adx_min: float = 20.0  # Minimum ADX for trend strength
+    et_adx_max: float = 30.0  # Maximum ADX (not too strong)
+    et_atr_percentile_min: float = 0.85  # High volatility (optimized from 0.8)
+    et_path_efficiency_min_pct: float = (
+        0.55  # Minimum path efficiency (optimized from 0.4)
+    )
+    et_path_efficiency_max_pct: float = (
+        0.7  # Maximum path efficiency (optimized from 0.6)
+    )
+    et_jump_risk_min_pct: float = 0.2  # Minimum jump risk (optimized from 0.3)
+    et_jump_risk_max_pct: float = 0.5  # Maximum jump risk (optimized from 0.6)
 
     # Physics v2 (Recall-first) hard veto
     hard_jump_risk_pct: float = 0.98  # Extreme jump-only veto
@@ -208,8 +248,81 @@ def _rolling_std(arr: np.ndarray, window: int) -> np.ndarray:
     return s.rolling(window=window, min_periods=window).std().to_numpy()
 
 
+def _compute_price_direction_consistency(close: np.ndarray, window: int) -> np.ndarray:
+    """
+    Compute rolling consistency of actual price direction (sign of returns).
+
+    This is based on actual price movements, NOT model predictions.
+    Returns values in [0,1] where 1 = perfectly consistent direction, 0 = flipping.
+    """
+    if len(close) < 2:
+        return np.full(len(close), np.nan)
+    if len(close) < window:
+        return np.full(len(close), np.nan)
+
+    # Compute returns
+    returns = np.diff(close, prepend=close[0])
+    # Get sign of returns
+    signs = np.sign(returns)
+    s = pd.Series(signs)
+    # abs(mean(sign)) = 1 if stable direction, ~0 if flipping
+    return s.rolling(window=window, min_periods=window).mean().abs().to_numpy()
+
+
+def _compute_path_efficiency(
+    close: np.ndarray, atr: np.ndarray, window: int
+) -> np.ndarray:
+    """
+    Compute path efficiency: net_displacement / total_path_length.
+
+    Path efficiency measures how efficiently price moves in a direction:
+    - High efficiency (close to 1): price moves in one direction with little backtracking
+    - Low efficiency (close to 0): price moves a lot but net displacement is small (choppy/mean-reverting)
+
+    This is a pure physical feature based on price trajectory, independent of model predictions.
+    """
+    if len(close) < window:
+        return np.full(len(close), np.nan)
+
+    # Net displacement: absolute change in price over window
+    net_displacement = np.full(len(close), np.nan)
+    for i in range(window - 1, len(close)):
+        start_price = close[i - window + 1]
+        end_price = close[i]
+        net_displacement[i] = abs(end_price - start_price)
+
+    # Total path length: sum of absolute returns over window
+    diffs = np.abs(np.diff(close, prepend=close[0]))
+    atr_safe = atr + 1e-9
+    path = diffs / atr_safe
+    s = pd.Series(path)
+    total_path_length = s.rolling(window=window, min_periods=window).sum().to_numpy()
+
+    # Normalize net_displacement by ATR for comparability
+    net_displacement_atr = net_displacement / atr_safe
+
+    # Path efficiency: net_displacement / total_path_length
+    # Avoid division by zero
+    path_efficiency = np.full(len(close), np.nan)
+    valid_mask = (
+        (total_path_length > 1e-9)
+        & np.isfinite(net_displacement_atr)
+        & np.isfinite(total_path_length)
+    )
+    path_efficiency[valid_mask] = (
+        net_displacement_atr[valid_mask] / total_path_length[valid_mask]
+    )
+
+    return path_efficiency
+
+
 def _rolling_dir_sign_consistency(p: np.ndarray, window: int) -> np.ndarray:
-    """Rolling consistency of directional sign in [0,1]."""
+    """
+    DEPRECATED: This function uses pred_dir_prob (model prediction).
+    Use _compute_price_direction_consistency instead, which is based on actual price movements.
+
+    Rolling consistency of directional sign in [0,1].
+    """
     if len(p) < window:
         return np.full(len(p), np.nan)
     sign = np.sign(p - 0.5)
@@ -265,6 +378,7 @@ def classify_regime(
     - TC_REGIME: Trend Continuation regime
     - TE_REGIME: Trend Expansion regime
     - MEAN_REGIME: Extreme Mean Reversion regime
+    - ET_REGIME: Exhaustion Turn regime (trend late stage)
     - NO_TRADE: No viable execution regime
 
     Args:
@@ -312,6 +426,17 @@ def classify_regime(
     dir_sign_consistency_pct = _percentile_rank(dir_sign_consistency)
     path_length = _compute_path_length(close, atr, window=cfg.atr_slope_window)
     path_length_pct = _percentile_rank(path_length)
+
+    # NEW: Path efficiency (net_displacement / total_path_length)
+    path_efficiency = _compute_path_efficiency(close, atr, window=cfg.atr_slope_window)
+    path_efficiency_pct = _percentile_rank(path_efficiency)
+
+    # NEW: Price direction consistency (based on actual returns, NOT pred_dir_prob)
+    price_dir_consistency = _compute_price_direction_consistency(
+        close, window=cfg.atr_slope_window
+    )
+    price_dir_consistency_pct = _percentile_rank(price_dir_consistency)
+
     deviation_z = _compute_deviation_z(close, window=cfg.mean_deviation_window)
     deviation_z_abs = np.abs(deviation_z)
     deviation_z_abs_pct = _percentile_rank(
@@ -343,13 +468,15 @@ def classify_regime(
     mean_band = ~np.isnan(jump_risk_pct) & (jump_risk_pct < cfg.jump_risk_mean_max_pct)
 
     # Physics feasibility score (soft-min proxy)
+    # UPDATED: Use physical features only (path_efficiency, price_dir_consistency)
+    # instead of pred_dir_prob-based features (dir_conf_std, dir_sign_consistency)
     physics_inputs = np.stack(
         [
-            1.0 - jump_risk_pct,
-            1.0 - atr_slope_pct,
-            path_length_pct,
-            1.0 - dir_conf_std_pct,
-            dir_sign_consistency_pct,
+            1.0 - jump_risk_pct,  # Low jump risk
+            1.0 - atr_slope_pct,  # Low volatility expansion
+            path_length_pct,  # Long path
+            path_efficiency_pct,  # High path efficiency (NEW: replaces dir_conf_std)
+            price_dir_consistency_pct,  # Stable price direction (NEW: replaces dir_sign_consistency)
         ],
         axis=0,
     )
@@ -359,9 +486,48 @@ def classify_regime(
         physics_score[valid_mask] = np.nanmin(physics_inputs[:, valid_mask], axis=0)
     physics_score_pct = _percentile_rank(physics_score)
 
+    # ET Regime: Exhaustion Turn (trend late stage)
+    # Check ET_REGIME BEFORE TC/TE to ensure ET-specific conditions take priority
+    # ET occurs when:
+    # - Lower jump risk (0.2-0.5) - Optimized: lower risk for better Sharpe
+    # - Higher volatility (atr_percentile >= 0.85) - Optimized: higher volatility for better Sharpe
+    # - Higher path efficiency (0.55-0.7) - Optimized: higher efficiency for better Sharpe
+    # - Path length sufficient (>= 0.6) - Optimized: higher path length requirement
+    # Note: ADX, vpin, sr_distance, cvd_change_5 are checked in gate rules, not here
+    et_band = (
+        ~np.isnan(jump_risk_pct)
+        & (jump_risk_pct >= cfg.et_jump_risk_min_pct)
+        & (jump_risk_pct < cfg.et_jump_risk_max_pct)
+    )
+    et_physical_ok = (
+        (~np.isnan(atr_percentile) & (atr_percentile >= cfg.et_atr_percentile_min))
+        & (
+            ~np.isnan(path_efficiency_pct)
+            & (path_efficiency_pct >= cfg.et_path_efficiency_min_pct)
+            & (path_efficiency_pct <= cfg.et_path_efficiency_max_pct)
+        )
+        & (
+            ~np.isnan(path_length_pct)
+            & (
+                path_length_pct >= 0.6
+            )  # Optimized: higher path length requirement (0.5 -> 0.6)
+        )
+    )
+    # ET_REGIME should be checked before TC_REGIME (more specific conditions)
+    # Priority: TE > ET > TC > MEAN
+    et_mask = (
+        et_physical_ok
+        & et_band
+        & (regime == "NO_TRADE")  # Only assign if not already TE
+        & (~hard_veto)
+    )
+    regime[et_mask] = "ET_REGIME"
+
     if cfg.regime_strategy == "simple_band":
         # v2.1 recall-first: regime by jump_risk bands only
-        regime[tc_band & (~hard_veto)] = "TC_REGIME"
+        # But exclude samples already classified as ET_REGIME
+        tc_mask = tc_band & (~hard_veto) & (regime != "ET_REGIME")
+        regime[tc_mask] = "TC_REGIME"
         regime[te_band & (~hard_veto)] = "TE_REGIME"
     else:
         # score_shape strategy (v1.x)
@@ -380,6 +546,8 @@ def classify_regime(
             & (regime == "NO_TRADE")
             & (~hard_veto)
         )
+        # Exclude samples already classified as ET_REGIME
+        tc_mask = tc_mask & (regime != "ET_REGIME")
         regime[tc_mask] = "TC_REGIME"
 
         te_feasible_inputs = np.stack(
@@ -424,6 +592,12 @@ def classify_regime(
     # Current implementation is a simplified proxy
     # NOTE: This should NOT be enabled in production execution
     # ⚠️ IMPORTANT: All thresholds are percentile-based for consistency with TC/TE
+    # Optimized conditions based on profitable FR/ET analysis:
+    # 1. High deviation from mean (deviation_z_abs_pct >= 0.6)
+    # 2. Low path efficiency (path_efficiency_pct <= 0.4) - choppy/mean-reverting
+    # 3. Unstable direction (price_dir_consistency_pct <= 0.5)
+    # 4. Low jump risk (jump_risk_pct <= 0.3)
+    # 5. Moderate path length and ATR (relaxed constraints)
     mean_physical_ok = (
         (
             ~np.isnan(deviation_z_abs_pct)
@@ -434,17 +608,64 @@ def classify_regime(
             & (path_length_pct >= cfg.mean_path_length_min_pct)
         )
         & (
-            ~np.isnan(dir_sign_consistency_pct)
-            & (dir_sign_consistency_pct <= cfg.mean_dir_sign_consistency_max_pct)
+            ~np.isnan(price_dir_consistency_pct)
+            & (price_dir_consistency_pct <= cfg.mean_price_dir_consistency_max_pct)
         )
         & (~np.isnan(atr_percentile) & (atr_percentile >= cfg.mean_atr_percentile_min))
+        & (
+            ~np.isnan(path_efficiency_pct)
+            & (path_efficiency_pct <= cfg.mean_path_efficiency_max_pct)
+        )
+        & (~np.isnan(jump_risk_pct) & (jump_risk_pct <= cfg.mean_jump_risk_max_pct))
     )
+    # ET Regime: Exhaustion Turn (trend late stage)
+    # ET occurs when:
+    # - Moderate jump risk (0.3-0.6) - not too low (TC) or too high (TE/NO_TRADE)
+    # - High volatility (atr_percentile > 0.8)
+    # - Moderate path efficiency (0.4-0.6) - not too high (TC) or too low (MEAN)
+    # - Path length sufficient (>= 0.5)
+    # Note: ADX, vpin, sr_distance, cvd_change_5 are checked in gate rules, not here
+    # Priority: ET should be checked BEFORE TC, because ET has more specific conditions
+    et_band = (
+        ~np.isnan(jump_risk_pct)
+        & (jump_risk_pct >= cfg.et_jump_risk_min_pct)
+        & (jump_risk_pct < cfg.et_jump_risk_max_pct)
+    )
+    et_physical_ok = (
+        (~np.isnan(atr_percentile) & (atr_percentile >= cfg.et_atr_percentile_min))
+        & (
+            ~np.isnan(path_efficiency_pct)
+            & (path_efficiency_pct >= cfg.et_path_efficiency_min_pct)
+            & (path_efficiency_pct <= cfg.et_path_efficiency_max_pct)
+        )
+        & (
+            ~np.isnan(path_length_pct)
+            & (path_length_pct >= 0.5)  # Sufficient path length
+        )
+    )
+    # ET_REGIME should be checked before TC_REGIME (more specific conditions)
+    # Priority: TE > ET > TC > MEAN
+    et_mask = (
+        et_physical_ok
+        & et_band
+        & (regime == "NO_TRADE")  # Only assign if not already TE
+        & (~hard_veto)
+    )
+    regime[et_mask] = "ET_REGIME"
+
     mean_mask = mean_physical_ok & mean_band & (regime == "NO_TRADE") & (~hard_veto)
     regime[mean_mask] = "MEAN_REGIME"
 
     out["regime"] = regime
 
     # Also output intermediate features for diagnostics
+    # NEW: Physical features (based on actual price movements)
+    out["path_efficiency"] = path_efficiency
+    out["path_efficiency_pct"] = path_efficiency_pct
+    out["price_dir_consistency"] = price_dir_consistency
+    out["price_dir_consistency_pct"] = price_dir_consistency_pct
+
+    # DEPRECATED: Keep for backward compatibility but should not be used
     out["dir_conf"] = dir_conf
     out["dir_conf_std"] = dir_conf_std
     out["dir_conf_std_pct"] = dir_conf_std_pct
@@ -490,11 +711,11 @@ def classify_regime(
 
     te_semantic_inputs = np.stack(
         [
-            atr_slope_pct,
-            range_expansion_pct,
-            path_length_pct,
-            1.0 - dir_conf_std_pct,
-            dir_sign_consistency_pct,
+            atr_slope_pct,  # High volatility expansion
+            range_expansion_pct,  # Range expansion
+            path_length_pct,  # Long path
+            path_efficiency_pct,  # High path efficiency (NEW: replaces dir_conf_std)
+            price_dir_consistency_pct,  # Stable price direction (NEW: replaces dir_sign_consistency)
         ],
         axis=0,
     )
@@ -514,7 +735,7 @@ def classify_regime(
         [
             np.clip(deviation_z_abs / 5.0, 0.0, 1.0),  # Normalize z-score to [0,1]
             1.0
-            - dir_sign_consistency_pct,  # Direction instability (lower consistency = better for FR)
+            - price_dir_consistency_pct,  # Direction instability (lower consistency = better for FR)
             path_length_pct,
             atr_percentile,
         ],
@@ -532,7 +753,7 @@ def classify_regime(
         [
             atr_percentile,
             path_length_pct,
-            1.0 - dir_sign_consistency_pct,  # Direction instability
+            1.0 - price_dir_consistency_pct,  # Direction instability
             np.clip(deviation_z_abs / 5.0, 0.0, 1.0),  # Normalize z-score to [0,1]
         ],
         axis=0,

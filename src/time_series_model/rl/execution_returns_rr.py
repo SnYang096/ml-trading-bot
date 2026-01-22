@@ -57,6 +57,19 @@ class RRExecutionReturnsConfig:
     mean_stop_loss_r: float = 3.0
     mean_use_breakeven_stop: bool = False
 
+    # ET-specific execution overrides (Exhaustion Turn: trend late stage reversal)
+    # ET requires faster take-profit and wider stop-loss due to reversal nature
+    et_use_time_exit: bool = True
+    et_use_trailing_stop: bool = True
+    et_trailing_atr_mult: float = 2.0  # Tighter trailing stop for ET
+    et_take_profit_r: float = (
+        1.5  # Faster take-profit (from ET config: 2.0, but optimized for reversal)
+    )
+    et_stop_loss_r: float = (
+        1.5  # Wider stop-loss (from ET config: 1.0, but optimized for reversal)
+    )
+    et_use_breakeven_stop: bool = False
+
     # How to decide direction from heads
     head_dir_score_col: str = "head_dir_score"
 
@@ -240,10 +253,17 @@ def compute_rr_execution_mode_returns(
     df: pd.DataFrame,
     *,
     cfg: RRExecutionReturnsConfig = RRExecutionReturnsConfig(),
+    archetype_col: Optional[str] = None,
 ) -> Tuple[pd.Series, pd.Series]:
     """
     Compute (ret_mean, ret_trend) per symbol using RR-based position simulation.
     Requires OHLC columns + head_* columns.
+
+    Args:
+        df: DataFrame with OHLC and head_* columns
+        cfg: RR execution configuration
+        archetype_col: Optional column name for archetype (e.g., 'gate_archetype').
+                      If provided and contains 'ET', uses ET-specific config for ret_mean.
     """
     needed = [
         cfg.symbol_col,
@@ -293,16 +313,39 @@ def compute_rr_execution_mode_returns(
         ret_t = pd.Series(pos_t.astype(float) * r_next, index=g.index, dtype=float)
 
         # MEAN (event-style mean)
-        entry_ok_m, sign_m = _compute_entry_signal_and_dir(g, cfg=cfg, mode="MEAN")
-        cfg_mean = replace(
-            cfg,
-            use_time_exit=cfg.mean_use_time_exit,
-            use_trailing_stop=cfg.mean_use_trailing_stop,
-            trailing_atr_mult=cfg.mean_trailing_atr_mult,
-            take_profit_r=cfg.mean_take_profit_r,
-            stop_loss_r=cfg.mean_stop_loss_r,
-            use_breakeven_stop=cfg.mean_use_breakeven_stop,
-        )
+        # Check if ET archetype is present and use ET-specific config
+        use_et_config = False
+        if archetype_col and archetype_col in g.columns:
+            # Check if any row has ET archetype
+            et_mask = (
+                g[archetype_col].astype(str).str.contains("ET", case=False, na=False)
+            )
+            use_et_config = et_mask.any()
+
+        if use_et_config:
+            # ET-specific config (faster TP, wider SL for reversal)
+            entry_ok_m, sign_m = _compute_entry_signal_and_dir(g, cfg=cfg, mode="MEAN")
+            cfg_mean = replace(
+                cfg,
+                use_time_exit=cfg.et_use_time_exit,
+                use_trailing_stop=cfg.et_use_trailing_stop,
+                trailing_atr_mult=cfg.et_trailing_atr_mult,
+                take_profit_r=cfg.et_take_profit_r,
+                stop_loss_r=cfg.et_stop_loss_r,
+                use_breakeven_stop=cfg.et_use_breakeven_stop,
+            )
+        else:
+            # Standard MEAN config (FR and other mean-reversion)
+            entry_ok_m, sign_m = _compute_entry_signal_and_dir(g, cfg=cfg, mode="MEAN")
+            cfg_mean = replace(
+                cfg,
+                use_time_exit=cfg.mean_use_time_exit,
+                use_trailing_stop=cfg.mean_use_trailing_stop,
+                trailing_atr_mult=cfg.mean_trailing_atr_mult,
+                take_profit_r=cfg.mean_take_profit_r,
+                stop_loss_r=cfg.mean_stop_loss_r,
+                use_breakeven_stop=cfg.mean_use_breakeven_stop,
+            )
         pos_m = _simulate_rr_position(
             g, entry_ok=entry_ok_m, dir_sign=sign_m, atr=atr_s, cfg=cfg_mean
         )

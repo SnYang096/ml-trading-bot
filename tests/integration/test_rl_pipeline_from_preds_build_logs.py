@@ -89,6 +89,21 @@ def test_rl_pipeline_from_preds_build_logs(tmp_path) -> None:
     assert required_cols.issubset(set(logs.columns))
     assert len(logs) > 0
 
+    # For BC/RL training, infer archetype from ret_mean/ret_trend for testing.
+    # In production, archetype would come from gate_archetype or regime.
+    # Simple heuristic: if ret_trend is larger in absolute value, use TC (TREND archetype), else FR (MEAN archetype)
+    def _infer_archetype_from_returns(row):
+        ret_trend_abs = abs(float(row.get("ret_trend", 0.0)))
+        ret_mean_abs = abs(float(row.get("ret_mean", 0.0)))
+        if ret_trend_abs > ret_mean_abs:
+            return "TrendContinuationTC"  # TREND archetype
+        elif ret_mean_abs > 0:
+            return "FailureReversionFR"  # MEAN archetype
+        else:
+            return None  # Will be inferred as NO_TRADE
+
+    logs["gate_archetype"] = logs.apply(_infer_archetype_from_returns, axis=1)
+
     split_cfg = WalkForwardSplitConfig(train_ratio=0.7)
 
     # 1) shadow eval

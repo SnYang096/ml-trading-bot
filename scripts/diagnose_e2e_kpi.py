@@ -238,9 +238,12 @@ def main() -> int:
             gate_arch_col = "archetype"
 
         if gate_arch_col:
-            # Merge with suffix to avoid column name conflicts
+            # Merge gate_archetype and mode columns from gate file
+            gate_cols = ["symbol", "timestamp", gate_arch_col]
+            if "mode" in gate_df.columns:
+                gate_cols.append("mode")
             merged_gate = logs_df.merge(
-                gate_df[["symbol", "timestamp", gate_arch_col]],
+                gate_df[gate_cols],
                 on=["symbol", "timestamp"],
                 how="left",
                 suffixes=("", "_gate"),
@@ -255,6 +258,14 @@ def main() -> int:
                     if "gate" in col.lower() and "arch" in col.lower():
                         actual_gate_col = col
                         break
+
+            # Use mode from gate file if available (overrides original mode)
+            if "mode_gate" in merged_gate.columns:
+                merged_gate["mode"] = merged_gate["mode_gate"]
+            elif "mode" in gate_df.columns and "mode" in merged_gate.columns:
+                # If mode was merged without suffix, check if it's from gate file
+                # (gate file mode should override original logs mode)
+                pass
 
             logs_df = merged_gate
 
@@ -754,6 +765,36 @@ def main() -> int:
                 f"{s['profit_loss_ratio']:.3f} | {s['ret_mean_e2e']:.4f} | "
                 f"{s.get('ret_p10_e2e', float('nan')):.4f} | {s.get('ret_p50_e2e', float('nan')):.4f} | {s.get('ret_p90_e2e', float('nan')):.4f} |\n"
             )
+
+        # FR/ET specific statistics (MEAN archetypes)
+        fr_et_stats = {
+            k: v
+            for k, v in by_archetype.items()
+            if "FR" in str(k).upper() or "ET" in str(k).upper()
+        }
+        if fr_et_stats:
+            lines.append("\n### FR/ET (MEAN Archetypes) Statistics\n")
+            lines.append(
+                "⚠️ **Important**: FR (FailureReversion) and ET (ExhaustionTurn) are MEAN-reversion archetypes.\n"
+                "They should use `ret_mean` for execution returns.\n\n"
+            )
+            lines.append(
+                "| archetype | trade_count | sharpe | win_rate | profit_loss_ratio | ret_mean |\n"
+            )
+            lines.append("|---|---|---|---|---|---|\n")
+            for arch in sorted(fr_et_stats.keys()):
+                s = fr_et_stats[arch]
+                lines.append(
+                    f"| {arch} | {s['trade_count']} | {s['sharpe']:.3f} | {s['win_rate']:.3f} | "
+                    f"{s['profit_loss_ratio']:.3f} | {s['ret_mean_e2e']:.4f} |\n"
+                )
+            if sum(s["trade_count"] for s in fr_et_stats.values()) == 0:
+                lines.append(
+                    "\n⚠️ **Warning**: No FR/ET trades found! This may indicate:\n"
+                    "- MEAN_REGIME classification is too strict\n"
+                    "- Gate filtering is too aggressive for FR/ET\n"
+                    "- Live config has FR/ET disabled\n\n"
+                )
 
         # Detailed per-archetype breakdown
         lines.append("\n### Detailed Breakdown by Archetype\n")

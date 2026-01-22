@@ -47,9 +47,15 @@ class CounterfactualEvalConfig:
 
     This produces:
       Rule mode equity vs BC-pred mode equity (same returns, same costs/constraints).
+
+    Note: Mode is inferred from archetype (TC/TE → TREND, FR/ET → MEAN, others → NO_TRADE).
     """
 
-    mode_col: str = "mode"
+    archetype_col: str = "gate_archetype"  # Primary: use gate_archetype if available
+    regime_col: str = "regime"  # Fallback: use regime if archetype not available
+    mode_col: str = (
+        "mode"  # Legacy fallback: use mode if archetype/regime not available
+    )
     timestamp_col: str = "timestamp"
     symbol_col: str = "symbol"
 
@@ -256,6 +262,34 @@ def _rolling_trade_preview(
         .tail(tail_n)
     )
     return agg
+
+
+def _infer_mode_from_archetype(archetype: Any, regime: Any = None) -> str:
+    """
+    Infer mode (TREND/MEAN/NO_TRADE) from archetype or regime.
+
+    Rules:
+    - TC/TE → TREND
+    - FR/ET → MEAN
+    - Others or missing → NO_TRADE
+    - If archetype not available, use regime (TC_REGIME/TE_REGIME → TREND, MEAN_REGIME → MEAN)
+    """
+    if archetype is not None:
+        arch_str = str(archetype).upper()
+        if "TC" in arch_str or "TE" in arch_str:
+            return "TREND"
+        elif "FR" in arch_str or "ET" in arch_str:
+            return "MEAN"
+
+    # Fallback to regime
+    if regime is not None:
+        reg_str = str(regime).upper()
+        if "TC_REGIME" in reg_str or "TE_REGIME" in reg_str or reg_str == "TREND":
+            return "TREND"
+        elif "MEAN_REGIME" in reg_str or reg_str == "MEAN":
+            return "MEAN"
+
+    return "NO_TRADE"
 
 
 def _mode_to_action(mode: Any) -> int:
@@ -472,8 +506,17 @@ def train_and_counterfactual_eval_bc3(
 
     Returns: (meta, metrics, per_symbol_df)
     """
-    if cfg.mode_col not in df_logs.columns:
-        raise ValueError(f"Missing mode column '{cfg.mode_col}' in logs.")
+    # Check for at least one of archetype/regime/mode columns
+    has_archetype = cfg.archetype_col in df_logs.columns
+    has_regime = cfg.regime_col in df_logs.columns
+    has_mode = cfg.mode_col in df_logs.columns
+
+    if not (has_archetype or has_regime or has_mode):
+        raise ValueError(
+            f"Missing required columns. Need at least one of: "
+            f"'{cfg.archetype_col}' (preferred), '{cfg.regime_col}' (fallback), "
+            f"or '{cfg.mode_col}' (legacy fallback) in logs."
+        )
     if cfg.sim_cfg.ret_mean_col not in df_logs.columns:
         raise ValueError(f"Missing return column '{cfg.sim_cfg.ret_mean_col}' in logs.")
     if cfg.sim_cfg.ret_trend_col not in df_logs.columns:
@@ -488,15 +531,31 @@ def train_and_counterfactual_eval_bc3(
     state_schema = BCStateSchema(keys=list(cfg.state_keys))
     infer_cfg = Router3ActionInferConfig(
         mean_routers=[], trend_routers=[]
-    )  # mode is first-class
+    )  # mode is inferred from archetype
 
-    transitions_train = [
-        {
-            "state": {k: r.get(k, 0.0) for k in cfg.state_keys},
-            "action": {"mode": r.get(cfg.mode_col)},
-        }
-        for r in train_df.to_dict(orient="records")
-    ]
+    # Infer mode from archetype/regime/mode for training transitions
+    transitions_train = []
+    for r in train_df.to_dict(orient="records"):
+        state = {k: r.get(k, 0.0) for k in cfg.state_keys}
+
+        # Try to infer mode from archetype/regime/mode in order of preference
+        archetype = r.get(cfg.archetype_col)
+        regime = r.get(cfg.regime_col)
+        mode = r.get(cfg.mode_col)
+
+        if archetype is not None or regime is not None:
+            inferred_mode = _infer_mode_from_archetype(archetype, regime)
+        elif mode is not None:
+            inferred_mode = str(mode).upper()
+        else:
+            inferred_mode = "NO_TRADE"
+
+        transitions_train.append(
+            {
+                "state": state,
+                "action": {"mode": inferred_mode},
+            }
+        )
 
     model, train_meta = train_bc_router3_policy(
         transitions=transitions_train,
@@ -505,10 +564,23 @@ def train_and_counterfactual_eval_bc3(
         cfg=cfg.bc_cfg,
     )
 
-    # test actions
-    rule_actions = np.asarray(
-        [_mode_to_action(m) for m in test_df[cfg.mode_col].tolist()], dtype=np.int64
-    )
+    # test actions: infer mode from archetype/regime/mode for rule actions
+    rule_modes = []
+    for _, row in test_df.iterrows():
+        archetype = row.get(cfg.archetype_col)
+        regime = row.get(cfg.regime_col)
+        mode = row.get(cfg.mode_col)
+
+        if archetype is not None or regime is not None:
+            inferred_mode = _infer_mode_from_archetype(archetype, regime)
+        elif mode is not None:
+            inferred_mode = str(mode).upper()
+        else:
+            inferred_mode = "NO_TRADE"
+
+        rule_modes.append(inferred_mode)
+
+    rule_actions = np.asarray([_mode_to_action(m) for m in rule_modes], dtype=np.int64)
     pred_actions = _predict_modes(
         test_df,
         model=model,

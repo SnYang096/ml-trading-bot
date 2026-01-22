@@ -313,6 +313,29 @@ def materialize_nnmh_config_from_task_spec(
     if not isinstance(ob_enabled, list):
         raise click.ClickException("TaskSpec feature_plan.optional_blocks_enabled must be a list")
     enabled_keys = {str(x).strip() for x in ob_enabled if str(x).strip()}
+    
+    # AUTO-DETECT: 自动推导gate/regime需要的blocks（方案3：自动推导计算需求）
+    try:
+        from src.cli.auto_detect_compute_requirements import auto_detect_compute_requirements
+        auto_detected_blocks = auto_detect_compute_requirements(
+            task_spec_path=ts_path,
+            execution_archetypes_path=PROJECT_ROOT / "config/nnmultihead/execution_archetypes.yaml",
+            feature_dependencies_path=PROJECT_ROOT / "config/feature_dependencies.yaml",
+        )
+        if auto_detected_blocks:
+            # 合并自动推导的blocks（不覆盖用户显式指定的）
+            enabled_keys = enabled_keys | auto_detected_blocks
+            click.echo(
+                f"🔍 Auto-detected compute requirements: {sorted(auto_detected_blocks)} "
+                f"(gate/regime needs). Total enabled: {sorted(enabled_keys)}",
+                err=True,
+            )
+    except Exception as e:
+        # 如果自动推导失败，不影响正常流程（向后兼容）
+        click.echo(
+            f"⚠️  Auto-detect compute requirements failed: {e}. Using manual config only.",
+            err=True,
+        )
     if not enabled_keys:
         req["optional_blocks"] = {}
     else:
@@ -2373,6 +2396,137 @@ def rule_diagnose_gate_filtering(
 
 
 @rule.command("diagnose-e2e-symbol-regime-archetype")
+@click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
+@click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
+@click.option("--output-json", required=True, help="Output JSON path")
+@click.option("--output-md", required=True, help="Output Markdown path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_e2e_symbol_regime_archetype(
+    logs_path,
+    regime_path,
+    output_json,
+    output_md,
+    docker,
+):
+    """E2E KPI by Symbol × Regime × Archetype (sharpe, trade_count, win_rate, profit_loss_ratio)."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--regime",
+        f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
+        "--output-json",
+        f"/workspace/{output_json}" if use_workspace_prefix else output_json,
+        "--output-md",
+        f"/workspace/{output_md}" if use_workspace_prefix else output_md,
+    ]
+    sys.exit(run_script("scripts/diagnose_e2e_symbol_regime_archetype.py", args, docker=docker))
+
+
+@cli.group("experiment")
+def experiment():
+    """Experiment commands for testing architecture changes."""
+    pass
+
+
+@experiment.command("regime-gate")
+@click.option(
+    "--logs",
+    "logs_path",
+    required=True,
+    help="Input logs file (must contain symbol, timestamp, regime, ret_mean, ret_trend)",
+)
+@click.option(
+    "--output-dir",
+    "output_dir",
+    default="results/experiments",
+    help="Output directory for experiment results",
+)
+@click.option(
+    "--features-store-root",
+    "features_store_root",
+    default="feature_store",
+    help="FeatureStore root directory",
+)
+@click.option(
+    "--features-store-layer",
+    "features_store_layer",
+    required=True,
+    help="FeatureStore layer name",
+)
+@click.option("--symbols", "symbols", default=None, help="Comma-separated symbols")
+@click.option("--timeframe", "timeframe", default="240T")
+@click.option("--start-date", "start_date", default=None)
+@click.option("--end-date", "end_date", default=None)
+@click.option(
+    "--execution-archetypes",
+    "execution_archetypes",
+    default="config/nnmultihead/execution_archetypes.yaml",
+)
+@click.option(
+    "--live-config",
+    "live_config",
+    default="config/nnmultihead/live/meta_router_live_config.yaml",
+)
+@click.option("--evidence-quantiles", "evidence_quantiles", default=None)
+@click.option("--physics-regime", "physics_regime", default=None)
+@click.option("--semantic-score-floors", "semantic_score_floors", default=None)
+@click.option("--ret-mean-col", "ret_mean_col", default="ret_mean")
+@click.option("--ret-trend-col", "ret_trend_col", default="ret_trend")
+@click.pass_context
+def experiment_regime_gate(
+    ctx,
+    logs_path,
+    output_dir,
+    features_store_root,
+    features_store_layer,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    execution_archetypes,
+    live_config,
+    evidence_quantiles,
+    physics_regime,
+    semantic_score_floors,
+    ret_mean_col,
+    ret_trend_col,
+):
+    """Run regime and gate experiments with 4 configurations."""
+    docker = ctx.obj.get("docker", False) if ctx.obj else False
+    args = [
+        "--logs",
+        logs_path,
+        "--output-dir",
+        output_dir,
+        "--features-store-root",
+        features_store_root,
+        "--features-store-layer",
+        features_store_layer,
+        "--timeframe",
+        timeframe,
+        "--execution-archetypes",
+        execution_archetypes,
+        "--live-config",
+        live_config,
+        "--ret-mean-col",
+        ret_mean_col,
+        "--ret-trend-col",
+        ret_trend_col,
+    ]
+    if symbols:
+        args.extend(["--symbols", symbols])
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    if evidence_quantiles:
+        args.extend(["--evidence-quantiles", evidence_quantiles])
+    if physics_regime:
+        args.extend(["--physics-regime", physics_regime])
+    if semantic_score_floors:
+        args.extend(["--semantic-score-floors", semantic_score_floors])
+    sys.exit(run_script("scripts/experiment_regime_gate.py", args, docker=docker))
 @click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
 @click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
 @click.option("--output-json", required=True, help="Output JSON path")

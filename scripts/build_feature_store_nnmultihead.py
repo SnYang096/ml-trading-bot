@@ -31,6 +31,7 @@ from src.time_series_model.strategy_config import StrategyConfigLoader  # noqa: 
 from scripts.train_strategy_pipeline import (
     run_feature_pipeline,
     determine_feature_columns,
+    _ensure_ticks_configured,
 )  # noqa: E402
 
 
@@ -164,6 +165,42 @@ def main() -> None:
 
         base_cols = ["open", "high", "low", "close", "volume", "_symbol", "symbol"]
         requested = cfg.features.requested_features
+
+        # Configure tick data for features that require it (e.g., vpin)
+        if not df_raw.empty:
+            start_ts = df_raw.index.min().isoformat()
+            end_ts = df_raw.index.max().isoformat()
+            try:
+                # requested can be a list or a dict
+                if isinstance(requested, dict):
+                    requested_features_list = requested.get("required", [])
+                    if isinstance(requested.get("optional_blocks"), dict):
+                        # optional_blocks is a dict of {block_name: [feature_nodes]}
+                        for block_features in requested.get(
+                            "optional_blocks", {}
+                        ).values():
+                            if isinstance(block_features, list):
+                                requested_features_list.extend(block_features)
+                elif isinstance(requested, list):
+                    requested_features_list = requested
+                else:
+                    requested_features_list = []
+
+                if requested_features_list:
+                    _ensure_ticks_configured(
+                        feature_loader=feature_loader,
+                        symbol=sym,
+                        data_path=args.data_path,
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        requested_features=requested_features_list,
+                    )
+                    print(f"✅ Configured tick data for {sym}", flush=True)
+            except ValueError as e:
+                # If tick data is missing but not required, continue (will fail later if actually needed)
+                print(f"⚠️  Tick configuration warning for {sym}: {e}", flush=True)
+            except Exception as e:
+                print(f"⚠️  Tick configuration error for {sym}: {e}", flush=True)
 
         # Precompute expected output columns for requested feature nodes
         features_cfg = feature_loader.feature_deps.get("features", {}) or {}

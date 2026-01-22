@@ -5,11 +5,31 @@
 
 ## 核心结论（先说清楚）
 
-- **线上不要“删列/不传列”**：模型输入维度必须固定。  
+- **线上不要"删列/不传列"**：模型输入维度必须固定。  
   正确做法是：缺失的 block 对应列保持为缺失（NaN）→ 进入 torch 前会被填成 0，并且同时提供 **block availability mask**。
 - **`append_block_mask` 不是 drop 特征**：它是 **给模型额外拼一个 block 是否可用的 0/1 标记**（输入维度增加 `n_blocks`）。
-- **`block_dropout_p` 是训练时的“整块随机 drop”**：按样本、按 block 随机把该 block 的所有特征置 0，并把对应 mask 置 0（只在训练阶段生效）。
-- 当前实现是 **block 级别**，不是“block 内随机 mask 某些特征”。（后续如需 per-feature masking，可以再扩展。）
+- **`block_dropout_p` 是训练时的"整块随机 drop"**：按样本、按 block 随机把该 block 的所有特征置 0，并把对应 mask 置 0（只在训练阶段生效）。
+- 当前实现是 **block 级别**，不是"block 内随机 mask 某些特征"。（后续如需 per-feature masking，可以再扩展。）
+
+### `optional_blocks`的两个作用
+
+`optional_blocks`可以包含两类特征：
+
+1. **定义额外特征**（需要额外计算）：
+   - tier0~1 没有的特征，需要通过 `optional_blocks_enabled` 启用对应的 feature nodes
+   - 这些 nodes 会被计算，然后输入模型
+   - 例如：`vpin_block`、`volume_profile_block`（需要 tick 数据）
+
+2. **定义 mask 范围**（用于训练鲁棒性）：
+   - 即使特征已经在 tier0~2 中（作为 required features），也可以标记为 `optional_blocks`
+   - `missingness_policy` 只作用于 `optional_blocks` 中定义的特征
+   - 这样可以让模型训练时对这些特征进行 mask（`block_dropout_p`），提高鲁棒性
+   - 例如：将 tier1 中的某些特征标记为 optional，训练时随机 mask 以提高鲁棒性
+
+**关键点**：
+- `optional_blocks_enabled` 控制**是否计算**这些 blocks 的特征（materialize 阶段）
+- `missingness_policy` 控制**模型训练时如何 mask**已计算的特征（训练阶段）
+- 两者是独立的：即使特征已在 tier0~2 中，也可以标记为 `optional_blocks` 以便 mask
 
 ---
 

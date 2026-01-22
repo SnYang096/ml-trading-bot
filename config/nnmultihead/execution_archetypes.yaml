@@ -81,7 +81,7 @@ regimes:
           - name: has_orderflow
             kind: quantile_gt
             key: vpin
-            quantile: 0.6
+            quantile: 0.55
             on_missing: error
           - name: oflow_not_negative
             kind: quantile_gte
@@ -175,7 +175,7 @@ regimes:
           - name: has_orderflow
             kind: quantile_gt
             key: vpin
-            quantile: 0.6
+            quantile: 0.55
             on_missing: error
           - name: oflow_expansion
             kind: quantile_gt
@@ -269,7 +269,26 @@ regimes:
               key: mean_score
               threshold: 0.2751
               on_missing: false
-          deny_if: [fr_volume_too_low, fr_bb_width_too_low, fr_mean_adx_too_high, fr_mean_sr_too_far, fr_sqs_too_low, fr_quality_too_low, fr_score_too_low]
+            # NEW: Physical feature constraints (optimized for mean reversion)
+            # Based on FR/ET analysis: profitable samples have low path efficiency
+            - name: fr_path_efficiency_too_high
+              kind: quantile_gt
+              key: path_efficiency_pct
+              quantile: 0.4
+              on_missing: false
+            # Profitable samples have unstable direction (low price_dir_consistency)
+            - name: fr_price_dir_consistency_too_high
+              kind: quantile_gt
+              key: price_dir_consistency_pct
+              quantile: 0.5
+              on_missing: false
+            # Profitable samples have high deviation from mean
+            - name: fr_deviation_too_low
+              kind: quantile_lt
+              key: deviation_z_abs_pct
+              quantile: 0.6
+              on_missing: false
+          deny_if: [fr_volume_too_low, fr_bb_width_too_low, fr_mean_adx_too_high, fr_mean_sr_too_far, fr_sqs_too_low, fr_quality_too_low, fr_score_too_low, fr_path_efficiency_too_high, fr_price_dir_consistency_too_high, fr_deviation_too_low]
           allow_if: [fr_divergence, fr_vpin_spike, fr_cvd_divergence, fr_absorption, fr_near_sr]
           allow_mode: any
           default_action: deny
@@ -278,7 +297,7 @@ regimes:
           - name: has_orderflow
             kind: quantile_gt
             key: vpin
-            quantile: 0.6
+            quantile: 0.55
             on_missing: error
           - name: oflow_divergence
             kind: quantile_lt
@@ -298,7 +317,7 @@ regimes:
           - vol_climax
           - mfe_extreme
           - momentum_divergence
-        required_evidence: [has_orderflow, has_volume_profile]
+        required_evidence: [has_orderflow, has_volume_profile]  # Restored: volume_profile_block now enabled
         execution_constraints:
           allow_add_on: false
           min_order_interval_minutes: 60
@@ -317,7 +336,7 @@ regimes:
             - name: et_vpin_spike
               kind: quantile_gt
               key: vpin
-              quantile: 0.65
+              quantile: 0.5  # Reduced from 0.65 to 0.5 for ET_REGIME (moderate orderflow)
               on_missing: false
             - name: et_cvd_divergence
               kind: quantile_lt
@@ -349,11 +368,13 @@ regimes:
               key: sr_distance_normalized
               threshold: 0.3
               on_missing: false
-            # Regime (mean) constraints
+            # Regime constraints (for ET_REGIME, ADX should be 20-30, checked in gate rules)
+            # Note: ADX range (20-30) is enforced by ET_REGIME classification, not here
+            # This rule is kept for backward compatibility but may be relaxed
             - name: et_mean_adx_too_high
               kind: value_gt
               key: adx
-              threshold: 25
+              threshold: 30  # Relaxed from 25 to 30 (ET_REGIME allows ADX up to 30)
               on_missing: false
             - name: et_mean_sr_too_far
               kind: value_gt
@@ -375,7 +396,26 @@ regimes:
               key: mean_score
               threshold: 0.2751
               on_missing: false
-          deny_if: [et_volume_too_low, et_bb_width_too_low, et_mean_adx_too_high, et_mean_sr_too_far, et_sqs_too_low, et_quality_too_low, et_score_too_low]
+            # NEW: Physical feature constraints (optimized for mean reversion)
+            # Based on FR/ET analysis: profitable samples have low path efficiency
+            - name: et_path_efficiency_too_high
+              kind: quantile_gt
+              key: path_efficiency_pct
+              quantile: 0.4
+              on_missing: false
+            # Profitable samples have unstable direction (low price_dir_consistency)
+            - name: et_price_dir_consistency_too_high
+              kind: quantile_gt
+              key: price_dir_consistency_pct
+              quantile: 0.5
+              on_missing: false
+            # Profitable samples have high deviation from mean
+            - name: et_deviation_too_low
+              kind: quantile_lt
+              key: deviation_z_abs_pct
+              quantile: 0.6
+              on_missing: false
+          deny_if: [et_volume_too_low, et_bb_width_too_low, et_mean_adx_too_high, et_mean_sr_too_far, et_sqs_too_low, et_quality_too_low, et_score_too_low, et_path_efficiency_too_high, et_price_dir_consistency_too_high, et_deviation_too_low]
           allow_if: [et_vol_climax, et_vpin_spike, et_cvd_divergence, et_momentum_decay, et_near_lvn, et_near_sr]
           allow_mode: any
           default_action: deny
@@ -384,11 +424,11 @@ regimes:
           - name: has_orderflow
             kind: quantile_gt
             key: vpin
-            quantile: 0.6
+            quantile: 0.5  # Reduced from 0.55 to 0.5 for ET_REGIME (moderate orderflow activity)
             on_missing: error
           - name: has_volume_profile
             kind: any_key_contains
-            any_key_contains: ["volume_profile", "vp_"]
+            any_key_contains: ["vpvr_", "volume_profile", "vp_"]  # Restored: includes vpvr_ prefix features
           - name: has_momentum_decay
             kind: any_key_contains
             any_key_contains: ["macd", "trend_r2", "momentum"]

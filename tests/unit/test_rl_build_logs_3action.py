@@ -192,7 +192,7 @@ def test_build_execution_logs_exec_specialize_adds_market_profile() -> None:
     assert set(logs.loc[logs["symbol"] == "BBB", "market_profile"].unique()) == {"btc"}
 
 
-def test_build_logs_3action_vectorbt_execution_smoke() -> None:
+def test_build_execution_logs_vectorbt_execution_smoke() -> None:
     # Skip if vectorbt is not installed in this environment
     try:
         import vectorbt  # noqa: F401

@@ -8,6 +8,7 @@ enabled_archetypes:
     - TrendExpansionTE
   MEAN:
     - FailureReversionFR
+  ET:  # NEW: ET_REGIME for ExhaustionTurnET
     - ExhaustionTurnET
   NO_TRADE: []
 

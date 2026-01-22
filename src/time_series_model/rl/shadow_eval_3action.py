@@ -23,15 +23,21 @@ from .walk_forward import WalkForwardSplitConfig, time_ordered_split_by_symbol
 @dataclass(frozen=True)
 class ShadowEvalConfig:
     """
-    Offline shadow evaluation for BC(3-action) against rule-logged mode labels.
+    Offline shadow evaluation for BC(3-action) against rule-logged archetype labels.
 
     This is *not* a counterfactual PnL simulator. It is a deployment gate:
     - does BC reproduce rule behavior?
     - is the action distribution stable?
     - does it collapse to a single mode?
+
+    Note: Mode is inferred from archetype (TC/TE → TREND, FR/ET → MEAN, others → NO_TRADE).
     """
 
-    mode_col: str = "mode"
+    archetype_col: str = "gate_archetype"  # Primary: use gate_archetype if available
+    regime_col: str = "regime"  # Fallback: use regime if archetype not available
+    mode_col: str = (
+        "mode"  # Legacy fallback: use mode if archetype/regime not available
+    )
     timestamp_col: str = "timestamp"
     symbol_col: str = "symbol"
 
@@ -50,13 +56,63 @@ class ShadowEvalConfig:
     )
 
 
+def _infer_mode_from_archetype(archetype: Any, regime: Any = None) -> str:
+    """
+    Infer mode (TREND/MEAN/NO_TRADE) from archetype or regime.
+
+    Rules:
+    - TC/TE → TREND
+    - FR/ET → MEAN
+    - Others or missing → NO_TRADE
+    - If archetype not available, use regime (TC_REGIME/TE_REGIME → TREND, MEAN_REGIME → MEAN)
+    """
+    if archetype is not None:
+        arch_str = str(archetype).upper()
+        if "TC" in arch_str or "TE" in arch_str:
+            return "TREND"
+        elif "FR" in arch_str or "ET" in arch_str:
+            return "MEAN"
+
+    # Fallback to regime
+    if regime is not None:
+        reg_str = str(regime).upper()
+        if "TC_REGIME" in reg_str or "TE_REGIME" in reg_str or reg_str == "TREND":
+            return "TREND"
+        elif "MEAN_REGIME" in reg_str or reg_str == "MEAN":
+            return "MEAN"
+
+    return "NO_TRADE"
+
+
 def _as_transition_rows(
-    df: pd.DataFrame, *, state_keys: Sequence[str], mode_col: str
+    df: pd.DataFrame,
+    *,
+    state_keys: Sequence[str],
+    archetype_col: str,
+    regime_col: str,
+    mode_col: str,
 ) -> List[Dict[str, Any]]:
+    """
+    Convert dataframe rows to transition rows for BC training.
+    Infers mode from archetype (preferred) or regime (fallback) or mode (legacy fallback).
+    """
     rows = []
     for r in df.to_dict(orient="records"):
         state = {k: r.get(k, 0.0) for k in state_keys}
-        action = {"mode": r.get(mode_col)}
+
+        # Try to infer mode from archetype/regime/mode in order of preference
+        archetype = r.get(archetype_col)
+        regime = r.get(regime_col)
+        mode = r.get(mode_col)
+
+        if archetype is not None or regime is not None:
+            inferred_mode = _infer_mode_from_archetype(archetype, regime)
+        elif mode is not None:
+            inferred_mode = str(mode).upper()
+        else:
+            inferred_mode = "NO_TRADE"
+
+        action = {"mode": inferred_mode}
         rows.append({"state": state, "action": action})
     return rows
 
@@ -192,18 +248,29 @@ def train_and_shadow_eval_bc3_from_logs(
       - shadow_sample.csv
       - shadow_report.html
     """
-    if cfg.mode_col not in df_logs.columns:
+    # Check for at least one of archetype/regime/mode columns
+    has_archetype = cfg.archetype_col in df_logs.columns
+    has_regime = cfg.regime_col in df_logs.columns
+    has_mode = cfg.mode_col in df_logs.columns
+
+    if not (has_archetype or has_regime or has_mode):
         raise ValueError(
-            f"Missing mode column '{cfg.mode_col}' in logs. Please log RouterStepLog.mode."
+            f"Missing required columns. Need at least one of: "
+            f"'{cfg.archetype_col}' (preferred), '{cfg.regime_col}' (fallback), "
+            f"or '{cfg.mode_col}' (legacy fallback) in logs."
         )
 
     train_df, test_df = time_ordered_split_by_symbol(df_logs, cfg=cfg.split_cfg)
     state_schema = BCStateSchema(keys=list(cfg.state_keys))
 
-    # In new system, mode is first-class; infer_cfg is unused but required by trainer signature.
+    # In new system, mode is inferred from archetype; infer_cfg is unused but required by trainer signature.
     infer_cfg = Router3ActionInferConfig(mean_routers=[], trend_routers=[])
     transitions_train = _as_transition_rows(
-        train_df, state_keys=cfg.state_keys, mode_col=cfg.mode_col
+        train_df,
+        state_keys=cfg.state_keys,
+        archetype_col=cfg.archetype_col,
+        regime_col=cfg.regime_col,
+        mode_col=cfg.mode_col,
     )
 
     model, meta = train_bc_router3_policy(
@@ -215,7 +282,11 @@ def train_and_shadow_eval_bc3_from_logs(
 
     # Evaluate on test
     test_rows = _as_transition_rows(
-        test_df, state_keys=cfg.state_keys, mode_col=cfg.mode_col
+        test_df,
+        state_keys=cfg.state_keys,
+        archetype_col=cfg.archetype_col,
+        regime_col=cfg.regime_col,
+        mode_col=cfg.mode_col,
     )
     y_true = np.asarray(
         [int(infer_router3_action(r["action"], cfg=infer_cfg)) for r in test_rows],

@@ -35,6 +35,11 @@ enforcement:
 
 feature_plan_ref: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
 
+feature_plan_overrides:
+  optional_blocks_enabled:
+    # Note: volume_profile_block and vpin_block are auto-detected from execution_archetypes.yaml
+    # Only add blocks here if they are NOT used in gate/evidence rules (user-defined blocks)
+
 entrypoints:
   nnmultihead_predict: "scripts/predict_path_primitives_mlp.py"
   rule_mode_3action: "scripts/rule_mode_3action.py"
