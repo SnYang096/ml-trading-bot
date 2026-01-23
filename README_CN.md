@@ -97,7 +97,7 @@ mlbot data download-funding-rate \
 
 ## 推荐工作流（MVP：最小闭环）
 
-> README 只保留“可复制的最小命令”。详细解释与扩展流程见：
+> README 只保留"可复制的最小命令"。详细解释与扩展流程见：
 > - `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`
 > - `docs/guides/CROSS_SECTIONAL_PIPELINE_CN.md`（CS：截面因子评估→筛选→回测→训练）
 > - `docs/guides/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
@@ -112,9 +112,13 @@ mlbot data download-funding-rate \
 > - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
 > - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
 > - `docs/strategies/树策略导出的可泛化规则.md`（tree 策略 if/else：语义规则模板 + 扫描汇总（含 VPIN/订单流规则））
-> - `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找“平坦高原”而非尖峰，Router/SLTP 通用）
+> - `docs/guides/THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md`（阈值调参：找"平坦高原"而非尖峰，Router/SLTP 通用）
 > - `docs/live_stream/README.md`（实盘事件流/回放/对账/稳定性：Live 边缘系统入口）
 > - `docs/guides/NNMULTIHEAD_CONFIG_FILES_CN.md`（nnmultihead 配置文件职责图：TaskSpec/FeaturePlan/features.yaml/labels.yaml/model.yaml）
+> - **工作流程指南**：
+>   - `docs/guides/BASELINE_TESTING_WORKFLOW.md`（基线测试工作流程：建立各archetype性能基准）
+>   - `docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md`（平坦高原优化工作流程：Gate规则参数优化方法）
+>   - `docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md`（实盘归因工作流程：分层诊断和上线评估）
 
 ### 0) 质量闸门（推荐）
 

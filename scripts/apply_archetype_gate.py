@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
-Apply tree-gate veto rules based on regime and archetype.
+Apply tree-gate veto rules based on archetype.
 
 This script applies gate rules (deny_if/allow_if) and evidence rules to filter
 trading signals based on archetype-specific requirements.
 
 Inputs:
-  - logs parquet/csv (symbol, timestamp, regime, ...) OR physics_regime parquet
+  - logs parquet/csv (symbol, timestamp, ...)
   - FeatureStore (root + layer) for the same timeframe/window
   - execution_archetypes.yaml gate_rules (per archetype)
-  - live meta_router config (to select a single archetype per regime)
   - optional evidence_quantiles.json (for quantile-based rules)
 
 Output:
   - gated file with added columns:
       gate_ok, gate_decision, gate_reasons, gate_archetype
+
+Note: Physical features (path_efficiency_pct, jump_risk_pct, etc.) are loaded
+directly from FeatureStore. Regime classification has been migrated to gate rules.
 """
 from __future__ import annotations
 
@@ -34,15 +36,9 @@ from src.feature_store import FeatureStore, FeatureStoreSpec  # noqa: E402
 from src.time_series_model.core.constitution.execution_evidence import (  # noqa: E402
     load_evidence_quantiles,
 )
-from src.time_series_model.live.meta_router_config import (  # noqa: E402
-    load_meta_router_live_config,
-)
 from src.time_series_model.live.tree_gate import apply_gate_rules  # noqa: E402
 from src.time_series_model.nnmultihead.strategy_profile import (  # noqa: E402
     load_execution_archetypes_registry,
-)
-from src.time_series_model.portfolio.pcm import (  # noqa: E402
-    _are_archetypes_compatible,
 )
 
 
@@ -237,15 +233,6 @@ def _compute_archetype_score(row: pd.Series, arch_name: str) -> float:
     return score
 
 
-def _enabled_archetypes(
-    *, live_cfg_path: str, regime: str, archetypes: Dict[str, object]
-) -> List[str]:
-    cfg = load_meta_router_live_config(live_cfg_path)
-    rr = str(regime).upper()
-    xs = cfg.enabled_archetypes.get(rr) or []
-    return [x for x in xs if x in archetypes]
-
-
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Apply tree gate based on regime and archetype."
@@ -253,7 +240,7 @@ def main() -> int:
     p.add_argument(
         "--logs",
         required=True,
-        help="logs_3action or physics_regime file (must contain symbol, timestamp, regime)",
+        help="logs file (must contain symbol, timestamp)",
     )
     p.add_argument("--out", required=True, help="output gated file")
     p.add_argument("--features-store-root", default="feature_store")
@@ -269,23 +256,18 @@ def main() -> int:
     p.add_argument(
         "--live-config",
         default="config/nnmultihead/live/meta_router_live_config.yaml",
-        help="Use enabled_archetypes to select per-regime archetype",
+        help="[DEPRECATED] Regime-based archetype selection has been removed. This flag is kept for backward compatibility but has no effect.",
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(
-        "--physics-regime",
-        default=None,
-        help="Optional physics_regime parquet to merge (adds tc/te semantic scores).",
-    )
-    p.add_argument(
         "--semantic-score-floors",
         default=None,
-        help="Optional JSON with tc/te semantic score thresholds (tc_p95 ceiling, te_p10 floor).",
+        help="[DEPRECATED] Optional JSON with tc/te semantic score thresholds (tc_p95 ceiling, te_p10 floor).",
     )
     p.add_argument(
         "--disable-regime-filter",
         action="store_true",
-        help="Disable regime filtering: allow all regimes (including NO_TRADE) and all archetypes as candidates.",
+        help="[DEPRECATED] Regime filtering has been removed. All archetypes are now candidates. This flag is kept for backward compatibility but has no effect.",
     )
     p.add_argument(
         "--disable-gate-veto",
@@ -302,8 +284,9 @@ def main() -> int:
     logs_df = _ensure_timestamp_col(_read_any(Path(args.logs)))
     if "symbol" not in logs_df.columns or "timestamp" not in logs_df.columns:
         raise KeyError("logs file must include symbol and timestamp columns")
+    # Regime column is optional (not used by gate rules, but kept for diagnostics)
     if "regime" not in logs_df.columns:
-        raise KeyError("logs file must include regime column")
+        logs_df["regime"] = "NO_TRADE"  # Default for diagnostics only
 
     symbols = (
         [s.strip() for s in str(args.symbols).split(",") if s.strip()]
@@ -342,80 +325,30 @@ def main() -> int:
         feats, on=["symbol", "timestamp"], how="left", suffixes=("", "_feat")
     )
 
-    # Optional: merge physics_regime scores and physical features
-    if args.physics_regime:
-        pw_df = _ensure_timestamp_col(_read_any(Path(args.physics_regime)))
-        if "symbol" not in pw_df.columns or "timestamp" not in pw_df.columns:
-            raise KeyError("physics_regime must include symbol and timestamp columns")
-        pw_df = pw_df.copy()
-        pw_df["symbol"] = pw_df["symbol"].astype(str)
-        pw_df["timestamp"] = pd.to_datetime(pw_df["timestamp"], errors="coerce")
+    # Remove duplicate columns: if a column exists both as original and with _feat suffix,
+    # prefer the original (from logs_df) and drop the _feat version
+    feat_suffix_cols = [c for c in merged.columns if c.endswith("_feat")]
+    cols_to_drop = []
+    cols_to_rename = {}
+    for feat_col in feat_suffix_cols:
+        original_col = feat_col[:-5]  # Remove "_feat" suffix
+        if original_col in merged.columns:
+            # Original column exists, drop the _feat version
+            cols_to_drop.append(feat_col)
+        else:
+            # No original column, rename _feat to original name
+            cols_to_rename[feat_col] = original_col
 
-        # Keep semantic scores and physical features from physics_regime
-        keep_cols = [
-            "symbol",
-            "timestamp",
-            "tc_semantic_score",
-            "te_semantic_score",
-            # Physical features needed for MEAN_REGIME classification and gate rules
-            "path_efficiency",
-            "path_efficiency_pct",
-            "price_dir_consistency",
-            "price_dir_consistency_pct",
-            "deviation_z_abs",
-            "deviation_z_abs_pct",
-            "path_length_pct",
-            "jump_risk_pct",
-            "atr_percentile",
-            "regime",  # Also merge regime in case it's updated
-        ]
-        keep_cols = [c for c in keep_cols if c in pw_df.columns]
-
-        # Use suffixes to avoid column name conflicts
-        # If logs already has semantic scores, physics_regime scores will have _physics suffix
-        merged = merged.merge(
-            pw_df[keep_cols],
-            on=["symbol", "timestamp"],
-            how="left",
-            suffixes=("", "_physics"),
+    # Drop and rename columns
+    if cols_to_drop:
+        merged = merged.drop(columns=[c for c in cols_to_drop if c in merged.columns])
+    if cols_to_rename:
+        merged = merged.rename(
+            columns={k: v for k, v in cols_to_rename.items() if k in merged.columns}
         )
 
-        # Prefer physics_regime scores over logs scores if both exist
-        for col in ["tc_semantic_score", "te_semantic_score"]:
-            physics_col = f"{col}_physics"
-            if physics_col in merged.columns:
-                # Use physics_regime score if available, otherwise keep original
-                merged[col] = merged[physics_col].fillna(merged.get(col))
-                merged = merged.drop(columns=[physics_col])
-
-        # For physical features, prefer physics_regime values (they are computed during regime classification)
-        physical_features = [
-            "path_efficiency",
-            "path_efficiency_pct",
-            "price_dir_consistency",
-            "price_dir_consistency_pct",
-            "deviation_z_abs",
-            "deviation_z_abs_pct",
-            "path_length_pct",
-            "jump_risk_pct",
-        ]
-        for col in physical_features:
-            physics_col = f"{col}_physics"
-            if physics_col in merged.columns:
-                # Use physics_regime value if available, otherwise keep original (if exists)
-                if col in merged.columns:
-                    merged[col] = merged[physics_col].fillna(merged[col])
-                else:
-                    merged[col] = merged[physics_col]
-                merged = merged.drop(columns=[physics_col])
-
-        # Update regime from physics_regime if available (to use optimized MEAN_REGIME classification)
-        if "regime_physics" in merged.columns:
-            # Prefer physics_regime regime (optimized) over original logs regime
-            merged["regime"] = merged["regime_physics"].fillna(
-                merged.get("regime", "NO_TRADE")
-            )
-            merged = merged.drop(columns=["regime_physics"])
+    # Physical features (path_efficiency_pct, jump_risk_pct, etc.) are now loaded directly from FeatureStore
+    # No need to merge from physics_regime file - regime classification has been migrated to gate rules
 
     # Optional: semantic score floors
     semantic_floors = None
@@ -425,12 +358,19 @@ def main() -> int:
         # Expected keys: tc_semantic_score_p95 (ceiling), te_semantic_score_p10 (floor)
 
     arches = load_execution_archetypes_registry(str(args.execution_archetypes))
+    # Filter out VolMeanCompressionExpansionReversion (not suitable for current framework)
+    arches = {
+        k: v for k, v in arches.items() if k != "VolMeanCompressionExpansionReversion"
+    }
     quantiles_raw = load_evidence_quantiles(args.evidence_quantiles)
 
     gate_ok: List[bool] = []
     gate_decision: List[str] = []
     gate_reasons: List[str] = []
     gate_arch: List[str] = []
+
+    # Statistics for multiple archetypes passing gate
+    multi_archetype_stats: Dict[str, int] = {}
     # For parallel archetype trading: store row data for each archetype
     parallel_rows: List[Dict] = (
         []
@@ -444,18 +384,9 @@ def main() -> int:
         if "_REGIME" in regime:
             regime_normalized = regime.replace("_REGIME", "")
 
-        # Regime filtering logic (can be disabled for experiment)
-        # When disabled, completely ignore regime column and allow all regimes
-        use_parallel = args.disable_regime_filter and args.disable_gate_veto
-
-        if not args.disable_regime_filter:
-            if regime_normalized == "NO_TRADE" or regime_normalized == "NONE":
-                if not use_parallel:
-                    gate_ok.append(True)
-                    gate_decision.append("no_trade")
-                    gate_reasons.append("")
-                    gate_arch.append("")
-                continue
+        # Regime filtering removed: all archetypes are candidates
+        # Regime column is kept for backward compatibility but not used for filtering
+        use_parallel = args.disable_gate_veto
 
         # Semantic score veto (Gate-only, can be disabled for experiment)
         # ⚠️ IMPORTANT: Based on E2E analysis:
@@ -499,50 +430,9 @@ def main() -> int:
                         gate_arch.append("semantic_floor")
                     continue
 
-        # Archetype candidate selection (can be disabled for experiment)
-        # When regime filter is disabled, ignore regime column completely and allow all archetypes
-        if args.disable_regime_filter:
-            # Allow all archetypes as candidates when regime filter is disabled
-            candidates = list(arches.keys())
-        else:
-            # Map TE/TC to TREND for enabled_archetypes lookup
-            # ET_REGIME maps to MEAN (for archetype selection, but ET has its own regime)
-            # Note: When regime filter is enabled, we still use regime for archetype selection
-            regime_for_lookup = (
-                "TREND"
-                if regime_normalized in ("TE", "TC")
-                else ("MEAN" if regime_normalized == "ET" else regime_normalized)
-            )
-            candidates = _enabled_archetypes(
-                live_cfg_path=str(args.live_config),
-                regime=regime_for_lookup,
-                archetypes=arches,
-            )
-            if not candidates:
-                if not use_parallel:
-                    gate_ok.append(True)
-                    gate_decision.append("no_archetype")
-                    gate_reasons.append("")
-                    gate_arch.append("")
-                continue
-
-            # If regime is TE/TC/ET, prioritize matching archetype
-            # TE -> TrendExpansionTE, TC -> TrendContinuationTC, ET -> ExhaustionTurnET
-            if regime_normalized == "ET":
-                prioritized = ["ExhaustionTurnET"] + [
-                    c for c in candidates if c != "ExhaustionTurnET"
-                ]
-                candidates = prioritized
-            elif regime_normalized == "TE":
-                prioritized = ["TrendExpansionTE"] + [
-                    c for c in candidates if c != "TrendExpansionTE"
-                ]
-                candidates = prioritized
-            elif regime_normalized == "TC":
-                prioritized = ["TrendContinuationTC"] + [
-                    c for c in candidates if c != "TrendContinuationTC"
-                ]
-                candidates = prioritized
+        # Archetype candidate selection: all archetypes are candidates (regime filter removed)
+        # All archetypes are evaluated through gate rules and evidence rules
+        candidates = list(arches.keys())
 
         quantiles = None
         if isinstance(quantiles_raw, dict):
@@ -584,46 +474,60 @@ def main() -> int:
             else:
                 last_reasons = list(reasons or [])
 
-        # NEW: Check archetype compatibility when multiple archetypes pass gate
-        # This logic applies when regime is removed (as per user requirement)
-        # For now, we implement it but it can be enabled/disabled via a flag
-
-        # Filter passing candidates by compatibility
-        compatible_candidates: List[tuple[str, float, List[str]]] = []
+        # Multi-archetype selection logic (simplified)
+        # When multiple archetypes pass gate, use priority rules:
+        # 1. ET+FR → select FR (ET has lower priority than FR)
+        # 2. ET+TC → NO_TRADE (wait for ET to appear alone, treat ET as extreme case)
+        # 3. Other combinations → NO_TRADE (conservative approach)
         if len(passing_candidates) > 1:
-            # If multiple archetypes pass, check compatibility
-            # TC+TE: compatible (both trend-following)
-            # FR+ET: compatible (both mean-reversion)
-            # Other combinations: incompatible (semantic conflict)
+            arch_names = [arch_name for arch_name, _, _ in passing_candidates]
+            combination_key = "+".join(sorted(arch_names))
+            multi_archetype_stats[combination_key] = (
+                multi_archetype_stats.get(combination_key, 0) + 1
+            )
 
-            archetype_names = [arch_name for arch_name, _, _ in passing_candidates]
+            # Rule 1: ET+FR → select FR
+            if "ExhaustionTurnET" in arch_names and "FailureReversionFR" in arch_names:
+                # Find FR in passing candidates
+                selected_arch = None
+                for arch_name, score, reasons in passing_candidates:
+                    if arch_name == "FailureReversionFR":
+                        selected_arch = (arch_name, score, reasons)
+                        break
 
-            # Check all pairs for compatibility
-            all_compatible = True
-            for i, arch1 in enumerate(archetype_names):
-                for j, arch2 in enumerate(archetype_names):
-                    if i < j:  # Avoid duplicate pairs
-                        if not _are_archetypes_compatible(arch1, arch2):
-                            all_compatible = False
-                            break
-                if not all_compatible:
-                    break
+                if selected_arch:
+                    arch_name, score, reasons = selected_arch
+                    gate_ok.append(True)
+                    gate_decision.append("allow")
+                    gate_reasons.append(f"et_fr_priority_fr:{arch_name}")
+                    gate_arch.append(arch_name)
+                    continue
 
-            if all_compatible:
-                # All passing archetypes are compatible, keep them all
-                compatible_candidates = passing_candidates
-            else:
-                # Not all compatible: select the best one (highest score)
-                # This maintains backward compatibility
-                passing_candidates.sort(key=lambda x: x[1], reverse=True)
-                compatible_candidates = [passing_candidates[0]]
-        else:
-            # Single or no candidates: no compatibility check needed
-            compatible_candidates = passing_candidates
+            # Rule 2: ET+TC → NO_TRADE (wait for ET to appear alone)
+            # ET is treated as an extreme case and should only trade when it appears alone
+            if "ExhaustionTurnET" in arch_names and "TrendContinuationTC" in arch_names:
+                gate_ok.append(False)
+                gate_decision.append("veto")
+                gate_reasons.append(
+                    "et_tc_wait_et_alone:ET requires to appear alone, not with TC"
+                )
+                gate_arch.append("")
+                continue
 
-        # Parallel archetype trading: when both regime filter and gate veto are disabled,
+            # Rule 3: Other multiple combinations → NO_TRADE (conservative)
+            arch_names_str = ", ".join(arch_names)
+            gate_ok.append(False)
+            gate_decision.append("veto")
+            gate_reasons.append(f"multiple_archetypes_no_trade:{arch_names_str}")
+            gate_arch.append("")
+            continue
+
+        # Single archetype passed: proceed
+        compatible_candidates = passing_candidates
+
+        # Parallel archetype trading: when gate veto is disabled,
         # allow all passing archetypes to trade in parallel
-        use_parallel = args.disable_regime_filter and args.disable_gate_veto
+        use_parallel = args.disable_gate_veto
 
         if use_parallel and compatible_candidates:
             # Create a row for each compatible archetype
@@ -802,6 +706,23 @@ def main() -> int:
         "   gate_decisions:",
         json.dumps(out["gate_decision"].value_counts().to_dict(), ensure_ascii=False),
     )
+
+    # Print statistics for multiple archetypes passing gate
+    if multi_archetype_stats:
+        print("\n" + "=" * 80, file=sys.stderr)
+        print("Multiple Archetype Pass Statistics", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        print(f"Total combinations: {len(multi_archetype_stats)}", file=sys.stderr)
+        print(
+            f"Total occurrences: {sum(multi_archetype_stats.values())}", file=sys.stderr
+        )
+        print("\nCombinations (sorted by frequency):", file=sys.stderr)
+        for combo, count in sorted(multi_archetype_stats.items(), key=lambda x: -x[1]):
+            print(f"  {combo}: {count} times", file=sys.stderr)
+        print("=" * 80 + "\n", file=sys.stderr)
+    else:
+        print("\nNo multiple archetype passes detected.\n", file=sys.stderr)
+
     return 0
 
 

@@ -255,16 +255,86 @@ def materialize_nnmh_config_from_task_spec(
     if not (isinstance(tiers_enabled, list) and isinstance(tier_feature_files, dict)):
         raise click.ClickException("TaskSpec missing feature_plan.tiers_enabled or tier_feature_files")
 
-    # Collect feature nodes from enabled tier files
+    base_dir = Path(base_config_dir)
+    if not base_dir.is_absolute():
+        base_dir = (PROJECT_ROOT / base_dir).resolve()
+    if not base_dir.exists():
+        raise click.ClickException(f"Base config dir not found: {base_dir}")
+
+    outp = Path(out_config_dir)
+    if not outp.is_absolute():
+        outp = (PROJECT_ROOT / outp).resolve()
+    if outp.exists():
+        shutil.rmtree(outp)
+    shutil.copytree(base_dir, outp)
+
+    # AUTO-DETECT TIER FEATURES: 自动检测并添加gate规则需要的tier features
+    # 在复制之后修改out_config_dir中的tier文件，这样不会影响base_config_dir
+    added_tier_nodes: List[str] = []
+    try:
+        from src.cli.auto_detect_compute_requirements import (
+            extract_required_features_from_execution_archetypes,
+            map_features_to_tier_nodes,
+            ensure_tier_features,
+        )
+        deps_path = (PROJECT_ROOT / "config/feature_dependencies.yaml").resolve()
+        deps = yaml.safe_load(deps_path.read_text(encoding="utf-8")) or {}
+        
+        # 提取gate规则需要的特征
+        required_features = extract_required_features_from_execution_archetypes(
+            PROJECT_ROOT / "config/nnmultihead/execution_archetypes.yaml"
+        )
+        
+        if required_features:
+            # 映射到feature nodes
+            required_nodes = map_features_to_tier_nodes(required_features, deps)
+            
+            if required_nodes:
+                # 对每个启用的tier，检查并添加缺失的nodes
+                for tier_name in tiers_enabled:
+                    tier_file_rel = tier_feature_files.get(str(tier_name))
+                    if not tier_file_rel:
+                        continue
+                    tier_file_path = Path(tier_file_rel)
+                    if not tier_file_path.is_absolute():
+                        tier_file_path = outp / tier_file_rel
+                    else:
+                        # 如果是绝对路径，需要转换为out_config_dir中的路径
+                        # 假设tier文件在base_config_dir的某个子目录中
+                        tier_file_path = outp / tier_file_rel
+                    
+                    if tier_file_path.exists():
+                        added = ensure_tier_features(required_nodes, tier_file_path, deps)
+                        added_tier_nodes.extend(added)
+                
+                if added_tier_nodes:
+                    click.echo(
+                        f"🔍 Auto-added tier features: {sorted(set(added_tier_nodes))} "
+                        f"(gate/regime needs)",
+                        err=True,
+                    )
+    except Exception as e:
+        # 如果自动推导失败，不影响正常流程（向后兼容）
+        click.echo(
+            f"⚠️  Auto-detect tier features failed: {e}. Using existing tier files only.",
+            err=True,
+        )
+
+    # Collect feature nodes from enabled tier files (after auto-adding)
+    # 从out_config_dir读取tier文件，因为可能已经被修改
     tier_nodes: List[str] = []
     for tier_name in tiers_enabled:
         k = str(tier_name).strip()
         fpath = tier_feature_files.get(k)
         if not fpath:
             continue
-        p = Path(str(fpath))
-        if not p.is_absolute():
-            p = (PROJECT_ROOT / p).resolve()
+        # 优先从out_config_dir读取（可能已被修改）
+        p = outp / fpath
+        if not p.exists():
+            # 回退到从PROJECT_ROOT读取（如果out_config_dir中没有）
+            p = Path(str(fpath))
+            if not p.is_absolute():
+                p = (PROJECT_ROOT / p).resolve()
         if not p.exists():
             raise click.ClickException(f"TaskSpec tier_feature_files[{k}] not found: {p}")
         obj = yaml.safe_load(p.read_text(encoding="utf-8"))
@@ -2093,7 +2163,12 @@ def rule_physics_regime(
     scan_md_output,
     docker,
 ):
-    """Classify Physics/Regimes and (optionally) scan physics_score_min_pct."""
+    """[DEPRECATED] Classify Physics/Regimes and (optionally) scan physics_score_min_pct.
+    
+    ⚠️ DEPRECATED: Regime classification has been migrated to gate rules in execution_archetypes.yaml.
+    Physical features are now computed in FeatureStore and checked directly by gate rules.
+    This command is kept for backward compatibility and diagnostics only.
+    """
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--preds",
@@ -6324,6 +6399,21 @@ def analyze_strategy_feature_compare(
     )
 
 
+@analyze.command("archetype-performance")
+@click.option("--logs", required=True, help="Input logs file (parquet)")
+@click.option("--output", required=True, help="Output markdown report path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def analyze_archetype_performance(logs, output, docker):
+    """Analyze archetype performance metrics."""
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if docker and not _is_in_docker() else logs,
+        "--output",
+        f"/workspace/{output}" if docker and not _is_in_docker() else output,
+    ]
+    sys.exit(run_script("scripts/analyze_archetype_performance.py", args, docker=docker))
+
+
 @analyze.command("timeframe-comparison")
 @click.option(
     "--output-dir",
@@ -8171,6 +8261,91 @@ def diagnose_poolb_semantic_search(
     subprocess.run(cmd, cwd=str(PROJECT_ROOT), check=True)
 
 
+@diagnose.command("e2e-kpi")
+@click.option("--logs", required=True, help="Input logs file (parquet)")
+@click.option("--output-md", default=None, help="Output Markdown report path")
+@click.option("--output-json", default=None, help="Output JSON report path")
+@click.option("--ret-mean-col", default="ret_mean", help="Column name for mean returns")
+@click.option("--ret-trend-col", default="ret_trend", help="Column name for trend returns")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_e2e_kpi(logs, output_md, output_json, ret_mean_col, ret_trend_col, docker):
+    """Generate E2E KPI diagnostics report."""
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if docker and not _is_in_docker() else logs,
+        "--ret-mean-col",
+        ret_mean_col,
+        "--ret-trend-col",
+        ret_trend_col,
+    ]
+    if output_md:
+        args.extend(["--output-md", f"/workspace/{output_md}" if docker and not _is_in_docker() else output_md])
+    if output_json:
+        args.extend(["--output-json", f"/workspace/{output_json}" if docker and not _is_in_docker() else output_json])
+    sys.exit(run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker))
+
+
+@diagnose.command("pcm-performance")
+@click.option("--logs", required=True, help="Input logs file (parquet)")
+@click.option("--baseline", default=None, help="Baseline logs file for comparison (optional)")
+@click.option("--output", required=True, help="Output report path (markdown)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_pcm_performance(logs, baseline, output, docker):
+    """Diagnose PCM (Portfolio Capital Management) layer performance."""
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if docker and not _is_in_docker() else logs,
+        "--output",
+        f"/workspace/{output}" if docker and not _is_in_docker() else output,
+    ]
+    if baseline:
+        args.extend(["--baseline", f"/workspace/{baseline}" if docker and not _is_in_docker() else baseline])
+    sys.exit(run_script("scripts/diagnose_pcm_performance.py", args, docker=docker))
+
+
+@diagnose.command("production-attribution")
+@click.option("--production-logs", required=True, help="Production logs file (parquet)")
+@click.option("--baseline-logs", required=True, help="Baseline logs file (parquet)")
+@click.option("--output-dir", required=True, help="Output directory for diagnostics")
+@click.option(
+    "--alert-thresholds",
+    default='{"consecutive_losses": 5, "sharpe_drop": -0.5, "trade_count_drop": 0.2}',
+    help="JSON string with alert thresholds",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_production_attribution(production_logs, baseline_logs, output_dir, alert_thresholds, docker):
+    """Comprehensive production attribution analysis across all layers."""
+    args = [
+        "--production-logs",
+        f"/workspace/{production_logs}" if docker and not _is_in_docker() else production_logs,
+        "--baseline-logs",
+        f"/workspace/{baseline_logs}" if docker and not _is_in_docker() else baseline_logs,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
+        "--alert-thresholds",
+        alert_thresholds,
+    ]
+    sys.exit(run_script("scripts/diagnose_production_attribution.py", args, docker=docker))
+
+
+@diagnose.command("outcome-attribution")
+@click.option("--logs", required=True, help="Input logs file (parquet)")
+@click.option("--baseline", default=None, help="Baseline logs file for comparison (optional)")
+@click.option("--output", required=True, help="Output report path (markdown)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def diagnose_outcome_attribution(logs, baseline, output, docker):
+    """Diagnose outcome/attribution layer performance."""
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if docker and not _is_in_docker() else logs,
+        "--output",
+        f"/workspace/{output}" if docker and not _is_in_docker() else output,
+    ]
+    if baseline:
+        args.extend(["--baseline", f"/workspace/{baseline}" if docker and not _is_in_docker() else baseline])
+    sys.exit(run_script("scripts/diagnose_outcome_attribution.py", args, docker=docker))
+
+
 @diagnose.command("export-fgs-shortlist")
 @click.option(
     "--base-strategy-config",
@@ -8347,9 +8522,129 @@ def diagnose_holdout_eval(
 
 
 @cli.group()
+def gate():
+    """Gate (archetype filtering) commands."""
+    pass
+
+
+@gate.command("apply-archetype")
+@click.option("--logs", required=True, help="Input logs file (parquet)")
+@click.option("--out", required=True, help="Output gated logs file (parquet)")
+@click.option("--features-store-layer", required=True, help="FeatureStore layer name")
+@click.option("--features-store-root", default="feature_store", help="FeatureStore root directory")
+@click.option(
+    "--execution-archetypes",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    help="Path to execution_archetypes.yaml",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def gate_apply_archetype(logs, out, features_store_layer, features_store_root, execution_archetypes, docker):
+    """Apply archetype gate rules to logs."""
+    args = [
+        "--logs",
+        f"/workspace/{logs}" if docker and not _is_in_docker() else logs,
+        "--out",
+        f"/workspace/{out}" if docker and not _is_in_docker() else out,
+        "--features-store-layer",
+        features_store_layer,
+        "--features-store-root",
+        f"/workspace/{features_store_root}" if docker and not _is_in_docker() else features_store_root,
+        "--execution-archetypes",
+        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+    ]
+    sys.exit(run_script("scripts/apply_archetype_gate.py", args, docker=docker))
+
+
+@cli.group()
 def optimize():
     """Optimization commands."""
     pass
+
+
+@optimize.command("gate-plateau")
+@click.option("--archetype", required=True, help="Archetype name (e.g., TrendContinuationTC)")
+@click.option("--rule-name", required=True, help="Gate rule name to optimize")
+@click.option("--gated-logs", required=True, help="Gated logs file (parquet)")
+@click.option("--raw-logs", default=None, help="Raw logs file (parquet, optional)")
+@click.option("--output", required=True, help="Output JSON path for optimization results")
+@click.option("--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold")
+@click.option("--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket")
+@click.option("--min-sharpe-threshold", type=float, default=0.5, help="Minimum Sharpe threshold for plateau")
+@click.option("--threshold-step", type=float, default=0.05, help="Threshold step size for scanning")
+@click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="Path to execution_archetypes.yaml")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_gate_plateau(
+    archetype,
+    rule_name,
+    gated_logs,
+    raw_logs,
+    output,
+    min_trade_rate,
+    min_trades_per_bucket,
+    min_sharpe_threshold,
+    threshold_step,
+    execution_archetypes,
+    docker,
+):
+    """Optimize a single gate rule threshold using plateau method."""
+    args = [
+        "--archetype",
+        archetype,
+        "--rule-name",
+        rule_name,
+        "--gated-logs",
+        f"/workspace/{gated_logs}" if docker and not _is_in_docker() else gated_logs,
+        "--output",
+        f"/workspace/{output}" if docker and not _is_in_docker() else output,
+        "--min-trade-rate",
+        str(min_trade_rate),
+        "--min-trades-per-bucket",
+        str(min_trades_per_bucket),
+        "--min-sharpe-threshold",
+        str(min_sharpe_threshold),
+        "--threshold-step",
+        str(threshold_step),
+        "--execution-archetypes",
+        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+    ]
+    if raw_logs:
+        args.extend(["--raw-logs", f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs])
+    sys.exit(run_script("scripts/optimize_gate_plateau.py", args, docker=docker))
+
+
+@optimize.command("gate-plateau-all")
+@click.option("--gated-logs", required=True, help="Gated logs file (parquet)")
+@click.option("--raw-logs", default=None, help="Raw logs file (parquet, optional)")
+@click.option("--output-dir", required=True, help="Output directory for optimization results")
+@click.option("--min-trade-rate", type=float, default=0.005, help="Minimum trade rate threshold")
+@click.option("--min-trades-per-bucket", type=int, default=10, help="Minimum trades per bucket")
+@click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="Path to execution_archetypes.yaml")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_gate_plateau_all(
+    gated_logs,
+    raw_logs,
+    output_dir,
+    min_trade_rate,
+    min_trades_per_bucket,
+    execution_archetypes,
+    docker,
+):
+    """Optimize all gate rules for all archetypes using plateau method."""
+    args = [
+        "--gated-logs",
+        f"/workspace/{gated_logs}" if docker and not _is_in_docker() else gated_logs,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
+        "--min-trade-rate",
+        str(min_trade_rate),
+        "--min-trades-per-bucket",
+        str(min_trades_per_bucket),
+        "--execution-archetypes",
+        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+    ]
+    if raw_logs:
+        args.extend(["--raw-logs", f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs])
+    sys.exit(run_script("scripts/optimize_all_archetypes_plateau.py", args, docker=docker))
 
 
 @optimize.command("rule")

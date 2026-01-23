@@ -140,6 +140,54 @@ def load_live_feature_nodes(
         nodes.extend(add_nodes)
         for b in add_blocks:
             nodes.extend(list(blocks.get(b) or []))
+    # AUTO-DETECT: 自动检测gate规则需要的特征并添加到nodes
+    try:
+        from src.cli.auto_detect_compute_requirements import (
+            extract_required_features_from_execution_archetypes,
+            map_features_to_tier_nodes,
+            resolve_feature_dependencies,
+        )
+        from pathlib import Path
+
+        # 获取项目根目录（从feature_deps_path推断）
+        deps_path = Path(feature_deps_path)
+        if not deps_path.is_absolute():
+            # 假设相对于项目根目录
+            project_root = (
+                Path(__file__).resolve().parents[3]
+            )  # src/time_series_model/live -> project root
+        else:
+            project_root = deps_path.parents[
+                1
+            ]  # config/feature_dependencies.yaml -> project root
+
+        # 提取gate规则需要的特征列名
+        gate_features = extract_required_features_from_execution_archetypes(
+            project_root / "config/nnmultihead/execution_archetypes.yaml"
+        )
+
+        if gate_features:
+            # 读取feature_dependencies
+            deps = _load_yaml(feature_deps_path)
+            if deps:
+                # 映射到feature nodes
+                gate_nodes = map_features_to_tier_nodes(gate_features, deps)
+
+                if gate_nodes:
+                    # 递归解析依赖关系
+                    all_gate_nodes = resolve_feature_dependencies(gate_nodes, deps)
+
+                    # 添加gate nodes到nodes列表
+                    existing_nodes_set = set(nodes)
+                    new_gate_nodes = [
+                        n for n in all_gate_nodes if n not in existing_nodes_set
+                    ]
+                    if new_gate_nodes:
+                        nodes.extend(new_gate_nodes)
+    except Exception:
+        # 如果自动检测失败，不影响正常流程
+        pass
+
     # de-dup while preserving order
     seen = set()
     out = []

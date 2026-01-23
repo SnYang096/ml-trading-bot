@@ -1,5 +1,9 @@
 """
-Physics / Regime Classifier
+[DEPRECATED] Physics / Regime Classifier
+
+⚠️ DEPRECATED: Regime classification has been migrated to gate rules in execution_archetypes.yaml.
+Physical features (path_efficiency_pct, jump_risk_pct, etc.) are now computed in FeatureStore
+and checked directly by gate rules. This module is kept for backward compatibility and diagnostics only.
 
 This module implements a minimal Physics/Regime classifier that determines
 which execution regime the market is currently in, based on statistical
@@ -17,6 +21,7 @@ Key principle: Regime determines "feasibility", not "direction" or "profitabilit
 ⚠️ IMPORTANT WARNINGS:
 1. dir_conf is only a weak signal in Regime classification, not the main axis
 2. MEAN_REGIME is PROXY V0 and should NOT be enabled in production execution
+3. This module is DEPRECATED - use gate rules in execution_archetypes.yaml instead
 """
 
 from __future__ import annotations
@@ -372,7 +377,11 @@ def classify_regime(
     cfg: PhysicsRegimeConfig = PhysicsRegimeConfig(),
 ) -> pd.DataFrame:
     """
-    Classify Physics/Regime for each timestamp.
+    [DEPRECATED] Classify Physics/Regime for each timestamp.
+
+    ⚠️ DEPRECATED: Regime classification has been migrated to gate rules.
+    Physical features are now computed in FeatureStore and checked directly by gate rules
+    in execution_archetypes.yaml. This function is kept for backward compatibility and diagnostics only.
 
     Returns DataFrame with 'regime' column containing:
     - TC_REGIME: Trend Continuation regime
@@ -398,6 +407,10 @@ def classify_regime(
             return np.full(len(df), np.nan)
         return np.full(len(df), default if default is not None else 0.0)
 
+    def _has_col(col: str) -> bool:
+        """Check if column exists in DataFrame."""
+        return col in df.columns
+
     pred_dir_prob = _get_col(cfg.pred_dir_prob_col)
     atr = _get_col(cfg.atr_col, default=1.0)
     atr_percentile = _get_col(cfg.atr_percentile_col)
@@ -410,38 +423,146 @@ def classify_regime(
     dir_conf = _dir_conf(pred_dir_prob_clipped)
 
     # Compute physics features
-    atr_slope = _compute_atr_slope(atr, window=cfg.atr_slope_window)
-    atr_slope_pct = _percentile_rank(atr_slope)
-    range_expansion = _compute_range_expansion(
-        high, low, atr, window=cfg.range_expansion_window
-    )
-    range_expansion_pct = _percentile_rank(range_expansion)
-    jump_risk = _compute_jump_risk(close, atr, window=cfg.jump_risk_window)
-    jump_risk_pct = _percentile_rank(jump_risk)
-    dir_conf_std = _rolling_std(dir_conf, window=cfg.atr_slope_window)
-    dir_conf_std_pct = _percentile_rank(dir_conf_std)
-    dir_sign_consistency = _rolling_dir_sign_consistency(
-        pred_dir_prob_clipped, window=cfg.atr_slope_window
-    )
-    dir_sign_consistency_pct = _percentile_rank(dir_sign_consistency)
-    path_length = _compute_path_length(close, atr, window=cfg.atr_slope_window)
-    path_length_pct = _percentile_rank(path_length)
+    # Prefer features from FeatureStore if available (computed in feature_dependencies.yaml)
+    # Only compute if not present in input DataFrame
+    if _has_col("atr_slope"):
+        atr_slope = _get_col("atr_slope")
+    else:
+        atr_slope = _compute_atr_slope(atr, window=cfg.atr_slope_window)
+    if _has_col("atr_slope_pct"):
+        atr_slope_pct = _get_col("atr_slope_pct")
+    else:
+        atr_slope_pct = _percentile_rank(atr_slope)
+
+    if _has_col("range_expansion"):
+        range_expansion = _get_col("range_expansion")
+    else:
+        range_expansion = _compute_range_expansion(
+            high, low, atr, window=cfg.range_expansion_window
+        )
+    if _has_col("range_expansion_pct"):
+        range_expansion_pct = _get_col("range_expansion_pct")
+    else:
+        range_expansion_pct = _percentile_rank(range_expansion)
+
+    if _has_col("jump_risk"):
+        jump_risk = _get_col("jump_risk")
+    else:
+        jump_risk = _compute_jump_risk(close, atr, window=cfg.jump_risk_window)
+    if _has_col("jump_risk_pct"):
+        jump_risk_pct = _get_col("jump_risk_pct")
+    else:
+        jump_risk_pct = _percentile_rank(jump_risk)
+
+    if _has_col("dir_conf_std"):
+        dir_conf_std = _get_col("dir_conf_std")
+    else:
+        dir_conf_std = _rolling_std(dir_conf, window=cfg.atr_slope_window)
+    if _has_col("dir_conf_std_pct"):
+        dir_conf_std_pct = _get_col("dir_conf_std_pct")
+    else:
+        dir_conf_std_pct = _percentile_rank(dir_conf_std)
+
+    if _has_col("dir_sign_consistency"):
+        dir_sign_consistency = _get_col("dir_sign_consistency")
+    else:
+        dir_sign_consistency = _rolling_dir_sign_consistency(
+            pred_dir_prob_clipped, window=cfg.atr_slope_window
+        )
+    if _has_col("dir_sign_consistency_pct"):
+        dir_sign_consistency_pct = _get_col("dir_sign_consistency_pct")
+    else:
+        dir_sign_consistency_pct = _percentile_rank(dir_sign_consistency)
+
+    if _has_col("path_length"):
+        path_length = _get_col("path_length")
+    else:
+        path_length = _compute_path_length(close, atr, window=cfg.atr_slope_window)
+    if _has_col("path_length_pct"):
+        path_length_pct = _get_col("path_length_pct")
+    else:
+        path_length_pct = _percentile_rank(path_length)
 
     # NEW: Path efficiency (net_displacement / total_path_length)
-    path_efficiency = _compute_path_efficiency(close, atr, window=cfg.atr_slope_window)
-    path_efficiency_pct = _percentile_rank(path_efficiency)
+    # Prefer from FeatureStore if available
+    if _has_col("path_efficiency"):
+        path_efficiency = _get_col("path_efficiency")
+    else:
+        path_efficiency = _compute_path_efficiency(
+            close, atr, window=cfg.atr_slope_window
+        )
+    if _has_col("path_efficiency_pct"):
+        path_efficiency_pct = _get_col("path_efficiency_pct")
+    else:
+        path_efficiency_pct = _percentile_rank(path_efficiency)
 
     # NEW: Price direction consistency (based on actual returns, NOT pred_dir_prob)
-    price_dir_consistency = _compute_price_direction_consistency(
-        close, window=cfg.atr_slope_window
-    )
-    price_dir_consistency_pct = _percentile_rank(price_dir_consistency)
+    # Prefer from FeatureStore if available
+    if _has_col("price_dir_consistency"):
+        price_dir_consistency = _get_col("price_dir_consistency")
+    else:
+        price_dir_consistency = _compute_price_direction_consistency(
+            close, window=cfg.atr_slope_window
+        )
+    if _has_col("price_dir_consistency_pct"):
+        price_dir_consistency_pct = _get_col("price_dir_consistency_pct")
+    else:
+        price_dir_consistency_pct = _percentile_rank(price_dir_consistency)
 
-    deviation_z = _compute_deviation_z(close, window=cfg.mean_deviation_window)
+    if _has_col("deviation_z"):
+        deviation_z = _get_col("deviation_z")
+    else:
+        deviation_z = _compute_deviation_z(close, window=cfg.mean_deviation_window)
     deviation_z_abs = np.abs(deviation_z)
-    deviation_z_abs_pct = _percentile_rank(
-        deviation_z_abs
-    )  # Convert to percentile for consistency
+    if _has_col("deviation_z_abs_pct"):
+        deviation_z_abs_pct = _get_col("deviation_z_abs_pct")
+    else:
+        deviation_z_abs_pct = _percentile_rank(
+            deviation_z_abs
+        )  # Convert to percentile for consistency
+
+    # Compute percentile versions of order flow and volume features for gate rules
+    # Prefer from FeatureStore if available (computed in feature_dependencies.yaml)
+    # These features are used in gate rules but are not percentile-based by default
+    cvd_change_5 = _get_col("cvd_change_5", default=np.nan)
+    if _has_col("cvd_change_5_pct"):
+        cvd_change_5_pct = _get_col("cvd_change_5_pct")
+    else:
+        cvd_change_5_pct = (
+            _percentile_rank(cvd_change_5)
+            if not np.all(np.isnan(cvd_change_5))
+            else np.full(len(df), np.nan)
+        )
+
+    volume_ratio = _get_col("volume_ratio", default=np.nan)
+    if _has_col("volume_ratio_pct"):
+        volume_ratio_pct = _get_col("volume_ratio_pct")
+    else:
+        volume_ratio_pct = (
+            _percentile_rank(volume_ratio)
+            if not np.all(np.isnan(volume_ratio))
+            else np.full(len(df), np.nan)
+        )
+
+    bb_width_normalized = _get_col("bb_width_normalized", default=np.nan)
+    if _has_col("bb_width_normalized_pct"):
+        bb_width_normalized_pct = _get_col("bb_width_normalized_pct")
+    else:
+        bb_width_normalized_pct = (
+            _percentile_rank(bb_width_normalized)
+            if not np.all(np.isnan(bb_width_normalized))
+            else np.full(len(df), np.nan)
+        )
+
+    cvd_change_5_normalized = _get_col("cvd_change_5_normalized", default=np.nan)
+    if _has_col("cvd_change_5_normalized_pct"):
+        cvd_change_5_normalized_pct = _get_col("cvd_change_5_normalized_pct")
+    else:
+        cvd_change_5_normalized_pct = (
+            _percentile_rank(cvd_change_5_normalized)
+            if not np.all(np.isnan(cvd_change_5_normalized))
+            else np.full(len(df), np.nan)
+        )
 
     # Initialize regime as NO_TRADE
     regime = np.full(len(df), "NO_TRADE", dtype=object)
@@ -664,6 +785,12 @@ def classify_regime(
     out["path_efficiency_pct"] = path_efficiency_pct
     out["price_dir_consistency"] = price_dir_consistency
     out["price_dir_consistency_pct"] = price_dir_consistency_pct
+
+    # Percentile versions of order flow and volume features for gate rules
+    out["cvd_change_5_pct"] = cvd_change_5_pct
+    out["volume_ratio_pct"] = volume_ratio_pct
+    out["bb_width_normalized_pct"] = bb_width_normalized_pct
+    out["cvd_change_5_normalized_pct"] = cvd_change_5_normalized_pct
 
     # DEPRECATED: Keep for backward compatibility but should not be used
     out["dir_conf"] = dir_conf

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Physics / Regime Classifier Script
+[DEPRECATED] Physics / Regime Classifier Script
+
+⚠️ DEPRECATED: Regime classification has been migrated to gate rules in execution_archetypes.yaml.
+Physical features (path_efficiency_pct, jump_risk_pct, etc.) are now computed in FeatureStore
+and checked directly by gate rules. This script is kept for backward compatibility and diagnostics only.
 
 Classifies each timestamp into Physics/Regime categories:
 - TC_REGIME: Trend Continuation regime

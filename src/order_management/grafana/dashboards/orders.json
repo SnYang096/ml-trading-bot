@@ -1,0 +1,89 @@
+{
+  "dashboard": {
+    "title": "订单管理系统 - 订单",
+    "tags": ["order_management", "orders"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "订单执行情况",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "order_management_orders_total",
+            "format": "table",
+            "legendFormat": "{{status}} - {{type}} - {{symbol}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "订单成功率",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "sum(rate(order_management_orders_total{status=\"filled\"}[5m])) / sum(rate(order_management_orders_total[5m]))",
+            "legendFormat": "成功率"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "平均执行时间",
+        "type": "histogram",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.5, order_management_orders_execution_time_bucket)",
+            "legendFormat": "中位数"
+          },
+          {
+            "expr": "histogram_quantile(0.95, order_management_orders_execution_time_bucket)",
+            "legendFormat": "95分位"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "订单状态分布",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (status) (order_management_orders_total)",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 0, "y": 10}
+      },
+      {
+        "id": 5,
+        "title": "订单类型统计",
+        "type": "barchart",
+        "targets": [
+          {
+            "expr": "sum by (type) (order_management_orders_total)",
+            "legendFormat": "{{type}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 12, "y": 10}
+      },
+      {
+        "id": 6,
+        "title": "订单执行时间分布",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(order_management_orders_execution_time_sum[5m]) / rate(order_management_orders_execution_time_count[5m])",
+            "legendFormat": "平均执行时间"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20}
+      }
+    ]
+  }
+}

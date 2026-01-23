@@ -1,0 +1,96 @@
+{
+  "dashboard": {
+    "title": "订单管理系统 - 风险",
+    "tags": ["order_management", "risk"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "风险指标概览",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "order_management_daily_pnl",
+            "legendFormat": "当日盈亏"
+          },
+          {
+            "expr": "order_management_daily_loss",
+            "legendFormat": "当日亏损"
+          },
+          {
+            "expr": "order_management_margin_usage_ratio",
+            "legendFormat": "保证金使用率"
+          },
+          {
+            "expr": "order_management_max_drawdown",
+            "legendFormat": "最大回撤"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "保证金使用率",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "order_management_margin_usage_ratio",
+            "legendFormat": "使用率"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 3,
+        "title": "保证金使用率趋势",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "order_management_margin_usage_ratio",
+            "legendFormat": "保证金使用率"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "回撤情况",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "order_management_max_drawdown",
+            "legendFormat": "最大回撤"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 5,
+        "title": "每日亏损",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "order_management_daily_loss",
+            "legendFormat": "每日亏损"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "止损触发次数",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(order_management_orders_total{type=\"stop\"}[1h])",
+            "legendFormat": "止损触发"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+      }
+    ]
+  }
+}

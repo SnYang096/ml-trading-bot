@@ -1,0 +1,76 @@
+{
+  "dashboard": {
+    "title": "订单管理系统 - 概览",
+    "tags": ["order_management", "overview"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "总盈亏",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "order_management_daily_pnl",
+            "legendFormat": "总盈亏"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "当前仓位数量",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(order_management_position_count)",
+            "legendFormat": "仓位数量"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "订单总数",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(increase(order_management_orders_total[1h]))",
+            "legendFormat": "订单总数"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "保证金使用率",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "order_management_margin_usage_ratio",
+            "legendFormat": "保证金使用率"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 5,
+        "title": "关键指标趋势",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "order_management_daily_pnl",
+            "legendFormat": "每日盈亏"
+          },
+          {
+            "expr": "sum(order_management_position_unrealized_pnl) by (symbol)",
+            "legendFormat": "未实现盈亏 - {{symbol}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      }
+    ]
+  }
+}

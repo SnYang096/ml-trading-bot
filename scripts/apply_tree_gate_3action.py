@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-Apply tree-gate veto rules based on regime and archetype.
+Apply tree-gate veto rules based on archetype.
 
 Inputs:
-  - logs_3action parquet/csv (symbol, timestamp, regime, ...) OR physics_regime parquet
+  - logs parquet/csv (symbol, timestamp, ...)
   - FeatureStore (root + layer) for the same timeframe/window
   - execution_archetypes.yaml gate_rules (per archetype)
-  - live meta_router config (to select a single archetype per regime)
   - optional evidence_quantiles.json (for quantile-based rules)
 
 Output:
   - gated file with added columns:
       gate_ok, gate_decision, gate_reasons, gate_archetype
+
+Note: Physical features (path_efficiency_pct, jump_risk_pct, etc.) are loaded
+directly from FeatureStore. Regime classification has been migrated to gate rules.
 """
 from __future__ import annotations
 
@@ -247,7 +249,7 @@ def main() -> int:
     p.add_argument(
         "--logs",
         required=True,
-        help="logs_3action or physics_regime file (must contain symbol, timestamp, regime)",
+        help="logs file (must contain symbol, timestamp)",
     )
     p.add_argument("--out", required=True, help="output gated file")
     p.add_argument("--features-store-root", default="feature_store")
@@ -267,14 +269,9 @@ def main() -> int:
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(
-        "--physics-regime",
-        default=None,
-        help="Optional physics_regime parquet to merge (adds tc/te semantic scores).",
-    )
-    p.add_argument(
         "--semantic-score-floors",
         default=None,
-        help="Optional JSON with tc/te semantic score thresholds (tc_p95 ceiling, te_p10 floor).",
+        help="[DEPRECATED] Optional JSON with tc/te semantic score thresholds (tc_p95 ceiling, te_p10 floor).",
     )
     p.add_argument(
         "--disable-regime-filter",
@@ -296,8 +293,9 @@ def main() -> int:
     logs_df = _ensure_timestamp_col(_read_any(Path(args.logs)))
     if "symbol" not in logs_df.columns or "timestamp" not in logs_df.columns:
         raise KeyError("logs file must include symbol and timestamp columns")
+    # Regime column is optional (not used by gate rules, but kept for diagnostics)
     if "regime" not in logs_df.columns:
-        raise KeyError("logs file must include regime column")
+        logs_df["regime"] = "NO_TRADE"  # Default for diagnostics only
 
     symbols = (
         [s.strip() for s in str(args.symbols).split(",") if s.strip()]
@@ -326,80 +324,8 @@ def main() -> int:
         feats, on=["symbol", "timestamp"], how="left", suffixes=("", "_feat")
     )
 
-    # Optional: merge physics_regime scores and physical features
-    if args.physics_regime:
-        pw_df = _ensure_timestamp_col(_read_any(Path(args.physics_regime)))
-        if "symbol" not in pw_df.columns or "timestamp" not in pw_df.columns:
-            raise KeyError("physics_regime must include symbol and timestamp columns")
-        pw_df = pw_df.copy()
-        pw_df["symbol"] = pw_df["symbol"].astype(str)
-        pw_df["timestamp"] = pd.to_datetime(pw_df["timestamp"], errors="coerce")
-
-        # Keep semantic scores and physical features from physics_regime
-        keep_cols = [
-            "symbol",
-            "timestamp",
-            "tc_semantic_score",
-            "te_semantic_score",
-            # Physical features needed for MEAN_REGIME classification and gate rules
-            "path_efficiency",
-            "path_efficiency_pct",
-            "price_dir_consistency",
-            "price_dir_consistency_pct",
-            "deviation_z_abs",
-            "deviation_z_abs_pct",
-            "path_length_pct",
-            "jump_risk_pct",
-            "atr_percentile",
-            "regime",  # Also merge regime in case it's updated
-        ]
-        keep_cols = [c for c in keep_cols if c in pw_df.columns]
-
-        # Use suffixes to avoid column name conflicts
-        # If logs already has semantic scores, physics_regime scores will have _physics suffix
-        merged = merged.merge(
-            pw_df[keep_cols],
-            on=["symbol", "timestamp"],
-            how="left",
-            suffixes=("", "_physics"),
-        )
-
-        # Prefer physics_regime scores over logs scores if both exist
-        for col in ["tc_semantic_score", "te_semantic_score"]:
-            physics_col = f"{col}_physics"
-            if physics_col in merged.columns:
-                # Use physics_regime score if available, otherwise keep original
-                merged[col] = merged[physics_col].fillna(merged.get(col))
-                merged = merged.drop(columns=[physics_col])
-
-        # For physical features, prefer physics_regime values (they are computed during regime classification)
-        physical_features = [
-            "path_efficiency",
-            "path_efficiency_pct",
-            "price_dir_consistency",
-            "price_dir_consistency_pct",
-            "deviation_z_abs",
-            "deviation_z_abs_pct",
-            "path_length_pct",
-            "jump_risk_pct",
-        ]
-        for col in physical_features:
-            physics_col = f"{col}_physics"
-            if physics_col in merged.columns:
-                # Use physics_regime value if available, otherwise keep original (if exists)
-                if col in merged.columns:
-                    merged[col] = merged[physics_col].fillna(merged[col])
-                else:
-                    merged[col] = merged[physics_col]
-                merged = merged.drop(columns=[physics_col])
-
-        # Update regime from physics_regime if available (to use optimized MEAN_REGIME classification)
-        if "regime_physics" in merged.columns:
-            # Prefer physics_regime regime (optimized) over original logs regime
-            merged["regime"] = merged["regime_physics"].fillna(
-                merged.get("regime", "NO_TRADE")
-            )
-            merged = merged.drop(columns=["regime_physics"])
+    # Physical features (path_efficiency_pct, jump_risk_pct, etc.) are now loaded directly from FeatureStore
+    # No need to merge from physics_regime file - regime classification has been migrated to gate rules
 
     # Optional: semantic score floors
     semantic_floors = None

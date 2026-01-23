@@ -1,9 +1,17 @@
-# 解决方案：物理特征读取和MEAN_REGIME分类问题
+# [DEPRECATED] 解决方案：物理特征读取和MEAN_REGIME分类问题
 
-## 问题总结
+⚠️ **DEPRECATED**: 此文档已过时。Regime分类已迁移到gate规则，物理特征现在在FeatureStore中计算并直接加载。
+
+## 问题总结（历史记录）
 
 1. **MEAN_REGIME分类问题**: 原始logs中的regime是在优化前分类的，需要重新运行regime分类以应用优化后的条件
 2. **物理特征读取问题**: `baseline_gated.parquet`中没有`path_efficiency_pct`等物理特征列，导致gate rules无法正确判断
+
+## 当前架构（2026-01更新）
+
+- **Regime分类已迁移到gate规则**：不再使用独立的`classify_regime`函数
+- **物理特征在FeatureStore中计算**：通过`feature_dependencies.yaml`定义，在FeatureStore构建时计算
+- **Gate规则直接检查物理特征**：从FeatureStore加载，不再需要`physics_regime`文件
 
 ## 解决方案
 

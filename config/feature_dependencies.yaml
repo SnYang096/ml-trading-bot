@@ -372,6 +372,92 @@ features:
       high: high
       low: low
       close: close
+  jump_risk_pct_f:
+    module: baseline
+    compute_func: compute_jump_risk_pct_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - atr
+    output_columns:
+    - jump_risk_pct
+    category: volatility
+    description: Percentile rank of jump_risk (microstructure stability, used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 10
+      percentile_window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        jump_risk_pct: bounded_0_1
+    column_mappings:
+      close: close
+      atr: atr
+  path_length_pct_f:
+    module: baseline
+    compute_func: compute_path_length_pct_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - atr
+    output_columns:
+    - path_length_pct
+    category: trend
+    description: Percentile rank of path_length (rolling path length in ATR units, used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 20
+      percentile_window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        path_length_pct: bounded_0_1
+    column_mappings:
+      close: close
+      atr: atr
+  path_efficiency_pct_f:
+    module: baseline
+    compute_func: compute_path_efficiency_pct_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - atr
+    output_columns:
+    - path_efficiency_pct
+    category: trend
+    description: Percentile rank of path_efficiency (net_displacement / total_path_length, used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 20
+      percentile_window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        path_efficiency_pct: bounded_0_1
+    column_mappings:
+      close: close
+      atr: atr
+  price_dir_consistency_pct_f:
+    module: baseline
+    compute_func: compute_price_dir_consistency_pct_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - price_dir_consistency_pct
+    category: trend
+    description: Percentile rank of price_dir_consistency (rolling consistency of actual price direction, used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 20
+      percentile_window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        price_dir_consistency_pct: bounded_0_1
+    column_mappings:
+      close: close
   trend_volatility_alignment_f:
     module: baseline
     compute_func: compute_trend_volatility_alignment_from_series
@@ -1746,6 +1832,158 @@ features:
     - cvd_change_5_normalized
     category: order_flow
     description: CVD basic normalized features (simple regime proxy).
+  cvd_change_5_pct_f:
+    module: baseline
+    compute_func: compute_cvd_change_5_pct_from_series
+    dependencies:
+    - cvd_change_features_f
+    required_columns:
+    - cvd_change_5
+    output_columns:
+    - cvd_change_5_pct
+    category: order_flow
+    description: Percentile rank of cvd_change_5 for cross-symbol stability (used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        cvd_change_5_pct: bounded_0_1
+    column_mappings:
+      cvd_change_5: cvd_change_5
+  cvd_change_5_normalized_pct_f:
+    module: baseline
+    compute_func: compute_cvd_change_5_normalized_pct_from_series
+    dependencies:
+    - cvd_change_features_f
+    required_columns:
+    - cvd_change_5_normalized
+    output_columns:
+    - cvd_change_5_normalized_pct
+    category: order_flow
+    description: Percentile rank of cvd_change_5_normalized for cross-symbol stability (used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        cvd_change_5_normalized_pct: bounded_0_1
+    column_mappings:
+      cvd_change_5_normalized: cvd_change_5_normalized
+  volume_ratio_pct_f:
+    module: baseline
+    compute_func: compute_volume_ratio_pct_from_series
+    dependencies: []
+    required_columns:
+    - volume_ratio
+    output_columns:
+    - volume_ratio_pct
+    category: volume
+    description: Percentile rank of volume_ratio for cross-symbol stability (used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        volume_ratio_pct: bounded_0_1
+    column_mappings:
+      volume_ratio: volume_ratio
+  bb_width_normalized_pct_f:
+    module: baseline
+    compute_func: compute_bb_width_normalized_pct_from_series
+    dependencies:
+    - bb_width_f
+    required_columns:
+    - bb_width_normalized
+    output_columns:
+    - bb_width_normalized_pct
+    category: volatility
+    description: Percentile rank of bb_width_normalized for cross-symbol stability (used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 288
+      shift: 1
+      normalized: true
+      output_normalization_map:
+        bb_width_normalized_pct: bounded_0_1
+    column_mappings:
+      bb_width_normalized: bb_width_normalized
+  ofci_f:
+    module: reflexivity
+    compute_func: compute_ofci_from_trades
+    dependencies: []
+    required_columns:
+    - side
+    output_columns:
+    - ofci
+    category: reflexivity
+    description: Order Flow Consensus Index - measures directional consensus strength [-1, 1]. High |OFCI| indicates reflexivity risk.
+    pass_full_df: false
+    compute_params:
+      window: 100
+    column_mappings:
+      side: side
+  ofci_pct_f:
+    module: reflexivity
+    compute_func: compute_ofci_pct_from_series
+    dependencies:
+    - ofci_f
+    required_columns:
+    - ofci
+    output_columns:
+    - ofci_pct
+    category: reflexivity
+    description: Percentile rank of OFCI for cross-symbol stability (used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 288
+      shift: 1
+      normalized: true
+    output_normalization_map:
+      ofci_pct: bounded_0_1
+    column_mappings:
+      ofci: ofci
+  shd_f:
+    module: reflexivity
+    compute_func: compute_shd_from_ohlcv
+    dependencies:
+    - cvd_change_features_f
+    required_columns:
+    - close
+    - cvd
+    output_columns:
+    - shd
+    category: reflexivity
+    description: Strategy Homogeneity Detector - measures if too many traders use similar logic [0, 1]. High SHD indicates reflexivity risk.
+    pass_full_df: false
+    compute_params:
+      window: 60
+    column_mappings:
+      close: close
+      cvd: cvd
+  shd_pct_f:
+    module: reflexivity
+    compute_func: compute_shd_pct_from_series
+    dependencies:
+    - shd_f
+    required_columns:
+    - shd
+    output_columns:
+    - shd_pct
+    category: reflexivity
+    description: Percentile rank of SHD for cross-symbol stability (used in gate rules)
+    pass_full_df: false
+    compute_params:
+      window: 288
+      shift: 1
+      normalized: true
+    output_normalization_map:
+      shd_pct: bounded_0_1
+    column_mappings:
+      shd: shd
   ofi_short_f:
     module: enhanced
     compute_func: compute_ofi_short_from_series

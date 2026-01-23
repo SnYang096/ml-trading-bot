@@ -166,6 +166,71 @@ def main() -> None:
         base_cols = ["open", "high", "low", "close", "volume", "_symbol", "symbol"]
         requested = cfg.features.requested_features
 
+        # AUTO-DETECT: 自动检测gate规则需要的特征并添加到requested_features
+        try:
+            from src.cli.auto_detect_compute_requirements import (
+                extract_required_features_from_execution_archetypes,
+                map_features_to_tier_nodes,
+                resolve_feature_dependencies,
+            )
+            import yaml
+
+            # 提取gate规则需要的特征列名
+            gate_features = extract_required_features_from_execution_archetypes(
+                PROJECT_ROOT / "config/nnmultihead/execution_archetypes.yaml"
+            )
+
+            if gate_features:
+                # 读取feature_dependencies
+                deps_path = PROJECT_ROOT / "config/feature_dependencies.yaml"
+                if deps_path.exists():
+                    with open(deps_path, "r", encoding="utf-8") as f:
+                        feature_dependencies = yaml.safe_load(f) or {}
+
+                    # 映射到feature nodes
+                    gate_nodes = map_features_to_tier_nodes(
+                        gate_features, feature_dependencies
+                    )
+
+                    if gate_nodes:
+                        # 递归解析依赖关系：确保gate nodes的依赖也被包含
+                        all_gate_nodes = resolve_feature_dependencies(
+                            gate_nodes, feature_dependencies
+                        )
+
+                        # 将gate nodes（包括依赖）添加到requested_features
+                        if isinstance(requested, dict):
+                            required_list = requested.get("required", [])
+                            if not isinstance(required_list, list):
+                                required_list = []
+                            # 添加缺失的nodes
+                            existing_required = set(required_list)
+                            new_nodes = [
+                                n for n in all_gate_nodes if n not in existing_required
+                            ]
+                            if new_nodes:
+                                required_list.extend(new_nodes)
+                                requested["required"] = required_list
+                                print(
+                                    f"🔍 Auto-added gate-required features: {sorted(new_nodes)}",
+                                    flush=True,
+                                )
+                        elif isinstance(requested, list):
+                            existing = set(requested)
+                            new_nodes = [n for n in all_gate_nodes if n not in existing]
+                            if new_nodes:
+                                requested.extend(new_nodes)
+                                print(
+                                    f"🔍 Auto-added gate-required features: {sorted(new_nodes)}",
+                                    flush=True,
+                                )
+        except Exception as e:
+            # 如果自动检测失败，不影响正常流程
+            print(
+                f"⚠️  Auto-detect gate features failed: {e}. Using config-only features.",
+                flush=True,
+            )
+
         # Configure tick data for features that require it (e.g., vpin)
         if not df_raw.empty:
             start_ts = df_raw.index.min().isoformat()

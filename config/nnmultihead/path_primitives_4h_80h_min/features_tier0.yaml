@@ -27,3 +27,13 @@
 - vwap_position_f
 - cvd_basic_f
 
+# Percentile features for gate rules (used in execution_archetypes.yaml)
+# These features are computed from OHLCV and are lightweight, suitable for tier0
+- path_efficiency_pct_f
+- jump_risk_pct_f
+- path_length_pct_f
+- price_dir_consistency_pct_f
+- cvd_change_5_pct_f
+- cvd_change_5_normalized_pct_f
+- volume_ratio_pct_f
+- bb_width_normalized_pct_f

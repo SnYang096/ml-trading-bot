@@ -415,6 +415,11 @@ flowchart TD
 ## 相关文档入口
 
 - README（最小可复制命令入口）：`README_CN.md`
+- **最终简化架构（2026-01）**：`docs/architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md` - 当前系统的简化架构文档
+- **工作流程指南**：
+  - 基线测试工作流程：`docs/guides/BASELINE_TESTING_WORKFLOW.md` - 建立各archetype性能基准
+  - 平坦高原优化工作流程：`docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md` - Gate规则参数优化方法
+  - 实盘归因工作流程：`docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md` - 分层诊断和上线评估
 - 总体原则与宪法：`docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`
 - 架构升级 V1：`docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`
 - Experiment Loop：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`

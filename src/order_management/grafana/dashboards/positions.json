@@ -1,0 +1,73 @@
+{
+  "dashboard": {
+    "title": "订单管理系统 - 仓位",
+    "tags": ["order_management", "positions"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "各品种仓位详情",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "order_management_position_count",
+            "format": "table",
+            "legendFormat": "{{symbol}} - {{side}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "未实现盈亏分布",
+        "type": "barchart",
+        "targets": [
+          {
+            "expr": "order_management_position_unrealized_pnl",
+            "legendFormat": "{{symbol}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "仓位价值分布",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "order_management_position_total_value",
+            "legendFormat": "{{symbol}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 0, "y": 10}
+      },
+      {
+        "id": 4,
+        "title": "仓位盈亏趋势",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "order_management_position_unrealized_pnl",
+            "legendFormat": "{{symbol}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 12, "x": 12, "y": 10}
+      },
+      {
+        "id": 5,
+        "title": "每个品种的风险指标",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "order_management_position_risk_per_symbol",
+            "legendFormat": "{{symbol}}"
+          }
+        ],
+        "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20}
+      }
+    ]
+  }
+}

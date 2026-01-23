@@ -1,0 +1,80 @@
+{
+  "dashboard": {
+    "title": "订单管理系统 - 性能",
+    "tags": ["order_management", "performance"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "API请求耗时",
+        "type": "histogram",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.5, order_management_api_request_duration_bucket)",
+            "legendFormat": "中位数 - {{endpoint}}"
+          },
+          {
+            "expr": "histogram_quantile(0.95, order_management_api_request_duration_bucket)",
+            "legendFormat": "95分位 - {{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "WebSocket连接状态",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "order_management_websocket_reconnect_count",
+            "legendFormat": "重连次数"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "WebSocket重连次数",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "increase(order_management_websocket_reconnect_count[1h])",
+            "legendFormat": "重连次数/小时"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "消息处理耗时",
+        "type": "histogram",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.5, order_management_message_processing_duration_bucket)",
+            "legendFormat": "中位数"
+          },
+          {
+            "expr": "histogram_quantile(0.95, order_management_message_processing_duration_bucket)",
+            "legendFormat": "95分位"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "API请求耗时趋势",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(order_management_api_request_duration_sum[5m]) / rate(order_management_api_request_duration_count[5m])",
+            "legendFormat": "平均耗时 - {{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+      }
+    ]
+  }
+}

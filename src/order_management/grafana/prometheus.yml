@@ -1,0 +1,16 @@
+# Prometheus配置示例
+# 添加到现有Prometheus配置 (/etc/prometheus/prometheus.yml)
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # 订单管理系统指标
+  - job_name: 'order_management'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:8000']
+        labels:
+          service: 'order_management'
+          environment: 'production'

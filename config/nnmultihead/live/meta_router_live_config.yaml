@@ -2,6 +2,9 @@ version: 1
 name: "meta_router_live_config"
 
 # One Nautilus Strategy hosts all archetypes; do NOT run one-strategy-per-archetype.
+# [LEGACY] enabled_archetypes: Regime-based archetype selection has been removed.
+# All archetypes are now evaluated through gate rules and evidence rules.
+# This section is kept for backward compatibility but is no longer used.
 enabled_archetypes:
   TREND:
     - TrendContinuationTC

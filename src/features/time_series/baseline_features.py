@@ -3748,6 +3748,300 @@ def compute_atr_percentile_from_series(
     return out.to_frame()
 
 
+@register_feature("compute_percentile_rank_from_series", category="baseline")
+def compute_percentile_rank_from_series(
+    *,
+    series: pd.Series,
+    window: int = 288,
+    shift: int = 1,
+    output_name: str = "percentile",
+) -> pd.DataFrame:
+    """
+    Compute percentile rank of a series using rolling window.
+    
+    This is a generic function for computing percentile ranks of any feature.
+    Used for features like cvd_change_5_pct, volume_ratio_pct, etc.
+    """
+    series = pd.to_numeric(series, errors="coerce").astype(float)
+    
+    def _percentile(arr: np.ndarray) -> float:
+        if len(arr) == 0:
+            return 0.5
+        current = arr[-1]
+        history = arr[:-1]  # Use history only (causal)
+        if len(history) == 0:
+            return 0.5
+        return float(np.mean(history <= current))
+    
+    pct = (
+        series.rolling(window=window, min_periods=window)
+        .apply(_percentile, raw=True)
+        .fillna(0.5)
+    )
+    if shift:
+        pct = pct.shift(shift)
+    out = pct.clip(0.0, 1.0).fillna(0.5).rename(output_name)
+    return out.to_frame()
+
+
+@register_feature("compute_cvd_change_5_pct_from_series", category="baseline")
+def compute_cvd_change_5_pct_from_series(
+    *,
+    cvd_change_5: pd.Series,
+    window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute percentile rank of cvd_change_5 for cross-symbol stability."""
+    return compute_percentile_rank_from_series(
+        series=cvd_change_5,
+        window=window,
+        shift=shift,
+        output_name="cvd_change_5_pct",
+    )
+
+
+@register_feature("compute_volume_ratio_pct_from_series", category="baseline")
+def compute_volume_ratio_pct_from_series(
+    *,
+    volume_ratio: pd.Series,
+    window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute percentile rank of volume_ratio for cross-symbol stability."""
+    return compute_percentile_rank_from_series(
+        series=volume_ratio,
+        window=window,
+        shift=shift,
+        output_name="volume_ratio_pct",
+    )
+
+
+@register_feature("compute_bb_width_normalized_pct_from_series", category="baseline")
+def compute_bb_width_normalized_pct_from_series(
+    *,
+    bb_width_normalized: pd.Series,
+    window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute percentile rank of bb_width_normalized for cross-symbol stability."""
+    return compute_percentile_rank_from_series(
+        series=bb_width_normalized,
+        window=window,
+        shift=shift,
+        output_name="bb_width_normalized_pct",
+    )
+
+
+@register_feature("compute_cvd_change_5_normalized_pct_from_series", category="baseline")
+def compute_cvd_change_5_normalized_pct_from_series(
+    *,
+    cvd_change_5_normalized: pd.Series,
+    window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute percentile rank of cvd_change_5_normalized for cross-symbol stability."""
+    return compute_percentile_rank_from_series(
+        series=cvd_change_5_normalized,
+        window=window,
+        shift=shift,
+        output_name="cvd_change_5_normalized_pct",
+    )
+
+
+# Regime features (path_efficiency, jump_risk, price_dir_consistency, path_length)
+# These should be computed in FeatureStore, not just in classify_regime
+def _compute_jump_risk_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 10,
+) -> pd.Series:
+    """Compute jump risk (max abs return / std of returns)."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = pd.to_numeric(atr, errors="coerce").astype(float)
+    
+    if len(close) < window:
+        return pd.Series(np.nan, index=close.index)
+    
+    returns = close.pct_change().fillna(0.0)
+    jump_risk = pd.Series(np.nan, index=close.index)
+    
+    for i in range(window, len(close)):
+        window_returns = returns.iloc[i - window : i]
+        if not window_returns.isna().all():
+            max_abs_ret = window_returns.abs().max()
+            std_ret = window_returns.std()
+            if std_ret > 1e-9:
+                jump_risk.iloc[i] = max_abs_ret / std_ret
+    
+    return jump_risk
+
+
+def compute_jump_risk_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 10,
+) -> pd.DataFrame:
+    """Narrow-IO jump risk computation."""
+    jump_risk = _compute_jump_risk_from_series(close=close, atr=atr, window=window)
+    return jump_risk.rename("jump_risk").to_frame()
+
+
+@register_feature("compute_jump_risk_pct_from_series", category="baseline")
+def compute_jump_risk_pct_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 10,
+    percentile_window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute jump_risk and its percentile rank."""
+    jump_risk = _compute_jump_risk_from_series(close=close, atr=atr, window=window)
+    jump_risk_pct = compute_percentile_rank_from_series(
+        series=jump_risk,
+        window=percentile_window,
+        shift=shift,
+        output_name="jump_risk_pct",
+    )
+    return jump_risk_pct
+
+
+def _compute_path_length_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 20,
+) -> pd.Series:
+    """Rolling path length in ATR units (sum of abs returns / ATR)."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = pd.to_numeric(atr, errors="coerce").astype(float)
+    
+    if len(close) < window:
+        return pd.Series(np.nan, index=close.index)
+    
+    diffs = close.diff().abs().fillna(0.0)
+    atr_safe = atr + 1e-9
+    path = diffs / atr_safe
+    path_length = path.rolling(window=window, min_periods=window).sum()
+    
+    return path_length
+
+
+@register_feature("compute_path_length_pct_from_series", category="baseline")
+def compute_path_length_pct_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 20,
+    percentile_window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute path_length and its percentile rank."""
+    path_length = _compute_path_length_from_series(close=close, atr=atr, window=window)
+    path_length_pct = compute_percentile_rank_from_series(
+        series=path_length,
+        window=percentile_window,
+        shift=shift,
+        output_name="path_length_pct",
+    )
+    return path_length_pct
+
+
+def _compute_path_efficiency_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 20,
+) -> pd.Series:
+    """Compute path efficiency: net_displacement / total_path_length."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr = pd.to_numeric(atr, errors="coerce").astype(float)
+    
+    if len(close) < window:
+        return pd.Series(np.nan, index=close.index)
+    
+    # Net displacement: absolute change in price over window
+    net_displacement = close.rolling(window=window).apply(
+        lambda x: abs(x.iloc[-1] - x.iloc[0]) if len(x) == window else np.nan,
+        raw=False,
+    )
+    
+    # Total path length: sum of absolute returns over window
+    diffs = close.diff().abs().fillna(0.0)
+    atr_safe = atr + 1e-9
+    path = diffs / atr_safe
+    total_path_length = path.rolling(window=window, min_periods=window).sum()
+    
+    # Normalize net_displacement by ATR
+    net_displacement_atr = net_displacement / atr_safe
+    
+    # Path efficiency: net_displacement / total_path_length
+    path_efficiency = net_displacement_atr / total_path_length.replace(0, np.nan)
+    path_efficiency = path_efficiency.clip(0.0, 1.0).fillna(np.nan)
+    
+    return path_efficiency
+
+
+@register_feature("compute_path_efficiency_pct_from_series", category="baseline")
+def compute_path_efficiency_pct_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    window: int = 20,
+    percentile_window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute path_efficiency and its percentile rank."""
+    path_efficiency = _compute_path_efficiency_from_series(close=close, atr=atr, window=window)
+    path_efficiency_pct = compute_percentile_rank_from_series(
+        series=path_efficiency,
+        window=percentile_window,
+        shift=shift,
+        output_name="path_efficiency_pct",
+    )
+    return path_efficiency_pct
+
+
+def _compute_price_direction_consistency_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+) -> pd.Series:
+    """Compute rolling consistency of actual price direction (sign of returns)."""
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    
+    if len(close) < window:
+        return pd.Series(np.nan, index=close.index)
+    
+    returns = close.diff().fillna(0.0)
+    signs = np.sign(returns)
+    # abs(mean(sign)) = 1 if stable direction, ~0 if flipping
+    consistency = signs.rolling(window=window, min_periods=window).mean().abs()
+    
+    return consistency
+
+
+@register_feature("compute_price_dir_consistency_pct_from_series", category="baseline")
+def compute_price_dir_consistency_pct_from_series(
+    *,
+    close: pd.Series,
+    window: int = 20,
+    percentile_window: int = 288,
+    shift: int = 1,
+) -> pd.DataFrame:
+    """Compute price_dir_consistency and its percentile rank."""
+    price_dir_consistency = _compute_price_direction_consistency_from_series(close=close, window=window)
+    price_dir_consistency_pct = compute_percentile_rank_from_series(
+        series=price_dir_consistency,
+        window=percentile_window,
+        shift=shift,
+        output_name="price_dir_consistency_pct",
+    )
+    return price_dir_consistency_pct
+
+
 @register_feature("compute_trend_volatility_alignment_from_series", category="baseline")
 def compute_trend_volatility_alignment_from_series(
     *,
