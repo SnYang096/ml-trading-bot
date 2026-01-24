@@ -35,7 +35,13 @@ async def test_binance_testnet_websocket(
     start_time = datetime.now()
 
     try:
-        async with websockets.connect(url) as websocket:
+        # 增加超时时间
+        async with websockets.connect(
+            url,
+            open_timeout=30,  # 增加握手超时时间
+            ping_interval=20,
+            ping_timeout=10,
+        ) as websocket:
             print(f"✅ WebSocket连接已建立")
             print(f"⏳ 等待接收数据...")
             print()

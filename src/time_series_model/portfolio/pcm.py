@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Any
 
 import yaml
 
@@ -46,6 +46,9 @@ class CandidateSignal:
     regime: str  # TREND/MEAN (kept for backward compatibility)
     archetype: str  # TC, TE, FR, ET (new: archetype as asset unit)
     ppath: float
+    features: Optional[Dict[str, Any]] = field(
+        default=None
+    )  # Optional features for reflexivity checks
 
 
 @dataclass(frozen=True)
@@ -176,6 +179,38 @@ def decide_pcm(
             reasons=reasons,
         )
     assert_ppath_usage("rotation")
+
+    # Reflexivity risk check (as final defense line)
+    # Note: Hard veto should already be checked in Gate layer, but we check again here for safety
+    if candidate.features is not None:
+        try:
+            from time_series_model.nnmultihead.gate_reflexivity_risk import (
+                check_reflexivity_hard_veto,
+            )
+
+            reflexivity_features = {
+                "ofci_p": candidate.features.get("ofci_pct", 0.0),
+                "shd_p": candidate.features.get("shd_pct", 0.0),
+                "lfi_p": candidate.features.get(
+                    "lfi_pct", 0.0
+                ),  # Reserved for future use
+            }
+
+            should_veto, veto_reason = check_reflexivity_hard_veto(reflexivity_features)
+            if should_veto:
+                reasons.append(f"reflexivity_veto:{veto_reason}")
+                return PCMDecision(
+                    allow_entry=False,
+                    allow_add_on=allow_add_on,
+                    replace_position_id=None,
+                    reasons=reasons,
+                )
+        except ImportError:
+            # If gate_reflexivity_risk is not available, skip reflexivity check
+            pass
+        except Exception:
+            # If any error occurs, skip reflexivity check (fail-safe)
+            pass
 
     slots = list(active_slots or [])
 

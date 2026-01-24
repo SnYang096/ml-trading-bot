@@ -1,11 +1,20 @@
 # 系统架构（统一版）
 
+**状态**: ✅ 当前版本  
+**最后更新**: 2026-01-25  
+**相关文档**: [最终简化架构（2026-01）](architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)
+
 > 这份文档回答三个问题：
 > 1) 系统分层与职责边界是什么？
 > 2) v0/v1/v2 在哲学意义上如何划分？
 > 3) 研发到上线的 pipeline 如何组织与验收？
 >
 > 细节（命令参数、算法说明、边界条件）仍由专题文档承载，这里只做统一对齐与索引。
+>
+> **与最终简化架构的关系**：
+> - 本文档：系统分层、职责边界、Pipeline组织（高层设计）
+> - [最终简化架构](architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md)：具体实现、设计目标、问题解决（详细设计）
+> - 两者互补，建议都阅读
 
 ## 一页速览
 
@@ -294,20 +303,20 @@ flowchart TD
 
 ## 版本模块清单（v0/v1/v2）
 
-| 模块 | v0 | v1 | v2 |
-|---|---|---|---|
-| DataCoverage / Drift | 必选 | 必选 | 必选 |
-| FeatureStore / Tiers | 必选 | 必选 | 必选 |
-| Path Primitives 多头 | 必选 | 必选 | 必选 |
-| Regime/Archetype Router | 必选 | 必选 | 必选 |
-| KPI Gate / KPI Journal | 必选 | 必选 | 必选 |
-| Tree Gate / Detector | 必选 | 必选 | 可选（保留核心 veto） |
-| PCM / Portfolio | 必选 | 必选 | 必选 |
-| Unified Safety Head（OOD/Survival/Safety 合并） | 不启用 | 必选 | 视证据保留 |
-| Adaptive Revenge / Immunity | 不启用 | 必选 | 只保留有效子集 |
-| BC/RL Router（offline） | 不启用 | 影子研究 | 影子研究 |
-| Execution archetype 扩展 | 可选 | 必选 | 收敛为简化集合 |
-| Runtime kill-switch / rollback | 必选 | 必选 | 必选 |
+| 模块                                            | v0     | v1       | v2                    |
+| ----------------------------------------------- | ------ | -------- | --------------------- |
+| DataCoverage / Drift                            | 必选   | 必选     | 必选                  |
+| FeatureStore / Tiers                            | 必选   | 必选     | 必选                  |
+| Path Primitives 多头                            | 必选   | 必选     | 必选                  |
+| Regime/Archetype Router                         | 必选   | 必选     | 必选                  |
+| KPI Gate / KPI Journal                          | 必选   | 必选     | 必选                  |
+| Tree Gate / Detector                            | 必选   | 必选     | 可选（保留核心 veto） |
+| PCM / Portfolio                                 | 必选   | 必选     | 必选                  |
+| Unified Safety Head（OOD/Survival/Safety 合并） | 不启用 | 必选     | 视证据保留            |
+| Adaptive Revenge / Immunity                     | 不启用 | 必选     | 只保留有效子集        |
+| BC/RL Router（offline）                         | 不启用 | 影子研究 | 影子研究              |
+| Execution archetype 扩展                        | 可选   | 必选     | 收敛为简化集合        |
+| Runtime kill-switch / rollback                  | 必选   | 必选     | 必选                  |
 
 ### 版本侧重点示意
 
@@ -417,9 +426,9 @@ flowchart TD
 - README（最小可复制命令入口）：`README_CN.md`
 - **最终简化架构（2026-01）**：`docs/architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md` - 当前系统的简化架构文档
 - **工作流程指南**：
-  - 基线测试工作流程：`docs/guides/BASELINE_TESTING_WORKFLOW.md` - 建立各archetype性能基准
-  - 平坦高原优化工作流程：`docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md` - Gate规则参数优化方法
-  - 实盘归因工作流程：`docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md` - 分层诊断和上线评估
+  - 基线测试工作流程：[docs/guides/BASELINE_TESTING_WORKFLOW.md](guides/BASELINE_TESTING_WORKFLOW.md) - 建立各archetype性能基准
+  - 平坦高原优化工作流程：[docs/guides/PLATEAU_OPTIMIZATION_WORKFLOW.md](guides/PLATEAU_OPTIMIZATION_WORKFLOW.md) - Gate规则参数优化方法
+  - 实盘归因工作流程：[docs/guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md](guides/PRODUCTION_ATTRIBUTION_WORKFLOW.md) - 分层诊断和上线评估
 - 总体原则与宪法：`docs/architecture/NN_MULTI_ASSET_CONSTITUTIONAL_SYSTEM_DESIGN_CN.md`
 - 架构升级 V1：`docs/architecture/ARCH_UPGRADE_TASKSPEC_CONSTITUTION_V1_CN.md`
 - Experiment Loop：`docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`

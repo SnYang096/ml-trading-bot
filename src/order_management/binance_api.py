@@ -1,8 +1,11 @@
 """
 Binance API封装
 使用ccxt实现REST API调用
+支持代理配置（用于主网连接）
 """
+
 import logging
+import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import ccxt
@@ -14,57 +17,225 @@ logger = logging.getLogger(__name__)
 
 class BinanceAPI:
     """Binance API封装（使用ccxt）"""
-    
+
     def __init__(
         self,
         api_key: str,
         api_secret: str,
         testnet: bool = False,
-        sandbox: bool = False
+        sandbox: bool = False,
+        use_proxy: Optional[bool] = None,
+        proxy_type: str = "socks5",
+        proxy_host: Optional[str] = None,
+        proxy_port: int = 7897,
     ):
         """
         初始化Binance API客户端
-        
+
         Args:
             api_key: API密钥
             api_secret: API密钥
             testnet: 是否使用测试网
             sandbox: 是否使用沙箱环境（与testnet相同）
+            use_proxy: 是否使用代理（None表示从环境变量USE_SOCKS5_PROXY读取，仅主网有效）
+            proxy_type: 代理类型 ('socks5' 或 'http')
+            proxy_host: 代理主机地址（None表示从环境变量或默认值获取）
+            proxy_port: 代理端口
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.testnet = testnet or sandbox
-        
+
+        # 代理配置（主网和测试网都可以使用）
+        if use_proxy is None:
+            # 从环境变量读取
+            use_proxy = os.environ.get("USE_SOCKS5_PROXY", "false").lower() == "true"
+
+        self.use_proxy = use_proxy  # 允许测试网也使用代理
+        self.proxy_type = proxy_type
+        self.proxy_host = proxy_host
+        self.proxy_port = proxy_port
+
         # 创建ccxt交易所实例
         exchange_options = {
-            'defaultType': 'future',  # 使用合约交易
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'future'
-            }
+            "defaultType": "future",  # 使用合约交易
+            "enableRateLimit": True,
+            "timeout": 30000,  # 增加超时时间到30秒
+            "options": {
+                "defaultType": "future",
+                "fetchCurrencies": False,  # 禁用货币配置获取（避免sapi端点超时）
+            },
         }
-        
+
+        # 测试网特殊配置：禁用所有sapi端点调用
+        if self.testnet:
+            exchange_options["options"]["fetchMarkets"] = {
+                "type": "future",  # 只获取合约市场，不调用sapi
+            }
+
+        # 配置代理（主网和测试网都可以使用）
+        if self.use_proxy:
+            # 获取代理地址
+            if self.proxy_host is None:
+                # 从环境变量获取
+                env_proxy = os.environ.get("HTTP_PROXY") or os.environ.get(
+                    "HTTPS_PROXY"
+                )
+                if env_proxy and "://" in env_proxy:
+                    try:
+                        from urllib.parse import urlparse
+
+                        parsed = urlparse(env_proxy)
+                        if parsed.hostname:
+                            self.proxy_host = parsed.hostname
+                            if parsed.port:
+                                self.proxy_port = parsed.port
+                    except Exception:
+                        pass
+
+                # 如果还没有，使用默认值
+                if self.proxy_host is None:
+                    self.proxy_host = "127.0.0.1"
+
+            # 配置代理URL
+            if self.proxy_type.lower() == "socks5":
+                proxy_url = f"socks5://{self.proxy_host}:{self.proxy_port}"
+            elif self.proxy_type.lower() == "http":
+                proxy_url = f"http://{self.proxy_host}:{self.proxy_port}"
+            else:
+                logger.warning(f"不支持的代理类型: {self.proxy_type}，将不使用代理")
+                self.use_proxy = False
+
+            if self.use_proxy:
+                exchange_options["proxies"] = {
+                    "http": proxy_url,
+                    "https": proxy_url,
+                }
+                logger.info(f"✅ 已配置代理: {proxy_url}")
+
         if self.testnet:
             # 测试网配置
-            exchange_options['urls'] = {
-                'api': {
-                    'public': 'https://testnet.binancefuture.com',
-                    'private': 'https://testnet.binancefuture.com',
+            exchange_options["urls"] = {
+                "api": {
+                    "public": "https://testnet.binancefuture.com",
+                    "private": "https://testnet.binancefuture.com",
                 }
             }
-        
-        self.exchange = ccxt.binance({
-            'apiKey': api_key,
-            'secret': api_secret,
-            **exchange_options
-        })
-    
+
+        self.exchange = ccxt.binance(
+            {"apiKey": api_key, "secret": api_secret, **exchange_options}
+        )
+
+        # 如果是测试网，确保URLs正确设置（在创建后手动设置）
+        if self.testnet:
+            testnet_base = "https://testnet.binancefuture.com"
+            # 设置所有API端点URL
+            self.exchange.urls["api"] = {
+                "public": testnet_base,
+                "private": testnet_base,
+                "fapiPublic": testnet_base,  # 合约公开端点
+                "fapiPrivate": testnet_base,  # 合约私有端点
+                "fapiPrivateV3": testnet_base,  # 合约私有端点V3
+            }
+            # 确保baseURLs也正确
+            if hasattr(self.exchange, "base_urls"):
+                self.exchange.base_urls["api"] = {
+                    "public": testnet_base,
+                    "private": testnet_base,
+                    "fapiPublic": testnet_base,
+                    "fapiPrivate": testnet_base,
+                    "fapiPrivateV3": testnet_base,
+                }
+            # 禁用load_markets时的货币配置获取（测试网不支持sapi端点）
+            self.exchange.options["fetchCurrencies"] = False
+
+            # Monkey patch sign方法，允许测试网使用fapiPrivate端点
+            original_sign = self.exchange.sign
+
+            def patched_sign(
+                path, api="public", method="GET", params=None, headers=None, body=None
+            ):
+                """测试网版本的sign方法，允许fapiPrivate和fapiPrivateV3端点"""
+                # 如果是fapiPrivate相关端点，确保URL正确
+                if api in ["fapiPrivate", "fapiPrivateV3"]:
+                    # 确保URLs中有对应的端点
+                    if api not in self.exchange.urls.get("api", {}):
+                        self.exchange.urls["api"][api] = testnet_base
+                return original_sign(path, api, method, params, headers, body)
+
+            self.exchange.sign = patched_sign
+
+            # 禁用margin相关调用（测试网不支持sapi端点）
+            # 通过monkey patch禁用sapiGetMarginAllPairs调用
+            original_fetch_markets = self.exchange.fetch_markets
+
+            def patched_fetch_markets(params=None):
+                """测试网版本的fetch_markets，禁用sapi调用"""
+                # 直接调用测试网API获取exchangeInfo
+                try:
+                    import requests
+
+                    url = "https://testnet.binancefuture.com/fapi/v1/exchangeInfo"
+                    # 如果使用代理，配置代理
+                    proxies = None
+                    if self.use_proxy:
+                        proxy_url = (
+                            f"{self.proxy_type}://{self.proxy_host}:{self.proxy_port}"
+                        )
+                        proxies = {
+                            "http": proxy_url,
+                            "https": proxy_url,
+                        }
+
+                    resp = requests.get(url, timeout=30, proxies=proxies)
+                    if resp.status_code == 200:
+                        response = resp.json()
+                        # 解析markets - ccxt的parse_markets期望接收整个response字典
+                        # 需要将response包装成ccxt期望的格式
+                        markets = []
+                        for symbol_info in response.get("symbols", []):
+                            # 只处理永续合约
+                            if symbol_info.get("contractType") == "PERPETUAL":
+                                market = self.exchange.parse_market(symbol_info)
+                                if market:
+                                    markets.append(market)
+                        return markets
+                    else:
+                        raise Exception(f"API请求失败: {resp.status_code}, {resp.text}")
+                except Exception as e:
+                    logger.error(f"测试网fetch_markets失败: {e}")
+                    raise
+
+            # 替换fetch_markets方法
+            self.exchange.fetch_markets = patched_fetch_markets
+
+        # 预加载markets（避免每次下单都加载，提高性能）
+        try:
+            logger.info("正在加载markets信息...")
+            self.exchange.load_markets()
+            logger.info("✅ Markets信息已加载")
+        except Exception as e:
+            logger.warning(f"⚠️ 预加载markets失败，将在下单时自动加载: {e}")
+
+        # 如果是测试网，确保URLs正确设置（在创建后手动设置）
+        if self.testnet:
+            self.exchange.urls["api"] = {
+                "public": "https://testnet.binancefuture.com",
+                "private": "https://testnet.binancefuture.com",
+            }
+            # 确保baseURLs也正确
+            if hasattr(self.exchange, "base_urls"):
+                self.exchange.base_urls["api"] = {
+                    "public": "https://testnet.binancefuture.com",
+                    "private": "https://testnet.binancefuture.com",
+                }
+
     # ========== 账户信息 ==========
-    
+
     def get_account_balance(self) -> Dict[str, Any]:
         """
         获取账户余额
-        
+
         Returns:
             账户余额信息
         """
@@ -74,11 +245,11 @@ class BinanceAPI:
         except Exception as e:
             logger.error(f"获取账户余额失败: {e}")
             raise
-    
+
     def get_account_info(self) -> Dict[str, Any]:
         """
         获取账户信息
-        
+
         Returns:
             账户信息
         """
@@ -86,84 +257,88 @@ class BinanceAPI:
             # ccxt的fetch_balance已经包含账户信息
             balance = self.get_account_balance()
             return {
-                'total_balance': balance.get('USDT', {}).get('total', 0),
-                'free_balance': balance.get('USDT', {}).get('free', 0),
-                'used_balance': balance.get('USDT', {}).get('used', 0),
-                'info': balance.get('info', {})
+                "total_balance": balance.get("USDT", {}).get("total", 0),
+                "free_balance": balance.get("USDT", {}).get("free", 0),
+                "used_balance": balance.get("USDT", {}).get("used", 0),
+                "info": balance.get("info", {}),
             }
         except Exception as e:
             logger.error(f"获取账户信息失败: {e}")
             raise
-    
+
     def get_margin_info(self) -> Dict[str, Any]:
         """
         获取保证金信息
-        
+
         Returns:
             保证金信息
         """
         try:
             balance = self.get_account_balance()
             return {
-                'total_margin': balance.get('USDT', {}).get('total', 0),
-                'available_margin': balance.get('USDT', {}).get('free', 0),
-                'used_margin': balance.get('USDT', {}).get('used', 0),
-                'margin_ratio': 0.0  # 需要从info中计算
+                "total_margin": balance.get("USDT", {}).get("total", 0),
+                "available_margin": balance.get("USDT", {}).get("free", 0),
+                "used_margin": balance.get("USDT", {}).get("used", 0),
+                "margin_ratio": 0.0,  # 需要从info中计算
             }
         except Exception as e:
             logger.error(f"获取保证金信息失败: {e}")
             raise
-    
+
     # ========== 仓位查询 ==========
-    
+
     def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         获取仓位信息
-        
+
         Args:
             symbol: 交易对符号，None表示获取所有仓位
-        
+
         Returns:
             仓位列表
         """
         try:
-            positions = self.exchange.fetch_positions(symbols=[symbol] if symbol else None)
+            positions = self.exchange.fetch_positions(
+                symbols=[symbol] if symbol else None
+            )
             result = []
             for pos in positions:
-                if pos['contracts'] != 0:  # 只返回有仓位的
-                    result.append({
-                        'symbol': pos['symbol'],
-                        'side': pos['side'],
-                        'size': pos['contracts'],
-                        'entry_price': pos['entryPrice'],
-                        'mark_price': pos['markPrice'],
-                        'unrealized_pnl': pos['unrealizedPnl'],
-                        'percentage': pos['percentage'],
-                        'leverage': pos.get('leverage', 1),
-                        'notional': pos.get('notional', 0),
-                        'margin_mode': pos.get('marginMode', 'isolated'),
-                        'liquidation_price': pos.get('liquidationPrice')
-                    })
+                if pos["contracts"] != 0:  # 只返回有仓位的
+                    result.append(
+                        {
+                            "symbol": pos["symbol"],
+                            "side": pos["side"],
+                            "size": pos["contracts"],
+                            "entry_price": pos["entryPrice"],
+                            "mark_price": pos["markPrice"],
+                            "unrealized_pnl": pos["unrealizedPnl"],
+                            "percentage": pos["percentage"],
+                            "leverage": pos.get("leverage", 1),
+                            "notional": pos.get("notional", 0),
+                            "margin_mode": pos.get("marginMode", "isolated"),
+                            "liquidation_price": pos.get("liquidationPrice"),
+                        }
+                    )
             return result
         except Exception as e:
             logger.error(f"获取仓位信息失败: {e}")
             raise
-    
+
     def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         获取指定交易对的仓位
-        
+
         Args:
             symbol: 交易对符号
-        
+
         Returns:
             仓位信息，如果没有仓位返回None
         """
         positions = self.get_positions(symbol)
         return positions[0] if positions else None
-    
+
     # ========== 订单操作 ==========
-    
+
     def place_order(
         self,
         symbol: str,
@@ -173,11 +348,11 @@ class BinanceAPI:
         price: Optional[float] = None,
         stop_price: Optional[float] = None,
         reduce_only: bool = False,
-        close_position: bool = False
+        close_position: bool = False,
     ) -> Dict[str, Any]:
         """
         下单
-        
+
         Args:
             symbol: 交易对符号
             side: 订单方向
@@ -187,21 +362,21 @@ class BinanceAPI:
             stop_price: 止损价格（止损单需要）
             reduce_only: 是否只减仓
             close_position: 是否平仓
-        
+
         Returns:
             订单信息
         """
         try:
             # 转换订单类型
-            ccxt_side = 'buy' if side == OrderSide.BUY else 'sell'
+            ccxt_side = "buy" if side == OrderSide.BUY else "sell"
             ccxt_type = self._convert_order_type(order_type)
-            
+
             params = {}
             if reduce_only:
-                params['reduceOnly'] = True
+                params["reduceOnly"] = True
             if close_position:
-                params['closePosition'] = True
-            
+                params["closePosition"] = True
+
             if order_type == OrderType.MARKET:
                 order = self.exchange.create_market_order(
                     symbol, ccxt_side, quantity, params=params
@@ -215,65 +390,65 @@ class BinanceAPI:
             elif order_type in [OrderType.STOP, OrderType.STOP_MARKET]:
                 if stop_price is None:
                     raise ValueError("止损单需要指定止损价格")
-                params['stopPrice'] = stop_price
+                params["stopPrice"] = stop_price
                 if order_type == OrderType.STOP_MARKET:
-                    params['type'] = 'STOP_MARKET'
+                    params["type"] = "STOP_MARKET"
                 order = self.exchange.create_order(
                     symbol, ccxt_type, ccxt_side, quantity, price, params=params
                 )
             elif order_type in [OrderType.TAKE_PROFIT, OrderType.TAKE_PROFIT_MARKET]:
                 if stop_price is None:
                     raise ValueError("止盈单需要指定止盈价格")
-                params['stopPrice'] = stop_price
+                params["stopPrice"] = stop_price
                 if order_type == OrderType.TAKE_PROFIT_MARKET:
-                    params['type'] = 'TAKE_PROFIT_MARKET'
+                    params["type"] = "TAKE_PROFIT_MARKET"
                 order = self.exchange.create_order(
                     symbol, ccxt_type, ccxt_side, quantity, price, params=params
                 )
             else:
                 raise ValueError(f"不支持的订单类型: {order_type}")
-            
+
             return {
-                'order_id': order['id'],
-                'symbol': order['symbol'],
-                'side': order['side'],
-                'type': order['type'],
-                'status': order['status'],
-                'quantity': order['amount'],
-                'price': order.get('price'),
-                'filled': order.get('filled', 0),
-                'remaining': order.get('remaining', 0),
-                'info': order.get('info', {})
+                "order_id": order["id"],
+                "symbol": order["symbol"],
+                "side": order["side"],
+                "type": order["type"],
+                "status": order["status"],
+                "quantity": order["amount"],
+                "price": order.get("price"),
+                "filled": order.get("filled", 0),
+                "remaining": order.get("remaining", 0),
+                "info": order.get("info", {}),
             }
         except Exception as e:
             logger.error(f"下单失败: {e}")
             raise
-    
+
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         """
         撤单
-        
+
         Args:
             order_id: 订单ID
             symbol: 交易对符号
-        
+
         Returns:
             是否成功
         """
         try:
             result = self.exchange.cancel_order(order_id, symbol)
-            return result.get('status') == 'canceled'
+            return result.get("status") == "canceled"
         except Exception as e:
             logger.error(f"撤单失败: {e}")
             raise
-    
+
     def cancel_all_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         撤销所有订单
-        
+
         Args:
             symbol: 交易对符号，None表示撤销所有交易对的订单
-        
+
         Returns:
             撤销的订单列表
         """
@@ -286,54 +461,56 @@ class BinanceAPI:
                 result = []
                 for order in open_orders:
                     try:
-                        canceled = self.cancel_order(order['id'], order['symbol'])
+                        canceled = self.cancel_order(order["order_id"], order["symbol"])
                         if canceled:
                             result.append(order)
                     except Exception as e:
-                        logger.warning(f"撤销订单 {order['id']} 失败: {e}")
+                        logger.warning(
+                            f"撤销订单 {order.get('order_id', 'unknown')} 失败: {e}"
+                        )
             return result
         except Exception as e:
             logger.error(f"撤销所有订单失败: {e}")
             raise
-    
+
     def get_order(self, order_id: str, symbol: str) -> Optional[Dict[str, Any]]:
         """
         查询订单
-        
+
         Args:
             order_id: 订单ID
             symbol: 交易对符号
-        
+
         Returns:
             订单信息
         """
         try:
             order = self.exchange.fetch_order(order_id, symbol)
             return {
-                'order_id': order['id'],
-                'symbol': order['symbol'],
-                'side': order['side'],
-                'type': order['type'],
-                'status': order['status'],
-                'quantity': order['amount'],
-                'price': order.get('price'),
-                'filled': order.get('filled', 0),
-                'remaining': order.get('remaining', 0),
-                'average_price': order.get('average'),
-                'created_at': order.get('timestamp'),
-                'info': order.get('info', {})
+                "order_id": order["id"],
+                "symbol": order["symbol"],
+                "side": order["side"],
+                "type": order["type"],
+                "status": order["status"],
+                "quantity": order["amount"],
+                "price": order.get("price"),
+                "filled": order.get("filled", 0),
+                "remaining": order.get("remaining", 0),
+                "average_price": order.get("average"),
+                "created_at": order.get("timestamp"),
+                "info": order.get("info", {}),
             }
         except Exception as e:
             logger.error(f"查询订单失败: {e}")
             return None
-    
+
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         获取未完成订单
-        
+
         Args:
             symbol: 交易对符号，None表示获取所有交易对的订单
-        
+
         Returns:
             订单列表
         """
@@ -341,45 +518,47 @@ class BinanceAPI:
             orders = self.exchange.fetch_open_orders(symbol)
             result = []
             for order in orders:
-                result.append({
-                    'order_id': order['id'],
-                    'symbol': order['symbol'],
-                    'side': order['side'],
-                    'type': order['type'],
-                    'status': order['status'],
-                    'quantity': order['amount'],
-                    'price': order.get('price'),
-                    'filled': order.get('filled', 0),
-                    'remaining': order.get('remaining', 0),
-                    'created_at': order.get('timestamp'),
-                    'info': order.get('info', {})
-                })
+                result.append(
+                    {
+                        "order_id": order["id"],
+                        "symbol": order["symbol"],
+                        "side": order["side"],
+                        "type": order["type"],
+                        "status": order["status"],
+                        "quantity": order["amount"],
+                        "price": order.get("price"),
+                        "filled": order.get("filled", 0),
+                        "remaining": order.get("remaining", 0),
+                        "created_at": order.get("timestamp"),
+                        "info": order.get("info", {}),
+                    }
+                )
             return result
         except Exception as e:
             logger.error(f"获取未完成订单失败: {e}")
             raise
-    
+
     def _convert_order_type(self, order_type: OrderType) -> str:
         """转换订单类型为ccxt格式"""
         mapping = {
-            OrderType.MARKET: 'market',
-            OrderType.LIMIT: 'limit',
-            OrderType.STOP: 'stop',
-            OrderType.STOP_MARKET: 'stop_market',
-            OrderType.TAKE_PROFIT: 'take_profit',
-            OrderType.TAKE_PROFIT_MARKET: 'take_profit_market'
+            OrderType.MARKET: "market",
+            OrderType.LIMIT: "limit",
+            OrderType.STOP: "stop",
+            OrderType.STOP_MARKET: "stop_market",
+            OrderType.TAKE_PROFIT: "take_profit",
+            OrderType.TAKE_PROFIT_MARKET: "take_profit_market",
         }
-        return mapping.get(order_type, 'market')
-    
+        return mapping.get(order_type, "market")
+
     # ========== 交易对信息 ==========
-    
+
     def get_symbol_info(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         获取交易对信息
-        
+
         Args:
             symbol: 交易对符号
-        
+
         Returns:
             交易对信息
         """
@@ -388,34 +567,34 @@ class BinanceAPI:
             if symbol in markets:
                 market = markets[symbol]
                 return {
-                    'symbol': symbol,
-                    'base': market['base'],
-                    'quote': market['quote'],
-                    'precision': {
-                        'amount': market['precision']['amount'],
-                        'price': market['precision']['price']
+                    "symbol": symbol,
+                    "base": market["base"],
+                    "quote": market["quote"],
+                    "precision": {
+                        "amount": market["precision"]["amount"],
+                        "price": market["precision"]["price"],
                     },
-                    'limits': {
-                        'amount': market['limits']['amount'],
-                        'price': market['limits']['price'],
-                        'cost': market['limits']['cost']
+                    "limits": {
+                        "amount": market["limits"]["amount"],
+                        "price": market["limits"]["price"],
+                        "cost": market["limits"]["cost"],
                     },
-                    'active': market.get('active', True),
-                    'contract': market.get('contract', False),
-                    'info': market.get('info', {})
+                    "active": market.get("active", True),
+                    "contract": market.get("contract", False),
+                    "info": market.get("info", {}),
                 }
             return None
         except Exception as e:
             logger.error(f"获取交易对信息失败: {e}")
             return None
-    
+
     def get_leverage(self, symbol: str) -> Optional[int]:
         """
         获取杠杆倍数
-        
+
         Args:
             symbol: 交易对符号
-        
+
         Returns:
             杠杆倍数
         """
@@ -423,20 +602,20 @@ class BinanceAPI:
             # ccxt可能不支持直接获取杠杆，需要从仓位信息中获取
             position = self.get_position(symbol)
             if position:
-                return position.get('leverage', 1)
+                return position.get("leverage", 1)
             return None
         except Exception as e:
             logger.error(f"获取杠杆倍数失败: {e}")
             return None
-    
+
     def set_leverage(self, symbol: str, leverage: int) -> bool:
         """
         设置杠杆倍数
-        
+
         Args:
             symbol: 交易对符号
             leverage: 杠杆倍数
-        
+
         Returns:
             是否成功
         """
@@ -446,3 +625,33 @@ class BinanceAPI:
         except Exception as e:
             logger.error(f"设置杠杆倍数失败: {e}")
             return False
+
+    def get_ticker_price(self, symbol: str) -> Optional[float]:
+        """
+        获取当前市场价格
+
+        Args:
+            symbol: 交易对符号
+
+        Returns:
+            当前价格（last price），如果获取失败返回None
+        """
+        try:
+            import requests
+
+            # 直接调用Binance API获取价格（避免ccxt的load_markets问题）
+            if self.testnet:
+                url = f"https://testnet.binancefuture.com/fapi/v1/ticker/price?symbol={symbol}"
+            else:
+                url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}"
+
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return float(data.get("price", 0))
+            else:
+                logger.error(f"API请求失败: {response.status_code}, {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"获取市场价格失败: {e}")
+            return None

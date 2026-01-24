@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -47,6 +47,7 @@ def compute_slot_size_from_risk(
     stop_atr: float,
     max_leverage: float = 3.0,
     min_qty: float = 0.0,
+    reflexivity_features: Optional[Dict[str, Any]] = None,
 ) -> SlotSizingResult:
     """
     Map per-slot risk budget (fraction of equity) to a contract quantity.
@@ -57,6 +58,11 @@ def compute_slot_size_from_risk(
     - cap notional by max_leverage: notional <= equity * max_leverage
 
     If stop_return_frac is 0 (bad inputs), returns qty=0.
+
+    Args:
+        reflexivity_features: Optional dict containing reflexivity risk features
+            (ofci_p, shd_p, lfi_p). If provided, applies position multiplier
+            based on reflexivity risk. Hard veto (SHD > 0.9) returns qty=0.
     """
     eq = float(max(0.0, equity_usd))
     rf = float(_clamp(risk_frac, 0.0, 1.0))
@@ -81,6 +87,36 @@ def compute_slot_size_from_risk(
     if float(min_qty) > 0.0:
         qty = float(max(float(min_qty), qty))
         notional = float(qty * px)
+
+    # Apply reflexivity position multiplier (if provided)
+    if reflexivity_features is not None:
+        try:
+            from time_series_model.nnmultihead.gate_reflexivity_risk import (
+                gate_reflexivity_risk,
+            )
+
+            reflexivity_dict = {
+                "ofci_p": reflexivity_features.get("ofci_pct", 0.0),
+                "shd_p": reflexivity_features.get("shd_pct", 0.0),
+                "lfi_p": reflexivity_features.get("lfi_pct", 0.0),
+            }
+            allow, multiplier, reason = gate_reflexivity_risk(reflexivity_dict)
+            if not allow:
+                # Hard veto: return 0 position
+                return SlotSizingResult(
+                    qty=0.0, notional_usd=0.0, stop_return_frac=float(stop_ret)
+                )
+            # Soft veto: apply multiplier to notional
+            notional = notional * multiplier
+            qty = float(notional / px)
+            # Re-apply min_qty constraint after multiplier
+            if float(min_qty) > 0.0:
+                qty = float(max(float(min_qty), qty))
+                notional = float(qty * px)
+        except Exception:
+            # If reflexivity check fails, continue with original notional (fail-safe)
+            pass
+
     return SlotSizingResult(
         qty=qty, notional_usd=notional, stop_return_frac=float(stop_ret)
     )

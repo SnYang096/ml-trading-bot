@@ -375,7 +375,7 @@ features:
   jump_risk_pct_f:
     module: baseline
     compute_func: compute_jump_risk_pct_from_series
-    dependencies: []
+    dependencies: [atr_f]
     required_columns:
     - close
     - atr
@@ -397,7 +397,7 @@ features:
   path_length_pct_f:
     module: baseline
     compute_func: compute_path_length_pct_from_series
-    dependencies: []
+    dependencies: [atr_f]
     required_columns:
     - close
     - atr
@@ -419,7 +419,7 @@ features:
   path_efficiency_pct_f:
     module: baseline
     compute_func: compute_path_efficiency_pct_from_series
-    dependencies: []
+    dependencies: [atr_f]
     required_columns:
     - close
     - atr
@@ -1875,7 +1875,7 @@ features:
   volume_ratio_pct_f:
     module: baseline
     compute_func: compute_volume_ratio_pct_from_series
-    dependencies: []
+    dependencies: [volume_ratio_f]
     required_columns:
     - volume_ratio
     output_columns:
@@ -1915,8 +1915,7 @@ features:
     module: reflexivity
     compute_func: compute_ofci_from_trades
     dependencies: []
-    required_columns:
-    - side
+    required_columns: []
     output_columns:
     - ofci
     category: reflexivity
@@ -1924,8 +1923,8 @@ features:
     pass_full_df: false
     compute_params:
       window: 100
-    column_mappings:
-      side: side
+      ticks_dir: data/parquet_data
+      lookback_minutes: 60
   ofci_pct_f:
     module: reflexivity
     compute_func: compute_ofci_pct_from_series

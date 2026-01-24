@@ -1,7 +1,11 @@
 # ML Trading Bot（中文）
- **Alpha不是收集的，是雕刻的。**
- 
-本仓库包含因子研究、模型训练、回测与数据管道的生产就绪组件。**本 README 保持尽量短**：只提供“命令 + 推荐流程 + 入口文档链接”。研究解释型内容已迁移到独立文档。
+
+**English**: [README.md](README.md)  
+**文档索引**: [docs/README.md](docs/README.md)
+
+**Alpha不是收集的，是雕刻的。**
+
+本仓库包含因子研究、模型训练、回测与数据管道的生产就绪组件。**本 README 保持尽量短**：只提供"命令 + 推荐流程 + 入口文档链接"。研究解释型内容已迁移到独立文档。
 
 ---
 
@@ -98,7 +102,7 @@ mlbot data download-funding-rate \
 ## 推荐工作流（MVP：最小闭环）
 
 > README 只保留"可复制的最小命令"。详细解释与扩展流程见：
-> - `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`
+> - `docs/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`
 > - `docs/guides/CROSS_SECTIONAL_PIPELINE_CN.md`（CS：截面因子评估→筛选→回测→训练）
 > - `docs/guides/CROSS_SECTIONAL_WORKFLOW_END2END_CN.md`（CS：端到端一张图 + 回测审计与产物）
 > - `docs/guides/CS_VS_TS_PIPELINE_CN.md`（CS vs TS：两套 pipeline 差异与指标取舍）
@@ -188,7 +192,7 @@ mlbot train final \
 
 ### 4) （可选）rolling / Nautilus
 
-- rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
+- rolling：用于**跨月稳定性验证**与**上线后监控**（见 `docs/guides/tree/DEPLOYMENT_MVP_WORKFLOW_CN.md`）
   - 说明：`poolb-semantic-search` 不是 rolling；它是在**单个训练窗 + 单个测试窗**（time split + 多 seed）上做特征搜索/收敛。
 - Nautilus：用于“回测=实盘一致性验证”（事件驱动回放）（见 `docs/live_stream/reference/Nautilus_Trader_集成指南.md`、`docs/live_stream/07_与NautilusTrader对齐清单.md`）
 
@@ -332,6 +336,36 @@ mlbot nnmultihead pipeline-3action-e2e --no-docker \
 
 > **详细工作流文档**: 完整的命令序列、Gate 过滤说明、ET/FR 交易缺失原因分析等，见 [`docs/workflow/PIPELINE_WORKFLOW.md`](docs/workflow/PIPELINE_WORKFLOW.md)
 
+#### 完整Pipeline工作流（固定流程）
+
+**推荐使用一键脚本**（见 `scripts/run_full_pipeline.py`）：
+
+```bash
+python scripts/run_full_pipeline.py \
+  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --model results/nnmultihead/.../model.pt \
+  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --run-id pipeline_2024_reflexivity_validation
+```
+
+**手动执行步骤**（每一步都有日志输出，支持断点续传）：
+
+1. **FeatureStore构建**（如果需要新特征）
+2. **模型预测** → `preds/`
+3. **Regime分类** → `physics_regime.parquet`
+4. **构建Execution日志** → `logs_execution.parquet`
+5. **应用Gate过滤** → `logs_execution_gated.parquet`
+6. **添加反身性特征**（可选）→ `exec_logs/features/`
+7. **构建Stage Logs** → `exec_logs/{preds,router,gate,execution,returns,features}/`
+8. **聚合Canonical Log** → `execution_log.jsonl`
+9. **生成E2E KPI报告** → `e2e_kpi_report.md`
+
+详细命令和说明见 [`docs/workflow/PIPELINE_WORKFLOW.md`](docs/workflow/PIPELINE_WORKFLOW.md)
+
 ### 3.1) Router 阈值：用“平坦高原”协议做稳健调参（推荐）
 
 > 目的：避免“找尖峰”导致的炼丹，优先选多窗口/bootstrapped 都稳的阈值组合。  
@@ -462,9 +496,11 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 
 ## 文档入口（建议先读）
 
+> **📚 统一文档索引**: [docs/README.md](docs/README.md) - 推荐从这里开始浏览所有文档
+
 ### 核心工作流文档
 
-- **上线 MVP 闭环（最重要，先看这个）**：`docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md`
+- **上线 MVP 闭环（最重要，先看这个）**：[docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md](docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md)
   - Pool‑B + 语义组搜索 → 6 个月 holdout 验收 → 训练最终上线模型
   - rolling 与 Nautilus 的职责边界（OOS vs 实盘一致性）
 
@@ -485,7 +521,8 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 
 ### 架构文档
 
-- **系统架构图（已更新到当前 CLI/工作流）**：`docs/ARCHITECTURE.md`
+- **文档索引**：[docs/README.md](docs/README.md) - 统一文档导航入口
+- **系统架构图（已更新到当前 CLI/工作流）**：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 - **特征列表与归一化状态**：`docs/architecture/FEATURE_CATALOG.md`
   - 全部 208 个特征节点的归一化状态

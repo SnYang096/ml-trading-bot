@@ -1,5 +1,8 @@
 # ML Trading Bot
 
+**中文版**: [README_CN.md](README_CN.md)  
+**文档索引**: [docs/README.md](docs/README.md)
+
 This repository hosts the production-ready components for the factor research, dimensionality reduction, model training, and live-trading backtesting stack. The code under `src/time_series_model/` contains the reusable Python package; the `scripts/` directory now only exposes a minimal set of command-line entry points that wrap the package APIs.
 
 ## Quick Start
@@ -860,9 +863,10 @@ mlbot cross-section workflow --no-docker \
 
 ## Documentation
 
-- **`docs/workflow_research_to_production.md`** - Complete workflow documentation
-- **`docs/simplified_workflow.md`** - Simplified workflow guide
-- **`docs/strategies/SR_REVERSAL_EXPERIMENT_PROTOCOL.md`** - SR Reversal experiment protocol (deterministic runs + multi-seed stats + mainline selection)
+- **[文档索引](docs/README.md)** - 统一文档导航入口（推荐从这里开始）
+- **[系统架构](docs/ARCHITECTURE.md)** - 系统架构（统一版）
+- **[工作流文档](docs/workflow/PIPELINE_WORKFLOW.md)** - 完整工作流命令序列
+- **[上线MVP闭环](docs/guides/DEPLOYMENT_MVP_WORKFLOW_CN.md)** - MVP工作流指南（中文）
 
 ## Recent Feature Updates
 

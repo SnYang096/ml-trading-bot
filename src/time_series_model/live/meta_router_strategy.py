@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import pandas as pd
 from pathlib import Path
@@ -97,6 +97,11 @@ from src.time_series_model.portfolio.pcm import (
     SymbolDecision as PCMSymbolDecision,
     compute_pcm_budget_for_decisions,
 )
+from src.time_series_model.execution.et_hedge import (
+    compute_et_position,
+    ETPositionPair,
+    compute_et_risk_score,
+)
 
 
 def _infer_regime_placeholder() -> str:
@@ -162,6 +167,15 @@ if NAUTILUS_AVAILABLE:
             self._execution_rules = None
             self._mode_hist = deque(maxlen=200)
             self._exec_stage_writers: dict[str, ExecutionStageLogWriter] = {}
+            # ET pairing tracking
+            from time_series_model.execution.et_hedge import ETPositionPair
+
+            self._et_position_pairs: Dict[str, ETPositionPair] = (
+                {}
+            )  # et_position_id -> pair
+            self._active_tc_te_positions: Dict[str, str] = (
+                {}
+            )  # position_id -> archetype (TC/TE)
 
         def on_start(self) -> None:
             self._cfg = load_meta_router_live_config(self.live_config_path)
@@ -264,6 +278,377 @@ if NAUTILUS_AVAILABLE:
             except Exception:
                 return
 
+        def on_position_closed(self, position) -> None:
+            """Handle position closed event - cleanup tracking"""
+            try:
+                position_id = str(position.id) if hasattr(position, "id") else ""
+                if position_id in self._active_tc_te_positions:
+                    archetype = self._active_tc_te_positions.pop(position_id)
+                    # If TC/TE position closed, check if we need to update ET hedge
+                    # This will be handled in the next signal check
+                    self.log.debug(
+                        f"Position closed: {position_id} (archetype: {archetype})"
+                    )
+            except Exception as e:
+                self.log.warning(f"Error handling position closed: {e}")
+
+        def _get_position_by_archetype(self, archetype: str) -> float:
+            """
+            Get current position size for a given archetype (TC, TE, etc.)
+
+            This method attempts to get positions from the strategy's cache
+            and filter by archetype. If positions are not available or archetype
+            cannot be determined, returns 0.0.
+
+            Args:
+                archetype: Archetype name (TC, TE, etc.)
+
+            Returns:
+                Position size (positive for long, negative for short, 0.0 if not found)
+            """
+            try:
+                if not hasattr(self, "cache") or self.cache is None:
+                    return 0.0
+
+                # Try to get position from cache
+                # In Nautilus Trader, positions are accessed via cache.positions()
+                positions = self.cache.positions(instrument_id=self.instrument_id)
+                if not positions:
+                    return 0.0
+
+                # Sum positions that match the archetype
+                # Note: We need to identify positions by archetype. This could be done via:
+                # 1. Position tags (if we store archetype in tags)
+                # 2. Position metadata
+                # 3. Tracking positions ourselves
+                # For now, we'll use a simple heuristic: check if position has matching tags
+                total_position = 0.0
+                archetype_upper = str(archetype).upper()
+
+                for position in positions:
+                    # Check position tags for archetype match
+                    tags = getattr(position, "tags", []) or []
+                    position_strategy = None
+                    for tag in tags:
+                        if isinstance(tag, str) and tag.upper() == archetype_upper:
+                            position_strategy = tag.upper()
+                            break
+                        # Also check if tag contains archetype
+                        if isinstance(tag, str) and archetype_upper in tag.upper():
+                            position_strategy = archetype_upper
+                            break
+
+                    # If we found a matching archetype, add to total
+                    if position_strategy == archetype_upper:
+                        # Get position size (signed: positive for long, negative for short)
+                        position_qty = float(position.quantity.as_double())
+                        if position.is_short():
+                            position_qty = -position_qty
+                        total_position += position_qty
+
+                return total_position
+            except Exception:
+                # If any error occurs, return 0 (fail-safe)
+                return 0.0
+
+        def _get_all_active_positions_by_archetype(
+            self, archetype: str
+        ) -> List[Dict[str, Any]]:
+            """
+            Get all active positions for a given archetype (TC, TE, etc.)
+
+            Returns list of dicts with 'position_id' and 'size' keys.
+            """
+            positions = []
+            try:
+                if not hasattr(self, "cache") or self.cache is None:
+                    return positions
+
+                cache_positions = self.cache.positions(instrument_id=self.instrument_id)
+                if not cache_positions:
+                    return positions
+
+                archetype_upper = str(archetype).upper()
+
+                for position in cache_positions:
+                    # Check position tags for archetype match
+                    tags = getattr(position, "tags", []) or []
+                    position_strategy = None
+                    for tag in tags:
+                        if isinstance(tag, str) and tag.upper() == archetype_upper:
+                            position_strategy = tag.upper()
+                            break
+                        if isinstance(tag, str) and archetype_upper in tag.upper():
+                            position_strategy = archetype_upper
+                            break
+
+                    if position_strategy == archetype_upper:
+                        position_qty = float(position.quantity.as_double())
+                        if position.is_short():
+                            position_qty = -position_qty
+                        positions.append(
+                            {
+                                "position_id": str(position.id),
+                                "size": position_qty,
+                            }
+                        )
+            except Exception:
+                pass
+            return positions
+
+        def _get_active_et_position(self) -> Optional[ETPositionPair]:
+            """Get the currently active ET hedge position pair"""
+            # Return the most recent active ET position
+            if not self._et_position_pairs:
+                return None
+            # Get pairs that are still in active tracking
+            active_pairs = [
+                pair
+                for pair in self._et_position_pairs.values()
+                if pair.et_position_id in self._active_tc_te_positions
+            ]
+            if not active_pairs:
+                # If no active ET in tracking, return the most recent one
+                return max(
+                    self._et_position_pairs.values(), key=lambda p: p.created_at_ns
+                )
+            return max(active_pairs, key=lambda p: p.created_at_ns)
+
+        def _check_and_update_et_hedge(
+            self,
+            feats: Dict[str, Any],
+            now_ns: int,
+            regime: str,
+            evidence: Optional[Dict[str, bool]],
+        ) -> None:
+            """Check and update ET hedge (independent of TC/TE order submission)"""
+            # 1. Get all active TC/TE positions
+            tc_positions = self._get_all_active_positions_by_archetype("TC")
+            te_positions = self._get_all_active_positions_by_archetype("TE")
+
+            # 2. Calculate total directional exposure
+            tc_total = sum(p["size"] for p in tc_positions)
+            te_total = sum(p["size"] for p in te_positions)
+
+            # 3. If no TC/TE positions, close all ET hedges
+            if len(tc_positions) == 0 and len(te_positions) == 0:
+                self._close_all_et_hedges(now_ns)
+                return
+
+            # 4. Get reflexivity features for ET calculation
+            ofci_p = float(feats.get("ofci_pct", 0.0))
+            shd_p = float(feats.get("shd_pct", 0.0))
+            vol_spike_p = float(feats.get("atr_percentile", 0.0))
+
+            # 5. Calculate ET position
+            et_position = compute_et_position(
+                tc_position=tc_total,
+                te_position=te_total,
+                ofci_p=ofci_p,
+                shd_p=shd_p,
+                vol_spike_p=vol_spike_p,
+                k_max=0.8,
+            )
+
+            # 6. Check if we need to create/update/close ET hedge
+            existing_et = self._get_active_et_position()
+            if abs(et_position) > 1e-6:
+                if existing_et is None:
+                    # Create new ET hedge
+                    self._create_et_hedge(
+                        et_position=et_position,
+                        tc_positions=tc_positions,
+                        te_positions=te_positions,
+                        feats=feats,
+                        now_ns=now_ns,
+                        regime=regime,
+                        evidence=evidence,
+                    )
+                else:
+                    # Update existing ET hedge if size changed significantly
+                    self._update_et_hedge_if_needed(
+                        existing_et=existing_et,
+                        new_et_position=et_position,
+                        tc_positions=tc_positions,
+                        te_positions=te_positions,
+                        feats=feats,
+                        now_ns=now_ns,
+                        regime=regime,
+                        evidence=evidence,
+                    )
+            else:
+                # Close ET hedge
+                if existing_et is not None:
+                    self._close_et_hedge(existing_et.et_position_id, now_ns)
+
+        def _create_et_hedge(
+            self,
+            et_position: float,
+            tc_positions: List[Dict[str, Any]],
+            te_positions: List[Dict[str, Any]],
+            feats: Dict[str, Any],
+            now_ns: int,
+            regime: str,
+            evidence: Optional[Dict[str, bool]],
+        ) -> None:
+            """Create new ET hedge order and establish pairing relationship"""
+            try:
+                # Calculate metrics
+                tc_total = sum(p["size"] for p in tc_positions)
+                te_total = sum(p["size"] for p in te_positions)
+                directional_exposure = abs(tc_total) + abs(te_total)
+
+                ofci_p = float(feats.get("ofci_pct", 0.0))
+                shd_p = float(feats.get("shd_pct", 0.0))
+                vol_spike_p = float(feats.get("atr_percentile", 0.0))
+                risk_score = compute_et_risk_score(ofci_p, shd_p, vol_spike_p)
+
+                # Create ET order
+                et_qty = self.instrument.make_qty(abs(et_position))
+                et_side = OrderSide.SELL if et_position < 0 else OrderSide.BUY
+                et_order = self.order_factory.market(
+                    instrument_id=self.instrument_id,
+                    order_side=et_side,
+                    quantity=et_qty,
+                )
+
+                et_position_id = f"{self.strategy_name}:ET:{int(now_ns)}"
+
+                # Submit order
+                self._xm.submit_order_guarded(
+                    order=et_order,
+                    ctx=GuardedOrderContext(
+                        position_id=et_position_id,
+                        symbol=str(self.instrument_id),
+                        mode=str(regime),
+                        execution_strategy="ET",
+                        execution_tags=[str(self.strategy_name), "ET_HEDGE"],
+                        execution_evidence=evidence,
+                    ),
+                )
+
+                # Create pairing record
+                pair = ETPositionPair(
+                    et_position_id=et_position_id,
+                    tc_position_ids=[p["position_id"] for p in tc_positions],
+                    te_position_ids=[p["position_id"] for p in te_positions],
+                    created_at_ns=now_ns,
+                    directional_exposure=directional_exposure,
+                    et_position_size=et_position,
+                    risk_score=risk_score,
+                    ofci_p=ofci_p,
+                    shd_p=shd_p,
+                    vol_spike_p=vol_spike_p,
+                )
+                self._et_position_pairs[et_position_id] = pair
+                self._active_tc_te_positions[et_position_id] = "ET"
+
+                self.log.info(
+                    f"ET hedge created: position_id={et_position_id}, "
+                    f"et_size={et_position:.4f}, tc_pos={tc_total:.4f}, te_pos={te_total:.4f}, "
+                    f"risk_score={risk_score:.3f}"
+                )
+            except Exception as e:
+                self.log.error(f"Failed to create ET hedge: {e}")
+
+        def _update_et_hedge_if_needed(
+            self,
+            existing_et: ETPositionPair,
+            new_et_position: float,
+            tc_positions: List[Dict[str, Any]],
+            te_positions: List[Dict[str, Any]],
+            feats: Dict[str, Any],
+            now_ns: int,
+            regime: str,
+            evidence: Optional[Dict[str, bool]],
+        ) -> None:
+            """Update existing ET hedge if size changed significantly (threshold: 5%)"""
+            size_diff = abs(new_et_position - existing_et.et_position_size)
+            size_threshold = abs(existing_et.et_position_size) * 0.05  # 5% threshold
+
+            if size_diff > size_threshold:
+                # Close old hedge and create new one
+                self._close_et_hedge(existing_et.et_position_id, now_ns)
+                self._create_et_hedge(
+                    et_position=new_et_position,
+                    tc_positions=tc_positions,
+                    te_positions=te_positions,
+                    feats=feats,
+                    now_ns=now_ns,
+                    regime=regime,
+                    evidence=evidence,
+                )
+
+        def _close_et_hedge(self, et_position_id: str, now_ns: int) -> None:
+            """Close specified ET hedge"""
+            try:
+                if et_position_id not in self._et_position_pairs:
+                    return
+
+                # Close position (submit opposite order to close)
+                pair = self._et_position_pairs[et_position_id]
+                close_qty = self.instrument.make_qty(abs(pair.et_position_size))
+                close_side = (
+                    OrderSide.BUY if pair.et_position_size < 0 else OrderSide.SELL
+                )
+                close_order = self.order_factory.market(
+                    instrument_id=self.instrument_id,
+                    order_side=close_side,
+                    quantity=close_qty,
+                )
+
+                self._xm.submit_order_guarded(
+                    order=close_order,
+                    ctx=GuardedOrderContext(
+                        position_id=f"{et_position_id}:CLOSE:{int(now_ns)}",
+                        symbol=str(self.instrument_id),
+                        mode="MEAN",  # ET is mean-reversion
+                        execution_strategy="ET",
+                        execution_tags=[str(self.strategy_name), "ET_HEDGE_CLOSE"],
+                        execution_evidence=None,
+                    ),
+                )
+
+                # Remove from tracking
+                self._et_position_pairs.pop(et_position_id, None)
+                self._active_tc_te_positions.pop(et_position_id, None)
+
+                self.log.info(f"ET hedge closed: position_id={et_position_id}")
+            except Exception as e:
+                self.log.error(f"Failed to close ET hedge {et_position_id}: {e}")
+
+        def _close_all_et_hedges(self, now_ns: int) -> None:
+            """Close all active ET hedges"""
+            et_position_ids = list(self._et_position_pairs.keys())
+            for et_position_id in et_position_ids:
+                self._close_et_hedge(et_position_id, now_ns)
+
+        def _cleanup_closed_positions(self) -> None:
+            """Clean up tracking for positions that are no longer active"""
+            try:
+                if not hasattr(self, "cache") or self.cache is None:
+                    return
+
+                active_position_ids = set()
+                cache_positions = self.cache.positions(instrument_id=self.instrument_id)
+                if cache_positions:
+                    for position in cache_positions:
+                        active_position_ids.add(str(position.id))
+
+                # Remove closed positions from tracking
+                closed_positions = []
+                for position_id in list(self._active_tc_te_positions.keys()):
+                    if position_id not in active_position_ids:
+                        closed_positions.append(position_id)
+
+                for position_id in closed_positions:
+                    archetype = self._active_tc_te_positions.pop(position_id, None)
+                    # If it was an ET position, also remove from pairs
+                    if archetype == "ET" and position_id in self._et_position_pairs:
+                        self._et_position_pairs.pop(position_id)
+            except Exception:
+                pass
+
         def _schedule_next_check(self) -> None:
             if self._cfg is None:
                 return
@@ -291,6 +676,9 @@ if NAUTILUS_AVAILABLE:
                 or self._feature_computer is None
             ):
                 return
+
+            # Clean up closed positions from tracking
+            self._cleanup_closed_positions()
             dl = self._cfg.decision_loop or {}
             interval_min = int(dl.get("check_interval_minutes", 10))
             orderflow_win = int(dl.get("orderflow_window_minutes", 15))
@@ -787,11 +1175,16 @@ if NAUTILUS_AVAILABLE:
             qty = self.instrument.make_qty(
                 self.trade_size * max(0.0, size_mult) * float(hd.risk_multiplier)
             )
+            # Include archetype in order tags for position tracking
+            order_tags = [str(self.strategy_name), str(arch.name)]
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=OrderSide.BUY if str(hd.side) == "BUY" else OrderSide.SELL,
                 quantity=qty,
             )
+            # Set order tags if supported
+            if hasattr(order, "tags"):
+                order.tags = order_tags
             self._xm.submit_order_guarded(
                 order=order,
                 ctx=GuardedOrderContext(
@@ -799,11 +1192,29 @@ if NAUTILUS_AVAILABLE:
                     symbol=str(self.instrument_id),
                     mode=str(arch.regime),
                     execution_strategy=str(arch.name),
-                    execution_tags=[str(self.strategy_name)],
+                    execution_tags=order_tags,
                     execution_evidence=evidence,
                 ),
             )
             self._last_order_time_ns = now_ns
+
+            # Track TC/TE position (for ET pairing)
+            if str(arch.name).upper() in ["TC", "TE"]:
+                position_id = f"{self.strategy_name}:{int(now_ns)}"
+                self._active_tc_te_positions[position_id] = str(arch.name).upper()
+
+            # Clean up closed positions before checking ET hedge
+            self._cleanup_closed_positions()
+
+            # Check and update ET hedge (independent of TC/TE order submission)
+            try:
+                self._check_and_update_et_hedge(
+                    feats=feats, now_ns=now_ns, regime=regime, evidence=evidence
+                )
+            except Exception as e:
+                # Fail-safe: if ET hedging fails, log but don't block main order
+                self.log.warning(f"ET hedging check failed: {e}")
+
             _emit_log(
                 router_mode=str(regime),
                 gate_blocked=False,

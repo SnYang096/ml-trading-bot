@@ -17,7 +17,43 @@ ET (Exhaustion Turn) 作为条件式对冲模块
 from __future__ import annotations
 
 import numpy as np
-from typing import Optional, Tuple, Dict, Any
+from dataclasses import dataclass
+from typing import Optional, Tuple, Dict, Any, List
+
+
+@dataclass
+class ETPositionPair:
+    """
+    ET仓位与TC/TE仓位的配对关系
+
+    用于跟踪ET对冲订单与对应的TC/TE仓位的关联关系。
+    """
+
+    et_position_id: str  # ET订单的position_id
+    tc_position_ids: List[str]  # 关联的TC仓位ID列表
+    te_position_ids: List[str]  # 关联的TE仓位ID列表
+    created_at_ns: int  # 创建时间戳（纳秒）
+    directional_exposure: float  # 对冲的方向性暴露
+    et_position_size: float  # ET仓位大小（有符号：正数=多，负数=空）
+    risk_score: float  # 触发时的风险评分 [0, 1]
+    ofci_p: float  # 触发时的OFCI percentile
+    shd_p: float  # 触发时的SHD percentile
+    vol_spike_p: float  # 触发时的vol_spike percentile
+
+    def as_dict(self) -> Dict[str, Any]:
+        """转换为字典格式（用于序列化/日志）"""
+        return {
+            "et_position_id": str(self.et_position_id),
+            "tc_position_ids": list(self.tc_position_ids),
+            "te_position_ids": list(self.te_position_ids),
+            "created_at_ns": int(self.created_at_ns),
+            "directional_exposure": float(self.directional_exposure),
+            "et_position_size": float(self.et_position_size),
+            "risk_score": float(self.risk_score),
+            "ofci_p": float(self.ofci_p),
+            "shd_p": float(self.shd_p),
+            "vol_spike_p": float(self.vol_spike_p),
+        }
 
 
 def compute_et_risk_score(

@@ -20,8 +20,10 @@ from src.features.time_series.baseline_features import compute_percentile_rank_f
 
 @register_feature("compute_ofci_from_trades", category="reflexivity")
 def compute_ofci_from_trades(
-    trades: pd.DataFrame,
+    trades: Optional[pd.DataFrame] = None,
     window: int = 100,
+    ticks_loader_json: Optional[str] = None,
+    df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     计算订单流一致性指数（Order Flow Consensus Index, OFCI）
@@ -29,16 +31,64 @@ def compute_ofci_from_trades(
     定义：衡量全市场"方向性共识强度"——越高越危险
     
     Args:
-        trades: 逐笔成交数据，必须包含'side'列（+1=buy, -1=sell）
-                如果只有OHLCV数据，可以从volume和price变化推断方向
+        trades: 逐笔成交数据，必须包含'side'列（+1=buy, -1=sell）。如果为None，将从ticks_loader_json加载
         window: 滚动窗口大小（建议100，对应10-30秒）
+        ticks_loader_json: JSON字符串，用于加载tick数据（如果trades为None）
+        df: OHLCV DataFrame（用于获取时间范围，如果使用ticks_loader_json）
     
     Returns:
         DataFrame with column 'ofci': [-1, 1] 的对称指标
         - |OFCI| > 0.7 → 高度一致（警惕反身性踩踏或追涨）
         - |OFCI| < 0.3 → 方向分散（相对安全）
     """
+    # 如果没有提供trades，尝试从ticks_loader_json加载
+    if trades is None or len(trades) == 0:
+        if ticks_loader_json:
+            from src.data_tools.tick_loader import (
+                deserialize_tick_loader_params,
+                load_tick_data,
+            )
+            loader_params = deserialize_tick_loader_params(ticks_loader_json)
+            symbol = str(loader_params["symbol"]).upper()
+            start_ts = loader_params.get("start_ts")
+            end_ts = loader_params.get("end_ts")
+            ticks_dir = loader_params.get("ticks_dir", "data/parquet_data")
+            
+            # 如果df提供了时间范围，使用df的范围
+            if df is not None and isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+                start_ts = str(df.index.min())
+                end_ts = str(df.index.max())
+            
+            # 加载tick数据
+            # 确保start_ts和end_ts是字符串格式
+            if start_ts is None:
+                if df is not None and isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+                    start_ts = str(df.index.min())
+                else:
+                    start_ts = "2024-01-01 00:00:00"
+            if end_ts is None:
+                if df is not None and isinstance(df.index, pd.DatetimeIndex) and len(df) > 0:
+                    end_ts = str(df.index.max())
+                else:
+                    end_ts = "2024-12-31 23:59:59"
+            
+            lookback_minutes = loader_params.get("lookback_minutes", 60)
+            trades = load_tick_data(
+                symbol=symbol,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                ticks_dir=ticks_dir,
+                lookback_minutes=lookback_minutes,
+            )
+        else:
+            # 如果没有trades也没有ticks_loader_json，返回空DataFrame
+            if df is not None and isinstance(df.index, pd.DatetimeIndex):
+                return pd.DataFrame(index=df.index, columns=["ofci"], dtype=float).fillna(0.0)
+            return pd.DataFrame(columns=["ofci"], dtype=float)
+    
     if len(trades) == 0:
+        if df is not None and isinstance(df.index, pd.DatetimeIndex):
+            return pd.DataFrame(index=df.index, columns=["ofci"], dtype=float).fillna(0.0)
         return pd.DataFrame(columns=["ofci"], dtype=float)
     
     # 检查是否有side列

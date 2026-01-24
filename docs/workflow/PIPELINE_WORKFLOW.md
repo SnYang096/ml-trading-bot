@@ -1,5 +1,9 @@
 # Pipeline Workflow
 
+**状态**: ✅ 当前版本  
+**最后更新**: 2026-01  
+**相关文档**: [主文档索引](../README.md), [README_CN.md](../../README_CN.md)
+
 本文档描述完整的交易系统工作流命令序列。
 
 > **注意**: 本文档是 `README_CN.md` 中工作流部分的详细扩展版本。  
@@ -7,19 +11,58 @@
 
 ## 完整工作流命令序列
 
+> **重要**: 每一步都有明确的输入输出和日志文件，支持独立执行和断点续传。
+
+### 0. FeatureStore构建（如果需要新特征）
+
+```bash
+mlbot nnmultihead build-feature-store \
+  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --feature-store-root feature_store \
+  --layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --warmup-months 1 \
+  --no-docker
+```
+
+**输出**: 
+- `feature_store/<layer>/<symbol>/240T/*.parquet` (按月存储的特征文件)
+
+**日志**: `results/featurestore_build.log`
+
+**说明**:
+- 如果FeatureStore已存在且包含所需特征，可跳过此步骤
+- 包含反身性特征（OFCI, SHD）的FeatureStore需要tick数据，构建时间较长
+
+---
+
 ### 1. 生成预测 (NN Multi-head Inference)
 
 ```bash
 mlbot nnmultihead predict \
-  --feature-store-root feature_store \
-  --layer tier0 \
+  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
-  --model-path results/runs/.../model.pt \
-  --config-dir config/nnmultihead/path_primitives_4h_80h_min \
-  --output-dir results/preds/
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --model results/nnmultihead/.../model.pt \
+  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --feature-store-root feature_store \
+  --output-dir results/pipeline_<run_id>/preds \
+  --no-docker
 ```
 
-**输出**: `preds_*.parquet` (每个 symbol 一个文件)
+**输出**: 
+- `results/pipeline_<run_id>/preds/preds_*.parquet` (每个 symbol 一个文件)
+
+**日志**: `results/pipeline_<run_id>/predict.log`
+
+**说明**:
+- `<run_id>` 建议使用时间戳或描述性名称，如 `2024_reflexivity_validation`
+- 预测结果包含 `pred_dir_prob`, `pred_mfe_atr`, `pred_mae_atr`, `pred_t_to_mfe`
 
 ---
 
@@ -27,12 +70,17 @@ mlbot nnmultihead predict \
 
 ```bash
 mlbot rule physics-regime \
-  --preds results/preds/ \
-  --output /tmp/physics_regime.parquet \
-  --stats-output /tmp/physics_regime_stats.json
+  --preds results/pipeline_<run_id>/preds \
+  --output results/pipeline_<run_id>/physics_regime.parquet \
+  --stats-output results/pipeline_<run_id>/physics_regime_stats.json \
+  --no-docker
 ```
 
-**输出**: `physics_regime.parquet` (包含 `regime`: TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE)
+**输出**: 
+- `physics_regime.parquet` (包含 `regime`: TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE)
+- `physics_regime_stats.json` (regime分布统计)
+
+**日志**: `results/pipeline_<run_id>/regime.log`
 
 **说明**:
 - Regime 分类器输出 `regime` (TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE) 用于 Gate 层
@@ -44,13 +92,23 @@ mlbot rule physics-regime \
 ### 3. 构建 Execution 日志 (Build Execution Logs)
 
 ```bash
-mlbot rl build-execution-logs \
-  --preds results/preds/ \
-  --output /tmp/logs_execution.parquet \
-  --returns-source rr_execution
+mlbot nnmultihead build-execution-logs \
+  --preds results/pipeline_<run_id>/preds \
+  --model results/nnmultihead/.../model.pt \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --data-path data/parquet_data \
+  --returns-source rr_execution \
+  --output results/pipeline_<run_id>/logs_execution.parquet \
+  --no-docker
 ```
 
-**输出**: `logs_execution.parquet` (包含 `ret_mean`, `ret_trend` 等)
+**输出**: 
+- `logs_execution.parquet` (包含 `ret_mean`, `ret_trend`, `drawdown` 等)
+
+**日志**: `results/pipeline_<run_id>/build_logs.log`
 
 **说明**:
 - 计算 counterfactual execution returns (`ret_mean`, `ret_trend`)
@@ -66,12 +124,20 @@ mlbot rl build-execution-logs \
 
 ```bash
 mlbot rule apply-tree-gate \
-  --logs /tmp/logs_execution.parquet \
-  --out /tmp/logs_execution_gated.parquet \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml
+  --logs results/pipeline_<run_id>/logs_execution.parquet \
+  --regime results/pipeline_<run_id>/physics_regime.parquet \
+  --out results/pipeline_<run_id>/logs_execution_gated.parquet \
+  --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --features-store-root feature_store \
+  --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
+  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+  --no-docker
 ```
 
-**输出**: `logs_execution_gated.parquet` (包含 `gate_decision`, `gate_archetype`, `gate_ok`)
+**输出**: 
+- `logs_execution_gated.parquet` (包含 `gate_ok`, `gate_decision`, `gate_reasons`, `gate_archetype`)
+
+**日志**: `results/pipeline_<run_id>/gate.log`
 
 **说明**:
 - 这一步应用 Gate 规则过滤交易
@@ -85,16 +151,86 @@ mlbot rule apply-tree-gate \
 
 ---
 
-### 5. 生成 E2E KPI 报告
+### 5. 添加反身性特征到Stage Logs（可选，如果FeatureStore包含反身性特征）
+
+```bash
+python scripts/add_reflexivity_features_to_logs.py \
+  --preds results/pipeline_<run_id>/preds \
+  --logs results/pipeline_<run_id>/logs_execution.parquet \
+  --out-dir results/pipeline_<run_id>/exec_logs \
+  --feature-store-dir feature_store \
+  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --data-path data/parquet_data \
+  --timeframe 240T \
+  --run-id <run_id> \
+  --strategy-name pipeline-3action-e2e
+```
+
+**输出**: 
+- `exec_logs/features/*.jsonl` (包含 `ofci_pct`, `shd_pct` 特征)
+
+**日志**: `results/pipeline_<run_id>/add_reflexivity.log`
+
+**说明**:
+- 如果FeatureStore已包含反身性特征，此步骤会从FeatureStore加载
+- 如果FeatureStore不包含，会重新计算（需要tick数据，较慢）
+
+---
+
+### 6. 构建Stage Logs（包含gate和execution）
+
+```bash
+python scripts/build_execution_log_stages.py \
+  --preds results/pipeline_<run_id>/preds \
+  --logs results/pipeline_<run_id>/logs_execution.parquet \
+  --gated-logs results/pipeline_<run_id>/logs_execution_gated.parquet \
+  --out-dir results/pipeline_<run_id>/exec_logs \
+  --run-id <run_id> \
+  --timeframe 240T \
+  --strategy-name pipeline-3action-e2e
+```
+
+**输出**: 
+- `exec_logs/{preds,router,gate,execution,returns,features}/*.jsonl` (分stage的日志文件)
+
+**日志**: `results/pipeline_<run_id>/build_stages.log`
+
+**说明**:
+- `--gated-logs` 参数用于从gated logs中提取gate和execution信息
+- 生成的gate stage包含：`blocked`, `decisions`, `reasons`, `archetype`
+- 生成的execution stage包含：`intent`, `submit_order`, `gate_blocked`, `archetype`
+
+---
+
+### 7. 聚合Canonical Log
+
+```bash
+python scripts/aggregate_execution_log_stages.py \
+  --stage-dir results/pipeline_<run_id>/exec_logs \
+  --out results/pipeline_<run_id>/execution_log.jsonl
+```
+
+**输出**: 
+- `execution_log.jsonl` (聚合后的canonical格式日志，包含所有stage)
+
+**日志**: `results/pipeline_<run_id>/aggregate.log`
+
+**说明**:
+- Canonical log包含所有stage的信息，便于后续分析和验证
+
+---
+
+### 8. 生成 E2E KPI 报告
 
 ```bash
 mlbot rule diagnose-e2e-kpi \
-  --logs /tmp/logs_execution_gated.parquet \
-  --regime /tmp/physics_regime.parquet \
-  --gate /tmp/logs_execution_gated.parquet \
-  --output-json results/e2e_kpi/e2e_kpi_report.json \
-  --output-md results/e2e_kpi/e2e_kpi_report.md \
-  --no-regime-filter
+  --logs results/pipeline_<run_id>/logs_execution_gated.parquet \
+  --regime results/pipeline_<run_id>/physics_regime.parquet \
+  --gate results/pipeline_<run_id>/logs_execution_gated.parquet \
+  --output-json results/pipeline_<run_id>/e2e_kpi_report.json \
+  --output-md results/pipeline_<run_id>/e2e_kpi_report.md \
+  --no-regime-filter \
+  --no-docker
 ```
 
 **输出**: 
@@ -145,36 +281,105 @@ mlbot rule diagnose-tc-regime-execution \
 
 ### 自动化脚本
 
-可以创建一个脚本来自动执行完整工作流：
+可以创建一个脚本来自动执行完整工作流（见 `scripts/run_full_pipeline.py`）：
 
 ```bash
 #!/bin/bash
 # run_full_pipeline.sh
 
+RUN_ID="pipeline_$(date +%Y%m%d_%H%M%S)"
+
+# 0. FeatureStore构建（如果需要）
+mlbot nnmultihead build-feature-store \
+  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --feature-store-root feature_store \
+  --layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --warmup-months 1 \
+  --no-docker 2>&1 | tee results/${RUN_ID}/featurestore_build.log
+
 # 1. Predict
-mlbot nnmultihead predict --output-dir results/preds/ ...
+mlbot nnmultihead predict \
+  --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --model results/nnmultihead/.../model.pt \
+  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --output-dir results/${RUN_ID}/preds \
+  --no-docker 2>&1 | tee results/${RUN_ID}/predict.log
 
 # 2. Regime classification
-mlbot rule physics-regime --preds results/preds/ --output /tmp/physics_regime.parquet
+mlbot rule physics-regime \
+  --preds results/${RUN_ID}/preds \
+  --output results/${RUN_ID}/physics_regime.parquet \
+  --stats-output results/${RUN_ID}/physics_regime_stats.json \
+  --no-docker 2>&1 | tee results/${RUN_ID}/regime.log
 
 # 3. Build execution logs
-mlbot rl build-execution-logs \
-  --preds results/preds/ \
-  --output /tmp/logs_execution.parquet \
-  --returns-source rr_execution
+mlbot nnmultihead build-execution-logs \
+  --preds results/${RUN_ID}/preds \
+  --model results/nnmultihead/.../model.pt \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --data-path data/parquet_data \
+  --returns-source rr_execution \
+  --output results/${RUN_ID}/logs_execution.parquet \
+  --no-docker 2>&1 | tee results/${RUN_ID}/build_logs.log
 
-# 4. Gate filtering (默认执行)
+# 4. Gate filtering
 mlbot rule apply-tree-gate \
-  --logs /tmp/logs_execution.parquet \
-  --out /tmp/logs_execution_gated.parquet \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml
+  --logs results/${RUN_ID}/logs_execution.parquet \
+  --regime results/${RUN_ID}/physics_regime.parquet \
+  --out results/${RUN_ID}/logs_execution_gated.parquet \
+  --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --features-store-root feature_store \
+  --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
+  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+  --no-docker 2>&1 | tee results/${RUN_ID}/gate.log
 
-# 5. E2E report
+# 5. Add reflexivity features (optional)
+python scripts/add_reflexivity_features_to_logs.py \
+  --preds results/${RUN_ID}/preds \
+  --logs results/${RUN_ID}/logs_execution.parquet \
+  --out-dir results/${RUN_ID}/exec_logs \
+  --feature-store-dir feature_store \
+  --feature-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --data-path data/parquet_data \
+  --timeframe 240T \
+  --run-id ${RUN_ID} \
+  --strategy-name pipeline-3action-e2e 2>&1 | tee results/${RUN_ID}/add_reflexivity.log
+
+# 6. Build stage logs
+python scripts/build_execution_log_stages.py \
+  --preds results/${RUN_ID}/preds \
+  --logs results/${RUN_ID}/logs_execution.parquet \
+  --gated-logs results/${RUN_ID}/logs_execution_gated.parquet \
+  --out-dir results/${RUN_ID}/exec_logs \
+  --run-id ${RUN_ID} \
+  --timeframe 240T \
+  --strategy-name pipeline-3action-e2e 2>&1 | tee results/${RUN_ID}/build_stages.log
+
+# 7. Aggregate canonical log
+python scripts/aggregate_execution_log_stages.py \
+  --stage-dir results/${RUN_ID}/exec_logs \
+  --out results/${RUN_ID}/execution_log.jsonl 2>&1 | tee results/${RUN_ID}/aggregate.log
+
+# 8. E2E report
 mlbot rule diagnose-e2e-kpi \
-  --logs /tmp/logs_execution_gated.parquet \
-  --regime /tmp/physics_regime.parquet \
-  --gate /tmp/logs_execution_gated.parquet \
-  --output-md results/e2e_kpi/e2e_kpi_report.md
+  --logs results/${RUN_ID}/logs_execution_gated.parquet \
+  --regime results/${RUN_ID}/physics_regime.parquet \
+  --gate results/${RUN_ID}/logs_execution_gated.parquet \
+  --output-md results/${RUN_ID}/e2e_kpi_report.md \
+  --output-json results/${RUN_ID}/e2e_kpi_report.json \
+  --no-regime-filter \
+  --no-docker 2>&1 | tee results/${RUN_ID}/e2e_kpi.log
 ```
 
 ---

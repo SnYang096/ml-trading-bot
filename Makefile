@@ -435,7 +435,7 @@ SR_BASELINE_TICKS_LOOKBACK ?= 60  # VPIN 计算时向前/向后额外加载的�
 
 ts-sr-reversal-rule-baseline:
 	@echo "📊 SR Reversal Rule Baseline: Testing pure rule-based SR+RR strategy (no ML)"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_rule_baseline \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.rule_based_strategies.sr_reversal_rule_strategy \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \
@@ -449,7 +449,7 @@ ts-sr-reversal-rule-baseline:
 # Adjusts max_holding_bars to maintain same holding period as 4h (200 bars ≈ 8.3 days)
 ts-sr-reversal-1h-baseline:
 	@echo "📊 SR Reversal Rule Baseline (1h): Testing pure rule-based SR+RR strategy on 1h timeframe"
-	@$(DOCKER_RUN_NO_TTY) python3 -m src.time_series_model.diagnostics.sr_reversal_rule_baseline \
+	@$(DOCKER_RUN_NO_TTY) python3 -m src.rule_based_strategies.sr_reversal_rule_strategy \
 		--strategy-config /workspace/$(SR_BASELINE_CONFIG) \
 		--symbol $(SR_BASELINE_SYMBOL) \
 		--data-path /workspace/$(SR_BASELINE_DATA_PATH) \

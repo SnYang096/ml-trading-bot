@@ -3861,8 +3861,6 @@ def nnmultihead_pipeline_3action_e2e(
         stage_args = [
             "--preds",
             preds_dir,
-            "--regime",
-            f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
             "--logs",
             logs_path,
             "--out-dir",
@@ -7554,7 +7552,7 @@ def diagnose_rule_baseline(
 
     sys.exit(
         run_python_module(
-            "src.time_series_model.diagnostics.sr_reversal_rule_baseline",
+            "src.rule_based_strategies.sr_reversal_rule_strategy",
             args,
             docker=docker,
         )
@@ -8645,6 +8643,76 @@ def optimize_gate_plateau_all(
     if raw_logs:
         args.extend(["--raw-logs", f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs])
     sys.exit(run_script("scripts/optimize_all_archetypes_plateau.py", args, docker=docker))
+
+
+@optimize.command("gate-experiments")
+@click.option("--gated-logs", required=True, help="Gated logs file (parquet)")
+@click.option("--raw-logs", required=True, help="Raw logs file (parquet)")
+@click.option("--execution-archetypes", default="config/nnmultihead/execution_archetypes.yaml", help="execution_archetypes.yaml path")
+@click.option("--output-dir", required=True, help="Output directory")
+@click.option("--feature-store-root", default="feature_store", help="FeatureStore root directory")
+@click.option("--feature-store-layer", default=None, help="FeatureStore layer name")
+@click.option("--timeframe", default="240T", help="Timeframe (e.g., 240T)")
+@click.option("--start-date", default=None, help="Start date (optional)")
+@click.option("--end-date", default=None, help="End date (optional)")
+@click.option("--experiments", multiple=True, default=["all"], help="Experiments to run (baseline, progressive, hard_gate, all)")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_gate_experiments(
+    gated_logs,
+    raw_logs,
+    execution_archetypes,
+    output_dir,
+    feature_store_root,
+    feature_store_layer,
+    timeframe,
+    start_date,
+    end_date,
+    experiments,
+    docker,
+):
+    """Run gate optimization experiments (baseline, progressive, hard-gate)."""
+    args = [
+        "--gated-logs",
+        f"/workspace/{gated_logs}" if docker and not _is_in_docker() else gated_logs,
+        "--raw-logs",
+        f"/workspace/{raw_logs}" if docker and not _is_in_docker() else raw_logs,
+        "--execution-archetypes",
+        f"/workspace/{execution_archetypes}" if docker and not _is_in_docker() else execution_archetypes,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
+    ]
+    if feature_store_layer:
+        args.extend([
+            "--feature-store-root", feature_store_root,
+            "--feature-store-layer", feature_store_layer,
+            "--timeframe", timeframe,
+        ])
+        if start_date:
+            args.extend(["--start-date", start_date])
+        if end_date:
+            args.extend(["--end-date", end_date])
+    if experiments:
+        args.extend(["--experiments"] + list(experiments))
+    sys.exit(run_script("scripts/run_gate_optimization_experiments.py", args, docker=docker))
+
+
+@optimize.command("gate-compare")
+@click.option("--results-file", required=True, help="Experiment results JSON file")
+@click.option("--output-dir", required=True, help="Output directory")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def optimize_gate_compare(
+    results_file,
+    output_dir,
+    docker,
+):
+    """Compare gate optimization experiment results and generate report."""
+    args = [
+        "--results-file",
+        f"/workspace/{results_file}" if docker and not _is_in_docker() else results_file,
+        "--output-dir",
+        f"/workspace/{output_dir}" if docker and not _is_in_docker() else output_dir,
+    ]
+    sys.exit(run_script("scripts/compare_gate_optimization_experiments.py", args, docker=docker))
 
 
 @optimize.command("rule")

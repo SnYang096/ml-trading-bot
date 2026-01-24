@@ -305,6 +305,8 @@ FEATURE_MODULES = [
     "src.features.time_series.utils_evt_features",
     # Volume profile
     "src.features.time_series.utils_volume_profile",
+    # Reflexivity features
+    "src.features.time_series.reflexivity_features",
     # Feature wrappers
     "src.features.loader.feature_wrappers",
     # interaction_feature_wrappers.py removed - functions already in utils_interaction_features.py

@@ -26,103 +26,125 @@ regimes:
         gate_rules:
           rules:
             # TC vetoes: no orderflow continuation, thin volume, vol compression, or weak trend.
+            # Priority 3: Execution strategy rules (lower priority)
             # Using percentile versions of features for cross-symbol stability
             - name: tc_no_oflow_continuation
               kind: value_lt
               key: cvd_change_5_pct
-              threshold: 0.55
+              threshold: 0.3
+              priority: 3
               on_missing: false
             - name: tc_oflow_weak
               kind: value_lt
               key: cvd_change_5_pct
               threshold: 0.45
+              priority: 3
               on_missing: false
             - name: tc_volume_too_low
               kind: value_lt
               key: volume_ratio_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: tc_vol_compress
               kind: value_lt
               key: bb_width_normalized_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: tc_trend_break
               kind: value_lt
               key: trend_r2_20
               threshold: 0.2
+              priority: 3
               on_missing: false
             # Regime (trend) constraints
             - name: tc_trend_adx_too_low
               kind: value_lt
               key: adx
               threshold: 20
+              priority: 3
               on_missing: false
             - name: tc_trend_price_below_ma200
               kind: value_lt
               key: sma_200_position
               threshold: 0.0
+              priority: 3
               on_missing: false
             - name: tc_quality_too_low
               kind: value_lt
               key: trade_quality
               threshold: 0.12
+              priority: 3
               on_missing: false
             - name: tc_score_too_low
               kind: value_lt
               key: tc_score
               threshold: 0.2226
+              priority: 3
               on_missing: false
             # TC_REGIME conditions (migrated from regime classification)
+            # Priority 2: Market state rules (stability)
             # TC requires jump_risk_pct in [0.3, 0.6]
             # Using value rules since jump_risk_pct is already a percentile
             - name: tc_not_tc_regime_jump_risk_too_low
               kind: value_lt
               key: jump_risk_pct
               threshold: 0.3
+              priority: 2
               on_missing: false
             - name: tc_not_tc_regime_jump_risk_too_high
               kind: value_gte
               key: jump_risk_pct
               threshold: 0.6
+              priority: 2
               on_missing: false
             # TC price trajectory features (trend strength and stability)
+            # Priority 2: Market state rules (structure existence)
             # TC requires: low volatility expansion (atr_slope_pct <= 0.6), high path efficiency (>= 0.6), sufficient path length (>= 0.4)
             # Using value rules since these features are already percentiles
             - name: tc_not_tc_regime_atr_slope_too_high
               kind: value_gt
               key: atr_slope_pct
               threshold: 0.6
+              priority: 2
               on_missing: false
             - name: tc_not_tc_regime_path_efficiency_too_low
               kind: value_lt
               key: path_efficiency_pct
-              threshold: 0.6
+              threshold: 0.25
+              priority: 2
               on_missing: false
             - name: tc_not_tc_regime_path_length_too_low
               kind: value_lt
               key: path_length_pct
               threshold: 0.4
+              priority: 2
               on_missing: false
             # Direction consistency (stability): TC requires stable direction
             - name: tc_not_tc_regime_dir_consistency_too_low
               kind: value_lt
               key: price_dir_consistency_pct
-              threshold: 0.6
+              threshold: 0.3
+              priority: 2
               on_missing: false
             # TC CVD regime: use percentile version for cross-symbol stability
+            # Priority 2: Market state rules (extreme conditions)
             # TC should veto when CVD is too negative (percentile > 0.85 = extreme negative orderflow)
             - name: tc_cvd_too_negative
               kind: value_gt
               key: cvd_change_5_pct
               threshold: 0.85
+              priority: 2
               on_missing: false
             # Reflexivity risk control (systemic risk awareness layer)
+            # Priority 1: Safety rules (highest priority)
             # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
             - name: tc_reflexivity_shd_too_high
               kind: value_gt
               key: shd_pct
               threshold: 0.9
+              priority: 1
               on_missing: false
             # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
             # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
@@ -133,6 +155,7 @@ regimes:
               kind: value_gt
               key: ofci_pct
               threshold: 0.95
+              priority: 1
               on_missing: false
           deny_if: [tc_no_oflow_continuation, tc_oflow_weak, tc_volume_too_low, tc_vol_compress, tc_trend_break, tc_trend_adx_too_low, tc_trend_price_below_ma200, tc_quality_too_low, tc_score_too_low, tc_not_tc_regime_jump_risk_too_low, tc_not_tc_regime_jump_risk_too_high, tc_not_tc_regime_atr_slope_too_high, tc_not_tc_regime_path_efficiency_too_low, tc_not_tc_regime_path_length_too_low, tc_not_tc_regime_dir_consistency_too_low, tc_cvd_too_negative, tc_reflexivity_shd_too_high, tc_reflexivity_ofci_extreme]
           allow_if: []
@@ -167,101 +190,122 @@ regimes:
         gate_rules:
           rules:
             # TE requires expansion in orderflow + volume + volatility; deny fake breakouts.
+            # Priority 3: Execution strategy rules (lower priority)
             # Using percentile versions of features for cross-symbol stability
             - name: te_oflow_expansion
               kind: value_gt
               key: cvd_change_5_pct
               threshold: 0.85
+              priority: 3
               on_missing: false
             - name: te_volume_surge
               kind: value_gt
               key: volume_ratio_pct
               threshold: 0.6
+              priority: 3
               on_missing: false
             - name: te_vol_expansion
               kind: value_gt
               key: bb_width_normalized_pct
               threshold: 0.7
+              priority: 3
               on_missing: false
             - name: te_fake_breakout_oflow
               kind: value_lt
               key: cvd_change_5_pct
               threshold: 0.3
+              priority: 3
               on_missing: false
             - name: te_no_volume_surge
               kind: value_lt
               key: volume_ratio_pct
               threshold: 0.4
+              priority: 3
               on_missing: false
             - name: te_vol_not_expanding
               kind: value_lt
               key: bb_width_normalized_pct
               threshold: 0.3
+              priority: 3
               on_missing: false
             - name: te_volume_too_low
               kind: value_lt
               key: volume_ratio_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: te_bb_width_too_low
               kind: value_lt
               key: bb_width_normalized_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             # Regime (trend) constraints
             - name: te_trend_adx_too_low
               kind: value_lt
               key: adx
               threshold: 20
+              priority: 3
               on_missing: false
             - name: te_trend_price_below_ma200
               kind: value_lt
               key: sma_200_position
               threshold: 0.0
+              priority: 3
               on_missing: false
             - name: te_quality_too_low
               kind: value_lt
               key: trade_quality
               threshold: 0.07
+              priority: 3
               on_missing: false
             - name: te_score_too_low
               kind: value_lt
               key: te_score
               threshold: 0.4253
+              priority: 3
               on_missing: false
             # TE_REGIME conditions (migrated from regime classification)
+            # Priority 2: Market state rules (stability)
             # TE requires jump_risk_pct in [0.6, 0.9]
             # Using value rules since jump_risk_pct is already a percentile
             - name: te_not_te_regime_jump_risk_too_low
               kind: value_lt
               key: jump_risk_pct
-              threshold: 0.6
+              threshold: 0.25
+              priority: 2
               on_missing: false
             - name: te_not_te_regime_jump_risk_too_high
               kind: value_gte
               key: jump_risk_pct
               threshold: 0.9
+              priority: 2
               on_missing: false
             # TE price trajectory features (volatility expansion and range expansion)
+            # Priority 2: Market state rules (structure)
             # TE requires: high volatility expansion (atr_slope_pct >= 0.6), range expansion (>= 0.6)
             # Using value rules since these features are already percentiles
             - name: te_not_te_regime_atr_slope_too_low
               kind: value_lt
               key: atr_slope_pct
               threshold: 0.6
+              priority: 2
               on_missing: false
             - name: te_not_te_regime_range_expansion_too_low
               kind: value_lt
               key: range_expansion_pct
               threshold: 0.6
+              priority: 2
               on_missing: false
             # Reflexivity risk control (systemic risk awareness layer)
+            # Priority 1: Safety rules (highest priority)
             # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
             # Note: SHD is more important for TE than TC (TE stage is most prone to "everyone rushing together")
             - name: te_reflexivity_shd_too_high
               kind: value_gt
               key: shd_pct
               threshold: 0.9
+              priority: 1
               on_missing: false
             # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
             # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
@@ -272,6 +316,7 @@ regimes:
               kind: value_gt
               key: ofci_pct
               threshold: 0.95
+              priority: 1
               on_missing: false
           deny_if: [te_fake_breakout_oflow, te_no_volume_surge, te_vol_not_expanding, te_volume_too_low, te_bb_width_too_low, te_trend_adx_too_low, te_trend_price_below_ma200, te_quality_too_low, te_score_too_low, te_not_te_regime_jump_risk_too_low, te_not_te_regime_jump_risk_too_high, te_not_te_regime_atr_slope_too_low, te_not_te_regime_range_expansion_too_low, te_reflexivity_shd_too_high, te_reflexivity_ofci_extreme]
           allow_if: [te_oflow_expansion, te_volume_surge, te_vol_expansion]
@@ -315,112 +360,135 @@ regimes:
         gate_rules:
           rules:
             # FR: divergence + vpin spike + absorption signals (>=2 hits). Deny thin liquidity.
+            # Priority 3: Execution strategy rules (lower priority)
             # Using percentile versions of features for cross-symbol stability
             - name: fr_divergence
               kind: value_lt
               key: cvd_change_5_pct
               threshold: 0.3
+              priority: 3
               on_missing: false
             - name: fr_vpin_spike
               kind: quantile_gt
               key: vpin
               quantile: 0.65
+              priority: 3
               on_missing: false
             - name: fr_cvd_divergence
               kind: value_lt
               key: cvd_change_5_pct
               threshold: 0.3
+              priority: 3
               on_missing: false
             - name: fr_absorption
               kind: quantile_gt
               key: vp_absorption_score
               quantile: 0.7
+              priority: 3
               on_missing: false
             - name: fr_volume_too_low
               kind: value_lt
               key: volume_ratio_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: fr_bb_width_too_low
               kind: value_lt
               key: bb_width_normalized_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: fr_near_sr
               kind: value_lt
               key: sr_distance_normalized
               threshold: 0.3
+              priority: 3
               on_missing: false
             # Regime (mean) constraints
             - name: fr_mean_adx_too_high
               kind: value_gt
               key: adx
-              threshold: 25
+              threshold: 40
+              priority: 3
               on_missing: false
             - name: fr_mean_sr_too_far
               kind: value_gt
               key: sr_distance_normalized
               threshold: 0.4
+              priority: 3
               on_missing: false
             - name: fr_sqs_too_low
               kind: value_lt
               key: sqs
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: fr_quality_too_low
               kind: value_lt
               key: trade_quality
               threshold: 0.09
+              priority: 3
               on_missing: false
             - name: fr_score_too_low
               kind: value_lt
               key: mean_score
               threshold: 0.2751
+              priority: 3
               on_missing: false
             # NEW: Physical feature constraints (optimized for mean reversion)
+            # Priority 2: Market state rules (structure)
             # Based on FR/ET analysis: profitable samples have low path efficiency
             # Using value rules since path_efficiency_pct is already a percentile
             - name: fr_path_efficiency_too_high
               kind: value_gt
               key: path_efficiency_pct
-              threshold: 0.4
+              threshold: 0.7
+              priority: 2
               on_missing: false
             # Profitable samples have unstable direction (low price_dir_consistency)
             - name: fr_price_dir_consistency_too_high
               kind: value_gt
               key: price_dir_consistency_pct
               threshold: 0.5
+              priority: 2
               on_missing: false
             # Profitable samples have high deviation from mean
             - name: fr_deviation_too_low
               kind: value_lt
               key: deviation_z_abs_pct
               threshold: 0.6
+              priority: 2
               on_missing: false
             # MEAN_REGIME conditions (migrated from regime classification)
+            # Priority 2: Market state rules (stability)
             # MEAN requires: path_length_pct >= 0.5, atr_percentile >= 0.5, jump_risk_pct <= 0.4
             # Using value rules since these features are already percentiles
             - name: fr_not_mean_regime_path_length_too_low
               kind: value_lt
               key: path_length_pct
               threshold: 0.5
+              priority: 2
               on_missing: false
             - name: fr_not_mean_regime_atr_percentile_too_low
               kind: value_lt
               key: atr_percentile
               threshold: 0.5
+              priority: 2
               on_missing: false
             - name: fr_not_mean_regime_jump_risk_too_high
               kind: value_gt
               key: jump_risk_pct
-              threshold: 0.4
+              threshold: 0.7
+              priority: 2
               on_missing: false
             # Reflexivity risk control (systemic risk awareness layer)
+            # Priority 1: Safety rules (highest priority)
             # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
             - name: fr_reflexivity_shd_too_high
               kind: value_gt
               key: shd_pct
               threshold: 0.9
+              priority: 1
               on_missing: false
             # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
             # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
@@ -431,6 +499,7 @@ regimes:
               kind: value_gt
               key: ofci_pct
               threshold: 0.95
+              priority: 1
               on_missing: false
           deny_if: [fr_volume_too_low, fr_bb_width_too_low, fr_mean_adx_too_high, fr_mean_sr_too_far, fr_sqs_too_low, fr_quality_too_low, fr_score_too_low, fr_path_efficiency_too_high, fr_price_dir_consistency_too_high, fr_deviation_too_low, fr_not_mean_regime_path_length_too_low, fr_not_mean_regime_atr_percentile_too_low, fr_not_mean_regime_jump_risk_too_high, fr_reflexivity_shd_too_high, fr_reflexivity_ofci_extreme]
           allow_if: [fr_divergence, fr_vpin_spike, fr_cvd_divergence, fr_absorption, fr_near_sr]
@@ -472,46 +541,55 @@ regimes:
         gate_rules:
           rules:
             # ET: climax + divergence + momentum decay + profile proximity (>=2 hits).
+            # Priority 3: Execution strategy rules (lower priority)
             # Using percentile versions of features for cross-symbol stability
             - name: et_vol_climax
               kind: value_gt
               key: atr_percentile
               threshold: 0.9
+              priority: 3
               on_missing: false
             - name: et_vpin_spike
               kind: quantile_gt
               key: vpin
               quantile: 0.5  # Reduced from 0.65 to 0.5 for ET_REGIME (moderate orderflow)
+              priority: 3
               on_missing: false
             - name: et_cvd_divergence
               kind: value_lt
               key: cvd_change_5_pct
               threshold: 0.3
+              priority: 3
               on_missing: false
             - name: et_momentum_decay
               kind: value_lt
               key: cvd_change_5_pct
               threshold: 0.3
+              priority: 3
               on_missing: false
             - name: et_near_lvn
               kind: value_lt
               key: vpvr_lvn_distance
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: et_volume_too_low
               kind: value_lt
               key: volume_ratio_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: et_bb_width_too_low
               kind: value_lt
               key: bb_width_normalized_pct
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: et_near_sr
               kind: value_lt
               key: sr_distance_normalized
               threshold: 0.3
+              priority: 3
               on_missing: false
             # Regime constraints (for ET_REGIME, ADX should be 20-30, checked in gate rules)
             # Note: ADX range (20-30) is enforced by ET_REGIME classification, not here
@@ -519,29 +597,35 @@ regimes:
             - name: et_mean_adx_too_high
               kind: value_gt
               key: adx
-              threshold: 30  # Relaxed from 25 to 30 (ET_REGIME allows ADX up to 30)
+              threshold: 45  # Relaxed to align with feature distribution
+              priority: 3
               on_missing: false
             - name: et_mean_sr_too_far
               kind: value_gt
               key: sr_distance_normalized
               threshold: 0.4
+              priority: 3
               on_missing: false
             - name: et_sqs_too_low
               kind: value_lt
               key: sqs
               threshold: 0.2
+              priority: 3
               on_missing: false
             - name: et_quality_too_low
               kind: value_lt
               key: trade_quality
               threshold: 0.09
+              priority: 3
               on_missing: false
             - name: et_score_too_low
               kind: value_lt
               key: mean_score
               threshold: 0.2751
+              priority: 3
               on_missing: false
             # NEW: Physical feature constraints (optimized for mean reversion)
+            # Priority 2: Market state rules (structure)
             # NOTE: et_path_efficiency_too_high is replaced by et_not_et_regime_path_efficiency_too_high (threshold 0.7)
             # Keeping this rule for backward compatibility but it's now redundant
             # Using value rules since path_efficiency_pct is already a percentile
@@ -549,67 +633,81 @@ regimes:
               kind: value_gt
               key: path_efficiency_pct
               threshold: 0.7
+              priority: 2
               on_missing: false
             # Profitable samples have unstable direction (low price_dir_consistency)
             - name: et_price_dir_consistency_too_high
               kind: value_gt
               key: price_dir_consistency_pct
               threshold: 0.5
+              priority: 2
               on_missing: false
             # Profitable samples have high deviation from mean
             - name: et_deviation_too_low
               kind: value_lt
               key: deviation_z_abs_pct
               threshold: 0.6
+              priority: 2
               on_missing: false
             # ET_REGIME conditions (migrated from regime classification)
+            # Priority 2: Market state rules (stability and structure)
             # ET requires: jump_risk_pct in [0.2, 0.5], atr_percentile >= 0.85, path_efficiency_pct in [0.55, 0.7], path_length_pct >= 0.6
             # Using value rules since these features are already percentiles
             - name: et_not_et_regime_jump_risk_too_low
               kind: value_lt
               key: jump_risk_pct
               threshold: 0.2
+              priority: 2
               on_missing: false
             - name: et_not_et_regime_jump_risk_too_high
               kind: value_gte
               key: jump_risk_pct
-              threshold: 0.5
+              threshold: 0.75
+              priority: 2
               on_missing: false
             - name: et_not_et_regime_atr_percentile_too_low
               kind: value_lt
               key: atr_percentile
-              threshold: 0.85
+              threshold: 0.25
+              priority: 2
               on_missing: false
             - name: et_not_et_regime_path_efficiency_too_low
               kind: value_lt
               key: path_efficiency_pct
-              threshold: 0.55
+              threshold: 0.25
+              priority: 2
               on_missing: false
             - name: et_not_et_regime_path_efficiency_too_high
               kind: value_gt
               key: path_efficiency_pct
               threshold: 0.7
+              priority: 2
               on_missing: false
             - name: et_not_et_regime_path_length_too_low
               kind: value_lt
               key: path_length_pct
-              threshold: 0.6
+              threshold: 0.25
+              priority: 2
               on_missing: false
             # ET CVD regime: use percentile version for cross-symbol stability
+            # Priority 2: Market state rules (extreme conditions)
             # ET requires CVD to be in low percentile (negative divergence), but use percentile not hard threshold
             # Reject when CVD percentile > 0.3 (not negative enough relative to history)
             - name: et_cvd_not_negative_enough
               kind: value_gt
               key: cvd_change_5_pct
-              threshold: 0.3
+              threshold: 0.7
+              priority: 2
               on_missing: false
             # Reflexivity risk control (systemic risk awareness layer)
+            # Priority 1: Safety rules (highest priority)
             # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
             # Note: ET is a hedge, so reflexivity risk is critical
             - name: et_reflexivity_shd_too_high
               kind: value_gt
               key: shd_pct
               threshold: 0.9
+              priority: 1
               on_missing: false
             # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
             # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
@@ -620,6 +718,7 @@ regimes:
               kind: value_gt
               key: ofci_pct
               threshold: 0.95
+              priority: 1
               on_missing: false
           deny_if: [et_volume_too_low, et_bb_width_too_low, et_mean_adx_too_high, et_mean_sr_too_far, et_sqs_too_low, et_quality_too_low, et_score_too_low, et_path_efficiency_too_high, et_price_dir_consistency_too_high, et_deviation_too_low, et_not_et_regime_jump_risk_too_low, et_not_et_regime_jump_risk_too_high, et_not_et_regime_atr_percentile_too_low, et_not_et_regime_path_efficiency_too_low, et_not_et_regime_path_efficiency_too_high, et_not_et_regime_path_length_too_low, et_cvd_not_negative_enough, et_reflexivity_shd_too_high, et_reflexivity_ofci_extreme]
           allow_if: [et_vol_climax, et_vpin_spike, et_cvd_divergence, et_momentum_decay, et_near_lvn, et_near_sr]

@@ -156,6 +156,7 @@ def build_stage_logs_from_pipeline(
     preds_df: pd.DataFrame,
     mode_df: Optional[pd.DataFrame],
     logs_df: Optional[pd.DataFrame],
+    gated_df: Optional[pd.DataFrame] = None,
     run_id: Optional[str] = None,
     timeframe: Optional[str] = None,
     strategy_name: str = "pipeline",
@@ -188,6 +189,24 @@ def build_stage_logs_from_pipeline(
             if c in logs_df.columns
         ]
         df = df.merge(logs_df[cols], on=["symbol", "timestamp"], how="left")
+
+    # Merge gated logs if provided
+    if gated_df is not None and not gated_df.empty:
+        gated_df = _normalize_symbol(_normalize_timestamp(gated_df))
+        gate_cols = [
+            c
+            for c in [
+                "symbol",
+                "timestamp",
+                "gate_ok",
+                "gate_decision",
+                "gate_reasons",
+                "gate_archetype",
+            ]
+            if c in gated_df.columns
+        ]
+        if gate_cols:
+            df = df.merge(gated_df[gate_cols], on=["symbol", "timestamp"], how="left")
 
     records: List[Dict[str, Any]] = []
     for _, row in df.iterrows():
@@ -265,6 +284,87 @@ def build_stage_logs_from_pipeline(
                 strategy_name=str(strategy_name),
                 instrument_id=None,
                 data=returns,
+            )
+        )
+
+        # Gate stage (from gated logs)
+        gate_blocked = False
+        gate_decisions = []
+        gate_reasons = {}
+        gate_archetype = None
+
+        if "gate_ok" in row and pd.notna(row.get("gate_ok")):
+            gate_ok_val = bool(row.get("gate_ok"))
+            gate_blocked = not gate_ok_val
+
+            if "gate_decision" in row and pd.notna(row.get("gate_decision")):
+                gate_decisions = [str(row.get("gate_decision"))]
+
+            if "gate_reasons" in row and pd.notna(row.get("gate_reasons")):
+                reasons_str = str(row.get("gate_reasons"))
+                # Parse gate_reasons (could be string or list)
+                if reasons_str.startswith("[") or reasons_str.startswith("{"):
+                    import json
+
+                    try:
+                        gate_reasons = json.loads(reasons_str)
+                    except:
+                        gate_reasons = {"gate_rules": [reasons_str]}
+                else:
+                    gate_reasons = {"gate_rules": [reasons_str]} if reasons_str else {}
+
+            if "gate_archetype" in row and pd.notna(row.get("gate_archetype")):
+                gate_archetype = str(row.get("gate_archetype"))
+
+        gate_data = {
+            "blocked": gate_blocked,
+            "decisions": gate_decisions,
+            "reasons": gate_reasons,
+            "archetype": gate_archetype,
+        }
+
+        records.append(
+            build_stage_record(
+                stage="gate",
+                decision_id=decision_id,
+                decision_ts_ns=decision_ts_ns,
+                source="pipeline",
+                run_id=run_id,
+                symbol=str(row.get("symbol")),
+                timeframe=timeframe,
+                strategy_name=str(strategy_name),
+                instrument_id=None,
+                data=gate_data,
+            )
+        )
+
+        # Execution stage
+        router_mode = str(row.get("mode", "NO_TRADE")).upper()
+        execution_intent = router_mode != "NO_TRADE" and not gate_blocked
+
+        execution_data = {
+            "intent": execution_intent,
+            "submit_order": False,  # pipeline is offline evaluation
+            "side": None,
+            "qty": None,
+            "price": None,
+            "reason": "pipeline_offline",
+            "gate_blocked": gate_blocked,
+            "archetype": gate_archetype,
+        }
+
+        records.append(
+            build_stage_record(
+                stage="execution",
+                decision_id=decision_id,
+                decision_ts_ns=decision_ts_ns,
+                source="pipeline",
+                run_id=run_id,
+                symbol=str(row.get("symbol")),
+                timeframe=timeframe,
+                strategy_name=str(strategy_name),
+                instrument_id=None,
+                data=execution_data,
             )
         )
     return records
