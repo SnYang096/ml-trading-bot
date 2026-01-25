@@ -47,6 +47,8 @@ class MonitoringService:
         self._running = False
         self._monitor_thread: Optional[Thread] = None
         self._alert_callbacks: List[Callable[[str, str], None]] = []
+        self._last_reconcile_time: Optional[float] = None
+        self._reconcile_interval = 60  # seconds
     
     def start(self):
         """启动监控服务"""
@@ -55,6 +57,11 @@ class MonitoringService:
             return
         
         self._running = True
+        # 启动前先进行一次对账
+        try:
+            self.order_manager.reconcile_open_orders()
+        except Exception as e:
+            logger.warning(f"启动对账失败: {e}")
         self._monitor_thread = Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
         logger.info("监控服务已启动")
@@ -81,12 +88,24 @@ class MonitoringService:
             try:
                 self._update_metrics()
                 self._check_alerts()
+                self._maybe_reconcile_orders()
             except Exception as e:
                 logger.error(f"监控循环错误: {e}")
             
             # 等待更新间隔
             import time
             time.sleep(self.update_interval)
+
+    def _maybe_reconcile_orders(self) -> None:
+        """定期对账订单状态"""
+        import time
+        now = time.time()
+        if self._last_reconcile_time is None or now - self._last_reconcile_time >= self._reconcile_interval:
+            try:
+                self.order_manager.reconcile_open_orders()
+            except Exception as e:
+                logger.warning(f"定期对账失败: {e}")
+            self._last_reconcile_time = now
     
     def _update_metrics(self):
         """更新Prometheus指标"""

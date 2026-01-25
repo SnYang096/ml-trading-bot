@@ -29,6 +29,12 @@ def mock_ccxt_exchange():
             },
             "active": True,
             "contract": True,
+            "info": {
+                "filters": [
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.10"},
+                    {"filterType": "LOT_SIZE", "stepSize": "0.001"},
+                ]
+            },
         }
     }
 
@@ -73,6 +79,7 @@ def mock_ccxt_exchange():
         "filled": 0,
         "remaining": 0.1,
         "price": None,
+        "clientOrderId": "client_123",
     }
 
     # 模拟create_limit_order
@@ -462,6 +469,7 @@ def test_get_order(binance_api):
     assert order is not None
     assert order["order_id"] == "binance_order_123"
     assert order["status"] == "filled"
+    assert isinstance(order["created_at"], int)
     binance_api.exchange.fetch_order.assert_called_once_with(
         "binance_order_123", "BTCUSDT"
     )
@@ -502,6 +510,20 @@ def test_get_symbol_info(binance_api):
     assert info["quote"] == "USDT"
     assert "precision" in info
     assert "limits" in info
+    assert info["filters"]["tick_size"] == 0.1
+    assert info["filters"]["step_size"] == 0.001
+
+
+def test_place_order_client_order_id(binance_api):
+    """测试下单返回client_order_id"""
+    order = binance_api.place_order(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=0.1,
+        client_order_id="client_123",
+    )
+    assert order["client_order_id"] == "client_123"
 
 
 def test_get_symbol_info_not_found(binance_api):

@@ -451,7 +451,8 @@ def optimize_rule_hard_gate(
                 }
             results = constrained
 
-        # 步骤5: 找到平台高原
+        # 步骤5: 在可行域内进行帕累托优化
+        # 先找到平台高原（用于参考，但不作为最终选择依据）
         plateau = _find_plateau(
             results,
             opt_config.min_sharpe_threshold,
@@ -460,19 +461,22 @@ def optimize_rule_hard_gate(
 
         if plateau:
             plateau_start, plateau_end, plateau_median = plateau
-            recommended_threshold = plateau_median
             print(
-                f"    ✅ 平台高原: [{plateau_start:.4f}, {plateau_end:.4f}], 推荐阈值: {plateau_median:.4f}"
+                f"    ✅ 平台高原: [{plateau_start:.4f}, {plateau_end:.4f}], 中位数: {plateau_median:.4f}"
             )
         else:
-            best_idx = results["robustness_score"].idxmax()
-            recommended_threshold = results.loc[best_idx, "threshold"]
-            print(f"    ⚠️  未找到平台高原，使用最佳阈值: {recommended_threshold:.4f}")
+            print(f"    ⚠️  未找到平台高原，将使用帕累托优化选择阈值")
 
+        # 计算 Pareto 前沿（在可行域内）
         pareto_front = compute_pareto_frontier(results)
+
+        # 使用 guardrail 值作为 min_trade_rate（生存约束）
+        min_trade_rate_for_pareto = max(
+            min_trade_per_rule or 0.0, opt_config.min_trade_rate
+        )
+
         if len(pareto_front) > 0:
             # 如果启用压缩模式且有目标trade_rate，添加trade_rate约束
-            min_trade_rate_for_selection = opt_config.min_trade_rate
             if compression_mode and compression_target_trade_rate is not None:
                 # 压缩模式：选择trade_rate接近目标但不超过目标的点
                 # 优先选择trade_rate <= compression_target_trade_rate的点
@@ -508,26 +512,97 @@ def optimize_rule_hard_gate(
                         min_robustness=max(
                             opt_config.min_sharpe_threshold, compression_min_robustness
                         ),
-                        min_trade_rate=min_trade_rate_for_selection,
+                        min_trade_rate=min_trade_rate_for_pareto,  # 使用 guardrail 值
                     )
             else:
-                # 正常模式
+                # 正常模式：在可行域内进行帕累托优化
                 best_multi_threshold = select_multi_objective_threshold(
                     results,
                     pareto_front,
                     strategy=multi_objective_strategy,
                     min_robustness=opt_config.min_sharpe_threshold,
-                    min_trade_rate=min_trade_rate_for_selection,
+                    min_trade_rate=min_trade_rate_for_pareto,  # 使用 guardrail 值
                 )
 
             if best_multi_threshold is not None:
-                if plateau and plateau_start <= best_multi_threshold <= plateau_end:
-                    recommended_threshold = best_multi_threshold
-                elif not plateau:
-                    recommended_threshold = best_multi_threshold
+                recommended_threshold = best_multi_threshold
+                print(f"    ✅ 帕累托优化选择阈值: {recommended_threshold:.4f}")
+            else:
+                # 如果帕累托优化失败，使用 plateau 中位数（如果存在）
+                if plateau:
+                    recommended_threshold = plateau_median
+                    print(
+                        f"    ⚠️  帕累托优化失败，使用平台高原中位数: {recommended_threshold:.4f}"
+                    )
+                else:
+                    # 最后回退：选择满足 guardrail 的最高 trade_rate（而非最高 robustness）
+                    valid = results[results["trade_rate"] >= min_trade_rate_for_pareto]
+                    if len(valid) > 0:
+                        recommended_threshold = valid.loc[
+                            valid["trade_rate"].idxmax(), "threshold"
+                        ]
+                        print(
+                            f"    ⚠️  帕累托优化失败，使用满足 guardrail 的最高 trade_rate: {recommended_threshold:.4f}"
+                        )
+                    else:
+                        print(f"    ❌ 无满足 guardrail 的解，回退到当前阈值")
+                        return {
+                            "archetype": arch_name,
+                            "rule_name": rule_name,
+                            "feature_key": feature_key,
+                            "rule_kind": rule_kind,
+                            "current_threshold": current_threshold,
+                            "recommended_threshold": current_threshold,
+                            "robustness_score": 0.0,
+                            "trade_rate": 0.0,
+                            "priority": rule_info.get("priority", 999),
+                            "guardrail_min_trade_rate": min_trade_per_rule,
+                            "guardrail_fallback": True,
+                        }
+        else:
+            # 无 Pareto 前沿：使用 plateau 或回退
+            if plateau:
+                recommended_threshold = plateau_median
+                print(
+                    f"    ⚠️  无 Pareto 前沿，使用平台高原中位数: {recommended_threshold:.4f}"
+                )
+            else:
+                # 选择满足 guardrail 的最高 trade_rate（而非最高 robustness）
+                valid = results[results["trade_rate"] >= min_trade_rate_for_pareto]
+                if len(valid) > 0:
+                    recommended_threshold = valid.loc[
+                        valid["trade_rate"].idxmax(), "threshold"
+                    ]
+                    print(
+                        f"    ⚠️  无 Pareto 前沿，使用满足 guardrail 的最高 trade_rate: {recommended_threshold:.4f}"
+                    )
+                else:
+                    print(f"    ❌ 无满足 guardrail 的解，回退到当前阈值")
+                    return {
+                        "archetype": arch_name,
+                        "rule_name": rule_name,
+                        "feature_key": feature_key,
+                        "rule_kind": rule_kind,
+                        "current_threshold": current_threshold,
+                        "recommended_threshold": current_threshold,
+                        "robustness_score": 0.0,
+                        "trade_rate": 0.0,
+                        "priority": rule_info.get("priority", 999),
+                        "guardrail_min_trade_rate": min_trade_per_rule,
+                        "guardrail_fallback": True,
+                    }
 
-        # 获取最佳结果
-        best_result = results.loc[results["robustness_score"].idxmax()]
+        # 获取最终结果（使用选择的阈值对应的结果，而非 max(robustness_score)）
+        best_result = results.loc[results["threshold"] == recommended_threshold]
+        if len(best_result) == 0:
+            # 如果精确匹配失败，使用最接近的阈值
+            threshold_diff = (results["threshold"] - recommended_threshold).abs()
+            closest_idx = threshold_diff.idxmin()
+            best_result = results.loc[[closest_idx]]
+            print(
+                f"    ⚠️  精确匹配失败，使用最接近的阈值: {results.loc[closest_idx, 'threshold']:.4f}"
+            )
+        best_result = best_result.iloc[0]
 
         return {
             "archetype": arch_name,

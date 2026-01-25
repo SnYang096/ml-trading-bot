@@ -7,7 +7,7 @@
 使用方法:
     python scripts/run_full_pipeline.py \
         --task-spec config/tasks/task_spec_highcap6_2024_202510.yaml \
-        --symbols BTCUSDT,ETHUSDT \
+        --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
         --timeframe 240T \
         --start-date 2024-01-01 \
         --end-date 2024-12-31 \
@@ -210,7 +210,7 @@ def main() -> int:
             args.feature_store_layer or "",
             "--feature-store-root",
             args.feature_store_root,
-            "--output-dir",
+            "--output",
             str(preds_dir),
         ]
         + docker_flag,
@@ -221,30 +221,7 @@ def main() -> int:
     if not success:
         return 1
 
-    # 步骤2: Regime分类
-    regime_file = run_dir / "physics_regime.parquet"
-    success = run_command(
-        cmd=[
-            "python3",
-            "src/cli/main.py",
-            "rule",
-            "physics-regime",
-            "--preds",
-            str(preds_dir),
-            "--output",
-            str(regime_file),
-            "--stats-output",
-            str(run_dir / "physics_regime_stats.json"),
-        ]
-        + docker_flag,
-        log_file=run_dir / "regime.log",
-        check_output=regime_file,
-        description="Regime分类",
-    )
-    if not success:
-        return 1
-
-    # 步骤3: 构建Execution日志
+    # 步骤2: 构建Execution日志
     logs_file = run_dir / "logs_execution.parquet"
     success = run_command(
         cmd=[
@@ -279,7 +256,7 @@ def main() -> int:
     if not success:
         return 1
 
-    # 步骤4: 应用Gate过滤
+    # 步骤3: 应用Gate过滤（regime 已内嵌在 gate 规则中）
     gated_file = run_dir / "logs_execution_gated.parquet"
     gate_cmd = [
         "python3",
@@ -288,8 +265,6 @@ def main() -> int:
         "apply-tree-gate",
         "--logs",
         str(logs_file),
-        "--regime",
-        str(regime_file),
         "--out",
         str(gated_file),
         "--features-store-layer",
@@ -311,7 +286,7 @@ def main() -> int:
     if not success:
         return 1
 
-    # 步骤5: 添加反身性特征（可选）
+    # 步骤4: 添加反身性特征（可选）
     exec_logs_dir = run_dir / "exec_logs"
     if not args.skip_reflexivity and args.feature_store_layer:
         success = run_command(
@@ -344,7 +319,7 @@ def main() -> int:
         if not success:
             print("⚠️ 反身性特征添加失败，继续执行后续步骤")
 
-    # 步骤6: 构建Stage Logs
+    # 步骤5: 构建Stage Logs
     success = run_command(
         cmd=[
             "python3",
@@ -371,7 +346,7 @@ def main() -> int:
     if not success:
         return 1
 
-    # 步骤7: 聚合Canonical Log
+    # 步骤6: 聚合Canonical Log
     canonical_file = run_dir / "execution_log.jsonl"
     success = run_command(
         cmd=[
@@ -389,7 +364,7 @@ def main() -> int:
     if not success:
         return 1
 
-    # 步骤8: 生成E2E KPI报告
+    # 步骤7: 生成E2E KPI报告
     success = run_command(
         cmd=[
             "python3",
@@ -398,8 +373,6 @@ def main() -> int:
             "diagnose-e2e-kpi",
             "--logs",
             str(gated_file),
-            "--regime",
-            str(regime_file),
             "--gate",
             str(gated_file),
             "--output-md",

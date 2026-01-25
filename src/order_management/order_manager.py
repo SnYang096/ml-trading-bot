@@ -62,6 +62,7 @@ class OrderManager:
         """
         with self._lock:
             order_id = f"order_{uuid.uuid4().hex}"
+            client_order_id = f"cid_{uuid.uuid4().hex}"
 
             # 调用Binance API下单
             try:
@@ -74,12 +75,14 @@ class OrderManager:
                     stop_price=stop_price,
                     reduce_only=reduce_only,
                     close_position=close_position,
+                    client_order_id=client_order_id,
                 )
             except Exception as e:
                 logger.error(f"Binance API下单失败: {e}")
                 # 创建失败的订单记录
                 order = Order(
                     order_id=order_id,
+                    client_order_id=client_order_id,
                     symbol=symbol,
                     side=side,
                     order_type=order_type,
@@ -113,6 +116,7 @@ class OrderManager:
                 binance_order_id=str(
                     binance_order.get("order_id", binance_order.get("id", ""))
                 ),
+                client_order_id=binance_order.get("client_order_id", client_order_id),
                 position_id=position_id,
                 symbol=symbol,
                 side=order_side,
@@ -284,13 +288,83 @@ class OrderManager:
 
         return updated_orders
 
+    def reconcile_open_orders(self, symbol: Optional[str] = None) -> List[Order]:
+        """
+        对账本地未完成订单与交易所未完成订单
+        """
+        with self._lock:
+            local_open = self.storage.get_open_orders(symbol)
+            exchange_open = self.binance_api.get_open_orders(symbol)
+
+            exchange_by_id = {str(o.get("order_id")): o for o in exchange_open if o.get("order_id")}
+            exchange_by_client = {
+                str(o.get("client_order_id")): o
+                for o in exchange_open
+                if o.get("client_order_id")
+            }
+
+            updated_orders: List[Order] = []
+
+            # 更新本地订单状态（本地存在，交易所不存在）
+            for order in local_open:
+                found = False
+                if order.binance_order_id and order.binance_order_id in exchange_by_id:
+                    found = True
+                if not found and order.client_order_id and order.client_order_id in exchange_by_client:
+                    found = True
+
+                if not found and order.binance_order_id:
+                    # 获取交易所最终状态
+                    binance_order = self.binance_api.get_order(order.binance_order_id, order.symbol)
+                    if binance_order:
+                        order.status = self._convert_order_status(binance_order.get("status"))
+                        order.filled_quantity = binance_order.get("filled", 0)
+                        order.average_price = binance_order.get("average_price")
+                        order.updated_at = datetime.now()
+                        self.storage.update_order(order)
+                        updated_orders.append(order)
+
+            # 交易所存在但本地不存在的订单
+            for ex_order in exchange_open:
+                ex_id = str(ex_order.get("order_id", ""))
+                client_id = ex_order.get("client_order_id")
+                existing = None
+                if ex_id:
+                    existing = self.storage.get_order_by_binance_id(ex_id)
+                if not existing and client_id:
+                    existing = self.storage.get_order_by_client_id(str(client_id))
+                if existing:
+                    continue
+
+                # 创建本地记录
+                new_order = Order(
+                    order_id=f"binance_{ex_id}",
+                    binance_order_id=ex_id or None,
+                    client_order_id=str(client_id) if client_id else None,
+                    symbol=ex_order.get("symbol", ""),
+                    side=self._parse_order_side(ex_order.get("side")),
+                    order_type=self._parse_order_type(ex_order.get("type")),
+                    quantity=ex_order.get("quantity", 0),
+                    price=ex_order.get("price"),
+                    status=self._convert_order_status(ex_order.get("status")),
+                    filled_quantity=ex_order.get("filled", 0),
+                    average_price=ex_order.get("average_price"),
+                    created_at=datetime.now(),
+                )
+                self.storage.create_order(new_order)
+                updated_orders.append(new_order)
+
+            return updated_orders
+
     def _convert_order_status(self, status: Optional[str]) -> OrderStatus:
         """转换订单状态"""
         if not status:
             return OrderStatus.PENDING
         status_lower = str(status).lower()
-        if status_lower in ["new", "pending"]:
+        if status_lower in ["new", "open", "pending"]:
             return OrderStatus.PENDING
+        elif status_lower in ["partially_filled", "partial", "partiallyfilled"]:
+            return OrderStatus.PARTIALLY_FILLED
         elif status_lower in ["filled", "closed"]:
             return OrderStatus.FILLED
         elif status_lower == "canceled":
@@ -302,3 +376,81 @@ class OrderManager:
         else:
             logger.warning(f"未知的订单状态: {status}")
             return OrderStatus.PENDING
+
+    def _parse_order_side(self, side: Optional[str]) -> OrderSide:
+        if not side:
+            return OrderSide.BUY
+        side_lower = str(side).lower()
+        return OrderSide.BUY if side_lower in ["buy", "long"] else OrderSide.SELL
+
+    def _parse_order_type(self, order_type: Optional[str]) -> OrderType:
+        if not order_type:
+            return OrderType.MARKET
+        ot = str(order_type).lower()
+        mapping = {
+            "market": OrderType.MARKET,
+            "limit": OrderType.LIMIT,
+            "stop": OrderType.STOP,
+            "stop_market": OrderType.STOP_MARKET,
+            "take_profit": OrderType.TAKE_PROFIT,
+            "take_profit_market": OrderType.TAKE_PROFIT_MARKET,
+        }
+        return mapping.get(ot, OrderType.MARKET)
+
+    def handle_execution_report(self, report: Dict[str, Any]) -> Optional[Order]:
+        """
+        处理User Data Stream的订单回报（executionReport/ORDER_TRADE_UPDATE）
+        """
+        with self._lock:
+            order = None
+            order_id = report.get("order_id")
+            client_order_id = report.get("client_order_id")
+
+            if order_id:
+                order = self.storage.get_order_by_binance_id(str(order_id))
+            if not order and client_order_id:
+                order = self.storage.get_order_by_client_id(str(client_order_id))
+
+            if not order:
+                # 创建本地缺失订单（对账场景）
+                symbol = report.get("symbol") or ""
+                order = Order(
+                    order_id=f"binance_{order_id}",
+                    binance_order_id=str(order_id) if order_id else None,
+                    client_order_id=str(client_order_id) if client_order_id else None,
+                    symbol=symbol,
+                    side=self._parse_order_side(report.get("side")),
+                    order_type=self._parse_order_type(report.get("order_type")),
+                    quantity=report.get("filled_qty", 0) or 0,
+                    status=self._convert_order_status(report.get("status")),
+                    filled_quantity=report.get("filled_qty", 0) or 0,
+                    average_price=report.get("avg_price") or None,
+                    created_at=datetime.now(),
+                )
+                self.storage.create_order(order)
+                return order
+
+            # 更新订单字段
+            if order_id and not order.binance_order_id:
+                order.binance_order_id = str(order_id)
+            if client_order_id and not order.client_order_id:
+                order.client_order_id = str(client_order_id)
+
+            order.status = self._convert_order_status(report.get("status"))
+            filled_qty = report.get("filled_qty")
+            if filled_qty is not None:
+                order.filled_quantity = float(filled_qty)
+            avg_price = report.get("avg_price")
+            if avg_price:
+                order.average_price = float(avg_price)
+
+            if order.status == OrderStatus.FILLED:
+                ts = report.get("trade_time") or report.get("event_time")
+                if ts:
+                    order.filled_at = datetime.fromtimestamp(int(ts))
+            elif order.status in (OrderStatus.CANCELED, OrderStatus.REJECTED, OrderStatus.EXPIRED):
+                order.canceled_at = datetime.now()
+
+            order.updated_at = datetime.now()
+            self.storage.update_order(order)
+            return order

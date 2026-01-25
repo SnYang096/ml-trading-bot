@@ -59,6 +59,7 @@ def test_order_type_enum():
 def test_order_status_enum():
     """测试OrderStatus枚举"""
     assert OrderStatus.PENDING == "pending"
+    assert OrderStatus.PARTIALLY_FILLED == "partially_filled"
     assert OrderStatus.FILLED == "filled"
     assert OrderStatus.CANCELED == "canceled"
     assert OrderStatus.REJECTED == "rejected"
@@ -164,6 +165,7 @@ def test_order_defaults():
     )
 
     assert order.binance_order_id is None
+    assert order.client_order_id is None
     assert order.position_id is None
     assert order.symbol == ""
     assert order.side == OrderSide.BUY

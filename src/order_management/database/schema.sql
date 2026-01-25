@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS position_operations (
 CREATE TABLE IF NOT EXISTS orders (
     order_id TEXT PRIMARY KEY,  -- 本地订单ID
     binance_order_id TEXT,  -- Binance订单ID
+    client_order_id TEXT,  -- 客户端订单ID（用于幂等）
     position_id TEXT,
     symbol TEXT NOT NULL,
     side TEXT NOT NULL,  -- 'buy' or 'sell'
@@ -115,6 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_symbol ON orders(symbol);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_position_id ON orders(position_id);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_order_id);
 CREATE INDEX IF NOT EXISTS idx_stop_loss_trailing_position_id ON stop_loss_trailing(position_id);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_date ON performance_metrics(date);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_symbol ON performance_metrics(symbol);

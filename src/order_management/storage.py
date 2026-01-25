@@ -45,15 +45,42 @@ class Storage:
             
             conn = sqlite3.connect(self.db_path)
             try:
-                conn.executescript(schema_sql)
-                conn.commit()
+                # 先尝试执行 schema，如果失败（表已存在），继续执行列检查
+                try:
+                    conn.executescript(schema_sql)
+                    conn.commit()
+                except sqlite3.OperationalError as e:
+                    # 如果表已存在，忽略错误，继续执行列检查
+                    if "already exists" not in str(e).lower() and "duplicate" not in str(e).lower():
+                        # 如果是其他错误，重新抛出
+                        raise
+                    conn.commit()
+                
+                # 确保所有必需的列都存在（兼容旧数据库）
+                self._ensure_order_columns(conn)
             finally:
                 conn.close()
+
+    def _ensure_order_columns(self, conn: sqlite3.Connection) -> None:
+        """确保orders表包含新增字段（兼容旧数据库）"""
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(orders)")
+            existing_cols = {row[1] for row in cursor.fetchall()}
+
+            if "client_order_id" not in existing_cols:
+                cursor.execute("ALTER TABLE orders ADD COLUMN client_order_id TEXT")
+                conn.commit()
+        except sqlite3.Error:
+            # 如果表不存在或其他错误，忽略以保持初始化流程
+            pass
     
     def _get_connection(self) -> sqlite3.Connection:
         """获取数据库连接"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # 启用 WAL 模式以提高并发性能
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
     
     # ========== Position CRUD ==========
@@ -210,14 +237,15 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO orders (
-                    order_id, binance_order_id, position_id, symbol, side,
+                    order_id, binance_order_id, client_order_id, position_id, symbol, side,
                     order_type, quantity, price, stop_price, status,
                     filled_quantity, average_price, commission, commission_asset,
                     created_at, updated_at, filled_at, canceled_at, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 order.order_id,
                 order.binance_order_id,
+                order.client_order_id,
                 order.position_id,
                 order.symbol,
                 order.side.value,
@@ -266,6 +294,19 @@ class Storage:
             return None
         finally:
             conn.close()
+
+    def get_order_by_client_id(self, client_order_id: str) -> Optional[Order]:
+        """通过客户端订单ID获取订单"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM orders WHERE client_order_id = ?", (client_order_id,))
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_order(row)
+            return None
+        finally:
+            conn.close()
     
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Order]:
         """获取未完成订单"""
@@ -274,11 +315,11 @@ class Storage:
             cursor = conn.cursor()
             if symbol:
                 cursor.execute(
-                    "SELECT * FROM orders WHERE status = 'pending' AND symbol = ?",
+                    "SELECT * FROM orders WHERE status IN ('pending', 'partially_filled') AND symbol = ?",
                     (symbol,)
                 )
             else:
-                cursor.execute("SELECT * FROM orders WHERE status = 'pending'")
+                cursor.execute("SELECT * FROM orders WHERE status IN ('pending', 'partially_filled')")
             
             rows = cursor.fetchall()
             return [self._row_to_order(row) for row in rows]
@@ -292,7 +333,7 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE orders SET
-                    binance_order_id = ?, position_id = ?, symbol = ?, side = ?,
+                    binance_order_id = ?, client_order_id = ?, position_id = ?, symbol = ?, side = ?,
                     order_type = ?, quantity = ?, price = ?, stop_price = ?,
                     status = ?, filled_quantity = ?, average_price = ?,
                     commission = ?, commission_asset = ?,
@@ -301,6 +342,7 @@ class Storage:
                 WHERE order_id = ?
             """, (
                 order.binance_order_id,
+                order.client_order_id,
                 order.position_id,
                 order.symbol,
                 order.side.value,
@@ -328,6 +370,7 @@ class Storage:
         return Order(
             order_id=row['order_id'],
             binance_order_id=row['binance_order_id'],
+            client_order_id=row['client_order_id'] if 'client_order_id' in row.keys() else None,
             position_id=row['position_id'],
             symbol=row['symbol'],
             side=OrderSide(row['side']),

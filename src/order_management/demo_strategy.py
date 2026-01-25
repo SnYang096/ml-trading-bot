@@ -9,8 +9,9 @@ import os
 import sys
 import logging
 import time
+import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent
@@ -20,6 +21,8 @@ from src.order_management.storage import Storage
 from src.order_management.binance_api import BinanceAPI
 from src.order_management.position_manager import PositionManager
 from src.order_management.order_manager import OrderManager
+from src.order_management.binance_user_stream import BinanceUserStream
+from src.order_management.database_backup import DatabaseBackup
 from src.order_management.models import OrderSide, OrderType, PositionSide
 
 logging.basicConfig(
@@ -122,11 +125,39 @@ def setup_system(testnet: bool = True) -> dict:
     order_manager = OrderManager(storage, binance_api)
     logger.info("✅ 管理器和订单管理器已初始化")
 
+    # 初始化 User Data Stream
+    def on_execution_report(report: Dict[str, Any]) -> None:
+        """处理订单执行回报"""
+        try:
+            order_manager.handle_execution_report(report)
+            logger.info(
+                f"📨 收到订单回报: order_id={report.get('order_id')}, "
+                f"status={report.get('status')}, symbol={report.get('symbol')}"
+            )
+        except Exception as e:
+            logger.error(f"处理订单回报失败: {e}", exc_info=True)
+
+    user_stream = BinanceUserStream(
+        binance_api=binance_api,
+        on_execution_report=on_execution_report,
+        keepalive_interval=30 * 60,  # 30分钟续期一次
+    )
+    logger.info("✅ User Data Stream已初始化")
+
+    # 初始化数据库备份
+    backup_manager = DatabaseBackup(
+        db_path=str(db_path),
+        retention_days=30,
+    )
+    logger.info("✅ 数据库备份管理器已初始化")
+
     return {
         "storage": storage,
         "binance_api": binance_api,
         "position_manager": position_manager,
         "order_manager": order_manager,
+        "user_stream": user_stream,
+        "backup_manager": backup_manager,
     }
 
 
@@ -459,9 +490,9 @@ def print_summary(system: dict):
     logger.info("=" * 80)
 
 
-def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False):
+async def run_demo_async(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False):
     """
-    运行基线策略demo
+    异步版本的运行基线策略demo
 
     Args:
         symbol: 交易对符号（默认: BTCUSDT）
@@ -478,11 +509,26 @@ def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False
         logger.warning("⚠️  警告: 使用主网，将使用真实资金！")
     logger.info("=" * 80)
 
+    system = None
+    user_stream = None
+    backup_manager = None
+
     try:
         # 1. 初始化系统
         system = setup_system(testnet=testnet)
+        user_stream = system["user_stream"]
+        backup_manager = system.get("backup_manager")
 
-        # 2. 开空单（SHORT）
+        # 2. 启动 User Data Stream
+        await user_stream.start()
+        logger.info("✅ User Data Stream已启动")
+
+        # 3. 启动数据库备份
+        if backup_manager:
+            await backup_manager.start()
+            logger.info("✅ 数据库备份任务已启动")
+
+        # 4. 开空单（SHORT）
         short_position_id, short_order_id = open_short_position(system, symbol, size)
         if not short_position_id:
             logger.error("❌ 开空单失败，终止demo")
@@ -490,7 +536,7 @@ def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False
 
         time.sleep(1)  # 短暂等待
 
-        # 3. 开多单（LONG）
+        # 5. 开多单（LONG）
         long_position_id, long_order_id = open_long_position(system, symbol, size)
         if not long_position_id:
             logger.error("❌ 开多单失败，终止demo")
@@ -498,7 +544,7 @@ def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False
 
         time.sleep(1)  # 短暂等待
 
-        # 4. 关闭仓位
+        # 6. 关闭仓位
         logger.info("=" * 80)
         logger.info("开始关闭仓位")
         logger.info("=" * 80)
@@ -513,7 +559,7 @@ def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False
             close_position(system, long_position_id, symbol)
             time.sleep(1)
 
-        # 5. 打印统计信息
+        # 7. 打印统计信息
         print_summary(system)
 
         logger.info("=" * 80)
@@ -522,6 +568,27 @@ def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False
 
     except Exception as e:
         logger.error(f"❌ Demo执行失败: {e}", exc_info=True)
+    finally:
+        # 停止数据库备份
+        if backup_manager:
+            await backup_manager.stop()
+        
+        # 停止 User Data Stream
+        if user_stream:
+            await user_stream.stop()
+            logger.info("✅ User Data Stream已停止")
+
+
+def run_demo(symbol: str = "BTCUSDT", size: float = 0.001, testnet: bool = False):
+    """
+    运行基线策略demo（同步包装器）
+
+    Args:
+        symbol: 交易对符号（默认: BTCUSDT）
+        size: 仓位大小（默认: 0.001）
+        testnet: 是否使用测试网（默认: False，使用主网）
+    """
+    asyncio.run(run_demo_async(symbol, size, testnet))
 
 
 if __name__ == "__main__":

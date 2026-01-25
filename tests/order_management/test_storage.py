@@ -60,6 +60,7 @@ def test_create_order(temp_db):
 
     order = Order(
         order_id="test_order_1",
+        client_order_id="client_123",
         symbol="BTCUSDT",
         side=OrderSide.BUY,
         order_type=OrderType.MARKET,
@@ -73,6 +74,26 @@ def test_create_order(temp_db):
     assert retrieved is not None
     assert retrieved.symbol == "BTCUSDT"
     assert retrieved.status == OrderStatus.PENDING
+    assert retrieved.client_order_id == "client_123"
+
+
+def test_get_order_by_client_id(temp_db):
+    """测试通过client_order_id获取订单"""
+    storage, path = temp_db[0], temp_db[1]
+    order = Order(
+        order_id="test_order_2",
+        client_order_id="client_456",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.2,
+        status=OrderStatus.PENDING,
+        created_at=datetime.now(),
+    )
+    storage.create_order(order)
+    retrieved = storage.get_order_by_client_id("client_456")
+    assert retrieved is not None
+    assert retrieved.order_id == "test_order_2"
 
 
 def test_get_open_positions(temp_db):
@@ -116,6 +137,23 @@ def test_get_open_positions(temp_db):
     # 测试按symbol过滤
     btc_positions = storage.get_open_positions("BTCUSDT")
     assert len(btc_positions) == 3
+
+
+def test_get_open_orders_includes_partial(temp_db):
+    """测试未完成订单包含部分成交"""
+    storage, path = temp_db[0], temp_db[1]
+    order = Order(
+        order_id="test_order_partial",
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=0.1,
+        status=OrderStatus.PARTIALLY_FILLED,
+        created_at=datetime.now(),
+    )
+    storage.create_order(order)
+    open_orders = storage.get_open_orders()
+    assert any(o.order_id == "test_order_partial" for o in open_orders)
 
 
 def test_update_position(temp_db):

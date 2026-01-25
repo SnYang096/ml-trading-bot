@@ -29,6 +29,7 @@ def mock_binance_api():
             "amount": {"min": 0.001, "max": 1000.0},
             "price": {"min": 0.01, "max": 1000000.0},
         },
+        "filters": {"tick_size": 0.1, "step_size": 0.01},
     }
     api.get_position.return_value = None
     return api
@@ -75,8 +76,18 @@ def test_check_order_quantity_precision(risk_controller):
 
     # 精度不符合（4位小数，但要求3位）
     passed, error = risk_controller.check_order_quantity_precision("BTCUSDT", 0.1234)
-    # 注意：实际实现可能需要根据symbol_info的precision来验证
-    # 这里简化测试
+    assert passed == False
+    assert "stepSize" in error
+
+
+def test_check_order_price_precision_step(risk_controller):
+    """测试订单价格tickSize精度"""
+    passed, error = risk_controller.check_order_price_precision("BTCUSDT", 50000.1)
+    assert passed == True
+
+    passed, error = risk_controller.check_order_price_precision("BTCUSDT", 50000.05)
+    assert passed == False
+    assert "tickSize" in error
 
 
 def test_check_margin_requirement(risk_controller):

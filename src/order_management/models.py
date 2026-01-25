@@ -39,6 +39,7 @@ class OrderType(str, Enum):
 class OrderStatus(str, Enum):
     """订单状态"""
     PENDING = "pending"
+    PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
     CANCELED = "canceled"
     REJECTED = "rejected"
@@ -97,6 +98,7 @@ class Order:
     """订单模型"""
     order_id: str
     binance_order_id: Optional[str] = None
+    client_order_id: Optional[str] = None
     position_id: Optional[str] = None
     symbol: str = ""
     side: OrderSide = OrderSide.BUY

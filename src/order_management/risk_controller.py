@@ -215,15 +215,22 @@ class RiskController:
             symbol_info = self.binance_api.get_symbol_info(symbol)
             if not symbol_info:
                 return False, f"无法获取交易对信息: {symbol}"
-            
+
+            tick_size = symbol_info.get("filters", {}).get("tick_size")
+            if tick_size:
+                if not self._is_multiple_of_step(price, tick_size):
+                    error_msg = f"订单价格不符合tickSize: {price}, tickSize={tick_size}"
+                    logger.warning(error_msg)
+                    return False, error_msg
+                return True, None
+
             precision = symbol_info.get('precision', {}).get('price')
             if precision is None:
                 return True, None
-            
-            # 检查价格精度
+
             price_str = f"{price:.{precision}f}"
             price_rounded = float(price_str)
-            
+
             if abs(price - price_rounded) > 1e-10:
                 error_msg = (
                     f"订单价格精度不符合要求: {price}, "
@@ -231,7 +238,7 @@ class RiskController:
                 )
                 logger.warning(error_msg)
                 return False, error_msg
-            
+
             return True, None
         except Exception as e:
             logger.error(f"检查价格精度失败: {e}")
@@ -256,15 +263,22 @@ class RiskController:
             symbol_info = self.binance_api.get_symbol_info(symbol)
             if not symbol_info:
                 return False, f"无法获取交易对信息: {symbol}"
-            
+
+            step_size = symbol_info.get("filters", {}).get("step_size")
+            if step_size:
+                if not self._is_multiple_of_step(quantity, step_size):
+                    error_msg = f"订单数量不符合stepSize: {quantity}, stepSize={step_size}"
+                    logger.warning(error_msg)
+                    return False, error_msg
+                return True, None
+
             precision = symbol_info.get('precision', {}).get('amount')
             if precision is None:
                 return True, None
-            
-            # 检查数量精度
+
             quantity_str = f"{quantity:.{precision}f}"
             quantity_rounded = float(quantity_str)
-            
+
             if abs(quantity - quantity_rounded) > 1e-10:
                 error_msg = (
                     f"订单数量精度不符合要求: {quantity}, "
@@ -272,11 +286,21 @@ class RiskController:
                 )
                 logger.warning(error_msg)
                 return False, error_msg
-            
+
             return True, None
         except Exception as e:
             logger.error(f"检查数量精度失败: {e}")
             return False, str(e)
+
+    @staticmethod
+    def _is_multiple_of_step(value: float, step: float) -> bool:
+        """检查数值是否为step的整数倍"""
+        try:
+            v = Decimal(str(value))
+            s = Decimal(str(step))
+            return (v % s) == 0
+        except Exception:
+            return False
     
     def validate_order_before_submit(
         self,

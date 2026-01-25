@@ -61,23 +61,13 @@ mlbot nnmultihead predict \
     --model "${MODEL_PATH}" \
     --feature-store-layer "${FEATURE_STORE_LAYER}" \
     --feature-store-root "${FEATURE_STORE_ROOT}" \
-    --output-dir "${OUTPUT_DIR}/preds" \
+    --output "${OUTPUT_DIR}/preds" \
     --no-docker 2>&1 | tee "${OUTPUT_DIR}/predict.log"
 echo "✅ 预测完成"
 
-# 步骤3: Regime分类
+# 步骤3: 构建Execution日志
 echo ""
-echo "步骤3: Regime分类..."
-mlbot rule physics-regime \
-    --preds "${OUTPUT_DIR}/preds" \
-    --output "${OUTPUT_DIR}/physics_regime.parquet" \
-    --stats-output "${OUTPUT_DIR}/physics_regime_stats.json" \
-    --no-docker 2>&1 | tee "${OUTPUT_DIR}/regime.log"
-echo "✅ Regime分类完成"
-
-# 步骤4: 构建Execution日志
-echo ""
-echo "步骤4: 构建Execution日志..."
+echo "步骤3: 构建Execution日志..."
 mlbot nnmultihead build-execution-logs \
     --preds "${OUTPUT_DIR}/preds" \
     --model "${MODEL_PATH}" \
@@ -91,44 +81,53 @@ mlbot nnmultihead build-execution-logs \
     --no-docker 2>&1 | tee "${OUTPUT_DIR}/build_logs.log"
 echo "✅ Execution日志构建完成"
 
-# 步骤5: 应用Gate过滤（全松阈值）
+# 步骤4: 应用Gate过滤（全松阈值，regime 已内嵌）
 echo ""
-echo "步骤5: 应用Gate过滤（全松阈值）..."
+echo "步骤4: 应用Gate过滤（全松阈值）..."
 mlbot rule apply-tree-gate \
     --logs "${OUTPUT_DIR}/logs_execution.parquet" \
-    --physics-regime "${OUTPUT_DIR}/physics_regime.parquet" \
     --out "${OUTPUT_DIR}/logs_execution_gated.parquet" \
     --features-store-layer "${FEATURE_STORE_LAYER}" \
     --features-store-root "${FEATURE_STORE_ROOT}" \
-    --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
     --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+    --timeframe "${TIMEFRAME}" \
+    --start-date "${START_DATE}" \
+    --end-date "${END_DATE}" \
     --no-docker 2>&1 | tee "${OUTPUT_DIR}/gate.log"
 echo "✅ Gate过滤完成"
 
-# 步骤6: 构建Stage Logs
+# 步骤5: 构建Stage Logs
 echo ""
-echo "步骤6: 构建Stage Logs..."
-mlbot nnmultihead build-execution-log-stages \
-    --logs "${OUTPUT_DIR}/logs_execution_gated.parquet" \
-    --output-dir "${OUTPUT_DIR}/exec_logs" \
-    --no-docker 2>&1 | tee "${OUTPUT_DIR}/build_stages.log"
+echo "步骤5: 构建Stage Logs..."
+PYTHONPATH=. python3 scripts/build_execution_log_stages.py \
+    --preds "${OUTPUT_DIR}/preds" \
+    --logs "${OUTPUT_DIR}/logs_execution.parquet" \
+    --gated-logs "${OUTPUT_DIR}/logs_execution_gated.parquet" \
+    --out-dir "${OUTPUT_DIR}/exec_logs" \
+    --timeframe "${TIMEFRAME}" \
+    --run-id "${RUN_ID}" \
+    --strategy-name "pipeline-3action-e2e" \
+    2>&1 | tee "${OUTPUT_DIR}/build_stages.log"
 echo "✅ Stage Logs构建完成"
 
-# 步骤7: 聚合Canonical Log
+# 步骤6: 聚合Canonical Log
 echo ""
-echo "步骤7: 聚合Canonical Log..."
-mlbot nnmultihead aggregate-execution-log-stages \
-    --stages-dir "${OUTPUT_DIR}/exec_logs" \
-    --output "${OUTPUT_DIR}/execution_log.jsonl" \
-    --no-docker 2>&1 | tee "${OUTPUT_DIR}/aggregate.log"
+echo "步骤6: 聚合Canonical Log..."
+PYTHONPATH=. python3 scripts/aggregate_execution_log_stages.py \
+    --stage-dir "${OUTPUT_DIR}/exec_logs" \
+    --out "${OUTPUT_DIR}/execution_log.jsonl" \
+    2>&1 | tee "${OUTPUT_DIR}/aggregate.log"
 echo "✅ Canonical Log聚合完成"
 
-# 步骤8: 生成E2E KPI报告
+# 步骤7: 生成E2E KPI报告
 echo ""
-echo "步骤8: 生成E2E KPI报告..."
-python scripts/diagnose_e2e_kpi.py \
-    --canonical-logs "${OUTPUT_DIR}/execution_log.jsonl" \
-    --output "${OUTPUT_DIR}/e2e_kpi_report.md" \
+echo "步骤7: 生成E2E KPI报告..."
+python3 scripts/diagnose_e2e_kpi.py \
+    --logs "${OUTPUT_DIR}/logs_execution_gated.parquet" \
+    --gate "${OUTPUT_DIR}/logs_execution_gated.parquet" \
+    --output-md "${OUTPUT_DIR}/e2e_kpi_report.md" \
+    --output-json "${OUTPUT_DIR}/e2e_kpi_report.json" \
+    --no-regime-filter \
     2>&1 | tee "${OUTPUT_DIR}/e2e_kpi.log"
 echo "✅ E2E KPI报告生成完成"
 

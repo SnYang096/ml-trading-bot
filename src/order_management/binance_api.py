@@ -9,6 +9,7 @@ import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import ccxt
+import requests
 
 from .models import Order, OrderSide, OrderType, OrderStatus
 
@@ -230,6 +231,59 @@ class BinanceAPI:
                     "private": "https://testnet.binancefuture.com",
                 }
 
+    def _get_futures_base_url(self) -> str:
+        """获取期货REST基础URL"""
+        if self.testnet:
+            return "https://testnet.binancefuture.com"
+        return "https://fapi.binance.com"
+
+    def _get_futures_ws_base(self) -> str:
+        """获取期货User Data Stream WS基础URL"""
+        if self.testnet:
+            return "wss://stream.binancefuture.com/ws"
+        return "wss://fstream.binance.com/ws"
+
+    def _get_requests_proxies(self) -> Optional[Dict[str, str]]:
+        """构建requests代理配置"""
+        if not self.use_proxy:
+            return None
+        proxy_url = f"{self.proxy_type}://{self.proxy_host}:{self.proxy_port}"
+        return {"http": proxy_url, "https": proxy_url}
+
+    def get_listen_key(self) -> str:
+        """创建User Data Stream listenKey（合约）"""
+        url = f"{self._get_futures_base_url()}/fapi/v1/listenKey"
+        headers = {"X-MBX-APIKEY": self.api_key}
+        resp = requests.post(
+            url, headers=headers, timeout=10, proxies=self._get_requests_proxies()
+        )
+        resp.raise_for_status()
+        return resp.json()["listenKey"]
+
+    def keepalive_listen_key(self, listen_key: str) -> None:
+        """续期User Data Stream listenKey"""
+        url = f"{self._get_futures_base_url()}/fapi/v1/listenKey"
+        headers = {"X-MBX-APIKEY": self.api_key}
+        params = {"listenKey": listen_key}
+        resp = requests.put(
+            url, headers=headers, params=params, timeout=10, proxies=self._get_requests_proxies()
+        )
+        resp.raise_for_status()
+
+    def close_listen_key(self, listen_key: str) -> None:
+        """关闭User Data Stream listenKey"""
+        url = f"{self._get_futures_base_url()}/fapi/v1/listenKey"
+        headers = {"X-MBX-APIKEY": self.api_key}
+        params = {"listenKey": listen_key}
+        resp = requests.delete(
+            url, headers=headers, params=params, timeout=10, proxies=self._get_requests_proxies()
+        )
+        resp.raise_for_status()
+
+    def get_user_stream_url(self, listen_key: str) -> str:
+        """获取User Data Stream WS URL"""
+        return f"{self._get_futures_ws_base()}/{listen_key}"
+
     # ========== 账户信息 ==========
 
     def get_account_balance(self) -> Dict[str, Any]:
@@ -324,6 +378,20 @@ class BinanceAPI:
             logger.error(f"获取仓位信息失败: {e}")
             raise
 
+    @staticmethod
+    def _normalize_timestamp(ts: Optional[int]) -> Optional[int]:
+        """将毫秒时间戳统一为秒级（int）"""
+        if ts is None:
+            return None
+        try:
+            ts_int = int(ts)
+        except (TypeError, ValueError):
+            return None
+        # 13位为毫秒时间戳
+        if ts_int > 10**12:
+            return ts_int // 1000
+        return ts_int
+
     def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         获取指定交易对的仓位
@@ -349,6 +417,7 @@ class BinanceAPI:
         stop_price: Optional[float] = None,
         reduce_only: bool = False,
         close_position: bool = False,
+        client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         下单
@@ -371,11 +440,15 @@ class BinanceAPI:
             ccxt_side = "buy" if side == OrderSide.BUY else "sell"
             ccxt_type = self._convert_order_type(order_type)
 
-            params = {}
+            params: Dict[str, Any] = {}
             if reduce_only:
                 params["reduceOnly"] = True
             if close_position:
                 params["closePosition"] = True
+            if client_order_id:
+                # Binance Futures支持newClientOrderId
+                params["newClientOrderId"] = client_order_id
+                params["clientOrderId"] = client_order_id
 
             if order_type == OrderType.MARKET:
                 order = self.exchange.create_market_order(
@@ -410,6 +483,11 @@ class BinanceAPI:
 
             return {
                 "order_id": order["id"],
+                "client_order_id": order.get("clientOrderId")
+                or order.get("clientOrderId".lower())
+                or order.get("client_order_id")
+                or (order.get("info") or {}).get("clientOrderId")
+                or client_order_id,
                 "symbol": order["symbol"],
                 "side": order["side"],
                 "type": order["type"],
@@ -488,6 +566,8 @@ class BinanceAPI:
             order = self.exchange.fetch_order(order_id, symbol)
             return {
                 "order_id": order["id"],
+                "client_order_id": order.get("clientOrderId")
+                or (order.get("info") or {}).get("clientOrderId"),
                 "symbol": order["symbol"],
                 "side": order["side"],
                 "type": order["type"],
@@ -497,7 +577,7 @@ class BinanceAPI:
                 "filled": order.get("filled", 0),
                 "remaining": order.get("remaining", 0),
                 "average_price": order.get("average"),
-                "created_at": order.get("timestamp"),
+                "created_at": self._normalize_timestamp(order.get("timestamp")),
                 "info": order.get("info", {}),
             }
         except Exception as e:
@@ -521,6 +601,8 @@ class BinanceAPI:
                 result.append(
                     {
                         "order_id": order["id"],
+                        "client_order_id": order.get("clientOrderId")
+                        or (order.get("info") or {}).get("clientOrderId"),
                         "symbol": order["symbol"],
                         "side": order["side"],
                         "type": order["type"],
@@ -529,7 +611,7 @@ class BinanceAPI:
                         "price": order.get("price"),
                         "filled": order.get("filled", 0),
                         "remaining": order.get("remaining", 0),
-                        "created_at": order.get("timestamp"),
+                        "created_at": self._normalize_timestamp(order.get("timestamp")),
                         "info": order.get("info", {}),
                     }
                 )
@@ -566,6 +648,14 @@ class BinanceAPI:
             markets = self.exchange.load_markets()
             if symbol in markets:
                 market = markets[symbol]
+                tick_size = None
+                step_size = None
+                filters = market.get("info", {}).get("filters", [])
+                for f in filters:
+                    if f.get("filterType") == "PRICE_FILTER":
+                        tick_size = f.get("tickSize")
+                    elif f.get("filterType") in ("LOT_SIZE", "MARKET_LOT_SIZE"):
+                        step_size = f.get("stepSize")
                 return {
                     "symbol": symbol,
                     "base": market["base"],
@@ -578,6 +668,10 @@ class BinanceAPI:
                         "amount": market["limits"]["amount"],
                         "price": market["limits"]["price"],
                         "cost": market["limits"]["cost"],
+                    },
+                    "filters": {
+                        "tick_size": float(tick_size) if tick_size else None,
+                        "step_size": float(step_size) if step_size else None,
                     },
                     "active": market.get("active", True),
                     "contract": market.get("contract", False),
