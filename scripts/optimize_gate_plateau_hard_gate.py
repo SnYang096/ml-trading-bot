@@ -38,6 +38,9 @@ from scripts.optimize_gate_plateau import (
     _find_plateau,
     _apply_single_rule_veto,
     _compute_robustness_score,
+    compute_pareto_frontier,
+    select_multi_objective_threshold,
+    _normalize_archetype,
     BucketConfig,
     OptimizationConfig,
 )
@@ -240,6 +243,22 @@ def apply_frozen_rules(
     return df[mask].copy()
 
 
+def _compute_min_trade_per_rule(
+    *,
+    total_rules: int,
+    optimized_count: int,
+    global_trade_budget: Optional[float],
+) -> Optional[float]:
+    """
+    Compute per-rule minimum trade rate from a global trade budget.
+    Uses multiplicative budget: min_trade_per_rule = budget ** (1 / remaining_rules).
+    """
+    if global_trade_budget is None or global_trade_budget <= 0:
+        return None
+    remaining_rules = max(1, total_rules - optimized_count)
+    return float(global_trade_budget) ** (1.0 / float(remaining_rules))
+
+
 def optimize_rule_hard_gate(
     df: pd.DataFrame,
     rule_info: Dict[str, Any],
@@ -247,6 +266,13 @@ def optimize_rule_hard_gate(
     bucket_config: BucketConfig,
     opt_config: OptimizationConfig,
     execution_archetypes_path: str,
+    total_rules: int,
+    optimized_count: int,
+    global_trade_budget: Optional[float],
+    compression_mode: bool = False,
+    compression_target_trade_rate: Optional[float] = None,
+    compression_min_robustness: float = 0.5,
+    multi_objective_strategy: str = "max_robustness",
 ) -> Optional[Dict[str, Any]]:
     """
     在Hard-Gate System下优化单个规则
@@ -280,15 +306,61 @@ def optimize_rule_hard_gate(
     print(f"    应用冻结规则后剩余样本: {len(df_filtered)} / {len(df)}")
 
     # 步骤2: 确定阈值扫描范围
+    # 如果启用压缩模式，从全松阈值开始逐步收紧
+
     if rule_kind.startswith("quantile_"):
-        threshold_range = (0.0, 1.0)
+        if compression_mode:
+            # 压缩模式：从全松开始收紧
+            if rule_kind in ["quantile_lt", "quantile_lte"]:
+                # 从0.0开始（全松），逐步增加到0.95（更严格）
+                threshold_range = (0.0, 0.95)
+            else:  # quantile_gt, quantile_gte
+                # 从0.05开始（全松），逐步降低到1.0（更严格）
+                # 注意：_scan_threshold使用递增扫描，所以我们需要从0.05到1.0
+                # 但实际上quantile_gt的threshold越小，过滤越多，所以我们需要反向扫描
+                # 为了简化，我们从0.05开始扫描到1.0，然后在结果中选择trade_rate较小的点
+                threshold_range = (0.05, 1.0)
+        else:
+            threshold_range = (0.0, 1.0)
     else:
         if feature_key in df_filtered.columns:
             feature_vals = df_filtered[feature_key].dropna()
             if len(feature_vals) > 0:
-                p5 = float(feature_vals.quantile(0.05))
-                p95 = float(feature_vals.quantile(0.95))
-                threshold_range = (p5, p95)
+                if compression_mode:
+                    # 压缩模式：从全松阈值开始，逐步收紧
+                    # 使用特征的实际分位数范围，避免内存问题
+                    # 限制范围，确保步长合理
+                    p01 = float(feature_vals.quantile(0.01))
+                    p05 = float(feature_vals.quantile(0.05))
+                    p10 = float(feature_vals.quantile(0.10))
+                    p50 = float(feature_vals.quantile(0.50))
+                    p90 = float(feature_vals.quantile(0.90))
+                    p95 = float(feature_vals.quantile(0.95))
+                    p99 = float(feature_vals.quantile(0.99))
+
+                    # 限制范围大小，确保扫描点数不超过1000
+                    range_size = max(abs(p95 - p01), abs(p99 - p05))
+                    max_range_size = 1000 * opt_config.threshold_step  # 最多1000个点
+
+                    if rule_kind in ["value_lt", "value_lte"]:
+                        # 从p01开始（全松），逐步增加到p95（更严格）
+                        if range_size > max_range_size:
+                            # 如果范围太大，只扫描到p50附近
+                            threshold_range = (p01, min(p50, p01 + max_range_size))
+                        else:
+                            threshold_range = (p01, p95)
+                    else:  # value_gt, value_gte
+                        # 从p99开始（全松），逐步降低到p05（更严格）
+                        if range_size > max_range_size:
+                            # 如果范围太大，只扫描到p50附近
+                            threshold_range = (max(p50, p99 - max_range_size), p99)
+                        else:
+                            threshold_range = (p05, p99)
+                else:
+                    # 正常模式：使用特征分位数范围
+                    p5 = float(feature_vals.quantile(0.05))
+                    p95 = float(feature_vals.quantile(0.95))
+                    threshold_range = (p5, p95)
             else:
                 print(f"    ⚠️  特征 {feature_key} 无有效值，跳过")
                 return None
@@ -333,8 +405,51 @@ def optimize_rule_hard_gate(
         )
 
         if len(results) == 0:
-            print(f"    ⚠️  未找到满足约束的阈值")
-            return None
+            print(f"    ⚠️  未找到满足约束的阈值，使用当前阈值回退")
+            return {
+                "archetype": arch_name,
+                "rule_name": rule_name,
+                "feature_key": feature_key,
+                "rule_kind": rule_kind,
+                "current_threshold": current_threshold,
+                "recommended_threshold": current_threshold,
+                "robustness_score": 0.0,
+                "trade_rate": 0.0,
+                "priority": rule_info.get("priority", 999),
+                "guardrail_min_trade_rate": _compute_min_trade_per_rule(
+                    total_rules=total_rules,
+                    optimized_count=optimized_count,
+                    global_trade_budget=global_trade_budget,
+                ),
+                "guardrail_fallback": True,
+            }
+
+        min_trade_per_rule = _compute_min_trade_per_rule(
+            total_rules=total_rules,
+            optimized_count=optimized_count,
+            global_trade_budget=global_trade_budget,
+        )
+        if min_trade_per_rule is not None:
+            constrained = results[results["trade_rate"] >= min_trade_per_rule].copy()
+            if len(constrained) == 0:
+                print(
+                    f"    ⚠️  guardrail未满足: min_trade_per_rule={min_trade_per_rule:.4f} "
+                    f"(使用当前阈值 {current_threshold})"
+                )
+                return {
+                    "archetype": arch_name,
+                    "rule_name": rule_name,
+                    "feature_key": feature_key,
+                    "rule_kind": rule_kind,
+                    "current_threshold": current_threshold,
+                    "recommended_threshold": current_threshold,
+                    "robustness_score": 0.0,
+                    "trade_rate": 0.0,
+                    "priority": rule_info.get("priority", 999),
+                    "guardrail_min_trade_rate": min_trade_per_rule,
+                    "guardrail_fallback": True,
+                }
+            results = constrained
 
         # 步骤5: 找到平台高原
         plateau = _find_plateau(
@@ -354,6 +469,63 @@ def optimize_rule_hard_gate(
             recommended_threshold = results.loc[best_idx, "threshold"]
             print(f"    ⚠️  未找到平台高原，使用最佳阈值: {recommended_threshold:.4f}")
 
+        pareto_front = compute_pareto_frontier(results)
+        if len(pareto_front) > 0:
+            # 如果启用压缩模式且有目标trade_rate，添加trade_rate约束
+            min_trade_rate_for_selection = opt_config.min_trade_rate
+            if compression_mode and compression_target_trade_rate is not None:
+                # 压缩模式：选择trade_rate接近目标但不超过目标的点
+                # 优先选择trade_rate <= compression_target_trade_rate的点
+                valid_for_compression = results[
+                    (results["trade_rate"] <= compression_target_trade_rate)
+                    & (results["robustness_score"] >= compression_min_robustness)
+                ]
+                if len(valid_for_compression) > 0:
+                    # 在满足压缩目标的点中，使用multi_objective_strategy选择
+                    pareto_compression = compute_pareto_frontier(valid_for_compression)
+                    if len(pareto_compression) > 0:
+                        best_multi_threshold = select_multi_objective_threshold(
+                            valid_for_compression,
+                            pareto_compression,
+                            strategy=multi_objective_strategy,
+                            min_robustness=compression_min_robustness,
+                            min_trade_rate=0.0,  # 压缩模式下不设最低trade_rate
+                        )
+                    else:
+                        best_multi_threshold = select_multi_objective_threshold(
+                            valid_for_compression,
+                            valid_for_compression,
+                            strategy=multi_objective_strategy,
+                            min_robustness=compression_min_robustness,
+                            min_trade_rate=0.0,
+                        )
+                else:
+                    # 如果没有满足压缩目标的点，使用正常选择逻辑
+                    best_multi_threshold = select_multi_objective_threshold(
+                        results,
+                        pareto_front,
+                        strategy=multi_objective_strategy,
+                        min_robustness=max(
+                            opt_config.min_sharpe_threshold, compression_min_robustness
+                        ),
+                        min_trade_rate=min_trade_rate_for_selection,
+                    )
+            else:
+                # 正常模式
+                best_multi_threshold = select_multi_objective_threshold(
+                    results,
+                    pareto_front,
+                    strategy=multi_objective_strategy,
+                    min_robustness=opt_config.min_sharpe_threshold,
+                    min_trade_rate=min_trade_rate_for_selection,
+                )
+
+            if best_multi_threshold is not None:
+                if plateau and plateau_start <= best_multi_threshold <= plateau_end:
+                    recommended_threshold = best_multi_threshold
+                elif not plateau:
+                    recommended_threshold = best_multi_threshold
+
         # 获取最佳结果
         best_result = results.loc[results["robustness_score"].idxmax()]
 
@@ -367,6 +539,8 @@ def optimize_rule_hard_gate(
             "robustness_score": float(best_result["robustness_score"]),
             "trade_rate": float(best_result["trade_rate"]),
             "priority": rule_info.get("priority", 999),
+            "guardrail_min_trade_rate": min_trade_per_rule,
+            "guardrail_fallback": False,
         }
 
     except Exception as e:
@@ -428,6 +602,12 @@ def main() -> int:
         help="阈值扫描步长",
     )
     parser.add_argument(
+        "--global-trade-budget",
+        type=float,
+        default=None,
+        help="全局trade_rate生存约束（如4H=0.12），用于受控Pareto",
+    )
+    parser.add_argument(
         "--feature-store-root",
         default="feature_store",
         help="FeatureStore根目录",
@@ -451,6 +631,51 @@ def main() -> int:
         "--end-date",
         default=None,
         help="结束日期（可选，用于FeatureStore读取）",
+    )
+    parser.add_argument(
+        "--compression-mode",
+        action="store_true",
+        help="压缩模式：从全松阈值开始逐步收紧，压缩过度交易",
+    )
+    parser.add_argument(
+        "--compression-target-trade-rate",
+        type=float,
+        default=None,
+        help="压缩目标trade_rate（例如0.02表示压缩到2%）",
+    )
+    parser.add_argument(
+        "--compression-min-robustness",
+        type=float,
+        default=0.5,
+        help="压缩过程中最低robustness_score要求",
+    )
+    parser.add_argument(
+        "--compression-step",
+        type=float,
+        default=0.01,
+        help="压缩收紧步长",
+    )
+    parser.add_argument(
+        "--archetype-filter",
+        default=None,
+        help="只优化指定archetype的规则（例如 TC,TE,FR,ET 或单个 TC）",
+    )
+    parser.add_argument(
+        "--archetype-order",
+        default=None,
+        help="指定优化顺序（例如 TC,TE,FR,ET），用逗号分隔",
+    )
+    parser.add_argument(
+        "--multi-objective-strategy",
+        choices=[
+            "max_trade_rate",
+            "max_robustness",
+            "balanced",
+            "pareto_midpoint",
+            "max_compression_efficiency",
+        ],
+        default="max_robustness",
+        help="多目标优化选择策略（压缩模式推荐使用max_compression_efficiency）",
     )
 
     args = parser.parse_args()
@@ -546,12 +771,37 @@ def main() -> int:
 
     # 配置
     bucket_config = BucketConfig()
+    # 压缩模式下使用更大的步长，避免内存问题
+    if args.compression_mode:
+        # 根据阈值范围动态调整步长
+        # 如果范围很大，使用更大的步长
+        effective_step = max(args.compression_step, 0.05)  # 至少0.05
+    else:
+        effective_step = args.threshold_step
+
     opt_config = OptimizationConfig(
         min_trade_rate=args.min_trade_rate,
         min_trades_per_bucket=args.min_trades_per_bucket,
         min_sharpe_threshold=args.min_sharpe_threshold,
-        threshold_step=args.threshold_step,
+        threshold_step=effective_step,
     )
+    # 添加压缩模式相关配置（作为字典扩展）
+    opt_config_dict = {
+        "compression_mode": args.compression_mode,
+        "compression_target_trade_rate": args.compression_target_trade_rate,
+        "compression_min_robustness": args.compression_min_robustness,
+    }
+
+    # Archetype过滤
+    archetype_filter = None
+    if args.archetype_filter:
+        archetype_filter = [a.strip().upper() for a in args.archetype_filter.split(",")]
+        print(f"🔍 Archetype过滤: {archetype_filter}")
+
+    archetype_order = None
+    if args.archetype_order:
+        archetype_order = [a.strip().upper() for a in args.archetype_order.split(",")]
+        print(f"📋 Archetype优化顺序: {archetype_order}")
 
     # 提取需要优化的规则，并按优先级排序
     all_rules_to_optimize = []
@@ -560,6 +810,10 @@ def main() -> int:
     print(f"📊 数据文件包含 {len(available_features)} 个特征列")
 
     for arch_name, arch in arches.items():
+        # Archetype过滤
+        arch_normalized = _normalize_archetype(arch_name)
+        if archetype_filter and arch_normalized not in archetype_filter:
+            continue
         if not arch.gate_rules:
             continue
 
@@ -598,10 +852,24 @@ def main() -> int:
                 }
             )
 
-    # 按优先级排序（优先级越小越先优化）
-    all_rules_to_optimize.sort(
-        key=lambda x: (x["priority"], x["archetype"], x["rule_name"])
-    )
+    # 按优先级和archetype顺序排序
+    if archetype_order:
+        # 如果有archetype顺序，先按archetype顺序，再按优先级
+        def sort_key(rule):
+            arch_normalized = _normalize_archetype(rule["archetype"])
+            arch_order = (
+                archetype_order.index(arch_normalized)
+                if arch_normalized in archetype_order
+                else 999
+            )
+            return (arch_order, rule["priority"], rule["archetype"], rule["rule_name"])
+
+        all_rules_to_optimize.sort(key=sort_key)
+    else:
+        # 按优先级排序（优先级越小越先优化）
+        all_rules_to_optimize.sort(
+            key=lambda x: (x["priority"], x["archetype"], x["rule_name"])
+        )
 
     print(f"\n📋 找到 {len(all_rules_to_optimize)} 个需要优化的规则")
     print(f"📊 优先级分布:")
@@ -616,6 +884,13 @@ def main() -> int:
     optimization_results = {}
     frozen_rules_by_arch: Dict[str, List[Dict[str, Any]]] = {}
 
+    total_rules_by_arch = {}
+    optimized_count_by_arch = {}
+    for rule in all_rules_to_optimize:
+        arch = rule["archetype"]
+        total_rules_by_arch[arch] = total_rules_by_arch.get(arch, 0) + 1
+        optimized_count_by_arch[arch] = 0
+
     for rule_info in all_rules_to_optimize:
         arch_name = rule_info["archetype"]
         frozen_rules = frozen_rules_by_arch.get(arch_name, [])
@@ -628,6 +903,13 @@ def main() -> int:
             bucket_config,
             opt_config,
             args.execution_archetypes,
+            total_rules_by_arch.get(arch_name, 1),
+            optimized_count_by_arch.get(arch_name, 0),
+            args.global_trade_budget,
+            compression_mode=args.compression_mode,
+            compression_target_trade_rate=args.compression_target_trade_rate,
+            compression_min_robustness=args.compression_min_robustness,
+            multi_objective_strategy=args.multi_objective_strategy,
         )
 
         if result:
@@ -636,22 +918,31 @@ def main() -> int:
             optimization_results[key] = result
 
             # 冻结当前规则（添加到frozen_rules）
+            threshold_val = result.get("recommended_threshold")
+            if threshold_val is None:
+                threshold_val = result.get("current_threshold")
+            if threshold_val is None:
+                print(f"    ⚠️  规则无有效阈值，跳过冻结: {rule_info['rule_name']}")
+                continue
             frozen_rule = {
                 "name": rule_info["rule_name"],
                 "feature_key": rule_info["feature_key"],
                 "rule_kind": rule_info["rule_kind"],
-                "threshold": result["recommended_threshold"],
+                "threshold": threshold_val,
                 "quantile": (
-                    result["recommended_threshold"]
+                    threshold_val
                     if rule_info["rule_kind"].startswith("quantile_")
                     else None
                 ),
             }
             frozen_rules.append(frozen_rule)
             frozen_rules_by_arch[arch_name] = frozen_rules
+            optimized_count_by_arch[arch_name] = (
+                optimized_count_by_arch.get(arch_name, 0) + 1
+            )
 
             print(
-                f"    ✅ 规则已优化并冻结: {rule_info['rule_name']} = {result['recommended_threshold']:.4f}"
+                f"    ✅ 规则已优化并冻结: {rule_info['rule_name']} = {float(threshold_val):.4f}"
             )
 
     # 保存结果

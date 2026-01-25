@@ -557,6 +557,18 @@ def select_multi_objective_threshold(
             best_idx = pareto_front["distance"].idxmin()
             return pareto_front.loc[best_idx, "threshold"]
 
+    elif strategy == "max_compression_efficiency":
+        # 最大压缩效率：robustness_score / trade_rate（越高越好）
+        # 表示用更少的交易获得更高的稳健性
+        valid = valid[valid["trade_rate"] > 0].copy()  # 避免除零
+        if len(valid) == 0:
+            return None
+        valid["compression_efficiency"] = (
+            valid["robustness_score"] / valid["trade_rate"]
+        )
+        best_idx = valid["compression_efficiency"].idxmax()
+        return valid.loc[best_idx, "threshold"]
+
     # 默认返回最佳robustness_score
     best_idx = valid["robustness_score"].idxmax()
     return valid.loc[best_idx, "threshold"]
@@ -711,7 +723,13 @@ def main() -> int:
     )
     p.add_argument(
         "--multi-objective-strategy",
-        choices=["max_trade_rate", "max_robustness", "balanced", "pareto_midpoint"],
+        choices=[
+            "max_trade_rate",
+            "max_robustness",
+            "balanced",
+            "pareto_midpoint",
+            "max_compression_efficiency",
+        ],
         default="balanced",
         help="多目标优化选择策略",
     )

@@ -80,6 +80,13 @@ class HyperliquidDataCollector:
         self.websocket = None
         self.is_running = False
 
+        # 订阅管理：记录已订阅的流，用于重连后重新订阅
+        self._subscriptions = {
+            "order_book": [],  # [(coin, ...), ...]
+            "trades": [],  # [(coin, ...), ...]
+            "liquidations": [],  # [(coin, ...), ...]
+        }
+
         # 数据缓存
         self.order_book = defaultdict(lambda: {"buy": {}, "sell": {}})
         self.recent_trades = deque(maxlen=10000)
@@ -167,10 +174,58 @@ class HyperliquidDataCollector:
         try:
             self.websocket = await websockets.connect(uri)
             logger.info("✅ 已连接到Hyperliquid WebSocket")
+
+            # 重连后重新订阅所有之前的订阅
+            await self._resubscribe_all()
+
             return True
         except Exception as e:
             logger.error(f"❌ WebSocket连接失败: {e}")
             return False
+
+    async def _resubscribe_all(self):
+        """重新订阅所有之前的订阅（用于重连后）"""
+        if not self.websocket:
+            return
+
+        # 重新订阅订单簿
+        for coin_tuple in self._subscriptions["order_book"]:
+            coin = coin_tuple[0]
+            subscribe_msg = {
+                "method": "subscribe",
+                "subscription": {"type": "l3Book", "coin": coin},
+            }
+            try:
+                await self.websocket.send(json.dumps(subscribe_msg))
+                logger.info(f"🔄 重新订阅 {coin} L3订单簿")
+            except Exception as e:
+                logger.error(f"重新订阅订单簿失败 {coin}: {e}")
+
+        # 重新订阅成交
+        for coin_tuple in self._subscriptions["trades"]:
+            coin = coin_tuple[0]
+            subscribe_msg = {
+                "method": "subscribe",
+                "subscription": {"type": "trades", "coin": coin},
+            }
+            try:
+                await self.websocket.send(json.dumps(subscribe_msg))
+                logger.info(f"🔄 重新订阅 {coin} 逐笔成交")
+            except Exception as e:
+                logger.error(f"重新订阅成交失败 {coin}: {e}")
+
+        # 重新订阅清算
+        for coin_tuple in self._subscriptions["liquidations"]:
+            coin = coin_tuple[0]
+            subscribe_msg = {
+                "method": "subscribe",
+                "subscription": {"type": "clearings", "coin": coin},
+            }
+            try:
+                await self.websocket.send(json.dumps(subscribe_msg))
+                logger.info(f"🔄 重新订阅 {coin} 清算事件")
+            except Exception as e:
+                logger.error(f"重新订阅清算失败 {coin}: {e}")
 
     async def subscribe_order_book(self, coin: str = "BTC"):
         """订阅L3订单簿数据."""
@@ -183,6 +238,11 @@ class HyperliquidDataCollector:
         }
 
         await self.websocket.send(json.dumps(subscribe_msg))
+
+        # 记录订阅
+        if (coin,) not in self._subscriptions["order_book"]:
+            self._subscriptions["order_book"].append((coin,))
+
         logger.info(f"📡 已订阅 {coin} L3订单簿")
 
     async def subscribe_trades(self, coin: str = "BTC"):
@@ -196,6 +256,11 @@ class HyperliquidDataCollector:
         }
 
         await self.websocket.send(json.dumps(subscribe_msg))
+
+        # 记录订阅
+        if (coin,) not in self._subscriptions["trades"]:
+            self._subscriptions["trades"].append((coin,))
+
         logger.info(f"📡 已订阅 {coin} 逐笔成交")
 
     async def subscribe_liquidations(self, coin: str = "BTC"):
@@ -209,6 +274,11 @@ class HyperliquidDataCollector:
         }
 
         await self.websocket.send(json.dumps(subscribe_msg))
+
+        # 记录订阅
+        if (coin,) not in self._subscriptions["liquidations"]:
+            self._subscriptions["liquidations"].append((coin,))
+
         logger.info(f"📡 已订阅 {coin} 清算事件")
 
     async def listen_data(self):
@@ -234,9 +304,14 @@ class HyperliquidDataCollector:
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("⚠️ WebSocket连接断开，尝试重连...")
+                # 重连会自动调用_resubscribe_all来重新订阅
                 await self.connect_websocket()
             except Exception as e:
                 logger.error(f"❌ 数据处理错误: {e}")
+                # 如果是连接错误，尝试重连
+                if "connection" in str(e).lower() or "closed" in str(e).lower():
+                    logger.warning("⚠️ 检测到连接错误，尝试重连...")
+                    await self.connect_websocket()
 
     async def _handle_order_book_update(self, data: dict):
         """处理订单簿更新."""

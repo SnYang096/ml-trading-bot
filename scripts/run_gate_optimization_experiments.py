@@ -151,18 +151,32 @@ def _apply_threshold_overrides(
 
     rule_map: Dict[str, Dict[str, float]] = {}
     for arch_name, arch_results in optimization_results.items():
-        if not isinstance(arch_results, list):
+        # progressive format: {arch: [rule_results]}
+        if isinstance(arch_results, list):
+            rule_map.setdefault(arch_name, {})
+            for rule_result in arch_results:
+                rule_name = rule_result.get("rule_name", "")
+                threshold = (
+                    rule_result.get("final_threshold")
+                    if rule_result.get("final_threshold") is not None
+                    else rule_result.get("recommended_threshold")
+                )
+                if rule_name and threshold is not None:
+                    rule_map[arch_name][rule_name] = float(threshold)
             continue
-        rule_map[arch_name] = {}
-        for rule_result in arch_results:
-            rule_name = rule_result.get("rule_name", "")
+
+        # hard-gate format: {rule_key: {archetype, rule_name, ...}}
+        if isinstance(arch_results, dict) and arch_results.get("archetype"):
+            arch = arch_results.get("archetype")
+            rule_name = arch_results.get("rule_name", "")
             threshold = (
-                rule_result.get("final_threshold")
-                if rule_result.get("final_threshold") is not None
-                else rule_result.get("recommended_threshold")
+                arch_results.get("final_threshold")
+                if arch_results.get("final_threshold") is not None
+                else arch_results.get("recommended_threshold")
             )
-            if rule_name and threshold is not None:
-                rule_map[arch_name][rule_name] = float(threshold)
+            if arch and rule_name and threshold is not None:
+                rule_map.setdefault(arch, {})
+                rule_map[arch][rule_name] = float(threshold)
 
     regimes = data.get("regimes", {})
     updated = 0
@@ -667,6 +681,8 @@ def run_hard_gate_experiment(
         "0.05",
         "--threshold-step",
         "0.05",
+        "--global-trade-budget",
+        "0.12",
     ]
 
     if feature_store_layer:
@@ -684,6 +700,10 @@ def run_hard_gate_experiment(
             cmd.extend(["--start-date", start_date])
         if end_date:
             cmd.extend(["--end-date", end_date])
+
+    # 保存临时文件（hard-gate脚本读取temp_raw/temp_gated）
+    df.to_parquet(output_dir / "temp_raw.parquet")
+    df.to_parquet(output_dir / "temp_gated.parquet")
 
     result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
 
@@ -786,7 +806,7 @@ def main() -> int:
     parser.add_argument(
         "--experiments",
         nargs="+",
-        choices=["baseline", "progressive", "hard_gate", "all"],
+        choices=["baseline", "merged", "all"],
         default=["all"],
         help="要运行的实验（默认：all）",
     )
@@ -822,7 +842,7 @@ def main() -> int:
     # 确定要运行的实验
     experiments_to_run = []
     if "all" in args.experiments:
-        experiments_to_run = ["baseline", "progressive", "hard_gate"]
+        experiments_to_run = ["baseline", "merged"]
     else:
         experiments_to_run = args.experiments
 
@@ -844,22 +864,7 @@ def main() -> int:
         )
         all_results["baseline"] = result
 
-    if "progressive" in experiments_to_run:
-        result = run_progressive_experiment(
-            df_raw,
-            arches,
-            args.raw_logs,
-            output_dir,
-            args.execution_archetypes,
-            args.feature_store_layer,
-            args.timeframe,
-            args.feature_store_root,
-            args.start_date,
-            args.end_date,
-        )
-        all_results["progressive"] = result
-
-    if "hard_gate" in experiments_to_run:
+    if "merged" in experiments_to_run:
         result = run_hard_gate_experiment(
             df_raw,
             arches,
@@ -872,7 +877,8 @@ def main() -> int:
             args.start_date,
             args.end_date,
         )
-        all_results["hard_gate"] = result
+        result["experiment"] = "merged"
+        all_results["merged"] = result
 
     # 保存所有结果
     results_file = output_dir / "all_experiments_results.json"

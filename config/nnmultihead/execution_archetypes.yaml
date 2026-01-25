@@ -1,355 +1,354 @@
 version: 2
-name: "execution_archetypes_v2_tc_te_fr_et"
-
-# Final 4 archetypes (per docs/architecture/archetype灭绝级回测.md:1752-1758):
-# A. Trend Continuation (TC)   ← 主力、养老金
-# B. Trend Expansion (TE)     ← 火箭、一次只来一个
-# C. Failure Reversion (FR)   ← 均值里唯一值得活的
-# D. Exhaustion Turn (ET)     ← 极端条件、医生
-#
-# NOTE:
-# - This registry is archetype-first; StrategyProfile only maps strategy_id -> archetype id.
-# - Names are stable IDs used by live configs and reports.
-
+name: execution_archetypes_v2_tc_te_fr_et
 regimes:
   TREND:
     archetypes:
       TrendContinuationTC:
         required_conditions:
-          - htf_trend_confirmed
-          - ltf_precision_entry
-          - structure_breakout
-          - healthy_pullback
-          - rr_geq_2
-          - not_counter_trend
-        required_evidence: [has_orderflow, has_trend_context, has_volatility]
+        - htf_trend_confirmed
+        - ltf_precision_entry
+        - structure_breakout
+        - healthy_pullback
+        - rr_geq_2
+        - not_counter_trend
+        required_evidence:
+        - has_orderflow
+        - has_trend_context
+        - has_volatility
         gate_rules:
           rules:
-            # TC vetoes: no orderflow continuation, thin volume, vol compression, or weak trend.
-            # Priority 3: Execution strategy rules (lower priority)
-            # Using percentile versions of features for cross-symbol stability
-            - name: tc_no_oflow_continuation
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: tc_oflow_weak
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.45
-              priority: 3
-              on_missing: false
-            - name: tc_volume_too_low
-              kind: value_lt
-              key: volume_ratio_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: tc_vol_compress
-              kind: value_lt
-              key: bb_width_normalized_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: tc_trend_break
-              kind: value_lt
-              key: trend_r2_20
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            # Regime (trend) constraints
-            - name: tc_trend_adx_too_low
-              kind: value_lt
-              key: adx
-              threshold: 20
-              priority: 3
-              on_missing: false
-            - name: tc_trend_price_below_ma200
-              kind: value_lt
-              key: sma_200_position
-              threshold: 0.0
-              priority: 3
-              on_missing: false
-            - name: tc_quality_too_low
-              kind: value_lt
-              key: trade_quality
-              threshold: 0.12
-              priority: 3
-              on_missing: false
-            - name: tc_score_too_low
-              kind: value_lt
-              key: tc_score
-              threshold: 0.2226
-              priority: 3
-              on_missing: false
-            # TC_REGIME conditions (migrated from regime classification)
-            # Priority 2: Market state rules (stability)
-            # TC requires jump_risk_pct in [0.3, 0.6]
-            # Using value rules since jump_risk_pct is already a percentile
-            - name: tc_not_tc_regime_jump_risk_too_low
-              kind: value_lt
-              key: jump_risk_pct
-              threshold: 0.3
-              priority: 2
-              on_missing: false
-            - name: tc_not_tc_regime_jump_risk_too_high
-              kind: value_gte
-              key: jump_risk_pct
-              threshold: 0.6
-              priority: 2
-              on_missing: false
-            # TC price trajectory features (trend strength and stability)
-            # Priority 2: Market state rules (structure existence)
-            # TC requires: low volatility expansion (atr_slope_pct <= 0.6), high path efficiency (>= 0.6), sufficient path length (>= 0.4)
-            # Using value rules since these features are already percentiles
-            - name: tc_not_tc_regime_atr_slope_too_high
-              kind: value_gt
-              key: atr_slope_pct
-              threshold: 0.6
-              priority: 2
-              on_missing: false
-            - name: tc_not_tc_regime_path_efficiency_too_low
-              kind: value_lt
-              key: path_efficiency_pct
-              threshold: 0.25
-              priority: 2
-              on_missing: false
-            - name: tc_not_tc_regime_path_length_too_low
-              kind: value_lt
-              key: path_length_pct
-              threshold: 0.4
-              priority: 2
-              on_missing: false
-            # Direction consistency (stability): TC requires stable direction
-            - name: tc_not_tc_regime_dir_consistency_too_low
-              kind: value_lt
-              key: price_dir_consistency_pct
-              threshold: 0.3
-              priority: 2
-              on_missing: false
-            # TC CVD regime: use percentile version for cross-symbol stability
-            # Priority 2: Market state rules (extreme conditions)
-            # TC should veto when CVD is too negative (percentile > 0.85 = extreme negative orderflow)
-            - name: tc_cvd_too_negative
-              kind: value_gt
-              key: cvd_change_5_pct
-              threshold: 0.85
-              priority: 2
-              on_missing: false
-            # Reflexivity risk control (systemic risk awareness layer)
-            # Priority 1: Safety rules (highest priority)
-            # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
-            - name: tc_reflexivity_shd_too_high
-              kind: value_gt
-              key: shd_pct
-              threshold: 0.9
-              priority: 1
-              on_missing: false
-            # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
-            # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
-            # should be implemented in PCM layer. This rule uses a very high threshold (0.95)
-            # to only trigger hard veto in extreme cases. For normal cases (|ofci_p| > 0.9),
-            # position scaling should be applied in PCM layer.
-            - name: tc_reflexivity_ofci_extreme
-              kind: value_gt
-              key: ofci_pct
-              threshold: 0.95
-              priority: 1
-              on_missing: false
-          deny_if: [tc_no_oflow_continuation, tc_oflow_weak, tc_volume_too_low, tc_vol_compress, tc_trend_break, tc_trend_adx_too_low, tc_trend_price_below_ma200, tc_quality_too_low, tc_score_too_low, tc_not_tc_regime_jump_risk_too_low, tc_not_tc_regime_jump_risk_too_high, tc_not_tc_regime_atr_slope_too_high, tc_not_tc_regime_path_efficiency_too_low, tc_not_tc_regime_path_length_too_low, tc_not_tc_regime_dir_consistency_too_low, tc_cvd_too_negative, tc_reflexivity_shd_too_high, tc_reflexivity_ofci_extreme]
+          - name: tc_no_oflow_continuation
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_oflow_weak
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_volume_too_low
+            kind: value_lt
+            key: volume_ratio_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_vol_compress
+            kind: value_lt
+            key: bb_width_normalized_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_trend_break
+            kind: value_lt
+            key: trend_r2_20
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_trend_adx_too_low
+            kind: value_lt
+            key: adx
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_trend_price_below_ma200
+            kind: value_lt
+            key: sma_200_position
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_quality_too_low
+            kind: value_lt
+            key: trade_quality
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_score_too_low
+            kind: value_lt
+            key: tc_score
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: tc_not_tc_regime_jump_risk_too_low
+            kind: value_lt
+            key: jump_risk_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_not_tc_regime_jump_risk_too_high
+            kind: value_gte
+            key: jump_risk_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_not_tc_regime_atr_slope_too_high
+            kind: value_gt
+            key: atr_slope_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_not_tc_regime_path_efficiency_too_low
+            kind: value_lt
+            key: path_efficiency_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_not_tc_regime_path_length_too_low
+            kind: value_lt
+            key: path_length_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_not_tc_regime_dir_consistency_too_low
+            kind: value_lt
+            key: price_dir_consistency_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_cvd_too_negative
+            kind: value_gt
+            key: cvd_change_5_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: tc_reflexivity_shd_too_high
+            kind: value_gt
+            key: shd_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          - name: tc_reflexivity_ofci_extreme
+            kind: value_gt
+            key: ofci_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          deny_if:
+          - tc_no_oflow_continuation
+          - tc_oflow_weak
+          - tc_volume_too_low
+          - tc_vol_compress
+          - tc_trend_break
+          - tc_trend_adx_too_low
+          - tc_trend_price_below_ma200
+          - tc_quality_too_low
+          - tc_score_too_low
+          - tc_not_tc_regime_jump_risk_too_low
+          - tc_not_tc_regime_jump_risk_too_high
+          - tc_not_tc_regime_atr_slope_too_high
+          - tc_not_tc_regime_path_efficiency_too_low
+          - tc_not_tc_regime_path_length_too_low
+          - tc_not_tc_regime_dir_consistency_too_low
+          - tc_cvd_too_negative
+          - tc_reflexivity_shd_too_high
+          - tc_reflexivity_ofci_extreme
           allow_if: []
           allow_mode: any
           default_action: allow
         evidence_rules:
-          # Orderflow should not be clearly adverse
-          - name: has_orderflow
-            kind: quantile_gt
-            key: vpin
-            quantile: 0.55
-            on_missing: error
-          - name: oflow_not_negative
-            kind: value_gte
-            key: cvd_change_5_normalized_pct
-            threshold: 0.55
-            on_missing: false
-          - name: has_trend_context
-            kind: any_key_contains
-            any_key_contains: ["sma_200", "trend_r2", "macd", "hurst", "hilbert"]
-          - name: has_volatility
-            kind: any_key_contains
-            any_key_contains: ["atr", "bb_width", "volume_ratio", "spectrum"]
-
+        - name: has_orderflow
+          kind: quantile_gt
+          key: vpin
+          quantile: 0.55
+          on_missing: error
+        - name: oflow_not_negative
+          kind: value_gte
+          key: cvd_change_5_normalized_pct
+          threshold: 0.55
+          on_missing: false
+        - name: has_trend_context
+          kind: any_key_contains
+          any_key_contains:
+          - sma_200
+          - trend_r2
+          - macd
+          - hurst
+          - hilbert
+        - name: has_volatility
+          kind: any_key_contains
+          any_key_contains:
+          - atr
+          - bb_width
+          - volume_ratio
+          - spectrum
       TrendExpansionTE:
         required_conditions:
-          - ttm_above_threshold
-          - vol_expansion
-          - no_reverse_absorption
-          - rr_geq_2
-        required_evidence: [has_orderflow, has_volatility]
+        - ttm_above_threshold
+        - vol_expansion
+        - no_reverse_absorption
+        - rr_geq_2
+        required_evidence:
+        - has_orderflow
+        - has_volatility
         gate_rules:
           rules:
-            # TE requires expansion in orderflow + volume + volatility; deny fake breakouts.
-            # Priority 3: Execution strategy rules (lower priority)
-            # Using percentile versions of features for cross-symbol stability
-            - name: te_oflow_expansion
-              kind: value_gt
-              key: cvd_change_5_pct
-              threshold: 0.85
-              priority: 3
-              on_missing: false
-            - name: te_volume_surge
-              kind: value_gt
-              key: volume_ratio_pct
-              threshold: 0.6
-              priority: 3
-              on_missing: false
-            - name: te_vol_expansion
-              kind: value_gt
-              key: bb_width_normalized_pct
-              threshold: 0.7
-              priority: 3
-              on_missing: false
-            - name: te_fake_breakout_oflow
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: te_no_volume_surge
-              kind: value_lt
-              key: volume_ratio_pct
-              threshold: 0.4
-              priority: 3
-              on_missing: false
-            - name: te_vol_not_expanding
-              kind: value_lt
-              key: bb_width_normalized_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: te_volume_too_low
-              kind: value_lt
-              key: volume_ratio_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: te_bb_width_too_low
-              kind: value_lt
-              key: bb_width_normalized_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            # Regime (trend) constraints
-            - name: te_trend_adx_too_low
-              kind: value_lt
-              key: adx
-              threshold: 20
-              priority: 3
-              on_missing: false
-            - name: te_trend_price_below_ma200
-              kind: value_lt
-              key: sma_200_position
-              threshold: 0.0
-              priority: 3
-              on_missing: false
-            - name: te_quality_too_low
-              kind: value_lt
-              key: trade_quality
-              threshold: 0.07
-              priority: 3
-              on_missing: false
-            - name: te_score_too_low
-              kind: value_lt
-              key: te_score
-              threshold: 0.4253
-              priority: 3
-              on_missing: false
-            # TE_REGIME conditions (migrated from regime classification)
-            # Priority 2: Market state rules (stability)
-            # TE requires jump_risk_pct in [0.6, 0.9]
-            # Using value rules since jump_risk_pct is already a percentile
-            - name: te_not_te_regime_jump_risk_too_low
-              kind: value_lt
-              key: jump_risk_pct
-              threshold: 0.25
-              priority: 2
-              on_missing: false
-            - name: te_not_te_regime_jump_risk_too_high
-              kind: value_gte
-              key: jump_risk_pct
-              threshold: 0.9
-              priority: 2
-              on_missing: false
-            # TE price trajectory features (volatility expansion and range expansion)
-            # Priority 2: Market state rules (structure)
-            # TE requires: high volatility expansion (atr_slope_pct >= 0.6), range expansion (>= 0.6)
-            # Using value rules since these features are already percentiles
-            - name: te_not_te_regime_atr_slope_too_low
-              kind: value_lt
-              key: atr_slope_pct
-              threshold: 0.6
-              priority: 2
-              on_missing: false
-            - name: te_not_te_regime_range_expansion_too_low
-              kind: value_lt
-              key: range_expansion_pct
-              threshold: 0.6
-              priority: 2
-              on_missing: false
-            # Reflexivity risk control (systemic risk awareness layer)
-            # Priority 1: Safety rules (highest priority)
-            # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
-            # Note: SHD is more important for TE than TC (TE stage is most prone to "everyone rushing together")
-            - name: te_reflexivity_shd_too_high
-              kind: value_gt
-              key: shd_pct
-              threshold: 0.9
-              priority: 1
-              on_missing: false
-            # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
-            # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
-            # should be implemented in PCM layer. This rule uses a very high threshold (0.95)
-            # to only trigger hard veto in extreme cases. For normal cases (|ofci_p| > 0.9),
-            # position scaling should be applied in PCM layer.
-            - name: te_reflexivity_ofci_extreme
-              kind: value_gt
-              key: ofci_pct
-              threshold: 0.95
-              priority: 1
-              on_missing: false
-          deny_if: [te_fake_breakout_oflow, te_no_volume_surge, te_vol_not_expanding, te_volume_too_low, te_bb_width_too_low, te_trend_adx_too_low, te_trend_price_below_ma200, te_quality_too_low, te_score_too_low, te_not_te_regime_jump_risk_too_low, te_not_te_regime_jump_risk_too_high, te_not_te_regime_atr_slope_too_low, te_not_te_regime_range_expansion_too_low, te_reflexivity_shd_too_high, te_reflexivity_ofci_extreme]
-          allow_if: [te_oflow_expansion, te_volume_surge, te_vol_expansion]
+          - name: te_oflow_expansion
+            kind: value_gt
+            key: cvd_change_5_pct
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_volume_surge
+            kind: value_gt
+            key: volume_ratio_pct
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_vol_expansion
+            kind: value_gt
+            key: bb_width_normalized_pct
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_fake_breakout_oflow
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_no_volume_surge
+            kind: value_lt
+            key: volume_ratio_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_vol_not_expanding
+            kind: value_lt
+            key: bb_width_normalized_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_volume_too_low
+            kind: value_lt
+            key: volume_ratio_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_bb_width_too_low
+            kind: value_lt
+            key: bb_width_normalized_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_trend_adx_too_low
+            kind: value_lt
+            key: adx
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_trend_price_below_ma200
+            kind: value_lt
+            key: sma_200_position
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_quality_too_low
+            kind: value_lt
+            key: trade_quality
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_score_too_low
+            kind: value_lt
+            key: te_score
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: te_not_te_regime_jump_risk_too_low
+            kind: value_lt
+            key: jump_risk_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: te_not_te_regime_jump_risk_too_high
+            kind: value_gte
+            key: jump_risk_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: te_not_te_regime_atr_slope_too_low
+            kind: value_lt
+            key: atr_slope_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: te_not_te_regime_range_expansion_too_low
+            kind: value_lt
+            key: range_expansion_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: te_reflexivity_shd_too_high
+            kind: value_gt
+            key: shd_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          - name: te_reflexivity_ofci_extreme
+            kind: value_gt
+            key: ofci_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          deny_if:
+          - te_fake_breakout_oflow
+          - te_no_volume_surge
+          - te_vol_not_expanding
+          - te_volume_too_low
+          - te_bb_width_too_low
+          - te_trend_adx_too_low
+          - te_trend_price_below_ma200
+          - te_quality_too_low
+          - te_score_too_low
+          - te_not_te_regime_jump_risk_too_low
+          - te_not_te_regime_jump_risk_too_high
+          - te_not_te_regime_atr_slope_too_low
+          - te_not_te_regime_range_expansion_too_low
+          - te_reflexivity_shd_too_high
+          - te_reflexivity_ofci_extreme
+          allow_if:
+          - te_oflow_expansion
+          - te_volume_surge
+          - te_vol_expansion
           allow_mode: any
           default_action: deny
         evidence_rules:
-          # Expansion requires orderflow + volume surge signals
-          - name: has_orderflow
-            kind: quantile_gt
-            key: vpin
-            quantile: 0.55
-            on_missing: error
-          - name: oflow_expansion
-            kind: value_gt
-            key: cvd_change_5_normalized_pct
-            threshold: 0.85
-            on_missing: false
-          - name: has_volatility
-            kind: any_key_contains
-            any_key_contains: ["atr", "bb_width", "spectrum"]
-          - name: has_volume_surge
-            kind: any_key_contains
-            any_key_contains: ["volume_anomaly", "volume_ratio", "vp_", "volume_profile"]
-
+        - name: has_orderflow
+          kind: quantile_gt
+          key: vpin
+          quantile: 0.55
+          on_missing: error
+        - name: oflow_expansion
+          kind: value_gt
+          key: cvd_change_5_normalized_pct
+          threshold: 0.85
+          on_missing: false
+        - name: has_volatility
+          kind: any_key_contains
+          any_key_contains:
+          - atr
+          - bb_width
+          - spectrum
+        - name: has_volume_surge
+          kind: any_key_contains
+          any_key_contains:
+          - volume_anomaly
+          - volume_ratio
+          - vp_
+          - volume_profile
   MEAN:
     archetypes:
       FailureReversionFR:
         required_conditions:
-          - breakout_failed_close_back
-          - no_follow_through
-          - absorption_present
-          - ttm_break
-        required_evidence: [has_orderflow, has_sr_quality]
+        - breakout_failed_close_back
+        - no_follow_through
+        - absorption_present
+        - ttm_break
+        required_evidence:
+        - has_orderflow
+        - has_sr_quality
         execution_constraints:
           allow_add_on: false
           min_order_interval_minutes: 60
@@ -359,178 +358,182 @@ regimes:
             max_holding_bars: 24
         gate_rules:
           rules:
-            # FR: divergence + vpin spike + absorption signals (>=2 hits). Deny thin liquidity.
-            # Priority 3: Execution strategy rules (lower priority)
-            # Using percentile versions of features for cross-symbol stability
-            - name: fr_divergence
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: fr_vpin_spike
-              kind: quantile_gt
-              key: vpin
-              quantile: 0.65
-              priority: 3
-              on_missing: false
-            - name: fr_cvd_divergence
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: fr_absorption
-              kind: quantile_gt
-              key: vp_absorption_score
-              quantile: 0.7
-              priority: 3
-              on_missing: false
-            - name: fr_volume_too_low
-              kind: value_lt
-              key: volume_ratio_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: fr_bb_width_too_low
-              kind: value_lt
-              key: bb_width_normalized_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: fr_near_sr
-              kind: value_lt
-              key: sr_distance_normalized
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            # Regime (mean) constraints
-            - name: fr_mean_adx_too_high
-              kind: value_gt
-              key: adx
-              threshold: 40
-              priority: 3
-              on_missing: false
-            - name: fr_mean_sr_too_far
-              kind: value_gt
-              key: sr_distance_normalized
-              threshold: 0.4
-              priority: 3
-              on_missing: false
-            - name: fr_sqs_too_low
-              kind: value_lt
-              key: sqs
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: fr_quality_too_low
-              kind: value_lt
-              key: trade_quality
-              threshold: 0.09
-              priority: 3
-              on_missing: false
-            - name: fr_score_too_low
-              kind: value_lt
-              key: mean_score
-              threshold: 0.2751
-              priority: 3
-              on_missing: false
-            # NEW: Physical feature constraints (optimized for mean reversion)
-            # Priority 2: Market state rules (structure)
-            # Based on FR/ET analysis: profitable samples have low path efficiency
-            # Using value rules since path_efficiency_pct is already a percentile
-            - name: fr_path_efficiency_too_high
-              kind: value_gt
-              key: path_efficiency_pct
-              threshold: 0.7
-              priority: 2
-              on_missing: false
-            # Profitable samples have unstable direction (low price_dir_consistency)
-            - name: fr_price_dir_consistency_too_high
-              kind: value_gt
-              key: price_dir_consistency_pct
-              threshold: 0.5
-              priority: 2
-              on_missing: false
-            # Profitable samples have high deviation from mean
-            - name: fr_deviation_too_low
-              kind: value_lt
-              key: deviation_z_abs_pct
-              threshold: 0.6
-              priority: 2
-              on_missing: false
-            # MEAN_REGIME conditions (migrated from regime classification)
-            # Priority 2: Market state rules (stability)
-            # MEAN requires: path_length_pct >= 0.5, atr_percentile >= 0.5, jump_risk_pct <= 0.4
-            # Using value rules since these features are already percentiles
-            - name: fr_not_mean_regime_path_length_too_low
-              kind: value_lt
-              key: path_length_pct
-              threshold: 0.5
-              priority: 2
-              on_missing: false
-            - name: fr_not_mean_regime_atr_percentile_too_low
-              kind: value_lt
-              key: atr_percentile
-              threshold: 0.5
-              priority: 2
-              on_missing: false
-            - name: fr_not_mean_regime_jump_risk_too_high
-              kind: value_gt
-              key: jump_risk_pct
-              threshold: 0.7
-              priority: 2
-              on_missing: false
-            # Reflexivity risk control (systemic risk awareness layer)
-            # Priority 1: Safety rules (highest priority)
-            # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
-            - name: fr_reflexivity_shd_too_high
-              kind: value_gt
-              key: shd_pct
-              threshold: 0.9
-              priority: 1
-              on_missing: false
-            # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
-            # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
-            # should be implemented in PCM layer. This rule uses a very high threshold (0.95)
-            # to only trigger hard veto in extreme cases. For normal cases (|ofci_p| > 0.9),
-            # position scaling should be applied in PCM layer.
-            - name: fr_reflexivity_ofci_extreme
-              kind: value_gt
-              key: ofci_pct
-              threshold: 0.95
-              priority: 1
-              on_missing: false
-          deny_if: [fr_volume_too_low, fr_bb_width_too_low, fr_mean_adx_too_high, fr_mean_sr_too_far, fr_sqs_too_low, fr_quality_too_low, fr_score_too_low, fr_path_efficiency_too_high, fr_price_dir_consistency_too_high, fr_deviation_too_low, fr_not_mean_regime_path_length_too_low, fr_not_mean_regime_atr_percentile_too_low, fr_not_mean_regime_jump_risk_too_high, fr_reflexivity_shd_too_high, fr_reflexivity_ofci_extreme]
-          allow_if: [fr_divergence, fr_vpin_spike, fr_cvd_divergence, fr_absorption, fr_near_sr]
+          - name: fr_divergence
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_vpin_spike
+            kind: quantile_gt
+            key: vpin
+            quantile: 1.0
+            priority: 3
+            on_missing: false
+          - name: fr_cvd_divergence
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_absorption
+            kind: quantile_gt
+            key: vp_absorption_score
+            quantile: 1.0
+            priority: 3
+            on_missing: false
+          - name: fr_volume_too_low
+            kind: value_lt
+            key: volume_ratio_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_bb_width_too_low
+            kind: value_lt
+            key: bb_width_normalized_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_near_sr
+            kind: value_lt
+            key: sr_distance_normalized
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_mean_adx_too_high
+            kind: value_gt
+            key: adx
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_mean_sr_too_far
+            kind: value_gt
+            key: sr_distance_normalized
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_sqs_too_low
+            kind: value_lt
+            key: sqs
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_quality_too_low
+            kind: value_lt
+            key: trade_quality
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_score_too_low
+            kind: value_lt
+            key: mean_score
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: fr_path_efficiency_too_high
+            kind: value_gt
+            key: path_efficiency_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: fr_price_dir_consistency_too_high
+            kind: value_gt
+            key: price_dir_consistency_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: fr_deviation_too_low
+            kind: value_lt
+            key: deviation_z_abs_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: fr_not_mean_regime_path_length_too_low
+            kind: value_lt
+            key: path_length_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: fr_not_mean_regime_atr_percentile_too_low
+            kind: value_lt
+            key: atr_percentile
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: fr_not_mean_regime_jump_risk_too_high
+            kind: value_gt
+            key: jump_risk_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: fr_reflexivity_shd_too_high
+            kind: value_gt
+            key: shd_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          - name: fr_reflexivity_ofci_extreme
+            kind: value_gt
+            key: ofci_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          deny_if:
+          - fr_volume_too_low
+          - fr_bb_width_too_low
+          - fr_mean_adx_too_high
+          - fr_mean_sr_too_far
+          - fr_sqs_too_low
+          - fr_quality_too_low
+          - fr_score_too_low
+          - fr_path_efficiency_too_high
+          - fr_price_dir_consistency_too_high
+          - fr_deviation_too_low
+          - fr_not_mean_regime_path_length_too_low
+          - fr_not_mean_regime_atr_percentile_too_low
+          - fr_not_mean_regime_jump_risk_too_high
+          - fr_reflexivity_shd_too_high
+          - fr_reflexivity_ofci_extreme
+          allow_if:
+          - fr_divergence
+          - fr_vpin_spike
+          - fr_cvd_divergence
+          - fr_absorption
+          - fr_near_sr
           allow_mode: any
           default_action: deny
         evidence_rules:
-          # Failure reversion needs divergence/absorption-like context
-          - name: has_orderflow
-            kind: quantile_gt
-            key: vpin
-            quantile: 0.55
-            on_missing: error
-          - name: oflow_divergence
-            kind: value_lt
-            key: cvd_change_5_normalized_pct
-            threshold: 0.15
-            on_missing: false
-          - name: has_sr_quality
-            kind: any_key_contains
-            any_key_contains: ["sr_", "sqs_", "poc_"]
-          - name: has_absorption
-            kind: any_key_contains
-            any_key_contains: ["absorption", "vp_absorption", "wick_absorption"]
-
+        - name: has_orderflow
+          kind: quantile_gt
+          key: vpin
+          quantile: 0.55
+          on_missing: error
+        - name: oflow_divergence
+          kind: value_lt
+          key: cvd_change_5_normalized_pct
+          threshold: 0.15
+          on_missing: false
+        - name: has_sr_quality
+          kind: any_key_contains
+          any_key_contains:
+          - sr_
+          - sqs_
+          - poc_
+        - name: has_absorption
+          kind: any_key_contains
+          any_key_contains:
+          - absorption
+          - vp_absorption
+          - wick_absorption
       ExhaustionTurnET:
         required_conditions:
-          - long_trend_late_stage
-          - vol_climax
-          - mfe_extreme
-          - momentum_divergence
-        required_evidence: [has_orderflow, has_volume_profile]  # Restored: volume_profile_block now enabled
+        - long_trend_late_stage
+        - vol_climax
+        - mfe_extreme
+        - momentum_divergence
+        required_evidence:
+        - has_orderflow
+        - has_volume_profile
         execution_constraints:
           allow_add_on: false
           min_order_interval_minutes: 60
@@ -540,219 +543,221 @@ regimes:
             max_holding_bars: 24
         gate_rules:
           rules:
-            # ET: climax + divergence + momentum decay + profile proximity (>=2 hits).
-            # Priority 3: Execution strategy rules (lower priority)
-            # Using percentile versions of features for cross-symbol stability
-            - name: et_vol_climax
-              kind: value_gt
-              key: atr_percentile
-              threshold: 0.9
-              priority: 3
-              on_missing: false
-            - name: et_vpin_spike
-              kind: quantile_gt
-              key: vpin
-              quantile: 0.5  # Reduced from 0.65 to 0.5 for ET_REGIME (moderate orderflow)
-              priority: 3
-              on_missing: false
-            - name: et_cvd_divergence
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: et_momentum_decay
-              kind: value_lt
-              key: cvd_change_5_pct
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            - name: et_near_lvn
-              kind: value_lt
-              key: vpvr_lvn_distance
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: et_volume_too_low
-              kind: value_lt
-              key: volume_ratio_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: et_bb_width_too_low
-              kind: value_lt
-              key: bb_width_normalized_pct
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: et_near_sr
-              kind: value_lt
-              key: sr_distance_normalized
-              threshold: 0.3
-              priority: 3
-              on_missing: false
-            # Regime constraints (for ET_REGIME, ADX should be 20-30, checked in gate rules)
-            # Note: ADX range (20-30) is enforced by ET_REGIME classification, not here
-            # This rule is kept for backward compatibility but may be relaxed
-            - name: et_mean_adx_too_high
-              kind: value_gt
-              key: adx
-              threshold: 45  # Relaxed to align with feature distribution
-              priority: 3
-              on_missing: false
-            - name: et_mean_sr_too_far
-              kind: value_gt
-              key: sr_distance_normalized
-              threshold: 0.4
-              priority: 3
-              on_missing: false
-            - name: et_sqs_too_low
-              kind: value_lt
-              key: sqs
-              threshold: 0.2
-              priority: 3
-              on_missing: false
-            - name: et_quality_too_low
-              kind: value_lt
-              key: trade_quality
-              threshold: 0.09
-              priority: 3
-              on_missing: false
-            - name: et_score_too_low
-              kind: value_lt
-              key: mean_score
-              threshold: 0.2751
-              priority: 3
-              on_missing: false
-            # NEW: Physical feature constraints (optimized for mean reversion)
-            # Priority 2: Market state rules (structure)
-            # NOTE: et_path_efficiency_too_high is replaced by et_not_et_regime_path_efficiency_too_high (threshold 0.7)
-            # Keeping this rule for backward compatibility but it's now redundant
-            # Using value rules since path_efficiency_pct is already a percentile
-            - name: et_path_efficiency_too_high
-              kind: value_gt
-              key: path_efficiency_pct
-              threshold: 0.7
-              priority: 2
-              on_missing: false
-            # Profitable samples have unstable direction (low price_dir_consistency)
-            - name: et_price_dir_consistency_too_high
-              kind: value_gt
-              key: price_dir_consistency_pct
-              threshold: 0.5
-              priority: 2
-              on_missing: false
-            # Profitable samples have high deviation from mean
-            - name: et_deviation_too_low
-              kind: value_lt
-              key: deviation_z_abs_pct
-              threshold: 0.6
-              priority: 2
-              on_missing: false
-            # ET_REGIME conditions (migrated from regime classification)
-            # Priority 2: Market state rules (stability and structure)
-            # ET requires: jump_risk_pct in [0.2, 0.5], atr_percentile >= 0.85, path_efficiency_pct in [0.55, 0.7], path_length_pct >= 0.6
-            # Using value rules since these features are already percentiles
-            - name: et_not_et_regime_jump_risk_too_low
-              kind: value_lt
-              key: jump_risk_pct
-              threshold: 0.2
-              priority: 2
-              on_missing: false
-            - name: et_not_et_regime_jump_risk_too_high
-              kind: value_gte
-              key: jump_risk_pct
-              threshold: 0.75
-              priority: 2
-              on_missing: false
-            - name: et_not_et_regime_atr_percentile_too_low
-              kind: value_lt
-              key: atr_percentile
-              threshold: 0.25
-              priority: 2
-              on_missing: false
-            - name: et_not_et_regime_path_efficiency_too_low
-              kind: value_lt
-              key: path_efficiency_pct
-              threshold: 0.25
-              priority: 2
-              on_missing: false
-            - name: et_not_et_regime_path_efficiency_too_high
-              kind: value_gt
-              key: path_efficiency_pct
-              threshold: 0.7
-              priority: 2
-              on_missing: false
-            - name: et_not_et_regime_path_length_too_low
-              kind: value_lt
-              key: path_length_pct
-              threshold: 0.25
-              priority: 2
-              on_missing: false
-            # ET CVD regime: use percentile version for cross-symbol stability
-            # Priority 2: Market state rules (extreme conditions)
-            # ET requires CVD to be in low percentile (negative divergence), but use percentile not hard threshold
-            # Reject when CVD percentile > 0.3 (not negative enough relative to history)
-            - name: et_cvd_not_negative_enough
-              kind: value_gt
-              key: cvd_change_5_pct
-              threshold: 0.7
-              priority: 2
-              on_missing: false
-            # Reflexivity risk control (systemic risk awareness layer)
-            # Priority 1: Safety rules (highest priority)
-            # SHD: hard veto when strategy homogeneity is too high (shd_p > 0.9)
-            # Note: ET is a hedge, so reflexivity risk is critical
-            - name: et_reflexivity_shd_too_high
-              kind: value_gt
-              key: shd_pct
-              threshold: 0.9
-              priority: 1
-              on_missing: false
-            # OFCI: soft veto (降低仓位，|ofci_p| > 0.9)
-            # Note: Gate rules only support hard veto. OFCI soft veto (position scaling) 
-            # should be implemented in PCM layer. This rule uses a very high threshold (0.95)
-            # to only trigger hard veto in extreme cases. For normal cases (|ofci_p| > 0.9),
-            # position scaling should be applied in PCM layer.
-            - name: et_reflexivity_ofci_extreme
-              kind: value_gt
-              key: ofci_pct
-              threshold: 0.95
-              priority: 1
-              on_missing: false
-          deny_if: [et_volume_too_low, et_bb_width_too_low, et_mean_adx_too_high, et_mean_sr_too_far, et_sqs_too_low, et_quality_too_low, et_score_too_low, et_path_efficiency_too_high, et_price_dir_consistency_too_high, et_deviation_too_low, et_not_et_regime_jump_risk_too_low, et_not_et_regime_jump_risk_too_high, et_not_et_regime_atr_percentile_too_low, et_not_et_regime_path_efficiency_too_low, et_not_et_regime_path_efficiency_too_high, et_not_et_regime_path_length_too_low, et_cvd_not_negative_enough, et_reflexivity_shd_too_high, et_reflexivity_ofci_extreme]
-          allow_if: [et_vol_climax, et_vpin_spike, et_cvd_divergence, et_momentum_decay, et_near_lvn, et_near_sr]
+          - name: et_vol_climax
+            kind: value_gt
+            key: atr_percentile
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_vpin_spike
+            kind: quantile_gt
+            key: vpin
+            quantile: 1.0
+            priority: 3
+            on_missing: false
+          - name: et_cvd_divergence
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_momentum_decay
+            kind: value_lt
+            key: cvd_change_5_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_near_lvn
+            kind: value_lt
+            key: vpvr_lvn_distance
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_volume_too_low
+            kind: value_lt
+            key: volume_ratio_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_bb_width_too_low
+            kind: value_lt
+            key: bb_width_normalized_pct
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_near_sr
+            kind: value_lt
+            key: sr_distance_normalized
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_mean_adx_too_high
+            kind: value_gt
+            key: adx
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_mean_sr_too_far
+            kind: value_gt
+            key: sr_distance_normalized
+            threshold: 1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_sqs_too_low
+            kind: value_lt
+            key: sqs
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_quality_too_low
+            kind: value_lt
+            key: trade_quality
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_score_too_low
+            kind: value_lt
+            key: mean_score
+            threshold: -1000000000.0
+            priority: 3
+            on_missing: false
+          - name: et_path_efficiency_too_high
+            kind: value_gt
+            key: path_efficiency_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_price_dir_consistency_too_high
+            kind: value_gt
+            key: price_dir_consistency_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_deviation_too_low
+            kind: value_lt
+            key: deviation_z_abs_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_not_et_regime_jump_risk_too_low
+            kind: value_lt
+            key: jump_risk_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_not_et_regime_jump_risk_too_high
+            kind: value_gte
+            key: jump_risk_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_not_et_regime_atr_percentile_too_low
+            kind: value_lt
+            key: atr_percentile
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_not_et_regime_path_efficiency_too_low
+            kind: value_lt
+            key: path_efficiency_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_not_et_regime_path_efficiency_too_high
+            kind: value_gt
+            key: path_efficiency_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_not_et_regime_path_length_too_low
+            kind: value_lt
+            key: path_length_pct
+            threshold: -1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_cvd_not_negative_enough
+            kind: value_gt
+            key: cvd_change_5_pct
+            threshold: 1000000000.0
+            priority: 2
+            on_missing: false
+          - name: et_reflexivity_shd_too_high
+            kind: value_gt
+            key: shd_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          - name: et_reflexivity_ofci_extreme
+            kind: value_gt
+            key: ofci_pct
+            threshold: 1000000000.0
+            priority: 1
+            on_missing: false
+          deny_if:
+          - et_volume_too_low
+          - et_bb_width_too_low
+          - et_mean_adx_too_high
+          - et_mean_sr_too_far
+          - et_sqs_too_low
+          - et_quality_too_low
+          - et_score_too_low
+          - et_path_efficiency_too_high
+          - et_price_dir_consistency_too_high
+          - et_deviation_too_low
+          - et_not_et_regime_jump_risk_too_low
+          - et_not_et_regime_jump_risk_too_high
+          - et_not_et_regime_atr_percentile_too_low
+          - et_not_et_regime_path_efficiency_too_low
+          - et_not_et_regime_path_efficiency_too_high
+          - et_not_et_regime_path_length_too_low
+          - et_cvd_not_negative_enough
+          - et_reflexivity_shd_too_high
+          - et_reflexivity_ofci_extreme
+          allow_if:
+          - et_vol_climax
+          - et_vpin_spike
+          - et_cvd_divergence
+          - et_momentum_decay
+          - et_near_lvn
+          - et_near_sr
           allow_mode: any
           default_action: deny
         evidence_rules:
-          # Exhaustion is rare: require volume profile + momentum decay signals
-          - name: has_orderflow
-            kind: quantile_gt
-            key: vpin
-            quantile: 0.5  # Reduced from 0.55 to 0.5 for ET_REGIME (moderate orderflow activity)
-            on_missing: error
-          - name: has_volume_profile
-            kind: any_key_contains
-            any_key_contains: ["vpvr_", "volume_profile", "vp_"]  # Restored: includes vpvr_ prefix features
-          - name: has_momentum_decay
-            kind: any_key_contains
-            any_key_contains: ["macd", "trend_r2", "momentum"]
-          - name: has_vol_climax
-            kind: any_key_contains
-            any_key_contains: ["volatility_reversal", "atr_percentile", "bb_width"]
-
+        - name: has_orderflow
+          kind: quantile_gt
+          key: vpin
+          quantile: 0.5
+          on_missing: error
+        - name: has_volume_profile
+          kind: any_key_contains
+          any_key_contains:
+          - vpvr_
+          - volume_profile
+          - vp_
+        - name: has_momentum_decay
+          kind: any_key_contains
+          any_key_contains:
+          - macd
+          - trend_r2
+          - momentum
+        - name: has_vol_climax
+          kind: any_key_contains
+          any_key_contains:
+          - volatility_reversal
+          - atr_percentile
+          - bb_width
   NO_TRADE:
     archetypes: {}
-
-# Optional overlay axis (Vol Mean) is implemented, but should NOT be enabled as mainline.
 overlays:
   VolMeanCompressionExpansionReversion:
     regime: MEAN
     required_conditions:
-      - vol_compression_history
-      - breakout_failed
-      - trend_weight_zero
-    required_evidence: [has_volatility, has_orderflow]
+    - vol_compression_history
+    - breakout_failed
+    - trend_weight_zero
+    required_evidence:
+    - has_volatility
+    - has_orderflow
     gate_rules:
       rules: []
       deny_if: []
@@ -760,12 +765,15 @@ overlays:
       allow_mode: any
       default_action: allow
     evidence_rules:
-      - name: has_volatility
-        kind: any_key_contains
-        any_key_contains: ["atr", "bb_width", "atr_percentile", "bb_width_percentile"]
-      - name: has_orderflow
-        kind: value_gt
-        key: vpin
-        threshold: 0.05
-        on_missing: error
-
+    - name: has_volatility
+      kind: any_key_contains
+      any_key_contains:
+      - atr
+      - bb_width
+      - atr_percentile
+      - bb_width_percentile
+    - name: has_orderflow
+      kind: value_gt
+      key: vpin
+      threshold: 0.05
+      on_missing: error

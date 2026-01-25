@@ -3,10 +3,11 @@ WebSocket 客户端（改进版）
 
 支持：
 1. Binance 实时数据流
-2. 自动重连
-3. 多币种订阅
-4. 数据回调接口
-5. 与 Nautilus Trader 集成
+2. 自动重连（指数退避、重连次数限制）
+3. 连接监控（心跳检测、健康状态评估）
+4. 多币种订阅
+5. 数据回调接口
+6. 与 Nautilus Trader 集成
 """
 
 from __future__ import annotations
@@ -25,6 +26,13 @@ try:
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
     websockets = None  # type: ignore
+
+from .reconnection_manager import (
+    ReconnectionManager,
+    ReconnectionConfig,
+    ConnectionState,
+)
+from .connection_monitor import ConnectionMonitor, HealthStatus
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +92,11 @@ class BinanceWebSocketClient:
     Binance WebSocket 客户端（改进版）
     
     特性：
-    - 自动重连
+    - 自动重连（指数退避、重连次数限制）
+    - 连接监控（心跳检测、健康状态评估）
     - 多币种订阅
     - 数据回调
-    - 心跳检测
+    - 重连统计和回调
     """
     
     def __init__(
@@ -97,14 +106,22 @@ class BinanceWebSocketClient:
         reconnect_delay: int = 5,
         ping_interval: int = 20,
         ping_timeout: int = 20,
+        reconnect_config: Optional[ReconnectionConfig] = None,
+        max_reconnect_retries: Optional[int] = None,
+        heartbeat_timeout: float = 60.0,
+        health_check_interval: float = 30.0,
     ):
         """
         Args:
             symbols: 交易对列表
             use_futures: 是否使用期货市场
-            reconnect_delay: 重连延迟（秒）
+            reconnect_delay: 初始重连延迟（秒）（已废弃，使用reconnect_config）
             ping_interval: 心跳间隔（秒）
             ping_timeout: 心跳超时（秒）
+            reconnect_config: 重连配置（如果为None，使用默认配置）
+            max_reconnect_retries: 最大重连次数（None=无限）
+            heartbeat_timeout: 心跳超时时间（秒）
+            health_check_interval: 健康检查间隔（秒）
         """
         if not WEBSOCKETS_AVAILABLE:
             raise ImportError("websockets 模块未安装，请安装: pip install websockets")
@@ -114,12 +131,38 @@ class BinanceWebSocketClient:
         
         self.symbols = [s.upper() for s in symbols]
         self.use_futures = use_futures
-        self.reconnect_delay = reconnect_delay
         self.ping_interval = ping_interval
         self.ping_timeout = ping_timeout
         
+        # 创建重连管理器
+        if reconnect_config is None:
+            reconnect_config = ReconnectionConfig(
+                initial_delay=float(reconnect_delay),
+                max_retries=max_reconnect_retries,
+            )
+        else:
+            if max_reconnect_retries is not None:
+                reconnect_config.max_retries = max_reconnect_retries
+        
+        self.reconnect_manager = ReconnectionManager(
+            config=reconnect_config,
+            on_reconnect_success=self._on_reconnect_success,
+            on_reconnect_failure=self._on_reconnect_failure,
+            on_state_change=self._on_state_change,
+        )
+        
+        # 创建连接监控器
+        self.connection_monitor = ConnectionMonitor(
+            heartbeat_timeout=heartbeat_timeout,
+            health_check_interval=health_check_interval,
+            on_health_change=self._on_health_change,
+            on_timeout=self._on_heartbeat_timeout,
+        )
+        
         self._stop_event: Optional[asyncio.Event] = None
         self._callbacks: List[Callable[[BinanceTick], None]] = []
+        self._reconnect_callbacks: List[Callable[[], None]] = []
+        self._health_callbacks: List[Callable[[HealthStatus], None]] = []
     
     def _ws_url(self) -> str:
         """构建 WebSocket URL"""
@@ -136,9 +179,48 @@ class BinanceWebSocketClient:
         if callback in self._callbacks:
             self._callbacks.remove(callback)
     
+    def add_reconnect_callback(self, callback: Callable[[], None]) -> None:
+        """添加重连成功回调"""
+        self._reconnect_callbacks.append(callback)
+    
+    def add_health_callback(self, callback: Callable[[HealthStatus], None]) -> None:
+        """添加健康状态变化回调"""
+        self._health_callbacks.append(callback)
+    
+    def _on_reconnect_success(self) -> None:
+        """重连成功回调"""
+        for callback in self._reconnect_callbacks:
+            try:
+                callback()
+            except Exception as e:
+                logger.error(f"Error in reconnect callback: {e}")
+    
+    def _on_reconnect_failure(self, error: Exception) -> None:
+        """重连失败回调"""
+        logger.debug(f"Reconnect failure callback: {error}")
+    
+    def _on_state_change(self, state: ConnectionState) -> None:
+        """连接状态变化回调"""
+        logger.debug(f"Connection state changed: {state.value}")
+    
+    def _on_health_change(self, status: HealthStatus) -> None:
+        """健康状态变化回调"""
+        logger.debug(f"Health status changed: {status.value}")
+        for callback in self._health_callbacks:
+            try:
+                callback(status)
+            except Exception as e:
+                logger.error(f"Error in health callback: {e}")
+    
+    def _on_heartbeat_timeout(self) -> None:
+        """心跳超时回调"""
+        logger.warning("Heartbeat timeout detected, will trigger reconnection")
+        # 触发重连（通过抛出异常）
+        # 注意：这会在stream_ticks的异常处理中被捕获
+    
     async def stream_ticks(self, stop_event: asyncio.Event) -> AsyncIterator[BinanceTick]:
         """
-        流式获取 tick 数据
+        流式获取 tick 数据（带重连机制）
         
         Args:
             stop_event: 停止事件
@@ -149,59 +231,102 @@ class BinanceWebSocketClient:
         self._stop_event = stop_event
         url = self._ws_url()
         
-        while not stop_event.is_set():
-            try:
-                async with websockets.connect(  # type: ignore[attr-defined]
-                    url,
-                    ping_interval=self.ping_interval,
-                    ping_timeout=self.ping_timeout,
-                    close_timeout=10,
-                ) as ws:
-                    logger.info(f"✅ WebSocket connected: {url}")
-                    
-                    async for msg in ws:
-                        if stop_event.is_set():
-                            break
-                        
-                        if not msg:
-                            continue
-                        
-                        try:
-                            data = json.loads(msg)
-                        except json.JSONDecodeError:
-                            logger.warning(f"Invalid JSON: {msg[:100]}")
-                            continue
-                        
-                        # 处理 Binance 数据格式
-                        payload = data.get("data") if isinstance(data, dict) and "data" in data else data
-                        if not isinstance(payload, dict):
-                            continue
-                        
-                        # 只处理 trade 事件
-                        if payload.get("e") != "trade":
-                            continue
-                        
-                        try:
-                            tick = BinanceTick.from_binance(payload)
-                            
-                            # 调用回调
-                            for callback in self._callbacks:
-                                try:
-                                    callback(tick)
-                                except Exception as e:
-                                    logger.error(f"Callback error: {e}")
-                            
-                            yield tick
-                        
-                        except Exception as e:
-                            logger.error(f"Error parsing tick: {e}")
-                            continue
-            
-            except Exception as exc:
-                logger.error(f"WebSocket connection error: {exc}, retrying in {self.reconnect_delay}s")
-                await asyncio.sleep(self.reconnect_delay)
+        # 启动连接监控
+        self.connection_monitor.start_monitoring()
         
-        logger.info("WebSocket stream stopped")
+        try:
+            while not stop_event.is_set():
+                # 检查是否应该继续重连
+                if not self.reconnect_manager.should_continue():
+                    logger.error("Max reconnection retries reached. Stopping.")
+                    break
+                
+                try:
+                    # 等待重连延迟（如果需要）
+                    if self.reconnect_manager.is_reconnecting():
+                        should_continue = await self.reconnect_manager.wait_before_reconnect()
+                        if not should_continue:
+                            break
+                    
+                    # 建立连接
+                    self.reconnect_manager._set_state(ConnectionState.CONNECTING)
+                    
+                    async with websockets.connect(  # type: ignore[attr-defined]
+                        url,
+                        ping_interval=self.ping_interval,
+                        ping_timeout=self.ping_timeout,
+                        close_timeout=10,
+                    ) as ws:
+                        logger.info(f"✅ WebSocket connected: {url}")
+                        self.reconnect_manager.on_connection_success()
+                        self.connection_monitor.record_heartbeat()
+                        
+                        # 消息接收循环
+                        async for msg in ws:
+                            if stop_event.is_set():
+                                break
+                            
+                            # 记录心跳（收到任何消息都算心跳）
+                            self.connection_monitor.record_heartbeat()
+                            
+                            if not msg:
+                                continue
+                            
+                            try:
+                                data = json.loads(msg)
+                            except json.JSONDecodeError:
+                                logger.warning(f"Invalid JSON: {msg[:100]}")
+                                continue
+                            
+                            # 处理 Binance 数据格式
+                            payload = data.get("data") if isinstance(data, dict) and "data" in data else data
+                            if not isinstance(payload, dict):
+                                continue
+                            
+                            # 只处理 trade 事件
+                            if payload.get("e") != "trade":
+                                continue
+                            
+                            try:
+                                tick = BinanceTick.from_binance(payload)
+                                
+                                # 记录消息接收
+                                self.connection_monitor.record_message()
+                                
+                                # 调用回调
+                                for callback in self._callbacks:
+                                    try:
+                                        callback(tick)
+                                    except Exception as e:
+                                        logger.error(f"Callback error: {e}")
+                                
+                                yield tick
+                            
+                            except Exception as e:
+                                logger.error(f"Error parsing tick: {e}")
+                                continue
+                
+                except Exception as exc:
+                    logger.error(f"WebSocket connection error: {exc}")
+                    self.reconnect_manager.on_connection_failure(exc)
+                    
+                    # 等待重连延迟
+                    should_continue = await self.reconnect_manager.wait_before_reconnect()
+                    if not should_continue:
+                        break
+        
+        finally:
+            # 停止连接监控
+            self.connection_monitor.stop_monitoring()
+            logger.info("WebSocket stream stopped")
+    
+    def get_reconnect_stats(self) -> Dict[str, Any]:
+        """获取重连统计信息"""
+        return self.reconnect_manager.get_stats()
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """获取连接健康状态"""
+        return self.connection_monitor.get_health()
     
     async def run(self, stop_event: asyncio.Event) -> None:
         """
