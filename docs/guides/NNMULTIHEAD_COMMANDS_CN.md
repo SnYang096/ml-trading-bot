@@ -20,7 +20,7 @@
 - **BC/RL 独有**：`mlbot rl ...` 下的影子研究命令（可选研究，v1 影子）。
 ```
 
-> 说明：BC/RL/FSM 目前都当作 **将来可选模块**。现在主力是 **Rule Router +（将来的 Gate）+ Execution 假设版本化**，通过 counterfactual 报告做复盘与迭代。
+> 说明：BC/RL/FSM 目前都当作 **将来可选模块**。现在主力是 **Rule Router + Gate + Execution 假设版本化**，通过 counterfactual 报告做复盘与迭代。
 
 ### 约定：核心配置目录
 
@@ -148,14 +148,39 @@ mlbot diagnose threshold-plateau --no-docker \
 - `--ttm-mean-max 29.0044411469`
 
 
-### 0.3（可选，但建议）Gate：树模型规则（将来模块，不影响主链路）
+### 0.3 Gate：Archetype可行性判定器（已实现，主链路核心组件）
 
-当前 repo 的 Gate(tree rules) 还在规划/待实现阶段（见 `EXP_007` 与 Gate TODO）。你现在可以把 Gate 理解为：
-- 输入：features + path primitives + router 输出
-- 输出：`allow/deny + reason`
-- 位置：介于 Router 与 Execution 之间（只做过滤，不改仓位）
+**Gate 已完全实现并集成到主链路中**，是系统的核心组件。
 
-> 现在先把 Router 阈值 + Execution 假设版本化跑通；Gate 可以后续补进主链路。[树模型在多头模型下游的角色.md](docs/architecture/树模型在多头模型下游的角色.md)
+**Gate 的作用**：
+- **输入**：features + path primitives + archetype ID
+- **输出**：`allow/deny + reason`
+- **位置**：介于 Router 与 Execution 之间（只做过滤，不改仓位）
+- **职责**：Archetype可行性判定器（Physics Feasibility Judge），同时做：
+  1. **结构识别**：Momentum / Pullback / Failure / Exhaustion
+  2. **物理约束**：Trend / Mean regime判断、ADX / volatility / liquidity检查
+  3. **否决（veto）**：只做「不该活的全部杀掉」
+
+**Gate规则配置**：
+- 配置文件：`config/nnmultihead/execution_archetypes.yaml`
+- 规则格式：使用 `when_then_rules`（支持5个phase：safety → exclusions → preconditions → evidence → decision）
+- 详细说明：参见 [最终简化架构](../architecture/FINAL_SIMPLIFIED_ARCHITECTURE_2026_01.md#layer-2gate系统核心已内嵌-regime)
+
+**应用Gate规则**：
+
+```bash
+python scripts/apply_archetype_gate.py \
+  --logs <LOGS_PARQUET> \
+  --config config/nnmultihead/execution_archetypes.yaml \
+  --quantiles <EVIDENCE_QUANTILES_JSON> \
+  --feature-store-root feature_store \
+  --feature-store-layer <LAYER> \
+  --timeframe 240T \
+  --out <GATED_LOGS_PARQUET>
+```
+
+**产物**：
+- `<GATED_LOGS_PARQUET>`：包含 `gate_ok`（是否通过）、`gate_archetype`（选中的archetype）、`gate_reasons`（veto原因）等列
 
 #### 0.3.1 Gate 放宽诊断（标签反推阈值）
 > 目的：用 label 评估 gate 的 precision/recall，并给出“放宽阈值”的建议。
@@ -178,6 +203,25 @@ mlbot rule diagnose-gate-label-loosen --no-docker \
   - `--label-col`（默认 `fbf_label`）
   - `--label-value`（默认 `FBF`）
 - `--target-fbf-pass/--target-fbf-veto` 是“目标标签通过率/被 veto 比例”，名称虽含 `fbf`，但适用于所有 archetype。
+
+#### 0.3.2 Gate 应用诊断（规则 veto 统计）
+> 目的：解释 “gate 全部 veto” 的根因，输出每条规则的 veto 频次与特征分布。
+
+```bash
+mlbot rule diagnose-gate-application --no-docker \
+  --logs <LOGS_PARQUET> \
+  --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
+  --feature-store-root feature_store \
+  --feature-store-layer <LAYER> \
+  --evidence-quantiles <EVIDENCE_QUANTILES_JSON> \
+  --timeframe 240T \
+  --start-date <START_DATE> --end-date <END_DATE> \
+  --output <OUT_JSON>
+```
+
+**输出**：
+- `pass_rate` / `veto_reasons_by_rule`
+- 每条 rule 的 `match_rate`、`veto_rate`、特征分布摘要
 
 ### 0.4 build-logs：把 (preds + mode + raw) 组装成 logs（并定义 execution 假设）
 
@@ -213,6 +257,30 @@ mlbot nnmultihead build-logs-3action --no-docker \
   --returns-source rr_execution \
   --output <LOGS_PARQUET>
 ```
+
+### 0.5 生成 evidence_quantiles.json（quantile_* 规则必需）
+> 目的：为 quantile_* 规则提供跨 symbol 的分位数阈值。
+
+**提取 keys（建议先跑一次）**：
+```bash
+mlbot rule extract-evidence-keys --no-docker \
+  --config config/nnmultihead/execution_archetypes.yaml
+```
+
+```bash
+mlbot rule build-evidence-quantiles --no-docker \
+  --feature-store-root feature_store \
+  --layer <LAYER> \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-12-31 \
+  --keys <COMMA_SEPARATED_KEYS> \
+  --out <OUT_JSON>
+```
+
+**说明**：
+- 实盘也需要（如果 gate 里有 `quantile_*` 规则）。
+- 建议离线周期性更新，不必每次实时生成。
 
 说明：
 - **`returns-source`** 就是你“Execution 假设”的核心开关（后续要版本化/做稳健性扫描）。

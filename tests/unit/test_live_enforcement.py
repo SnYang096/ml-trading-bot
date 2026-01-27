@@ -9,6 +9,7 @@ from src.time_series_model.diagnostics.ood_config import load_ood_config
 from src.time_series_model.diagnostics.live_dashboard import (
     build_live_dashboard_payload,
 )
+from src.order_management.storage import Storage
 
 
 @pytest.mark.unit
@@ -84,3 +85,60 @@ extreme_tail:
             mode="MEAN",
             drawdown=0.1,
         )
+
+
+@pytest.mark.unit
+def test_live_enforcement_persists_safety_state(tmp_path):
+    cy = tmp_path / "constitution.yaml"
+    db_path = tmp_path / "safety.db"
+    cy.write_text(
+        f"""
+version: 1
+name: "C_SAFETY"
+kill_switch:
+  enabled: true
+  max_dd: 0.5
+  daily_loss_limit: 0.01
+  weekly_loss_limit: 1.0
+  monthly_loss_limit: 1.0
+  max_turnover_mean: 0.35
+  max_cost_mean: 0.002
+  cooldown_minutes: 0
+  daily_reset_timezone: "UTC"
+  kill_on_any_hard_violation: true
+safety_state:
+  persist_to: "{db_path.as_posix()}"
+slots:
+  enabled: false
+add_position:
+  enabled: false
+replacement_policy:
+  enabled: false
+capital_escalation:
+  enabled: false
+extreme_tail:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    ex = ConstitutionExecutor(constitution_yaml=str(cy))
+    st = ex.load_runtime_state()
+
+    with pytest.raises(ConstitutionViolation):
+        enforce_before_order(
+            executor=ex,
+            runtime_state=st,
+            position_id="p1",
+            symbol="BTCUSDT",
+            mode="TREND",
+            execution_strategy="TrendContinuationTC",
+            daily_loss=0.05,
+            evt_risk_flag=True,
+        )
+
+    storage = Storage(str(db_path))
+    saved = storage.get_safety_state(state_id="global")
+    assert saved is not None
+    assert saved.get("halted") is True
+    assert "daily_loss_limit" in (saved.get("halt_reason") or [])
+    assert (saved.get("last_metrics") or {}).get("evt_risk_flag") is True

@@ -35,8 +35,79 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.time_series_model.nnmultihead.strategy_profile import (
     load_execution_archetypes_registry,
 )
-from src.time_series_model.live.tree_gate import apply_gate_rules
+from src.time_series_model.live.tree_gate import apply_gate_rules, _eval_when_clause
+from src.time_series_model.core.constitution.execution_evidence import (
+    load_evidence_quantiles,
+)
 from scripts.apply_archetype_gate import _read_feature_store_range
+
+
+def _collect_feature_keys_from_when(when: Any, out: set) -> None:
+    if isinstance(when, list):
+        for item in when:
+            _collect_feature_keys_from_when(item, out)
+        return
+    if not isinstance(when, dict):
+        return
+    if "all_of" in when:
+        for item in when.get("all_of") or []:
+            _collect_feature_keys_from_when(item, out)
+        return
+    if "any_of" in when:
+        for item in when.get("any_of") or []:
+            _collect_feature_keys_from_when(item, out)
+        return
+    if "not" in when:
+        _collect_feature_keys_from_when(when.get("not"), out)
+        return
+    if "key" in when and "op" in when:
+        key = str(when.get("key") or "").strip()
+        if key:
+            out.add(key)
+        return
+    if "any_key_contains" in when:
+        return
+    if len(when) == 1:
+        k = next(iter(when.keys()))
+        if str(k).strip():
+            out.add(str(k).strip())
+
+
+def _collect_when_conditions(when: Any, out: List[Dict[str, Any]]) -> None:
+    if isinstance(when, list):
+        for item in when:
+            _collect_when_conditions(item, out)
+        return
+    if not isinstance(when, dict):
+        return
+    if "all_of" in when:
+        for item in when.get("all_of") or []:
+            _collect_when_conditions(item, out)
+        return
+    if "any_of" in when:
+        for item in when.get("any_of") or []:
+            _collect_when_conditions(item, out)
+        return
+    if "not" in when:
+        _collect_when_conditions(when.get("not"), out)
+        return
+    if "key" in when and "op" in when:
+        out.append(
+            {
+                "key": str(when.get("key") or ""),
+                "op": str(when.get("op") or ""),
+                "value": when.get("value"),
+            }
+        )
+        return
+    if "any_key_contains" in when:
+        return
+    if len(when) == 1:
+        k = next(iter(when.keys()))
+        cond = when.get(k) or {}
+        if isinstance(cond, dict) and len(cond) == 1:
+            op = next(iter(cond.keys()))
+            out.append({"key": str(k), "op": str(op), "value": cond.get(op)})
 
 
 def extract_required_features(
@@ -47,10 +118,15 @@ def extract_required_features(
     features = set()
 
     for arch in arches.values():
+        rules = list(getattr(arch, "when_then_rules", []) or [])
+        if rules:
+            for rule in rules:
+                _collect_feature_keys_from_when(rule.get("when"), features)
+            continue
         if not arch.gate_rules:
             continue
-        rules = arch.gate_rules.get("rules", [])
-        for rule in rules:
+        raw_rules = arch.gate_rules.get("rules", [])
+        for rule in raw_rules:
             feature_key = rule.get("key")
             if feature_key:
                 features.add(feature_key)
@@ -131,6 +207,7 @@ def load_features_from_featurestore(
 def analyze_rule_effectiveness(
     df: pd.DataFrame,
     arches: Dict[str, Any],
+    quantiles: Dict[str, Any] | None,
 ) -> Dict[str, Any]:
     """
     分析每个gate规则的生效情况
@@ -143,6 +220,67 @@ def analyze_rule_effectiveness(
     rule_stats = {}
 
     for arch_name, arch in arches.items():
+        when_then_rules = list(getattr(arch, "when_then_rules", []) or [])
+        if when_then_rules:
+            arch_stats = []
+            for rule in when_then_rules:
+                rule_id = str(rule.get("id") or rule.get("name") or "unknown")
+                phase = str(rule.get("phase") or "")
+                action = str(rule.get("then", {}).get("action") or "")
+                when = rule.get("when")
+                conditions: List[Dict[str, Any]] = []
+                _collect_when_conditions(when, conditions)
+                feature_keys = sorted(
+                    {c.get("key") for c in conditions if c.get("key")}
+                )
+
+                matched = df.apply(
+                    lambda r: _eval_when_clause(
+                        when, features=r.to_dict(), quantiles=quantiles
+                    ),
+                    axis=1,
+                )
+
+                if action == "deny" and phase in ("safety", "exclusions"):
+                    veto_count = int(matched.sum())
+                elif action == "require" and phase in ("preconditions", "evidence"):
+                    veto_count = int((~matched).sum())
+                else:
+                    veto_count = 0
+
+                feature_stats = {}
+                for key in feature_keys:
+                    if key in df.columns:
+                        values = df[key].dropna()
+                        if len(values) > 0:
+                            feature_stats[key] = {
+                                "min": float(values.min()),
+                                "max": float(values.max()),
+                                "mean": float(values.mean()),
+                                "median": float(values.median()),
+                                "p5": float(values.quantile(0.05)),
+                                "p95": float(values.quantile(0.95)),
+                            }
+
+                arch_stats.append(
+                    {
+                        "rule_name": rule_id,
+                        "phase": phase,
+                        "action": action,
+                        "feature_keys": feature_keys,
+                        "ops": sorted({c.get("op") for c in conditions if c.get("op")}),
+                        "veto_count": veto_count,
+                        "veto_rate": (
+                            float(veto_count / len(df)) if len(df) > 0 else 0.0
+                        ),
+                        "match_rate": float(matched.mean()) if len(df) > 0 else 0.0,
+                        "feature_stats": feature_stats,
+                    }
+                )
+            if arch_stats:
+                rule_stats[arch_name] = arch_stats
+            continue
+
         if not arch.gate_rules:
             continue
 
@@ -158,12 +296,10 @@ def analyze_rule_effectiveness(
             if not feature_key or feature_key not in df.columns:
                 continue
 
-            # 获取特征值
             feature_values = df[feature_key].dropna()
             if len(feature_values) == 0:
                 continue
 
-            # 计算veto次数
             veto_count = 0
             if rule_kind in ("value_lt", "quantile_lt", "value_lte", "quantile_lte"):
                 if threshold is not None:
@@ -172,7 +308,6 @@ def analyze_rule_effectiveness(
                 if threshold is not None:
                     veto_count = int((feature_values > threshold).sum())
 
-            # 特征值统计
             feature_stats = {
                 "min": float(feature_values.min()),
                 "max": float(feature_values.max()),
@@ -182,14 +317,11 @@ def analyze_rule_effectiveness(
                 "p95": float(feature_values.quantile(0.95)),
             }
 
-            # 计算阈值位置
             threshold_position = None
             if threshold is not None:
                 if rule_kind.startswith("quantile_"):
-                    # 对于quantile规则，threshold本身就是分位数
                     threshold_position = threshold
                 else:
-                    # 对于value规则，计算threshold在特征值分布中的位置
                     if len(feature_values) > 0:
                         threshold_position = float((feature_values < threshold).mean())
 
@@ -219,6 +351,7 @@ def analyze_rule_effectiveness(
 def diagnose_gate_application(
     df: pd.DataFrame,
     arches: Dict[str, Any],
+    quantiles: Dict[str, Any] | None,
 ) -> Dict[str, Any]:
     """
     诊断gate规则应用逻辑
@@ -256,7 +389,7 @@ def diagnose_gate_application(
             ok, reasons = apply_gate_rules(
                 gate_rules=arch.gate_rules,
                 features=features,
-                quantiles=None,
+                quantiles=quantiles,
             )
 
             if ok:
@@ -266,13 +399,7 @@ def diagnose_gate_application(
             else:
                 # 记录veto原因
                 for reason in reasons:
-                    if reason.startswith("gate_deny="):
-                        veto_rules = (
-                            reason.replace("gate_deny=", "").strip("[]").split(",")
-                        )
-                        sample_result["veto_rules"].extend(
-                            [r.strip() for r in veto_rules]
-                        )
+                    sample_result["veto_rules"].append(str(reason))
 
         gate_results.append(sample_result)
 
@@ -283,7 +410,7 @@ def diagnose_gate_application(
             veto_reasons_by_rule[rule_name] += 1
 
     # 分析规则生效情况
-    rule_stats = analyze_rule_effectiveness(df, arches)
+    rule_stats = analyze_rule_effectiveness(df, arches, quantiles)
 
     # 统计结果
     total_samples = len(df)
@@ -338,6 +465,11 @@ def main() -> int:
         help="FeatureStore layer名称",
     )
     parser.add_argument(
+        "--evidence-quantiles",
+        default=None,
+        help="evidence_quantiles.json路径（用于quantile_*规则）",
+    )
+    parser.add_argument(
         "--timeframe",
         default="240T",
         help="时间框架",
@@ -379,6 +511,13 @@ def main() -> int:
             )
             print(f"✅ 特征加载完成，DataFrame现在有 {len(df.columns)} 列")
 
+    # 加载quantiles（用于quantile_*规则）
+    quantiles = (
+        load_evidence_quantiles(args.evidence_quantiles)
+        if args.evidence_quantiles
+        else None
+    )
+
     # 加载archetypes
     print("📊 加载archetypes配置...")
     arches = load_execution_archetypes_registry(args.execution_archetypes)
@@ -387,7 +526,7 @@ def main() -> int:
     }
 
     # 诊断gate规则应用
-    diagnosis = diagnose_gate_application(df, arches)
+    diagnosis = diagnose_gate_application(df, arches, quantiles)
 
     print(f"\n✅ 诊断完成:")
     print(f"   总样本数: {diagnosis['total_samples']}")

@@ -44,6 +44,7 @@ class SystemStateSnapshot:
     live_dashboard: Optional[Dict[str, Any]] = None
 
     kpi_gate: Optional[Dict[str, Any]] = None
+    safety_state: Optional[Dict[str, Any]] = None
     overrides: Optional[List[HumanOverride]] = None
 
     def as_dict(self) -> Dict[str, Any]:
@@ -68,6 +69,9 @@ class SystemStateSnapshot:
                 else None
             ),
             "kpi_gate": self.kpi_gate,
+            "safety_state": (
+                dict(self.safety_state or {}) if self.safety_state is not None else None
+            ),
             "overrides": [o.as_dict() for o in (self.overrides or [])],
         }
 

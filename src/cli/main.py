@@ -2412,6 +2412,138 @@ def rule_diagnose_gate_label_loosen(
     sys.exit(run_script("scripts/diagnose_gate_label_loosen.py", args, docker=docker))
 
 
+@rule.command("diagnose-gate-application")
+@click.option("--logs", "logs_path", required=True, help="logs parquet")
+@click.option(
+    "--execution-archetypes",
+    "config_path",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    show_default=True,
+    help="execution_archetypes.yaml path",
+)
+@click.option("--output", "out_path", required=True, help="output json path")
+@click.option("--feature-store-root", default="feature_store", show_default=True)
+@click.option("--feature-store-layer", default=None)
+@click.option("--evidence-quantiles", default=None)
+@click.option("--timeframe", default="240T", show_default=True)
+@click.option("--start-date", default=None)
+@click.option("--end-date", default=None)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_gate_application(
+    logs_path,
+    config_path,
+    out_path,
+    feature_store_root,
+    feature_store_layer,
+    evidence_quantiles,
+    timeframe,
+    start_date,
+    end_date,
+    docker,
+):
+    """Diagnose gate application and veto sources."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--logs",
+        f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
+        "--execution-archetypes",
+        f"/workspace/{config_path}" if use_workspace_prefix else config_path,
+        "--output",
+        f"/workspace/{out_path}" if use_workspace_prefix else out_path,
+        "--feature-store-root",
+        feature_store_root,
+        "--timeframe",
+        timeframe,
+    ]
+    if feature_store_layer:
+        args.extend(["--feature-store-layer", feature_store_layer])
+    if evidence_quantiles:
+        args.extend(
+            [
+                "--evidence-quantiles",
+                f"/workspace/{evidence_quantiles}"
+                if use_workspace_prefix
+                else evidence_quantiles,
+            ]
+        )
+    if start_date:
+        args.extend(["--start-date", start_date])
+    if end_date:
+        args.extend(["--end-date", end_date])
+    sys.exit(run_script("scripts/diagnose_gate_application.py", args, docker=docker))
+
+
+@rule.command("build-evidence-quantiles")
+@click.option("--feature-store-root", default="feature_store", show_default=True)
+@click.option("--layer", required=True, help="FeatureStore layer name")
+@click.option("--symbols", required=True, help="comma-separated symbols")
+@click.option("--timeframe", default="240T", show_default=True)
+@click.option("--start-date", required=True)
+@click.option("--end-date", required=True)
+@click.option("--keys", required=True, help="comma-separated feature keys")
+@click.option(
+    "--quantiles",
+    default="0.0,0.05,0.2,0.25,0.3,0.4,0.5,0.55,0.6,0.7,0.75,0.85,0.9,0.95,1.0",
+    show_default=True,
+)
+@click.option("--out", "out_path", required=True, help="output json path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_build_evidence_quantiles(
+    feature_store_root,
+    layer,
+    symbols,
+    timeframe,
+    start_date,
+    end_date,
+    keys,
+    quantiles,
+    out_path,
+    docker,
+):
+    """Build evidence quantiles for quantile_* gate rules."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--feature-store-root",
+        feature_store_root,
+        "--layer",
+        layer,
+        "--symbols",
+        symbols,
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--keys",
+        keys,
+        "--quantiles",
+        quantiles,
+        "--out",
+        f"/workspace/{out_path}" if use_workspace_prefix else out_path,
+    ]
+    sys.exit(run_script("scripts/build_evidence_quantiles.py", args, docker=docker))
+
+
+@rule.command("extract-evidence-keys")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    show_default=True,
+    help="execution_archetypes.yaml path",
+)
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_extract_evidence_keys(config_path, docker):
+    """Extract quantile_* evidence keys from when_then_rules."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--config",
+        f"/workspace/{config_path}" if use_workspace_prefix else config_path,
+    ]
+    sys.exit(run_script("scripts/extract_evidence_keys.py", args, docker=docker))
+
+
 @rule.command("apply-tree-gate")
 @click.option(
     "--logs",

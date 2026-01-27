@@ -72,7 +72,7 @@
 
 ### 其他专题
 
-- **[可选块语义与要求](OPTIONAL_BLOCKS_SEMANTICS_AND_REQUIREMENTS.md)** - Optional Blocks设计
+- **[可选块语义与实现](NNMULTIHEAD_FEATURE_CONTRACT_BLOCK_GATING.md)** - Optional Blocks完整说明（语义、需求、实现）
 - **[Archetype上线前Checklist](ARCHETYPE_PRELIVE_CHECKLIST_CN.md)** - 上线前检查清单
 - **[6种archetype简化成4种的原因](6种archetype简化成4种的原因.md)** - Archetype简化逻辑
 

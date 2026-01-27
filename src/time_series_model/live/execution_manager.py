@@ -35,8 +35,11 @@ class GuardedOrderContext:
     daily_loss: float = 0.0
     weekly_loss: float = 0.0
     monthly_loss: float = 0.0
+    daily_cost_mean: Optional[float] = None
+    daily_turnover_mean: Optional[float] = None
     hard_violation: bool = False
     data_bad: bool = False
+    evt_risk_flag: Optional[bool] = None
 
 
 class ExecutionManager:
@@ -73,7 +76,10 @@ class ExecutionManager:
             daily_loss=float(ctx.daily_loss),
             weekly_loss=float(ctx.weekly_loss),
             monthly_loss=float(ctx.monthly_loss),
+            daily_cost_mean=ctx.daily_cost_mean,
+            daily_turnover_mean=ctx.daily_turnover_mean,
             hard_violation=bool(ctx.hard_violation),
             data_bad=bool(ctx.data_bad),
+            evt_risk_flag=ctx.evt_risk_flag,
         )
         self.strategy.submit_order(order)

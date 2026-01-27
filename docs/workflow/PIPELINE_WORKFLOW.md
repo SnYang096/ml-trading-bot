@@ -21,9 +21,9 @@ mlbot nnmultihead build-feature-store \
   --symbols BTCUSDT,ETHUSDT \
   --timeframe 240T \
   --start-date 2024-01-01 \
-  --end-date 2024-12-31 \
+  --end-date 2025-10-31 \
   --feature-store-root feature_store \
-  --layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --layer nnmh_highcap6_240T_2024_2025_test \
   --warmup-months 1 \
   --no-docker
 ```
@@ -66,30 +66,9 @@ mlbot nnmultihead predict \
 
 ---
 
-### 2. 生成 Regime 分类 (Physics/Regime Classifier)
-
-```bash
-mlbot rule physics-regime \
-  --preds results/pipeline_<run_id>/preds \
-  --output results/pipeline_<run_id>/physics_regime.parquet \
-  --stats-output results/pipeline_<run_id>/physics_regime_stats.json \
-  --no-docker
-```
-
-**输出**: 
-- `physics_regime.parquet` (包含 `regime`: TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE)
-- `physics_regime_stats.json` (regime分布统计)
-
-**日志**: `results/pipeline_<run_id>/regime.log`
-
-**说明**:
-- Regime 分类器输出 `regime` (TC_REGIME/TE_REGIME/MEAN_REGIME/NO_TRADE) 用于 Gate 层
-- 这是 Physics/Regime 分类器的输出，基于市场物理可行性判断
-- **注意**: Router 模块已被移除。Execution 层现在直接根据 archetype 选择 ret_mean 或 ret_trend
+### 2. 构建 Execution 日志 (Build Execution Logs)
 
 ---
-
-### 3. 构建 Execution 日志 (Build Execution Logs)
 
 ```bash
 mlbot nnmultihead build-execution-logs \
@@ -116,21 +95,42 @@ mlbot nnmultihead build-execution-logs \
 - Execution 层根据 archetype 选择使用哪个 return：
   - TC/TE → 使用 `ret_trend` (趋势风格执行)
   - FR/ET → 使用 `ret_mean` (均值回归风格执行)
-- **注意**: 不再输出 `mode` 列，因为 Router 模块已被移除
+- **注意**: 不再输出 `mode` 列（旧 regime/router 已移除）
 
 ---
 
-### 4. 应用 Gate 过滤 ⭐ (必需，自动执行)
+### 3. 应用 Gate 过滤 ⭐ (必需，自动执行)
+
+**(a) 提取 quantile keys（建议）**
+```bash
+mlbot rule extract-evidence-keys --no-docker \
+  --config config/nnmultihead/execution_archetypes.yaml
+```
+
+**(b) 生成 evidence_quantiles.json（quantile_* 规则必需）**
+```bash
+mlbot rule build-evidence-quantiles --no-docker \
+  --feature-store-root feature_store \
+  --layer nnmh_highcap6_240T_2024_with_reflexivity \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-12-31 \
+  --keys <COMMA_SEPARATED_KEYS> \
+  --out results/pipeline_<run_id>/evidence_quantiles.json
+```
+
+**(c) 应用 gate**
 
 ```bash
-mlbot rule apply-tree-gate \
+python scripts/apply_archetype_gate.py \
   --logs results/pipeline_<run_id>/logs_execution.parquet \
-  --regime results/pipeline_<run_id>/physics_regime.parquet \
   --out results/pipeline_<run_id>/logs_execution_gated.parquet \
   --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
   --features-store-root feature_store \
-  --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
   --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+  --evidence-quantiles results/pipeline_<run_id>/evidence_quantiles.json \
+  --timeframe 240T \
+  --start-date 2024-01-01 --end-date 2024-12-31 \
   --no-docker
 ```
 
@@ -141,17 +141,12 @@ mlbot rule apply-tree-gate \
 
 **说明**:
 - 这一步应用 Gate 规则过滤交易
-- 输入 `logs` 必须包含 `regime` 列（来自 physics-regime 步骤）
-- 根据 `regime` 和 `live_config` 中的 `enabled_archetypes` 决定哪些交易可以执行
-- 过滤掉 NO_TRADE regime 中的交易
-- 应用 semantic score thresholds（如果提供）
-  - TC_REGIME: 使用上限阈值（p95），veto 高分毒区
-  - TE_REGIME: 使用下限阈值（p10），veto 低分噪声
-- 输出 `gate_archetype` 列（TC/TE/FR/ET/NO_TRADE），用于 Execution 层选择 ret_mean 或 ret_trend
+- Gate 完全基于 `when_then_rules` 与 `evidence_quantiles.json`
+- 输出 `gate_archetype` 列（6 archetypes）用于后续 KPI 和执行归因
 
 ---
 
-### 5. 添加反身性特征到Stage Logs（可选，如果FeatureStore包含反身性特征）
+### 4. 添加反身性特征到Stage Logs（可选，如果FeatureStore包含反身性特征）
 
 ```bash
 python scripts/add_reflexivity_features_to_logs.py \
@@ -177,7 +172,7 @@ python scripts/add_reflexivity_features_to_logs.py \
 
 ---
 
-### 6. 构建Stage Logs（包含gate和execution）
+### 5. 构建Stage Logs（包含gate和execution）
 
 ```bash
 python scripts/build_execution_log_stages.py \
@@ -202,7 +197,7 @@ python scripts/build_execution_log_stages.py \
 
 ---
 
-### 7. 聚合Canonical Log
+### 6. 聚合Canonical Log
 
 ```bash
 python scripts/aggregate_execution_log_stages.py \
@@ -393,6 +388,11 @@ mlbot rule diagnose-e2e-kpi \
    - **输出带 archetype 信息的日志**，供 E2E 报告使用
 
 2. **E2E 报告需要 Gate 输出**: 使用 `--gate` 参数提供准确的 archetype 信息
+
+3. **Safety 硬停机优先于下游流程**：
+   - Live enforcement 在下单前先做 Safety 判定（kill-switch + 日内限制 + 冷却恢复）
+   - 日亏损触发后仅跨日恢复（当日回归也不恢复）
+   - EVT 极端风险仅作软告警，不触发硬停机
 
 3. **ET/FR 交易缺失原因**:
    - **主要原因**: MEAN_REGIME 中没有交易（MEAN_REGIME 分类条件可能过于严格）

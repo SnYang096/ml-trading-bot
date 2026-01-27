@@ -107,6 +107,13 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 6. Safety state table (global runtime safety status)
+CREATE TABLE IF NOT EXISTS safety_state (
+    state_id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);

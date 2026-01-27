@@ -1,7 +1,6 @@
-# nnmultihead：Feature Contract 的 block gating（可选特征块）落地说明
+# nnmultihead：Feature Contract 的 block gating（可选特征块）完整说明
 
-本文档解释 **optional blocks** 在 `nnmultihead`（path-primitives MLP）里的工程实现：  
-如何做到 **“一个模型 + 可选特征块（有就用，没有就不用）”**，并且保证训练/推理口径一致。
+本文档完整解释 **optional blocks** 在 `nnmultihead`（path-primitives MLP）里的语义、需求、工程实现和最佳实践。
 
 ## 核心结论（先说清楚）
 
@@ -11,20 +10,24 @@
 - **`block_dropout_p` 是训练时的"整块随机 drop"**：按样本、按 block 随机把该 block 的所有特征置 0，并把对应 mask 置 0（只在训练阶段生效）。
 - 当前实现是 **block 级别**，不是"block 内随机 mask 某些特征"。（后续如需 per-feature masking，可以再扩展。）
 
-### `optional_blocks`的两个作用
+---
 
-`optional_blocks`可以包含两类特征：
+## `optional_blocks` 的两个作用
 
-1. **定义额外特征**（需要额外计算）：
-   - tier0~1 没有的特征，需要通过 `optional_blocks_enabled` 启用对应的 feature nodes
-   - 这些 nodes 会被计算，然后输入模型
-   - 例如：`vpin_block`、`volume_profile_block`（需要 tick 数据）
+`optional_blocks` 可以包含两类特征：
 
-2. **定义 mask 范围**（用于训练鲁棒性）：
-   - 即使特征已经在 tier0~2 中（作为 required features），也可以标记为 `optional_blocks`
-   - `missingness_policy` 只作用于 `optional_blocks` 中定义的特征
-   - 这样可以让模型训练时对这些特征进行 mask（`block_dropout_p`），提高鲁棒性
-   - 例如：将 tier1 中的某些特征标记为 optional，训练时随机 mask 以提高鲁棒性
+### 1. 定义额外特征（需要额外计算）
+
+- tier0~1 没有的特征，需要通过 `optional_blocks_enabled` 启用对应的 feature nodes
+- 这些 nodes 会被计算，然后输入模型
+- 例如：`vpin_block`、`volume_profile_block`（需要 tick 数据）
+
+### 2. 定义 mask 范围（用于训练鲁棒性）
+
+- 即使特征已经在 tier0~2 中（作为 required features），也可以标记为 `optional_blocks`
+- `missingness_policy` 只作用于 `optional_blocks` 中定义的特征
+- 这样可以让模型训练时对这些特征进行 mask（`block_dropout_p`），提高鲁棒性
+- 例如：将 tier1 中的某些特征标记为 optional，训练时随机 mask 以提高鲁棒性
 
 **关键点**：
 - `optional_blocks_enabled` 控制**是否计算**这些 blocks 的特征（materialize 阶段）
@@ -76,6 +79,24 @@ feature_contract:
     block_dropout_p: 0.05
 ```
 
+### TaskSpec 中的配置
+
+在 `task_spec_*.yaml` 中，通过 `feature_plan_overrides.optional_blocks_enabled` 控制哪些 blocks 被计算：
+
+```yaml
+feature_plan_overrides:
+  # optional_blocks_enabled控制"是否计算"（不仅仅是"是否喂给模型"）
+  # 如果gate/regime需要某个block，必须在这里启用它
+  optional_blocks_enabled:
+    - vpin_block  # 必需：gate rules需要vpin（has_orderflow evidence）
+    # - volume_profile_block  # 可选：如果gate rules需要vp_absorption_score，需要启用
+```
+
+**重要语义**：
+- `optional_blocks_enabled` 控制**是否计算**这些 blocks 的特征（materialize 阶段）
+- 如果 gate/regime 需要某个 block，**必须**在 `optional_blocks_enabled` 中启用它
+- 模型训练时，可以通过 `feature_contract.optional_blocks` 和 `append_block_mask` 来控制哪些 blocks 被喂给模型
+
 ---
 
 ## 算法与数据流（训练 / 推理）
@@ -119,7 +140,7 @@ d_{in} = |feature\_cols| + |blocks|
   - 将该 block 对应的所有 feature dims 置 0
   - 将该 block 的 mask dim 置 0
 
-这相当于对“线上 block 开/关、缺失、成本 gating”的情形做 Monte-Carlo augmentation。
+这相当于对"线上 block 开/关、缺失、成本 gating"的情形做 Monte-Carlo augmentation。
 
 ### 5) 推理阶段（不做 dropout，但保留 mask）
 
@@ -128,6 +149,126 @@ d_{in} = |feature\_cols| + |blocks|
 - `predict_path_primitives(..., append_block_mask=True, block_cols_by_name=...)`
   - 不会做 dropout
   - 仍然会构建相同维度的输入（NaN→0 + mask）
+
+---
+
+## Gate/Regime 需求分析
+
+### 问题背景
+
+`optional_blocks_enabled` 的语义存在混淆，导致 gate rules 和 regime classification 的需求没有被正确满足。
+
+**关键问题**：
+- `optional_blocks_enabled` 控制的是"是否计算"，而不仅仅是"是否喂给模型"
+- 如果 gate rules 需要 `vpin` 特征，但 `optional_blocks_enabled` 中没有 `vpin_block`，`vpin` 特征**不会被计算**
+- 如果 regime classification 需要某些特征，但这些特征属于 optional blocks 且未启用，这些特征**不会被计算**
+
+### Gate Rules 需要的特征
+
+通过分析 `config/nnmultihead/execution_archetypes.yaml`，gate rules 需要以下特征：
+
+| 特征 | 所属Block | 是否必需 |
+|------|----------|---------|
+| `vpin` | `vpin_block` | ✅ 必需（用于has_orderflow evidence） |
+| `cvd_change_5` | 不属于optional blocks（在live_feature_plan.yaml中通过add_features添加） | ✅ 必需 |
+| `cvd_change_5_normalized` | 不属于optional blocks | ✅ 必需 |
+| `vp_absorption_score` | `volume_profile_block` | ⚠️ 需要确认 |
+
+### Regime Classification 需要的特征
+
+Regime classification 主要使用物理特征（path_efficiency, price_dir_consistency, deviation_z等），这些特征不属于 optional blocks，属于 required features。
+
+### 当前 TaskSpec 状态
+
+```yaml
+feature_plan_overrides:
+  optional_blocks_enabled:
+    - vpin_block  # ✅ 已启用
+```
+
+**问题**：
+- `vpin_block` 已启用 ✅
+- `volume_profile_block` 未启用（如果 gate rules 需要 `vp_absorption_score`，需要启用）
+
+---
+
+## 解决方案
+
+### 方案1：分离"计算需求"和"模型输入需求"（推荐，但需要较大改动）
+
+在 TaskSpec 中区分：
+- `feature_compute_requirements`：哪些 blocks 必须被计算（用于 gate/regime/FeatureStore）
+- `model_input_blocks`：哪些 blocks 会被喂给模型（用于训练/推理）
+
+**优点**：语义清晰，完全分离计算和模型输入需求  
+**缺点**：需要修改 materialize 逻辑，改动较大
+
+### 方案2：扩展 optional_blocks_enabled 语义（简单，推荐当前采用）
+
+**明确语义**：
+- `optional_blocks_enabled` 控制"是否计算"（不仅仅是"是否喂给模型"）
+- 如果 gate/regime 需要某个 block，**必须**在 `optional_blocks_enabled` 中启用它
+- 模型训练时，可以通过 `feature_contract.optional_blocks` 和 `append_block_mask` 来控制哪些 blocks 被喂给模型
+
+**实施**：
+1. 在 TaskSpec 中添加注释说明 gate/regime 需求
+2. 确保所有 gate/regime 需要的 blocks 都被启用
+3. 更新文档明确语义
+
+### 方案3：自动推导计算需求（最智能，但实现复杂）
+
+从 gate rules 和 regime 配置自动推导需要哪些 blocks：
+- 扫描 `execution_archetypes.yaml`，找出所有需要的特征
+- 映射特征到 blocks
+- 自动添加到计算需求中
+
+### 当前推荐方案（方案2）
+
+#### 实施步骤
+
+1. **更新 TaskSpec**：
+   - 在 `feature_plan_overrides.optional_blocks_enabled` 中添加所有 gate/regime 需要的 blocks
+   - 添加注释说明为什么需要这些 blocks
+
+2. **更新文档**：
+   - 明确 `optional_blocks_enabled` 控制计算
+   - 说明 gate/regime 需求与模型需求的区别
+
+3. **验证**：
+   - 确保所有 gate/regime 需要的特征都被计算
+   - 验证 FeatureStore 包含所有需要的特征
+
+#### TaskSpec 示例
+
+```yaml
+feature_plan_overrides:
+  # optional_blocks_enabled控制"是否计算"（不仅仅是"是否喂给模型"）
+  # 如果gate/regime需要某个block，必须在这里启用它
+  optional_blocks_enabled:
+    - vpin_block  # 必需：gate rules需要vpin（has_orderflow evidence）
+    # - volume_profile_block  # 可选：如果gate rules需要vp_absorption_score，需要启用
+```
+
+---
+
+## 最佳实践
+
+### 1. 明确需求来源
+
+- 列出所有 gate rules 和 regime 需要的特征
+- 确认哪些属于 optional blocks
+- 在 TaskSpec 中明确启用这些 blocks
+
+### 2. 分离关注点
+
+- **计算需求**：由 `optional_blocks_enabled` 控制
+- **模型输入需求**：由 `feature_contract.optional_blocks` 和 `append_block_mask` 控制
+- **训练时 block dropout**：由 `block_dropout_p` 控制
+
+### 3. 文档化
+
+- 在 TaskSpec 中添加注释说明每个 block 的用途
+- 记录 gate/regime 对特征的依赖关系
 
 ---
 
@@ -155,14 +296,33 @@ python scripts/train_path_primitives_mlp.py \
 
 ## 常见误解澄清
 
-- **Q：append_block_mask 是“删除整个 block 特征”吗？**  
-  不是。它是“增加一个 mask 输入”，让模型识别 block 是否可用。
+- **Q：append_block_mask 是"删除整个 block 特征"吗？**  
+  不是。它是"增加一个 mask 输入"，让模型识别 block 是否可用。
 
-- **Q：block_dropout_p 是“mask block 里某些特征”吗？**  
-  不是。当前实现是“整块 drop”（block 内全部特征一起 drop）。
+- **Q：block_dropout_p 是"mask block 里某些特征"吗？**  
+  不是。当前实现是"整块 drop"（block 内全部特征一起 drop）。
 
 - **Q：随机 drop 足够覆盖各种线上情况吗？**  
-  它只能覆盖“缺失/关闭”的分布，但不能替代分组 ablation 的“准入证据”。  
+  它只能覆盖"缺失/关闭"的分布，但不能替代分组 ablation 的"准入证据"。  
   推荐：`block_dropout_p` 小比例做鲁棒性正则；是否把某块默认 on/off 仍要靠 add-back + slice 评估决定。
 
+- **Q：optional_blocks_enabled 只控制模型输入吗？**  
+  不是。它控制**是否计算**这些 blocks 的特征。如果 gate/regime 需要某个 block，必须启用它。
 
+- **Q：特征已经在 tier0~2 中，还需要在 optional_blocks_enabled 中启用吗？**  
+  如果只是为了模型训练时的 mask（block_dropout_p），不需要在 `optional_blocks_enabled` 中启用，只需要在 `feature_contract.optional_blocks` 中定义即可。  
+  但如果 gate/regime 需要这些特征，且它们属于某个 optional block，则需要启用。
+
+---
+
+## 未来改进方向
+
+考虑实施方案1，完全分离"计算需求"和"模型输入需求"：
+- 添加 `feature_compute_requirements` 字段
+- 保持 `optional_blocks_enabled` 仅控制模型输入
+- 这样可以让模型训练和 gate/regime 的需求完全解耦
+
+---
+
+**最后更新**: 2026-01-22  
+**状态**: 文档合并完成，推荐采用方案2（简单且有效）

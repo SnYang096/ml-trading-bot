@@ -54,15 +54,12 @@
 
 它们同时出现在两处配置（职责不同）：
 
-- **A) Execution Archetype Registry（定义“证据怎么计算”）**
+- **Execution Archetype Registry（定义"证据怎么计算"和"证据不满足就硬拒绝"）**
   - 文件：`config/nnmultihead/execution_archetypes.yaml`
   - 每个 archetype 有：
-    - `required_evidence`: 这个 archetype 必须满足哪些证据
     - `evidence_rules`: 证据如何从 `features: Dict[str, Any]` 推导出来（DSL）
-
-- **B) Execution Whitelist Constitution（定义“证据不满足就硬拒绝”）**
-  - 文件：`config/constitution/execution_whitelist.yaml`
-  - 每个 regime 下每个 strategy 的 `required_evidence`：**硬门禁**
+    - `when_then_rules`: Gate 规则，包括 evidence phase 的规则（证据不满足会被 deny）
+    - 注意：execution_whitelist 已被移除，现在所有验证都在 execution_archetypes.yaml 中完成
 
 ### 2.2 证据字段如何计算（代码入口）
 
@@ -98,19 +95,17 @@
   - 在下单前会计算 `evidence = compute_execution_evidence(...)`
   - 然后传给 `enforce_before_order(..., execution_evidence=evidence)`
 
-### 2.3 证据字段如何被宪法强制执行（硬拒绝）
+### 2.3 证据字段如何被 Gate 强制执行（硬拒绝）
 
 门禁实现：
-- `src/time_series_model/core/constitution/execution_whitelist.py`
-  - `enforce_execution_whitelist(...)`
-  - 会检查：
-    - regime 是否允许这个 strategy
-    - 是否命中 forbidden keyword
-    - **required_evidence 是否存在且为 True（缺 or False 都拒绝）**
+- `config/nnmultihead/execution_archetypes.yaml` 中的 `when_then_rules`
+  - 每个 archetype 的 `evidence` phase 规则会检查证据是否满足
+  - 如果证据不满足，Gate 会返回 `deny`，阻止交易执行
+- `scripts/apply_archetype_gate.py` 或 Gate 层实现
+  - 会检查 `evidence_rules` 计算出的证据是否满足要求
+  - 不满足的证据会导致 archetype 被 veto
 
-live enforcement hook：
-- `src/time_series_model/live/enforcement.py`
-  - `enforce_before_order()` 内部调用 `executor.validate_execution_strategy(...)`
+注意：`execution_whitelist` 已被移除，现在所有策略验证都在 `execution_archetypes.yaml` 中通过 Gate 规则完成。
 
 ### 2.4 一个具体例子（`has_orderflow` / `has_sr_quality`）
 
@@ -119,9 +114,9 @@ live enforcement hook：
 - `has_orderflow`：只要 `features` 的 key 里出现过 `vpin/cvd/delta/...` 任意一个子串，就认为有 orderflow 证据
 - `has_sr_quality`：只要 key 里出现 `sr_` / `sqs_` / `poc_` 这类子串，就认为有 SR 质量证据
 
-然后 whitelist 会要求例如：
-- `FailedBreakoutFade` 必须同时满足 `has_orderflow` 和 `has_sr_quality`
-  - 否则：**硬拒绝下单**
+然后 `execution_archetypes.yaml` 中的 Gate 规则会要求例如：
+- `FailedBreakoutFade` 的 `evidence` phase 规则会检查 `has_orderflow` 和 `has_sr_quality`
+  - 如果证据不满足，Gate 会返回 `deny`，**硬拒绝下单**
 
 ---
 
@@ -137,19 +132,20 @@ live enforcement hook：
 
 你可以把它理解为：把“训练时 features.yaml 的要求”迁移成“实盘时 features 必须满足的运行时约束”，并且提供可审计的降级行为。
 
-### 3.1 为什么 Evidence/Whitelist 已经实现了，还需要 Live Feature Contract？
+### 3.1 为什么 Evidence DSL + Gate 已经实现了，还需要 Live Feature Contract？
 
 这两者解决的是不同层级的问题：
 
-- **Evidence DSL + Whitelist enforcement**：解决“下单前能否执行某个 archetype”（硬门禁）
+- **Evidence DSL + Gate enforcement**：解决"下单前能否执行某个 archetype"（硬门禁）
   - 输入假设：已经有一个 `features: Dict[str, Any]`（但不保证它完整/一致）
-- **Live Feature Contract**：解决“features 本身是否可信/一致”（运行时契约）
+  - 实现：`execution_archetypes.yaml` 中的 `evidence_rules` 和 `when_then_rules`（evidence phase）
+- **Live Feature Contract**：解决"features 本身是否可信/一致"（运行时契约）
   - 目标：把 *哪些特征必须存在、怎么更新、缺失如何降级、窗口怎么对齐、哪些证据依赖哪些输入* 变成可配置、可审计、可回放的 contract
 
 如果没有 live contract，会出现一种最危险的情况：
-- whitelist 看起来在工作
-- 但 features 的语义已经漂了（例如窗口不同、对齐不同、断流导致“默认为 0”）
-- 最终门禁变成“形式正确、实际无效”
+- Gate 规则看起来在工作
+- 但 features 的语义已经漂了（例如窗口不同、对齐不同、断流导致"默认为 0"）
+- 最终门禁变成"形式正确、实际无效"
 
 > 备注：仓库里已提供 `live_feature_contract.yaml` 作为默认样例；如果你的 live 特征集不同，请按需裁剪/扩展。
 

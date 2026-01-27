@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import os
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,11 +23,6 @@ from .replacement_judge import (
 )
 from .state_store import ConstitutionStatePaths, append_jsonl, read_json, write_json
 from .violation import ConstitutionViolation
-from .execution_whitelist import (
-    ExecutionWhitelistConfig,
-    enforce_execution_whitelist,
-    load_execution_whitelist_config,
-)
 
 
 def _sha256_text(s: str) -> str:
@@ -50,7 +46,11 @@ class ConstitutionConfig:
     weekly_loss_limit: float
     monthly_loss_limit: float
     max_dd: float
+    max_turnover_mean: float
+    max_cost_mean: float
     kill_on_any_hard_violation: bool
+    cooldown_minutes: int
+    daily_reset_timezone: Optional[str]
 
 
 def load_constitution_config(path: str | Path) -> ConstitutionConfig:
@@ -58,6 +58,7 @@ def load_constitution_config(path: str | Path) -> ConstitutionConfig:
     raw = p.read_text(encoding="utf-8")
     obj = yaml.safe_load(raw) or {}
     ks = obj.get("kill_switch") or {}
+    ss = ks.get("safety_state") or {}
     return ConstitutionConfig(
         version=int(obj.get("version", 1)),
         name=str(obj.get("name", "Constitution_v1")),
@@ -67,7 +68,13 @@ def load_constitution_config(path: str | Path) -> ConstitutionConfig:
         weekly_loss_limit=float(ks.get("weekly_loss_limit", 0.08)),
         monthly_loss_limit=float(ks.get("monthly_loss_limit", 0.12)),
         max_dd=float(ks.get("max_dd", 0.20)),
+        max_turnover_mean=float(ks.get("max_turnover_mean", 0.35)),
+        max_cost_mean=float(ks.get("max_cost_mean", 0.002)),
         kill_on_any_hard_violation=bool(ks.get("kill_on_any_hard_violation", True)),
+        cooldown_minutes=int(ss.get("cooldown_minutes", 240)),
+        daily_reset_timezone=str(
+            ss.get("daily_reset_tz") or ss.get("daily_reset_timezone", "UTC")
+        ),
     )
 
 
@@ -113,7 +120,6 @@ class ConstitutionExecutor:
             yaml.safe_load(Path(constitution_yaml).read_text(encoding="utf-8")) or {}
         )
         self._paths = self._load_state_paths()
-        self._exec_whitelist_cfg = self._load_execution_whitelist_cfg()
 
     def meta(self) -> Dict[str, Any]:
         return {
@@ -123,43 +129,22 @@ class ConstitutionExecutor:
             "constitution_hash": str(self.cfg.constitution_hash),
         }
 
-    def _load_execution_whitelist_cfg(self) -> Optional[ExecutionWhitelistConfig]:
+    def resolve_safety_db_path(self) -> Optional[Path]:
         obj = self._raw_obj or {}
-        ew = obj.get("execution_whitelist") or {}
-        if not isinstance(ew, dict):
-            return None
-        if not bool(ew.get("enabled", False)):
-            return None
-        cfg_file = ew.get("config_file")
-        if not cfg_file:
+        ks = obj.get("kill_switch") or {}
+        ss = ks.get("safety_state") or {}
+        db_path = (
+            ss.get("persist_to")
+            or os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH")
+            or "data/order_management.db"
+        )
+        if not db_path:
             return None
         base = Path(self._base_dir).resolve()
-        p = Path(str(cfg_file))
+        p = Path(str(db_path))
         if not p.is_absolute():
             p = (base / p).resolve()
-        return load_execution_whitelist_config(p)
-
-    def validate_execution_strategy(
-        self,
-        *,
-        regime: str,
-        strategy_id: str,
-        tags: Optional[List[str]] = None,
-        evidence: Optional[Dict[str, bool]] = None,
-    ) -> None:
-        """
-        Hard contract: Router decides regime; execution MUST be in regime allow-list.
-        """
-        if self._exec_whitelist_cfg is None:
-            return
-        enforce_execution_whitelist(
-            cfg=self._exec_whitelist_cfg,
-            regime=str(regime),
-            strategy_id=str(strategy_id),
-            tags=tags,
-            evidence=evidence,
-            meta=self.meta(),
-        )
+        return p
 
     def _load_state_paths(self) -> ConstitutionStatePaths:
         obj = self._raw_obj or {}

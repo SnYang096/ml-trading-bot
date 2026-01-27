@@ -58,6 +58,7 @@ class Storage:
                 
                 # 确保所有必需的列都存在（兼容旧数据库）
                 self._ensure_order_columns(conn)
+                self._ensure_safety_state_table(conn)
             finally:
                 conn.close()
 
@@ -74,6 +75,23 @@ class Storage:
         except sqlite3.Error:
             # 如果表不存在或其他错误，忽略以保持初始化流程
             pass
+
+    def _ensure_safety_state_table(self, conn: sqlite3.Connection) -> None:
+        """确保safety_state表存在"""
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS safety_state (
+                    state_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+        except sqlite3.Error:
+            # 保持初始化流程稳定
+            pass
     
     def _get_connection(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -82,6 +100,45 @@ class Storage:
         # 启用 WAL 模式以提高并发性能
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
+
+    # ========== Safety state ==========
+
+    def get_safety_state(self, *, state_id: str = "global") -> Optional[Dict[str, Any]]:
+        """读取安全状态（JSON payload）"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT payload FROM safety_state WHERE state_id = ?", (state_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            payload = row["payload"] if isinstance(row, sqlite3.Row) else row[0]
+            return json.loads(payload) if payload else None
+        finally:
+            conn.close()
+
+    def upsert_safety_state(
+        self, *, state_id: str = "global", payload: Dict[str, Any]
+    ) -> None:
+        """写入安全状态（JSON payload）"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO safety_state (state_id, payload, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(state_id) DO UPDATE SET
+                    payload = excluded.payload,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (state_id, json.dumps(payload, ensure_ascii=False)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
     
     # ========== Position CRUD ==========
     
