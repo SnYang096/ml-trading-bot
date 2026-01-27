@@ -47,6 +47,7 @@ The recommended workflow uses **config-driven architecture** with strategy-speci
 - **Industrial Experiment Loop (Layer A/B/C, TaskSpec, Filter→Wrapper, stability rules)**: `docs/architecture/EXPERIMENT_LOOP_ARCHITECTURE.md`
 - **NN Multi-head Path Primitives + Router→Execution (NO/MEAN/TREND) architecture**: `docs/时序模型/架构：NN多头路径原语（Path Primitives）+Router解耦升级.md`
 - **Feature Search Playbook (Pool B + semantic groups, greedy baselines, singleton ablation, and the roadmap for Halving/Beam/SFFS)**: `docs/strategies/FEATURE_SEARCH_PLAYBOOK.md`
+- **Plateau Optimization Methodology (为什么慢 + 怎么改)**: `docs/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md` - 关键：Plateau 搜索不允许同时调节超过 3 个连续阈值参数
 
 Quick mental model:
 - **PolicyTask (direct entry)**: train a model that directly produces trade signals; fastest research loop.

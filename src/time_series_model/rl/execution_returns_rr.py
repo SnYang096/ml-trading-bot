@@ -33,6 +33,7 @@ class RRExecutionReturnsConfig:
 
     # RR exit parameters
     max_holding_bars: int = 24
+    min_holding_bars: int = 0
     stop_loss_r: float = 1.0
     take_profit_r: float = 2.0
     entry_offset: int = 1  # enter next bar
@@ -184,12 +185,16 @@ def _simulate_rr_position(
         stop_loss = initial_stop
         breakeven_activated = False
 
+        min_hold = int(cfg.min_holding_bars or 0)
+        if min_hold > int(cfg.max_holding_bars):
+            min_hold = int(cfg.max_holding_bars)
         end_idx = (
             min(scan_start + int(cfg.max_holding_bars), T)
             if bool(cfg.use_time_exit)
             else T
         )
 
+        earliest_exit = scan_start + max(0, min_hold - 1)
         for j in range(scan_start, end_idx):
             h = high[j]
             l = low[j]
@@ -202,6 +207,9 @@ def _simulate_rr_position(
                 else:
                     cand = l + float(cfg.trailing_atr_mult) * atr_j
                     stop_loss = min(stop_loss, cand)
+
+            if j < earliest_exit:
+                continue
 
             if sign > 0:
                 if (

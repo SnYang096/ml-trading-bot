@@ -36,7 +36,10 @@
 
 ### 阈值与优化
 
+- **[Plateau优化方法论](PLATEAU_OPTIMIZATION_METHODOLOGY.md)** ⭐ **关键** - 为什么Plateau搜索慢 + 怎么改（核心：分层冻结 + 子空间搜索，不允许同时调节超过3个参数）
 - **[阈值平坦高原协议](THRESHOLD_PLATEAU_TUNING_PROTOCOL_CN.md)** - Router/SLTP通用调参方法
+- **[平坦高原优化工作流](PLATEAU_OPTIMIZATION_WORKFLOW.md)** - Gate规则参数优化方法
+- **[Plateau vs Optuna对比](PLATEAU_VS_OPTUNA_COMPARISON.md)** - 两种优化方法对比
 - **[Gate优化实验总结](GATE_OPTIMIZATION_EXPERIMENTS_SUMMARY.md)** - Gate优化实验
 - **[多目标Gate优化](MULTI_OBJECTIVE_GATE_OPTIMIZATION.md)** - 多目标优化方法
 - **[硬Gate系统](HARD_GATE_SYSTEM.md)** - 硬Gate设计

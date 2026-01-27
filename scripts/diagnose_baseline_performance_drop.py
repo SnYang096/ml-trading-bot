@@ -86,8 +86,8 @@ def analyze_gate_rules_strictness(
             # 计算Sharpe
             if len(returns) > 1 and returns.std() > 1e-12:
                 sharpe = (
-                    returns.mean() / returns.std() * np.sqrt(6 * 365)
-                )  # Annualized for 4H bars
+                    returns.mean() / returns.std() * np.sqrt(252)
+                )  # Annualized using Daily factor
                 results["sharpe"] = float(sharpe)
 
     return results

@@ -78,11 +78,13 @@ from src.time_series_model.live.live_feature_contract import (
 from src.time_series_model.live.archetype_heuristics import (
     evaluate_required_conditions,
 )
+from src.time_series_model.live.direction_resolver import resolve_direction
 from src.time_series_model.live.execution_rules import (
     apply_execution_rules,
     load_execution_rules,
 )
 from src.time_series_model.live.tree_gate import apply_gate_rules
+from src.time_series_model.live.execution_intelligence import build_execution_profile
 from src.time_series_model.ops.state_snapshot import (
     SystemStateSnapshot,
     write_state_snapshot,
@@ -1045,7 +1047,15 @@ if NAUTILUS_AVAILABLE:
             )
 
             # Gate rules (optional, defined per archetype)
-            gate_cfg = getattr(arch, "gate_rules", None) or {}
+            when_then = list(getattr(arch, "when_then_rules", []) or [])
+            gate_cfg = (
+                {
+                    "when_then_rules": when_then,
+                    "default_action": getattr(arch, "default_action", "deny"),
+                }
+                if when_then
+                else (getattr(arch, "gate_rules", None) or {})
+            )
             if gate_cfg:
                 ok3, reasons3 = apply_gate_rules(
                     gate_rules=gate_cfg,
@@ -1115,6 +1125,29 @@ if NAUTILUS_AVAILABLE:
                     self._schedule_next_check()
                     return
 
+            # Structural direction resolution (per-archetype policy)
+            direction_policy = dict(getattr(arch, "direction_policy", None) or {})
+            direction = resolve_direction(
+                archetype_name=str(arch.name),
+                policy=direction_policy,
+                feats=feats,
+                bars=bars,
+            )
+            if not direction.ok or direction.side is None:
+                self.log.info(
+                    f"ℹ️ direction_unresolved: {arch.name} | {direction.reason}"
+                )
+                _emit_log(
+                    router_mode=str(regime),
+                    gate_blocked=True,
+                    gate_decisions=["direction_unresolved"],
+                    gate_reasons={"direction": [direction.reason]},
+                    evidence=evidence,
+                    execution={"intent": True, "submit_order": False},
+                )
+                self._schedule_next_check()
+                return
+
             # FR/ET low-frequency constraint (if configured)
             constraints = getattr(arch, "execution_constraints", None) or {}
             min_interval_m = float(constraints.get("min_order_interval_minutes", 0.0))
@@ -1172,6 +1205,12 @@ if NAUTILUS_AVAILABLE:
                     (pcm_budget.get("per_symbol_budget") or {}).get(sym_key, 1.0)
                 )
                 size_mult *= max(0.0, sym_mult)
+            exec_profile = build_execution_profile(
+                archetype_name=str(arch.name),
+                feats=feats,
+                constraints=constraints,
+            )
+            size_mult *= float(exec_profile.get("size_multiplier", 1.0))
             qty = self.instrument.make_qty(
                 self.trade_size * max(0.0, size_mult) * float(hd.risk_multiplier)
             )
@@ -1179,7 +1218,9 @@ if NAUTILUS_AVAILABLE:
             order_tags = [str(self.strategy_name), str(arch.name)]
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.BUY if str(hd.side) == "BUY" else OrderSide.SELL,
+                order_side=(
+                    OrderSide.BUY if str(direction.side) == "BUY" else OrderSide.SELL
+                ),
                 quantity=qty,
             )
             # Set order tags if supported
@@ -1198,22 +1239,7 @@ if NAUTILUS_AVAILABLE:
             )
             self._last_order_time_ns = now_ns
 
-            # Track TC/TE position (for ET pairing)
-            if str(arch.name).upper() in ["TC", "TE"]:
-                position_id = f"{self.strategy_name}:{int(now_ns)}"
-                self._active_tc_te_positions[position_id] = str(arch.name).upper()
-
-            # Clean up closed positions before checking ET hedge
-            self._cleanup_closed_positions()
-
-            # Check and update ET hedge (independent of TC/TE order submission)
-            try:
-                self._check_and_update_et_hedge(
-                    feats=feats, now_ns=now_ns, regime=regime, evidence=evidence
-                )
-            except Exception as e:
-                # Fail-safe: if ET hedging fails, log but don't block main order
-                self.log.warning(f"ET hedging check failed: {e}")
+            # ET hedge pairing is disabled under 6-archetype routing.
 
             _emit_log(
                 router_mode=str(regime),
@@ -1224,13 +1250,14 @@ if NAUTILUS_AVAILABLE:
                 execution={
                     "intent": True,
                     "submit_order": True,
-                    "side": str(hd.side),
+                    "side": str(direction.side),
+                    "direction_source": str(direction.source),
+                    "direction_method": str(direction.method),
                     "qty": float(qty),
                     "price": None,
                     "reason": str(arch.name),
-                    "rr_constraints": (
-                        constraints.get("fixed_rr") if constraints else None
-                    ),
+                    "rr_constraints": exec_profile.get("rr_constraints"),
+                    "execution_profile": exec_profile,
                 },
                 observability={
                     "tick_gap_seconds": tick_gap_seconds,

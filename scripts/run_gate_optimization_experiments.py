@@ -210,6 +210,8 @@ def _run_apply_tree_gate(
     timeframe: str,
     start_date: Optional[str],
     end_date: Optional[str],
+    evidence_quantiles: Optional[str] = None,
+    archetype_filter: Optional[str] = None,
 ) -> None:
     cmd = [
         sys.executable,
@@ -231,6 +233,10 @@ def _run_apply_tree_gate(
         cmd.extend(["--start-date", start_date])
     if end_date:
         cmd.extend(["--end-date", end_date])
+    if evidence_quantiles:
+        cmd.extend(["--evidence-quantiles", evidence_quantiles])
+    if archetype_filter:
+        cmd.extend(["--archetype-filter", archetype_filter])
     _run_cmd(cmd)
 
 
@@ -495,6 +501,8 @@ def run_baseline_experiment(
     start_date: Optional[str],
     end_date: Optional[str],
     quantiles: Optional[Dict[str, Any]] = None,
+    evidence_quantiles: Optional[str] = None,
+    archetype_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行基线实验（使用当前gate规则）"""
     print("\n" + "=" * 60)
@@ -511,6 +519,8 @@ def run_baseline_experiment(
         timeframe=timeframe,
         start_date=start_date,
         end_date=end_date,
+        evidence_quantiles=evidence_quantiles,
+        archetype_filter=archetype_filter,
     )
     kpi = _run_e2e_kpi(logs_path=gated_path, output_dir=output_dir, label="baseline")
 
@@ -538,6 +548,8 @@ def run_progressive_experiment(
     feature_store_root: str = "feature_store",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    evidence_quantiles: Optional[str] = None,
+    archetype_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行渐进式优化实验"""
     print("\n" + "=" * 60)
@@ -625,6 +637,8 @@ def run_progressive_experiment(
         timeframe=timeframe,
         start_date=start_date,
         end_date=end_date,
+        evidence_quantiles=evidence_quantiles,
+        archetype_filter=archetype_filter,
     )
     kpi = _run_e2e_kpi(logs_path=gated_path, output_dir=output_dir, label="progressive")
 
@@ -653,6 +667,13 @@ def run_hard_gate_experiment(
     feature_store_root: str = "feature_store",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    global_trade_budget: Optional[float] = None,
+    compression_mode: bool = False,
+    compression_target_trade_rate: Optional[float] = None,
+    compression_min_robustness: float = 0.5,
+    multi_objective_strategy: str = "max_robustness",
+    archetype_filter: Optional[str] = None,
+    evidence_quantiles: Optional[str] = None,
 ) -> Dict[str, Any]:
     """运行Hard-Gate System优化实验"""
     print("\n" + "=" * 60)
@@ -681,9 +702,21 @@ def run_hard_gate_experiment(
         "0.05",
         "--threshold-step",
         "0.05",
-        "--global-trade-budget",
-        "0.12",
     ]
+    if global_trade_budget is not None:
+        cmd.extend(["--global-trade-budget", str(global_trade_budget)])
+    if compression_mode:
+        cmd.append("--compression-mode")
+    if compression_target_trade_rate is not None:
+        cmd.extend(
+            ["--compression-target-trade-rate", str(compression_target_trade_rate)]
+        )
+    if compression_min_robustness is not None:
+        cmd.extend(["--compression-min-robustness", str(compression_min_robustness)])
+    if multi_objective_strategy:
+        cmd.extend(["--multi-objective-strategy", str(multi_objective_strategy)])
+    if archetype_filter:
+        cmd.extend(["--archetype-filter", str(archetype_filter)])
 
     if feature_store_layer:
         cmd.extend(
@@ -735,6 +768,8 @@ def run_hard_gate_experiment(
         timeframe=timeframe,
         start_date=start_date,
         end_date=end_date,
+        evidence_quantiles=evidence_quantiles,
+        archetype_filter=archetype_filter,
     )
     kpi = _run_e2e_kpi(logs_path=gated_path, output_dir=output_dir, label="hard_gate")
 
@@ -810,6 +845,51 @@ def main() -> int:
         default=["all"],
         help="要运行的实验（默认：all）",
     )
+    parser.add_argument(
+        "--global-trade-budget",
+        type=float,
+        default=None,
+        help="Hard-Gate全局trade_rate生存约束（可选）",
+    )
+    parser.add_argument(
+        "--compression-mode",
+        action="store_true",
+        help="Hard-Gate压缩模式（从全松阈值开始收紧）",
+    )
+    parser.add_argument(
+        "--compression-target-trade-rate",
+        type=float,
+        default=None,
+        help="压缩目标trade_rate（例如0.1表示压缩到10%）",
+    )
+    parser.add_argument(
+        "--compression-min-robustness",
+        type=float,
+        default=0.5,
+        help="压缩过程中最低robustness_score要求",
+    )
+    parser.add_argument(
+        "--multi-objective-strategy",
+        default="max_robustness",
+        choices=[
+            "max_trade_rate",
+            "max_robustness",
+            "balanced",
+            "pareto_midpoint",
+            "max_compression_efficiency",
+        ],
+        help="Hard-Gate多目标策略（压缩模式推荐max_compression_efficiency）",
+    )
+    parser.add_argument(
+        "--archetype-filter",
+        default=None,
+        help="只优化指定archetype（例如 FR）",
+    )
+    parser.add_argument(
+        "--evidence-quantiles",
+        default=None,
+        help="evidence_quantiles.json path for quantile_* gate rules",
+    )
 
     args = parser.parse_args()
 
@@ -861,6 +941,8 @@ def main() -> int:
             args.timeframe,
             args.start_date,
             args.end_date,
+            evidence_quantiles=args.evidence_quantiles,
+            archetype_filter=args.archetype_filter,
         )
         all_results["baseline"] = result
 
@@ -876,6 +958,13 @@ def main() -> int:
             args.feature_store_root,
             args.start_date,
             args.end_date,
+            global_trade_budget=args.global_trade_budget,
+            compression_mode=args.compression_mode,
+            compression_target_trade_rate=args.compression_target_trade_rate,
+            compression_min_robustness=args.compression_min_robustness,
+            multi_objective_strategy=args.multi_objective_strategy,
+            archetype_filter=args.archetype_filter,
+            evidence_quantiles=args.evidence_quantiles,
         )
         result["experiment"] = "merged"
         all_results["merged"] = result

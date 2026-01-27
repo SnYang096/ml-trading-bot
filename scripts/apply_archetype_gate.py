@@ -279,6 +279,11 @@ def main() -> int:
         action="store_true",
         help="Disable semantic score veto (tc/te semantic score thresholds), but keep gate_rules veto and archetype selection.",
     )
+    p.add_argument(
+        "--archetype-filter",
+        default=None,
+        help="Comma-separated archetypes to evaluate (e.g., FR,FailureReversionFR).",
+    )
     args = p.parse_args()
 
     logs_df = _ensure_timestamp_col(_read_any(Path(args.logs)))
@@ -363,6 +368,17 @@ def main() -> int:
         k: v for k, v in arches.items() if k != "VolMeanCompressionExpansionReversion"
     }
     quantiles_raw = load_evidence_quantiles(args.evidence_quantiles)
+    raw_filter = str(args.archetype_filter or "").strip()
+    allowed_archetypes = None
+    if raw_filter:
+        tokens = [t.strip() for t in raw_filter.split(",") if t.strip()]
+        alias_map = {
+            "FR": "FailureReversionFR",
+            "TC": "TrendContinuationTC",
+            "TE": "TrendExhaustionTE",
+            "ET": "ExhaustionTurnET",
+        }
+        allowed_archetypes = {alias_map.get(t, t) for t in tokens}
 
     gate_ok: List[bool] = []
     gate_decision: List[str] = []
@@ -394,6 +410,9 @@ def main() -> int:
         #   → Veto HIGH scores (p95), keep LOW sweet spot
         # - TE_REGIME: High scores (0.308-0.761) have highest Sharpe (6.215)
         #   → Veto LOW scores (p10), keep HIGH signals
+        # Note: With 6 archetypes, this applies to:
+        # - BreakoutPullbackContinuation, HTFBiasLTFEntry (TC-like)
+        # - MomentumExpansion (TE-like)
         if (
             not args.disable_semantic_veto
             and semantic_floors
@@ -401,6 +420,7 @@ def main() -> int:
         ):
             if regime_normalized == "TC":
                 # Veto high-score toxic zone, keep low-score sweet spot
+                # Applies to BreakoutPullbackContinuation and HTFBiasLTFEntry
                 ceiling = semantic_floors.get("tc_semantic_score_p95")
                 score = row.get("tc_semantic_score")
                 if (
@@ -416,6 +436,7 @@ def main() -> int:
                     continue
             if regime_normalized == "TE":
                 # Veto low-score noise, keep high-score signals
+                # Applies to MomentumExpansion
                 floor = semantic_floors.get("te_semantic_score_p10")
                 score = row.get("te_semantic_score")
                 if (
@@ -433,6 +454,8 @@ def main() -> int:
         # Archetype candidate selection: all archetypes are candidates (regime filter removed)
         # All archetypes are evaluated through gate rules and evidence rules
         candidates = list(arches.keys())
+        if allowed_archetypes:
+            candidates = [c for c in candidates if c in allowed_archetypes]
 
         quantiles = None
         if isinstance(quantiles_raw, dict):
@@ -461,8 +484,12 @@ def main() -> int:
                 ok = True
                 reasons = []
             else:
+                gate_cfg = {
+                    "when_then_rules": list(getattr(arch, "when_then_rules", []) or []),
+                    "default_action": str(getattr(arch, "default_action", "deny")),
+                }
                 ok, reasons = apply_gate_rules(
-                    gate_rules=arch.gate_rules,
+                    gate_rules=gate_cfg,
                     features=row.to_dict(),
                     quantiles=quantiles,
                 )
@@ -474,11 +501,12 @@ def main() -> int:
             else:
                 last_reasons = list(reasons or [])
 
-        # Multi-archetype selection logic (simplified)
+        # Multi-archetype selection logic (updated for 6 archetypes)
         # When multiple archetypes pass gate, use priority rules:
-        # 1. ET+FR → select FR (ET has lower priority than FR)
-        # 2. ET+TC → NO_TRADE (wait for ET to appear alone, treat ET as extreme case)
-        # 3. Other combinations → NO_TRADE (conservative approach)
+        # 1. MEAN族优先于TREND族（清算机会优先于趋势机会）
+        # 2. 同族内：FailedBreakoutFade优先于LiquiditySweepRejection（更快）
+        # 3. AuctionExhaustionReversal需要单独出现（极端条件）
+        # 4. 其他组合 → NO_TRADE (conservative approach)
         if len(passing_candidates) > 1:
             arch_names = [arch_name for arch_name, _, _ in passing_candidates]
             combination_key = "+".join(sorted(arch_names))
@@ -486,35 +514,110 @@ def main() -> int:
                 multi_archetype_stats.get(combination_key, 0) + 1
             )
 
-            # Rule 1: ET+FR → select FR
-            if "ExhaustionTurnET" in arch_names and "FailureReversionFR" in arch_names:
-                # Find FR in passing candidates
+            # Helper: Check if archetype is MEAN族
+            def is_mean_archetype(name):
+                mean_archetypes = [
+                    "FailedBreakoutFade",
+                    "LiquiditySweepRejection",
+                    "AuctionExhaustionReversal",
+                ]
+                return any(ma in name for ma in mean_archetypes)
+
+            def is_trend_archetype(name):
+                trend_archetypes = [
+                    "BreakoutPullbackContinuation",
+                    "HTFBiasLTFEntry",
+                    "MomentumExpansion",
+                ]
+                return any(ta in name for ta in trend_archetypes)
+
+            # Rule 1: MEAN族 + TREND族 → select MEAN族（清算机会优先）
+            mean_archs = [a for a in arch_names if is_mean_archetype(a)]
+            trend_archs = [a for a in arch_names if is_trend_archetype(a)]
+            if mean_archs and trend_archs:
+                # Prefer FailedBreakoutFade > LiquiditySweepRejection > AuctionExhaustionReversal
+                priority_order = [
+                    "FailedBreakoutFade",
+                    "LiquiditySweepRejection",
+                    "AuctionExhaustionReversal",
+                ]
                 selected_arch = None
-                for arch_name, score, reasons in passing_candidates:
-                    if arch_name == "FailureReversionFR":
-                        selected_arch = (arch_name, score, reasons)
+                for priority_name in priority_order:
+                    for arch_name, score, reasons in passing_candidates:
+                        if priority_name in arch_name:
+                            selected_arch = (arch_name, score, reasons)
+                            break
+                    if selected_arch:
                         break
 
                 if selected_arch:
                     arch_name, score, reasons = selected_arch
                     gate_ok.append(True)
                     gate_decision.append("allow")
-                    gate_reasons.append(f"et_fr_priority_fr:{arch_name}")
+                    gate_reasons.append(f"mean_over_trend_priority:{arch_name}")
                     gate_arch.append(arch_name)
                     continue
 
-            # Rule 2: ET+TC → NO_TRADE (wait for ET to appear alone)
-            # ET is treated as an extreme case and should only trade when it appears alone
-            if "ExhaustionTurnET" in arch_names and "TrendContinuationTC" in arch_names:
+            # Rule 2: 同族内多个archetype → 选择优先级最高的
+            if mean_archs and len(mean_archs) > 1:
+                # MEAN族内：FailedBreakoutFade > LiquiditySweepRejection > AuctionExhaustionReversal
+                priority_order = [
+                    "FailedBreakoutFade",
+                    "LiquiditySweepRejection",
+                    "AuctionExhaustionReversal",
+                ]
+                selected_arch = None
+                for priority_name in priority_order:
+                    for arch_name, score, reasons in passing_candidates:
+                        if priority_name in arch_name:
+                            selected_arch = (arch_name, score, reasons)
+                            break
+                    if selected_arch:
+                        break
+
+                if selected_arch:
+                    arch_name, score, reasons = selected_arch
+                    gate_ok.append(True)
+                    gate_decision.append("allow")
+                    gate_reasons.append(f"mean_priority:{arch_name}")
+                    gate_arch.append(arch_name)
+                    continue
+
+            if trend_archs and len(trend_archs) > 1:
+                # TREND族内：BreakoutPullbackContinuation > HTFBiasLTFEntry > MomentumExpansion
+                priority_order = [
+                    "BreakoutPullbackContinuation",
+                    "HTFBiasLTFEntry",
+                    "MomentumExpansion",
+                ]
+                selected_arch = None
+                for priority_name in priority_order:
+                    for arch_name, score, reasons in passing_candidates:
+                        if priority_name in arch_name:
+                            selected_arch = (arch_name, score, reasons)
+                            break
+                    if selected_arch:
+                        break
+
+                if selected_arch:
+                    arch_name, score, reasons = selected_arch
+                    gate_ok.append(True)
+                    gate_decision.append("allow")
+                    gate_reasons.append(f"trend_priority:{arch_name}")
+                    gate_arch.append(arch_name)
+                    continue
+
+            # Rule 3: AuctionExhaustionReversal需要单独出现（极端条件）
+            if "AuctionExhaustionReversal" in arch_names and len(arch_names) > 1:
                 gate_ok.append(False)
                 gate_decision.append("veto")
                 gate_reasons.append(
-                    "et_tc_wait_et_alone:ET requires to appear alone, not with TC"
+                    "aer_requires_alone:AuctionExhaustionReversal requires to appear alone"
                 )
                 gate_arch.append("")
                 continue
 
-            # Rule 3: Other multiple combinations → NO_TRADE (conservative)
+            # Rule 4: Other multiple combinations → NO_TRADE (conservative)
             arch_names_str = ", ".join(arch_names)
             gate_ok.append(False)
             gate_decision.append("veto")

@@ -199,6 +199,109 @@ def load_rule_priorities(
     return priorities
 
 
+def load_allow_rules(
+    execution_archetypes_path: str,
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, str]]:
+    """
+    Load allow_if rules and allow_mode per archetype from execution_archetypes.yaml.
+    Returns:
+        allow_rules_by_arch: {archetype: [rule_dicts]}
+        allow_mode_by_arch: {archetype: allow_mode}
+    """
+    with open(execution_archetypes_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    allow_rules_by_arch: Dict[str, List[Dict[str, Any]]] = {}
+    allow_mode_by_arch: Dict[str, str] = {}
+
+    def _collect(archetypes: Dict[str, Any]) -> None:
+        for arch_name, arch in (archetypes or {}).items():
+            gate_rules = (arch or {}).get("gate_rules") or {}
+            allow_names = [str(x) for x in (gate_rules.get("allow_if") or [])]
+            allow_mode_by_arch[arch_name] = str(gate_rules.get("allow_mode") or "any")
+            rules = gate_rules.get("rules") or []
+            name_map = {
+                str(r.get("name")): r
+                for r in rules
+                if isinstance(r, dict) and r.get("name")
+            }
+            allow_rules_by_arch[arch_name] = [
+                name_map[n] for n in allow_names if n in name_map
+            ]
+
+    regimes = data.get("regimes") or {}
+    for regime in regimes.values():
+        _collect((regime or {}).get("archetypes") or {})
+    _collect(data.get("overlays") or {})
+    return allow_rules_by_arch, allow_mode_by_arch
+
+
+def _apply_single_rule_allow(
+    df: pd.DataFrame,
+    feature_key: str,
+    rule_kind: str,
+    threshold: float,
+) -> pd.Series:
+    if feature_key not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    feature_values = pd.to_numeric(df[feature_key], errors="coerce")
+    feature_quantile = feature_values.rank(pct=True, na_option="keep")
+
+    if rule_kind in ("quantile_lt", "quantile_lte"):
+        mask = feature_quantile <= threshold
+    elif rule_kind in ("quantile_gt", "quantile_gte"):
+        mask = feature_quantile >= threshold
+    elif rule_kind in ("value_lt", "value_lte"):
+        mask = feature_values <= threshold
+    elif rule_kind in ("value_gt", "value_gte"):
+        mask = feature_values >= threshold
+    else:
+        mask = pd.Series(False, index=df.index)
+
+    return mask.fillna(False)
+
+
+def _apply_allow_rules_mask(
+    df: pd.DataFrame, allow_rules: List[Dict[str, Any]], allow_mode: str
+) -> pd.Series:
+    if not allow_rules:
+        return pd.Series(True, index=df.index)
+
+    masks = []
+    for rule in allow_rules:
+        feature_key = rule.get("key")
+        rule_kind = rule.get("kind")
+        threshold = (
+            rule.get("threshold") if "threshold" in rule else rule.get("quantile")
+        )
+        if not feature_key or not rule_kind or threshold is None:
+            masks.append(pd.Series(False, index=df.index))
+            continue
+        masks.append(
+            _apply_single_rule_allow(df, feature_key, rule_kind, float(threshold))
+        )
+
+    mode = str(allow_mode or "any").strip().lower()
+    if mode == "all":
+        out = masks[0]
+        for m in masks[1:]:
+            out = out & m
+        return out
+    if mode.startswith("at_least_") or mode.startswith("min"):
+        raw = mode.replace("at_least_", "").replace("min", "").replace(":", "").strip()
+        try:
+            min_hits = int(raw)
+        except Exception:
+            min_hits = 1
+        hit_count = sum(m.astype(int) for m in masks)
+        return hit_count >= max(1, min_hits)
+    # default: any
+    out = masks[0]
+    for m in masks[1:]:
+        out = out | m
+    return out
+
+
 def apply_frozen_rules(
     df: pd.DataFrame,
     frozen_rules: List[Dict[str, Any]],
@@ -251,12 +354,11 @@ def _compute_min_trade_per_rule(
 ) -> Optional[float]:
     """
     Compute per-rule minimum trade rate from a global trade budget.
-    Uses multiplicative budget: min_trade_per_rule = budget ** (1 / remaining_rules).
+    Uses direct floor: min_trade_per_rule = global_trade_budget.
     """
     if global_trade_budget is None or global_trade_budget <= 0:
         return None
-    remaining_rules = max(1, total_rules - optimized_count)
-    return float(global_trade_budget) ** (1.0 / float(remaining_rules))
+    return float(global_trade_budget)
 
 
 def optimize_rule_hard_gate(
@@ -269,6 +371,8 @@ def optimize_rule_hard_gate(
     total_rules: int,
     optimized_count: int,
     global_trade_budget: Optional[float],
+    allow_rules: Optional[List[Dict[str, Any]]] = None,
+    allow_mode: str = "any",
     compression_mode: bool = False,
     compression_target_trade_rate: Optional[float] = None,
     compression_min_robustness: float = 0.5,
@@ -298,6 +402,8 @@ def optimize_rule_hard_gate(
 
     # 步骤1: 应用所有已冻结的规则，得到过滤后的数据集
     df_filtered = apply_frozen_rules(df, frozen_rules, arch_name)
+    allow_mask = _apply_allow_rules_mask(df, allow_rules or [], allow_mode)
+    df_filtered = df_filtered[allow_mask.loc[df_filtered.index]]
 
     if len(df_filtered) == 0:
         print(f"    ⚠️  应用冻结规则后无数据，跳过")
@@ -370,7 +476,7 @@ def optimize_rule_hard_gate(
 
     # 步骤3: 构建base_gated_df（包含冻结规则的结果）
     base_gated_df = None
-    if frozen_rules:
+    if frozen_rules or allow_rules:
         base_mask = pd.Series(True, index=df.index)
         for rule in frozen_rules:
             feature_key_frozen = rule.get("feature_key")
@@ -386,6 +492,7 @@ def optimize_rule_hard_gate(
                 )
                 base_mask = base_mask & rule_veto
 
+        base_mask = base_mask & allow_mask
         base_gated_df = df.copy()
         base_gated_df["gate_ok"] = base_mask
 
@@ -843,6 +950,9 @@ def main() -> int:
     # 加载规则优先级
     rule_priorities = load_rule_priorities(args.execution_archetypes)
     print(f"✅ 加载规则优先级: {len(rule_priorities)} 个archetype")
+    allow_rules_by_arch, allow_mode_by_arch = load_allow_rules(
+        args.execution_archetypes
+    )
 
     # 配置
     bucket_config = BucketConfig()
@@ -872,6 +982,16 @@ def main() -> int:
     if args.archetype_filter:
         archetype_filter = [a.strip().upper() for a in args.archetype_filter.split(",")]
         print(f"🔍 Archetype过滤: {archetype_filter}")
+        if "gate_archetype" not in df_raw.columns:
+            alias_map = {
+                "FR": "FailureReversionFR",
+                "TC": "TrendContinuationTC",
+                "TE": "TrendExhaustionTE",
+                "ET": "ExhaustionTurnET",
+            }
+            first_arch = archetype_filter[0] if archetype_filter else ""
+            df_raw = df_raw.copy()
+            df_raw["gate_archetype"] = alias_map.get(first_arch, first_arch)
 
     archetype_order = None
     if args.archetype_order:
@@ -894,6 +1014,7 @@ def main() -> int:
 
         rules = (arch.gate_rules or {}).get("rules", [])
         arch_priorities = rule_priorities.get(arch_name, {})
+        allow_names = {r.get("name") for r in allow_rules_by_arch.get(arch_name, [])}
 
         for rule in rules:
             rule_name = rule.get("name", "")
@@ -907,6 +1028,8 @@ def main() -> int:
                 continue
 
             if not rule_name or not feature_key:
+                continue
+            if rule_name in allow_names:
                 continue
 
             # 检查特征是否存在于数据中
@@ -981,6 +1104,8 @@ def main() -> int:
             total_rules_by_arch.get(arch_name, 1),
             optimized_count_by_arch.get(arch_name, 0),
             args.global_trade_budget,
+            allow_rules=allow_rules_by_arch.get(arch_name),
+            allow_mode=allow_mode_by_arch.get(arch_name, "any"),
             compression_mode=args.compression_mode,
             compression_target_trade_rate=args.compression_target_trade_rate,
             compression_min_robustness=args.compression_min_robustness,

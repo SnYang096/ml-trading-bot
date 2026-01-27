@@ -25,7 +25,9 @@ def _sharpe(x: pd.Series) -> float:
         return 0.0
     mean = x.mean()
     std = x.std(ddof=1)
-    return float(mean / std * np.sqrt(6 * 365)) if std > 1e-12 else 0.0
+    # Use Daily annualization factor (sqrt(252)) instead of 4H factor (sqrt(6*365))
+    # This is more conservative and standard for financial metrics
+    return float(mean / std * np.sqrt(252)) if std > 1e-12 else 0.0
 
 
 def _pct(x: pd.Series, p: float) -> float:
@@ -40,18 +42,33 @@ def _archetype_return(row: pd.Series, ret_mean_col: str, ret_trend_col: str) -> 
     Select ret_mean or ret_trend based on archetype.
     - TC/TE → ret_trend
     - FR/ET → ret_mean
+
+    Note: For FailedBreakoutFade (FBF), ret_mean is calculated for long direction,
+    but FBF should be short (counter-trend). So we need to negate ret_mean for FBF.
     """
     archetype = str(row.get("gate_archetype") or row.get("archetype") or "").upper()
     if not archetype:
         return 0.0
 
-    # TC/TE → ret_trend
-    if "TC" in archetype or "TE" in archetype:
+    # TREND族 → ret_trend
+    trend_archetypes = ["BREAKOUTPULLBACK", "HTFBIAS", "MOMENTUMEXPANSION", "TC", "TE"]
+    if any(ta in archetype for ta in trend_archetypes):
         return float(row.get(ret_trend_col, 0.0) or 0.0)
 
-    # FR/ET → ret_mean
-    if "FR" in archetype or "ET" in archetype:
-        return float(row.get(ret_mean_col, 0.0) or 0.0)
+    # MEAN族 → ret_mean
+    mean_archetypes = [
+        "FAILEDBREAKOUT",
+        "LIQUIDITYSWEEP",
+        "AUCTIONEXHAUSTION",
+        "FR",
+        "ET",
+    ]
+    if any(ma in archetype for ma in mean_archetypes):
+        ret_mean = float(row.get(ret_mean_col, 0.0) or 0.0)
+        # FBF should be short (counter-trend), so negate ret_mean
+        if "FAILEDBREAKOUT" in archetype or "FBF" in archetype:
+            ret_mean = -ret_mean
+        return ret_mean
 
     return 0.0
 
@@ -93,7 +110,13 @@ def _kpi_for_df(
 ) -> Dict[str, Any]:
     df = df.copy()
     df["mode"] = df["mode"].astype(str)
-    trade_mask = df["mode"].str.upper().isin(["MEAN", "TREND"])
+    # Use gate_ok if available (new architecture), otherwise fallback to mode
+    if "gate_ok" in df.columns:
+        trade_mask = df["gate_ok"] == True
+    elif "gate_archetype" in df.columns:
+        trade_mask = df["gate_archetype"].notna() & (df["gate_archetype"] != "")
+    else:
+        trade_mask = df["mode"].str.upper().isin(["MEAN", "TREND"])
 
     df["ret_mode"] = df.apply(
         lambda r: _mode_return(r, ret_mean_col, ret_trend_col), axis=1
@@ -269,19 +292,38 @@ def main() -> int:
 
             logs_df = merged_gate
 
-            # Map gate archetype to standard archetype names
+            # Map gate archetype to standard archetype names (6 archetypes)
             def _normalize_archetype(arch):
                 if pd.isna(arch) or not arch or str(arch).strip() == "":
                     return None
-                arch = str(arch).upper()
-                if "TRENDCONTINUATION" in arch or arch == "TC":
-                    return "TC"
-                elif "TRENDEXPANSION" in arch or arch == "TE":
-                    return "TE"
-                elif "FAILUREREVERSION" in arch or arch == "FR":
-                    return "FR"
-                elif "EXHAUSTIONTURN" in arch or arch == "ET":
-                    return "ET"
+                arch_str = str(arch).upper()
+                # TREND族
+                if "BREAKOUTPULLBACK" in arch_str or "BREAKOUT_PULLBACK" in arch_str:
+                    return "BreakoutPullbackContinuation"
+                elif "HTFBIAS" in arch_str or "HTF_BIAS" in arch_str:
+                    return "HTFBiasLTFEntry"
+                elif (
+                    "MOMENTUMEXPANSION" in arch_str
+                    or "MOMENTUM_EXPANSION" in arch_str
+                    or arch_str == "TE"
+                ):
+                    return "MomentumExpansion"
+                # MEAN族
+                elif "FAILEDBREAKOUT" in arch_str or "FAILED_BREAKOUT" in arch_str:
+                    return "FailedBreakoutFade"
+                elif "LIQUIDITYSWEEP" in arch_str or "LIQUIDITY_SWEEP" in arch_str:
+                    return "LiquiditySweepRejection"
+                elif (
+                    "AUCTIONEXHAUSTION" in arch_str
+                    or "AUCTION_EXHAUSTION" in arch_str
+                    or arch_str == "ET"
+                ):
+                    return "AuctionExhaustionReversal"
+                # Legacy mappings (for backward compatibility)
+                elif "TRENDCONTINUATION" in arch_str or arch_str == "TC":
+                    return "BreakoutPullbackContinuation"  # Default to BPC
+                elif "FAILUREREVERSION" in arch_str or arch_str == "FR":
+                    return "FailedBreakoutFade"  # Default to FBF
                 return None
 
             logs_df["archetype"] = logs_df[actual_gate_col].apply(_normalize_archetype)
@@ -883,22 +925,6 @@ def main() -> int:
             f"| ret_mean | {base.get('ret_mean_e2e', 0.0):.4f} | {no_regime_filter_kpi.get('ret_mean_e2e', 0.0):.4f} | "
             f"{no_regime_filter_kpi.get('ret_mean_e2e', 0.0) - base.get('ret_mean_e2e', 0.0):.4f} |\n"
         )
-
-    if by_symbol_regime_archetype:
-        lines.append("\n## Symbol × Regime × Mode (Legacy)\n")
-        lines.append(
-            "⚠️ **Note**: 'mode' is legacy Router output (TREND/MEAN/NO_TRADE). Use archetype (TC/TE/FR/ET) for detailed analysis.\n\n"
-        )
-        lines.append(
-            "| symbol | regime | mode | trade_count | sharpe | win_rate | profit_loss_ratio | ret_mean |\n"
-        )
-        lines.append("|---|---|---|---|---|---|---|---|\n")
-        for symbol, regime, mode in sorted(by_symbol_regime_archetype.keys()):
-            s = by_symbol_regime_archetype[(symbol, regime, mode)]
-            lines.append(
-                f"| {symbol} | {regime} | {mode} | {s['trade_count']} | {s['sharpe']:.3f} | "
-                f"{s['win_rate']:.3f} | {s['profit_loss_ratio']:.3f} | {s['ret_mean_e2e']:.4f} |\n"
-            )
 
     if by_regime_semantic:
         lines.append("\n## By Regime Semantic Buckets\n")

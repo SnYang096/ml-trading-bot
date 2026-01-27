@@ -1,779 +1,644 @@
-version: 2
-name: execution_archetypes_v2_tc_te_fr_et
-regimes:
-  TREND:
-    archetypes:
-      TrendContinuationTC:
-        required_conditions:
-        - htf_trend_confirmed
-        - ltf_precision_entry
-        - structure_breakout
-        - healthy_pullback
-        - rr_geq_2
-        - not_counter_trend
-        required_evidence:
-        - has_orderflow
-        - has_trend_context
-        - has_volatility
-        gate_rules:
-          rules:
-          - name: tc_no_oflow_continuation
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_oflow_weak
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_volume_too_low
-            kind: value_lt
-            key: volume_ratio_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_vol_compress
-            kind: value_lt
-            key: bb_width_normalized_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_trend_break
-            kind: value_lt
-            key: trend_r2_20
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_trend_adx_too_low
-            kind: value_lt
-            key: adx
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_trend_price_below_ma200
-            kind: value_lt
-            key: sma_200_position
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_quality_too_low
-            kind: value_lt
-            key: trade_quality
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_score_too_low
-            kind: value_lt
-            key: tc_score
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: tc_not_tc_regime_jump_risk_too_low
-            kind: value_lt
-            key: jump_risk_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_not_tc_regime_jump_risk_too_high
-            kind: value_gte
-            key: jump_risk_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_not_tc_regime_atr_slope_too_high
-            kind: value_gt
-            key: atr_slope_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_not_tc_regime_path_efficiency_too_low
-            kind: value_lt
-            key: path_efficiency_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_not_tc_regime_path_length_too_low
-            kind: value_lt
-            key: path_length_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_not_tc_regime_dir_consistency_too_low
-            kind: value_lt
-            key: price_dir_consistency_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_cvd_too_negative
-            kind: value_gt
-            key: cvd_change_5_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: tc_reflexivity_shd_too_high
-            kind: value_gt
-            key: shd_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          - name: tc_reflexivity_ofci_extreme
-            kind: value_gt
-            key: ofci_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          deny_if:
-          - tc_no_oflow_continuation
-          - tc_oflow_weak
-          - tc_volume_too_low
-          - tc_vol_compress
-          - tc_trend_break
-          - tc_trend_adx_too_low
-          - tc_trend_price_below_ma200
-          - tc_quality_too_low
-          - tc_score_too_low
-          - tc_not_tc_regime_jump_risk_too_low
-          - tc_not_tc_regime_jump_risk_too_high
-          - tc_not_tc_regime_atr_slope_too_high
-          - tc_not_tc_regime_path_efficiency_too_low
-          - tc_not_tc_regime_path_length_too_low
-          - tc_not_tc_regime_dir_consistency_too_low
-          - tc_cvd_too_negative
-          - tc_reflexivity_shd_too_high
-          - tc_reflexivity_ofci_extreme
-          allow_if: []
-          allow_mode: any
-          default_action: allow
-        evidence_rules:
-        - name: has_orderflow
-          kind: quantile_gt
-          key: vpin
-          quantile: 0.55
-          on_missing: error
-        - name: oflow_not_negative
-          kind: value_gte
-          key: cvd_change_5_normalized_pct
-          threshold: 0.55
-          on_missing: false
-        - name: has_trend_context
-          kind: any_key_contains
-          any_key_contains:
-          - sma_200
-          - trend_r2
-          - macd
-          - hurst
-          - hilbert
-        - name: has_volatility
-          kind: any_key_contains
-          any_key_contains:
-          - atr
-          - bb_width
-          - volume_ratio
-          - spectrum
-      TrendExpansionTE:
-        required_conditions:
-        - ttm_above_threshold
-        - vol_expansion
-        - no_reverse_absorption
-        - rr_geq_2
-        required_evidence:
-        - has_orderflow
-        - has_volatility
-        gate_rules:
-          rules:
-          - name: te_oflow_expansion
-            kind: value_gt
-            key: cvd_change_5_pct
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_volume_surge
-            kind: value_gt
-            key: volume_ratio_pct
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_vol_expansion
-            kind: value_gt
-            key: bb_width_normalized_pct
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_fake_breakout_oflow
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_no_volume_surge
-            kind: value_lt
-            key: volume_ratio_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_vol_not_expanding
-            kind: value_lt
-            key: bb_width_normalized_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_volume_too_low
-            kind: value_lt
-            key: volume_ratio_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_bb_width_too_low
-            kind: value_lt
-            key: bb_width_normalized_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_trend_adx_too_low
-            kind: value_lt
-            key: adx
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_trend_price_below_ma200
-            kind: value_lt
-            key: sma_200_position
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_quality_too_low
-            kind: value_lt
-            key: trade_quality
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_score_too_low
-            kind: value_lt
-            key: te_score
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: te_not_te_regime_jump_risk_too_low
-            kind: value_lt
-            key: jump_risk_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: te_not_te_regime_jump_risk_too_high
-            kind: value_gte
-            key: jump_risk_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: te_not_te_regime_atr_slope_too_low
-            kind: value_lt
-            key: atr_slope_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: te_not_te_regime_range_expansion_too_low
-            kind: value_lt
-            key: range_expansion_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: te_reflexivity_shd_too_high
-            kind: value_gt
-            key: shd_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          - name: te_reflexivity_ofci_extreme
-            kind: value_gt
-            key: ofci_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          deny_if:
-          - te_fake_breakout_oflow
-          - te_no_volume_surge
-          - te_vol_not_expanding
-          - te_volume_too_low
-          - te_bb_width_too_low
-          - te_trend_adx_too_low
-          - te_trend_price_below_ma200
-          - te_quality_too_low
-          - te_score_too_low
-          - te_not_te_regime_jump_risk_too_low
-          - te_not_te_regime_jump_risk_too_high
-          - te_not_te_regime_atr_slope_too_low
-          - te_not_te_regime_range_expansion_too_low
-          - te_reflexivity_shd_too_high
-          - te_reflexivity_ofci_extreme
-          allow_if:
-          - te_oflow_expansion
-          - te_volume_surge
-          - te_vol_expansion
-          allow_mode: any
-          default_action: deny
-        evidence_rules:
-        - name: has_orderflow
-          kind: quantile_gt
-          key: vpin
-          quantile: 0.55
-          on_missing: error
-        - name: oflow_expansion
-          kind: value_gt
-          key: cvd_change_5_normalized_pct
-          threshold: 0.85
-          on_missing: false
-        - name: has_volatility
-          kind: any_key_contains
-          any_key_contains:
-          - atr
-          - bb_width
-          - spectrum
-        - name: has_volume_surge
-          kind: any_key_contains
-          any_key_contains:
-          - volume_anomaly
-          - volume_ratio
-          - vp_
-          - volume_profile
-  MEAN:
-    archetypes:
-      FailureReversionFR:
-        required_conditions:
-        - breakout_failed_close_back
-        - no_follow_through
-        - absorption_present
-        - ttm_break
-        required_evidence:
-        - has_orderflow
-        - has_sr_quality
-        execution_constraints:
-          allow_add_on: false
-          min_order_interval_minutes: 60
-          fixed_rr:
-            stop_loss_r: 1.0
-            take_profit_r: 2.0
-            max_holding_bars: 24
-        gate_rules:
-          rules:
-          - name: fr_divergence
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_vpin_spike
-            kind: quantile_gt
-            key: vpin
-            quantile: 1.0
-            priority: 3
-            on_missing: false
-          - name: fr_cvd_divergence
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_absorption
-            kind: quantile_gt
-            key: vp_absorption_score
-            quantile: 1.0
-            priority: 3
-            on_missing: false
-          - name: fr_volume_too_low
-            kind: value_lt
-            key: volume_ratio_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_bb_width_too_low
-            kind: value_lt
-            key: bb_width_normalized_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_near_sr
-            kind: value_lt
-            key: sr_distance_normalized
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_mean_adx_too_high
-            kind: value_gt
-            key: adx
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_mean_sr_too_far
-            kind: value_gt
-            key: sr_distance_normalized
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_sqs_too_low
-            kind: value_lt
-            key: sqs
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_quality_too_low
-            kind: value_lt
-            key: trade_quality
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_score_too_low
-            kind: value_lt
-            key: mean_score
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: fr_path_efficiency_too_high
-            kind: value_gt
-            key: path_efficiency_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: fr_price_dir_consistency_too_high
-            kind: value_gt
-            key: price_dir_consistency_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: fr_deviation_too_low
-            kind: value_lt
-            key: deviation_z_abs_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: fr_not_mean_regime_path_length_too_low
-            kind: value_lt
-            key: path_length_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: fr_not_mean_regime_atr_percentile_too_low
-            kind: value_lt
-            key: atr_percentile
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: fr_not_mean_regime_jump_risk_too_high
-            kind: value_gt
-            key: jump_risk_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: fr_reflexivity_shd_too_high
-            kind: value_gt
-            key: shd_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          - name: fr_reflexivity_ofci_extreme
-            kind: value_gt
-            key: ofci_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          deny_if:
-          - fr_volume_too_low
-          - fr_bb_width_too_low
-          - fr_mean_adx_too_high
-          - fr_mean_sr_too_far
-          - fr_sqs_too_low
-          - fr_quality_too_low
-          - fr_score_too_low
-          - fr_path_efficiency_too_high
-          - fr_price_dir_consistency_too_high
-          - fr_deviation_too_low
-          - fr_not_mean_regime_path_length_too_low
-          - fr_not_mean_regime_atr_percentile_too_low
-          - fr_not_mean_regime_jump_risk_too_high
-          - fr_reflexivity_shd_too_high
-          - fr_reflexivity_ofci_extreme
-          allow_if:
-          - fr_divergence
-          - fr_vpin_spike
-          - fr_cvd_divergence
-          - fr_absorption
-          - fr_near_sr
-          allow_mode: any
-          default_action: deny
-        evidence_rules:
-        - name: has_orderflow
-          kind: quantile_gt
-          key: vpin
-          quantile: 0.55
-          on_missing: error
-        - name: oflow_divergence
-          kind: value_lt
-          key: cvd_change_5_normalized_pct
-          threshold: 0.15
-          on_missing: false
-        - name: has_sr_quality
-          kind: any_key_contains
-          any_key_contains:
-          - sr_
-          - sqs_
-          - poc_
-        - name: has_absorption
-          kind: any_key_contains
-          any_key_contains:
-          - absorption
-          - vp_absorption
-          - wick_absorption
-      ExhaustionTurnET:
-        required_conditions:
-        - long_trend_late_stage
-        - vol_climax
-        - mfe_extreme
-        - momentum_divergence
-        required_evidence:
-        - has_orderflow
-        - has_volume_profile
-        execution_constraints:
-          allow_add_on: false
-          min_order_interval_minutes: 60
-          fixed_rr:
-            stop_loss_r: 1.0
-            take_profit_r: 2.0
-            max_holding_bars: 24
-        gate_rules:
-          rules:
-          - name: et_vol_climax
-            kind: value_gt
-            key: atr_percentile
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_vpin_spike
-            kind: quantile_gt
-            key: vpin
-            quantile: 1.0
-            priority: 3
-            on_missing: false
-          - name: et_cvd_divergence
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_momentum_decay
-            kind: value_lt
-            key: cvd_change_5_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_near_lvn
-            kind: value_lt
-            key: vpvr_lvn_distance
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_volume_too_low
-            kind: value_lt
-            key: volume_ratio_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_bb_width_too_low
-            kind: value_lt
-            key: bb_width_normalized_pct
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_near_sr
-            kind: value_lt
-            key: sr_distance_normalized
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_mean_adx_too_high
-            kind: value_gt
-            key: adx
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_mean_sr_too_far
-            kind: value_gt
-            key: sr_distance_normalized
-            threshold: 1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_sqs_too_low
-            kind: value_lt
-            key: sqs
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_quality_too_low
-            kind: value_lt
-            key: trade_quality
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_score_too_low
-            kind: value_lt
-            key: mean_score
-            threshold: -1000000000.0
-            priority: 3
-            on_missing: false
-          - name: et_path_efficiency_too_high
-            kind: value_gt
-            key: path_efficiency_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_price_dir_consistency_too_high
-            kind: value_gt
-            key: price_dir_consistency_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_deviation_too_low
-            kind: value_lt
-            key: deviation_z_abs_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_not_et_regime_jump_risk_too_low
-            kind: value_lt
-            key: jump_risk_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_not_et_regime_jump_risk_too_high
-            kind: value_gte
-            key: jump_risk_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_not_et_regime_atr_percentile_too_low
-            kind: value_lt
-            key: atr_percentile
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_not_et_regime_path_efficiency_too_low
-            kind: value_lt
-            key: path_efficiency_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_not_et_regime_path_efficiency_too_high
-            kind: value_gt
-            key: path_efficiency_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_not_et_regime_path_length_too_low
-            kind: value_lt
-            key: path_length_pct
-            threshold: -1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_cvd_not_negative_enough
-            kind: value_gt
-            key: cvd_change_5_pct
-            threshold: 1000000000.0
-            priority: 2
-            on_missing: false
-          - name: et_reflexivity_shd_too_high
-            kind: value_gt
-            key: shd_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          - name: et_reflexivity_ofci_extreme
-            kind: value_gt
-            key: ofci_pct
-            threshold: 1000000000.0
-            priority: 1
-            on_missing: false
-          deny_if:
-          - et_volume_too_low
-          - et_bb_width_too_low
-          - et_mean_adx_too_high
-          - et_mean_sr_too_far
-          - et_sqs_too_low
-          - et_quality_too_low
-          - et_score_too_low
-          - et_path_efficiency_too_high
-          - et_price_dir_consistency_too_high
-          - et_deviation_too_low
-          - et_not_et_regime_jump_risk_too_low
-          - et_not_et_regime_jump_risk_too_high
-          - et_not_et_regime_atr_percentile_too_low
-          - et_not_et_regime_path_efficiency_too_low
-          - et_not_et_regime_path_efficiency_too_high
-          - et_not_et_regime_path_length_too_low
-          - et_cvd_not_negative_enough
-          - et_reflexivity_shd_too_high
-          - et_reflexivity_ofci_extreme
-          allow_if:
-          - et_vol_climax
-          - et_vpin_spike
-          - et_cvd_divergence
-          - et_momentum_decay
-          - et_near_lvn
-          - et_near_sr
-          allow_mode: any
-          default_action: deny
-        evidence_rules:
-        - name: has_orderflow
-          kind: quantile_gt
-          key: vpin
-          quantile: 0.5
-          on_missing: error
-        - name: has_volume_profile
-          kind: any_key_contains
-          any_key_contains:
-          - vpvr_
-          - volume_profile
-          - vp_
-        - name: has_momentum_decay
-          kind: any_key_contains
-          any_key_contains:
-          - macd
-          - trend_r2
-          - momentum
-        - name: has_vol_climax
-          kind: any_key_contains
-          any_key_contains:
-          - volatility_reversal
-          - atr_percentile
-          - bb_width
-  NO_TRADE:
-    archetypes: {}
-overlays:
-  VolMeanCompressionExpansionReversion:
-    regime: MEAN
-    required_conditions:
-    - vol_compression_history
-    - breakout_failed
-    - trend_weight_zero
-    required_evidence:
-    - has_volatility
-    - has_orderflow
-    gate_rules:
-      rules: []
-      deny_if: []
-      allow_if: []
-      allow_mode: any
-      default_action: allow
-    evidence_rules:
-    - name: has_volatility
-      kind: any_key_contains
-      any_key_contains:
-      - atr
-      - bb_width
-      - atr_percentile
-      - bb_width_percentile
-    - name: has_orderflow
-      kind: value_gt
-      key: vpin
-      threshold: 0.05
-      on_missing: error
+version: 3
+name: execution_archetypes_when_then_v1
+schema:
+  phases:
+  - safety
+  - exclusions
+  - preconditions
+  - evidence
+  - decision
+  evaluation_order: safety -> exclusions -> preconditions -> evidence -> decision
+  default_action: deny
+  note: All rules use when-then. priority orders rules within phase.
+archetypes:
+  BreakoutPullbackContinuation:
+    default_action: allow
+    execution_constraints:
+      allow_add_on: false
+      min_order_interval_minutes: 60
+      fixed_rr:
+        stop_loss_r: 1.0
+        take_profit_r: 2.5
+        max_holding_bars: 24
+    direction_policy:
+      direction_source: structure
+      structure_direction:
+        method: trend_sign
+        lookback_bars: 5
+        min_consistency: 0.6
+    plateau_candidates:
+    - bpc_path_efficiency_high
+    - bpc_dir_consistency_high
+    - bpc_compression_score
+    rule_groups:
+      safety:
+      - bpc_reflexivity_shd_too_high
+      - bpc_reflexivity_ofci_extreme
+      exclusions:
+      - bpc_jump_risk_too_low
+      - bpc_jump_risk_too_high
+      - bpc_atr_slope_too_high
+      preconditions:
+      - bpc_path_efficiency_high
+      - bpc_dir_consistency_high
+      - bpc_compression_score
+      evidence:
+      - bpc_orderflow_present
+      - bpc_pullback_not_reversed
+    when_then_rules:
+    - id: bpc_reflexivity_shd_too_high
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        shd_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: bpc_reflexivity_ofci_extreme
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        ofci_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: bpc_jump_risk_too_low
+      phase: exclusions
+      priority: 2
+      reason: regime:低跳空风险不利趋势续航
+      when:
+        jump_risk_pct:
+          quantile_lt: 0.3
+      then:
+        action: deny
+    - id: bpc_jump_risk_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险过高
+      when:
+        jump_risk_pct:
+          quantile_gt: 0.6
+      then:
+        action: deny
+    - id: bpc_atr_slope_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:高波动不适合BPC
+      when:
+        atr_percentile:
+          quantile_gt: 0.7
+      then:
+        action: deny
+    - id: bpc_path_efficiency_high
+      phase: preconditions
+      priority: 2
+      reason: 强语义:趋势结构有效（结构再次被市场证明）
+      when:
+        path_efficiency_pct:
+          quantile_gte: 0.6
+      then:
+        action: require
+    - id: bpc_dir_consistency_high
+      phase: preconditions
+      priority: 2
+      reason: 强语义:方向一致性
+      when:
+        price_dir_consistency_pct:
+          quantile_gte: 0.6
+      then:
+        action: require
+    - id: bpc_compression_score
+      phase: preconditions
+      priority: 2
+      reason: 强语义:结构压缩→解压（compression score > 0.75）
+      when:
+        path_efficiency_pct:
+          quantile_gte: 0.55
+      then:
+        action: require
+    - id: bpc_orderflow_present
+      phase: evidence
+      priority: 3
+      reason: 证据:订单流支撑（pullback未被反向接管）
+      when:
+        vpin:
+          quantile_gt: 0.55
+      then:
+        action: require
+    - id: bpc_pullback_not_reversed
+      phase: evidence
+      priority: 3
+      reason: 证据:反向单没有真的掌控订单簿（cvd_change_5_pct不极端负）
+      when:
+        cvd_change_5_pct:
+          value_gt: 0.3
+      then:
+        action: require
+  HTFBiasLTFEntry:
+    default_action: allow
+    execution_constraints:
+      allow_add_on: false
+      min_order_interval_minutes: 30
+      fixed_rr:
+        stop_loss_r: 0.8
+        take_profit_r: 2.0
+        max_holding_bars: 24
+    direction_policy:
+      direction_source: structure
+      structure_direction:
+        method: trend_sign
+        lookback_bars: 10
+        min_consistency: 0.6
+    plateau_candidates:
+    - htf_path_efficiency_high
+    - htf_dir_consistency_high
+    rule_groups:
+      safety:
+      - htf_reflexivity_shd_too_high
+      - htf_reflexivity_ofci_extreme
+      exclusions:
+      - htf_jump_risk_too_high
+      preconditions:
+      - htf_path_efficiency_high
+      - htf_dir_consistency_high
+      evidence:
+      - htf_ltf_orderflow_ok
+      - htf_ltf_wick_rejection
+    when_then_rules:
+    - id: htf_reflexivity_shd_too_high
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        shd_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: htf_reflexivity_ofci_extreme
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        ofci_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: htf_jump_risk_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险过高
+      when:
+        jump_risk_pct:
+          quantile_gt: 0.6
+      then:
+        action: deny
+    - id: htf_path_efficiency_high
+      phase: preconditions
+      priority: 2
+      reason: 强语义:HTF趋势结构有效（大方向对）
+      when:
+        path_efficiency_pct:
+          quantile_gte: 0.6
+      then:
+        action: require
+    - id: htf_dir_consistency_high
+      phase: preconditions
+      priority: 2
+      reason: 强语义:HTF方向一致性
+      when:
+        price_dir_consistency_pct:
+          quantile_gte: 0.6
+      then:
+        action: require
+    - id: htf_ltf_orderflow_ok
+      phase: evidence
+      priority: 3
+      reason: 证据:LTF订单流一致（entry bar HTF方向一致，无反向主导imbalance）
+      when:
+        vpin:
+          quantile_gt: 0.5
+      then:
+        action: require
+    - id: htf_ltf_wick_rejection
+      phase: evidence
+      priority: 3
+      reason: 证据:LTF反向wick被立即吸收
+      when:
+        cvd_change_5_pct:
+          value_gt: 0.4
+      then:
+        action: require
+  MomentumExpansion:
+    default_action: allow
+    execution_constraints:
+      allow_add_on: false
+      min_order_interval_minutes: 30
+      fixed_rr:
+        stop_loss_r: 1.2
+        take_profit_r: 2.0
+        max_holding_bars: 24
+    direction_policy:
+      direction_source: structure
+      structure_direction:
+        method: breakout_sign
+        fallback: recent_return
+        lookback_bars: 10
+        atr_mult: 0.3
+    plateau_candidates:
+    - me_jump_risk_high
+    - me_atr_slope_high
+    - me_range_expansion_high
+    rule_groups:
+      safety:
+      - me_reflexivity_shd_too_high
+      - me_reflexivity_ofci_extreme
+      exclusions:
+      - me_jump_risk_too_low
+      - me_jump_risk_too_high
+      preconditions:
+      - me_atr_slope_high
+      - me_range_expansion_high
+      evidence:
+      - me_orderflow_present
+      - me_volume_surge
+    when_then_rules:
+    - id: me_reflexivity_shd_too_high
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        shd_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: me_reflexivity_ofci_extreme
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        ofci_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: me_jump_risk_too_low
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险不足（真钱正在加速流入）
+      when:
+        jump_risk_pct:
+          quantile_lt: 0.6
+      then:
+        action: deny
+    - id: me_jump_risk_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险过高
+      when:
+        jump_risk_pct:
+          quantile_gt: 0.9
+      then:
+        action: deny
+    - id: me_atr_slope_high
+      phase: preconditions
+      priority: 2
+      reason: 强语义:波动扩张（动能×波动率告诉你钱在加速流入）
+      when:
+        atr_percentile:
+          quantile_gte: 0.7
+      then:
+        action: require
+    - id: me_range_expansion_high
+      phase: preconditions
+      priority: 2
+      reason: 强语义:区间扩张（bb_width > percentile(80)）
+      when:
+        bb_width_normalized_pct:
+          quantile_gte: 0.7
+      then:
+        action: require
+    - id: me_orderflow_present
+      phase: evidence
+      priority: 3
+      reason: 证据:订单流加速（连续方向性cluster，cluster间距缩短）
+      when:
+        vpin:
+          quantile_gt: 0.55
+      then:
+        action: require
+    - id: me_volume_surge
+      phase: evidence
+      priority: 3
+      reason: 证据:成交量放大（单有没有来得越来越快）
+      when:
+        volume_ratio_pct:
+          quantile_gt: 0.6
+      then:
+        action: require
+  FailedBreakoutFade:
+    default_action: allow
+    execution_constraints:
+      allow_add_on: false
+      min_order_interval_minutes: 60
+      fixed_rr:
+        stop_loss_r: 1.0
+        take_profit_r: 2.0
+        max_holding_bars: 8
+        min_holding_bars: 3
+    direction_policy:
+      direction_source: structure
+      structure_direction:
+        method: failed_breakout
+        lookback_bars: 10
+        atr_mult: 0.3
+    plateau_candidates:
+    - fbf_wick_scene
+    - fbf_fp_scene
+    - fbf_vpin_spike
+    rule_groups:
+      safety:
+      - fbf_reflexivity_shd_too_high
+      - fbf_reflexivity_ofci_extreme
+      exclusions:
+      - fbf_jump_risk_too_high
+      preconditions:
+      - fbf_false_breakout
+      - fbf_volume_profile_rejection
+      evidence:
+      - fbf_wick_scene_long_wick
+      - fbf_fp_aggressive_but_stuck
+      - fbf_vpin_spike
+    when_then_rules:
+    - id: fbf_reflexivity_shd_too_high
+      phase: safety
+      priority: 1
+      reason: 反身性风险，这里是太拥挤反而不做FR
+      when:
+        shd_pct:
+          quantile_gt: 0.9
+      then:
+        action: deny
+    - id: fbf_reflexivity_ofci_extreme
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        ofci_pct:
+          quantile_gt: 0.9
+      then:
+        action: deny
+    - id: fbf_jump_risk_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险过高
+      when:
+        jump_risk_pct:
+          quantile_gt: 0.9
+      then:
+        action: deny
+    - id: fbf_false_breakout
+      phase: preconditions
+      priority: 2
+      reason: 强语义:假突破（突破尝试失败，价格回到SR附近）
+      when:
+        all_of:
+        - liquidity_void_false_breakout_risk:
+            quantile_gt: 0.6
+        - sr_distance_normalized:
+            quantile_lt: 0.7
+      then:
+        action: require
+    - id: fbf_volume_profile_rejection
+      phase: preconditions
+      priority: 2
+      reason: 强语义:成交分布拒绝（wick exhaustion表示价格被拒绝）
+      when:
+        wick_exhaustion_score:
+          quantile_gt: 0.4
+      then:
+        action: require
+    - id: fbf_evidence_any
+      phase: evidence
+      priority: 3
+      reason: 证据:至少满足一个证据条件（wick/cvd）
+      when:
+        any_of:
+        - range_ratio_5bar:
+            quantile_gt: 0.4
+        - cvd_change_5:
+            quantile_lt: 0.6
+        min_matches: 1
+      then:
+        action: require
+  LiquiditySweepRejection:
+    default_action: allow
+    execution_constraints:
+      allow_add_on: false
+      min_order_interval_minutes: 60
+      fixed_rr:
+        stop_loss_r: 1.0
+        take_profit_r: 2.0
+        max_holding_bars: 24
+    direction_policy:
+      direction_source: structure
+      structure_direction:
+        method: reverse_of
+        base: sweep_side
+        fallback: failed_breakout
+        lookback_bars: 10
+        atr_mult: 0.3
+    plateau_candidates:
+    - lsr_liquidity_void
+    - lsr_fp_scene
+    - lsr_trade_cluster
+    rule_groups:
+      safety:
+      - lsr_reflexivity_shd_too_high
+      - lsr_reflexivity_ofci_extreme
+      exclusions:
+      - lsr_jump_risk_too_high
+      preconditions:
+      - lsr_liquidity_sweep_detected
+      evidence:
+      - lsr_liquidity_void_scene
+      - lsr_fp_opposite_imbalance
+      - lsr_trade_cluster_failed
+    when_then_rules:
+    - id: lsr_reflexivity_shd_too_high
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        shd_pct:
+          quantile_gt: 0.9
+      then:
+        action: deny
+    - id: lsr_reflexivity_ofci_extreme
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        ofci_pct:
+          quantile_gt: 0.9
+      then:
+        action: deny
+    - id: lsr_jump_risk_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险过高
+      when:
+        jump_risk_pct:
+          quantile_gt: 0.4
+      then:
+        action: deny
+    - id: lsr_liquidity_sweep_detected
+      phase: preconditions
+      priority: 2
+      reason: 强语义:流动性扫止损检测（liquidity_void_scene.sweep_detected，被止损引出来的流动性）
+      when:
+        any_of:
+        - jump_risk_pct:
+            quantile_gt: 0.5
+        - sr_distance_normalized:
+            quantile_lt: 0.2
+        min_matches: 1
+      then:
+        action: require
+    - id: lsr_liquidity_void_scene
+      phase: evidence
+      priority: 3
+      reason: 证据:sweep后立刻回到高流动区（liquidity_void_scene）
+      when:
+        range_ratio_5bar:
+          quantile_gt: 0.5
+      then:
+        action: require
+    - id: lsr_fp_opposite_imbalance
+      phase: evidence
+      priority: 3
+      reason: 证据:sweep时单边aggressor，反转时opposite imbalance（fp_scene）
+      when:
+        cvd_change_5_pct:
+          value_lt: 0.5
+      then:
+        action: require
+    - id: lsr_trade_cluster_failed
+      phase: evidence
+      priority: 3
+      reason: 证据:sweep位置单笔巨大但失败的cluster（trade_cluster_scene）
+      when:
+        volume_ratio_pct:
+          quantile_gt: 0.7
+      then:
+        action: require
+  AuctionExhaustionReversal:
+    default_action: allow
+    execution_constraints:
+      allow_add_on: false
+      min_order_interval_minutes: 60
+      fixed_rr:
+        stop_loss_r: 1.0
+        take_profit_r: 2.0
+        max_holding_bars: 24
+    direction_policy:
+      direction_source: structure
+      structure_direction:
+        method: reverse_of
+        base: trend_sign
+        lookback_bars: 10
+        min_consistency: 0.5
+    plateau_candidates:
+    - aer_vol_climax
+    - aer_path_efficiency_mid
+    - aer_jump_risk_mid
+    rule_groups:
+      safety:
+      - aer_reflexivity_shd_too_high
+      - aer_reflexivity_ofci_extreme
+      exclusions:
+      - aer_jump_risk_too_low
+      - aer_jump_risk_too_high
+      preconditions:
+      - aer_vol_climax
+      - aer_path_efficiency_mid
+      - aer_path_length_sufficient
+      evidence:
+      - aer_exhaustion_evidence
+    when_then_rules:
+    - id: aer_reflexivity_shd_too_high
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        shd_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: aer_reflexivity_ofci_extreme
+      phase: safety
+      priority: 1
+      reason: 反身性风险
+      when:
+        ofci_pct:
+          quantile_gt: 0.85
+      then:
+        action: deny
+    - id: aer_jump_risk_too_low
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险不足
+      when:
+        jump_risk_pct:
+          quantile_lt: 0.2
+      then:
+        action: deny
+    - id: aer_jump_risk_too_high
+      phase: exclusions
+      priority: 2
+      reason: regime:跳空风险过高
+      when:
+        jump_risk_pct:
+          quantile_gt: 0.5
+      then:
+        action: deny
+    - id: aer_vol_climax
+      phase: preconditions
+      priority: 2
+      reason: 强语义:波动极值（趋势末期的信仰充值）
+      when:
+        atr_percentile:
+          quantile_gte: 0.85
+      then:
+        action: require
+    - id: aer_path_efficiency_mid
+      phase: preconditions
+      priority: 2
+      reason: 强语义:中等效率易衰竭（趋势没死，但信仰没油了）
+      when:
+        path_efficiency_pct:
+          quantile_gte: 0.55
+      then:
+        action: require
+    - id: aer_path_length_sufficient
+      phase: preconditions
+      priority: 2
+      reason: 强语义:路径长度足够
+      when:
+        path_length_pct:
+          quantile_gte: 0.6
+      then:
+        action: require
+    - id: aer_exhaustion_evidence
+      phase: evidence
+      priority: 3
+      reason: 证据:cluster变大但推进变小，能量峰值后衰减，imbalance仍在但delta不再带动价格
+      when:
+        any_of:
+        - vpin:
+            quantile_gt: 0.7
+        - cvd_change_5_pct:
+            value_lt: 0.3
+        min_matches: 1
+      then:
+        action: require

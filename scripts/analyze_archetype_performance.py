@@ -25,13 +25,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def _sharpe(returns: pd.Series) -> float:
-    """Calculate Sharpe ratio (annualized, assuming 6 bars per day for 240T timeframe)."""
+    """Calculate Sharpe ratio (annualized, using Daily factor sqrt(252))."""
     returns = returns.dropna()
     if len(returns) < 2:
         return 0.0
     mean = returns.mean()
     std = returns.std(ddof=1)
-    return float(mean / std * np.sqrt(6 * 365)) if std > 1e-12 else 0.0
+    # Use Daily annualization factor (sqrt(252)) instead of 4H factor (sqrt(6*365))
+    # This is more conservative and standard for financial metrics
+    return float(mean / std * np.sqrt(252)) if std > 1e-12 else 0.0
 
 
 def _archetype_return(row: pd.Series, ret_mean_col: str, ret_trend_col: str) -> float:

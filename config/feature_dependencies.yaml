@@ -458,6 +458,38 @@ features:
         price_dir_consistency_pct: bounded_0_1
     column_mappings:
       close: close
+  path_efficiency_slope_5_f:
+    module: interaction
+    compute_func: compute_path_efficiency_slope_from_series
+    dependencies: [path_efficiency_pct_f]
+    required_columns:
+    - path_efficiency_pct
+    output_columns:
+    - path_efficiency_slope_5
+    category: derived
+    description: Slope of path_efficiency_pct over 5-bar rolling window. Negative values indicate efficiency is declining (trend weakening).
+    pass_full_df: false
+    compute_params:
+      window: 5
+      normalized: false
+    column_mappings:
+      path_efficiency_pct: path_efficiency_pct
+  price_dir_consistency_slope_5_f:
+    module: interaction
+    compute_func: compute_price_dir_consistency_slope_from_series
+    dependencies: [price_dir_consistency_pct_f]
+    required_columns:
+    - price_dir_consistency_pct
+    output_columns:
+    - price_dir_consistency_slope_5
+    category: derived
+    description: Slope of price_dir_consistency_pct over 5-bar rolling window. Negative values indicate consistency is declining (trend weakening).
+    pass_full_df: false
+    compute_params:
+      window: 5
+      normalized: false
+    column_mappings:
+      price_dir_consistency_pct: price_dir_consistency_pct
   trend_volatility_alignment_f:
     module: baseline
     compute_func: compute_trend_volatility_alignment_from_series

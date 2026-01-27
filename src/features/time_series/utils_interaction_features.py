@@ -1587,6 +1587,78 @@ def compute_cvd_slope_from_series(*, cvd: pd.Series, window: int = 5) -> pd.Data
     return out.to_frame()
 
 
+@register_feature("compute_path_efficiency_slope_from_series", category="derived")
+def compute_path_efficiency_slope_from_series(
+    *, path_efficiency_pct: pd.Series, window: int = 5
+) -> pd.DataFrame:
+    """
+    Compute slope of path_efficiency_pct over rolling window.
+    
+    Used to detect "trendy but failing" conditions: efficiency is declining.
+    Negative slope indicates efficiency is decreasing (trend is weakening).
+    
+    Args:
+        path_efficiency_pct: Percentile rank of path efficiency (0-1)
+        window: Rolling window size for slope calculation
+    
+    Returns:
+        DataFrame with path_efficiency_slope_{window} column
+    """
+    s = pd.to_numeric(path_efficiency_pct, errors="coerce").astype(float)
+    if len(s) <= window:
+        out = pd.Series(0.0, index=s.index, name=f"path_efficiency_slope_{window}")
+        return out.to_frame()
+
+    def _compute_slope(x):
+        if len(x) > 1:
+            return np.polyfit(range(len(x)), x, 1)[0]
+        return 0.0
+
+    out = (
+        s.rolling(window=window, min_periods=1)
+        .apply(_compute_slope)
+        .fillna(0.0)
+        .rename(f"path_efficiency_slope_{window}")
+    )
+    return out.to_frame()
+
+
+@register_feature("compute_price_dir_consistency_slope_from_series", category="derived")
+def compute_price_dir_consistency_slope_from_series(
+    *, price_dir_consistency_pct: pd.Series, window: int = 5
+) -> pd.DataFrame:
+    """
+    Compute slope of price_dir_consistency_pct over rolling window.
+    
+    Used to detect "trendy but failing" conditions: consistency is declining.
+    Negative slope indicates consistency is decreasing (trend is weakening).
+    
+    Args:
+        price_dir_consistency_pct: Percentile rank of price direction consistency (0-1)
+        window: Rolling window size for slope calculation
+    
+    Returns:
+        DataFrame with price_dir_consistency_slope_{window} column
+    """
+    s = pd.to_numeric(price_dir_consistency_pct, errors="coerce").astype(float)
+    if len(s) <= window:
+        out = pd.Series(0.0, index=s.index, name=f"price_dir_consistency_slope_{window}")
+        return out.to_frame()
+
+    def _compute_slope(x):
+        if len(x) > 1:
+            return np.polyfit(range(len(x)), x, 1)[0]
+        return 0.0
+
+    out = (
+        s.rolling(window=window, min_periods=1)
+        .apply(_compute_slope)
+        .fillna(0.0)
+        .rename(f"price_dir_consistency_slope_{window}")
+    )
+    return out.to_frame()
+
+
 @register_feature("compute_atr_ratio", category="derived")
 def compute_atr_ratio(
     df: pd.DataFrame,

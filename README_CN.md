@@ -548,7 +548,9 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 - [VolMean难在哪里](docs/architecture/VolMean难在哪里.md)
 - [时间框架高级甜点区](docs/architecture/时间框架高级甜点区.md)
 - [职责坍缩](docs/architecture/职责坍缩.md)
-
+- [GATE_FEATURE_MAPPING_VS_TREE_PHASE1](docs/architecture/GATE_FEATURE_MAPPING_VS_TREE_PHASE1.md)
+- [PLATEAU_OPTIMIZATION_METHODOLOGY](docs/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md)
+- [NNMULTIHEAD_COMMANDS_CN](docs/guides/NNMULTIHEAD_COMMANDS_CN.md)
 ---
 
 ## 获取帮助
@@ -573,5 +575,3 @@ python -m src.time_series_model.live.run_nautilus_strategy \
   --timeframe 15T \
   --testnet
 ```
-
-

@@ -26,7 +26,7 @@ def _sharpe(x: pd.Series) -> float:
         return 0.0
     mean = x.mean()
     std = x.std(ddof=1)
-    return float(mean / std * np.sqrt(6 * 365)) if std > 1e-12 else 0.0
+    return float(mean / std * np.sqrt(252)) if std > 1e-12 else 0.0
 
 
 def _pct(x: pd.Series, p: float) -> float:

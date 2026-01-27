@@ -115,6 +115,8 @@ def evaluate_required_conditions(
     - Missing inputs => fail closed (NO_TRADE).
     """
     reasons: List[str] = []
+    if not required_conditions:
+        return HeuristicDecision(ok=True, side=None, reasons=reasons)
     rr_min = 2.0
     lookback = 48
     atr_mult = 0.3

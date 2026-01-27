@@ -2337,6 +2337,81 @@ def rule_diagnose_e2e_kpi(
     sys.exit(run_script("scripts/diagnose_e2e_kpi.py", args, docker=docker))
 
 
+@rule.command("diagnose-gate-label-loosen")
+@click.option("--labels", "labels_path", required=True, help="labeled parquet from generate_fbf_labels.py")
+@click.option(
+    "--config",
+    "config_path",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    show_default=True,
+    help="execution_archetypes.yaml path",
+)
+@click.option("--archetype", required=True, help="archetype name")
+@click.option("--quantiles", default=None, help="evidence_quantiles.json path")
+@click.option("--feature-store-root", default=None, help="FeatureStore root")
+@click.option("--feature-store-layer", default=None, help="FeatureStore layer")
+@click.option("--timeframe", default=None, help="timeframe for FeatureStore")
+@click.option("--label-col", default="fbf_label", show_default=True, help="label column")
+@click.option("--label-value", default="FBF", show_default=True, help="label value")
+@click.option("--target-fbf-pass", default=0.6, show_default=True, help="target pass rate on labels")
+@click.option("--target-fbf-veto", default=0.1, show_default=True, help="target veto rate on labels")
+@click.option("--min-samples", default=200, show_default=True, help="min samples to suggest thresholds")
+@click.option("--out", "out_path", required=True, help="output json path")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def rule_diagnose_gate_label_loosen(
+    labels_path,
+    config_path,
+    archetype,
+    quantiles,
+    feature_store_root,
+    feature_store_layer,
+    timeframe,
+    label_col,
+    label_value,
+    target_fbf_pass,
+    target_fbf_veto,
+    min_samples,
+    out_path,
+    docker,
+):
+    """Diagnose which rules veto labels and suggest looser thresholds."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--labels",
+        f"/workspace/{labels_path}" if use_workspace_prefix else labels_path,
+        "--config",
+        f"/workspace/{config_path}" if use_workspace_prefix else config_path,
+        "--archetype",
+        archetype,
+        "--label-col",
+        label_col,
+        "--label-value",
+        label_value,
+        "--target-fbf-pass",
+        str(target_fbf_pass),
+        "--target-fbf-veto",
+        str(target_fbf_veto),
+        "--min-samples",
+        str(min_samples),
+        "--out",
+        f"/workspace/{out_path}" if use_workspace_prefix else out_path,
+    ]
+    if quantiles:
+        args.extend(
+            [
+                "--quantiles",
+                f"/workspace/{quantiles}" if use_workspace_prefix else quantiles,
+            ]
+        )
+    if feature_store_root:
+        args.extend(["--feature-store-root", feature_store_root])
+    if feature_store_layer:
+        args.extend(["--feature-store-layer", feature_store_layer])
+    if timeframe:
+        args.extend(["--timeframe", timeframe])
+    sys.exit(run_script("scripts/diagnose_gate_label_loosen.py", args, docker=docker))
+
+
 @rule.command("apply-tree-gate")
 @click.option(
     "--logs",

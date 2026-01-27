@@ -26,6 +26,11 @@ class StrategyProfile:
 class ExecutionArchetype:
     name: str
     regime: str
+    when_then_rules: List[Dict[str, Any]]
+    rule_groups: Dict[str, Any]
+    plateau_candidates: List[str]
+    default_action: str
+    direction_policy: Dict[str, Any]
     required_conditions: List[str]
     required_evidence: List[str]
     evidence_rules: List[Dict[str, Any]]
@@ -38,8 +43,40 @@ def load_execution_archetypes_registry(
 ) -> Dict[str, ExecutionArchetype]:
     p = Path(path)
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    regimes = obj.get("regimes") or {}
     out: Dict[str, ExecutionArchetype] = {}
+    archetypes = obj.get("archetypes")
+    if isinstance(archetypes, dict):
+        for name, a in archetypes.items():
+            if not isinstance(a, dict):
+                continue
+            when_then_rules = list(a.get("when_then_rules") or [])
+            default_action = str(a.get("default_action") or "deny").lower()
+            gate_rules = dict(a.get("gate_rules") or {})
+            if when_then_rules and not gate_rules:
+                gate_rules = {
+                    "when_then_rules": when_then_rules,
+                    "default_action": default_action,
+                }
+            out[str(name)] = ExecutionArchetype(
+                name=str(name),
+                regime=str(a.get("regime") or "ANY").upper(),
+                when_then_rules=when_then_rules,
+                rule_groups=dict(a.get("rule_groups") or {}),
+                plateau_candidates=[
+                    str(x) for x in (a.get("plateau_candidates") or [])
+                ],
+                default_action=default_action,
+                direction_policy=dict(a.get("direction_policy") or {}),
+                required_conditions=[
+                    str(x) for x in (a.get("required_conditions") or [])
+                ],
+                required_evidence=[str(x) for x in (a.get("required_evidence") or [])],
+                evidence_rules=list(a.get("evidence_rules") or []),
+                gate_rules=gate_rules,
+                execution_constraints=dict(a.get("execution_constraints") or {}),
+            )
+
+    regimes = obj.get("regimes") or {}
     if isinstance(regimes, dict):
         for regime, rr in regimes.items():
             if not isinstance(rr, dict):
@@ -50,9 +87,24 @@ def load_execution_archetypes_registry(
             for name, a in arch.items():
                 if not isinstance(a, dict):
                     continue
+                when_then_rules = list(a.get("when_then_rules") or [])
+                default_action = str(a.get("default_action") or "deny").lower()
+                gate_rules = dict(a.get("gate_rules") or {})
+                if when_then_rules and not gate_rules:
+                    gate_rules = {
+                        "when_then_rules": when_then_rules,
+                        "default_action": default_action,
+                    }
                 out[str(name)] = ExecutionArchetype(
                     name=str(name),
                     regime=str(regime).upper(),
+                    when_then_rules=when_then_rules,
+                    rule_groups=dict(a.get("rule_groups") or {}),
+                    plateau_candidates=[
+                        str(x) for x in (a.get("plateau_candidates") or [])
+                    ],
+                    default_action=default_action,
+                    direction_policy=dict(a.get("direction_policy") or {}),
                     required_conditions=[
                         str(x) for x in (a.get("required_conditions") or [])
                     ],
@@ -60,7 +112,7 @@ def load_execution_archetypes_registry(
                         str(x) for x in (a.get("required_evidence") or [])
                     ],
                     evidence_rules=list(a.get("evidence_rules") or []),
-                    gate_rules=dict(a.get("gate_rules") or {}),
+                    gate_rules=gate_rules,
                     execution_constraints=dict(a.get("execution_constraints") or {}),
                 )
 
@@ -70,15 +122,30 @@ def load_execution_archetypes_registry(
         for name, a in overlays.items():
             if not isinstance(a, dict):
                 continue
+            when_then_rules = list(a.get("when_then_rules") or [])
+            default_action = str(a.get("default_action") or "deny").lower()
+            gate_rules = dict(a.get("gate_rules") or {})
+            if when_then_rules and not gate_rules:
+                gate_rules = {
+                    "when_then_rules": when_then_rules,
+                    "default_action": default_action,
+                }
             out[str(name)] = ExecutionArchetype(
                 name=str(name),
                 regime=str(a.get("regime") or "MEAN").upper(),
+                when_then_rules=when_then_rules,
+                rule_groups=dict(a.get("rule_groups") or {}),
+                plateau_candidates=[
+                    str(x) for x in (a.get("plateau_candidates") or [])
+                ],
+                default_action=default_action,
+                direction_policy=dict(a.get("direction_policy") or {}),
                 required_conditions=[
                     str(x) for x in (a.get("required_conditions") or [])
                 ],
                 required_evidence=[str(x) for x in (a.get("required_evidence") or [])],
                 evidence_rules=list(a.get("evidence_rules") or []),
-                gate_rules=dict(a.get("gate_rules") or {}),
+                gate_rules=gate_rules,
                 execution_constraints=dict(a.get("execution_constraints") or {}),
             )
     return out

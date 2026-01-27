@@ -295,6 +295,7 @@ if NAUTILUS_AVAILABLE:
             stop_loss_r: float = 1.0,
             take_profit_r: float = 2.0,
             max_holding_bars: int = 50,
+            min_holding_bars: int = 0,
             use_trailing_stop: bool = True,
             trailing_atr_mult: float = 1.0,
             use_breakeven_stop: bool = False,
@@ -317,6 +318,7 @@ if NAUTILUS_AVAILABLE:
             self.stop_loss_r = stop_loss_r
             self.take_profit_r = take_profit_r
             self.max_holding_bars = max_holding_bars
+            self.min_holding_bars = min_holding_bars
             self.use_trailing_stop = use_trailing_stop
             self.trailing_atr_mult = trailing_atr_mult
             self.use_breakeven_stop = use_breakeven_stop
@@ -467,6 +469,11 @@ if NAUTILUS_AVAILABLE:
                     self.max_holding_bars = rr.get(
                         "max_holding_bars", self.max_holding_bars
                     )
+                    self.min_holding_bars = rr.get(
+                        "min_holding_bars", self.min_holding_bars
+                    )
+                    if self.min_holding_bars > self.max_holding_bars:
+                        self.min_holding_bars = self.max_holding_bars
                     self.use_trailing_stop = rr.get(
                         "use_trailing_stop", self.use_trailing_stop
                     )
@@ -731,6 +738,10 @@ if NAUTILUS_AVAILABLE:
             # Check exit conditions
             exit_reason = None
             exit_price = close_price
+
+            # Optional exit delay (skip exits before min_holding_bars)
+            if pos.bars_held < int(self.min_holding_bars or 0):
+                return
 
             if self.use_rr_exit:
                 # 1. Stop-loss check

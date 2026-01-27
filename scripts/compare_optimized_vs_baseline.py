@@ -113,7 +113,7 @@ def compare_performance(
             return 0.0
         mean = returns.mean()
         std = returns.std(ddof=1)
-        return float(mean / std * (6 * 365) ** 0.5) if std > 1e-12 else 0.0
+        return float(mean / std * np.sqrt(252)) if std > 1e-12 else 0.0
 
     def _archetype_return(
         row: pd.Series, ret_mean_col: str, ret_trend_col: str

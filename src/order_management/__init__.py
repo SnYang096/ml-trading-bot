@@ -5,3 +5,6 @@ Binance合约订单管理系统
 """
 
 __version__ = "0.1.0"
+
+# Public adapter for strategy -> order_management integration
+from .signal_bridge import ExecutionSignal, OrderManagementBridge  # noqa: F401

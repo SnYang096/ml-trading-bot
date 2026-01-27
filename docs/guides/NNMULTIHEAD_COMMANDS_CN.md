@@ -157,6 +157,28 @@ mlbot diagnose threshold-plateau --no-docker \
 
 > 现在先把 Router 阈值 + Execution 假设版本化跑通；Gate 可以后续补进主链路。[树模型在多头模型下游的角色.md](docs/architecture/树模型在多头模型下游的角色.md)
 
+#### 0.3.1 Gate 放宽诊断（标签反推阈值）
+> 目的：用 label 评估 gate 的 precision/recall，并给出“放宽阈值”的建议。
+
+```bash
+mlbot rule diagnose-gate-label-loosen --no-docker \
+  --labels <FBF_LABELS_PARQUET> \
+  --config config/nnmultihead/execution_archetypes.yaml \
+  --archetype FailedBreakoutFade \
+  --quantiles <EVIDENCE_QUANTILES_JSON> \
+  --feature-store-root feature_store \
+  --feature-store-layer <LAYER> \
+  --timeframe 240T \
+  --out <OUT_JSON>
+```
+
+**通用性说明**：
+- 该命令不只适用于 FBF。对其他 archetype，仅需更换：
+  - `--archetype`
+  - `--label-col`（默认 `fbf_label`）
+  - `--label-value`（默认 `FBF`）
+- `--target-fbf-pass/--target-fbf-veto` 是“目标标签通过率/被 veto 比例”，名称虽含 `fbf`，但适用于所有 archetype。
+
 ### 0.4 build-logs：把 (preds + mode + raw) 组装成 logs（并定义 execution 假设）
 
 **它干啥？**
