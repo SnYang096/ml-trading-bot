@@ -41,10 +41,11 @@ def append_jsonl(path: Path, obj: Dict[str, Any]) -> None:
 class ConstitutionStatePaths:
     base_dir: Path
     slots_path: Optional[Path] = None
+    slots_db_path: Optional[Path] = None
     add_position_path: Optional[Path] = None
+    add_position_db_path: Optional[Path] = None
     escalation_path: Optional[Path] = None
-    replacement_log_dir: Optional[Path] = None
-    extreme_tail_path: Optional[Path] = None
+    escalation_db_path: Optional[Path] = None
 
     def resolve(self, p: Optional[str]) -> Optional[Path]:
         if not p:

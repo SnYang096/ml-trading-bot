@@ -110,9 +110,48 @@ CREATE TABLE IF NOT EXISTS performance_metrics (
 -- 6. Safety state table (global runtime safety status)
 CREATE TABLE IF NOT EXISTS safety_state (
     state_id TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
+    halted INTEGER DEFAULT 0,
+    halt_reason TEXT,
+    halt_since TIMESTAMP,
+    cooldown_until TIMESTAMP,
+    last_metrics TEXT,
+    last_reset_date DATE,
+    last_daily_halt_date DATE,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 7. Slots runtime state (active slots only)
+CREATE TABLE IF NOT EXISTS slots_state (
+    position_id TEXT PRIMARY KEY,
+    symbol TEXT,
+    archetype TEXT,
+    opened_at TIMESTAMP,
+    closed_at TIMESTAMP,
+    close_reason TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. Add-position runtime state (per position)
+CREATE TABLE IF NOT EXISTS add_position_state (
+    position_id TEXT PRIMARY KEY,
+    add_count INTEGER DEFAULT 0,
+    locked_profit INTEGER DEFAULT 0,
+    current_r REAL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 9. Escalation runtime state (single row)
+CREATE TABLE IF NOT EXISTS escalation_state (
+    state_id TEXT PRIMARY KEY,
+    is_escalated INTEGER DEFAULT 0,
+    escalation_entry_time TIMESTAMP,
+    escalation_entry_equity REAL,
+    locked_until TIMESTAMP,
+    last_exit_reason TEXT,
+    last_exit_time TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);

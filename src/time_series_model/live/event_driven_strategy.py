@@ -609,7 +609,7 @@ class EventDrivenStrategy(Strategy):
                     runtime_state=self._constitution_runtime_state,
                     position_id=f"{self.strategy_name}:{int(self.clock.timestamp_ns())}",
                     symbol=str(self.instrument_id),
-                    mode=mode,
+                    archetype=mode,
                     execution_strategy=exec_id,
                     execution_tags=[str(reason)],
                     execution_evidence=evidence,
@@ -630,7 +630,7 @@ class EventDrivenStrategy(Strategy):
                     ctx=GuardedOrderContext(
                         position_id=f"{self.strategy_name}:{int(self.clock.timestamp_ns())}",
                         symbol=str(self.instrument_id),
-                        mode=mode,
+                        archetype=mode,
                         execution_strategy=exec_id,
                         execution_tags=[str(reason)],
                         execution_evidence=evidence,

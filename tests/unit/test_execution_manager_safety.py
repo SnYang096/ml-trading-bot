@@ -53,8 +53,6 @@ replacement_policy:
   enabled: false
 capital_escalation:
   enabled: false
-extreme_tail:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -80,7 +78,7 @@ extreme_tail:
     ctx_ok = GuardedOrderContext(
         position_id="p1",
         symbol="BTCUSDT",
-        mode="TREND",
+        archetype="TREND",
         execution_strategy="TrendContinuationTC",
         equity=10000.0,
         drawdown=0.1,  # 0.1 < 0.2, should not trigger halt
@@ -98,7 +96,7 @@ extreme_tail:
     ctx_halted = GuardedOrderContext(
         position_id="p2",
         symbol="ETHUSDT",
-        mode="MEAN",
+        archetype="MEAN",
         execution_strategy="FailureReversionFR",
         equity=10000.0,
         drawdown=0.25,  # Exceeds 0.2 limit
@@ -151,8 +149,6 @@ replacement_policy:
   enabled: false
 capital_escalation:
   enabled: false
-extreme_tail:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -178,7 +174,7 @@ extreme_tail:
     ctx_with_metrics = GuardedOrderContext(
         position_id="p1",
         symbol="BTCUSDT",
-        mode="TREND",
+        archetype="TREND",
         execution_strategy="TrendContinuationTC",
         equity=10000.0,
         drawdown=0.1,  # 0.1 < 0.2, should not trigger halt
@@ -198,7 +194,7 @@ extreme_tail:
     ctx_cost_violation = GuardedOrderContext(
         position_id="p2",
         symbol="ETHUSDT",
-        mode="MEAN",
+        archetype="MEAN",
         execution_strategy="FailureReversionFR",
         equity=10000.0,
         drawdown=0.1,
@@ -250,8 +246,6 @@ replacement_policy:
   enabled: false
 capital_escalation:
   enabled: false
-extreme_tail:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -277,7 +271,7 @@ extreme_tail:
     ctx_evt_risk = GuardedOrderContext(
         position_id="p1",
         symbol="BTCUSDT",
-        mode="TREND",
+        archetype="TREND",
         execution_strategy="TrendContinuationTC",
         equity=10000.0,
         drawdown=0.1,  # 0.1 < 0.2, should not trigger halt

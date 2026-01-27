@@ -1,10 +1,9 @@
 """
 Live trading integration module.
 
-This module provides live trading functionality using Nautilus Trader,
-including strategy execution with feature engineering integration.
+This module exposes the meta router strategy for live execution.
 """
 
-from .nautilus_strategy_with_features import NautilusStrategyWithFeatures
+from .meta_router_strategy import MetaRouterStrategy
 
-__all__ = ["NautilusStrategyWithFeatures"]
+__all__ = ["MetaRouterStrategy"]

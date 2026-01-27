@@ -17,8 +17,41 @@ mkdir -p /data
 mount /dev/vdb /data
 echo '/dev/vdb /data ext4 defaults 0 0' >> /etc/fstab
 
-# 2. 安装必要软件
+# 2. 安装必要软件（包括 Docker）
 apt-get update
+apt-get install -y \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+
+# 安装 Docker
+if ! command -v docker &> /dev/null; then
+    echo "📦 Installing Docker..."
+    # 添加 Docker 官方 GPG key
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    
+    # 添加 Docker repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # 将 ubuntu 用户添加到 docker 组（允许无 sudo 运行 docker）
+    usermod -aG docker ubuntu
+    
+    # 启动 Docker 服务
+    systemctl enable docker
+    systemctl start docker
+    
+    echo "✅ Docker installed"
+else
+    echo "✅ Docker already installed"
+fi
 
 # 3. 复制 systemd 服务文件（从 Terraform 传入）
 cp /tmp/systemd/*.service /etc/systemd/system/
@@ -57,8 +90,21 @@ dpkg -i filebeat-8.12.0-amd64.deb
 # 7. 创建数据目录
 mkdir -p /data/prometheus
 mkdir -p /data/trades  # SQLite 数据库目录（订单流数据）
+mkdir -p /data/quant-engine  # 策略代码和数据目录
 
-# 8. 启用所有服务
+# 8. 构建 Docker 镜像（如果 Dockerfile 存在）
+# 注意：代码应该通过 volume 挂载，镜像只包含依赖
+if [ -f /opt/quant-engine/Dockerfile.live ]; then
+    echo "📦 Building quant-engine Docker image..."
+    cd /opt/quant-engine
+    docker build -f Dockerfile.live -t quant-engine:latest .
+    echo "✅ Docker image built"
+else
+    echo "⚠️  Dockerfile.live not found, skipping image build"
+    echo "    You can build the image manually or copy it from registry"
+fi
+
+# 9. 启用所有服务
 systemctl daemon-reload
 systemctl enable quant-engine node_exporter prometheus grafana-server filebeat
 systemctl start quant-engine

@@ -45,6 +45,15 @@ from .feature_storage import StorageManager
 from .memory_window import MemoryWindow
 from .gap_filler import GapFiller
 from src.time_series_model.live.incremental_feature_computer import IncrementalFeatureComputer
+from src.time_series_model.live.enforcement import enforce_before_order
+from src.time_series_model.core.constitution.constitution_executor import (
+    ConstitutionExecutor,
+)
+from src.time_series_model.core.constitution.runtime_state import (
+    ConstitutionRuntimeState,
+)
+from src.time_series_model.core.meta_router_core import MetaRouterCore, TradeIntent
+from src.order_management.models import OrderSide, OrderType
 
 
 class OrderFlowListener:
@@ -72,6 +81,11 @@ class OrderFlowListener:
         storage_base_path: str = "data/live_storage",
         on_bar_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_feature_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        meta_router_core: Optional[MetaRouterCore] = None,
+        constitution_executor: Optional[ConstitutionExecutor] = None,
+        runtime_state: Optional[ConstitutionRuntimeState] = None,
+        order_manager: Optional[Any] = None,
+        trade_size: Optional[float] = None,
     ):
         """
         Args:
@@ -84,6 +98,11 @@ class OrderFlowListener:
             storage_base_path: 存储根目录
             on_bar_callback: 收到新bar时的回调函数
             on_feature_callback: 计算完特征时的回调函数
+            meta_router_core: 纯逻辑 MetaRouterCore（可选）
+            constitution_executor: 宪法执行器（可选）
+            runtime_state: 宪法运行时状态（可选）
+            order_manager: 订单管理器（可选）
+            trade_size: 默认下单数量（可选）
         """
         self.symbol = symbol
         self.storage_manager = storage_manager
@@ -109,6 +128,13 @@ class OrderFlowListener:
         # 回调函数
         self.on_bar_callback = on_bar_callback
         self.on_feature_callback = on_feature_callback
+
+        # Optional trading pipeline
+        self.meta_router_core = meta_router_core
+        self.constitution_executor = constitution_executor
+        self.runtime_state = runtime_state
+        self.order_manager = order_manager
+        self.trade_size = trade_size
         
         # 1分钟聚合状态
         self.current_1min_bar: Optional[Dict[str, Any]] = None
@@ -296,9 +322,7 @@ class OrderFlowListener:
         # 保存
         self.storage_manager.save_15min_features(self.symbol, features_df, now)
         
-        # 回调
-        if self.on_feature_callback:
-            self.on_feature_callback(all_features)
+        self._handle_features(all_features)
     
     def _aggregate_and_save_4h_features(self) -> None:
         """聚合并保存4小时特征（从15分钟特征聚合）"""
@@ -343,6 +367,100 @@ class OrderFlowListener:
         
         # 保存
         self.storage_manager.save_4h_features(self.symbol, features_df, now)
+
+    def _handle_features(self, all_features: Dict[str, Any]) -> None:
+        if self.on_feature_callback:
+            self.on_feature_callback(all_features)
+        if (
+            self.meta_router_core is None
+            or self.constitution_executor is None
+            or self.runtime_state is None
+            or self.order_manager is None
+        ):
+            return
+        intents = self.meta_router_core.decide(
+            features=all_features,
+            symbol=self.symbol,
+            bars=self.memory_window.get_latest(240),
+        )
+        if not intents:
+            return
+        for intent in intents:
+            self._execute_intent(intent=intent, features=all_features)
+
+    def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
+        if intent.action == "NO_TRADE":
+            return
+        side = OrderSide.BUY if intent.action == "LONG" else OrderSide.SELL
+        qty = (
+            float(intent.quantity)
+            if intent.quantity is not None
+            else float(self.trade_size or 0.0)
+        )
+        size_mult = float(intent.size_multiplier or 1.0)
+        qty *= max(0.0, size_mult)
+        if intent.pcm_budget:
+            per_symbol = (intent.pcm_budget.get("per_symbol_budget") or {}).get(
+                self.symbol
+            )
+            if per_symbol is not None:
+                try:
+                    qty *= max(0.0, float(per_symbol))
+                except Exception:
+                    pass
+        if qty <= 0:
+            return
+        position_id = intent.position_id
+        if not position_id:
+            position_id = f"{self.symbol}:{int(pd.Timestamp.now(tz='UTC').value)}"
+
+        if intent.add_position and intent.parent_position_id:
+            self.constitution_executor.validate_add_position(
+                st=self.runtime_state,
+                position_id=intent.parent_position_id,
+                archetype=intent.archetype,
+                current_r=intent.current_r,
+                locked_profit=intent.locked_profit,
+            )
+
+        enforce_before_order(
+            executor=self.constitution_executor,
+            runtime_state=self.runtime_state,
+            position_id=position_id,
+            symbol=self.symbol,
+            archetype=str(intent.archetype),
+            execution_strategy=str(intent.execution_strategy or intent.archetype),
+            execution_tags=intent.execution_tags,
+            execution_evidence=intent.execution_evidence,
+            equity=features.get("equity"),
+            drawdown=features.get("drawdown"),
+            daily_loss=float(features.get("daily_loss", 0.0)),
+            weekly_loss=float(features.get("weekly_loss", 0.0)),
+            monthly_loss=float(features.get("monthly_loss", 0.0)),
+            daily_cost_mean=features.get("daily_cost_mean"),
+            daily_turnover_mean=features.get("daily_turnover_mean"),
+            hard_violation=bool(features.get("hard_violation", False)),
+            data_bad=bool(features.get("data_bad", False)),
+            evt_risk_flag=features.get("evt_risk_flag"),
+            pcm_budget=intent.pcm_budget,
+        )
+
+        self.order_manager.place_order(
+            symbol=self.symbol,
+            side=side,
+            order_type=OrderType.MARKET,
+            quantity=qty,
+            position_id=position_id,
+        )
+
+        if intent.add_position and intent.parent_position_id:
+            self.constitution_executor.record_add_position(
+                st=self.runtime_state,
+                position_id=intent.parent_position_id,
+                current_r=intent.current_r,
+                locked_profit=intent.locked_profit,
+            )
+            self.constitution_executor.save_runtime_state(self.runtime_state)
     
     async def _periodic_tasks(self) -> None:
         """定期任务（特征计算和保存）"""

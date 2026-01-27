@@ -16,13 +16,15 @@ from .runtime_state import (
     EscalationRuntimeState,
     SlotRecord,
 )
-from .replacement_judge import (
-    ReplacementDecision,
-    ReplacementInputs,
-    decide_replacement_v1,
-)
-from .state_store import ConstitutionStatePaths, append_jsonl, read_json, write_json
+from .state_store import ConstitutionStatePaths, read_json, write_json
 from .violation import ConstitutionViolation
+from src.order_management.storage import Storage
+
+SLOT_RELEASE_REASONS = {
+    "position_closed",
+    "stop_loss_hit",
+    "take_profit_hit",
+}
 
 
 def _sha256_text(s: str) -> str:
@@ -58,7 +60,23 @@ def load_constitution_config(path: str | Path) -> ConstitutionConfig:
     raw = p.read_text(encoding="utf-8")
     obj = yaml.safe_load(raw) or {}
     ks = obj.get("kill_switch") or {}
-    ss = ks.get("safety_state") or {}
+    ss = obj.get("safety_state") or {}
+    ss_ks = ks.get("safety_state") or {}
+    cooldown_minutes = (
+        ss.get("cooldown_minutes")
+        or ss_ks.get("cooldown_minutes")
+        or ks.get("cooldown_minutes")
+        or 240
+    )
+    daily_reset_timezone = (
+        ss.get("daily_reset_tz")
+        or ss.get("daily_reset_timezone")
+        or ss_ks.get("daily_reset_tz")
+        or ss_ks.get("daily_reset_timezone")
+        or ks.get("daily_reset_tz")
+        or ks.get("daily_reset_timezone")
+        or "UTC"
+    )
     return ConstitutionConfig(
         version=int(obj.get("version", 1)),
         name=str(obj.get("name", "Constitution_v1")),
@@ -71,10 +89,8 @@ def load_constitution_config(path: str | Path) -> ConstitutionConfig:
         max_turnover_mean=float(ks.get("max_turnover_mean", 0.35)),
         max_cost_mean=float(ks.get("max_cost_mean", 0.002)),
         kill_on_any_hard_violation=bool(ks.get("kill_on_any_hard_violation", True)),
-        cooldown_minutes=int(ss.get("cooldown_minutes", 240)),
-        daily_reset_timezone=str(
-            ss.get("daily_reset_tz") or ss.get("daily_reset_timezone", "UTC")
-        ),
+        cooldown_minutes=int(cooldown_minutes),
+        daily_reset_timezone=str(daily_reset_timezone),
     )
 
 
@@ -132,9 +148,11 @@ class ConstitutionExecutor:
     def resolve_safety_db_path(self) -> Optional[Path]:
         obj = self._raw_obj or {}
         ks = obj.get("kill_switch") or {}
-        ss = ks.get("safety_state") or {}
+        ss = obj.get("safety_state") or {}
+        ss_ks = ks.get("safety_state") or {}
         db_path = (
             ss.get("persist_to")
+            or ss_ks.get("persist_to")
             or os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH")
             or "data/order_management.db"
         )
@@ -150,26 +168,37 @@ class ConstitutionExecutor:
         obj = self._raw_obj or {}
         slots = obj.get("slots") or {}
         addp = obj.get("add_position") or {}
-        rep = obj.get("replacement_policy") or {}
         esc = obj.get("capital_escalation") or {}
         esc_ad = esc.get("auto_degradation") or {}
-        xt = obj.get("extreme_tail") or {}
 
         slots_p = (slots.get("slot_state_tracking") or {}).get("persist_to") or None
         addp_p = (addp.get("state_tracking") or {}).get("persist_to") or None
         esc_p = ((esc_ad.get("state_persistence") or {}).get("persist_to")) or None
-        rep_dir = (rep.get("auditability") or {}).get("log_path") or None
-        xt_p = (xt.get("state_tracking") or {}).get("persist_to") or None
 
         base = Path(self._base_dir).resolve()
         tmp = ConstitutionStatePaths(base_dir=base)
+
+        def _split_persist_target(
+            p: Optional[str],
+        ) -> tuple[Optional[Path], Optional[Path]]:
+            if not p:
+                return None, None
+            raw = str(p)
+            if raw.lower().endswith(".db"):
+                return None, tmp.resolve(raw)
+            return tmp.resolve(raw), None
+
+        slots_path, slots_db_path = _split_persist_target(slots_p)
+        addp_path, addp_db_path = _split_persist_target(addp_p)
+        esc_path, esc_db_path = _split_persist_target(esc_p)
         return ConstitutionStatePaths(
             base_dir=base,
-            slots_path=tmp.resolve(str(slots_p)) if slots_p else None,
-            add_position_path=tmp.resolve(str(addp_p)) if addp_p else None,
-            escalation_path=tmp.resolve(str(esc_p)) if esc_p else None,
-            replacement_log_dir=tmp.resolve(str(rep_dir)) if rep_dir else None,
-            extreme_tail_path=tmp.resolve(str(xt_p)) if xt_p else None,
+            slots_path=slots_path,
+            slots_db_path=slots_db_path,
+            add_position_path=addp_path,
+            add_position_db_path=addp_db_path,
+            escalation_path=esc_path,
+            escalation_db_path=esc_db_path,
         )
 
     # -------------------------------------------------------------------------
@@ -179,113 +208,132 @@ class ConstitutionExecutor:
         st = ConstitutionRuntimeState()
 
         # Slots
-        if self._paths.slots_path:
+        if self._paths.slots_db_path:
+            storage = Storage(str(self._paths.slots_db_path))
+            obj = storage.get_slots_state() or {}
+        elif self._paths.slots_path:
             obj = read_json(self._paths.slots_path)
-            active = (obj.get("active") or {}) if isinstance(obj, dict) else {}
-            if isinstance(active, dict):
-                for pid, rec in active.items():
-                    if not pid:
-                        continue
-                    r = rec or {}
-                    st.slots.active[str(pid)] = SlotRecord(
-                        position_id=str(pid),
-                        symbol=(
-                            str(r.get("symbol"))
-                            if r.get("symbol") is not None
-                            else None
-                        ),
-                        mode=str(r.get("mode")) if r.get("mode") is not None else None,
-                        opened_at=(
-                            str(r.get("opened_at"))
-                            if r.get("opened_at") is not None
-                            else None
-                        ),
-                        closed_at=(
-                            str(r.get("closed_at"))
-                            if r.get("closed_at") is not None
-                            else None
-                        ),
-                        close_reason=(
-                            str(r.get("close_reason"))
-                            if r.get("close_reason") is not None
-                            else None
-                        ),
-                    )
-
-        # Add-position
-        if self._paths.add_position_path:
-            obj = read_json(self._paths.add_position_path)
-            pos = (obj.get("positions") or {}) if isinstance(obj, dict) else {}
-            if isinstance(pos, dict):
-                for pid, rec in pos.items():
-                    if not pid:
-                        continue
-                    r = rec or {}
-                    st.add_position.positions[str(pid)] = AddPositionRecord(
-                        position_id=str(pid),
-                        add_count=int(r.get("add_count", 0)),
-                        locked_profit=bool(r.get("locked_profit", False)),
-                        current_r=(
-                            float(r["current_r"])
-                            if r.get("current_r") is not None
-                            else None
-                        ),
-                        updated_at=(
-                            str(r.get("updated_at"))
-                            if r.get("updated_at") is not None
-                            else None
-                        ),
-                    )
-
-        # Escalation
-        if self._paths.escalation_path:
-            obj = read_json(self._paths.escalation_path)
-            if isinstance(obj, dict):
-                st.escalation = EscalationRuntimeState(
-                    is_escalated=bool(obj.get("is_escalated", False)),
-                    escalation_entry_time=(
-                        str(obj.get("escalation_entry_time"))
-                        if obj.get("escalation_entry_time") is not None
+        else:
+            obj = {}
+        active = (obj.get("active") or {}) if isinstance(obj, dict) else {}
+        if isinstance(active, dict):
+            for pid, rec in active.items():
+                if not pid:
+                    continue
+                r = rec or {}
+                st.slots.active[str(pid)] = SlotRecord(
+                    position_id=str(pid),
+                    symbol=(
+                        str(r.get("symbol")) if r.get("symbol") is not None else None
+                    ),
+                    archetype=(
+                        str(r.get("archetype"))
+                        if r.get("archetype") is not None
                         else None
                     ),
-                    escalation_entry_equity=(
-                        float(obj["escalation_entry_equity"])
-                        if obj.get("escalation_entry_equity") is not None
+                    opened_at=(
+                        str(r.get("opened_at"))
+                        if r.get("opened_at") is not None
                         else None
                     ),
-                    locked_until=(
-                        str(obj.get("locked_until"))
-                        if obj.get("locked_until") is not None
+                    closed_at=(
+                        str(r.get("closed_at"))
+                        if r.get("closed_at") is not None
                         else None
                     ),
-                    last_exit_reason=(
-                        str(obj.get("last_exit_reason"))
-                        if obj.get("last_exit_reason") is not None
-                        else None
-                    ),
-                    last_exit_time=(
-                        str(obj.get("last_exit_time"))
-                        if obj.get("last_exit_time") is not None
+                    close_reason=(
+                        str(r.get("close_reason"))
+                        if r.get("close_reason") is not None
                         else None
                     ),
                 )
 
-        # Extreme tail (event optionality) state (raw dict for v1)
-        if self._paths.extreme_tail_path:
-            obj = read_json(self._paths.extreme_tail_path)
-            st.extreme_tail = dict(obj or {}) if isinstance(obj, dict) else {}
+        # Add-position
+        if self._paths.add_position_db_path:
+            storage = Storage(str(self._paths.add_position_db_path))
+            obj = storage.get_add_position_state() or {}
+        elif self._paths.add_position_path:
+            obj = read_json(self._paths.add_position_path)
+        else:
+            obj = {}
+        pos = (obj.get("positions") or {}) if isinstance(obj, dict) else {}
+        if isinstance(pos, dict):
+            for pid, rec in pos.items():
+                if not pid:
+                    continue
+                r = rec or {}
+                st.add_position.positions[str(pid)] = AddPositionRecord(
+                    position_id=str(pid),
+                    add_count=int(r.get("add_count", 0)),
+                    locked_profit=bool(r.get("locked_profit", False)),
+                    current_r=(
+                        float(r["current_r"])
+                        if r.get("current_r") is not None
+                        else None
+                    ),
+                    updated_at=(
+                        str(r.get("updated_at"))
+                        if r.get("updated_at") is not None
+                        else None
+                    ),
+                )
+
+        # Escalation
+        if self._paths.escalation_db_path:
+            storage = Storage(str(self._paths.escalation_db_path))
+            obj = storage.get_escalation_state() or {}
+        elif self._paths.escalation_path:
+            obj = read_json(self._paths.escalation_path)
+        else:
+            obj = {}
+        if isinstance(obj, dict):
+            st.escalation = EscalationRuntimeState(
+                is_escalated=bool(obj.get("is_escalated", False)),
+                escalation_entry_time=(
+                    str(obj.get("escalation_entry_time"))
+                    if obj.get("escalation_entry_time") is not None
+                    else None
+                ),
+                escalation_entry_equity=(
+                    float(obj["escalation_entry_equity"])
+                    if obj.get("escalation_entry_equity") is not None
+                    else None
+                ),
+                locked_until=(
+                    str(obj.get("locked_until"))
+                    if obj.get("locked_until") is not None
+                    else None
+                ),
+                last_exit_reason=(
+                    str(obj.get("last_exit_reason"))
+                    if obj.get("last_exit_reason") is not None
+                    else None
+                ),
+                last_exit_time=(
+                    str(obj.get("last_exit_time"))
+                    if obj.get("last_exit_time") is not None
+                    else None
+                ),
+            )
 
         return st
 
     def save_runtime_state(self, st: ConstitutionRuntimeState) -> None:
+        if self._paths.slots_db_path:
+            storage = Storage(str(self._paths.slots_db_path))
+            storage.upsert_slots_state(payload=st.slots.as_dict())
         if self._paths.slots_path:
             write_json(self._paths.slots_path, st.slots.as_dict())
+        if self._paths.add_position_db_path:
+            storage = Storage(str(self._paths.add_position_db_path))
+            storage.upsert_add_position_state(payload=st.add_position.as_dict())
         if self._paths.add_position_path:
             write_json(self._paths.add_position_path, st.add_position.as_dict())
+        if self._paths.escalation_db_path:
+            storage = Storage(str(self._paths.escalation_db_path))
+            storage.upsert_escalation_state(payload=st.escalation.as_dict())
         if self._paths.escalation_path:
             write_json(self._paths.escalation_path, st.escalation.as_dict())
-        if self._paths.extreme_tail_path:
-            write_json(self._paths.extreme_tail_path, dict(st.extreme_tail or {}))
 
     def reserve_slot(
         self,
@@ -293,7 +341,7 @@ class ConstitutionExecutor:
         st: ConstitutionRuntimeState,
         position_id: str,
         symbol: Optional[str] = None,
-        mode: Optional[str] = None,
+        archetype: Optional[str] = None,
         opened_at: Optional[str] = None,
     ) -> None:
         slots = (self._raw_obj or {}).get("slots") or {}
@@ -316,7 +364,7 @@ class ConstitutionExecutor:
         st.slots.active[pid] = SlotRecord(
             position_id=pid,
             symbol=str(symbol) if symbol is not None else None,
-            mode=str(mode) if mode is not None else None,
+            archetype=str(archetype) if archetype is not None else None,
             opened_at=opened_at or _iso_now(),
         )
 
@@ -328,6 +376,8 @@ class ConstitutionExecutor:
         reason: str,
         closed_at: Optional[str] = None,
     ) -> None:
+        if str(reason) not in SLOT_RELEASE_REASONS:
+            return
         pid = str(position_id).strip()
         if not pid:
             return
@@ -337,87 +387,102 @@ class ConstitutionExecutor:
         # Closed record not persisted separately in v1; we just free the slot.
         st.slots.active.pop(pid, None)
 
-    def append_replacement_audit(self, *, event: Dict[str, Any]) -> None:
-        rep = (self._raw_obj or {}).get("replacement_policy") or {}
-        aud = rep.get("auditability") or {}
-        if not bool(rep.get("enabled", True)) or not bool(
-            aud.get("log_every_replacement", True)
-        ):
-            return
-        req = aud.get("required_fields") or []
-        missing = []
-        for k in req:
-            kk = str(k)
-            if kk and (event or {}).get(kk) in (None, "", []):
-                missing.append(kk)
-        if missing:
-            raise ConstitutionViolation(
-                code="REPLACEMENT_AUDIT_MISSING_FIELDS",
-                message=f"Replacement audit missing required fields: {missing}",
-                context={"missing": missing, "event": event, **self.meta()},
-            )
-        log_dir = (
-            self._paths.replacement_log_dir
-            or (Path(self._base_dir) / "logs/replacements").resolve()
-        )
-        log_path = Path(log_dir) / "replacements.jsonl"
-        evt = dict(event or {})
-        evt.setdefault("timestamp", _iso_now())
-        append_jsonl(log_path, evt)
-
-    def decide_replacement(
+    def validate_add_position(
         self,
         *,
         st: ConstitutionRuntimeState,
-        old_position_id: str,
-        old_remaining_rr: float,
-        old_failure_reasons: List[str],
-        new_signal_id: str,
-        new_expected_rr: float,
-    ) -> Dict[str, Any]:
-        """
-        Constitution-level replacement judge (v1):
-        - Uses replacement_policy.min_expected_rr_improvement => beta = 1 + min_expected_rr_improvement
-        - Enforces 'replacement must be guilty' and forbids multi-dimensional scoring
-        - Writes audit log when decision==REPLACE
-        """
-        rep = (self._raw_obj or {}).get("replacement_policy") or {}
-        min_imp = float(rep.get("min_expected_rr_improvement", 0.25))
-        beta = float(1.0 + max(0.0, min_imp))
-        has_free_slot = st.slots.active_count() < int(
-            ((self._raw_obj or {}).get("slots") or {}).get("slot_count", 2)
-        )
-
-        res = decide_replacement_v1(
-            ReplacementInputs(
-                has_free_slot=bool(has_free_slot),
-                old_position_id=str(old_position_id),
-                old_remaining_rr=float(old_remaining_rr),
-                old_failure_reasons=list(old_failure_reasons or []),
-                new_signal_id=str(new_signal_id),
-                new_expected_rr=float(new_expected_rr),
-                beta=beta,
+        position_id: str,
+        archetype: Optional[str],
+        current_r: Optional[float],
+        locked_profit: Optional[bool] = None,
+    ) -> None:
+        addp = (self._raw_obj or {}).get("add_position") or {}
+        if not bool(addp.get("enabled", True)):
+            raise ConstitutionViolation(
+                code="ADD_POSITION_DISABLED",
+                message="add_position disabled",
+                context=self.meta(),
             )
-        )
-        out = {
-            "decision": res.decision.value,
-            "reason": res.reason,
-            "context": dict(res.context or {}),
-        }
-
-        if res.decision == ReplacementDecision.REPLACE and not has_free_slot:
-            # Audit required for any eviction-style replacement.
-            self.append_replacement_audit(
-                event={
-                    "closed_position_id": str(old_position_id),
-                    "close_reason": str(res.reason),
-                    "new_position_signal": str(new_signal_id),
-                    "expected_rr_improvement": float(
-                        float(new_expected_rr) - float(old_remaining_rr)
-                    ),
-                }
+        arch = str(archetype or "").strip().upper()
+        if arch.startswith("MEAN"):
+            if not bool(addp.get("mean_allow_add", False)):
+                raise ConstitutionViolation(
+                    code="ADD_POSITION_MEAN_FORBIDDEN",
+                    message="mean archetype add_position forbidden",
+                    context={"archetype": arch, **self.meta()},
+                )
+        elif arch.startswith("TREND"):
+            if not bool(addp.get("trend_allow_add", True)):
+                raise ConstitutionViolation(
+                    code="ADD_POSITION_TREND_FORBIDDEN",
+                    message="trend archetype add_position forbidden",
+                    context={"archetype": arch, **self.meta()},
+                )
+        else:
+            raise ConstitutionViolation(
+                code="ADD_POSITION_ARCHETYPE_UNKNOWN",
+                message="unknown archetype for add_position",
+                context={"archetype": arch, **self.meta()},
             )
-        return out
+
+        pid = str(position_id).strip()
+        if not pid:
+            raise ConstitutionViolation(
+                code="ADD_POSITION_BAD_ID",
+                message="position_id is empty",
+                context=self.meta(),
+            )
+        rec = st.add_position.positions.get(pid)
+        add_count = int(rec.add_count) if rec is not None else 0
+        max_add_times = int(addp.get("max_add_times", 1))
+        if add_count >= max_add_times:
+            raise ConstitutionViolation(
+                code="ADD_POSITION_MAX_TIMES",
+                message="max_add_times exceeded",
+                context={"position_id": pid, "add_count": add_count, **self.meta()},
+            )
+
+        trigger_r = float(addp.get("lock_profit_breakeven_trigger_r", 1.0))
+        inferred_locked = bool(locked_profit) if locked_profit is not None else False
+        if current_r is not None and float(current_r) >= trigger_r:
+            inferred_locked = True
+        if bool(addp.get("require_locked_profit", True)) and not inferred_locked:
+            raise ConstitutionViolation(
+                code="ADD_POSITION_LOCKED_PROFIT_REQUIRED",
+                message="locked_profit required before add",
+                context={
+                    "position_id": pid,
+                    "current_r": current_r,
+                    "locked_profit": inferred_locked,
+                    **self.meta(),
+                },
+            )
+
+    def record_add_position(
+        self,
+        *,
+        st: ConstitutionRuntimeState,
+        position_id: str,
+        current_r: Optional[float],
+        locked_profit: Optional[bool] = None,
+    ) -> None:
+        pid = str(position_id).strip()
+        if not pid:
+            return
+        addp = (self._raw_obj or {}).get("add_position") or {}
+        trigger_r = float(addp.get("lock_profit_breakeven_trigger_r", 1.0))
+        inferred_locked = bool(locked_profit) if locked_profit is not None else False
+        if current_r is not None and float(current_r) >= trigger_r:
+            inferred_locked = True
+        rec = st.add_position.positions.get(pid)
+        add_count = int(rec.add_count) if rec is not None else 0
+        st.add_position.positions[pid] = AddPositionRecord(
+            position_id=pid,
+            add_count=int(add_count + 1),
+            locked_profit=inferred_locked,
+            current_r=current_r,
+            updated_at=_iso_now(),
+        )
 
     def is_escalation_locked(
         self, *, st: ConstitutionRuntimeState, now_iso: Optional[str] = None
@@ -459,90 +524,6 @@ class ConstitutionExecutor:
             last_exit_reason=str(exit_reason),
             last_exit_time=exited_at,
         )
-
-    # -------------------------------------------------------------------------
-    # Extreme tail / Event optionality (non-compounding) — v1 minimal enforcement
-    # -------------------------------------------------------------------------
-    def validate_extreme_tail_entry(
-        self,
-        *,
-        equity_usd: float,
-        entry_usd: float,
-        st: ConstitutionRuntimeState,
-        year: int,
-    ) -> None:
-        xt = (self._raw_obj or {}).get("extreme_tail") or {}
-        if not bool(xt.get("enabled", True)):
-            raise ConstitutionViolation(
-                code="EXTREME_TAIL_DISABLED",
-                message="extreme_tail disabled",
-                context=self.meta(),
-            )
-
-        limits = xt.get("hard_limits") or {}
-        single_max = float(limits.get("single_event_max_usd", 1000))
-        annual_ratio = float(limits.get("annual_total_ratio", 0.02))
-        max_budget = float(xt.get("max_budget", 0.02))
-
-        eq = float(max(0.0, equity_usd))
-        e = float(max(0.0, entry_usd))
-        if e <= 0.0:
-            return
-        if e > single_max + 1e-9:
-            raise ConstitutionViolation(
-                code="EXTREME_TAIL_SINGLE_MAX",
-                message=f"entry_usd {e} exceeds single_event_max_usd {single_max}",
-                context={
-                    "entry_usd": e,
-                    "single_event_max_usd": single_max,
-                    **self.meta(),
-                },
-            )
-        if eq > 0 and e > eq * max_budget + 1e-9:
-            raise ConstitutionViolation(
-                code="EXTREME_TAIL_BUDGET_MAX",
-                message="entry exceeds max_budget fraction",
-                context={
-                    "entry_usd": e,
-                    "equity_usd": eq,
-                    "max_budget": max_budget,
-                    **self.meta(),
-                },
-            )
-
-        used = float((st.extreme_tail or {}).get("used_this_year", 0.0) or 0.0)
-        y0 = int((st.extreme_tail or {}).get("year", year) or year)
-        if y0 != int(year):
-            # reset yearly usage
-            used = 0.0
-        if eq > 0 and (used + e) > eq * annual_ratio + 1e-9:
-            raise ConstitutionViolation(
-                code="EXTREME_TAIL_ANNUAL_CAP",
-                message="annual_total_ratio exceeded",
-                context={
-                    "used_this_year": used,
-                    "entry_usd": e,
-                    "annual_total_ratio": annual_ratio,
-                    "equity_usd": eq,
-                    **self.meta(),
-                },
-            )
-
-    def record_extreme_tail_entry(
-        self,
-        *,
-        st: ConstitutionRuntimeState,
-        entry_usd: float,
-        position_id: str,
-        year: int,
-    ) -> None:
-        used = float((st.extreme_tail or {}).get("used_this_year", 0.0) or 0.0)
-        st.extreme_tail = dict(st.extreme_tail or {})
-        st.extreme_tail["year"] = int(year)
-        st.extreme_tail["used_this_year"] = float(used + float(max(0.0, entry_usd)))
-        aps = list(st.extreme_tail.get("active_positions") or [])
-        aps.append(str(position_id))
-        st.extreme_tail["active_positions"] = sorted(set(aps))
 
     def validate_drawdown(self, *, state: ConstitutionState) -> None:
         """

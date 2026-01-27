@@ -55,14 +55,14 @@ def test_slots_state_roundtrip(tmp_path):
         st=st,
         position_id="p1",
         symbol="BTCUSDT",
-        mode="TREND",
+        archetype="TREND",
         opened_at="2026-01-01T00:00:00+00:00",
     )
     ex.reserve_slot(
         st=st,
         position_id="p2",
         symbol="ETHUSDT",
-        mode="MEAN",
+        archetype="MEAN",
         opened_at="2026-01-01T00:00:00+00:00",
     )
     assert st.slots.active_count() == 2
@@ -73,17 +73,7 @@ def test_slots_state_roundtrip(tmp_path):
     assert st2.slots.active_count() == 2
 
     with pytest.raises(ConstitutionViolation):
-        ex2.reserve_slot(st=st2, position_id="p3", symbol="SOLUSDT", mode="TREND")
-
-
-@pytest.mark.unit
-def test_replacement_audit_requires_fields(tmp_path):
-    cy = _write_constitution(tmp_path)
-    ex = ConstitutionExecutor(constitution_yaml=cy)
-    with pytest.raises(ConstitutionViolation):
-        ex.append_replacement_audit(
-            event={"closed_position_id": "x"}
-        )  # missing required fields
+        ex2.reserve_slot(st=st2, position_id="p3", symbol="SOLUSDT", archetype="TREND")
 
 
 @pytest.mark.unit

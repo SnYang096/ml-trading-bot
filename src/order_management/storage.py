@@ -56,9 +56,12 @@ class Storage:
                         raise
                     conn.commit()
                 
-                # 确保所有必需的列都存在（兼容旧数据库）
+                # 确保所有必需的表都存在
                 self._ensure_order_columns(conn)
                 self._ensure_safety_state_table(conn)
+                self._ensure_slots_state_table(conn)
+                self._ensure_add_position_state_table(conn)
+                self._ensure_escalation_state_table(conn)
             finally:
                 conn.close()
 
@@ -83,7 +86,13 @@ class Storage:
                 """
                 CREATE TABLE IF NOT EXISTS safety_state (
                     state_id TEXT PRIMARY KEY,
-                    payload TEXT NOT NULL,
+                    halted INTEGER DEFAULT 0,
+                    halt_reason TEXT,
+                    halt_since TIMESTAMP,
+                    cooldown_until TIMESTAMP,
+                    last_metrics TEXT,
+                    last_reset_date DATE,
+                    last_daily_halt_date DATE,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -92,6 +101,69 @@ class Storage:
         except sqlite3.Error:
             # 保持初始化流程稳定
             pass
+
+    def _ensure_slots_state_table(self, conn: sqlite3.Connection) -> None:
+        """确保slots_state表存在"""
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS slots_state (
+                    position_id TEXT PRIMARY KEY,
+                    symbol TEXT,
+                    archetype TEXT,
+                    opened_at TIMESTAMP,
+                    closed_at TIMESTAMP,
+                    close_reason TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+        except sqlite3.Error:
+            # 保持初始化流程稳定
+            pass
+
+    def _ensure_add_position_state_table(self, conn: sqlite3.Connection) -> None:
+        """确保add_position_state表存在"""
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS add_position_state (
+                    position_id TEXT PRIMARY KEY,
+                    add_count INTEGER DEFAULT 0,
+                    locked_profit INTEGER DEFAULT 0,
+                    current_r REAL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+        except sqlite3.Error:
+            # 保持初始化流程稳定
+            pass
+
+    def _ensure_escalation_state_table(self, conn: sqlite3.Connection) -> None:
+        """确保escalation_state表存在"""
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS escalation_state (
+                    state_id TEXT PRIMARY KEY,
+                    is_escalated INTEGER DEFAULT 0,
+                    escalation_entry_time TIMESTAMP,
+                    escalation_entry_equity REAL,
+                    locked_until TIMESTAMP,
+                    last_exit_reason TEXT,
+                    last_exit_time TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+        except sqlite3.Error:
+            # 保持初始化流程稳定
+            pass
+
     
     def _get_connection(self) -> sqlite3.Connection:
         """获取数据库连接"""
@@ -104,41 +176,240 @@ class Storage:
     # ========== Safety state ==========
 
     def get_safety_state(self, *, state_id: str = "global") -> Optional[Dict[str, Any]]:
-        """读取安全状态（JSON payload）"""
+        """读取安全状态（展开字段结构）"""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT payload FROM safety_state WHERE state_id = ?", (state_id,)
+                "SELECT * FROM safety_state WHERE state_id = ?", (state_id,)
             )
             row = cursor.fetchone()
             if not row:
                 return None
-            payload = row["payload"] if isinstance(row, sqlite3.Row) else row[0]
-            return json.loads(payload) if payload else None
+            data = dict(row) if isinstance(row, sqlite3.Row) else {}
+            try:
+                halt_reason = json.loads(data.get("halt_reason") or "[]")
+            except Exception:
+                halt_reason = []
+            try:
+                last_metrics = json.loads(data.get("last_metrics") or "{}")
+            except Exception:
+                last_metrics = {}
+            return {
+                "halted": bool(data.get("halted", False)),
+                "halt_reason": halt_reason,
+                "halt_since": data.get("halt_since"),
+                "cooldown_until": data.get("cooldown_until"),
+                "last_metrics": last_metrics,
+                "last_reset_date": data.get("last_reset_date"),
+                "last_daily_halt_date": data.get("last_daily_halt_date"),
+            }
         finally:
             conn.close()
 
     def upsert_safety_state(
         self, *, state_id: str = "global", payload: Dict[str, Any]
     ) -> None:
-        """写入安全状态（JSON payload）"""
+        """写入安全状态（展开字段结构）"""
         conn = self._get_connection()
         try:
+            halted = bool(payload.get("halted", False))
+            halt_reason = payload.get("halt_reason") or []
+            last_metrics = payload.get("last_metrics") or {}
+            row_payload = {
+                "halted": 1 if halted else 0,
+                "halt_reason": json.dumps(halt_reason, ensure_ascii=False),
+                "halt_since": payload.get("halt_since"),
+                "cooldown_until": payload.get("cooldown_until"),
+                "last_metrics": json.dumps(last_metrics, ensure_ascii=False),
+                "last_reset_date": payload.get("last_reset_date"),
+                "last_daily_halt_date": payload.get("last_daily_halt_date"),
+            }
             cursor = conn.cursor()
+            columns = ["state_id"] + list(row_payload.keys()) + ["updated_at"]
+            values = [state_id] + list(row_payload.values())
+            placeholders = ", ".join(["?"] * len(values) + ["CURRENT_TIMESTAMP"])
+            update_cols = [f"{c} = excluded.{c}" for c in row_payload.keys()]
+            update_cols.append("updated_at = CURRENT_TIMESTAMP")
             cursor.execute(
-                """
-                INSERT INTO safety_state (state_id, payload, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
+                f"""
+                INSERT INTO safety_state ({", ".join(columns)})
+                VALUES ({placeholders})
                 ON CONFLICT(state_id) DO UPDATE SET
-                    payload = excluded.payload,
-                    updated_at = CURRENT_TIMESTAMP
+                    {", ".join(update_cols)}
                 """,
-                (state_id, json.dumps(payload, ensure_ascii=False)),
+                values,
             )
             conn.commit()
         finally:
             conn.close()
+
+    # ========== Slots runtime state ==========
+
+    def get_slots_state(self) -> Dict[str, Any]:
+        """读取槽位状态，返回与 SlotsRuntimeState.as_dict() 一致结构"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM slots_state")
+            rows = cursor.fetchall()
+            active: Dict[str, Any] = {}
+            for row in rows:
+                data = dict(row) if isinstance(row, sqlite3.Row) else {}
+                pid = str(data.get("position_id") or "").strip()
+                if not pid:
+                    continue
+                active[pid] = {
+                    "position_id": pid,
+                    "symbol": data.get("symbol"),
+                    "archetype": data.get("archetype"),
+                    "opened_at": data.get("opened_at"),
+                    "closed_at": data.get("closed_at"),
+                    "close_reason": data.get("close_reason"),
+                }
+            return {"active": active}
+        finally:
+            conn.close()
+
+    def upsert_slots_state(self, *, payload: Dict[str, Any]) -> None:
+        """写入槽位状态，传入 SlotsRuntimeState.as_dict()"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM slots_state")
+            active = (payload or {}).get("active") or {}
+            for pid, rec in (active or {}).items():
+                r = rec or {}
+                cursor.execute(
+                    """
+                    INSERT INTO slots_state (
+                        position_id, symbol, archetype, opened_at, closed_at, close_reason, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        str(pid),
+                        r.get("symbol"),
+                        r.get("archetype"),
+                        r.get("opened_at"),
+                        r.get("closed_at"),
+                        r.get("close_reason"),
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ========== Add-position runtime state ==========
+
+    def get_add_position_state(self) -> Dict[str, Any]:
+        """读取加仓状态，返回与 AddPositionRuntimeState.as_dict() 一致结构"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM add_position_state")
+            rows = cursor.fetchall()
+            positions: Dict[str, Any] = {}
+            for row in rows:
+                data = dict(row) if isinstance(row, sqlite3.Row) else {}
+                pid = str(data.get("position_id") or "").strip()
+                if not pid:
+                    continue
+                positions[pid] = {
+                    "position_id": pid,
+                    "add_count": int(data.get("add_count", 0) or 0),
+                    "locked_profit": bool(data.get("locked_profit", 0)),
+                    "current_r": data.get("current_r"),
+                    "updated_at": data.get("updated_at"),
+                }
+            return {"positions": positions}
+        finally:
+            conn.close()
+
+    def upsert_add_position_state(self, *, payload: Dict[str, Any]) -> None:
+        """写入加仓状态，传入 AddPositionRuntimeState.as_dict()"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM add_position_state")
+            positions = (payload or {}).get("positions") or {}
+            for pid, rec in (positions or {}).items():
+                r = rec or {}
+                cursor.execute(
+                    """
+                    INSERT INTO add_position_state (
+                        position_id, add_count, locked_profit, current_r, updated_at
+                    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        str(pid),
+                        int(r.get("add_count", 0) or 0),
+                        1 if bool(r.get("locked_profit", False)) else 0,
+                        r.get("current_r"),
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ========== Escalation runtime state ==========
+
+    def get_escalation_state(self, *, state_id: str = "global") -> Dict[str, Any]:
+        """读取升级状态，返回与 EscalationRuntimeState.as_dict() 一致结构"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM escalation_state WHERE state_id = ?",
+                (state_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {}
+            data = dict(row) if isinstance(row, sqlite3.Row) else {}
+            return {
+                "is_escalated": bool(data.get("is_escalated", 0)),
+                "escalation_entry_time": data.get("escalation_entry_time"),
+                "escalation_entry_equity": data.get("escalation_entry_equity"),
+                "locked_until": data.get("locked_until"),
+                "last_exit_reason": data.get("last_exit_reason"),
+                "last_exit_time": data.get("last_exit_time"),
+            }
+        finally:
+            conn.close()
+
+    def upsert_escalation_state(
+        self, *, payload: Dict[str, Any], state_id: str = "global"
+    ) -> None:
+        """写入升级状态，传入 EscalationRuntimeState.as_dict()"""
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            row_payload = {
+                "is_escalated": 1 if bool(payload.get("is_escalated", False)) else 0,
+                "escalation_entry_time": payload.get("escalation_entry_time"),
+                "escalation_entry_equity": payload.get("escalation_entry_equity"),
+                "locked_until": payload.get("locked_until"),
+                "last_exit_reason": payload.get("last_exit_reason"),
+                "last_exit_time": payload.get("last_exit_time"),
+            }
+            columns = ["state_id"] + list(row_payload.keys()) + ["updated_at"]
+            values = [state_id] + list(row_payload.values())
+            placeholders = ", ".join(["?"] * len(values) + ["CURRENT_TIMESTAMP"])
+            update_cols = [f"{c} = excluded.{c}" for c in row_payload.keys()]
+            update_cols.append("updated_at = CURRENT_TIMESTAMP")
+            cursor.execute(
+                f"""
+                INSERT INTO escalation_state ({", ".join(columns)})
+                VALUES ({placeholders})
+                ON CONFLICT(state_id) DO UPDATE SET
+                    {", ".join(update_cols)}
+                """,
+                values,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     
     # ========== Position CRUD ==========
     

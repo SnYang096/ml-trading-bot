@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 class SlotRecord:
     position_id: str
     symbol: Optional[str] = None
-    mode: Optional[str] = None
+    archetype: Optional[str] = None
     opened_at: Optional[str] = None
     closed_at: Optional[str] = None
     close_reason: Optional[str] = None
@@ -17,7 +17,7 @@ class SlotRecord:
         return {
             "position_id": str(self.position_id),
             "symbol": self.symbol,
-            "mode": self.mode,
+            "archetype": self.archetype,
             "opened_at": self.opened_at,
             "closed_at": self.closed_at,
             "close_reason": self.close_reason,
@@ -90,12 +90,10 @@ class ConstitutionRuntimeState:
         default_factory=AddPositionRuntimeState
     )
     escalation: EscalationRuntimeState = field(default_factory=EscalationRuntimeState)
-    extreme_tail: Dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
             "slots": self.slots.as_dict(),
             "add_position": self.add_position.as_dict(),
             "escalation": self.escalation.as_dict(),
-            "extreme_tail": dict(self.extreme_tail or {}),
         }

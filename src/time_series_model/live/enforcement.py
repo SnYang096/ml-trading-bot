@@ -38,7 +38,7 @@ def enforce_before_order(
     runtime_state: ConstitutionRuntimeState,
     position_id: str,
     symbol: str,
-    mode: str,
+    archetype: str,
     execution_strategy: Optional[str] = None,
     execution_tags: Optional[list[str]] = None,
     execution_evidence: Optional[dict[str, bool]] = None,
@@ -127,7 +127,7 @@ def enforce_before_order(
                 timestamp=None,
                 constitution_hash=str(executor.meta().get("constitution_hash")),
                 constitution_yaml=str(executor.meta().get("constitution_yaml")),
-                router_mode=str(mode),
+                router_mode=str(archetype),
                 gate_decisions={},
                 pcm_budget=dict(pcm_budget or {}),
                 active_slots=int(runtime_state.slots.active_count()),
@@ -159,7 +159,7 @@ def enforce_before_order(
         st=runtime_state,
         position_id=str(position_id),
         symbol=str(symbol),
-        mode=str(mode),
+        archetype=str(archetype),
     )
     executor.save_runtime_state(runtime_state)
 
@@ -172,7 +172,7 @@ def enforce_before_order(
             timestamp=None,
             constitution_hash=str(executor.meta().get("constitution_hash")),
             constitution_yaml=str(executor.meta().get("constitution_yaml")),
-            router_mode=str(mode),
+            router_mode=str(archetype),
             gate_decisions={},
             pcm_budget=dict(pcm_budget or {}),
             active_slots=int(runtime_state.slots.active_count()),

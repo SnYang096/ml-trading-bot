@@ -551,6 +551,7 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 - [GATE_FEATURE_MAPPING_VS_TREE_PHASE1](docs/architecture/GATE_FEATURE_MAPPING_VS_TREE_PHASE1.md)
 - [PLATEAU_OPTIMIZATION_METHODOLOGY](docs/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md)
 - [NNMULTIHEAD_COMMANDS_CN](docs/guides/NNMULTIHEAD_COMMANDS_CN.md)
+- [meta_router_core_pipeline](docs/architecture/meta_router_core_pipeline.md)
 ---
 
 ## 获取帮助

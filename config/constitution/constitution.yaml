@@ -127,41 +127,9 @@ slots:
   # If not enough margin/slots, replacement policy decides what to close/replace.
   allow_replacement: true
 
-  # (V1.1 placeholder) Slot state tracking (for live / restart safety).
-  # Not enforced by code yet; reserved for Execution/PCM integration.
+  # Slot state tracking (for live / restart safety).
   slot_state_tracking:
-    persist_to: "state/slots.json"
-    on_restart: "load_from_file" # load_from_file|reset
-
-  # (V1.1 placeholder) When to consider a slot "freed".
-  release_condition:
-    - "position_closed"
-    - "stop_loss_hit"
-    - "take_profit_hit"
-
-replacement_policy:
-  # Replacement must be attributable; do not allow arbitrary reshuffling.
-  enabled: true
-  # Candidate close order: prefer closing losing positions first, unless forbidden.
-  prefer_close_loser: true
-  # Optional: only replace if new opportunity has materially better expected RR.
-  min_expected_rr_improvement: 0.25
-
-  # (V1.1 placeholder) Auditability requirements (must be logged + replayable).
-  auditability:
-    log_every_replacement: true
-    log_path: "logs/replacements/"
-    required_fields:
-      - "closed_position_id"
-      - "close_reason"
-      - "new_position_signal"
-      - "expected_rr_improvement"
-      - "timestamp"
-
-  # (V1.1 placeholder) Forbidden replacements (hard constraints).
-  forbidden_replacements:
-    - "replace_winner_with_loser"
-    - "replace_during_kill_switch"
+    persist_to: "data/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 3) Add-position policy (Trend-only) — "adding is allowed only by freed risk budget"
@@ -178,22 +146,9 @@ add_position:
   # Example lock rule: once R>1, move stop to breakeven and "free" risk budget.
   lock_profit_breakeven_trigger_r: 1.0
 
-  # (V1.1 placeholder) State tracking to enforce max_add_times & locked-profit requirement.
+  # State tracking to enforce add-position rules (fields are not configurable).
   state_tracking:
-    persist_to: "state/add_position_count.json"
-    fields:
-      - "position_id"
-      - "add_count"
-      - "locked_profit"
-      - "current_r"
-
-  hard_constraints:
-    - name: "max_add_times_per_position"
-      check: "position.add_count < max_add_times"
-      violation: "reject_add_order"
-    - name: "require_locked_profit_before_add"
-      check: "position.locked_profit == true"
-      violation: "reject_add_order"
+    persist_to: "data/order_management.db"
 
 # -----------------------------------------------------------------------------
 # 4) Capital escalation clause (wealth transition) — Portfolio/PCM layer only
@@ -253,7 +208,7 @@ capital_escalation:
           - "timestamp"
 
     state_persistence:
-      persist_to: "state/escalation_state.json"
+      persist_to: "data/order_management.db"
       fields:
         - "is_escalated"
         - "escalation_entry_time"
@@ -262,33 +217,4 @@ capital_escalation:
 
   # If escalation fails, it's not a model failure; it is a controlled attempt.
   failure_is_not_system_error: true
-
-# -----------------------------------------------------------------------------
-# 5) Extreme tail participation (meme/news) — always separate budget pool
-# -----------------------------------------------------------------------------
-extreme_tail:
-  enabled: true
-  # Default: opt-out. Enable only with explicit task + whitelist.
-  default_enabled: false
-  # Separate budget pool (fraction of equity).
-  max_budget: 0.02
-  hard_limits:
-    single_event_max_usd: 1000
-    annual_total_ratio: 0.02
-    allow_add_position: false
-    allow_compounding: false
-
-  profit_handling:
-    withdraw_principal: 1.0
-    profit_to_cash: 0.7
-    profit_can_replay: 0.3
-
-  state_tracking:
-    persist_to: "state/extreme_tail_budget.json"
-    fields:
-      - "used_this_year"
-      - "year_start_date"
-      - "active_positions"
-  # Require independent stop/exit policy, not shared with main engine.
-  require_separate_risk_policy: true
 

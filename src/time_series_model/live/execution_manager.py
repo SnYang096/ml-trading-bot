@@ -26,7 +26,7 @@ from src.time_series_model.live.enforcement import enforce_before_order
 class GuardedOrderContext:
     position_id: str
     symbol: str
-    mode: str
+    archetype: str
     execution_strategy: str
     execution_tags: Optional[list[str]] = None
     execution_evidence: Optional[dict[str, bool]] = None
@@ -67,7 +67,7 @@ class ExecutionManager:
             runtime_state=self.runtime_state,
             position_id=str(ctx.position_id),
             symbol=str(ctx.symbol),
-            mode=str(ctx.mode),
+            archetype=str(ctx.archetype),
             execution_strategy=str(ctx.execution_strategy),
             execution_tags=ctx.execution_tags,
             execution_evidence=ctx.execution_evidence,

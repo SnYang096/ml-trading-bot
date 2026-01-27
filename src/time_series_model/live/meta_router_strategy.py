@@ -522,7 +522,7 @@ if NAUTILUS_AVAILABLE:
                     ctx=GuardedOrderContext(
                         position_id=et_position_id,
                         symbol=str(self.instrument_id),
-                        mode=str(regime),
+                        archetype=str(regime),
                         execution_strategy="ET",
                         execution_tags=[str(self.strategy_name), "ET_HEDGE"],
                         execution_evidence=evidence,
@@ -604,7 +604,7 @@ if NAUTILUS_AVAILABLE:
                     ctx=GuardedOrderContext(
                         position_id=f"{et_position_id}:CLOSE:{int(now_ns)}",
                         symbol=str(self.instrument_id),
-                        mode="MEAN",  # ET is mean-reversion
+                        archetype="MEAN",  # ET is mean-reversion
                         execution_strategy="ET",
                         execution_tags=[str(self.strategy_name), "ET_HEDGE_CLOSE"],
                         execution_evidence=None,
@@ -1231,7 +1231,7 @@ if NAUTILUS_AVAILABLE:
                 ctx=GuardedOrderContext(
                     position_id=f"{self.strategy_name}:{int(now_ns)}",
                     symbol=str(self.instrument_id),
-                    mode=str(arch.regime),
+                    archetype=str(arch.regime),
                     execution_strategy=str(arch.name),
                     execution_tags=order_tags,
                     execution_evidence=evidence,

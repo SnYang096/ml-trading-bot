@@ -1,28 +1,49 @@
 [Unit]
-Description=Quant Engine (Order Flow Strategy)
-After=network.target
+Description=Quant Engine (Order Flow Strategy) - Docker Container
+After=docker.service network.target
+Requires=docker.service
 
 [Service]
-# 假设你的策略代码放在 /opt/quant-engine/main.py
-WorkingDirectory=/opt/quant-engine
-ExecStart=/usr/bin/python3 main.py
+Type=notify
+# 等待 Docker 服务就绪
+ExecStartPre=/bin/bash -c 'until docker info; do sleep 1; done'
+
+# 运行 Docker 容器
+# 注意：代码通过 volume 挂载，镜像只包含依赖
+# 修改下面的命令以匹配你的实际启动脚本
+ExecStart=/usr/bin/docker run \
+    --rm \
+    --name quant-engine \
+    --network host \
+    --memory="2.5g" \
+    --cpus="1.8" \
+    --env-file /opt/quant-engine/.env \
+    -v /opt/quant-engine:/workspace \
+    -v /data/trades:/data/trades \
+    -v /data/quant-engine:/data/quant-engine \
+    quant-engine:latest \
+    python3 /workspace/main.py
+
+# 停止容器
+ExecStop=/usr/bin/docker stop quant-engine
+ExecStopPost=/usr/bin/docker rm -f quant-engine
 
 # 关键：输出日志到 journald（供 Filebeat 采集）
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=quant-engine
 
-# 环境变量（可选）
+# 环境变量
 Environment=PYTHONUNBUFFERED=1
 Environment=LOG_FORMAT=json
-
-# 资源限制（留足内存给策略）
-MemoryLimit=2.5G
-CPUQuota=90%
 
 # 崩溃自动重启
 Restart=always
 RestartSec=30
+
+# 资源限制（Docker 容器级别已设置，这里作为额外保护）
+MemoryLimit=2.5G
+CPUQuota=90%
 
 [Install]
 WantedBy=multi-user.target

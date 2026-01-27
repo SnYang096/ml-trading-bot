@@ -38,8 +38,6 @@ replacement_policy:
   enabled: false
 capital_escalation:
   enabled: false
-extreme_tail:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -60,7 +58,7 @@ extreme_tail:
         runtime_state=st,
         position_id="p1",
         symbol="BTCUSDT",
-        mode="TREND",
+        archetype="TREND",
         execution_strategy="TrendContinuationTC",
         execution_evidence={
             "has_orderflow": True,
@@ -82,7 +80,7 @@ extreme_tail:
             runtime_state=st2,
             position_id="p2",
             symbol="ETHUSDT",
-            mode="MEAN",
+            archetype="MEAN",
             drawdown=0.1,
         )
 
@@ -116,8 +114,6 @@ replacement_policy:
   enabled: false
 capital_escalation:
   enabled: false
-extreme_tail:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -130,7 +126,7 @@ extreme_tail:
             runtime_state=st,
             position_id="p1",
             symbol="BTCUSDT",
-            mode="TREND",
+            archetype="TREND",
             execution_strategy="TrendContinuationTC",
             daily_loss=0.05,
             evt_risk_flag=True,
