@@ -22,6 +22,10 @@ feature_pipeline:
   # For multi-asset training, prefer scale-free volatility inputs:
   - atr_ratio_f
   - poc_hal_features_close_f
+  # SR 结构特征
+  - sr_strength_max_close_f
+  # Volume Profile 特征（包含 vp_boundary_stability_score）
+  - volume_profile_volatility_features_f
   - macd_f
   - rsi_f
   - trend_r2_20_f

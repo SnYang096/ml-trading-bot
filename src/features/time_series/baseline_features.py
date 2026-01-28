@@ -4164,25 +4164,6 @@ def compute_compression_energy_from_series(
     return out
 
 
-@register_feature("compute_sqs_combined_from_series", category="baseline")
-def compute_sqs_combined_from_series(
-    *, sqs_hal_high: pd.Series, sqs_hal_low: pd.Series
-) -> pd.Series:
-    """
-    组合 sqs_hal_high 和 sqs_hal_low 为通用 SQS
-
-    使用 max 或 mean 组合，这里使用 max（取最强的 SR 质量）
-    """
-    sqs_high = pd.to_numeric(sqs_hal_high, errors="coerce").astype(float).fillna(0.0)
-    sqs_low = pd.to_numeric(sqs_hal_low, errors="coerce").astype(float).fillna(0.0)
-
-    # 使用 max（取最强的 SR 质量）
-    out = pd.Series(
-        np.maximum(sqs_high.values, sqs_low.values), index=sqs_high.index, name="sqs"
-    )
-    return out
-
-
 @register_feature("compute_sma_slope_from_series", category="baseline")
 def compute_sma_slope_from_series(*, sma_200: pd.Series, window: int = 5) -> pd.Series:
     """

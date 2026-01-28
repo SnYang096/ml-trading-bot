@@ -10,7 +10,6 @@ import pandas as pd
 from src.live_data_stream import StorageManager, GapFiller, MultiSymbolManager
 from src.live_data_stream.websocket_client import BinanceWebSocketClient, BinanceTick
 from src.live_data_stream.order_manager_factory import init_order_manager_from_env
-from src.order_management.storage import Storage
 from src.time_series_model.core.meta_router_core import (
     MetaRouterCore,
     MetaRouterCoreConfig,
@@ -18,6 +17,7 @@ from src.time_series_model.core.meta_router_core import (
 from src.time_series_model.core.constitution.constitution_executor import (
     ConstitutionExecutor,
 )
+from src.time_series_model.live.meta_router_config import load_meta_router_live_config
 
 
 def _parse_symbols(raw: str) -> List[str]:
@@ -66,10 +66,13 @@ async def main() -> None:
         except Exception:
             gap_filler = None
 
-    # Try to read config from database first
-    db_path = os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db")
-    live_cfg = Storage(db_path=db_path).get_live_config() or {}
-    window_minutes = int(live_cfg.get("window_minutes", 15))
+    # Live config from YAML at startup (no database)
+    live_config_path = os.getenv(
+        "MLBOT_LIVE_CONFIG_YAML",
+        "config/live/live_config_defaults.yaml",
+    )
+    live_cfg = load_meta_router_live_config(config_path=live_config_path)
+    window_minutes = live_cfg.window_minutes
 
     core_cfg = MetaRouterCoreConfig(
         archetype_registry_path=os.getenv(
@@ -77,7 +80,7 @@ async def main() -> None:
             "config/nnmultihead/execution_archetypes.yaml",
         ),
         evidence_quantiles_path=os.getenv("MLBOT_EVIDENCE_QUANTILES_JSON"),
-        db_path=db_path,  # Enable database config reading
+        live_config_path=live_config_path,
     )
     meta_router = MetaRouterCore(core_cfg)
 

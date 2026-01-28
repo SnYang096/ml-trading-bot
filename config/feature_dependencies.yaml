@@ -779,26 +779,6 @@ features:
       atr: atr
       hal_low: hal_low
     notes: 基于 WPT 重构价格计算，实现多尺度对齐
-  sqs_f:
-    module: baseline
-    compute_func: compute_sqs_combined_from_series
-    dependencies:
-    - sqs_hal_high_f
-    - sqs_hal_low_f
-    required_columns:
-    - sqs_hal_high
-    - sqs_hal_low
-    output_columns:
-    - sqs
-    category: sr_structure
-    description: 通用 SQS（结合 sqs_hal_high 和 sqs_hal_low，使用 max） (normalized/unitless
-      or similarity score)
-    pass_full_df: false
-    column_mappings:
-      sqs_hal_high: sqs_hal_high
-      sqs_hal_low: sqs_hal_low
-    compute_params:
-      normalized: true
   sr_strength_max_f:
     module: baseline
     compute_func: compute_sr_strength_max_from_series
@@ -987,6 +967,43 @@ features:
       bins: 50
       normalized: true
     pass_full_df: false
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      volume: volume
+  unified_volume_profile_f:
+    module: enhanced
+    compute_func: compute_unified_volume_profile
+    dependencies: []
+    required_columns:
+    - close
+    - high
+    - low
+    - volume
+    output_columns:
+    - vp_poc
+    - vp_poc_volume_ratio
+    - vp_hal_high
+    - vp_hal_low
+    - vp_hal_mid
+    - vp_hvn_count
+    - vp_lvn_count
+    - vp_lvn_distance
+    - vp_volume_density
+    - vp_price_in_lvn
+    - vp_boundary_stability_score
+    category: liquidity
+    description: Unified Volume Profile features (POC/HAL + HVN/LVN + boundary stability score)
+    compute_params:
+      window: 160
+      bins: auto
+      value_area_ratio: 0.7
+      wavelet: db4
+      level: 4
+      drop_high_freq: true
+      normalized: true
+    pass_full_df: true
     column_mappings:
       close: close
       high: high
@@ -4852,28 +4869,6 @@ features:
       sqs_hal_low: sqs_hal_low
     compute_params:
       normalized: true
-  sr_distance_normalized_f:
-    module: enhanced
-    compute_func: compute_sr_distance_normalized_from_series
-    dependencies:
-    - sr_strength_max_close_f
-    required_columns:
-    - dist_to_nearest_sr
-    - atr
-    output_columns:
-    - sr_distance_normalized
-    category: derived
-    description: SR 距离归一化（两个特征的比值：dist / atr）
-    pass_full_df: false
-    column_mappings:
-      dist_to_nearest_sr: dist_to_nearest_sr
-      atr: atr
-    compute_params:
-      normalized: true
-      output_normalization_map:
-        sr_distance_normalized: unitless
-      input_normalization_map:
-        atr: price_unit
   zigzag_high_low_f:
     module: baseline
     compute_func: compute_zigzag_high_low_from_series

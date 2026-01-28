@@ -2209,23 +2209,16 @@ python3 scripts/apply_tree_gate_3action.py \
 - `mean_take_profit_r = 12.0`
 - `mean_use_breakeven_stop = true`
 
-配置文件：`config/nnmultihead/mean_execution_profiles.json`
+MEAN 执行：使用代码默认固定 R/R（`mean_stop_loss_r=3.0`、`mean_take_profit_r=5.0`、追踪止损 ATR=3.0）。无需单独配置文件；若需覆盖，可传 `--rr-profile-overrides-json` 与 `--default-profile`。
 
 **执行方式（示例）**：
 ```bash
-python3 scripts/rl_build_logs_3action.py \
+python3 scripts/rl_build_execution_logs.py \
   --preds <preds_dir> \
-  --mode <mode_3action.parquet> \
   --returns-source rr_execution \
-  --rr-profile-overrides-json "$(cat config/nnmultihead/mean_execution_profiles.json)" \
-  --default-profile mean_A_trailing \
   --output <logs_out.parquet>
 ```
-
-**初步对比（semantic switch, top-quantile=0.8, 2025H2）**：
-- A（trailing）最佳：`sharpe_trades_only ≈ 2.20`
-- B（longhold）次之：`≈ 1.61`
-- C（event）最弱：`≈ 0.89`
+（不传 `--rr-profile-overrides-json` 即使用默认 MEAN 执行参数。）
 
 ---
 

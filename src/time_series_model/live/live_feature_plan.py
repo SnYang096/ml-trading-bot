@@ -48,7 +48,7 @@ def _node_to_output_columns(
 
 def load_live_feature_plan(
     *,
-    plan_path: str | Path = "config/nnmultihead/live_feature_plan.yaml",
+    plan_path: str | Path = "config/live/live_feature_plan.yaml",
     feature_deps_path: str | Path = "config/feature_dependencies.yaml",
 ) -> Set[str]:
     cfg = _load_yaml(plan_path)
@@ -146,7 +146,7 @@ def load_live_feature_plan(
 
 def load_live_feature_nodes(
     *,
-    plan_path: str | Path = "config/nnmultihead/live_feature_plan.yaml",
+    plan_path: str | Path = "config/live/live_feature_plan.yaml",
     feature_deps_path: str | Path = "config/feature_dependencies.yaml",
 ) -> List[str]:
     cfg = _load_yaml(plan_path)

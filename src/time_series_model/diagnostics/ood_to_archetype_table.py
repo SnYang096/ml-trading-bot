@@ -36,10 +36,40 @@ class OODToArchetypeTableConfig:
     default_weight_if_missing: float
 
 
+def _default_ood_to_archetype_table_config() -> OODToArchetypeTableConfig:
+    """In-code default when config/ood was removed. Research-only; live uses constitution."""
+    return OODToArchetypeTableConfig(
+        version=1,
+        name="ood_to_archetype_table_default",
+        symbol_col="symbol",
+        timestamp_col="timestamp",
+        ood_score_col="ood_score",
+        archetype_col="active_archetype",
+        label_col="y_surv",
+        archetypes=[
+            "TrendContinuationTC",
+            "TrendExpansionTE",
+            "FailureReversionFR",
+            "ExhaustionTurnET",
+        ],
+        bins=[
+            OODBin(name="low_ood", lo=0.0, hi=0.4),
+            OODBin(name="mid_ood", lo=0.4, hi=0.7),
+            OODBin(name="high_ood", lo=0.7, hi=1.0),
+        ],
+        temperature=0.15,
+        min_samples_per_cell=200,
+        default_weight_if_missing=0.0,
+    )
+
+
 def load_ood_to_archetype_table_config(
     path: str | Path = "config/ood/ood_to_archetype_table.yaml",
 ) -> OODToArchetypeTableConfig:
     p = Path(path)
+    if not p.exists():
+        return _default_ood_to_archetype_table_config()
+
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     cols = obj.get("columns") or {}
     bins_obj = obj.get("bins") or []

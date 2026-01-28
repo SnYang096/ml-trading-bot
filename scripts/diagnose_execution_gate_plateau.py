@@ -121,9 +121,11 @@ def _override_gate_rules(
 
 
 def _enabled_archetypes(
-    *, db_path: str, archetypes: Dict[str, ExecutionArchetype]
+    *,
+    config_path: Optional[str] = None,
+    archetypes: Dict[str, ExecutionArchetype],
 ) -> List[str]:
-    cfg = load_meta_router_live_config(db_path=db_path)
+    cfg = load_meta_router_live_config(config_path=config_path)
     xs = cfg.enabled_archetypes or []
     return [x for x in xs if x in archetypes]
 
@@ -206,9 +208,11 @@ def main() -> None:
         help="Execution archetypes registry yaml",
     )
     ap.add_argument(
-        "--db-path",
-        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
-        help="Order management DB path (live_config stored here)",
+        "--live-config",
+        default=os.getenv(
+            "MLBOT_LIVE_CONFIG_YAML", "config/live/live_config_defaults.yaml"
+        ),
+        help="Live config YAML path (enabled_archetypes, etc.)",
     )
     ap.add_argument("--sweep-key", default="vpin")
     ap.add_argument("--q-grid", default="0.55,0.60,0.65,0.70,0.75,0.80")
@@ -348,7 +352,7 @@ def main() -> None:
                 gate_arch.append("")
                 continue
             candidates = _enabled_archetypes(
-                db_path=str(args.db_path),
+                config_path=args.live_config,
                 archetypes=arches_q,
             )
             if not candidates:

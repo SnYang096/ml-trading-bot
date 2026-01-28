@@ -1298,6 +1298,106 @@ def train():
     pass
 
 
+@train.command("export-rules-to-readme")
+@click.option(
+    "--strategy-config",
+    required=True,
+    help="config/strategies/<strategy> directory",
+)
+@click.option(
+    "--rules-md",
+    default=None,
+    help="Path to existing rules.md file (if not provided and --generate-rules, will generate)",
+)
+@click.option(
+    "--generate-rules",
+    is_flag=True,
+    default=False,
+    help="Generate rules first using export_tree_rules_imodels.py",
+)
+@click.option(
+    "--features-yaml",
+    default=None,
+    help="Features YAML path (required if --generate-rules)",
+)
+@click.option("--symbol", default="BTCUSDT", help="Trading symbol")
+@click.option("--timeframe", default="240T", help="Timeframe")
+@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--test-size", type=float, default=0.3, help="Test set size")
+@click.option("--max-rules", type=int, default=20, help="Maximum rules to export")
+@click.option("--min-support", type=float, default=0.01, help="Minimum support threshold")
+@click.option("--max-conditions", type=int, default=3, help="Maximum conditions per rule")
+@click.option("--max-rule-len", type=int, default=120, help="Maximum rule string length")
+@click.option("--random-state", type=int, default=42, help="Random state")
+@click.option("--docker/--no-docker", default=True, help="Run in Docker")
+def train_export_rules_to_readme(
+    strategy_config,
+    rules_md,
+    generate_rules,
+    features_yaml,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    test_size,
+    max_rules,
+    min_support,
+    max_conditions,
+    max_rule_len,
+    random_state,
+    docker,
+):
+    """Export tree model rules to strategy README.md."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--strategy-config",
+        f"/workspace/{strategy_config}" if use_workspace_prefix else strategy_config,
+    ]
+    if rules_md:
+        args.extend(
+            [
+                "--rules-md",
+                f"/workspace/{rules_md}" if use_workspace_prefix else rules_md,
+            ]
+        )
+    if generate_rules:
+        args.append("--generate-rules")
+        if not features_yaml:
+            raise click.BadParameter("--features-yaml required when --generate-rules")
+        if not start_date or not end_date:
+            raise click.BadParameter("--start-date and --end-date required when --generate-rules")
+        args.extend(
+            [
+                "--features-yaml",
+                f"/workspace/{features_yaml}" if use_workspace_prefix else features_yaml,
+                "--symbol",
+                symbol,
+                "--timeframe",
+                timeframe,
+                "--start-date",
+                start_date,
+                "--end-date",
+                end_date,
+                "--test-size",
+                str(test_size),
+                "--max-rules",
+                str(max_rules),
+                "--min-support",
+                str(min_support),
+                "--max-conditions",
+                str(max_conditions),
+                "--max-rule-len",
+                str(max_rule_len),
+                "--random-state",
+                str(random_state),
+            ]
+        )
+    sys.exit(
+        run_script("scripts/export_strategy_rules_to_readme.py", args, docker=docker)
+    )
+
+
 @cli.group()
 def nnmultihead():
     """NN multi-head base model (path primitives) commands."""
@@ -2557,7 +2657,7 @@ def rule_extract_evidence_keys(config_path, docker):
     "db_path",
     default="data/order_management.db",
     show_default=True,
-    help="Order management DB path (live_config stored here)",
+    help="Order management DB path",
 )
 @click.option(
     "--features-store-root",
@@ -2656,7 +2756,7 @@ def rule_apply_tree_gate(
     "--db-path",
     "db_path",
     required=True,
-    help="Order management DB path (live_config stored here)",
+    help="Order management DB path",
 )
 @click.option("--output-md", required=True, help="Output Markdown path")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
@@ -3851,16 +3951,6 @@ def nnmultihead_pipeline_3action_e2e(
         env_overrides["MLBOT_CONSTITUTION_YAML"] = _ws(constitution_yaml)
     if kpi_gate_yaml:
         env_overrides["MLBOT_KPI_GATE_YAML"] = _ws(kpi_gate_yaml)
-
-    # Optional: Portfolio Assets v1 contract (diagnostic artifacts / PCM wiring).
-    pa = ts_obj.get("portfolio_assets_plan") or {}
-    try:
-        pa_enabled = bool(pa.get("enabled", False))
-    except Exception:
-        pa_enabled = False
-    pa_cfg = str(pa.get("config_file") or "").strip()
-    if pa_enabled and pa_cfg:
-        env_overrides["MLBOT_PORTFOLIO_ASSETS_YAML"] = _ws(pa_cfg)
 
     base_cfg = (
         str(base_config).strip()
@@ -6964,7 +7054,7 @@ def diagnose_evidence_quantiles_plateau(
 @click.option(
     "--db-path",
     default="data/order_management.db",
-    help="Order management DB path (live_config stored here)",
+    help="Order management DB path",
 )
 @click.option("--sweep-key", default="vpin")
 @click.option("--q-grid", default="0.55,0.60,0.65,0.70,0.75,0.80")
@@ -7089,74 +7179,6 @@ def diagnose_execution_constraints_plateau(
     sys.exit(
         run_script("scripts/diagnose_execution_constraints_plateau.py", args, docker=docker)
     )
-
-
-@diagnose.command("portfolio-allocation-plateau")
-@click.option("--mode", required=True, help="mode_3action parquet/csv")
-@click.option("--portfolio-assets-yaml", required=True)
-@click.option("--metrics-json", required=True)
-@click.option(
-    "--sweep-target",
-    required=True,
-    type=click.Choice(
-        [
-            "global_trend_p_trend_min",
-            "global_trend_regime_entropy_max",
-            "high_beta_confidence_min",
-            "high_beta_crowding_max",
-            "trend_zero_regime_entropy_gt",
-            "trend_zero_portfolio_drawdown_gt",
-        ]
-    ),
-)
-@click.option("--grid", required=True, help="Comma-separated sweep values")
-@click.option(
-    "--gate-yaml",
-    default="config/kpi_gates/nnmh_portfolio_allocation.yaml",
-    help="KPI gate yaml for auto selection",
-)
-@click.option("--require-gate/--no-require-gate", default=False)
-@click.option("--plateau-frac", default=0.05, type=float)
-@click.option("--score-key", default="rule_pcm_sharpe_mean")
-@click.option("--out", required=True)
-@click.option("--docker/--no-docker", default=True, help="Run in Docker")
-def diagnose_portfolio_allocation_plateau(
-    mode,
-    portfolio_assets_yaml,
-    metrics_json,
-    sweep_target,
-    grid,
-    gate_yaml,
-    require_gate,
-    plateau_frac,
-    score_key,
-    out,
-    docker,
-):
-    """Portfolio allocation plateau sweep (proxy KPIs)."""
-    args = [
-        "--mode",
-        mode,
-        "--portfolio-assets-yaml",
-        portfolio_assets_yaml,
-        "--metrics-json",
-        metrics_json,
-        "--sweep-target",
-        sweep_target,
-        "--grid",
-        grid,
-        "--out",
-        out,
-        "--gate-yaml",
-        gate_yaml,
-        "--plateau-frac",
-        str(plateau_frac),
-        "--score-key",
-        score_key,
-    ]
-    if require_gate:
-        args.append("--require-gate")
-    sys.exit(run_script("scripts/diagnose_portfolio_allocation_plateau.py", args, docker=docker))
 
 
 @diagnose.command("archetype-trade-counts")
@@ -7575,9 +7597,8 @@ def diagnose_threshold_plateau(
 @click.option("--out", required=True, help="Output directory (report.json/sim.parquet/labels.parquet).")
 @click.option(
     "--ood-config",
-    default="config/ood/ood_config.yaml",
-    show_default=True,
-    help="OOD config YAML (dashboard keys, size-cap mapping).",
+    default=None,  # OOD removed; safety handled by constitution only
+    help="[DEPRECATED] OOD config YAML (optional, research only). Safety is handled by constitution/slots.",
 )
 @click.option("--ood-score-col", default=None, help="Optional column name for ood_score (if present in logs).")
 @click.option("--survival-prob-col", default=None, help="Optional column name for survival_prob (if present in logs).")
@@ -7597,7 +7618,8 @@ def diagnose_extinction_replay_3action(
     docker,
 ):
     """
-    Extinction replay runner for 3-action logs.
+    [DEPRECATED - Research only] Extinction replay runner for 3-action logs.
+    OOD/survival removed; safety is handled by constitution/slots only.
 
     Produces:
       - report.json: extinction_rate/max_dd per symbol
@@ -7610,8 +7632,6 @@ def diagnose_extinction_replay_3action(
         f"/workspace/{logs}" if use_workspace_prefix else logs,
         "--out",
         f"/workspace/{out}" if use_workspace_prefix else out,
-        "--ood-config",
-        f"/workspace/{ood_config}" if use_workspace_prefix else ood_config,
         "--survival-horizon-bars",
         str(int(survival_horizon_bars)),
         "--equity-floor-frac",
@@ -7619,6 +7639,8 @@ def diagnose_extinction_replay_3action(
         "--dd-floor",
         str(float(dd_floor)),
     ]
+    if ood_config:
+        args.extend(["--ood-config", f"/workspace/{ood_config}" if use_workspace_prefix else ood_config])
     if ood_score_col:
         args.extend(["--ood-score-col", str(ood_score_col)])
     if survival_prob_col:
@@ -7626,7 +7648,7 @@ def diagnose_extinction_replay_3action(
     sys.exit(run_script("scripts/extinction_replay_3action.py", args, docker=docker))
 
 
-@diagnose.command("survival-head-train")
+@diagnose.command("survival-head-train")  # [DEPRECATED - Research only]
 @click.option(
     "--logs",
     required=True,
@@ -7641,14 +7663,15 @@ def diagnose_extinction_replay_3action(
 @click.option(
     "--config",
     "config_yaml",
-    default="config/ood/survival_head_mlp.yaml",
+    default=None,  # OOD removed; safety handled by constitution only
     show_default=True,
     help="Survival head config YAML.",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
     """
-    Train Survival Head (tiny MLP) from extinction replay labels.
+    [DEPRECATED - Research only] Train Survival Head (tiny MLP) from extinction replay labels.
+    OOD/survival removed; safety is handled by constitution/slots only.
 
     Produces model.pt + survival_preds.parquet + metrics/curves/report.
     """
@@ -7661,26 +7684,27 @@ def diagnose_survival_head_train(logs, labels, out, config_yaml, docker):
         "--out",
         f"/workspace/{out}" if use_workspace_prefix else out,
         "--config",
-        f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml,
+        f"/workspace/{config_yaml}" if use_workspace_prefix and config_yaml else (config_yaml or ""),
     ]
     sys.exit(run_script("scripts/train_survival_head_mlp.py", args, docker=docker))
 
 
-@diagnose.command("ood-to-archetype-weights")
+@diagnose.command("ood-to-archetype-weights")  # [DEPRECATED - Research only]
 @click.option("--logs", required=True, help="logs_3action.parquet (must contain ood_score + active_archetype).")
 @click.option("--labels", required=True, help="labels.parquet (y_surv) from extinction-replay-3action.")
 @click.option("--out", required=True, help="Output directory (survival_table.csv/weights.yaml).")
 @click.option(
     "--config",
     "config_yaml",
-    default="config/ood/ood_to_archetype_table.yaml",
+    default=None,  # OOD removed; safety handled by constitution only
     show_default=True,
     help="Config YAML (bins/archetypes/temperature/min_samples).",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
     """
-    Learn OOD -> Archetype weights via Conditional Survival Table (baseline).
+    [DEPRECATED - Research only] Learn OOD -> Archetype weights via Conditional Survival Table (baseline).
+    OOD/survival removed; safety is handled by constitution/slots only.
     """
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
@@ -7690,9 +7714,9 @@ def diagnose_ood_to_archetype_weights(logs, labels, out, config_yaml, docker):
         f"/workspace/{labels}" if use_workspace_prefix else labels,
         "--out",
         f"/workspace/{out}" if use_workspace_prefix else out,
-        "--config",
-        f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml,
     ]
+    if config_yaml:
+        args.extend(["--config", f"/workspace/{config_yaml}" if use_workspace_prefix else config_yaml])
     sys.exit(run_script("scripts/learn_ood_to_archetype_weights_table.py", args, docker=docker))
 
 

@@ -20,13 +20,31 @@
 - liquidity_void_f
 
 # SR quality / proximity (close-based POC/HAL to avoid WPT dependence)
+# MLP 不需要 WPT 的原因
+# 1. MLP 可以自动学习噪声模式
+# MLP 是通用函数逼近器，能学习复杂非线性关系
+# 训练过程中会自动识别信号与噪声
+# 通过正则化（dropout、L2 等）抑制过拟合
+# 2. WPT 可能丢失信息
+# WPT 去除高频可能同时去除真实信号
+# MLP 能从原始数据中学习更丰富的模式
+# 预处理可能限制模型的学习能力
+# 3. 树模型 vs MLP 的区别
+# 树模型：需要清晰的边界和规则，WPT 有助于稳定结构
+# MLP：可以处理更复杂、更原始的特征，自动学习模式
+# 对 Tier1 的建议
+# 既然 Tier1 是为 MLP 设计的，应该：
+# 保留 sr_strength_max_close_f（基于 close，无 WPT）
+# 移除 sr_strength_max_f（基于 WPT）
+# 这样符合 Tier1 的设计原则：避免 WPT 依赖，让 MLP 自己学习。
 - poc_hal_features_close_f
 - sr_strength_max_close_f
-- sr_distance_normalized_f
 - sqs_hal_high_f
 - sqs_hal_low_f
-- sqs_f
 - sr_strength_combined_f
+
+# Volume Profile boundary stability
+- unified_volume_profile_f
 
 # ZigZag structure (proxy for swing points; no ticks)
 - zigzag_high_low_f

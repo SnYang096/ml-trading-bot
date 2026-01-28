@@ -113,6 +113,8 @@ mlbot data download-funding-rate \
 > - `docs/architecture/archetype灭绝级回测.md`（Archetype 灭绝级回测：压力测试→生存评分→Router/Size 映射）
 > - `docs/architecture/ood头的训练.md`（OOD/Survival Head：监督信号定义、loss、评估曲线、熄火/复燃验证）
 > - `docs/architecture/LiveDashboard.md`（LiveDashboard：只盯 5 个数（含增强版），用于阻止系统犯蠢）
+> - `docs/architecture/树模型规则导出与维护方法.md`（树模型规则导出：可归因性、SR聚合、规则重要性分析）
+> - `docs/architecture/规则重要性分析_vs_特征组搜索.md`（规则重要性分析 vs Feature Group Search：本质差异与结合使用）
 > - `docs/guides/RD_TO_LIVE_TIERED_WORKFLOW_V1_CN.md`（研发→上线分层工作流：Tier×Universe×TaskSpec）
 > - `docs/guides/POOLB_INVERT_FEATURES_CN.md`（Pool‑B 反向特征：invert_features 处理规则）
 > - `docs/strategies/树策略导出的可泛化规则.md`（tree 策略 if/else：语义规则模板 + 扫描汇总（含 VPIN/订单流规则））

@@ -30,6 +30,7 @@ feature_pipeline:
     - rsi_f
     - sma_200_f
     - atr_f
+    - atr_percentile_f  # ⭐ 相对阈值特征：自适应 regime shift
     - trend_r2_20_f
     - bb_width_f
     - wick_ratios_f

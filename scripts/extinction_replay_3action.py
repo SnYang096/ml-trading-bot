@@ -27,7 +27,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--logs", required=True, help="Path to logs_3action.parquet")
     p.add_argument("--out", required=True, help="Output directory")
-    p.add_argument("--ood-config", default="config/ood/ood_config.yaml")
+    p.add_argument(
+        "--ood-config",
+        default=None,  # OOD removed; safety handled by constitution only
+        help="[DEPRECATED] OOD config (optional, for research only). Safety is handled by constitution/slots.",
+    )
     p.add_argument(
         "--ood-score-col", default=None, help="Optional column name for ood_score"
     )
@@ -48,6 +52,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_parquet(args.logs)
+    # OOD removed; safety handled by constitution only. This is for research only.
     ood_cfg = load_ood_config(args.ood_config) if args.ood_config else None
 
     cfg = ExtinctionReplayConfig(

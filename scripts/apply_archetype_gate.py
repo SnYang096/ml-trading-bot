@@ -257,7 +257,7 @@ def main() -> int:
     p.add_argument(
         "--db-path",
         default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
-        help="Order management DB path (live_config stored here)",
+        help="Order management DB path",
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(

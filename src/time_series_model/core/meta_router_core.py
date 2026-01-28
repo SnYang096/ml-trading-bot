@@ -18,6 +18,10 @@ from src.time_series_model.portfolio.pcm import (
     compute_pcm_budget_for_decisions,
 )
 from src.time_series_model.live.execution_intelligence import build_execution_profile
+from src.time_series_model.live.meta_router_config import (
+    MetaRouterLiveConfig,
+    load_meta_router_live_config,
+)
 
 
 @dataclass(frozen=True)
@@ -52,7 +56,7 @@ class MetaRouterCoreConfig:
     gate_enabled: bool = True
     gate_fail_open_missing_quantiles: bool = True
     use_pcm: bool = False
-    db_path: Optional[str] = None  # Optional: read config from database
+    live_config_path: Optional[str] = None  # YAML path; read at startup, no DB
 
 
 class MetaRouterCore:
@@ -67,18 +71,19 @@ class MetaRouterCore:
         self.cfg = cfg or MetaRouterCoreConfig()
         self._arches: Dict[str, ExecutionArchetype] = {}
         self._quantiles: Dict[str, Any] | None = None
-        self._db_storage: Optional[Any] = None
+        self._live_config: Optional[MetaRouterLiveConfig] = None
         self._load_configs()
 
     def _load_configs(self) -> None:
-        # Try to load from database first
-        if self.cfg.db_path:
+        # Load live config from YAML if path given
+        if self.cfg.live_config_path:
             try:
-                from src.order_management.storage import Storage
-
-                self._db_storage = Storage(db_path=self.cfg.db_path)
+                self._live_config = load_meta_router_live_config(
+                    config_path=self.cfg.live_config_path,
+                    archetype_registry_path=self.cfg.archetype_registry_path,
+                )
             except Exception:
-                self._db_storage = None
+                self._live_config = None
 
         try:
             self._arches = load_execution_archetypes_registry(
@@ -89,19 +94,11 @@ class MetaRouterCore:
         self._quantiles = load_evidence_quantiles(self.cfg.evidence_quantiles_path)
 
     def _resolve_enabled_archetypes(self) -> List[str]:
-        """Resolve enabled archetypes as a direct list (no mode grouping)"""
-        # Priority: 1) explicit config, 2) database, 3) all archetypes
+        """Resolve enabled archetypes: 1) explicit config, 2) YAML file, 3) all archetypes"""
         if self.cfg.enabled_archetypes is not None:
             return [str(x) for x in self.cfg.enabled_archetypes]
-
-        if self._db_storage is not None:
-            cfg = self._db_storage.get_live_config()
-            if cfg is not None:
-                enabled = cfg.get("enabled_archetypes")
-                if isinstance(enabled, list):
-                    return [str(x) for x in enabled]
-
-        # Default: all registered archetypes
+        if self._live_config is not None:
+            return list(self._live_config.enabled_archetypes)
         return list(self._arches.keys())
 
     def _resolve_size_multipliers(self) -> Dict[str, float]:
@@ -109,13 +106,8 @@ class MetaRouterCore:
             return {
                 str(k): float(v) for k, v in (self.cfg.size_multipliers or {}).items()
             }
-
-        if self._db_storage is not None:
-            cfg = self._db_storage.get_live_config()
-            if cfg is not None:
-                multipliers = cfg.get("size_multipliers")
-                if isinstance(multipliers, dict):
-                    return {str(k): float(v) for k, v in multipliers.items()}
+        if self._live_config is not None:
+            return dict(self._live_config.size_multipliers)
         return {}
 
     def _resolve_quantiles(self, symbol: str) -> Dict[str, Any] | None:

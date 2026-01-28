@@ -5,7 +5,6 @@ from src.time_series_model.core.constitution.constitution_executor import (
 )
 from src.time_series_model.core.constitution.violation import ConstitutionViolation
 from src.time_series_model.live.enforcement import enforce_before_order
-from src.time_series_model.diagnostics.ood_config import load_ood_config
 from src.time_series_model.diagnostics.live_dashboard import (
     build_live_dashboard_payload,
 )
@@ -42,14 +41,12 @@ replacement_policy:
     ex = ConstitutionExecutor(constitution_yaml=str(cy))
     st = ex.load_runtime_state()
     out_path = tmp_path / "snap.json"
-    ood_cfg = load_ood_config("config/ood/ood_config.yaml")
     dash = build_live_dashboard_payload(
-        ood_cfg=ood_cfg,
-        ood_score=None,
-        top_archetype_survival_prob=None,
-        active_archetype=None,
-        size_cap=None,
-        kill_switch_state=None,
+        active_archetype="TrendContinuationTC",
+        size_cap=1.0,
+        kill_switch_state="active",
+        drawdown=0.1,
+        daily_loss=0.02,
     ).as_dict()
     res = enforce_before_order(
         executor=ex,

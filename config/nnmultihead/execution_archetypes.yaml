@@ -405,8 +405,21 @@ archetypes:
         all_of:
         - liquidity_void_false_breakout_risk:
             quantile_gt: 0.6
-        - sr_distance_normalized:
+        - dist_to_nearest_sr:
             quantile_lt: 0.7
+      then:
+        action: require
+    - id: fbf_near_quality_sr
+      phase: preconditions
+      priority: 2
+      reason: 强语义:靠近高质量SR（SR强度高且距离近）
+      when:
+        all_of:
+        - sr_strength_max:
+            quantile_gte: 0.5
+        - dist_to_nearest_sr:
+            quantile_lt: 0.3
+        min_matches: 2
       then:
         action: require
     - id: fbf_volume_profile_rejection
@@ -500,9 +513,22 @@ archetypes:
         any_of:
         - jump_risk_pct:
             quantile_gt: 0.5
-        - sr_distance_normalized:
+        - dist_to_nearest_sr:
             quantile_lt: 0.2
         min_matches: 1
+      then:
+        action: require
+    - id: lsr_near_quality_sr
+      phase: preconditions
+      priority: 2
+      reason: 强语义:靠近高质量SR（LSR需要SR作为反转锚点）
+      when:
+        all_of:
+        - sr_strength_max:
+            quantile_gte: 0.5
+        - dist_to_nearest_sr:
+            quantile_lt: 0.3
+        min_matches: 2
       then:
         action: require
     - id: lsr_liquidity_void_scene

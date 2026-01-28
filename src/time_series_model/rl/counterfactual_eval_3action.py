@@ -12,14 +12,6 @@ import torch
 
 from src.time_series_model.rule.router_3action import Rule3ActionConfig
 
-from src.time_series_model.portfolio.portfolio_assets_artifacts import (
-    build_portfolio_assets_artifacts_from_modes,
-)
-from src.time_series_model.portfolio.portfolio_assets import (
-    aggregate_from_symbol_modes,
-    compute_portfolio_asset_weights,
-    load_portfolio_assets_config,
-)
 from src.time_series_model.portfolio.mean_system import compute_mean_system_health
 
 from src.time_series_model.diagnostics.ood_config import (
@@ -88,11 +80,6 @@ class CounterfactualEvalConfig:
     rolling_window: int = 300
     rolling_min_periods: int = 60
     rolling_tail_points: int = 120
-
-    # Portfolio assets v1 (optional reporting artifact; no trading logic change).
-    portfolio_assets_yaml: Optional[str] = None
-    portfolio_key_symbols: Sequence[str] = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
-    portfolio_assets_tail_points: int = 240
 
     # Optional: Survival Head integration (research + live share semantics)
     survival_prob_col: str = "survival_prob"
@@ -316,25 +303,6 @@ def _apply_mean_only_actions(actions: np.ndarray) -> np.ndarray:
     a = np.asarray(actions, dtype=np.int64).copy()
     a[a == int(Router3Action.TREND)] = int(Router3Action.NO_TRADE)
     return a
-
-
-def _asset_weights_to_mode_multipliers(
-    weights: Dict[str, float],
-) -> Tuple[float, float]:
-    """
-    Map portfolio asset weights to (mean_multiplier, trend_multiplier) for the 3-action simulator.
-    - mean multiplier is the total weight assigned to MEAN-like assets
-    - trend multiplier is the total weight assigned to TREND-like assets
-    """
-    w = weights or {}
-    mean_mult = float(w.get("GLOBAL_MEAN", 0.0)) + float(w.get("DEFENSIVE_MEAN", 0.0))
-    trend_mult = float(w.get("GLOBAL_TREND", 0.0)) + float(
-        w.get("HIGH_BETA_OVERLAY", 0.0)
-    )
-    # Clamp to [0,1] for safety (cash is residual in PortfolioAssets v1).
-    mean_mult = float(max(0.0, min(1.0, mean_mult)))
-    trend_mult = float(max(0.0, min(1.0, trend_mult)))
-    return mean_mult, trend_mult
 
 
 def _predict_modes(
@@ -740,41 +708,6 @@ def train_and_counterfactual_eval_bc3(
         router_roll_tail = pd.DataFrame()
 
     # per-symbol simulation
-    # Optional: build a global timestamp->(mean_mult,trend_mult) schedule from PortfolioAssets v1.
-    pcm_mult_by_ts: Dict[pd.Timestamp, Tuple[float, float]] = {}
-    try:
-        if cfg.portfolio_assets_yaml and cfg.timestamp_col in test_df.columns:
-            dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
-            pa_cfg = load_portfolio_assets_config(str(cfg.portfolio_assets_yaml))
-            work = test_df.reset_index(drop=True).copy()
-            work[cfg.timestamp_col] = pd.to_datetime(
-                work[cfg.timestamp_col], utc=True, errors="coerce"
-            )
-            work = work.dropna(subset=[cfg.timestamp_col])
-            for ts, g in work.groupby(cfg.timestamp_col, sort=True):
-                decisions = [
-                    {
-                        "symbol": str(r.get(cfg.symbol_col, "")).strip(),
-                        "mode": str(r.get(cfg.mode_col, "NO_TRADE")),
-                    }
-                    for r in g.to_dict(orient="records")
-                    if str(r.get(cfg.symbol_col, "")).strip()
-                ]
-                if not decisions:
-                    continue
-                # reuse the same aggregation function used by artifacts
-                sig = aggregate_from_symbol_modes(
-                    decisions=decisions, key_symbols=list(cfg.portfolio_key_symbols)
-                )
-                w = compute_portfolio_asset_weights(
-                    cfg=pa_cfg,
-                    sig=sig,
-                    gate_veto=False,
-                    portfolio_drawdown=dd_proxy,
-                )
-                pcm_mult_by_ts[pd.Timestamp(ts)] = _asset_weights_to_mode_multipliers(w)
-    except Exception:
-        pcm_mult_by_ts = {}
 
     rows = []
     for sym, g in test_df.groupby(cfg.symbol_col, sort=False):
@@ -787,16 +720,6 @@ def train_and_counterfactual_eval_bc3(
         trend_mult_arr = None
         surv_mean_mult_arr = None
         surv_trend_mult_arr = None
-        if pcm_mult_by_ts and cfg.timestamp_col in g.columns:
-            ts_arr = pd.to_datetime(g[cfg.timestamp_col], utc=True, errors="coerce")
-            mm = []
-            tm = []
-            for ts in ts_arr.tolist():
-                m2, t2 = pcm_mult_by_ts.get(pd.Timestamp(ts), (1.0, 1.0))
-                mm.append(float(m2))
-                tm.append(float(t2))
-            mean_mult_arr = mm
-            trend_mult_arr = tm
 
         # Optional: Survival baseline multipliers (size_cap = survival^a * (1-ood)^b).
         try:
@@ -1201,36 +1124,6 @@ def train_and_counterfactual_eval_bc3(
     except Exception:
         pass
 
-    # -------------------------------------------------------------------------
-    # Portfolio assets (V1) reporting: aggregate router state across symbols and
-    # map to deterministic portfolio asset weights (purely diagnostic for now).
-    # -------------------------------------------------------------------------
-    pa_summary: Dict[str, Any] = {}
-    try:
-        if cfg.portfolio_assets_yaml:
-            dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
-            pa = build_portfolio_assets_artifacts_from_modes(
-                test_df,
-                portfolio_assets_yaml=str(cfg.portfolio_assets_yaml),
-                timestamp_col=str(cfg.timestamp_col),
-                symbol_col=str(cfg.symbol_col),
-                mode_col=str(cfg.mode_col),
-                key_symbols=tuple(cfg.portfolio_key_symbols),
-                tail_points=int(cfg.portfolio_assets_tail_points),
-                gate_veto=False,
-                portfolio_drawdown=dd_proxy,
-            )
-            pa_summary = dict(pa.summary or {})
-            if pa_summary:
-                meta["portfolio_assets"] = pa_summary
-                for k, v in (pa_summary.get("avg_weights") or {}).items():
-                    metrics[f"pa__avg_weight__{k}"] = float(v)
-                metrics["pa__trend_zero_rate"] = float(
-                    pa_summary.get("trend_zero_rate", 0.0)
-                )
-    except Exception:
-        pa_summary = {}
-
     if out_dir:
         p = Path(out_dir)
         p.mkdir(parents=True, exist_ok=True)
@@ -1243,33 +1136,6 @@ def train_and_counterfactual_eval_bc3(
             encoding="utf-8",
         )
         per_symbol.to_csv(p / "per_symbol.csv", index=False)
-        if pa_summary:
-            (p / "portfolio_assets_summary.json").write_text(
-                json.dumps(pa_summary, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
-        try:
-            if cfg.portfolio_assets_yaml:
-                dd_proxy = float(metrics.get("rule_avg_max_dd", 0.0))
-                pa = build_portfolio_assets_artifacts_from_modes(
-                    test_df,
-                    portfolio_assets_yaml=str(cfg.portfolio_assets_yaml),
-                    timestamp_col=str(cfg.timestamp_col),
-                    symbol_col=str(cfg.symbol_col),
-                    mode_col=str(cfg.mode_col),
-                    key_symbols=tuple(cfg.portfolio_key_symbols),
-                    tail_points=int(cfg.portfolio_assets_tail_points),
-                    gate_veto=False,
-                    portfolio_drawdown=dd_proxy,
-                )
-                if isinstance(pa.timeseries_tail, pd.DataFrame) and len(
-                    pa.timeseries_tail
-                ):
-                    pa.timeseries_tail.to_csv(
-                        p / "portfolio_assets_timeseries_tail.csv", index=False
-                    )
-        except Exception:
-            pass
         if isinstance(router_diag_per_symbol, pd.DataFrame) and len(
             router_diag_per_symbol
         ):

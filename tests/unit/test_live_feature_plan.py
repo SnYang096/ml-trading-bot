@@ -2,9 +2,7 @@ from src.time_series_model.live.live_feature_plan import load_live_feature_plan
 
 
 def test_live_feature_plan_overlay():
-    feats = load_live_feature_plan(
-        plan_path="config/nnmultihead/live_feature_plan.yaml"
-    )
+    feats = load_live_feature_plan(plan_path="config/live/live_feature_plan.yaml")
     # base minimal_required + overlay additions
     assert "close" in feats
     assert "atr" in feats

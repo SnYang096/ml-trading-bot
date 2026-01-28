@@ -39,8 +39,8 @@ class SystemStateSnapshot:
     # Observability / drift debug (optional, stable extension)
     observability: Optional[Dict[str, Any]] = None
 
-    # Live dashboard: "only watch 5 numbers" (optional, stable extension)
-    # Keys are defined by config/ood/ood_config.yaml::dashboard.keys
+    # Live dashboard: minimal monitoring (optional, stable extension)
+    # Keys: active_archetype, size_cap, kill_switch_state, drawdown, daily_loss
     live_dashboard: Optional[Dict[str, Any]] = None
 
     kpi_gate: Optional[Dict[str, Any]] = None

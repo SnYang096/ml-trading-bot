@@ -87,6 +87,128 @@ class VolumeProfileResult:
     price_min: float
     price_max: float
     price_denoised: Optional[np.ndarray] = None
+    hal_high: Optional[float] = None
+    hal_low: Optional[float] = None
+
+
+def compute_raw_volume_profile(
+    price_window: np.ndarray,
+    volume_window: np.ndarray,
+    bins: int | str = "auto",
+    value_area_ratio: float = 0.7,
+) -> Optional[VolumeProfileResult]:
+    """
+    使用原始价格序列（不使用 WPT）构建 volume profile 直方图。
+    
+    Args:
+        price_window: 价格序列窗口（原始价格，不降噪）
+        volume_window: 成交量序列窗口（与 price_window 等长）
+        bins: 直方图 bins 数量。如果为 "auto"（默认），则使用 Freedman-Diaconis rule 自动计算
+        value_area_ratio: Value Area ratio (default: 0.7, i.e., 70%)
+    
+    Returns:
+        VolumeProfileResult 对象，包含：
+        - hist: 成交量直方图
+        - edges: bins 边界
+        - centers: bins 中心价格
+        - price_min: 价格最小值
+        - price_max: 价格最大值
+        - hal_high: HAL high (Value Area upper bound)
+        - hal_low: HAL low (Value Area lower bound)
+    """
+    if price_window is None or volume_window is None:
+        return None
+    
+    if len(price_window) != len(volume_window) or len(price_window) < 10:
+        return None
+    
+    price_window = np.asarray(price_window, dtype=float)
+    volume_window = np.asarray(volume_window, dtype=float)
+    
+    # 过滤无效值
+    valid_mask = (
+        np.isfinite(price_window)
+        & np.isfinite(volume_window)
+        & (volume_window > 0)
+    )
+    
+    if not np.any(valid_mask):
+        return None
+    
+    price_valid = price_window[valid_mask]
+    volume_valid = volume_window[valid_mask]
+    
+    if len(price_valid) < 10:
+        return None
+    
+    price_min = price_valid.min()
+    price_max = price_valid.max()
+    price_range = price_max - price_min
+    
+    if not np.isfinite(price_min) or not np.isfinite(price_max) or price_range <= 1e-10:
+        return None
+    
+    # 动态 bins 计算
+    if isinstance(bins, str) and bins == "auto":
+        bins = freedman_diaconis_bins(price_valid, min_bins=10, max_bins=100)
+    
+    bins = min(bins, len(price_valid))
+    if bins < 1:
+        bins = 1
+    
+    # 构建 volume profile
+    hist, edges = np.histogram(
+        price_valid,
+        bins=bins,
+        range=(price_min, price_max),
+        weights=volume_valid,
+    )
+    
+    if np.sum(hist) <= 0:
+        return None
+    
+    centers = (edges[:-1] + edges[1:]) / 2
+    
+    # 计算 HAL (Value Area)
+    total_volume = hist.sum()
+    target_volume = total_volume * value_area_ratio
+    max_vol_idx = int(np.argmax(hist))
+    accumulated_volume = hist[max_vol_idx]
+    upper_idx = max_vol_idx
+    lower_idx = max_vol_idx
+    
+    while accumulated_volume < target_volume:
+        upper_vol = hist[upper_idx + 1] if upper_idx + 1 < len(hist) else 0.0
+        lower_vol = hist[lower_idx - 1] if lower_idx - 1 >= 0 else 0.0
+        
+        if (upper_vol >= lower_vol and upper_idx + 1 < len(hist)) or lower_idx == 0:
+            if upper_idx + 1 < len(hist):
+                upper_idx += 1
+                accumulated_volume += hist[upper_idx]
+            else:
+                break
+        elif lower_idx - 1 >= 0:
+            lower_idx -= 1
+            accumulated_volume += hist[lower_idx]
+        else:
+            break
+    
+    # HAL 上下界对应价格档的边界
+    hal_high_edge_idx = min(upper_idx + 1, len(edges) - 1)
+    hal_low_edge_idx = max(lower_idx, 0)
+    hal_high = edges[hal_high_edge_idx]
+    hal_low = edges[hal_low_edge_idx]
+    
+    return VolumeProfileResult(
+        hist=hist,
+        edges=edges,
+        centers=centers,
+        price_min=float(price_min),
+        price_max=float(price_max),
+        price_denoised=None,
+        hal_high=float(hal_high),
+        hal_low=float(hal_low),
+    )
 
 
 def compute_wpt_volume_profile(
@@ -203,6 +325,37 @@ def compute_wpt_volume_profile(
     
     centers = (edges[:-1] + edges[1:]) / 2
     
+    # 计算 HAL (Value Area) - 与 raw VP 保持一致的计算逻辑
+    total_volume = hist.sum()
+    value_area_ratio = 0.7  # 默认值，与 compute_unified_volume_profile_features 保持一致
+    target_volume = total_volume * value_area_ratio
+    max_vol_idx = int(np.argmax(hist))
+    accumulated_volume = hist[max_vol_idx]
+    upper_idx = max_vol_idx
+    lower_idx = max_vol_idx
+    
+    while accumulated_volume < target_volume:
+        upper_vol = hist[upper_idx + 1] if upper_idx + 1 < len(hist) else 0.0
+        lower_vol = hist[lower_idx - 1] if lower_idx - 1 >= 0 else 0.0
+        
+        if (upper_vol >= lower_vol and upper_idx + 1 < len(hist)) or lower_idx == 0:
+            if upper_idx + 1 < len(hist):
+                upper_idx += 1
+                accumulated_volume += hist[upper_idx]
+            else:
+                break
+        elif lower_idx - 1 >= 0:
+            lower_idx -= 1
+            accumulated_volume += hist[lower_idx]
+        else:
+            break
+    
+    # HAL 上下界对应价格档的边界
+    hal_high_edge_idx = min(upper_idx + 1, len(edges) - 1)
+    hal_low_edge_idx = max(lower_idx, 0)
+    hal_high = edges[hal_high_edge_idx]
+    hal_low = edges[hal_low_edge_idx]
+    
     return VolumeProfileResult(
         hist=hist,
         edges=edges,
@@ -210,6 +363,8 @@ def compute_wpt_volume_profile(
         price_min=float(price_min),
         price_max=float(price_max),
         price_denoised=price_denoised,
+        hal_high=float(hal_high),
+        hal_low=float(hal_low),
     )
 
 
@@ -234,6 +389,7 @@ def compute_unified_volume_profile_features(
     在一次计算中同时输出：
     1. POC/HAL 特征（价值区间）
     2. HVN/LVN 特征（流动性节点）
+    3. 边界稳定性分数（raw VP vs WPT VP 的一致性）
     
     Args:
         df: DataFrame with OHLCV data
@@ -266,6 +422,11 @@ def compute_unified_volume_profile_features(
         - vp_lvn_distance: Distance to nearest LVN (normalized)
         - vp_volume_density: Volume density at current price
         - vp_price_in_lvn: Whether current price is in LVN (1.0/0.0)
+        
+        # 边界稳定性特征
+        - vp_boundary_stability_score: Raw VP vs WPT VP 的边界一致性分数 (0-1)
+          - 1.0 = 完美一致（结构稳定）
+          - 接近 0 = 结构不一致（噪音 / 过渡）
     """
     df = df.copy()
     
@@ -292,13 +453,23 @@ def compute_unified_volume_profile_features(
     df["vp_volume_density"] = 0.0
     df["vp_price_in_lvn"] = 0.0
     
+    # 边界稳定性分数（raw VP vs WPT VP）
+    df["vp_boundary_stability_score"] = np.nan
+    
     # 滚动窗口计算
     for i in range(window, len(df)):
         price_window = price_data.iloc[i - window : i].values
         volume_window = df[volume_col].iloc[i - window : i].values
         
-        # 计算 WPT Volume Profile（共享计算）
-        vp_result: Optional[VolumeProfileResult] = compute_wpt_volume_profile(
+        # 同时计算 raw VP 和 WPT VP
+        raw_vp_result: Optional[VolumeProfileResult] = compute_raw_volume_profile(
+            price_window=price_window,
+            volume_window=volume_window,
+            bins=bins,
+            value_area_ratio=value_area_ratio,
+        )
+        
+        wpt_vp_result: Optional[VolumeProfileResult] = compute_wpt_volume_profile(
             price_window=price_window,
             volume_window=volume_window,
             bins=bins,
@@ -306,6 +477,18 @@ def compute_unified_volume_profile_features(
             level=level,
             drop_high_freq=drop_high_freq,
         )
+        
+        # 计算边界稳定性分数
+        if raw_vp_result is not None and wpt_vp_result is not None:
+            stability_score = compute_boundary_stability_score(
+                raw_vp=raw_vp_result,
+                wpt_vp=wpt_vp_result,
+                tau=0.075,
+            )
+            df.iloc[i, df.columns.get_loc("vp_boundary_stability_score")] = stability_score
+        
+        # 使用 WPT VP 作为主要输出（保持向后兼容）
+        vp_result = wpt_vp_result
         
         if vp_result is None:
             continue
@@ -419,8 +602,65 @@ def compute_unified_volume_profile_features(
     df["vp_hal_low"] = df["vp_hal_low"].ffill()
     df["vp_hal_mid"] = df["vp_hal_mid"].ffill()
     df["vp_lvn_distance"] = df["vp_lvn_distance"].fillna(0.0)
+    df["vp_boundary_stability_score"] = df["vp_boundary_stability_score"].ffill().fillna(0.0)
     
     return df
+
+
+def compute_boundary_stability_score(
+    raw_vp: VolumeProfileResult,
+    wpt_vp: VolumeProfileResult,
+    tau: float = 0.075,
+) -> float:
+    """
+    计算 raw VP 和 WPT VP 的边界一致性分数。
+    
+    比较 raw VP 和 WPT VP 的 HAL 边界差异，用一致性来判断：
+    当前市场是"结构主导"还是"噪音 / 过渡主导"。
+    
+    Args:
+        raw_vp: Raw volume profile result (不使用 WPT)
+        wpt_vp: WPT volume profile result (使用 WPT 降噪)
+        tau: Temperature parameter (default: 0.075, 建议范围 0.05 ~ 0.1)
+    
+    Returns:
+        Stability score in (0, 1], where:
+        - 1.0 = perfect consistency (结构一致)
+        - 接近 0 = 结构不一致 (噪音 / 过渡)
+    
+    Formula:
+        Δ_high = |HAL_high_raw − HAL_high_wpt|
+        Δ_low  = |HAL_low_raw  − HAL_low_wpt|
+        range = max(price_max_raw, price_max_wpt) - min(price_min_raw, price_min_wpt)
+        d = (Δ_high + Δ_low) / (2 * range)
+        score = exp(− d / τ)
+    """
+    if raw_vp is None or wpt_vp is None:
+        return 0.0
+    
+    if raw_vp.hal_high is None or raw_vp.hal_low is None:
+        return 0.0
+    
+    if wpt_vp.hal_high is None or wpt_vp.hal_low is None:
+        return 0.0
+    
+    # 计算 HAL 差异
+    delta_high = abs(raw_vp.hal_high - wpt_vp.hal_high)
+    delta_low = abs(raw_vp.hal_low - wpt_vp.hal_low)
+    
+    # 归一化：使用两个 VP 的联合价格范围
+    price_min_union = min(raw_vp.price_min, wpt_vp.price_min)
+    price_max_union = max(raw_vp.price_max, wpt_vp.price_max)
+    price_range = price_max_union - price_min_union
+    
+    if price_range <= 0:
+        return 0.0
+    
+    d = (delta_high + delta_low) / (2.0 * price_range)
+    
+    # 映射到稳定性分数
+    score = np.exp(-d / tau)
+    return float(np.clip(score, 0.0, 1.0))
 
 
 def compute_unified_volume_profile_derived_features(

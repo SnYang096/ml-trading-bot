@@ -55,10 +55,43 @@ def _i(x: Any, default: int) -> int:
         return int(default)
 
 
+def _default_ood_config() -> OODConfig:
+    """In-code default when config/ood was removed. Safety is handled by constitution/slots only."""
+    return OODConfig(
+        version=1,
+        name="ood_config_default",
+        ood_horizon_bars=20,
+        survival_horizon_bars=50,
+        y_ood_or_sources=[],
+        ood_degrade_ge=0.6,
+        ood_halt_ge=0.8,
+        survival_degrade_le=0.4,
+        survival_halt_le=0.25,
+        ood_revive_le=0.35,
+        survival_revive_ge=0.6,
+        revive_phases={},
+        use_power_formula=True,
+        survival_power=2.0,
+        ood_power=2.0,
+        min_cap=0.0,
+        max_cap=1.0,
+        dashboard_keys=[
+            "ood_score",
+            "top_archetype_survival_prob",
+            "active_archetype",
+            "size_cap",
+            "kill_switch_state",
+        ],
+    )
+
+
 def load_ood_config(
     path: str | Path = "config/ood/ood_config.yaml",
 ) -> OODConfig:
     p = Path(path)
+    if not p.exists():
+        return _default_ood_config()
+
     obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
     labels = obj.get("labels") or {}
@@ -84,6 +117,8 @@ def load_ood_config(
         xs = dash.get("keys") or []
         if isinstance(xs, list):
             keys = [str(x) for x in xs]
+    if not keys:
+        keys = list(_default_ood_config().dashboard_keys)
 
     return OODConfig(
         version=int(obj.get("version", 1)),

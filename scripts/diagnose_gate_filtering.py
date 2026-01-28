@@ -33,9 +33,11 @@ def main() -> int:
     p.add_argument("--logs", required=True, help="logs_3action.parquet")
     p.add_argument("--regime", required=True, help="physics_regime parquet")
     p.add_argument(
-        "--db-path",
-        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
-        help="Order management DB path (live_config stored here)",
+        "--live-config",
+        default=os.getenv(
+            "MLBOT_LIVE_CONFIG_YAML", "config/live/live_config_defaults.yaml"
+        ),
+        help="Live config YAML path (enabled_archetypes)",
     )
     p.add_argument("--output-md", required=True, help="Output Markdown report")
     args = p.parse_args()
@@ -88,7 +90,7 @@ def main() -> int:
 
         # Filter 2: Check enabled archetypes
         enabled = _enabled_archetypes(
-            db_path=str(args.db_path),
+            config_path=args.live_config,
             archetypes=arches,
         )
 
@@ -163,17 +165,13 @@ def main() -> int:
     else:
         lines.append(f"\n✓ ET archetype has {stats['by_archetype']['ET']} trades\n")
 
-    # Enabled archetypes info
+    # Enabled archetypes (from live config YAML)
+    enabled = _enabled_archetypes(
+        config_path=args.live_config,
+        archetypes=arches,
+    )
     lines.append("\n## Enabled Archetypes (from live config)\n")
-    for regime_name in ["TREND", "MEAN", "NO_TRADE"]:
-        enabled = _enabled_archetypes(
-            live_cfg_path=args.live_config,
-            regime=regime_name,
-            archetypes=arches,
-        )
-        lines.append(
-            f"- **{regime_name}**: {enabled if enabled else '[] (disabled)'}\n"
-        )
+    lines.append(f"- **enabled**: {enabled if enabled else '[] (empty)'}\n")
 
     out_md = Path(args.output_md)
     out_md.parent.mkdir(parents=True, exist_ok=True)

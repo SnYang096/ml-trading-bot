@@ -22,5 +22,5 @@ See `docs/live_stream/README.md` for details.
 
 ## Live Feature Plan
 `IncrementalFeatureComputer` reads `MLBOT_LIVE_FEATURE_PLAN_YAML` (default:
-`config/nnmultihead/live_feature_plan.yaml`) to decide which features are
+`config/live/live_feature_plan.yaml`) to decide which features are
 expected/kept in live.

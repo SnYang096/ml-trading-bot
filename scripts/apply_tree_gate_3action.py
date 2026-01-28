@@ -234,8 +234,12 @@ def _compute_archetype_score(row: pd.Series, arch_name: str) -> float:
     return score
 
 
-def _enabled_archetypes(*, db_path: str, archetypes: Dict[str, object]) -> List[str]:
-    cfg = load_meta_router_live_config(db_path=db_path)
+def _enabled_archetypes(
+    *,
+    config_path: Optional[str] = None,
+    archetypes: Dict[str, object],
+) -> List[str]:
+    cfg = load_meta_router_live_config(config_path=config_path)
     xs = cfg.enabled_archetypes or []
     return [x for x in xs if x in archetypes]
 
@@ -261,9 +265,11 @@ def main() -> int:
         default="config/nnmultihead/execution_archetypes.yaml",
     )
     p.add_argument(
-        "--db-path",
-        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
-        help="Order management DB path (live_config stored here)",
+        "--live-config",
+        default=os.getenv(
+            "MLBOT_LIVE_CONFIG_YAML", "config/live/live_config_defaults.yaml"
+        ),
+        help="Live config YAML path (enabled_archetypes, size_multipliers, etc.)",
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(
@@ -417,7 +423,7 @@ def main() -> int:
             # ET_REGIME maps to MEAN (for archetype selection, but ET has its own regime)
             # Note: When regime filter is enabled, we still use regime for archetype selection
             candidates = _enabled_archetypes(
-                db_path=str(args.db_path),
+                config_path=args.live_config,
                 archetypes=arches,
             )
             if not candidates:

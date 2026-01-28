@@ -58,6 +58,8 @@ def find_monthly_files(data_dir: str, symbol: str) -> List[Dict[str, Any]]:
         f"{symbol}-aggTrades-*.zip",
         f"{symbol}-*.parquet",
         f"{symbol}-*.zip",
+        f"{symbol}_*.parquet",  # 添加下划线格式（如 BTCUSDT_2024-01.parquet）
+        f"{symbol}_*.zip",
     ]
 
     symbol_mapping = {
@@ -74,6 +76,7 @@ def find_monthly_files(data_dir: str, symbol: str) -> List[Dict[str, Any]]:
             stem = file_path.stem
             date_patterns = [
                 rf"{re.escape(symbol)}-aggTrades-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
+                rf"{re.escape(symbol)}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",  # 添加原始 symbol 的下划线格式
                 rf"{re.escape(file_symbol)}_(?P<year>\d{{4}})-(?P<month>\d{{2}})",
                 rf"{re.escape(file_symbol)}-(?P<year>\d{{4}})-(?P<month>\d{{2}})",
                 rf"(?P<year>\d{{4}})-(?P<month>\d{{2}})",

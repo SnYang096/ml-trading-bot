@@ -61,7 +61,6 @@ class Storage:
                 self._ensure_safety_state_table(conn)
                 self._ensure_slots_state_table(conn)
                 self._ensure_add_position_state_table(conn)
-                self._ensure_live_config_table(conn)
             finally:
                 conn.close()
 
@@ -858,97 +857,3 @@ class Storage:
             created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] and isinstance(row['created_at'], str) else row['created_at']
         )
     
-    # ========== Live Config CRUD ==========
-    
-    def _ensure_live_config_table(self, conn: sqlite3.Connection) -> None:
-        """确保live_config表存在"""
-        try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS live_config (
-                    config_id INTEGER PRIMARY KEY CHECK (config_id = 1),
-                    enabled_archetypes TEXT NOT NULL,
-                    size_multipliers TEXT NOT NULL,
-                    window_minutes INTEGER NOT NULL,
-                    min_order_interval_minutes INTEGER NOT NULL,
-                    nnmultihead_inference TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_by TEXT
-                )
-                """
-            )
-            conn.commit()
-        except sqlite3.Error:
-            pass
-
-    def get_live_config(self) -> Optional[Dict[str, Any]]:
-        """获取live配置（解析为结构化字段）"""
-        conn = self._get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT
-                    enabled_archetypes,
-                    size_multipliers,
-                    window_minutes,
-                    min_order_interval_minutes,
-                    nnmultihead_inference
-                FROM live_config
-                WHERE config_id = 1
-                """
-            )
-            row = cursor.fetchone()
-            if not row:
-                return None
-            return {
-                "enabled_archetypes": json.loads(row["enabled_archetypes"]),
-                "size_multipliers": json.loads(row["size_multipliers"]),
-                "window_minutes": int(row["window_minutes"]),
-                "min_order_interval_minutes": int(row["min_order_interval_minutes"]),
-                "nnmultihead_inference": json.loads(row["nnmultihead_inference"]),
-            }
-        finally:
-            conn.close()
-
-    def upsert_live_config(
-        self,
-        *,
-        enabled_archetypes: List[str],
-        size_multipliers: Dict[str, float],
-        window_minutes: int,
-        min_order_interval_minutes: int,
-        nnmultihead_inference: Dict[str, Any],
-        updated_by: Optional[str] = None,
-    ) -> None:
-        """写入live配置（单行）"""
-        conn = self._get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO live_config
-                (
-                    config_id,
-                    enabled_archetypes,
-                    size_multipliers,
-                    window_minutes,
-                    min_order_interval_minutes,
-                    nnmultihead_inference,
-                    updated_at,
-                    updated_by
-                )
-                VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
-                """,
-                (
-                    json.dumps(list(enabled_archetypes)),
-                    json.dumps(dict(size_multipliers)),
-                    int(window_minutes),
-                    int(min_order_interval_minutes),
-                    json.dumps(dict(nnmultihead_inference)),
-                    updated_by,
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()

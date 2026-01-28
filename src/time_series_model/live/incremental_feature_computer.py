@@ -122,7 +122,7 @@ class IncrementalFeatureComputer:
                 if live_feature_plan_path is not None
                 else os.getenv(
                     "MLBOT_LIVE_FEATURE_PLAN_YAML",
-                    "config/nnmultihead/live_feature_plan.yaml",
+                    "config/live/live_feature_plan.yaml",
                 )
             )
             self.live_feature_set = load_live_feature_plan(plan_path=plan_path) or set()

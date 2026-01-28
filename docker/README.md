@@ -10,8 +10,12 @@
 # 基本构建
 ./docker/build-gpu.sh
 
-# 指定镜像名称和标签
+# 指定镜像名称和标签（GPU 镜像）
 ./docker/build-gpu.sh -n hansenlovefiona017/lightgbm-runtime -t v0.0.9 --no-ssh --no-proxy
+
+# 构建实盘镜像 (Dockerfile.live，无 GPU/LightGBM)
+./docker/build-gpu.sh --live -n quant-engine-live -t v0.0.9 --no-proxy
+# 若拉取 ubuntu:22.04 出现 TLS handshake timeout，请去掉 --no-proxy 并设置代理后再构建，或先配置 Docker 守护进程的代理/镜像站
 
 # 使用代理构建
 # 注意：脚本会自动修复代理地址（127.0.0.1 -> Docker 网桥 IP，以便容器访问宿主机代理）
@@ -122,6 +126,12 @@ make docker-gpu-check     # 环境检查
 ```
 
 ### 实盘版本（Live Trading - CPU Only）
+
+使用同一构建脚本加 `--live` 即可构建实盘镜像（不复制 LightGBM/dtaidistance，不校验 GPU）：
+
+```bash
+./docker/build-gpu.sh --live -n quant-engine -t v0.0.9 --no-proxy
+```
 
 实盘 Dockerfile (`Dockerfile.live`) 专为生产环境设计，不包含 GPU 支持，专注于：
 - WebSocket 实时数据接收

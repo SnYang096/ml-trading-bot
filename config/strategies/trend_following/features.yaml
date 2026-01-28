@@ -4,15 +4,12 @@ description: 'Trend-following strategy leveraging WPT trend, Hurst persistence, 
 
   '
 feature_pipeline:
-  # Keep label/backtest-required columns (like raw `atr`) in the dataframe, but do NOT feed them into the model.
   exclude_columns:
   - atr
   requested_features:
-  # Core kline features (required for feature-group-search)
   - macd_f
   - sma_200_f
   - trend_r2_20_f
-  # Strategy-specific features
   - wpt_price_reconstructed_f
   - wpt_price_fluctuation_f
   - wpt_cvd_fluctuation_f
@@ -31,7 +28,12 @@ feature_pipeline:
   - hilbert_env_price_vol_ratio
   - spectrum_features_trend_following_f
   - atr_f
+  - atr_percentile_f
   - rsi_f
+  # SR 结构特征
+  - sr_strength_max_f
+  # Volume Profile 特征（包含 vp_boundary_stability_score）
+  - volume_profile_volatility_features_f
   - vpin_features_f
   - footprint_basic_f
   - hurst_x_trend_r2_f

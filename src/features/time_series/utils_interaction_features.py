@@ -7,7 +7,6 @@
    - 参考：docs/时序模型/高级特征：特征组合交互.md
 
 2. **衍生特征**（Derived）：单个特征的变换或两个特征的其他运算
-   - 如：dist_to_nearest_sr / atr = sr_distance_normalized（归一化）
    - 如：abs(close - zz_high_value) = dist_to_zz_high（差值）
    - 如：cvd 的滚动斜率 = cvd_slope_5（变换）
 
@@ -1311,48 +1310,6 @@ def compute_sr_strength_combined_from_hal_sqs_from_series(
     h = pd.to_numeric(sqs_hal_high, errors="coerce").fillna(0.0).astype(float)
     l = pd.to_numeric(sqs_hal_low, errors="coerce").fillna(0.0).astype(float)
     out = pd.Series(np.maximum(h.values, l.values), index=h.index, name="sr_strength_combined")
-    return out.to_frame()
-
-
-@register_feature("compute_sr_distance_normalized", category="derived")
-def compute_sr_distance_normalized(
-    df: pd.DataFrame,
-    dist_col: str = "dist_to_nearest_sr",
-    atr_col: str = "atr",
-) -> pd.Series:
-    """
-    计算 SR 距离归一化（两个特征的比值：dist / atr）
-    
-    Args:
-        df: DataFrame with base features
-        dist_col: Distance to nearest SR column
-        atr_col: ATR column
-    
-    Returns:
-        Series with sr_distance_normalized
-    
-    Raises:
-        ValueError: 如果依赖列不存在
-    """
-    missing_cols = [c for c in [dist_col, atr_col] if c not in df.columns]
-    if missing_cols:
-        raise ValueError(
-            f"Required columns {missing_cols} not found for sr_distance_normalized. "
-            f"Available columns: {list(df.columns)[:20]}..."
-        )
-    return (
-        df[dist_col] / df[atr_col].replace(0, np.nan)
-    ).fillna(0.0).rename("sr_distance_normalized")
-
-
-@register_feature("compute_sr_distance_normalized_from_series", category="derived")
-def compute_sr_distance_normalized_from_series(
-    *, dist_to_nearest_sr: pd.Series, atr: pd.Series
-) -> pd.DataFrame:
-    """Narrow-IO entrypoint for sr_distance_normalized."""
-    dist = pd.to_numeric(dist_to_nearest_sr, errors="coerce").astype(float)
-    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).replace(0, np.nan)
-    out = (dist / atr_s).fillna(0.0).rename("sr_distance_normalized")
     return out.to_frame()
 
 

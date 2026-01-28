@@ -154,14 +154,4 @@ CREATE INDEX IF NOT EXISTS idx_stop_loss_trailing_position_id ON stop_loss_trail
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_date ON performance_metrics(date);
 CREATE INDEX IF NOT EXISTS idx_performance_metrics_symbol ON performance_metrics(symbol);
 
--- 9. Live trading configuration (single-row, explicit columns)
-CREATE TABLE IF NOT EXISTS live_config (
-    config_id INTEGER PRIMARY KEY CHECK (config_id = 1),
-    enabled_archetypes TEXT NOT NULL,        -- JSON array of archetype names
-    size_multipliers TEXT NOT NULL,          -- JSON object mapping archetype -> multiplier
-    window_minutes INTEGER NOT NULL,
-    min_order_interval_minutes INTEGER NOT NULL,
-    nnmultihead_inference TEXT NOT NULL,     -- JSON object with inference config
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_by TEXT
-);
+-- Live trading config: read from config/live/live_config_defaults.yaml at startup (no DB table).

@@ -1,3 +1,4 @@
+# Live config: read at startup from this file. No database; single source of truth.
 version: 1
 name: "live_config_defaults"
 

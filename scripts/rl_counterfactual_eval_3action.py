@@ -108,8 +108,8 @@ def main() -> None:
     )
     ap.add_argument(
         "--ood-config",
-        default="config/ood/ood_config.yaml",
-        help="OOD config YAML used to map (ood,survival)->size cap for the extra baseline.",
+        default=None,  # OOD removed; safety handled by constitution only
+        help="[DEPRECATED] OOD config YAML (optional, for research only). Safety is handled by constitution/slots.",
     )
     args = ap.parse_args()
 
@@ -152,10 +152,6 @@ def main() -> None:
         ),
         router_cfg=router_cfg,
         preds_in_log1p=bool(int(args.preds_in_log1p)),
-        portfolio_assets_yaml=str(
-            os.environ.get("MLBOT_PORTFOLIO_ASSETS_YAML") or ""
-        ).strip()
-        or None,
     )
     # Optional: let library compute extra baseline if cols exist
     try:
@@ -236,15 +232,6 @@ def main() -> None:
         kpi_gate=kpi_gate_res,
         overrides=overrides,
     )
-    # If portfolio assets summary exists, include it for attribution.
-    try:
-        pa_path = Path(args.out) / "portfolio_assets_summary.json"
-        if pa_path.exists():
-            snap.pcm_budget.update(
-                json.loads(pa_path.read_text(encoding="utf-8")) or {}
-            )
-    except Exception:
-        pass
     write_state_snapshot(
         out_path=str(Path(args.out) / "system_state_snapshot.json"), snapshot=snap
     )

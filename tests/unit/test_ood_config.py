@@ -5,11 +5,11 @@ from src.time_series_model.diagnostics.ood_config import (
 
 
 def test_load_ood_config_has_expected_defaults() -> None:
+    # Uses in-code default when config/ood was removed; dashboard keys for snapshot contract.
     cfg = load_ood_config("config/ood/ood_config.yaml")
     assert cfg.version == 1
     assert cfg.ood_horizon_bars > 0
     assert cfg.survival_horizon_bars > 0
-    assert "extinction_replay" in cfg.y_ood_or_sources
     assert "ood_score" in cfg.dashboard_keys
 
 
