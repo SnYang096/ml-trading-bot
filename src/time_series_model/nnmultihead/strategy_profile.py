@@ -154,6 +154,11 @@ def load_execution_archetypes_registry(
 def load_execution_profile_runtime_config(
     path: str | Path = "config/nnmultihead/execution_profile_runtime.yaml",
 ) -> Dict[str, Any]:
+    """
+    DEPRECATED: This config file has been removed.
+    New live trading pipeline uses MetaRouterCore which reads directly from execution_archetypes.yaml.
+    This function is kept for backward compatibility with legacy EventDrivenStrategy.
+    """
     p = Path(path)
     if not p.exists():
         return {}
@@ -167,12 +172,16 @@ def resolve_execution_profile_paths(
     default_archetype_registry_path: str = "config/nnmultihead/execution_archetypes.yaml",
     runtime_config_path: Optional[str | Path] = None,
 ) -> Tuple[str, str]:
+    """
+    DEPRECATED: This function is only used by legacy EventDrivenStrategy.
+    New live trading pipeline uses MetaRouterCore which reads directly from execution_archetypes.yaml.
+    """
     cfg_path = (
         runtime_config_path
         if runtime_config_path is not None
         else os.getenv(
             "MLBOT_NNMH_EXEC_PROFILE_CONFIG",
-            "config/nnmultihead/execution_profile_runtime.yaml",
+            "config/nnmultihead/execution_profile_runtime.yaml",  # File removed, will use defaults
         )
     )
     cfg = load_execution_profile_runtime_config(cfg_path)

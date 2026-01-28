@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -254,9 +255,9 @@ def main() -> int:
         default="config/nnmultihead/execution_archetypes.yaml",
     )
     p.add_argument(
-        "--live-config",
-        default="config/nnmultihead/live/meta_router_live_config.yaml",
-        help="[DEPRECATED] Regime-based archetype selection has been removed. This flag is kept for backward compatibility but has no effect.",
+        "--db-path",
+        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
+        help="Order management DB path (live_config stored here)",
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(

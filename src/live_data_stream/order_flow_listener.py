@@ -83,6 +83,7 @@ class OrderFlowListener:
         gap_filler: Optional[GapFiller] = None,
         memory_window_hours: float = 4.0,
         feature_compute_interval_minutes: int = 15,
+        orderflow_window_minutes: Optional[int] = None,
         feature_4h_interval_hours: int = 4,
         storage_base_path: str = "data/live_storage",
         on_bar_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -100,6 +101,7 @@ class OrderFlowListener:
             feature_computer: 特征计算器（如果为None，会创建默认的）
             memory_window_hours: 内存滑动窗口时长（小时）
             feature_compute_interval_minutes: 特征计算间隔（分钟）
+            orderflow_window_minutes: 订单流特征窗口（分钟）
             feature_4h_interval_hours: 4小时特征保存间隔（小时）
             storage_base_path: 存储根目录
             on_bar_callback: 收到新bar时的回调函数
@@ -114,6 +116,11 @@ class OrderFlowListener:
         self.storage_manager = storage_manager
         self.memory_window_hours = memory_window_hours
         self.feature_compute_interval_minutes = feature_compute_interval_minutes
+        self.orderflow_window_minutes = (
+            int(orderflow_window_minutes)
+            if orderflow_window_minutes is not None
+            else int(feature_compute_interval_minutes)
+        )
         self.feature_4h_interval_hours = feature_4h_interval_hours
         
         # 特征计算器
@@ -311,7 +318,9 @@ class OrderFlowListener:
         """计算并保存15分钟特征"""
         # 获取特征
         features = self.feature_computer.get_features()
-        orderflow_features = self.feature_computer.get_orderflow_features(window_minutes=15)
+        orderflow_features = self.feature_computer.get_orderflow_features(
+            window_minutes=self.orderflow_window_minutes
+        )
         
         if not features and not orderflow_features:
             return
@@ -348,7 +357,9 @@ class OrderFlowListener:
         if len(features_15min) == 0:
             # 如果没有15分钟特征，使用当前计算的特征
             features = self.feature_computer.get_features()
-            orderflow_features = self.feature_computer.get_orderflow_features(window_minutes=240)
+            orderflow_features = self.feature_computer.get_orderflow_features(
+                window_minutes=max(self.orderflow_window_minutes, 240)
+            )
             
             if not features and not orderflow_features:
                 return

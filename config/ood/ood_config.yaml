@@ -7,7 +7,7 @@ name: "ood_config"
 #
 # This config is used by:
 # - research counterfactual report (prove kill/revive reduces extinction risk)
-# - live MetaRouterStrategy (same semantics; fail-closed)
+# - live MetaRouterCore (same semantics; fail-closed)
 
 labels:
   # Horizon definition for supervised labels (bars of the decision timeframe).

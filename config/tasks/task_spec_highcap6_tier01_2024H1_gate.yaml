@@ -57,7 +57,7 @@ gate_plan:
   enabled: true
   kind: "tree_gate_veto"
   execution_archetypes_yaml: "config/nnmultihead/execution_archetypes.yaml"
-  live_config_yaml: "config/nnmultihead/live/meta_router_live_config.yaml"
+  live_config_yaml: ""
   evidence_quantiles_json: "results/diagnose/evidence_quantiles_highcap6_2024H1.json"
 
 pcm_plan:

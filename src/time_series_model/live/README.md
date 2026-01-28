@@ -1,24 +1,24 @@
 # Live strategies overview
 
-This folder contains live-trading helpers built on Nautilus Trader.
+This folder contains live-trading helpers.
 
 ## TL;DR which file to use?
-- **Run real trading quickly** → `run_nautilus_strategy.py` (main entry).  
+- **Run real trading quickly** → `scripts/run_live.py` (main entry).  
   Command:  
-  `python -m time_series_model.live.run_nautilus_strategy --strategy-id meta_router --symbol BTCUSDT-PERP --timeframe 15T --testnet --live-config config/nnmultihead/live/meta_router_live_config.yaml`
-- **Understand or extend the live strategy logic** → read/modify `meta_router_strategy.py` (preferred) and `nautilus_strategy_with_features.py` (legacy / reference).
+  `python scripts/run_live.py` (see `README_CN.md` for environment variables)
+- **Understand the live strategy logic** → see `src/time_series_model/core/meta_router_core.py` (core decision logic).
 
 ## Files
-- `run_nautilus_strategy.py` — entry script. Builds Nautilus TradingNode, then runs **`MetaRouterStrategy`** (one strategy orchestrating multiple execution archetypes).
-- `meta_router_strategy.py` — the MetaRouterStrategy implementation (Router → archetype selection → enforcement → order submit).
 - `meta_router_config.py` — YAML schema loader for live config (enabled archetypes, size multipliers, router thresholds).
 - `nnmh_live_inferencer.py` — optional nnmultihead online inference wrapper (model.pt → preds_* for rule router).
 - `live_feature_plan.py` — live feature plan resolver (base training plan + live overlay).
-- `nautilus_strategy_with_features.py` — legacy strategy class (kept for reference).
+- `execution_intelligence.py` — execution profile builder (SL/TP, holding time, confidence).
+- `execution_profile_apply.py` — utilities for applying execution profiles to orders.
 
-## Requirements / Notes
-- Nautilus Trader must be installed.
-- Binance keys must be set in env vars for the entry script (see docstring in `run_nautilus_strategy.py`).
+## Architecture
+The live trading flow is: **WebSocket → OrderFlowListener → MetaRouterCore → ConstitutionExecutor → OrderManager**
+
+See `docs/live_stream/README.md` for details.
 
 ## Live Feature Plan
 `IncrementalFeatureComputer` reads `MLBOT_LIVE_FEATURE_PLAN_YAML` (default:

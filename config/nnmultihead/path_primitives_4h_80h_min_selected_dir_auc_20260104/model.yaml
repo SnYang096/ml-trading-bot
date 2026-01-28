@@ -1,8 +1,0 @@
-# Note: Strategy ID is the directory name (path_primitives_4h_80h_min_selected_dir_auc_20260104).
-# The 'name' field is optional and only for display purposes.
-trainer:
-  module: src.time_series_model.models.nn.path_primitives_trainer
-  function: train_path_primitives_mlp
-  params: {}
-
-

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -233,12 +234,9 @@ def _compute_archetype_score(row: pd.Series, arch_name: str) -> float:
     return score
 
 
-def _enabled_archetypes(
-    *, live_cfg_path: str, regime: str, archetypes: Dict[str, object]
-) -> List[str]:
-    cfg = load_meta_router_live_config(live_cfg_path)
-    rr = str(regime).upper()
-    xs = cfg.enabled_archetypes.get(rr) or []
+def _enabled_archetypes(*, db_path: str, archetypes: Dict[str, object]) -> List[str]:
+    cfg = load_meta_router_live_config(db_path=db_path)
+    xs = cfg.enabled_archetypes or []
     return [x for x in xs if x in archetypes]
 
 
@@ -263,9 +261,9 @@ def main() -> int:
         default="config/nnmultihead/execution_archetypes.yaml",
     )
     p.add_argument(
-        "--live-config",
-        default="config/nnmultihead/live/meta_router_live_config.yaml",
-        help="Use enabled_archetypes to select per-regime archetype",
+        "--db-path",
+        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
+        help="Order management DB path (live_config stored here)",
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(
@@ -418,14 +416,8 @@ def main() -> int:
             # Map TE/TC to TREND for enabled_archetypes lookup
             # ET_REGIME maps to MEAN (for archetype selection, but ET has its own regime)
             # Note: When regime filter is enabled, we still use regime for archetype selection
-            regime_for_lookup = (
-                "TREND"
-                if regime_normalized in ("TE", "TC")
-                else ("MEAN" if regime_normalized == "ET" else regime_normalized)
-            )
             candidates = _enabled_archetypes(
-                live_cfg_path=str(args.live_config),
-                regime=regime_for_lookup,
+                db_path=str(args.db_path),
                 archetypes=arches,
             )
             if not candidates:

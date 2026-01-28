@@ -558,17 +558,18 @@ RUN echo "📦 Installing data science libraries..." && \
 # ============================================================================
 # 注意：mamba-ssm 依赖 GPU 驱动，构建时不验证导入，只在运行时验证
 # 关键：使用 --only-binary :all: 强制只使用预编译的 wheel，避免重新编译
-# 由于 builder 阶段使用 --no-deps，需要先安装 mamba-ssm 的依赖
-RUN echo "📦 Installing mamba-ssm dependencies first..." && \
+# 由于 builder 阶段使用 --no-deps，需要先安装 mamba-ssm 的运行时依赖（causal-conv1d）
+# 安装 wheel 时使用 --no-deps，避免 pip 在 --no-index 下解析 ninja 等构建时依赖
+RUN echo "📦 Installing mamba-ssm runtime dependency (causal-conv1d)..." && \
     pip3 install --no-cache-dir --timeout=1800 \
     causal-conv1d>=1.2.0 \
-    && echo "✅ mamba-ssm dependencies installed" && \
+    && echo "✅ causal-conv1d installed" && \
     echo "📦 Installing mamba-ssm from pre-built wheel..." && \
     echo "📦 Checking for pre-built wheels..." && \
     ls -lh /wheelhouse/ 2>/dev/null || echo "⚠️  /wheelhouse directory empty or not found" && \
     if [ -n "$(ls -A /wheelhouse/mamba_ssm*.whl 2>/dev/null)" ]; then \
-        echo "🔗 Found pre-built wheel(s), installing..." && \
-        pip3 install --no-cache-dir \
+        echo "🔗 Found pre-built wheel(s), installing (no-deps)..." && \
+        pip3 install --no-cache-dir --no-deps \
         --no-build-isolation \
         --only-binary :all: \
         --find-links=/wheelhouse \

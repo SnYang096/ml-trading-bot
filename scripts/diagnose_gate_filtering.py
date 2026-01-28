@@ -12,6 +12,7 @@ This script analyzes how Gate filtering affects trades, showing:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -25,14 +26,17 @@ from scripts.apply_tree_gate_3action import (
     _enabled_archetypes,
     load_execution_archetypes_registry,
 )
-from src.time_series_model.live.meta_router_config import load_meta_router_live_config
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Diagnose Gate filtering effects.")
     p.add_argument("--logs", required=True, help="logs_3action.parquet")
     p.add_argument("--regime", required=True, help="physics_regime parquet")
-    p.add_argument("--live-config", required=True, help="meta_router_live_config.yaml")
+    p.add_argument(
+        "--db-path",
+        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
+        help="Order management DB path (live_config stored here)",
+    )
     p.add_argument("--output-md", required=True, help="Output Markdown report")
     args = p.parse_args()
 
@@ -51,7 +55,6 @@ def main() -> int:
     )
 
     # Load configs
-    live_cfg = load_meta_router_live_config(args.live_config)
     arches = load_execution_archetypes_registry()
 
     # Statistics
@@ -84,14 +87,8 @@ def main() -> int:
             continue
 
         # Filter 2: Check enabled archetypes
-        regime_for_lookup = (
-            "TREND"
-            if regime in ("TC_REGIME", "TE_REGIME")
-            else regime.replace("_REGIME", "")
-        )
         enabled = _enabled_archetypes(
-            live_cfg_path=args.live_config,
-            regime=regime_for_lookup,
+            db_path=str(args.db_path),
             archetypes=arches,
         )
 

@@ -24,18 +24,43 @@ def get_project_root() -> Path:
 PROJECT_ROOT = get_project_root()
 
 
+# Reserved keys in when-then "when" blocks (not feature names)
+_WHEN_RESERVED = frozenset({"any_of", "all_of", "min_matches", "min_matches_any"})
+
+
+def _collect_features_from_when(when: Any, out: Set[str]) -> None:
+    """Recursively collect feature names from a when-then 'when' block."""
+    if not isinstance(when, dict):
+        return
+    for key, val in when.items():
+        key = str(key).strip()
+        if key in _WHEN_RESERVED:
+            if isinstance(val, list):
+                for item in val:
+                    _collect_features_from_when(item, out)
+            continue
+        # Key is a feature name (e.g. shd_pct, cvd_change_5); val is the condition (quantile_gt etc.)
+        if isinstance(val, dict) and val:
+            out.add(key)
+            # Do not recurse into condition dict (quantile_gt, quantile_lt are not feature names)
+        elif isinstance(val, list):
+            for item in val:
+                _collect_features_from_when(item, out)
+
+
 def extract_required_features_from_execution_archetypes(
     execution_archetypes_path: str | Path = "config/nnmultihead/execution_archetypes.yaml",
 ) -> Set[str]:
     """
-    从execution_archetypes.yaml中提取所有gate rules和evidence rules需要的特征
+    从execution_archetypes.yaml中提取所有gate rules需要的特征
+
+    支持格式: config.archetypes[].when_then_rules[].when (递归提取特征名)
     
     Returns:
         需要的特征名称集合
     """
     path = Path(execution_archetypes_path)
     if not path.is_absolute():
-        # 假设相对于项目根目录
         path = PROJECT_ROOT / path
     
     if not path.exists():
@@ -43,40 +68,22 @@ def extract_required_features_from_execution_archetypes(
     
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            try:
-                config = yaml.safe_load(f) or {}
-            except yaml.YAMLError:
-                # 无效的YAML文件，返回空集合
-                return set()
+            config = yaml.safe_load(f) or {}
     except Exception:
-        # 文件读取错误，返回空集合
         return set()
     
     required_features: Set[str] = set()
     
-    # 扫描所有archetypes
-    for regime_name, regime_data in config.get('regimes', {}).items():
-        for arch_name, arch_data in regime_data.get('archetypes', {}).items():
-            # Gate rules
-            gate_rules = arch_data.get('gate_rules', {})
-            for rule in gate_rules.get('rules', []):
-                if 'key' in rule:
-                    required_features.add(str(rule['key']))
-            
-            # Evidence rules
-            evidence_rules = arch_data.get('evidence_rules', [])
-            for rule in evidence_rules:
-                if 'key' in rule:
-                    required_features.add(str(rule['key']))
-                # any_key_contains是模式匹配，需要提取模式字符串用于匹配
-                if rule.get('kind') == 'any_key_contains' and 'any_key_contains' in rule:
-                    patterns = rule['any_key_contains']
-                    if isinstance(patterns, list):
-                        # 将模式添加到特征集合中（用于后续的模式匹配）
-                        for pattern in patterns:
-                            required_features.add(str(pattern))
-                    elif isinstance(patterns, str):
-                        required_features.add(str(patterns))
+    # 从 when_then_rules 中提取特征名
+    for arch_name, arch_data in config.get('archetypes', {}).items():
+        if not isinstance(arch_data, dict):
+            continue
+        for rule in arch_data.get('when_then_rules', []) or []:
+            if not isinstance(rule, dict):
+                continue
+            when = rule.get('when')
+            if when:
+                _collect_features_from_when(when, required_features)
     
     return required_features
 

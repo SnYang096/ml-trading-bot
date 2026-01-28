@@ -39,6 +39,7 @@ class MultiSymbolManager:
         gap_filler: Optional[GapFiller] = None,
         memory_window_hours: float = 4.0,
         feature_compute_interval_minutes: int = 15,
+        orderflow_window_minutes: Optional[int] = None,
         feature_4h_interval_hours: int = 4,
         order_manager: Optional[Any] = None,
     ):
@@ -50,6 +51,7 @@ class MultiSymbolManager:
             gap_filler: 数据补全器（共享，可选）
             memory_window_hours: 内存滑动窗口时长（小时）
             feature_compute_interval_minutes: 特征计算间隔（分钟）
+            orderflow_window_minutes: 订单流特征窗口（分钟）
             feature_4h_interval_hours: 4小时特征保存间隔（小时）
             order_manager: 订单管理器（可选，默认从环境变量初始化）
         """
@@ -58,6 +60,7 @@ class MultiSymbolManager:
         self.gap_filler = gap_filler
         self.memory_window_hours = memory_window_hours
         self.feature_compute_interval_minutes = feature_compute_interval_minutes
+        self.orderflow_window_minutes = orderflow_window_minutes
         self.feature_4h_interval_hours = feature_4h_interval_hours
         self.order_manager = order_manager or init_order_manager_from_env()
         
@@ -82,6 +85,7 @@ class MultiSymbolManager:
                 gap_filler=gap_filler,
                 memory_window_hours=memory_window_hours,
                 feature_compute_interval_minutes=feature_compute_interval_minutes,
+                orderflow_window_minutes=orderflow_window_minutes,
                 feature_4h_interval_hours=feature_4h_interval_hours,
                 order_manager=self.order_manager,
             )

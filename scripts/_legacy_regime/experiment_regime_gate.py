@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -71,8 +72,8 @@ def main() -> int:
         default="config/nnmultihead/execution_archetypes.yaml",
     )
     p.add_argument(
-        "--live-config",
-        default="config/nnmultihead/live/meta_router_live_config.yaml",
+        "--db-path",
+        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
     )
     p.add_argument("--evidence-quantiles", default=None)
     p.add_argument(
@@ -188,7 +189,7 @@ def main() -> int:
             "--execution-archetypes",
             str(args.execution_archetypes),
             "--live-config",
-            str(args.live_config),
+            str(args.db_path),
         ]
 
         if args.symbols:

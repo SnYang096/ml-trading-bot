@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -120,11 +121,10 @@ def _override_gate_rules(
 
 
 def _enabled_archetypes(
-    *, live_cfg_path: str, regime: str, archetypes: Dict[str, ExecutionArchetype]
+    *, db_path: str, archetypes: Dict[str, ExecutionArchetype]
 ) -> List[str]:
-    cfg = load_meta_router_live_config(live_cfg_path)
-    rr = str(regime).upper()
-    xs = cfg.enabled_archetypes.get(rr) or []
+    cfg = load_meta_router_live_config(db_path=db_path)
+    xs = cfg.enabled_archetypes or []
     return [x for x in xs if x in archetypes]
 
 
@@ -206,9 +206,9 @@ def main() -> None:
         help="Execution archetypes registry yaml",
     )
     ap.add_argument(
-        "--live-config",
-        default="config/nnmultihead/live/meta_router_live_config.yaml",
-        help="Use enabled_archetypes to select per-regime archetype",
+        "--db-path",
+        default=os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
+        help="Order management DB path (live_config stored here)",
     )
     ap.add_argument("--sweep-key", default="vpin")
     ap.add_argument("--q-grid", default="0.55,0.60,0.65,0.70,0.75,0.80")
@@ -348,8 +348,7 @@ def main() -> None:
                 gate_arch.append("")
                 continue
             candidates = _enabled_archetypes(
-                live_cfg_path=str(args.live_config),
-                regime=regime,
+                db_path=str(args.db_path),
                 archetypes=arches_q,
             )
             if not candidates:

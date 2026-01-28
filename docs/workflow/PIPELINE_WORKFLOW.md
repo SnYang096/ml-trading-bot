@@ -127,7 +127,7 @@ python scripts/apply_archetype_gate.py \
   --out results/pipeline_<run_id>/logs_execution_gated.parquet \
   --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
   --features-store-root feature_store \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+  --db-path data/order_management.db \
   --evidence-quantiles results/pipeline_<run_id>/evidence_quantiles.json \
   --timeframe 240T \
   --start-date 2024-01-01 --end-date 2024-12-31 \
@@ -250,7 +250,7 @@ mlbot rule diagnose-e2e-kpi \
 mlbot rule diagnose-gate-filtering \
   --logs /tmp/logs_execution.parquet \
   --regime /tmp/physics_regime.parquet \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+  --db-path data/order_management.db \
   --output-md /tmp/gate_filtering_diagnosis.md
 ```
 
@@ -336,7 +336,7 @@ mlbot rule apply-tree-gate \
   --features-store-layer nnmh_highcap6_240T_2024_with_reflexivity \
   --features-store-root feature_store \
   --execution-archetypes config/nnmultihead/execution_archetypes.yaml \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+  --db-path data/order_management.db \
   --no-docker 2>&1 | tee results/${RUN_ID}/gate.log
 
 # 5. Add reflexivity features (optional)

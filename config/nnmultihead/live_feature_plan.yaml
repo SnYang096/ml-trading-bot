@@ -1,5 +1,5 @@
 version: 1
-description: "Live feature plan overlay (base training plan + live extras)"
+description: "Live feature plan (base training plan + gate auto-detect)"
 
 # Reuse training feature plan for consistency.
 base_feature_plan: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
@@ -9,35 +9,9 @@ base_feature_plan: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.y
 # - tiers: expand tiers_enabled -> tier_feature_files -> output_columns
 base_feature_plan_mode: "tiers"
 
+# Overlay is optional. Gate-dependent features are now auto-detected from
+# execution_archetypes.yaml (when_then_rules) and merged into the feature set.
+# Use overlay only to add extra live-only columns/nodes not in base or gate.
 overlay:
-  # Add live-only features (tick/orderflow or heavy constructs)
-  add_features:
-    - open
-    - high
-    - low
-    - close
-    - volume
-    - cvd_change_5
-    - cvd_change_5_normalized
-    - vpin
-    - orderflow_imbalance
-    - orderflow_total_vol
-    - atr_percentile
-    - bb_width_normalized
-    - bb_position
-    - volume_ratio
-    - trend_r2_20
-    - vpvr_pvp
-    - vpvr_hvn_count
-    - vpvr_lvn_count
-    - vpvr_lvn_distance
-    - vpvr_volume_density
-    - vpvr_price_in_lvn
-  add_feature_nodes:
-    - vpin_features_f
-    - ofi_short_f
-    - vpin_scene_semantic_scores_f
-    - trade_cluster_scene_semantic_scores_f
-    - footprint_basic_f
-    - volume_profile_volatility_features_f
-    - volume_profile_scene_semantic_scores_f
+  add_features: []
+  add_feature_nodes: []

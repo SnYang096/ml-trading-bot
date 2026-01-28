@@ -10,6 +10,7 @@ import pandas as pd
 from src.live_data_stream import StorageManager, GapFiller, MultiSymbolManager
 from src.live_data_stream.websocket_client import BinanceWebSocketClient, BinanceTick
 from src.live_data_stream.order_manager_factory import init_order_manager_from_env
+from src.order_management.storage import Storage
 from src.time_series_model.core.meta_router_core import (
     MetaRouterCore,
     MetaRouterCoreConfig,
@@ -65,15 +66,18 @@ async def main() -> None:
         except Exception:
             gap_filler = None
 
+    # Try to read config from database first
+    db_path = os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db")
+    live_cfg = Storage(db_path=db_path).get_live_config() or {}
+    window_minutes = int(live_cfg.get("window_minutes", 15))
+
     core_cfg = MetaRouterCoreConfig(
-        live_config_path=os.getenv(
-            "MLBOT_LIVE_CONFIG", "config/nnmultihead/live/meta_router_live_config.yaml"
-        ),
         archetype_registry_path=os.getenv(
             "MLBOT_ARCHETYPE_REGISTRY",
             "config/nnmultihead/execution_archetypes.yaml",
         ),
         evidence_quantiles_path=os.getenv("MLBOT_EVIDENCE_QUANTILES_JSON"),
+        db_path=db_path,  # Enable database config reading
     )
     meta_router = MetaRouterCore(core_cfg)
 
@@ -88,6 +92,8 @@ async def main() -> None:
         symbols=symbols,
         storage_manager=storage,
         gap_filler=gap_filler,
+        feature_compute_interval_minutes=window_minutes,
+        orderflow_window_minutes=window_minutes,
         order_manager=order_manager,
     )
 

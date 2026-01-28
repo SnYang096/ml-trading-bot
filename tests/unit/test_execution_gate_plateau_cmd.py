@@ -84,22 +84,17 @@ def test_execution_gate_plateau_smoke(tmp_path):
         encoding="utf-8",
     )
 
-    live_cfg = tmp_path / "live.yaml"
-    live_cfg.write_text(
-        "\n".join(
-            [
-                "version: 1",
-                "name: test_live",
-                "enabled_archetypes:",
-                "  TREND: [TrendContinuationTC]",
-                "size_multipliers: {}",
-                "vol_mean: {enabled: false, archetype_id: x, size_multiplier: 0.0}",
-                "router_thresholds: {}",
-                "nnmultihead_inference: {}",
-                "decision_loop: {}",
-            ]
-        ),
-        encoding="utf-8",
+    db_path = tmp_path / "order_management.db"
+    from src.order_management.storage import Storage
+
+    storage = Storage(db_path=str(db_path))
+    storage.upsert_live_config(
+        enabled_archetypes=["TrendContinuationTC"],
+        size_multipliers={},
+        window_minutes=10,
+        min_order_interval_minutes=10,
+        nnmultihead_inference={},
+        updated_by="test",
     )
 
     out_dir = tmp_path / "out"
@@ -126,8 +121,8 @@ def test_execution_gate_plateau_smoke(tmp_path):
         str(logs_path),
         "--registry",
         str(registry),
-        "--live-config",
-        str(live_cfg),
+        "--db-path",
+        str(db_path),
         "--sweep-key",
         "vpin",
         "--q-grid",

@@ -562,15 +562,15 @@ mlbot --help
 
 ---
 
-## 实盘（Live：Nautilus + MetaRouterStrategy）
+## 实盘（Live：WebSocket + MetaRouterCore）
 
 > 实盘入口与事件流/回放/对账等细节：见 `docs/live_stream/README.md`。
 
-启动 MetaRouterStrategy（单策略 + 多 archetype 编排）：
+启动实盘交易系统（WebSocket → OrderFlowListener → MetaRouterCore → OrderManager）：
 
 ```bash
 MLBOT_LIVE_SYMBOLS=BTCUSDT \
 MLBOT_LIVE_USE_FUTURES=true \
-MLBOT_LIVE_CONFIG=config/nnmultihead/live/meta_router_live_config.yaml \
+MLBOT_ORDER_MANAGEMENT_DB_PATH=data/order_management.db \
 python scripts/run_live.py
 ```

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -273,8 +274,8 @@ def main() -> int:
         args.feature_store_root,
         "--execution-archetypes",
         "config/nnmultihead/execution_archetypes.yaml",
-        "--live-config",
-        "config/nnmultihead/live/meta_router_live_config.yaml",
+        "--db-path",
+        os.getenv("MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"),
     ] + docker_flag
 
     success = run_command(

@@ -105,6 +105,42 @@ def load_live_feature_plan(
 
     base_features |= add_features
     base_features -= drop_features
+
+    # Always include raw OHLCV (filled by IncrementalFeatureComputer from bar data)
+    base_features |= {"open", "high", "low", "close", "volume"}
+
+    # Merge gate-required columns (same auto-detect as load_live_feature_nodes)
+    # so that _want(gate_column) is True and computed gate columns are kept.
+    try:
+        from src.cli.auto_detect_compute_requirements import (
+            extract_required_features_from_execution_archetypes,
+            map_features_to_tier_nodes,
+            resolve_feature_dependencies,
+        )
+
+        deps_path = Path(feature_deps_path)
+        project_root = (
+            deps_path.resolve().parents[1]
+            if deps_path.is_absolute()
+            else Path(__file__).resolve().parents[3]
+        )
+        gate_features = extract_required_features_from_execution_archetypes(
+            project_root / "config/nnmultihead/execution_archetypes.yaml"
+        )
+        if gate_features:
+            base_features |= gate_features  # gate rule keys (e.g. cvd_change_5) in case filled by IncrementalFeatureComputer
+            deps = _load_yaml(feature_deps_path)
+            if deps:
+                gate_nodes = map_features_to_tier_nodes(gate_features, deps)
+                if gate_nodes:
+                    all_gate_nodes = resolve_feature_dependencies(gate_nodes, deps)
+                    gate_cols = _node_to_output_columns(
+                        nodes=all_gate_nodes, feature_deps=deps
+                    )
+                    base_features |= gate_cols
+    except Exception:
+        pass
+
     return base_features
 
 

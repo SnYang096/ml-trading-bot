@@ -157,7 +157,7 @@ PYTHONPATH=. python3 scripts/apply_archetype_gate.py \
     --out "${OUTPUT_DIR}/logs_execution_gated.parquet" \
     --features-store-layer "${FEATURE_STORE_LAYER}" \
     --features-store-root "${FEATURE_STORE_ROOT}" \
-    --live-config config/nnmultihead/live/meta_router_live_config.yaml \
+    --db-path "${MLBOT_ORDER_MANAGEMENT_DB_PATH:-data/order_management.db}" \
     --evidence-quantiles "${OUTPUT_DIR}/evidence_quantiles.json" \
     --archetype-filter FR \
     --timeframe "${TIMEFRAME}" \

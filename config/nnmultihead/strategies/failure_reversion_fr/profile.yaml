@@ -1,3 +1,0 @@
-version: 1
-strategy_id: failure_reversion_fr
-archetype: FailureReversionFR

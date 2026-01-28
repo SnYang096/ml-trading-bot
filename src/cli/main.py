@@ -2553,11 +2553,11 @@ def rule_extract_evidence_keys(config_path, docker):
 )
 @click.option("--out", "out_path", required=True, help="output gated mode file")
 @click.option(
-    "--live-config",
-    "live_config_path",
-    default="config/nnmultihead/live/meta_router_live_config.yaml",
+    "--db-path",
+    "db_path",
+    default="data/order_management.db",
     show_default=True,
-    help="meta_router_live_config.yaml",
+    help="Order management DB path (live_config stored here)",
 )
 @click.option(
     "--features-store-root",
@@ -2602,7 +2602,7 @@ def rule_extract_evidence_keys(config_path, docker):
 def rule_apply_tree_gate(
     logs_path,
     out_path,
-    live_config_path,
+    db_path,
     features_store_root,
     features_store_layer,
     timeframe,
@@ -2619,8 +2619,8 @@ def rule_apply_tree_gate(
         f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
         "--out",
         f"/workspace/{out_path}" if use_workspace_prefix else out_path,
-        "--live-config",
-        f"/workspace/{live_config_path}" if use_workspace_prefix else live_config_path,
+        "--db-path",
+        f"/workspace/{db_path}" if use_workspace_prefix else db_path,
         "--features-store-root",
         f"/workspace/{features_store_root}" if use_workspace_prefix else features_store_root,
         "--features-store-layer",
@@ -2652,13 +2652,18 @@ def rule_apply_tree_gate(
 @rule.command("diagnose-gate-filtering")
 @click.option("--logs", "logs_path", required=True, help="logs_3action.parquet")
 @click.option("--regime", "regime_path", required=True, help="physics_regime parquet")
-@click.option("--live-config", "live_config_path", required=True, help="meta_router_live_config.yaml")
+@click.option(
+    "--db-path",
+    "db_path",
+    required=True,
+    help="Order management DB path (live_config stored here)",
+)
 @click.option("--output-md", required=True, help="Output Markdown path")
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def rule_diagnose_gate_filtering(
     logs_path,
     regime_path,
-    live_config_path,
+    db_path,
     output_md,
     docker,
 ):
@@ -2669,8 +2674,8 @@ def rule_diagnose_gate_filtering(
         f"/workspace/{logs_path}" if use_workspace_prefix else logs_path,
         "--regime",
         f"/workspace/{regime_path}" if use_workspace_prefix else regime_path,
-        "--live-config",
-        f"/workspace/{live_config_path}" if use_workspace_prefix else live_config_path,
+        "--db-path",
+        f"/workspace/{db_path}" if use_workspace_prefix else db_path,
         "--output-md",
         f"/workspace/{output_md}" if use_workspace_prefix else output_md,
     ]
@@ -2746,9 +2751,9 @@ def experiment():
     default="config/nnmultihead/execution_archetypes.yaml",
 )
 @click.option(
-    "--live-config",
-    "live_config",
-    default="config/nnmultihead/live/meta_router_live_config.yaml",
+    "--db-path",
+    "db_path",
+    default="data/order_management.db",
 )
 @click.option("--evidence-quantiles", "evidence_quantiles", default=None)
 @click.option("--physics-regime", "physics_regime", default=None)
@@ -2767,7 +2772,7 @@ def experiment_regime_gate(
     start_date,
     end_date,
     execution_archetypes,
-    live_config,
+    db_path,
     evidence_quantiles,
     physics_regime,
     semantic_score_floors,
@@ -2789,8 +2794,8 @@ def experiment_regime_gate(
         timeframe,
         "--execution-archetypes",
         execution_archetypes,
-        "--live-config",
-        live_config,
+        "--db-path",
+        db_path,
         "--ret-mean-col",
         ret_mean_col,
         "--ret-trend-col",
@@ -3975,16 +3980,16 @@ def nnmultihead_pipeline_3action_e2e(
             gate_plan.get("execution_archetypes_yaml")
             or "config/nnmultihead/execution_archetypes.yaml"
         )
-        gate_live_cfg = str(
-            gate_plan.get("live_config_yaml")
-            or "config/nnmultihead/live/meta_router_live_config.yaml"
-        )
         gate_args.extend(
             [
                 "--execution-archetypes",
                 f"/workspace/{gate_exec}" if use_workspace_prefix else gate_exec,
-                "--live-config",
-                f"/workspace/{gate_live_cfg}" if use_workspace_prefix else gate_live_cfg,
+                "--db-path",
+                f"/workspace/{env_overrides.get('MLBOT_ORDER_MANAGEMENT_DB_PATH')}"
+                if use_workspace_prefix and env_overrides.get("MLBOT_ORDER_MANAGEMENT_DB_PATH")
+                else env_overrides.get(
+                    "MLBOT_ORDER_MANAGEMENT_DB_PATH", "data/order_management.db"
+                ),
             ]
         )
         eq_path = str(gate_plan.get("evidence_quantiles_json") or "").strip()
@@ -6957,9 +6962,9 @@ def diagnose_evidence_quantiles_plateau(
     help="Execution archetypes registry yaml",
 )
 @click.option(
-    "--live-config",
-    default="config/nnmultihead/live/meta_router_live_config.yaml",
-    help="Live meta router config",
+    "--db-path",
+    default="data/order_management.db",
+    help="Order management DB path (live_config stored here)",
 )
 @click.option("--sweep-key", default="vpin")
 @click.option("--q-grid", default="0.55,0.60,0.65,0.70,0.75,0.80")
@@ -6985,7 +6990,7 @@ def diagnose_execution_gate_plateau(
     mode,
     logs,
     registry,
-    live_config,
+    db_path,
     sweep_key,
     q_grid,
     quantiles,
@@ -7017,8 +7022,8 @@ def diagnose_execution_gate_plateau(
         logs,
         "--registry",
         registry,
-        "--live-config",
-        live_config,
+        "--db-path",
+        db_path,
         "--sweep-key",
         sweep_key,
         "--q-grid",
