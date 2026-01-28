@@ -224,13 +224,14 @@ RUN echo "🔨 Pre-building mamba-ssm wheel (this will take 30-60 minutes)..." &
     --no-cache-dir \
     --timeout=3600 \
     --wheel-dir /wheelhouse \
-    --no-deps \
     --index-url https://pypi.org/simple \
     --trusted-host pypi.org \
     --trusted-host files.pythonhosted.org \
     mamba-ssm>=1.0.0 && \
     ls -lh /wheelhouse/*.whl && \
-    echo "✅ mamba-ssm wheel built successfully with PyTorch ${PYTORCH_VERSION}"
+    echo "✅ mamba-ssm wheel built successfully with PyTorch ${PYTORCH_VERSION}" && \
+    echo "📦 Wheel files in /wheelhouse:" && \
+    ls -lh /wheelhouse/
 
 # =========================================================================
 # Stage 2: Runtime - 运行环境（不包含编译工具）
@@ -555,11 +556,28 @@ RUN echo "📦 Installing data science libraries..." && \
 # 安装深度学习加速库
 # ============================================================================
 # 注意：mamba-ssm 依赖 GPU 驱动，构建时不验证导入，只在运行时验证
+# 关键：使用 --only-binary :all: 强制只使用预编译的 wheel，避免重新编译
 RUN echo "📦 Installing mamba-ssm from pre-built wheel..." && \
-    pip3 install --no-cache-dir --find-links=/wheelhouse mamba-ssm && \
-    pip3 show mamba-ssm && \
-    echo "✅ mamba-ssm installed (GPU verification will be done at runtime)" && \
-    rm -rf /wheelhouse
+    echo "📦 Checking for pre-built wheels..." && \
+    ls -lh /wheelhouse/ 2>/dev/null || echo "⚠️  /wheelhouse directory empty or not found" && \
+    if [ -n "$(ls -A /wheelhouse/mamba_ssm*.whl 2>/dev/null)" ]; then \
+        echo "🔗 Found pre-built wheel(s), installing..." && \
+        pip3 install --no-cache-dir \
+        --no-build-isolation \
+        --only-binary :all: \
+        --find-links=/wheelhouse \
+        --no-index \
+        $(ls /wheelhouse/mamba_ssm*.whl | head -1) && \
+        pip3 show mamba-ssm && \
+        echo "✅ mamba-ssm installed from pre-built wheel"; \
+    else \
+        echo "❌ ERROR: No pre-built mamba-ssm wheel found in /wheelhouse!" && \
+        echo "   This means the builder stage failed to build the wheel." && \
+        echo "   Please check the builder stage logs." && \
+        exit 1; \
+    fi && \
+    rm -rf /wheelhouse && \
+    echo "✅ mamba-ssm installation completed"
 
 # RUN set -e \
 #     && pip3 install --no-cache-dir --timeout=1800 flash-attn>=2.0.0 --no-build-isolation \

@@ -10,7 +10,9 @@ RUN pip3 install --no-cache-dir --default-timeout=300 --retries 5 \
     isort \
     ipython \
     notebook \
-    jupyterlab
+    jupyterlab \
+    ccxt>=4.5.0 \
+    python-socks[asyncio]>=2.8.0
 
 # Common CLI tools to make the devcontainer feel like a full Linux dev box
 RUN apt-get update && \
