@@ -25,6 +25,10 @@ plotly>=5.3.0
 tqdm>=4.62.0
 joblib>=1.1.0
 
+# Exchange/Trading APIs
+ccxt>=4.5.0
+python-socks[asyncio]>=2.8.0
+
 # Optional: Deep Learning (uncomment if needed)
 # torch>=2.0.0
 # mamba-ssm>=1.0.0
