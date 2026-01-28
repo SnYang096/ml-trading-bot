@@ -160,20 +160,20 @@ funding_rate_features_f:
 
 对于外部数据（例如 CoinGecko market cap），我们**不在 YAML 中存密钥**，而是通过环境变量注入：
 
-- `config/data/market_cap.yaml` 中配置：
+- `config/market_cap/market_cap.yaml` 中配置：
   - `api_key_env: COINGECKO_API_KEY`（这里只写“环境变量名”，不写 key 本体）
 
 ### 3.2.1 如何设置 key（推荐方式）
 
 ```bash
 export COINGECKO_API_KEY='...'
-mlbot data update-market-cap --config config/data/market_cap.yaml --no-docker
+mlbot data update-market-cap --config config/market_cap/market_cap.yaml --no-docker
 ```
 
 或只对单条命令生效（更安全）：
 
 ```bash
-COINGECKO_API_KEY='...' mlbot data update-market-cap --config config/data/market_cap.yaml --no-docker
+COINGECKO_API_KEY='...' mlbot data update-market-cap --config config/market_cap/market_cap.yaml --no-docker
 ```
 
 ### 3.2.2 关于 `--docker/--no-docker`

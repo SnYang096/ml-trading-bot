@@ -19,6 +19,20 @@
 - `06_实盘稳定性运行手册.md`
 - `07_与NautilusTrader对齐清单.md`
 
+## 实盘启动（当前主入口）
+
+当前实盘启动脚本已统一为 **WebSocket + OrderFlowListener + MetaRouterCore** 链路，入口在：
+
+- `scripts/run_live.py`
+
+核心说明与完整环境变量见：
+
+- **[README_CN.md](../README_CN.md)**（实盘启动命令与参数）
+
+> 说明：
+> - 若启用 `MLBOT_ORDER_MANAGER_ENABLED=true`，会自动注入 `OrderManager`，用于 SL/TP + 持仓时间 + 追踪止损。
+> - 研究/回测阶段不需要注入 OrderManager（默认不启用）。
+
 ## 目录结构
 
 - `reference/`: 相关的长文档（架构设计、使用指南等），作为细节参考。

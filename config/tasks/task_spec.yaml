@@ -66,7 +66,7 @@ windows:
 enforcement:
   # Optional but recommended: make constitution/kpi-gate injection explicit and reproducible.
   constitution_yaml: "config/constitution/constitution.yaml"
-  kpi_gate_yaml: "config/kpi_gates/router_counterfactual.yaml"
+  kpi_gate_yaml: ""
 
 # Feature plan:
 # - Prefer referencing a nnmultihead-owned plan file, so feature configs live in one place.
@@ -166,12 +166,6 @@ pcm_plan:
       # 真正执行层将把它映射为 per-asset weight cap。
       baseline_max: 0.40
       escalation_max: 0.50
-  withdrawal_policy:
-    # Withdrawal rules are constitution-like but personal (risk-of-ruin control + compounding discipline).
-    # Keep disabled in research runs unless you explicitly want to simulate cash-out behavior.
-    enabled: false
-    config_file: "config/constitution/withdrawal_rules.yaml"
-
 strategy_assets:
   # Strategy Assets Registry (V1.1 schema placeholder; recommended for "system finalization").
   #

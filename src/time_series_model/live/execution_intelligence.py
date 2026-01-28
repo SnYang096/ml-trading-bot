@@ -34,6 +34,7 @@ def build_execution_profile(
     pred_mtt = float(feats.get("pred_t_to_mfe", 0.0))
 
     # dir -> size (only shrink/scale, never flip)
+    confidence = _clip(abs(dir_prob - 0.5) * 2.0, 0.0, 1.0)
     size_mult = _clip((dir_prob - 0.5) * 2.0, 0.0, 1.0)
 
     # mfe/mae -> take profit cap (never exceed structural RR)
@@ -61,6 +62,10 @@ def build_execution_profile(
         "MOMENTUMEXPANSION",
     }
     allow_trailing = str(archetype_name).upper() in trend_archetypes and dir_prob > 0.65
+    trailing_atr = None
+    if allow_trailing:
+        mae_ref = pred_mae if pred_mae > 0 else stop_loss_r
+        trailing_atr = max(0.3, min(float(stop_loss_r), float(mae_ref)) * 0.6)
 
     rr_constraints = {
         "stop_loss_r": float(stop_loss_r),
@@ -68,12 +73,14 @@ def build_execution_profile(
         "max_holding_bars": max_holding_bars,
         "min_holding_bars": min_holding,
         "allow_trailing": allow_trailing,
+        "trailing_atr": trailing_atr,
     }
 
     return {
         "size_multiplier": float(size_mult),
         "rr_constraints": rr_constraints,
         "signals": {
+            "confidence": confidence,
             "pred_dir_prob": dir_prob,
             "pred_mfe_atr": pred_mfe,
             "pred_mae_atr": pred_mae,

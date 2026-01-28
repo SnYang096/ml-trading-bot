@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional, List
@@ -79,12 +80,19 @@ from src.time_series_model.live.archetype_heuristics import (
     evaluate_required_conditions,
 )
 from src.time_series_model.live.direction_resolver import resolve_direction
-from src.time_series_model.live.execution_rules import (
-    apply_execution_rules,
-    load_execution_rules,
-)
 from src.time_series_model.live.tree_gate import apply_gate_rules
 from src.time_series_model.live.execution_intelligence import build_execution_profile
+from src.order_management.models import (
+    OrderSide as OMOrderSide,
+    OrderType as OMOrderType,
+)
+from src.time_series_model.live.execution_profile_apply import (
+    pick_atr,
+    compute_rr_prices,
+    compute_trailing_stop,
+    holding_expired,
+)
+from src.live_data_stream.order_manager_factory import init_order_manager_from_env
 from src.time_series_model.ops.state_snapshot import (
     SystemStateSnapshot,
     write_state_snapshot,
@@ -165,8 +173,6 @@ if NAUTILUS_AVAILABLE:
                 live_paths["live_feature_contract_yaml"]
             )
             self._live_feature_contract = None
-            self._execution_rules_yaml = str(live_paths["execution_rules_yaml"])
-            self._execution_rules = None
             self._mode_hist = deque(maxlen=200)
             self._exec_stage_writers: dict[str, ExecutionStageLogWriter] = {}
             # ET pairing tracking
@@ -178,6 +184,9 @@ if NAUTILUS_AVAILABLE:
             self._active_tc_te_positions: Dict[str, str] = (
                 {}
             )  # position_id -> archetype (TC/TE)
+            # Optional: order_management for SL/TP + trailing + holding enforcement
+            self._order_manager: Optional[Any] = None
+            self._open_positions: Dict[str, Dict[str, Any]] = {}
 
         def on_start(self) -> None:
             self._cfg = load_meta_router_live_config(self.live_config_path)
@@ -189,6 +198,7 @@ if NAUTILUS_AVAILABLE:
             self._xm = ExecutionManager(
                 strategy=self, executor=self._exec, runtime_state=self._st
             )
+            self._order_manager = init_order_manager_from_env()
             self._feature_computer = IncrementalFeatureComputer(bar_window_size=1000)
             log_dir = Path(os.getenv("MLBOT_EXECUTION_LOG_DIR", "results/live_logs"))
             for stage in [
@@ -234,20 +244,6 @@ if NAUTILUS_AVAILABLE:
             except Exception as e:
                 self.log.error(f"⚠️ Live feature contract init failed: {e}")
 
-            # Optional: exported execution rules (tree-distilled / YAML-first), fail-closed.
-            try:
-                if (
-                    self._execution_rules_yaml
-                    and Path(self._execution_rules_yaml).exists()
-                ):
-                    self._execution_rules = load_execution_rules(
-                        self._execution_rules_yaml
-                    )
-                    self.log.info(
-                        f"✅ Execution rules loaded: {self._execution_rules_yaml}"
-                    )
-            except Exception as e:
-                self.log.error(f"⚠️ Execution rules init failed: {e}")
             self.subscribe_bars(self.bar_type, client_id=self._data_client_id)
             # Orderflow must update on trade ticks (not bar)
             self.subscribe_trade_ticks(
@@ -704,6 +700,7 @@ if NAUTILUS_AVAILABLE:
                     window_minutes=orderflow_win
                 )
             )
+            self._enforce_open_positions(feats)
 
             # Precompute observability (before early returns)
             last_tick_ts = self._feature_computer.get_last_tick_ts_ns()
@@ -1102,29 +1099,6 @@ if NAUTILUS_AVAILABLE:
                 self._schedule_next_check()
                 return
 
-            # Optional exported execution rules veto (tree-distilled hook)
-            if self._execution_rules is not None:
-                ok2, reasons2 = apply_execution_rules(
-                    rules=self._execution_rules,
-                    archetype_name=str(arch.name),
-                    features=feats,
-                )
-                if not ok2:
-                    self.log.info(
-                        f"ℹ️ execution_rules_veto: {arch.name} | "
-                        + "; ".join(reasons2[:6])
-                    )
-                    _emit_log(
-                        router_mode=str(regime),
-                        gate_blocked=True,
-                        gate_decisions=["execution_rules_veto"],
-                        gate_reasons={"execution_rules": list(reasons2 or [])},
-                        evidence=evidence,
-                        execution={"intent": True, "submit_order": False},
-                    )
-                    self._schedule_next_check()
-                    return
-
             # Structural direction resolution (per-archetype policy)
             direction_policy = dict(getattr(arch, "direction_policy", None) or {})
             direction = resolve_direction(
@@ -1226,10 +1200,11 @@ if NAUTILUS_AVAILABLE:
             # Set order tags if supported
             if hasattr(order, "tags"):
                 order.tags = order_tags
+            position_id = f"{self.strategy_name}:{int(now_ns)}"
             self._xm.submit_order_guarded(
                 order=order,
                 ctx=GuardedOrderContext(
-                    position_id=f"{self.strategy_name}:{int(now_ns)}",
+                    position_id=position_id,
                     symbol=str(self.instrument_id),
                     archetype=str(arch.regime),
                     execution_strategy=str(arch.name),
@@ -1238,6 +1213,71 @@ if NAUTILUS_AVAILABLE:
                 ),
             )
             self._last_order_time_ns = now_ns
+
+            if self._order_manager is not None:
+                rr_constraints = exec_profile.get("rr_constraints") or {}
+                entry_price = self._resolve_entry_price(feats, bars)
+                atr = pick_atr(feats) or 0.0
+                stop_loss_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
+                take_profit_r = float(rr_constraints.get("take_profit_r", 0.0) or 0.0)
+                allow_trailing = bool(rr_constraints.get("allow_trailing", False))
+                trailing_atr = rr_constraints.get("trailing_atr")
+                max_holding_bars = rr_constraints.get("max_holding_bars")
+
+                stop_loss_price = None
+                take_profit_price = None
+                if (
+                    entry_price is not None
+                    and atr > 0
+                    and stop_loss_r > 0
+                    and take_profit_r > 0
+                ):
+                    stop_loss_price, take_profit_price = compute_rr_prices(
+                        side=str(direction.side),
+                        entry_price=float(entry_price),
+                        atr=float(atr),
+                        stop_loss_r=stop_loss_r,
+                        take_profit_r=take_profit_r,
+                    )
+
+                close_side = (
+                    OMOrderSide.SELL
+                    if str(direction.side) == "BUY"
+                    else OMOrderSide.BUY
+                )
+                if take_profit_price is not None:
+                    self._order_manager.place_order(
+                        symbol=str(self.instrument_id),
+                        side=close_side,
+                        order_type=OMOrderType.TAKE_PROFIT_MARKET,
+                        quantity=float(qty),
+                        stop_price=take_profit_price,
+                        reduce_only=True,
+                        close_position=True,
+                        position_id=position_id,
+                    )
+                if stop_loss_price is not None and not allow_trailing:
+                    self._order_manager.place_order(
+                        symbol=str(self.instrument_id),
+                        side=close_side,
+                        order_type=OMOrderType.STOP_MARKET,
+                        quantity=float(qty),
+                        stop_price=stop_loss_price,
+                        reduce_only=True,
+                        close_position=True,
+                        position_id=position_id,
+                    )
+                self._open_positions[position_id] = {
+                    "side": str(direction.side),
+                    "qty": float(qty),
+                    "entry_price": entry_price,
+                    "entry_time": datetime.now(timezone.utc),
+                    "stop_loss_price": stop_loss_price,
+                    "take_profit_price": take_profit_price,
+                    "allow_trailing": allow_trailing,
+                    "trailing_atr": trailing_atr,
+                    "max_holding_bars": max_holding_bars,
+                }
 
             # ET hedge pairing is disabled under 6-archetype routing.
 
@@ -1322,6 +1362,132 @@ if NAUTILUS_AVAILABLE:
             except Exception:
                 pass
             self._schedule_next_check()
+
+        def _parse_timeframe_minutes(self) -> int:
+            tf = str((self._cfg.nnmultihead_inference or {}).get("timeframe") or "15T")
+            try:
+                if tf.endswith("T"):
+                    return max(1, int(float(tf[:-1])))
+                if tf.endswith("H"):
+                    return max(1, int(float(tf[:-1]) * 60))
+            except Exception:
+                return 15
+            return 15
+
+        def _resolve_entry_price(
+            self, feats: Dict[str, Any], bars: List[Dict[str, Any]]
+        ) -> Optional[float]:
+            for key in ("close", "price", "last_price", "mark_price"):
+                if key in feats and feats.get(key) is not None:
+                    try:
+                        return float(feats.get(key))
+                    except Exception:
+                        pass
+            if bars:
+                try:
+                    return float(bars[-1].get("close"))
+                except Exception:
+                    return None
+            return None
+
+        def _enforce_open_positions(self, feats: Dict[str, Any]) -> None:
+            if not self._open_positions or self._order_manager is None:
+                return
+            now = feats.get("timestamp")
+            if isinstance(now, str):
+                try:
+                    now = datetime.fromisoformat(str(now))
+                except Exception:
+                    now = None
+            if not isinstance(now, datetime):
+                now = datetime.now(timezone.utc)
+            bars = self._feature_computer.get_recent_bars(1)
+            current_price = self._resolve_entry_price(feats, bars)
+            if current_price is None:
+                return
+            atr = pick_atr(feats) or 0.0
+            bar_minutes = self._parse_timeframe_minutes()
+            to_close: List[str] = []
+            for pid, pos in self._open_positions.items():
+                entry_time = pos.get("entry_time")
+                if isinstance(entry_time, str):
+                    try:
+                        entry_time = datetime.fromisoformat(str(entry_time))
+                    except Exception:
+                        entry_time = None
+                if not isinstance(entry_time, datetime):
+                    entry_time = datetime.now(timezone.utc)
+                if holding_expired(
+                    entry_time=entry_time,
+                    now=now,
+                    max_holding_bars=pos.get("max_holding_bars"),
+                    bar_minutes=bar_minutes,
+                ):
+                    self._close_position(
+                        position_id=pid,
+                        side=str(pos.get("side")),
+                        qty=float(pos.get("qty") or 0.0),
+                        reason="max_holding_bars",
+                    )
+                    to_close.append(pid)
+                    continue
+                if pos.get("allow_trailing") and atr > 0:
+                    trail_stop = compute_trailing_stop(
+                        side=str(pos.get("side")),
+                        current_price=float(current_price),
+                        atr=float(atr),
+                        trailing_atr=pos.get("trailing_atr"),
+                    )
+                    if trail_stop is not None:
+                        stop_loss_price = pos.get("stop_loss_price")
+                        if str(pos.get("side")).upper() in {"LONG", "BUY"}:
+                            if stop_loss_price is None or trail_stop > float(
+                                stop_loss_price
+                            ):
+                                pos["stop_loss_price"] = float(trail_stop)
+                            if float(current_price) <= float(pos["stop_loss_price"]):
+                                self._close_position(
+                                    position_id=pid,
+                                    side=str(pos.get("side")),
+                                    qty=float(pos.get("qty") or 0.0),
+                                    reason="trailing_stop",
+                                )
+                                to_close.append(pid)
+                        else:
+                            if stop_loss_price is None or trail_stop < float(
+                                stop_loss_price
+                            ):
+                                pos["stop_loss_price"] = float(trail_stop)
+                            if float(current_price) >= float(pos["stop_loss_price"]):
+                                self._close_position(
+                                    position_id=pid,
+                                    side=str(pos.get("side")),
+                                    qty=float(pos.get("qty") or 0.0),
+                                    reason="trailing_stop",
+                                )
+                                to_close.append(pid)
+            for pid in to_close:
+                self._open_positions.pop(pid, None)
+
+        def _close_position(
+            self, *, position_id: str, side: str, qty: float, reason: str
+        ) -> None:
+            if qty <= 0 or self._order_manager is None:
+                return
+            close_side = (
+                OMOrderSide.SELL
+                if str(side).upper() in {"LONG", "BUY"}
+                else OMOrderSide.BUY
+            )
+            self._order_manager.place_order(
+                symbol=str(self.instrument_id),
+                side=close_side,
+                order_type=OMOrderType.MARKET,
+                quantity=float(qty),
+                reduce_only=True,
+                close_position=True,
+                position_id=position_id,
+            )
 
 else:
 

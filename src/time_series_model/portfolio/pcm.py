@@ -345,20 +345,11 @@ class ConstitutionSlots:
 
 
 @dataclass(frozen=True)
-class ConstitutionEscalation:
-    enabled: bool = True
-    default_enabled: bool = False
-    risk_per_slot_multiplier: float = 1.5
-    trend_budget_multiplier: float = 1.3
-
-
-@dataclass(frozen=True)
 class Constitution:
     version: int = 1
     name: str = "Constitution_v1"
     kill_switch: ConstitutionKillSwitch = ConstitutionKillSwitch()
     slots: ConstitutionSlots = ConstitutionSlots()
-    capital_escalation: ConstitutionEscalation = ConstitutionEscalation()
 
 
 @dataclass(frozen=True)
@@ -379,7 +370,7 @@ class RiskState:
     hard_violation: bool = False
     data_bad: bool = False
 
-    # Optional: drawdown (fraction), used for escalation eligibility in higher versions.
+    # Optional: drawdown (fraction) for external risk logic.
     recent_max_dd: Optional[float] = None
 
 
@@ -403,11 +394,10 @@ class CapitalPolicy:
     A simple, explainable capital policy:
     - allocate a fixed budget per mode (MEAN vs TREND)
     - within each mode, split budget across symbols by soft ranking on score
-    - apply constitution: kill-switch => global_pause; escalation => bounded multipliers
+    - apply constitution: kill-switch => global_pause
     """
 
     base_mode_budgets: Dict[str, float]
-    allow_escalation: bool = False
 
 
 @dataclass(frozen=True)
@@ -478,8 +468,6 @@ def load_constitution(path: str | Path) -> Constitution:
     obj = _load_yaml(path)
     ks = obj.get("kill_switch") or {}
     slots = obj.get("slots") or {}
-    esc = obj.get("capital_escalation") or {}
-    esc_actions = esc.get("allowed_actions") or {}
 
     return Constitution(
         version=int(obj.get("version", 1)),
@@ -495,16 +483,6 @@ def load_constitution(path: str | Path) -> Constitution:
             enabled=bool(slots.get("enabled", True)),
             slot_count=int(slots.get("slot_count", 2)),
             risk_per_slot=float(slots.get("risk_per_slot", 0.015)),
-        ),
-        capital_escalation=ConstitutionEscalation(
-            enabled=bool(esc.get("enabled", True)),
-            default_enabled=bool(esc.get("default_enabled", False)),
-            risk_per_slot_multiplier=float(
-                esc_actions.get("risk_per_slot_multiplier", 1.5)
-            ),
-            trend_budget_multiplier=float(
-                esc_actions.get("trend_budget_multiplier", 1.3)
-            ),
         ),
     )
 
@@ -570,21 +548,7 @@ def allocate_capital(
 
     base = _normalize_mode_budgets(policy.base_mode_budgets)
 
-    # Escalation (v1): if enabled, multiply TREND budget (bounded), then renormalize.
     reasons: List[str] = []
-    if (
-        constitution.capital_escalation.enabled
-        and bool(policy.allow_escalation)
-        and bool(constitution.capital_escalation.default_enabled)
-    ):
-        base_trend = float(base.get("TREND", 0.0)) * float(
-            constitution.capital_escalation.trend_budget_multiplier
-        )
-        base_mean = float(base.get("MEAN", 0.0))
-        s = float(base_trend + base_mean)
-        if s > 0:
-            base = {"NO_TRADE": 0.0, "MEAN": base_mean / s, "TREND": base_trend / s}
-            reasons.append("capital_escalation:trend_budget_multiplier")
 
     # Group decisions by mode, but only if gated.
     per_symbol_budget: Dict[str, float] = {}

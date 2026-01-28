@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import os
 import hashlib
 from dataclasses import dataclass
@@ -13,7 +13,6 @@ from .state import ConstitutionState
 from .runtime_state import (
     AddPositionRecord,
     ConstitutionRuntimeState,
-    EscalationRuntimeState,
     SlotRecord,
 )
 from .state_store import ConstitutionStatePaths, read_json, write_json
@@ -168,12 +167,8 @@ class ConstitutionExecutor:
         obj = self._raw_obj or {}
         slots = obj.get("slots") or {}
         addp = obj.get("add_position") or {}
-        esc = obj.get("capital_escalation") or {}
-        esc_ad = esc.get("auto_degradation") or {}
-
         slots_p = (slots.get("slot_state_tracking") or {}).get("persist_to") or None
         addp_p = (addp.get("state_tracking") or {}).get("persist_to") or None
-        esc_p = ((esc_ad.get("state_persistence") or {}).get("persist_to")) or None
 
         base = Path(self._base_dir).resolve()
         tmp = ConstitutionStatePaths(base_dir=base)
@@ -190,19 +185,16 @@ class ConstitutionExecutor:
 
         slots_path, slots_db_path = _split_persist_target(slots_p)
         addp_path, addp_db_path = _split_persist_target(addp_p)
-        esc_path, esc_db_path = _split_persist_target(esc_p)
         return ConstitutionStatePaths(
             base_dir=base,
             slots_path=slots_path,
             slots_db_path=slots_db_path,
             add_position_path=addp_path,
             add_position_db_path=addp_db_path,
-            escalation_path=esc_path,
-            escalation_db_path=esc_db_path,
         )
 
     # -------------------------------------------------------------------------
-    # Runtime state persistence (V1.1): slots / add-position / escalation
+    # Runtime state persistence (V1.1): slots / add-position
     # -------------------------------------------------------------------------
     def load_runtime_state(self) -> ConstitutionRuntimeState:
         st = ConstitutionRuntimeState()
@@ -278,44 +270,6 @@ class ConstitutionExecutor:
                     ),
                 )
 
-        # Escalation
-        if self._paths.escalation_db_path:
-            storage = Storage(str(self._paths.escalation_db_path))
-            obj = storage.get_escalation_state() or {}
-        elif self._paths.escalation_path:
-            obj = read_json(self._paths.escalation_path)
-        else:
-            obj = {}
-        if isinstance(obj, dict):
-            st.escalation = EscalationRuntimeState(
-                is_escalated=bool(obj.get("is_escalated", False)),
-                escalation_entry_time=(
-                    str(obj.get("escalation_entry_time"))
-                    if obj.get("escalation_entry_time") is not None
-                    else None
-                ),
-                escalation_entry_equity=(
-                    float(obj["escalation_entry_equity"])
-                    if obj.get("escalation_entry_equity") is not None
-                    else None
-                ),
-                locked_until=(
-                    str(obj.get("locked_until"))
-                    if obj.get("locked_until") is not None
-                    else None
-                ),
-                last_exit_reason=(
-                    str(obj.get("last_exit_reason"))
-                    if obj.get("last_exit_reason") is not None
-                    else None
-                ),
-                last_exit_time=(
-                    str(obj.get("last_exit_time"))
-                    if obj.get("last_exit_time") is not None
-                    else None
-                ),
-            )
-
         return st
 
     def save_runtime_state(self, st: ConstitutionRuntimeState) -> None:
@@ -329,11 +283,6 @@ class ConstitutionExecutor:
             storage.upsert_add_position_state(payload=st.add_position.as_dict())
         if self._paths.add_position_path:
             write_json(self._paths.add_position_path, st.add_position.as_dict())
-        if self._paths.escalation_db_path:
-            storage = Storage(str(self._paths.escalation_db_path))
-            storage.upsert_escalation_state(payload=st.escalation.as_dict())
-        if self._paths.escalation_path:
-            write_json(self._paths.escalation_path, st.escalation.as_dict())
 
     def reserve_slot(
         self,
@@ -482,47 +431,6 @@ class ConstitutionExecutor:
             locked_profit=inferred_locked,
             current_r=current_r,
             updated_at=_iso_now(),
-        )
-
-    def is_escalation_locked(
-        self, *, st: ConstitutionRuntimeState, now_iso: Optional[str] = None
-    ) -> bool:
-        now = _parse_iso(now_iso) or datetime.now(timezone.utc)
-        until = _parse_iso(st.escalation.locked_until)
-        return bool(until and now < until)
-
-    def record_escalation_exit(
-        self,
-        *,
-        st: ConstitutionRuntimeState,
-        exit_reason: str,
-        equity_at_exit: Optional[float] = None,
-        exited_at: Optional[str] = None,
-    ) -> None:
-        esc = (self._raw_obj or {}).get("capital_escalation") or {}
-        ad = esc.get("auto_degradation") or {}
-        dur_days = 0
-        for act in ad.get("on_exit") or []:
-            if (
-                isinstance(act, dict)
-                and str(act.get("action")) == "lock_new_escalation"
-            ):
-                dur_days = int(act.get("duration_days", 0))
-                break
-        exited_at = exited_at or _iso_now()
-        t = _parse_iso(exited_at) or datetime.now(timezone.utc)
-        locked_until = (
-            (t + timedelta(days=int(max(0, dur_days))))
-            .replace(microsecond=0)
-            .isoformat()
-        )
-        st.escalation = EscalationRuntimeState(
-            is_escalated=False,
-            escalation_entry_time=st.escalation.escalation_entry_time,
-            escalation_entry_equity=st.escalation.escalation_entry_equity,
-            locked_until=locked_until,
-            last_exit_reason=str(exit_reason),
-            last_exit_time=exited_at,
         )
 
     def validate_drawdown(self, *, state: ConstitutionState) -> None:

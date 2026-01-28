@@ -73,7 +73,7 @@ mlbot data pipeline-universe \
 export COINGECKO_API_KEY='...'
 
 mlbot data update-market-cap \
-  --config config/data/market_cap.yaml \
+  --config config/market_cap/market_cap.yaml \
   --max-age-days 7 \
   --no-docker
 ```
@@ -569,10 +569,8 @@ mlbot --help
 启动 MetaRouterStrategy（单策略 + 多 archetype 编排）：
 
 ```bash
-python -m src.time_series_model.live.run_nautilus_strategy \
-  --strategy-id meta_router \
-  --live-config config/nnmultihead/live/meta_router_live_config.yaml \
-  --symbol BTCUSDT-PERP \
-  --timeframe 15T \
-  --testnet
+MLBOT_LIVE_SYMBOLS=BTCUSDT \
+MLBOT_LIVE_USE_FUTURES=true \
+MLBOT_LIVE_CONFIG=config/nnmultihead/live/meta_router_live_config.yaml \
+python scripts/run_live.py
 ```

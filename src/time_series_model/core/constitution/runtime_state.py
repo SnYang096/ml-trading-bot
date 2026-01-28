@@ -64,36 +64,14 @@ class AddPositionRuntimeState:
 
 
 @dataclass
-class EscalationRuntimeState:
-    is_escalated: bool = False
-    escalation_entry_time: Optional[str] = None
-    escalation_entry_equity: Optional[float] = None
-    locked_until: Optional[str] = None  # ISO timestamp/date
-    last_exit_reason: Optional[str] = None
-    last_exit_time: Optional[str] = None
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {
-            "is_escalated": bool(self.is_escalated),
-            "escalation_entry_time": self.escalation_entry_time,
-            "escalation_entry_equity": self.escalation_entry_equity,
-            "locked_until": self.locked_until,
-            "last_exit_reason": self.last_exit_reason,
-            "last_exit_time": self.last_exit_time,
-        }
-
-
-@dataclass
 class ConstitutionRuntimeState:
     slots: SlotsRuntimeState = field(default_factory=SlotsRuntimeState)
     add_position: AddPositionRuntimeState = field(
         default_factory=AddPositionRuntimeState
     )
-    escalation: EscalationRuntimeState = field(default_factory=EscalationRuntimeState)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
             "slots": self.slots.as_dict(),
             "add_position": self.add_position.as_dict(),
-            "escalation": self.escalation.as_dict(),
         }

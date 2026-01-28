@@ -47,8 +47,6 @@ slots:
     persist_to: "{db_path.as_posix()}"
 add_position:
   enabled: false
-capital_escalation:
-  enabled: false
 """,
         encoding="utf-8",
     )

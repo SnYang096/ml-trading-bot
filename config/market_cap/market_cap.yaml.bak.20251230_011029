@@ -1,0 +1,17 @@
+provider: coingecko
+vs_currency: usd
+data_dir: data/market_cap
+cache_version: v1
+mode: static
+api_key_env: CG-QpVt8Drwnb8pdmdy2fdg9ins
+universe_yaml: config/download/crypto_4h_token_universe_groups.yaml
+universe_set: starter_a
+symbols:
+  BTCUSDT:
+    coingecko_id: bitcoin
+  ETHUSDT:
+    coingecko_id: ethereum
+  SOLUSDT:
+    coingecko_id: solana
+  AAVEUSDT:
+    coingecko_id: aave

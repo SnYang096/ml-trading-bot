@@ -212,7 +212,11 @@ class MetaRouterCore:
             features=feats, rules=arch.evidence_rules, quantiles=quantiles
         )
 
-        confidence = abs(float(feats.get("pred_dir_prob", 0.5)) - 0.5) * 2.0
+        confidence = float(
+            exec_profile.get("signals", {}).get(
+                "confidence", abs(float(feats.get("pred_dir_prob", 0.5)) - 0.5) * 2.0
+            )
+        )
         action = "LONG" if direction.side == "BUY" else "SHORT"
 
         pcm_budget = None

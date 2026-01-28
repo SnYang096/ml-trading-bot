@@ -19,7 +19,7 @@ archetypes:
       fixed_rr:
         stop_loss_r: 1.0
         take_profit_r: 2.5
-        max_holding_bars: 24
+        max_holding_bars: null
     direction_policy:
       direction_source: structure
       structure_direction:
@@ -144,7 +144,7 @@ archetypes:
       fixed_rr:
         stop_loss_r: 0.8
         take_profit_r: 2.0
-        max_holding_bars: 24
+        max_holding_bars: null
     direction_policy:
       direction_source: structure
       structure_direction:
@@ -238,7 +238,7 @@ archetypes:
       fixed_rr:
         stop_loss_r: 1.2
         take_profit_r: 2.0
-        max_holding_bars: 24
+        max_holding_bars: null
     direction_policy:
       direction_source: structure
       structure_direction:

@@ -30,14 +30,6 @@ replacement_policy:
     log_every_replacement: true
     log_path: "{tmp_path.as_posix()}/logs/replacements/"
     required_fields: ["closed_position_id","close_reason","new_position_signal","expected_rr_improvement","timestamp"]
-capital_escalation:
-  enabled: true
-  auto_degradation:
-    on_exit:
-      - action: "lock_new_escalation"
-        duration_days: 30
-    state_persistence:
-      persist_to: "{tmp_path.as_posix()}/state/escalation.json"
 """,
         encoding="utf-8",
     )
@@ -74,21 +66,3 @@ def test_slots_state_roundtrip(tmp_path):
 
     with pytest.raises(ConstitutionViolation):
         ex2.reserve_slot(st=st2, position_id="p3", symbol="SOLUSDT", archetype="TREND")
-
-
-@pytest.mark.unit
-def test_escalation_lockout(tmp_path):
-    cy = _write_constitution(tmp_path)
-    ex = ConstitutionExecutor(constitution_yaml=cy)
-    st = ex.load_runtime_state()
-    assert ex.is_escalation_locked(st=st) is False
-
-    ex.record_escalation_exit(
-        st=st,
-        exit_reason="test",
-        equity_at_exit=1.0,
-        exited_at="2026-01-01T00:00:00+00:00",
-    )
-    # Locked for 30 days per constitution
-    assert ex.is_escalation_locked(st=st, now_iso="2026-01-10T00:00:00+00:00") is True
-    assert ex.is_escalation_locked(st=st, now_iso="2026-02-15T00:00:00+00:00") is False

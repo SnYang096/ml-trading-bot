@@ -54,20 +54,20 @@
 我们使用 **CoinGecko** 的公共 API（无需 key 的模式也能用，但有频率限制）。
 
 配置文件：
-- `config/data/market_cap.yaml`
+- `config/market_cap/market_cap.yaml`
 
 更新命令（会写入 `data/market_cap/<SYMBOL>.parquet`）：
 
 ```bash
 python3 scripts/update_market_cap.py \
-  --config config/data/market_cap.yaml \
+  --config config/market_cap/market_cap.yaml \
   --write-manifest
 ```
 
 说明：
-- 默认会从 `config/data/market_cap.yaml` 读取 `universe_yaml` + `universe_set`，
+- 默认会从 `config/market_cap/market_cap.yaml` 读取 `universe_yaml` + `universe_set`，
   自动把该 universe 的所有 token（如 BTC/ETH/SOL/...）拼成 `BTCUSDT/ETHUSDT/...` 并更新市值数据。
-- 默认会把 **自动 search 解析出的 `coingecko_id` 固定写回**到 `config/data/market_cap.yaml`（并生成备份），避免下次再猜测导致冲突。
+- 默认会把 **自动 search 解析出的 `coingecko_id` 固定写回**到 `config/market_cap/market_cap.yaml`（并生成备份），避免下次再猜测导致冲突。
 - 如果你还没下载某个币种的 OHLC parquet（例如 `SOLUSDT`），即使市值更新好了，多币种训练也会因 OHLC 缺失而失败。
 
 ## 5) 如何验证它是否“真有用”（推荐实验方式）

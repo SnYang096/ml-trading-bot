@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Callable
 from collections import deque
 import pandas as pd
@@ -54,6 +54,12 @@ from src.time_series_model.core.constitution.runtime_state import (
 )
 from src.time_series_model.core.meta_router_core import MetaRouterCore, TradeIntent
 from src.order_management.models import OrderSide, OrderType
+from src.time_series_model.live.execution_profile_apply import (
+    pick_atr,
+    compute_rr_prices,
+    compute_trailing_stop,
+    holding_expired,
+)
 
 
 class OrderFlowListener:
@@ -135,6 +141,7 @@ class OrderFlowListener:
         self.runtime_state = runtime_state
         self.order_manager = order_manager
         self.trade_size = trade_size
+        self._open_positions: Dict[str, Dict[str, Any]] = {}
         
         # 1分钟聚合状态
         self.current_1min_bar: Optional[Dict[str, Any]] = None
@@ -387,6 +394,7 @@ class OrderFlowListener:
             return
         for intent in intents:
             self._execute_intent(intent=intent, features=all_features)
+        self._enforce_open_positions(features=all_features)
 
     def _execute_intent(self, intent: TradeIntent, features: Dict[str, Any]) -> None:
         if intent.action == "NO_TRADE":
@@ -445,6 +453,27 @@ class OrderFlowListener:
             pcm_budget=intent.pcm_budget,
         )
 
+        exec_profile = intent.execution_profile or {}
+        rr_constraints = exec_profile.get("rr_constraints") or {}
+        entry_price = self._resolve_entry_price(features)
+        atr = pick_atr(features) or 0.0
+        stop_loss_r = float(rr_constraints.get("stop_loss_r", 0.0) or 0.0)
+        take_profit_r = float(rr_constraints.get("take_profit_r", 0.0) or 0.0)
+        allow_trailing = bool(rr_constraints.get("allow_trailing", False))
+        trailing_atr = rr_constraints.get("trailing_atr")
+        max_holding_bars = rr_constraints.get("max_holding_bars")
+
+        stop_loss_price = None
+        take_profit_price = None
+        if entry_price is not None and atr > 0 and stop_loss_r > 0 and take_profit_r > 0:
+            stop_loss_price, take_profit_price = compute_rr_prices(
+                side=intent.action,
+                entry_price=float(entry_price),
+                atr=float(atr),
+                stop_loss_r=stop_loss_r,
+                take_profit_r=take_profit_r,
+            )
+
         self.order_manager.place_order(
             symbol=self.symbol,
             side=side,
@@ -452,6 +481,43 @@ class OrderFlowListener:
             quantity=qty,
             position_id=position_id,
         )
+
+        # Place protective orders if configured (skip SL if trailing is enabled).
+        close_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+        if take_profit_price is not None:
+            self.order_manager.place_order(
+                symbol=self.symbol,
+                side=close_side,
+                order_type=OrderType.TAKE_PROFIT_MARKET,
+                quantity=qty,
+                stop_price=take_profit_price,
+                reduce_only=True,
+                close_position=True,
+                position_id=position_id,
+            )
+        if stop_loss_price is not None and not allow_trailing:
+            self.order_manager.place_order(
+                symbol=self.symbol,
+                side=close_side,
+                order_type=OrderType.STOP_MARKET,
+                quantity=qty,
+                stop_price=stop_loss_price,
+                reduce_only=True,
+                close_position=True,
+                position_id=position_id,
+            )
+
+        self._open_positions[position_id] = {
+            "side": str(intent.action),
+            "qty": float(qty),
+            "entry_price": entry_price,
+            "entry_time": datetime.now(timezone.utc),
+            "stop_loss_price": stop_loss_price,
+            "take_profit_price": take_profit_price,
+            "allow_trailing": allow_trailing,
+            "trailing_atr": trailing_atr,
+            "max_holding_bars": max_holding_bars,
+        }
 
         if intent.add_position and intent.parent_position_id:
             self.constitution_executor.record_add_position(
@@ -461,6 +527,117 @@ class OrderFlowListener:
                 locked_profit=intent.locked_profit,
             )
             self.constitution_executor.save_runtime_state(self.runtime_state)
+
+    def _resolve_entry_price(self, features: Dict[str, Any]) -> Optional[float]:
+        for key in ("close", "price", "last_price", "mark_price"):
+            if key in features and features.get(key) is not None:
+                try:
+                    return float(features.get(key))
+                except Exception:
+                    pass
+        if self.current_1min_bar:
+            try:
+                return float(self.current_1min_bar.get("close"))
+            except Exception:
+                pass
+        bars = self.memory_window.get_latest(1) if self.memory_window else []
+        if bars:
+            try:
+                return float(bars[-1].get("close"))
+            except Exception:
+                return None
+        return None
+
+    def _enforce_open_positions(self, features: Dict[str, Any]) -> None:
+        if not self._open_positions:
+            return
+        now = features.get("timestamp")
+        if isinstance(now, str):
+            try:
+                now = datetime.fromisoformat(str(now))
+            except Exception:
+                now = None
+        if not isinstance(now, datetime):
+            now = datetime.now(timezone.utc)
+        current_price = self._resolve_entry_price(features)
+        if current_price is None:
+            return
+        atr = pick_atr(features) or 0.0
+        bar_minutes = int(self.feature_4h_interval_hours * 60)
+        to_close: List[str] = []
+        for pid, pos in self._open_positions.items():
+            entry_time = pos.get("entry_time")
+            if isinstance(entry_time, str):
+                try:
+                    entry_time = datetime.fromisoformat(str(entry_time))
+                except Exception:
+                    entry_time = None
+            if not isinstance(entry_time, datetime):
+                entry_time = datetime.now(timezone.utc)
+            if holding_expired(
+                entry_time=entry_time,
+                now=now,
+                max_holding_bars=pos.get("max_holding_bars"),
+                bar_minutes=bar_minutes,
+            ):
+                self._close_position(
+                    position_id=pid,
+                    side=str(pos.get("side")),
+                    qty=float(pos.get("qty") or 0.0),
+                    reason="max_holding_bars",
+                )
+                to_close.append(pid)
+                continue
+            if pos.get("allow_trailing") and atr > 0:
+                trailing_atr = pos.get("trailing_atr")
+                trail_stop = compute_trailing_stop(
+                    side=str(pos.get("side")),
+                    current_price=float(current_price),
+                    atr=float(atr),
+                    trailing_atr=trailing_atr,
+                )
+                if trail_stop is not None:
+                    stop_loss_price = pos.get("stop_loss_price")
+                    if str(pos.get("side")).upper() in {"LONG", "BUY"}:
+                        if stop_loss_price is None or trail_stop > float(stop_loss_price):
+                            pos["stop_loss_price"] = float(trail_stop)
+                        if float(current_price) <= float(pos["stop_loss_price"]):
+                            self._close_position(
+                                position_id=pid,
+                                side=str(pos.get("side")),
+                                qty=float(pos.get("qty") or 0.0),
+                                reason="trailing_stop",
+                            )
+                            to_close.append(pid)
+                    else:
+                        if stop_loss_price is None or trail_stop < float(stop_loss_price):
+                            pos["stop_loss_price"] = float(trail_stop)
+                        if float(current_price) >= float(pos["stop_loss_price"]):
+                            self._close_position(
+                                position_id=pid,
+                                side=str(pos.get("side")),
+                                qty=float(pos.get("qty") or 0.0),
+                                reason="trailing_stop",
+                            )
+                            to_close.append(pid)
+        for pid in to_close:
+            self._open_positions.pop(pid, None)
+
+    def _close_position(
+        self, *, position_id: str, side: str, qty: float, reason: str
+    ) -> None:
+        if qty <= 0 or self.order_manager is None:
+            return
+        close_side = OrderSide.SELL if str(side).upper() in {"LONG", "BUY"} else OrderSide.BUY
+        self.order_manager.place_order(
+            symbol=self.symbol,
+            side=close_side,
+            order_type=OrderType.MARKET,
+            quantity=float(qty),
+            reduce_only=True,
+            close_position=True,
+            position_id=position_id,
+        )
     
     async def _periodic_tasks(self) -> None:
         """定期任务（特征计算和保存）"""

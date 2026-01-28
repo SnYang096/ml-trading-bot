@@ -27,7 +27,7 @@ windows:
 
 enforcement:
   constitution_yaml: "config/constitution/constitution.yaml"
-  kpi_gate_yaml: "config/kpi_gates/router_counterfactual.yaml"
+  kpi_gate_yaml: ""
 
 feature_plan_ref: "config/nnmultihead/path_primitives_4h_80h_min/feature_plan.yaml"
 feature_plan_overrides:

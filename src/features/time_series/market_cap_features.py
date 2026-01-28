@@ -14,7 +14,7 @@ def _load_market_cap_daily(symbol: str, market_cap_dir: str) -> pd.Series:
     if not path.exists():
         raise FileNotFoundError(
             f"Market-cap parquet not found for symbol '{symbol}': {path}. "
-            f"Run: python3 scripts/update_market_cap.py --config config/data/market_cap.yaml --symbols {symbol}"
+            f"Run: python3 scripts/update_market_cap.py --config config/market_cap/market_cap.yaml --symbols {symbol}"
         )
     df = pd.read_parquet(path)
     # Expect either:

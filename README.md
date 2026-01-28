@@ -567,11 +567,11 @@ These datasets are used for **feature engineering** (e.g., market-cap normalizat
 export COINGECKO_API_KEY='...'
 ```
 
-- **Update the full universe** (by default, symbols are loaded from the universe YAML referenced by `config/data/market_cap.yaml`):
+- **Update the full universe** (by default, symbols are loaded from the universe YAML referenced by `config/market_cap/market_cap.yaml`):
 
 ```bash
 mlbot data update-market-cap \
-  --config config/data/market_cap.yaml \
+  --config config/market_cap/market_cap.yaml \
   --no-docker
 ```
 
@@ -579,7 +579,7 @@ mlbot data update-market-cap \
 
 ```bash
 mlbot data update-market-cap \
-  --config config/data/market_cap.yaml \
+  --config config/market_cap/market_cap.yaml \
   --symbols BTCUSDT,ETHUSDT \
   --no-docker
 ```
@@ -588,7 +588,7 @@ mlbot data update-market-cap \
 
 ```bash
 mlbot data update-market-cap \
-  --config config/data/market_cap.yaml \
+  --config config/market_cap/market_cap.yaml \
   --max-age-days 7 \
   --no-docker
 ```
@@ -597,7 +597,7 @@ mlbot data update-market-cap \
 
 ```bash
 mlbot data update-market-cap \
-  --config config/data/market_cap.yaml \
+  --config config/market_cap/market_cap.yaml \
   --force \
   --no-docker
 ```

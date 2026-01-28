@@ -1002,7 +1002,7 @@ def data_download_funding_rate(
 
 
 @data.command("update-market-cap")
-@click.option("--config", default="config/data/market_cap.yaml", show_default=True)
+@click.option("--config", default="config/market_cap/market_cap.yaml", show_default=True)
 @click.option(
     "--symbols",
     default="",

@@ -491,16 +491,8 @@ def write_kpi_journal(
             "config/kpi_gates/nnmh_primitives_model.yaml",
         )
     ).resolve()
-    router_gate = Path(
-        os.getenv(
-            "MLBOT_KPI_ROUTER_YAML",
-            os.getenv(
-                "MLBOT_KPI_GATE_YAML", "config/kpi_gates/router_counterfactual.yaml"
-            ),
-        )
-    ).resolve()
-    plateau_gate = Path(
-        os.getenv("MLBOT_KPI_PLATEAU_YAML", "config/kpi_gates/nnmh_router_plateau.yaml")
+    safety_gate = Path(
+        os.getenv("MLBOT_KPI_SAFETY_YAML", "config/kpi_gates/nnmh_safety_layer.yaml")
     ).resolve()
     gate_layer_gate = Path(
         os.getenv("MLBOT_KPI_GATE_LAYER_YAML", "config/kpi_gates/nnmh_gate_layer.yaml")
@@ -520,16 +512,16 @@ def write_kpi_journal(
 
     guardrails = [
         {
-            "layer": "Router",
-            "rule": "Plateau-pass is a hard gate; if FAIL, do not proceed to system-level tuning.",
+            "layer": "Execution Intelligence (Primitives)",
+            "rule": "Calibrate confidence/SL/TP/holding-time; do not use Sharpe here.",
         },
         {
-            "layer": "A-layer (Primitives Model)",
-            "rule": "Optimize AUC/IC/calibration/tau only (including trade-subset KPIs); do not chase Sharpe here.",
+            "layer": "Safety",
+            "rule": "Survival first: hard-fail if tail risk / max DD exceeds safety limits.",
         },
         {
             "layer": "System (Gate/Portfolio/Execution)",
-            "rule": "Sharpe/DD/cost/slippage are optimized here after Router + A-layer pass.",
+            "rule": "Sharpe/DD/cost/slippage are optimized here after execution-intelligence pass.",
         },
     ]
 
@@ -582,40 +574,21 @@ def write_kpi_journal(
     )
     html_parts.append("</div>")
 
-    # --- Layer: Primitives model (train metrics.json) ---
-    if stage in {"train", "all"}:
-        # Prefer fixed metrics if present (historical runs might have incorrect aggregate metrics).
-        def _is_train_metrics(p: Path) -> bool:
-            # Exclude non-train metrics (e2e/counterfactual/shadow/plateau)
-            bad_parts = {"e2e", "counterfactual", "shadow", "threshold_plateau"}
-            return not any(part in bad_parts for part in p.parts)
-
-        fixed_paths = [
-            p for p in run_root.glob("**/metrics_fixed.json") if _is_train_metrics(p)
-        ]
-        if fixed_paths:
-            metrics_p = max(fixed_paths, key=lambda p: p.stat().st_mtime)
-        else:
-            metrics_paths = [
-                p for p in run_root.glob("**/metrics.json") if _is_train_metrics(p)
-            ]
-            metrics_p = (
-                max(metrics_paths, key=lambda p: p.stat().st_mtime)
-                if metrics_paths
-                else None
-            )
-        if metrics_p and primitives_gate.exists():
-            metrics = _read_json(metrics_p)
+    # --- Layer: Execution Intelligence (Primitives) ---
+    if stage in {"pipeline", "all"}:
+        cf_p = run_root / "e2e" / "counterfactual" / "metrics.json"
+        if cf_p.exists() and primitives_gate.exists():
+            metrics = _read_json(cf_p)
             gate = _read_yaml(primitives_gate)
             ok, rows = _eval_gate(metrics, gate)
             snap["layers"]["primitives_model"] = {
-                "metrics_json": str(metrics_p),
+                "metrics_json": str(cf_p),
                 "gate_yaml": str(primitives_gate),
                 "ok": bool(ok),
                 "rows": [r.__dict__ for r in rows],
             }
-            md.append("\n### Primitives Model (A-layer)\n")
-            md.append(f"- metrics: `{metrics_p}`\n")
+            md.append("\n### Execution Intelligence (Primitives)\n")
+            md.append(f"- metrics: `{cf_p}`\n")
             md.append(f"- gate: `{primitives_gate}`\n")
             md.append(f"- ok: **{ok}**\n\n")
             md.append("| severity | metric | value | min | max | status |\n")
@@ -628,13 +601,13 @@ def write_kpi_journal(
             html_parts.append("<div class='card span-12'>")
             html_parts.append("<div class='kpi-title'>")
             html_parts.append(
-                "<div><h2>Primitives Model (A-layer)</h2><div class='muted'>Model quality KPIs (no Sharpe here)</div></div>"
+                "<div><h2>Execution Intelligence (Primitives)</h2><div class='muted'>Sizing/SL/TP/holding-time control (no Sharpe here)</div></div>"
             )
             html_parts.append(f"<div>{_ok_badge_html(ok)}</div>")
             html_parts.append("</div>")
             html_parts.append("<div class='row'>")
             html_parts.append(
-                f"<div>metrics: <a class='mono' href='{_html.escape(str(metrics_p))}'>{_html.escape(str(metrics_p))}</a></div>"
+                f"<div>metrics: <a class='mono' href='{_html.escape(str(cf_p))}'>{_html.escape(str(cf_p))}</a></div>"
             )
             html_parts.append(
                 f"<div>gate: <a class='mono' href='{_html.escape(str(primitives_gate))}'>{_html.escape(str(primitives_gate))}</a></div>"
@@ -642,151 +615,32 @@ def write_kpi_journal(
             html_parts.append("</div>")
             html_parts.append("<div class='divider'></div>")
             html_parts.append(_rows_table_html(rows))
-            # Optional: per-symbol KPI table (baseline vs tuned) if user generated it.
-            try:
-                # tuned location: per_symbol_kpi/tuned/... (preferred) or per_symbol_kpi/... (legacy)
-                ps_root = run_root / "per_symbol_kpi"
-                tuned_csv = None
-                baseline_csv = None
-                if (ps_root / "tuned" / "per_symbol_kpi.csv").exists():
-                    tuned_csv = ps_root / "tuned" / "per_symbol_kpi.csv"
-                elif (ps_root / "per_symbol_kpi.csv").exists():
-                    tuned_csv = ps_root / "per_symbol_kpi.csv"
-                if (ps_root / "baseline" / "per_symbol_kpi.csv").exists():
-                    baseline_csv = ps_root / "baseline" / "per_symbol_kpi.csv"
-
-                def _render_ps(csv_path: Path, title: str) -> str:
-                    import pandas as pd  # local import to keep module light
-
-                    dfps = pd.read_csv(csv_path)
-                    # Keep a small, readable subset
-                    cols = [
-                        c
-                        for c in [
-                            "symbol",
-                            "n_all",
-                            "dir_auc_all",
-                            "trade_rate",
-                            "n_trade",
-                            "dir_auc_trade",
-                        ]
-                        if c in dfps.columns
-                    ]
-                    dfps = dfps[cols].copy()
-                    # Sort by all-sample AUC ascending (find worst offender fast)
-                    if "dir_auc_all" in dfps.columns:
-                        dfps = dfps.sort_values("dir_auc_all", ascending=True)
-                    # render table
-                    th = "".join([f"<th>{_html.escape(c)}</th>" for c in cols])
-                    trs = []
-                    for _, r0 in dfps.iterrows():
-                        tds = []
-                        for c in cols:
-                            v = r0.get(c)
-                            if c == "symbol":
-                                tds.append(
-                                    f"<td class='mono'>{_html.escape(str(v))}</td>"
-                                )
-                            elif isinstance(v, float):
-                                tds.append(
-                                    f"<td class='right mono'>{_html.escape(_fmt(float(v)))}</td>"
-                                )
-                            else:
-                                try:
-                                    tds.append(
-                                        f"<td class='right mono'>{_html.escape(str(int(v)))}</td>"
-                                    )
-                                except Exception:
-                                    tds.append(
-                                        f"<td class='right mono'>{_html.escape(str(v))}</td>"
-                                    )
-                        trs.append("<tr>" + "".join(tds) + "</tr>")
-                    return (
-                        f"<h3>{_html.escape(title)}</h3>"
-                        f"<div class='muted'>source: <a class='mono' href='{_html.escape(str(csv_path))}'>{_html.escape(str(csv_path))}</a></div>"
-                        "<div class='divider'></div>"
-                        "<table><thead><tr>"
-                        + th
-                        + "</tr></thead><tbody>"
-                        + "".join(trs)
-                        + "</tbody></table>"
-                    )
-
-                if baseline_csv or tuned_csv:
-                    html_parts.append("<div class='divider'></div>")
-                    html_parts.append(
-                        "<h3>Per-symbol dir_auc (diagnose HighCap6 mixing)</h3>"
-                    )
-                    html_parts.append(
-                        "<div class='muted'>This table is generated by scripts/nnmh_per_symbol_primitives_kpi.py. Use it to find which symbol drags global AUC and how trade subset changes under baseline vs tuned thresholds.</div>"
-                    )
-                    if baseline_csv:
-                        html_parts.append(
-                            _render_ps(
-                                baseline_csv,
-                                "Baseline thresholds (fixed, stable definition)",
-                            )
-                        )
-                    if tuned_csv:
-                        html_parts.append(
-                            _render_ps(
-                                tuned_csv,
-                                "Tuned thresholds (experimental if plateau FAIL)",
-                            )
-                        )
-            except Exception:
-                pass
             html_parts.append("</div></div>")
         else:
             md.append(
-                "\n### Primitives Model (A-layer)\n- (missing metrics.json or gate yaml)\n"
+                "\n### Execution Intelligence (Primitives)\n- (missing e2e/counterfactual/metrics.json or gate yaml)\n"
             )
             html_parts.append(
-                "<div class='card span-12'><h2>Primitives Model (A-layer)</h2><div class='muted'>(missing metrics.json or gate yaml)</div></div>"
+                "<div class='card span-12'><h2>Execution Intelligence (Primitives)</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
             )
 
-    # --- Layer: Router/System (counterfactual metrics.json) ---
+    # --- Layer: Gate (PCM / rules) ---
     if stage in {"pipeline", "all"}:
         cf_p = run_root / "e2e" / "counterfactual" / "metrics.json"
-        sh_p = run_root / "e2e" / "shadow" / "metrics.json"
-        if cf_p.exists() and router_gate.exists():
-            # Build Router KPI dict:
-            # - counterfactual metrics (router_diag__*, entropy, dd...)
-            # - shadow mismatch/stability metrics (acc_vs_rule_mode, switch_rate_pred, mode_entropy_pred...)
-            # - derived router_kpi__mismatch = 1 - acc_vs_rule_mode
-            metrics_cf = _read_json(cf_p)
-            metrics_router: Dict[str, Any] = dict(metrics_cf or {})
-            metrics_shadow = _read_json(sh_p) if sh_p.exists() else {}
-            if isinstance(metrics_shadow, dict):
-                # Preserve raw shadow keys too (for transparency)
-                for k, v in metrics_shadow.items():
-                    metrics_router[f"shadow__{k}"] = v
-                acc = _to_float_or_none(metrics_shadow.get("acc_vs_rule_mode"))
-                if acc is not None:
-                    metrics_router["router_kpi__acc_vs_rule_mode"] = float(acc)
-                    metrics_router["router_kpi__mismatch"] = float(
-                        max(0.0, min(1.0, 1.0 - float(acc)))
-                    )
-                srp = _to_float_or_none(metrics_shadow.get("switch_rate_pred"))
-                if srp is not None:
-                    metrics_router["router_kpi__switch_rate_pred"] = float(srp)
-                mep = _to_float_or_none(metrics_shadow.get("mode_entropy_pred"))
-                if mep is not None:
-                    metrics_router["router_kpi__mode_entropy_pred"] = float(mep)
-            gate = _read_yaml(router_gate)
-            ok, rows = _eval_gate(metrics_router, gate)
-            snap["layers"]["router_counterfactual"] = {
+        # --- Layer: Safety ---
+        if cf_p.exists() and safety_gate.exists():
+            metrics_safety = _read_json(cf_p)
+            gate = _read_yaml(safety_gate)
+            ok, rows = _eval_gate(metrics_safety, gate)
+            snap["layers"]["safety_layer"] = {
                 "metrics_json": str(cf_p),
-                "shadow_metrics_json": str(sh_p) if sh_p.exists() else None,
-                "gate_yaml": str(router_gate),
+                "gate_yaml": str(safety_gate),
                 "ok": bool(ok),
                 "rows": [r.__dict__ for r in rows],
             }
-            md.append("\n### Router / Counterfactual (Router-layer gate)\n")
+            md.append("\n### Safety Layer\n")
             md.append(f"- metrics: `{cf_p}`\n")
-            if sh_p.exists():
-                md.append(f"- shadow: `{sh_p}`\n")
-            md.append(f"- gate: `{router_gate}`\n")
+            md.append(f"- gate: `{safety_gate}`\n")
             md.append(f"- ok: **{ok}**\n\n")
             md.append("| severity | metric | value | min | max | status |\n")
             md.append("|---|---|---:|---:|---:|---|\n")
@@ -798,7 +652,7 @@ def write_kpi_journal(
             html_parts.append("<div class='card span-12'>")
             html_parts.append("<div class='kpi-title'>")
             html_parts.append(
-                "<div><h2>Router (mismatch / stability)</h2><div class='muted'>按文档：mismatch + stability（来自 shadow） + 可交易形态健康（来自 counterfactual）</div></div>"
+                "<div><h2>Safety Layer</h2><div class='muted'>生存优先：最大回撤 / 尾部风险</div></div>"
             )
             html_parts.append(f"<div>{_ok_badge_html(ok)}</div>")
             html_parts.append("</div>")
@@ -806,12 +660,8 @@ def write_kpi_journal(
             html_parts.append(
                 f"<div>metrics: <a class='mono' href='{_html.escape(str(cf_p))}'>{_html.escape(str(cf_p))}</a></div>"
             )
-            if sh_p.exists():
-                html_parts.append(
-                    f"<div>shadow: <a class='mono' href='{_html.escape(str(sh_p))}'>{_html.escape(str(sh_p))}</a></div>"
-                )
             html_parts.append(
-                f"<div>gate: <a class='mono' href='{_html.escape(str(router_gate))}'>{_html.escape(str(router_gate))}</a></div>"
+                f"<div>gate: <a class='mono' href='{_html.escape(str(safety_gate))}'>{_html.escape(str(safety_gate))}</a></div>"
             )
             html_parts.append("</div>")
             html_parts.append("<div class='divider'></div>")
@@ -819,13 +669,12 @@ def write_kpi_journal(
             html_parts.append("</div></div>")
         else:
             md.append(
-                "\n### Router / Counterfactual\n- (missing e2e/counterfactual/metrics.json or gate yaml)\n"
+                "\n### Safety Layer\n- (missing e2e/counterfactual/metrics.json or gate yaml)\n"
             )
             html_parts.append(
-                "<div class='card span-12'><h2>Router / Counterfactual</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
+                "<div class='card span-12'><h2>Safety Layer</h2><div class='muted'>(missing e2e/counterfactual/metrics.json or gate yaml)</div></div>"
             )
 
-        # --- Layer: Gate (PCM / rules) ---
         if cf_p.exists() and gate_layer_gate.exists():
             metrics_gate = _read_json(cf_p)
             gate = _read_yaml(gate_layer_gate)
@@ -970,63 +819,6 @@ def write_kpi_journal(
             )
 
     # --- Layer: Plateau tuning robustness ---
-    if stage in {"threshold_plateau", "all"}:
-        plat_p = run_root / "threshold_plateau" / "summary.json"
-        if plat_p.exists() and plateau_gate.exists():
-            summary = _read_json(plat_p)
-            metrics = _flatten_plateau_summary(summary)
-            gate = _read_yaml(plateau_gate)
-            ok, rows = _eval_gate(metrics, gate)
-            snap["layers"]["threshold_plateau"] = {
-                "summary_json": str(plat_p),
-                "gate_yaml": str(plateau_gate),
-                "ok": bool(ok),
-                "rows": [r.__dict__ for r in rows],
-            }
-            md.append("\n### Threshold Plateau (Router tuning robustness)\n")
-            md.append(f"- summary: `{plat_p}`\n")
-            rep = run_root / "threshold_plateau" / "report.html"
-            if rep.exists():
-                md.append(f"- plateau_report: `{rep}`\n")
-            md.append(f"- gate: `{plateau_gate}`\n")
-            md.append(f"- ok: **{ok}**\n\n")
-            md.append("| severity | metric | value | min | max | status |\n")
-            md.append("|---|---|---:|---:|---:|---|\n")
-            for r in rows:
-                md.append(
-                    f"| {r.severity} | `{r.name}` | {_fmt(r.value)} | {_fmt(r.min)} | {_fmt(r.max)} | **{r.status}** |\n"
-                )
-            html_parts.append("<div class='grid'>")
-            html_parts.append("<div class='card span-12'>")
-            html_parts.append("<div class='kpi-title'>")
-            html_parts.append(
-                "<div><h2>Threshold Plateau</h2><div class='muted'>Stability/controllability of router thresholds</div></div>"
-            )
-            html_parts.append(f"<div>{_ok_badge_html(ok)}</div>")
-            html_parts.append("</div>")
-            html_parts.append("<div class='row'>")
-            html_parts.append(
-                f"<div>summary: <a class='mono' href='{_html.escape(str(plat_p))}'>{_html.escape(str(plat_p))}</a></div>"
-            )
-            if rep.exists():
-                html_parts.append(
-                    f"<div>plot: <a class='mono' href='{_html.escape(str(rep))}'>{_html.escape(str(rep))}</a></div>"
-                )
-            html_parts.append(
-                f"<div>gate: <a class='mono' href='{_html.escape(str(plateau_gate))}'>{_html.escape(str(plateau_gate))}</a></div>"
-            )
-            html_parts.append("</div>")
-            html_parts.append("<div class='divider'></div>")
-            html_parts.append(_rows_table_html(rows))
-            html_parts.append("</div></div>")
-        else:
-            md.append(
-                "\n### Threshold Plateau\n- (missing threshold_plateau/summary.json or gate yaml)\n"
-            )
-            html_parts.append(
-                "<div class='card span-12'><h2>Threshold Plateau</h2><div class='muted'>(missing threshold_plateau/summary.json or gate yaml)</div></div>"
-            )
-
     # Write journal + latest snapshot
     title = f"{stage} @ {snap['created_at']}"
     _append_md_section(journal_path, title, "".join(md))

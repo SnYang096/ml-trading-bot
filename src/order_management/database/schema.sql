@@ -140,19 +140,6 @@ CREATE TABLE IF NOT EXISTS add_position_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 9. Escalation runtime state (single row)
-CREATE TABLE IF NOT EXISTS escalation_state (
-    state_id TEXT PRIMARY KEY,
-    is_escalated INTEGER DEFAULT 0,
-    escalation_entry_time TIMESTAMP,
-    escalation_entry_equity REAL,
-    locked_until TIMESTAMP,
-    last_exit_reason TEXT,
-    last_exit_time TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-
 -- 创建索引以提高查询性能
 CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);

@@ -44,8 +44,6 @@ class ConstitutionStatePaths:
     slots_db_path: Optional[Path] = None
     add_position_path: Optional[Path] = None
     add_position_db_path: Optional[Path] = None
-    escalation_path: Optional[Path] = None
-    escalation_db_path: Optional[Path] = None
 
     def resolve(self, p: Optional[str]) -> Optional[Path]:
         if not p:

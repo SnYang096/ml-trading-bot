@@ -14,6 +14,7 @@ import pandas as pd
 from .order_flow_listener import OrderFlowListener
 from .feature_storage import StorageManager
 from .gap_filler import GapFiller
+from .order_manager_factory import init_order_manager_from_env
 from src.time_series_model.live.incremental_feature_computer import IncrementalFeatureComputer
 
 try:
@@ -39,6 +40,7 @@ class MultiSymbolManager:
         memory_window_hours: float = 4.0,
         feature_compute_interval_minutes: int = 15,
         feature_4h_interval_hours: int = 4,
+        order_manager: Optional[Any] = None,
     ):
         """
         Args:
@@ -49,6 +51,7 @@ class MultiSymbolManager:
             memory_window_hours: 内存滑动窗口时长（小时）
             feature_compute_interval_minutes: 特征计算间隔（分钟）
             feature_4h_interval_hours: 4小时特征保存间隔（小时）
+            order_manager: 订单管理器（可选，默认从环境变量初始化）
         """
         self.symbols = symbols
         self.storage_manager = storage_manager
@@ -56,6 +59,7 @@ class MultiSymbolManager:
         self.memory_window_hours = memory_window_hours
         self.feature_compute_interval_minutes = feature_compute_interval_minutes
         self.feature_4h_interval_hours = feature_4h_interval_hours
+        self.order_manager = order_manager or init_order_manager_from_env()
         
         # 为每个symbol创建独立的OrderFlowListener
         self.listeners: Dict[str, OrderFlowListener] = {}
@@ -79,6 +83,7 @@ class MultiSymbolManager:
                 memory_window_hours=memory_window_hours,
                 feature_compute_interval_minutes=feature_compute_interval_minutes,
                 feature_4h_interval_hours=feature_4h_interval_hours,
+                order_manager=self.order_manager,
             )
             
             self.listeners[symbol] = listener

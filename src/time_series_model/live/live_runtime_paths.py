@@ -55,9 +55,4 @@ def resolve_live_runtime_paths(
                 "config/live/live_feature_contract.yaml",
             ),
         ),
-        "execution_rules_yaml": pick(
-            "MLBOT_EXECUTION_RULES_YAML",
-            "execution_rules_yaml",
-            defaults.get("execution_rules_yaml", ""),
-        ),
     }

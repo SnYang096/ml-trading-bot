@@ -2,7 +2,6 @@ from .runtime_state import (
     AddPositionRecord,
     AddPositionRuntimeState,
     ConstitutionRuntimeState,
-    EscalationRuntimeState,
     SlotRecord,
     SlotsRuntimeState,
 )

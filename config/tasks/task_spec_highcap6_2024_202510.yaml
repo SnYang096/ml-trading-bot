@@ -77,7 +77,7 @@ enforcement:
   # - Execution whitelist: hard allow-list per regime
   # - Used by: ConstitutionExecutor.validate_drawdown(), reserve_slot(), etc.
   # - Purpose: Prevent system from violating survival constraints
-  kpi_gate_yaml: "config/kpi_gates/router_counterfactual.yaml"
+  kpi_gate_yaml: ""
   # KPI Gate: Performance metrics validation (hard-fail CI gate)
   # - hard_fail: Metrics that cause CI to fail (e.g., trade_rate, mode_entropy, mismatch)
   # - warn: Metrics that trigger warnings (e.g., max_dd, switch_rate)
@@ -155,10 +155,6 @@ model_plan:
 #     position_concentration:
 #       baseline_max: 0.40
 #       escalation_max: 0.50
-#   withdrawal_policy:
-#     enabled: false
-#     config_file: "config/constitution/withdrawal_rules.yaml"
-
 # Strategy Assets Registry (placeholder for future implementation, not currently used)
 # strategy_assets:
 #   - asset_id: "BTC_TREND_V1"

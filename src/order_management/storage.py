@@ -61,7 +61,6 @@ class Storage:
                 self._ensure_safety_state_table(conn)
                 self._ensure_slots_state_table(conn)
                 self._ensure_add_position_state_table(conn)
-                self._ensure_escalation_state_table(conn)
             finally:
                 conn.close()
 
@@ -133,28 +132,6 @@ class Storage:
                     add_count INTEGER DEFAULT 0,
                     locked_profit INTEGER DEFAULT 0,
                     current_r REAL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.commit()
-        except sqlite3.Error:
-            # 保持初始化流程稳定
-            pass
-
-    def _ensure_escalation_state_table(self, conn: sqlite3.Connection) -> None:
-        """确保escalation_state表存在"""
-        try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS escalation_state (
-                    state_id TEXT PRIMARY KEY,
-                    is_escalated INTEGER DEFAULT 0,
-                    escalation_entry_time TIMESTAMP,
-                    escalation_entry_equity REAL,
-                    locked_until TIMESTAMP,
-                    last_exit_reason TEXT,
-                    last_exit_time TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -351,66 +328,6 @@ class Storage:
         finally:
             conn.close()
 
-    # ========== Escalation runtime state ==========
-
-    def get_escalation_state(self, *, state_id: str = "global") -> Dict[str, Any]:
-        """读取升级状态，返回与 EscalationRuntimeState.as_dict() 一致结构"""
-        conn = self._get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM escalation_state WHERE state_id = ?",
-                (state_id,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return {}
-            data = dict(row) if isinstance(row, sqlite3.Row) else {}
-            return {
-                "is_escalated": bool(data.get("is_escalated", 0)),
-                "escalation_entry_time": data.get("escalation_entry_time"),
-                "escalation_entry_equity": data.get("escalation_entry_equity"),
-                "locked_until": data.get("locked_until"),
-                "last_exit_reason": data.get("last_exit_reason"),
-                "last_exit_time": data.get("last_exit_time"),
-            }
-        finally:
-            conn.close()
-
-    def upsert_escalation_state(
-        self, *, payload: Dict[str, Any], state_id: str = "global"
-    ) -> None:
-        """写入升级状态，传入 EscalationRuntimeState.as_dict()"""
-        conn = self._get_connection()
-        try:
-            cursor = conn.cursor()
-            row_payload = {
-                "is_escalated": 1 if bool(payload.get("is_escalated", False)) else 0,
-                "escalation_entry_time": payload.get("escalation_entry_time"),
-                "escalation_entry_equity": payload.get("escalation_entry_equity"),
-                "locked_until": payload.get("locked_until"),
-                "last_exit_reason": payload.get("last_exit_reason"),
-                "last_exit_time": payload.get("last_exit_time"),
-            }
-            columns = ["state_id"] + list(row_payload.keys()) + ["updated_at"]
-            values = [state_id] + list(row_payload.values())
-            placeholders = ", ".join(["?"] * len(values) + ["CURRENT_TIMESTAMP"])
-            update_cols = [f"{c} = excluded.{c}" for c in row_payload.keys()]
-            update_cols.append("updated_at = CURRENT_TIMESTAMP")
-            cursor.execute(
-                f"""
-                INSERT INTO escalation_state ({", ".join(columns)})
-                VALUES ({placeholders})
-                ON CONFLICT(state_id) DO UPDATE SET
-                    {", ".join(update_cols)}
-                """,
-                values,
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    
     # ========== Position CRUD ==========
     
     def create_position(self, position: Position) -> bool:

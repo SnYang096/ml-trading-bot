@@ -370,7 +370,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--config",
-        default="config/data/market_cap.yaml",
+        default="config/market_cap/market_cap.yaml",
         help="YAML config defining provider + symbol->coingecko_id mapping",
     )
     # NOTE: symbols are auto-discovered from config (and optional universe_yaml).

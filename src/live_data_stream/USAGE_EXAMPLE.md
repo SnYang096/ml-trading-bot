@@ -60,6 +60,8 @@ listener = OrderFlowListener(
     memory_window_hours=config.memory_window_hours,
     feature_compute_interval_minutes=config.feature_compute_interval_minutes,
     feature_4h_interval_hours=config.feature_4h_interval_hours,
+    # 可选：实盘下单，需配置环境变量后自动注入 OrderManager
+    # order_manager=init_order_manager_from_env(),
 )
 
 # 6. Warmup（加载历史数据）

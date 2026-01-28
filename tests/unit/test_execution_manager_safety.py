@@ -51,8 +51,6 @@ add_position:
   enabled: false
 replacement_policy:
   enabled: false
-capital_escalation:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -146,8 +144,6 @@ slots:
 add_position:
   enabled: false
 replacement_policy:
-  enabled: false
-capital_escalation:
   enabled: false
 """,
         encoding="utf-8",
@@ -243,8 +239,6 @@ slots:
 add_position:
   enabled: false
 replacement_policy:
-  enabled: false
-capital_escalation:
   enabled: false
 """,
         encoding="utf-8",
