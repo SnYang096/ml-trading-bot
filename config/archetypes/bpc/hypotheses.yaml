@@ -1,0 +1,127 @@
+# BPC (BreakoutPullbackContinuation) Archetype 假设定义
+# 7 条可证伪假设，用于审计 BPC 策略
+
+name: bpc
+display_name: "Breakout Pullback Continuation"
+version: "1.0.0"
+
+description: |
+  BPC 策略的核心假设是：在趋势中，回踩后价格会继续原方向运动。
+  以下 7 条假设将这个「信仰」分解为可验证的子假设。
+
+# 7 条可证伪假设
+hypotheses:
+  - id: H1
+    name: "突破前能量积累"
+    falsifiable_statement: "突破前必须有足够的能量积累（压缩或成交量堆积），否则是假突破"
+    evidence_features:
+      - bb_width_normalized_pct  # 布林带宽度
+      - atr_percentile  # ATR 百分位
+      - volume_ratio_pct  # 成交量比率
+    threshold_logic: |
+      IF bb_width_normalized_pct < 0.3 AND volume_ratio_pct < 0.8:
+        能量不足，假设被否定
+    weight: 0.15
+
+  - id: H2
+    name: "HTF 趋势一致"
+    falsifiable_statement: "回踩方向必须与大周期趋势一致，否则是逆势交易"
+    evidence_features:
+      - trend_r2_20  # 趋势强度
+      - path_efficiency_pct  # 路径效率
+      - price_dir_consistency_pct  # 价格方向一致性
+      - sma_200_diff  # 与 200 SMA 的距离
+    threshold_logic: |
+      IF trend_r2_20 < 0.5 OR path_efficiency_pct < 0.4:
+        HTF 趋势不清晰，假设被否定
+    weight: 0.20
+
+  - id: H3
+    name: "回踩幅度受控"
+    falsifiable_statement: "回踩幅度必须在合理范围内（如 0.382~0.618 回撤），否则可能是趋势反转"
+    evidence_features:
+      - pullback_depth_pct  # 回踩深度百分比
+      - fib_level  # 斐波那契水平
+      - dist_to_nearest_sr  # 到最近支撑阻力的距离
+    threshold_logic: |
+      IF pullback_depth_pct > 0.7 OR pullback_depth_pct < 0.1:
+        回踩幅度异常，假设被否定
+    weight: 0.15
+
+  - id: H4
+    name: "控制权未转移"
+    falsifiable_statement: "回踩期间控制权（volume delta / order flow）仍在原方向主导"
+    evidence_features:
+      - vpin_features  # VPIN
+      - ofci_pct  # 订单流不平衡
+      - delta_volume  # 成交量 delta
+    threshold_logic: |
+      IF ofci_pct < -0.3 (做多时) OR ofci_pct > 0.3 (做空时):
+        控制权已转移，假设被否定
+    weight: 0.15
+
+  - id: H5
+    name: "非趋势尾端"
+    falsifiable_statement: "当前位置不能是趋势末端（衰竭信号），否则可能是反转"
+    evidence_features:
+      - rsi  # RSI
+      - macd_histogram  # MACD 柱状图
+      - momentum_divergence  # 动量背离
+    threshold_logic: |
+      IF rsi > 80 (做多时) OR rsi < 20 (做空时):
+        趋势已衰竭，假设被否定
+    weight: 0.10
+
+  - id: H6
+    name: "宏观环境支持"
+    falsifiable_statement: "市场整体环境支持趋势延续（非高波动 / 极端事件）"
+    evidence_features:
+      - market_regime  # 市场状态
+      - volatility_regime  # 波动率状态
+      - correlation_to_btc  # 与 BTC 的相关性
+    threshold_logic: |
+      IF volatility_regime == 'extreme' OR market_regime == 'crisis':
+        宏观环境不支持，假设被否定
+    weight: 0.10
+
+  - id: H7
+    name: "时效性未过期"
+    falsifiable_statement: "从突破到回踩的时间不能过长，否则市场已忘记突破"
+    evidence_features:
+      - bars_since_breakout  # 突破后经过的 bar 数
+      - time_decay_factor  # 时间衰减因子
+    threshold_logic: |
+      IF bars_since_breakout > 50:
+        突破已过期，假设被否定
+    weight: 0.15
+
+# 假设到特征的映射
+hypothesis_feature_mapping:
+  H1:
+    - bb_width_normalized_pct_f
+    - atr_percentile_f
+    - volume_ratio_pct_f
+  H2:
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    - price_dir_consistency_pct_f
+    - sma_200_f
+  H3:
+    - sr_strength_max_f
+    - dist_to_nearest_sr_f
+  H4:
+    - vpin_features_f
+    - ofci_pct_f
+  H5:
+    - rsi_f
+    - macd_f
+  H6:
+    - atr_percentile_f
+  H7:
+    - bar_range_to_atr_f
+
+# 综合评估
+evaluation:
+  min_valid_hypotheses: 5
+  archetype_health_threshold: 0.7
+  scoring_method: weighted_average

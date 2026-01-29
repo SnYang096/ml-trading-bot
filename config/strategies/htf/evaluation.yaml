@@ -1,0 +1,8 @@
+evaluation:
+  metrics:
+    - name: test_mse
+      type: mse
+      params:
+        target_col: rr_label
+  save_details: true
+  results_file: evaluation.json

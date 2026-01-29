@@ -1,0 +1,38 @@
+# FBF (FailedBreakoutFade) 策略元信息
+name: fbf
+display_name: "Failed Breakout Fade"
+version: "1.0.0"
+archetype: FBF
+
+description: |
+  假突破后反手策略。
+  当价格突破关键位但未能延续（假突破）时，反向入场。
+
+market_hypothesis: |
+  假突破往往意味着:
+  1. 止损盘已被清扫
+  2. 没有真正的买/卖盘跟进
+  3. 价格将反向运动
+
+entry_logic: |
+  1. 检测突破：价格突破近期高/低点
+  2. 检测失败：突破后收盘收回
+  3. 反向入场：failed_up → 做空，failed_down → 做多
+
+exit_logic: |
+  基于 ATR 的固定止损止盈：
+  - 止损：1.0 ATR
+  - 止盈：2.0 ATR
+
+label_type: outcome_based
+label_meta:
+  rr_type: path_extreme
+  horizon: 50 bars
+  exit_model: fixed_rr_atr
+  risk_unit: ATR
+
+tags:
+  - mean_reversion
+  - failed_breakout
+  - fade
+  - counter_trend

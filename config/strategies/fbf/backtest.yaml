@@ -1,0 +1,34 @@
+# FBF (FailedBreakoutFade) 策略回测配置
+name: fbf
+
+backtest:
+  initial_capital: 100000
+  position_sizing:
+    method: fixed_risk
+    risk_per_trade: 0.02
+    max_position_size: 0.1
+  
+  entry:
+    entry_price: next_open
+    entry_offset: 1
+  
+  exit:
+    stop_loss_r: 1.0
+    take_profit_r: 2.0
+    max_holding_bars: 50
+    exit_on_opposite_signal: false
+  
+  filters:
+    min_signal_threshold: 0.3
+    require_volume_confirmation: false
+  
+  costs:
+    commission: 0.0004
+    slippage: 0.0001
+
+walk_forward:
+  enabled: true
+  train_window: 5000
+  test_window: 1000
+  step_size: 500
+  min_train_samples: 2000

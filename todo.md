@@ -7,50 +7,9 @@
 7. 规则类的消融方法，在archetypes那边做的
 8. 一个新特征 vp_boundary_stability_score  dist_to_nearest_sr sr_strength_max
 9. 建立6个树模型 
-
-
-1. 你的目标（对齐一下）
-不做：把 execution_archetypes 里现有规则搬到树那边（那些规则你也不确定对不对）。
-要做：按 6 个 archetype 的语义 在树这边设计 6 个新策略；树还是「自己学规则、自己训」，只是策略的 交易逻辑/语义 和 6 个 archetype 一一对应。
-现状：原来 4 个策略（sr_reversal, compression_breakout, sr_breakout, trend_following）既对不上 6 个 archetype，部分 Sharpe 还负，所以你想用这 6 个「语义对齐 archetype」的新策略来替代/补充。
-2. 能复用什么、不能复用什么
-目录结构 —— 可以完全复用
-和现在树策略一样即可：
-config/strategies/<strategy_name>/
-labels.yaml
-model.yaml
-features.yaml
-meta.yaml
-backtest.yaml
-evaluation.yaml
-6 个新策略就是 6 个新目录，例如：bpc、htf、me、fbf、lsr、aer（或你喜欢的命名）。
-模型训练方式 —— 可以完全复用
-继续用同一套：train_strategy_model、LightGBM、task_type（regression / multiclass）、target_col、TS-CV 等。
-每个新策略的 model.yaml 和现有策略同构即可：指定 target_col、task_type、model_params 等，不需要新训练框架。
-Labels —— 部分可复用，部分要新写
-6 个 archetype 的 语义 和现有 4 个策略的 label 对比如下：
-Archetype	语义（交易想法）	和现有 label 的关系
-MomentumExpansion	压缩后波动/区间扩张，放量突破	和 compression_breakout 非常接近（compression → breakout 方向）。可 直接复用 compute_compression_breakout_label，必要时调参数（confirmation_bars、compression_col 等）。
-AuctionExhaustionReversal	趋势末端衰竭（量/波动极值）后反转	和 sr_reversal 都是「反转」，但多了「衰竭」前提。可 在 sr_reversal 思路上加条件：例如只在 atr_percentile / path_efficiency 等满足「衰竭」的 bar 上打 SR 附近的反转标签；或写一个 exhaustion_reversal 的小变体。
-BreakoutPullbackContinuation	趋势中先回踩再延续原方向	现有没有「回踩 + 延续」的标签。需要 新 label：例如用 trend_sign 定方向 + 回踩定义（如 LL in uptrend）+ 后续 N bar 是否延续且达到一定 RR。
-HTFBiasLTFEntry	大周期定方向，小周期定入场	现有没有显式 HTF/LTF 的标签。需要 新 label：例如 HTF 趋势方向 + LTF 入场信号（如 wick rejection、订单流）出现后的 forward return。
-FailedBreakoutFade	假突破（突破后失败）→ 反手 fade	现有没有「假突破 + fade」的标签。需要 新 label：例如识别 failed_breakout（破高/破低后收回去）+ 按 fade 方向算 forward RR。
-LiquiditySweepRejection	流动性扫损（sweep）后价格拒绝并反向	现有没有「sweep + rejection」的标签。需要 新 label：例如 sweep 检测（如 wick 扫前高/前低后收回）+ 反向的 forward return。
-结论：
-可以复用的：
-MomentumExpansion → 复用 compression_breakout 的 label 逻辑（同一套 label 生成函数，可能不同 params）。
-AuctionExhaustionReversal → 复用或小幅扩展 sr_reversal（例如加「衰竭」过滤或新函数 exhaustion_reversal_label）。
-需要新 label 的：
-BreakoutPullbackContinuation、HTFBiasLTFEntry、FailedBreakoutFade、LiquiditySweepRejection 这 4 个，语义在现有 4 个策略里都没有现成对应，要 新写 4 个 label 生成函数（或 2–3 个通用函数 + 不同参数）。
-3. 落地时怎么选：复用 vs 新写
-目录：6 个新策略 = 6 个 config/strategies/<name>/，结构照搬现有。
-训练：6 个都继续用现在的树模型训练方式（同一套 model.yaml / trainer）。
-Labels：
-ME：labels.yaml 里 module/function 指向现有的 compression_breakout label，必要时改 params。
-AER：要么在现有 sr_reversal label 上包一层「仅衰竭区」的过滤，要么新写一个 compute_exhaustion_reversal_label，再在 labels.yaml 里引用。
-BPC / HTF / FBF / LSR：各写一个 compute_xxx_label(df, **params)，在对应策略的 labels.yaml 里引用；这些函数的「语义」按上表对应 archetype 来设计，和 execution_archetypes 里的具体规则无关，只是交易想法一致。
-这样：树这边 还是和现在一样（同样的目录结构、同样的训练方式），只是从「4 个旧策略」变成「6 个按 archetype 语义设计的新策略」；其中 2 个可尽量复用现有 label，4 个需要新 label，但训练流水线和目录都可以不变。
-
+10. 世界怎么对我 label，树模型 =》regime
+11. 我怎么对世界，特征 bpc 还不够
+12. gate灭绝交易，做软化分层
 
 python src/time_series_model/visualization/feature_indicator_visualizer.py \
   --data-path data/parquet_data \
@@ -59,3 +18,255 @@ python src/time_series_model/visualization/feature_indicator_visualizer.py \
   --start-date 2024-01-01 \
   --end-date 2025-12-31 \
   --strategy-config config/strategies/compression_breakout
+
+---
+
+## 🟦 套路 A：策略训练 vs 🟥 套路 B：Archetype 审计
+
+> ❗ **两套代码必须分开，不能混用**
+
+| | 🟦 套路 A：策略训练 | 🟥 套路 B：Archetype 审计 |
+|---|---|---|
+| **目标** | Sharpe / 可交易性 | 发现“我在哪些情况下是错的” |
+| **样本** | 结构预筛选（非回踩 = NaN） | **全样本** |
+| **检测条件** | 作为筛选条件 | 作为 **feature** |
+| **RR 类型** | execution-aware（有止损止盈） | path_extreme（无执行绑定） |
+| **信仰** | 可以有 | **必须无** |
+| **代码文件** | `xxx_label.py` | `xxx_audit_label.py` |
+
+### 文件结构
+
+```
+src/time_series_model/strategies/labels/
+├── me_label.py              # 🟦 策略训练
+├── aer_label.py             # 🟦 策略训练 (exhaustion_reversal_label.py)
+├── bpc_label.py             # 🟦 策略训练
+├── htf_label.py             # 🟦 策略训练
+├── fbf_label.py             # 🟦 策略训练
+├── lsr_label.py             # 🟦 策略训练
+├── bpc_audit_label.py       # 🟥 Archetype 审计
+└── archetype_audit_labels.py # 🟥 通用审计框架（全部 6 个）
+```
+
+---
+
+## 6 个 Archetype 对齐策略创建 TODO
+
+### 背景与目标
+
+**不做**：把 execution_archetypes 里现有规则搬到树那边（那些规则你也不确定对不对）。
+
+**要做**：按 6 个 archetype 的语义在树这边设计 6 个新策略；树还是「自己学规则、自己训」，只是策略的交易逻辑/语义和 6 个 archetype 一一对应。
+
+**现状**：原来 4 个策略（sr_reversal, compression_breakout, sr_breakout, trend_following）既对不上 6 个 archetype，部分 Sharpe 还负，所以用这 6 个「语义对齐 archetype」的新策略来替代/补充。
+
+### 目录结构（完全复用现有）
+
+```
+config/strategies/<strategy_name>/
+├── labels.yaml
+├── model.yaml
+├── features.yaml
+├── meta.yaml
+├── backtest.yaml
+└── evaluation.yaml
+```
+
+6 个新策略 = 6 个新目录：`bpc`、`htf`、`me`、`fbf`、`lsr`、`aer`
+
+### 模型训练方式（完全复用现有）
+
+继续用同一套：`train_strategy_model`、LightGBM、task_type（regression / multiclass）、target_col、TS-CV 等。
+
+### Label 设计方案
+
+| Archetype | 语义（交易想法） | 和现有 label 的关系 |
+|-----------|-----------------|--------------------|
+| **MomentumExpansion** | 压缩后波动/区间扩张，放量突破 | ✅ 新写 `me_label`，检测压缩+扩张突破 |
+| **AuctionExhaustionReversal** | 趋势末端衰竭（量/波动极值）后反转 | ✅ 可在 sr_reversal 基础上加「衰竭」过滤，或新写 `exhaustion_reversal_label` |
+| **BreakoutPullbackContinuation** | 趋势中先回踩再延续原方向 | ❌ 需新写：trend_sign 定方向 + 回踩检测 + forward RR |
+| **HTFBiasLTFEntry** | 大周期定方向，小周期定入场 | ❌ 需新写：HTF 趋势方向 + LTF 入场信号 + forward return |
+| **FailedBreakoutFade** | 假突破（突破后失败）→ 反手 fade | ❌ 需新写：failed_breakout 检测（破高/低后收回）+ fade 方向 RR |
+| **LiquiditySweepRejection** | 流动性扫损（sweep）后价格拒绝并反向 | ❌ 需新写：sweep 检测（wick 扫前高/低后收回）+ 反向 forward return |
+
+**结论**：
+- **全部新写**：ME、AER、BPC、HTF、FBF、LSR（6 个新 label 函数）
+- 每个 archetype 对齐策略都有独立的 label 文件，便于维护和调参
+
+### 策略总览
+
+| 策略 | 全名 | Label 方案 | 优先级 |
+|------|------|------------|--------|
+| ME | MomentumExpansion | **新写** me_label | ⭐⭐⭐ |
+| AER | AuctionExhaustionReversal | 扩展 sr_reversal | ⭐⭐⭐ |
+| BPC | BreakoutPullbackContinuation | **新写** | ⭐⭐⭐⭐⭐ |
+| HTF | HTFBiasLTFEntry | **新写** | ⭐⭐⭐⭐ |
+| FBF | FailedBreakoutFade | **新写** | ⭐⭐⭐⭐ |
+| LSR | LiquiditySweepRejection | **新写** | ⭐⭐⭐ |
+
+### Step 1：可复用策略（ME, AER）
+
+- [x] **S1.1** 创建 ME 策略目录结构 ✅
+  - 位置：`config/strategies/me/`
+  - labels.yaml 指向 `compression_breakout_label.py`
+  - 必要时调整 params
+
+- [x] **S1.2** 创建 AER 策略目录结构 ✅
+  - 位置：`config/strategies/aer/`
+  - 新写 `compute_exhaustion_reversal_label()` 或在 sr_reversal 基础上加衰竭过滤
+  - 位置：`src/time_series_model/strategies/labels/exhaustion_reversal_label.py`
+
+### Step 2：新 Label 策略（BPC, HTF, FBF, LSR）
+
+- [x] **S2.1** BPC - BreakoutPullbackContinuation ✅
+  - 新写 `compute_bpc_label()`
+  - 逻辑：trend_sign 定方向 + 回踩检测 + forward RR
+  - 位置：`src/time_series_model/strategies/labels/bpc_label.py`
+  - 配置：`config/strategies/bpc/`
+
+- [x] **S2.2** HTF - HTFBiasLTFEntry ✅
+  - 新写 `compute_htf_label()`
+  - 逻辑：HTF 趋势方向 + LTF 入场信号 + forward return
+  - 位置：`src/time_series_model/strategies/labels/htf_label.py`
+  - 配置：`config/strategies/htf/`
+
+- [x] **S2.3** FBF - FailedBreakoutFade ✅
+  - 新写 `compute_fbf_label()`
+  - 逻辑：failed_breakout 检测（破高/低后收回）+ fade 方向 RR
+  - 位置：`src/time_series_model/strategies/labels/fbf_label.py`
+  - 配置：`config/strategies/fbf/`
+
+- [x] **S2.4** LSR - LiquiditySweepRejection ✅
+  - 新写 `compute_lsr_label()`
+  - 逻辑：sweep 检测（wick 扫前高/低后收回）+ 反向 forward return
+  - 位置：`src/time_series_model/strategies/labels/lsr_label.py`
+  - 配置：`config/strategies/lsr/`
+
+### Step 3：训练与验证
+
+- [x] **S3.1** 为每个策略创建完整配置 ✅
+  - labels.yaml, model.yaml, features.yaml, meta.yaml, backtest.yaml, evaluation.yaml
+
+- [ ] **S3.2** 训练 6 个策略模型
+  - 使用现有 `mlbot train` 流程
+  - 检查 Sharpe / 命中率
+
+- [ ] **S3.3** 对比 6 个策略与原 4 个策略
+  - 确认语义对齐
+  - 确认性能改进
+
+---
+
+## Outcome-Based Tree Labeling 方案实施 TODO（用于审计上述策略）
+
+> 文档：`docs/strategies/OUTCOME_BASED_TREE_LABELING.md`
+
+### Phase 1：基础设施
+
+- [x] **1.1** 实现 `compute_forward_rr_label()` 函数 ✅
+  - 位置：`src/time_series_model/strategies/labels/outcome_based_label.py`
+  - 支持 direction = 'long' / 'short'
+  - 支持 label_meta 元信息输出
+  - 额外实现：`compute_delta_rr()`, `extract_negative_leaves()`, `validate_rule_stability()`
+
+- [x] **1.2** 创建 outcome_audit 策略配置 ✅
+  - 位置：`config/strategies/outcome_audit/`
+  - 包含：labels.yaml, model.yaml, features.yaml, meta.yaml, evaluation.yaml
+  - 树配置：max_depth=3, min_data_in_leaf=500
+
+### Phase 2：负规则导出
+
+- [x] **2.1** 实现 `extract_negative_rules.py` 脚本 ✅
+  - 位置：`scripts/extract_negative_rules.py`
+  - 条件：mean_rr < -0.3, delta_rr < -0.2, coverage > 2%
+  - 支持从 LightGBM 模型提取树规则
+
+- [x] **2.2** 实现 `validate_rule_stability()` 函数 ✅
+  - 时间切片稳定性检验
+  - 阈值扰动稳定性检验
+  - 输出 veto_level: hard / soft / discard
+
+### Phase 3：BPC Archetype 审计
+
+- [x] **3.1** 创建 BPC 审计配置 ✅
+  - 位置：`config/archetypes/bpc/`
+  - 定义 7 条可证伪假设 (hypotheses.yaml)
+  - 假设 → 特征分组映射
+  - 审计流程配置 (audit.yaml)
+  - Gate 配置 (gate.yaml)
+
+- [ ] **3.2** BPC Long Dataset 审计
+  - 训练 forward_rr_long 浅树
+  - 导出负规则
+  - 映射到假设 1-7
+
+- [ ] **3.3** BPC Short Dataset 审计
+  - 训练 forward_rr_short 浅树
+  - 导出负规则
+  - 映射到假设 1-7
+
+- [ ] **3.4** 生成 BPC 审计报告
+  - 哪些假设被否定
+  - veto_hard / veto_soft 规则列表
+  - archetype_health 评估
+
+### Phase 4：Gate 写回
+
+- [ ] **4.1** 创建 BPC gate 配置
+  - 位置：`config/archetypes/bpc/gate.yaml`
+  - 写入通过稳定性检验的负规则
+  - 标注 hypothesis 来源
+
+- [ ] **4.2** 实现 Gate 执行逻辑
+  - veto_hard → 绝对禁止
+  - veto_soft → 仓位减半
+
+### Phase 5：其他 Archetype 审计（可选）
+
+- [ ] **5.1** ME (MomentumExpansion) 审计
+- [ ] **5.2** AER (AuctionExhaustionReversal) 审计
+- [ ] **5.3** HTF (HTFBiasLTFEntry) 审计
+- [ ] **5.4** FBF (FailedBreakoutFade) 审计
+- [ ] **5.5** LSR (LiquiditySweepRejection) 审计
+
+---
+
+### 验收标准
+
+1. ✅ forward_rr 标签携带完整 label_meta
+2. ✅ 负规则筛选满足 delta_rr < -0.2（对照组差异）
+3. ✅ veto 分级与 gate 语义强绑定
+4. ✅ 每条负规则可追溯到被否定的假设
+5. ✅ 审计报告输出格式标准化
+
+已完成的任务
+1. 6 个 Archetype 对齐策略创建 ✅
+策略	Label 文件	配置目录	状态
+ME	复用 compression_breakout	config/strategies/me/	✅
+AER	exhaustion_reversal_label.py	config/strategies/aer/	✅
+BPC	bpc_label.py	config/strategies/bpc/	✅
+HTF	htf_label.py	config/strategies/htf/	✅
+FBF	fbf_label.py	config/strategies/fbf/	✅
+LSR	lsr_label.py	config/strategies/lsr/	✅
+2. Outcome-Based Tree Labeling 方案 ✅
+Phase 1: 基础设施
+outcome_based_label.py - compute_forward_rr_label(), compute_delta_rr(), validate_rule_stability()
+config/strategies/outcome_audit/ - 5 个配置文件
+Phase 2: 负规则导出
+extract_negative_rules.py - 完整脚本
+Phase 3: BPC Archetype 审计配置
+hypotheses.yaml - 7 条可证伪假设
+audit.yaml - 审计流程
+gate.yaml - Gate 配置
+3. 待执行任务（需要数据）
+TODO 中的以下任务需要实际数据才能执行：
+S3.2 训练 6 个策略模型
+3.2-3.4 BPC 审计执行
+Phase 4 Gate 写回
+Phase 5 其他 Archetype 审计
+
+# 查看 BTCUSDT 2023 年 parquet 文件数量
+ls /home/yin/trading/ml_trading_bot/data/parquet_data/BTCUSDT*2023*.parquet | wc -l
+
+# 应该看到 12 个文件（01-12月）才是完整的
+

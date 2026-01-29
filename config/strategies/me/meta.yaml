@@ -1,0 +1,14 @@
+# ME (MomentumExpansion) 策略元信息
+
+strategy:
+  name: me
+  description: |
+    MomentumExpansion archetype: 压缩后波动/区间扩张，放量突破。
+    当市场经历低波动压缩期后，识别动量扩张突破机会。
+  tags:
+    - momentum
+    - expansion
+    - breakout
+    - compression
+  owner: quant_team
+  archetype: MomentumExpansion

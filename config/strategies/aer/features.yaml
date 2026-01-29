@@ -1,0 +1,40 @@
+# AER (AuctionExhaustionReversal) 策略特征配置
+# 语义：趋势末端衰竭（量/波动极值）后反转
+
+name: aer
+description: |
+  AuctionExhaustionReversal archetype: 趋势末端衰竭后反转。
+  核心特征：ATR 极值 + 路径效率下降 + SR 附近。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # ----- AER 核心特征：衰竭检测 -----
+    - atr_percentile_f
+    - path_efficiency_pct_f
+    - path_length_pct_f
+    - price_dir_consistency_pct_f
+    # ----- SR 相关 -----
+    - sr_strength_max_f
+    - dist_to_nearest_sr_f
+    # ----- 订单流 / Volume -----
+    - vpin_features_f
+    - volume_ratio_pct_f
+    - ofci_pct_f
+    - shd_pct_f
+    # ----- 趋势 / 动量 -----
+    - macd_f
+    - rsi_f
+    - trend_r2_20_f
+    # ----- 基础 -----
+    - atr_f
+    - sma_200_f
+    - bb_width_normalized_pct_f
+    # ----- 高级特征 -----
+    - hurst_price_f
+    - hilbert_phase_f
+    - footprint_basic_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0

@@ -1,0 +1,14 @@
+# BPC (BreakoutPullbackContinuation) 策略元信息
+
+strategy:
+  name: bpc
+  description: |
+    BreakoutPullbackContinuation archetype: 趋势中回踩后延续。
+    在已确认的趋势中，识别健康的回踩并在回踩位置顺势入场。
+  tags:
+    - pullback
+    - continuation
+    - trend
+    - breakout
+  owner: quant_team
+  archetype: BreakoutPullbackContinuation

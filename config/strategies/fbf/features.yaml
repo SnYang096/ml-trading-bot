@@ -1,0 +1,37 @@
+# FBF (FailedBreakoutFade) 策略特征配置
+name: fbf
+description: |
+  FailedBreakoutFade archetype: 假突破后反手 fade。
+  核心：突破失败检测 + 反向入场。
+
+feature_pipeline:
+  exclude_columns:
+    - atr
+  requested_features:
+    # ----- 突破检测 -----
+    - sr_strength_max_f
+    - dist_to_nearest_sr_f
+    - sr_zone_position_f
+    # ----- 假突破特征 -----
+    - shd_pct_f  # 影线深度，rejection 信号
+    - bar_range_to_atr_f
+    - wick_ratio_f
+    # ----- 波动 -----
+    - atr_percentile_f
+    - bb_width_normalized_pct_f
+    - atr_f
+    # ----- 成交量 -----
+    - volume_ratio_pct_f
+    - vpin_features_f
+    - ofci_pct_f
+    # ----- 动量 -----
+    - macd_f
+    - rsi_f
+    # ----- 趋势 -----
+    - trend_r2_20_f
+    - path_efficiency_pct_f
+    # ----- 高级 -----
+    - hurst_price_f
+  ensure_signal_column:
+    name: signal
+    default_value: 0
