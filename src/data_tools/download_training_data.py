@@ -23,20 +23,22 @@ import argparse
 
 
 class BinanceMultiSymbolDownloader:
-    """Binance多币种历史数据下载器"""
+    """Binance多币种历史数据下载器
+
+    简化设计：
+    - data_dir (agg_data/) 存放下载的 ZIP（永久保留）
+    - parquet_dir (parquet_data/) 存放转换后的 Parquet
+    - 检查顺序：parquet -> zip，已存在则跳过下载
+    """
 
     def __init__(
         self,
-        data_dir: str = "data/raw",
+        data_dir: str = "data/agg_data",
         parquet_dir: Optional[str] = None,
-        backup_dir: Optional[str] = None,
     ):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.parquet_dir = Path(parquet_dir) if parquet_dir else None
-        self.backup_dir = Path(backup_dir) if backup_dir else None
-        if self.backup_dir:
-            self.backup_dir.mkdir(parents=True, exist_ok=True)
 
         # Binance数据基础URL
         self.base_url = "https://data.binance.vision/data/futures/um/monthly/aggTrades"
@@ -155,16 +157,12 @@ class BinanceMultiSymbolDownloader:
         return normalized
 
     def check_local_file(self, symbol: str, year: int, month: int) -> Optional[str]:
-        """检查本地是否已具备该月份数据：优先检查 Parquet；其次检查 data_dir ZIP；
-        再检查 backup_dir ZIP（若存在则复制回来）
+        """检查本地是否已具备该月份数据：优先检查 Parquet；其次检查 ZIP
 
         Returns:
-            Optional[str]: "parquet" if parquet file already exists,
-            "zip" if a valid zip exists,
-            "zip-from-backup" if copied from backup,
-            or None if data is missing.
+            "parquet" if parquet exists, "zip" if zip exists, None if missing
         """
-        # 1) 如果提供了Parquet目录，先检查是否已有对应月份的Parquet
+        # 1) 检查 Parquet
         if self.parquet_dir:
             parquet_symbol = self._parquet_symbol(symbol)
             parquet_name = f"{parquet_symbol}_{year}-{month:02d}.parquet"
@@ -173,23 +171,11 @@ class BinanceMultiSymbolDownloader:
                 print(f"✅ Parquet 已存在: {parquet_name}")
                 return "parquet"
 
-        # 2) 回退检查ZIP是否已完整下载
+        # 2) 检查 ZIP
         filename = f"{symbol}-aggTrades-{year}-{month:02d}.zip"
         file_path = self.data_dir / filename
 
         if not file_path.exists():
-            # 3) 如果 data_dir 没有，尝试 backup_dir
-            if self.backup_dir:
-                backup_path = self.backup_dir / filename
-                if backup_path.exists():
-                    backup_size = backup_path.stat().st_size
-                    if backup_size >= 1 * 1024 * 1024:
-                        # 复制回 data_dir，避免重复下载
-                        file_path.parent.mkdir(parents=True, exist_ok=True)
-                        backup_data = backup_path.read_bytes()
-                        file_path.write_bytes(backup_data)
-                        print(f"✅ 从 backup 复制已存在 ZIP: {backup_path.name}")
-                        return "zip-from-backup"
             return None
 
         # 检查文件大小（至少应该有1MB，避免下载不完整的文件）
@@ -199,6 +185,7 @@ class BinanceMultiSymbolDownloader:
             file_path.unlink()  # 删除不完整的文件
             return None
 
+        print(f"✅ ZIP 已存在: {filename}")
         return "zip"
 
     def download_file(
@@ -514,11 +501,6 @@ def main():
         "--parquet-dir", default=None, help="Parquet目录 (提供后将跳过已存在月份)"
     )
     parser.add_argument(
-        "--backup-dir",
-        default=None,
-        help="备份目录（若 data-dir 不存在该月 ZIP，则尝试从此目录复制，避免重复下载）",
-    )
-    parser.add_argument(
         "--symbols", nargs="+", help="指定要下载的币种（支持 BTC、BTCUSDT 等别名）"
     )
     parser.add_argument(
@@ -541,9 +523,7 @@ def main():
     args = parser.parse_args()
 
     # 创建下载器
-    downloader = BinanceMultiSymbolDownloader(
-        args.data_dir, args.parquet_dir, backup_dir=args.backup_dir
-    )
+    downloader = BinanceMultiSymbolDownloader(args.data_dir, args.parquet_dir)
 
     if args.summary:
         # 只显示摘要

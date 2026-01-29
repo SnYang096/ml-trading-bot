@@ -1,21 +1,34 @@
 name: compression_breakout
 description: 'Compression breakout strategy combining compression strength, trigger,
   and direction confirmation signals across WPT/VPVR/Spectrum domains.
-
+  Aligned with MomentumExpansion archetype: compression → expansion (atr/range/volume).
   '
 feature_pipeline:
   exclude_columns:
   - atr
   requested_features:
+  # ----- MomentumExpansion archetype features (execution_archetypes.yaml) -----
+  # Safety: reflexivity
+  - shd_pct_f
+  - ofci_pct_f
+  # Exclusions / preconditions: jump_risk, atr_percentile, bb_width
+  - jump_risk_pct_f
+  - atr_percentile_f
+  - bb_width_normalized_pct_f
+  # Evidence: vpin, volume_ratio_pct
+  - volume_ratio_pct_f
+  - vpin_features_f
+  # Structure / path (ME preconditions-adjacent)
+  - path_efficiency_pct_f
+  - path_length_pct_f
+  - price_dir_consistency_pct_f
+  # ----- Original compression / WPT / spectrum -----
   - macd_f
   - rsi_f
   - sma_200_f
   - atr_f
-  - atr_percentile_f
   - trend_r2_20_f
-  # SR 结构特征
   - sr_strength_max_f
-  # Volume Profile 特征（包含 vp_boundary_stability_score）
   - volume_profile_volatility_features_f
   - wpt_price_reconstructed_f
   - wpt_price_fluctuation_f
@@ -26,7 +39,6 @@ feature_pipeline:
   - hilbert_phase_f
   - hurst_price_f
   - hurst_cvd_f
-  - vpin_features_f
   - footprint_basic_f
   - liquidity_void_x_wpt_risk_f
   - compression_energy_x_ofi_short_f

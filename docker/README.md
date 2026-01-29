@@ -17,6 +17,10 @@
 ./docker/build-gpu.sh --live -n quant-engine-live -t v0.0.9 --no-proxy
 # 若拉取 ubuntu:22.04 出现 TLS handshake timeout，请去掉 --no-proxy 并设置代理后再构建，或先配置 Docker 守护进程的代理/镜像站
 
+HTTP_PROXY=http://127.0.0.1:7897 \
+HTTPS_PROXY=http://127.0.0.1:7897 \
+NO_PROXY=localhost,127.0.0.1 \
+./docker/build-gpu.sh --live -n quant-engine-live -t v0.0.9
 # 使用代理构建
 # 注意：脚本会自动修复代理地址（127.0.0.1 -> Docker 网桥 IP，以便容器访问宿主机代理）
 HTTP_PROXY=http://127.0.0.1:7897 \

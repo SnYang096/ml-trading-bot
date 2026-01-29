@@ -818,24 +818,20 @@ def _data_download_impl(
 
 def _data_convert_impl(
     *,
-    cleanup: bool,
     input_dir: Optional[str],
     output_dir: Optional[str],
-    backup_dir: Optional[str],
     pattern: Optional[str],
     force: bool,
     aggregate_freq: Optional[str],
     docker: bool,
 ) -> int:
-    args = ["--cleanup", "yes" if cleanup else "no"]
+    args = []
     if pattern:
         args.extend(["--pattern", str(pattern)])
     if input_dir:
         args.extend(["--input-dir", input_dir])
     if output_dir:
         args.extend(["--output-dir", output_dir])
-    if backup_dir:
-        args.extend(["--backup-dir", backup_dir])
     if force:
         args.append("--force")
     if aggregate_freq:
@@ -1049,9 +1045,6 @@ def data_update_market_cap(
 
 @data.command("convert")
 @click.option(
-    "--cleanup/--no-cleanup", default=True, help="Clean up ZIP files after conversion"
-)
-@click.option(
     "--pattern",
     default=None,
     help="Optional ZIP glob pattern to convert a subset (example: BNBUSDT-aggTrades-2024-*.zip).",
@@ -1064,30 +1057,23 @@ def data_update_market_cap(
     default=None,
     help="Parquet output directory (default: data/parquet_data)",
 )
-@click.option(
-    "--backup-dir",
-    default=None,
-    help="Optional backup directory for ZIPs (default: disabled; avoid disk blowups).",
-)
 @click.option("--force/--no-force", default=False, show_default=True)
 @click.option(
     "--aggregate-freq",
-    default="1s",
-    help="Aggregation frequency for tick data (default: 1s). "
+    default="1min",
+    help="Aggregation frequency for tick data (default: 1min). "
     "Examples: '1s' (1 second), '1T' (1 minute), '5T' (5 minutes). "
     "Uses pandas resample frequency strings.",
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_convert(
-    cleanup, pattern, input_dir, output_dir, backup_dir, force, aggregate_freq, docker
+    pattern, input_dir, output_dir, force, aggregate_freq, docker
 ):
-    """Convert downloaded ZIPs to Parquet format."""
+    """Convert downloaded ZIPs to Parquet format (preserves source ZIPs)."""
     code = _data_convert_impl(
-        cleanup=cleanup,
         pattern=pattern,
         input_dir=input_dir,
         output_dir=output_dir,
-        backup_dir=backup_dir,
         force=force,
         aggregate_freq=aggregate_freq,
         docker=docker,
@@ -1159,11 +1145,9 @@ def data_pipeline(ctx, symbols, docker):
     if code != 0:
         sys.exit(code)
     code = _data_convert_impl(
-        cleanup=True,
         pattern=None,
         input_dir=None,
         output_dir=None,
-        backup_dir=None,
         force=False,
         aggregate_freq=None,
         docker=docker,
@@ -1185,7 +1169,6 @@ def data_pipeline(ctx, symbols, docker):
 @click.option("--end-month", default=None)
 @click.option("--data-dir", default="data/agg_data")
 @click.option("--parquet-dir", default="data/parquet_data")
-@click.option("--cleanup/--no-cleanup", default=True)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_pipeline_universe(
     universe_config,
@@ -1197,7 +1180,6 @@ def data_pipeline_universe(
     end_month,
     data_dir,
     parquet_dir,
-    cleanup,
     docker,
 ):
     """Download+convert using universe config (non-interactive)."""
@@ -1217,11 +1199,9 @@ def data_pipeline_universe(
     if code != 0:
         sys.exit(code)
     code = _data_convert_impl(
-        cleanup=cleanup,
         pattern=None,
         input_dir=data_dir,
         output_dir=parquet_dir,
-        backup_dir=None,
         force=False,
         aggregate_freq=None,
         docker=docker,
@@ -1348,7 +1328,7 @@ def train_export_rules_to_readme(
     random_state,
     docker,
 ):
-    """Export tree model rules to strategy README.md."""
+    """Export tree model rules to strategy README.md (using imodels or existing rules.md)."""
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--strategy-config",
@@ -1395,6 +1375,75 @@ def train_export_rules_to_readme(
         )
     sys.exit(
         run_script("scripts/export_strategy_rules_to_readme.py", args, docker=docker)
+    )
+
+
+@train.command("export-rules")
+@click.option(
+    "--model-dir",
+    required=True,
+    help="Directory containing model.pkl (e.g., results/fixed_long/<strategy>/<strategy>)",
+)
+@click.option(
+    "--strategy",
+    required=True,
+    help="Strategy name (e.g., sr_reversal_rr_reg_long)",
+)
+@click.option(
+    "--max-splits",
+    type=int,
+    default=30,
+    help="Maximum number of split conditions to export",
+)
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
+def train_export_rules(
+    model_dir,
+    strategy,
+    max_splits,
+    docker,
+):
+    """Export LightGBM tree rules from model.pkl to strategy README.md."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--model-dir",
+        f"/workspace/{model_dir}" if use_workspace_prefix else model_dir,
+        "--strategy",
+        strategy,
+        "--max-splits",
+        str(max_splits),
+    ]
+    sys.exit(
+        run_script("scripts/export_lightgbm_rules_to_readme.py", args, docker=docker)
+    )
+
+
+@train.command("export-monthly")
+@click.option(
+    "--results-dir",
+    required=True,
+    help="Base directory containing strategy results (e.g., results/fixed_long or results/fixed_short)",
+)
+@click.option(
+    "--strategy",
+    required=True,
+    help="Strategy name (e.g., sr_reversal_rr_reg_long)",
+)
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
+def train_export_monthly(
+    results_dir,
+    strategy,
+    docker,
+):
+    """Export monthly OOS results to strategy README.md."""
+    use_workspace_prefix = docker and not _is_in_docker()
+    args = [
+        "--results-dir",
+        f"/workspace/{results_dir}" if use_workspace_prefix else results_dir,
+        "--strategy",
+        strategy,
+    ]
+    sys.exit(
+        run_script("scripts/export_monthly_results_to_readme.py", args, docker=docker)
     )
 
 
@@ -6149,6 +6198,16 @@ def train_rolling(
 @click.option("--start-date", required=True, help="Train start date (YYYY-MM-DD)")
 @click.option("--end-date", required=True, help="Train end date (YYYY-MM-DD)")
 @click.option(
+    "--holdout-start-date",
+    default=None,
+    help="OOS holdout start (YYYY-MM-DD). If set with --holdout-end-date, train on [start, holdout_start) and test on [holdout_start, holdout_end].",
+)
+@click.option(
+    "--holdout-end-date",
+    default=None,
+    help="OOS holdout end (YYYY-MM-DD). Requires --holdout-start-date.",
+)
+@click.option(
     "--seed", default="42", show_default=True, help="Seed for reproducibility"
 )
 @click.option(
@@ -6172,6 +6231,8 @@ def train_final(
     config,
     start_date,
     end_date,
+    holdout_start_date,
+    holdout_end_date,
     seed,
     output_root,
     data_path,
@@ -6180,7 +6241,7 @@ def train_final(
     deterministic,
     docker,
 ):
-    """Train a final (deployable) model on the full training window and save a ModelArtifact."""
+    """Train a final model and save ModelArtifact. With --holdout-*: train/test split by date (no overlap); without: train on full window (--train-all)."""
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--config",
@@ -6199,8 +6260,18 @@ def train_final(
         str(start_date),
         "--end-date",
         str(end_date),
-        "--train-all",
     ]
+    if holdout_start_date and holdout_end_date:
+        args.extend(
+            [
+                "--holdout-start-date",
+                str(holdout_start_date),
+                "--holdout-end-date",
+                str(holdout_end_date),
+            ]
+        )
+    else:
+        args.append("--train-all")
     args.extend(
         [
             "--feature-store-dir",
@@ -9220,6 +9291,39 @@ def backtest_vectorbot(model, symbol, start, end, docker):
     default="vectorized",
     help="Backtest mode (vectorized is faster, event-driven is more realistic)",
 )
+def backtest_strategy(
+    strategy,
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    model_path,
+    data_path,
+    output_dir,
+    mode,
+):
+    """Run strategy backtest with trained model (train+backtest via pipeline)."""
+    use_workspace_prefix = False  # CLI typically run with --no-docker
+    args = [
+        "--config",
+        f"/workspace/config/strategies/{strategy}" if use_workspace_prefix else f"config/strategies/{strategy}",
+        "--symbol",
+        symbol,
+        "--data-path",
+        data_path or "data/parquet_data",
+        "--timeframe",
+        timeframe,
+        "--start-date",
+        start_date,
+        "--end-date",
+        end_date,
+        "--output-root",
+        output_dir,
+    ]
+    # pipeline 暂无 --model-path；仅用日期范围做 train+backtest
+    sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=False))
+
+
 @backtest.command("visualize")
 @click.option(
     "--strategy",
@@ -10535,9 +10639,40 @@ def visualize():
     default="results/feature_indicators",
     help="Output directory",
 )
+@click.option(
+    "--strategy-config",
+    default=None,
+    help="Strategy config dir (e.g. config/strategies/compression_breakout). When set, run feature pipeline so Hurst/Hilbert/WPT/Spectral etc. appear in the report.",
+)
+@click.option(
+    "--feature-store-dir",
+    default="feature_store",
+    help="FeatureStore root when using --strategy-config",
+)
+@click.option(
+    "--use-cache/--no-cache",
+    default=False,
+    help="Use FeatureStore cache (default: compute fresh)",
+)
+@click.option(
+    "--force-rebuild",
+    is_flag=True,
+    default=False,
+    help="Force rebuild FeatureStore cache (requires --use-cache)",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def visualize_feature_indicators(
-    symbol, timeframe, start_date, end_date, config, output_dir, docker
+    symbol,
+    timeframe,
+    start_date,
+    end_date,
+    config,
+    output_dir,
+    strategy_config,
+    feature_store_dir,
+    use_cache,
+    force_rebuild,
+    docker,
 ):
     """Generate feature indicators visualization."""
     args = [
@@ -10556,6 +10691,13 @@ def visualize_feature_indicators(
         args.extend(["--start-date", start_date])
     if end_date:
         args.extend(["--end-date", end_date])
+    if strategy_config:
+        args.extend(["--strategy-config", strategy_config])
+        args.extend(["--feature-store-dir", feature_store_dir])
+        if use_cache:
+            args.append("--use-cache")
+        if force_rebuild:
+            args.append("--force-rebuild")
 
     sys.exit(
         run_script(

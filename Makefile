@@ -259,7 +259,6 @@ docker-install:
 
 # Download configuration
 AGG_DATA_DIR ?= data/agg_data
-BACKUP_AGG_DATA_DIR ?= data/backup_zip
 DOWNLOAD_SYMBOLS ?= $(SYMBOLS)
 comma := ,
 DOWNLOAD_SYMBOLS_LIST := $(strip $(subst $(comma), ,$(DOWNLOAD_SYMBOLS)))
@@ -272,11 +271,10 @@ data-download:
 	@echo "📥 Downloading Binance monthly aggTrades ZIPs to $(AGG_DATA_DIR) ..."
 	@echo "Symbols=$(DOWNLOAD_SYMBOLS) Range=$(DOWNLOAD_START_YEAR)-$(DOWNLOAD_START_MONTH) → $(DOWNLOAD_END_YEAR)-$(DOWNLOAD_END_MONTH)"
 	@mkdir -p $(AGG_DATA_DIR)
-	# Non-interactive confirm: auto-continue (downloads directly into agg_data)
+	# ZIP files are preserved in agg_data (no cleanup after convert)
 	@yes | $(PYTHON) src/data_tools/download_training_data.py \
 		--data-dir $(AGG_DATA_DIR) \
 		--parquet-dir $(DATA_DIR) \
-		--backup-dir $(BACKUP_AGG_DATA_DIR) \
 		$(if $(DOWNLOAD_SYMBOLS_LIST),--symbols $(DOWNLOAD_SYMBOLS_LIST)) \
 		--start-year $(DOWNLOAD_START_YEAR) \
 		--start-month $(DOWNLOAD_START_MONTH) \
@@ -285,7 +283,7 @@ data-download:
 
 data-convert:
 	@echo "🔄 Converting ZIPs under data/agg_data → Parquet under data/parquet_data ..."
-	$(PYTHON) -m src.data_tools.zip_to_parquet --cleanup yes
+	$(PYTHON) -m src.data_tools.zip_to_parquet
 
 data-pipeline:
 	@$(MAKE) data-download \

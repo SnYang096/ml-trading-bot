@@ -1,55 +1,9 @@
 name: feature_indicators
 description: >
   Feature indicators visualization configuration.
-  Defines which feature types to visualize and their display settings.
-
-# Feature types to visualize
-feature_types:
-  # Hurst exponent features (trend persistence)
-  hurst:
-    enabled: true
-    display_name: "Hurst Exponent"
-    description: "Measures trend persistence and mean reversion"
-    column_patterns:
-      - "hurst_"
-      - "hurst_price"
-      - "hurst_cvd"
-      - "hurst_volume"
-  
-  # Hilbert transform features (phase and envelope)
-  hilbert:
-    enabled: true
-    display_name: "Hilbert Transform"
-    description: "Phase analysis and envelope detection"
-    column_patterns:
-      - "hilbert_"
-      - "hilbert_phase"
-      - "hilbert_price_env"
-      - "hilbert_cvd_env"
-      - "hilbert_volume_env"
-  
-  # Wavelet Packet Transform features
-  wavelet:
-    enabled: true
-    display_name: "Wavelet Packet Transform"
-    description: "Multi-scale decomposition and energy analysis"
-    column_patterns:
-      - "wpt_"
-      - "wpt_price_"
-      - "wpt_cvd_"
-      - "vpvr_"
-  
-  # Spectral analysis features
-  spectral:
-    enabled: true
-    display_name: "Spectral Analysis"
-    description: "Frequency domain analysis and market structure"
-    column_patterns:
-      - "spectrum_"
-      - "spectral_"
-      - "spectrum_price_"
-      - "spectrum_flatness"
-      - "spectrum_entropy"
+  When --strategy-config is provided, feature groups are auto-derived from the strategy's
+  requested_features/invert_features (via feature_dependencies.yaml).
+  This file only controls display and output settings.
 
 # Display settings
 display:
@@ -61,6 +15,12 @@ display:
   sample_count: 5
   # Group features by type
   group_by_type: true
+  # Generate time-series charts for each feature type
+  show_plots: true
+  # Max series per chart (subplots if more columns)
+  max_columns_per_chart: 6
+  # Chart height in pixels (per subplot row)
+  chart_height_per_row: 200
 
 # Output settings
 output:

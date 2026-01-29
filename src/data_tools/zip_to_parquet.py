@@ -22,13 +22,18 @@ logger = logging.getLogger(__name__)
 
 
 class DataConverter:
-    """数据转换器：将 Binance aggTrades ZIP → 原始 tick Parquet"""
+    """数据转换器：将 Binance aggTrades ZIP → 原始 tick Parquet
+
+    简化设计：
+    - agg_data/ 存放原始 ZIP（永久保留，不删除）
+    - parquet_data/ 存放转换后的 Parquet
+    - 转换时检查 parquet 是否存在，不存在才转换
+    """
 
     def __init__(
         self,
         input_dir: str,
         output_dir: str,
-        backup_dir: Optional[str] = None,
         *,
         force: bool = False,
         aggregate_freq: str = "1s",
@@ -37,21 +42,17 @@ class DataConverter:
         初始化数据转换器
 
         Args:
-            input_dir: ZIP 文件输入目录
+            input_dir: ZIP 文件输入目录（转换后保留源文件）
             output_dir: Parquet 文件输出目录
-            backup_dir: 备份目录（可选）
             force: 是否强制重新转换
             aggregate_freq: 聚合频率，pandas resample 格式（默认: "1s"）
                 Examples: "1s" (1秒), "1T" (1分钟), "5T" (5分钟)
         """
         self.input_dir = input_dir
         self.output_dir = output_dir
-        self.backup_dir = backup_dir
         self.force = bool(force)
         self.aggregate_freq = aggregate_freq
         os.makedirs(self.output_dir, exist_ok=True)
-        if self.backup_dir:
-            os.makedirs(self.backup_dir, exist_ok=True)
 
     def convert_zip_to_parquet(
         self, zip_file: str, symbol: Optional[str] = None
@@ -173,14 +174,6 @@ class DataConverter:
 
                 df_ticks.to_parquet(output_file, compression="snappy", index=False)
                 logger.info(f"Saved tick parquet: {output_file}")
-
-                # 备份原始文件
-                if self.backup_dir:
-                    backup_file = os.path.join(
-                        self.backup_dir, os.path.basename(zip_file)
-                    )
-                    shutil.copy2(zip_file, backup_file)
-                    logger.info(f"Backed up to: {backup_file}")
 
                 return {
                     "original_file": zip_file,
@@ -364,32 +357,6 @@ class DataConverter:
             "total_files": len(zip_files),
         }
 
-    def cleanup_zip_files(self, converted_files: List[Dict]) -> int:
-        """
-        清理已转换的 ZIP 文件
-
-        Args:
-            converted_files: 已转换的文件信息列表
-
-        Returns:
-            清理的文件数量
-        """
-        logger.info("Cleaning up converted zip files...")
-
-        cleaned_count = 0
-        for file_info in converted_files:
-            try:
-                original_file = file_info["original_file"]
-                if os.path.exists(original_file):
-                    os.remove(original_file)
-                    cleaned_count += 1
-                    logger.info(f"Removed: {original_file}")
-            except Exception as e:
-                logger.error(f"Error removing {original_file}: {e}")
-
-        logger.info(f"Cleaned up {cleaned_count} zip files")
-        return cleaned_count
-
 
 def main():
     """命令行入口点"""
@@ -414,25 +381,14 @@ def main():
         help="Parquet output directory (default: data/parquet_data)",
     )
     parser.add_argument(
-        "--backup-dir",
-        default=None,
-        help="Backup directory for original ZIPs (optional)",
-    )
-    parser.add_argument(
-        "--cleanup",
-        choices=["yes", "no"],
-        default="yes",
-        help="Delete converted ZIPs without prompt (default: yes)",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help="Force re-convert even if output parquet already exists.",
     )
     parser.add_argument(
         "--aggregate-freq",
-        default="1s",
-        help="Aggregation frequency for tick data (default: 1s). "
+        default="1min",
+        help="Aggregation frequency for tick data (default: 1min). "
         "Examples: '1s' (1 second), '1T' (1 minute), '5T' (5 minutes). "
         "Uses pandas resample frequency strings.",
     )
@@ -451,13 +407,10 @@ def main():
     base_dir = current_file.parents[2]  # src/data_tools -> src -> project root
     input_dir = args.input_dir or str(base_dir / "data" / "agg_data")
     output_dir = args.output_dir or str(base_dir / "data" / "parquet_data")
-    backup_dir = args.backup_dir  # default: disabled (avoid disk blowups)
 
     print(f"📂 Base directory: {base_dir}")
     print(f"📂 Input directory: {input_dir}")
     print(f"📂 Output directory: {output_dir}")
-    if backup_dir:
-        print(f"📂 Backup directory: {backup_dir}")
     print()
 
     # 检查输入目录
@@ -471,7 +424,6 @@ def main():
     converter = DataConverter(
         input_dir,
         output_dir,
-        backup_dir,
         force=bool(args.force),
         aggregate_freq=args.aggregate_freq,
     )
@@ -504,19 +456,9 @@ def main():
         if len(results["failed_files"]) > 5:
             print(f"   ... and {len(results['failed_files']) - 5} more files")
 
-    # 清理zip文件（可非交互）
-    if results["converted_files"]:
-        if args.cleanup == "yes":
-            cleaned_count = converter.cleanup_zip_files(results["converted_files"])
-            print(f"✅ Cleaned up {cleaned_count} zip files")
-        else:
-            # Non-interactive safe: never prompt. Caller explicitly chose no-cleanup.
-            print("ℹ️  Cleanup disabled; keeping ZIP files.")
-
     print(f"\n🎉 Data conversion complete!")
     print(f"   Output directory: {output_dir}")
-    if backup_dir:
-        print(f"   Backup directory: {backup_dir}")
+    print(f"   ZIP files preserved in: {input_dir}")
     print(f"   Ready for fast processing!")
 
 

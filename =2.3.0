@@ -1,0 +1,7 @@
+Collecting dtaidistance
+  Downloading dtaidistance-2.3.13-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (13 kB)
+Requirement already satisfied: numpy in /home/yin/miniconda3/lib/python3.12/site-packages (from dtaidistance) (1.26.4)
+Downloading dtaidistance-2.3.13-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.0/3.0 MB 4.3 MB/s eta 0:00:00
+Installing collected packages: dtaidistance
+Successfully installed dtaidistance-2.3.13

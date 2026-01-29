@@ -417,9 +417,9 @@ class StrategyFeatureLoader:
 
                     # if store already has all needed outputs, return joined frame
                     if output_cols and all(c in df_store.columns for c in output_cols):
-                        merged = result_df.copy()
-                        for c in output_cols:
-                            merged[c] = df_store[c]
+                        # Use pd.concat to avoid DataFrame fragmentation from multiple column assignments
+                        feature_subset = df_store[output_cols]
+                        merged = pd.concat([result_df, feature_subset], axis=1)
                         return merged
             except Exception:
                 pass

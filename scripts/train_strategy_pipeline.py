@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -58,6 +59,7 @@ from src.time_series_model.strategies.backtesting.vectorbt_backtest import (
     VectorBTBacktest,
 )
 
+# 原始/未归一化列：不传入模型，只用于标签或 backtest
 BASE_DATA_COLUMNS = {
     "timestamp",
     "datetime",
@@ -75,6 +77,9 @@ BASE_DATA_COLUMNS = {
     "delta",
     "taker_buy_ratio",
     "cvd",
+    "cvd_short",
+    "cvd_medium",
+    "cvd_long",
 }
 
 
@@ -1626,14 +1631,21 @@ def train_strategy(
             test_end = df_test_raw.index.max()
             print(f"   📅 Test set time range: {test_start} to {test_end}")
 
-    requested = strategy_config.features.requested_features
-    print(f"\n   ▶️ Feature pipeline (train) start: {len(requested)} requested features")
+    requested = list(strategy_config.features.requested_features)
+    inv = getattr(strategy_config.features, "invert_features", None) or []
+    effective_requested = requested + [c for c in inv if c not in requested]
+    pipeline_cfg_effective = replace(
+        strategy_config.features, requested_features=effective_requested
+    )
+    print(
+        f"\n   ▶️ Feature pipeline (train) start: {len(effective_requested)} requested features (incl. invert)"
+    )
 
     if not is_multi_symbol:
         df_train_features = run_feature_pipeline(
             df_train_raw,
             feature_loader=feature_loader,
-            pipeline_cfg=strategy_config.features,
+            pipeline_cfg=pipeline_cfg_effective,
             fit=True,
             feature_store_dir=fs_dir,
             feature_store_layer=fs_layer,
@@ -1650,7 +1662,7 @@ def train_strategy(
         df_test_features = run_feature_pipeline(
             df_test_raw,
             feature_loader=feature_loader,
-            pipeline_cfg=strategy_config.features,
+            pipeline_cfg=pipeline_cfg_effective,
             fit=False,
             feature_store_dir=fs_dir,
             feature_store_layer=fs_layer,
@@ -1675,7 +1687,7 @@ def train_strategy(
             feat_tr = run_feature_pipeline(
                 df_tr,
                 feature_loader=feature_loader,
-                pipeline_cfg=strategy_config.features,
+                pipeline_cfg=pipeline_cfg_effective,
                 fit=True,
                 feature_store_dir=fs_dir,
                 feature_store_layer=fs_layer,
@@ -1685,7 +1697,7 @@ def train_strategy(
             feat_te = run_feature_pipeline(
                 df_te,
                 feature_loader=feature_loader,
-                pipeline_cfg=strategy_config.features,
+                pipeline_cfg=pipeline_cfg_effective,
                 fit=False,
                 feature_store_dir=fs_dir,
                 feature_store_layer=fs_layer,

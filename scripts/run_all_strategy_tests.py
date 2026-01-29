@@ -66,7 +66,7 @@ def run_rolling_training(strategy: str):
 
 
 def run_fixed_training(strategy: str):
-    """运行固定训练（长时间测试）"""
+    """运行固定训练（长时间）：训练期 2023-01-01→2024-12-31，OOS 测试期 2025-01-01→2025-05-31（无交叉）"""
     print(f"\n{'='*80}")
     print(f"📊 固定训练（长时间测试）: {strategy}")
     print(f"{'='*80}")
@@ -74,8 +74,7 @@ def run_fixed_training(strategy: str):
     output_dir = f"results/fixed_long/{strategy}"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    # 使用 train_strategy_pipeline.py 进行固定训练
-    # 训练期：2023-01-01 到 2025-12-31（3年）
+    # 训练期：2023-01-01 → 2024-12-31；OOS 测试期：2025-01-01 → 2025-05-31（严格不交叉）
     cmd = [
         "python3",
         "scripts/train_strategy_pipeline.py",
@@ -90,15 +89,19 @@ def run_fixed_training(strategy: str):
         "--start-date",
         "2023-01-01",
         "--end-date",
-        "2025-12-31",
-        "--test-size",
-        "0.15",  # 15% 作为测试集
+        "2025-05-31",
+        "--holdout-start-date",
+        "2025-01-01",
+        "--holdout-end-date",
+        "2025-05-31",
         "--output-root",
         output_dir,
         "--seed",
         "42",
     ]
 
+    print(f"训练期: 2023-01-01 → 2024-12-31")
+    print(f"OOS 测试期: 2025-01-01 → 2025-05-31")
     print(f"执行: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
