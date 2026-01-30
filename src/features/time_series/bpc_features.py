@@ -759,3 +759,424 @@ def compute_bpc_pullback_delta_absorption_from_series(
     out = pd.Series(absorption, index=close.index).fillna(0.0).clip(0.0, 1.0)
     
     return out.rename("bpc_pullback_delta_absorption").to_frame()
+
+
+# =============================================================================
+# 🎯 上下文特征：Volume Profile + Liquidity + Reflexivity
+# =============================================================================
+
+@register_feature(
+    "compute_bpc_breakout_context_from_series",
+    category="bpc",
+    description="BPC breakout context: VP position + liquidity void + reflexivity",
+    outputs=[
+        "bpc_breakout_above_poc",
+        "bpc_breakout_above_hal",
+        "bpc_liquidity_void_ahead",
+        "bpc_false_breakout_risk",
+        "bpc_reflex_confirm",
+    ],
+)
+def compute_bpc_breakout_context_from_series(
+    *,
+    close: pd.Series,
+    bpc_breakout_direction: pd.Series,
+    vp_poc: pd.Series = None,
+    vp_hal_high: pd.Series = None,
+    vp_hal_low: pd.Series = None,
+    liquidity_void_detected: pd.Series = None,
+    wpt_false_breakout_risk: pd.Series = None,
+    ofci_pct: pd.Series = None,
+) -> pd.DataFrame:
+    """
+    突破上下文特征：VP位置 + 流动性真空 + 反身性确认
+    
+    用途：树模型发现“在什么情况下突破语义不成立”
+    - POC 上方突破更有力
+    - 流动性真空区域突破阻力小
+    - 高反身性 = 风险（过度拥挤）
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    direction = pd.to_numeric(bpc_breakout_direction, errors="coerce").fillna(0).astype(int)
+    n = len(close)
+    
+    # 1. 突破是否在 POC 上方（多头）或下方（空头）
+    if vp_poc is not None:
+        poc = pd.to_numeric(vp_poc, errors="coerce").fillna(close)
+        above_poc_long = ((close > poc) & (direction > 0)).astype(float)
+        below_poc_short = ((close < poc) & (direction < 0)).astype(float)
+        breakout_above_poc = above_poc_long + below_poc_short
+    else:
+        breakout_above_poc = pd.Series(0.5, index=close.index)
+    
+    # 2. 突破是否超越 HAL 边界
+    if vp_hal_high is not None and vp_hal_low is not None:
+        hal_h = pd.to_numeric(vp_hal_high, errors="coerce").fillna(close)
+        hal_l = pd.to_numeric(vp_hal_low, errors="coerce").fillna(close)
+        above_hal_long = ((close > hal_h) & (direction > 0)).astype(float)
+        below_hal_short = ((close < hal_l) & (direction < 0)).astype(float)
+        breakout_above_hal = above_hal_long + below_hal_short
+    else:
+        breakout_above_hal = pd.Series(0.5, index=close.index)
+    
+    # 3. 突破方向是否有流动性真空（阻力小）
+    if liquidity_void_detected is not None:
+        lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0).clip(0, 1)
+    else:
+        lv = pd.Series(0.0, index=close.index)
+    
+    # 4. 假突破风险
+    if wpt_false_breakout_risk is not None:
+        fb_risk = pd.to_numeric(wpt_false_breakout_risk, errors="coerce").fillna(0).clip(0, 1)
+    else:
+        fb_risk = pd.Series(0.0, index=close.index)
+    
+    # 5. 反身性确认（OFCI 适中 = 突破确认，OFCI 极端 = 风险）
+    if ofci_pct is not None:
+        ofci = pd.to_numeric(ofci_pct, errors="coerce").fillna(0.5).clip(0, 1)
+        # OFCI 0.3-0.7 是健康区间，超过这个范围表示风险
+        reflex_confirm = 1 - 2 * np.abs(ofci - 0.5)
+    else:
+        reflex_confirm = pd.Series(0.5, index=close.index)
+    
+    return pd.DataFrame({
+        "bpc_breakout_above_poc": breakout_above_poc,
+        "bpc_breakout_above_hal": breakout_above_hal,
+        "bpc_liquidity_void_ahead": lv,
+        "bpc_false_breakout_risk": fb_risk,
+        "bpc_reflex_confirm": reflex_confirm,
+    }, index=close.index)
+
+
+@register_feature(
+    "compute_bpc_pullback_structure_from_series",
+    category="bpc",
+    description="BPC pullback structure: Fib levels + VP support + volume density",
+    outputs=[
+        "bpc_pullback_fib_382",
+        "bpc_pullback_fib_500",
+        "bpc_pullback_fib_618",
+        "bpc_pullback_to_poc",
+        "bpc_pullback_in_hal",
+        "bpc_pullback_volume_support",
+    ],
+)
+def compute_bpc_pullback_structure_from_series(
+    *,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    bpc_breakout_direction: pd.Series = None,
+    vp_poc: pd.Series = None,
+    vp_hal_high: pd.Series = None,
+    vp_hal_low: pd.Series = None,
+    vpvr_volume_density: pd.Series = None,
+    lookback: int = 20,
+) -> pd.DataFrame:
+    """
+    回踩结构特征：Fib水平 + VP支撑 + 成交密度
+    
+    用途：树模型发现“什么情况下回踩语义不成立”
+    - 回踩到 0.382 = 健康
+    - 回踩到 0.618 = 深度回踩，结构可能被破坏
+    - 回踩到 POC = 关键支撑
+    - 回踩在 HAL 区间内 = 健康
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    
+    # 计算近期高低点
+    rolling_high = high.rolling(lookback, min_periods=1).max()
+    rolling_low = low.rolling(lookback, min_periods=1).min()
+    swing_range = (rolling_high - rolling_low).clip(lower=1e-8)
+    
+    # 方向处理
+    if bpc_breakout_direction is not None:
+        direction = pd.to_numeric(bpc_breakout_direction, errors="coerce").fillna(0).astype(int)
+    else:
+        direction = np.sign(close.diff(5).fillna(0)).astype(int)
+    
+    # 计算 Fib 回踩水平（多头：从高点回踩；空头：从低点反弹）
+    # 多头回踩水平 = (high - close) / range
+    pullback_long = (rolling_high - close) / swing_range
+    # 空头反弹水平 = (close - low) / range
+    pullback_short = (close - rolling_low) / swing_range
+    
+    # 根据方向选择
+    pullback_ratio = np.where(
+        direction >= 0,
+        pullback_long.values,
+        pullback_short.values
+    )
+    pullback_ratio = pd.Series(pullback_ratio, index=close.index).clip(0, 1)
+    
+    # Fib 水平特征（接近该水平时为 1）
+    fib_382 = (1 - np.abs(pullback_ratio - 0.382) / 0.15).clip(0, 1)
+    fib_500 = (1 - np.abs(pullback_ratio - 0.500) / 0.15).clip(0, 1)
+    fib_618 = (1 - np.abs(pullback_ratio - 0.618) / 0.15).clip(0, 1)
+    
+    # 回踩是否到达 POC
+    if vp_poc is not None:
+        poc = pd.to_numeric(vp_poc, errors="coerce").fillna(close)
+        atr_proxy = swing_range / 4  # 粗略 ATR 估计
+        dist_to_poc = np.abs(close - poc) / atr_proxy.clip(lower=1e-8)
+        pullback_to_poc = (1 - dist_to_poc / 2).clip(0, 1)  # 2 ATR 内为接近
+    else:
+        pullback_to_poc = pd.Series(0.5, index=close.index)
+    
+    # 回踩是否在 HAL 区间内
+    if vp_hal_high is not None and vp_hal_low is not None:
+        hal_h = pd.to_numeric(vp_hal_high, errors="coerce").fillna(close)
+        hal_l = pd.to_numeric(vp_hal_low, errors="coerce").fillna(close)
+        in_hal = ((close >= hal_l) & (close <= hal_h)).astype(float)
+    else:
+        in_hal = pd.Series(0.5, index=close.index)
+    
+    # 回踩位置的成交密度（高密度 = 强支撑）
+    if vpvr_volume_density is not None:
+        vol_density = pd.to_numeric(vpvr_volume_density, errors="coerce").fillna(0.5).clip(0, 1)
+    else:
+        vol_density = pd.Series(0.5, index=close.index)
+    
+    return pd.DataFrame({
+        "bpc_pullback_fib_382": fib_382,
+        "bpc_pullback_fib_500": fib_500,
+        "bpc_pullback_fib_618": fib_618,
+        "bpc_pullback_to_poc": pullback_to_poc,
+        "bpc_pullback_in_hal": in_hal,
+        "bpc_pullback_volume_support": vol_density,
+    }, index=close.index)
+
+
+@register_feature(
+    "compute_bpc_continuation_target_from_series",
+    category="bpc",
+    description="BPC continuation target: LVN distance + momentum divergence",
+    outputs=[
+        "bpc_target_lvn_distance",
+        "bpc_target_lvn_count",
+        "bpc_momentum_divergence",
+        "bpc_reflex_momentum",
+    ],
+)
+def compute_bpc_continuation_target_from_series(
+    *,
+    close: pd.Series,
+    atr: pd.Series,
+    bpc_breakout_direction: pd.Series = None,
+    vpvr_lvn_distance: pd.Series = None,
+    vpvr_lvn_count: pd.Series = None,
+    cvd_change_5: pd.Series = None,
+    shd_pct: pd.Series = None,
+    lookback: int = 10,
+) -> pd.DataFrame:
+    """
+    延续目标特征：LVN距离 + 动量背离 + 反身性动量
+    
+    用途：树模型发现“什么情况下延续语义不成立”
+    - LVN 距离近 = 延续目标清晰
+    - 动量背离 = 趋势衰竭预警
+    - SHD 过高 = 结构不健康
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    atr_s = pd.to_numeric(atr, errors="coerce").astype(float).clip(lower=1e-8)
+    
+    # LVN 距离（归一化）
+    if vpvr_lvn_distance is not None:
+        lvn_dist = pd.to_numeric(vpvr_lvn_distance, errors="coerce").fillna(0.5).clip(0, 1)
+    else:
+        lvn_dist = pd.Series(0.5, index=close.index)
+    
+    # LVN 数量（归一化到 0-1）
+    if vpvr_lvn_count is not None:
+        lvn_cnt = pd.to_numeric(vpvr_lvn_count, errors="coerce").fillna(0)
+        lvn_cnt_norm = (lvn_cnt / 5).clip(0, 1)  # 假设最多 5 个 LVN
+    else:
+        lvn_cnt_norm = pd.Series(0.5, index=close.index)
+    
+    # 动量背离检测（价格创新高/低但 CVD 没有）
+    if cvd_change_5 is not None:
+        cvd = pd.to_numeric(cvd_change_5, errors="coerce").fillna(0)
+        price_change = close.diff(lookback)
+        
+        # 价格创新高但 CVD 没有 = 看空背离
+        # 价格创新低但 CVD 没有 = 看多背离
+        price_high = close >= close.rolling(lookback, min_periods=1).max()
+        price_low = close <= close.rolling(lookback, min_periods=1).min()
+        cvd_high = cvd >= cvd.rolling(lookback, min_periods=1).max()
+        cvd_low = cvd <= cvd.rolling(lookback, min_periods=1).min()
+        
+        bearish_div = (price_high & ~cvd_high).astype(float)
+        bullish_div = (price_low & ~cvd_low).astype(float)
+        momentum_div = bearish_div + bullish_div
+    else:
+        momentum_div = pd.Series(0.0, index=close.index)
+    
+    # 反身性动量（SHD 健康度）
+    if shd_pct is not None:
+        shd = pd.to_numeric(shd_pct, errors="coerce").fillna(0.5).clip(0, 1)
+        # SHD 低 = 健康，SHD 高 = 风险
+        reflex_momentum = 1 - shd
+    else:
+        reflex_momentum = pd.Series(0.5, index=close.index)
+    
+    return pd.DataFrame({
+        "bpc_target_lvn_distance": lvn_dist,
+        "bpc_target_lvn_count": lvn_cnt_norm,
+        "bpc_momentum_divergence": momentum_div,
+        "bpc_reflex_momentum": reflex_momentum,
+    }, index=close.index)
+
+
+@register_feature(
+    "compute_bpc_compression_state_from_series",
+    category="bpc",
+    description="BPC compression state: volatility + volume + energy compression",
+    outputs=[
+        "bpc_vol_compression_state",
+        "bpc_bb_compression_state",
+        "bpc_garch_compression",
+        "bpc_wpt_energy_low",
+        "bpc_pre_breakout_score",
+    ],
+)
+def compute_bpc_compression_state_from_series(
+    *,
+    close: pd.Series,
+    volume: pd.Series,
+    bb_width_normalized: pd.Series = None,
+    garch_volatility: pd.Series = None,
+    wpt_vper_low: pd.Series = None,
+    vol_window: int = 20,
+    pct_window: int = 100,
+) -> pd.DataFrame:
+    """
+    蓄势状态特征：波动率 + 成交量 + 能量压缩
+    
+    用途：树模型发现“什么情况下蓄势语义不成立”
+    - 成交量压缩 = 待爆发
+    - 波动率压缩 = 突破前兆
+    - WPT 能量低 = 待释放
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    volume = pd.to_numeric(volume, errors="coerce").astype(float).clip(lower=1)
+    
+    # 成交量压缩（百分位低 = 压缩）
+    vol_ma = volume.rolling(vol_window, min_periods=1).mean()
+    vol_pct = vol_ma.rolling(pct_window, min_periods=20).rank(pct=True).fillna(0.5)
+    vol_compression = 1 - vol_pct
+    
+    # 布林带压缩
+    if bb_width_normalized is not None:
+        bb_width = pd.to_numeric(bb_width_normalized, errors="coerce").fillna(0.5).clip(0, 1)
+        bb_compression = 1 - bb_width
+    else:
+        bb_compression = pd.Series(0.5, index=close.index)
+    
+    # GARCH 波动率压缩
+    if garch_volatility is not None:
+        garch_vol = pd.to_numeric(garch_volatility, errors="coerce").fillna(0)
+        garch_pct = garch_vol.rolling(pct_window, min_periods=20).rank(pct=True).fillna(0.5)
+        garch_compression = 1 - garch_pct
+    else:
+        garch_compression = pd.Series(0.5, index=close.index)
+    
+    # WPT 能量低频分量（低 = 能量聘集在低频，稳定）
+    if wpt_vper_low is not None:
+        wpt_low = pd.to_numeric(wpt_vper_low, errors="coerce").fillna(0.5).clip(0, 1)
+    else:
+        wpt_low = pd.Series(0.5, index=close.index)
+    
+    # 预突破综合分（压缩程度加权平均）
+    pre_breakout_score = (
+        vol_compression * 0.3 +
+        bb_compression * 0.3 +
+        garch_compression * 0.2 +
+        wpt_low * 0.2
+    ).clip(0, 1)
+    
+    return pd.DataFrame({
+        "bpc_vol_compression_state": vol_compression,
+        "bpc_bb_compression_state": bb_compression,
+        "bpc_garch_compression": garch_compression,
+        "bpc_wpt_energy_low": wpt_low,
+        "bpc_pre_breakout_score": pre_breakout_score,
+    }, index=close.index)
+
+
+@register_feature(
+    "compute_bpc_phase_transition_from_series",
+    category="bpc",
+    description="BPC phase transition: transition probability + speed + direction",
+    outputs=[
+        "bpc_phase_dominant",
+        "bpc_phase_confidence",
+        "bpc_transition_b_to_p",
+        "bpc_transition_p_to_c",
+        "bpc_transition_speed",
+        "bpc_structure_health",
+    ],
+)
+def compute_bpc_phase_transition_from_series(
+    *,
+    bpc_score_breakout: pd.Series,
+    bpc_score_pullback: pd.Series,
+    bpc_score_continuation: pd.Series,
+    bpc_score_neutral: pd.Series,
+    shd_pct: pd.Series = None,
+    lookback: int = 5,
+) -> pd.DataFrame:
+    """
+    阶段转换特征：转换概率 + 转换速度 + 结构健康度
+    
+    用途：树模型发现“什么情况下 BPC 循环不成立”
+    - B→P 转换概率 = 突破后回踩的可能性
+    - P→C 转换概率 = 回踩后延续的可能性
+    - 转换速度 = 阶段变化的快慢
+    """
+    b = pd.to_numeric(bpc_score_breakout, errors="coerce").fillna(0).clip(0, 1)
+    p = pd.to_numeric(bpc_score_pullback, errors="coerce").fillna(0).clip(0, 1)
+    c = pd.to_numeric(bpc_score_continuation, errors="coerce").fillna(0).clip(0, 1)
+    n = pd.to_numeric(bpc_score_neutral, errors="coerce").fillna(0).clip(0, 1)
+    
+    # 主导阶段（0=neutral, 1=breakout, 2=pullback, 3=continuation）
+    scores = pd.DataFrame({"n": n, "b": b, "p": p, "c": c})
+    phase_dominant = scores.idxmax(axis=1).map({"n": 0, "b": 1, "p": 2, "c": 3}).fillna(0)
+    phase_confidence = scores.max(axis=1)
+    
+    # B→P 转换概率：breakout 分数下降且 pullback 上升
+    b_falling = (b < b.shift(1)).astype(float)
+    p_rising = (p > p.shift(1)).astype(float)
+    trans_b_to_p = (b_falling * p_rising * b.shift(1)).fillna(0).clip(0, 1)
+    
+    # P→C 转换概率：pullback 分数下降且 continuation 上升
+    p_falling = (p < p.shift(1)).astype(float)
+    c_rising = (c > c.shift(1)).astype(float)
+    trans_p_to_c = (p_falling * c_rising * p.shift(1)).fillna(0).clip(0, 1)
+    
+    # 转换速度：阶段分数变化的绝对值和
+    score_changes = (
+        b.diff().abs() + 
+        p.diff().abs() + 
+        c.diff().abs() + 
+        n.diff().abs()
+    ).fillna(0)
+    trans_speed = score_changes.rolling(lookback, min_periods=1).mean().clip(0, 1)
+    
+    # 结构健康度（基于 SHD 或简化估计）
+    if shd_pct is not None:
+        shd = pd.to_numeric(shd_pct, errors="coerce").fillna(0.5).clip(0, 1)
+        structure_health = 1 - shd
+    else:
+        # 简化估计：主导阶段置信度高 = 结构清晰
+        structure_health = phase_confidence
+    
+    return pd.DataFrame({
+        "bpc_phase_dominant": phase_dominant,
+        "bpc_phase_confidence": phase_confidence,
+        "bpc_transition_b_to_p": trans_b_to_p,
+        "bpc_transition_p_to_c": trans_p_to_c,
+        "bpc_transition_speed": trans_speed,
+        "bpc_structure_health": structure_health,
+    }, index=b.index)

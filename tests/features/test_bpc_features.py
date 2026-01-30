@@ -29,6 +29,11 @@ from src.features.time_series.bpc_features import (
     compute_bpc_pullback_duration_from_series,
     compute_bpc_impulse_return_atr_from_series,
     compute_bpc_dir_consistency_multi_from_series,
+    compute_bpc_breakout_context_from_series,
+    compute_bpc_pullback_structure_from_series,
+    compute_bpc_continuation_target_from_series,
+    compute_bpc_compression_state_from_series,
+    compute_bpc_phase_transition_from_series,
     FEATURE_VERSION,
     DEFAULT_LOOKBACK_BREAKOUT,
 )
@@ -957,3 +962,257 @@ def run_all_tests():
 if __name__ == "__main__":
     success = run_all_tests()
     sys.exit(0 if success else 1)
+
+
+# =============================================================================
+# 📋 测试类：BPC 上下文特征（新增）
+# =============================================================================
+
+
+class TestBPCContextFeatures:
+    """
+    BPC 上下文特征测试（breakout_context, pullback_structure, continuation_target,
+    compression_state, phase_transition）
+    """
+
+    @pytest.fixture
+    def sample_data(self):
+        """创建样本数据"""
+        df = create_ohlcv_data(n_samples=500, seed=42)
+        orderflow = create_orderflow_data(df, seed=42)
+        return df, orderflow
+
+    def test_breakout_context_basic(self, sample_data):
+        """测试 breakout_context 基本功能"""
+        df, orderflow = sample_data
+
+        # 模拟必要输入
+        bpc_breakout_direction = pd.Series(
+            np.sign(df["close"].diff(5).fillna(0)), index=df.index
+        ).astype(int)
+        vp_poc = df["close"].rolling(20, min_periods=1).mean()
+        vp_hal_high = df["high"].rolling(20, min_periods=1).max()
+        vp_hal_low = df["low"].rolling(20, min_periods=1).min()
+        liquidity_void_detected = pd.Series(
+            np.random.randint(0, 2, len(df)), index=df.index
+        )
+        ofci_pct = pd.Series(np.random.uniform(0.3, 0.7, len(df)), index=df.index)
+
+        result = compute_bpc_breakout_context_from_series(
+            close=df["close"],
+            bpc_breakout_direction=bpc_breakout_direction,
+            vp_poc=vp_poc,
+            vp_hal_high=vp_hal_high,
+            vp_hal_low=vp_hal_low,
+            liquidity_void_detected=liquidity_void_detected,
+            ofci_pct=ofci_pct,
+        )
+
+        expected_cols = [
+            "bpc_breakout_above_poc",
+            "bpc_breakout_above_hal",
+            "bpc_liquidity_void_ahead",
+            "bpc_false_breakout_risk",
+            "bpc_reflex_confirm",
+        ]
+        for col in expected_cols:
+            assert col in result.columns, f"缺少列: {col}"
+
+        print("✅ breakout_context 基本功能测试通过")
+
+    def test_pullback_structure_basic(self, sample_data):
+        """测试 pullback_structure 基本功能"""
+        df, _ = sample_data
+
+        bpc_breakout_direction = pd.Series(
+            np.sign(df["close"].diff(5).fillna(0)), index=df.index
+        ).astype(int)
+        vp_poc = df["close"].rolling(20, min_periods=1).mean()
+        vp_hal_high = df["high"].rolling(20, min_periods=1).max()
+        vp_hal_low = df["low"].rolling(20, min_periods=1).min()
+        vpvr_volume_density = pd.Series(
+            np.random.uniform(0.3, 0.7, len(df)), index=df.index
+        )
+
+        result = compute_bpc_pullback_structure_from_series(
+            close=df["close"],
+            high=df["high"],
+            low=df["low"],
+            bpc_breakout_direction=bpc_breakout_direction,
+            vp_poc=vp_poc,
+            vp_hal_high=vp_hal_high,
+            vp_hal_low=vp_hal_low,
+            vpvr_volume_density=vpvr_volume_density,
+        )
+
+        expected_cols = [
+            "bpc_pullback_fib_382",
+            "bpc_pullback_fib_500",
+            "bpc_pullback_fib_618",
+            "bpc_pullback_to_poc",
+            "bpc_pullback_in_hal",
+            "bpc_pullback_volume_support",
+        ]
+        for col in expected_cols:
+            assert col in result.columns, f"缺少列: {col}"
+
+        print("✅ pullback_structure 基本功能测试通过")
+
+    def test_continuation_target_basic(self, sample_data):
+        """测试 continuation_target 基本功能"""
+        df, _ = sample_data
+
+        bpc_breakout_direction = pd.Series(
+            np.sign(df["close"].diff(5).fillna(0)), index=df.index
+        ).astype(int)
+        vpvr_lvn_distance = pd.Series(
+            np.random.uniform(0.0, 1.0, len(df)), index=df.index
+        )
+        vpvr_lvn_count = pd.Series(np.random.randint(0, 5, len(df)), index=df.index)
+        shd_pct = pd.Series(np.random.uniform(0.3, 0.7, len(df)), index=df.index)
+
+        result = compute_bpc_continuation_target_from_series(
+            close=df["close"],
+            atr=df["atr"],
+            bpc_breakout_direction=bpc_breakout_direction,
+            vpvr_lvn_distance=vpvr_lvn_distance,
+            vpvr_lvn_count=vpvr_lvn_count,
+            shd_pct=shd_pct,
+        )
+
+        expected_cols = [
+            "bpc_target_lvn_distance",
+            "bpc_target_lvn_count",
+            "bpc_momentum_divergence",
+            "bpc_reflex_momentum",
+        ]
+        for col in expected_cols:
+            assert col in result.columns, f"缺少列: {col}"
+
+        print("✅ continuation_target 基本功能测试通过")
+
+    def test_compression_state_basic(self, sample_data):
+        """测试 compression_state 基本功能"""
+        df, orderflow = sample_data
+
+        garch_volatility = pd.Series(
+            np.random.uniform(0.01, 0.03, len(df)), index=df.index
+        )
+        wpt_vper_low = pd.Series(np.random.uniform(0.0, 1.0, len(df)), index=df.index)
+
+        result = compute_bpc_compression_state_from_series(
+            close=df["close"],
+            volume=df["volume"],
+            bb_width_normalized=orderflow["bb_width_normalized"],
+            garch_volatility=garch_volatility,
+            wpt_vper_low=wpt_vper_low,
+        )
+
+        expected_cols = [
+            "bpc_vol_compression_state",
+            "bpc_bb_compression_state",
+            "bpc_garch_compression",
+            "bpc_wpt_energy_low",
+            "bpc_pre_breakout_score",
+        ]
+        for col in expected_cols:
+            assert col in result.columns, f"缺少列: {col}"
+
+        # 检查值范围
+        for col in ["bpc_pre_breakout_score"]:
+            vals = result[col].dropna()
+            assert vals.min() >= 0, f"{col} 最小值小于 0"
+            assert vals.max() <= 1, f"{col} 最大值大于 1"
+
+        print("✅ compression_state 基本功能测试通过")
+
+    def test_phase_transition_basic(self, sample_data):
+        """测试 phase_transition 基本功能"""
+        df, _ = sample_data
+
+        # 模拟 BPC 主函数输出
+        bpc_main = compute_bpc_soft_phase_from_series(
+            close=df["close"],
+            high=df["high"],
+            low=df["low"],
+            atr=df["atr"],
+            volume=df["volume"],
+        )
+
+        shd_pct = pd.Series(np.random.uniform(0.3, 0.7, len(df)), index=df.index)
+
+        result = compute_bpc_phase_transition_from_series(
+            bpc_score_breakout=bpc_main["bpc_score_breakout"],
+            bpc_score_pullback=bpc_main["bpc_score_pullback"],
+            bpc_score_continuation=bpc_main["bpc_score_continuation"],
+            bpc_score_neutral=bpc_main["bpc_score_neutral"],
+            shd_pct=shd_pct,
+        )
+
+        expected_cols = [
+            "bpc_phase_dominant",
+            "bpc_phase_confidence",
+            "bpc_transition_b_to_p",
+            "bpc_transition_p_to_c",
+            "bpc_transition_speed",
+            "bpc_structure_health",
+        ]
+        for col in expected_cols:
+            assert col in result.columns, f"缺少列: {col}"
+
+        print("✅ phase_transition 基本功能测试通过")
+
+    def test_context_features_no_future_leak(self, sample_data):
+        """测试上下文特征无未来数据泄露"""
+        df, orderflow = sample_data
+
+        # 创建输入数据
+        bpc_breakout_direction = pd.Series(
+            np.sign(df["close"].diff(5).fillna(0)), index=df.index
+        ).astype(int)
+        vp_poc = df["close"].rolling(20, min_periods=1).mean()
+        vp_hal_high = df["high"].rolling(20, min_periods=1).max()
+        vp_hal_low = df["low"].rolling(20, min_periods=1).min()
+        liquidity_void_detected = pd.Series(
+            np.random.randint(0, 2, len(df)), index=df.index
+        )
+        ofci_pct = pd.Series(np.random.uniform(0.3, 0.7, len(df)), index=df.index)
+
+        # 第一次计算
+        result1 = compute_bpc_breakout_context_from_series(
+            close=df["close"],
+            bpc_breakout_direction=bpc_breakout_direction,
+            vp_poc=vp_poc,
+            vp_hal_high=vp_hal_high,
+            vp_hal_low=vp_hal_low,
+            liquidity_void_detected=liquidity_void_detected,
+            ofci_pct=ofci_pct,
+        )
+
+        # 修改未来数据
+        df_future = df.copy()
+        future_idx = df_future.index[300:]
+        df_future.loc[future_idx, "close"] *= 2.0
+
+        # 第二次计算
+        result2 = compute_bpc_breakout_context_from_series(
+            close=df_future["close"],
+            bpc_breakout_direction=bpc_breakout_direction,
+            vp_poc=vp_poc,
+            vp_hal_high=vp_hal_high,
+            vp_hal_low=vp_hal_low,
+            liquidity_void_detected=liquidity_void_detected,
+            ofci_pct=ofci_pct,
+        )
+
+        # 验证历史特征值相同
+        check_idx = df.index[:200]
+        for col in ["bpc_breakout_above_poc", "bpc_reflex_confirm"]:
+            vals1 = result1.loc[check_idx, col].dropna()
+            vals2 = result2.loc[check_idx, col].dropna()
+            common_idx = vals1.index.intersection(vals2.index)
+            if len(common_idx) > 0:
+                diff = (vals1.loc[common_idx] - vals2.loc[common_idx]).abs().max()
+                assert diff < 1e-6, f"{col} 存在未来数据泄露，差异: {diff}"
+
+        print("✅ 上下文特征无未来数据泄露测试通过")

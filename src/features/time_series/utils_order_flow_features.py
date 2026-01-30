@@ -423,6 +423,181 @@ def compute_vpin_from_ticks(
     return result_df
 
 
+@register_feature("compute_vpin_adaptive_bucket", category="order_flow")
+def compute_vpin_adaptive_bucket(
+    ticks: pd.DataFrame,
+    rolling_window_minutes: int = 7 * 24 * 60,  # 默认7天
+    bucket_multiplier: float = 3.0,  # K值：桶大小 = 滚动平均分钟成交量 × K
+    n_buckets: int = 50,  # 滚动平均窗口
+    min_bucket_usd: float = 50000.0,  # 最小桶大小(USD)
+    max_bucket_usd: float = 50_000_000.0,  # 最大桶大小(USD)
+) -> pd.DataFrame:
+    """
+    自适应桶大小的VPIN计算
+    
+    核心思想：用「相对成交量」代替「绝对成交量」
+    桶大小 = 过去N天平均分钟成交量(USD) × K
+    
+    这样可以确保VPIN的统计特性在不同市场环境下保持稳定：
+    - 牛市：成交量大 → 桶大 → VPIN不会因为更多tick而被稀释
+    - 熊市：成交量小 → 桶小 → VPIN不会因为数据稀疏而失真
+    
+    成功标志：
+    - VPIN均值在0.35~0.45之间波动（不随牛市/熊市剧烈变化）
+    - P(VPIN > 0.6) 稳定在5%~15%
+    
+    Args:
+        ticks: DataFrame with tick data, must contain:
+            - timestamp (datetime index or column)
+            - price (float)
+            - volume (float)  
+            - side (1 for buy, -1 for sell)
+        rolling_window_minutes: 计算滚动平均成交量的窗口（分钟）
+        bucket_multiplier: K值，桶大小 = 滚动平均分钟成交量 × K
+        n_buckets: 计算VPIN的滚动平均窗口（bucket数）
+        min_bucket_usd: 最小桶大小(USD)，防止极端低流动性
+        max_bucket_usd: 最大桶大小(USD)，防止极端高流动性
+    
+    Returns:
+        DataFrame with columns:
+            - vpin: VPIN values (0-1 range)
+            - signed_imbalance: Signed imbalance (-1 to 1)
+    """
+    if len(ticks) == 0:
+        return pd.DataFrame(columns=["vpin", "signed_imbalance"], dtype=float)
+    
+    ticks = ticks.copy()
+    
+    # 标准化side
+    if "side" not in ticks.columns:
+        raise ValueError("ticks must contain 'side' column")
+    if ticks["side"].dtype == "object":
+        ticks["side"] = ticks["side"].map({"buy": 1, "sell": -1, "BUY": 1, "SELL": -1})
+    
+    # 过滤无效side
+    valid_mask = ticks["side"].isin([1, -1])
+    ticks = ticks[valid_mask].copy()
+    if len(ticks) == 0:
+        return pd.DataFrame(columns=["vpin", "signed_imbalance"], dtype=float)
+    
+    # 确保有timestamp索引
+    if not isinstance(ticks.index, pd.DatetimeIndex):
+        if "timestamp" in ticks.columns:
+            ticks = ticks.set_index("timestamp").sort_index()
+        else:
+            raise ValueError("ticks must have DatetimeIndex or 'timestamp' column")
+    else:
+        ticks = ticks.sort_index()
+    
+    # 计算每笔的USD价值
+    if "price" not in ticks.columns:
+        raise ValueError("price column is required for USD-based adaptive bucket")
+    
+    ticks["usd_value"] = ticks["price"] * ticks["volume"]
+    
+    # Step 1: 计算分钟级成交量(USD)
+    minute_volume = ticks["usd_value"].resample("1min").sum().fillna(0)
+    
+    # Step 2: 计算滚动平均分钟成交量
+    # 使用min_periods避免冷启动时桶太小
+    min_periods = min(1440, rolling_window_minutes // 7)  # 至少1天或窗口的1/7
+    rolling_avg_vol = minute_volume.rolling(
+        window=rolling_window_minutes, 
+        min_periods=min_periods
+    ).mean()
+    
+    # 填充初始NaN（使用第一个有效值）
+    first_valid = rolling_avg_vol.first_valid_index()
+    if first_valid is not None:
+        first_value = rolling_avg_vol.loc[first_valid]
+        rolling_avg_vol = rolling_avg_vol.fillna(first_value)
+    else:
+        # 如果全是NaN，使用整体均值
+        rolling_avg_vol = rolling_avg_vol.fillna(minute_volume.mean())
+    
+    # Step 3: 计算自适应桶大小
+    # 桶大小 = 滚动平均分钟成交量 × K
+    adaptive_bucket_size = rolling_avg_vol * bucket_multiplier
+    
+    # 应用最小/最大限制
+    adaptive_bucket_size = adaptive_bucket_size.clip(lower=min_bucket_usd, upper=max_bucket_usd)
+    
+    # Step 4: 基于自适应桶计算VPIN
+    # 需要将bucket_size对齐到每笔tick
+    bucket_size_aligned = adaptive_bucket_size.reindex(
+        ticks.index, method="ffill"
+    ).fillna(adaptive_bucket_size.mean() if len(adaptive_bucket_size) > 0 else min_bucket_usd)
+    
+    # 准备数据数组
+    timestamps = ticks.index.values
+    usd_values = ticks["usd_value"].values
+    sides = ticks["side"].values
+    bucket_sizes = bucket_size_aligned.values
+    
+    # Step 5: 动态累积 + 切桶
+    buckets_data = []
+    i = 0
+    n = len(ticks)
+    
+    while i < n:
+        current_bucket_size = bucket_sizes[i]
+        cumvol = 0.0
+        buy_vol = 0.0
+        sell_vol = 0.0
+        start_i = i
+        
+        # 累积直到达到桶大小
+        while i < n and cumvol < current_bucket_size:
+            usd_val = usd_values[i]
+            side = sides[i]
+            cumvol += usd_val
+            if side == 1:
+                buy_vol += usd_val
+            else:
+                sell_vol += usd_val
+            i += 1
+        
+        # 计算这个桶的VPIN和signed_imbalance
+        total = buy_vol + sell_vol
+        if total > 0:
+            vpin_value = abs(buy_vol - sell_vol) / total
+            signed_imbalance = (buy_vol - sell_vol) / total
+        else:
+            vpin_value = 0.0
+            signed_imbalance = 0.0
+        
+        # 限制范围
+        vpin_value = min(vpin_value, 1.0)
+        signed_imbalance = max(-1.0, min(1.0, signed_imbalance))
+        
+        # 时间戳取桶内最后一笔
+        bucket_ts = timestamps[i - 1] if i > start_i else timestamps[start_i]
+        
+        buckets_data.append({
+            "timestamp": bucket_ts,
+            "vpin": vpin_value,
+            "signed_imbalance": signed_imbalance,
+            "bucket_size_usd": current_bucket_size,  # 记录实际使用的桶大小
+        })
+    
+    if len(buckets_data) == 0:
+        return pd.DataFrame(columns=["vpin", "signed_imbalance"], dtype=float)
+    
+    # 转为DataFrame
+    buckets_df = pd.DataFrame(buckets_data).set_index("timestamp")
+    
+    # 滚动平均
+    vpin_series = buckets_df["vpin"].rolling(window=n_buckets, min_periods=1).mean()
+    signed_series = buckets_df["signed_imbalance"].rolling(window=n_buckets, min_periods=1).mean()
+    
+    result_df = pd.DataFrame({
+        "vpin": vpin_series,
+        "signed_imbalance": signed_series,
+    })
+    
+    return result_df
+
+
 # 注意：compute_vpin_from_ohlcv 函数已移除
 # VPIN 必须基于 tick 数据计算，不支持 proxy 实现
 # 如果只有 OHLCV 数据，请使用 tick 数据或移除 VPIN 特征
@@ -440,34 +615,40 @@ def extract_order_flow_features(
     volume_col: str = "volume",
     buy_qty_col: Optional[str] = None,
     sell_qty_col: Optional[str] = None,
-    vpin_bucket_volume: Optional[float] = None,
+    vpin_bucket_volume: Optional[float] = None,  # 已废弃，使用自适应桶
     vpin_n_buckets: int = 50,
-    vpin_adaptive: bool = True,
+    vpin_adaptive: bool = True,  # 已废弃，始终使用自适应桶
     freq: Optional[str] = None,
     include_trade_clustering: bool = True,
     compute_vpin_derived: bool = True,
     trade_clustering_window: int = 100,
     monthly_cache_dir: Optional[str] = "cache/features/monthly",
-    vpin_bucket_volume_usd: Optional[float] = None,
+    vpin_bucket_volume_usd: Optional[float] = None,  # 已废弃，使用自适应桶
     vpin_max_preload_months: int = 6,
+    # 新增自适应桶参数
+    vpin_rolling_window_minutes: int = 7 * 24 * 60,  # 7天滚动窗口
+    vpin_bucket_multiplier: float = 3.0,  # K值
+    vpin_min_bucket_usd: float = 50000.0,  # 最小桶大小
+    vpin_max_bucket_usd: float = 50_000_000.0,  # 最大桶大小
 ) -> pd.DataFrame:
     """
     提取订单流特征（VPIN 等）
+    
     注意：VPIN 必须基于 tick 数据计算，不支持 proxy 实现。
     如果没有 tick 数据，将抛出 ValueError。
+    
+    使用自适应桶大小算法：桶大小 = 滚动平均分钟成交量(USD) × K
+    确保VPIN统计特性在不同市场环境下保持稳定。
+    
     Args:
         df: DataFrame with OHLCV data
         ticks: Tick data for real VPIN calculation (必需)
-        open_col: Open price column (未使用，保留用于兼容)
-        close_col: Close price column (未使用，保留用于兼容)
-        high_col: High price column (未使用，保留用于兼容)
-        low_col: Low price column (未使用，保留用于兼容)
-        volume_col: Volume column (未使用，保留用于兼容)
-        buy_qty_col: Buy quantity column (未使用，保留用于兼容)
-        sell_qty_col: Sell quantity column (未使用，保留用于兼容)
-        vpin_bucket_volume: Fixed bucket volume for VPIN
+        ticks_loader_json: JSON序列化的tick数据加载参数
         vpin_n_buckets: Number of buckets for VPIN rolling average
-        vpin_adaptive: Whether to use adaptive VPIN
+        vpin_rolling_window_minutes: 计算滚动平均成交量的窗口（分钟）
+        vpin_bucket_multiplier: K值，桶大小 = 滚动平均分钟成交量 × K
+        vpin_min_bucket_usd: 最小桶大小(USD)
+        vpin_max_bucket_usd: 最大桶大小(USD)
     Returns:
         DataFrame with order flow features added
     Raises:
@@ -484,30 +665,57 @@ def extract_order_flow_features(
                 f"Tick data must contain columns: {required_tick_cols}. "
                 f"Missing columns: {missing_cols}"
             )
-        print("   📊 Computing real VPIN from tick data (in-memory)...")
-        vpin_series = compute_vpin_from_ticks(
+        print("   📊 Computing real VPIN from tick data (adaptive bucket)...")
+        vpin_series = compute_vpin_adaptive_bucket(
             ticks,
-            bucket_volume=vpin_bucket_volume,
+            rolling_window_minutes=vpin_rolling_window_minutes,
+            bucket_multiplier=vpin_bucket_multiplier,
             n_buckets=vpin_n_buckets,
-            adaptive=vpin_adaptive,
-            bucket_volume_usd=vpin_bucket_volume_usd,
+            min_bucket_usd=vpin_min_bucket_usd,
+            max_bucket_usd=vpin_max_bucket_usd,
         )
     elif ticks_loader_json:
         loader_params = deserialize_tick_loader_params(ticks_loader_json)
         tick_files = loader_params.get("tick_files", [])
-        print(f"   📊 Computing real VPIN from ticks ({len(tick_files)} files)...")
-        vpin_series = compute_vpin_from_cached_ticks(
-            cache_files=tick_files,
-            start_ts=loader_params["start_ts"],
-            end_ts=loader_params["end_ts"],
-            bucket_volume=vpin_bucket_volume,
-            n_buckets=vpin_n_buckets,
-            adaptive=vpin_adaptive,
-            lookback_minutes=loader_params.get("lookback_minutes", 60),
-            monthly_cache_dir=monthly_cache_dir,
-            bucket_volume_usd=vpin_bucket_volume_usd,
-            max_preload_months=int(vpin_max_preload_months),
-        )
+        print(f"   📊 Loading ticks from {len(tick_files)} files for adaptive VPIN...")
+        
+        # 加载tick数据
+        start_ts = pd.to_datetime(loader_params["start_ts"], utc=True).tz_convert(None)
+        end_ts = pd.to_datetime(loader_params["end_ts"], utc=True).tz_convert(None)
+        lookback_minutes = loader_params.get("lookback_minutes", 60)
+        
+        # 扩展时间范围用于滚动窗口
+        load_start = start_ts - pd.Timedelta(minutes=max(lookback_minutes, vpin_rolling_window_minutes))
+        load_end = end_ts + pd.Timedelta(minutes=lookback_minutes)
+        
+        # 加载tick文件
+        all_ticks = []
+        for tick_file in sorted(tick_files):
+            try:
+                tick_df = pd.read_parquet(tick_file)
+                if "timestamp" in tick_df.columns:
+                    tick_df["timestamp"] = pd.to_datetime(tick_df["timestamp"])
+                    # 过滤时间范围
+                    mask = (tick_df["timestamp"] >= load_start) & (tick_df["timestamp"] <= load_end)
+                    tick_df = tick_df[mask]
+                if len(tick_df) > 0:
+                    all_ticks.append(tick_df)
+            except Exception as e:
+                print(f"      ⚠️ Failed to load {tick_file}: {e}")
+        
+        if all_ticks:
+            ticks_loaded = pd.concat(all_ticks, ignore_index=True)
+            print(f"      Loaded {len(ticks_loaded)} ticks")
+            vpin_series = compute_vpin_adaptive_bucket(
+                ticks_loaded,
+                rolling_window_minutes=vpin_rolling_window_minutes,
+                bucket_multiplier=vpin_bucket_multiplier,
+                n_buckets=vpin_n_buckets,
+                min_bucket_usd=vpin_min_bucket_usd,
+                max_bucket_usd=vpin_max_bucket_usd,
+            )
+        else:
+            raise ValueError("No valid tick data loaded from files")
     else:
         # 如果没有tick数据，直接抛出错误并退出
         # VPIN必须基于tick数据计算，不支持降级处理
