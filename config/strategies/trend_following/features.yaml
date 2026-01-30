@@ -36,9 +36,9 @@ feature_pipeline:
   - volume_profile_volatility_features_f
   - vpin_features_f
   - footprint_basic_f
-  - hurst_x_trend_r2_f
-  - evt_x_trend_r2_f
-  - sma_slope_x_price_pos_f
-  - vpin_signed_imbalance_x_trade_cluster_imbalance_f
-  - vpin_x_trade_cluster_entropy_f
+  - hurst_x_trend_r2_rank_f
+  - evt_x_trend_r2_rank_f
+  - sma_slope_x_price_pos_rank_f
+  - vpin_signed_imbalance_x_trade_cluster_imbalance_signed_rank_f
+  - vpin_x_trade_cluster_entropy_rank_f
   - dtw_features_trend_f

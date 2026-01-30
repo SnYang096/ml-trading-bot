@@ -43,11 +43,11 @@ feature_pipeline:
     - hurst_price_f
     - hurst_cvd_f
     - footprint_basic_f
-    - liquidity_void_x_wpt_risk_f
-    - compression_energy_x_ofi_short_f
-    - vpin_x_compression_f
-    - vpin_zscore_x_trade_cluster_max_buy_run_f
-    - vpin_x_trade_cluster_entropy_f
+    - liquidity_void_x_wpt_risk_rank_f
+    - compression_energy_x_ofi_short_rank_f
+    - vpin_x_compression_rank_f
+    - vpin_zscore_x_trade_cluster_max_buy_run_rank_f
+    - vpin_x_trade_cluster_entropy_rank_f
     - dtw_features_compression_f
   ensure_signal_column:
     name: signal

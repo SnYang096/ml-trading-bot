@@ -1257,6 +1257,26 @@ def apply_rank_transform_to_interaction_from_series(
     return ranked.rename(f"{interaction.name or 'interaction'}_rank").to_frame()
 
 
+@register_feature("apply_signed_rank_transform_to_interaction_from_series", category="interaction")
+def apply_signed_rank_transform_to_interaction_from_series(
+    *,
+    interaction: pd.Series,
+) -> pd.DataFrame:
+    """
+    Signed rank transform: 保留原始符号，只对绝对值做 rank。
+    
+    对于有正负方向的交互特征（如 vpin_signed_imbalance × trade_cluster_imbalance），
+    直接做 rank 会丢失方向信息。此函数保留符号：
+    - 输出范围: [-1, 1]
+    - sign(x) × rank(|x|)
+    """
+    s = pd.to_numeric(interaction, errors="coerce").astype(float)
+    sign = np.sign(s)
+    abs_ranked = s.abs().rank(pct=True, method="average").fillna(0.5)
+    signed_ranked = sign * abs_ranked
+    return signed_ranked.rename(f"{interaction.name or 'interaction'}_signed_rank").to_frame()
+
+
 # ========================================================================
 # 衍生特征（Derived Features）：单个特征的变换或两个特征的其他运算
 # ========================================================================

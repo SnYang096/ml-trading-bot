@@ -4857,6 +4857,86 @@ features:
     notes: 高 VPIN + 低熵 = 大单主导且有序（知情交易）；高 VPIN + 高熵 = 大单主导但混乱（可能假突破）
     compute_params:
       normalized: true
+  liquidity_void_x_vpin_rank_f:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction_from_series
+    dependencies:
+    - liquidity_void_x_vpin_f
+    required_columns:
+    - liquidity_void_x_vpin
+    output_columns:
+    - liquidity_void_x_vpin_rank
+    category: interaction
+    description: liquidity_void_x_vpin 的 rank transform 版本 (normalized 0-1)
+    pass_full_df: false
+    column_mappings:
+      interaction: liquidity_void_x_vpin
+    compute_params:
+      normalized: true
+  vpin_x_trade_cluster_max_buy_run_rank_f:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction_from_series
+    dependencies:
+    - vpin_x_trade_cluster_max_buy_run_f
+    required_columns:
+    - vpin_x_trade_cluster_max_buy_run
+    output_columns:
+    - vpin_x_trade_cluster_max_buy_run_rank
+    category: interaction
+    description: vpin_x_trade_cluster_max_buy_run 的 rank transform 版本 (normalized 0-1)
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_x_trade_cluster_max_buy_run
+    compute_params:
+      normalized: true
+  vpin_zscore_x_trade_cluster_max_buy_run_rank_f:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction_from_series
+    dependencies:
+    - vpin_zscore_x_trade_cluster_max_buy_run_f
+    required_columns:
+    - vpin_zscore_x_trade_cluster_max_buy_run
+    output_columns:
+    - vpin_zscore_x_trade_cluster_max_buy_run_rank
+    category: interaction
+    description: vpin_zscore_x_trade_cluster_max_buy_run 的 rank transform 版本 (normalized 0-1)
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_zscore_x_trade_cluster_max_buy_run
+    compute_params:
+      normalized: true
+  vpin_signed_imbalance_x_trade_cluster_imbalance_signed_rank_f:
+    module: enhanced
+    compute_func: apply_signed_rank_transform_to_interaction_from_series
+    dependencies:
+    - vpin_signed_imbalance_x_trade_cluster_imbalance_f
+    required_columns:
+    - vpin_signed_imbalance_x_trade_cluster_imbalance
+    output_columns:
+    - vpin_signed_imbalance_x_trade_cluster_imbalance_signed_rank
+    category: interaction
+    description: vpin_signed_imbalance_x_trade_cluster_imbalance 的 signed rank 版本 (保留方向, -1 到 1)
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_signed_imbalance_x_trade_cluster_imbalance
+    compute_params:
+      normalized: true
+  vpin_x_trade_cluster_entropy_rank_f:
+    module: enhanced
+    compute_func: apply_rank_transform_to_interaction_from_series
+    dependencies:
+    - vpin_x_trade_cluster_entropy_f
+    required_columns:
+    - vpin_x_trade_cluster_entropy
+    output_columns:
+    - vpin_x_trade_cluster_entropy_rank
+    category: interaction
+    description: vpin_x_trade_cluster_entropy 的 rank transform 版本 (normalized 0-1)
+    pass_full_df: false
+    column_mappings:
+      interaction: vpin_x_trade_cluster_entropy
+    compute_params:
+      normalized: true
   sr_strength_combined_f:
     module: enhanced
     compute_func: compute_sr_strength_combined_from_hal_sqs_from_series
