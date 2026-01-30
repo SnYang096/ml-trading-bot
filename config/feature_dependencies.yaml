@@ -4258,7 +4258,12 @@ features:
       \ evt_var_99_left: 99% VaR估计（负值，表示预期最大损失）\n- evt_es_99 / evt_es_99_left: 99%\
       \ Expected Shortfall估计（负值，表示超过VaR的平均损失）\n\n可选特征（右尾 - 泡沫风险，仅当separate_tails=true时）：\n\
       - evt_tail_shape_right: 右尾形状参数\n- evt_scale_right: 右尾尺度参数\n- evt_var_99_right:\
-      \ 右尾99% VaR（正值，表示预期最大涨幅）\n- evt_es_99_right: 右尾99% ES（正值）\n\n改进说明：\n- 聚焦左尾风险：VaR/ES基于左尾GPD拟合，正确反映暴跌风险\n\
+      \ 右尾99% VaR（正值，表示预期最大涨幅）
+- evt_es_99_right: 右尾99% ES（正值）
+
+改进说明：
+- 聚焦左尾风险：VaR/ES基于左尾GPD拟合，正确反映暴跌风险
+\
       - 修正公式：使用标准EVT公式计算VaR/ES，正确处理ξ的不同情况\n- 阈值调整：threshold_quantile=0.1（10%分位数）用于左尾，更准确捕捉极端事件\n\
       \n应用场景：\n- 控制离场：当 ξ_left > 0.3 或突增时，提前离场避免黑天鹅\n- 不加仓：当尾部风险高时（ξ_left > 0.3 或\
       \ evt_var_99_left 更负），避免加仓\n- 风险管理：使用 evt_var_99_left 和 evt_es_99_left 进行仓位控制\n\
@@ -6764,3 +6769,288 @@ features:
         alpha101_022_ts: unitless
         alpha101_043_ts: unitless
         alpha101_066_ts: unitless
+
+  # ---------------------------------------------------------------------------
+  # BPC (Breakout-Pullback-Continuation) Soft Phase Features
+  # ---------------------------------------------------------------------------
+  bpc_soft_phase_f:
+    module: bpc
+    compute_func: compute_bpc_soft_phase_from_series
+    dependencies:
+    - atr_f
+    - cvd_change_5_pct_f
+    - vpin_features_f
+    - ofci_pct_f
+    - bb_width_normalized_pct_f
+    required_columns:
+    - close
+    - high
+    - low
+    - atr
+    - volume
+    output_columns:
+    # === ATOMIC: Breakout 原子信号 ===
+    - bpc_price_breakout_strength
+    - bpc_vol_breakout_confirm
+    - bpc_cvd_breakout_confirm
+    - bpc_vpin_breakout_confirm
+    # === ATOMIC: Pullback 原子信号 ===
+    - bpc_pullback_depth
+    - bpc_pullback_quality
+    - bpc_vol_pullback_confirm
+    - bpc_cvd_absorption
+    # === ATOMIC: Continuation 原子信号 ===
+    - bpc_recovery_strength
+    - bpc_momentum_confirm
+    - bpc_vol_continuation_confirm
+    - bpc_cvd_momentum
+    - bpc_vpin_rising
+    # === ATOMIC: Neutral 原子信号 ===
+    - bpc_bb_compression
+    - bpc_vol_compression
+    # === COMPOSITE: 组合分数 ===
+    - bpc_score_breakout
+    - bpc_score_pullback
+    - bpc_score_continuation
+    - bpc_score_neutral
+    # === CONTEXTUAL: 状态信号 ===
+    - bpc_breakout_direction
+    - bpc_direction_confidence
+    - bpc_is_after_breakout
+    - bpc_was_in_pullback
+    - bpc_vol_ratio
+    - bpc_cvd_z
+    category: bpc
+    description: BPC soft phase scores with atomic/composite/contextual features for tree model exploration.
+    pass_full_df: false
+    compute_params:
+      lookback_breakout: 20
+      breakout_atr_mult: 1.0
+      pullback_decay: 0.3
+      vol_ma_window: 20
+      normalized: true
+      output_normalization_map:
+        # ATOMIC: Breakout
+        bpc_price_breakout_strength: bounded_0_1
+        bpc_vol_breakout_confirm: bounded_0_1
+        bpc_cvd_breakout_confirm: bounded_0_1
+        bpc_vpin_breakout_confirm: bounded_0_1
+        # ATOMIC: Pullback
+        bpc_pullback_depth: bounded_0_1
+        bpc_pullback_quality: bounded_0_1
+        bpc_vol_pullback_confirm: bounded_0_1
+        bpc_cvd_absorption: bounded_0_1
+        # ATOMIC: Continuation
+        bpc_recovery_strength: bounded_0_1
+        bpc_momentum_confirm: bounded_0_1
+        bpc_vol_continuation_confirm: bounded_0_1
+        bpc_cvd_momentum: bounded_0_1
+        bpc_vpin_rising: bounded_0_1
+        # ATOMIC: Neutral
+        bpc_bb_compression: bounded_0_1
+        bpc_vol_compression: bounded_0_1
+        # COMPOSITE
+        bpc_score_breakout: bounded_0_1
+        bpc_score_pullback: bounded_0_1
+        bpc_score_continuation: bounded_0_1
+        bpc_score_neutral: bounded_0_1
+        # CONTEXTUAL
+        bpc_breakout_direction: discrete
+        bpc_direction_confidence: bounded_0_1
+        bpc_is_after_breakout: bounded_0_1
+        bpc_was_in_pullback: bounded_0_1
+        bpc_vol_ratio: ratio
+        bpc_cvd_z: zscore
+    column_mappings:
+      close: close
+      high: high
+      low: low
+      atr: atr
+      volume: volume
+      cvd_change_5: cvd_change_5
+      vpin: vpin
+      ofci_pct: ofci_pct
+      bb_width_normalized: bb_width_normalized
+
+  bpc_pullback_depth_pct_f:
+    module: bpc
+    compute_func: compute_bpc_pullback_depth_pct_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - high
+    - low
+    output_columns:
+    - bpc_pullback_depth_long
+    - bpc_pullback_depth_short
+    - bpc_pullback_depth_pct
+    category: bpc
+    description: BPC pullback depth as percentage of range, side-aware (long/short/adaptive)
+    pass_full_df: false
+    compute_params:
+      lookback: 20
+      normalized: true
+      output_normalization_map:
+        bpc_pullback_depth_long: bounded_0_1
+        bpc_pullback_depth_short: bounded_0_1
+        bpc_pullback_depth_pct: bounded_0_1
+    column_mappings:
+      close: close
+      high: high
+      low: low
+
+  bpc_pullback_duration_f:
+    module: bpc
+    compute_func: compute_bpc_pullback_duration_from_series
+    dependencies: []
+    required_columns:
+    - close
+    - high
+    output_columns:
+    - bpc_pullback_duration
+    category: bpc
+    description: BPC pullback duration in consecutive bars (normalized)
+    pass_full_df: false
+    compute_params:
+      lookback: 20
+      threshold_pct: 0.1
+      normalized: true
+      output_normalization_map:
+        bpc_pullback_duration: bounded_0_1
+    column_mappings:
+      close: close
+      high: high
+
+  bpc_pullback_speed_f:
+    module: bpc
+    compute_func: compute_bpc_pullback_speed_from_series
+    dependencies:
+    - bpc_pullback_depth_pct_f
+    - bpc_pullback_duration_f
+    required_columns:
+    - bpc_pullback_depth_pct
+    - bpc_pullback_duration
+    output_columns:
+    - bpc_pullback_speed
+    category: bpc
+    description: BPC pullback speed = depth / (duration + 1), robust to division by zero
+    pass_full_df: false
+    compute_params:
+      normalized: true
+      output_normalization_map:
+        bpc_pullback_speed: bounded_0_1
+    column_mappings:
+      bpc_pullback_depth_pct: bpc_pullback_depth_pct
+      bpc_pullback_duration: bpc_pullback_duration
+
+  bpc_impulse_return_atr_f:
+    module: bpc
+    compute_func: compute_bpc_impulse_return_atr_from_series
+    dependencies:
+    - atr_f
+    required_columns:
+    - close
+    - atr
+    output_columns:
+    - bpc_impulse_return_atr
+    - bpc_impulse_direction_match
+    category: bpc
+    description: BPC impulse return normalized by ATR, with direction preserved (signed)
+    pass_full_df: false
+    compute_params:
+      lookback: 20
+      normalized: true
+      output_normalization_map:
+        bpc_impulse_return_atr: bounded_-1_1
+        bpc_impulse_direction_match: bounded_0_1
+    column_mappings:
+      close: close
+      atr: atr
+
+  bpc_dir_consistency_multi_f:
+    module: bpc
+    compute_func: compute_bpc_dir_consistency_multi_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - bpc_dir_consistency_short
+    - bpc_dir_consistency_mid
+    - bpc_dir_consistency_long
+    category: bpc
+    description: BPC multi-scale direction consistency (short/mid/long windows)
+    pass_full_df: false
+    compute_params:
+      window_short: 5
+      window_mid: 20
+      window_long: 50
+      normalized: true
+      output_normalization_map:
+        bpc_dir_consistency_short: bounded_0_1
+        bpc_dir_consistency_mid: bounded_0_1
+        bpc_dir_consistency_long: bounded_0_1
+    column_mappings:
+      close: close
+
+  bpc_dir_flip_count_f:
+    module: bpc
+    compute_func: compute_bpc_dir_flip_count_from_series
+    dependencies: []
+    required_columns:
+    - close
+    output_columns:
+    - bpc_dir_flip_count
+    category: bpc
+    description: BPC direction flip count in recent bars (normalized)
+    pass_full_df: false
+    compute_params:
+      lookback: 20
+      normalized: true
+      output_normalization_map:
+        bpc_dir_flip_count: bounded_0_1
+    column_mappings:
+      close: close
+
+  bpc_volume_compression_pct_f:
+    module: bpc
+    compute_func: compute_bpc_volume_compression_pct_from_series
+    dependencies: []
+    required_columns:
+    - volume
+    output_columns:
+    - bpc_volume_compression_pct
+    category: bpc
+    description: BPC volume compression percentile (low = contracting, high = expanding)
+    pass_full_df: false
+    compute_params:
+      window: 20
+      percentile_window: 288
+      normalized: true
+      output_normalization_map:
+        bpc_volume_compression_pct: bounded_0_1
+    column_mappings:
+      volume: volume
+
+  bpc_pullback_delta_absorption_f:
+    module: bpc
+    compute_func: compute_bpc_pullback_delta_absorption_from_series
+    dependencies:
+    - atr_f
+    required_columns:
+    - close
+    - cvd_change_5
+    - atr
+    output_columns:
+    - bpc_pullback_delta_absorption
+    category: bpc
+    description: BPC pullback delta absorption using z-score (high = accumulation signal)
+    pass_full_df: false
+    compute_params:
+      lookback: 50
+      normalized: true
+      output_normalization_map:
+        bpc_pullback_delta_absorption: bounded_0_1
+    column_mappings:
+      close: close
+      cvd_change_5: cvd_change_5
+      atr: atr

@@ -26,6 +26,43 @@ archetypes:
         method: trend_sign
         lookback_bars: 5
         min_consistency: 0.6
+    # ====== 特征分层定义（供报告/特征迁移使用） ======
+    feature_layers:
+      atomic:
+        description: "原子信号（price, vol, cvd 分开）- 供树模型自由组合发现新规律"
+        breakout:
+          - bpc_price_breakout_strength   # 价格突破强度
+          - bpc_vol_breakout_confirm      # 成交量确认
+          - bpc_cvd_breakout_confirm      # CVD确认
+          - bpc_vpin_breakout_confirm     # VPIN确认
+        pullback:
+          - bpc_pullback_depth            # 回踩深度
+          - bpc_pullback_quality          # 回踩质量
+          - bpc_vol_pullback_confirm      # 缩量确认
+          - bpc_cvd_absorption            # CVD吸收
+        continuation:
+          - bpc_recovery_strength         # 恢复强度
+          - bpc_momentum_confirm          # 动量确认
+          - bpc_vol_continuation_confirm  # 放量确认
+          - bpc_cvd_momentum              # CVD动量
+          - bpc_vpin_rising               # VPIN上升
+        neutral:
+          - bpc_bb_compression            # 波动率压缩
+          - bpc_vol_compression           # 成交量压缩
+      composite:
+        description: "组合信号（领域知识加权）- 体现领域知识，作为强先验"
+        - bpc_score_breakout              # 突破综合分
+        - bpc_score_pullback              # 回踩综合分
+        - bpc_score_continuation          # 续行综合分
+        - bpc_score_neutral               # 中性综合分
+      contextual:
+        description: "状态信号（方向/阶段/环境）- 提供上下文信息"
+        - bpc_breakout_direction          # 突破方向 (1/-1)
+        - bpc_direction_confidence        # 方向置信度
+        - bpc_is_after_breakout           # 是否在突破后
+        - bpc_was_in_pullback             # 是否经历过回踩
+        - bpc_vol_ratio                   # 成交量比率
+        - bpc_cvd_z                       # CVD z-score
     plateau_candidates:
     - bpc_path_efficiency_high
     - bpc_dir_consistency_high

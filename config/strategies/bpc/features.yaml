@@ -1,40 +1,71 @@
 # BPC (BreakoutPullbackContinuation) 策略特征配置
 # 语义：趋势中先回踩再延续原方向
+# 设计理念：Price tells you WHAT, Volume tells you IF, Order flow tells you WHO
 
 name: bpc
 description: |
   BreakoutPullbackContinuation archetype: 趋势中回踩后延续。
-  核心特征：趋势强度 + 回踩深度 + 结构完整性。
+  核心特征：软阶段概率 + 成交量确认 + 订单流验证。
+  
+  BPC 三阶段语义：
+  - Breakout: 突破压缩区/前高，放量+CVD同向
+  - Pullback: 回踩但不破结构，缩量+CVD吸收
+  - Continuation: 重新启动，再次放量+CVD恢复
 
 feature_pipeline:
   exclude_columns:
     - atr
   requested_features:
-    # ----- BPC 核心特征：趋势 + 回踩 -----
+    # ========== BPC 核心：软阶段分数 ==========
+    - bpc_soft_phase_f  # 输出: bpc_score_breakout/pullback/continuation/neutral
+    
+    # ========== BPC 结构特征 ==========
+    - bpc_pullback_depth_pct_f    # 回踩深度 (side-aware)
+    - bpc_pullback_duration_f     # 回踩持续时间
+    - bpc_pullback_speed_f        # 回踩速度 = depth/(duration+1)
+    - bpc_impulse_return_atr_f    # impulse 收益/ATR (带方向)
+    
+    # ========== BPC 方向一致性 ==========
+    - bpc_dir_consistency_multi_f # 多尺度方向一致性 (short/mid/long)
+    - bpc_dir_flip_count_f        # 方向翻转次数
+    
+    # ========== BPC 量能/订单流 ==========
+    - bpc_volume_compression_pct_f    # 成交量压缩百分位
+    - bpc_pullback_delta_absorption_f # 回踩期间 delta 吸收
+    
+    # ========== 趋势强度 ==========
     - trend_r2_20_f
     - path_efficiency_pct_f
     - path_length_pct_f
     - price_dir_consistency_pct_f
-    # ----- 动量 -----
+    
+    # ========== 动量 ==========
     - macd_f
     - rsi_f
-    # ----- 波动 -----
+    
+    # ========== 波动 ==========
     - atr_percentile_f
     - bb_width_normalized_pct_f
     - atr_f
-    # ----- SR 相关 -----
+    
+    # ========== SR 相关 ==========
     - sr_strength_max_f
     - dist_to_nearest_sr_f
-    # ----- 订单流 -----
+    
+    # ========== 订单流 ==========
     - vpin_features_f
     - volume_ratio_pct_f
     - ofci_pct_f
     - shd_pct_f
-    # ----- 基础 -----
+    - cvd_divergence_f
+    
+    # ========== 基础 ==========
     - sma_200_f
-    # ----- 高级特征 -----
+    
+    # ========== 高级特征 ==========
     - hurst_price_f
     - hilbert_phase_f
+
   ensure_signal_column:
     name: signal
     default_value: 0

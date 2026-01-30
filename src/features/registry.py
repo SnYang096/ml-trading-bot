@@ -318,6 +318,8 @@ FEATURE_MODULES = [
     "src.features.loader.selector_utils",
     # Alpha (TS-adapted subset)
     "src.features.time_series.alpha_factors.alpha_ts_wrappers",
+    # BPC (Breakout-Pullback-Continuation) features
+    "src.features.time_series.bpc_features",
 ]
 
 _features_registered = False
