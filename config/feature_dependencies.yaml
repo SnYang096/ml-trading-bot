@@ -874,6 +874,7 @@ features:
     compute_params:
       wavelet: db4
       level: 4
+      use_log_returns: true  # 对 log returns 做 WPT，避免趋势能量主导低频带
       normalized: true
       output_normalization_map:
         wpt_price_fluctuation: unitless
@@ -1082,6 +1083,7 @@ features:
       wavelet: db4
       level: 4
       lookback_window: 20
+      use_log_returns: true  # 关键修复：对 log returns 做 WPT，避免趋势能量主导
       normalized: true
     pass_full_df: false
     column_mappings:

@@ -48,6 +48,7 @@ def load_data_with_strategy_features(
     feature_store_dir: str = "feature_store",
     use_cache: bool = False,
     force_rebuild: bool = False,
+    data_path: str = "data/parquet_data",
 ) -> pd.DataFrame:
     """Run strategy feature pipeline to get feature-enriched df.
 
@@ -59,6 +60,7 @@ def load_data_with_strategy_features(
         feature_store_dir: FeatureStore root directory
         use_cache: If True, use FeatureStore cache; if False, compute fresh
         force_rebuild: If True, force rebuild FeatureStore cache even if exists
+        data_path: Path to tick data directory for VPIN features
     """
     from src.features.loader.strategy_feature_loader import StrategyFeatureLoader
     from src.time_series_model.strategy_config import StrategyConfigLoader
@@ -93,6 +95,48 @@ def load_data_with_strategy_features(
     feature_loader = StrategyFeatureLoader(
         feature_deps_path=str(PROJECT_ROOT / "config" / "feature_dependencies.yaml"),
     )
+
+    # Configure ticks_loader_json for VPIN features
+    try:
+        from src.data_tools.tick_loader import (
+            list_tick_files,
+            serialize_tick_loader_params,
+        )
+
+        start_ts = str(df.index.min())
+        end_ts = str(df.index.max())
+        tick_files = list_tick_files(
+            symbol=symbol,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            ticks_dir=data_path,
+            lookback_minutes=60,
+        )
+
+        if tick_files:
+            tick_params = {
+                "symbol": symbol,
+                "tick_files": [str(Path(f)) for f in tick_files],
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "lookback_minutes": 60,
+                "ticks_dir": data_path,
+            }
+            ticks_loader_json = serialize_tick_loader_params(tick_params)
+
+            # Set ticks_loader_json for all features that need it
+            features_cfg = feature_loader.feature_deps.get("features", {})
+            for feature_name in ["vpin_features", "footprint_basic", "reflexivity_f"]:
+                if feature_name in features_cfg:
+                    compute_params = features_cfg[feature_name].setdefault(
+                        "compute_params", {}
+                    )
+                    compute_params["ticks_loader_json"] = ticks_loader_json
+            print(f"   ✅ Configured tick data: {len(tick_files)} files")
+        else:
+            print(f"   ⚠️  No tick files found in {data_path} for {symbol}")
+    except Exception as e:
+        print(f"   ⚠️  Could not configure tick data: {e}")
 
     # Determine FeatureStore parameters based on options
     if use_cache:
@@ -773,6 +817,7 @@ def main() -> None:
                 feature_store_dir=getattr(args, "feature_store_dir", "feature_store"),
                 use_cache=use_cache,
                 force_rebuild=force_rebuild,
+                data_path=args.data_path,  # Pass tick data path for VPIN
             )
             print(f"✅ Feature pipeline done: {len(df.columns)} columns")
         except Exception as e:

@@ -195,6 +195,7 @@ def extract_wpt_features(
     window: int = 100,
     return_reconstructed_price: bool = False,
     update_step: int = 1,
+    use_log_returns: bool = False,
 ) -> pd.DataFrame:
     """
     从 DataFrame 中提取 WPT 特征（滚动窗口，无数据泄露）
@@ -221,6 +222,10 @@ def extract_wpt_features(
                      - 4H/日线策略：update_step=1（推荐）
                      - 1min策略：update_step=5-10（可选优化）
                      - 资源受限环境：根据实际情况调整
+        use_log_returns: If True, apply np.diff(np.log(price)) before WPT decomposition.
+                        This converts non-stationary price to stationary returns,
+                        improving energy distribution across frequency bands.
+                        Recommended for energy ratio features.
     
     Returns:
         DataFrame with WPT features added
@@ -229,6 +234,7 @@ def extract_wpt_features(
         - 所有 WPT 特征具有约 window//2 的相位滞后，适用于中低频策略（日线/4H）
         - 滚动窗口 + shift(1) 有效避免了未来函数问题
         - 当 update_step > 1 时，特征值会广播到后续 update_step 根K线
+        - 当 use_log_returns=True 时，能量比特征更有意义（避免趋势能量主导低频带）
     """
     df = df.copy()
     
@@ -268,10 +274,20 @@ def extract_wpt_features(
     
     for i in range(min_length, len(df), update_step):
         # 使用历史窗口数据 [i-window, i)
-        window_data = price_values[i - window : i]
+        window_data_raw = price_values[i - window : i]
         
-        if len(window_data) < 2 ** level:
+        if len(window_data_raw) < 2 ** level:
             continue
+        
+        # 对价格做预处理：如果 use_log_returns=True，转换为 log returns
+        # 这将非平稳价格转换为平稳收益率，使能量分布更均匀
+        if use_log_returns:
+            # log returns: r_t = log(p_t) - log(p_{t-1})
+            window_data = np.diff(np.log(np.maximum(window_data_raw, 1e-10)))
+            if len(window_data) < 2 ** level:
+                continue
+        else:
+            window_data = window_data_raw
         
         # 对窗口数据做 WPT
         price_wpt = wpt_decompose(window_data, wavelet=wavelet, level=level)
@@ -423,6 +439,7 @@ def extract_wpt_price_features_normalized(
     level: int = 4,
     window: int = 100,
     update_step: int = 1,
+    use_log_returns: bool = True,  # Default True for energy ratio features
 ) -> pd.DataFrame:
     """
     Normalized WPT price features for cross-asset training.
@@ -432,6 +449,8 @@ def extract_wpt_price_features_normalized(
         - wpt_price_trend := (trend / close) - 1
         - wpt_price_fluctuation := fluctuation / close
     - Energy ratios are clipped to [0, 1].
+    - use_log_returns=True (default) ensures energy is distributed across frequency bands
+      rather than concentrating in low-frequency (trend) band.
     """
     out = extract_wpt_features(
         df,
@@ -444,6 +463,7 @@ def extract_wpt_price_features_normalized(
         window=window,
         return_reconstructed_price=False,
         update_step=update_step,
+        use_log_returns=use_log_returns,
     )
 
     if price_col not in df.columns:
