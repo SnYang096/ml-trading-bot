@@ -1270,6 +1270,8 @@ class FeatureComputer:
             result_df: 包含计算特征的 DataFrame
         """
         result_df = df.copy()
+        if result_df.empty:
+            return result_df
         base_index = result_df.index
         df_hash = self._get_df_hash(result_df)
 

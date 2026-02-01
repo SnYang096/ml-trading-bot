@@ -44,6 +44,14 @@ def _collect_splits_from_dataframe(booster, max_splits=40):
     split_df = df.dropna(subset=["split_feature", "threshold"])
     if split_df.empty:
         return []
+
+    # 过滤掉 categorical splits（threshold 包含 '||' 的是分类特征分裂）
+    split_df = split_df[
+        ~split_df["threshold"].astype(str).str.contains(r"\|\|", regex=True)
+    ]
+    if split_df.empty:
+        return []
+
     names = split_df["split_feature"].astype(str)
     thrs = split_df["threshold"].astype(float)
     cnt = defaultdict(int)
@@ -123,10 +131,12 @@ def _strip_rules_section(content: str) -> str:
     new_lines = []
     in_section = False
     for line in lines:
+        # 检测多种可能的标题格式
         if (
-            "## 📜 特征使用规则" in line
-            or "## 特征使用规则" in line
-            or "## 树模型规则导出" in line
+            "特征使用规则" in line
+            and line.strip().startswith("##")
+            or "树模型规则导出" in line
+            and line.strip().startswith("##")
         ):
             in_section = True
             continue
@@ -137,6 +147,116 @@ def _strip_rules_section(content: str) -> str:
     while new_lines and not new_lines[-1].strip():
         new_lines.pop()
     return "\n".join(new_lines)
+
+
+def _write_standalone_rules(
+    output_path: Path, rules: list, strategy: str, model_source: str
+):
+    """写入独立的规则文件（到模型目录）。"""
+    lines = [
+        f"# {strategy} 树模型规则导出",
+        "",
+        "以下为从 LightGBM 模型中提取的**高频分裂条件**（按出现次数排序）。",
+        "",
+        "| 特征 | 条件 | 出现次数 |",
+        "|------|------|----------|",
+    ]
+    for name, thr, op, count in rules:
+        cond = f"{name} {op} {thr:.4g}"
+        lines.append(f"| `{name}` | `{cond}` | {count} |")
+    lines.append("")
+    lines.append(f"**模型来源**：`{model_source}`")
+    lines.append("")
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _generate_risk_gate_yaml(
+    output_path: Path, rules: list, strategy: str, model_source: str, top_n: int = 10
+):
+    """
+    从树模型分裂规则生成 risk_gate_draft.yaml 草稿。
+
+    生成的 YAML 包含语义注释，需人工审核修改后使用。
+    """
+    import yaml
+
+    # 分类规则：根据特征名语义分组
+    hard_gate_features = {"vpin", "direction", "vacuum", "committed", "regime"}
+
+    hard_gates = []
+    soft_filters = []
+
+    for name, thr, op, count in rules[:top_n]:
+        # 判断是 hard gate 还是 soft filter
+        name_lower = name.lower()
+        is_hard = any(kw in name_lower for kw in hard_gate_features)
+
+        # 生成规则 ID
+        rule_id = f"{'gate' if is_hard else 'filter'}_{name.replace('.', '_').lower()}"
+
+        # 构造规则
+        rule = {
+            "id": rule_id,
+            "key": name,
+            "operator": "<" if op == "<=" else op.replace("<=", "<"),
+            "quantile_value": round(thr, 4),
+            "tag": f"{'HARD' if is_hard else 'SOFT'}_{name.upper().replace('.', '_')}",
+            "_comment": f"树模型分裂 {count} 次 | 阈值 {thr:.4g} | 需人工确认语义",
+        }
+
+        if is_hard:
+            hard_gates.append(rule)
+        else:
+            # soft filter 需要权重
+            rule["weight"] = 0.8  # 默认权重，需人工调整
+            soft_filters.append(rule)
+
+    # 构建完整配置
+    config = {
+        "_meta": {
+            "generated_from": str(model_source),
+            "strategy": strategy,
+            "note": "此为自动生成的草稿，需人工审核修改后使用",
+        },
+        "system_safety": {
+            "pre_checks": [
+                {
+                    "id": "check_feature_freshness",
+                    "description": "检查特征数据时效性",
+                },
+            ],
+        },
+        "hard_gates": {
+            "_description": "硬规则：任一触发则拒绝交易",
+            "rules": hard_gates,
+        },
+        "soft_filters": {
+            "_description": "软规则：触发则降低置信度",
+            "rules": soft_filters,
+        },
+        "governance": {
+            "soft_filter_floor": {
+                "min_cumulative_weight": 0.25,
+                "_comment": "软规则累计权重下限，防止过度降权",
+            },
+            "failure_budget": {
+                "max_hard_deny_rate": 0.50,
+                "_comment": "硬规则拒绝率上限，超过需审查规则",
+            },
+        },
+    }
+
+    # 使用自定义 dumper 保留注释字段
+    yaml_content = yaml.dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+
+    output_path.write_text(yaml_content, encoding="utf-8")
+    return output_path
 
 
 def _append_rules_section(
@@ -158,7 +278,6 @@ def _append_rules_section(
     new_lines.append(f"**模型来源**：`{model_source}`")
     new_lines.append("")
     readme_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    print(f"  ✅ {readme_path}（已写入 {len(rules)} 条规则）")
 
 
 def _append_placeholder_section(readme_path: Path, reason: str):
@@ -196,6 +315,16 @@ def main():
         "--max-splits", type=int, default=30, help="Maximum number of split conditions"
     )
     ap.add_argument(
+        "--generate-risk-gate",
+        action="store_true",
+        help="Generate risk_gate_draft.yaml from tree splits (requires manual review)",
+    )
+    ap.add_argument(
+        "--risk-gate-output",
+        default=None,
+        help="Output path for risk_gate_draft.yaml (default: <model-dir>/risk_gate_draft.yaml)",
+    )
+    ap.add_argument(
         "base", nargs="?", help="Base directory (legacy: results/fixed_long)"
     )
 
@@ -213,18 +342,23 @@ def main():
         artifact_dir = Path(args.model_dir).resolve()
         model_path = artifact_dir / "model.pkl"
         features_path = artifact_dir / "used_features.json"
+
+        # 输出到模型目录下，文件名包含策略名
+        output_path = artifact_dir / f"{args.strategy}_tree_rules.md"
+
+        # 同时还可以更新策略目录下的 README（如果存在）
         readme_path = ROOT / "config" / "strategies" / args.strategy / "README.md"
 
         if not readme_path.exists():
-            print(f"  ⚠️  {args.strategy}: no README at {readme_path}")
-            return 1
+            print(f"  ℹ️  {args.strategy}: 策略 README 不存在，将只输出到模型目录")
+            readme_path = None  # 不更新 README
 
         if not model_path.exists():
-            _append_placeholder_section(
-                readme_path,
-                "未找到 model.pkl。请先运行固定训练（如 mlbot train fixed）并确保 ModelArtifact 保存成功。",
-            )
-            return 0
+            msg = "未找到 model.pkl。请先运行固定训练（如 mlbot train fixed）并确保 ModelArtifact 保存成功。"
+            if readme_path:
+                _append_placeholder_section(readme_path, msg)
+            print(f"  ❌ {args.strategy}: {msg}")
+            return 1
 
         model = joblib.load(model_path)
         if isinstance(model, dict):
@@ -242,13 +376,28 @@ def main():
 
         rules = _collect_splits(booster, feature_names, max_splits=args.max_splits)
         if not rules:
-            _append_placeholder_section(
-                readme_path,
-                "模型可加载但未提取到分裂条件（可能为叶节点或格式变化）。可检查 model.pkl 与 LightGBM 版本。",
-            )
+            msg = "模型可加载但未提取到分裂条件（可能为叶节点或格式变化）。可检查 model.pkl 与 LightGBM 版本。"
+            if readme_path:
+                _append_placeholder_section(readme_path, msg)
+            print(f"  ⚠️ {args.strategy}: {msg}")
             return 0
 
-        _append_rules_section(readme_path, rules, args.strategy, str(artifact_dir))
+        # 输出到模型目录下的独立文件
+        _write_standalone_rules(output_path, rules, args.strategy, str(artifact_dir))
+        print(f"  ✅ {output_path}")
+
+        # 生成 risk_gate_draft.yaml（如果指定）
+        if args.generate_risk_gate:
+            risk_gate_path = (
+                Path(args.risk_gate_output)
+                if args.risk_gate_output
+                else artifact_dir / "risk_gate_draft.yaml"
+            )
+            _generate_risk_gate_yaml(
+                risk_gate_path, rules, args.strategy, str(artifact_dir)
+            )
+            print(f"  ✅ {risk_gate_path} (草稿，需人工审核)")
+
         return 0
 
     # 旧接口：扫描所有策略

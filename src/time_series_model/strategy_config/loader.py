@@ -104,11 +104,17 @@ class StrategyConfigLoader:
         config_dir: Path | str,
         *,
         strict_name_match: bool = False,
+        labels_override: Optional[Path | str] = None,
     ) -> None:
         self.config_dir = Path(config_dir)
         self.strict_name_match = bool(strict_name_match)
+        self.labels_override = Path(labels_override) if labels_override else None
         if not self.config_dir.exists() or not self.config_dir.is_dir():
             raise FileNotFoundError(f"Config directory not found: {self.config_dir}")
+        if self.labels_override and not self.labels_override.exists():
+            raise FileNotFoundError(
+                f"Labels override file not found: {self.labels_override}"
+            )
 
     def load(self) -> StrategyConfig:
         missing_required = [
@@ -134,7 +140,11 @@ class StrategyConfigLoader:
                 print(f"   ⚠️  Optional config '{fname}' not found in {self.config_dir}")
 
         features_data = _load_yaml_file(self.config_dir / "features.yaml")
-        labels_data = _load_yaml_file(self.config_dir / "labels.yaml")
+        # Support --labels override: use specified file instead of default labels.yaml
+        labels_path = self.labels_override or (self.config_dir / "labels.yaml")
+        labels_data = _load_yaml_file(labels_path)
+        if self.labels_override:
+            print(f"   📋 Using labels override: {self.labels_override}")
         model_data = _load_yaml_file(self.config_dir / "model.yaml")
 
         evaluation_data = (

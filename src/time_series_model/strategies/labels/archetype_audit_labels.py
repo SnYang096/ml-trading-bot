@@ -675,3 +675,55 @@ def audit_archetype(
         )
 
     return results
+
+
+# ============================================================
+# Training Pipeline Wrapper
+# ============================================================
+
+
+def compute_generic_outcome_audit_label(
+    df: pd.DataFrame,
+    archetype: str = "generic",
+    direction: Literal["long", "short"] = "long",
+    horizon: int = 50,
+    return_features: bool = False,
+    **kwargs,
+) -> pd.Series:
+    """
+    训练流水线适配函数：计算 outcome audit 标签。
+
+    为训练流水线提供统一接口，返回 forward_rr Series。
+
+    Args:
+        df: 输入数据，必须包含 OHLC 和 ATR
+        archetype: archetype 名称（当前未使用，保留用于未来扩展）
+        direction: 交易方向 "long" 或 "short"
+        horizon: 持仓窗口（bars）
+        return_features: 是否返回额外特征（当前未实现）
+        **kwargs: 其他参数（向后兼容）
+
+    Returns:
+        pd.Series: forward_rr 标签序列
+
+    Raises:
+        KeyError: 如果缺少必需列（OHLC + ATR）
+    """
+    # 处理空 DataFrame（例如 test 集为空）
+    if df.empty:
+        return pd.Series([], dtype=float, name="forward_rr")
+
+    # 计算 forward_rr
+    rr_raw, rr_clipped = compute_path_extreme_forward_rr(
+        df=df,
+        direction=direction,
+        horizon=horizon,
+        price_col=kwargs.get("price_col", "close"),
+        high_col=kwargs.get("high_col", "high"),
+        low_col=kwargs.get("low_col", "low"),
+        atr_col=kwargs.get("atr_col", "atr"),
+        clip_range=kwargs.get("clip_range", (-5, 5)),
+    )
+
+    # 返回 raw 版本（保留极端值用于树模型学习）
+    return rr_raw

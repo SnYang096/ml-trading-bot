@@ -40,6 +40,7 @@ if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
 
 import numpy as np
 import pandas as pd
+from datetime import datetime
 
 from src.data_tools.data_handler import DataHandler
 from src.data_tools.tick_loader import list_tick_files, serialize_tick_loader_params
@@ -58,6 +59,8 @@ from src.time_series_model.pipeline.training.volatility_model_config import (
 from src.time_series_model.strategies.backtesting.vectorbt_backtest import (
     VectorBTBacktest,
 )
+
+import yaml
 
 # 原始/未归一化列：不传入模型，只用于标签或 backtest
 BASE_DATA_COLUMNS = {
@@ -81,6 +84,87 @@ BASE_DATA_COLUMNS = {
     "cvd_medium",
     "cvd_long",
 }
+
+# 缓存 output_columns 集合（方案 C：基于元数据自动过滤）
+_VALID_OUTPUT_COLUMNS: Optional[set] = None
+
+# 归一化后缀（方案 A + C 结合）
+NORMALIZED_SUFFIXES = ("_pct", "_rank", "_zscore", "_normalized", "_f")
+# 原始特征前缀（需要额外过滤）
+RAW_FEATURE_PREFIXES = (
+    "cvd_change_",  # cvd_change_1, cvd_change_5, cvd_change_20 (但保留 cvd_change_5_pct)
+    "trade_cluster_",  # trade_cluster_* 原始列 (但保留 zscore 版本)
+)
+# 明确排除的单个列名
+RAW_FEATURE_EXACT = {
+    "_symbol",
+    "macd",
+    "macd_signal",
+    "macd_histogram",
+    "cvd",
+    "cvd_normalized",
+}
+
+
+def _is_normalized_feature(col: str) -> bool:
+    """判断是否为归一化特征（方案 A）。
+
+    返回 True 表示应该保留，False 表示应该排除。
+    """
+    # 明确排除的列
+    if col in RAW_FEATURE_EXACT:
+        return False
+
+    # 检查原始特征前缀
+    for prefix in RAW_FEATURE_PREFIXES:
+        if col.startswith(prefix):
+            # 但如果有归一化后缀，则保留
+            if any(col.endswith(suffix) for suffix in NORMALIZED_SUFFIXES):
+                return True
+            # 或者包含 zscore
+            if "zscore" in col:
+                return True
+            return False
+
+    return True
+
+
+def _load_valid_output_columns(
+    feature_deps_path: str = "config/feature_dependencies.yaml",
+) -> set:
+    """从 feature_dependencies.yaml 收集所有合法的 output_columns。
+
+    只有在 output_columns 中声明的列才允许进入模型训练。
+    原始数据列（如 cvd_change_1、macd 等）不在任何 output_columns 中，自动被排除。
+    """
+    global _VALID_OUTPUT_COLUMNS
+    if _VALID_OUTPUT_COLUMNS is not None:
+        return _VALID_OUTPUT_COLUMNS
+
+    try:
+        p = Path(feature_deps_path)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / p
+        obj = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        features = obj.get("features", {}) or {}
+
+        valid_cols = set()
+        for feat_name, feat_info in features.items():
+            if isinstance(feat_info, dict):
+                out_cols = feat_info.get("output_columns") or []
+                for c in out_cols:
+                    valid_cols.add(str(c))
+
+        _VALID_OUTPUT_COLUMNS = valid_cols
+        print(
+            f"   ℹ️  Loaded {len(valid_cols)} valid output columns from feature_dependencies.yaml"
+        )
+        return valid_cols
+    except Exception as e:
+        print(
+            f"   ⚠️  Failed to load output_columns from feature_dependencies.yaml: {e}"
+        )
+        return set()
 
 
 def parse_args() -> argparse.Namespace:
@@ -168,6 +252,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Optional specific strategy name (or comma separated) inside config root",
+    )
+    parser.add_argument(
+        "--labels",
+        type=str,
+        default=None,
+        help="Override labels config file path (e.g. config/strategies/bpc/labels_rr_extreme.yaml)",
     )
     return parser.parse_args()
 
@@ -426,6 +516,11 @@ def determine_feature_columns(
     df: pd.DataFrame,
     pipeline_cfg,
 ) -> List[str]:
+    """确定进入模型训练的特征列。
+
+    方案 C：基于 feature_dependencies.yaml 的 output_columns 元数据自动过滤。
+    只有在 output_columns 中声明的列才允许进入模型，原始数据列自动排除。
+    """
     # YAML-driven input pruning: keep some columns for label/backtest, but never feed them into the model.
     exclude_cols = []
     try:
@@ -433,6 +528,9 @@ def determine_feature_columns(
     except Exception:
         exclude_cols = []
     exclude_cols = [str(c).strip() for c in exclude_cols if str(c).strip()]
+
+    # 方案 C：加载合法的 output_columns 集合
+    valid_output_cols = _load_valid_output_columns()
 
     if pipeline_cfg.selector:
         selector_func = import_callable(
@@ -453,6 +551,22 @@ def determine_feature_columns(
         if col not in BASE_DATA_COLUMNS
         and not col.startswith(("signal", "binary_signal"))
     ]
+
+    # 方案 C：只保留在 output_columns 中声明的列
+    if valid_output_cols:
+        before_count = len(cols)
+        cols = [c for c in cols if c in valid_output_cols]
+        filtered_count = before_count - len(cols)
+        if filtered_count > 0:
+            print(f"   ℹ️  Auto-filtered {filtered_count} columns not in output_columns")
+
+    # 方案 A：进一步过滤非归一化的原始特征
+    before_count = len(cols)
+    cols = [c for c in cols if _is_normalized_feature(c)]
+    filtered_count = before_count - len(cols)
+    if filtered_count > 0:
+        print(f"   ℹ️  Auto-filtered {filtered_count} raw features (not normalized)")
+
     if exclude_cols:
         cols = [c for c in cols if c not in set(exclude_cols)]
     return cols
@@ -506,6 +620,238 @@ def apply_post_label_filters(
         if column and column in result.columns and filt.get("notna"):
             result = result[result[column].notna()]
     return result
+
+
+def generate_training_html_report(
+    results: Dict[str, Any],
+    output_dir: Path,
+    strategy_name: str,
+    args: argparse.Namespace,
+) -> Optional[Path]:
+    """
+    Generate an HTML report for training results.
+
+    Args:
+        results: Training results dictionary
+        output_dir: Directory to save the report
+        strategy_name: Name of the strategy
+        args: Command line arguments
+
+    Returns:
+        Path to the generated HTML file, or None if generation fails
+    """
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{strategy_name}_{timestamp}_report.html"
+        report_path = output_dir / filename
+
+        # Extract key metrics
+        model_type = results.get("model_type", "unknown")
+        task_type = results.get("task_type", "unknown")
+        avg_cv_metric = results.get("avg_cv_metric")
+        n_features = results.get("n_features", 0)
+        n_train = results.get("n_train_samples", 0)
+        n_test = results.get("n_test_samples", 0)
+
+        # Backtest metrics
+        backtest = results.get("backtest") or {}
+        sharpe = backtest.get("sharpe")
+        total_return = backtest.get("total_return_pct")
+        max_dd = backtest.get("max_drawdown_pct")
+        win_rate = backtest.get("win_rate")
+        total_trades = backtest.get("total_trades")
+
+        # Feature importance (top 20)
+        feature_importance = results.get("feature_importance", {})
+        top_features = list(feature_importance.items())[:20]
+
+        # Per-symbol backtest
+        backtest_by_symbol = results.get("backtest_by_symbol", {})
+
+        # Build HTML content
+        html_parts = [
+            "<!DOCTYPE html>",
+            "<html lang='en'>",
+            "<head>",
+            "  <meta charset='UTF-8'>",
+            "  <meta name='viewport' content='width=device-width, initial-scale=1.0'>",
+            f"  <title>{strategy_name} Training Report</title>",
+            "  <style>",
+            "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 20px; background: #f5f5f5; }",
+            "    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }",
+            "    h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }",
+            "    h2 { color: #555; margin-top: 30px; }",
+            "    .meta-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }",
+            "    .meta-info span { margin-right: 20px; }",
+            "    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }",
+            "    .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; }",
+            "    .metric-card.positive { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }",
+            "    .metric-card.negative { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }",
+            "    .metric-card.neutral { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }",
+            "    .metric-value { font-size: 28px; font-weight: bold; }",
+            "    .metric-label { font-size: 12px; opacity: 0.9; margin-top: 5px; }",
+            "    table { width: 100%; border-collapse: collapse; margin: 15px 0; }",
+            "    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }",
+            "    th { background: #f8f9fa; font-weight: 600; }",
+            "    tr:hover { background: #f5f5f5; }",
+            "    .importance-bar { background: #4CAF50; height: 20px; border-radius: 3px; }",
+            "    .warning { color: #f57c00; }",
+            "    .error { color: #d32f2f; }",
+            "    .success { color: #388e3c; }",
+            "  </style>",
+            "</head>",
+            "<body>",
+            "  <div class='container'>",
+            f"    <h1>📊 {strategy_name} Training Report</h1>",
+            "    <div class='meta-info'>",
+            f"      <span><strong>Model:</strong> {model_type}</span>",
+            f"      <span><strong>Task:</strong> {task_type}</span>",
+            f"      <span><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</span>",
+            "    </div>",
+        ]
+
+        # Training parameters
+        html_parts.extend(
+            [
+                "    <h2>🔧 Training Parameters</h2>",
+                "    <table>",
+                f"      <tr><td>Symbol(s)</td><td>{getattr(args, 'symbol', 'N/A')}</td></tr>",
+                f"      <tr><td>Timeframe</td><td>{getattr(args, 'timeframe', 'N/A')}</td></tr>",
+                f"      <tr><td>Start Date</td><td>{getattr(args, 'start_date', 'N/A')}</td></tr>",
+                f"      <tr><td>End Date</td><td>{getattr(args, 'end_date', 'N/A')}</td></tr>",
+                f"      <tr><td>Holdout Start</td><td>{getattr(args, 'holdout_start_date', 'N/A')}</td></tr>",
+                f"      <tr><td>Holdout End</td><td>{getattr(args, 'holdout_end_date', 'N/A')}</td></tr>",
+                f"      <tr><td>Seed</td><td>{getattr(args, 'seed', 'N/A')}</td></tr>",
+                "    </table>",
+            ]
+        )
+
+        # Sample statistics
+        html_parts.extend(
+            [
+                "    <h2>📈 Sample Statistics</h2>",
+                "    <div class='metrics-grid'>",
+                f"      <div class='metric-card neutral'><div class='metric-value'>{n_train:,}</div><div class='metric-label'>Training Samples</div></div>",
+                f"      <div class='metric-card neutral'><div class='metric-value'>{n_test:,}</div><div class='metric-label'>Test Samples</div></div>",
+                f"      <div class='metric-card neutral'><div class='metric-value'>{n_features}</div><div class='metric-label'>Features Used</div></div>",
+            ]
+        )
+        if avg_cv_metric is not None:
+            html_parts.append(
+                f"      <div class='metric-card neutral'><div class='metric-value'>{avg_cv_metric:.4f}</div><div class='metric-label'>Avg CV Metric</div></div>"
+            )
+        html_parts.append("    </div>")
+
+        # Backtest results
+        if backtest and sharpe is not None:
+            sharpe_class = (
+                "positive"
+                if sharpe > 0.5
+                else ("negative" if sharpe < 0 else "neutral")
+            )
+            return_class = "positive" if (total_return or 0) > 0 else "negative"
+            dd_class = "negative" if (max_dd or 0) > 20 else "neutral"
+
+            html_parts.extend(
+                [
+                    "    <h2>💰 Backtest Results</h2>",
+                    "    <div class='metrics-grid'>",
+                    f"      <div class='metric-card {sharpe_class}'><div class='metric-value'>{sharpe:.2f}</div><div class='metric-label'>Sharpe Ratio</div></div>",
+                ]
+            )
+            if total_return is not None:
+                html_parts.append(
+                    f"      <div class='metric-card {return_class}'><div class='metric-value'>{total_return:.2f}%</div><div class='metric-label'>Total Return</div></div>"
+                )
+            if max_dd is not None:
+                html_parts.append(
+                    f"      <div class='metric-card {dd_class}'><div class='metric-value'>{max_dd:.2f}%</div><div class='metric-label'>Max Drawdown</div></div>"
+                )
+            if win_rate is not None:
+                html_parts.append(
+                    f"      <div class='metric-card neutral'><div class='metric-value'>{win_rate:.1f}%</div><div class='metric-label'>Win Rate</div></div>"
+                )
+            if total_trades is not None:
+                html_parts.append(
+                    f"      <div class='metric-card neutral'><div class='metric-value'>{total_trades}</div><div class='metric-label'>Total Trades</div></div>"
+                )
+            html_parts.append("    </div>")
+        elif backtest is None:
+            html_parts.extend(
+                [
+                    "    <h2>💰 Backtest Results</h2>",
+                    "    <p class='warning'>⚠️ Backtest skipped (train-all mode or no holdout test set)</p>",
+                ]
+            )
+        else:
+            html_parts.extend(
+                [
+                    "    <h2>💰 Backtest Results</h2>",
+                    f"    <p class='error'>❌ Backtest failed or skipped: {backtest.get('note', 'unknown reason')}</p>",
+                ]
+            )
+
+        # Per-symbol backtest
+        if backtest_by_symbol:
+            html_parts.extend(
+                [
+                    "    <h2>📊 Per-Symbol Backtest</h2>",
+                    "    <table>",
+                    "      <tr><th>Symbol</th><th>Sharpe</th><th>Return %</th><th>Max DD %</th><th>Trades</th></tr>",
+                ]
+            )
+            for sym, bt in backtest_by_symbol.items():
+                s = bt.get("sharpe", "N/A")
+                r = bt.get("total_return_pct", "N/A")
+                d = bt.get("max_drawdown_pct", "N/A")
+                t = bt.get("total_trades", "N/A")
+                s_str = f"{s:.2f}" if isinstance(s, (int, float)) else str(s)
+                r_str = f"{r:.2f}" if isinstance(r, (int, float)) else str(r)
+                d_str = f"{d:.2f}" if isinstance(d, (int, float)) else str(d)
+                html_parts.append(
+                    f"      <tr><td>{sym}</td><td>{s_str}</td><td>{r_str}</td><td>{d_str}</td><td>{t}</td></tr>"
+                )
+            html_parts.append("    </table>")
+
+        # Feature importance
+        if top_features:
+            max_importance = top_features[0][1] if top_features else 1
+            html_parts.extend(
+                [
+                    "    <h2>🎯 Top 20 Feature Importance</h2>",
+                    "    <table>",
+                    "      <tr><th>Rank</th><th>Feature</th><th>Importance</th><th></th></tr>",
+                ]
+            )
+            for i, (feat, imp) in enumerate(top_features, 1):
+                bar_width = (
+                    int((imp / max_importance) * 100) if max_importance > 0 else 0
+                )
+                html_parts.append(
+                    f"      <tr><td>{i}</td><td><code>{feat}</code></td><td>{imp:.2f}</td>"
+                    f"<td><div class='importance-bar' style='width:{bar_width}%'></div></td></tr>"
+                )
+            html_parts.append("    </table>")
+
+        # Footer
+        html_parts.extend(
+            [
+                "    <hr style='margin-top: 40px; border: none; border-top: 1px solid #eee;'>",
+                f"    <p style='color: #999; font-size: 12px;'>Generated by mlbot train • {output_dir}</p>",
+                "  </div>",
+                "</body>",
+                "</html>",
+            ]
+        )
+
+        # Write HTML file
+        html_content = "\n".join(html_parts)
+        report_path.write_text(html_content, encoding="utf-8")
+        return report_path
+
+    except Exception as exc:
+        print(f"   ⚠️  Failed to generate HTML report: {exc}")
+        return None
 
 
 def train_volatility_model_in_pipeline(
@@ -621,12 +967,24 @@ def drop_inf_rows(df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
     """Remove rows containing inf/-inf in feature columns (NaN is kept)."""
     if not feature_cols:
         return df
+    if df.empty:
+        return df
+
+    # First, handle duplicate columns in df
+    if df.columns.duplicated().any():
+        # Keep first occurrence of duplicate columns
+        df = df.loc[:, ~df.columns.duplicated()].copy()
+
     dedup_cols = list(dict.fromkeys(feature_cols))
     result = df.copy()
     # Only numeric columns can contain +/-inf in a meaningful way.
     # Some feature pipelines may include non-numeric columns (e.g. DTW match labels).
+    # Filter to columns that actually exist in result
+    existing_cols = [c for c in dedup_cols if c in result.columns]
+    if not existing_cols:
+        return result
     numeric_cols = (
-        result[dedup_cols].select_dtypes(include=[np.number]).columns.tolist()
+        result[existing_cols].select_dtypes(include=[np.number]).columns.tolist()
     )
     if not numeric_cols:
         return result
@@ -636,11 +994,16 @@ def drop_inf_rows(df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
     has_inf = np.isinf(result[numeric_cols]).any(axis=1)
     finite_mask = ~has_inf
     dropped = len(result) - finite_mask.sum()
-    result = result[finite_mask]
+    result = result[finite_mask].copy()  # explicit copy to avoid SettingWithCopyWarning
 
     # Safety: ensure no inf remains after filtering (convert to NaN).
-    # This should normally be a no-op, but keeps downstream code robust.
-    result[numeric_cols] = result[numeric_cols].replace([np.inf, -np.inf], np.nan)
+    # Use numpy-based replacement to avoid pandas column name issues
+    if len(result) > 0 and numeric_cols:
+        for col in numeric_cols:
+            if col in result.columns:
+                arr = result[col].values
+                arr = np.where(np.isinf(arr), np.nan, arr)
+                result[col] = arr
 
     if dropped > 0:
         print(f"   ⚠️  Dropped {dropped} rows due to inf/-inf in features")
@@ -740,21 +1103,21 @@ def evaluate_predictions(
                 threshold = params.get("threshold", 0.5)
                 pred_class = (preds >= threshold).astype(int)
             score = float((pred_class == y_true).mean())
-        elif metric_type == "regression_mae":
+        elif metric_type == "regression_mae" or metric_type == "mae":
             # Mean Absolute Error for regression tasks
             valid_mask = ~(np.isnan(preds) & ~np.isnan(y_true))
             if valid_mask.sum() > 0:
                 score = float(np.mean(np.abs(preds[valid_mask] - y_true[valid_mask])))
             else:
                 score = 0.0
-        elif metric_type == "regression_mse":
+        elif metric_type == "regression_mse" or metric_type == "mse":
             # Mean Squared Error for regression tasks
             valid_mask = ~(np.isnan(preds) & ~np.isnan(y_true))
             if valid_mask.sum() > 0:
                 score = float(np.mean((preds[valid_mask] - y_true[valid_mask]) ** 2))
             else:
                 score = 0.0
-        elif metric_type == "regression_rmse":
+        elif metric_type == "regression_rmse" or metric_type == "rmse":
             # Root Mean Squared Error for regression tasks
             valid_mask = ~(np.isnan(preds) & ~np.isnan(y_true))
             if valid_mask.sum() > 0:
@@ -1362,7 +1725,7 @@ def train_strategy(
 ) -> None:
     print("\n" + "=" * 80)
     print(f"📂 Loading strategy config from {config_dir}")
-    loader = StrategyConfigLoader(config_dir)
+    loader = StrategyConfigLoader(config_dir, labels_override=args.labels)
     strategy_config = loader.load()
 
     output_dir = Path(args.output_root) / strategy_config.name
@@ -1682,7 +2045,8 @@ def train_strategy(
         for sym in symbol_list:
             df_tr = df_train_raw[df_train_raw["_symbol"] == sym].sort_index()
             df_te = df_test_raw[df_test_raw["_symbol"] == sym].sort_index()
-            if df_tr.empty or df_te.empty:
+            # Skip only if train set is empty; test can be empty in train-all mode
+            if df_tr.empty:
                 continue
             feat_tr = run_feature_pipeline(
                 df_tr,
@@ -1741,13 +2105,9 @@ def train_strategy(
     feature_cols = determine_feature_columns(
         df_train_features, strategy_config.features
     )
-    # Multi-symbol pooled training: optionally include symbol as a categorical feature.
-    # Prefer `_symbol` (already configured as categorical in config/feature_column_types.yaml).
-    if is_multi_symbol:
-        if "_symbol" in df_train_features.columns and "_symbol" not in feature_cols:
-            feature_cols = list(feature_cols) + ["_symbol"]
-        elif "symbol" in df_train_features.columns and "symbol" not in feature_cols:
-            feature_cols = list(feature_cols) + ["symbol"]
+    # NOTE: Previously we auto-included `_symbol` for multi-symbol training,
+    # but this causes data leakage (model learns symbol identity instead of features).
+    # If needed, explicitly configure symbol as a feature in the strategy config.
     print(f"   ✅ Candidate features: {len(feature_cols)}")
 
     # Label generation
@@ -1798,6 +2158,8 @@ def train_strategy(
 
     def _debug_inf(df: pd.DataFrame, name: str):
         if not feature_cols:
+            return
+        if df.empty:
             return
         numeric_cols = (
             df[feature_cols].select_dtypes(include=[np.number]).columns.tolist()
@@ -1896,9 +2258,8 @@ def train_strategy(
         try:
             # Infer basic metadata without training
             trainer_params = dict(strategy_config.model.trainer.params or {})
-            target_col = trainer_params.get(
-                "target_col", getattr(strategy_config.labels, "target_column", "target")
-            )
+            # Labels config target_column takes priority (supports --labels override)
+            target_col = strategy_config.labels.target_column
             model_type = str(trainer_params.get("model_type", "unknown"))
             task_type = str(trainer_params.get("task_type", "unknown"))
         except Exception:
@@ -1943,6 +2304,16 @@ def train_strategy(
                 with open(results_file, "w", encoding="utf-8") as fh:
                     json.dump(results, fh, indent=2, default=str)
                 print(f"   💾 Results saved to {results_file}")
+
+                # Generate HTML training report (输出到 output_dir)
+                html_report_path = generate_training_html_report(
+                    results=results,
+                    output_dir=output_dir,
+                    strategy_name=strategy_config.name,
+                    args=args,
+                )
+                if html_report_path:
+                    print(f"   📄 HTML report saved to {html_report_path}")
         except Exception as exc:  # noqa: BLE001
             print(f"   ⚠️  Failed to save placeholder results.json: {exc}")
         return
@@ -1952,7 +2323,9 @@ def train_strategy(
         strategy_config.model.trainer.function,
     )
     trainer_params = dict(strategy_config.model.trainer.params)
-    target_col = trainer_params.pop("target_col", strategy_config.labels.target_column)
+    # Labels config target_column takes priority (supports --labels override)
+    trainer_params.pop("target_col", None)  # Remove model.yaml target_col if present
+    target_col = strategy_config.labels.target_column
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
     diagnostics_payload["labels"]["target_col"] = str(target_col)
@@ -2316,6 +2689,148 @@ def train_strategy(
             json.dump(results, fh, indent=2, default=str)
         print(f"   💾 Results saved to {results_file}")
 
+        # Generate HTML training report (输出到 output_dir)
+        html_report_path = generate_training_html_report(
+            results=results,
+            output_dir=output_dir,
+            strategy_name=strategy_config.name,
+            args=args,
+        )
+        if html_report_path:
+            print(f"   📄 HTML report saved to {html_report_path}")
+
+        # ========== Failure Sub-label Analysis ==========
+        # Analyze failure distribution in model-selected vs unselected trades
+        try:
+            from src.time_series_model.strategies.labels.failure_first_label import (
+                compute_failure_subtypes,
+            )
+
+            print(f"\n   📊 Failure Sub-label Analysis...")
+
+            # Use test set for analysis
+            analysis_df = df_test_filtered.copy()
+
+            # Get model predictions
+            X_test = analysis_df[used_features].values
+            preds_list = []
+            for model in models:
+                if model is None:
+                    continue
+                try:
+                    pred = model.predict(X_test)
+                    preds_list.append(pred)
+                except Exception:
+                    pass
+
+            if preds_list:
+                preds = np.mean(preds_list, axis=0)
+
+                # Determine entry threshold based on prediction distribution
+                entry_threshold = np.percentile(preds, 70)  # Top 30%
+                selected_mask = preds >= entry_threshold
+
+                # Compute failure subtypes
+                direction = str(
+                    getattr(strategy_config.labels.generator, "params", {}).get(
+                        "direction", "long"
+                    )
+                )
+                horizon = int(
+                    getattr(strategy_config.labels.generator, "params", {}).get(
+                        "horizon", 50
+                    )
+                )
+
+                failure_df = compute_failure_subtypes(
+                    df=analysis_df,
+                    direction=direction,
+                    horizon=horizon,
+                )
+
+                # Merge and analyze
+                failure_df["selected"] = selected_mask
+                valid_mask = failure_df["failure_any"].notna()
+                failure_valid = failure_df[valid_mask]
+
+                if len(failure_valid) > 0:
+                    # Global failure rates
+                    global_rr_extreme = (
+                        failure_valid["failure_rr_extreme"] == 1
+                    ).mean()
+                    global_no_opp = (
+                        failure_valid["failure_no_opportunity"] == 1
+                    ).mean()
+
+                    # Selected trades failure rates
+                    selected_df = failure_valid[failure_valid["selected"]]
+                    unselected_df = failure_valid[~failure_valid["selected"]]
+
+                    if len(selected_df) > 0:
+                        selected_rr_extreme = (
+                            selected_df["failure_rr_extreme"] == 1
+                        ).mean()
+                        selected_no_opp = (
+                            selected_df["failure_no_opportunity"] == 1
+                        ).mean()
+
+                        # Calculate lifts
+                        lift_rr = (
+                            selected_rr_extreme / global_rr_extreme
+                            if global_rr_extreme > 0
+                            else 0
+                        )
+                        lift_no_opp = (
+                            selected_no_opp / global_no_opp if global_no_opp > 0 else 0
+                        )
+
+                        print(f"      ────────────────────────────────────────")
+                        print(f"      🌍 Global Failure Rate (baseline):")
+                        print(
+                            f"         failure_rr_extreme:     {global_rr_extreme:.1%}  (踩大坑)"
+                        )
+                        print(
+                            f"         failure_no_opportunity: {global_no_opp:.1%}  (入场即反)"
+                        )
+                        print(f"      ────────────────────────────────────────")
+                        print(
+                            f"      ✅ Selected Trades (top 30%, n={len(selected_df)}):"
+                        )
+                        print(
+                            f"         failure_rr_extreme:     {selected_rr_extreme:.1%}  (lift={lift_rr:.2f}x)"
+                        )
+                        print(
+                            f"         failure_no_opportunity: {selected_no_opp:.1%}  (lift={lift_no_opp:.2f}x)"
+                        )
+
+                        if len(unselected_df) > 0:
+                            unselected_rr = (
+                                unselected_df["failure_rr_extreme"] == 1
+                            ).mean()
+                            reduction = (
+                                1 - selected_rr_extreme / unselected_rr
+                                if unselected_rr > 0
+                                else 0
+                            )
+                            print(f"      ────────────────────────────────────────")
+                            print(f"      🎯 Reduction vs unselected: {reduction:+.1%}")
+                            if reduction < 0:
+                                print(f"      ⚠️  警告: 模型选中的 trades 失败率更高!")
+
+                        # Save to results
+                        results["failure_analysis"] = {
+                            "global_failure_rr_extreme": float(global_rr_extreme),
+                            "global_failure_no_opportunity": float(global_no_opp),
+                            "selected_failure_rr_extreme": float(selected_rr_extreme),
+                            "selected_failure_no_opportunity": float(selected_no_opp),
+                            "lift_rr_extreme": float(lift_rr),
+                            "lift_no_opportunity": float(lift_no_opp),
+                            "n_selected": int(len(selected_df)),
+                            "n_total": int(len(failure_valid)),
+                        }
+        except Exception as exc:
+            print(f"   ⚠️  Failure analysis skipped: {exc}")
+
         # Save preprocessor (required for inference consistency)
         import joblib
 
@@ -2358,6 +2873,55 @@ def train_strategy(
             vol_model_file = output_dir / "volatility_model.pkl"
             joblib.dump(vol_model, vol_model_file)
             print(f"   💾 Volatility model saved to {vol_model_file}")
+
+        # Auto-export tree rules and risk_gate_draft.yaml
+        try:
+            from scripts.export_lightgbm_rules_to_readme import (
+                _collect_splits,
+                _get_booster,
+                _write_standalone_rules,
+                _generate_risk_gate_yaml,
+            )
+
+            model_path = output_dir / "model.pkl"
+            features_path = output_dir / "used_features.json"
+
+            if model_path.exists():
+                import json as json_module
+
+                loaded_model = joblib.load(model_path)
+                if isinstance(loaded_model, dict):
+                    loaded_model = (
+                        loaded_model.get("regression")
+                        or loaded_model.get("model")
+                        or list(loaded_model.values())[0]
+                    )
+                booster = _get_booster(loaded_model)
+
+                feature_names = []
+                if features_path.exists():
+                    with open(features_path, encoding="utf-8") as f:
+                        feature_names = json_module.load(f)
+                if not feature_names and hasattr(booster, "feature_name"):
+                    feature_names = booster.feature_name() or []
+
+                rules = _collect_splits(booster, feature_names, max_splits=30)
+                if rules:
+                    # Export tree rules
+                    rules_path = output_dir / f"{strategy_config.name}_tree_rules.md"
+                    _write_standalone_rules(
+                        rules_path, rules, strategy_config.name, str(output_dir)
+                    )
+                    print(f"   📜 Tree rules exported to {rules_path}")
+
+                    # Export risk_gate_draft.yaml
+                    risk_gate_path = output_dir / "risk_gate_draft.yaml"
+                    _generate_risk_gate_yaml(
+                        risk_gate_path, rules, strategy_config.name, str(output_dir)
+                    )
+                    print(f"   📜 Risk gate draft exported to {risk_gate_path}")
+        except Exception as exc:
+            print(f"   ⚠️  Auto-export rules failed: {exc}")
 
 
 def main():

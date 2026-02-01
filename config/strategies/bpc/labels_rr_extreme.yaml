@@ -1,0 +1,37 @@
+# BPC Failure 子标签：failure_rr_extreme（踩大坑）
+# 🟥 只学习识别"路径极端不利"的结构条件
+# - failure_rr_extreme = forward_rr < -0.8R
+# - 目标：识别哪些条件下会踩大坑
+
+name: bpc_rr_extreme
+target_column: success_no_rr_extreme  # invert=True
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_failure_rr_extreme_label
+  params:
+    direction: long
+    horizon: 50
+    invert: true  # 1=好机会（不会踩坑），0=踩坑
+
+# 标签元信息
+label_meta:
+  label_type: binary
+  failure_subtype: rr_extreme
+  semantic: |
+    success_no_rr_extreme = 1 - failure_rr_extreme
+    1 = 不会踩大坑（forward_rr >= -0.8R）
+    0 = 踩大坑（forward_rr < -0.8R）
+  failure_definition: |
+    failure_rr_extreme = forward_rr < -0.8R
+  horizon: 50 bars
+  description: |
+    Failure 子标签训练：
+    - 只学习识别"踩大坑"的结构条件
+    - 高预测值 = 安全（不会踩坑）
+
+filters:
+  - column: success_no_rr_extreme
+    notna: true
+
+post_label_filters: []

@@ -1,16 +1,18 @@
 # BPC (BreakoutPullbackContinuation) 回测配置
+# Failure-first 模型：预测 failure_prob，低值 = 好机会
 
 backtest:
   enabled: true
   params:
     price_col: close
     freq: 4H
-    regression:
-      entry_mode: top_quantile
-      entry_quantile: 0.90
-      quantile_mode: expanding
-      quantile_min_periods: 50
-      direction_from_prediction: true
+    use_signal_direction: false
+    # Failure-first: 低 failure_prob 入场
+    # long_entry_threshold: 0.3 表示 failure_prob <= 0.3 时做多
+    long_entry_threshold: 0.3
+    exit_mode: none
+    entry_mode: level
+    strategy_direction: long_only
     max_holding_bars: 50
     use_rr_exit: true
     rr:

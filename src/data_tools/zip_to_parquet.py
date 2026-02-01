@@ -332,11 +332,36 @@ class DataConverter:
         for index, zip_file in enumerate(zip_files, start=1):
             file_name = os.path.basename(zip_file)
             progress_prefix = f"[{index}/{total_files}]"
-            print(f"{progress_prefix} Converting {file_name} ...")
 
+            # 先检查是否已转换，再打印日志（避免误导用户）
+            # 从文件名提取 symbol
+            upper_name = file_name.upper()
+            sym_match = re.search(r"([A-Z]+)(USDT|USD)", upper_name)
+            if sym_match:
+                detected_symbol = f"{sym_match.group(1)}{'USDT' if sym_match.group(2) != 'USDT' else sym_match.group(2)}"
+            else:
+                detected_symbol = "UNKNOWN"
+            output_file = self._generate_output_filename(zip_file, detected_symbol)
+            if (
+                (not self.force)
+                and os.path.exists(output_file)
+                and os.path.getsize(output_file) > 0
+            ):
+                print(f"{progress_prefix} ⏩ Skip (cached): {file_name}")
+                skipped_files.append(
+                    {
+                        "original_file": zip_file,
+                        "output_file": output_file,
+                        "skipped": True,
+                    }
+                )
+                continue
+
+            print(f"{progress_prefix} 📦 Converting {file_name} ...")
             result = self.convert_zip_to_parquet(zip_file)
             if result:
                 if bool(result.get("skipped")):
+                    # 不应该走到这里，但保留兼容性
                     skipped_files.append(result)
                     print(f"{progress_prefix} ⏩ Skip (already converted): {file_name}")
                 else:

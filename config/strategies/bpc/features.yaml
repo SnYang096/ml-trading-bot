@@ -48,6 +48,18 @@ feature_pipeline:
     - bb_width_normalized_pct_f
     - atr_f
     
+    # ========== ⭐ Volatility Regime (新增) ==========
+    # 识别"踩大坑"的波动率状态
+    - vol_regime_features_f       # vol_zscore, vol_percentile_approx
+    - vol_trend_features_f        # vol_slope, vol_accel (波动率趋势)
+    - vol_mom_features_f          # vol_mom_5/10/20 (波动率动量)
+    
+    # ========== ⭐ Trend Exhaustion (新增) ==========
+    # 识别趋势衰竭/反转信号
+    - wick_scene_semantic_scores_f   # wick_exhaustion_score (影线衰竭)
+    - wpt_scene_semantic_scores_f    # wpt_exhaustion_score (小波变换衰竭)
+    - vp_scene_semantic_scores_f     # vp_exhaustion_score (成交量分布衰竭)
+    
     # ========== SR 相关 ==========
     - sr_strength_max_f
     - dist_to_nearest_sr_f
@@ -58,6 +70,14 @@ feature_pipeline:
     - ofci_pct_f
     - shd_pct_f
     - cvd_divergence_f
+    - cvd_change_5_pct_f  # CVD 变化的归一化版本
+    
+    # ========== Trade Cluster 归一化版本 (zscore) ==========
+    - trade_cluster_entropy_zscore_features_f
+    - trade_cluster_imbalance_zscore_features_f
+    - trade_cluster_net_runs_zscore_features_f
+    - trade_cluster_max_buy_run_zscore_features_f
+    - trade_cluster_max_sell_run_zscore_features_f
     
     # ========== 基础 ==========
     - sma_200_f

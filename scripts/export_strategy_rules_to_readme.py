@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import yaml
 
 # Ensure repo root is importable
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,13 +85,149 @@ def _format_rule_for_readme(rule: str) -> str:
     return rule_formatted
 
 
+def _load_risk_gate_config(strategy_config: Path) -> Optional[Dict[str, Any]]:
+    """Load risk_gate.yaml if it exists in strategy config directory."""
+    risk_gate_path = strategy_config / "risk_gate.yaml"
+    if not risk_gate_path.exists():
+        return None
+    try:
+        with open(risk_gate_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"⚠️  Failed to load risk_gate.yaml: {e}")
+        return None
+
+
+def _format_risk_gate_section(risk_gate: Dict[str, Any]) -> List[str]:
+    """Format risk_gate config as Markdown section."""
+    lines: List[str] = []
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🛡️ 交易宪法条款 (RISK_GATE)")
+    lines.append("")
+    lines.append(
+        "从树模型高频分裂条件中抽象出的风险过滤规则，用于禁止在危险结构下交易："
+    )
+    lines.append("")
+
+    # Hard Gates
+    hard_gates = risk_gate.get("hard_gates", [])
+    if hard_gates:
+        lines.append("### 🔴 Hard Gates (结构性失败 → deny)")
+        lines.append("")
+        lines.append("| ID | 标签 | 条件 | 原因 |")
+        lines.append("|---|---|---|---|")
+        for gate in hard_gates:
+            gate_id = gate.get("id", "-")
+            tag = gate.get("tag", "-")
+            reason = gate.get("reason", "-").replace("[", "").replace("]", "")
+            when = gate.get("when", {})
+            # Format condition
+            cond_parts = []
+            for feat, crit in when.items():
+                if feat == "any_of":
+                    # Handle any_of: show as "A OR B"
+                    any_parts = []
+                    for sub_cond in crit:
+                        for sf, sc in sub_cond.items():
+                            if isinstance(sc, dict):
+                                for op, val in sc.items():
+                                    op_map = {
+                                        "value_lt": "<",
+                                        "value_lte": "≤",
+                                        "value_gt": ">",
+                                        "value_gte": "≥",
+                                    }
+                                    op_str = op_map.get(op, op)
+                                    any_parts.append(f"`{sf} {op_str} {val}`")
+                    if any_parts:
+                        cond_parts.append("(" + " OR ".join(any_parts) + ")")
+                elif feat == "all_of":
+                    # Handle all_of: show as "A AND B"
+                    all_parts = []
+                    for sub_cond in crit:
+                        for sf, sc in sub_cond.items():
+                            if isinstance(sc, dict):
+                                for op, val in sc.items():
+                                    op_map = {
+                                        "value_lt": "<",
+                                        "value_lte": "≤",
+                                        "value_gt": ">",
+                                        "value_gte": "≥",
+                                    }
+                                    op_str = op_map.get(op, op)
+                                    all_parts.append(f"`{sf} {op_str} {val}`")
+                    if all_parts:
+                        cond_parts.append("(" + " AND ".join(all_parts) + ")")
+                elif isinstance(crit, dict):
+                    for op, val in crit.items():
+                        op_map = {
+                            "value_lt": "<",
+                            "value_lte": "≤",
+                            "value_gt": ">",
+                            "value_gte": "≥",
+                        }
+                        op_str = op_map.get(op, op)
+                        cond_parts.append(f"`{feat} {op_str} {val}`")
+            cond_str = " AND ".join(cond_parts) if cond_parts else "-"
+            lines.append(f"| {gate_id} | `{tag}` | {cond_str} | {reason} |")
+        lines.append("")
+
+    # Soft Filters
+    soft_filters = risk_gate.get("soft_filters", [])
+    if soft_filters:
+        lines.append("### 🟡 Soft Filters (经济性失败 → downweight)")
+        lines.append("")
+        lines.append("| ID | 标签 | 权重 | 原因 |")
+        lines.append("|---|---|---|---|")
+        for filt in soft_filters:
+            filt_id = filt.get("id", "-")
+            tag = filt.get("tag", "-")
+            weight = filt.get("then", {}).get("weight", filt.get("weight", "-"))
+            if isinstance(weight, (int, float)):
+                weight = f"{weight:.0%}" if weight <= 1 else str(weight)
+            reason = filt.get("reason", "-").replace("[", "").replace("]", "")
+            lines.append(f"| {filt_id} | `{tag}` | {weight} | {reason} |")
+        lines.append("")
+
+    # Governance
+    governance = risk_gate.get("schema", {}).get("governance", {})
+    if governance:
+        lines.append("### ⚙️ 治理机制")
+        lines.append("")
+        floor_cfg = governance.get("soft_filter_floor", {})
+        if floor_cfg.get("enabled"):
+            min_weight = floor_cfg.get("min_cumulative_weight", 0.25)
+            lines.append(
+                f"- **Soft Filter 地板保护**: 即使全部 soft 触发，最低置信度为 `{min_weight:.0%}`"
+            )
+        budget_cfg = governance.get("failure_budget", {})
+        if budget_cfg:
+            max_deny = budget_cfg.get("max_hard_deny_rate", 0.5)
+            lines.append(f"- **Hard Gate 预算上限**: 最多拒绝 `{max_deny:.0%}` 的交易")
+        lines.append("")
+
+    lines.append(
+        "> 💡 **来源**: 这些规则从树模型高频分裂条件中提取，详见 `risk_gate.yaml`"
+    )
+    lines.append("")
+
+    return lines
+
+
 def _append_rules_to_readme(
     readme_path: Path,
     rules: List[Tuple[float, float, str]],
     strategy: str,
     model_source: str = "",
+    strategy_config: Optional[Path] = None,
 ) -> None:
-    """Append rules section to existing README.md."""
+    """Append rules section to existing README.md.
+
+    If strategy_config is provided and contains risk_gate.yaml,
+    will also append RISK_GATE section.
+    """
     if not readme_path.exists():
         print(f"⚠️  README not found: {readme_path}, creating new one")
         content = f"# {strategy} 策略特征说明\n\n"
@@ -101,15 +238,22 @@ def _append_rules_to_readme(
     lines = content.split("\n")
     new_lines = []
     in_rules_section = False
+    in_risk_gate_section = False
     for line in lines:
+        # Skip existing rules section
         if line.strip().startswith("## 📜 特征使用规则") or line.strip().startswith(
             "## 特征使用规则"
         ):
             in_rules_section = True
             continue
-        if in_rules_section and line.strip().startswith("##"):
+        # Skip existing RISK_GATE section
+        if line.strip().startswith("## 🛡️ 交易宪法条款"):
+            in_risk_gate_section = True
+            continue
+        if (in_rules_section or in_risk_gate_section) and line.strip().startswith("##"):
             in_rules_section = False
-        if not in_rules_section:
+            in_risk_gate_section = False
+        if not in_rules_section and not in_risk_gate_section:
             new_lines.append(line)
 
     # Remove trailing empty lines
@@ -166,6 +310,15 @@ def _append_rules_to_readme(
     new_lines.append(
         "> 💡 **提示**：这些规则是从树模型中提取的简化版本，实际模型可能包含更复杂的非线性组合。"
     )
+
+    # Append RISK_GATE section if risk_gate.yaml exists
+    if strategy_config:
+        risk_gate = _load_risk_gate_config(strategy_config)
+        if risk_gate:
+            new_lines.extend(_format_risk_gate_section(risk_gate))
+            print(
+                f"🛡️  RISK_GATE section appended from {strategy_config / 'risk_gate.yaml'}"
+            )
 
     readme_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     print(f"✅ Rules appended to {readme_path}")
@@ -334,6 +487,7 @@ def main() -> None:
         rules,
         strategy=cfg_dir.name,
         model_source=model_source,
+        strategy_config=cfg_dir,  # Pass config dir to check for risk_gate.yaml
     )
 
     print(f"✅ Done! Rules exported to {readme_path}")

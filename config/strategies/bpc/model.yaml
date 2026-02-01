@@ -7,11 +7,11 @@ trainer:
   function: train_strategy_model
   params:
     model_type: lightgbm
-    task_type: regression
-    target_col: rr_label
+    task_type: binary
+    target_col: success_label
     n_splits: 5
     tscv_gap: 24
-    use_gpu: true
+    use_gpu: false
     model_params:
       n_estimators: 800
       learning_rate: 0.05

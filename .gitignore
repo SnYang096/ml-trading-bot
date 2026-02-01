@@ -456,3 +456,4 @@ terraform/terraform-provider-*/
 terraform/.terraform/
 terraform/.terraform.lock.hcl
 terraform/.terraform-config.zip
+.qoder/

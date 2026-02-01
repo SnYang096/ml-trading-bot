@@ -1382,12 +1382,12 @@ def train_export_rules_to_readme(
 @click.option(
     "--model-dir",
     required=True,
-    help="Directory containing model.pkl (e.g., results/fixed_long/<strategy>/<strategy>)",
+    help="Directory containing model.pkl (e.g., results/train_final_xxx/bpc)",
 )
 @click.option(
     "--strategy",
     required=True,
-    help="Strategy name (e.g., sr_reversal_rr_reg_long)",
+    help="Strategy name (e.g., bpc)",
 )
 @click.option(
     "--max-splits",
@@ -1395,14 +1395,26 @@ def train_export_rules_to_readme(
     default=30,
     help="Maximum number of split conditions to export",
 )
+@click.option(
+    "--generate-risk-gate/--no-generate-risk-gate",
+    default=True,
+    help="Generate risk_gate_draft.yaml from tree splits (default: enabled)",
+)
+@click.option(
+    "--risk-gate-output",
+    default=None,
+    help="Output path for risk_gate_draft.yaml (default: <model-dir>/risk_gate_draft.yaml)",
+)
 @click.option("--docker/--no-docker", default=False, help="Run in Docker")
 def train_export_rules(
     model_dir,
     strategy,
     max_splits,
+    generate_risk_gate,
+    risk_gate_output,
     docker,
 ):
-    """Export LightGBM tree rules from model.pkl to strategy README.md."""
+    """Export LightGBM tree rules from model.pkl to <model-dir>/<strategy>_tree_rules.md."""
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--model-dir",
@@ -1412,6 +1424,13 @@ def train_export_rules(
         "--max-splits",
         str(max_splits),
     ]
+    if generate_risk_gate:
+        args.append("--generate-risk-gate")
+    if risk_gate_output:
+        args.extend([
+            "--risk-gate-output",
+            f"/workspace/{risk_gate_output}" if use_workspace_prefix else risk_gate_output,
+        ])
     sys.exit(
         run_script("scripts/export_lightgbm_rules_to_readme.py", args, docker=docker)
     )
@@ -2857,6 +2876,108 @@ def rule_diagnose_e2e_symbol_regime_archetype(
         f"/workspace/{output_md}" if use_workspace_prefix else output_md,
     ]
     sys.exit(run_script("scripts/diagnose_e2e_symbol_regime_archetype.py", args, docker=docker))
+
+
+@rule.command("optimize-gate-plateau")
+@click.option(
+    "--gated-logs",
+    required=True,
+    help="Gated logs parquet file (from apply-tree-gate)",
+)
+@click.option(
+    "--raw-logs",
+    default=None,
+    help="Raw logs parquet file (optional, for re-applying gate rules)",
+)
+@click.option(
+    "--execution-archetypes",
+    default="config/nnmultihead/execution_archetypes.yaml",
+    show_default=True,
+    help="execution_archetypes.yaml path",
+)
+@click.option(
+    "--output",
+    default="results/gate_optimization.json",
+    show_default=True,
+    help="Output JSON path",
+)
+@click.option(
+    "--min-trade-rate",
+    type=float,
+    default=0.005,
+    show_default=True,
+    help="Minimum trade rate constraint",
+)
+@click.option(
+    "--min-sharpe-threshold",
+    type=float,
+    default=0.5,
+    show_default=True,
+    help="Minimum Sharpe for plateau detection",
+)
+@click.option(
+    "--threshold-step",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help="Threshold scan step size",
+)
+@click.option(
+    "--archetype-filter",
+    default=None,
+    help="Filter to specific archetype (e.g., BPC, HTF)",
+)
+@click.option("--docker/--no-docker", default=False, help="Run in Docker")
+def rule_optimize_gate_plateau(
+    gated_logs,
+    raw_logs,
+    execution_archetypes,
+    output,
+    min_trade_rate,
+    min_sharpe_threshold,
+    threshold_step,
+    archetype_filter,
+    docker,
+):
+    """
+    Optimize Gate rule thresholds using plateau search (backup tool).
+    
+    Note: Gate parameters typically come from tree model splits.
+    This tool is for manual threshold tuning if needed.
+    
+    Example:
+      mlbot rule optimize-gate-plateau \
+        --gated-logs results/logs_gated.parquet \
+        --output results/gate_optimization.json
+    """
+    use_workspace_prefix = docker and not _is_in_docker()
+    script = "scripts/optimize_gate_plateau.py"
+    
+    args = [
+        "--gated-logs",
+        f"/workspace/{gated_logs}" if use_workspace_prefix else gated_logs,
+        "--execution-archetypes",
+        f"/workspace/{execution_archetypes}" if use_workspace_prefix else execution_archetypes,
+        "--output",
+        f"/workspace/{output}" if use_workspace_prefix else output,
+        "--min-trade-rate",
+        str(min_trade_rate),
+        "--min-sharpe-threshold",
+        str(min_sharpe_threshold),
+        "--threshold-step",
+        str(threshold_step),
+    ]
+    
+    if raw_logs:
+        args.extend([
+            "--raw-logs",
+            f"/workspace/{raw_logs}" if use_workspace_prefix else raw_logs,
+        ])
+    
+    if archetype_filter:
+        args.extend(["--archetype-filter", archetype_filter])
+    
+    sys.exit(run_script(script, args, docker=docker))
 
 
 @cli.group("experiment")
@@ -6212,9 +6333,8 @@ def train_rolling(
 )
 @click.option(
     "--output-root",
-    default="models",
-    show_default=True,
-    help="Root dir for final model outputs (ModelArtifact saved under <output-root>/<strategy_name>/).",
+    default=None,
+    help="Root dir for outputs. Default: results/train_final_<timestamp>/ (auto-generated).",
 )
 @click.option(
     "--data-path", default="data/parquet_data", show_default=True, help="Data directory"
@@ -6225,6 +6345,11 @@ def train_rolling(
     "--deterministic/--non-deterministic", default=True, help="Deterministic training"
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
+@click.option(
+    "--labels",
+    default=None,
+    help="Override labels config file (e.g. config/strategies/bpc/labels_rr_extreme.yaml)",
+)
 def train_final(
     symbol,
     timeframe,
@@ -6240,8 +6365,26 @@ def train_final(
     feature_store_layer,
     deterministic,
     docker,
+    labels,
 ):
     """Train a final model and save ModelArtifact. With --holdout-*: train/test split by date (no overlap); without: train on full window (--train-all)."""
+    from datetime import datetime
+    from pathlib import Path
+    
+    # 自动生成带时间戳和 label 名称的输出目录
+    if output_root is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 提取 label 名称（如 labels_no_opportunity.yaml -> no_opportunity）
+        label_suffix = ""
+        if labels:
+            label_name = Path(labels).stem  # e.g. "labels_no_opportunity"
+            if label_name.startswith("labels_"):
+                label_suffix = f"_{label_name[7:]}"  # 去掉 "labels_" 前缀
+            elif label_name != "labels":
+                label_suffix = f"_{label_name}"
+        output_root = f"results/train_final_{timestamp}{label_suffix}"
+        click.echo(f"📂 Output directory: {output_root}")
+    
     use_workspace_prefix = docker and not _is_in_docker()
     args = [
         "--config",
@@ -6286,6 +6429,8 @@ def train_final(
         args.extend(["--feature-store-layer", feature_store_layer])
     if deterministic:
         args.append("--deterministic")
+    if labels:
+        args.extend(["--labels", f"/workspace/{labels}" if use_workspace_prefix else labels])
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 
