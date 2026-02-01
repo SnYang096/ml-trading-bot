@@ -2326,6 +2326,50 @@ def train_strategy(
     # Labels config target_column takes priority (supports --labels override)
     trainer_params.pop("target_col", None)  # Remove model.yaml target_col if present
     target_col = strategy_config.labels.target_column
+
+    # Apply model_hints from labels config (allows labels.yaml to override model.yaml)
+    # This enables e.g. labels_return_tree.yaml to specify task_type=regression
+    model_hints = getattr(strategy_config.labels, "model_hints", None)
+    if model_hints and isinstance(model_hints, dict):
+        # Separate top-level trainer params from model_params
+        top_level_keys = {"task_type", "model_type", "n_splits", "tscv_gap", "use_gpu"}
+        model_param_keys = {
+            "objective",
+            "metric",
+            "max_depth",
+            "min_data_in_leaf",
+            "n_estimators",
+            "num_leaves",
+            "learning_rate",
+            "feature_fraction",
+            "bagging_fraction",
+            "bagging_freq",
+            "seed",
+        }
+
+        hints_applied = []
+        model_params_hints = {}
+        for key, value in model_hints.items():
+            if value is not None:
+                if key in top_level_keys:
+                    trainer_params[key] = value
+                    hints_applied.append(key)
+                elif key in model_param_keys:
+                    model_params_hints[key] = value
+                    hints_applied.append(f"model_params.{key}")
+
+        # Merge model_params hints into existing model_params
+        if model_params_hints:
+            mp = trainer_params.get("model_params") or {}
+            if isinstance(mp, dict):
+                mp = dict(mp)
+                mp.update(model_params_hints)
+                trainer_params["model_params"] = mp
+
+        if hints_applied:
+            print(
+                f"   \U0001f4cc Applied model_hints from labels config: {hints_applied}"
+            )
     model_type = trainer_params.get("model_type", "xgboost")
     task_type = trainer_params.get("task_type", "regression")
     diagnostics_payload["labels"]["target_col"] = str(target_col)
@@ -2874,13 +2918,14 @@ def train_strategy(
             joblib.dump(vol_model, vol_model_file)
             print(f"   💾 Volatility model saved to {vol_model_file}")
 
-        # Auto-export tree rules and risk_gate_draft.yaml
+        # Auto-export tree rules and yaml config based on task type
         try:
             from scripts.export_lightgbm_rules_to_readme import (
                 _collect_splits,
                 _get_booster,
                 _write_standalone_rules,
                 _generate_risk_gate_yaml,
+                _generate_evidence_candidates_yaml,
             )
 
             model_path = output_dir / "model.pkl"
@@ -2912,16 +2957,29 @@ def train_strategy(
                     _write_standalone_rules(
                         rules_path, rules, strategy_config.name, str(output_dir)
                     )
-                    print(f"   📜 Tree rules exported to {rules_path}")
+                    print(f"   \U0001f4dc Tree rules exported to {rules_path}")
 
-                    # Export risk_gate_draft.yaml
-                    risk_gate_path = output_dir / "risk_gate_draft.yaml"
-                    _generate_risk_gate_yaml(
-                        risk_gate_path, rules, strategy_config.name, str(output_dir)
-                    )
-                    print(f"   📜 Risk gate draft exported to {risk_gate_path}")
+                    # Choose export based on task_type:
+                    # - regression (Return Tree): evidence_candidates.yaml
+                    # - binary (Failure Tree): risk_gate_draft.yaml
+                    if task_type == "regression":
+                        evidence_path = output_dir / "evidence_candidates.yaml"
+                        _generate_evidence_candidates_yaml(
+                            evidence_path, rules, strategy_config.name, str(output_dir)
+                        )
+                        print(
+                            f"   \U0001f4dc Evidence candidates exported to {evidence_path}"
+                        )
+                    else:
+                        risk_gate_path = output_dir / "risk_gate_draft.yaml"
+                        _generate_risk_gate_yaml(
+                            risk_gate_path, rules, strategy_config.name, str(output_dir)
+                        )
+                        print(
+                            f"   \U0001f4dc Risk gate draft exported to {risk_gate_path}"
+                        )
         except Exception as exc:
-            print(f"   ⚠️  Auto-export rules failed: {exc}")
+            print(f"   \u26a0\ufe0f  Auto-export rules failed: {exc}")
 
 
 def main():

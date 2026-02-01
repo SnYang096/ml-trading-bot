@@ -1,0 +1,59 @@
+# BPC Return Tree 标签配置
+# 🟢 Phase 2: 在 GOOD 样本空间中学习"如何让 RR 更大"
+#
+# 核心变化：
+# - 从 Failure-first（避免失败）切换到 Return-amplification（放大成功）
+# - 只在 GOOD 样本（~failure_any）上训练
+# - 目标是 forward_rr（连续值），不是 failure_label（二值）
+#
+# GOOD 样本定义：
+# - ~failure_rr_extreme: forward_rr >= -0.8R
+# - ~failure_no_opportunity: 有机会的交易
+#
+# 参考文档：docs/architecture/FAILURE_TO_RETURN_PIPELINE.md
+
+name: bpc_return_tree
+target_column: forward_rr
+
+label_generator:
+  module: src.time_series_model.strategies.labels.failure_first_label
+  function: compute_bpc_return_tree_label
+  params:
+    direction: long
+    horizon: 50
+    filter_good_only: true  # 只返回 GOOD 样本
+
+# 标签元信息
+label_meta:
+  label_type: regression
+  semantic: |
+    forward_rr = (MFE - MAE) / ATR
+    范围: 约 [-5, 5]
+    正值 = 有盈利空间
+    负值 = 亏损
+  sample_space: |
+    GOOD = ~failure_any
+    GOOD = ~(failure_rr_extreme | failure_no_opportunity)
+    大约占全部样本的 70-80%
+  horizon: 50 bars
+  description: |
+    Return Tree 连续标签：
+    - 目标是 forward_rr
+    - 只在 GOOD 样本上训练
+    - 学习"在什么条件下 RR 更高"
+
+filters:
+  - column: forward_rr
+    notna: true
+
+# 模型配置（回归任务）
+model_hints:
+  task_type: regression
+  objective: regression
+  metric: mae
+  # Return Tree 推荐参数
+  max_depth: 5
+  min_data_in_leaf: 100
+  n_estimators: 100
+
+post_label_filters: []

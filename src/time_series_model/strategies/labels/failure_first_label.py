@@ -596,3 +596,79 @@ def compute_bpc_failure_label(
         success_label.name = "success_label"
         return success_label
     return failure_label
+
+
+# ============================================================
+# Return Tree 标签（用于 GOOD 样本空间）
+# ============================================================
+
+
+def compute_return_tree_label(
+    df: pd.DataFrame,
+    direction: Literal["long", "short"] = "long",
+    horizon: int = 50,
+    filter_good_only: bool = True,
+    **kwargs,
+) -> pd.Series:
+    """
+    计算 Return Tree 标签：GOOD 样本的 forward_rr。
+
+    🟢 用途：在已经排除 failure 的样本中，学习“如何让 RR 更大”
+
+    Args:
+        df: 价格数据，必须包含 OHLC 和 ATR
+        direction: 交易方向
+        horizon: 持仓窗口（bars）
+        filter_good_only: 是否只返回 GOOD 样本（默认 True）
+
+    Returns:
+        pd.Series: forward_rr 值，失败样本为 NaN
+    """
+    # 计算 failure 子标签
+    failure_df = compute_failure_subtypes(
+        df=df,
+        direction=direction,
+        horizon=horizon,
+        **kwargs,
+    )
+
+    # 提取 forward_rr
+    forward_rr = failure_df["forward_rr"].copy()
+    forward_rr.name = "forward_rr"
+
+    if filter_good_only:
+        # GOOD 样本 = ~failure_any
+        failure_any = failure_df["failure_any"]
+        # 将 failure 样本的 forward_rr 设为 NaN（会被过滤掉）
+        forward_rr = forward_rr.where(failure_any == 0)
+
+    return forward_rr
+
+
+def compute_bpc_return_tree_label(
+    df: pd.DataFrame,
+    direction: Literal["long", "short"] = "long",
+    horizon: int = 50,
+    filter_good_only: bool = True,
+    **kwargs,
+) -> pd.Series:
+    """
+    BPC 策略的 Return Tree 标签（训练流水线适配）。
+
+    🟢 Phase 2 核心任务：在 GOOD 样本中学习“如何让 RR 更大”
+
+    输出：
+    - forward_rr: 路径 RR 值
+    - 失败样本自动过滤（failure_any = 1 的样本 forward_rr 为 NaN）
+
+    GOOD 样本空间：
+    - ~failure_rr_extreme: forward_rr >= -0.8R
+    - ~failure_no_opportunity: 有机会的交易
+    """
+    return compute_return_tree_label(
+        df=df,
+        direction=direction,
+        horizon=horizon,
+        filter_good_only=filter_good_only,
+        **kwargs,
+    )

@@ -259,6 +259,106 @@ def _generate_risk_gate_yaml(
     return output_path
 
 
+def _generate_evidence_candidates_yaml(
+    output_path: Path, rules: list, strategy: str, model_source: str, top_n: int = 15
+):
+    """
+    从 Return Tree 分裂规则生成 evidence_candidates.yaml。
+
+    这是 Evidence 轴候选列表，不是 Gate 规则。
+    用于后续的 quantile_mapping 配置。
+
+    特性：
+    - 聚合同一 feature 的多个分裂阈值
+    - 使用语义化标签 (suppress/downweight/neutral/favor/amplify)
+    - 添加 usage_hint 和 affects 字段
+    """
+    import yaml
+    from collections import defaultdict
+
+    # 第一步：聚合同一 feature 的多个分裂
+    feature_splits = defaultdict(lambda: {"thresholds": [], "count": 0})
+    for name, thr, op, count in rules:
+        feature_splits[name]["thresholds"].append(round(thr, 4))
+        feature_splits[name]["count"] += count
+
+    # 第二步：按总分裂次数排序，取 top_n
+    sorted_features = sorted(
+        feature_splits.items(), key=lambda x: x[1]["count"], reverse=True
+    )[:top_n]
+
+    # 第三步：生成聚合后的候选列表
+    candidates = []
+    for rank, (feature, data) in enumerate(sorted_features, 1):
+        thresholds = sorted(data["thresholds"])
+        total_count = data["count"]
+
+        # 生成分布提示
+        if len(thresholds) >= 2:
+            min_thr, max_thr = min(thresholds), max(thresholds)
+            distribution_hint = f"密集分布在 {min_thr:.3g}–{max_thr:.3g} 区间"
+        else:
+            distribution_hint = f"单一阈值 {thresholds[0]:.4g}"
+
+        candidate = {
+            "rank": rank,
+            "feature": feature,
+            "split_count_total": total_count,
+            "threshold_examples": thresholds[:5],  # 最多显示 5 个
+            "distribution_hint": distribution_hint,
+            "quantile_mapping": {
+                "_comment": "树告诉你'区间'，不是点。根据 threshold_examples 定义 bins",
+                "bins": [0.2, 0.4, 0.6, 0.8],
+                "labels": ["suppress", "downweight", "neutral", "favor", "amplify"],
+            },
+            "usage_hint": "TODO: 填写用途，如'决定 TP 拉伸与 trail 速度'",
+            "affects": {
+                "_comment": "标注该 Evidence 影响哪些 execution 参数",
+                "candidates": [
+                    "tp_range",
+                    "trailing_speed",
+                    "scale_in_allowed",
+                    "position_size",
+                ],
+            },
+        }
+        candidates.append(candidate)
+
+    config = {
+        "_meta": {
+            "generated_from": str(model_source),
+            "strategy": strategy,
+            "purpose": "Evidence 轴候选列表（从 Return Tree 发现）",
+            "note": "此为自动生成的草稿，需人工审核后使用",
+        },
+        "label_semantics": {
+            "suppress": "强烈不利 - 拒绝或极度限制",
+            "downweight": "不利 - 降低信心/仓位",
+            "neutral": "中性 - 标准执行",
+            "favor": "有利 - 提高信心/仓位",
+            "amplify": "强烈有利 - 最大化执行",
+        },
+        "evidence_candidates": candidates,
+        "usage_guide": {
+            "step_1": "审核 feature 是否有语义意义",
+            "step_2": "根据 threshold_examples 和 distribution_hint 定义 bins",
+            "step_3": "填写 usage_hint 和 affects",
+            "step_4": "将确认的 Evidence 轴复制到 execution_archetype.yaml",
+        },
+    }
+
+    yaml_content = yaml.dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        width=120,
+    )
+
+    output_path.write_text(yaml_content, encoding="utf-8")
+    return output_path
+
+
 def _append_rules_section(
     readme_path: Path, rules: list, strategy: str, model_source: str
 ):

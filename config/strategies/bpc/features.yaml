@@ -84,7 +84,7 @@ feature_pipeline:
     
     # ========== 高级特征 ==========
     - hurst_price_f
-    - hilbert_phase_f
+    - jump_risk_pct_f  # 跳空风险分位（用于过滤不稳定市场）
 
   ensure_signal_column:
     name: signal
