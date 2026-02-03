@@ -31,23 +31,6 @@ mlbot feature-store build --no-docker \
   --warmup-months 3 \
   --force-rebuild
 
-  mlbot feature-store build --no-docker \
-  --config config/strategies/bpc \
-  --symbols BTCUSDT,ETHUSDT \
-  --timeframe 240T \
-  --start-date 2023-01-01 \
-  --end-date 2023-06-30 \
-  --warmup-months 3 \
-  --force-rebuild
-
-  mlbot visualize feature-indicators --no-docker \
-  --symbol BTCUSDT \
-  --timeframe 240T \
-  --start-date 2023-01-01 \
-  --end-date 2023-06-30 \
-  --strategy-config config/strategies/bpc \
-  --force-rebuild
-
 #  --force-rebuild 参数 重新build，或者修改配置文件
 # # 会 hash 这些文件的内容：
 # - {config_dir}/features.yaml
