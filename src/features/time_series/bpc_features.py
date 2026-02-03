@@ -690,7 +690,7 @@ def compute_bpc_volume_compression_pct_from_series(
     *,
     volume: pd.Series,
     window: int = 20,
-    percentile_window: int = 288,
+    percentile_window: int = 540,
 ) -> pd.DataFrame:
     """
     成交量压缩百分位：当前成交量相对历史的百分位

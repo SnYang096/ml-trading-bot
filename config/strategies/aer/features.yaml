@@ -24,7 +24,7 @@ feature_pipeline:
     - ofci_pct_f
     - shd_pct_f
     # ----- 趋势 / 动量 -----
-    - macd_f
+    - macd_atr_f
     - rsi_f
     - trend_r2_20_f
     # ----- 基础 -----

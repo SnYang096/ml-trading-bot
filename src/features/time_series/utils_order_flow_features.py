@@ -1737,10 +1737,27 @@ def compute_trade_clustering_from_ticks(
     else:
         ticks = ticks.sort_index()
     
-    # 过滤无效的 side 值
-    valid_side_mask = ticks["side"].isin([1, -1])
-    if not valid_side_mask.all():
-        ticks = ticks[valid_side_mask].copy()
+    # 支持聚合数据：按时间戳聚合并计算主导方向
+    # 数据格式：每个时间戳可能有多条记录（side=1 和 side=-1），需要聚合计算主导方向
+    ticks = ticks.copy()
+    
+    # 如果没有 volume 列，使用计数（每条记录计为 1）
+    if "volume" not in ticks.columns:
+        ticks["volume"] = 1.0
+    
+    # 按 side 拆分成交量
+    ticks["buy_volume"] = np.where(ticks["side"] == 1, ticks["volume"], 0.0)
+    ticks["sell_volume"] = np.where(ticks["side"] == -1, ticks["volume"], 0.0)
+    # 按时间戳聚合
+    agg = ticks.groupby(ticks.index).agg({
+        "buy_volume": "sum",
+        "sell_volume": "sum",
+    })
+    # 计算主导方向
+    agg["net"] = agg["buy_volume"] - agg["sell_volume"]
+    agg["side"] = np.where(agg["net"] >= 0, 1, -1)
+    # 重建 ticks 为每个时间戳一条记录
+    ticks = agg[["side"]].copy()
     
     if len(ticks) == 0:
         final_state = initial_state.copy() if initial_state else {
@@ -2014,6 +2031,7 @@ def extract_trade_clustering_features(
             window_size=window_size,
             output_timestamps=df.index.values,
         )
+        cluster_df_accum = cluster_df  # 用于后续对齐操作
     elif ticks_loader_json:
         # 使用 tick loader 加载数据并计算 Trade Clustering
         # 优化：按月分批处理，避免一次性加载所有数据导致内存不足
@@ -2046,6 +2064,8 @@ def extract_trade_clustering_features(
         
         # 按月缓存目录
         cache_dir = Path(monthly_cache_dir) if monthly_cache_dir else None
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
         
         # 生成月份范围
         current_month = (start_ts - pd.Timedelta(minutes=lookback_minutes)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -2205,14 +2225,30 @@ def extract_trade_clustering_features(
                                 month_ticks = month_ticks.set_index("timestamp")
                             else:
                                 raise ValueError(f"Tick data must have DatetimeIndex or 'timestamp' column")
-                        # 只保留 side 列（Trade Clustering 只需要 side，但需要保留索引）
-                        month_ticks = month_ticks[["side"]].copy()
+                        # 保留 side 和 volume 列（聚合数据需要 volume 来计算主导方向）
+                        cols_to_keep = ["side"]
+                        if "volume" in month_ticks.columns:
+                            cols_to_keep.append("volume")
+                        month_ticks = month_ticks[cols_to_keep].copy()
                         print(f"      ✅ Loaded {month_start.strftime('%Y-%m')}: {len(month_ticks)} ticks")
                         
                         # 性能优化：筛选当月的 K 线时间戳，只在这些时间点输出结果
                         # 这可以将计算量从每个 tick 减少到每个 K 线，提升 ~240 倍
-                        month_kline_mask = (df.index >= month_start) & (df.index <= month_end)
-                        month_output_ts = df.index[month_kline_mask].values if month_kline_mask.any() else None
+                        # 处理时区：如果 df.index 是 tz-aware，需要将 month_start/month_end 转换为相同时区
+                        _month_start = month_start
+                        _month_end = month_end
+                        if hasattr(df.index, 'tz') and df.index.tz is not None:
+                            _month_start = month_start.tz_localize(df.index.tz) if month_start.tzinfo is None else month_start.tz_convert(df.index.tz)
+                            _month_end = month_end.tz_localize(df.index.tz) if month_end.tzinfo is None else month_end.tz_convert(df.index.tz)
+                        month_kline_mask = (df.index >= _month_start) & (df.index <= _month_end)
+                        # 将 output_timestamps 转换为 tz-naive，确保与 tick 时间戳一致
+                        if month_kline_mask.any():
+                            month_output_ts = df.index[month_kline_mask]
+                            if hasattr(month_output_ts, 'tz') and month_output_ts.tz is not None:
+                                month_output_ts = month_output_ts.tz_localize(None)
+                            month_output_ts = month_output_ts.values
+                        else:
+                            month_output_ts = None
                         
                         # 计算该月的 Trade Clustering（传入上个月的状态）
                         month_cluster_df, state = compute_trade_clustering_from_ticks(
@@ -2434,6 +2470,10 @@ def extract_trade_clustering_features(
             "Trade clustering calculation requires tick data. "
             "Please provide tick data via the 'ticks' parameter."
         )
+    
+    # 将累积结果赋值给 cluster_df（用于后续对齐操作）
+    cluster_df = cluster_df_accum
+    
     # 对齐到 df 的时间索引（右对齐，避免未来信息泄露）
     if isinstance(df.index, pd.DatetimeIndex):
         # 推断 df 的频率

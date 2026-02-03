@@ -3,16 +3,63 @@
 ```bash
 mlbot data check-month-coverage --symbol BTCUSDT --start 2022-01 --end 2026-01 --zip-dir data/agg_data --parquet-dir data/parquet_data --no-docker
 
+mlbot data convert --no-docker --input-dir data/agg_data --output-dir data/parquet_data --pattern '*-aggTrades-202[5]*.zip'
+
+mlbot data convert --no-docker \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --pattern '*-aggTrades-202[5]-*.zip'
 # 转成1min的ticks加速运算
-mlbot data convert --input-dir data/agg_data --output-dir data/parquet_data --pattern 'BTCUSDT-aggTrades-2024-*.zip' 
+
 
 ```
 ## build 计算缓存，方便后面复用
 ```bash
-mlbot feature-store build --no-docker --config config/strategies/bpc --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT --timeframe 240T --data-path data/parquet_data --start-date 2023-01-01 --end-date 2024-12-31 --root feature_store 
+# 只补充没有数据的
+mlbot feature-store build --no-docker --config config/strategies/bpc --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT --timeframe 240T --data-path data/parquet_data --start-date 2023-05-01 --end-date 2025-12-31 --root feature_store 
+
+# 如果图形显示结果不对，一般是缓存问题，删除月度特征缓存和feature store缓存
+cd /home/yin/trading/ml_trading_bot && rm -rf cache/features/monthly/* && echo "Cleared cache/features/monthly/"
+
+rm -rf feature_store/bpc_highcap6_240T_v1
+
+mlbot feature-store build --no-docker \
+  --config config/strategies/bpc \
+  --symbols BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
+  --timeframe 240T \
+  --start-date 2023-01-01 \
+  --end-date 2025-11-30 \
+  --warmup-months 3 \
+  --force-rebuild
+
+  mlbot feature-store build --no-docker \
+  --config config/strategies/bpc \
+  --symbols BTCUSDT,ETHUSDT \
+  --timeframe 240T \
+  --start-date 2023-01-01 \
+  --end-date 2023-06-30 \
+  --warmup-months 3 \
+  --force-rebuild
+
+  mlbot visualize feature-indicators --no-docker \
+  --symbol BTCUSDT \
+  --timeframe 240T \
+  --start-date 2023-01-01 \
+  --end-date 2023-06-30 \
+  --strategy-config config/strategies/bpc \
+  --force-rebuild
+
+#  --force-rebuild 参数 重新build，或者修改配置文件
+# # 会 hash 这些文件的内容：
+# - {config_dir}/features.yaml
+# - {config_dir}/meta.yaml (可选)
+# - {config_dir}/feature_contract.yaml (可选)
+# - config/feature_dependencies.yaml (全局)
+# 新构建的数据使用了 --warmup-months 3，百分位计算正确，默认也是这个
+# 等构建完成后用 mlbot visualize feature-indicators --use-cache 可视化即可看到正常的图表
 ```
 ## 可视化特征，防止特征计算有问题，看看有没有空的 
 ```bash
+# 支持单个symbol
 mlbot visualize feature-indicators --no-docker \
   --symbol BTCUSDT \
   --timeframe 240T \
@@ -32,7 +79,7 @@ mlbot visualize feature-indicators --no-docker \
 # 如果数据不对，可以删除以下几层缓存
 echo "清理 2024 年所有相关缓存（vpin, cvd, ofci, bb_width）..." && find /home/yin/trading/ml_trading_bot/cache/features/monthly -name "*2024*" \( -name "*vpin*" -o -name "*cvd*" -o -name "*ofci*" -o -name "*bb_width*" \) -type f -delete && echo "✅ 完成"
 
-echo "🗑️ 清理所有 2024 年缓存..." && find /home/yin/trading/ml_trading_bot/cache -name "*2024*" -type f -delete 2>/dev/null && echo "✅ 完成" && find /home/yin/trading/ml_trading_bot/cache -name "*2024*" -type f 2>/dev/null | wc -l
+echo "🗑️ 清理所有 2024 年缓存..." && find /home/yin/trading/ml_trading_bot/cache -name "*2024*" -type f -delete 2>/dev/null && echo "✅ 完成" && find /home/yin/trading/ml_trading_bot/cache -name "*2023*" -type f 2>/dev/null | wc -l
 
 /home/yin/trading/ml_trading_bot/cache/timeframes/BTCUSDT_240T.parquet && echo "✅ 已删除 BTCUSDT_240T 缓存"
 

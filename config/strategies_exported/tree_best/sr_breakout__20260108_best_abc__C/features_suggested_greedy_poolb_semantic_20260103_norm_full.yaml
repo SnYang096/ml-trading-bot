@@ -7,7 +7,7 @@ feature_pipeline:
   requested_features:
   - atr_f
   - poc_hal_features_close_f
-  - macd_f
+  - macd_atr_f
   - rsi_f
   - trend_r2_20_f
   - bb_width_f
@@ -65,7 +65,7 @@ feature_group_search:
   final_features:
   - atr_f
   - poc_hal_features_close_f
-  - macd_f
+  - macd_atr_f
   - rsi_f
   - trend_r2_20_f
   - bb_width_f

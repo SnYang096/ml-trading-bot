@@ -364,7 +364,7 @@ feature_pipeline:
   - liquidity_void_x_vpin_f
   - liquidity_void_x_wpt_risk_f
   - liquidity_void_x_wpt_risk_rank_f
-  - macd_f
+  - macd_atr_f
   - macd_histogram
   - macd_signal
   - macdext_f

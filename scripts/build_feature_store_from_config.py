@@ -70,8 +70,16 @@ def parse_args() -> argparse.Namespace:
         help="FeatureStore layer (dataset id). If not specified, auto-generated from config content. "
         "You can pass a versioned name like heavy_v6 for manual invalidation.",
     )
-    p.add_argument("--warmup-months", type=int, default=1)
+    p.add_argument(
+        "--warmup-months", type=int, default=3
+    )  # 3 months for 540-bar percentile window
     p.add_argument("--warmup-bars", type=int, default=0)
+    p.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Delete existing layer data and rebuild from scratch. "
+        "Without this flag, existing months are skipped.",
+    )
     return p.parse_args()
 
 
@@ -117,6 +125,21 @@ def main() -> None:
 
     # Auto-generate layer name if not specified (unified handling for both CLI and direct script calls)
     layer = resolve_layer_name(args.layer, cfg_dir)
+
+    # Force rebuild: delete existing layer data
+    if args.force_rebuild:
+        layer_path = root / layer
+        if layer_path.exists():
+            import shutil
+
+            print(f"   🗑️  --force-rebuild: Deleting existing layer '{layer}'...")
+            shutil.rmtree(layer_path)
+            print(f"   ✅ Deleted: {layer_path}")
+        else:
+            print(
+                f"   ℹ️  --force-rebuild: Layer '{layer}' does not exist, nothing to delete."
+            )
+
     warmup_months = max(0, int(args.warmup_months))
     warmup_bars = max(0, int(args.warmup_bars))
 
@@ -136,16 +159,66 @@ def main() -> None:
         "failed_months": [],
     }
 
+    # Pre-check: verify all symbols have tick data for requested range
+    if args.start_date and args.end_date:
+        print("\n🔍 Pre-checking tick data availability...")
+        expected_months = (
+            pd.date_range(start=args.start_date, end=args.end_date, freq="MS")
+            .strftime("%Y-%m")
+            .tolist()
+        )
+        tick_data_path = Path(args.data_path)
+        all_missing = {}
+        for sym in symbols:
+            missing = []
+            for m in expected_months:
+                tick_file = tick_data_path / f"{sym}_{m}.parquet"
+                if not tick_file.exists():
+                    missing.append(m)
+            if missing:
+                all_missing[sym] = missing
+
+        if all_missing:
+            error_lines = ["\n❌ Missing tick data detected!"]
+            error_lines.append(
+                f"   Requested range: {args.start_date} to {args.end_date}"
+            )
+            error_lines.append(f"   Data path: {args.data_path}\n")
+            for sym, months in all_missing.items():
+                months_str = ", ".join(months[:5])
+                if len(months) > 5:
+                    months_str += f"... (+{len(months) - 5} more)"
+                error_lines.append(
+                    f"   - {sym}: missing {len(months)} month(s): {months_str}"
+                )
+            error_lines.append("\n💡 Please convert the missing tick data first:")
+            error_lines.append(
+                "   mlbot data convert --pattern '<SYMBOL>-aggTrades-*.zip'"
+            )
+            raise ValueError("\n".join(error_lines))
+        print("   ✅ All symbols have complete tick data for requested range\n")
+
     for sym_idx, sym in enumerate(symbols, 1):
         print(f"\n{'='*60}")
         print(f"📊 Processing symbol {sym_idx}/{len(symbols)}: {sym}")
         print(f"{'='*60}")
 
         try:
+            # Calculate actual start date including warmup period
+            actual_start = args.start_date
+            if warmup_months > 0 and args.start_date:
+                actual_start_ts = pd.to_datetime(args.start_date) - pd.DateOffset(
+                    months=warmup_months
+                )
+                actual_start = actual_start_ts.strftime("%Y-%m-%d")
+                print(
+                    f"  🔄 Loading data from {actual_start} (warmup {warmup_months} months before {args.start_date})"
+                )
+
             df_raw = load_raw_data(
                 data_path=args.data_path,
                 symbol=sym,
-                start_date=args.start_date,
+                start_date=actual_start,
                 end_date=args.end_date,
                 timeframe=args.timeframe,
             )
@@ -314,7 +387,7 @@ def main() -> None:
             print(f"     ... and {len(stats['failed_symbols']) - 10} more")
 
     if stats["failed_months"]:
-        print(f"\n  ⚠️  Failed months ({len(stats['failed_months'])}):")
+        print(f"\n  \u26a0\ufe0f  Failed months ({len(stats['failed_months'])}):")
         for sym, month, error in stats["failed_months"][:10]:
             print(f"     - {sym} {month}: {error[:100]}")
         if len(stats["failed_months"]) > 10:

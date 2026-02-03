@@ -866,5 +866,177 @@ class TestGARCHAndEVTIntegration(unittest.TestCase):
         print("  ✅ 流式 vs 批量一致性测试通过")
 
 
+class TestEVTQuantileNormalization(unittest.TestCase):
+    """
+    EVT 分位数归一化测试 (2026-02 新增)
+
+    验证 EVT 特征的滚动分位数归一化：
+    1. 范围正确性 [0, 1]
+    2. 无未来函数
+    3. 流式与批量一致性
+    """
+
+    def setUp(self):
+        np.random.seed(42)
+        self.window = 120
+
+    def test_evt_quantile_normalization_range(self):
+        """
+        测试: EVT 分位数归一化范围正确性
+
+        验证：所有 EVT 特征在归一化后应该在 [0, 1] 范围内
+        """
+        print("\n" + "=" * 70)
+        print("测试: EVT 分位数归一化范围正确性")
+        print("=" * 70)
+
+        # 创建较长数据确保分位数计算有足够数据
+        n = 600
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        # 创建有波动的价格数据
+        returns = np.random.randn(n) * 0.02
+        prices = 100 * np.exp(np.cumsum(returns))
+
+        df = pd.DataFrame({"close": prices}, index=dates)
+
+        result = extract_evt_features(df, price_col="close", window=self.window)
+
+        # 检查所有 EVT 列
+        evt_cols = [
+            "evt_tail_shape",
+            "evt_scale",
+            "evt_var_99",
+            "evt_es_99",
+            "evt_tail_shape_left",
+            "evt_scale_left",
+            "evt_var_99_left",
+            "evt_es_99_left",
+        ]
+
+        for col in evt_cols:
+            if col in result.columns:
+                vals = result[col].dropna()
+                if len(vals) > 0:
+                    min_val = vals.min()
+                    max_val = vals.max()
+
+                    print(f"  {col}: min={min_val:.4f}, max={max_val:.4f}")
+
+                    # 分位数归一化后应在 [0, 1] 范围
+                    self.assertGreaterEqual(
+                        min_val, 0.0, f"{col} 最小值应 >= 0，实际: {min_val}"
+                    )
+                    self.assertLessEqual(
+                        max_val, 1.0, f"{col} 最大值应 <= 1，实际: {max_val}"
+                    )
+
+        print("  ✅ EVT 分位数归一化范围 [0,1] 验证通过")
+
+    def test_evt_quantile_normalization_no_future_leak(self):
+        """
+        测试: EVT 分位数归一化无未来函数
+
+        验证：分位数归一化不引入未来信息，t 时刻的分位数只依赖历史数据
+        """
+        print("\n" + "=" * 70)
+        print("测试: EVT 分位数归一化无未来函数")
+        print("=" * 70)
+
+        n = 500
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        returns = np.random.randn(n) * 0.02
+        prices = 100 * np.exp(np.cumsum(returns))
+
+        df = pd.DataFrame({"close": prices}, index=dates)
+
+        # 使用前 350 个数据点计算
+        result_partial = extract_evt_features(
+            df.iloc[:350].copy(), price_col="close", window=self.window
+        )
+
+        # 使用全部数据计算
+        result_full = extract_evt_features(
+            df.copy(), price_col="close", window=self.window
+        )
+
+        # 对比 t=300 时刻的值
+        # 如果无未来函数，前 350 点和全部数据在 t=300 处应该一致
+        test_idx = 300
+        col = "evt_tail_shape"
+
+        val_partial = result_partial.iloc[test_idx][col]
+        val_full = result_full.iloc[test_idx][col]
+
+        print(f"  t={test_idx} {col} (前350点): {val_partial:.6f}")
+        print(f"  t={test_idx} {col} (全部数据): {val_full:.6f}")
+
+        # 允许微小数值误差
+        diff = abs(val_partial - val_full)
+        self.assertLess(diff, 1e-6, f"EVT 分位数归一化存在未来函数，差异: {diff}")
+
+        print("  ✅ EVT 分位数归一化无未来函数验证通过")
+
+    def test_evt_quantile_normalization_streaming_consistency(self):
+        """
+        测试: EVT 分位数归一化流式一致性
+
+        验证：流式计算与批量计算结果一致
+        """
+        print("\n" + "=" * 70)
+        print("测试: EVT 分位数归一化流式一致性")
+        print("=" * 70)
+
+        n = 450
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        returns = np.random.randn(n) * 0.02
+        prices = 100 * np.exp(np.cumsum(returns))
+
+        df = pd.DataFrame({"close": prices}, index=dates)
+
+        # 批量计算
+        batch_result = extract_evt_features(df, price_col="close", window=self.window)
+
+        # 流式计算（每次只用到当前时刻的数据）
+        streaming_results = []
+        start_idx = self.window + 252  # EVT 窗口 + 分位数窗口
+        for i in range(start_idx, len(df)):
+            df_stream = df.iloc[: i + 1].copy()
+            stream_result = extract_evt_features(
+                df_stream, price_col="close", window=self.window
+            )
+            if len(stream_result) > 0:
+                streaming_results.append(stream_result.iloc[-1])
+
+        if len(streaming_results) > 10:
+            streaming_df = pd.DataFrame(streaming_results)
+            streaming_df.index = df.index[start_idx : len(df)]
+
+            col = "evt_tail_shape"
+            if col in batch_result.columns and col in streaming_df.columns:
+                batch_vals = batch_result[col].iloc[start_idx:].dropna()
+                stream_vals = streaming_df[col].dropna()
+
+                common_idx = batch_vals.index.intersection(stream_vals.index)
+                if len(common_idx) > 5:
+                    diff = (
+                        batch_vals.loc[common_idx] - stream_vals.loc[common_idx]
+                    ).abs()
+                    max_diff = diff.max()
+                    mean_diff = diff.mean()
+
+                    print(
+                        f"  流式 vs 批量差异: max={max_diff:.8f}, mean={mean_diff:.8f}"
+                    )
+
+                    # 允许极小的数值误差
+                    self.assertLess(
+                        max_diff,
+                        1e-5,
+                        f"EVT 流式与批量不一致，最大差异: {max_diff:.8f}",
+                    )
+
+                    print("  ✅ EVT 分位数归一化流式一致性验证通过")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

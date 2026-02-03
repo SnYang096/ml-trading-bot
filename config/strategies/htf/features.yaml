@@ -26,7 +26,7 @@ feature_pipeline:
     - sr_strength_max_f
     - dist_to_nearest_sr_f
     # ----- 动量 -----
-    - macd_f
+    - macd_atr_f
     - rsi_f
     # ----- 高级 -----
     - hurst_price_f

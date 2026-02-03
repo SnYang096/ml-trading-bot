@@ -23,7 +23,7 @@ feature_pipeline:
     - ofci_pct_f
     
     # ----- 动量特征 -----
-    - macd_f
+    - macd_atr_f
     - rsi_f
     - trend_r2_20_f
     - path_efficiency_pct_f

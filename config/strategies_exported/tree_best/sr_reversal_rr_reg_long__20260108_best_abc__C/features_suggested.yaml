@@ -3,7 +3,7 @@ description: 'Regression mainline (best-known): kline_core + vpin_scene + minima
   SR-distance features (stable, no ticks)'
 feature_pipeline:
   requested_features:
-  - macd_f
+  - macd_atr_f
   - rsi_f
   - sma_200_f
   - atr_f
@@ -59,7 +59,7 @@ notes: 'Best-known regression mainline feature set (stable, no ticks).
 
   Updated with best features from feature-group-search:
 
-  - kline_core: macd_f, rsi_f, sma_200_f, atr_f, trend_r2_20_f, bb_width_f, wick_ratios_f
+  - kline_core: macd_atr_f, rsi_f, sma_200_f, atr_f, trend_r2_20_f, bb_width_f, wick_ratios_f
 
   - vpin_scene: vpin_scene_semantic_scores_f
 
@@ -81,7 +81,7 @@ feature_group_search:
   - poolb__evt_features_f
   stop_reason: no_improvement
   base_features:
-  - macd_f
+  - macd_atr_f
   - rsi_f
   - sma_200_f
   - atr_f
@@ -100,7 +100,7 @@ feature_group_search:
   - sqs_hal_low_f
   - sr_strength_max_close_f
   final_features:
-  - macd_f
+  - macd_atr_f
   - rsi_f
   - sma_200_f
   - atr_f

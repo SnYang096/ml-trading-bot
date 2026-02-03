@@ -689,6 +689,208 @@ class TestSpectrumFeaturesCritical(unittest.TestCase):
                         f"平均差异: {mean_diff:.8f}",
                     )
 
+    # ==========================================================================
+    # Centroid 分位数归一化测试 (2026-02 新增)
+    # ==========================================================================
+
+    def test_centroid_quantile_normalization_range(self):
+        """
+        测试: centroid 分位数归一化范围正确性
+
+        验证：centroid 特征在归一化后应该在 [0, 1] 范围内
+        """
+        print("\n" + "=" * 70)
+        print("测试: centroid 分位数归一化范围正确性")
+        print("=" * 70)
+
+        # 创建较长数据确保分位数计算有足够数据
+        np.random.seed(42)
+        n = 500
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        prices = 100 + np.cumsum(np.random.randn(n) * 0.5)
+
+        df = pd.DataFrame(
+            {
+                "close": prices,
+                "volume": np.random.uniform(1000, 10000, n),
+                "cvd": np.cumsum(np.random.randn(n) * 100),
+            },
+            index=dates,
+        )
+
+        result = extract_spectrum_features(
+            df,
+            price_col="close",
+            volume_col="volume",
+            cvd_col="cvd",
+            rolling_window=self.rolling_window,
+        )
+
+        # 检查所有 centroid 列
+        centroid_cols = [
+            "spectrum_price_centroid",
+            "spectrum_volume_centroid",
+            "spectrum_cvd_centroid",
+        ]
+
+        for col in centroid_cols:
+            if col in result.columns:
+                vals = result[col].dropna()
+                if len(vals) > 0:
+                    min_val = vals.min()
+                    max_val = vals.max()
+
+                    print(f"  {col}: min={min_val:.4f}, max={max_val:.4f}")
+
+                    # 分位数归一化后应在 [0, 1] 范围
+                    self.assertGreaterEqual(
+                        min_val, 0.0, f"{col} 最小值应 >= 0，实际: {min_val}"
+                    )
+                    self.assertLessEqual(
+                        max_val, 1.0, f"{col} 最大值应 <= 1，实际: {max_val}"
+                    )
+
+        print("  ✅ centroid 分位数归一化范围 [0,1] 验证通过")
+
+    def test_centroid_quantile_normalization_no_future_leak(self):
+        """
+        测试: centroid 分位数归一化无未来函数
+
+        验证：分位数归一化不引入未来信息，t 时刻的分位数只依赖历史数据
+        """
+        print("\n" + "=" * 70)
+        print("测试: centroid 分位数归一化无未来函数")
+        print("=" * 70)
+
+        np.random.seed(42)
+        n = 400
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        prices = 100 + np.cumsum(np.random.randn(n) * 0.5)
+
+        df = pd.DataFrame(
+            {
+                "close": prices,
+                "volume": np.random.uniform(1000, 10000, n),
+                "cvd": np.cumsum(np.random.randn(n) * 100),
+            },
+            index=dates,
+        )
+
+        # 使用前 300 个数据点计算
+        result_partial = extract_spectrum_features(
+            df.iloc[:300].copy(),
+            price_col="close",
+            volume_col="volume",
+            cvd_col="cvd",
+            rolling_window=self.rolling_window,
+        )
+
+        # 使用全部数据计算
+        result_full = extract_spectrum_features(
+            df.copy(),
+            price_col="close",
+            volume_col="volume",
+            cvd_col="cvd",
+            rolling_window=self.rolling_window,
+        )
+
+        # 对比 t=200 时刻的 centroid 值
+        # 如果无未来函数，前 300 点和全部数据在 t=200 处应该一致
+        test_idx = 200
+        col = "spectrum_price_centroid"
+
+        val_partial = result_partial.iloc[test_idx][col]
+        val_full = result_full.iloc[test_idx][col]
+
+        print(f"  t={test_idx} centroid (前300点): {val_partial:.6f}")
+        print(f"  t={test_idx} centroid (全部数据): {val_full:.6f}")
+
+        # 允许微小数值误差，但应该基本一致
+        diff = abs(val_partial - val_full)
+        self.assertLess(diff, 1e-6, f"centroid 分位数归一化存在未来函数，差异: {diff}")
+
+        print("  ✅ centroid 分位数归一化无未来函数验证通过")
+
+    def test_centroid_quantile_normalization_streaming_consistency(self):
+        """
+        测试: centroid 分位数归一化流式一致性
+
+        验证：流式计算与批量计算结果一致
+        """
+        print("\n" + "=" * 70)
+        print("测试: centroid 分位数归一化流式一致性")
+        print("=" * 70)
+
+        np.random.seed(42)
+        n = 350
+        dates = pd.date_range("2024-01-01", periods=n, freq="4h")
+        prices = 100 + np.cumsum(np.random.randn(n) * 0.5)
+
+        df = pd.DataFrame(
+            {
+                "close": prices,
+                "volume": np.random.uniform(1000, 10000, n),
+                "cvd": np.cumsum(np.random.randn(n) * 100),
+            },
+            index=dates,
+        )
+
+        window = self.rolling_window
+
+        # 批量计算
+        batch_result = extract_spectrum_features(
+            df,
+            price_col="close",
+            volume_col="volume",
+            cvd_col="cvd",
+            rolling_window=window,
+        )
+
+        # 流式计算（每次只用到当前时刻的数据）
+        streaming_results = []
+        start_idx = window + 252  # 分位数窗口需要足够数据
+        for i in range(start_idx, len(df)):
+            df_stream = df.iloc[: i + 1].copy()
+            stream_result = extract_spectrum_features(
+                df_stream,
+                price_col="close",
+                volume_col="volume",
+                cvd_col="cvd",
+                rolling_window=window,
+            )
+            if len(stream_result) > 0:
+                streaming_results.append(stream_result.iloc[-1])
+
+        if len(streaming_results) > 10:
+            streaming_df = pd.DataFrame(streaming_results)
+            streaming_df.index = df.index[start_idx : len(df)]
+
+            col = "spectrum_price_centroid"
+            if col in batch_result.columns and col in streaming_df.columns:
+                batch_vals = batch_result[col].iloc[start_idx:].dropna()
+                stream_vals = streaming_df[col].dropna()
+
+                common_idx = batch_vals.index.intersection(stream_vals.index)
+                if len(common_idx) > 5:
+                    diff = (
+                        batch_vals.loc[common_idx] - stream_vals.loc[common_idx]
+                    ).abs()
+                    max_diff = diff.max()
+                    mean_diff = diff.mean()
+
+                    print(
+                        f"  流式 vs 批量差异: max={max_diff:.8f}, mean={mean_diff:.8f}"
+                    )
+
+                    # 允许极小的数值误差
+                    self.assertLess(
+                        max_diff,
+                        1e-5,
+                        f"centroid 流式与批量不一致，最大差异: {max_diff:.8f}",
+                    )
+
+                    print("  ✅ centroid 分位数归一化流式一致性验证通过")
+
 
 if __name__ == "__main__":
     run_all_tests()

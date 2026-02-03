@@ -125,30 +125,48 @@ def compute_ofci_from_trades(
 @register_feature("compute_ofci_pct_from_series", category="reflexivity")
 def compute_ofci_pct_from_series(
     *,
-    ofci: pd.Series,
-    window: int = 288,
+    ticks_loader_json: Optional[str] = None,
+    df: Optional[pd.DataFrame] = None,
+    ofci_window: int = 100,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """
-    计算OFCI的percentile rank（用于跨symbol稳定性）
+    自包含版本：内部计算 OFCI 再转百分位
     
-    注意：OFCI是[-1, 1]的对称指标，为了正确反映极端一致性（无论是正还是负），
-    我们对abs(ofci)计算percentile rank。
+    1. OFCI = rolling_mean(trade_side) from tick data
+    2. ofci_pct = percentile_rank(abs(OFCI))  # 反映极端一致性
     
     Args:
-        ofci: OFCI序列（[-1, 1]）
-        window: 滚动窗口大小
-        shift: 滞后shift
+        ticks_loader_json: JSON字符串，用于加载tick数据
+        df: OHLCV DataFrame（用于获取时间范围）
+        ofci_window: OFCI计算的滚动窗口
+        percentile_window: 百分位计算的滚动窗口
+        shift: 滞后 shift
     
     Returns:
         DataFrame with column 'ofci_pct': [0, 1] 的percentile值
-        - ofci_pct > 0.9 表示极端一致性（无论是正还是负）
+        - ofci_pct > 0.9 表示极端一致性
     """
-    # 使用绝对值计算percentile rank，以反映极端一致性
-    ofci_abs = ofci.abs()
+    # Step 1: 计算 OFCI
+    ofci_df = compute_ofci_from_trades(
+        trades=None,
+        window=ofci_window,
+        ticks_loader_json=ticks_loader_json,
+        df=df,
+    )
+    
+    if ofci_df.empty or "ofci" not in ofci_df.columns:
+        # 如果没有tick数据，返回默认值
+        if df is not None and isinstance(df.index, pd.DatetimeIndex):
+            return pd.DataFrame(index=df.index, columns=["ofci_pct"], dtype=float).fillna(0.5)
+        return pd.DataFrame(columns=["ofci_pct"], dtype=float)
+    
+    # Step 2: 使用绝对值计算percentile rank
+    ofci_abs = ofci_df["ofci"].abs()
     return compute_percentile_rank_from_series(
         series=ofci_abs,
-        window=window,
+        window=percentile_window,
         shift=shift,
         output_name="ofci_pct",
     )
@@ -206,24 +224,41 @@ def compute_shd_from_series(
 @register_feature("compute_shd_pct_from_series", category="reflexivity")
 def compute_shd_pct_from_series(
     *,
-    shd: pd.Series,
-    window: int = 288,
+    close: pd.Series,
+    cvd: pd.Series,
+    shd_window: int = 60,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """
-    计算SHD的percentile rank（用于跨symbol稳定性）
+    自包含版本：内部计算 SHD 再转百分位
+    
+    1. SHD = abs(rolling_corr(ΔCVD, price_returns))
+    2. shd_pct = percentile_rank(SHD)
     
     Args:
-        shd: SHD序列
-        window: 滚动窗口大小
-        shift: 滞后shift
+        close: 收盘价序列
+        cvd: CVD序列（从 orderflow features 中获取）
+        shd_window: SHD计算的滚动窗口
+        percentile_window: 百分位计算的滚动窗口
+        shift: 滞后 shift
     
     Returns:
         DataFrame with column 'shd_pct': [0, 1] 的percentile值
     """
+    # Step 1: 计算 SHD
+    price_returns = np.log(close / close.shift(1)).fillna(0.0)
+    shd_df = compute_shd_from_series(
+        cvd_series=cvd,
+        price_returns=price_returns,
+        window=shd_window,
+    )
+    shd_series = shd_df["shd"] if "shd" in shd_df.columns else pd.Series(0.0, index=close.index)
+    
+    # Step 2: 转百分位
     return compute_percentile_rank_from_series(
-        series=shd,
-        window=window,
+        series=shd_series,
+        window=percentile_window,
         shift=shift,
         output_name="shd_pct",
     )

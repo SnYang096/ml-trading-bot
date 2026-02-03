@@ -37,6 +37,22 @@ except ImportError:
     print("⚠️ scipy package not available. EVT features will be disabled.")
 
 
+def _rolling_quantile_normalize(arr: np.ndarray, idx: pd.Index, window: int = 252) -> np.ndarray:
+    """
+    滚动分位数归一化：将每个值映射为其在历史 window 中的分位数 [0, 1]
+    
+    用于 EVT 特征（scale, VaR, ES）的跨品种/跨时间框架可比性。
+    """
+    def _quantile_rank(x: np.ndarray) -> float:
+        if len(x) < 10 or np.all(np.isnan(x)):
+            return np.nan
+        return float((x <= x[-1]).mean())
+    
+    s = pd.Series(arr, index=idx)
+    result = s.rolling(window=window, min_periods=10).apply(_quantile_rank, raw=True)
+    return result.to_numpy()
+
+
 def _extract_evt_features_from_close(
     close: pd.Series,
     window: int = 120,
@@ -438,6 +454,27 @@ def _extract_evt_features_from_close(
         else:
             # For any other columns, use a small default value
             result[col] = result[col].fillna(0.001)
+    
+    # 对所有 EVT 特征应用滚动分位数归一化，使其跨品种/跨时间框架可比 [0, 1]
+    cols_to_normalize = [
+        # Left tail (main risk focus)
+        "evt_tail_shape_left", "evt_scale_left", "evt_var_99_left", "evt_es_99_left",
+        # Backward compatibility aliases
+        "evt_tail_shape", "evt_scale", "evt_var_99", "evt_es_99",
+    ]
+    if separate_tails:
+        cols_to_normalize.extend([
+            "evt_tail_shape_right", "evt_scale_right", "evt_var_99_right", "evt_es_99_right",
+        ])
+    
+    for col in cols_to_normalize:
+        if col in result.columns:
+            result[col] = _rolling_quantile_normalize(result[col].values, index, window=252)
+    
+    # 分位数归一化后可能产生 NaN（前 10 个数据点），填充为 0.5（中位数）
+    for col in cols_to_normalize:
+        if col in result.columns:
+            result[col] = result[col].fillna(0.5)
     
     return result
 

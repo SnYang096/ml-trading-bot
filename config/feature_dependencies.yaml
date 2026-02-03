@@ -41,7 +41,7 @@ features:
     pass_full_df: false
     column_mappings:
       close: close
-  macd_f:
+  macd_atr_f:
     module: baseline
     compute_func: compute_macd_from_series
     dependencies: []
@@ -50,9 +50,9 @@ features:
     - high
     - low
     output_columns:
-    - macd
-    - macd_signal
-    - macd_histogram
+    - macd_atr
+    - macd_signal_atr
+    - macd_histogram_atr
     category: technical_indicator
     description: MACD Indicator (normalized by ATR for cross-asset comparability)
     compute_params:
@@ -363,7 +363,7 @@ features:
     description: Rolling ATR percentile (compression detector)
     pass_full_df: false
     compute_params:
-      window: 288
+      window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -386,7 +386,7 @@ features:
     pass_full_df: false
     compute_params:
       window: 10
-      percentile_window: 288
+      percentile_window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -408,7 +408,7 @@ features:
     pass_full_df: false
     compute_params:
       window: 20
-      percentile_window: 288
+      percentile_window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -430,7 +430,7 @@ features:
     pass_full_df: false
     compute_params:
       window: 20
-      percentile_window: 288
+      percentile_window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -451,7 +451,7 @@ features:
     pass_full_df: false
     compute_params:
       window: 20
-      percentile_window: 288
+      percentile_window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -526,7 +526,7 @@ features:
     description: 压缩持续时间（基于 ATR percentile，连续 bar 数）
     pass_full_df: false
     compute_params:
-      percentile_window: 288
+      percentile_window: 540
       compression_threshold_pct: 0.2
       normalized: true
       output_normalization_map:
@@ -871,6 +871,7 @@ features:
     - wpt_price_energy_high_ratio
     category: wpt
     description: WPT price fluctuation + 能量比特征（用于 Hilbert 等需要去趋势价格的特征）
+    pass_full_df: true  # extract_wpt_price_features_normalized expects df
     compute_params:
       wavelet: db4
       level: 4
@@ -904,6 +905,7 @@ features:
     - wpt_cvd_fluctuation
     category: wpt
     description: WPT CVD fluctuation (normalized/unitless or similarity score)
+    pass_full_df: true  # extract_wpt_features expects df, not individual columns
     compute_params:
       wavelet: db4
       level: 4
@@ -1896,7 +1898,7 @@ features:
     description: Percentile rank of cvd_change_5 for cross-symbol stability (used in gate rules)
     pass_full_df: false
     compute_params:
-      window: 288
+      window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -1916,7 +1918,7 @@ features:
     description: Percentile rank of cvd_change_5_normalized for cross-symbol stability (used in gate rules)
     pass_full_df: false
     compute_params:
-      window: 288
+      window: 540
       shift: 1
       normalized: true
       output_normalization_map:
@@ -1926,42 +1928,49 @@ features:
   volume_ratio_pct_f:
     module: baseline
     compute_func: compute_volume_ratio_pct_from_series
-    dependencies: [volume_ratio_f]
+    dependencies: []  # 自包含：内部计算 volume_ratio
     required_columns:
-    - volume_ratio
+    - volume
     output_columns:
     - volume_ratio_pct
     category: volume
-    description: Percentile rank of volume_ratio for cross-symbol stability (used in gate rules)
+    description: 自包含的 volume_ratio percentile（内部计算 volume/rolling_mean 再转百分位）
     pass_full_df: false
     compute_params:
-      window: 288
+      ratio_window: 20
+      percentile_window: 540
       shift: 1
       normalized: true
       output_normalization_map:
         volume_ratio_pct: bounded_0_1
     column_mappings:
-      volume_ratio: volume_ratio
+      volume: volume
   bb_width_normalized_pct_f:
     module: baseline
     compute_func: compute_bb_width_normalized_pct_from_series
-    dependencies:
-    - bb_width_f
+    dependencies: []  # 自包含：内部计算 bb_width_normalized
     required_columns:
-    - bb_width_normalized
+    - close
+    - high
+    - low
     output_columns:
     - bb_width_normalized_pct
     category: volatility
-    description: Percentile rank of bb_width_normalized for cross-symbol stability (used in gate rules)
+    description: 自包含的 bb_width_normalized percentile（内部计算 BB width/ATR 再转百分位）
     pass_full_df: false
     compute_params:
-      window: 288
+      bb_period: 20
+      bb_std_dev: 2
+      atr_window: 14
+      percentile_window: 540
       shift: 1
       normalized: true
       output_normalization_map:
         bb_width_normalized_pct: bounded_0_1
     column_mappings:
-      bb_width_normalized: bb_width_normalized
+      close: close
+      high: high
+      low: low
   ofci_f:
     module: reflexivity
     compute_func: compute_ofci_from_trades
@@ -1979,23 +1988,20 @@ features:
   ofci_pct_f:
     module: reflexivity
     compute_func: compute_ofci_pct_from_series
-    dependencies:
-    - ofci_f
-    required_columns:
-    - ofci
+    dependencies: []  # 自包含：内部加载tick数据计算OFCI
+    required_columns: []  # 通过 ticks_loader_json 加载tick数据
     output_columns:
     - ofci_pct
     category: reflexivity
-    description: Percentile rank of OFCI for cross-symbol stability (used in gate rules)
-    pass_full_df: false
+    description: 自包含的 OFCI percentile（内部加载tick数据计算OFCI再转百分位）
+    pass_full_df: true  # 需要df获取时间范围
     compute_params:
-      window: 288
+      ofci_window: 100
+      percentile_window: 540
       shift: 1
       normalized: true
     output_normalization_map:
       ofci_pct: bounded_0_1
-    column_mappings:
-      ofci: ofci
   shd_f:
     module: reflexivity
     compute_func: compute_shd_from_ohlcv
@@ -2017,23 +2023,25 @@ features:
   shd_pct_f:
     module: reflexivity
     compute_func: compute_shd_pct_from_series
-    dependencies:
-    - shd_f
+    dependencies: []  # 自包含：内部计算SHD
     required_columns:
-    - shd
+    - close
+    - cvd
     output_columns:
     - shd_pct
     category: reflexivity
-    description: Percentile rank of SHD for cross-symbol stability (used in gate rules)
+    description: 自包含的 SHD percentile（内部计算rolling_corr(ΔCVD, returns)再转百分位）
     pass_full_df: false
     compute_params:
-      window: 288
+      shd_window: 60
+      percentile_window: 540
       shift: 1
       normalized: true
     output_normalization_map:
       shd_pct: bounded_0_1
     column_mappings:
-      shd: shd
+      close: close
+      cvd: cvd
   ofi_short_f:
     module: enhanced
     compute_func: compute_ofi_short_from_series
@@ -6952,7 +6960,7 @@ features:
       cvd_change_5: cvd_change_5
       vpin: vpin
       ofci_pct: ofci_pct
-      bb_width_normalized: bb_width_normalized
+      bb_width_normalized: bb_width_normalized_pct  # 使用 _pct 版本，值域 [0,1]
 
   bpc_pullback_depth_pct_f:
     module: bpc
@@ -7106,7 +7114,7 @@ features:
     pass_full_df: false
     compute_params:
       window: 20
-      percentile_window: 288
+      percentile_window: 540
       normalized: true
       output_normalization_map:
         bpc_volume_compression_pct: bounded_0_1

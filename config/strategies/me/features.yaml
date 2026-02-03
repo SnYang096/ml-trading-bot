@@ -26,7 +26,7 @@ feature_pipeline:
     - path_length_pct_f
     - price_dir_consistency_pct_f
     # ----- Compression / WPT / spectrum -----
-    - macd_f
+    - macd_atr_f
     - rsi_f
     - sma_200_f
     - atr_f

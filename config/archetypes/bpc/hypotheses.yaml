@@ -114,7 +114,7 @@ hypothesis_feature_mapping:
     - ofci_pct_f
   H5:
     - rsi_f
-    - macd_f
+    - macd_atr_f
   H6:
     - atr_percentile_f
   H7:

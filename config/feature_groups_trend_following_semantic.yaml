@@ -4,7 +4,7 @@
 # We test incremental scene semantic blocks that may improve regime robustness.
 groups:
   kline_core:
-    - macd_f
+    - macd_atr_f
     - rsi_f
     - trend_r2_20_f
     - bb_width_f

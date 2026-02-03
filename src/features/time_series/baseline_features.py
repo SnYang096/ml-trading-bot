@@ -117,9 +117,9 @@ def compute_macd_from_series(
     hist_norm = (histogram / atr_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
     
     return pd.DataFrame({
-        "macd": macd_norm,
-        "macd_signal": signal_norm,
-        "macd_histogram": hist_norm,
+        "macd_atr": macd_norm,
+        "macd_signal_atr": signal_norm,
+        "macd_histogram_atr": hist_norm,
     })
 
 
@@ -2096,7 +2096,7 @@ def compute_slope_consistency_score(df: pd.DataFrame) -> pd.DataFrame:
 def compute_atr_percentile(
     df: pd.DataFrame,
     *,
-    window: int = 288,
+    window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """ATR 百分位（压缩检测）。"""
@@ -2130,7 +2130,7 @@ def compute_trend_volatility_alignment(
     df: pd.DataFrame,
     *,
     feature_shift: int = 0,
-    atr_percentile_window: int = 288,
+    atr_percentile_window: int = 540,
 ) -> pd.DataFrame:
     """趋势方向与波动率状态的一致性。"""
     if "roc_5" not in df.columns:
@@ -3722,7 +3722,7 @@ def compute_atr_percentile_from_series(
     high: pd.Series,
     low: pd.Series,
     close: pd.Series,
-    window: int = 288,
+    window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Narrow-IO ATR percentile (compression detector)."""
@@ -3752,7 +3752,7 @@ def compute_atr_percentile_from_series(
 def compute_percentile_rank_from_series(
     *,
     series: pd.Series,
-    window: int = 288,
+    window: int = 540,
     shift: int = 1,
     output_name: str = "percentile",
 ) -> pd.DataFrame:
@@ -3788,7 +3788,7 @@ def compute_percentile_rank_from_series(
 def compute_cvd_change_5_pct_from_series(
     *,
     cvd_change_5: pd.Series,
-    window: int = 288,
+    window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute percentile rank of cvd_change_5 for cross-symbol stability."""
@@ -3803,14 +3803,29 @@ def compute_cvd_change_5_pct_from_series(
 @register_feature("compute_volume_ratio_pct_from_series", category="baseline")
 def compute_volume_ratio_pct_from_series(
     *,
-    volume_ratio: pd.Series,
-    window: int = 288,
+    volume: pd.Series,
+    ratio_window: int = 20,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
-    """Compute percentile rank of volume_ratio for cross-symbol stability."""
+    """
+    自包含版本：内部计算 volume_ratio 再转百分位
+    
+    1. volume_ratio = volume / rolling_mean(volume)
+    2. volume_ratio_pct = percentile_rank(volume_ratio)
+    """
+    vol = pd.to_numeric(volume, errors="coerce").astype(float)
+    
+    # Step 1: 计算 volume_ratio
+    rolling_mean = vol.rolling(window=ratio_window, min_periods=1).mean()
+    rolling_mean_safe = rolling_mean.replace(0, np.nan)
+    ratio = vol / rolling_mean_safe
+    ratio = ratio.replace([np.inf, -np.inf], np.nan).clip(0.0, 10.0).fillna(1.0)
+    
+    # Step 2: 转百分位
     return compute_percentile_rank_from_series(
-        series=volume_ratio,
-        window=window,
+        series=ratio,
+        window=percentile_window,
         shift=shift,
         output_name="volume_ratio_pct",
     )
@@ -3819,14 +3834,39 @@ def compute_volume_ratio_pct_from_series(
 @register_feature("compute_bb_width_normalized_pct_from_series", category="baseline")
 def compute_bb_width_normalized_pct_from_series(
     *,
-    bb_width_normalized: pd.Series,
-    window: int = 288,
+    close: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    bb_period: int = 20,
+    bb_std_dev: int = 2,
+    atr_window: int = 14,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
-    """Compute percentile rank of bb_width_normalized for cross-symbol stability."""
+    """
+    自包含版本：内部计算 bb_width_normalized 再转百分位
+    
+    1. bb_width_normalized = BB_width / ATR (跨资产可比)
+    2. bb_width_normalized_pct = percentile_rank(bb_width_normalized)
+    """
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    
+    # Step 1: 计算 BB bands
+    upper, middle, lower = compute_bollinger_bands(close, period=bb_period, std_dev=bb_std_dev)
+    
+    # Step 2: 计算 ATR
+    atr = compute_atr(high, low, close, period=atr_window)
+    
+    # Step 3: BB width normalized by ATR
+    width = (upper - lower).abs()
+    bb_width_norm = (width / atr.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    
+    # Step 4: 转百分位
     return compute_percentile_rank_from_series(
-        series=bb_width_normalized,
-        window=window,
+        series=bb_width_norm,
+        window=percentile_window,
         shift=shift,
         output_name="bb_width_normalized_pct",
     )
@@ -3836,7 +3876,7 @@ def compute_bb_width_normalized_pct_from_series(
 def compute_cvd_change_5_normalized_pct_from_series(
     *,
     cvd_change_5_normalized: pd.Series,
-    window: int = 288,
+    window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute percentile rank of cvd_change_5_normalized for cross-symbol stability."""
@@ -3894,7 +3934,7 @@ def compute_jump_risk_pct_from_series(
     close: pd.Series,
     atr: pd.Series,
     window: int = 10,
-    percentile_window: int = 288,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute jump_risk and its percentile rank."""
@@ -3935,7 +3975,7 @@ def compute_path_length_pct_from_series(
     close: pd.Series,
     atr: pd.Series,
     window: int = 20,
-    percentile_window: int = 288,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute path_length and its percentile rank."""
@@ -3990,7 +4030,7 @@ def compute_path_efficiency_pct_from_series(
     close: pd.Series,
     atr: pd.Series,
     window: int = 20,
-    percentile_window: int = 288,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute path_efficiency and its percentile rank."""
@@ -4028,7 +4068,7 @@ def compute_price_dir_consistency_pct_from_series(
     *,
     close: pd.Series,
     window: int = 20,
-    percentile_window: int = 288,
+    percentile_window: int = 540,
     shift: int = 1,
 ) -> pd.DataFrame:
     """Compute price_dir_consistency and its percentile rank."""
@@ -4049,7 +4089,7 @@ def compute_trend_volatility_alignment_from_series(
     high: pd.Series,
     low: pd.Series,
     feature_shift: int = 0,
-    atr_percentile_window: int = 288,
+    atr_percentile_window: int = 540,
 ) -> pd.DataFrame:
     """Narrow-IO alignment of ROC sign and ATR percentile regime."""
     close = pd.to_numeric(close, errors="coerce").astype(float)
@@ -4069,7 +4109,7 @@ def compute_compression_duration_from_series(
     high: pd.Series,
     low: pd.Series,
     close: pd.Series,
-    percentile_window: int = 288,
+    percentile_window: int = 540,
     compression_threshold_pct: float = 0.2,
 ) -> pd.Series:
     """

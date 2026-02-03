@@ -12,7 +12,7 @@
 groups:
   # Cheap, non-tick groups
   kline_core:
-    - macd_f
+    - macd_atr_f
     - rsi_f
     - sma_200_f
     - atr_f

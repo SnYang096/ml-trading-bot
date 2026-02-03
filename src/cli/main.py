@@ -821,6 +821,7 @@ def _data_convert_impl(
     input_dir: Optional[str],
     output_dir: Optional[str],
     pattern: Optional[str],
+    symbols: Optional[str],
     force: bool,
     aggregate_freq: Optional[str],
     docker: bool,
@@ -828,6 +829,8 @@ def _data_convert_impl(
     args = []
     if pattern:
         args.extend(["--pattern", str(pattern)])
+    if symbols:
+        args.extend(["--symbols", str(symbols)])
     if input_dir:
         args.extend(["--input-dir", input_dir])
     if output_dir:
@@ -1050,6 +1053,12 @@ def data_update_market_cap(
     help="Optional ZIP glob pattern to convert a subset (example: BNBUSDT-aggTrades-2024-*.zip).",
 )
 @click.option(
+    "--symbols",
+    default=None,
+    help="Comma-separated list of symbols to convert (e.g., BTCUSDT,ETHUSDT,BNBUSDT). "
+    "If not specified, all matching files will be converted.",
+)
+@click.option(
     "--input-dir", default=None, help="ZIP input directory (default: data/agg_data)"
 )
 @click.option(
@@ -1067,11 +1076,12 @@ def data_update_market_cap(
 )
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def data_convert(
-    pattern, input_dir, output_dir, force, aggregate_freq, docker
+    pattern, symbols, input_dir, output_dir, force, aggregate_freq, docker
 ):
     """Convert downloaded ZIPs to Parquet format (preserves source ZIPs)."""
     code = _data_convert_impl(
         pattern=pattern,
+        symbols=symbols,
         input_dir=input_dir,
         output_dir=output_dir,
         force=force,
@@ -1532,6 +1542,12 @@ def feature_store():
     default=0,
     help="Fallback warmup by bars if warmup-months=0.",
 )
+@click.option(
+    "--force-rebuild",
+    is_flag=True,
+    default=False,
+    help="Delete existing layer data and rebuild from scratch. Without this flag, existing months are skipped.",
+)
 @click.option("--docker/--no-docker", default=True, help="Run in Docker")
 def feature_store_build(
     config,
@@ -1547,6 +1563,7 @@ def feature_store_build(
     layer,
     warmup_months,
     warmup_bars,
+    force_rebuild,
     docker,
 ):
     """Build monthly FeatureStore from a config directory (shared infra for tree+nn)."""
@@ -1592,6 +1609,8 @@ def feature_store_build(
     # Only pass --layer if explicitly provided (None means auto-generate in script)
     if layer is not None:
         args.extend(["--layer", layer])
+    if force_rebuild:
+        args.append("--force-rebuild")
     sys.exit(
         run_script("scripts/build_feature_store_from_config.py", args, docker=docker)
     )

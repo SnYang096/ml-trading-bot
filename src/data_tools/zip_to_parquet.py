@@ -242,7 +242,7 @@ class DataConverter:
                 )
             )
 
-            # 计算该秒 VWAP
+            # 计算该时间段 VWAP
             agg["vwap"] = agg["price_volume"] / agg["volume"].replace(0, np.nan)
 
             rows = []
@@ -300,20 +300,48 @@ class DataConverter:
         output_filename = f"{symbol}_{date_part}.parquet"
         return os.path.join(self.output_dir, output_filename)
 
-    def convert_all_files(self, pattern: str = "*aggTrades-*.zip") -> Dict:
+    def convert_all_files(
+        self, pattern: str = "*aggTrades-*.zip", symbols: Optional[List[str]] = None
+    ) -> Dict:
         """
         转换所有匹配的 ZIP 文件（支持多币种）
 
         Args:
             pattern: 文件匹配模式
+            symbols: 可选的币种列表过滤（如 ["BTCUSDT", "ETHUSDT"]），None 表示不过滤
 
         Returns:
             转换结果字典，包含成功和失败的文件列表
         """
         logger.info(f"Converting all files matching pattern: {pattern}")
+        if symbols:
+            logger.info(f"Filtering by symbols: {symbols}")
 
         # 查找所有匹配的zip文件
         zip_files = glob.glob(os.path.join(self.input_dir, pattern))
+
+        # 如果指定了 symbols，则过滤文件列表
+        if symbols:
+            symbols_upper = [s.upper() for s in symbols]
+            filtered_files = []
+            for zf in zip_files:
+                basename = os.path.basename(zf).upper()
+                # 从文件名提取币种（支持 BTCUSDT-aggTrades-... 格式）
+                match = re.search(r"([A-Z]+)(USDT|USD)", basename)
+                if match:
+                    detected_symbol = f"{match.group(1)}{match.group(2)}"
+                    # 统一为 USDT 结尾
+                    if detected_symbol.endswith("USD") and not detected_symbol.endswith(
+                        "USDT"
+                    ):
+                        detected_symbol = detected_symbol[:-3] + "USDT"
+                    if detected_symbol in symbols_upper:
+                        filtered_files.append(zf)
+            zip_files = filtered_files
+            logger.info(
+                f"Filtered to {len(zip_files)} files matching symbols: {symbols}"
+            )
+
         logger.info(f"Found {len(zip_files)} files to convert")
 
         converted_files: List[Dict] = []
@@ -417,6 +445,12 @@ def main():
         "Examples: '1s' (1 second), '1T' (1 minute), '5T' (5 minutes). "
         "Uses pandas resample frequency strings.",
     )
+    parser.add_argument(
+        "--symbols",
+        default=None,
+        help="Comma-separated list of symbols to convert (e.g., BTCUSDT,ETHUSDT). "
+        "If not specified, all matching files will be converted.",
+    )
     args = parser.parse_args()
 
     # 设置日志
@@ -454,7 +488,14 @@ def main():
     )
 
     # 转换所有文件
-    results = converter.convert_all_files(pattern=str(args.pattern))
+    symbols_list = None
+    if args.symbols:
+        symbols_list = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+        print(f"🎯 Filtering by symbols: {', '.join(symbols_list)}")
+        print()
+    results = converter.convert_all_files(
+        pattern=str(args.pattern), symbols=symbols_list
+    )
 
     # 打印结果
     print(f"\n📊 Conversion Results:")

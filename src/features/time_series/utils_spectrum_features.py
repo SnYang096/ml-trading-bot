@@ -31,6 +31,22 @@ from src.features.registry import register_feature
 import os
 
 
+def _rolling_quantile_normalize(arr: np.ndarray, idx: pd.Index, window: int = 252) -> np.ndarray:
+    """
+    滚动分位数归一化：将每个值映射为其在历史 window 中的分位数 [0, 1]
+    
+    用于 centroid 等未归一化的特征，使其跨品种/跨时间框架可比。
+    """
+    def _quantile_rank(x: np.ndarray) -> float:
+        if len(x) < 10 or np.all(np.isnan(x)):
+            return np.nan
+        return float((x <= x[-1]).mean())
+    
+    s = pd.Series(arr, index=idx)
+    result = s.rolling(window=window, min_periods=10).apply(_quantile_rank, raw=True)
+    return result.to_numpy()
+
+
 def compute_spectrum_features(
     x: np.ndarray,
     fs: float = 1.0,
@@ -296,6 +312,13 @@ def extract_spectrum_features_from_series(
             cvd_low = _ffill(cvd_low)
             cvd_ent = _ffill(cvd_ent)
             cvd_cent = _ffill(cvd_cent)
+
+    # 对 centroid 应用滚动分位数归一化，使其跨品种/跨时间框架可比 [0, 1]
+    price_cent = _rolling_quantile_normalize(price_cent, idx, window=252)
+    if volume is not None:
+        vol_cent = _rolling_quantile_normalize(vol_cent, idx, window=252)
+    if cvd is not None:
+        cvd_cent = _rolling_quantile_normalize(cvd_cent, idx, window=252)
 
     return pd.DataFrame(
         {

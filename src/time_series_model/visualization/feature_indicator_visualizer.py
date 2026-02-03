@@ -124,15 +124,50 @@ def load_data_with_strategy_features(
             }
             ticks_loader_json = serialize_tick_loader_params(tick_params)
 
-            # Set ticks_loader_json for all features that need it
+            # 自动检测需要 ticks 数据的特征（基于函数签名，而非硬编码）
             features_cfg = feature_loader.feature_deps.get("features", {})
-            for feature_name in ["vpin_features", "footprint_basic", "reflexivity_f"]:
-                if feature_name in features_cfg:
-                    compute_params = features_cfg[feature_name].setdefault(
-                        "compute_params", {}
-                    )
-                    compute_params["ticks_loader_json"] = ticks_loader_json
-            print(f"   ✅ Configured tick data: {len(tick_files)} files")
+            try:
+                import inspect
+                from src.features.registry import get_compute_func
+
+                tick_configured_count = 0
+                for feature_name, feature_cfg in features_cfg.items():
+                    compute_func_name = feature_cfg.get("compute_func")
+                    if not compute_func_name:
+                        continue
+                    try:
+                        compute_func = get_compute_func(compute_func_name)
+                        sig = inspect.signature(compute_func)
+                        if ("ticks" in sig.parameters) or (
+                            "ticks_loader_json" in sig.parameters
+                        ):
+                            compute_params = feature_cfg.setdefault(
+                                "compute_params", {}
+                            )
+                            if not compute_params.get("ticks_loader_json"):
+                                compute_params["ticks_loader_json"] = ticks_loader_json
+                                tick_configured_count += 1
+                    except Exception:
+                        pass  # 跳过无法获取的函数
+                print(
+                    f"   ✅ Configured tick data: {len(tick_files)} files, {tick_configured_count} features"
+                )
+            except Exception as e:
+                # fallback：先保持旧逻辑兼容
+                for feature_name in [
+                    "vpin_features",
+                    "footprint_basic",
+                    "reflexivity_f",
+                    "trade_cluster_base_aligned_features_f",
+                ]:
+                    if feature_name in features_cfg:
+                        compute_params = features_cfg[feature_name].setdefault(
+                            "compute_params", {}
+                        )
+                        compute_params["ticks_loader_json"] = ticks_loader_json
+                print(
+                    f"   ✅ Configured tick data: {len(tick_files)} files (fallback mode)"
+                )
         else:
             print(f"   ⚠️  No tick files found in {data_path} for {symbol}")
     except Exception as e:
@@ -437,15 +472,25 @@ def _plot_feature_time_series_bokeh(
 ) -> Optional[str]:
     """Plot interactive time series for given columns using Bokeh; return HTML div string."""
     if not _BOKEH_AVAILABLE or not columns:
+        print(
+            f"      ❌ Early return: bokeh={_BOKEH_AVAILABLE}, cols={len(columns) if columns else 0}"
+        )
         return None
     cols = columns[:max_cols]
     n = len(cols)
     if n == 0:
+        print(f"      ❌ No columns after slice")
         return None
     try:
         plots = []
         for col in cols:
+            if col not in df.columns:
+                print(f"      ⚠️  Column {col} not in df")
+                continue
             series = df[col].dropna()
+            print(
+                f"      - {col}: {len(series)} non-null values (total: {len(df[col])}, null: {df[col].isnull().sum()})"
+            )
             if len(series) == 0:
                 continue
 
@@ -482,6 +527,7 @@ def _plot_feature_time_series_bokeh(
             plots.append(p)
 
         if not plots:
+            print(f"      ❌ No plots generated (all series empty?)")
             return None
 
         # Arrange in grid (3 columns max)
@@ -492,9 +538,13 @@ def _plot_feature_time_series_bokeh(
 
         grid = gridplot(grid_rows, sizing_mode="stretch_width")
         script, div = components(grid)
+        print(f"      ✅ Generated plot with {len(plots)} subplots")
         return f"{script}\n{div}"
     except Exception as e:
         print(f"   ⚠️  Bokeh plot error: {e}")
+        import traceback
+
+        traceback.print_exc()
         return None
 
 
@@ -527,10 +577,17 @@ def generate_html_report(
 
     # Generate time-series plots for each feature type that has columns
     plot_html_sections: List[str] = []
+    print(
+        f"   📊 Generating plots: show_plots={show_plots}, bokeh_available={_BOKEH_AVAILABLE}"
+    )
+    print(
+        f"   📊 Feature groups with data: {sum(1 for f in available_features if f['count'] > 0)}"
+    )
     if show_plots and _BOKEH_AVAILABLE:
         for feat in available_features:
             if feat["count"] == 0:
                 continue
+            print(f"   📊 Plotting {feat['key']} ({feat['count']} cols)...")
             bokeh_html = _plot_feature_time_series_bokeh(
                 df,
                 feat["columns"],

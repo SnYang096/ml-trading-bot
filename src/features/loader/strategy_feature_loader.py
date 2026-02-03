@@ -404,6 +404,18 @@ class StrategyFeatureLoader:
                     spec, result_df.index.min(), result_df.index.max()
                 )
                 if not df_store.empty:
+                    # Timezone alignment: FeatureStore may be tz-naive while raw data is UTC
+                    result_tz = getattr(result_df.index, 'tz', None)
+                    store_tz = getattr(df_store.index, 'tz', None)
+                    if store_tz is None and result_tz is not None:
+                        # FeatureStore is tz-naive, localize to match result_df
+                        df_store.index = df_store.index.tz_localize(result_tz)
+                    elif store_tz is not None and result_tz is None:
+                        # Result is tz-naive, strip tz from store
+                        df_store.index = df_store.index.tz_localize(None)
+                    elif store_tz is not None and result_tz is not None and store_tz != result_tz:
+                        # Both have tz but different, convert store to result's tz
+                        df_store.index = df_store.index.tz_convert(result_tz)
                     df_store = df_store.reindex(result_df.index)
                     features_cfg = self.feature_deps.get("features", {})
                     output_cols: List[str] = []

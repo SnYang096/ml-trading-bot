@@ -7,7 +7,7 @@ feature_pipeline:
   exclude_columns:
   - atr
   requested_features:
-  - macd_f
+  - macd_atr_f
   - sma_200_f
   - trend_r2_20_f
   - wpt_price_reconstructed_f

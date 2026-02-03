@@ -25,7 +25,7 @@ feature_pipeline:
     - vpin_features_f
     - ofci_pct_f
     # ----- 动量 -----
-    - macd_f
+    - macd_atr_f
     - rsi_f
     # ----- 趋势 -----
     - trend_r2_20_f
