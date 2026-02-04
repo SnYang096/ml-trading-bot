@@ -106,10 +106,27 @@ def compute_ofci_from_trades(
         if not valid_mask.any():
             return pd.DataFrame(index=trades.index, columns=["ofci"], dtype=float).fillna(0.0)
         
-        # 计算buy_ratio（滚动窗口）
-        buy_count = (directions == 1).rolling(window=window, min_periods=window).sum()
-        total_count = valid_mask.rolling(window=window, min_periods=window).sum()
-        buy_ratio = buy_count / total_count.replace(0, np.nan)
+        # 使用 volume 加权计算 buy_ratio（与 VPIN signed_imbalance 保持一致）
+        if "volume" in trades.columns:
+            volume = trades["volume"].copy()
+            buy_volume = np.where(directions == 1, volume, 0.0)
+            sell_volume = np.where(directions == -1, volume, 0.0)
+            
+            buy_vol_rolling = pd.Series(buy_volume, index=trades.index).rolling(
+                window=window, min_periods=window
+            ).sum()
+            sell_vol_rolling = pd.Series(sell_volume, index=trades.index).rolling(
+                window=window, min_periods=window
+            ).sum()
+            total_vol_rolling = buy_vol_rolling + sell_vol_rolling
+            
+            # buy_ratio = buy_volume / total_volume
+            buy_ratio = buy_vol_rolling / total_vol_rolling.replace(0, np.nan)
+        else:
+            # 回退到 tick 数量计算（不推荐，聚合数据场景下会失真）
+            buy_count = (directions == 1).rolling(window=window, min_periods=window).sum()
+            total_count = valid_mask.rolling(window=window, min_periods=window).sum()
+            buy_ratio = buy_count / total_count.replace(0, np.nan)
         
         # 转换为[-1, 1]对称指标
         ofci = 2 * buy_ratio - 1
@@ -125,10 +142,12 @@ def compute_ofci_from_trades(
 @register_feature("compute_ofci_pct_from_series", category="reflexivity")
 def compute_ofci_pct_from_series(
     *,
+    ofci: Optional[pd.Series] = None,  # 直接传入 OFCI 序列（用于测试）
     ticks_loader_json: Optional[str] = None,
     df: Optional[pd.DataFrame] = None,
     ofci_window: int = 100,
     percentile_window: int = 540,
+    window: Optional[int] = None,  # 别名，兼容旧测试
     shift: int = 1,
 ) -> pd.DataFrame:
     """
@@ -138,16 +157,32 @@ def compute_ofci_pct_from_series(
     2. ofci_pct = percentile_rank(abs(OFCI))  # 反映极端一致性
     
     Args:
+        ofci: 直接传入的 OFCI 序列（可选，用于测试场景）
         ticks_loader_json: JSON字符串，用于加载tick数据
         df: OHLCV DataFrame（用于获取时间范围）
         ofci_window: OFCI计算的滚动窗口
         percentile_window: 百分位计算的滚动窗口
+        window: percentile_window 的别名（兼容旧测试）
         shift: 滞后 shift
     
     Returns:
         DataFrame with column 'ofci_pct': [0, 1] 的percentile值
         - ofci_pct > 0.9 表示极端一致性
     """
+    # 兼容旧测试：window 是 percentile_window 的别名
+    if window is not None:
+        percentile_window = window
+    
+    # 如果直接传入 ofci 序列，跳过内部计算
+    if ofci is not None:
+        ofci_abs = ofci.abs()
+        return compute_percentile_rank_from_series(
+            series=ofci_abs,
+            window=percentile_window,
+            shift=shift,
+            output_name="ofci_pct",
+        )
+    
     # Step 1: 计算 OFCI
     ofci_df = compute_ofci_from_trades(
         trades=None,

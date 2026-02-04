@@ -52,12 +52,14 @@ mlbot visualize feature-indicators --no-docker \
   --use-cache
 # --force-rebuild 只删除 FeatureStore 缓存，但不删除 monthly 特征缓存（cache/features/monthly/）。
 mlbot visualize feature-indicators --no-docker \
-  --symbol BTCUSDT \
+  --symbol BNBUSDT \
   --timeframe 240T \
   --start-date 2023-01-01 \
   --end-date 2025-12-31 \
   --strategy-config config/strategies/bpc \
   --force-rebuild
+
+  # 所有特征得一个图表BTC：results/feature_indicators/BTCUSDT_240min_feature_indicators_from20230101_to20251231_20260204_121724.html
 
 # 如果数据不对，可以删除以下几层缓存
 echo "清理 2024 年所有相关缓存（vpin, cvd, ofci, bb_width）..." && find /home/yin/trading/ml_trading_bot/cache/features/monthly -name "*2024*" \( -name "*vpin*" -o -name "*cvd*" -o -name "*ofci*" -o -name "*bb_width*" \) -type f -delete && echo "✅ 完成"
