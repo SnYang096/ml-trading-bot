@@ -35,6 +35,7 @@ feature_pipeline:
     - cvd_divergence_v2_f           # CVD 背离
     - price_momentum_divergence_f  # 价格-动量背离（与 CVD 背离正交）
     - terminal_risk_score_f        # 末端风险评分（Execution 层追单风险）
+    - volume_participation_score_f # 市场参与度评分（Execution 层活跃度）
     
     # ========== 趋势强度 ==========
     - trend_r2_20_f

@@ -4592,6 +4592,35 @@ features:
       cvd_exhaustion_score: bounded_0_1
       location_amplifier: bounded_0_1
       terminal_risk_score: bounded_0_1
+  volume_participation_score_f:
+    module: interaction
+    compute_func: compute_volume_participation_score_from_series
+    dependencies: []
+    required_columns:
+    - volume
+    output_columns:
+    - volume_activity_pct
+    - volume_velocity_pct
+    - volume_stability
+    - volume_participation_score
+    category: interaction
+    description: |
+      Volume Participation Score: Execution 层市场参与度/活跃度评分 [0,1]。
+      回答"现在市场有没有人在认真交易？"，用于 size 缩放 / entry 时机 / stop 设置。
+      与 terminal_risk_score 组合使用效果最佳。
+    compute_params:
+      activity_window: 540
+      velocity_span: 5
+      stability_short_window: 5
+      stability_long_window: 20
+    pass_full_df: false
+    column_mappings:
+      volume: volume
+    output_normalization_map:
+      volume_activity_pct: bounded_0_1
+      volume_velocity_pct: bounded_0_1
+      volume_stability: bounded_0_1
+      volume_participation_score: bounded_0_1
   compression_energy_x_ofi_short_f:
     module: enhanced
     compute_func: compute_compression_energy_x_ofi_short_from_series

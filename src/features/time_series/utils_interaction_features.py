@@ -2544,3 +2544,97 @@ def compute_terminal_risk_score_from_series(
         "location_amplifier": location_amplifier,
         "terminal_risk_score": terminal_risk_score,
     })
+
+@register_feature("compute_volume_participation_score_from_series", category="interaction")
+def compute_volume_participation_score_from_series(
+    *,
+    volume: pd.Series,
+    activity_window: int = 540,
+    velocity_span: int = 5,
+    stability_short_window: int = 5,
+    stability_long_window: int = 20,
+) -> pd.DataFrame:
+    """
+    Volume Participation Score: 市场参与度/活跃度评分 [0,1]
+    
+    Execution 层专用的连续化参与度评估，回答：
+    "现在市场有没有人在认真交易？"
+    
+    语义：
+    - 0 → 市场很"空"，追单/突破极易假
+    - 1 → 市场很"热"，执行质量好、滑点可控
+    
+    Args:
+        volume: 成交量序列
+        activity_window: 活跃度历史窗口
+        velocity_span: 速度EMA平滑窗口
+        stability_short_window: 稳定性短期窗口
+        stability_long_window: 稳定性长期窗口
+    
+    Returns:
+        DataFrame with columns:
+        - volume_activity_pct: 活跃度百分位 [0,1]（当前成交量在历史中的热度）
+        - volume_velocity_pct: 速度百分位 [0,1]（突然开始交易的迹象）
+        - volume_stability: 稳定性 [0,1]（不是一根假量）
+        - volume_participation_score: 参与度综合得分 [0,1]
+    
+    Usage in Execution:
+        volume_participation_score | Execution 含义
+        -------------------------|------------------
+        < 0.2                    | 市场冷清，避免追单
+        0.2 ~ 0.4                | 一般参与度，谨慎执行
+        0.4 ~ 0.7                | 良好参与度，可执行
+        > 0.7                    | 高参与度，优质执行环境
+    
+    Notes:
+        - 只给 Execution 层，不给 Router 决策方向
+        - 用于: size 缩放 / entry 时机 / stop 设置
+        - 与 terminal_risk_score 组合使用效果最佳
+    """
+    # === 1. 解析输入 ===
+    vol = pd.to_numeric(volume, errors="coerce").astype(float)
+    
+    # === 2. 计算滚动百分位排名 ===
+    def _rolling_percentile_rank(series: pd.Series, window: int) -> pd.Series:
+        """滚动窗口内的百分位排名 [0, 1]，使用 <= 比较"""
+        def _pct_rank(x):
+            if len(x) < 2:
+                return 0.5
+            rank = (x <= x.iloc[-1]).sum() - 1
+            return rank / (len(x) - 1)
+        return series.rolling(window=window, min_periods=max(10, window // 3)).apply(_pct_rank, raw=False)
+    
+    # === 3. Volume 活跃度（相对历史）===
+    volume_activity_pct = _rolling_percentile_rank(vol, activity_window)
+    
+    # === 4. Volume 加速度（突然有人）===
+    raw_velocity = vol.diff()
+    volume_velocity = raw_velocity.ewm(span=velocity_span, adjust=False).mean()
+    volume_velocity_pct = _rolling_percentile_rank(volume_velocity, activity_window)
+    
+    # === 5. Volume 稳定性（不是一根假冲）===
+    short_avg = vol.rolling(stability_short_window).mean()
+    long_avg = vol.rolling(stability_long_window).mean()
+    # 避免除零，确保比率有意义
+    volume_stability = (short_avg / (long_avg + 1e-8)).clip(0.0, 2.0) / 2.0
+    volume_stability = volume_stability.fillna(0.5)  # NaN 处理
+    
+    # === 6. 最终：参与度综合得分 ===
+    # 使用 sqrt 对速度进行非线性处理，避免过度放大
+    # 确保所有输入都经过NaN处理
+    volume_activity_clean = volume_activity_pct.fillna(0.5)
+    volume_velocity_clean = volume_velocity_pct.fillna(0.5)
+    volume_stability_clean = volume_stability.fillna(0.5)
+    
+    volume_participation_score = (
+        volume_activity_clean *
+        np.sqrt(np.abs(volume_velocity_clean)) *
+        volume_stability_clean
+    ).clip(0.0, 1.0)
+    
+    return pd.DataFrame({
+        "volume_activity_pct": volume_activity_pct.fillna(0.5),
+        "volume_velocity_pct": volume_velocity_pct.fillna(0.5),
+        "volume_stability": volume_stability,
+        "volume_participation_score": volume_participation_score,
+    })
