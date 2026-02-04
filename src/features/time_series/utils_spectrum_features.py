@@ -184,22 +184,194 @@ def compute_spectrum_features(
     }
 
 
-@register_feature("extract_spectrum_features_from_series", category="spectrum")
-def extract_spectrum_features_from_series(
-    *,
-    close: pd.Series,
-    volume: Optional[pd.Series] = None,
-    cvd: Optional[pd.Series] = None,
-    rolling_window: int = 64,
-    step: int = 1,
-) -> pd.DataFrame:
+# 标准化签名的Spectrum特征计算函数
+@register_feature("compute_spectrum_features", category="spectrum")
+def compute_spectrum_features_main(data, is_streaming=False, state=None, **params):
     """
-    Narrow-IO spectrum feature entrypoint for the feature DAG.
+    Spectrum特征计算函数 - 符合标准化签名，支持流式计算
+    
+    Args:
+        data: 输入数据 (DataFrame 或单行数据)
+        is_streaming: 是否为流式模式
+        state: 计算状态，用于维护滑动窗口历史数据和中间结果
+        **params: 额外参数，包括:
+            - close: 价格序列
+            - volume: 成交量序列 (可选)
+            - cvd: CVD序列 (可选)
+            - rolling_window: 滚动窗口大小 (default: 64)
+            - step: 计算步长 (default: 1)
+    
+    Returns:
+        在批处理模式下返回DataFrame，在流式模式下返回单行特征值和更新的状态
+    """
+    # 从params中获取参数
+    close = params.get('close', None)
+    volume = params.get('volume', None)
+    cvd = params.get('cvd', None)
+    rolling_window = params.get('rolling_window', 64)
+    step = params.get('step', 1)
+    
+    if is_streaming:
+        return _compute_spectrum_features_streaming(data, state, close=close, volume=volume, cvd=cvd,
+                                               rolling_window=rolling_window, step=step)
+    else:
+        # 批处理模式，保持原有逻辑
+        return _compute_spectrum_features_batch(close=close, volume=volume, cvd=cvd,
+                                           rolling_window=rolling_window, step=step)
 
-    - Always returns the full set of spectrum columns (price + optional volume/cvd),
-      leaving optional blocks as NaN if not provided.
-    - Designed to be used with YAML `pass_full_df: false` + `column_mappings`.
+
+def _compute_spectrum_features_streaming(new_data, state, **kwargs):
     """
+    流式计算Spectrum特征
+    
+    Args:
+        new_data: 新到达的数据点 (单行DataFrame或Series)
+        state: 包含历史数据和中间计算结果的状态
+        **kwargs: 与批处理相同的参数
+        
+    Returns:
+        tuple: (特征值, 更新后的state)
+    """
+    # 从kwargs获取参数
+    close = kwargs.get('close', None)
+    volume = kwargs.get('volume', None)
+    cvd = kwargs.get('cvd', None)
+    rolling_window = kwargs.get('rolling_window', 64)
+    step = kwargs.get('step', 1)
+    
+    # 初始化状态
+    if state is None:
+        state = {
+            'close_history': [],  # 价格历史
+            'volume_history': [],  # 成交量历史
+            'cvd_history': [],  # CVD历史
+            'price_returns_history': [],  # 价格收益率历史
+            'volume_diff_history': [],  # 成交量差分历史
+            'cvd_diff_history': [],  # CVD差分历史
+            'spectrum_cache': {},  # Spectrum计算结果缓存
+        }
+    
+    # 将新数据添加到历史记录
+    if isinstance(new_data, pd.DataFrame):
+        if len(new_data) == 1:
+            new_row = new_data.iloc[0]
+        else:
+            raise ValueError("流式模式下new_data应为单行数据")
+    elif isinstance(new_data, pd.Series):
+        new_row = new_data
+    else:
+        raise ValueError("流式模式下new_data应为DataFrame单行或Series")
+    
+    # 更新历史数据
+    if 'close' in new_row:
+        state['close_history'].append(new_row['close'])
+    if volume is not None and 'volume' in new_row:
+        state['volume_history'].append(new_row['volume'])
+    if cvd is not None and 'cvd' in new_row:
+        state['cvd_history'].append(new_row['cvd'])
+    
+    # 计算收益率和差分
+    if len(state['close_history']) > 1:
+        # 计算价格收益率
+        prev_close = state['close_history'][-2]
+        curr_close = state['close_history'][-1]
+        if prev_close != 0:
+            ret = (curr_close - prev_close) / prev_close
+        else:
+            ret = 0.0
+        state['price_returns_history'].append(ret)
+        
+        # 确保历史长度不超过窗口
+        if len(state['price_returns_history']) > rolling_window * 2:
+            state['price_returns_history'] = state['price_returns_history'][-rolling_window*2:]
+    
+    if volume is not None and len(state['volume_history']) > 1:
+        # 计算成交量差分
+        prev_vol = state['volume_history'][-2]
+        curr_vol = state['volume_history'][-1]
+        diff = curr_vol - prev_vol
+        state['volume_diff_history'].append(diff)
+        
+        if len(state['volume_diff_history']) > rolling_window * 2:
+            state['volume_diff_history'] = state['volume_diff_history'][-rolling_window*2:]
+    
+    if cvd is not None and len(state['cvd_history']) > 1:
+        # 计算CVD差分
+        prev_cvd = state['cvd_history'][-2]
+        curr_cvd = state['cvd_history'][-1]
+        diff = curr_cvd - prev_cvd
+        state['cvd_diff_history'].append(diff)
+        
+        if len(state['cvd_diff_history']) > rolling_window * 2:
+            state['cvd_diff_history'] = state['cvd_diff_history'][-rolling_window*2:]
+    
+    # 计算特征值
+    features = {}
+    
+    # 计算价格频谱特征
+    if len(state['price_returns_history']) >= rolling_window:
+        window_returns = np.array(state['price_returns_history'][-rolling_window:])
+        spec = compute_spectrum_features(window_returns)
+        features['spectrum_price_has_dominant_freq'] = spec["has_dominant_freq"]
+        features['spectrum_price_flatness'] = spec["spectral_flatness"]
+        features['spectrum_price_high_freq_ratio'] = spec["high_freq_energy_ratio"]
+        features['spectrum_price_low_freq_ratio'] = spec["low_freq_energy_ratio"]
+        features['spectrum_price_entropy'] = spec["spectral_entropy"]
+        features['spectrum_price_centroid'] = spec["spectral_centroid"]
+    else:
+        features['spectrum_price_has_dominant_freq'] = np.nan
+        features['spectrum_price_flatness'] = np.nan
+        features['spectrum_price_high_freq_ratio'] = np.nan
+        features['spectrum_price_low_freq_ratio'] = np.nan
+        features['spectrum_price_entropy'] = np.nan
+        features['spectrum_price_centroid'] = np.nan
+    
+    # 计算成交量频谱特征
+    if volume is not None and len(state['volume_diff_history']) >= rolling_window:
+        window_diff = np.array(state['volume_diff_history'][-rolling_window:])
+        spec = compute_spectrum_features(window_diff)
+        features['spectrum_volume_flatness'] = spec["spectral_flatness"]
+        features['spectrum_volume_high_freq_ratio'] = spec["high_freq_energy_ratio"]
+        features['spectrum_volume_low_freq_ratio'] = spec["low_freq_energy_ratio"]
+        features['spectrum_volume_entropy'] = spec["spectral_entropy"]
+        features['spectrum_volume_centroid'] = spec["spectral_centroid"]
+    else:
+        features['spectrum_volume_flatness'] = np.nan
+        features['spectrum_volume_high_freq_ratio'] = np.nan
+        features['spectrum_volume_low_freq_ratio'] = np.nan
+        features['spectrum_volume_entropy'] = np.nan
+        features['spectrum_volume_centroid'] = np.nan
+    
+    # 计算CVD频谱特征
+    if cvd is not None and len(state['cvd_diff_history']) >= rolling_window:
+        window_diff = np.array(state['cvd_diff_history'][-rolling_window:])
+        spec = compute_spectrum_features(window_diff)
+        features['spectrum_cvd_flatness'] = spec["spectral_flatness"]
+        features['spectrum_cvd_high_freq_ratio'] = spec["high_freq_energy_ratio"]
+        features['spectrum_cvd_low_freq_ratio'] = spec["low_freq_energy_ratio"]
+        features['spectrum_cvd_entropy'] = spec["spectral_entropy"]
+        features['spectrum_cvd_centroid'] = spec["spectral_centroid"]
+    else:
+        features['spectrum_cvd_flatness'] = np.nan
+        features['spectrum_cvd_high_freq_ratio'] = np.nan
+        features['spectrum_cvd_low_freq_ratio'] = np.nan
+        features['spectrum_cvd_entropy'] = np.nan
+        features['spectrum_cvd_centroid'] = np.nan
+    
+    return features, state
+
+
+def _compute_spectrum_features_batch(**kwargs):
+    """
+    批处理模式计算Spectrum特征（保持原有逻辑）
+    """
+    # 从kwargs获取参数
+    close = kwargs.get('close', None)
+    volume = kwargs.get('volume', None)
+    cvd = kwargs.get('cvd', None)
+    rolling_window = kwargs.get('rolling_window', 64)
+    step = kwargs.get('step', 1)
+    
     close = pd.to_numeric(close, errors="coerce").astype(float)
     n = len(close)
     idx = close.index
@@ -341,6 +513,23 @@ def extract_spectrum_features_from_series(
         },
         index=idx,
     )
+
+
+# 保持原有的函数名作为别名，以便向后兼容
+@register_feature("extract_spectrum_features_from_series", category="spectrum")
+def extract_spectrum_features_from_series(
+    *,
+    close: pd.Series,
+    volume: Optional[pd.Series] = None,
+    cvd: Optional[pd.Series] = None,
+    rolling_window: int = 64,
+    step: int = 1,
+) -> pd.DataFrame:
+    """
+    旧版函数，保持向后兼容性
+    """
+    return _compute_spectrum_features_batch(close=close, volume=volume, cvd=cvd,
+                                        rolling_window=rolling_window, step=step)
 
 
 @register_feature("extract_spectrum_price_features_from_series", category="spectrum")

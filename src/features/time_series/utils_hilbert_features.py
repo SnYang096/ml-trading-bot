@@ -127,77 +127,243 @@ def rolling_quantile_normalize(
     )
 
 
-@register_feature("extract_hilbert_features", category="hilbert")
-def extract_hilbert_features(
-    df: pd.DataFrame,
-    price_fluctuation_col: str = "wpt_price_fluctuation",
-    cvd_fluctuation_col: Optional[str] = "wpt_cvd_fluctuation",
-    price_col: Optional[str] = "close",
-    volume_col: Optional[str] = "volume",
-    window: int = 64,
-    ema_span: int = 10,
-    # 高级功能参数
-    use_adaptive_window: bool = False,
-    base_window_min: int = 32,
-    base_window_max: int = 128,
-    period_lookback: int = 64,
-    use_quantile_normalize: bool = False,
-    quantile_window: int = 252,
-    use_volume_fusion: bool = False,
-    vol_detrend_window: int = 20,
-    # Contract-focused output normalization:
-    # If enabled, we will compute rolling quantile normalization for envelope-like columns
-    # and overwrite the base envelope outputs to make them cross-asset comparable.
-    replace_env_with_qnorm: bool = False,
-) -> pd.DataFrame:
+# 标准化签名的Hilbert特征计算函数
+@register_feature("compute_hilbert_features", category="hilbert")
+def compute_hilbert_features(data, is_streaming=False, state=None, **params):
     """
-    从 DataFrame 中提取 Hilbert 包络特征（滚动窗口 + EMA 平滑，无数据泄露）
-    
-    实现步骤：
-    1. 使用 WPT 分解后的高频波动分量作为输入
-    2. （可选）估计局部周期，自适应调整窗口长度
-    3. 滚动计算 Hilbert 包络（每个时刻 t，仅用历史窗口 [t-W, t) 数据）
-    4. 提取包络值（当前时刻值）
-    5. EMA 平滑原始包络序列
-    6. （可选）分位数标准化，支持跨品种可比
-    7. （可选）计算成交量包络，融合多信号
-    8. 计算衍生特征（包络比值、斜率等）
-    9. shift(1) 确保时间对齐
+    Hilbert特征计算函数 - 符合标准化签名，支持流式计算
     
     Args:
-        df: DataFrame with WPT features
-        price_fluctuation_col: Price fluctuation column (WPT 波动分量)
-        cvd_fluctuation_col: CVD fluctuation column (WPT 波动分量，可选)
-        price_col: Price column for ratio calculation (可选，用于包络比值)
-        volume_col: Volume column for volume envelope fusion (可选)
-        window: Rolling window size for Hilbert transform (default: 64)
-               建议范围：32 ~ 128，需覆盖至少 2~3 个典型波动周期
-        ema_span: EMA smoothing span (default: 10)
-                 建议范围：5 ~ 20，可通过交叉验证优化
-        use_adaptive_window: 是否使用自适应窗口（基于局部周期估计）
-        base_window_min: 自适应窗口的最小值
-        base_window_max: 自适应窗口的最大值
-        period_lookback: 用于估计周期的历史窗口大小
-        use_quantile_normalize: 是否使用分位数标准化（跨品种可比）
-        quantile_window: 分位数标准化的滚动窗口（建议：252=日线年化）
-        use_volume_fusion: 是否融合成交量包络特征
-        vol_detrend_window: 成交量去趋势的滚动窗口（default: 20）
-                           不同品种（股票 vs 加密货币）的成交量趋势周期差异大，可调整
+        data: 输入数据 (DataFrame 或单行数据)
+        is_streaming: 是否为流式模式
+        state: 计算状态，用于维护滑动窗口历史数据和中间结果
+        **params: 额外参数，包括:
+            - price_fluctuation_col: 价格波动列名 (default: "wpt_price_fluctuation")
+            - cvd_fluctuation_col: CVD波动列名 (default: "wpt_cvd_fluctuation")
+            - price_col: 价格列名 (default: "close")
+            - volume_col: 成交量列名 (default: "volume")
+            - window: 滚动窗口大小 (default: 64)
+            - ema_span: EMA平滑跨度 (default: 10)
+            - use_adaptive_window: 是否使用自适应窗口 (default: False)
+            - base_window_min: 自适应窗口最小值 (default: 32)
+            - base_window_max: 自适应窗口最大值 (default: 128)
+            - period_lookback: 用于估计周期的历史窗口大小 (default: 64)
+            - use_quantile_normalize: 是否使用分位数标准化 (default: False)
+            - quantile_window: 分位数标准化的滚动窗口 (default: 252)
+            - use_volume_fusion: 是否融合成交量包络特征 (default: False)
+            - vol_detrend_window: 成交量去趋势的滚动窗口 (default: 20)
+            - replace_env_with_qnorm: 是否用分位数标准化替换基础包络 (default: False)
     
     Returns:
-        DataFrame with Hilbert features added:
-        - hilbert_price_env: 价格波动强度（EMA 平滑后）
-        - hilbert_cvd_env: CVD 波动强度（EMA 平滑后）
-        - hilbert_cvd_price_env_ratio: 资金流 vs 价格强度比
-        - hilbert_price_env_slope: 价格波动加速/减速
-        - hilbert_cvd_env_slope: CVD 波动加速/减速
-        - hilbert_adaptive_window: 自适应窗口长度（如果启用）
-        - hilbert_price_env_qnorm: 价格包络分位数标准化（如果启用）
-        - hilbert_cvd_env_qnorm: CVD 包络分位数标准化（如果启用）
-        - hilbert_volume_env: 成交量波动强度（如果启用）
-        - hilbert_env_price_vol_ratio: 价格/成交量包络比（如果启用）
-        - hilbert_triple_divergence: 三元背离信号（如果启用）
+        在批处理模式下返回DataFrame，在流式模式下返回单行特征值和更新的状态
     """
+    # 从params中获取参数
+    price_fluctuation_col = params.get('price_fluctuation_col', 'wpt_price_fluctuation')
+    cvd_fluctuation_col = params.get('cvd_fluctuation_col', 'wpt_cvd_fluctuation')
+    price_col = params.get('price_col', 'close')
+    volume_col = params.get('volume_col', 'volume')
+    window = params.get('window', 64)
+    ema_span = params.get('ema_span', 10)
+    use_adaptive_window = params.get('use_adaptive_window', False)
+    base_window_min = params.get('base_window_min', 32)
+    base_window_max = params.get('base_window_max', 128)
+    period_lookback = params.get('period_lookback', 64)
+    use_quantile_normalize = params.get('use_quantile_normalize', False)
+    quantile_window = params.get('quantile_window', 252)
+    use_volume_fusion = params.get('use_volume_fusion', False)
+    vol_detrend_window = params.get('vol_detrend_window', 20)
+    replace_env_with_qnorm = params.get('replace_env_with_qnorm', False)
+    
+    if is_streaming:
+        return _compute_hilbert_features_streaming(data, state, price_fluctuation_col=price_fluctuation_col,
+                                                cvd_fluctuation_col=cvd_fluctuation_col, price_col=price_col,
+                                                volume_col=volume_col, window=window, ema_span=ema_span,
+                                                use_adaptive_window=use_adaptive_window,
+                                                base_window_min=base_window_min, base_window_max=base_window_max,
+                                                period_lookback=period_lookback,
+                                                use_quantile_normalize=use_quantile_normalize,
+                                                quantile_window=quantile_window, use_volume_fusion=use_volume_fusion,
+                                                vol_detrend_window=vol_detrend_window,
+                                                replace_env_with_qnorm=replace_env_with_qnorm)
+    else:
+        # 批处理模式，保持原有逻辑
+        return _compute_hilbert_features_batch(data, price_fluctuation_col=price_fluctuation_col,
+                                             cvd_fluctuation_col=cvd_fluctuation_col, price_col=price_col,
+                                             volume_col=volume_col, window=window, ema_span=ema_span,
+                                             use_adaptive_window=use_adaptive_window,
+                                             base_window_min=base_window_min, base_window_max=base_window_max,
+                                             period_lookback=period_lookback,
+                                             use_quantile_normalize=use_quantile_normalize,
+                                             quantile_window=quantile_window, use_volume_fusion=use_volume_fusion,
+                                             vol_detrend_window=vol_detrend_window,
+                                             replace_env_with_qnorm=replace_env_with_qnorm)
+
+
+def _compute_hilbert_features_streaming(new_data, state, **kwargs):
+    """
+    流式计算Hilbert特征
+    
+    Args:
+        new_data: 新到达的数据点 (单行DataFrame或Series)
+        state: 包含历史数据和中间计算结果的状态
+        **kwargs: 与批处理相同的参数
+        
+    Returns:
+        tuple: (特征值, 更新后的state)
+    """
+    # 从kwargs获取参数
+    price_fluctuation_col = kwargs.get('price_fluctuation_col', 'wpt_price_fluctuation')
+    cvd_fluctuation_col = kwargs.get('cvd_fluctuation_col', 'wpt_cvd_fluctuation')
+    price_col = kwargs.get('price_col', 'close')
+    volume_col = kwargs.get('volume_col', 'volume')
+    window = kwargs.get('window', 64)
+    ema_span = kwargs.get('ema_span', 10)
+    use_adaptive_window = kwargs.get('use_adaptive_window', False)
+    base_window_min = kwargs.get('base_window_min', 32)
+    base_window_max = kwargs.get('base_window_max', 128)
+    period_lookback = kwargs.get('period_lookback', 64)
+    use_quantile_normalize = kwargs.get('use_quantile_normalize', False)
+    quantile_window = kwargs.get('quantile_window', 252)
+    use_volume_fusion = kwargs.get('use_volume_fusion', False)
+    vol_detrend_window = kwargs.get('vol_detrend_window', 20)
+    replace_env_with_qnorm = kwargs.get('replace_env_with_qnorm', False)
+    
+    # 初始化状态
+    if state is None:
+        state = {
+            'history': [],  # 历史数据点
+            'price_fluc_history': [],  # 价格波动历史
+            'cvd_fluc_history': [],  # CVD波动历史
+            'volume_history': [],  # 成交量历史
+            'adaptive_windows': [],  # 自适应窗口历史
+            'envelope_cache': {},  # 包络计算结果缓存
+        }
+    
+    # 将新数据添加到历史记录
+    if isinstance(new_data, pd.DataFrame):
+        if len(new_data) == 1:
+            new_row = new_data.iloc[0]
+        else:
+            raise ValueError("流式模式下new_data应为单行数据")
+    elif isinstance(new_data, pd.Series):
+        new_row = new_data
+    else:
+        raise ValueError("流式模式下new_data应为DataFrame单行或Series")
+    
+    # 更新历史数据
+    state['history'].append(new_row)
+    if price_fluctuation_col in new_row:
+        state['price_fluc_history'].append(new_row[price_fluctuation_col])
+    if cvd_fluctuation_col and cvd_fluctuation_col in new_row:
+        state['cvd_fluc_history'].append(new_row[cvd_fluctuation_col])
+    if volume_col and volume_col in new_row:
+        state['volume_history'].append(new_row[volume_col])
+    
+    # 保持历史数据在窗口长度内
+    max_history_len = window * 2  # 使用稍大的缓冲区
+    if len(state['history']) > max_history_len:
+        state['history'] = state['history'][-max_history_len:]
+        state['price_fluc_history'] = state['price_fluc_history'][-max_history_len:]
+        state['cvd_fluc_history'] = state['cvd_fluc_history'][-max_history_len:]
+        state['volume_history'] = state['volume_history'][-max_history_len:]
+    
+    # 计算特征值
+    features = {}
+    
+    # 确保有足够的数据进行计算
+    if len(state['price_fluc_history']) < window:
+        # 返回空特征
+        for col in ['hilbert_price_env', 'hilbert_cvd_env', 'hilbert_cvd_price_env_ratio', 
+                   'hilbert_price_env_slope', 'hilbert_cvd_env_slope']:
+            features[col] = np.nan
+        return features, state
+    
+    # 获取当前窗口的数据
+    price_fluc_window = state['price_fluc_history'][-window:]
+    cvd_fluc_window = state['cvd_fluc_history'][-window:] if len(state['cvd_fluc_history']) >= window else []
+    
+    # 检查数据有效性
+    price_fluc_valid = np.array([x for x in price_fluc_window if pd.notna(x)])
+    if len(price_fluc_valid) >= max(10, window // 2):
+        # 使用前向填充处理NaN
+        price_series = pd.Series(price_fluc_window)
+        price_series = price_series.ffill().fillna(method='bfill')
+        if not price_series.isna().any():
+            try:
+                # 计算价格包络
+                price_envelope = compute_hilbert_envelope(price_series.values)
+                if len(price_envelope) > 0:
+                    features['hilbert_price_env'] = price_envelope[-1]
+                else:
+                    features['hilbert_price_env'] = np.nan
+            except Exception:
+                features['hilbert_price_env'] = np.nan
+        else:
+            features['hilbert_price_env'] = np.nan
+    else:
+        features['hilbert_price_env'] = np.nan
+    
+    # 计算CVD包络
+    if len(cvd_fluc_window) > 0:
+        cvd_fluc_valid = np.array([x for x in cvd_fluc_window if pd.notna(x)])
+        if len(cvd_fluc_valid) >= max(10, window // 2):
+            cvd_series = pd.Series(cvd_fluc_window)
+            cvd_series = cvd_series.ffill().fillna(method='bfill')
+            if not cvd_series.isna().any():
+                try:
+                    cvd_envelope = compute_hilbert_envelope(cvd_series.values)
+                    if len(cvd_envelope) > 0:
+                        features['hilbert_cvd_env'] = cvd_envelope[-1]
+                    else:
+                        features['hilbert_cvd_env'] = np.nan
+                except Exception:
+                    features['hilbert_cvd_env'] = np.nan
+            else:
+                features['hilbert_cvd_env'] = np.nan
+        else:
+            features['hilbert_cvd_env'] = np.nan
+    else:
+        features['hilbert_cvd_env'] = np.nan
+    
+    # 计算包络比率
+    if 'hilbert_price_env' in features and 'hilbert_cvd_env' in features:
+        price_env = features['hilbert_price_env']
+        cvd_env = features['hilbert_cvd_env']
+        if not (np.isnan(price_env) or np.isnan(cvd_env) or price_env == 0):
+            features['hilbert_cvd_price_env_ratio'] = cvd_env / price_env
+        else:
+            features['hilbert_cvd_price_env_ratio'] = np.nan
+    else:
+        features['hilbert_cvd_price_env_ratio'] = np.nan
+    
+    # 为简单起见，斜率特征在流式模式下暂设为NaN，实际应用中可以使用历史值计算
+    features['hilbert_price_env_slope'] = np.nan
+    features['hilbert_cvd_env_slope'] = np.nan
+    
+    return features, state
+
+
+def _compute_hilbert_features_batch(df, **kwargs):
+    """
+    批处理模式计算Hilbert特征（保持原有逻辑）
+    """
+    # 从kwargs获取参数
+    price_fluctuation_col = kwargs.get('price_fluctuation_col', 'wpt_price_fluctuation')
+    cvd_fluctuation_col = kwargs.get('cvd_fluctuation_col', 'wpt_cvd_fluctuation')
+    price_col = kwargs.get('price_col', 'close')
+    volume_col = kwargs.get('volume_col', 'volume')
+    window = kwargs.get('window', 64)
+    ema_span = kwargs.get('ema_span', 10)
+    use_adaptive_window = kwargs.get('use_adaptive_window', False)
+    base_window_min = kwargs.get('base_window_min', 32)
+    base_window_max = kwargs.get('base_window_max', 128)
+    period_lookback = kwargs.get('period_lookback', 64)
+    use_quantile_normalize = kwargs.get('use_quantile_normalize', False)
+    quantile_window = kwargs.get('quantile_window', 252)
+    use_volume_fusion = kwargs.get('use_volume_fusion', False)
+    vol_detrend_window = kwargs.get('vol_detrend_window', 20)
+    replace_env_with_qnorm = kwargs.get('replace_env_with_qnorm', False)
+    
     df = df.copy()
     
     # 初始化基础特征列
@@ -569,3 +735,42 @@ def extract_hilbert_features(
     # 不填充 NaN：0 波动 ≠ 未知，保留 NaN 让模型知道这是缺失的历史信息
     
     return df
+
+
+# 保持原有的函数名作为别名，以便向后兼容
+@register_feature("extract_hilbert_features", category="hilbert")
+def extract_hilbert_features(
+    df: pd.DataFrame,
+    price_fluctuation_col: str = "wpt_price_fluctuation",
+    cvd_fluctuation_col: Optional[str] = "wpt_cvd_fluctuation",
+    price_col: Optional[str] = "close",
+    volume_col: Optional[str] = "volume",
+    window: int = 64,
+    ema_span: int = 10,
+    # 高级功能参数
+    use_adaptive_window: bool = False,
+    base_window_min: int = 32,
+    base_window_max: int = 128,
+    period_lookback: int = 64,
+    use_quantile_normalize: bool = False,
+    quantile_window: int = 252,
+    use_volume_fusion: bool = False,
+    vol_detrend_window: int = 20,
+    # Contract-focused output normalization:
+    # If enabled, we will compute rolling quantile normalization for envelope-like columns
+    # and overwrite the base envelope outputs to make them cross-asset comparable.
+    replace_env_with_qnorm: bool = False,
+) -> pd.DataFrame:
+    """
+    旧版函数，保持向后兼容性
+    """
+    return _compute_hilbert_features_batch(df, price_fluctuation_col=price_fluctuation_col,
+                                         cvd_fluctuation_col=cvd_fluctuation_col, price_col=price_col,
+                                         volume_col=volume_col, window=window, ema_span=ema_span,
+                                         use_adaptive_window=use_adaptive_window,
+                                         base_window_min=base_window_min, base_window_max=base_window_max,
+                                         period_lookback=period_lookback,
+                                         use_quantile_normalize=use_quantile_normalize,
+                                         quantile_window=quantile_window, use_volume_fusion=use_volume_fusion,
+                                         vol_detrend_window=vol_detrend_window,
+                                         replace_env_with_qnorm=replace_env_with_qnorm)

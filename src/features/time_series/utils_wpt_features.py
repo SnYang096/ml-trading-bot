@@ -183,59 +183,278 @@ def wpt_decompose(
     }
 
 
-@register_feature("extract_wpt_features", category="wpt")
-def extract_wpt_features(
-    df: pd.DataFrame,
-    price_col: str = "close",
-    volume_col: str = "volume",
-    cvd_col: Optional[str] = None,
-    tbr_col: Optional[str] = None,
-    wavelet: str = "db4",
-    level: int = 4,
-    window: int = 100,
-    return_reconstructed_price: bool = False,
-    update_step: int = 1,
-    use_log_returns: bool = False,
-) -> pd.DataFrame:
+# 标准化签名的WPT特征计算函数
+@register_feature("compute_wpt_features", category="wpt")
+def compute_wpt_features(data, is_streaming=False, state=None, **params):
     """
-    从 DataFrame 中提取 WPT 特征（滚动窗口，无数据泄露）
+    WPT特征计算函数 - 符合标准化签名，支持流式计算
     
     Args:
-        df: DataFrame with OHLCV data
-        price_col: Price column name
-        volume_col: Volume column name
-        cvd_col: CVD column name (optional)
-        tbr_col: Take Buy Ratio column name (optional)
-        wavelet: Wavelet function (推荐："db4"平滑、"haar"快速、"sym4"对称)
-        level: WPT decomposition level
-        window: Rolling window size for WPT calculation (default: 100)
-        return_reconstructed_price: If True, only return reconstructed price (for multi-scale SR)
-        update_step: 每多少根K线更新一次WPT特征（默认1，即每根K线都更新）
-                     
-                     性能说明：
-                     - 对于4H/日线等低频K线：保持默认值1即可，WPT计算速度完全足够
-                       （单次WPT约0.8-5ms，远快于4小时/1天的K线频率）
-                     - 对于1min/tick等高频K线：可设置为5-10以减少计算量
-                       （每分钟计算一次WPT可能过于频繁，每5-10分钟更新一次更合理）
-                     
-                     使用场景：
-                     - 4H/日线策略：update_step=1（推荐）
-                     - 1min策略：update_step=5-10（可选优化）
-                     - 资源受限环境：根据实际情况调整
-        use_log_returns: If True, apply np.diff(np.log(price)) before WPT decomposition.
-                        This converts non-stationary price to stationary returns,
-                        improving energy distribution across frequency bands.
-                        Recommended for energy ratio features.
+        data: 输入数据 (DataFrame 或单行数据)
+        is_streaming: 是否为流式模式
+        state: 计算状态，用于维护滑动窗口历史数据和中间结果
+        **params: 额外参数，包括:
+            - price_col: 价格列名 (default: "close")
+            - volume_col: 成交量列名 (default: "volume")
+            - cvd_col: CVD列名 (default: None)
+            - tbr_col: TBR列名 (default: None)
+            - wavelet: 小波函数 (default: "db4")
+            - level: WPT分解层数 (default: 4)
+            - window: 滚动窗口大小 (default: 100)
+            - return_reconstructed_price: 是否仅返回重构价格 (default: False)
+            - update_step: 更新步长 (default: 1)
+            - use_log_returns: 是否使用对数收益率 (default: False)
     
     Returns:
-        DataFrame with WPT features added
-        
-    Note:
-        - 所有 WPT 特征具有约 window//2 的相位滞后，适用于中低频策略（日线/4H）
-        - 滚动窗口 + shift(1) 有效避免了未来函数问题
-        - 当 update_step > 1 时，特征值会广播到后续 update_step 根K线
-        - 当 use_log_returns=True 时，能量比特征更有意义（避免趋势能量主导低频带）
+        在批处理模式下返回DataFrame，在流式模式下返回单行特征值和更新的状态
     """
+    # 从params中获取参数
+    price_col = params.get('price_col', 'close')
+    volume_col = params.get('volume_col', 'volume')
+    cvd_col = params.get('cvd_col', None)
+    tbr_col = params.get('tbr_col', None)
+    wavelet = params.get('wavelet', 'db4')
+    level = params.get('level', 4)
+    window = params.get('window', 100)
+    return_reconstructed_price = params.get('return_reconstructed_price', False)
+    update_step = params.get('update_step', 1)
+    use_log_returns = params.get('use_log_returns', False)
+    
+    if is_streaming:
+        return _compute_wpt_features_streaming(data, state, price_col=price_col, volume_col=volume_col,
+                                             cvd_col=cvd_col, tbr_col=tbr_col, wavelet=wavelet,
+                                             level=level, window=window,
+                                             return_reconstructed_price=return_reconstructed_price,
+                                             update_step=update_step, use_log_returns=use_log_returns)
+    else:
+        # 批处理模式，保持原有逻辑
+        return _compute_wpt_features_batch(data, price_col=price_col, volume_col=volume_col,
+                                         cvd_col=cvd_col, tbr_col=tbr_col, wavelet=wavelet,
+                                         level=level, window=window,
+                                         return_reconstructed_price=return_reconstructed_price,
+                                         update_step=update_step, use_log_returns=use_log_returns)
+
+
+def _compute_wpt_features_streaming(new_data, state, **kwargs):
+    """
+    流式计算WPT特征
+    
+    Args:
+        new_data: 新到达的数据点 (单行DataFrame或Series)
+        state: 包含历史数据和中间计算结果的状态
+        **kwargs: 与批处理相同的参数
+        
+    Returns:
+        tuple: (特征值, 更新后的state)
+    """
+    # 从kwargs获取参数
+    price_col = kwargs.get('price_col', 'close')
+    volume_col = kwargs.get('volume_col', 'volume')
+    cvd_col = kwargs.get('cvd_col', None)
+    wavelet = kwargs.get('wavelet', 'db4')
+    level = kwargs.get('level', 4)
+    window = kwargs.get('window', 100)
+    use_log_returns = kwargs.get('use_log_returns', False)
+    
+    # 初始化状态
+    if state is None:
+        state = {
+            'history': [],  # 历史数据点
+            'price_history': [],  # 价格历史
+            'volume_history': [],  # 成交量历史
+            'cvd_history': [],  # CVD历史
+            'last_update_idx': -1,  # 上次更新索引
+            'computed_features_cache': {}  # 已计算特征的缓存
+        }
+    
+    # 将新数据添加到历史记录
+    if isinstance(new_data, pd.DataFrame):
+        if len(new_data) == 1:
+            new_row = new_data.iloc[0]
+        else:
+            raise ValueError("流式模式下new_data应为单行数据")
+    elif isinstance(new_data, pd.Series):
+        new_row = new_data
+    else:
+        raise ValueError("流式模式下new_data应为DataFrame单行或Series")
+    
+    # 更新历史数据
+    state['history'].append(new_row)
+    if price_col in new_row:
+        state['price_history'].append(new_row[price_col])
+    if volume_col in new_row:
+        state['volume_history'].append(new_row[volume_col])
+    if cvd_col and cvd_col in new_row:
+        state['cvd_history'].append(new_row[cvd_col])
+    
+    # 保持历史数据在窗口长度内
+    if len(state['history']) > window * 2:  # 使用稍大的缓冲区
+        state['history'] = state['history'][-window:]
+        state['price_history'] = state['price_history'][-window:]
+        state['volume_history'] = state['volume_history'][-window:]
+        state['cvd_history'] = state['cvd_history'][-window:]
+    
+    # 只有当有足够的数据时才计算特征
+    if len(state['price_history']) < max(window, 2 ** level):
+        # 返回空特征
+        features = {}
+        wpt_feature_names = [
+            "wpt_price_trend", "wpt_price_fluctuation", "wpt_price_reconstructed",
+            "wpt_price_energy_low_ratio", "wpt_price_energy_mid_ratio", "wpt_price_energy_high_ratio",
+            "wpt_price_energy_mid_low_ratio", "wpt_volume_trend", "wpt_volume_fluctuation",
+            "wpt_volume_energy_low_ratio", "wpt_cvd_trend", "wpt_cvd_fluctuation",
+            "wpt_cvd_energy_low_ratio", "wpt_vper"
+        ]
+        for name in wpt_feature_names:
+            features[name] = np.nan
+        
+        return features, state
+    
+    # 获取当前窗口的数据
+    price_values = np.array(state['price_history'])
+    window_start = max(0, len(price_values) - window)
+    window_data_raw = price_values[window_start:]
+    
+    # 对价格做预处理：如果 use_log_returns=True，转换为 log returns
+    if use_log_returns:
+        window_data = np.diff(np.log(np.maximum(window_data_raw, 1e-10)))
+        if len(window_data) < 2 ** level:
+            # 返回空特征
+            features = {}
+            wpt_feature_names = [
+                "wpt_price_trend", "wpt_price_fluctuation", "wpt_price_reconstructed",
+                "wpt_price_energy_low_ratio", "wpt_price_energy_mid_ratio", "wpt_price_energy_high_ratio",
+                "wpt_price_energy_mid_low_ratio", "wpt_volume_trend", "wpt_volume_fluctuation",
+                "wpt_volume_energy_low_ratio", "wpt_cvd_trend", "wpt_cvd_fluctuation",
+                "wpt_cvd_energy_low_ratio", "wpt_vper"
+            ]
+            for name in wpt_feature_names:
+                features[name] = np.nan
+            
+            return features, state
+    else:
+        window_data = window_data_raw
+    
+    # 对窗口数据做 WPT
+    price_wpt = wpt_decompose(window_data, wavelet=wavelet, level=level)
+    
+    # 获取特征值
+    trend_series = price_wpt["trend"]
+    fluctuation_series = price_wpt["fluctuation"]
+    
+    # 计算特征值
+    trend_val = trend_series[-1] if len(trend_series) > 0 else np.nan
+    fluctuation_val = fluctuation_series[-1] if len(fluctuation_series) > 0 else np.nan
+    reconstructed_val = trend_val + fluctuation_val if not (np.isnan(trend_val) or np.isnan(fluctuation_val)) else np.nan
+    
+    # 计算能量比
+    all_paths = list(price_wpt["energy"].keys())
+    if all_paths:
+        path_freq = {p: p.count('d') for p in all_paths}  # 'd'的数量表示频率
+        max_d = max(path_freq.values()) if path_freq else 0
+        
+        # 按频率分类：low (d <= max_d//3), mid (max_d//3 < d <= 2*max_d//3), high (d > 2*max_d//3)
+        low_bands = [p for p, d in path_freq.items() if d <= max_d // 3]
+        mid_bands = [p for p, d in path_freq.items() if max_d // 3 < d <= 2 * max_d // 3]
+        high_bands = [p for p, d in path_freq.items() if d > 2 * max_d // 3]
+        
+        energy_low = sum(price_wpt["energy"].get(p, 0.0) for p in low_bands)
+        energy_mid = sum(price_wpt["energy"].get(p, 0.0) for p in mid_bands)
+        energy_high = sum(price_wpt["energy"].get(p, 0.0) for p in high_bands)
+    else:
+        energy_low = energy_mid = energy_high = 0.0
+    
+    total_energy = sum(price_wpt["energy"].values())
+    energy_low_ratio = energy_low / total_energy if total_energy > 0 else np.nan
+    energy_mid_ratio = energy_mid / total_energy if total_energy > 0 else np.nan
+    energy_high_ratio = energy_high / total_energy if total_energy > 0 else np.nan
+    energy_mid_low_ratio = energy_mid / energy_low if energy_low > 0 else np.nan
+    
+    # 组织特征结果
+    features = {
+        "wpt_price_trend": trend_val,
+        "wpt_price_fluctuation": fluctuation_val,
+        "wpt_price_reconstructed": reconstructed_val,
+        "wpt_price_energy_low_ratio": energy_low_ratio,
+        "wpt_price_energy_mid_ratio": energy_mid_ratio,
+        "wpt_price_energy_high_ratio": energy_high_ratio,
+        "wpt_price_energy_mid_low_ratio": energy_mid_low_ratio
+    }
+    
+    # 计算成交量WPT特征（如果可用）
+    if len(state['volume_history']) >= len(window_data_raw):
+        vol_window_start = max(0, len(state['volume_history']) - window)
+        volume_window_data = np.array(state['volume_history'][vol_window_start:])
+        
+        if len(volume_window_data) >= 2 ** level:
+            volume_wpt = wpt_decompose(volume_window_data[-len(window_data):], wavelet=wavelet, level=level)
+            vol_trend_series = volume_wpt["trend"]
+            vol_fluctuation_series = volume_wpt["fluctuation"]
+            
+            if len(vol_trend_series) > 0:
+                features["wpt_volume_trend"] = vol_trend_series[-1]
+                features["wpt_volume_fluctuation"] = vol_fluctuation_series[-1]
+            
+            volume_total_energy = sum(volume_wpt["energy"].values())
+            if volume_total_energy > 0:
+                features["wpt_volume_energy_low_ratio"] = (
+                    volume_wpt["energy"].get("a" * level, 0.0) / volume_total_energy
+                )
+            else:
+                features["wpt_volume_energy_low_ratio"] = np.nan
+        
+    # 计算CVD WPT特征（如果可用）
+    if cvd_col and len(state['cvd_history']) >= len(window_data_raw):
+        cvd_window_start = max(0, len(state['cvd_history']) - window)
+        cvd_window_data = np.array(state['cvd_history'][cvd_window_start:])
+        
+        if len(cvd_window_data) >= 2 ** level:
+            cvd_wpt = wpt_decompose(cvd_window_data[-len(window_data):], wavelet=wavelet, level=level)
+            cvd_trend_series = cvd_wpt["trend"]
+            cvd_fluctuation_series = cvd_wpt["fluctuation"]
+            
+            if len(cvd_trend_series) > 0:
+                features["wpt_cvd_trend"] = cvd_trend_series[-1]
+                features["wpt_cvd_fluctuation"] = cvd_fluctuation_series[-1]
+            
+            cvd_total_energy = sum(cvd_wpt["energy"].values())
+            if cvd_total_energy > 0:
+                features["wpt_cvd_energy_low_ratio"] = (
+                    cvd_wpt["energy"].get("a" * level, 0.0) / cvd_total_energy
+                )
+            else:
+                features["wpt_cvd_energy_low_ratio"] = np.nan
+    
+    # 计算VPER特征
+    if len(features) > 0 and "wpt_volume_energy_low_ratio" in features and not np.isnan(features["wpt_volume_energy_low_ratio"]):
+        price_total_energy = total_energy
+        volume_total_energy = sum(price_wpt["energy"].values())  # 重用price_wpt的能量值
+        if price_total_energy > 0 and volume_total_energy > 0:
+            features["wpt_vper"] = volume_total_energy / price_total_energy
+        else:
+            features["wpt_vper"] = np.nan
+    else:
+        features["wpt_vper"] = np.nan
+    
+    return features, state
+
+
+def _compute_wpt_features_batch(df, **kwargs):
+    """
+    批处理模式计算WPT特征（保持原有逻辑）
+    """
+    # 从kwargs获取参数
+    price_col = kwargs.get('price_col', 'close')
+    volume_col = kwargs.get('volume_col', 'volume')
+    cvd_col = kwargs.get('cvd_col', None)
+    tbr_col = kwargs.get('tbr_col', None)
+    wavelet = kwargs.get('wavelet', 'db4')
+    level = kwargs.get('level', 4)
+    window = kwargs.get('window', 100)
+    return_reconstructed_price = kwargs.get('return_reconstructed_price', False)
+    update_step = kwargs.get('update_step', 1)
+    use_log_returns = kwargs.get('use_log_returns', False)
+    
     df = df.copy()
     
     # 计算价格（使用典型价格）
@@ -429,6 +648,32 @@ def extract_wpt_features(
             df[col] = df[col].shift(1).fillna(0.0)
     
     return df
+
+
+# 保留原有的函数名作为别名，以便向后兼容
+@register_feature("extract_wpt_features", category="wpt")
+def extract_wpt_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    volume_col: str = "volume",
+    cvd_col: Optional[str] = None,
+    tbr_col: Optional[str] = None,
+    wavelet: str = "db4",
+    level: int = 4,
+    window: int = 100,
+    return_reconstructed_price: bool = False,
+    update_step: int = 1,
+    use_log_returns: bool = False,
+) -> pd.DataFrame:
+    """
+    旧版函数，保持向后兼容性
+    """
+    return _compute_wpt_features_batch(df, price_col=price_col, volume_col=volume_col,
+                                     cvd_col=cvd_col, tbr_col=tbr_col, wavelet=wavelet,
+                                     level=level, window=window,
+                                     return_reconstructed_price=return_reconstructed_price,
+                                     update_step=update_step, use_log_returns=use_log_returns)
+
 
 
 @register_feature("extract_wpt_price_features_normalized", category="wpt")

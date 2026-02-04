@@ -314,67 +314,213 @@ def _auto_adjust_clip_pct(
     return clip_pct
 
 
-@register_feature("extract_hurst_features", category="hurst")
-def extract_hurst_features(
-    df: pd.DataFrame,
-    price_col: str = "close",
-    cvd_col: Optional[str] = None,
-    volume_col: Optional[str] = None,
-    rolling_window: int = 50,
-    update_freq: Union[int, str] = "auto",  # "auto" 或具体数值
-    clip_pct: Union[Optional[float], str] = "auto",  # "auto" 或具体数值或 None
-) -> pd.DataFrame:
+# 标准化签名的Hurst特征计算函数
+@register_feature("compute_hurst_features", category="hurst")
+def compute_hurst_features(data, is_streaming=False, state=None, **params):
     """
-    提取 Hurst 特征（严格因果、高效、生产就绪）
+    Hurst特征计算函数 - 符合标准化签名，支持流式计算
     
     Args:
-        df: DataFrame with price data
-        price_col: Price column name
-        cvd_col: CVD column name (optional)
-        volume_col: Volume column name (optional)
-        rolling_window: Rolling window size for Hurst calculation
-        update_freq: Update frequency. Can be:
-                    - "auto": 根据数据频率自动调整（高频数据用5，中频用3，低频用1）
-                    - int: 具体数值（1=every bar, 5=every 5 bars, etc.)
-                    Higher values improve efficiency but reduce granularity
-        clip_pct: Clip extreme returns to ±clip_pct. Can be:
-                 - "auto": 根据品种波动特性自动调整（高波动放宽到1.0，中波动0.5，低波动0.3）
-                 - float: 具体数值（e.g., 0.5 = ±50%）
-                 - None: 禁用裁剪
-                 Useful for handling outliers like stock splits, flash crashes, etc.
+        data: 输入数据 (DataFrame 或单行数据)
+        is_streaming: 是否为流式模式
+        state: 计算状态，用于维护滑动窗口历史数据和中间结果
+        **params: 额外参数，包括:
+            - price_col: 价格列名 (default: "close")
+            - cvd_col: CVD列名 (default: None)
+            - volume_col: 成交量列名 (default: None)
+            - rolling_window: 滚动窗口大小 (default: 50)
+            - update_freq: 更新频率 (default: "auto")
+            - clip_pct: 极值裁剪百分比 (default: "auto")
     
     Returns:
-        DataFrame with Hurst features added:
-        - hurst_price_rolling: 价格收益率的滚动 Hurst
-        - hurst_cvd_rolling: CVD 单期变化的滚动 Hurst（如果 cvd_col 提供）
-        - hurst_volume_rolling: 成交量收益率的滚动 Hurst（如果 volume_col 提供）
-    
-    Note:
-        - 所有特征在 t 时刻仅依赖 [t-W, t-1] 的历史数据
-        - 早期数据不足时保留 NaN，不填充 0.5
-        - 所有输入均为增量过程：价格→收益率，CVD→差分，Volume→收益率
-        - update_freq="auto" 和 clip_pct="auto" 会根据数据特性自动调整参数
+        在批处理模式下返回DataFrame，在流式模式下返回单行特征值和更新的状态
     """
+    # 从params中获取参数
+    price_col = params.get('price_col', 'close')
+    cvd_col = params.get('cvd_col', None)
+    volume_col = params.get('volume_col', None)
+    rolling_window = params.get('rolling_window', 50)
+    update_freq_param = params.get('update_freq', 'auto')
+    clip_pct_param = params.get('clip_pct', 'auto')
+    
+    if is_streaming:
+        return _compute_hurst_features_streaming(data, state, price_col=price_col, cvd_col=cvd_col,
+                                            volume_col=volume_col, rolling_window=rolling_window,
+                                            update_freq=update_freq_param, clip_pct=clip_pct_param)
+    else:
+        # 批处理模式，保持原有逻辑
+        return _compute_hurst_features_batch(data, price_col=price_col, cvd_col=cvd_col,
+                                          volume_col=volume_col, rolling_window=rolling_window,
+                                          update_freq=update_freq_param, clip_pct=clip_pct_param)
+
+
+def _compute_hurst_features_streaming(new_data, state, **kwargs):
+    """
+    流式计算Hurst特征
+    
+    Args:
+        new_data: 新到达的数据点 (单行DataFrame或Series)
+        state: 包含历史数据和中间计算结果的状态
+        **kwargs: 与批处理相同的参数
+        
+    Returns:
+        tuple: (特征值, 更新后的state)
+    """
+    # 从kwargs获取参数
+    price_col = kwargs.get('price_col', 'close')
+    cvd_col = kwargs.get('cvd_col', None)
+    volume_col = kwargs.get('volume_col', None)
+    rolling_window = kwargs.get('rolling_window', 50)
+    update_freq_param = kwargs.get('update_freq', 'auto')
+    clip_pct_param = kwargs.get('clip_pct', 'auto')
+    
+    # 初始化状态
+    if state is None:
+        state = {
+            'history': [],  # 历史数据点
+            'price_history': [],  # 价格历史
+            'cvd_history': [],  # CVD历史
+            'volume_history': [],  # 成交量历史
+            'price_returns_history': [],  # 价格收益率历史
+            'cvd_diff_history': [],  # CVD差分历史
+            'volume_returns_history': [],  # 成交量收益率历史
+            'hurst_cache': {},  # Hurst指数计算结果缓存
+        }
+    
+    # 将新数据添加到历史记录
+    if isinstance(new_data, pd.DataFrame):
+        if len(new_data) == 1:
+            new_row = new_data.iloc[0]
+        else:
+            raise ValueError("流式模式下new_data应为单行数据")
+    elif isinstance(new_data, pd.Series):
+        new_row = new_data
+    else:
+        raise ValueError("流式模式下new_data应为DataFrame单行或Series")
+    
+    # 更新历史数据
+    state['history'].append(new_row)
+    if price_col in new_row:
+        state['price_history'].append(new_row[price_col])
+    if cvd_col and cvd_col in new_row:
+        state['cvd_history'].append(new_row[cvd_col])
+    if volume_col and volume_col in new_row:
+        state['volume_history'].append(new_row[volume_col])
+    
+    # 保持历史数据在窗口长度内
+    max_history_len = rolling_window * 2  # 使用稍大的缓冲区
+    if len(state['history']) > max_history_len:
+        state['history'] = state['history'][-max_history_len:]
+        state['price_history'] = state['price_history'][-max_history_len:]
+        state['cvd_history'] = state['cvd_history'][-max_history_len:]
+        state['volume_history'] = state['volume_history'][-max_history_len:]
+    
+    # 计算收益率和差分
+    price_returns = []
+    cvd_diff = []
+    volume_returns = []
+    
+    if len(state['price_history']) > 1:
+        # 计算价格收益率
+        prev_price = state['price_history'][-2]
+        curr_price = state['price_history'][-1]
+        if prev_price != 0:
+            ret = (curr_price - prev_price) / prev_price
+            state['price_returns_history'].append(ret)
+        else:
+            state['price_returns_history'].append(0.0)
+        
+        # 确保收益率历史长度不超过窗口
+        if len(state['price_returns_history']) > max_history_len:
+            state['price_returns_history'] = state['price_returns_history'][-max_history_len:]
+    
+    if len(state['cvd_history']) > 1:
+        # 计算CVD差分
+        prev_cvd = state['cvd_history'][-2]
+        curr_cvd = state['cvd_history'][-1]
+        diff = curr_cvd - prev_cvd
+        state['cvd_diff_history'].append(diff)
+        
+        if len(state['cvd_diff_history']) > max_history_len:
+            state['cvd_diff_history'] = state['cvd_diff_history'][-max_history_len:]
+    
+    if len(state['volume_history']) > 1:
+        # 计算成交量收益率
+        prev_vol = state['volume_history'][-2]
+        curr_vol = state['volume_history'][-1]
+        if prev_vol != 0:
+            ret = (curr_vol - prev_vol) / prev_vol
+            state['volume_returns_history'].append(ret)
+        else:
+            state['volume_returns_history'].append(0.0)
+        
+        if len(state['volume_returns_history']) > max_history_len:
+            state['volume_returns_history'] = state['volume_returns_history'][-max_history_len:]
+    
+    # 计算特征值
+    features = {}
+    
+    # 计算价格Hurst指数
+    if len(state['price_returns_history']) >= rolling_window:
+        window_returns = np.array(state['price_returns_history'][-rolling_window:])
+        hurst_price = compute_hurst_dfa(window_returns)
+        features['hurst_price_rolling'] = hurst_price
+    else:
+        features['hurst_price_rolling'] = np.nan
+    
+    # 计算CVD Hurst指数
+    if cvd_col and len(state['cvd_diff_history']) >= rolling_window:
+        window_diff = np.array(state['cvd_diff_history'][-rolling_window:])
+        hurst_cvd = compute_hurst_dfa(window_diff)
+        features['hurst_cvd_rolling'] = hurst_cvd
+    else:
+        features['hurst_cvd_rolling'] = np.nan
+    
+    # 计算成交量Hurst指数
+    if volume_col and len(state['volume_returns_history']) >= rolling_window:
+        window_returns = np.array(state['volume_returns_history'][-rolling_window:])
+        hurst_volume = compute_hurst_dfa(window_returns)
+        features['hurst_volume_rolling'] = hurst_volume
+    else:
+        features['hurst_volume_rolling'] = np.nan
+    
+    return features, state
+
+
+def _compute_hurst_features_batch(df, **kwargs):
+    """
+    批处理模式计算Hurst特征（保持原有逻辑）
+    """
+    # 从kwargs获取参数
+    price_col = kwargs.get('price_col', 'close')
+    cvd_col = kwargs.get('cvd_col', None)
+    volume_col = kwargs.get('volume_col', None)
+    rolling_window = kwargs.get('rolling_window', 50)
+    update_freq_param = kwargs.get('update_freq', 'auto')
+    clip_pct_param = kwargs.get('clip_pct', 'auto')
+    
     df = df.copy()
     
     # === 自动调整参数 ===
     # 1. 自动调整 update_freq
-    if update_freq == "auto":
+    if update_freq_param == "auto":
         update_freq = _auto_adjust_update_freq(df, default_update_freq=1)
         # 只在非测试环境打印（避免测试输出过多）
         import os
         if os.getenv("PYTEST_CURRENT_TEST") is None:
             print(f"  📊 自动检测数据频率，设置 update_freq={update_freq}")
-    elif isinstance(update_freq, str):
+    elif isinstance(update_freq_param, str):
         # 如果不是 "auto"，尝试转换为 int
         try:
-            update_freq = int(update_freq)
+            update_freq = int(update_freq_param)
         except ValueError:
-            raise ValueError(f"update_freq 必须是 'auto' 或整数，当前值: {update_freq}")
+            raise ValueError(f"update_freq 必须是 'auto' 或整数，当前值: {update_freq_param}")
+    else:
+        update_freq = update_freq_param
     
     # 2. 自动调整 clip_pct
     # 注意：如果只计算 CVD 或 Volume Hurst（没有价格数据），使用默认值
-    if clip_pct == "auto":
+    if clip_pct_param == "auto":
         if price_col in df.columns:
             clip_pct = _auto_adjust_clip_pct(df, price_col, default_clip_pct=0.5)
             # 只在非测试环境打印
@@ -388,15 +534,17 @@ def extract_hurst_features(
             import os
             if os.getenv("PYTEST_CURRENT_TEST") is None:
                 print(f"  📊 无价格数据，使用默认 clip_pct={clip_pct}")
-    elif isinstance(clip_pct, str):
+    elif isinstance(clip_pct_param, str):
         # 如果不是 "auto"，尝试转换
-        if clip_pct.lower() == "none":
+        if clip_pct_param.lower() == "none":
             clip_pct = None
         else:
             try:
-                clip_pct = float(clip_pct)
+                clip_pct = float(clip_pct_param)
             except ValueError:
-                raise ValueError(f"clip_pct 必须是 'auto'、数值或 None，当前值: {clip_pct}")
+                raise ValueError(f"clip_pct 必须是 'auto'、数值或 None，当前值: {clip_pct_param}")
+    else:
+        clip_pct = clip_pct_param
     
     # 初始化列
     df["hurst_price_rolling"] = np.nan
@@ -508,3 +656,22 @@ def extract_hurst_features(
     # 下游模型（如 LightGBM）可以自行处理缺失值
     
     return df
+
+
+# 保持原有的函数名作为别名，以便向后兼容
+@register_feature("extract_hurst_features", category="hurst")
+def extract_hurst_features(
+    df: pd.DataFrame,
+    price_col: str = "close",
+    cvd_col: Optional[str] = None,
+    volume_col: Optional[str] = None,
+    rolling_window: int = 50,
+    update_freq: Union[int, str] = "auto",  # "auto" 或具体数值
+    clip_pct: Union[Optional[float], str] = "auto",  # "auto" 或具体数值或 None
+) -> pd.DataFrame:
+    """
+    旧版函数，保持向后兼容性
+    """
+    return _compute_hurst_features_batch(df, price_col=price_col, cvd_col=cvd_col,
+                                       volume_col=volume_col, rolling_window=rolling_window,
+                                       update_freq=update_freq, clip_pct=clip_pct)

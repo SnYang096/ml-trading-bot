@@ -118,10 +118,6 @@ find cache/features/monthly -name "*2024*" -delete
 ## 训练树模型，效果好就可以导出规则
 ```bash
   # --end-date 2025-11-30 ← 改为包含 holdout 期间
-mlbot train final --no-docker --config config/strategies/bpc --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT --timeframe 240T --data-path data/parquet_data --start-date 2023-01-01 --end-date 2025-11-30 --holdout-start-date 2024-05-01 --holdout-end-date 2025-11-30 --seed 42
-
-python3 scripts/train_strategy_pipeline.py --config config/strategies/bpc --data-path data/parquet_data --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT --timeframe 240T --seed 42 --output-root results/bpc_highcap6 --start-date 2023-01-01 --end-date 2024-12-31 --train-all --feature-store-dir feature_store --feature-store-layer bpc_highcap6_240T_v1 --deterministic 2>&1 | tee /tmp/bpc_multisymbol_train.log
-
 
 # 训练 failure_rr_extreme
 mlbot train final --no-docker \
