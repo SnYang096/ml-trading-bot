@@ -1140,7 +1140,7 @@ features:
       compression_score: compression_score
       trend_r2_20: trend_r2_20
   liquidity_void_scene_semantic_scores_f:
-    module: enhanced
+    module: interaction
     compute_func: compute_liquidity_void_scene_semantic_scores_from_series
     dependencies:
     - liquidity_void_f
@@ -1148,7 +1148,6 @@ features:
     - compression_score_f
     - trend_r2_20_f
     required_columns:
-    - liquidity_void_detected
     - liquidity_void_speed
     - liquidity_void_price_impact
     - liquidity_void_retracement
@@ -1162,8 +1161,9 @@ features:
     - liquidity_void_absorption_score
     - liquidity_void_exhaustion_score
     category: interaction
-    description: 'LiquidityVoid scene semantics: compression/ignition/absorption/exhaustion
-      (0..1), using void+WPT+compression+trend context.'
+    description: |
+      LiquidityVoid scene semantics V2: 连续化版本，用 speed_norm 作为 soft gate。
+      4 个场景分数: compression/ignition/absorption/exhaustion [0,1]。
     compute_params:
       speed_scale: 3.0
       impact_scale: 3.0
@@ -1175,7 +1175,6 @@ features:
         liquidity_void_exhaustion_score: bounded_0_1
     pass_full_df: false
     column_mappings:
-      liquidity_void_detected: liquidity_void_detected
       liquidity_void_speed: liquidity_void_speed
       liquidity_void_price_impact: liquidity_void_price_impact
       liquidity_void_retracement: liquidity_void_retracement
@@ -4488,28 +4487,111 @@ features:
       high: high
       low: low
       atr: atr
-  cvd_divergence_f:
-    module: enhanced
-    compute_func: compute_cvd_divergence_from_series
-    dependencies: []
+  cvd_divergence_v2_f:
+    module: interaction
+    compute_func: compute_cvd_divergence_v2_from_series
+    dependencies:
+    - trend_r2_20_f
     required_columns:
     - close
     - cvd
     output_columns:
-    - cvd_bullish_divergence
-    - cvd_bearish_divergence
-    - cvd_divergence_strength
+    - cvd_divergence_score
+    - cvd_divergence_score_pct
+    - price_position
+    - trend_div_alignment
+    - trend_div_tension
+    - div_location_pressure
     category: interaction
-    description: 'CVD divergence semantic: price extremes vs CVD extremes (bull/bear
-      divergence + strength). (normalized/unitless or similarity score)'
+    description: |
+      CVD Divergence V2: 连续化背离特征，替代 Bool 版本。
+      包含 3 个工业级复合特征：trend_div_alignment（方向轴）、
+      trend_div_tension（冲突强度）、div_location_pressure（位置压力）。
     compute_params:
-      window: 50
-      eps_pct: 0.001
-      normalized: true
+      position_window: 50
+      percentile_window: 540
     pass_full_df: false
     column_mappings:
       close: close
       cvd: cvd
+      trend_strength: trend_r2_20
+    output_normalization_map:
+      cvd_divergence_score: bounded_neg1_1
+      cvd_divergence_score_pct: bounded_0_1
+      price_position: bounded_0_1
+      trend_div_alignment: bounded_neg1_1
+      trend_div_tension: bounded_0_1
+      div_location_pressure: bounded_0_1
+  price_momentum_divergence_f:
+    module: interaction
+    compute_func: compute_price_momentum_divergence_from_series
+    dependencies:
+    - trend_r2_20_f
+    required_columns:
+    - close
+    output_columns:
+    - price_velocity_pct
+    - price_accel_pct
+    - price_momentum_div_score
+    - price_momentum_div_score_pct
+    - momentum_div_tension
+    - momentum_location_pressure
+    category: interaction
+    description: |
+      Price-Momentum Divergence: 价格-动量背离特征，与 CVD Divergence V2 正交。
+      CVD 度量 "行为支撑"，Momentum 度量 "推进力"。
+      所有输出均为跨 symbol 可比的归一化特征。
+    compute_params:
+      velocity_span: 6
+      accel_span: 4
+      position_window: 50
+      velocity_position_window: 30
+      percentile_window: 540
+    pass_full_df: false
+    column_mappings:
+      close: close
+      trend_strength: trend_r2_20
+    output_normalization_map:
+      price_velocity_pct: bounded_0_1
+      price_accel_pct: bounded_0_1
+      price_momentum_div_score: bounded_neg1_1
+      price_momentum_div_score_pct: bounded_0_1
+      momentum_div_tension: bounded_0_1
+      momentum_location_pressure: bounded_0_1
+  terminal_risk_score_f:
+    module: interaction
+    compute_func: compute_terminal_risk_score_from_series
+    dependencies:
+    - price_momentum_divergence_f
+    - cvd_divergence_v2_f
+    required_columns:
+    - price_position
+    - price_velocity_pct
+    - price_accel_pct
+    - cvd_divergence_score
+    - div_location_pressure
+    output_columns:
+    - momentum_exhaustion_score
+    - cvd_exhaustion_score
+    - location_amplifier
+    - terminal_risk_score
+    category: interaction
+    description: |
+      Terminal Risk Score: Execution 层末端风险评分 [0,1]。
+      综合 位置 + 动量衰竭 + CVD 背离，评估追单风险。
+      用于 size 缩放 / entry 延迟 / stop 收紧。
+    pass_full_df: false
+    column_mappings:
+      price_position: price_position
+      price_velocity_pct: price_velocity_pct
+      price_accel_pct: price_accel_pct
+      cvd_divergence_score: cvd_divergence_score
+      div_location_pressure: div_location_pressure
+    output_normalization_map:
+      momentum_exhaustion_score: bounded_0_1
+      cvd_exhaustion_score: bounded_0_1
+      location_amplifier: bounded_0_1
+      terminal_risk_score: bounded_0_1
   compression_energy_x_ofi_short_f:
     module: enhanced
     compute_func: compute_compression_energy_x_ofi_short_from_series

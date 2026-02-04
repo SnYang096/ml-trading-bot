@@ -567,7 +567,6 @@ def compute_trade_cluster_scene_semantic_scores_from_series(
 @register_feature("compute_liquidity_void_scene_semantic_scores_from_series", category="interaction")
 def compute_liquidity_void_scene_semantic_scores_from_series(
     *,
-    liquidity_void_detected: pd.Series,
     liquidity_void_speed: pd.Series,
     liquidity_void_price_impact: pd.Series,
     liquidity_void_retracement: pd.Series,
@@ -579,13 +578,41 @@ def compute_liquidity_void_scene_semantic_scores_from_series(
     impact_scale: float = 3.0,
 ) -> pd.DataFrame:
     """
-    LiquidityVoid scene semantics (0..1) built from liquidity_void_* base features:
-      - compression: void detected + compression regime
-      - ignition: fast sweep with low fakeout risk (optionally reinforced by WPT breakout confidence)
-      - absorption/continuation: void detected + low retracement + trend regime
-      - exhaustion/fakeout: void detected + high fakeout risk + retracement
+    LiquidityVoid scene semantics (0..1) - V2 连续化版本
+    
+    改进：用 speed_norm 作为 soft gate，替代 Bool 的 detected。
+    这样每 bar 都有连续值，不再是 80% 时间为 0。
+    
+    语义：
+      - compression: 压缩区 + 价格忘速度高
+      - ignition: 快速穿越 + 低假突破风险 + WPT 确认
+      - absorption: 低回撇 + 低假突破风险 + 趋势延续
+      - exhaustion: 高回撇 + 高假突破风险 + 趋势衰竭
+    
+    Args:
+        liquidity_void_speed: 价格穿越速度（ATR 归一化）
+        liquidity_void_price_impact: 价格冲击
+        liquidity_void_retracement: 回撇幅度 [0,1]
+        liquidity_void_false_breakout_risk: 假突破风险 [0,1]
+        wpt_breakout_confidence: WPT 突破置信度（可选）
+        compression_score: 压缩得分（可选）
+        trend_r2_20: 趋势 R²（可选）
+        speed_scale: 速度归一化系数
+        impact_scale: 冲击归一化系数
+    
+    Returns:
+        DataFrame with 4 scene scores [0,1]:
+        - liquidity_void_compression_score
+        - liquidity_void_ignition_score
+        - liquidity_void_absorption_score
+        - liquidity_void_exhaustion_score
+    
+    Notes:
+        - 使用 speed_norm 作为 soft gate，而非 Bool detected
+        - 高速度 → 高 gate，低速度 → 低 gate
+        - 这样每 bar 都有连续值，适合树模型
     """
-    lv = pd.to_numeric(liquidity_void_detected, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
+    # === 1. 解析输入 ===
     speed = pd.to_numeric(liquidity_void_speed, errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
     impact = pd.to_numeric(liquidity_void_price_impact, errors="coerce").fillna(0.0).astype(float).clip(lower=0.0)
     retr = pd.to_numeric(liquidity_void_retracement, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
@@ -596,34 +623,45 @@ def compute_liquidity_void_scene_semantic_scores_from_series(
     speed_norm = (speed / s_scale).clip(0.0, 1.0)
     impact_norm = (impact / i_scale).clip(0.0, 1.0)
 
-    comp_gate = 0.0
+    # === 2. Soft Gate: 用速度作为连续 gate，替代 Bool detected ===
+    # 高速度 = 更可能是真正的流动性真空
+    lv_gate = speed_norm
+
+    # === 3. 可选的上下文门控 ===
+    comp_gate = pd.Series(0.0, index=speed.index)
     if compression_score is not None:
         comp_gate = pd.to_numeric(compression_score, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
 
-    trend_gate = 1.0
-    trend_end_gate = 1.0
+    trend_gate = pd.Series(1.0, index=speed.index)
+    trend_end_gate = pd.Series(1.0, index=speed.index)
     if trend_r2_20 is not None:
         r2 = pd.to_numeric(trend_r2_20, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
         trend_gate = r2
         trend_end_gate = (1.0 - r2).clip(0.0, 1.0)
 
-    wpt_gate = 1.0
+    wpt_gate = pd.Series(1.0, index=speed.index)
     if wpt_breakout_confidence is not None:
         wpt_gate = pd.to_numeric(wpt_breakout_confidence, errors="coerce").fillna(0.0).astype(float).clip(0.0, 1.0)
 
-    lv_compression = (lv * comp_gate).rename("liquidity_void_compression_score")
-    lv_ignition = (lv * speed_norm * impact_norm * (1.0 - fake) * wpt_gate).rename("liquidity_void_ignition_score")
-    lv_absorption = (lv * (1.0 - retr) * (1.0 - fake) * trend_gate).rename("liquidity_void_absorption_score")
-    lv_exhaustion = (lv * retr * fake * trend_end_gate).rename("liquidity_void_exhaustion_score")
+    # === 4. 计算 4 个场景分数 ===
+    # compression: 压缩区 + 有速度
+    lv_compression = (lv_gate * comp_gate).clip(0.0, 1.0).rename("liquidity_void_compression_score")
+    
+    # ignition: 快速穿越 + 高冲击 + 低假突破风险 + WPT 确认
+    lv_ignition = (lv_gate * impact_norm * (1.0 - fake) * wpt_gate).clip(0.0, 1.0).rename("liquidity_void_ignition_score")
+    
+    # absorption: 低回撇 + 低假突破风险 + 趋势延续
+    lv_absorption = (lv_gate * (1.0 - retr) * (1.0 - fake) * trend_gate).clip(0.0, 1.0).rename("liquidity_void_absorption_score")
+    
+    # exhaustion: 高回撇 + 高假突破风险 + 趋势衰竭
+    lv_exhaustion = (lv_gate * retr * fake * trend_end_gate).clip(0.0, 1.0).rename("liquidity_void_exhaustion_score")
 
-    return pd.DataFrame(
-        {
-            "liquidity_void_compression_score": lv_compression,
-            "liquidity_void_ignition_score": lv_ignition,
-            "liquidity_void_absorption_score": lv_absorption,
-            "liquidity_void_exhaustion_score": lv_exhaustion,
-        }
-    )
+    return pd.DataFrame({
+        "liquidity_void_compression_score": lv_compression,
+        "liquidity_void_ignition_score": lv_ignition,
+        "liquidity_void_absorption_score": lv_absorption,
+        "liquidity_void_exhaustion_score": lv_exhaustion,
+    })
 
 
 @register_feature("compute_wpt_scene_semantic_scores_from_series", category="interaction")
@@ -770,60 +808,6 @@ def compute_wick_scene_semantic_scores_from_series(
             "wick_ignition_score": wick_ignition,
             "wick_absorption_score": wick_absorption,
             "wick_exhaustion_score": wick_exhaustion,
-        }
-    )
-
-
-@register_feature("compute_cvd_divergence_from_series", category="interaction")
-def compute_cvd_divergence_from_series(
-    *,
-    close: pd.Series,
-    cvd: pd.Series,
-    window: int = 50,
-    eps_pct: float = 0.001,
-) -> pd.DataFrame:
-    """
-    CVD divergence semantic (reversal-friendly):
-
-    - bullish_divergence: price makes (near) new low but CVD does NOT make new low
-    - bearish_divergence: price makes (near) new high but CVD does NOT make new high
-
-    Returns three columns:
-    - cvd_bullish_divergence (0/1)
-    - cvd_bearish_divergence (0/1)
-    - cvd_divergence_strength (0..1) simple strength proxy
-    """
-    w = int(window) if int(window) > 5 else 50
-    price = pd.to_numeric(close, errors="coerce").astype(float)
-    cvd_s = pd.to_numeric(cvd, errors="coerce").astype(float)
-
-    roll_min_p = price.rolling(window=w, min_periods=max(10, w // 3)).min()
-    roll_max_p = price.rolling(window=w, min_periods=max(10, w // 3)).max()
-    roll_min_c = cvd_s.rolling(window=w, min_periods=max(10, w // 3)).min()
-    roll_max_c = cvd_s.rolling(window=w, min_periods=max(10, w // 3)).max()
-
-    eps = float(eps_pct) if float(eps_pct) > 0 else 0.001
-    near_new_low = price <= (roll_min_p * (1.0 + eps))
-    near_new_high = price >= (roll_max_p * (1.0 - eps))
-
-    # Divergence condition: price at extreme but CVD not at corresponding extreme
-    cvd_not_new_low = cvd_s > (roll_min_c * (1.0 + eps))
-    cvd_not_new_high = cvd_s < (roll_max_c * (1.0 - eps))
-
-    bull = (near_new_low & cvd_not_new_low).fillna(False).astype(float).rename("cvd_bullish_divergence")
-    bear = (near_new_high & cvd_not_new_high).fillna(False).astype(float).rename("cvd_bearish_divergence")
-
-    # Strength proxy: normalized gap between current CVD and rolling extreme when divergence triggers
-    denom = (roll_max_c - roll_min_c).replace(0.0, np.nan)
-    bull_gap = ((cvd_s - roll_min_c) / denom).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(0.0, 1.0)
-    bear_gap = ((roll_max_c - cvd_s) / denom).replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(0.0, 1.0)
-    strength = (bull * bull_gap + bear * bear_gap).rename("cvd_divergence_strength")
-
-    return pd.DataFrame(
-        {
-            "cvd_bullish_divergence": bull,
-            "cvd_bearish_divergence": bear,
-            "cvd_divergence_strength": strength,
         }
     )
 
@@ -2247,4 +2231,316 @@ def compute_dtw_scene_semantic_scores_from_series(
         "dtw_continuation_bearish_score": dtw_cont_bear,
         "dtw_compression_score": dtw_compression,
         "dtw_exhaustion_score": dtw_exhaustion,
+    })
+
+
+# ============================================================================
+# CVD Divergence V2: 连续化背离特征
+# ============================================================================
+
+@register_feature("compute_cvd_divergence_v2_from_series", category="interaction")
+def compute_cvd_divergence_v2_from_series(
+    *,
+    close: pd.Series,
+    cvd: pd.Series,
+    trend_strength: Optional[pd.Series] = None,
+    position_window: int = 50,
+    percentile_window: int = 540,
+) -> pd.DataFrame:
+    """
+    CVD Divergence V2: 连续化背离特征
+    
+    相比 V1 (Bool) 的改进:
+    1. 用 rank 替代 min-max，避免极值抖动
+    2. 输出连续值，每 bar 都有值
+    3. 新增 3 个工业级复合特征，区分"健康背离" vs "反转背离"
+    
+    Args:
+        close: 收盘价序列
+        cvd: CVD 序列
+        trend_strength: 趋势强度 [-1, 1]，正=上行，负=下行（可选）
+        position_window: 位置计算窗口
+        percentile_window: 百分位历史窗口
+    
+    Returns:
+        DataFrame with columns:
+        - cvd_divergence_score: 背离得分 [-1, 1]，正=看涨背离，负=看跌背离
+        - cvd_divergence_score_pct: 背离得分的历史百分位 [0, 1]
+        - price_position: 价格在窗口内的相对位置 [0, 1]
+        - trend_div_alignment: 趋势-背离对齐度（顺趋势 vs 逆趋势）
+        - trend_div_tension: 趋势-背离张力（冲突强度，sqrt 非线性增强）
+        - div_location_pressure: 背离位置压力（极端位置反转潜力）
+    
+    Notes:
+        - NaN position is treated as neutral (mid-range=0.5) to avoid artificial reversal bias.
+        - trend_div_tension uses sqrt() for better sensitivity to small conflicts.
+        - Percentile rank uses <= comparison for stable handling of repeated values.
+    """
+    w = max(position_window, 10)
+    price = pd.to_numeric(close, errors="coerce").astype(float)
+    cvd_s = pd.to_numeric(cvd, errors="coerce").astype(float)
+    
+    # ===== 1. 计算相对位置（用 rank 替代 min-max）=====
+    def _rolling_percentile_rank(series: pd.Series, window: int) -> pd.Series:
+        """
+        计算滚动窗口内的百分位排名 [0, 1]
+        
+        使用 <= 比较，确保：
+        - 最小值 → 0
+        - 最大值 → 1
+        - 重复值 → 中性分布（不会系统性偏低）
+        """
+        def _pct_rank(x):
+            if len(x) < 2:
+                return 0.5
+            rank = (x <= x.iloc[-1]).sum() - 1
+            return rank / (len(x) - 1)
+        return series.rolling(window=window, min_periods=max(10, window // 3)).apply(_pct_rank, raw=False)
+    
+    price_position = _rolling_percentile_rank(price, w)
+    cvd_position = _rolling_percentile_rank(cvd_s, w)
+    
+    # ===== 2. 背离得分 =====
+    # 正值：CVD 相对强，价格相对弱 → 看涨背离（吸筹）
+    # 负值：CVD 相对弱，价格相对强 → 看跌背离（派发）
+    divergence_score = (cvd_position - price_position).fillna(0.0).clip(-1.0, 1.0)
+    
+    # 百分位版本（用于 Router/Tree/NN）
+    divergence_score_pct = _rolling_percentile_rank(divergence_score, percentile_window)
+    
+    # ===== 3. 三个工业级复合特征 =====
+    # 趋势强度：如果没提供，用 0（只保留基础特征）
+    if trend_strength is not None:
+        T = pd.to_numeric(trend_strength, errors="coerce").fillna(0.0).clip(-1.0, 1.0)
+    else:
+        T = pd.Series(0.0, index=price.index)
+    
+    D = divergence_score
+    # NaN position → 0.5 (neutral mid-range) to avoid artificial reversal bias
+    P = price_position.fillna(0.5)
+    
+    # Feature 1: Trend–Divergence Alignment（顺趋势 vs 逆趋势）
+    # 正值 = 顺趋势背离（健康），负值 = 逆趋势背离（反转风险）
+    trend_div_alignment = (D * T).fillna(0.0).clip(-1.0, 1.0)
+    
+    # Feature 2: Trend–Divergence Tension（冲突强度）
+    # 使用 sqrt() 非线性：小冲突更敏感，大冲突不过饱和
+    trend_div_tension = np.sqrt((D.abs() * T.abs()).fillna(0.0)).clip(0.0, 1.0)
+    
+    # Feature 3: Divergence Location Pressure（位置压力）
+    # 高值 = 背离 + 极端位置（反转潜力高）
+    div_location_pressure = (D.abs() * (P - 0.5).abs() * 2).fillna(0.0).clip(0.0, 1.0)
+    
+    return pd.DataFrame({
+        "cvd_divergence_score": divergence_score,
+        "cvd_divergence_score_pct": divergence_score_pct.fillna(0.5),
+        "price_position": P,
+        "trend_div_alignment": trend_div_alignment,
+        "trend_div_tension": trend_div_tension,
+        "div_location_pressure": div_location_pressure,
+    })
+
+
+@register_feature("compute_price_momentum_divergence_from_series", category="interaction")
+def compute_price_momentum_divergence_from_series(
+    *,
+    close: pd.Series,
+    trend_strength: Optional[pd.Series] = None,
+    velocity_span: int = 6,
+    accel_span: int = 4,
+    position_window: int = 50,
+    velocity_position_window: int = 30,
+    percentile_window: int = 540,
+) -> pd.DataFrame:
+    """
+    Price-Momentum Divergence: 价格-动量背离特征
+    
+    与 CVD Divergence V2 完全同构，但度量的是"价格自己的推进力"而非"行为支撑"。
+    
+    语义差异：
+    - CVD Divergence: "有没有人在背后支持这个价格？"
+    - Momentum Divergence: "价格自己还有没有力气？"
+    
+    这两个是**正交维度**，应该同时使用。
+    
+    Args:
+        close: 收盘价序列
+        trend_strength: 趋势强度 [-1, 1]（可选，用于复合特征）
+        velocity_span: 速度 EMA 平滑窗口 (推荐: 1h=5~6, 4h=8~10)
+        accel_span: 加速度 EMA 平滑窗口 (通常 < velocity_span)
+        position_window: 价格位置计算窗口（结构位置，较稳定）
+        velocity_position_window: 速度位置计算窗口（更短，对"突然失速"更敏感）
+        percentile_window: 百分位历史窗口
+    
+    Returns:
+        DataFrame with columns:
+        - price_velocity_pct: 速度的历史百分位 [0, 1]
+        - price_accel_pct: 加速度的历史百分位 [0, 1]
+        - price_momentum_div_score: 背离得分 [-1, 1]，正=动量超前，负=动量衰竭
+        - price_momentum_div_score_pct: 背离得分的历史百分位 [0, 1]
+        - momentum_div_tension: 动量-趋势张力 [0, 1]（sqrt 非线性）
+        - momentum_location_pressure: 动量背离位置压力 [0, 1]
+    
+    Notes:
+        - price_velocity 不是 return，是 "去噪的一阶时间导数"
+        - price_accel 用于识别趋势衰竭/末端拐点
+        - velocity_position_window < position_window 让背离对"突然失速"更敏感
+        - NaN position is treated as neutral (mid-range=0.5) to avoid artificial reversal bias
+    
+    Example:
+        双重背离（强反转信号）:
+        - CVD divergence ↓ + Momentum divergence ↓
+        
+        结构分歧（容易假信号）:
+        - CVD 支持 + 动量衰竭 → 多半是震荡/洗盘
+    """
+    # === 1. 解析输入 ===
+    price = pd.to_numeric(close, errors="coerce").astype(float)
+    w_price = max(position_window, 10)
+    w_velocity = max(velocity_position_window, 10)
+    v_span = max(velocity_span, 2)
+    a_span = max(accel_span, 2)
+    
+    # === 2. 计算价格速度（平滑的一阶导数） ===
+    # price_velocity = EMA(price.diff())
+    # 这不是 return，是物理量："价格推进的速度"
+    raw_velocity = price.diff()
+    price_velocity = raw_velocity.ewm(span=v_span, adjust=False).mean()
+    
+    # === 3. 计算价格加速度（平滑的二阶导数） ===
+    # price_accel = EMA(price_velocity.diff())
+    # 用于识别趋势衰竭、末端拐点
+    raw_accel = price_velocity.diff()
+    price_accel = raw_accel.ewm(span=a_span, adjust=False).mean()
+    
+    # === 4. 计算滚动百分位排名 ===
+    def _rolling_percentile_rank(series: pd.Series, window: int) -> pd.Series:
+        """滚动窗口内的百分位排名 [0, 1]，使用 <= 比较"""
+        def _pct_rank(x):
+            if len(x) < 2:
+                return 0.5
+            rank = (x <= x.iloc[-1]).sum() - 1
+            return rank / (len(x) - 1)
+        return series.rolling(window=window, min_periods=max(10, window // 3)).apply(_pct_rank, raw=False)
+    
+    # 价格位置（结构位置，较稳定）、速度位置（更短窗口，对失速更敏感）
+    price_position = _rolling_percentile_rank(price, w_price)
+    velocity_position = _rolling_percentile_rank(price_velocity, w_velocity)
+    
+    # 速度、加速度的历史百分位
+    price_velocity_pct = _rolling_percentile_rank(price_velocity, percentile_window)
+    price_accel_pct = _rolling_percentile_rank(price_accel, percentile_window)
+    
+    # === 5. 动量背离得分 ===
+    # 正值：动量相对强，价格相对弱 → 推进潜力
+    # 负值：动量相对弱，价格相对强 → 推进衰竭
+    momentum_div_score = (velocity_position - price_position).fillna(0.0).clip(-1.0, 1.0)
+    momentum_div_score_pct = _rolling_percentile_rank(momentum_div_score, percentile_window)
+    
+    # === 6. 复合特征（与 CVD V2 同构） ===
+    if trend_strength is not None:
+        T = pd.to_numeric(trend_strength, errors="coerce").fillna(0.0).clip(-1.0, 1.0)
+    else:
+        T = pd.Series(0.0, index=price.index)
+    
+    D = momentum_div_score
+    P = price_position.fillna(0.5)  # NaN → 中性
+    
+    # Momentum-Trend Tension: sqrt 非线性增强
+    momentum_div_tension = np.sqrt((D.abs() * T.abs()).fillna(0.0)).clip(0.0, 1.0)
+    
+    # Momentum Location Pressure: 背离 + 极端位置 → 反转潜力
+    momentum_location_pressure = (D.abs() * (P - 0.5).abs() * 2).fillna(0.0).clip(0.0, 1.0)
+    
+    return pd.DataFrame({
+        "price_velocity_pct": price_velocity_pct.fillna(0.5),
+        "price_accel_pct": price_accel_pct.fillna(0.5),
+        "price_momentum_div_score": momentum_div_score,
+        "price_momentum_div_score_pct": momentum_div_score_pct.fillna(0.5),
+        "momentum_div_tension": momentum_div_tension,
+        "momentum_location_pressure": momentum_location_pressure,
+    })
+
+
+@register_feature("compute_terminal_risk_score_from_series", category="interaction")
+def compute_terminal_risk_score_from_series(
+    *,
+    price_position: pd.Series,
+    price_velocity_pct: pd.Series,
+    price_accel_pct: pd.Series,
+    cvd_divergence_score: pd.Series,
+    div_location_pressure: pd.Series,
+) -> pd.DataFrame:
+    """
+    Terminal Risk Score: 末端风险评分 [0,1]
+    
+    Execution 层专用的连续化风险评估，回答：
+    "我现在追进去，有多大概率是在吃趋势最后一口甚至接盘？"
+    
+    末端风险 = 三件事同时成立（连续化）：
+    1. 价格已经在结构高/低位（位置）
+    2. 价格自己在衰竭（Momentum divergence）
+    3. 行为也开始不支持（CVD divergence）
+    
+    语义：末端 = "价格在极端 + 自己没力 + 背后没人"
+    
+    Args:
+        price_position: 价格位置 [0,1]
+        price_velocity_pct: 速度百分位 [0,1]
+        price_accel_pct: 加速度百分位 [0,1]
+        cvd_divergence_score: CVD 背离得分 [-1,1]
+        div_location_pressure: 背离位置压力 [0,1]
+    
+    Returns:
+        DataFrame with columns:
+        - momentum_exhaustion_score: 动量衰竭分数 [0,1]（价格自己没力）
+        - cvd_exhaustion_score: 行为不支持分数 [0,1]（CVD 背离）
+        - location_amplifier: 位置放大器 [0,1]（只在极端放大）
+        - terminal_risk_score: 末端风险综合得分 [0,1]
+    
+    Usage in Execution:
+        terminal_risk_score | Execution 含义
+        -------------------|------------------
+        < 0.2              | 安全推进段
+        0.2 ~ 0.4          | 需要谨慎（减 size）
+        0.4 ~ 0.6          | 高风险追单
+        > 0.6              | 基本是末端 / 易反转
+    
+    Notes:
+        - 这不是反转信号，只是追单风险评估
+        - 只给 Execution 层，不给 Router 决策方向
+        - 用于: size 缩放 / entry 延迟 / stop 收紧
+    """
+    # === 1. 解析输入 ===
+    P = pd.to_numeric(price_position, errors="coerce").fillna(0.5).clip(0.0, 1.0)
+    V_pct = pd.to_numeric(price_velocity_pct, errors="coerce").fillna(0.5).clip(0.0, 1.0)
+    A_pct = pd.to_numeric(price_accel_pct, errors="coerce").fillna(0.5).clip(0.0, 1.0)
+    CVD_div = pd.to_numeric(cvd_divergence_score, errors="coerce").fillna(0.0).clip(-1.0, 1.0)
+    div_loc_pressure = pd.to_numeric(div_location_pressure, errors="coerce").fillna(0.0).clip(0.0, 1.0)
+    
+    # === 2. 动量衰竭分数（价格自己没力） ===
+    # velocity 低 + accel 低 → 衰竭
+    # 用 (1 - pct) 表示衰竭程度
+    momentum_exhaustion_score = ((1 - V_pct) * (1 - A_pct)).clip(0.0, 1.0)
+    
+    # === 3. 行为不支持分数（CVD 背离） ===
+    # cvd_divergence_score 的绝对值表示背离强度
+    # 乘以 div_location_pressure 放大极端位置的背离
+    cvd_exhaustion_score = (CVD_div.abs() * div_loc_pressure).clip(0.0, 1.0)
+    
+    # === 4. 位置放大器（只在极端放大） ===
+    # 0.5 是中位，|P - 0.5| * 2 在极端位置 (0 或 1) 等于 1
+    location_amplifier = ((P - 0.5).abs() * 2).clip(0.0, 1.0)
+    
+    # === 5. 末端风险综合得分 ===
+    # 三者相乘：只有三件事都成立时才会高
+    terminal_risk_score = (
+        momentum_exhaustion_score * cvd_exhaustion_score * location_amplifier
+    ).clip(0.0, 1.0)
+    
+    return pd.DataFrame({
+        "momentum_exhaustion_score": momentum_exhaustion_score,
+        "cvd_exhaustion_score": cvd_exhaustion_score,
+        "location_amplifier": location_amplifier,
+        "terminal_risk_score": terminal_risk_score,
     })

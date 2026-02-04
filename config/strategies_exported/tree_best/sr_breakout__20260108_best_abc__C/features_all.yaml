@@ -34,7 +34,7 @@ feature_pipeline:
   - compression_energy_x_ofi_short_rank_f
   - compression_score_f
   - compression_to_breakout_prob_f
-  - cvd_divergence_f
+  - cvd_divergence_v2_f
   - cvd_slope_5_f
   - direction_to_nearest_sr
   - dist_to_nearest_sr
@@ -354,7 +354,6 @@ feature_pipeline:
   - kama_10_f
   - kama_20_f
   - kama_30_f
-  - liquidity_void_detected
   - liquidity_void_f
   - liquidity_void_false_breakout_risk
   - liquidity_void_retracement

@@ -611,8 +611,6 @@ archetypes:
       atomic:
         description: "原子信号 - 供树模型自由组合发现新规律"
         sweep:
-          - lsr_sweep_up_detected      # 向上扫检测
-          - lsr_sweep_down_detected    # 向下扫检测
           - lsr_sweep_depth            # 扫深度
           - lsr_sweep_speed            # 扫速度
         rejection:
@@ -633,7 +631,6 @@ archetypes:
       contextual:
         description: "状态信号（方向/环境）"
         - lsr_sweep_side               # 扫方向
-        - lsr_is_sweep                 # 是否在扫
         - lsr_near_sr                  # 是否接近SR
       failure:
         description: "失败信号 - 供树模型发现语义不成立的条件"

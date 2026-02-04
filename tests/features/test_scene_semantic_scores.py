@@ -149,11 +149,12 @@ def test_fp_imbalance_scene_semantic_scores_basic_monotonicity():
 
 
 def test_liquidity_void_scene_semantic_scores_basic():
+    """V2 连续化版本: 用 speed 作为 soft gate"""
     n = 4
     idx = pd.date_range("2025-01-01", periods=n, freq="h")
 
-    lv = pd.Series([1, 1, 1, 1], index=idx)
-    speed = pd.Series([0.1, 3.0, 0.1, 0.1], index=idx)  # ignition at bar1
+    # speed 作为 soft gate，不再需要 detected
+    speed = pd.Series([0.1, 3.0, 0.1, 0.1], index=idx)  # ignition at bar1 (high speed)
     impact = pd.Series([0.1, 3.0, 0.1, 0.1], index=idx)
     retr = pd.Series([0.1, 0.1, 0.1, 0.9], index=idx)  # exhaustion at bar3 (high retr)
     fake = pd.Series(
@@ -164,7 +165,6 @@ def test_liquidity_void_scene_semantic_scores_basic():
     trend_r2_20 = pd.Series([1.0, 1.0, 1.0, 0.0], index=idx)
 
     out = compute_liquidity_void_scene_semantic_scores_from_series(
-        liquidity_void_detected=lv,
         liquidity_void_speed=speed,
         liquidity_void_price_impact=impact,
         liquidity_void_retracement=retr,
@@ -192,6 +192,99 @@ def test_liquidity_void_scene_semantic_scores_basic():
         out["liquidity_void_exhaustion_score"].iloc[3]
         > out["liquidity_void_exhaustion_score"].iloc[0]
     )
+
+
+def test_liquidity_void_scene_v2_continuous_gate():
+    """测试 V2 的核心改进：连续化 gate，而非 Bool"""
+    n = 100
+    idx = pd.date_range("2025-01-01", periods=n, freq="h")
+
+    # 创建渐变的 speed（0 → 3）
+    speed = pd.Series(np.linspace(0, 3, n), index=idx)
+    impact = pd.Series([1.0] * n, index=idx)
+    retr = pd.Series([0.2] * n, index=idx)
+    fake = pd.Series([0.2] * n, index=idx)
+
+    out = compute_liquidity_void_scene_semantic_scores_from_series(
+        liquidity_void_speed=speed,
+        liquidity_void_price_impact=impact,
+        liquidity_void_retracement=retr,
+        liquidity_void_false_breakout_risk=fake,
+        speed_scale=3.0,
+        impact_scale=3.0,
+    )
+
+    # 核心断言：输出应该是连续的，不是大量 0
+    ignition = out["liquidity_void_ignition_score"]
+
+    # 应该有多个不同的值（不是只有 0 和 1）
+    unique_values = ignition.round(2).nunique()
+    assert unique_values > 10, f"V2 应该输出连续值，但只有 {unique_values} 个不同值"
+
+    # 应该单调递增（speed 增加 → ignition 增加）
+    assert ignition.iloc[-1] > ignition.iloc[0], "high speed 应该产生更高的 ignition"
+
+    # 不应该有 80% 是 0（这是 V1 的问题）
+    zero_ratio = (ignition < 0.01).mean()
+    assert zero_ratio < 0.5, f"V2 不应该有大量 0 值，但 {zero_ratio:.1%} 是接近 0"
+
+
+def test_liquidity_void_scene_semantic_correctness():
+    """测试 4 个场景的语义正确性"""
+    n = 4
+    idx = pd.date_range("2025-01-01", periods=n, freq="h")
+
+    # 设计 4 个不同场景
+    # bar0: compression (高压缩 + 高速度)
+    # bar1: ignition (高速度 + 高冲击 + 低假突破风险 + WPT确认)
+    # bar2: absorption (高速度 + 低回撇 + 低假突破 + 高趋势)
+    # bar3: exhaustion (高速度 + 高回撇 + 高假突破 + 低趋势)
+
+    speed = pd.Series([3.0, 3.0, 3.0, 3.0], index=idx)  # 都有高速度
+    impact = pd.Series([0.5, 3.0, 0.5, 0.5], index=idx)  # bar1 高冲击
+    retr = pd.Series([0.1, 0.1, 0.1, 0.9], index=idx)  # bar3 高回撇
+    fake = pd.Series([0.1, 0.1, 0.1, 0.9], index=idx)  # bar3 高假突破风险
+
+    wpt_bc = pd.Series([0.0, 1.0, 0.0, 0.0], index=idx)  # bar1 WPT 确认
+    compression_score = pd.Series([1.0, 0.0, 0.0, 0.0], index=idx)  # bar0 压缩
+    trend_r2_20 = pd.Series([0.5, 0.5, 0.9, 0.1], index=idx)  # bar2 高趋势, bar3 低趋势
+
+    out = compute_liquidity_void_scene_semantic_scores_from_series(
+        liquidity_void_speed=speed,
+        liquidity_void_price_impact=impact,
+        liquidity_void_retracement=retr,
+        liquidity_void_false_breakout_risk=fake,
+        wpt_breakout_confidence=wpt_bc,
+        compression_score=compression_score,
+        trend_r2_20=trend_r2_20,
+        speed_scale=3.0,
+        impact_scale=3.0,
+    )
+
+    # 语义正确性断言
+    # compression 在 bar0 最高
+    assert (
+        out["liquidity_void_compression_score"].iloc[0]
+        == out["liquidity_void_compression_score"].max()
+    ), "bar0 应该有最高的 compression_score"
+
+    # ignition 在 bar1 最高
+    assert (
+        out["liquidity_void_ignition_score"].iloc[1]
+        == out["liquidity_void_ignition_score"].max()
+    ), "bar1 应该有最高的 ignition_score"
+
+    # absorption 在 bar2 最高（高趋势 + 低回撇 + 低假突破）
+    assert (
+        out["liquidity_void_absorption_score"].iloc[2]
+        == out["liquidity_void_absorption_score"].max()
+    ), "bar2 应该有最高的 absorption_score"
+
+    # exhaustion 在 bar3 最高（低趋势 + 高回撇 + 高假突破）
+    assert (
+        out["liquidity_void_exhaustion_score"].iloc[3]
+        == out["liquidity_void_exhaustion_score"].max()
+    ), "bar3 应该有最高的 exhaustion_score"
 
 
 def test_wpt_scene_semantic_scores_basic():
