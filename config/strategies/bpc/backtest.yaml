@@ -1,5 +1,6 @@
 # BPC (BreakoutPullbackContinuation) 回测配置
-# Failure-first 模型：预测 failure_prob，低值 = 好机会
+# Failure-first 模型（invert=true）：预测 success_prob（不会踩坑的概率）
+# 入场逻辑：success_prob 高于阈值时入场（高置信度的好机会）
 
 backtest:
   enabled: true
@@ -7,9 +8,10 @@ backtest:
     price_col: close
     freq: 4H
     use_signal_direction: false
-    # Failure-first: 低 failure_prob 入场
-    # long_entry_threshold: 0.3 表示 failure_prob <= 0.3 时做多
-    long_entry_threshold: 0.3
+    # Failure-first (invert=true): 模型输出 success_prob
+    # long_entry_threshold: 0.8 表示 success_prob >= 0.8 时做多
+    # 值越高 = 越保守 = 只在高置信度的"不会踩坑"时入场
+    long_entry_threshold: 0.8
     exit_mode: none
     entry_mode: level
     strategy_direction: long_only

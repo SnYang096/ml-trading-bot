@@ -1,0 +1,64 @@
+version: 2  # 支持noise_penalty
+
+# 噪声惩罚配置
+noise_penalty:
+  enabled: true
+  short_window: 20
+  long_window: 120
+  # 权重分配基于功能分工：
+  # - WPT/Spectrum: 结构破碎度主信号 (0.35+0.30=0.65)
+  # - Hilbert: 短期相位不稳定 (0.20)
+  # - Hurst: 背景环境 (0.15)
+  weights:
+    wpt_entropy: 0.35  # WPT: 多尺度分解，结构破碎度主信号
+    spectrum_width: 0.30  # Spectrum: 频域分析，频谱稳定性
+    hilbert_phase_var: 0.20  # Hilbert: 相位/包络不稳定性
+    hurst_inverse: 0.15  # Hurst: 长期记忆性，背景环境指标
+  max_penalty: 0.8
+
+# 执行档位配置
+tiers:
+  - name: "强证据"
+    score_min: 0.70
+    params:
+      sl_r: 0.8
+      tp_r: 3.0
+      size_multiplier: 1.2
+      max_hold_time: 200
+      trailing_enabled: true
+      trailing_threshold: 0.1
+      trailing_distance: 0.05
+  
+  - name: "中等证据"
+    score_min: 0.50
+    params:
+      sl_r: 1.0
+      tp_r: 2.5
+      size_multiplier: 1.0
+      max_hold_time: 150
+      trailing_enabled: true
+      trailing_threshold: 0.15
+      trailing_distance: 0.08
+  
+  - name: "弱证据"
+    score_min: 0.30
+    params:
+      sl_r: 1.2
+      tp_r: 2.0
+      size_multiplier: 0.8
+      max_hold_time: 100
+      trailing_enabled: false
+  
+  - name: "边缘证据"
+    score_min: 0.10
+    params:
+      sl_r: 1.5
+      tp_r: 1.8
+      size_multiplier: 0.5
+      max_hold_time: 80
+      trailing_enabled: false
+
+# 最小交易限制（物理限制，不是策略判断）
+min_trade_limits:
+  min_size_multiplier: 0.1
+  min_position_value: 100  # 最小持仓价值

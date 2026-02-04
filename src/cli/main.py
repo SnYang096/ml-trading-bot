@@ -6369,6 +6369,11 @@ def train_rolling(
     default=None,
     help="Override labels config file (e.g. config/strategies/bpc/labels_rr_extreme.yaml)",
 )
+@click.option(
+    "--features",
+    default=None,
+    help="Override features config file (e.g. config/strategies/bpc/features_gate.yaml)",
+)
 def train_final(
     symbol,
     timeframe,
@@ -6385,6 +6390,7 @@ def train_final(
     deterministic,
     docker,
     labels,
+    features,
 ):
     """Train a final model and save ModelArtifact. With --holdout-*: train/test split by date (no overlap); without: train on full window (--train-all)."""
     from datetime import datetime
@@ -6450,6 +6456,8 @@ def train_final(
         args.append("--deterministic")
     if labels:
         args.extend(["--labels", f"/workspace/{labels}" if use_workspace_prefix else labels])
+    if features:
+        args.extend(["--features", f"/workspace/{features}" if use_workspace_prefix else features])
     sys.exit(run_script("scripts/train_strategy_pipeline.py", args, docker=docker))
 
 

@@ -116,12 +116,36 @@ find cache/features/monthly -name "*2024*" -delete
 # FeatureStore 用 --force-rebuild 重建
 ```
 ## 训练树模型，效果好就可以导出规则
+注意点：
+1. 分两个label训练
+① 子类型不均衡：常见的那种 failure 吃掉了模型容量
+② 两种 failure 模式在特征空间是“错位”的
+
+2. 不把细节特征放到gate，不然会过滤掉很多交易
+
+ 📊 Failure Sub-label Analysis...
+      ────────────────────────────────────────
+      🌍 Global Failure Rate (baseline):
+         failure_rr_extreme:     16.7%  (踩大坑)
+         failure_no_opportunity: 4.5%  (入场即反)
+      ────────────────────────────────────────
+      ✅ Selected Trades (top 30%, n=6168):
+         failure_rr_extreme:     0.7%  (lift=0.04x)
+         failure_no_opportunity: 0.1%  (lift=0.03x)
+      ────────────────────────────────────────
+      🎯 Reduction vs unselected: +97.2%
+  📜 Tree rules exported to results/train_final_20260204_230907_rr_extreme/bpc/bpc_tree_rules.md
+   📜 Risk gate draft exported to results/train_final_20260204_230907_rr_extreme/bpc/risk_gate_draft.yaml
+ 
+
+
 ```bash
   # --end-date 2025-11-30 ← 改为包含 holdout 期间
 
-# 训练 failure_rr_extreme
+# 训练 failure_rr_extreme “未来这 50 根 K 的路径里，会不会出现非常极端的不利 RR（比如一路亏到 -0.8R 以下）。
 mlbot train final --no-docker \
   --config config/strategies/bpc \
+  --features config/strategies/bpc/features_gate.yaml \
   --labels config/strategies/bpc/labels_rr_extreme.yaml \
   --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
@@ -132,9 +156,11 @@ mlbot train final --no-docker \
   --holdout-end-date 2025-11-30 \
   --seed 42
 
-# 训练 failure_no_opportunity
+
+# 训练 failure_no_opportunity 入场即反
 mlbot train final --no-docker \
   --config config/strategies/bpc \
+  --features config/strategies/bpc/features_gate.yaml \
   --labels config/strategies/bpc/labels_no_opportunity.yaml \
   --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
@@ -144,7 +170,6 @@ mlbot train final --no-docker \
   --holdout-start-date 2024-05-01 \
   --holdout-end-date 2025-11-30 \
   --seed 42
-
 ```
 
 ##  训练 Return Tree
@@ -177,15 +202,16 @@ mlbot train final --no-docker \
 ```bash
 mlbot train final --no-docker \
   --config config/strategies/bpc \
+  --features config/strategies/bpc/features_evidence.yaml \
   --labels config/strategies/bpc/labels_return_tree.yaml \
   --symbol BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT \
   --timeframe 240T \
+  --data-path data/parquet_data \
   --start-date 2023-01-01 \
   --end-date 2025-11-30 \
   --holdout-start-date 2024-05-01 \
   --holdout-end-date 2025-11-30 \
   --seed 42
-
 ```
 
 ## 审核 risk_gate.yaml 和 evidence_candidates.yaml 是否有语义意义

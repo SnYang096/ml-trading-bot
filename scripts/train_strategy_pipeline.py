@@ -259,6 +259,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override labels config file path (e.g. config/strategies/bpc/labels_rr_extreme.yaml)",
     )
+    parser.add_argument(
+        "--features",
+        type=str,
+        default=None,
+        help="Override features config file path (e.g. config/strategies/bpc/features_gate.yaml)",
+    )
     return parser.parse_args()
 
 
@@ -1725,7 +1731,11 @@ def train_strategy(
 ) -> None:
     print("\n" + "=" * 80)
     print(f"📂 Loading strategy config from {config_dir}")
-    loader = StrategyConfigLoader(config_dir, labels_override=args.labels)
+    loader = StrategyConfigLoader(
+        config_dir,
+        labels_override=args.labels,
+        features_override=getattr(args, "features", None),
+    )
     strategy_config = loader.load()
 
     output_dir = Path(args.output_root) / strategy_config.name

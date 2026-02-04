@@ -3,6 +3,11 @@
 **English**: [README.md](README.md)  
 **文档索引**: [docs/README.md](docs/README.md)
 
+## 底层哲学
+[系统哲学基础](docs/architecture/系统哲学基础.md)
+[顶级量化团队.md](docs/architecture/顶级量化团队.md)
+[一道一宿速正道](docs/architecture/一道一宿速正道.md)
+
 **Alpha不是收集的，是雕刻的。**
 
 本仓库包含因子研究、模型训练、回测与数据管道的生产就绪组件。**本 README 保持尽量短**：只提供"命令 + 推荐流程 + 入口文档链接"。研究解释型内容已迁移到独立文档。
@@ -554,6 +559,7 @@ mlbot diagnose ood-to-archetype-weights --no-docker \
 - [PLATEAU_OPTIMIZATION_METHODOLOGY](docs/guides/PLATEAU_OPTIMIZATION_METHODOLOGY.md)
 - [NNMULTIHEAD_COMMANDS_CN](docs/guides/NNMULTIHEAD_COMMANDS_CN.md)
 - [meta_router_core_pipeline](docs/architecture/meta_router_core_pipeline.md)
+- [数学特征如何使用](docs/architecture/数学特征如何使用.md)
 ---
 
 ## 获取帮助

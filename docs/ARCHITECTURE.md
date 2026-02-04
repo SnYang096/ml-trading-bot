@@ -75,6 +75,25 @@ Gate 的每条规则都是一个“约束算子”（谓词），通过 `deny_if
 - **FR/ET（严格）**：`allow_if` + `default_action: deny`（必须满足任一 allow 才放行）
 - **分位数阈值**：`quantile_gt/lt` 支持跨标的的相对严格度控制
 
+### Evidence 层设计原则
+
+Evidence 层负责评估 alpha 质量，仅基于结构/订单流/规制特征，不使用数学特征：
+
+- **输入特征**：仅使用结构、订单流、规制特征
+- **输出**：alpha 质量评分（0-1）
+- **目的**：评估"是否值得交易"而非"市场是否可预测"
+- **语义**："Price tells you WHAT, Volume tells you IF, Order flow tells you WHO"
+
+### Execution 层数学特征使用规范
+
+Execution 层是数学特征的唯一合法使用位置，实现 `execution_noise_penalty` 机制：
+
+- **数学特征**：Hurst/WPT/Spectrum/Hilbert/EVT 仅在此层使用
+- **功能**：计算 `execution_noise_penalty`，影响"如何执行"而非"是否执行"
+- **权重分配**：WPT(0.35) + Spectrum(0.30) + Hilbert(0.20) + Hurst(0.15)
+- **EVT处理**：采用"保险丝"机制，极端情况下额外增加惩罚
+- **参数调整**：根据 `evidence_score` 和 `noise_penalty` 动态调整 SL/TP/Size 等参数
+
 ### 主要配置文件
 
 - `config/nnmultihead/strategies/<strategy_id>/profile.yaml`  
@@ -102,7 +121,8 @@ flowchart TD
   ModelCfg --> Regime[Physics Regime Classifier]
   Regime --> Archetype[Archetype Selector]
   Archetype --> Gate[Tree Gate / Veto / Bias]
-  Gate --> ExecPolicy[Execution Policy]
+  Gate --> Evidence[Alpha Quality Assessment]
+  Evidence --> ExecPolicy[Execution Policy with Noise Penalty]
   ExecPolicy --> PCM[PCM Portfolio Control]
   PCM --> LiveExec
   PCM --> Backtest
@@ -116,6 +136,10 @@ flowchart TD
   `src/time_series_model/live/event_driven_strategy.py::_execute_entry`
 - Evidence 规则解释器（v1）：  
   `src/time_series_model/core/constitution/execution_evidence.py::compute_execution_evidence`
+- Alpha质量评估器（BPC证据计算器）：
+  `src/time_series_model/evidence/bpc_evidence_calculator.py::calculate_evidence_score`
+- Execution噪声惩罚计算器：
+  `src/time_series_model/execution/noise_penalty.py::ExecutionNoisePenalty`
 - KPI Gate 读取（Gate/Execution/Portfolio 评估）：  
   `src/time_series_model/diagnostics/kpi_journal.py`
 
@@ -192,10 +216,11 @@ Layer2  ModelHeads             Outcome Path 多头（A-layer）
 Layer3  RegimePhysics          物理可行性/风格分布（硬 veto）
 Layer4  Archetype              行为模板（TC_EXEC/TE_EXEC/FR/ET）
 Layer5  Gate                   规则 veto/allow/bias（execution-local）
-Layer6  Execution              单仓生命周期管理（entry/exit/SL/TP）
-Layer7  PCM_Portfolio          组合分配/风控（生产决策层）
-Layer8  ReportsAndOps          KPI/审计/快照/回放
-Layer9  RollbackAndDegrade     降级路径（回退到更低自由度）
+Layer6  Evidence               Alpha质量评估（仅基于结构/订单流特征）
+Layer7  Execution              单仓生命周期管理（含noise_penalty调整）
+Layer8  PCM_Portfolio          组合分配/风控（生产决策层）
+Layer9  ReportsAndOps          KPI/审计/快照/回放
+Layer10 RollbackAndDegrade     降级路径（回退到更低自由度）
 ```
 
 ### 命名规范（避免术语冲突）
@@ -280,7 +305,8 @@ flowchart TD
   Model --> Regime[PhysicsRegime]
   Regime --> Archetype[ArchetypeSelector]
   Archetype --> Gate[TreeGateAndDetectors]
-  Gate --> Exec[ExecutionPolicies]
+  Gate --> Evidence[AlphaQualityAssessment]
+  Evidence --> Exec[ExecutionPoliciesWithNoisePenalty]
   Exec --> PCM[PCM: Slot Rotation / Add-on / Risk Budget]
   PCM --> CF[CounterfactualEval]
   PCM --> Shadow[ShadowEval]
@@ -293,7 +319,9 @@ flowchart TD
 统一路径说明：
 
 - TaskSpec 负责冻结 Universe/时间窗/特征/标签/模型超参
-- Regime/Archetype 的阈值与规则用 “平坦高原” 协议（多窗口/bootstraps）
+- Regime/Archetype 的阈值与规则用 "平坦高原" 协议（多窗口/bootstraps）
+- Evidence 层评估 alpha 质量，仅基于结构/订单流特征，不使用数学特征
+- Execution 层使用数学特征计算 noise_penalty，影响执行参数调整
 - KPI gates 在各层硬门禁，避免 Sharpe 乱用
 - Shadow/Counterfactual 统一生成证据链
 - **RL/BC 分支**：在 `logs_3action.parquet` 基础上做影子研究（BC/Offline RL），
@@ -393,10 +421,15 @@ flowchart TD
 
 - `config/feature_dependencies.yaml`：特征 DAG 与归一化契约
 - `config/tasks/task_spec_*.yaml`：TaskSpec（冻结 Universe/时间窗/特征/标签）
+- `config/execution/bpc_execution_tiers.yaml`：Execution层配置（含noise_penalty）
 - `scripts/build_feature_store_nnmultihead.py`：FeatureStore 构建
 - `scripts/train_path_primitives_mlp.py`：A-layer 训练
 - `scripts/rl_counterfactual_eval_3action.py`：系统级评估
 - `src/time_series_model/diagnostics/kpi_journal.py`：KPI Journal
+- `src/time_series_model/evidence/bpc_evidence_calculator.py`：BPC证据计算器
+- `src/time_series_model/execution/noise_penalty.py`：Execution噪声惩罚计算器
+- `src/time_series_model/execution/execution_controller.py`：Execution控制器
+- `src/time_series_model/strategies/bpc_strategy_v2.py`：BPC策略V2（路径2.5架构）
 - Feature/Cache 模块说明：`src/features/loader/README.md`
 
 ---
@@ -447,3 +480,6 @@ flowchart TD
 - [保险模块得合并](docs/architecture/保险模块得合并.md)
 - [和大模型灌数据比较](docs/architecture/和大模型灌数据比较.md)
 - [树模型和神经网络模型能力区别](docs/architecture/树模型和神经网络模型能力区别.md)
+- [路径2.5数学特征分层使用规范](docs/architecture/path2.5_math_features.md)
+- [回测与实盘Execution层对比](docs/architecture/backtest_vs_live_execution.md)
+- [数学特征分离原则](docs/architecture/math_feature_separation_principle.md)
